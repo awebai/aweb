@@ -457,16 +457,28 @@ certificate dependencies never transfer; local key replacement is a new
 principal.
 
 Resource decisions consume only verified membership facts. The following rule
-is shared verbatim with acwd.16 (Athena `2bc86d1b-8ff1-4063-8686-8bb3633cb6c5`,
+follows the converged rule for acwd.16 (Athena `2bc86d1b-8ff1-4063-8686-8bb3633cb6c5`,
 settled with R and relayed by secrets `e536012c-0fd4-4feb-86fb-cc4ded970483`):
 
 The shared verifier's original membership dependency deadline (the earliest fresh_until across the verified evidence, retained from admission, never refreshed by a cache hit) is compared LOCALLY against the clock read after the last effect-lock wait in the final fence transaction. That transaction covers approval consumption, credential opening and release, and the dispatch or assignment commit. It applies to direct and inherited members alike and makes no network call. An expired deadline refuses inside that transaction, so the transaction rolls back:
 
-- no approval is consumed;
+- no approval is newly consumed by the rolled-back transaction;
 - no assignment is persisted;
 - no bytes are released.
 
-The requester re-submits, which gets a fresh admission with fresh membership evidence.
+The requester obtains fresh admission with fresh membership evidence. A rollback
+cannot undo an approval consumed by an earlier committed admission. Recovery
+is determined by that commit boundary, not whether the request is brokered or
+runner-based (`secrets.md` §10.5 and §11.1; secrets `103904d4` option (i)):
+
+- Before admission commits, refusal leaves the request and any unconsumed
+  approval available for exact re-submission with the same request ID/bytes,
+  subject to normal grant, approval expiry and idempotency checks.
+- After admission commits, its approval stays consumed. A later fence refusal
+  closes the admitted intent `refused` through the existing transition, after
+  rolling back the failed effect transaction. No old assignment can be claimed
+  again. Recovery is a fresh request and fresh approval where policy requires
+  it; nothing refunds or rearms the original approval.
 
 This is an explicit addition to Secrets' existing dispatch fence, not a claim
 that its current implementation already checks membership deadlines. The
@@ -498,20 +510,26 @@ Consequences for that consumer:
 
 - A queued runner job claimed after the deadline refuses at its claim fence
   with the shared 503 `current_membership_unavailable`, final for that dispatch.
-  This is unavailable evidence, not a claim of revocation. Recovery requires
-  requester re-submission through fresh admission, never automatic release of
-  that old assignment. The remaining deadline can be less than 60 seconds at
-  admission; queued jobs need a connected runner or a re-submit.
+  This is unavailable evidence, not a claim of revocation. Any approval consumed at admission stays consumed; the intent closes
+  `refused`, with no assignment, credential release or send. Recovery requires a
+  fresh request and fresh approval where required, never automatic release of
+  the old assignment. The remaining deadline can be less than 60 seconds at
+  admission. A job queued beyond that deadline requires re-submission and, for
+  an approval-gated job, another human approval. This is the availability cost.
 - Ordinary brokered requests admit and dispatch in one flow and are unaffected
-  in practice; any actual wait beyond the deadline still refuses.
+  in practice; any actual wait beyond the deadline still refuses. One flow does
+  not imply one transaction: an approval already consumed at committed admission
+  stays consumed after a later broker fence failure, just as for a runner.
 - Membership withdrawal exposure is the governing observation window without
   extra queue delay. This retains the earlier qualification for independent
   external-authority freshness. Grant revocation still cuts admitted unsent
   intents at the existing fence.
 - Vectors cover expiry during a proven effect-lock wait, during deadline
   persistence and in a queued cross-worker claim. Each asserts no approval
-  consumption, no assignment row, no credential release and no send. Short
-  waits with usable evidence remain the positive neighbors.
+  newly consumed approval in the failed transaction, no assignment row, no
+  credential release and no send. A queued job's earlier consumed approval stays
+  consumed and its intent closes refused. Short waits with usable evidence
+  remain the positive neighbors.
 
 Installation scopes and resource policy remain separate. Acwd.16 owns how the
 verified path constrains grants and distinct approvers; these output fields
@@ -609,9 +627,9 @@ direct-naapp consumers:
 | Unclassified transition, forged floor or changed proof with old status hash | Refuse; transition validation and exact signed/status binding are mandatory. |
 | Laptop and managed-server children with equivalent evidence | Same membership/resource decisions; no placement condition or forced host migration. |
 | Direct member versus inherited leaf | Only inherited result exposes verified policy/root/ordered ancestors; caller fields cannot substitute. |
-| Membership deadline expires during the last effect-lock wait | Local final-fence refusal; no approval consumed, no assignment row, no released bytes. Short wait with unexpired evidence succeeds. |
-| Runner claims queued job after membership deadline, including another worker | 503 `current_membership_unavailable`, final for dispatch; no approval consumed, no assignment row, release or send; fresh authenticated re-submission runs normal grant/approval/idempotency checks. |
-| Evidence expires while its deadline is persisted | DB-first timestamp plus later rounded-down remaining budget does not extend authority; final fence refuses with no approval consumed, assignment, credential release or send. |
+| Membership deadline expires during the last effect-lock wait | Local refusal; no newly consumed approval in the failed transaction, no assignment/release/send. Earlier committed admission consumption is not undone. Short wait with unexpired evidence succeeds. |
+| Runner claims queued job after membership deadline, including another worker | 503 `current_membership_unavailable`; intent closes refused, admission approval stays consumed; no assignment, credential release or send. Recovery needs a fresh request and fresh approval where required. |
+| Evidence expires while its deadline is persisted | DB-first timestamp plus later rounded-down remaining budget does not extend authority; admission refuses before commit with no approval consumed, assignment, credential release or send. |
 | Local B reused across teams | Existing local-scope refusal; distinct local children or existing global B are the valid neighbors. |
 | T1 succeeds while T2 refuses in a selected set | Exact per-team receipt; no T2 access, no hidden rollback or silent overall success. |
 | Old client receives inherited proof | Unsupported/authentication refusal; existing v1 certificate still works. |
@@ -742,5 +760,7 @@ released v1 authority is unchanged. The later fence convergence
 `2bc86d1b-8ff1-4063-8686-8bb3633cb6c5` explicitly adds local original-deadline
 checks for both direct and inherited effects; the R/A refinement relayed in
 `1baed17f` adds the DB-anchored portable deadline and shared unavailable refusal.
+Secrets `103904d4` clarifies that previously committed approval consumption
+is not rolled back; the corpus distinguishes pre-admission and queued effects.
 This supersedes the provisional
 admission-only option and must be qualified with the resource consumer.
