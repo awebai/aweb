@@ -366,6 +366,16 @@ _EFFECTIVE_CONTACT = (
 )
 
 
+# The scope's approver in effect now ($2) that holds an unrevoked passkey.
+_USABLE_APPROVER = (
+    f"SELECT subject, {_EFFECTIVE_CONTACT} AS contact "
+    "FROM {{tables.passkey_approvers}} a "
+    f"WHERE scope = $1 AND {_CURRENT} AND EXISTS ("
+    "SELECT 1 FROM {{tables.passkey_credentials}} c "
+    "WHERE c.subject = a.subject AND c.revoked_at IS NULL)"
+)
+
+
 class Passkeys:
     """Approver designation, enrolment and passkey assertions for one app.
 
@@ -878,20 +888,19 @@ class Passkeys:
 
     async def designated_approver(self, scope: str) -> Approver | None:
         """The scope's current approver, once in effect and enrolled."""
-        row = await self.db.fetch_one(
-            f"SELECT subject, {_EFFECTIVE_CONTACT} AS contact "
-            "FROM {{tables.passkey_approvers}} a "
-            f"WHERE scope = $1 AND {_CURRENT} AND EXISTS ("
-            "SELECT 1 FROM {{tables.passkey_credentials}} c "
-            "WHERE c.subject = a.subject AND c.revoked_at IS NULL)",
-            scope,
-            self._clock(),
-        )
+        row = await self.db.fetch_one(_USABLE_APPROVER, scope, self._clock())
         if row is None:
             return None
         return Approver(
             scope=scope, subject=row["subject"], subject_type=SUBJECT_TYPE, contact=row["contact"]
         )
+
+    async def current_subject_in(self, tx: TransactionManager, scope: str) -> str | None:
+        """The subject of the scope's approver that can log in now: in effect
+        and holding an unrevoked passkey. Read in the caller's transaction, by
+        SQL only, at this Passkeys' clock; None while no credential can."""
+        row = await tx.fetch_one(_USABLE_APPROVER, scope, self._clock())
+        return None if row is None else str(row["subject"])
 
     async def candidates(self, policy: ActionPolicy, request: Mapping[str, Any]) -> list[Approver]:
         """The current approver of each of the policy's scopes that has one."""
