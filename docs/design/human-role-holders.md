@@ -358,6 +358,24 @@ async def refresh_holding_certificate(
   value, so a consumer that bound a session to the earlier holding sees that
   it changed. A consumer's binding to a holding uses only installation, team,
   role, principal and `held_since`, none of which is secret.
+- **The holding's identity.** A console session binds to one holding
+  through `human-role-holding/1`, a public digest that grants nothing. It is
+  defined only while `subject` is not `None`: during a replace's cooling-off
+  no session can log in, so there is nothing to bind. Its input is the strict
+  canonical JSON ([canonical-json-v1](../vectors/canonical-json-v1.json)) of
+  nine nonempty strings: `app_id`, `team_id`, `installation_id`, `generation`
+  (the admitted installation's generation, a decimal integer of at least 1),
+  `role`, `principal`, `b3_scope`, `subject`, and `held_since` (UTC to the
+  microsecond, `YYYY-MM-DDTHH:MM:SS.ffffffZ`). `b3_scope` must be the one
+  derived from the key below. The identity is
+  `aweb.human-role-holding/1:` followed by the lowercase hex SHA-256 of
+  `aweb.human-role-holding/1` and a newline, followed by that canonical JSON.
+  It changes when a replace gives the holding a new subject, when a revoke
+  and a designate give it a new `held_since`, and when the installation's
+  generation advances; a session bound to the earlier value then fails its
+  holding comparison. It carries no credential, certificate, key or session
+  material, and a change of any of those is checked elsewhere. The vector is
+  [human-role-holding-v1](../vectors/human-role-holding-v1.json).
 - **The certificate.** `certificate` is the exact bytes of the holder's
   team certificate, retained with the holding
   ([Membership evidence](human-confirmation-from-aw.md#membership-evidence)).
