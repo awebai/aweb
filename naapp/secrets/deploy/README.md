@@ -147,8 +147,13 @@ container logs or private environment files as acceptance evidence.
 After building the image, from `naapp/secrets`, under the team's suite lock:
 
 ```sh
-uv run --frozen --no-sync python e2e/package_lab.py --image customer-secrets:reviewed
+uv run --frozen --no-sync python e2e/package_lab.py --image customer-secrets:reviewed --source-commit "$(git rev-parse HEAD)"
 ```
+
+Pass the commit used to build the image; the command assumes this checkout
+still matches it. The lab checks the image's default UID/GID without a user
+override, then requires its revision label and served build SHA to match that
+commit. The mounted-fixture service processes continue to use the host UID.
 
 This creates an internal Docker network, real PostgreSQL/Redis/AWID, an
 answering TXT DNS server and a TLS registry, all with generated synthetic lab

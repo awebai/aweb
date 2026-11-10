@@ -28,6 +28,7 @@ from awid_service.testing import signed_team_server_record
 
 from aweb_naapp_testing import Member
 from aweb_naapp_testing.network import make_certificates
+from aweb_naapp_testing.packaged_identity import require_commit, require_user
 
 REGISTRY_URL = "https://registry.lab.test:8010"
 
@@ -50,6 +51,7 @@ class PackagedService:
     keys: tuple[str, ...]
     environment: Callable[[Lab], Mapping[str, str]]
     probe: Path
+    expected_user: tuple[int, int]
 
 
 def docker(*args, input=None):
@@ -70,14 +72,57 @@ def wait_until(check, seconds=90):
     raise TimeoutError("lab readiness")
 
 
-def run_package_lab(image: str, service: PackagedService) -> None:
+def remove_container(name: str) -> None:
+    if docker("ps", "-aq", "--filter", f"name=^/{name}$"):
+        docker("rm", "-f", name)
+
+
+def run_package_lab(image: str, service: PackagedService, *, expected_commit: str) -> None:
     if os.getuid() == 0:
         raise ValueError("run the disposable lab as a non-root user")
     prefix = f"{service.name}-package-" + uuid.uuid4().hex[:10]
     network, containers = prefix, []
+    metadata = json.loads(docker("image", "inspect", image))[0]
+    image = metadata["Id"]  # No tag can move between inspection and launch.
+    revision = (metadata["Config"].get("Labels") or {}).get("org.opencontainers.image.revision")
+    require_commit(expected_commit, revision)
+    user_container = prefix + "-image-user"
+    try:
+        # No --user override, mounts or app inputs: exercise the image's USER.
+        observed = json.loads(
+            docker(
+                "run",
+                "--name",
+                user_container,
+                "--network",
+                "none",
+                "--read-only",
+                "--label",
+                f"aweb.package-lab={prefix}",
+                "--entrypoint",
+                "/app/.venv/bin/python",
+                image,
+                "-I",
+                "-c",
+                "import json,os;print(json.dumps([os.geteuid(),os.getegid()]))",
+            )
+        )
+        require_user(metadata["Config"].get("User", ""), observed, service.expected_user)
+    finally:
+        remove_container(user_container)
+    print("packaged image default USER PASS", flush=True)
     with tempfile.TemporaryDirectory(prefix=f"{service.name}-package-") as directory:
         lab = Path(directory)
         lab.chmod(0o700)
+        (lab / "image-identity.json").write_text(
+            json.dumps(
+                {
+                    "commit": expected_commit,
+                    "revision": revision,
+                    "image": image,
+                }
+            )
+        )
         (lab / "tls").mkdir()
         make_certificates(lab / "tls", ["registry.lab.test"], [])
         # Certificates and all generated key files are mounted, never built in.
@@ -121,23 +166,30 @@ def run_package_lab(image: str, service: PackagedService) -> None:
         (lab / "probe.py").write_bytes(service.probe.read_bytes())
         shared_probe = Path(__file__).with_name("packaged_probe.py")
         (lab / shared_probe.name).write_bytes(shared_probe.read_bytes())
+        shared_identity = Path(__file__).with_name("packaged_identity.py")
+        (lab / shared_identity.name).write_bytes(shared_identity.read_bytes())
         docker(
             "network",
             "create",
             "--internal",
             "--subnet",
             f"10.253.{secrets.randbelow(256)}.0/24",
+            "--label",
+            f"aweb.package-lab={prefix}",
             network,
         )
         try:
 
             def start(name, container_image, *args, options=()):
                 full = prefix + "-" + name
+                containers.append(full)
                 docker(
                     "run",
                     "-d",
                     "--name",
                     full,
+                    "--label",
+                    f"aweb.package-lab={prefix}",
                     "--network",
                     network,
                     "--network-alias",
@@ -146,7 +198,6 @@ def run_package_lab(image: str, service: PackagedService) -> None:
                     container_image,
                     *args,
                 )
-                containers.append(full)
                 return full
 
             pg = start(
@@ -257,7 +308,16 @@ def run_package_lab(image: str, service: PackagedService) -> None:
                     probe_process.terminate()
                     probe_process.wait(timeout=10)
         finally:
+            cleanup_failed = False
             for container in reversed(containers):
-                docker("rm", "-f", container)
-            docker("network", "rm", network)
+                try:
+                    remove_container(container)
+                except RuntimeError:
+                    cleanup_failed = True
+            try:
+                docker("network", "rm", network)
+            except RuntimeError:
+                cleanup_failed = True
+            if cleanup_failed:
+                raise RuntimeError("packaged lab cleanup failed")
         print("owned containers/network/private generated files cleaned PASS")

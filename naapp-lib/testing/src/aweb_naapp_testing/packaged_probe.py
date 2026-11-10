@@ -15,6 +15,7 @@ from typing import Any
 import asyncpg
 import httpx
 from fastapi import HTTPException
+from packaged_identity import PackagedIdentityError, require_commit
 
 from aweb_naapp.runtime.app import NaappRuntime
 from aweb_naapp.runtime.team_server import TeamServerUnavailable
@@ -38,14 +39,16 @@ async def probe(
             f"http://127.0.0.1:{port}/health", headers={"Host": host}
         )
         health_response.raise_for_status()
+        image_identity = json.loads(Path("/lab/image-identity.json").read_text())
+        require_commit(image_identity["commit"], image_identity["revision"])
+        require_commit(image_identity["commit"], health_response.json()["build"]["git_sha"])
+        print("packaged served build identity PASS", flush=True)
         checks = health_response.json()["checks"]
         assert all(checks[name]["ok"] for name in health)
         ready = await client.get(f"http://127.0.0.1:{port}/ready", headers={"Host": host})
         assert ready.status_code == 200
         assert (
-            await client.get(
-                f"http://127.0.0.1:{port}/manifests/v2.json", headers={"Host": host}
-            )
+            await client.get(f"http://127.0.0.1:{port}/manifests/v2.json", headers={"Host": host})
         ).json()["app"]["id"] == configured.app_id
         print(served, flush=True)
 
@@ -159,6 +162,9 @@ def run(configured: Callable[[], Any], **options: Any) -> None:
     settings; ``options`` are :func:`probe`'s."""
     try:
         asyncio.run(probe(configured(), **options))
+    except PackagedIdentityError as exc:
+        print(str(exc), flush=True)
+        raise SystemExit(1) from None
     except Exception as exc:
         # No credential-bearing environment, response bodies or tracebacks.
         print("packaging probe failed: " + type(exc).__name__, flush=True)

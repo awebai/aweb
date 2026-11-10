@@ -21,7 +21,8 @@ class NaappImageUsers(unittest.TestCase):
                 users = re.findall(r"^USER\s+(\S+)\s*$", path.read_text(), re.MULTILINE)
                 self.assertTrue(users, "image must explicitly declare its runtime USER")
                 self.assertRegex(
-                    users[-1], r"^[1-9][0-9]*:[1-9][0-9]*$",
+                    users[-1],
+                    r"^[1-9][0-9]*:[1-9][0-9]*$",
                     "runAsNonRoot needs a numeric non-root image UID; pin its GID too",
                 )
 

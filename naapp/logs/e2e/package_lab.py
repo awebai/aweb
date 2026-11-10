@@ -43,11 +43,13 @@ LOGS = PackagedService(
     keys=("chain", "resolve", "grants", "governance", "smtp"),
     environment=environment,
     probe=Path(__file__).with_name("package_probe.py"),
+    expected_user=(10001, 10001),
 )
 
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--image", required=True)
+    parser.add_argument("--source-commit", required=True)
     args = parser.parse_args()
-    run_package_lab(args.image, LOGS)
+    run_package_lab(args.image, LOGS, expected_commit=args.source_commit)
