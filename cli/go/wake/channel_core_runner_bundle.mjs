@@ -3593,6 +3593,9 @@ var EVENT_STREAM_INACTIVITY_MS = 2 * EVENT_STREAM_SERVER_HEARTBEAT_MS + 15e3;
 var EVENT_STREAM_DEADLINE_MS = 5 * 60 * 1e3;
 var EVENT_STREAM_PLANNED_CLOSE_MS = 4 * 60 * 1e3;
 
+// channel-core/src/identity/encrypted.ts
+import { createHash as createHash3 } from "node:crypto";
+
 // channel-core/src/identity/base64.ts
 var RAW_STD_BASE64 = /^[A-Za-z0-9+/]*$/;
 function decodeRawStdBase64(value) {
@@ -3746,8 +3749,161 @@ function signedPayloadConversationStatus(signedPayload, conversationID) {
   }
 }
 
+// channel-core/src/identity/canonical.ts
+function canonicalJSONValue(value, unsupported) {
+  if (Array.isArray(value)) return `[${value.map((item) => canonicalJSONValue(item, unsupported)).join(",")}]`;
+  if (value !== null && typeof value === "object") {
+    const obj = value;
+    return `{${Object.keys(obj).sort().map((key) => `${JSON.stringify(key)}:${canonicalJSONValue(obj[key], unsupported)}`).join(",")}}`;
+  }
+  if (typeof value === "string" || typeof value === "boolean" || value === null || typeof value === "number" && Number.isSafeInteger(value)) return JSON.stringify(value);
+  throw new Error(unsupported);
+}
+
+// channel-core/src/identity/encrypted.ts
+function isEncryptedMessage(msg) {
+  return msg.content_mode === "encrypted_v2" || msg.message_version === 2 || msg.encrypted_envelope != null;
+}
+function object(value) {
+  if (!value || typeof value !== "object" || Array.isArray(value)) throw new Error("expected object");
+  return value;
+}
+function text(value) {
+  if (value === void 0) return "";
+  if (typeof value !== "string") throw new Error("expected string");
+  return value;
+}
+function canonicalEncryptedJSON(value) {
+  return canonicalJSONValue(value, "unsupported encrypted envelope value");
+}
+function optionalStrings(value, keys) {
+  for (const key of keys) {
+    if (value[key] === void 0) continue;
+    const normalized = text(value[key]).trim();
+    if (normalized) value[key] = normalized;
+    else delete value[key];
+  }
+}
+function envelopeForSignature(value) {
+  const envelope = structuredClone(object(value));
+  optionalStrings(envelope, ["reply_to_message_id"]);
+  const identityKeys = ["address", "did", "stable_id", "team_id", "encryption_key_id"];
+  optionalStrings(object(envelope.from), identityKeys);
+  if (!Array.isArray(envelope.recipients) || !Array.isArray(envelope.key_wraps)) throw new Error("missing recipient proof");
+  for (const ref of envelope.recipients) optionalStrings(object(ref), [...identityKeys, "wrap_id"]);
+  optionalStrings(object(envelope.routing), ["to", "to_did", "to_stable_id", "delivery_origin", "sender_observed_inbound_mode"]);
+  optionalStrings(object(envelope.crypto), ["ciphertext_hash"]);
+  for (const wrap of envelope.key_wraps) optionalStrings(object(wrap), ["recipient_stable_id", "recipient_did", "recipient_address", "sender_stable_id"]);
+  if (envelope.sender_encryption_key === null) delete envelope.sender_encryption_key;
+  if (envelope.sender_encryption_key !== void 0) {
+    const key = object(envelope.sender_encryption_key);
+    for (const field of ["identity_stable_id", "previous_encryption_key_id"]) if (key[field] === null) delete key[field];
+    optionalStrings(key, ["identity_stable_id", "previous_encryption_key_id", "custody"]);
+    for (const field of ["operation", "version", "identity_did", "encryption_key_id", "encryption_public_key", "algorithm", "created_at", "not_before", "expires_at", "signature"]) {
+      key[field] = text(key[field]).trim();
+    }
+  }
+  return envelope;
+}
+var hash = (value) => `sha256:${createHash3("sha256").update(value).digest("base64").replace(/=+$/, "")}`;
+async function verifyDecryptedMessage(fetched, decrypted, kind, conversationID, self) {
+  try {
+    const envelope = envelopeForSignature(decrypted.encrypted_envelope);
+    if (canonicalEncryptedJSON(envelope) !== canonicalEncryptedJSON(envelopeForSignature(fetched.encrypted_envelope))) return;
+    if (envelope.message_version !== 2 || envelope.envelope_type !== "aweb.e2ee.message" || envelope.kind !== kind) return;
+    if (!text(envelope.message_id) || envelope.message_id !== fetched.message_id || envelope.message_id !== decrypted.message_id) return;
+    if (!text(envelope.conversation_id) || envelope.conversation_id !== conversationID || envelope.conversation_id !== decrypted.conversation_id) return;
+    if (fetched.conversation_id && fetched.conversation_id !== envelope.conversation_id) return;
+    const from = object(envelope.from);
+    const did = text(from.did);
+    const stable = text(from.stable_id);
+    const address = text(from.address);
+    if (!did || envelope.signing_key_id !== did) return;
+    const { signature, ...signed } = envelope;
+    if (await verifySignedPayload(canonicalEncryptedJSON(signed), text(signature), did, text(envelope.signing_key_id)) !== "verified") return;
+    const crypto = object(envelope.crypto);
+    if (crypto.suite !== "aweb-e2ee-v2.x25519-hkdf-sha256-aes256gcm-ed25519") return;
+    const ciphertext = decodeRawStdBase64(text(envelope.ciphertext));
+    if (crypto.ciphertext_size !== ciphertext.length || crypto.ciphertext_hash !== hash(ciphertext)) return;
+    if (!Array.isArray(envelope.key_wraps) || crypto.key_wraps_hash !== hash(canonicalEncryptedJSON(envelope.key_wraps))) return;
+    if (!Array.isArray(envelope.recipients)) return;
+    const recipients = envelope.recipients.map(object);
+    const recipient = recipients.find((ref) => self.stableID && text(ref.stable_id) ? ref.stable_id === self.stableID : !!self.did && ref.did === self.did);
+    if (!recipient) return;
+    const recipientDID = text(recipient.did);
+    const recipientStable = text(recipient.stable_id);
+    if (decrypted.from_did !== did || text(decrypted.from_stable_id) !== stable) return;
+    if (address && decrypted.from_address !== address) return;
+    const didMatches = (observed, key, stableID) => !observed || observed === key || !!stableID && observed === stableID;
+    if (!didMatches(fetched.from_did, did, stable) || fetched.from_stable_id && fetched.from_stable_id !== stable) return;
+    if (fetched.from_address && address && fetched.from_address !== address) return;
+    for (const projection of [fetched, decrypted]) {
+      if (!didMatches(projection.to_did, recipientDID, recipientStable)) return;
+      if (projection.to_stable_id && projection.to_stable_id !== recipientStable) return;
+    }
+    return {
+      from_did: did,
+      from_stable_id: stable,
+      signed_from: address,
+      signed_from_team_id: text(from.team_id),
+      to_did: recipientDID,
+      to_stable_id: recipientStable
+    };
+  } catch {
+    return;
+  }
+}
+
+// channel-core/src/identity/signed_display.ts
+function claims(signedPayload) {
+  try {
+    const parsed = JSON.parse(signedPayload);
+    return parsed !== null && typeof parsed === "object" && !Array.isArray(parsed) ? parsed : null;
+  } catch {
+    return null;
+  }
+}
+function signedClaimsEqual(signedPayload, displayed) {
+  const signed = claims(signedPayload);
+  if (!signed) return false;
+  return Object.entries(displayed).every(([name, shown]) => signed[name] === shown);
+}
+function signedDisplayMatches(signedPayload, displayed) {
+  const signed = claims(signedPayload);
+  return signed !== null && everyClaimMatches(signed, displayed);
+}
+function signedMailDisplayMatches(signedPayload, displayed, reader) {
+  const signed = claims(signedPayload);
+  if (!signed) return false;
+  const recipient = displayed.to_did ?? "";
+  const readerIsRecipient = recipient !== "" && (recipient === reader.did || recipient === reader.stableID);
+  if (readerIsRecipient && signed.to_did === "" && !("to_stable_id" in signed)) {
+    const { to_did: _recipient, ...rest } = displayed;
+    return everyClaimMatches(signed, rest);
+  }
+  return everyClaimMatches(signed, displayed);
+}
+function everyClaimMatches(signed, displayed) {
+  for (const [name, shown = ""] of Object.entries(displayed)) {
+    if (!(name in signed)) continue;
+    const claim = signed[name];
+    if (typeof claim !== "string") return false;
+    if (claim === shown) continue;
+    if (stableIdentityStandsFor(signed, name, shown, claim, displayed)) continue;
+    return false;
+  }
+  return true;
+}
+function stableIdentityStandsFor(signed, name, shown, claim, displayed) {
+  if (name !== "from_did" && name !== "to_did") return false;
+  if (!shown.startsWith("did:aw:")) return false;
+  const stable = signed[name === "from_did" ? "from_stable_id" : "to_stable_id"];
+  if (claim.startsWith("did:key:")) return stable === shown;
+  return name === "to_did" && claim === "" && stable === shown && typeof signed.conversation_id === "string" && signed.conversation_id !== "" && signed.conversation_id === (displayed.conversation_id ?? "");
+}
+
 // channel-core/src/api/mail.ts
-async function fetchInbox(client, unreadOnly = true, limit = 50, messageID, log = (message) => console.error(message)) {
+async function fetchInbox(client, unreadOnly = true, limit = 50, messageID, log = (message) => console.error(message), reader = { did: "", stableID: "" }) {
   const params = new URLSearchParams();
   if (unreadOnly) params.set("unread_only", "true");
   if (limit > 0) params.set("limit", String(limit));
@@ -3759,6 +3915,11 @@ async function fetchInbox(client, unreadOnly = true, limit = 50, messageID, log 
   for (const msg of resp.messages) {
     try {
       msg.verification_error = false;
+      if (!displayMatchesSignedClaims(msg, reader)) {
+        msg.projected_from_did = msg.from_did;
+        msg.verification_status = "failed";
+        continue;
+      }
       hydrateAddressesFromSignedPayload(msg);
       msg.verification_status = await verifyInboxMessage(msg);
     } catch {
@@ -3774,6 +3935,18 @@ async function fetchInbox(client, unreadOnly = true, limit = 50, messageID, log 
     log(`aweb: skipped verification for ${verificationErrors} inbox ${noun}; ${verb} unread`);
   }
   return resp.messages;
+}
+function displayMatchesSignedClaims(msg, reader) {
+  if (!msg.signed_payload || isEncryptedMessage(msg)) return true;
+  return signedMailDisplayMatches(msg.signed_payload, {
+    type: "mail",
+    body: msg.body,
+    subject: msg.subject,
+    message_id: msg.message_id,
+    conversation_id: msg.conversation_id,
+    from_did: msg.from_did,
+    to_did: msg.to_did
+  }, reader);
 }
 function hydrateAddressesFromSignedPayload(msg) {
   msg.projected_from_did = msg.from_did;
@@ -3851,10 +4024,26 @@ async function fetchHistory(client, sessionId, unreadOnly = false, limit = 50, m
     `/v1/chat/sessions/${encodeURIComponent(sessionId)}/messages?${params}`
   );
   for (const msg of resp.messages) {
+    if (!displayMatchesSignedClaims2(msg)) {
+      msg.projected_from_did = msg.from_did;
+      msg.verification_status = "failed";
+      continue;
+    }
     hydrateAddressesFromSignedPayload2(msg);
     msg.verification_status = await verifyChatMessage(msg);
   }
   return resp.messages;
+}
+function displayMatchesSignedClaims2(msg) {
+  if (!msg.signed_payload || isEncryptedMessage(msg)) return true;
+  return signedDisplayMatches(msg.signed_payload, {
+    type: "chat",
+    body: msg.body,
+    message_id: msg.message_id,
+    conversation_id: msg.conversation_id,
+    from_did: msg.from_did,
+    to_did: msg.to_did
+  });
 }
 function hydrateAddressesFromSignedPayload2(msg) {
   msg.projected_from_did = msg.from_did;
@@ -3959,7 +4148,18 @@ async function fetchRoomMessage(client, team, room, id) {
   const status2 = await verifySignedPayload(message.signed_payload || "", message.signature || "", message.from_did || "", message.signing_key_id || "");
   if (status2 !== "verified") throw new Error("room post signature failed");
   const signed = JSON.parse(message.signed_payload);
-  if (message.team_id !== team || message.room_id !== room || message.conversation_id !== room || message.message_id !== id || signed.type !== "chat" || signed.to !== `team-room:${team}` || signed.conversation_id !== room || signed.message_id !== id || signed.to_did || signed.to_stable_id || signed.from_did !== message.from_did || message.signing_key_id !== message.from_did || (signed.from_stable_id || "") !== (message.from_stable_id || "") || signed.from !== message.from_alias || signed.subject !== message.subject || signed.body !== message.body || signed.timestamp !== message.timestamp || message.from_address && message.from_address !== signed.from) {
+  const displayed = {
+    type: "chat",
+    to: `team-room:${team}`,
+    conversation_id: room,
+    message_id: id,
+    from_did: message.from_did,
+    from: message.from_alias,
+    subject: message.subject,
+    body: message.body,
+    timestamp: message.timestamp
+  };
+  if (message.team_id !== team || message.room_id !== room || message.conversation_id !== room || message.message_id !== id || signed.to_did || signed.to_stable_id || message.signing_key_id !== message.from_did || (signed.from_stable_id || "") !== (message.from_stable_id || "") || message.from_address && message.from_address !== signed.from || !signedClaimsEqual(message.signed_payload, displayed)) {
     throw new Error("room post signed bindings failed");
   }
   message.verification_status = status2;
@@ -7296,17 +7496,6 @@ async function readYAML(path) {
   }
 }
 
-// channel-core/src/identity/canonical.ts
-function canonicalJSONValue(value, unsupported) {
-  if (Array.isArray(value)) return `[${value.map((item) => canonicalJSONValue(item, unsupported)).join(",")}]`;
-  if (value !== null && typeof value === "object") {
-    const obj = value;
-    return `{${Object.keys(obj).sort().map((key) => `${JSON.stringify(key)}:${canonicalJSONValue(obj[key], unsupported)}`).join(",")}}`;
-  }
-  if (typeof value === "string" || typeof value === "boolean" || value === null || typeof value === "number" && Number.isSafeInteger(value)) return JSON.stringify(value);
-  throw new Error(unsupported);
-}
-
 // channel-core/src/identity/strict_json.ts
 var StrictJSONError = class extends Error {
   constructor(failure, message) {
@@ -10014,98 +10203,6 @@ import { dirname as dirname2, join as join2 } from "node:path";
 import { homedir } from "node:os";
 import { appendFile, mkdir, open, readFile as readFile4, rename, rm } from "node:fs/promises";
 
-// channel-core/src/identity/encrypted.ts
-import { createHash as createHash3 } from "node:crypto";
-function object(value) {
-  if (!value || typeof value !== "object" || Array.isArray(value)) throw new Error("expected object");
-  return value;
-}
-function text(value) {
-  if (value === void 0) return "";
-  if (typeof value !== "string") throw new Error("expected string");
-  return value;
-}
-function canonicalEncryptedJSON(value) {
-  return canonicalJSONValue(value, "unsupported encrypted envelope value");
-}
-function optionalStrings(value, keys) {
-  for (const key of keys) {
-    if (value[key] === void 0) continue;
-    const normalized = text(value[key]).trim();
-    if (normalized) value[key] = normalized;
-    else delete value[key];
-  }
-}
-function envelopeForSignature(value) {
-  const envelope = structuredClone(object(value));
-  optionalStrings(envelope, ["reply_to_message_id"]);
-  const identityKeys = ["address", "did", "stable_id", "team_id", "encryption_key_id"];
-  optionalStrings(object(envelope.from), identityKeys);
-  if (!Array.isArray(envelope.recipients) || !Array.isArray(envelope.key_wraps)) throw new Error("missing recipient proof");
-  for (const ref of envelope.recipients) optionalStrings(object(ref), [...identityKeys, "wrap_id"]);
-  optionalStrings(object(envelope.routing), ["to", "to_did", "to_stable_id", "delivery_origin", "sender_observed_inbound_mode"]);
-  optionalStrings(object(envelope.crypto), ["ciphertext_hash"]);
-  for (const wrap of envelope.key_wraps) optionalStrings(object(wrap), ["recipient_stable_id", "recipient_did", "recipient_address", "sender_stable_id"]);
-  if (envelope.sender_encryption_key === null) delete envelope.sender_encryption_key;
-  if (envelope.sender_encryption_key !== void 0) {
-    const key = object(envelope.sender_encryption_key);
-    for (const field of ["identity_stable_id", "previous_encryption_key_id"]) if (key[field] === null) delete key[field];
-    optionalStrings(key, ["identity_stable_id", "previous_encryption_key_id", "custody"]);
-    for (const field of ["operation", "version", "identity_did", "encryption_key_id", "encryption_public_key", "algorithm", "created_at", "not_before", "expires_at", "signature"]) {
-      key[field] = text(key[field]).trim();
-    }
-  }
-  return envelope;
-}
-var hash = (value) => `sha256:${createHash3("sha256").update(value).digest("base64").replace(/=+$/, "")}`;
-async function verifyDecryptedMessage(fetched, decrypted, kind, conversationID, self) {
-  try {
-    const envelope = envelopeForSignature(decrypted.encrypted_envelope);
-    if (canonicalEncryptedJSON(envelope) !== canonicalEncryptedJSON(envelopeForSignature(fetched.encrypted_envelope))) return;
-    if (envelope.message_version !== 2 || envelope.envelope_type !== "aweb.e2ee.message" || envelope.kind !== kind) return;
-    if (!text(envelope.message_id) || envelope.message_id !== fetched.message_id || envelope.message_id !== decrypted.message_id) return;
-    if (!text(envelope.conversation_id) || envelope.conversation_id !== conversationID || envelope.conversation_id !== decrypted.conversation_id) return;
-    if (fetched.conversation_id && fetched.conversation_id !== envelope.conversation_id) return;
-    const from = object(envelope.from);
-    const did = text(from.did);
-    const stable = text(from.stable_id);
-    const address = text(from.address);
-    if (!did || envelope.signing_key_id !== did) return;
-    const { signature, ...signed } = envelope;
-    if (await verifySignedPayload(canonicalEncryptedJSON(signed), text(signature), did, text(envelope.signing_key_id)) !== "verified") return;
-    const crypto = object(envelope.crypto);
-    if (crypto.suite !== "aweb-e2ee-v2.x25519-hkdf-sha256-aes256gcm-ed25519") return;
-    const ciphertext = decodeRawStdBase64(text(envelope.ciphertext));
-    if (crypto.ciphertext_size !== ciphertext.length || crypto.ciphertext_hash !== hash(ciphertext)) return;
-    if (!Array.isArray(envelope.key_wraps) || crypto.key_wraps_hash !== hash(canonicalEncryptedJSON(envelope.key_wraps))) return;
-    if (!Array.isArray(envelope.recipients)) return;
-    const recipients = envelope.recipients.map(object);
-    const recipient = recipients.find((ref) => self.stableID && text(ref.stable_id) ? ref.stable_id === self.stableID : !!self.did && ref.did === self.did);
-    if (!recipient) return;
-    const recipientDID = text(recipient.did);
-    const recipientStable = text(recipient.stable_id);
-    if (decrypted.from_did !== did || text(decrypted.from_stable_id) !== stable) return;
-    if (address && decrypted.from_address !== address) return;
-    const didMatches = (observed, key, stableID) => !observed || observed === key || !!stableID && observed === stableID;
-    if (!didMatches(fetched.from_did, did, stable) || fetched.from_stable_id && fetched.from_stable_id !== stable) return;
-    if (fetched.from_address && address && fetched.from_address !== address) return;
-    for (const projection of [fetched, decrypted]) {
-      if (!didMatches(projection.to_did, recipientDID, recipientStable)) return;
-      if (projection.to_stable_id && projection.to_stable_id !== recipientStable) return;
-    }
-    return {
-      from_did: did,
-      from_stable_id: stable,
-      signed_from: address,
-      signed_from_team_id: text(from.team_id),
-      to_did: recipientDID,
-      to_stable_id: recipientStable
-    };
-  } catch {
-    return;
-  }
-}
-
 // channel-core/src/local_aw.ts
 import { execFile, spawn as spawn2 } from "node:child_process";
 import { promisify } from "node:util";
@@ -10675,7 +10772,7 @@ async function dispatchAppEvent(options, dispatched, event) {
 }
 async function dispatchMailEvent(options, dispatched, event, log) {
   emitTrace(options, "exact_fetch_started", event, "mail");
-  const messages = await fetchInbox(options.client, true, MAIL_FETCH_LIMIT, event.message_id, log);
+  const messages = await fetchInbox(options.client, true, MAIL_FETCH_LIMIT, event.message_id, log, options.self);
   emitTrace(options, "exact_fetch_completed", event, "mail");
   for (const msg of messages) {
     const messageEvent = eventForMessage(event, msg.message_id, msg.conversation_id);
@@ -11010,9 +11107,6 @@ async function resolveChatForDelivery(options, sessionID, msg) {
   } catch (error) {
     return { ok: false, error: error instanceof Error ? error.message : String(error) };
   }
-}
-function isEncryptedMessage(msg) {
-  return msg.content_mode === "encrypted_v2" || msg.message_version === 2 || msg.encrypted_envelope != null;
 }
 function encryptedDeliveryFailureMeta(type2, from, messageID, conversationID, error, sessionID) {
   const meta = {

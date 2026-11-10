@@ -10,6 +10,13 @@
   address registration and reassignment are limited to 256 characters like
   every other DID field. The limiter is `awid.request_body_limit`.
 
+- The channel client (the Claude Code plugin, the Pi extension and `aw wake`)
+  reports mail and chat as verified only when the displayed body, subject,
+  message id, conversation id, sender and recipient agree with the claims in
+  the signed payload, by the same rules `aw` applies. A message whose displayed
+  fields differ is presented with trust status `failed` and its fields as
+  received. Room posts use the same comparison.
+
 - Self-custodial humans can select their OS-keychain identity with `aw --human
   <did:aw> --human-domain <domain>` to fetch a controller-issued team certificate,
   connect, send/read/reply to plaintext mail, and make ordinary team-auth naapp
