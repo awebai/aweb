@@ -368,6 +368,17 @@
   sets to the client address it saw, and keeps the console login limit per that
   address. Unset, the limit is kept per TCP peer, which behind a proxy is one
   limit for every reader.
+- App manifest did:keys: `aweb_naapp.manifest.load_manifest` checks a declared
+  v1 `event_emitters[].did_key` or v2 `app_keys[].did_key` for its shape only
+  (the `did:key:z` prefix, at most 47 base58 characters, the base58 alphabet)
+  and decodes nothing, so an over-long key is refused unread. Each key is
+  validated as a canonical prime-order Ed25519 key with awid by
+  `aweb_naapp.manifest_keys.check_manifest_keys` where it is used: the
+  server's manifest fetch and its install, update and reseed registration.
+  The refusal codes are unchanged (`manifest_invalid` for v1,
+  `app_keys_invalid` for v2); a small-order key is now refused there too.
+  naapp-lib's `runtime` and `hooks` extras and the server require
+  `awid-service>=0.5.38`.
 
 - `aw` writes U+2028 (line separator) and U+2029 (paragraph separator) as UTF-8
   in the canonical JSON it signs, as the Python reference
