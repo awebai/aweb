@@ -165,17 +165,22 @@ placement.
 
 ## Rate scopes and custody limits
 
-The existing rate scopes apply unchanged ([§4.4](secrets.md#44-policy)):
+The existing rate scopes ([§4.4](secrets.md#44-policy)) keep their names and
+their keying by installation, policy digest and secret. For an inherited
+admission, the principal part of the key is the member's **line**, so spawning
+neither resets nor multiplies a budget:
 
-- **`principal_secret`** counts per leaf. Each admitted worker has its own
-  bucket, so a line of N workers can make N times the per-worker rate.
-- **`secret`** counts across every principal. It is the only aggregate bound
-  on a covered line, and it is shared with every other user of the secret.
+- **`principal_secret`** counts per line: `(team_id, policy_id, root)`, from
+  the verified output, never per leaf. Every worker in one root's line shares
+  one bucket, however many are spawned or re-admitted. The line key is
+  distinct from the root's own principal key, so the root's own use under its
+  own grant is counted separately. One busy worker can spend the line's
+  budget; per-worker fairness inside a line is not provided.
+- **`secret`** counts across every principal and line, as today.
 - **acwd.13's issuance allowance** bounds how many members a policy admits.
   It counts admissions, not use, and does not reset.
 
-An owner who needs an aggregate bound on one line sets the secret-wide bucket.
-No per-grant bucket is proposed.
+A direct member's buckets are unchanged.
 
 The custody limits:
 
@@ -190,8 +195,8 @@ The custody limits:
   ([§4.6](secrets.md#46-custody-and-principal-attestation-contract)). An owner
   can still require them.
 - **A compromised eligible root** can admit attacker-held keys up to the
-  policy's allowance. Each one gets the grant's per-worker rate, within the
-  secret-wide bucket. Two containment acts each cut the whole line: the
+  policy's allowance. Together they share the line's bucket, so more keys do
+  not buy more use. Two containment acts each cut the whole line: the
   controller revokes the root's membership, or the owner revokes the grant.
 - **Several keys under one worker UID** remain one compromise boundary, as
   acwd.13 states.
@@ -229,6 +234,7 @@ Then, for each worker, with no human act:
 | Widening revision of P | B_H stays allowed with no owner act. |
 | Owner revokes the grant | `grant_missing` at admission; `grant_revoked` at the fence for admitted intents. |
 | Approver linked to A_H, `distinct_approver: required`, B_H requests | A_H's approver is excluded. |
+| Ten workers of A_H's line request S together | They share one `principal_secret` bucket; spawning more does not raise it. |
 | Membership evidence unavailable | The verifier's 503; no grant is read and no fallback applies. |
 
 ## Work this creates, after acceptance
@@ -236,7 +242,8 @@ Then, for each worker, with no human act:
 - **acwd.13 verifier output**: the inherited fields above, from verified
   evidence only, retained with the intent for the fence.
 - **secrets**: the `grant/1` subject, the admission order, the fence
-  re-evaluation, the `distinct_approver` path exclusion and the console
+  re-evaluation, the line-keyed `principal_secret` bucket, the
+  `distinct_approver` path exclusion and the console
   rendering. The console shows the policy, the root, `max_depth` and the
   policy's current terms as read at draft time, labelled as such.
   [§4.3](secrets.md#43-grants), [§4.4](secrets.md#44-policy),
