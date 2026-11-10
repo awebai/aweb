@@ -35,10 +35,16 @@ A web service that builds Folio with Docker needs:
 | Root directory | the repository root (empty) |
 | Dockerfile path | `naapp/folio/Dockerfile` |
 | Docker build context | `.` (the repository root) |
-| Health check path | `/health` |
+| Health check path | `/live` |
 
-`/health` answers 503 while Folio's database check fails, as `/ready` does;
-`/live` checks nothing and answers 200 whenever the process serves requests.
+Render stops routing to an instance that fails its health check and then
+restarts it, so the path is `/live`, which checks nothing and answers 200
+whenever the process serves requests. `/health` and `/ready` answer 503 while
+Folio's database check fails: as the health check path they would restart every
+instance during a database outage, into the same outage. The manifest's
+health path is also the one `make prod-verify` and the deploy targets request
+on both URLs, so they show the process serving, not its database; `GET /ready`
+shows that.
 
 A root directory of `naapp/folio` limits the build to that folder, which is why
 the root directory moves to the repository root. Whether a given host resolves

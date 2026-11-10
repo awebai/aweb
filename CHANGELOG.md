@@ -15,8 +15,10 @@
   `/ready`), and the folio, library and logs images gain a `HEALTHCHECK` on
   `/live`. A platform health check that restarts an instance on failure should
   use `/live`: on `/health` or `/ready` it restarts every instance during a
-  database outage. The folio and library end-to-end compose files wait on
-  `/ready`.
+  database outage. Folio's Render health check path is `/live`, in
+  `naapp/folio/render.yaml` and `naapp/folio/ops/render-production.json`; the
+  live service's setting has to be changed to match before this version is
+  deployed. The folio and library end-to-end compose files wait on `/ready`.
 
 - The naapp outbox (`aweb_naapp.outbox`) keeps one team's failures from
   delaying other teams. An event whose targets cannot be resolved is resolved
