@@ -9,7 +9,7 @@ tampered one as failed.
 from __future__ import annotations
 
 import json
-from datetime import datetime, timedelta, timezone
+from datetime import datetime, timezone
 from uuid import UUID, uuid4
 
 import pytest
@@ -186,7 +186,6 @@ async def test_hosted_encrypted_chat_wait_reply_names_the_senders_address(aweb_c
     conversation_id = sent.get("conversation_id") or sent.get("session_id")
 
     _, bond_decryptor = _custody(m, bond)
-    first = await aweb_cloud_db.aweb_db.fetch_val("SELECT MIN(created_at) FROM {{tables.chat_messages}}")
     replies, _timed_out = await chat_tools._wait_for_replies(
         aweb_cloud_db.aweb_db,
         None,
@@ -194,7 +193,7 @@ async def test_hosted_encrypted_chat_wait_reply_names_the_senders_address(aweb_c
         hosted_decryptor=bond_decryptor,
         session_id=UUID(conversation_id),
         participant_did=bond["did"],
-        after=first - timedelta(seconds=1),
+        after_seq=0,
         wait_seconds=1,
     )
     [reply] = replies
