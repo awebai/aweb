@@ -29,7 +29,9 @@ an injectable clock.
 The mechanisms are in `docs/page-links.md` and `docs/app-registry.md`; this
 records the design rule. The same gap appears in
 [lock order in authority and approval transactions](/aweb-expert/lessons/lock-order-in-authority-and-approval-transactions.md)
-("recheck after every blocking wait").
+("recheck after every blocking wait"). When the effect spans more than one
+commit or crosses workers, see
+[a retained deadline is checked at each commit boundary](/aweb-protocol-expert/lessons/a-retained-deadline-is-checked-at-each-commit-boundary.md).
 
 # Provenance
 
