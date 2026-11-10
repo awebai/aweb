@@ -770,6 +770,33 @@ registry dependency failure returns
 `federation_authority_coordination_unavailable` (503, retryable) with exception
 logging preserved.
 
+**Outbound delivery transport:** federated mail and chat leave through one
+function, `deliver_federated_message`, and one transport,
+`aweb.federation.transport`. The delivery origin comes from a registry record or
+a stored participant route, so the transport admits it before any connection:
+the origin is `https` and named by host, the host is resolved once, and every
+answer is a public address (loopback, private, link-local, shared CGNAT,
+unique-local, multicast, reserved, unspecified and IPv4-mapped forms of those
+are refused, and one refused answer refuses the name). The connection goes to an
+admitted address, trying the answers in order until one accepts a connection,
+while TLS verification, SNI and `Host` name the origin; proxy
+settings in the environment are not read, redirects are not followed, each
+delivery resolves and checks again, and no connection outlives its response.
+Routes and MCP tools both take the transport from the federation authority, which
+shares its resolver, origin policy and trust anchors with strict registry reads
+(`docs/vectors/federation-origin-ip-v1.json`). `http` origins, address literals
+and non-public answers are admitted only under the isolated-development
+conditions of that vector: `APP_ENV=development`, `AWEB_FEDERATION_TEST=1`, and
+both this server's public origin and the destination host isolated (a
+single-label name, `localhost`, `*.localhost`, `*.test`, `*.test.local`, or a
+loopback literal). A delivery is bounded to 10 seconds, a 10 MiB success body
+and a 64 KiB error body. A failed delivery reaches the sender as the status and
+one fixed reason: `delivery_origin_refused`, `delivery_origin_unreachable`,
+`delivery_timeout`, a response-bound reason, `HTTP <status>`, or the remote's
+`reason` when it is a federation reason from
+[`federation-error-reference.md`](federation-error-reference.md). Other text the
+remote answers is logged at a bounded length and is not returned.
+
 **Receiver-wide replay identity:** every accepted local or federated mail/chat,
 plaintext or encrypted, claims one `message_ingress_receipts` row keyed solely
 by `message_id`. An exact federated canonical-envelope retry returns the stored

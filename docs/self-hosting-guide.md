@@ -236,6 +236,20 @@ example, use `https://aweb.acme.internal`, not
 by addresses in that namespace; it is not a canonical route for bare `did:aw`
 first contact. Hosted aweb.ai namespaces are configured by the hosted service.
 
+Other servers deliver to this origin only when it is an `https` origin named by
+host (not an address literal) and every address the host resolves to is public.
+A sending aweb server refuses an origin that is `http` or resolves to a
+loopback, private, link-local, CGNAT or otherwise non-public address, and
+reports `delivery_origin_refused` to the sender.
+
+For federation between servers on one development machine or compose network,
+set `APP_ENV=development` and `AWEB_FEDERATION_TEST=1` on each aweb server. With
+both set, a server whose own `AWEB_PUBLIC_ORIGIN` host is isolated (a
+single-label name such as `aweb-a`, `localhost`, `*.localhost`, `*.test`,
+`*.test.local`, or a loopback literal) delivers over `http` and to non-public
+addresses when the destination host is isolated too. Do not set
+`AWEB_FEDERATION_TEST` in production.
+
 ### Create a Team
 
 ```bash

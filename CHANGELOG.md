@@ -2,6 +2,21 @@
 
 ## Unreleased
 
+- Federated mail and chat delivery connects only to the addresses the
+  recipient's delivery origin resolves to, over one address-checked transport
+  shared by the HTTP routes and the MCP tools. The origin must be `https` and
+  named by host, every resolved address must be public, the connection goes to
+  the address that was checked, and redirects are not followed; `http` and
+  non-public destinations remain available only to isolated development
+  deployments (`APP_ENV=development` with `AWEB_FEDERATION_TEST=1`). A failed
+  delivery returns its status and a fixed reason (`delivery_origin_refused`,
+  `delivery_origin_unreachable`, `delivery_timeout`, `HTTP <status>`, or the
+  recipient server's typed federation reason) in place of the remote's response
+  text. `deliver_federated_message` requires its `transport`, and
+  `deliver_federated_mail` is removed in favour of it; hosts that embed the
+  server get the transport from the federation authority
+  (`FederationAuthorityActivation.delivery_transport`).
+
 - The channel client (the Claude Code plugin, the Pi extension and `aw wake`)
   signs every certificate and identity request with the
   [v2 request envelope](docs/team-auth-envelope-v2.md), which binds the
