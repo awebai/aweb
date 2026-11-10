@@ -113,7 +113,7 @@ class PackagedImageControls(unittest.TestCase):
                 errors.append("mutant image removal failed: " + image)
         self.assertFalse(errors, errors)
 
-    def run_lab(self, name, image, *, force_timeout=False):
+    def run_lab(self, name, image, *, force_timeout=False, expected_commit=None):
         script = self.lab_source / "naapp" / name / "e2e/package_lab.py"
         command = [sys.executable, str(script), "--image", image]
         environment = dict(os.environ)
@@ -136,7 +136,10 @@ class PackagedImageControls(unittest.TestCase):
             env=environment,
         )
         if "--source-commit" in help_result.stdout:
-            command += ["--source-commit", self.commit]
+            command += [
+                "--source-commit",
+                self.commit if expected_commit is None else expected_commit,
+            ]
         label = "aweb.package-proof=" + uuid.uuid4().hex
         real_docker = shutil.which("docker")
         self.assertIsNotNone(real_docker)
@@ -248,6 +251,29 @@ class PackagedImageControls(unittest.TestCase):
                 self.assertIn(
                     "packaged build identity mismatch", result.stdout + result.stderr
                 )
+
+    def assert_preflight_build_refusal(self, result):
+        self.assertNotEqual(result.returncode, 0, "wrong image revision stayed green")
+        self.assertIn("packaged build identity mismatch", result.stdout + result.stderr)
+        self.assertNotIn("packaged image default USER PASS", result.stdout)
+
+    def test_02b_wrong_revision_label_refuses_before_default_user_probe(self):
+        wrong = "c" * 40 if self.commit != "c" * 40 else "d" * 40
+        for name in ("secrets", "logs"):
+            with self.subTest(service=name):
+                # Only the label changes; the baked service GIT_SHA stays intact.
+                image = self.mutant(
+                    name, f"LABEL org.opencontainers.image.revision={wrong}"
+                )
+                self.assert_preflight_build_refusal(self.run_lab(name, image))
+
+    def test_02c_wrong_expected_commit_refuses_an_unmodified_image(self):
+        wrong = "d" * 40 if self.commit != "d" * 40 else "e" * 40
+        for name in ("secrets", "logs"):
+            with self.subTest(service=name):
+                # Label and served SHA agree, but neither is the requested commit.
+                result = self.run_lab(name, self.base_ids[name], expected_commit=wrong)
+                self.assert_preflight_build_refusal(result)
 
     def test_03_root_and_wrong_image_users_refuse_for_both_services(self):
         for name in ("secrets", "logs"):
