@@ -287,12 +287,14 @@ func (p *StreamPolicy) jittered(delay time.Duration) time.Duration {
 }
 
 // confirmed records that a stream is streaming: its first event or heartbeat
-// has been read. The transient delay returns to its start and the refused
-// state ends. It returns the cause of the refusal it ended, or "".
+// has been read, the opening connected event included. The transient delay
+// returns to its start and the refused state ends. It returns the cause of
+// the refusal it ended, or "".
 //
-// The refused delay is left where it is: a server can accept the open, send
-// its heartbeat and then refuse, every time, and a heartbeat that reset the
-// delay would have that stream retried once a minute for ever.
+// The refused delay is left where it is: the server writes its heartbeat and
+// the connected event before it checks the grant, so it can accept the open,
+// send both and then refuse, every time. If either reset the delay, that
+// stream would be retried once a minute for ever. See served.
 func (p *StreamPolicy) confirmed() string {
 	p.mu.Lock()
 	defer p.mu.Unlock()
@@ -309,9 +311,9 @@ func (p *StreamPolicy) confirmed() string {
 	return cause
 }
 
-// served records that the server is serving this caller: a non-comment event
-// was read, or a connection reached its planned close. Only then does the
-// refused delay return to its start (§4).
+// served records that the server is serving this caller: an event other
+// than the opening connected event was read, or a connection reached its
+// planned close. Only then does the refused delay return to its start (§4).
 func (p *StreamPolicy) served() {
 	p.mu.Lock()
 	p.refusedDelay = StreamRefusedDelayMin
@@ -478,12 +480,18 @@ func (c *StreamConnection) confirm() {
 	})
 }
 
-// Event records that the source delivered an event. The client calls it for
-// every event Next returns.
-func (c *StreamConnection) Event() {
+// Event records that the source delivered ev. The client calls it for every
+// event Next returns, passing that event. Any event counts as a read and
+// confirms the stream. An event other than the opening connected event also
+// shows the server is serving this caller, which returns the refused delay
+// to its start; connected does not, because the server sends it before it
+// checks the grant.
+func (c *StreamConnection) Event(ev *awid.AgentEvent) {
 	c.read()
 	c.confirm()
-	c.policy.served()
+	if ev != nil && ev.Type != awid.AgentEventConnected {
+		c.policy.served()
+	}
 }
 
 // Reopen closes the connection because its client wants a fresh one. It ends

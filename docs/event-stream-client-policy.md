@@ -102,10 +102,12 @@ So a refused stream is **quarantined**:
 - The first successful, confirmed stream ends the quarantine: the client
   reports that it left `refused`.
 - The refused delay returns to 1 minute only after the stream delivers an
-  event that is not a comment, or a connection reaches its planned close. A
-  heartbeat confirms the stream and ends the quarantine but leaves the delay
-  where it is, so a server that accepts the open, sends its heartbeat and
-  then refuses again is retried at a growing interval, not once a minute.
+  event other than a comment or the opening `connected` event (which the
+  server sends before it checks the grant), or a connection reaches its
+  planned close. A heartbeat or `connected` confirms the stream and ends the
+  quarantine but leaves the delay where it is, so a server that accepts the
+  open, sends them and then refuses again is retried at a growing interval,
+  not once a minute.
 
 `verification_unavailable` is not a refusal. It says the server could not
 check the grant; it is transient and follows section 3.

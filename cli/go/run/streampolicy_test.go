@@ -35,10 +35,11 @@ func policyConfig(clock *manualclock.Clock) StreamPolicyConfig {
 func consumeConnection(conn *StreamConnection, source awid.EventSource) error {
 	defer source.Close()
 	for {
-		if _, err := source.Next(conn.Context()); err != nil {
+		ev, err := source.Next(conn.Context())
+		if err != nil {
 			return err
 		}
-		conn.Event()
+		conn.Event(ev)
 	}
 }
 

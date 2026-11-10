@@ -311,7 +311,7 @@ func (s *streamRunner) consume(conn *run.StreamConnection, source awid.EventSour
 		if err != nil {
 			return err
 		}
-		conn.Event()
+		conn.Event(ev)
 		if ev == nil {
 			continue
 		}

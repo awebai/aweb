@@ -349,7 +349,7 @@ func (b *EventBus) consumeStream(conn *StreamConnection, source awid.EventSource
 		if err != nil {
 			return err
 		}
-		conn.Event()
+		conn.Event(ev)
 
 		if ev.Type == awid.AgentEventConnected {
 			continue
