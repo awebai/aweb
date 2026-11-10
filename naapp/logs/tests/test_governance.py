@@ -18,7 +18,13 @@ from aweb_naapp.hooks.owner_act import Refused, VerifiedOwnerAct
 from aweb_naapp_testing.owner_acts import APP_ID, INSTALLATION_ID, TEAM_ID
 
 from aweb_logs.governance import GovernanceRefused
-from aweb_logs.ledger import GOVERNANCE_BEFORE, append, open_next_epoch, verify_epoch
+from aweb_logs.ledger import (
+    GOVERNANCE_BEFORE,
+    append,
+    load_governance_before,
+    open_next_epoch,
+    verify_epoch,
+)
 from aweb_logs.retention import apply_retention
 
 from .fixtures import _APP_EVENT, SECRETS_SEED
@@ -461,3 +467,17 @@ async def test_earlier_epochs_governance_is_read_by_its_own_index(world: World):
             await tx.fetch_value("EXPLAIN (FORMAT JSON) " + GOVERNANCE_BEFORE, TEAM_ID, 2)
         )
     assert "idx_chain_events_governance" in index_names(explained["Plan"])
+
+
+async def test_earlier_epochs_are_read_only_once_the_epoch_exists(world: World):
+    """Epoch 1 is still open while epoch 2 does not exist: a read of the epochs
+    before 2 would miss a hold set before the rotation, so it is refused."""
+    await hold(world, "hold-1")
+    with pytest.raises(LookupError):
+        await load_governance_before(world.db, TEAM_ID, 2)
+    with pytest.raises(LookupError):
+        await verified(world, chain_epoch=2)
+    await hold(world, "hold-2")
+    await open_next_epoch(world.db, world.signer, TEAM_ID, at=datetime.now(UTC))
+    report = await verified(world, chain_epoch=2)
+    assert [hold["hold_id"] for hold in report["holds"]] == ["hold-1", "hold-2"]

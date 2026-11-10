@@ -371,7 +371,14 @@ async def load_governance_before(
 ) -> list[tuple[Genesis, list[StoredEvent]]]:
     """Each of the team's epochs before ``chain_epoch``, in order, with only
     logs' own governance entries in it: the chain that carries a hold across
-    epochs."""
+    epochs. Raises LookupError unless ``chain_epoch`` exists: only then are the
+    epochs before it closed, and their governance entries final."""
+    if not await db.fetch_value(
+        "SELECT 1 FROM {{tables.chain_epochs}} WHERE team_id = $1 AND chain_epoch = $2",
+        team_id,
+        chain_epoch,
+    ):
+        raise LookupError(f"team {team_id} has no epoch {chain_epoch}")
     epochs = await db.fetch_all(
         "SELECT " + _GENESIS_COLUMNS + " FROM {{tables.chain_epochs}}"
         " WHERE team_id = $1 AND chain_epoch < $2 ORDER BY chain_epoch",
@@ -442,8 +449,9 @@ async def verify_epoch(
     the same head lock, held here only for database reads, never network I/O.
     Authorization belongs to the caller; this function is not an HTTP route.
     """
-    # Earlier epochs are closed, and no purge reaches logs' own governance
-    # entries, so they are read outside the head lock appends wait on.
+    # Once the epoch exists the earlier ones are closed, and no purge reaches
+    # logs' own governance entries, so they are read outside the head lock
+    # appends wait on.
     earlier = await load_governance_before(db, team_id, chain_epoch)
     async with db.transaction() as tx:
         await _existing_head(tx, team_id)
