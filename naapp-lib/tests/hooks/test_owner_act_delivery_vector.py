@@ -15,7 +15,12 @@ from typing import Any
 import cbor2
 import pytest
 
-from aweb_naapp.hooks.owner_act import HUMAN_ROLE_ACTS, Refused, owner_act_signing_bytes
+from aweb_naapp.hooks.owner_act import (
+    HUMAN_ROLE_ACTS,
+    Refused,
+    human_credential_sha256,
+    owner_act_signing_bytes,
+)
 from aweb_naapp.hooks.owner_act import _verify_owner_act as verify_owner_act
 from tests.hooks.owner_act_delivery_vector import build_vector, render
 
@@ -110,6 +115,11 @@ def test_the_credential_hash_and_fingerprint(case) -> None:
     assert case["credential_sha256"] == digest
     groups = case["fingerprint"].split(" ")
     assert groups == [digest[0:4], digest[4:8], digest[8:12], digest[12:16]]
+
+
+@pytest.mark.parametrize("case", VECTOR["credential_cases"], ids=lambda c: c["name"])
+def test_the_runtime_names_a_credential_by_the_vector_hash(case) -> None:
+    assert human_credential_sha256(case["credential"]) == case["credential_sha256"]
 
 
 @pytest.mark.parametrize("case", ACCEPTED, ids=lambda c: c["name"])

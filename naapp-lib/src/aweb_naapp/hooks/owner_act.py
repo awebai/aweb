@@ -18,6 +18,7 @@ nonce and its exact subject.
 
 from __future__ import annotations
 
+import hashlib
 import re
 from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass
@@ -45,6 +46,7 @@ __all__ = [
     "Refused",
     "VerifiedOwnerAct",
     "hook_binding_subject",
+    "human_credential_sha256",
     "owner_act_signing_bytes",
 ]
 
@@ -60,6 +62,14 @@ APP_ACTS = ("app-role.designate", "app-role.revoke", "app-credential.recover")
 # owner-act delivery route.
 HUMAN_ROLE_ACTS = ("human-credential.replace", "human-role.designate", "human-role.revoke")
 LOGS_ACTS = ("logs.retention.set", "logs.erase", "logs.legal-hold.set", "logs.legal-hold.release")
+CREDENTIAL_PREFIX = b"aweb.human-credential/1\n"
+
+
+def human_credential_sha256(credential: Mapping[str, str]) -> str:
+    """The ``credential_sha256`` a human-role act names its credential by: the
+    SHA-256 of the prefix and the canonical JSON of the credential's
+    ``credential_id``, ``public_key`` (each unpadded base64url) and ``rp_id``."""
+    return hashlib.sha256(CREDENTIAL_PREFIX + canonical(dict(credential))).hexdigest()
 
 _TIME = "%Y-%m-%dT%H:%M:%SZ"
 _MAX_ITEMS = 64
