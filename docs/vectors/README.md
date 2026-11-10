@@ -283,8 +283,11 @@ includes a neutral OSS task request, the same request carrying a signed
 `trace_id` member (an additive case: extra signed members are signed and
 ignored by the auth layer, which is how aw-hooks carries its trace), and a
 hosted-route interoperability case; negative cases cover cross-endpoint/origin replay, body tampering, and a missing
-protocol version. The aweb server, Go conformance suite, and public naapp
-verifiers consume it. See
+protocol version. `identity_cases` holds identity-only requests, which sign
+`did_aw` in place of `team_id`: one for a stable identity and one for a local
+identity, whose `did_aw` is the empty string. The aweb server, Go conformance
+suite, and channel-core request signer consume every case; the public naapp
+verifiers consume the certificate cases. See
 [`team-auth-envelope-v2.md`](../team-auth-envelope-v2.md).
 
 ### `federation-origin-ip-v1.json`
@@ -791,7 +794,7 @@ reference duplication are mutation-tested failures.
 | `stable-id-v1.json` | Python AWID and aweb conformance tests; Go shared `conformance_test.go` |
 | `secrets-runner-protocol-v1.json` | secrets `test_runner_protocol_vectors.py` and production-server `test_runner_server_protocol.py` |
 | `secrets-runner-http-v1.json` | secrets `test_runner_protocol_vectors.py` |
-| `team-auth-envelope-v2.json` | Python aweb `test_team_auth_envelope.py`; naapp-lib `test_team_auth_vectors.py`; Go shared `conformance_test.go`, including its root-equality check for the managed embedded copy |
+| `team-auth-envelope-v2.json` | Python aweb `test_team_auth_envelope.py`; naapp-lib `test_team_auth_vectors.py`; Go shared `conformance_test.go`, including its root-equality check for the managed embedded copy; TypeScript channel-core `request_auth_v2.test.ts` |
 | `federation-origin-ip-v1.json` | Python AWID `test_federation_authority_vectors.py` and `test_external_authority.py`; Python aweb pre-activation federation harness; Go AWID `federation_authority_test.go`; Go shared `federation_authority_vectors_test.go` |
 | `federation-discovery-v1.json` | Python AWID `test_federation_authority_vectors.py` and `test_external_authority.py`; Python aweb pre-activation federation harness; Go AWID `federation_authority_test.go`; Go shared `federation_authority_vectors_test.go` |
 | `federation-authority-state-v1.json` | Python AWID `test_federation_authority_vectors.py`; Python aweb `test_federation_authority_core.py`, `test_federation_authority_schema.py`, and pre-activation federation harness; Go AWID `federation_authority_test.go`; Go shared `federation_authority_vectors_test.go`; generated `federation-error-reference.md` response-shape cross-check through `generate_federation_error_reference.py` (reason/status/retryability source is `awid/src/awid/federation_errors.py`); federation SOT/support coverage in `check-extension-docs.py` |
