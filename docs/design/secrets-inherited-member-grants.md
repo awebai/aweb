@@ -35,8 +35,10 @@ without another owner act.
 ## The model
 
 - **H's controller** decides who may join H and through which parents, by the
-  inheritance policy (acwd.13). Under the recommendation below it never
-  decides secret use.
+  inheritance policy (acwd.13). It remains the root of trust for who the
+  owners are ([§14, T11](secrets.md#141-trust-boundaries);
+  [owner acts](../owner-act.md#who-signs)). Under the recommendation below,
+  its inheritance policy does not by itself extend secret use.
 - **A secrets owner** decides which members may use which secrets, by grants.
   A grant to an inherited set is a widening change and needs the owner's
   passkey, like every grant.
@@ -104,13 +106,17 @@ subject joins the existing three; it replaces none of them.
 | **Recommend: root-scoped only.** | The owner names each eligible root once, for example a deployment member A_H, and every worker A_H's line admits within `max_depth` is covered. Only the owner's passkey can extend use to another root's line. Cost: one owner act per root, never per worker. |
 | Also offer policy-scoped. | One owner act covers every root's line. H's controller then extends secret use by making more members eligible (a named-parent eligibility grant, or all-direct-members mode, which covers every direct member it later admits), with no secrets owner passkey. That moves a widening change outside [§6.3](secrets.md#63-widening-changes-need-owner-passkey-confirmation). |
 
-The recommendation keeps one rule: only an owner's passkey widens which lines
-are covered. The controller's existing power is unchanged
-([§14, T10](secrets.md#141-trust-boundaries)), and it cannot take over a
-root's line: every request is signed by the member's own key, and for a global
-root the verifier also requires the certificate's key to be the `did:aw`'s
-current registry key. Policy-scoped would add a second path, controller-driven
-eligibility, that needs no key at all. Where the owner and the controller are
+Under the recommendation, a grant covers another root's line only through an
+owner's passkey-confirmed grant. That bounds the normal grant path, not the
+trust base. The controller's existing powers are unchanged
+([§14, T10 and T11](secrets.md#141-trust-boundaries)): it binds the owners, so
+it can change who confirms grants. Re-certification alone does not take over a
+root's line. Every request is signed by the member's own key, and for a global
+root, B1b also requires the certificate's key to be the `did:aw`'s current
+registry key ([§4.1](secrets.md#41-admission-of-a-member-request)). T10 is a
+limit of the trust base, not an exemption from that check. Policy-scoped would
+add a path on which ordinary eligibility changes extend secret use, with no
+owner act at all. Where the owner and the controller are
 the same human, the cost is small; the recommendation still does not depend on
 that.
 
@@ -158,7 +164,8 @@ read. A grant to an inherited subject never makes a withdrawn path usable.
 | Owner revokes the grant | Admission refuses at once, the fence refuses `grant_revoked`, and derived secrets issued under the grant are disabled ([§8.4](secrets.md#84-derived-secret-creation-and-use)), as for every grant. Any change to the grant is a `grant.changed`, which is widening and needs the passkey. |
 | Global root rotates its key and is re-admitted under the same `member_did_aw` | The root principal is unchanged, so a root-scoped grant still names it. Old child paths do not transfer; re-admitted children match again. |
 | Local root replaces its key | Another principal. The grant does not cover the replacement root's line until the owner grants it. |
-| Child's key replaced | Another principal with a fresh certificate. If it is admitted under the same root, policy and depth, it is covered. |
+| Local child's key replaced | Another principal with a fresh certificate. If it is admitted under the same root, policy and depth, it is covered. |
+| Global child re-admitted under the same `member_did_aw` with another key | The same principal, with fresh membership evidence. Old paths do not transfer. Re-admitted under the same root, policy and depth, it is covered. |
 
 An approved `per_use` request is consumed only when the same request is
 re-submitted ([§10.3](secrets.md#103-flow)), and that re-submission is
