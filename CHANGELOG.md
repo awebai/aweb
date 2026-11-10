@@ -2,6 +2,22 @@
 
 ## Unreleased
 
+- The naapp runtime (`aweb_naapp.runtime.health`) serves the probe contract of
+  the server and AWID. `/live` answers 200 whenever the process serves requests
+  and checks no dependency. `/ready` and `/health` answer 200 when every
+  dependency check passes and 503 otherwise; `/health` answered 200 in both
+  cases. Their body reports `status` as `ok` or `unhealthy` (it was
+  `unavailable`) and names each check in `checks` as `ok` or `error` (it was an
+  object with an `ok` boolean); `/health` adds `details`, which holds each
+  check's figures under the check's name, such as
+  `details.outbox.oldest_undelivered_age_seconds`. This applies to folio, logs
+  and secrets. The secrets image `HEALTHCHECK` probes `/live` (it probed
+  `/ready`), and the folio, library and logs images gain a `HEALTHCHECK` on
+  `/live`. A platform health check that restarts an instance on failure should
+  use `/live`: on `/health` or `/ready` it restarts every instance during a
+  database outage. The folio and library end-to-end compose files wait on
+  `/ready`.
+
 - The naapp outbox (`aweb_naapp.outbox`) keeps one team's failures from
   delaying other teams. An event whose targets cannot be resolved is resolved
   again after a backoff (5 seconds doubling to 5 minutes by default, the

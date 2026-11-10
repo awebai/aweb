@@ -270,17 +270,30 @@ Operator rules:
 
 ### Health
 
-`/live` reports the app's id and build commit. `/health` and `/ready` also run
-the app's dependency checks and report each by name: `ready` is 503 when any
-check fails, and `health` always answers 200. The runtime checks its database
+The three routes follow the probe contract of the aweb server and AWID
+([Health probes](../docs/aweb-sot.md#health-probes)):
+
+| Route | Checks | Answers | Use it for |
+|---|---|---|---|
+| `GET /live` | Nothing | 200 with the app's id and build commit whenever the process serves requests | Liveness probes and container healthchecks: anything that restarts the process |
+| `GET /ready` | The app's dependency checks | 200 when every check passes, 503 when any fails | Readiness probes, load-balancer routing, start-up ordering |
+| `GET /health` | The same as `/ready` | The same status code and body as `/ready`, plus `details` | Monitoring and manual checks |
+
+The body of `/ready` and `/health` carries `status`, `ok` or `unhealthy`, and
+`checks`, which names each check as `ok` or `error`, beside the id and build
+commit `/live` reports. Point a restarting probe at `/live` only: on `/ready`
+or `/health` it restarts every replica during a database outage, into the same
+outage. The naapp images' `HEALTHCHECK`s probe `/live`.
+
+The runtime checks its database
 and reports the age of its oldest undelivered outbox event
 (`NaappRuntime.health_checks()`). The age is a figure, not a dependency: no
 backlog fails the `outbox` check, the read stops at the oldest undelivered
 event without reading delivered history, and when it does not answer within
 2 s the figure is left out. An app adds its own as async callables that
 return a `CheckResult`. A check that raises, or does not answer within 5 s,
-fails, and its error is logged, never served. `/ready` serves only whether each
-check passed; `/health` adds each check's detail, whose values are numbers,
+fails, and its error is logged, never served. `/health` adds `details`, which
+holds each check's detail under the check's name; its values are numbers,
 booleans or null, never text. The routes are unauthenticated,
 so the checks run at most once every 10 s: concurrent requests share the run in
 flight, and later ones get its result until it expires.

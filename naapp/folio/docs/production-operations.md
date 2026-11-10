@@ -37,6 +37,9 @@ A web service that builds Folio with Docker needs:
 | Docker build context | `.` (the repository root) |
 | Health check path | `/health` |
 
+`/health` answers 503 while Folio's database check fails, as `/ready` does;
+`/live` checks nothing and answers 200 whenever the process serves requests.
+
 A root directory of `naapp/folio` limits the build to that folder, which is why
 the root directory moves to the repository root. Whether a given host resolves
 the Dockerfile path and context relative to the root directory or to the
