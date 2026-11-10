@@ -61,9 +61,9 @@ Each of its member-facing functions takes the acting member and `on_mutation`
 as required arguments. A route passes `mutation_callback(request)`, which is
 `request.app.state.on_mutation`; an MCP tool passes the callback of the
 application the MCP app is mounted in. The service fires after its own write
-commits. A caller that runs it inside a transaction of its own passes a
-callback that records the events, and fires them after that transaction
-commits.
+commits. A caller that runs it inside a transaction of its own passes the
+`record` method of a `HeldMutationEvents` (`aweb.hooks`), and calls its `fire`
+with `on_mutation` after that transaction commits.
 
 If the attribute is absent or `None`, the helper returns. At route call sites
 the callback is awaited before the route returns; this is not a durable queue or detached
