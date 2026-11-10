@@ -34,6 +34,7 @@ environment variables only; it does not load a checkout's `.env`.
 | `SECRETS_APP_ID` | Stable customer app ID, chosen before installation. |
 | `SECRETS_PUBLIC_ORIGIN` | HTTPS agent API origin. |
 | `SECRETS_CONSOLE_ORIGIN` | Distinct HTTPS console origin. |
+| `SECRETS_CLIENT_ADDRESS_HEADER` | Optional header overwritten by a trusted proxy. The console login limiter uses its last comma-separated entry; a missing header or an unset setting uses the peer address. Leave unset unless the proxy controls this header. |
 | `SECRETS_AWID_REGISTRY_URL` | Customer registry origin, matching the namespace's `_awid` TXT `registry=` selection. |
 | `SECRETS_KMS_KEY_ID`, `SECRETS_KMS_REGION` | Recommended custody: customer AWS KMS key and region. Give the runtime's AWS role the required key operations; no static AWS keys in the image. |
 | `SECRETS_CUSTODY_KEY_FILE` | Mounted local custody key, allowed in production and lab deployments. Configure exactly one of this or KMS. Keep the file private to the Secrets service account. |
