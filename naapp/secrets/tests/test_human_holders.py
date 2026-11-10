@@ -97,11 +97,11 @@ async def test_public_scope_cannot_select_another_holding(enrolled, public_scope
     assert (refused.value.status_code, refused.value.detail) == (403, "owner_required")
 
 
-async def test_unenrolled_designation_is_not_a_session_target(world):
+async def test_held_unenrolled_designation_requires_a_new_console_session(world):
     await _apply(world, "app-role.designate", ALICE, "alice@example.com")
     with pytest.raises(HTTPException) as refused:
         await authority(world).session_target(PublicScope())
-    assert refused.value.detail == "owner_required"
+    assert (refused.value.status_code, refused.value.detail) == (401, "console_session_required")
 
 
 async def test_withdrawal_between_projection_and_hold_refuses(enrolled):
@@ -144,11 +144,31 @@ async def test_recovery_does_not_retarget_the_original_subject(enrolled):
     target = await service.session_target(PublicScope())
     await _apply(enrolled, "app-credential.recover", ALICE, "alice-new@example.com")
     assert await enrolled.passkeys.recovery_pending_until(target.b3_scope) is not None
-    with pytest.raises(HTTPException):
+    assert await enrolled.directory.owner_of(enrolled.db, target.b3_scope) == ALICE
+    assert await enrolled.passkeys.designated_approver(target.b3_scope) is None
+    with pytest.raises(HTTPException) as refused:
         await service.session_target(PublicScope())
+    assert (refused.value.status_code, refused.value.detail) == (401, "console_session_required")
     async with enrolled.db.transaction() as tx:
         with pytest.raises(HTTPException):
             await hold(service, tx, target)
+
+
+@pytest.mark.parametrize("recovering", [False, True], ids=["enrolled", "cooling-off"])
+async def test_revoked_holding_is_final_even_when_b3_requires_renewal(enrolled, recovering):
+    scope = owner_scope(INSTALLATION_ID, TEAM, ALICE.principal_did)
+    if recovering:
+        await _apply(enrolled, "app-credential.recover", ALICE, "alice-new@example.com")
+        assert await enrolled.passkeys.recovery_pending_until(scope) is not None
+        assert await enrolled.passkeys.designated_approver(scope) is None
+    else:
+        assert await enrolled.passkeys.designated_approver(scope) is not None
+    async with enrolled.db.transaction() as tx:
+        await unassign(tx, ALICE, OWNER_ROLE)
+    assert await enrolled.directory.owner_of(enrolled.db, scope) is None
+    with pytest.raises(HTTPException) as refused:
+        await authority(enrolled).session_target(PublicScope())
+    assert (refused.value.status_code, refused.value.detail) == (403, "owner_required")
 
 
 async def test_a_supplied_subject_cannot_rebind_the_projection(enrolled):
