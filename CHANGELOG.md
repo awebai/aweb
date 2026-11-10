@@ -2,6 +2,36 @@
 
 ## Unreleased
 
+- The MCP `send_mail` tool and `POST /v1/messages` resolve the recipient and
+  store the message through one mail send, so a send through the tool behaves
+  as the same send through the route:
+  - A first mail and its conversation are stored together; a send that fails
+    leaves no conversation.
+  - A first mail to an address records the recipient as the sender's contact
+    under the conditions the route applies, and the conversation records each
+    participant's current key with `transport_hint` `local`.
+  - `message.sent` for a reply names the recipient's member in `to_agent_id`,
+    so the recipient's event stream receives `message.delivered` for it.
+  - A hosted identity's signed payload and encrypted envelope are validated
+    before they are stored. A reply signs the recipient's `did:aw` as
+    `to_stable_id`. Encrypted mail to a recipient whose published encryption
+    key is in hosted custody is delivered when the sender's own hosted key is
+    published to this server, and is otherwise refused with
+    `recipient_custodial_no_e2ee`; `plaintext` sends are unaffected.
+  - A full address or `@handle` outside the sender's team reaches a recipient
+    on this server when the registry binds that address to it; `@handle`
+    references follow the same rule as full addresses. An address that reaches
+    no one is refused in the same words whether or not a local identity holds
+    the name.
+  - `to` accepts `team~alias` for another team of the sender's organization.
+  - A reply to a participant whose key record on this server is not current is
+    delivered when the registry confirms the participant's current key, and is
+    otherwise refused with `identity_binding_mismatch` or
+    `identity_binding_unavailable`.
+  - An unknown alias is refused with `Recipient agent not found`, an unknown
+    bare `did:aw` with the route's first-contact text, and an unknown team with
+    `Unknown team: <team>`.
+
 - An MCP `send_mail` reply on a conversation whose stored route is a federation
   route to this server's own origin wakes the recipient's event stream when the
   message is stored; the recipient's stream used to show it only on its slow
