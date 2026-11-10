@@ -61,7 +61,7 @@ def test_a_stable_id_of_twenty_zero_bytes_still_validates():
 
 @pytest.mark.parametrize("extra", [1, 100, 20_000])
 def test_an_over_long_did_key_is_refused_without_decoding(decoded, extra):
-    did_key = _did_key() + "1" * extra
+    did_key = "did:key:z" + _did_key().removeprefix("did:key:z").ljust(47, "1") + "1" * extra
     with pytest.raises(ValueError):
         public_key_from_did(did_key)
     assert validate_did(did_key) is False
@@ -72,8 +72,10 @@ def test_an_over_long_did_key_is_refused_without_decoding(decoded, extra):
 
 @pytest.mark.parametrize("extra", [1, 100, 20_000])
 def test_an_over_long_stable_id_is_refused_without_decoding(decoded, extra):
+    # Twenty bytes encode to at most twenty-eight characters, and often fewer.
+    stable_id = "did:aw:" + _stable_id().removeprefix("did:aw:").ljust(28, "1") + "1" * extra
     with pytest.raises(ValueError):
-        validate_stable_id(_stable_id() + "1" * extra)
+        validate_stable_id(stable_id)
     assert decoded == []
 
 
