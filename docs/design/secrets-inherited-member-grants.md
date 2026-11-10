@@ -150,8 +150,8 @@ The verifier's proof keeps that deadline on a process-local monotonic clock
 (`naapp-lib/src/aweb_naapp/runtime/team_auth.py`), which must not be persisted
 or read by another worker. So the admission transaction samples the database's
 `clock_timestamp()` first, adds the smallest remaining original budget,
-rounded down, and persists that absolute deadline. It is never rebased after a
-wait; adding an earlier budget to a later timestamp would extend authority.
+rounded down, and persists that absolute deadline; a non-positive budget
+refuses. It is never rebased after a wait; adding an earlier budget to a later timestamp would extend authority.
 The final fence transaction compares it with the same database clock, read
 after its last effect-lock wait. That transaction covers approval consumption, credential
 opening and release, and the dispatch or assignment commit. The rule applies to
