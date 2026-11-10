@@ -104,6 +104,10 @@ async def _make_due(db: AsyncDatabaseManager) -> None:
     await db.execute("UPDATE {{tables.outbox_deliveries}} SET next_attempt_at = NOW()")
 
 
+async def _make_resolution_due(db: AsyncDatabaseManager) -> None:
+    await db.execute("UPDATE {{tables.outbox_events}} SET next_resolve_at = NOW()")
+
+
 async def test_enqueue_commits_and_rolls_back_with_the_callers_transaction(db) -> None:
     kept, dropped = _event(), _event()
     async with db.transaction() as tx:
@@ -402,12 +406,62 @@ async def test_an_unresolvable_event_stays_pending_and_counts_as_undelivered(db)
         await drain(
             db, channel="default", resolver=resolver, transport=Scripted({}), policy=_POLICY
         )
+    assert len(resolver.calls) == 1, "a backed-off event is not resolved early"
+    await _make_resolution_due(db)
+    await drain(db, channel="default", resolver=resolver, transport=Scripted({}), policy=_POLICY)
     assert len(resolver.calls) == 2
     assert await db.fetch_value("SELECT count(*) FROM {{tables.outbox_deliveries}}") == 0
     status = await outbox_status(db)
     assert status.unmaterialized[_TEAM].count == 1
     assert status.unmaterialized[_TEAM].oldest_age_seconds >= 0
     assert status.targets == {}
+
+
+async def test_one_teams_unresolvable_events_do_not_hold_back_another_teams(db) -> None:
+    stuck_team = "stuck:example.com"
+    stuck = [_event(team_id=stuck_team) for _ in range(5)]
+    waiting = _event(b"waiting")
+    async with db.transaction() as tx:
+        for event in (*stuck, waiting):
+            await enqueue(tx, event)
+
+    async def resolver(event: StoredEvent) -> Sequence[Target] | None:
+        return None if event.team_id == stuck_team else [Target("a")]
+
+    transport = Scripted({"a": Acked("delivered", None)})
+    # Five stuck events ahead of it, three claimed per pass: the waiting event
+    # is claimed on the second pass.
+    for _ in range(2):
+        await drain(
+            db, channel="default", resolver=resolver, transport=transport, policy=_POLICY, limit=3
+        )
+    assert [sent[0] for sent in transport.sent] == [waiting.event_id]
+    assert (await outbox_status(db)).unmaterialized[stuck_team].count == 5
+
+
+async def test_an_unresolvable_event_backs_off_up_to_the_cap(db) -> None:
+    policy = RetryPolicy(stalled_after=timedelta(hours=1), base_seconds=5, max_seconds=30)
+    async with db.transaction() as tx:
+        await enqueue(tx, _event())
+
+    async def delay() -> float:
+        return float(
+            await db.fetch_value(
+                "SELECT EXTRACT(EPOCH FROM next_resolve_at - clock_timestamp())"
+                " FROM {{tables.outbox_events}}"
+            )
+        )
+
+    delays = []
+    for attempt in range(6):
+        if attempt:
+            await _make_resolution_due(db)
+        await drain(
+            db, channel="default", resolver=Targets(None), transport=Scripted({}), policy=policy
+        )
+        delays.append(await delay())
+    assert delays[:3] == [pytest.approx(5, abs=1), pytest.approx(10, abs=1), pytest.approx(20, abs=1)]
+    assert delays[-1] == pytest.approx(30, abs=1)
 
 
 async def test_a_resolver_exception_leaves_the_event_unmaterialized(db) -> None:

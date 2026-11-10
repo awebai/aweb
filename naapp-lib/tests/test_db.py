@@ -68,6 +68,7 @@ _OUTBOX = [
     ("aweb_naapp_outbox", "001_outbox.sql"),
     ("aweb_naapp_outbox", "002_outbox_channels.sql"),
     ("aweb_naapp_outbox", "003_admission_backlog.sql"),
+    ("aweb_naapp_outbox", "004_resolution_backoff.sql"),
 ]
 
 
