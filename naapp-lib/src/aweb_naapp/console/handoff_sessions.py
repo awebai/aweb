@@ -20,6 +20,7 @@ from aweb_naapp.console import (
     ConsoleRoute,
     KeyBoundConsoleSession,
     LoginLimiter,
+    _prune_sessions,
     require_json,
 )
 from aweb_naapp.console.handoff_authority import HandoffAuthority, PublicScope
@@ -183,21 +184,9 @@ class ConsoleHandoffs:
         self.store = HandoffStore(db)
 
     async def prune(self) -> None:
-        """Remove certificate bytes from ended sessions and handoffs.
-
-        Call alongside the app's existing console housekeeping. Request paths
-        call it too; none ever reads expired/closed evidence as current.
-        """
-        await self.db.execute(
-            "UPDATE {{tables.console_sessions}} SET member_certificate=NULL "
-            "WHERE member_certificate IS NOT NULL AND "
-            "(expires_at<=clock_timestamp() OR closed_at IS NOT NULL)"
-        )
-        await self.db.execute(
-            "UPDATE {{tables.console_handoffs}} SET member_certificate=NULL "
-            "WHERE member_certificate IS NOT NULL AND "
-            "(expires_at<=clock_timestamp() OR released_at IS NOT NULL)"
-        )
+        """Bounded post-commit cleanup, never part of request authentication."""
+        await _prune_sessions(self.db)
+        await self.store.prune()
 
     async def _target(self, scope):
         try:
@@ -298,6 +287,7 @@ class ConsoleHandoffs:
                 certificate,
             )
             proof.require_fresh()
+        await self.store.prune()
         return created
 
     def api_router(self):
@@ -317,7 +307,6 @@ class ConsoleHandoffs:
         return await binding.prepare(tx, session, approver_pairs)
 
     async def current(self, request: Request) -> KeyBoundConsoleSession:
-        await self.prune()
         try:
             lookup = console_payload(request).get("session_id")
             lookup = _token(lookup)
@@ -492,6 +481,7 @@ class ConsoleHandoffs:
             if not await self.authority.check_session_target(tx, held):
                 raise _required()
             proof.require_fresh()
+        await self.prune()
         return {
             "purpose": "session",
             "session_id": token,
@@ -513,7 +503,6 @@ class ConsoleHandoffs:
         )
 
         async def limited(request: Request):
-            await self.prune()
             await self.limiter.admit(request, "console.handoff")
 
         @router.get("/handoff/{handoff_id}/session", dependencies=[Depends(limited)])

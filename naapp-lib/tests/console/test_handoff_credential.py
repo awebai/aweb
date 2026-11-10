@@ -128,6 +128,12 @@ async def test_credential_result_is_verified_one_shot_and_authorizes_nothing(han
             headers=headers(other_secret, did_from_public_key(other_public), handoff, body),
         )
         assert wrong_key.status_code == 403
+        staged = await handoff_db.fetch_one(
+            "SELECT code_sha256,released_at FROM {{tables.console_handoffs}} WHERE handoff_id=$1::uuid",
+            handoff,
+        )
+        assert staged["released_at"] is None
+        assert bytes(staged["code_sha256"]) == hashlib.sha256(query["code"][0].encode()).digest()
         released = await browser.post(f"/handoffs/{handoff}/result", content=body, headers=signed)
         assert released.status_code == 200
         assert released.json()["purpose"] == "credential"
@@ -141,8 +147,7 @@ async def test_credential_result_is_verified_one_shot_and_authorizes_nothing(han
     row = await handoff_db.fetch_one(
         "SELECT * FROM {{tables.console_handoffs}} WHERE handoff_id=$1::uuid", handoff
     )
-    assert row["released_at"] is not None
-    assert bytes(row["code_sha256"]) == hashlib.sha256(query["code"][0].encode()).digest()
+    assert row is None  # Post-commit cleanup removes the released handoff.
 
 
 @pytest.mark.parametrize("fault", ["other_handoff", "foreign_origin", "no_uv"])

@@ -158,6 +158,19 @@ async def _housekeeping(table: str, work: Awaitable[Any]) -> None:
         logger.warning("console prune of %s failed: %s", table, type(error).__name__)
 
 
+async def _prune_sessions(db: AsyncDatabaseManager) -> None:
+    """Bounded post-commit cleanup; held sessions and their nonces stay intact."""
+    await _housekeeping(
+        "console_sessions",
+        db.execute(
+            "DELETE FROM {{tables.console_sessions}} WHERE token_sha256 IN ("
+            "SELECT token_sha256 FROM {{tables.console_sessions}} "
+            "WHERE expires_at <= NOW() OR closed_at IS NOT NULL "
+            "ORDER BY expires_at LIMIT 64 FOR UPDATE SKIP LOCKED)"
+        ),
+    )
+
+
 ScopeAdmission = Callable[[str], Awaitable[bool]]
 
 
@@ -209,16 +222,7 @@ class ConsoleSessions:
         # A session that has ended is refused already; dropping it, after the
         # insert has committed and skipping rows another transaction holds,
         # bounds the table without ever waiting on a login.
-        await _housekeeping(
-            "console_sessions",
-            self._db.execute(
-                """
-                DELETE FROM {{tables.console_sessions}} WHERE token_sha256 IN (
-                    SELECT token_sha256 FROM {{tables.console_sessions}}
-                    WHERE expires_at <= NOW() OR closed_at IS NOT NULL FOR UPDATE SKIP LOCKED)
-                """
-            ),
-        )
+        await _prune_sessions(self._db)
         return IssuedSession(token, csrf_token, expires_at, int(self._ttl.total_seconds()))
 
     def set_cookie(self, response: Response, issued: IssuedSession) -> None:

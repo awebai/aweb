@@ -252,6 +252,7 @@ def credential_handoff_router(
             credential = row["credential"]
             if isinstance(credential, str):
                 credential = json.loads(credential)
-            return {"purpose": "credential", "credential": credential}
+        await store.prune()
+        return {"purpose": "credential", "credential": credential}
 
     return router

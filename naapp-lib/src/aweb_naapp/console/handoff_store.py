@@ -12,7 +12,7 @@ from fastapi import APIRouter, Depends, HTTPException, Request
 from pgdbm import AsyncDatabaseManager
 from pgdbm.core import TransactionManager
 
-from aweb_naapp.console import ConsoleRoute, LoginLimiter, require_json
+from aweb_naapp.console import ConsoleRoute, LoginLimiter, _housekeeping, require_json
 from aweb_naapp.console.handoff_authority import PublicScope
 from aweb_naapp.console.handoff_wire import HandoffWireRefused, loopback_redirect
 from aweb_naapp.runtime.approvals.request import parse_request_json
@@ -101,6 +101,18 @@ class HandoffStore:
     def __init__(self, db: AsyncDatabaseManager) -> None:
         self.db = db
 
+    async def prune(self) -> None:
+        """Reclaim a bounded batch of ended handoffs after a write commits."""
+        await _housekeeping(
+            "console_handoffs",
+            self.db.execute(
+                "DELETE FROM {{tables.console_handoffs}} WHERE handoff_id IN ("
+                "SELECT handoff_id FROM {{tables.console_handoffs}} "
+                "WHERE expires_at <= NOW() OR released_at IS NOT NULL "
+                "ORDER BY expires_at LIMIT 64 FOR UPDATE SKIP LOCKED)"
+            ),
+        )
+
     async def create(
         self, start: HandoffStart, *, tx: TransactionManager | None = None
     ) -> dict[str, str]:
@@ -117,6 +129,8 @@ class HandoffStore:
             json.dumps(asdict(start.scope)),
             start.client_hostname,
         )
+        if tx is None:
+            await self.prune()
         return {
             "handoff_id": str(handoff_id),
             "expires_at": expiry.replace(microsecond=0).isoformat().replace("+00:00", "Z"),
