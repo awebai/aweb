@@ -15,6 +15,7 @@ from typing import cast
 from fastapi import HTTPException
 
 from awid.federation_errors import FederationAuthorityError
+from aweb.e2ee_messages import E2EERecipientKeyMismatch
 from aweb.federation.errors import RecipientNotResidentError
 from aweb.agent_wake import agent_wake_scope, record_did_wakes
 from aweb.mcp.auth import current_agent_wake_publisher, get_auth
@@ -186,21 +187,67 @@ def _signed_mail_fields(
     return signed_fields
 
 
-def _send_refusal(exc: Exception, *, address: str = "") -> str:
+REGISTRY_CANNOT_CONFIRM_ADDRESS = "the registry can't confirm {address} right now; try again, or check the address"
+SENDER_KEY_NOT_PUBLISHED = (
+    "your encryption key isn't published yet; try again shortly, and if it persists contact support"
+)
+SENDER_KEY_NOT_VERIFIABLE = (
+    "your published encryption key can't be verified right now; try again shortly, "
+    "and if it persists contact support"
+)
+RECIPIENT_ENCRYPTION_KEY_NOT_VERIFIABLE = (
+    "this recipient's published encryption key can't be verified right now; try again later, "
+    "and if it persists contact support"
+)
+RECIPIENT_KEY_CHANGED = "this recipient's key changed; refresh and resend"
+REGISTRY_CANNOT_CONFIRM_RECIPIENT_KEY = (
+    "the registry can't confirm this recipient's key right now; try again shortly"
+)
+
+# What a hosted sender does next when the custody check refuses its envelope.
+# The sender of a hosted envelope holds a hosted key, so the check refused
+# because that key, or the recipient's, is not verifiably published here.
+_HOSTED_ENVELOPE_NEXT_ACTIONS = {
+    "recipient_custodial_no_e2ee": SENDER_KEY_NOT_PUBLISHED,
+    "federation_envelope_invalid": SENDER_KEY_NOT_VERIFIABLE,
+    "recipient_encryption_assertion_invalid_or_stale": RECIPIENT_ENCRYPTION_KEY_NOT_VERIFIABLE,
+}
+_IDENTITY_BINDING_NEXT_ACTIONS = {
+    "identity_binding_mismatch": RECIPIENT_KEY_CHANGED,
+    "identity_binding_unavailable": REGISTRY_CANNOT_CONFIRM_RECIPIENT_KEY,
+}
+
+
+def _send_refusal(exc: Exception, *, address: str = "", hosted_envelope: bool = False) -> str:
     """A send the service refused, in this tool's error shape.
 
-    A full address that reaches no one is refused in one set of words, which do
-    not say whether a local identity holds that name.
+    The reader is a language model: a refusal it can act on is a sentence
+    naming the next action, with the service's code beside it as ``reason``.
+    ``address`` is the full address the send named, ``hosted_envelope`` whether
+    hosted custody encrypted it. A full address that reaches no one is refused
+    in one set of words, which do not say whether a local identity holds that
+    name.
     """
     if isinstance(exc, RecipientNotResidentError):
         return json.dumps({"error": exc.detail, "reason": exc.reason, "retryable": exc.retryable})
     if isinstance(exc, FederationAuthorityError):
         if address and exc.reason in ("recipient_identity_not_found", "local_recipient_route_missing"):
             return json.dumps({"error": unreachable_address_refusal(address)})
+        next_action = None
+        if address and exc.reason == "sender_registry_unavailable":
+            next_action = REGISTRY_CANNOT_CONFIRM_ADDRESS.format(address=address)
+        elif hosted_envelope:
+            next_action = _HOSTED_ENVELOPE_NEXT_ACTIONS.get(exc.reason)
+        if next_action is not None:
+            return json.dumps({"error": next_action, "reason": exc.reason})
         return json.dumps({"error": exc.reason})
     detail = getattr(exc, "detail", None)
     if address and detail == "Recipient address not found":
         return json.dumps({"error": unreachable_address_refusal(address)})
+    if isinstance(exc.__cause__, E2EERecipientKeyMismatch):
+        return json.dumps({"error": RECIPIENT_KEY_CHANGED})
+    if isinstance(exc, HTTPException) and detail in _IDENTITY_BINDING_NEXT_ACTIONS:
+        return json.dumps({"error": _IDENTITY_BINDING_NEXT_ACTIONS[detail], "reason": detail})
     return json.dumps({"error": detail or str(exc)})
 
 
@@ -394,7 +441,7 @@ async def send_mail(
     try:
         sent = await mail_send.send_mail(db_infra, sender, target, message, runtime)
     except Exception as exc:
-        return _send_refusal(exc, address=address_ref)
+        return _send_refusal(exc, address=address_ref, hosted_envelope=encrypted is not None)
 
     return json.dumps(
         {
