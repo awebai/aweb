@@ -1,6 +1,6 @@
 """The secrets service: one process on two origins, on the shared naapp runtime.
 
-The agent API origin (``public_origin``) serves the manifest, health and the
+The agent API origin (``public_origin``) serves public docs, the manifest, health and the
 manifest's tools. Every tool route is admitted only through the runtime's
 team-auth guard (B1): signed by a team member, declared by the served
 manifest, covered by the team's installed grant and allowed by secrets'
@@ -23,7 +23,7 @@ from aweb_naapp.egress import Egress
 from aweb_naapp.idempotency import apply_idempotency_migrations
 from aweb_naapp.ratelimit import apply_ratelimit_migrations
 from aweb_naapp.roles import apply_roles_migrations, purge_team
-from aweb_naapp.runtime.app import NaappRuntime, mount_manifest_routes
+from aweb_naapp.runtime.app import NaappRuntime
 from aweb_naapp.runtime.authorization import ActionPolicy, Authorization, GrantSource
 from aweb_naapp.runtime.health import HealthCheck, mount_health
 from aweb_naapp.runtime.installation import (
@@ -39,6 +39,7 @@ from pgdbm import AsyncDatabaseManager
 from aweb_secrets.config import SecretsSettings
 from aweb_secrets.manifest import MANIFEST_PATH
 from aweb_secrets.revisions import apply_revision_migrations
+from aweb_secrets.surfaces import mount_public_surfaces
 
 MIGRATIONS_PATH = Path(__file__).resolve().parent / "migrations"
 MODULE_NAME = "aweb_secrets"
@@ -208,6 +209,11 @@ def create_app(
             console.router.routes[:] = console_routes
 
     api = FastAPI(lifespan=lifespan, docs_url=None, redoc_url=None, openapi_url=None)
-    mount_manifest_routes(api, runtime=runtime)
-    mount_health(api, settings, checks=checks, labels=health_labels)
+    mount_public_surfaces(
+        api,
+        runtime=runtime,
+        health_checks=checks,
+        console_origin=settings.console_origin,
+        health_labels=health_labels,
+    )
     return SecretsService(runtime, api, console)

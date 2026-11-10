@@ -34,6 +34,7 @@ from collections.abc import AsyncIterator, Awaitable, Callable, Mapping, Sequenc
 from contextlib import aclosing, asynccontextmanager
 from dataclasses import replace
 from datetime import UTC, datetime
+from enum import StrEnum
 from ipaddress import IPv4Network, IPv6Network
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
@@ -726,6 +727,7 @@ def mount_naapp_routes(
     robots_disallow: Sequence[str] = (),
     noindex_paths: Sequence[str] = (),
     health_checks: Mapping[str, HealthCheck] | None = None,
+    health_labels: Mapping[str, StrEnum] | None = None,
 ) -> None:
     """Serve the standard naapp public surface.
 
@@ -809,4 +811,9 @@ def mount_naapp_routes(
         return PlainTextResponse(skill, headers=_NOSNIFF)
 
     mount_manifest_routes(app, runtime=runtime)
-    mount_health(app, settings, checks={**runtime.health_checks(), **(health_checks or {})})
+    mount_health(
+        app,
+        settings,
+        checks={**runtime.health_checks(), **(health_checks or {})},
+        labels=health_labels,
+    )
