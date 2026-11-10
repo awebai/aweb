@@ -3,6 +3,13 @@
 ## Unreleased
 
 - The channel client (the Claude Code plugin, the Pi extension and `aw wake`)
+  signs every certificate and identity request with the
+  [v2 request envelope](docs/team-auth-envelope-v2.md), which binds the
+  audience, method, path with query, body and timestamp, as `aw` does. It does
+  not send the compact v1 form and does not fall back to it; a server that
+  refuses v2 refuses the request.
+
+- The channel client (the Claude Code plugin, the Pi extension and `aw wake`)
   reports mail and chat as verified only when the displayed body, subject,
   message id, conversation id, sender and recipient agree with the claims in
   the signed payload, by the same rules `aw` applies. A message whose displayed
