@@ -945,13 +945,14 @@ Per team and chain epoch, under a row lock on the team's chain head:
 - **`verify`** recomputes the chain over a range or from a checkpoint. It
   re-checks retained provenance signatures and commitments, and reports
   `intact`, `broken_at`, `missing` (gaps), purged ranges with their governing
-  act, per-producer and per-hook `seq` gaps inside binding intervals, and
-  conflicts. It also accepts **producer receipts and exported checkpoints as
-  input**, and reports any receipt or checkpoint that the current chain
-  contradicts. `aw logs verify --bundle` checks an export offline, with no
-  server. **In flight (aweb-acgh.16.24):** the Go chain verifier
-  (`cli/go/logschain`) passes `logs-chain-v1.json`; the `aw logs` command is
-  not on main.
+  act, the legal holds the chain discloses (those still active from earlier
+  epochs, and those set in the epoch), per-producer and per-hook `seq` gaps
+  inside binding intervals, and conflicts. It also accepts **producer receipts
+  and exported checkpoints as input**, and reports any receipt or checkpoint
+  that the current chain contradicts. `aw logs verify --bundle` checks an
+  export offline, with no server. **In flight (aweb-acgh.16.24):** the Go
+  chain verifier (`cli/go/logschain`) passes `logs-chain-v1.json`; the
+  `aw logs` command is not on main.
 
 **What this does and does not protect against.** It detects in-transit loss
 (the outbox), forgery by other apps (productions), agent deletion (there is no
@@ -1102,7 +1103,9 @@ This follows D1's rule: deletion overrides routine audit-content retention
 unless a disclosed legal obligation requires retention, and minimal non-content
 receipts remain (`agent-pages.md` §3). An owner-requested erasure of
 an actor's content is a governance entry with counts, never silent. A legal
-hold is an owner act and is disclosed in receipts. Uninstall and team deletion
+hold is an owner act and is disclosed in the chain: setting and releasing it
+append logs' own governance entries atomically, and `verify` reports the holds
+next to purged ranges. Uninstall and team deletion
 use D1's lifecycle tools. Export produces a self-verifying bundle (envelopes,
 chain, checkpoints, receipts). Deletion runs as D1's durable job and keeps the
 final checkpoint and a deletion receipt. Logs has its own hosted default

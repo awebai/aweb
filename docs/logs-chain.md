@@ -183,13 +183,28 @@ receipts and checkpoints it is given, and reports:
 and conflicting deliveries, from logs' records of bindings and faults. Those
 are not part of this pure chain check or of its vector.
 
-The stored-report API, `aweb_logs.ledger.verify_epoch`, adds `delivery` and
-`conflicts` to the pure chain report. Its caller authorizes the reader and
-supplies the expected receipt/checkpoint keys. It reads events and refused-byte
-faults consistently under the team head lock, then verifies outside that lock.
-`intact` describes the chain; a delivery finding does not imply a chain edit.
-Conflicts name the event, its stored chain position, the refused-byte digest
-and the recorded fault time, without returning refused content.
+The stored-report API, `aweb_logs.ledger.verify_epoch`, adds `holds`,
+`delivery` and `conflicts` to the pure chain report. Its caller authorizes the
+reader and supplies the expected receipt/checkpoint keys. It reads events and
+refused-byte faults consistently under the team head lock, then verifies
+outside that lock. `intact` describes the chain; a delivery finding does not
+imply a chain edit. Conflicts name the event, its stored chain position, the
+refused-byte digest and the recorded fault time, without returning refused
+content.
+
+The stored report's **`holds`** are the legal holds that logs' own chain
+entries disclose for the epoch. Each is reported with `hold_id`,
+`hold_scope`, `actor_ref` for an actor hold, the `chain_epoch` and `team_seq`
+of the entry that set it (`set`), and those of its release (`released`, or
+null while it is active). A hold set in an earlier epoch and still active at
+the epoch's start is reported too, so verifying only the current epoch does
+not miss it. Holds are read only from the chain, never from logs' other
+records. Only a retained `post-governance-hook` entry produced by the epoch's
+own logs origin, that verifies, counts. A hold act signed by any other
+producer is never a hold. **In flight (aweb-acgh.16.24):** the Go verifier
+and `logs-chain-v1.json` do not report holds yet. An export bundle will carry
+the earlier epochs' logs governance entries this report needs, so that
+`aw logs verify --bundle` reports the same holds offline.
 
 `delivery.scope` is always `observed_internal_only`. Its `gaps` are inclusive
 missing sequence ranges between retained authenticated observations in the
