@@ -166,6 +166,16 @@ checks reuse the 60-second team-facts cache where it applies.
   it gates are frozen.
 - **Revoke** ends the holding.
 
+Only the owner's revoke ends a holding, apart from team retirement, which
+purges every holding with its team. Team authority acting alone, such as a
+member's removal from the team or the containment of a holder, is
+containment: it retires the holder's credential, so the holder can no longer
+log in or approve, and the holding continues until the owner replaces the
+credential or revokes the holding. Ending a holding any other way would
+bypass the owner-act record and last-owner protection. A holder who is no
+longer a member still cannot act, because each use re-checks membership
+([Use](#use)).
+
 Each emits `post-governance-hook` with `authority: owner_act`.
 
 **What the credential audit retains.** Each act is one B3 audit event and one
@@ -314,8 +324,8 @@ async def refresh_holding_certificate(
   transaction reuse the prepared rows (`check_current_approver`, :103) and
   acquire nothing further upstream. Every writer of the holding row locks it
   `FOR UPDATE` in the same order, after the fence and before any B3 row:
-  designate, replace and revoke under the owner act (stage 3), the
-  certificate refresh, and any app path that ends a holding. On the hold
+  designate, replace and revoke under the owner act (stage 3), and the
+  certificate refresh. On the hold
   side, secrets' owner holding takes this order with `hold_role`
   (`naapp-lib/src/aweb_naapp/roles/__init__.py:158`) on the role row as its
   hold.
