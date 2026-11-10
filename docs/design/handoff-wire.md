@@ -107,8 +107,15 @@ rate-limited as login is.
   forbidden member.
 - `400 redirect_uri_refused`.
 - `403 scope_not_signer`: `scope.principal` is not the verified signer.
+- `401 console_session_required`: a `session` start for a holding the signer
+  still holds but that has no credential able to log in, such as during a
+  replace's cooling-off.
 - `403 role_not_held`: a `session` start for a scope in which the signer
-  holds no current holding. It is final, and `aw` reports it and stops.
+  holds no current holding. It is final.
+
+`aw` never renews on a start refusal. A refused start, whether the
+command's first or its one renewal, ends the command, and `aw` reports the
+code.
 - `409 fallback_unavailable`: a `session` start with `user_code` that the app
   cannot serve ([Fallback](human-confirmation-from-aw.md#the-handoff)).
 - `429 handoff_rate_limited`.
@@ -253,10 +260,12 @@ and every field does it treat the request as that console session.
   code is merged, `aw` renews on a signature or replay fault too. That stays
   safe because a confirm is sent at most once across a renewal.
 - `403 role_not_held`: the session's holding was revoked. It is final, and
-  `aw` never renews on it. A credential superseded by a replace whose
-  cooling-off has ended is not this: the principal still holds the role, so
-  the app answers `401 console_session_required`, and the renewal's login
-  needs the new passkey.
+  `aw` never renews on it. A session whose login credential a
+  `human-credential.replace` has retired is not this: the principal still
+  holds the role, so the app answers `401 console_session_required`. During
+  the cooling-off, the renewal's start is refused with the same code (section
+  1) and the command ends. After it, the renewal's login needs the new
+  passkey.
 - `403 principal_not_member`.
 - `403 principal_not_human`.
 - `503 principal_status_unavailable`, the only retryable one. An unknown
