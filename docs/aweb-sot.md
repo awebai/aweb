@@ -546,6 +546,18 @@ forward migration**, never editing an existing one. Concrete cases:
 The principle holds across every deployment using pgdbm (the aweb server,
 AWID service, and any hosted operator schema). Once shipped, immutable.
 
+**Migration 048 (`048_chat_session_seq.sql`) and server order.** It adds
+`chat_sessions.last_seq`, `chat_messages.seq` and `chat_read_receipts.seq`,
+numbers the existing rows, and installs the triggers that number every later
+write. Apply it before running a server release that reads `seq`: the chat
+stream, the MCP reply wait and `up_to_message_id` fail without the columns. A
+server release that predates the columns keeps working once the migration is
+applied, because the triggers number its inserts, so a rolling deploy applies
+the migration first and replaces processes afterwards. The migration holds
+`ACCESS EXCLUSIVE` on the three tables for its one transaction; chat reads and
+writes wait for it. A hosted deployment that keeps its own copy of the aweb
+migrations needs the same file in that copy.
+
 ### Current table inventory
 
 The following list is exhaustive for current **aweb application tables declared
@@ -912,10 +924,10 @@ transient `did:key`.
 | `POST /v1/chat/sessions` | Create chat session by address first contact, stored-route continuation, or local alias; bare external `did:aw` first contact fails closed without stored route state |
 | `GET /v1/chat/pending` | Pending chats for the authenticated agent |
 | `GET /v1/chat/sessions` | List sessions |
-| `GET /v1/chat/sessions/{id}/messages` | Chat history |
+| `GET /v1/chat/sessions/{id}/messages` | Chat history, ordered by `created_at`. Each item carries its `seq`, usable as `after_seq` on the stream. |
 | `POST /v1/chat/sessions/{id}/messages` | Send chat message |
-| `GET /v1/chat/sessions/{id}/stream` | Chat SSE stream |
-| `POST /v1/chat/sessions/{id}/read` | Mark read |
+| `GET /v1/chat/sessions/{id}/stream` | Chat SSE stream. Every `message` and `read_receipt` frame carries `seq`, the session's number for that message or receipt. A session gives out its numbers under its row lock, held until the writer commits, so within a session a greater number always commits later; numbers are unique per session and not consecutive (a changed read receipt takes another number, and deleted rows leave gaps). The stream delivers every message and read receipt numbered above its cursor, in number order, whatever their `created_at` or `last_read_at` and whatever the writers' clocks. Without `after_seq` or `after`, the cursor is the session's last number, read before the response status is sent: a message whose send began after the client received the 200 is delivered, within the fallback poll interval if its wake preceded the stream's subscription. With `after_seq=<n>` the stream first replays the messages and read receipts numbered above `n`, so a client that keeps the last `seq` it received resumes with nothing skipped or repeated; a value above the session's last number is read as that last number. With `after=<timestamp>` it first replays the messages numbered above the last message stamped at or before that timestamp, and read receipts start live. `after` and `after_seq` together are refused with 422. |
+| `POST /v1/chat/sessions/{id}/read` | Mark read: the exact `message_ids`, or with `up_to_message_id` every incoming message numbered up to the named one (a message committed after it stays unread even if it is stamped earlier). |
 
 ### Agents and presence
 
@@ -997,6 +1009,23 @@ tiebreaker rather than evidence that an offline workspace is currently
 relevant. When more matching workspaces exist than the requested limit, the
 response sets `has_more=true`. Human CLI output must state plainly when this
 bounded response is incomplete.
+
+A task claim is made and released by the task's status change, in the same
+PostgreSQL transaction, for every caller of the task service (the HTTP routes,
+the MCP task tools and an embedding host alike). Setting `in_progress` records
+the claim of the acting member's workspace, or answers `409` when another
+workspace holds one. A change of status to `open` or `closed` releases every
+claim on the task, whichever workspace holds it, and sets each released
+workspace's focus to its most recent remaining claim, else to the released
+focus task while that task is not closed, else to none. A request that does not
+change the status releases nothing, and a change that rolls back leaves the
+claim. The release does not depend on the mutation
+hook; the hook only announces it, as `task.unclaimed` workspace and team
+events. Answering a task (`POST /v1/tasks/{ref}/answer`) and cancelling an app
+request close the task and release its claims the same way. Closing a parent
+closes its open descendants without changing their claims, and deleting a task
+releases its claims through the `task.deleted` hook cascade rather than in the
+deleting transaction.
 
 Task claims have no time-based expiry or implicit lease in v1.
 `GET /v1/tasks/active` includes `owner_last_seen_at` for claim-backed tasks.
@@ -1443,7 +1472,11 @@ selection.
 ## awid API surface (what aweb depends on)
 
 The standard server uses these AWID read families through the cached registry
-client. Startup also performs an uncached AWID health check before serving.
+client. Startup also performs an uncached AWID health check before serving: the
+server does not start unless AWID answers `GET /health`. AWID's health report
+with status `unhealthy`, which it sends with 503 when its own Redis or database
+check fails, counts as reached: the server logs a warning and starts. Any other
+failure, including a 503 that is not that report, stops start-up.
 
 ### Team resolution (on first agent connection or cache miss)
 
@@ -1734,6 +1767,19 @@ operators that layer billing on top of aweb may schedule GC according
 to their own per-tier retention policies; that scheduling is the
 operator's concern, not aweb's.
 
+### Releasing claims on closed tasks
+
+`aweb release-closed-task-claims` (module function
+`aweb.closed_task_claims.release_closed_task_claims(db, apply=False)`) is a
+one-off for claims left on closed tasks by data written before a task's claims
+were released in the transaction of its status change. By default it is a dry
+run that changes nothing and prints, as JSON, the total number of claims on
+closed tasks and, per team id, the number of tasks and claims. With `--apply`
+it releases each task's claims through `release_task_claims_on`, in a
+transaction of its own that first confirms the task is still closed, which
+also sets each released workspace's focus; it prints the same counts plus the
+number released. A second apply releases nothing.
+
 ### Rate limiting
 
 Rate limiting at the **coordination layer** is not enforced by aweb
@@ -1753,6 +1799,30 @@ This intentional split means a self-hosted aweb deployed inside a
 private VPC behind authenticated agent traffic does not pay the cost
 of artificial limits, while a hosted operator can apply whatever
 metering its product needs without changing the aweb contract.
+
+### Health probes
+
+Three unauthenticated routes report the server's state. None is rate limited.
+
+| Route | Checks | Answers | Use it for |
+|---|---|---|---|
+| `GET /live` | Nothing | `200 {"status": "ok"}` whenever the process serves requests | Liveness probes and container healthchecks: anything that restarts the process |
+| `GET /ready` | Redis and the database | 200 when both answer, 503 when either fails | Readiness probes, load-balancer routing, start-up ordering |
+| `GET /health` | The same as `/ready` | The same response as `/ready` | Monitoring and manual checks |
+
+`/ready` and `/health` are one handler. Their body is
+`{"status": "ok" | "unhealthy", "checks": {"redis": "ok" | "error", "database": "ok" | "error"}}`
+with either status code; failure details go to the server log, never the body.
+
+Point a restarting probe at `/live` only. A probe that restarts the process on
+`/ready` or `/health` restarts every replica during a Redis or database outage,
+into the same outage. The `server/Dockerfile` `HEALTHCHECK` probes `/live`; the
+compose files' healthchecks, which order start-up, probe `/ready`.
+
+A host that mounts the app under a prefix serves the three routes under that
+prefix. The CLI's request-compression discovery reads `GET /health` and treats
+a non-2xx answer as no advertisement, so writes to a server that is not ready
+go uncompressed.
 
 ### Server lifecycle
 

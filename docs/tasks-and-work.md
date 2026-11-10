@@ -47,7 +47,9 @@ aw task update <ref> --status in_progress --assignee <your-name>
 
 The CLI exposes claim state in workspace and work views, but does not currently
 have a separate `aw claim` mutation command. Assignment plus `in_progress`
-status is the everyday ownership signal.
+status is the everyday ownership signal. Setting `in_progress` records the
+claim; changing the status to `open` or `closed` releases it in the same
+change, whether the change comes from `aw`, the HTTP API or an MCP task tool.
 
 Claim review is evidence-based, not an expiry timer. `aw work active` reports
 the age of a claim together with the claimant workspace's last activity in

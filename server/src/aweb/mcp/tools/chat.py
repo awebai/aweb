@@ -288,7 +288,7 @@ async def _wait_for_replies(
     hosted_decryptor: HostedMessageDecryptor | None,
     session_id: UUID,
     participant_did: str,
-    after: datetime,
+    after_seq: int,
     wait_seconds: int,
 ) -> tuple[list[dict], bool]:
     session_id_str = str(session_id)
@@ -299,7 +299,7 @@ async def _wait_for_replies(
     await register_waiting(redis, session_id_str, participant_did)
     await wake_chat_session_participants(aweb_db, current_agent_wake_publisher(), session_id=session_id)
     last_refresh = time.monotonic()
-    last_seen_at = after
+    last_seen_seq = after_seq
 
     try:
         while time.monotonic() < deadline:
@@ -310,7 +310,7 @@ async def _wait_for_replies(
 
             new_msgs = await aweb_db.fetch_all(
                 """
-                SELECT message_id, from_did, from_alias, from_address,
+                SELECT message_id, seq, from_did, from_alias, from_address,
                        CASE WHEN content_mode = 'encrypted_v2' THEN '' ELSE body END AS body,
                        signature, signed_payload,
                        content_mode, message_version, encrypted_envelope, created_at,
@@ -322,13 +322,13 @@ async def _wait_for_replies(
                         WHERE own.session_id = m.session_id AND own.did = $2
                           AND (m.from_did = own.did OR m.from_did = NULLIF(own.current_did_key, ''))
                     )
-                  AND created_at > $3
-                ORDER BY created_at ASC
+                  AND seq > $3
+                ORDER BY seq ASC
                 LIMIT 50
                 """,
                 session_id,
                 participant_did,
-                last_seen_at,
+                last_seen_seq,
             )
 
             if new_msgs:
@@ -339,7 +339,7 @@ async def _wait_for_replies(
                         hosted_decryptor=hosted_decryptor,
                         row=dict(row),
                     )
-                    last_seen_at = max(last_seen_at, row["created_at"])
+                    last_seen_seq = row["seq"]
                     is_hang_on = bool(row["hang_on"])
                     if is_hang_on:
                         extended = time.monotonic() + HANG_ON_EXTENSION_SECONDS
@@ -432,7 +432,7 @@ async def chat_send(
             return json.dumps({"error": error.code, "effects": "none"})
         if wait:
             row = await db_infra.get_manager("aweb").fetch_one(
-                "SELECT created_at,from_did FROM {{tables.chat_messages}} WHERE message_id=$1",
+                "SELECT seq,from_did FROM {{tables.chat_messages}} WHERE message_id=$1",
                 UUID(result["message_id"]),
             )
             replies, timed_out = await _wait_for_replies(
@@ -442,7 +442,7 @@ async def chat_send(
                 hosted_decryptor=hosted_decryptor,
                 session_id=UUID(result["session_id"]),
                 participant_did=row["from_did"],
-                after=row["created_at"],
+                after_seq=row["seq"],
                 wait_seconds=wait_seconds,
             )
             result.update(replies=replies, timed_out=timed_out)
@@ -1031,7 +1031,7 @@ async def chat_send(
             hosted_decryptor=hosted_decryptor,
             session_id=sid,
             participant_did=wait_participant_did,
-            after=msg["created_at"],
+            after_seq=msg["seq"],
             wait_seconds=wait_seconds,
         )
         result["replies"] = replies

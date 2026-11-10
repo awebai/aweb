@@ -69,6 +69,10 @@ async def _seed_recipient_and_authority(db, envelope: FederationEnvelope) -> tup
         envelope.target_did_aw,
         envelope.target_address,
     )
+    return dict(recipient), await _seed_sender_authority(db, envelope)
+
+
+async def _seed_sender_authority(db, envelope: FederationEnvelope) -> AuthoritySecurityToken:
     await db.execute(
         """
         INSERT INTO {{tables.federation_did_checkpoints}} (
@@ -103,7 +107,7 @@ async def _seed_recipient_and_authority(db, envelope: FederationEnvelope) -> tup
         "a" * 64,
         envelope.sender_delivery_origin,
     )
-    return dict(recipient), AuthoritySecurityToken(
+    return AuthoritySecurityToken(
         envelope.sender_address or "",
         envelope.sender_did_aw,
         1,

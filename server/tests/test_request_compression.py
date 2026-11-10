@@ -105,7 +105,7 @@ async def test_bad_encoding_refused_before_inner_middleware(body, encoding, stat
 
 
 @pytest.mark.asyncio
-@pytest.mark.parametrize("path,status", [("/health", 200), ("/absent", 404), ("/compression-error", 500)])
+@pytest.mark.parametrize("path,status", [("/live", 200), ("/health", 503), ("/absent", 404), ("/compression-error", 500)])
 async def test_all_responses_advertise_gzip(path, status):
     app, _ = _probe_app()
     async with httpx.AsyncClient(transport=httpx.ASGITransport(app, raise_app_exceptions=False), base_url="http://test") as client:

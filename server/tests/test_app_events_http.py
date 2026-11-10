@@ -473,6 +473,49 @@ async def test_subscription_get_accepts_internal_gateway_auth(aweb_cloud_db, mon
     assert listed.json()["subscriptions"][0]["type"] == "folio/doc.changed"
 
 
+@pytest.mark.asyncio
+@pytest.mark.parametrize("state", ["retired", "archived", "deleted", "removed", "absent"])
+async def test_subscription_get_refuses_a_forwarded_actor_that_is_not_an_active_member(
+    aweb_cloud_db, monkeypatch, state
+):
+    """The gateway forwards a read for an agent that is not an active member of the team: one whose
+    row has another status with deleted_at NULL, one that is soft-deleted, or one with no row."""
+    monkeypatch.setattr(events_routes, "get_team_identity", _fake_team_identity)
+    app = _build_events_app(aweb_cloud_db.aweb_db)
+    await _seed_team_and_agent(aweb_cloud_db.aweb_db)
+    secret = "test-internal-secret"
+    user_id = "00000000-0000-0000-0000-000000000999"
+    monkeypatch.setenv("AWEB_TRUST_PROXY_HEADERS", "true")
+    monkeypatch.setenv("AWEB_INTERNAL_AUTH_SECRET", secret)
+    actor_id = str(AGENT_ID)
+    if state == "absent":
+        actor_id = "00000000-0000-0000-0000-000000000777"
+    elif state == "removed":
+        await aweb_cloud_db.aweb_db.execute(
+            "UPDATE {{tables.agents}} SET deleted_at = NOW() WHERE agent_id = $1", AGENT_ID
+        )
+    else:
+        await aweb_cloud_db.aweb_db.execute(
+            "UPDATE {{tables.agents}} SET status = $2 WHERE agent_id = $1", AGENT_ID, state
+        )
+    auth = build_internal_auth_header_value(
+        secret=secret, team_id=TEAM_ID, principal_type="u", principal_id=user_id, actor_id=actor_id,
+    )
+
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+        listed = await client.get(
+            "/v1/events/subscriptions",
+            headers={
+                "X-AWEB-Auth": auth,
+                "X-Team-ID": TEAM_ID,
+                "X-User-ID": user_id,
+                "X-AWEB-Actor-ID": actor_id,
+            },
+        )
+
+    assert listed.status_code == 403, listed.text
+
+
 async def _emit_doc_changed(app, *, signing_key: bytes, did_key: str, team_id: str, kid: str):
     body = json.dumps(
         {"type": "folio/doc.changed", "resource_ref": "pitch", "payload": {}},
