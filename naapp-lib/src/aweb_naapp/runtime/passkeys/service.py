@@ -46,7 +46,7 @@ from urllib.parse import urlsplit
 from awid.signing import canonical_json_bytes
 from pgdbm import AsyncDatabaseManager, AsyncMigrationManager
 from pgdbm.core import TransactionManager
-from webauthn import generate_authentication_options, generate_registration_options
+from webauthn import generate_authentication_options
 from webauthn.helpers import (
     base64url_to_bytes,
     bytes_to_base64url,
@@ -55,9 +55,7 @@ from webauthn.helpers import (
 )
 from webauthn.helpers.exceptions import WebAuthnException
 from webauthn.helpers.structs import (
-    AuthenticatorSelectionCriteria,
     PublicKeyCredentialDescriptor,
-    ResidentKeyRequirement,
     UserVerificationRequirement,
 )
 
@@ -104,6 +102,7 @@ from aweb_naapp.runtime.passkeys.proof import (
 from aweb_naapp.runtime.passkeys.rp import RelyingParty
 from aweb_naapp.runtime.passkeys.webauthn import (
     WebAuthnRefused,
+    registration_options,
     verify_assertion,
     verify_registration,
 )
@@ -1218,6 +1217,7 @@ class Passkeys:
         evidence_ref: str,
         *,
         tx: TransactionManager | None = None,
+        hold: bool = True,
     ) -> bool:
         """Whether this login's exact credential still permits the session.
 
@@ -1225,14 +1225,17 @@ class Passkeys:
         With tx, hold the approver then credential FOR SHARE through the caller's
         fenced action transaction, in retirement order. Without tx, use a short
         owned transaction. The caller separately checks its session expiry and
-        application authority. This read confers no additional authority.
+        application authority. With hold=False this is a local predicate only:
+        the caller already holds its complete prepared B3 union, or uses a
+        negative result solely to refuse. It takes no new upstream locks.
+        This read confers no additional authority.
         """
         if tx is None:
             async with self.db.transaction() as own:
-                return await self.login_evidence_is_current(scope, subject, evidence_ref, tx=own)
+                return await self.login_evidence_is_current(scope, subject, evidence_ref, tx=own, hold=hold)
         current = await tx.fetch_value(
             "SELECT subject FROM {{tables.passkey_approvers}} "
-            f"WHERE scope=$1 AND {_CURRENT} AND subject=$3 FOR SHARE",
+            f"WHERE scope=$1 AND {_CURRENT} AND subject=$3" + (" FOR SHARE" if hold else ""),
             scope,
             self._clock(),
             subject,
@@ -1244,7 +1247,7 @@ class Passkeys:
                 "SELECT 1 FROM {{tables.passkey_assertions}} e "
                 "JOIN {{tables.passkey_credentials}} c ON c.credential_id=e.credential_id "
                 "AND c.subject=e.subject WHERE e.evidence_ref=$1 AND e.subject=$2 "
-                "AND e.purpose='login' AND c.revoked_at IS NULL FOR SHARE OF c",
+                "AND e.purpose='login' AND c.revoked_at IS NULL" + (" FOR SHARE OF c" if hold else ""),
                 evidence_ref,
                 subject,
             )
@@ -1408,20 +1411,13 @@ class Passkeys:
             nonce,
             enrolment_id=enrolment["enrolment_id"],
         )
-        options = generate_registration_options(
-            rp_id=self.rp.rp_id,
-            rp_name=self.rp.name,
-            user_id=enrolment["subject"].encode("utf-8"),
-            user_name=enrolment["contact"],
-            user_display_name=enrolment["contact"],
+        return registration_options(
+            rp=self.rp,
+            subject=enrolment["subject"],
+            display_name=enrolment["contact"],
             challenge=challenge,
             timeout=int(self._challenge_ttl.total_seconds() * 1000),
-            authenticator_selection=AuthenticatorSelectionCriteria(
-                resident_key=ResidentKeyRequirement.PREFERRED,
-                user_verification=UserVerificationRequirement.REQUIRED,
-            ),
         )
-        return options_to_json_dict(options)
 
     async def complete_enrolment(
         self,

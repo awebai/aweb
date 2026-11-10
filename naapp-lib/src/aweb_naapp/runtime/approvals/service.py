@@ -23,6 +23,7 @@ import json
 import logging
 import uuid
 from collections.abc import Callable, Mapping, Sequence
+from contextlib import AsyncExitStack
 from dataclasses import replace
 from datetime import UTC, datetime
 from typing import Any, overload
@@ -44,6 +45,7 @@ from aweb_naapp.runtime.approvals.model import (
     ActionPolicy,
     Admission,
     Approval,
+    ApprovalDecisionFence,
     ApprovalDelivery,
     ApprovalRefused,
     ApprovalState,
@@ -706,13 +708,22 @@ class Approvals:
         task_answer_ref: str | None = None,
         subject: str | None = None,
         tx: TransactionManager | None = None,
+        fence: ApprovalDecisionFence | None = None,
     ) -> Approval:
         """Record one candidate's verified decision; the first decision is the
         only one. A link presentation uses its link and revokes every other
         candidate's. A task presentation names its candidate with `subject` and
         needs both the app's verification of its task answer, given by that
         candidate's principal, and the authenticator proof bound to that
-        answer; until both verify the approval stays pending."""
+        answer; until both verify the approval stays pending.
+
+        An optional fence prepares the caller's complete authority after fresh
+        assertion verification and before B2 locks, then checks it after the
+        decision/audit in the same effect transaction. No owned transaction is
+        acquired across the verifier's separate checkout. A final refusal
+        rolls back the decision/audit, even when a caller catches it in tx;
+        the fresh assertion stays spent.
+        """
         approval, candidate, link_id = await self._presented(
             await self._store.get(approval_id), link_token, task_answer_ref, subject, deciding=True
         )
@@ -723,7 +734,15 @@ class Approvals:
             approval, candidate, decision.purpose, assurance, proof, task_answer_ref
         )
 
-        async with self._store.locked(approval_id, tx) as locked:
+        async with AsyncExitStack() as stack:
+            effect_tx = tx
+            if fence is not None:
+                if effect_tx is None:
+                    effect_tx = await stack.enter_async_context(self._store.transaction(None))
+                await fence.prepare(effect_tx)
+            # Keep the store's decision savepoint open through the final fence,
+            # so catching a refusal in a caller-owned tx cannot commit B2 writes.
+            locked = await stack.enter_async_context(self._store.locked(approval_id, effect_tx))
             current = self._check_pending(locked.approval)
             # Eligibility again under the lock: a retirement serialises with
             # this decision on the approval row, so one committed during the
@@ -754,6 +773,9 @@ class Approvals:
                 authenticator=decided_by.assurance.value,
                 evidence_ref=decided_by.evidence_ref,
             )
+            if fence is not None:
+                assert effect_tx is not None
+                await fence.check(effect_tx)
         return decided
 
     # The owner

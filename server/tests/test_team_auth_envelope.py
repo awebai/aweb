@@ -10,9 +10,10 @@ from urllib.parse import urlsplit
 import pytest
 from starlette.requests import Request
 
-from awid.signing import canonical_json_bytes, verify_did_key_signature
+from awid.signing import canonical_json_bytes, sign_message, verify_did_key_signature
 from aweb.team_auth_envelope import (
     compact_team_auth_payload,
+    identity_auth_signature_payload,
     raw_request_target,
     team_auth_signature_payload,
 )
@@ -213,6 +214,65 @@ def test_team_auth_envelope_v2_conformance_vector() -> None:
         )
         assert envelope.version == vector["version"]
         assert envelope.canonical_payload == canonical
+
+
+def _identity_request(payload: dict, signed_payload: bytes) -> Request:
+    target = urlsplit(payload["path"])
+    return _request(
+        method=payload["method"],
+        path=target.path,
+        query_string=target.query.encode(),
+        signed_payload=signed_payload,
+    )
+
+
+def test_identity_auth_envelope_v2_conformance_vector() -> None:
+    vector = _load_vector()
+    cases = vector["identity_cases"]
+    did_aw_values = {case["payload"]["did_aw"] for case in cases}
+    assert "" in did_aw_values
+    assert any(did_aw_values - {""})
+
+    for case in cases:
+        payload = case["payload"]
+        canonical = case["canonical_payload"].encode()
+        assert "team_id" not in payload
+        assert canonical_json_bytes(payload) == canonical
+        assert _b64url(canonical) == case["signed_payload_b64url"]
+        assert sign_message(bytes.fromhex(case["seed_hex"]), canonical) == case["signature_b64"]
+        envelope = identity_auth_signature_payload(
+            _identity_request(payload, canonical),
+            did_aw=payload["did_aw"],
+            timestamp=payload["timestamp"],
+            body_sha256=hashlib.sha256(case["body"].encode()).hexdigest(),
+            allowed_audiences=[payload["aud"]],
+        )
+        assert envelope.version == vector["version"]
+        assert envelope.canonical_payload == canonical
+        verify_did_key_signature(
+            did_key=case["did_key"],
+            payload=envelope.canonical_payload,
+            signature_b64=case["signature_b64"],
+        )
+
+
+def test_identity_auth_envelope_v2_refuses_missing_did_aw() -> None:
+    cases = _load_vector()["identity_cases"]
+    assert cases
+
+    for case in cases:
+        payload = case["payload"]
+        without_claim = dict(payload)
+        without_claim.pop("did_aw")
+
+        with pytest.raises(ValueError, match="signed request payload does not match request"):
+            identity_auth_signature_payload(
+                _identity_request(payload, canonical_json_bytes(without_claim)),
+                did_aw=payload["did_aw"],
+                timestamp=payload["timestamp"],
+                body_sha256=hashlib.sha256(case["body"].encode()).hexdigest(),
+                allowed_audiences=[payload["aud"]],
+            )
 
 
 def test_team_auth_envelope_v2_conformance_negative_cases() -> None:
