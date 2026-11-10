@@ -1150,14 +1150,14 @@ class Containment:
         # and holder AFTER acquiring it, so a completed retirement is seen and
         # a concurrent retirement commits after this narrowing action.
         await self.approvals.lock_many(tx, [approval_id])
-        approval = await self.approvals.get(approval_id)
+        approval = await self.approvals.get(approval_id, tx=tx)
         if approval is not None:
             current_scopes = set()
             for candidate in approval.candidates:
                 if (
                     candidate.principal_did == principal_did
                     and candidate.retired_at is None
-                    and await self.passkeys.is_current(candidate.scope, candidate.subject)
+                    and await self.passkeys.is_current(candidate.scope, candidate.subject, tx=tx)
                 ):
                     current_scopes.add(candidate.scope)
             if all(scopes.intersection(current_scopes) for scopes in scope_sets):

@@ -103,6 +103,10 @@ class ApprovalStore(Protocol):
 
     async def get_by_request(self, request_ref: str) -> Approval | None: ...
 
+    async def get_by_request_in(
+        self, request_ref: str, tx: TransactionManager
+    ) -> Approval | None: ...
+
     async def request_canonical(self, request_ref: str) -> bytes: ...
 
     async def find_link(self, verifier_sha256: str) -> ApprovalLink | None: ...
@@ -435,6 +439,17 @@ class PgApprovalStore:
             await t.fetch_one(
                 f"SELECT {_APPROVAL_COLUMNS} FROM {{{{tables.approvals}}}} WHERE approval_id=$1",
                 approval_id,
+            ),
+        )
+
+    async def get_by_request_in(self, request_ref: str, tx: TransactionManager) -> Approval | None:
+        """Request association on the supplied connection, without another checkout."""
+        t = TransactionManager(tx.connection, self.db)
+        return await _with_candidates(
+            t,
+            await t.fetch_one(
+                f"SELECT {_APPROVAL_COLUMNS} FROM {{{{tables.approvals}}}} WHERE request_ref=$1",
+                request_ref,
             ),
         )
 

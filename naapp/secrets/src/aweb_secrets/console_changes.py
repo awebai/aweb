@@ -403,7 +403,7 @@ class ConsoleChanges:
         async with self.console.db.transaction() as tx:
             await self._owner(tx, current, admitted)
             row = await self._row(tx, admitted, change_id)
-            approval = await self.approvals.get(row["approval_id"])
+            approval = await self.approvals.get(row["approval_id"], tx=tx)
             if approval is None or approval.decided_by is None:
                 raise HTTPException(409, "change_not_approved")
             if (approval.decided_by.scope, approval.decided_by.subject) != (

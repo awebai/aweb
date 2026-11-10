@@ -17,6 +17,7 @@ from aweb_naapp.runtime.approvals import (
     ApprovalState,
     Assurance,
     Decision,
+    DispatchOutcome,
     PgApprovalStore,
 )
 from aweb_naapp.runtime.installation import InstallationFence, apply_installation_migrations
@@ -95,8 +96,9 @@ def waits_for(rows, pid, holder):
 
 
 @pytest.mark.parametrize("database_policy", [False, True], ids=["directory", "policy"])
-async def test_five_fenced_deciders_do_not_checkout_a_sixth_connection(
-    test_db_factory, registry, database_policy
+@pytest.mark.parametrize("phase", ["mint", "decide", "admit", "retry"])
+async def test_five_fenced_operations_do_not_checkout_a_sixth_connection(
+    test_db_factory, registry, database_policy, phase
 ):
     world = await passkey_world(
         test_db_factory,
@@ -135,7 +137,22 @@ async def test_five_fenced_deciders_do_not_checkout_a_sixth_connection(
         )
         approval = await world.approvals.for_request(view.request_id)
         proof = await ceremony(world, approval, device)
-        pending.append((approval, proof))
+        if phase in ("admit", "retry"):
+            await world.approvals.decide(
+                approval.approval_id,
+                Decision.APPROVE,
+                Assurance.PASSKEY,
+                proof,
+                link_token=world.contacts.by_approval[approval.approval_id],
+            )
+        if phase == "retry":
+            await world.approvals.admit(
+                approval.approval_id, {"operation": "charge", "item": index}, str(index)
+            )
+            await world.approvals.record_outcome(
+                approval.approval_id, str(index), DispatchOutcome.NOT_SENT
+            )
+        pending.append((approval, proof, ref, index))
 
     current = grant(ttl=60)
     effects = FencedEffects(
@@ -147,20 +164,37 @@ async def test_five_fenced_deciders_do_not_checkout_a_sixth_connection(
     pool = db._pool
     assert pool is not None and pool.get_max_size() == 5
     tasks = []
-    try:
-        for approval, proof in pending:
-            tasks.append(
-                asyncio.create_task(
-                    world.approvals.decide(
-                        approval.approval_id,
-                        Decision.APPROVE,
-                        Assurance.PASSKEY,
-                        proof,
-                        link_token=world.contacts.by_approval[approval.approval_id],
-                        fence=effects,
-                    )
-                )
+
+    async def run(approval, proof, ref, index):
+        if phase == "decide":
+            return await world.approvals.decide(
+                approval.approval_id,
+                Decision.APPROVE,
+                Assurance.PASSKEY,
+                proof,
+                link_token=world.contacts.by_approval[approval.approval_id],
+                fence=effects,
             )
+        async with db.transaction() as tx:
+            await effects.prepare(tx)
+            request = {"operation": "charge", "item": index}
+            if phase == "mint":
+                result = await world.approvals.mint(
+                    request={**request, "round": "fenced"},
+                    policy_ref=ref,
+                    requested_by="agent-1",
+                    tx=tx,
+                )
+            else:
+                result = await world.approvals.admit(
+                    approval.approval_id, request, str(index), tx=tx
+                )
+            await effects.check(tx)
+            return result
+
+    try:
+        for arguments in pending:
+            tasks.append(asyncio.create_task(run(*arguments)))
         await asyncio.wait_for(effects.first.wait(), 5)
         async with asyncio.timeout(5):
             while True:
@@ -185,12 +219,19 @@ async def test_five_fenced_deciders_do_not_checkout_a_sixth_connection(
             pytest.fail(
                 "pool starvation: retained F6 holder needs a sixth checkout; " + json.dumps(rows)
             )
-        assert all(task.result().state is ApprovalState.APPROVED for task in tasks)
+        results = [task.result() for task in tasks]
+        if phase == "decide":
+            assert all(result.state is ApprovalState.APPROVED for result in results)
+            kind, count = "approval_decided", 5
+        elif phase == "mint":
+            assert all(result.approval.state is ApprovalState.PENDING for result in results)
+            kind, count = "approval_requested", 10
+        else:
+            assert all(result.may_send and result.first == (phase == "admit") for result in results)
+            kind, count = "dispatch_admitted", 10 if phase == "retry" else 5
         assert (
-            await db.fetch_value(
-                "SELECT count(*) FROM {{tables.audit_outbox}} WHERE kind='approval_decided'"
-            )
-            == 5
+            await db.fetch_value("SELECT count(*) FROM {{tables.audit_outbox}} WHERE kind=$1", kind)
+            == count
         )
     finally:
         effects.release.set()

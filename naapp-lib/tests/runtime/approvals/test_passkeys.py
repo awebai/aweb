@@ -108,17 +108,17 @@ class MappedApprovers:
         self.passkeys = passkeys
         self.principals: dict[str, str] = {}
 
-    async def candidates(self, policy, request) -> list[Approver]:
+    async def candidates(self, policy, request, *, tx=None) -> list[Approver]:
         return [
             replace(
                 approver,
                 principal_did=self.principals.get(approver.subject, approver.principal_did),
             )
-            for approver in await self.passkeys.candidates(policy, request)
+            for approver in await self.passkeys.candidates(policy, request, tx=tx)
         ]
 
-    async def is_current(self, scope: str, subject: str) -> bool:
-        return await self.passkeys.is_current(scope, subject)
+    async def is_current(self, scope: str, subject: str, *, tx=None) -> bool:
+        return await self.passkeys.is_current(scope, subject, tx=tx)
 
 
 @dataclass

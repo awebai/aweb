@@ -489,6 +489,17 @@ the final fence. Do not expose prepared handles through model-visible tools.
   capability. The requester rule compares `requested_by` with each approver's
   subject and, when set, their `principal_did`, at mint and again at decide,
   so the app names the requester the same way.
+- **Provider transactions.** `PolicySource.current`,
+  `ApproverDirectory.candidates` and `ApproverDirectory.is_current` accept
+  keyword `tx=None`. When supplied, every SQL read, including nested owner,
+  policy and B3 lookups, uses that caller connection; providers never take a
+  second pool connection while the caller retains its installation fence.
+  Mint and decision/admission rechecks pass the original effect transaction,
+  so its uncommitted role changes are visible and share commit or rollback.
+  `Approvals.get`, `for_request` and `requester_view` also accept `tx` for
+  fenced reads. Fresh authenticator verification remains before effect-fence
+  preparation, with its separately committed assertion; these read adapters
+  neither replace the verifier nor move verification under authority locks.
 - **One decision.** Any one candidate decides, and the first approve or reject
   is the only one: it is recorded as `decided_by` (scope, subject, assurance,
   evidence ref) and every other candidate's link is revoked. A failed ceremony
