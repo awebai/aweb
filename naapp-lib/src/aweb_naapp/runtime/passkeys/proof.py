@@ -101,7 +101,8 @@ def is_public_cose_key(cose: bytes) -> bool:
         return -4 not in key
     if key[1] == 3:  # RSA: only n/e are public negative-label parameters.
         return not any(label in key for label in (-3, -4, -5, -6, -7, -8, -9))
-    return True
+    # Any other type, symmetric (4) included, has no public-only form here.
+    return False
 
 
 def _require(condition: bool) -> None:

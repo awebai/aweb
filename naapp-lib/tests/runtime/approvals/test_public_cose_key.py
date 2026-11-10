@@ -43,3 +43,24 @@ def test_an_rsa_key_with_any_private_parameter_is_refused(label: int) -> None:
 )
 def test_anything_but_one_complete_cose_key_is_refused(encoded: bytes) -> None:
     assert not is_public_cose_key(encoded)
+
+
+@pytest.mark.parametrize(
+    "key",
+    [
+        {1: 1, 3: -8, -1: 6, -2: os.urandom(32)},
+        {1: 3, 3: -257, -1: os.urandom(256), -2: b"\x01\x00\x01"},
+    ],
+    ids=["okp", "rsa"],
+)
+def test_a_public_okp_or_rsa_key_is_public(key: dict) -> None:
+    assert is_public_cose_key(cbor2.dumps(key))
+
+
+@pytest.mark.parametrize(
+    "key",
+    [{1: 4, -1: os.urandom(32)}, {1: 999, -1: os.urandom(32)}],
+    ids=["symmetric", "unknown-type"],
+)
+def test_a_symmetric_or_unknown_key_type_is_refused(key: dict) -> None:
+    assert not is_public_cose_key(cbor2.dumps(key))
