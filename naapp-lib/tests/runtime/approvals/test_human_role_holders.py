@@ -302,9 +302,9 @@ async def test_one_credential_binds_one_holding_when_two_are_designated_at_once(
     member = holder()
     db = pw.passkeys.db
     waiting_inserts = (
-        "SELECT count(*) FROM pg_locks l JOIN pg_class c ON c.oid = l.relation "
-        "WHERE l.database = (SELECT oid FROM pg_database WHERE datname = current_database()) "
-        "AND c.relname = 'passkey_credentials' AND l.mode = 'RowExclusiveLock' AND NOT l.granted"
+        "SELECT count(*) FROM pg_locks "
+        "WHERE relation = '{{tables.passkey_credentials}}'::regclass "
+        "AND mode = 'RowExclusiveLock' AND NOT granted"
     )
     writers = None
     try:
