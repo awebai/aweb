@@ -221,6 +221,7 @@ async def setup(uses, *, approval_required=False, producer_clock=None):
         return targets(uses.clock()) if available[0] else None
 
     arguments = dict(
+        redaction=uses.world.custody.run_redaction,
         fence=InstallationFence(db, app_id="secrets", grants=RunInstallations()),
         opener=UseSecretOpener(
             db,

@@ -8,6 +8,7 @@ from collections.abc import AsyncIterator
 from types import SimpleNamespace
 
 import pytest
+from aweb_naapp.console import apply_console_migrations
 from aweb_naapp.roles import (
     PrincipalKey,
     apply_roles_migrations,
@@ -17,9 +18,14 @@ from aweb_naapp.roles import (
 from aweb_naapp.runtime.authorization import Grant
 from aweb_naapp.runtime.clock import seconds_to_ns
 from aweb_naapp.runtime.installation import InstallationRefused, apply_installation_migrations
-from pgdbm import AsyncDatabaseManager
+from aweb_naapp.runtime.passkeys.service import MIGRATION_MODULE as PASSKEY_MODULE
+from aweb_naapp.runtime.passkeys.service import MIGRATIONS as PASSKEY_MIGRATIONS
+from pgdbm import AsyncDatabaseManager, AsyncMigrationManager
 
-from aweb_secrets.app import installation_fence
+from aweb_secrets.app import MIGRATIONS_PATH, MODULE_NAME, installation_fence
+from aweb_secrets.change_sets import apply_change_set_migrations
+from aweb_secrets.custody import apply_custody_migrations
+from aweb_secrets.owners import apply_owner_migrations
 
 TEAM = "backend:acme.com"
 OTHER_TEAM = "frontend:acme.com"
@@ -69,6 +75,19 @@ async def db(test_db_factory) -> AsyncIterator[AsyncDatabaseManager]:
     database = await test_db_factory.create_db(suffix="secrets_reinstall")
     await apply_installation_migrations(database)
     await apply_roles_migrations(database)
+    await AsyncMigrationManager(
+        database, migrations_path=str(MIGRATIONS_PATH), module_name=MODULE_NAME
+    ).apply_pending_migrations()
+    for migrate in (
+        apply_owner_migrations,
+        apply_custody_migrations,
+        apply_change_set_migrations,
+        apply_console_migrations,
+    ):
+        await migrate(database)
+    await AsyncMigrationManager(
+        database, migrations_path=str(PASSKEY_MIGRATIONS), module_name=PASSKEY_MODULE
+    ).apply_pending_migrations()
     yield database
 
 

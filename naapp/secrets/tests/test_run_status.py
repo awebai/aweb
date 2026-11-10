@@ -74,12 +74,12 @@ async def test_aggregate_run_approval_status_requires_a_fresh_submission(uses):
     assert (await context.service.claim(context.signed("/runner/v1/claim"))).status == 204
 
 
-@pytest.mark.parametrize("withheld", [False, True])
-async def test_only_original_requester_receives_stored_run_output(uses, withheld):
+@pytest.mark.parametrize("new_worker", [False, True])
+async def test_only_original_requester_receives_stored_run_output(uses, new_worker):
     context = await setup(uses)
     admitted, _, wire = await context.assigned()
     dispatch_ref = wire["assignment"]["dispatch_id"]
-    reporter = RunDispatch(uses.world.db, **context.arguments) if withheld else context.service
+    reporter = RunDispatch(uses.world.db, **context.arguments) if new_worker else context.service
     await reporter.result(
         dispatch_ref, context.signed(f"/runner/v1/dispatches/{dispatch_ref}/result", report())
     )

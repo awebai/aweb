@@ -689,3 +689,18 @@ async def test_outer_admission_trace_input_is_not_retained_as_free_text(db, fenc
     (event,) = await envelopes(db)
     assert event["trace"]["origin"] == "producer"
     assert canary not in json.dumps(event)
+
+
+@pytest.mark.parametrize(
+    "table", ["broker_audit_contexts", "broker_use_events", "use_contexts", "intents"]
+)
+@pytest.mark.parametrize("operation", ["DELETE FROM", "TRUNCATE TABLE"])
+async def test_durable_broker_history_refuses_deletion_and_truncation(db, fence, table, operation):
+    request, admitted, dispatch_id, state = await prepared(db, fence)
+    async with db.transaction() as tx:
+        await state.admit(tx, dispatch_id, fence=authority(fence, admitted, request, dispatch_id))
+    with pytest.raises(asyncpg.RaiseError):
+        async with db.transaction() as tx:
+            suffix = " CASCADE" if operation == "TRUNCATE TABLE" else ""
+            await tx.execute(f"{operation} {{{{tables.{table}}}}}{suffix}")
+    assert await db.fetch_value(f"SELECT count(*) FROM {{{{tables.{table}}}}}") > 0
