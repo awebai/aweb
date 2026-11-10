@@ -496,8 +496,13 @@ persist the resulting absolute deadline. A non-positive budget refuses.
 Adding an earlier budget to a later timestamp would extend authority and is
 forbidden. Persisting or queueing may consume that budget; it never extends it.
 
-The final fence compares the persisted deadline against the same database
-clock, sampled after its last lock wait. Dequeue, cache hits, retries and lock
+There are two checkpoints, each after its own last effect-lock wait: the
+admission transaction checks before its approval/intent commit, and the
+dispatch or runner-claim transaction checks before its effect commit. Both
+compare the anchored deadline against the same database clock. An expired
+admission transaction rolls back with no consumed approval and no committed
+intent. A later dispatch/claim refusal preserves earlier consumption and
+closes that intent refused, as stated above. Dequeue, cache hits, retries and lock
 acquisition never rebase the deadline. The consumer inventory must cover
 admission, persistence, cross-worker queue claim, approval consumption and
 credential release using that representation. Expiry is the existing shared
@@ -629,7 +634,7 @@ direct-naapp consumers:
 | Direct member versus inherited leaf | Only inherited result exposes verified policy/root/ordered ancestors; caller fields cannot substitute. |
 | Membership deadline expires during the last effect-lock wait | Local refusal; no newly consumed approval in the failed transaction, no assignment/release/send. Earlier committed admission consumption is not undone. Short wait with unexpired evidence succeeds. |
 | Runner claims queued job after membership deadline, including another worker | 503 `current_membership_unavailable`; intent closes refused, admission approval stays consumed; no assignment, credential release or send. Recovery needs a fresh request and fresh approval where required. |
-| Evidence expires while its deadline is persisted | DB-first timestamp plus later rounded-down remaining budget does not extend authority; admission refuses before commit with no approval consumed, assignment, credential release or send. |
+| Evidence expires during the admission transaction lock wait or deadline persistence | DB-first timestamp plus later rounded-down remaining budget does not extend authority; admission refuses before commit with no approval consumed, assignment, credential release or send. |
 | Local B reused across teams | Existing local-scope refusal; distinct local children or existing global B are the valid neighbors. |
 | T1 succeeds while T2 refuses in a selected set | Exact per-team receipt; no T2 access, no hidden rollback or silent overall success. |
 | Old client receives inherited proof | Unsupported/authentication refusal; existing v1 certificate still works. |
