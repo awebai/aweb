@@ -400,12 +400,19 @@ async def _get_revoked_certificates(request: Request, team_id: str) -> set[str]:
 
     Raises HTTPException(503) if awid is unreachable.
     """
+    return await revoked_certificates(getattr(request.app.state, "awid_registry_client", None), team_id)
+
+
+async def revoked_certificates(registry_client, team_id: str) -> set[str]:
+    """The revoked certificate IDs of a team, read through this registry client.
+
+    Raises HTTPException(503) if awid is unreachable.
+    """
     try:
         domain, team_name = parse_team_id(team_id)
     except ValueError:
         return set()
 
-    registry_client = getattr(request.app.state, "awid_registry_client", None)
     if registry_client is None:
         raise awid_registry_not_configured_exception(operation="AWID team revocation check")
 
@@ -432,12 +439,16 @@ async def _get_registered_certificates(request: Request, team_id: str) -> set[st
     staleness allowance, fail closed with 503 — an existence check must not
     silently fail open.
     """
+    return await registered_certificates(getattr(request.app.state, "awid_registry_client", None), team_id)
+
+
+async def registered_certificates(registry_client, team_id: str) -> set[str]:
+    """The certificate IDs the AWID registry knows for a team, read through this registry client."""
     try:
         domain, team_name = parse_team_id(team_id)
     except ValueError:
         return set()
 
-    registry_client = getattr(request.app.state, "awid_registry_client", None)
     if registry_client is None:
         raise awid_registry_not_configured_exception(operation="AWID certificate existence check")
 

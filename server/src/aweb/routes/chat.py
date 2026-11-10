@@ -788,12 +788,12 @@ async def _resolve_chat_targets(
             target = resolve_alias_target(auth.team_id, alias, field="to_aliases")
             if not await team_exists(db, target.team_id):
                 raise HTTPException(status_code=404, detail=f"Unknown team: {target.team_id}")
-            row = await messaging_participant_by_alias(db, team_id=target.team_id, alias=target.alias, selected_team_id=auth.team_id, request=request)
+            row = await messaging_participant_by_alias(db, team_id=target.team_id, alias=target.alias, selected_team_id=auth.team_id, registry_client=getattr(request.app.state, "awid_registry_client", None))
             if row is None:
                 raise HTTPException(status_code=404, detail=f"Unknown aliases: {alias}")
             target_rows.append(row)
         if local_aliases:
-            local_rows = await messaging_participants_by_aliases(db, team_id=auth.team_id, aliases=local_aliases, selected_team_id=auth.team_id, request=request)
+            local_rows = await messaging_participants_by_aliases(db, team_id=auth.team_id, aliases=local_aliases, selected_team_id=auth.team_id, registry_client=getattr(request.app.state, "awid_registry_client", None))
             resolved_aliases = {row["alias"] for row in local_rows}
             missing = [alias for alias in local_aliases if alias not in resolved_aliases]
             if missing:

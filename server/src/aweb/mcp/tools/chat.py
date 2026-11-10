@@ -477,7 +477,7 @@ async def chat_send(
         if to_alias:
             if auth.team_id is None:
                 return json.dumps({"error": "to_alias requires team context"})
-            target = await messaging_participant_by_alias(db_infra, team_id=auth.team_id, alias=to_alias.strip(), selected_team_id=auth.team_id, request=auth.request)
+            target = await messaging_participant_by_alias(db_infra, team_id=auth.team_id, alias=to_alias.strip(), selected_team_id=auth.team_id, registry_client=mcp_messaging_runtime(auth).registry_client)
             if not target:
                 return json.dumps({"error": f"Agent '{to_alias}' not found in team"})
         elif to_did:

@@ -561,7 +561,8 @@ async def send_mail(
         if not auth.team_id:
             return json.dumps({"error": "Alias delivery requires team context"})
         recipient = await messaging_participant_by_alias(
-            db_infra, team_id=auth.team_id, alias=recipient_ref, selected_team_id=auth.team_id, request=auth.request,
+            db_infra, team_id=auth.team_id, alias=recipient_ref, selected_team_id=auth.team_id,
+            registry_client=mcp_messaging_runtime(auth).registry_client,
         )
         if recipient is not None:
             recipient_did = (recipient.get("did_aw") or recipient.get("did_key") or "").strip()

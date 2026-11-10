@@ -230,7 +230,9 @@ async def _target(request, payload, auth, db, kind, session_id):
         raise ContractError("unsupported", "native pair ingress")
     recipient = None
     if aliases:
-        recipient = await _resolve_message_alias(db, auth, aliases[0], request=request)
+        recipient = await _resolve_message_alias(
+            db, auth, aliases[0], getattr(request.app.state, "awid_registry_client", None),
+        )
     elif dids:
         recipient = await resolve_agent_by_did(db, dids[0])
     elif kind == "mail" and getattr(payload, "to_agent_id", None):
