@@ -58,8 +58,7 @@ async def test_signed_value_ingress_requires_its_factory_before_staging(
         assert await w.db.fetch_value("SELECT count(*) FROM {{tables.sealed_versions}}") == 0
 
 
-@pytest.mark.parametrize("prepared", [True, False], ids=["same-factory", "missing-factory"])
-async def test_signed_containment_prepares_before_removing_a_role(journey, tmp_path, prepared):
+async def containment_service(journey, tmp_path, *, prepared=True):
     w = journey.world
     await apply_custody_migrations(w.db)
     await apply_idempotency_migrations(w.db)
@@ -74,7 +73,7 @@ async def test_signed_containment_prepares_before_removing_a_role(journey, tmp_p
         authenticators=[w.passkeys.authenticator()],
         audit=Audit(w.db),
     )
-    service = Containment(
+    return Containment(
         db=w.db,
         fence=w.console.fence,
         approvals=approvals,
@@ -86,6 +85,12 @@ async def test_signed_containment_prepares_before_removing_a_role(journey, tmp_p
         credential_audit=w.credential_audit,
         prepare_key_bound=journey.factory.prepare if prepared else None,
     )
+
+
+@pytest.mark.parametrize("prepared", [True, False], ids=["same-factory", "missing-factory"])
+async def test_signed_containment_prepares_before_removing_a_role(journey, tmp_path, prepared):
+    w = journey.world
+    service = await containment_service(journey, tmp_path, prepared=prepared)
     target = PrincipalKey(w.admitted.team_id, journey.member.did_key)
     role = "secrets.role.deployers"
     async with w.db.transaction() as tx:
