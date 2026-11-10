@@ -970,11 +970,12 @@ class RunDispatch:
                 original.dispatch_id,
             )
             await tx.execute(
-                "UPDATE {{tables.run_deliveries}} SET assignment=$2,issued_at=$3,expires_at=$4 WHERE dispatch_id=$1",
+                "UPDATE {{tables.run_deliveries}} SET assignment=$2,issued_at=$3,expires_at=$4,assignment_attempt=$5 WHERE dispatch_id=$1",
                 original.dispatch_id,
                 wire,
                 issued,
                 expires,
+                current.attempts,
             )
             await self._consume(tx, submission, grant)
             # Nonce/outbox/sealing await work too: the sole aggregate final
@@ -1156,7 +1157,13 @@ class RunDispatch:
                     response_status=None if audit is None else str(audit["upstream_status_code"]),
                     tx=tx,
                 )
-        return await record(tx, original.dispatch_id, dict(reply.body))
+        attempt = await tx.fetch_value(
+            "SELECT assignment_attempt FROM {{tables.run_deliveries}} WHERE dispatch_id=$1",
+            original.dispatch_id,
+        )
+        if type(attempt) is not int:
+            raise UseAuditUnavailable()
+        return await record(tx, original.dispatch_id, dict(reply.body), expected_attempt=attempt)
 
     async def result(self, dispatch_ref: str, submission: RunnerSubmission) -> RunnerReply:
         parsed = parse_request(submission.header)

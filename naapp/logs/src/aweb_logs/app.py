@@ -86,6 +86,27 @@ async def admit_members(request: Request, principal: Principal, tool: DeclaredTo
     return True
 
 
+def create_runtime(
+    settings: LogsSettings,
+    hooks: HookEgress,
+    *,
+    awid_transport: httpx.AsyncBaseTransport | None = None,
+    team_server_transport: httpx.AsyncBaseTransport | None = None,
+) -> NaappRuntime:
+    """logs' runtime: its schema, its manifest and its hook events leaving through ``hooks``."""
+    return NaappRuntime(
+        settings,
+        module_name=MIGRATIONS_MODULE,
+        migrations_path=MIGRATIONS_PATH,
+        manifest_path=MANIFEST_PATH,
+        awid_transport=awid_transport,
+        team_server_transport=team_server_transport,
+        hook_egress=hooks.egress,
+        hook_internal_cidr=hooks.internal_cidr,
+        hook_internal_origins=hooks.internal_origins,
+    )
+
+
 def create_app(
     settings: LogsSettings,
     *,
@@ -99,16 +120,8 @@ def create_app(
     enrolment links of designated readers. Hook events leave through the guard
     the settings configure; ``resolver`` replaces its DNS resolver."""
     hooks = HookEgress.from_settings(settings, resolver=resolver)
-    runtime = NaappRuntime(
-        settings,
-        module_name=MIGRATIONS_MODULE,
-        migrations_path=MIGRATIONS_PATH,
-        manifest_path=MANIFEST_PATH,
-        awid_transport=awid_transport,
-        team_server_transport=team_server_transport,
-        hook_egress=hooks.egress,
-        hook_internal_cidr=hooks.internal_cidr,
-        hook_internal_origins=hooks.internal_origins,
+    runtime = create_runtime(
+        settings, hooks, awid_transport=awid_transport, team_server_transport=team_server_transport
     )
     signer = chain_signer(settings, runtime.manifest)
     authorized = runtime.authorized(grants=runtime.installation_grants(), policy=admit_members)
@@ -191,6 +204,7 @@ def create_app(
 
 
 def serve() -> OriginApps:
-    """The service for this deployment, configured from its ``LOGS_`` environment,
-    its mail from ``LOGS_EMAIL_*``: ``uvicorn aweb_logs.app:serve --factory``."""
-    return create_app(LogsSettings(), email=EmailSettings.from_env("LOGS_"))
+    """The service for this deployment, configured from its ``LOGS_`` environment
+    only, never a ``.env`` file, its mail from ``LOGS_EMAIL_*``:
+    ``uvicorn aweb_logs.app:serve --factory``."""
+    return create_app(LogsSettings(_env_file=None), email=EmailSettings.from_env("LOGS_"))

@@ -25,8 +25,9 @@ var ownerActRoleNamePattern = regexp.MustCompile(`^[a-z][a-z0-9_-]*(\.[a-z0-9][a
 // OwnerActs is a version 3 manifest's human origin and the roles that only a
 // team owner act designates.
 type OwnerActs struct {
-	Origin string         `json:"origin"`
-	Roles  []OwnerActRole `json:"roles"`
+	Origin         string          `json:"origin"`
+	Roles          []OwnerActRole  `json:"roles"`
+	SessionActions []SessionAction `json:"session_actions,omitempty"`
 }
 
 // humanRoleActs are the acts an owner-designated role may declare, in
@@ -53,8 +54,9 @@ func parseOwnerActs(raw json.RawMessage, appOrigin string) (*OwnerActs, error) {
 	// Each level is decoded on its own, because the strict decoder matches
 	// keys exactly only at the level it is given.
 	var document struct {
-		Origin string            `json:"origin"`
-		Roles  []json.RawMessage `json:"roles"`
+		Origin         string            `json:"origin"`
+		Roles          []json.RawMessage `json:"roles"`
+		SessionActions json.RawMessage   `json:"session_actions,omitempty"`
 	}
 	if err := decodeStrictObject(raw, &document, "owner_acts"); err != nil {
 		return nil, codedf(CodeOwnerActsInvalid, "%v", err)
@@ -100,6 +102,11 @@ func parseOwnerActs(raw json.RawMessage, appOrigin string) (*OwnerActs, error) {
 			return nil, codedf(CodeOwnerActsInvalid, "owner_acts role %q must say whether it names a notice contact", role.Name)
 		}
 	}
+	sessionActions, err := parseSessionActions(document.SessionActions, ownerActs.Roles)
+	if err != nil {
+		return nil, err
+	}
+	ownerActs.SessionActions = sessionActions
 	return &ownerActs, nil
 }
 

@@ -16,6 +16,7 @@ from typing import Any
 
 import cbor2
 from awid.did import did_from_public_key
+from awid.signing import canonical_json_bytes, sign_message
 from cryptography.hazmat.primitives.asymmetric import ec
 from nacl.signing import SigningKey
 
@@ -24,6 +25,7 @@ from aweb_naapp.hooks.strictjson import canonical, encode_signature
 
 TEAM_SEED = bytes(range(0x21, 0x41))
 ADMIN_SEED = bytes(range(0x41, 0x61))
+MEMBER_SEED = bytes(range(0x61, 0x81))
 TEAM_ID = "demo:example.com"
 APP_ORIGIN = "https://logs.example.com"
 CONSOLE_ORIGIN = "https://console.logs.example.com"
@@ -32,6 +34,7 @@ SECRETS_CONSOLE = "https://console.secrets.example.com"
 INSTALLATION = "1b4e28ba-2fa1-4d3b-a3f5-ef19b5a7633b"
 SECRETS_INSTALLATION = "2c5f39cb-3fb2-4e4c-b4f6-f02ac6b8744c"
 PRINCIPAL = "did:aw:2Zf4Lq8m3VYb9nKc5RjTs7Hd"
+OTHER_PRINCIPAL = "did:aw:3Ag5Mr9n4WZc8pLd6SkUt8Je"
 NOTICE_CONTACT = "owner@example.com"
 OTHER_CONTACT = "someone-else@example.com"
 ISSUED = "2026-11-07T12:00:00Z"
@@ -91,6 +94,35 @@ READER_CREDENTIAL = credential("console.logs.example.com")
 OWNER_CREDENTIAL = credential("console.secrets.example.com", scalar=0x5A6B7C8D)
 REPLACEMENT_CREDENTIAL = credential("console.secrets.example.com", scalar=0x0A0B0C0D)
 SECURITY_KEY_CREDENTIAL = credential("aweb:", scalar=0x11223344)
+
+
+def team_certificate(
+    principal: str = PRINCIPAL,
+    *,
+    team_id: str = TEAM_ID,
+    team_seed: bytes = TEAM_SEED,
+    member_seed: bytes = MEMBER_SEED,
+) -> str:
+    """A team certificate as team-auth's X-AWID-Team-Certificate carries it:
+    standard base64 of its JSON, signed by the team key over its canonical
+    JSON without the signature."""
+    certificate: dict[str, Any] = {
+        "version": 1,
+        "certificate_id": "6f9619ff-8b86-4011-b42d-00c04fc964ff",
+        "team_id": team_id,
+        "team_did_key": did_key(team_seed),
+        "member_did_key": did_key(member_seed),
+        "member_did_aw": principal,
+        "alias": "holder",
+        "identity_scope": "global",
+        "issued_at": ISSUED,
+    }
+    certificate["signature"] = sign_message(team_seed, canonical_json_bytes(certificate))
+    return base64.b64encode(canonical_json_bytes(certificate)).decode("ascii")
+
+
+HOLDER_CERTIFICATE = team_certificate()
+DEFAULT = object()
 
 
 def reader_role(**changes: Any) -> dict[str, Any]:
@@ -222,6 +254,350 @@ def manifest_cases() -> list[dict[str, Any]]:
             error=invalid,
         ),
         manifest_case("owner_acts_null", owner_acts=None, error="manifest_invalid"),
+        *session_action_cases(),
+        manifest_case(
+            "origin_shares_the_app_host_but_for_a_trailing_dot",
+            owner_acts=logs,
+            app_origin="https://console.logs.example.com.",
+            error=invalid,
+        ),
+        *v2_null_parity_cases(),
+    ]
+
+
+def v2_null_parity_cases() -> list[dict[str, Any]]:
+    """Fields a session action inherits from the v2 tool object keep v2's
+    handling of null."""
+
+    def secrets(action: dict[str, Any]) -> dict[str, Any]:
+        return {"origin": SECRETS_CONSOLE, "roles": [owner_role()], "session_actions": [action]}
+
+    return [
+        manifest_case(
+            "session_action_description_null",
+            owner_acts=secrets(read_action(description=None)),
+            app_origin=SECRETS_ORIGIN,
+        ),
+        manifest_case(
+            "stage_action_body_mode_null",
+            owner_acts=secrets(stage_action(body={"mode": None})),
+            app_origin=SECRETS_ORIGIN,
+        ),
+    ]
+
+
+CHANGE_SET = "/installations/{installation_id}/change-sets"
+
+
+def path_inputs(*names: str, protected: str | None = None) -> dict[str, Any]:
+    """input_schema and params for string path params, and one body param."""
+    fields = [*names, *([protected] if protected else [])]
+    params: list[dict[str, Any]] = [{"name": name, "in": "path"} for name in names]
+    if protected:
+        params.append({"name": protected, "in": "body", "protected": True})
+    return {
+        "input_schema": {
+            "type": "object",
+            "properties": {name: {"type": "string"} for name in fields},
+            "required": fields,
+        },
+        "params": params,
+    }
+
+
+def read_action(**changes: Any) -> dict[str, Any]:
+    action: dict[str, Any] = {
+        "name": "change-set",
+        "description": "Read a change set in the owner's session.",
+        "kind": "read",
+        "role": "secrets.owner",
+        "method": "GET",
+        "path": CHANGE_SET + "/{change_id}",
+        **path_inputs("installation_id", "change_id"),
+    }
+    action.update(changes)
+    return action
+
+
+def stage_action(**changes: Any) -> dict[str, Any]:
+    action: dict[str, Any] = {
+        "name": "onepassword-token",
+        "description": "Stage the 1Password service-account token from the terminal.",
+        "kind": "stage",
+        "role": "secrets.owner",
+        "method": "POST",
+        "path": "/installations/{installation_id}/backend-credentials/onepassword/versions",
+        **path_inputs("installation_id", protected="value"),
+        "body": {"mode": "json"},
+    }
+    action.update(changes)
+    return action
+
+
+def confirm_action(**changes: Any) -> dict[str, Any]:
+    action: dict[str, Any] = {
+        "name": "confirm",
+        "description": "Confirm an approved change set; runner codes go to the terminal.",
+        "kind": "confirm",
+        "role": "secrets.owner",
+        "method": "POST",
+        "path": CHANGE_SET + "/{change_id}/confirm",
+        **path_inputs("installation_id", "change_id"),
+        "body": {"mode": "json"},
+        "terminal_output": ["/runner_registrations/*/registration_code"],
+        "completion": {
+            "read": "change-set",
+            "ready": {"member": "can_confirm", "in": [True]},
+            "done": {"member": "state", "in": ["applied"]},
+            "stop": [
+                {"member": "state", "in": ["cancelled", "expired"]},
+                {"member": "approval_state", "in": ["rejected", "revoked", "expired"]},
+            ],
+        },
+    }
+    action.update(changes)
+    return action
+
+
+def session_action_cases() -> list[dict[str, Any]]:
+    def secrets(*actions: dict[str, Any]) -> dict[str, Any]:
+        return {
+            "origin": SECRETS_CONSOLE,
+            "roles": [owner_role()],
+            "session_actions": list(actions),
+        }
+
+    def case(name: str, *actions: dict[str, Any], error: str | None = "owner_acts_invalid"):
+        return manifest_case(
+            name, owner_acts=secrets(*actions), app_origin=SECRETS_ORIGIN, error=error
+        )
+
+    read, stage, confirm = read_action(), stage_action(), confirm_action()
+    completion = confirm["completion"]
+    unprotected = stage_action(**path_inputs("installation_id"))
+    unprotected["params"] = [{"name": "installation_id", "in": "path"}]
+    return [
+        case("session_actions_of_secrets", read, stage, confirm, error=None),
+        case("a_stage_action_with_nothing_protected", unprotected, error=None),
+        case("session_actions_empty"),
+        case("session_action_names_repeat", read, read_action(path=CHANGE_SET)),
+        case("session_action_of_an_undeclared_role", read_action(role="secrets.issuer")),
+        case("session_action_of_an_unknown_kind", read_action(kind="write")),
+        case("read_action_is_a_post", read_action(method="POST", body={"mode": "json"})),
+        case("stage_action_is_a_put", stage_action(method="PUT")),
+        case("session_action_path_is_absolute", read_action(path=SECRETS_CONSOLE + CHANGE_SET)),
+        case("session_action_declares_scopes", read_action(scopes=["secrets:admin"])),
+        case(
+            "session_action_declares_invocation_contexts",
+            read_action(invocation_contexts=["agent"]),
+        ),
+        case(
+            "protected_param_on_a_read",
+            read_action(
+                params=[
+                    {"name": "installation_id", "in": "path"},
+                    {"name": "change_id", "in": "path", "protected": True},
+                ],
+            ),
+        ),
+        case(
+            "protected_path_param_on_a_stage",
+            stage_action(
+                params=[
+                    {"name": "installation_id", "in": "path", "protected": True},
+                    {"name": "value", "in": "body"},
+                ]
+            ),
+        ),
+        case(
+            "terminal_output_on_a_stage",
+            stage_action(terminal_output=["/version"]),
+        ),
+        case("terminal_output_with_an_empty_pointer", read, confirm_action(terminal_output=[""])),
+        case("confirm_without_completion", read, without(confirm, "completion")),
+        case("completion_on_a_read", read_action(completion=completion), confirm),
+        case(
+            "completion_reads_an_undeclared_action",
+            confirm_action(completion={**completion, "read": "change-set"}),
+        ),
+        case(
+            "completion_reads_a_stage_action",
+            read,
+            stage,
+            confirm_action(completion={**completion, "read": "onepassword-token"}),
+        ),
+        case(
+            "completion_read_has_a_path_param_the_confirm_lacks",
+            read_action(
+                path=CHANGE_SET + "/{change_id}/{revision}",
+                **path_inputs("installation_id", "change_id", "revision"),
+            ),
+            confirm,
+        ),
+        case(
+            "completion_stop_is_empty",
+            read,
+            confirm_action(completion={**completion, "stop": []}),
+        ),
+        case(
+            "completion_predicate_with_a_float",
+            read,
+            confirm_action(
+                completion={**completion, "ready": {"member": "can_confirm", "in": [1.5]}}
+            ),
+        ),
+        *session_action_bound_cases(case, read, completion),
+    ]
+
+
+def session_action_bound_cases(case, read, completion) -> list[dict[str, Any]]:
+    """Each stated bound at its limit, which is valid, and one past it."""
+
+    def reads(count: int) -> list[dict[str, Any]]:
+        return [read_action(name=f"change-set-{i:02d}") for i in range(count)]
+
+    def pointers(count: int) -> list[str]:
+        return [f"/runner_registrations/*/field_{i:02d}" for i in range(count)]
+
+    def stops(count: int) -> list[dict[str, Any]]:
+        return [{"member": f"state_{i}", "in": ["cancelled"]} for i in range(count)]
+
+    def values(count: int) -> dict[str, Any]:
+        return {"member": "state", "in": list(range(count))}
+
+    return [
+        case("session_actions_64", *reads(64), error=None),
+        case("session_actions_65", *reads(65)),
+        case("terminal_output_empty", read, confirm_action(terminal_output=[])),
+        case("terminal_output_16", read, confirm_action(terminal_output=pointers(16)), error=None),
+        case("terminal_output_17", read, confirm_action(terminal_output=pointers(17))),
+        case(
+            "completion_stop_8",
+            read,
+            confirm_action(completion={**completion, "stop": stops(8)}),
+            error=None,
+        ),
+        case(
+            "completion_stop_9", read, confirm_action(completion={**completion, "stop": stops(9)})
+        ),
+        case(
+            "completion_predicate_of_16_values",
+            read,
+            confirm_action(completion={**completion, "done": values(16)}),
+            error=None,
+        ),
+        case(
+            "completion_predicate_of_17_values",
+            read,
+            confirm_action(completion={**completion, "done": values(17)}),
+        ),
+        case(
+            "completion_predicate_of_no_values",
+            read,
+            confirm_action(completion={**completion, "done": values(0)}),
+        ),
+        *session_action_grammar_cases(case, read, completion),
+    ]
+
+
+def session_action_grammar_cases(case, read, completion) -> list[dict[str, Any]]:
+    """The boundaries of the session-action grammar that both readers decide alike."""
+
+    def pointer(value: str) -> dict[str, Any]:
+        return confirm_action(terminal_output=[value])
+
+    def predicate(member: str, values: list[Any]) -> dict[str, Any]:
+        return confirm_action(completion={**completion, "done": {"member": member, "in": values}})
+
+    stage_false = stage_action()
+    stage_false["params"] = [
+        {"name": "installation_id", "in": "path"},
+        {"name": "value", "in": "body", "protected": False},
+    ]
+    read_with_body_param = read_action(
+        params=[{"name": "installation_id", "in": "path"}, {"name": "change_id", "in": "body"}]
+    )
+    safe = 2**53 - 1
+    read_with_query = read_action(
+        **path_inputs("installation_id", "change_id", "revision"),
+    )
+    read_with_query["params"] = [
+        {"name": "installation_id", "in": "path"},
+        {"name": "change_id", "in": "path"},
+        {"name": "revision", "in": "query"},
+    ]
+    confirm_with_revision = confirm_action(
+        **path_inputs("installation_id", "change_id", "revision"),
+    )
+    confirm_with_revision["params"] = [
+        {"name": "installation_id", "in": "path"},
+        {"name": "change_id", "in": "path"},
+        {"name": "revision", "in": "body"},
+    ]
+    confirm = confirm_action()
+    stage_padded_in = stage_action()
+    stage_padded_in["params"] = [
+        {"name": "installation_id", "in": "path"},
+        {"name": "value", "in": " body", "protected": True},
+    ]
+    return [
+        case("session_action_declares_auth", read_action(auth="none")),
+        case("protected_false", stage_false),
+        case("read_action_with_a_body", read_action(body={"mode": "json"})),
+        case("read_action_with_a_body_param", read_with_body_param),
+        case("pointer_of_8_segments", read, pointer("/a/*/b/*/c/*/d/e"), error=None),
+        case("pointer_of_9_segments", read, pointer("/a/*/b/*/c/*/d/e/f")),
+        case("pointer_without_a_leading_slash", read, pointer("runner_registrations/*/code")),
+        case("pointer_with_an_empty_segment", read, pointer("/runner_registrations//code")),
+        case("pointer_with_a_trailing_slash", read, pointer("/runner_registrations/*/code/")),
+        case("pointer_ending_in_a_wildcard", read, pointer("/runner_registrations/*")),
+        case("pointer_with_a_numeric_segment", read, pointer("/runner_registrations/0/code")),
+        case("pointer_with_an_escape", read, pointer("/runner~1registrations/*/code")),
+        case("pointer_with_an_upper_case_name", read, pointer("/Runner_registrations/*/code")),
+        case(
+            "pointers_repeat",
+            read,
+            confirm_action(
+                terminal_output=[
+                    "/runner_registrations/*/registration_code",
+                    "/runner_registrations/*/registration_code",
+                ]
+            ),
+        ),
+        case("predicate_member_upper_case", read, predicate("State", ["applied"])),
+        case("predicate_member_empty", read, predicate("", ["applied"])),
+        case(
+            "predicate_integers_at_the_safe_bound", read, predicate("n", [safe, -safe]), error=None
+        ),
+        case("predicate_integer_past_the_safe_bound", read, predicate("n", [safe + 1])),
+        case("predicate_values_repeat", read, predicate("state", ["applied", "applied"])),
+        case("predicate_value_null", read, predicate("state", [None])),
+        case("predicate_value_object", read, predicate("state", [{"state": "applied"}])),
+        case("predicate_value_array", read, predicate("state", [["applied"]])),
+        case("predicate_value_integral_float", read, predicate("n", [1.0])),
+        case("predicate_integer_past_the_negative_bound", read, predicate("n", [-(safe + 1)])),
+        case("predicate_true_and_one_are_distinct", read, predicate("n", [True, 1]), error=None),
+        case("predicate_false_and_zero_are_distinct", read, predicate("n", [False, 0]), error=None),
+        case("completion_read_needs_a_query_input_the_confirm_lacks", read_with_query, confirm),
+        case("stage_action_without_a_body", without(stage_action(), "body"), error=None),
+        case(
+            "session_action_names_repeat_after_trim",
+            read_action(name="confirm"),
+            read_action(name="confirm "),
+        ),
+        case(
+            "completion_read_names_its_read_padded",
+            read,
+            confirm_action(completion={**completion, "read": "change-set "}),
+            error=None,
+        ),
+        case("protected_param_with_a_padded_in", stage_padded_in, error=None),
+        case(
+            "completion_read_query_input_the_confirm_declares",
+            read_with_query,
+            confirm_with_revision,
+            error=None,
+        ),
     ]
 
 
@@ -321,14 +697,20 @@ def delivery_case(
     holding_current: bool | None = None,
     security_key: bool = False,
     body: dict[str, Any] | None = None,
+    certificate: Any = DEFAULT,
+    principal_key: str = "",
 ) -> dict[str, Any]:
     signing, signature = signed(act, seed)
     if body is None:
         body = {"signing": signing, "signature": signature}
         if credential_value is not None:
             body["credential"] = credential_value
+            if certificate is DEFAULT:
+                body["certificate"] = HOLDER_CERTIFICATE
         if notice_contact is not None:
             body["notice_contact"] = notice_contact
+        if certificate is not DEFAULT and certificate is not None:
+            body["certificate"] = certificate
     if holding_current is None:
         holding_current = act["act"] != "human-role.designate"
     app_id = act["subject"]["app_id"]
@@ -349,7 +731,11 @@ def delivery_case(
             "nonce_used": nonce_used,
             "registry": registry,
         },
-        "state": {"holding": holding_current, "principal_status": principal_status},
+        "state": {
+            "holding": holding_current,
+            "principal_status": principal_status,
+            "principal_key": principal_key or did_key(MEMBER_SEED),
+        },
         "act": act,
         "body": body,
         "expected_subject": expected_subject(act, body) if status != 400 else None,
@@ -683,6 +1069,59 @@ def delivery_cases() -> list[dict[str, Any]]:
             detail="request_invalid",
         ),
         *forged_signature_pairs(designate, reader),
+        delivery_case(
+            "designate_without_a_certificate",
+            act=designate,
+            role=reader,
+            credential_value=READER_CREDENTIAL,
+            certificate=None,
+            status=403,
+            detail="principal_not_member",
+        ),
+        delivery_case(
+            "revoke_carrying_a_certificate",
+            act=revoke,
+            role=reader,
+            certificate=HOLDER_CERTIFICATE,
+            status=400,
+            detail="request_invalid",
+        ),
+        delivery_case(
+            "certificate_of_another_principal",
+            act=designate,
+            role=reader,
+            credential_value=READER_CREDENTIAL,
+            certificate=team_certificate(OTHER_PRINCIPAL),
+            status=403,
+            detail="principal_not_member",
+        ),
+        delivery_case(
+            "certificate_of_another_team",
+            act=designate,
+            role=reader,
+            credential_value=READER_CREDENTIAL,
+            certificate=team_certificate(team_id="other:example.com"),
+            status=403,
+            detail="principal_not_member",
+        ),
+        delivery_case(
+            "certificate_signed_by_a_rotated_team_key",
+            act=designate,
+            role=reader,
+            credential_value=READER_CREDENTIAL,
+            certificate=team_certificate(team_seed=ADMIN_SEED),
+            status=403,
+            detail="principal_not_member",
+        ),
+        delivery_case(
+            "certificate_for_a_rotated_member_key",
+            act=designate,
+            role=reader,
+            credential_value=READER_CREDENTIAL,
+            principal_key=did_key(ADMIN_SEED),
+            status=403,
+            detail="principal_not_member",
+        ),
     ]
 
 
@@ -732,7 +1171,7 @@ def build_vector() -> dict[str, Any]:
             "authority": "docs/owner-act-delivery.md",
             "manifest": "manifest_cases: a version 3 manifest's owner_acts; error is the manifest refusal code, or null when it is valid",
             "credential": "credential_cases: credential_sha256 is the lowercase hex SHA-256 of 'aweb.human-credential/1' and a newline, then the credential's canonical JSON; fingerprint is its first 16 hex characters in groups of four",
-            "delivery": "delivery_cases: a delivery body to the app's human origin; app is the app's declaration and whether it enables the optional security key; state is whether (installation, role, principal) has a current holding and what the registry reports for the principal (member_human, not_member, not_human, unavailable); expected_subject is the subject the app builds, null when the body is refused before it; verifier_code is the owner-act/1 refusal behind a 403, or null when the act verifies; result is the HTTP status, detail and response",
+            "delivery": "delivery_cases: a delivery body to the app's human origin; app is the app's declaration and whether it enables the optional security key; state is whether (installation, role, principal) has a current holding, what the registry reports for the body's certificate and the principal's kind (member_human, not_member, not_human, unavailable), and the principal's current member key; a designate or replace body carries the holder's team certificate as team-auth's X-AWID-Team-Certificate carries it, which must verify under verifier.current_team_key_did and name the act's team_id, its principal and that member key; expected_subject is the subject the app builds, null when the body is refused before it; verifier_code is the owner-act/1 refusal behind a 403, or null when the act verifies; result is the HTTP status, detail and response",
             "signing": "standard base64 with padding of the owner-act/1 signing bytes",
             "role": "role_cases pin the declared role name, which is the act's role, against the owner-act/1 signer: a leading letter, at most 64 bytes",
             "registry": "delivery_cases' verifier.registry says whether stage 2 can read the team key; the forged_signature cases pair a present and an absent holding under each, and the pair's results are equal",

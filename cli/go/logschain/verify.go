@@ -96,59 +96,96 @@ func VerifyChain(
 	receiptKeys, checkpointKeys map[string]bool,
 	receipts, checkpoints []Artefact,
 ) (Report, error) {
-	var report Report
-	genesisHash, err := genesis.Hash()
+	state, err := newEpochState(genesis)
 	if err != nil {
-		return report, err
+		return Report{}, err
 	}
-	hashes := map[int64]string{0: genesisHash}
+	hashes := map[int64]string{0: state.genesisHash}
 	stored := map[int64]StoredEvent{}
-	prevHash := genesisHash
-	expected := int64(1)
 
 	ordered := append([]StoredEvent{}, events...)
 	sort.SliceStable(ordered, func(i, j int) bool { return ordered[i].Link.TeamSeq < ordered[j].Link.TeamSeq })
-	fail := func(seq int64, reason string) {
-		if report.FirstBreak == nil {
-			report.FirstBreak = &Break{TeamSeq: seq, Reason: reason}
-		}
-	}
-
 	for _, event := range ordered {
 		seq := event.Link.TeamSeq
 		if _, seen := hashes[seq]; seen {
-			fail(seq, "sequence_duplicate")
+			state.fail(seq, "sequence_duplicate")
 			continue
 		}
-		linked := true
-		if seq > expected {
-			report.Missing = append(report.Missing, [2]int64{expected, seq - 1})
-		} else {
-			linked = event.Link.PrevEventHash == prevHash
-		}
-		if reason := eventFault(genesis, event, linked); reason != "" {
-			fail(seq, reason)
-		}
-		if event.Content == nil && event.PurgeAct != "" {
-			report.Purged = extendPurged(report.Purged, seq, event.PurgeAct)
-		}
+		state.add(event)
 		hashes[seq] = event.EventHash
 		stored[seq] = event
-		prevHash = event.EventHash
-		expected = seq + 1
 	}
 
+	contradiction := func(kind string, artefact Artefact, keys map[string]bool) string {
+		opened, reason := acceptedArtefact(kind, artefact, keys, genesis)
+		if opened == nil {
+			return reason
+		}
+		hash, present := hashes[opened.teamSeq]
+		if !present {
+			return "not_in_chain"
+		}
+		event, held := stored[opened.teamSeq]
+		if !held {
+			return opened.atPosition(hash, nil)
+		}
+		return opened.atPosition(hash, &event)
+	}
 	for index, artefact := range receipts {
-		if reason := receiptContradiction(artefact, receiptKeys, genesis, hashes, stored); reason != "" {
-			report.Contradicted = append(report.Contradicted, Contradiction{"receipt", index, reason})
+		if reason := contradiction("receipt", artefact, receiptKeys); reason != "" {
+			state.report.Contradicted = append(state.report.Contradicted, Contradiction{"receipt", index, reason})
 		}
 	}
 	for index, artefact := range checkpoints {
-		if reason := checkpointContradiction(artefact, checkpointKeys, genesis, hashes); reason != "" {
-			report.Contradicted = append(report.Contradicted, Contradiction{"checkpoint", index, reason})
+		if reason := contradiction("checkpoint", artefact, checkpointKeys); reason != "" {
+			state.report.Contradicted = append(state.report.Contradicted, Contradiction{"checkpoint", index, reason})
 		}
 	}
-	return report, nil
+	return state.report, nil
+}
+
+// epochState is the running check of one epoch's events, taken in increasing
+// team_seq order: the chain links, sequence gaps, purged ranges and the first
+// break.
+type epochState struct {
+	genesis     Genesis
+	genesisHash string
+	report      Report
+	prevHash    string
+	expected    int64
+}
+
+func newEpochState(genesis Genesis) (*epochState, error) {
+	hash, err := genesis.Hash()
+	if err != nil {
+		return nil, err
+	}
+	return &epochState{genesis: genesis, genesisHash: hash, prevHash: hash, expected: 1}, nil
+}
+
+func (s *epochState) fail(seq int64, reason string) {
+	if s.report.FirstBreak == nil {
+		s.report.FirstBreak = &Break{TeamSeq: seq, Reason: reason}
+	}
+}
+
+// add checks the next event, whose team_seq is greater than any before it.
+func (s *epochState) add(event StoredEvent) {
+	seq := event.Link.TeamSeq
+	linked := true
+	if seq > s.expected {
+		s.report.Missing = append(s.report.Missing, [2]int64{s.expected, seq - 1})
+	} else {
+		linked = event.Link.PrevEventHash == s.prevHash
+	}
+	if reason := eventFault(s.genesis, event, linked); reason != "" {
+		s.fail(seq, reason)
+	}
+	if event.Content == nil && event.PurgeAct != "" {
+		s.report.Purged = extendPurged(s.report.Purged, seq, event.PurgeAct)
+	}
+	s.prevHash = event.EventHash
+	s.expected = seq + 1
 }
 
 // eventFault is the first fault of one stored event, in the contract's order.
@@ -192,40 +229,51 @@ func extendPurged(purged []PurgedRange, seq int64, act string) []PurgedRange {
 	return append(purged, PurgedRange{First: seq, Last: seq, Act: act})
 }
 
-// chainContradiction is why the chain contradicts an artefact naming these
-// facts, in the contract's order after its signature, or "".
-func chainContradiction(
-	didKey string, keys map[string]bool, teamID string, epoch int64, origin string, seq int64, eventHash string,
-	genesis Genesis, hashes map[int64]string,
-) string {
-	if !keys[didKey] {
-		return "signature_invalid"
-	}
-	if teamID != genesis.TeamID || epoch != genesis.ChainEpoch || origin != genesis.LogsOrigin {
-		return "wrong_chain"
-	}
-	stored, present := hashes[seq]
-	if !present {
-		return "not_in_chain"
-	}
-	if stored != eventHash {
-		return "hash_mismatch"
-	}
-	return ""
+// openedArtefact is a receipt or checkpoint opened under an accepted key for
+// an epoch: the facts the chain is checked against.
+type openedArtefact struct {
+	teamSeq   int64
+	eventHash string
+	receipt   *Receipt
 }
 
-func receiptContradiction(
-	artefact Artefact, keys map[string]bool, genesis Genesis, hashes map[int64]string, stored map[int64]StoredEvent,
-) string {
-	receipt, err := OpenReceipt(artefact.SigningBytes, artefact.Signature)
-	if err != nil {
-		return "signature_invalid"
+// acceptedArtefact opens a receipt or checkpoint signed by one of keys for this
+// epoch, or says why it is contradicted before its position is looked at.
+func acceptedArtefact(kind string, artefact Artefact, keys map[string]bool, genesis Genesis) (*openedArtefact, string) {
+	var didKey, teamID, origin string
+	var epoch int64
+	opened := &openedArtefact{}
+	if kind == "receipt" {
+		receipt, err := OpenReceipt(artefact.SigningBytes, artefact.Signature)
+		if err != nil {
+			return nil, "signature_invalid"
+		}
+		didKey, teamID, epoch, origin = receipt.DIDKey, receipt.TeamID, receipt.ChainEpoch, receipt.LogsOrigin
+		opened.teamSeq, opened.eventHash, opened.receipt = receipt.TeamSeq, receipt.EventHash, receipt
+	} else {
+		checkpoint, err := OpenCheckpoint(artefact.SigningBytes, artefact.Signature)
+		if err != nil {
+			return nil, "signature_invalid"
+		}
+		didKey, teamID, epoch, origin = checkpoint.DIDKey, checkpoint.TeamID, checkpoint.ChainEpoch, checkpoint.LogsOrigin
+		opened.teamSeq, opened.eventHash = checkpoint.TeamSeq, checkpoint.EventHash
 	}
-	if reason := chainContradiction(receipt.DIDKey, keys, receipt.TeamID, receipt.ChainEpoch, receipt.LogsOrigin,
-		receipt.TeamSeq, receipt.EventHash, genesis, hashes); reason != "" {
-		return reason
+	if !keys[didKey] {
+		return nil, "signature_invalid"
 	}
-	if !receiptNamesEvent(receipt, stored[receipt.TeamSeq]) {
+	if teamID != genesis.TeamID || epoch != genesis.ChainEpoch || origin != genesis.LogsOrigin {
+		return nil, "wrong_chain"
+	}
+	return opened, ""
+}
+
+// atPosition is why the chain at the artefact's position, holding storedHash
+// and the stored event (nil at the genesis), contradicts it, or "".
+func (a *openedArtefact) atPosition(storedHash string, stored *StoredEvent) string {
+	if storedHash != a.eventHash {
+		return "hash_mismatch"
+	}
+	if a.receipt != nil && (stored == nil || !receiptNamesEvent(a.receipt, *stored)) {
 		return "event_mismatch"
 	}
 	return ""
@@ -246,13 +294,4 @@ func receiptNamesEvent(receipt *Receipt, event StoredEvent) bool {
 		return false
 	}
 	return envelope.EventID == receipt.EventID
-}
-
-func checkpointContradiction(artefact Artefact, keys map[string]bool, genesis Genesis, hashes map[int64]string) string {
-	checkpoint, err := OpenCheckpoint(artefact.SigningBytes, artefact.Signature)
-	if err != nil {
-		return "signature_invalid"
-	}
-	return chainContradiction(checkpoint.DIDKey, keys, checkpoint.TeamID, checkpoint.ChainEpoch, checkpoint.LogsOrigin,
-		checkpoint.TeamSeq, checkpoint.EventHash, genesis, hashes)
 }
