@@ -701,6 +701,18 @@ ROOT_CONSUMERS = {
         'join(testDir, "..", "..", "docs", "vectors", "identity-log-raw-wire-v1.json")',
         'join(testDir, "..", "..", "docs", "vectors", "identity-log-negative-v1.json")',
     ),
+    PurePosixPath("awid/tests/test_canonical_json_vectors.py"): _consumer(
+        "canonical-json-v1.json",
+        'Path(__file__).parents[2] / "docs" / "vectors" / "canonical-json-v1.json"',
+    ),
+    PurePosixPath("cli/go/awid/canonical_json_vector_test.go"): _consumer(
+        "canonical-json-v1.json",
+        'filepath.Join("..", "..", "..", "docs", "vectors", "canonical-json-v1.json")',
+    ),
+    PurePosixPath("channel-core/test/canonical_json_vector.test.ts"): _consumer(
+        "canonical-json-v1.json",
+        'new URL("../../docs/vectors/canonical-json-v1.json", import.meta.url)',
+    ),
     PurePosixPath("scripts/check-extension-docs.py"): _consumer(
         {
             "federation-authority-state-v1.json",
