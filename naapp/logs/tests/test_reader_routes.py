@@ -75,6 +75,11 @@ REMOVE_READER_TOOL: dict[str, Any] = {
     "invocation_contexts": ["agent"],
 }
 
+def no_passkeys():
+    """This directory only lists readers; nothing here reads a holder's credential."""
+    raise AssertionError("this test's directory has no passkeys")
+
+
 
 class Installations:
     """logs' installation in TEAM as the team server reports it, granting ``scopes``."""
@@ -181,7 +186,7 @@ async def running(
         fence = InstallationFence(runtime.db(), app_id=TEST_APP_ID, grants=grants)
         api.include_router(
             reader_slot_router(
-                ReaderDirectory(runtime.db()),
+                ReaderDirectory(runtime.db(), app_id=TEST_APP_ID, passkeys=no_passkeys),
                 authorized=runtime.authorized(grants=grants, policy=allow_members),
                 fence=fence,
                 limit=SLOT_LIMIT,

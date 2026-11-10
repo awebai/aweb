@@ -92,13 +92,24 @@ class Reader:
     scope: str
     installation_id: str
     team_id: str
+    # The principal holding the reader role; None for a slot reader.
+    principal: str | None = None
 
 
 class ReaderDirectory:
     """The reader slots of this deployment, pending and claimed."""
 
-    def __init__(self, db: AsyncDatabaseManager, *, slot_ttl: timedelta = SLOT_TTL) -> None:
+    def __init__(
+        self,
+        db: AsyncDatabaseManager,
+        *,
+        app_id: str,
+        passkeys: Callable[[], Passkeys],
+        slot_ttl: timedelta = SLOT_TTL,
+    ) -> None:
         self.db = db
+        self.app_id = app_id
+        self._passkeys = passkeys
         self._slot_ttl = slot_ttl
 
     async def create_slot(

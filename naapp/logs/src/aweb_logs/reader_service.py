@@ -115,19 +115,19 @@ async def reader_service(
     app_id = runtime.manifest.app_id
     fence = runtime.installation_fence()
     registrations = runtime.hook_registrations()
-    directory = ReaderDirectory(db)
+    passkeys: Passkeys | None = None
+
+    def current_passkeys() -> Passkeys:
+        assert passkeys is not None
+        return passkeys
+
+    directory = ReaderDirectory(db, app_id=app_id, passkeys=current_passkeys)
 
     async def governance_view(team_id: str) -> RegistrationView | None:
         return await registrations.view(team_id, GOVERNANCE_HOOK)
 
     async def team_key(team_id: str) -> str:
         return (await runtime.team_cache().get(team_id)).team_did_key
-
-    passkeys: Passkeys | None = None
-
-    def current_passkeys() -> Passkeys:
-        assert passkeys is not None
-        return passkeys
 
     recorder = CredentialAudit(
         db=db,

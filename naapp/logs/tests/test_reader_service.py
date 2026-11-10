@@ -49,6 +49,11 @@ ORIGIN = AUDIENCE
 CONSOLE = "https://console.app.example.com"
 CONTACT = "reader@example.com"
 
+def no_passkeys():
+    """This directory only lists readers; nothing here reads a holder's credential."""
+    raise AssertionError("this test's directory has no passkeys")
+
+
 
 class Unresolved:
     """The hook drain's resolver: no host resolves, and every attempt is kept."""
@@ -195,7 +200,7 @@ async def deployment(coordination, test_db_factory, tmp_path) -> AsyncIterator[D
                         team_id=member.team_id,
                     ),
                     installation_id=installation["installation_id"],
-                    directory=ReaderDirectory(db),
+                    directory=ReaderDirectory(db, app_id=TEST_APP_ID, passkeys=no_passkeys),
                     smtp=smtp,
                     agent=agent,
                     console=human,
