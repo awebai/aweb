@@ -2,6 +2,13 @@
 
 ## Unreleased
 
+- `RegistryClient.list_addresses` and `RegistryClient.list_did_addresses` (and
+  their cached forms) follow the registry's cursor until `has_more` is false
+  and return every address; they returned the first 50. A cursor that does not
+  advance raises `RegistryError` with status 502. `list_team_certificates`
+  reads its pages through the same code and reports that case as `AWID
+  certificates pagination did not advance`.
+
 - `POST /v1/connect` with the `repo_origin` of a repo the team deleted restores
   the team's repo row and binds the workspace to it, as `PATCH /v1/agents/me`
   and `POST /v1/repos/ensure` do; it answered 500.
