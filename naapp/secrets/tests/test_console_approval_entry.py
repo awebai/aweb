@@ -8,11 +8,12 @@ from aweb_naapp.console import CONSOLE_HEADERS
 from aweb_naapp.runtime.approvals import ApprovalState
 
 from aweb_secrets.approval_kind import approval_kind
+from aweb_secrets.console_changes import ConsoleChanges
 from aweb_secrets.owners import approver_scope
 from aweb_secrets.reconciliation_control_audit import apply_reconciliation_migrations
 from tests.test_approval_kind import linked
 from tests.test_change_sets import ALICE, CAROL, TEAM, by_member, change_set, draft, grant_role
-from tests.test_console_changes import clients, sign_in
+from tests.test_console_changes import Registrations, application, clients, sign_in
 from tests.test_use_approvals import uses as uses
 from tests.test_use_approvals import world as world
 
@@ -22,6 +23,64 @@ ENTRY = "/approvals/dispatch"
 def personal_token(w, approval_id):
     [token] = [t for links in w.inbox.links.values() for a, t in links if a == approval_id]
     return token
+
+
+@pytest.mark.parametrize(
+    "kind,path",
+    [
+        ("change_set", "/approvals"),
+        ("use", "/use-approvals"),
+        ("run", "/run-approvals"),
+        ("reconciliation_control", "/reconciliation-approvals"),
+    ],
+)
+async def test_destination_uses_frozen_approval_without_a_personal_link(uses, kind, path):
+    w = uses.world
+    if kind == "change_set":
+        approval_id = await draft(
+            w, change_set(drafter=by_member(ALICE), changes=[grant_role(CAROL, "secrets.role.dev")])
+        )
+    else:
+        actual = await linked(uses, kind)
+        approval_id = actual.approval.approval_id
+    lookup = partial(
+        approval_kind,
+        enable_runs=kind in ("run", "reconciliation_control"),
+        enable_reconciliation=kind == "reconciliation_control",
+    )
+    await application(w, kind_lookup=lookup)
+    services = ConsoleChanges(
+        console=w.console,
+        changes=w.change_sets,
+        approvals=w.approvals,
+        registrations=Registrations(),
+        after_commit=w.containment.evict,
+        approval_kind=lookup,
+    )
+    # N3 discovers an approval before it issues a new personal link. Existing
+    # links may all be unusable; destination metadata must not recover one.
+    await w.db.execute(
+        "UPDATE {{tables.approval_links}} SET revoked_at=created_at WHERE approval_id=$1",
+        approval_id,
+    )
+    approval = await w.approvals.get(approval_id)
+    assert approval is not None
+    links = await w.db.fetch_all(
+        "SELECT * FROM {{tables.approval_links}} WHERE approval_id=$1 ORDER BY link_id", approval_id
+    )
+    events = await w.db.fetch_value("SELECT count(*) FROM {{tables.outbox_events}}")
+
+    assert await services.approval_destination(approval) == {"kind": kind, "path": path}
+
+    assert await w.approvals.get(approval_id) == approval
+    assert (
+        await w.db.fetch_all(
+            "SELECT * FROM {{tables.approval_links}} WHERE approval_id=$1 ORDER BY link_id",
+            approval_id,
+        )
+        == links
+    )
+    assert await w.db.fetch_value("SELECT count(*) FROM {{tables.outbox_events}}") == events
 
 
 @pytest.mark.parametrize(

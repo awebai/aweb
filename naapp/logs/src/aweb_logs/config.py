@@ -5,6 +5,7 @@ from __future__ import annotations
 from typing import Self
 from urllib.parse import urlsplit
 
+from aweb_naapp.runtime.hook_egress import HookEgressSettings
 from aweb_naapp.runtime.settings import NaappSettings
 from pydantic import Field, model_validator
 from pydantic_settings import SettingsConfigDict
@@ -12,7 +13,7 @@ from pydantic_settings import SettingsConfigDict
 from aweb_logs.ingest import ClientQuota
 
 
-class LogsSettings(NaappSettings):
+class LogsSettings(NaappSettings, HookEgressSettings):
     model_config = SettingsConfigDict(env_prefix="LOGS_", env_file=".env", extra="ignore")
 
     app_id: str = Field(default="logs")
@@ -21,6 +22,8 @@ class LogsSettings(NaappSettings):
     console_origin: str
     # How often each team whose chain moved gets a checkpoint (design §B3).
     checkpoint_interval_seconds: float = Field(default=300, gt=0)
+    # How often the teams' owner-set retention is applied (design §B6).
+    retention_interval_seconds: float = Field(default=3600, gt=0)
 
     # One member's client events per one-minute window (design §B2).
     client_events_per_minute: int = Field(default=30, ge=1)
