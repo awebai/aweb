@@ -11,11 +11,13 @@ import (
 	"path/filepath"
 	"slices"
 	"strings"
+	"sync"
 	"syscall"
 	"time"
 
 	aweb "github.com/awebai/aw"
 	"github.com/awebai/aw/awconfig"
+	"github.com/awebai/aw/awid"
 	awrun "github.com/awebai/aw/run"
 	"github.com/spf13/cobra"
 	"golang.org/x/term"
@@ -535,18 +537,50 @@ func resolveRunClientForDir(cmd *cobra.Command, workingDir string, interactive b
 // retry of a refused stream: it reads the identity for workingDir again from
 // where it is kept, by the selection `aw run` started with, so a certificate
 // or grant renewed on disk is used without a restart. It selects the same
-// identity home every time; it is not a way to another identity.
+// identity home every time; it is not a way to another identity. It builds
+// the client for the mount of the stored server URL that answers as the API
+// (resolveReloadBaseURLContext), and that mount is stored once a stream opens
+// there (reloadedEventStreamOpener).
 //
 // It runs on the bus goroutine. Whatever it waits on ends with ctx, so
 // stopping the run does not wait for it, and it does not record its client as
 // the command's last client, which the root command reads after the run.
 func runEventStreamReload(workingDir string) awrun.StreamReload {
 	return func(ctx context.Context) (awrun.EventStreamOpener, error) {
-		client, _, err := buildClientSelectionForDir(ctx, workingDir, strings.TrimSpace(teamFlag))
+		client, sel, err := buildClientSelectionForDir(ctx, workingDir, strings.TrimSpace(teamFlag), resolveReloadBaseURLContext)
 		if err != nil {
 			return nil, err
 		}
-		return awrun.NewEventStreamOpener(client.Client), nil
+		return reloadedEventStreamOpener(client, sel), nil
+	}
+}
+
+// reloadedEventStreamOpener returns the stream opener for a client a reload
+// built. When the client was built for another mount than the stored server
+// URL, that mount is stored once a stream signed for it has opened there: the
+// open's 200 is the first signed answer the mount gives. A refused or failed
+// open stores nothing.
+func reloadedEventStreamOpener(client *aweb.Client, sel *awconfig.Selection) awrun.EventStreamOpener {
+	open := awrun.NewEventStreamOpener(client.Client)
+	if sel == nil || strings.TrimSpace(os.Getenv("AWEB_URL")) != "" {
+		return open
+	}
+	stored, err := cleanBaseURL(sel.AwebURL)
+	if err != nil || stored == sel.BaseURL {
+		return open
+	}
+	workspacePath, mount := sel.WorkspacePath, sel.BaseURL
+	var store sync.Once
+	return func(ctx context.Context, deadline time.Time) (awid.EventSource, error) {
+		source, err := open(ctx, deadline)
+		if err == nil {
+			store.Do(func() {
+				if err := persistResolvedAwebURL(workspacePath, mount); err != nil {
+					debugLog("store answering mount for %s: %v", workspacePath, err)
+				}
+			})
+		}
+		return source, err
 	}
 }
 

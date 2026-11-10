@@ -1299,9 +1299,21 @@ type APIError struct {
 	// delta-seconds or an HTTP-date. It is empty when the header is absent.
 	RetryAfter      string
 	responseSummary string
+	// answeringMount is the API base on the request's origin that the client
+	// found answering when the configured one answered 404. It is empty
+	// otherwise.
+	answeringMount string
 }
 
 func (e *APIError) Error() string {
+	text := e.responseText()
+	if e.answeringMount != "" {
+		text += "\n" + answeringMountAdvice(e.answeringMount)
+	}
+	return text
+}
+
+func (e *APIError) responseText() string {
 	var metadata []string
 	for _, header := range []struct{ name, value string }{
 		{"x-request-id", e.RequestID}, {"cf-ray", e.CfRay}, {"cf-mitigated", e.CfMitigated},

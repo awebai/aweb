@@ -19,6 +19,8 @@ import (
 	"github.com/awebai/aw/awid"
 	"github.com/awebai/aw/internal/manualclock"
 	awrun "github.com/awebai/aw/run"
+	"github.com/awebai/aw/wake"
+	"github.com/awebai/aw/wake/session"
 )
 
 // A server whose API is mounted under /api while the workspace stores the
@@ -429,13 +431,89 @@ func TestRunEventStreamSignsForTheAnsweringMountAfterAReload(t *testing.T) {
 	waitForCondition(t, "the answering mount to be stored", func() bool { return storedAwebURL(t, workspacePath) == server.URL+"/api" })
 }
 
+// The wake broker: the stream's first open is signed for the stored server
+// URL and refused with 404. Before the retry the broker calls its reload,
+// which finds the mount that answers and builds a client that signs for it.
+func TestWakeBrokerSignsForTheAnsweringMountAfterAReload(t *testing.T) {
+	server := newMovedMountServer(t)
+	workingDir, workspacePath := movedMountWorkspace(t, server.URL)
+	identityHome := awconfig.WorktreeIdentityHome(workingDir)
+	instanceHome := filepath.Join(filepath.Dir(workingDir), "instance")
+	if err := os.MkdirAll(instanceHome, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	store, err := wake.NewStore(filepath.Join(filepath.Dir(workingDir), "state"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	clock := manualclock.New(time.Now())
+	broker, err := wake.NewBroker(wake.Config{
+		Store:        store,
+		Session:      session.NewFake(session.Inspection{Home: instanceHome, Backend: "herdr", Present: true, State: session.StateIdle, RawState: "idle"}),
+		OpenStream:   wakeStreamOpener,
+		ReloadStream: wakeStreamReload,
+		StreamPolicy: awrun.StreamPolicyConfig{Now: clock.Now, Timer: clock.Timer, Rand: clock.Random},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := broker.Register(wake.Registration{Home: instanceHome, IdentityHome: identityHome, Delivery: wake.DeliverySession, Backend: "herdr", RegisteredAt: time.Now().UTC()}); err != nil {
+		t.Fatal(err)
+	}
+	ctx, cancel := context.WithCancel(context.Background())
+	done := make(chan error, 1)
+	go func() { done <- broker.Run(ctx) }()
+	defer func() {
+		cancel()
+		select {
+		case <-done:
+		case <-time.After(5 * time.Second):
+			t.Errorf("broker did not stop")
+		}
+	}()
+	stream := func() wake.StreamStatus {
+		streams := broker.Status().Streams
+		if len(streams) != 1 {
+			t.Fatalf("streams=%+v, want one", streams)
+		}
+		return streams[0]
+	}
+
+	// First attempt: planned-close timer, then the wait after the refusal.
+	if !clock.AwaitStarted(2, 1) {
+		t.Fatal("the stream is not waiting to retry after the refusal")
+	}
+	if refused := stream(); refused.Phase != string(wake.StreamRefused) || refused.Cause != "404" {
+		t.Fatalf("stream %+v, want refused by 404", refused)
+	}
+	if stored := storedAwebURL(t, workspacePath); stored != server.URL {
+		t.Fatalf("stored aweb_url=%q after the refusal, want it unchanged at %q", stored, server.URL)
+	}
+
+	clock.Advance(time.Minute)
+	waitForCondition(t, "the stream to be accepted at the mount that answers", func() bool { return stream().Phase == string(wake.StreamLive) })
+
+	want := []signedRequestSeen{
+		{Path: "/v1/events/stream", SignedForIt: true},
+		{Path: "/api/v1/events/stream", SignedForIt: true},
+	}
+	got := server.signedSeen()
+	for i := range got {
+		got[i].SignedForWhich = ""
+	}
+	if fmt.Sprint(got) != fmt.Sprint(want) {
+		t.Fatalf("signed requests the server saw: %+v, want exactly %+v", got, want)
+	}
+	waitForCondition(t, "the answering mount to be stored", func() bool { return storedAwebURL(t, workspacePath) == server.URL+"/api" })
+}
+
 // The two reloads that find the answering mount: `aw run`'s and the wake
-// broker's opener, which the broker calls again before a refused retry.
+// broker's, which the broker calls before a refused retry.
 func answeringMountReloads(workingDir string) map[string]awrun.StreamReload {
 	return map[string]awrun.StreamReload{
 		"aw run": runEventStreamReload(workingDir),
 		"wake broker": func(ctx context.Context) (awrun.EventStreamOpener, error) {
-			return wakeStreamOpener(ctx, awconfig.WorktreeIdentityHome(workingDir), "")
+			return wakeStreamReload(ctx, awconfig.WorktreeIdentityHome(workingDir), "")
 		},
 	}
 }
@@ -555,5 +633,30 @@ func TestReloadProbeForTheAnsweringMountEndsWithItsContext(t *testing.T) {
 				t.Fatalf("the reload returned %s after its context ended; the probe timeout is %s", waited, awebBaseURLProbeTimeout)
 			}
 		})
+	}
+}
+
+// A mount is only ever one on the stored server URL's origin: scheme, host
+// and port all equal. The probe derives its candidates from the stored URL,
+// so this guards the two places a probe's answer is used, the hint and the
+// base a reload builds for.
+func TestAnsweringMountIsOnTheStoredServerURLsOrigin(t *testing.T) {
+	for _, tc := range []struct {
+		stored, mount string
+		same          bool
+	}{
+		{"https://aweb.example", "https://aweb.example/api", true},
+		{"https://aweb.example/api", "https://aweb.example", true},
+		{"https://AWEB.example", "https://aweb.example/api", true},
+		{"https://aweb.example", "http://aweb.example/api", false},
+		{"https://aweb.example", "https://aweb.example:8443/api", false},
+		{"https://aweb.example", "https://other.example/api", false},
+		{"https://aweb.example", "https://aweb.example.other.example/api", false},
+		{"https://aweb.example", "/api", false},
+		{"https://aweb.example", "", false},
+	} {
+		if got := sameOriginBaseURLs(tc.stored, tc.mount); got != tc.same {
+			t.Errorf("sameOriginBaseURLs(%q, %q)=%v, want %v", tc.stored, tc.mount, got, tc.same)
+		}
 	}
 }

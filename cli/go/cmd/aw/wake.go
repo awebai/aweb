@@ -97,15 +97,16 @@ var wakeRunCmd = &cobra.Command{
 		defer func() { _ = lock.Release() }()
 
 		broker, err := wake.NewBroker(wake.Config{
-			Store:       store,
-			Session:     &session.ExecClient{Bin: strings.TrimSpace(wakeOatsBin)},
-			ChannelCore: wake.NewChannelCoreRunner(store),
-			OpenStream:  wakeStreamOpener,
-			Heartbeat:   wakeHeartbeat,
-			MaxStreams:  wakeMaxStreams,
-			Version:     version,
-			Commit:      daemonCommitForStatus(),
-			Log:         wakeLogger(),
+			Store:        store,
+			Session:      &session.ExecClient{Bin: strings.TrimSpace(wakeOatsBin)},
+			ChannelCore:  wake.NewChannelCoreRunner(store),
+			OpenStream:   wakeStreamOpener,
+			ReloadStream: wakeStreamReload,
+			Heartbeat:    wakeHeartbeat,
+			MaxStreams:   wakeMaxStreams,
+			Version:      version,
+			Commit:       daemonCommitForStatus(),
+			Log:          wakeLogger(),
 		})
 		if err != nil {
 			return err
@@ -444,15 +445,28 @@ func wakeStore() (*wake.Store, error) {
 // stream-read and presence authority — it never opens a message, so it never
 // needs decryption material for any identity.
 func wakeStreamOpener(ctx context.Context, identityHome, teamID string) (run.EventStreamOpener, error) {
-	client, err := wakeIdentityClient(ctx, identityHome, teamID)
+	client, _, err := wakeIdentityClient(ctx, identityHome, teamID, resolveAuthenticatedBaseURLContext)
 	if err != nil {
 		return nil, err
 	}
 	return run.NewEventStreamOpener(client.Client), nil
 }
 
+// wakeStreamReload builds one identity's event stream source before a retry
+// of a refused stream. It reads the identity home again as wakeStreamOpener
+// does, and builds the client for the mount of the stored server URL that
+// answers as the API (resolveReloadBaseURLContext); that mount is stored once
+// a stream opens there (reloadedEventStreamOpener).
+func wakeStreamReload(ctx context.Context, identityHome, teamID string) (run.EventStreamOpener, error) {
+	client, sel, err := wakeIdentityClient(ctx, identityHome, teamID, resolveReloadBaseURLContext)
+	if err != nil {
+		return nil, err
+	}
+	return reloadedEventStreamOpener(client, sel), nil
+}
+
 func wakeHeartbeat(ctx context.Context, identityHome, teamID string) error {
-	client, err := wakeIdentityClient(ctx, identityHome, teamID)
+	client, _, err := wakeIdentityClient(ctx, identityHome, teamID, resolveAuthenticatedBaseURLContext)
 	if err != nil {
 		return err
 	}
@@ -460,10 +474,10 @@ func wakeHeartbeat(ctx context.Context, identityHome, teamID string) error {
 	return err
 }
 
-func wakeIdentityClient(ctx context.Context, identityHome, teamID string) (*aweb.Client, error) {
+func wakeIdentityClient(ctx context.Context, identityHome, teamID string, resolveBaseURL baseURLResolver) (*aweb.Client, *awconfig.Selection, error) {
 	identityHome = strings.TrimSpace(identityHome)
 	if identityHome == "" || !filepath.IsAbs(identityHome) {
-		return nil, fmt.Errorf("identity home must be an absolute path, got %q", identityHome)
+		return nil, nil, fmt.Errorf("identity home must be an absolute path, got %q", identityHome)
 	}
 	home := awconfig.IdentityHome{Root: identityHome, Source: awconfig.IdentityHomeFlag}
 	workingDir := awconfig.WorktreeRootFromIdentityPath(filepath.Join(identityHome, "identity.yaml"))
@@ -471,23 +485,23 @@ func wakeIdentityClient(ctx context.Context, identityHome, teamID string) (*aweb
 		workingDir = filepath.Dir(identityHome)
 	}
 	var client *aweb.Client
+	var selection *awconfig.Selection
 	var err error
 	if awconfig.IsGrantHome(home.Root) {
 		if err := validateGrantHomeTeam(home.Root, teamID); err != nil {
-			return nil, err
+			return nil, nil, err
 		}
-		client, _, err = buildGrantClientSelectionForTeam(ctx, workingDir, home, teamID)
+		client, selection, err = buildGrantClientSelectionForTeam(ctx, workingDir, home, teamID, resolveBaseURL)
 	} else {
-		var selection *awconfig.Selection
 		selection, err = resolveSelectionAtIdentityHome(workingDir, teamID, home)
 		if err == nil {
-			client, _, err = buildClientForSelectionAtIdentityHome(ctx, workingDir, externalIdentityHomeRoot(home), selection)
+			client, selection, err = buildClientForSelectionAtIdentityHome(ctx, workingDir, externalIdentityHomeRoot(home), selection, resolveBaseURL)
 		}
 	}
 	if err != nil {
-		return nil, err
+		return nil, nil, err
 	}
-	return client, nil
+	return client, selection, nil
 }
 
 func validateGrantHomeTeam(identityHome, teamID string) error {

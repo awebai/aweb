@@ -57,9 +57,15 @@ type Config struct {
 	// OpenStream builds the event stream source for one identity home. It is
 	// injected so the broker can be tested with no server and no credentials,
 	// and so credential resolution stays in cmd/aw where it already lives.
-	// The broker calls it when it creates a stream and again before each retry
-	// of a refused one; anything it waits on must end with ctx.
+	// The broker calls it when it creates a stream and, unless ReloadStream is
+	// set, again before each retry of a refused one; anything it waits on must
+	// end with ctx.
 	OpenStream func(ctx context.Context, identityHome, teamID string) (run.EventStreamOpener, error)
+	// ReloadStream, when set, is what the broker calls in place of OpenStream
+	// before each retry of a refused stream. It reads the same identity home
+	// again, and may do what only a refused stream needs, such as looking for
+	// the server mount that answers; anything it waits on must end with ctx.
+	ReloadStream func(ctx context.Context, identityHome, teamID string) (run.EventStreamOpener, error)
 	// Heartbeat uses the same explicit identity/team selection as OpenStream.
 	// The runner calls it only after this tick's fresh inspect says present.
 	Heartbeat         func(ctx context.Context, identityHome, teamID string) error
@@ -449,10 +455,15 @@ func (b *Broker) ensureStream(binding ReceiveIdentity) bool {
 		return false
 	}
 	identityHome := binding.IdentityHome
-	// OpenStream resolves the identity home from disk, so calling it again is
-	// how a refused stream's retry picks up a renewed certificate or grant.
+	// OpenStream and ReloadStream resolve the identity home from disk, so
+	// calling one again is how a refused stream's retry picks up a renewed
+	// certificate or grant.
+	reopen := b.cfg.OpenStream
+	if b.cfg.ReloadStream != nil {
+		reopen = b.cfg.ReloadStream
+	}
 	reload := func(ctx context.Context) (run.EventStreamOpener, error) {
-		return b.cfg.OpenStream(ctx, identityHome, teamID)
+		return reopen(ctx, identityHome, teamID)
 	}
 	runner := newStreamRunner(key, identityHome, teamID, opener, reload, func(ev awid.AgentEvent) {
 		b.dispatchStream(key, ev)
