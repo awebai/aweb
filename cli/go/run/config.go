@@ -8,6 +8,7 @@ import (
 	"strings"
 
 	"github.com/awebai/aw/awconfig"
+	"github.com/awebai/aw/internal/atomicfile"
 )
 
 const (
@@ -209,37 +210,5 @@ func writeUserConfigTo(path string, cfg UserConfig) error {
 	}
 	data = append(data, '\n')
 
-	return atomicWriteFileMode(path, data, 0o600)
-}
-
-func atomicWriteFileMode(path string, data []byte, mode os.FileMode) error {
-	dir := filepath.Dir(path)
-	if err := os.MkdirAll(dir, 0o700); err != nil {
-		return err
-	}
-
-	tmp, err := os.CreateTemp(dir, ".tmp.*")
-	if err != nil {
-		return err
-	}
-	tmpName := tmp.Name()
-	defer func() { _ = os.Remove(tmpName) }()
-
-	if err := tmp.Chmod(mode); err != nil {
-		_ = tmp.Close()
-		return err
-	}
-	if _, err := tmp.Write(data); err != nil {
-		_ = tmp.Close()
-		return err
-	}
-	if err := tmp.Sync(); err != nil {
-		_ = tmp.Close()
-		return err
-	}
-	if err := tmp.Close(); err != nil {
-		return err
-	}
-
-	return os.Rename(tmpName, path)
+	return atomicfile.Options{Mode: 0o600, ParentMode: 0o700}.Write(path, data)
 }

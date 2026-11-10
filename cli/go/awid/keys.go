@@ -9,6 +9,7 @@ import (
 	"path/filepath"
 	"strings"
 
+	"github.com/awebai/aw/internal/atomicfile"
 	"github.com/awebai/aw/internal/crashtest"
 	"github.com/awebai/aw/internal/pathpreflight"
 )
@@ -67,18 +68,8 @@ func SaveSigningKeyExclusive(path string, priv ed25519.PrivateKey) error {
 		Type:  "ED25519 PRIVATE KEY",
 		Bytes: priv.Seed(),
 	})
-	file, err := os.OpenFile(path, os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0o600)
-	if err != nil {
+	if err := atomicfile.WriteExclusive(path, data, 0o600); err != nil {
 		return fmt.Errorf("create private key %s without overwrite: %w", path, err)
-	}
-	if _, err := file.Write(data); err != nil {
-		_ = file.Close()
-		_ = os.Remove(path)
-		return fmt.Errorf("write private key %s: %w", path, err)
-	}
-	if err := file.Close(); err != nil {
-		_ = os.Remove(path)
-		return fmt.Errorf("close private key %s: %w", path, err)
 	}
 	return nil
 }

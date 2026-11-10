@@ -2,6 +2,11 @@
 
 ## Unreleased
 
+- `aw` writes signing keys, certificates and its other credential and state
+  files through one atomic write that syncs the file and then its directory, so
+  a key reported as saved survives a host crash. Recovery-only key writes keep
+  refusing an existing key.
+
 - AWID bounds its request input. The registry service refuses a request body
   over `AWID_MAX_REQUEST_BODY_BYTES` with 413 before parsing it (default 4 MiB,
   following a raised `AWID_ROTATE_MAX_BODY_BYTES`; a value below the rotate
