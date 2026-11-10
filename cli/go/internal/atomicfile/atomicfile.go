@@ -52,7 +52,8 @@ type Options struct {
 // holds the new content: the write is complete but not known to be durable.
 // The rename replaces a symlink at path; it does not write through it.
 //
-// Every error names path. On Windows the directory sync is skipped.
+// Every error names path. The directory sync is skipped on Windows and on a
+// filesystem that answers that it cannot sync a directory.
 func Write(path string, data []byte, mode os.FileMode) error {
 	return Options{Mode: mode}.Write(path, data)
 }
