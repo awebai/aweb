@@ -193,18 +193,26 @@ refused-byte digest and the recorded fault time, without returning refused
 content.
 
 The stored report's **`holds`** are the legal holds that logs' own chain
-entries disclose for the epoch. Each is reported with `hold_id`,
-`hold_scope`, `actor_ref` for an actor hold, the `chain_epoch` and `team_seq`
-of the entry that set it (`set`), and those of its release (`released`, or
-null while it is active). A hold set in an earlier epoch and still active at
-the epoch's start is reported too, so verifying only the current epoch does
-not miss it. Holds are read only from the chain, never from logs' other
-records. Only a retained `post-governance-hook` entry produced by the epoch's
-own logs origin, that verifies, counts. A hold act signed by any other
-producer is never a hold. **In flight (aweb-acgh.16.24):** the Go verifier
-and `logs-chain-v1.json` do not report holds yet. An export bundle will carry
-the earlier epochs' logs governance entries this report needs, so that
-`aw logs verify --bundle` reports the same holds offline.
+entries disclose for the epoch. Each is reported with `hold_id`, `hold_scope`,
+`actor_ref` for an actor hold, the `chain_epoch` and `team_seq` of the entry
+that set it (`set`), and those of its release (`released`, or null while it is
+active). Logs sets a hold id once per team, so the id names one hold. A hold
+set in an earlier epoch and still active at the epoch's start is reported too,
+so that verifying only the current epoch does not miss it. That relies on the
+earlier epochs' governance entries being whole: the report re-checks each
+entry's own signature but not the earlier epochs' links, so an earlier epoch's
+entries that were deleted are caught only by verifying that epoch against a
+checkpoint kept outside logs. Each genesis records the previous epoch's final
+checkpoint hash, which names the checkpoint to check against. Holds are read
+only from the chain, never from logs' other records. Only a retained
+`post-governance-hook` entry produced by its epoch's own logs origin, that
+verifies, counts. A hold act signed by any other producer is never a hold. The
+earlier epochs, which are closed and whose governance entries no purge
+reaches, are read through their own index before the head lock is taken. **In
+flight (aweb-acgh.16.24):** the Go verifier and `logs-chain-v1.json` do not
+report holds yet. An export bundle will carry the earlier epochs' logs
+governance entries this report needs, so that `aw logs verify --bundle`
+reports the same holds offline.
 
 `delivery.scope` is always `observed_internal_only`. Its `gaps` are inclusive
 missing sequence ranges between retained authenticated observations in the

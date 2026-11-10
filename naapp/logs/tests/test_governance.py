@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import asyncio
 import copy
+import json
 import uuid
 from datetime import UTC, datetime, timedelta
 
@@ -17,7 +18,7 @@ from aweb_naapp.hooks.owner_act import Refused, VerifiedOwnerAct
 from aweb_naapp_testing.owner_acts import APP_ID, INSTALLATION_ID, TEAM_ID
 
 from aweb_logs.governance import GovernanceRefused
-from aweb_logs.ledger import append, open_next_epoch, verify_epoch
+from aweb_logs.ledger import GOVERNANCE_BEFORE, append, open_next_epoch, verify_epoch
 from aweb_logs.retention import apply_retention
 
 from .fixtures import _APP_EVENT, SECRETS_SEED
@@ -440,3 +441,23 @@ async def test_verify_carries_each_hold_still_active_into_the_next_epoch(world: 
         {"hold_id": "hold-3", "hold_scope": "actor", "actor_ref": AGENT, "set": set_3,
          "released": None},
     ]  # fmt: skip
+
+
+def index_names(plan: dict) -> set[str]:
+    names = {plan["Index Name"]} if "Index Name" in plan else set()
+    for child in plan.get("Plans", []):
+        names |= index_names(child)
+    return names
+
+
+async def test_earlier_epochs_governance_is_read_by_its_own_index(world: World):
+    for seq in range(1, 6):
+        await appended(world, secret_use(seq=seq), age=timedelta(days=1))
+    await hold(world, "hold-1")
+    await open_next_epoch(world.db, world.signer, TEAM_ID, at=datetime.now(UTC))
+    async with world.db.transaction() as tx:
+        await tx.execute("SET LOCAL enable_seqscan = off")
+        [explained] = json.loads(
+            await tx.fetch_value("EXPLAIN (FORMAT JSON) " + GOVERNANCE_BEFORE, TEAM_ID, 2)
+        )
+    assert "idx_chain_events_governance" in index_names(explained["Plan"])

@@ -329,6 +329,22 @@ async def open_next_epoch(
         return final
 
 
+_GENESIS_COLUMNS = "chain_epoch, logs_origin, created_at, previous_checkpoint_sha256"
+_EVENT_COLUMNS = (
+    "chain_epoch, team_seq, prev_event_hash, event_hash, received_at, hook, producer_origin,"
+    " content_commitment, salt, signing_bytes, signature, key_evidence, purge_act"
+)
+
+# logs' own governance entries in a team's epochs before $2, read through
+# idx_chain_events_governance: their count, not the team's history, is the cost.
+GOVERNANCE_BEFORE = (
+    "SELECT " + _EVENT_COLUMNS + " FROM {{tables.chain_events}} e"
+    " JOIN {{tables.chain_epochs}} p USING (team_id, chain_epoch)"
+    " WHERE e.team_id = $1 AND e.chain_epoch < $2 AND e.hook = '" + GOVERNANCE_HOOK + "'"
+    " AND e.producer_origin = p.logs_origin ORDER BY e.chain_epoch, e.team_seq"
+)
+
+
 async def load_epoch(
     db: AsyncDatabaseManager | TransactionManager, team_id: str, chain_epoch: int
 ) -> tuple[Genesis, list[StoredEvent]]:
@@ -362,15 +378,7 @@ async def load_governance_before(
         team_id,
         chain_epoch,
     )
-    rows = await db.fetch_all(
-        "SELECT " + _EVENT_COLUMNS + " FROM {{tables.chain_events}} e"
-        " JOIN {{tables.chain_epochs}} p USING (team_id, chain_epoch)"
-        " WHERE e.team_id = $1 AND e.chain_epoch < $2 AND e.hook = $3"
-        " AND e.producer_origin = p.logs_origin ORDER BY e.chain_epoch, e.team_seq",
-        team_id,
-        chain_epoch,
-        GOVERNANCE_HOOK,
-    )
+    rows = await db.fetch_all(GOVERNANCE_BEFORE, team_id, chain_epoch)
     return [
         (
             _genesis(team_id, epoch),
@@ -384,11 +392,6 @@ async def load_governance_before(
     ]
 
 
-_GENESIS_COLUMNS = "chain_epoch, logs_origin, created_at, previous_checkpoint_sha256"
-_EVENT_COLUMNS = (
-    "chain_epoch, team_seq, prev_event_hash, event_hash, received_at, hook, producer_origin,"
-    " content_commitment, salt, signing_bytes, signature, key_evidence, purge_act"
-)
 
 
 def _genesis(team_id: str, row: Mapping[str, Any]) -> Genesis:
@@ -439,10 +442,12 @@ async def verify_epoch(
     the same head lock, held here only for database reads, never network I/O.
     Authorization belongs to the caller; this function is not an HTTP route.
     """
+    # Earlier epochs are closed, and no purge reaches logs' own governance
+    # entries, so they are read outside the head lock appends wait on.
+    earlier = await load_governance_before(db, team_id, chain_epoch)
     async with db.transaction() as tx:
         await _existing_head(tx, team_id)
         genesis, events = await load_epoch(tx, team_id, chain_epoch)
-        earlier = await load_governance_before(tx, team_id, chain_epoch)
         faults = await tx.fetch_all(
             "SELECT f.fault_id, f.event_id, e.team_seq, f.kind, f.refused_sha256, f.recorded_at"
             " FROM {{tables.chain_faults}} f JOIN {{tables.chain_events}} e"
