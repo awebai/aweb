@@ -12,6 +12,7 @@ import {
 } from "./registry.js";
 import { PinStore, type IdentityScope } from "./pinstore.js";
 import { decodeRawStdBase64 } from "./base64.js";
+import { compareByCodePoint } from "./canonical.js";
 
 ed.etc.sha512Sync = (...m) => sha512(ed.etc.concatBytes(...m));
 
@@ -1132,7 +1133,7 @@ export function canonicalReplacementJSON(
 }
 
 function canonicalObject(fields: Array<[string, string]>): string {
-  const sorted = [...fields].sort(([a], [b]) => (a < b ? -1 : a > b ? 1 : 0));
+  const sorted = [...fields].sort(([a], [b]) => compareByCodePoint(a, b));
   return `{${sorted.map(([key, value]) => `"${key}":"${escapeJSON(value)}"`).join(",")}}`;
 }
 

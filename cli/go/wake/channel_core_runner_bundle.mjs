@@ -3219,11 +3219,20 @@ async function readBoundedJSON(response) {
 }
 
 // channel-core/src/identity/canonical.ts
+function compareByCodePoint(a, b) {
+  for (let i = 0; i < a.length && i < b.length; ) {
+    const x = a.codePointAt(i);
+    const y = b.codePointAt(i);
+    if (x !== y) return x < y ? -1 : 1;
+    i += x > 65535 ? 2 : 1;
+  }
+  return a.length - b.length;
+}
 function canonicalJSONValue(value, unsupported) {
   if (Array.isArray(value)) return `[${value.map((item) => canonicalJSONValue(item, unsupported)).join(",")}]`;
   if (value !== null && typeof value === "object") {
     const obj = value;
-    return `{${Object.keys(obj).sort().map((key) => `${JSON.stringify(key)}:${canonicalJSONValue(obj[key], unsupported)}`).join(",")}}`;
+    return `{${Object.keys(obj).sort(compareByCodePoint).map((key) => `${JSON.stringify(key)}:${canonicalJSONValue(obj[key], unsupported)}`).join(",")}}`;
   }
   if (typeof value === "string" || typeof value === "boolean" || value === null || typeof value === "number" && Number.isSafeInteger(value)) return JSON.stringify(value);
   throw new Error(unsupported);
@@ -3670,7 +3679,7 @@ function canonicalJSON(env) {
   if (env.conversation_id) fields.push(["conversation_id", env.conversation_id]);
   if (env.message_id) fields.push(["message_id", env.message_id]);
   if (env.to_stable_id) fields.push(["to_stable_id", env.to_stable_id]);
-  fields.sort((a, b) => a[0] < b[0] ? -1 : a[0] > b[0] ? 1 : 0);
+  fields.sort((a, b) => compareByCodePoint(a[0], b[0]));
   let result = "{";
   for (let i = 0; i < fields.length; i++) {
     if (i > 0) result += ",";
@@ -10189,7 +10198,7 @@ function canonicalReplacementJSON(address, controllerDID, oldDID, newDID, timest
   ]);
 }
 function canonicalObject(fields) {
-  const sorted = [...fields].sort(([a], [b]) => a < b ? -1 : a > b ? 1 : 0);
+  const sorted = [...fields].sort(([a], [b]) => compareByCodePoint(a, b));
   return `{${sorted.map(([key, value]) => `"${key}":"${escapeJSON3(value)}"`).join(",")}}`;
 }
 function b64Decode3(value) {

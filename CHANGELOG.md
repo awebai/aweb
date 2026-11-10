@@ -44,6 +44,16 @@
   of its own and is unchanged apart from its rebuilt bundle.
 
 - The channel client (the Claude Code plugin, the Pi extension and `aw wake`)
+  sorts the object keys of the canonical JSON it signs and verifies by Unicode
+  code point, as `aw` and the Python reference do. The order differs from
+  JavaScript's default only between a key holding a character outside the
+  Basic Multilingual Plane and a key holding a character in U+E000-U+FFFF;
+  every payload the client builds has ASCII keys and produces the same bytes
+  as before. Signed payloads carry only integers of magnitude at most 2^53-1;
+  `docs/vectors/README.md` states what each implementation does with any other
+  number, and `docs/vectors/canonical-json-v1.json` pins it.
+
+- The channel client (the Claude Code plugin, the Pi extension and `aw wake`)
   signs every certificate and identity request with the
   [v2 request envelope](docs/team-auth-envelope-v2.md), which binds the
   audience, method, path with query, body and timestamp, as `aw` does. It does
