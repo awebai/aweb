@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 import logging
+from dataclasses import replace
 from datetime import datetime, timezone
 from uuid import UUID, uuid4
 
@@ -14,6 +15,7 @@ from aweb.identity_auth_deps import _enforce_current_membership
 from aweb.agent_wake import agent_wake_scope
 from aweb.mcp.auth import current_agent_wake_publisher, get_auth
 from aweb.mcp.signing import sign_hosted_message
+from aweb.mcp.tools._common import team_identity
 from aweb.messaging.room import (
     RoomPost,
     room_metadata,
@@ -21,7 +23,6 @@ from aweb.messaging.room import (
     post_room_message,
     present_room,
 )
-from aweb.team_auth_deps import TeamIdentity
 from aweb.messaging.room_notices import count_room_notices, pending_room_notices
 
 logger = logging.getLogger(__name__)
@@ -65,17 +66,7 @@ async def _room_actor(db):
             address=auth.address or "",
         )
         await authenticate_id_chain(auth.request, binding)
-    actor = TeamIdentity(
-        team_id=auth.team_id,
-        alias=auth.alias or "",
-        did_key=auth.did_key,
-        did_aw=auth.did_aw or "",
-        address=auth.address or "",
-        agent_id=auth.agent_id,
-        identity_scope=auth.identity_scope or "",
-        certificate_id=row["certificate_id"],
-    )
-    return auth, actor
+    return auth, replace(team_identity(auth), certificate_id=row["certificate_id"])
 
 
 async def room_read(db, *, after=None, limit=50):

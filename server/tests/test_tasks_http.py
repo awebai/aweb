@@ -50,17 +50,22 @@ def _build_tasks_app(aweb_db) -> FastAPI:
     return app
 
 
-async def _fake_team_identity(request=None, db_infra=None) -> TeamIdentity:
+def member_identity(alias: str = "alice", *, team_id: str = TEAM_ID) -> TeamIdentity:
+    """An already-authenticated member, as the task routes and service receive one."""
     return TeamIdentity(
-        team_id=TEAM_ID,
-        alias="alice",
-        did_key="did:key:z6Mkalice",
-        did_aw="did:aw:alice",
-        address="acme.com/alice",
+        team_id=team_id,
+        alias=alias,
+        did_key=f"did:key:z6Mk{alias}",
+        did_aw=f"did:aw:{alias}",
+        address=f"acme.com/{alias}",
         agent_id=str(uuid4()),
         identity_scope="global",
         certificate_id="cert-001",
     )
+
+
+async def _fake_team_identity(request=None, db_infra=None) -> TeamIdentity:
+    return member_identity()
 
 
 async def _seed_team(aweb_db) -> None:
