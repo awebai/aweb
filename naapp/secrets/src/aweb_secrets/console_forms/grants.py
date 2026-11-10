@@ -263,7 +263,7 @@ def grant_forms_router(*, changes: ConsoleChanges) -> APIRouter:
             return _login_redirect(refused)
         async with _errors(changes.console, current):
             installation_id = await changes.installation_for_session(current)
-            admitted = await changes._installation(installation_id)
+            admitted = await changes._installation(current, installation_id)
             async with changes.console.db.transaction() as tx:
                 await changes._owner(tx, current, admitted)
                 await changes.console.fence.check(tx, admitted)
@@ -279,7 +279,7 @@ def grant_forms_router(*, changes: ConsoleChanges) -> APIRouter:
         current = await changes.console.sessions.current(request)
         body = await _body(request, _FIELDS)
         async with _errors(changes.console, current):
-            admitted = await changes._installation(installation_id)
+            admitted = await changes._installation(current, installation_id)
             async with changes.console.db.transaction() as tx:
                 await changes._owner(tx, current, admitted)
                 stored = await records.secret_by_ref(

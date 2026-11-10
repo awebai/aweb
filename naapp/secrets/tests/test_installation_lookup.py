@@ -14,7 +14,6 @@ from aweb_naapp_testing.owner_acts import INSTALLATION_ID
 from aweb_secrets.installation_lookup import InstallationLookup
 from tests.test_change_sets import APP_ID, TEAM, Installations
 
-
 OTHER_TEAM = "other:example.com"
 
 
