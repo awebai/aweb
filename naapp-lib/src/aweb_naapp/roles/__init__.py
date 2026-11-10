@@ -25,8 +25,9 @@ from __future__ import annotations
 import hashlib
 import re
 from dataclasses import dataclass
+from datetime import datetime
 from pathlib import Path
-from typing import Protocol
+from typing import Any, Protocol
 
 from pgdbm import AsyncDatabaseManager, AsyncMigrationManager
 from pgdbm.core import TransactionManager
@@ -137,6 +138,193 @@ async def unassign(tx: TransactionManager, principal: PrincipalKey, role: str) -
     )
 
 
+@dataclass(frozen=True)
+class Holding:
+    """A principal's holding of a human role in one installation.
+
+    ``held_since`` is its assignment's time: kept while the holding lasts, new
+    when the role is held again after it ended. ``certificate`` is the exact
+    certificate retained for it, or None for one retained before certificates.
+    """
+
+    installation_id: str
+    team_id: str
+    role: str
+    principal: str
+    b3_scope: str
+    certificate: bytes | None
+    held_since: datetime
+
+
+# A holding: the live assignment joined to the installation's record of it.
+_HOLDING = """
+    SELECT h.b3_scope, h.certificate, a.assigned_at
+    FROM {{tables.role_assignments}} a
+    JOIN {{tables.role_holdings}} h
+        ON h.team_id = a.team_id AND h.role = a.role AND h.principal_did = a.principal_did
+    WHERE h.installation_id = $1 AND a.team_id = $2 AND a.role = $3 AND a.principal_did = $4
+"""
+_ASSIGNMENT = """
+    SELECT assigned_at FROM {{tables.role_assignments}}
+    WHERE team_id = $1 AND role = $2 AND principal_did = $3
+"""
+_RECORD = "SELECT 1 FROM {{tables.role_holdings}} WHERE b3_scope = $1"
+
+
+def _holding(
+    installation_id: str, team_id: str, role: str, principal: str, row: Any
+) -> Holding | None:
+    if row is None:
+        return None
+    return Holding(
+        installation_id=installation_id,
+        team_id=team_id,
+        role=role,
+        principal=principal,
+        b3_scope=row["b3_scope"],
+        certificate=None if row["certificate"] is None else bytes(row["certificate"]),
+        held_since=row["assigned_at"],
+    )
+
+
+async def read_holding(
+    db: Executor, *, installation_id: str, team_id: str, role: str, principal: str
+) -> Holding | None:
+    """The current holding, by SQL reads only: no lock and no refresh. None for
+    no holding, and for a bare role assignment the installation has no record of."""
+    holding_scope(installation_id, team_id, role, principal)
+    row = await db.fetch_one(_HOLDING, installation_id, team_id, role, principal)
+    return _holding(installation_id, team_id, role, principal, row)
+
+
+async def _lock(
+    tx: TransactionManager, mode: str, installation_id: str, team_id: str, role: str,
+    principal: str,
+) -> Holding | None:
+    # The assignment first, then the record: every holder and writer locks in
+    # this order, in separate statements, so the two orders never cycle.
+    scope = holding_scope(installation_id, team_id, role, principal)
+    if await tx.fetch_one(f"{_ASSIGNMENT} FOR {mode}", team_id, role, principal) is None:
+        return None
+    if await tx.fetch_one(f"{_RECORD} FOR {mode}", scope) is None:
+        return None
+    row = await tx.fetch_one(_HOLDING, installation_id, team_id, role, principal)
+    return _holding(installation_id, team_id, role, principal, row)
+
+
+async def hold_holding(
+    tx: TransactionManager, *, installation_id: str, team_id: str, role: str, principal: str
+) -> Holding | None:
+    """The current holding, held FOR SHARE until the transaction ends, so no
+    holding writer commits under it. Takes no B3 row: the caller prepares B3
+    once, for every pair it needs, after all its holds."""
+    return await _lock(tx, "SHARE", installation_id, team_id, role, principal)
+
+
+async def lock_holding(
+    tx: TransactionManager, *, installation_id: str, team_id: str, role: str, principal: str
+) -> Holding | None:
+    """The current holding, locked FOR UPDATE for a writer, after the
+    installation fence and before any B3 row. None when nothing is held."""
+    return await _lock(tx, "UPDATE", installation_id, team_id, role, principal)
+
+
+async def begin_holding(
+    tx: TransactionManager,
+    *,
+    installation_id: str,
+    team_id: str,
+    role: str,
+    principal: str,
+    certificate: bytes | None,
+) -> Holding | None:
+    """Make ``principal`` hold the role in the installation, retaining
+    ``certificate``. None, writing nothing, when the role is already held."""
+    scope = holding_scope(installation_id, team_id, role, principal)
+    assigned_at = await tx.fetch_value(
+        """
+        INSERT INTO {{tables.role_assignments}} (team_id, principal_did, role)
+        VALUES ($1, $2, $3)
+        ON CONFLICT (team_id, principal_did, role) DO NOTHING
+        RETURNING assigned_at
+        """,
+        team_id,
+        principal,
+        role,
+    )
+    if assigned_at is None:
+        return None
+    recorded = await tx.fetch_value(
+        """
+        INSERT INTO {{tables.role_holdings}} AS h
+            (b3_scope, installation_id, team_id, role, principal_did, certificate)
+        VALUES ($1, $2, $3, $4, $5, $6)
+        ON CONFLICT (b3_scope) DO UPDATE SET certificate = EXCLUDED.certificate
+        WHERE (h.installation_id, h.team_id, h.role, h.principal_did)
+            = (EXCLUDED.installation_id, EXCLUDED.team_id, EXCLUDED.role,
+               EXCLUDED.principal_did)
+        RETURNING 1
+        """,
+        scope,
+        installation_id,
+        team_id,
+        role,
+        principal,
+        certificate,
+    )
+    if recorded is None:
+        raise ValueError("this holding's scope is recorded for another holding")
+    return Holding(installation_id, team_id, role, principal, scope, certificate, assigned_at)
+
+
+async def end_holding(
+    tx: TransactionManager, *, installation_id: str, team_id: str, role: str, principal: str
+) -> bool:
+    """End the holding, keeping its record as history. False, writing
+    nothing, when nothing is held."""
+    if await lock_holding(
+        tx, installation_id=installation_id, team_id=team_id, role=role, principal=principal
+    ) is None:
+        return False
+    ended = await tx.fetch_value(
+        """
+        DELETE FROM {{tables.role_assignments}}
+        WHERE team_id = $1 AND principal_did = $2 AND role = $3
+        RETURNING 1
+        """,
+        team_id,
+        principal,
+        role,
+    )
+    return ended is not None
+
+
+async def refresh_holding_certificate(
+    tx: TransactionManager,
+    *,
+    installation_id: str,
+    team_id: str,
+    role: str,
+    principal: str,
+    held_since: datetime,
+    certificate: bytes,
+) -> bool:
+    """Retain ``certificate`` for the holding that has held since
+    ``held_since``. False, writing nothing, when that holding has ended, even
+    if the role is held again."""
+    held = await lock_holding(
+        tx, installation_id=installation_id, team_id=team_id, role=role, principal=principal
+    )
+    if held is None or held.held_since != held_since:
+        return False
+    await tx.execute(
+        "UPDATE {{tables.role_holdings}} SET certificate = $2 WHERE b3_scope = $1",
+        held.b3_scope,
+        certificate,
+    )
+    return True
+
+
 async def purge_team(tx: TransactionManager, team_id: str) -> None:
     """Remove every role assignment of the team in the caller's transaction.
 
@@ -145,6 +333,7 @@ async def purge_team(tx: TransactionManager, team_id: str) -> None:
     roles. A role resolved in a transaction still open is purged once it ends.
     """
     await tx.execute("DELETE FROM {{tables.role_assignments}} WHERE team_id = $1", team_id)
+    await tx.execute("DELETE FROM {{tables.role_holdings}} WHERE team_id = $1", team_id)
 
 
 async def has_role(db: Executor, principal: PrincipalKey, role: str) -> bool:
