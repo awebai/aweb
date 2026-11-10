@@ -128,16 +128,13 @@ def main():
     require(as_user('oatsagent', ['/usr/bin/test', '-r', '/etc/hostname']).returncode == 0)
     require(as_user('oatsagent', ['/usr/bin/test', '-x', '/etc']).returncode == 0)
     privileged_groups = {0}
-    for name in ('docker', 'sudo', 'adm'):
+    for name in ('docker', 'sudo', 'adm', 'lxd', 'incus'):
         try:
             privileged_groups.add(grp.getgrnam(name).gr_gid)
         except KeyError:
             continue
-    require(not privileged_groups.intersection(actor_metadata['aweb-runner']['groups']))
-    try:
-        require(grp.getgrnam('docker').gr_gid not in actor_metadata['oatsagent']['groups'])
-    except KeyError:
-        pass
+    for name in ('oatsagent', 'aweb-runner'):
+        require(not privileged_groups.intersection(actor_metadata[name]['groups']))
     require(as_user('aweb-runner', ['/usr/bin/test', '-r', str(probe)]).returncode == 0)
     config, state = PREFIX / 'runner-config.json', PREFIX / 'runner-state'
     for path, mode, directory in [(config, 0o600, False), (state, 0o700, True)]:
