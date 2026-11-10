@@ -594,3 +594,28 @@ async def test_a_link_approval_has_only_candidates_a_link_can_reach(
         return
     await minting
     assert len(pw.contacts.inbox[NOTICE]) == 1
+
+
+async def test_an_enrolment_link_issued_before_conversion_enrols_nothing_after(pw: PasskeyWorld):
+    designation = await designate_by_act(pw, "app-role.designate", NOTICE, SCOPE)
+    await designate_by_act(pw, "app-role.designate", "neighbour@example.com", CONTACT_SCOPE)
+    token = pw.contacts.last(NOTICE)
+    registration = SoftAuthenticator(ORIGIN).create(await pw.passkeys.enrolment_options(token))
+    neighbour = pw.contacts.last("neighbour@example.com")
+    neighbour_registration = SoftAuthenticator(ORIGIN).create(
+        await pw.passkeys.enrolment_options(neighbour)
+    )
+    await backfilled(pw)
+    with pytest.raises(EnrolmentRefused):
+        await pw.passkeys.complete_enrolment(token, registration)
+    db = pw.passkeys.db
+    subject = designation.approver.subject
+    assert not await db.fetch_value(
+        "SELECT count(*) FROM {{tables.passkey_credentials}} WHERE subject = $1", subject
+    )
+    assert not await db.fetch_value(
+        "SELECT count(*) FROM {{tables.passkey_enrolments}} "
+        "WHERE subject = $1 AND used_at IS NOT NULL",
+        subject,
+    )
+    await pw.passkeys.complete_enrolment(neighbour, neighbour_registration)
