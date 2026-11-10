@@ -66,6 +66,11 @@ async def db(test_db_factory):
     db = await test_db_factory.create_db(suffix="install_authority", schema="aweb")
     await db.execute("CREATE TABLE aweb.test_install_admins (team_id TEXT NOT NULL, subject_id TEXT NOT NULL)")
     await db.execute("CREATE TABLE aweb.team_app_install_admins (team_id TEXT, principal_did TEXT, role TEXT, revoked_at TIMESTAMPTZ)")
+    # The columns a forwarded actor is read by (aweb.internal_auth.resolve_internal_actor).
+    await db.execute(
+        "CREATE TABLE aweb.agents (agent_id UUID PRIMARY KEY, team_id TEXT, status TEXT, deleted_at TIMESTAMPTZ, "
+        "alias TEXT, did_key TEXT, did_aw TEXT, address TEXT, identity_scope TEXT)"
+    )
     return db
 
 
@@ -150,6 +155,33 @@ async def test_verified_internal_subject_reaches_host_policy(db, monkeypatch, pr
     assert subject == InternalInstallAdminSubject(
         team_id=TEAM, principal_type=principal_type, principal_id=PRINCIPAL, actor_id=ACTOR,
     )
+
+
+@pytest.mark.parametrize("state", ["retired", "removed", "other-team"])
+async def test_forwarded_actor_that_names_a_non_member_agent_never_reaches_policy(db, monkeypatch, state):
+    monkeypatch.setenv("AWEB_TRUST_PROXY_HEADERS", "1")
+    monkeypatch.setenv("AWEB_INTERNAL_AUTH_SECRET", SECRET)
+    await db.execute(
+        "INSERT INTO aweb.agents (agent_id, team_id, status, deleted_at) VALUES ($1, $2, $3, CASE WHEN $4 THEN NOW() END)",
+        ACTOR, "elsewhere:example.com" if state == "other-team" else TEAM,
+        "retired" if state == "retired" else "active", state == "removed",
+    )
+    await db.execute("INSERT INTO aweb.test_install_admins VALUES ($1, $2)", TEAM, PRINCIPAL)
+    policy = Policy()
+    with pytest.raises(HTTPException) as exc:
+        await require(db, request(headers=proxy_headers(), policy=policy))
+    assert exc.value.status_code == 403
+    assert policy.seen == []
+
+
+async def test_forwarded_actor_that_is_an_active_member_reaches_policy(db, monkeypatch):
+    monkeypatch.setenv("AWEB_TRUST_PROXY_HEADERS", "1")
+    monkeypatch.setenv("AWEB_INTERNAL_AUTH_SECRET", SECRET)
+    await db.execute("INSERT INTO aweb.agents (agent_id, team_id, status) VALUES ($1, $2, 'active')", ACTOR, TEAM)
+    await db.execute("INSERT INTO aweb.test_install_admins VALUES ($1, $2)", TEAM, PRINCIPAL)
+    policy = Policy()
+    await require(db, request(headers=proxy_headers(), policy=policy))
+    assert len(policy.seen) == 1
 
 
 async def test_unverified_internal_headers_never_reach_policy(db, monkeypatch):

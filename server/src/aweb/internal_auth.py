@@ -151,21 +151,32 @@ def parse_internal_auth_context(request: Request) -> Optional[InternalAuthContex
     }
 
 
-async def fetch_active_internal_actor(aweb_db, *, team_id: str, actor_id: str):
-    """The agent a trusted proxy forwards a request for, while it is an active member.
+async def resolve_internal_actor(aweb_db, internal: InternalAuthContext):
+    """The agent a trusted proxy forwards a request for.
 
-    The proxy's signature says which agent row the request is for; it does not
-    say that the agent is still a member. Only a row of that team with status
-    'active' that is not deleted is one: a retired, archived or deleted agent
-    whose row remains is not admitted. Every resolver that acts for a forwarded
-    actor reads the actor here. Returns the row, or None.
+    The proxy's signature says which actor the request is for; it does not say
+    that the actor is still a member. Every resolver that admits a forwarded
+    request reads the actor here.
+
+    Returns the agent's row when the actor id names an active member of the
+    forwarded team: status 'active', not deleted. Returns None when it names no
+    agent row at all, which is how a proxy forwards a caller that has no agent
+    (a team-scoped key before it is bound, a dashboard person, a public
+    reader): a resolver that needs an agent refuses None, one that admits a
+    team-level principal goes on without an agent. Raises 403 when it names an
+    agent row that is not an active member of that team: one that is retired,
+    archived, deleted, or another team's.
     """
-    return await aweb_db.fetch_one(
+    row = await aweb_db.fetch_one(
         """
-        SELECT agent_id, alias, did_key, did_aw, address, identity_scope
+        SELECT agent_id, team_id, status, deleted_at, alias, did_key, did_aw, address, identity_scope
         FROM {{tables.agents}}
-        WHERE agent_id = $1 AND team_id = $2 AND status = 'active' AND deleted_at IS NULL
+        WHERE agent_id = $1
         """,
-        uuid.UUID(actor_id),
-        team_id,
+        uuid.UUID(internal["actor_id"]),
     )
+    if row is None:
+        return None
+    if row["team_id"] != internal["team_id"] or row["status"] != "active" or row["deleted_at"] is not None:
+        raise HTTPException(status_code=403, detail="Agent not connected")
+    return row

@@ -19,7 +19,7 @@ from aweb.identity_auth_deps import (
 )
 from aweb.agent_wake import agent_wake_publisher
 from aweb.identity_binding import refresh_projection_binding, verify_identity_binding
-from aweb.internal_auth import fetch_active_internal_actor, parse_internal_auth_context
+from aweb.internal_auth import parse_internal_auth_context, resolve_internal_actor
 from aweb.mcp.mutations import (
     mutation_callback_from_scope,
     reset_mutation_callback,
@@ -210,7 +210,7 @@ class MCPAuthMiddleware:
     async def _resolve_proxy_auth(self, internal: dict[str, str], *, request: Request) -> AuthContext:
         aweb_db = _aweb_db(self.db_infra)
         team_id = internal["team_id"]
-        row = await fetch_active_internal_actor(aweb_db, team_id=team_id, actor_id=internal["actor_id"])
+        row = await resolve_internal_actor(aweb_db, internal)
         if not row:
             raise HTTPException(status_code=403, detail="Agent not connected")
 
