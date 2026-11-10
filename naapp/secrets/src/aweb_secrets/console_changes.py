@@ -23,6 +23,7 @@ from datetime import UTC, datetime, timedelta
 from typing import Any, Literal, Protocol
 
 from aweb_naapp.console import ConsoleRoute, ConsoleSession
+from aweb_naapp.console.handoff_sessions import ConsoleHandoffs
 from aweb_naapp.hooks.producer import Registrations
 from aweb_naapp.hooks.strictjson import Refused as HookRefused
 from aweb_naapp.roles import hold_role
@@ -87,6 +88,7 @@ class ConsoleChanges:
         registrations: Registrations,
         after_commit: AfterCommit,
         approval_kind: ApprovalKindLookup,
+        handoffs: ConsoleHandoffs | None = None,
     ) -> None:
         self.console = console
         self.changes = changes
@@ -94,6 +96,7 @@ class ConsoleChanges:
         self.registrations = registrations
         self.after_commit = after_commit
         self.approval_kind = approval_kind
+        self.handoffs = handoffs
 
     async def _installation(self, installation_id: str) -> AdmittedInstallation:
         admitted = await self.console.installation(installation_id)
