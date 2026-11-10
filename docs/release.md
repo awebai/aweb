@@ -333,6 +333,8 @@ wrapper adds project-scoped service aliases (`<project>-<service>.test`), attach
 the runner after `compose up`, and detaches it before `compose down`. Service
 clients use those names and the service's container port. Temporary A2A clients
 also join their journey network. Existing federation DNS/TLS aliases remain.
+Services using `network_mode: service:aweb` retain that shared namespace and
+its signed loopback audience; the overlay adds no separate networks to them.
 The local quickstart test's loopback bridge stays inside the runner and forwards
 to the direct service endpoints; it does not use a host-published port.
 Standalone host journeys retain their existing host endpoint configuration.

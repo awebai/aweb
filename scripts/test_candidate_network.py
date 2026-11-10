@@ -129,6 +129,46 @@ class EndpointTests(unittest.TestCase):
             network.override({'name': 'proof', 'services': {'awid': {'network_mode': 'host'}}})
 
 
+class ComposeConfigTests(unittest.TestCase):
+    def test_existing_shared_namespace_fixtures_survive_the_network_overlay(self):
+        # Real Compose config merges only: no daemon, builds or containers.
+        docker = os.environ.get('AWEB_CANDIDATE_REAL_DOCKER') or shutil.which('docker')
+        self.assertIsNotNone(docker, 'Docker Compose CLI is required for fixture validation')
+        env = {**os.environ, 'FOLIO_WAKES_ORIGIN': 'https://folio-wakes.test:8765',
+               'FOLIO_WAKES_APP_KEY_FILES': '{}', 'GRANT_APP_E2E_PROJECT': 'proof'}
+        fixtures = [(['scripts/e2e/folio-wakes.compose.yml'], {'folio', 'client'}),
+                    (['docker-compose.e2e.yml', 'scripts/e2e/grant-app-acceptance.compose.yml'], {'client'})]
+        for files, expected_shared in fixtures:
+            with self.subTest(files=files), tempfile.TemporaryDirectory() as tmp:
+                args = [docker, 'compose', '-p', 'proof', '--project-directory', str(ROOT)]
+                for file in files:
+                    args += ['-f', str(ROOT / file)]
+
+                def config(extra=()):
+                    result = subprocess.run([*args, *extra, 'config', '--format', 'json'],
+                                            env=env, text=True, capture_output=True, timeout=30)
+                    self.assertEqual(result.returncode, 0, result.stderr)
+                    return json.loads(result.stdout)
+
+                original = config()
+                shared = {name for name, service in original['services'].items()
+                          if service.get('network_mode') == 'service:aweb'}
+                self.assertEqual(shared, expected_shared)
+                overlay = Path(tmp) / 'network.yml'
+                overlay.write_text(network.override(original))
+                merged = config(['-f', str(overlay)])
+                for name, service in merged['services'].items():
+                    self.assertFalse(service.get('ports'), name)
+                    if name in shared:
+                        self.assertEqual(service['network_mode'], 'service:aweb')
+                        self.assertNotIn('networks', service)
+                    else:
+                        self.assertIn(f'proof-{name}.test', service['networks']['default']['aliases'])
+                # Preserve the fixture's actual signed loopback audience.
+                self.assertEqual(merged['services']['aweb']['environment']['AWEB_PUBLIC_ORIGIN'],
+                                 original['services']['aweb']['environment']['AWEB_PUBLIC_ORIGIN'])
+
+
 @unittest.skipUnless(os.environ.get('AWEB_TEST_DOCKER_NETWORK') == '1', 'requires an approved Docker slot')
 class ComposeNetworkTests(unittest.TestCase):
     def test_real_services_start_despite_competing_host_port_and_stay_isolated(self):

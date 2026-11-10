@@ -12,9 +12,16 @@ def override(config: dict) -> str:
     project = config['name']
     lines = ['services:']
     for service, spec in config['services'].items():
-        if spec.get('network_mode'):
-            raise ValueError(f'{project}/{service}: candidate services require a Compose network')
-        lines += [f'  {json.dumps(service)}:', '    ports: !reset []', '    networks:']
+        mode = spec.get('network_mode', '')
+        if mode and not mode.startswith('service:'):
+            raise ValueError(f'{project}/{service}: candidate services require a Compose network or service namespace')
+        lines += [f'  {json.dumps(service)}:', '    ports: !reset []']
+        if mode:
+            # Folio/grant clients share aweb's signed loopback audience. Their
+            # network belongs to the referenced service; adding networks here
+            # would conflict with network_mode and split that namespace.
+            continue
+        lines.append('    networks:')
         for network in spec.get('networks', {'default': None}):
             # Append to existing aliases, including federation's TLS/DNS names.
             lines += [f'      {json.dumps(network)}:',
