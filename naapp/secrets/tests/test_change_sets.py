@@ -182,8 +182,10 @@ class World:
 
 
 @pytest.fixture
-async def world(test_db_factory, tmp_path: Path) -> AsyncIterator[World]:
-    db = await test_db_factory.create_db(suffix="secrets_change_sets")
+async def world(test_db_factory, tmp_path: Path, request) -> AsyncIterator[World]:
+    db = await test_db_factory.create_db(
+        suffix="secrets_change_sets", **getattr(request, "param", {})
+    )
     registry_db = await test_db_factory.create_db(suffix="secrets_change_sets_awid")
     await db.execute(
         "CREATE TABLE {{tables.audit_outbox}} (id SERIAL PRIMARY KEY, kind TEXT, details TEXT)"
