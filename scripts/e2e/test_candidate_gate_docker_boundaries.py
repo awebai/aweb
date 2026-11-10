@@ -141,7 +141,10 @@ class PublishedPortWaitTests(unittest.TestCase):
                 else:
                     result = subprocess.CompletedProcess(args, 0, "127.0.0.1:32768\n", "")
             elif args[:3] == ("docker", "run", "--detach"):
-                result = subprocess.CompletedProcess(args, 0, "delayed-mapping-container\n", "")
+                if "--name" in args:
+                    result = subprocess.CompletedProcess(args, 1, "", "port is already allocated")
+                else:
+                    result = subprocess.CompletedProcess(args, 0, "delayed-mapping-container\n", "")
             elif args[:3] == ("docker", "container", "inspect"):
                 result = subprocess.CompletedProcess(args, 1, "", "removed")
             else:
@@ -150,13 +153,13 @@ class PublishedPortWaitTests(unittest.TestCase):
                 raise subprocess.CalledProcessError(result.returncode, args, result.stdout, result.stderr)
             return result
 
-        boundary = DockerBoundaryTests("test_fixed_docker_host_reaches_published_port_but_loopback_does_not")
+        boundary = DockerBoundaryTests("test_docker_assigned_published_port_is_reserved_by_its_service")
         boundary.image = "synthetic-candidate"
         # Only Docker's external command boundary is delayed. Exercise the real
         # boundary test, including its host-vs-loopback command and cleanup.
         with patch(__name__ + ".run", side_effect=docker):
             try:
-                boundary.test_fixed_docker_host_reaches_published_port_but_loopback_does_not()
+                boundary.test_docker_assigned_published_port_is_reserved_by_its_service()
             except subprocess.CalledProcessError as error:
                 self.fail(f"Delayed port publication must be retried, not fail at the first docker port: {error.stderr}")
         self.assertEqual(port_reads, 3)
@@ -396,29 +399,29 @@ class DockerBoundaryTests(unittest.TestCase):
             )
             self.assertEqual(result.stdout.strip(), "visible")
 
-    def test_fixed_docker_host_reaches_published_port_but_loopback_does_not(self) -> None:
+    def test_docker_assigned_published_port_is_reserved_by_its_service(self) -> None:
         container = run(
             "docker", "run", "--detach", "--publish", "127.0.0.1::80",
             PROBE_SERVICE_IMAGE,
         ).stdout.strip()
+        competitor = f"aweb-publish-competitor-{uuid.uuid4().hex[:12]}"
         try:
             port = wait_for_published_port(container)
             result = run(
-                "docker", "run", "--rm",
-                "--add-host", "aweb-docker.test:host-gateway",
-                self.image, "bash", "-ceu",
-                f"ready=; for _ in $(seq 1 30); do "
-                f"curl -fsS http://aweb-docker.test:{port} >/dev/null && {{ ready=1; break; }}; "
-                f"sleep 0.2; done; test -n \"$ready\"; "
-                f"! curl -fsS --connect-timeout 1 http://127.0.0.1:{port} >/dev/null 2>&1",
+                "docker", "run", "--detach", "--name", competitor,
+                "--publish", f"127.0.0.1:{port}:80", PROBE_SERVICE_IMAGE,
                 check=False,
             )
-            self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+            self.assertNotEqual(result.returncode, 0, result.stdout + result.stderr)
+            self.assertRegex(result.stderr.lower(),
+                             "port is already allocated|address already in use|ports are not available")
         finally:
+            run("docker", "rm", "-f", competitor, check=False)
             removed = run("docker", "rm", "-f", container, check=False)
             self.assertEqual(removed.returncode, 0, removed.stdout + removed.stderr)
-            remains = run("docker", "container", "inspect", container, check=False)
-            self.assertNotEqual(remains.returncode, 0, "probe container survived cleanup")
+            for name in (container, competitor):
+                remains = run("docker", "container", "inspect", name, check=False)
+                self.assertNotEqual(remains.returncode, 0, "probe container survived cleanup")
 
 
 def main() -> int:

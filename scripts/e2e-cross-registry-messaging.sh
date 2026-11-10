@@ -4,6 +4,7 @@
 set -euo pipefail
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd -P)"
+source "$ROOT/scripts/journey-network.sh"
 PROJECT="${AWEB_CROSS_REGISTRY_PROJECT:-aweb-cross-reg-$RANDOM-$$}"
 BIND_ROOT="${AWEB_DOCKER_BIND_ROOT:-${TMPDIR:-/tmp}}"
 [[ "$BIND_ROOT" = /* && -d "$BIND_ROOT" ]] || { echo "AWEB_DOCKER_BIND_ROOT must be an existing absolute directory" >&2; exit 2; }
@@ -16,6 +17,10 @@ AWID_B_PORT="${AWEB_CROSS_REGISTRY_AWID_B_PORT:-18520}"
 AWEB_A_PORT="${AWEB_CROSS_REGISTRY_AWEB_A_PORT:-18530}"
 AWEB_B_PORT="${AWEB_CROSS_REGISTRY_AWEB_B_PORT:-18540}"
 PUBLISHED_HOST="${AWEB_DOCKER_PUBLISHED_HOST:-127.0.0.1}"
+AWID_A_URL="$(journey_url "$PROJECT" awid-a 8010 "http://$PUBLISHED_HOST:$AWID_A_PORT")"
+AWID_B_URL="$(journey_url "$PROJECT" awid-b 8010 "http://$PUBLISHED_HOST:$AWID_B_PORT")"
+AWEB_A_URL="$(journey_url "$PROJECT" aweb-a 8000 "http://$PUBLISHED_HOST:$AWEB_A_PORT")"
+AWEB_B_URL="$(journey_url "$PROJECT" aweb-b 8000 "http://$PUBLISHED_HOST:$AWEB_B_PORT")"
 mkdir -p "$DNS_DIR" "$WORK_DIR/home" "$WORK_DIR/alice" "$WORK_DIR/bob"
 
 compose() {
@@ -306,11 +311,11 @@ for marker in ("A", "B", "CLI", "AWID_A", "AWID_B"):
 path.write_text(text)
 PY
 compose up -d awid-a awid-b
-wait_health awid-a "http://$PUBLISHED_HOST:$AWID_A_PORT" awid-a
-wait_health awid-b "http://$PUBLISHED_HOST:$AWID_B_PORT" awid-b
+wait_health awid-a "$AWID_A_URL" awid-a
+wait_health awid-b "$AWID_B_URL" awid-b
 compose up -d aweb-a aweb-b
-wait_health aweb-a "http://$PUBLISHED_HOST:$AWEB_A_PORT" aweb-a
-wait_health aweb-b "http://$PUBLISHED_HOST:$AWEB_B_PORT" aweb-b
+wait_health aweb-a "$AWEB_A_URL" aweb-a
+wait_health aweb-b "$AWEB_B_URL" aweb-b
 
 echo "Preparing DNS controllers without creating identities"
 alice_controller="$(run_cli alice id namespace prepare-controller --domain alpha.example.com --registry http://awid-a:8010 --json)"
@@ -376,7 +381,7 @@ for _ in $(seq 1 30); do
   sleep 1
 done
 [[ "$awid_refused" == 1 ]] || { printf '%s\n' "$refused" >&2; exit 1; }
-[[ "$(curl -sS -o /dev/null -w '%{http_code}' "http://$PUBLISHED_HOST:$AWID_A_PORT/v1/namespaces/alpha.example.com")" == 404 ]]
+[[ "$(curl -sS -o /dev/null -w '%{http_code}' "$AWID_A_URL/v1/namespaces/alpha.example.com")" == 404 ]]
 if run_cli alice id namespace check-txt --domain alpha.example.com --json > "$RUNTIME/cli-wrong-controller.json" 2>&1; then
   echo "CLI accepted a DNS controller that differs from its prepared key" >&2
   exit 1
@@ -446,7 +451,7 @@ for _ in $(seq 1 600); do
   fi
   if [[ -f "$WORK_DIR/start-awid-request" && ! -f "$WORK_DIR/start-awid-complete" ]]; then
     compose start awid-a
-    wait_health awid-a "http://$PUBLISHED_HOST:$AWID_A_PORT" awid-a
+    wait_health awid-a "$AWID_A_URL" awid-a
     touch "$WORK_DIR/start-awid-complete"
   fi
   if [[ -f "$WORK_DIR/register-delegated-child-request" && ! -f "$WORK_DIR/register-delegated-child-complete" ]]; then
@@ -498,10 +503,10 @@ echo "PASS: team join and aweb connection keep each identity's exact aw who chai
 
 [[ -n "$ALICE_DID_AW" && -n "$BOB_DID_AW" && -n "$ALICE_CONTROLLER" && -n "$BOB_CONTROLLER" ]]
 # Control: each home registry lacks the foreign address.
-[[ "$(curl -sS -o /dev/null -w '%{http_code}' "http://$PUBLISHED_HOST:$AWID_A_PORT/v1/namespaces/beta.example.net/addresses/bob")" == "404" ]]
-[[ "$(curl -sS -o /dev/null -w '%{http_code}' "http://$PUBLISHED_HOST:$AWID_B_PORT/v1/namespaces/alpha.example.com/addresses/alice")" == "404" ]]
-[[ "$(curl -sS -o /dev/null -w '%{http_code}' "http://$PUBLISHED_HOST:$AWID_A_PORT/v1/namespaces/alpha.example.com/addresses/alice")" == "200" ]]
-[[ "$(curl -sS -o /dev/null -w '%{http_code}' "http://$PUBLISHED_HOST:$AWID_B_PORT/v1/namespaces/beta.example.net/addresses/bob")" == "200" ]]
+[[ "$(curl -sS -o /dev/null -w '%{http_code}' "$AWID_A_URL/v1/namespaces/beta.example.net/addresses/bob")" == "404" ]]
+[[ "$(curl -sS -o /dev/null -w '%{http_code}' "$AWID_B_URL/v1/namespaces/alpha.example.com/addresses/alice")" == "404" ]]
+[[ "$(curl -sS -o /dev/null -w '%{http_code}' "$AWID_A_URL/v1/namespaces/alpha.example.com/addresses/alice")" == "200" ]]
+[[ "$(curl -sS -o /dev/null -w '%{http_code}' "$AWID_B_URL/v1/namespaces/beta.example.net/addresses/bob")" == "200" ]]
 
 run_cli alice id namespace set-delivery-origin --namespace alpha.example.com --origin http://aweb-a:8000 --json >/dev/null
 run_cli bob id namespace set-delivery-origin --namespace beta.example.net --origin http://aweb-b:8000 --json >/dev/null
@@ -559,7 +564,7 @@ echo "Proving team membership removal is not ID revocation"
 removed="$(run_cli alice id team remove-member --team alpha --namespace alpha.example.com --member alpha.example.com/alice --json)"
 removed_certificate="$(printf '%s' "$removed" | json_field certificate_id)"
 [[ -n "$removed_certificate" ]]
-[[ "$(curl -sS "http://$PUBLISHED_HOST:$AWID_A_PORT/v1/namespaces/alpha.example.com/teams/alpha/certificates/$removed_certificate/status" | json_field status)" == revoked ]]
+[[ "$(curl -sS "$AWID_A_URL/v1/namespaces/alpha.example.com/teams/alpha/certificates/$removed_certificate/status" | json_field status)" == revoked ]]
 [[ "$(who_json alice)" == "$ALICE_WHO" ]]
 echo "PASS: removing alice from team alpha revokes her team certificate and leaves her ID chain verified"
 

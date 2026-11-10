@@ -6,6 +6,7 @@
 set -euo pipefail
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd -P)"
+source "$ROOT/scripts/journey-network.sh"
 PROJECT="${AWEB_FED_AUTH_PROJECT:-aweb-fed-auth-$RANDOM-$$}"
 DOCKER_BIND_ROOT="${AWEB_DOCKER_BIND_ROOT:-${TMPDIR:-/tmp}}"
 [[ "$DOCKER_BIND_ROOT" = /* && -d "$DOCKER_BIND_ROOT" ]] \
@@ -266,17 +267,17 @@ if [[ "${AWEB_FED_AUTH_BUILD:-1}" != "0" ]]; then
   compose build
 fi
 compose up -d postgres-a postgres-b redis-a redis-b awid-a awid-b registry-a registry-b
-wait_http awid-a "http://$DOCKER_PUBLISHED_HOST:$AWID_A_PORT" awid-a
-wait_http awid-b "http://$DOCKER_PUBLISHED_HOST:$AWID_B_PORT" awid-b
+wait_http awid-a "$(journey_url "$PROJECT" awid-a 8010 "http://$DOCKER_PUBLISHED_HOST:$AWID_A_PORT")" awid-a
+wait_http awid-b "$(journey_url "$PROJECT" awid-b 8010 "http://$DOCKER_PUBLISHED_HOST:$AWID_B_PORT")" awid-b
 # Serialize first migration ownership per side, then start the second process
 # against the already-migrated shared schema. This avoids mistaking pgdbm's
 # first-table creation race for an authority-core worker race.
 compose up -d aweb-a-1 aweb-b-1
-wait_http aweb-a-1 "http://$DOCKER_PUBLISHED_HOST:$AWEB_A1_PORT" aweb-a-1
-wait_http aweb-b-1 "http://$DOCKER_PUBLISHED_HOST:$AWEB_B1_PORT" aweb-b-1
+wait_http aweb-a-1 "$(journey_url "$PROJECT" aweb-a-1 8000 "http://$DOCKER_PUBLISHED_HOST:$AWEB_A1_PORT")" aweb-a-1
+wait_http aweb-b-1 "$(journey_url "$PROJECT" aweb-b-1 8000 "http://$DOCKER_PUBLISHED_HOST:$AWEB_B1_PORT")" aweb-b-1
 compose up -d aweb-a-2 aweb-b-2
-wait_http aweb-a-2 "http://$DOCKER_PUBLISHED_HOST:$AWEB_A2_PORT" aweb-a-2
-wait_http aweb-b-2 "http://$DOCKER_PUBLISHED_HOST:$AWEB_B2_PORT" aweb-b-2
+wait_http aweb-a-2 "$(journey_url "$PROJECT" aweb-a-2 8000 "http://$DOCKER_PUBLISHED_HOST:$AWEB_A2_PORT")" aweb-a-2
+wait_http aweb-b-2 "$(journey_url "$PROJECT" aweb-b-2 8000 "http://$DOCKER_PUBLISHED_HOST:$AWEB_B2_PORT")" aweb-b-2
 
 seed_registry() {
   local postgres_service="$1" identity_file="$2" domain="$3" name="$4" delivery="$5"

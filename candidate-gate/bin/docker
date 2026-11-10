@@ -113,19 +113,19 @@ compose_with_limits() {
     fi
   fi
 
-  if [[ -n "${CANDIDATE_RESOURCE_MANIFEST:-}" ]]; then
+  if [[ -n "${CANDIDATE_RESOURCE_MANIFEST:-}${CANDIDATE_RUNNER_NAME:-}" ]]; then
     local project config_json
     config_json="$("$real" compose "${compose_prefix[@]}" config --format json)"
     project="$(printf '%s' "$config_json" | python3 -c 'import json,sys; print(json.load(sys.stdin)["name"])')"
     mapfile -t build_services < <(printf '%s' "$config_json" | python3 -c 'import json,sys; print("\n".join(k for k,v in json.load(sys.stdin).get("services", {}).items() if "build" in v))')
     [[ -n "$project" ]] || { printf 'candidate compose project is unknown\n' >&2; exit 2; }
-    printf 'compose-project\t%s\n' "$project" >> "$CANDIDATE_RESOURCE_MANIFEST"
+    [[ -z "${CANDIDATE_RESOURCE_MANIFEST:-}" ]] || printf 'compose-project\t%s\n' "$project" >> "$CANDIDATE_RESOURCE_MANIFEST"
   fi
   mapfile -t services < <("$real" compose "${compose_prefix[@]}" config --services 2>/dev/null || true)
   if [[ "${#services[@]}" -eq 0 ]]; then
     exec "$real" compose "${prefix[@]}" "${rest[@]}"
   fi
-  local override
+  local override network_override="" network_helper
   override="$(mktemp "${TMPDIR:-/tmp}/aweb-candidate-compose-limits.XXXXXX")"
   {
     printf 'services:\n'
@@ -142,7 +142,25 @@ compose_with_limits() {
       printf '    pids_limit: %s\n' "$sibling_pids"
     done
   } > "$override"
-  exec "$real" compose "${compose_prefix[@]}" -f "$override" "${rest[@]}"
+  if [[ -n "${CANDIDATE_RUNNER_NAME:-}" ]]; then
+    network_helper="$(cd "$(dirname "${BASH_SOURCE[0]}")/../../scripts" && pwd)/candidate-network.py"
+    network_override="$(mktemp "${TMPDIR:-/tmp}/aweb-candidate-compose-network.XXXXXX")"
+    printf '%s' "$config_json" | python3 "$network_helper" override > "$network_override"
+    compose_prefix+=(-f "$override" -f "$network_override")
+    trap 'rm -f "$override" "$network_override"' EXIT
+    if [[ "${rest[0]}" == down ]]; then
+      python3 "$network_helper" disconnect "$project"
+    fi
+    "$real" compose "${compose_prefix[@]}" "${rest[@]}"
+    if [[ "${rest[0]}" == up ]]; then
+      python3 "$network_helper" connect "$project"
+    fi
+  else
+    trap 'rm -f "$override"' EXIT
+    "$real" compose "${compose_prefix[@]}" -f "$override" "${rest[@]}"
+  fi
+  rm -f "$override" ${network_override:+"$network_override"}
+  trap - EXIT
 }
 
 case "$cmd" in

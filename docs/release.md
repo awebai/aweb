@@ -207,7 +207,7 @@ absence, and removes the temporary root and buildx configuration. It never
 prunes or restarts shared Docker. The suite's existing 10GB prune applies only
 to its own builder during the run; that builder is removed at the end.
 
-Evidence stays in `/tmp/aweb-candidate-gate-<SHA>/`: `owned-resources.tsv`, raw
+Evidence stays in `/tmp/aweb-candidate-gate-<SHA>-<run-id>/`: `owned-resources.tsv`, raw
 host snapshots, `host-before.json`, `host-after.json`, and
 `host-recovery.json`. On macOS, cleanup passes only if Docker VM total `lsof`
 rows return to at most their baseline plus 5,000. The host-wide `kern.num_files`
@@ -325,3 +325,40 @@ publish the version-only OSS finals and deploy the paired Cloud/Folio release.
 
 There are no release-intent tags, done tags, release branches, workflow
 monitors, or cross-repository release transactions.
+
+### Candidate journey networks
+
+Candidate Compose services do not publish host ports. The candidate Docker
+wrapper adds project-scoped service aliases (`<project>-<service>.test`), attaches
+the runner after `compose up`, and detaches it before `compose down`. Service
+clients use those names and the service's container port. Temporary A2A clients
+also join their journey network. Existing federation DNS/TLS aliases remain.
+The local quickstart test's loopback bridge stays inside the runner and forwards
+to the direct service endpoints; it does not use a host-published port.
+Standalone host journeys retain their existing host endpoint configuration.
+
+The only candidate publication controls are
+`DockerBoundaryTests.test_docker_assigned_published_port_is_reserved_by_its_service`
+and `ComposeNetworkTests.test_real_services_start_despite_competing_host_port_and_stay_isolated`.
+Docker chooses and holds the actual published binding in both. The latter holds
+a competing host port while two intended services start successfully without
+publishing, serves distinct responses over their scoped aliases, exercises a
+sibling client, and checks that one journey cannot resolve the other's service.
+Run its focused proof in an approved Docker slot:
+
+```sh
+AWEB_TEST_DOCKER_NETWORK=1 python3 scripts/test_candidate_network.py ComposeNetworkTests -v
+```
+
+The diagnostic commits preceding this change demonstrated a possible socket and
+journey-container reservation gap. They did not establish the historical
+forwarding incident's cause. Those candidate paths no longer allocate host
+ports; their failing diagnostics are replaced by the positive network regression
+and endpoint controls. Reachability errors report the service, address, network
+path and underlying curl error separately from an application health response.
+
+Each gate invocation retains distinct logs even at the same SHA. The ordinary
+ledger still serializes/reuses proof for a tree. An explicitly authorized
+concurrency proof uses separate `AWEB_GATE_LEDGER` directories for its two runs;
+it must not share either ledger or retained artifact directory. Resource labels,
+Compose project names, networks, workspaces and logs remain unique per run.

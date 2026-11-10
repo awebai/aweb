@@ -145,7 +145,7 @@ test-shipping:
 	python3 scripts/test_aw_npm_publication.py
 	python3 scripts/test_candidate_cleanup.py
 	python3 scripts/test_candidate_disk_floor.py
-	python3 scripts/test_candidate_ports.py
+	python3 scripts/test_candidate_network.py
 	python3 scripts/test_folio_wakes_gate.py
 	python3 scripts/test_user_paths_gate.py
 	python3 scripts/test_fetch_released_aw.py
@@ -441,7 +441,8 @@ test-a2a:
 
 test-e2e:
 	python3 scripts/test_controller_key_absence_guard.py
-	AWEB_TEST_DOCKER_PORTS=1 python3 scripts/test_oss_user_journey.py
+	python3 scripts/test_oss_user_journey.py
+	AWEB_TEST_DOCKER_NETWORK=1 python3 scripts/test_candidate_network.py ComposeNetworkTests
 	./scripts/e2e-oss-user-journey.sh
 	./scripts/test-e2e-controller-key-absence-guard.sh
 
