@@ -18,6 +18,7 @@ nonce and its exact subject.
 
 from __future__ import annotations
 
+import base64
 import hashlib
 import re
 from collections.abc import Callable, Mapping, Sequence
@@ -41,12 +42,12 @@ __all__ = [
     "APP_ACTS",
     "CORE_ACTS",
     "HUMAN_ROLE_ACTS",
+    "HumanCredential",
     "LOGS_ACTS",
     "PREFIX",
     "Refused",
     "VerifiedOwnerAct",
     "hook_binding_subject",
-    "human_credential_sha256",
     "owner_act_signing_bytes",
 ]
 
@@ -65,11 +66,44 @@ LOGS_ACTS = ("logs.retention.set", "logs.erase", "logs.legal-hold.set", "logs.le
 CREDENTIAL_PREFIX = b"aweb.human-credential/1\n"
 
 
-def human_credential_sha256(credential: Mapping[str, str]) -> str:
-    """The ``credential_sha256`` a human-role act names its credential by: the
-    SHA-256 of the prefix and the canonical JSON of the credential's
-    ``credential_id``, ``public_key`` (each unpadded base64url) and ``rp_id``."""
-    return hashlib.sha256(CREDENTIAL_PREFIX + canonical(dict(credential))).hexdigest()
+_CREDENTIAL_FIELDS = frozenset({"credential_id", "public_key", "rp_id"})
+
+
+def _unpadded_base64url(value: Any) -> bytes:
+    if not isinstance(value, str) or not re.fullmatch(r"[A-Za-z0-9_-]+", value):
+        raise ValueError("a credential field is not unpadded base64url")
+    decoded = base64.urlsafe_b64decode(value + "=" * (-len(value) % 4))
+    if base64.urlsafe_b64encode(decoded).rstrip(b"=").decode("ascii") != value:
+        raise ValueError("a credential field is not unpadded base64url")
+    return decoded
+
+
+@dataclass(frozen=True)
+class HumanCredential:
+    """The credential a human-role act binds: exactly ``credential_id`` and
+    ``public_key`` (each unpadded base64url) and ``rp_id``. ``sha256`` is the
+    ``credential_sha256`` an act names it by: the SHA-256 of the prefix and the
+    credential's canonical JSON."""
+
+    credential_id: bytes
+    public_key: bytes
+    rp_id: str
+    sha256: str
+
+    @classmethod
+    def parse(cls, value: Any) -> HumanCredential:
+        """The credential of a delivery body; ValueError unless it has exactly
+        its three fields, each in its encoding."""
+        if not isinstance(value, Mapping) or set(value) != _CREDENTIAL_FIELDS:
+            raise ValueError("a credential has exactly credential_id, public_key and rp_id")
+        rp_id = value["rp_id"]
+        if not isinstance(rp_id, str) or not rp_id:
+            raise ValueError("a credential's rp_id is a nonempty string")
+        credential_id = _unpadded_base64url(value["credential_id"])
+        public_key = _unpadded_base64url(value["public_key"])
+        digest = hashlib.sha256(CREDENTIAL_PREFIX + canonical(dict(value))).hexdigest()
+        return cls(credential_id, public_key, rp_id, digest)
+
 
 _TIME = "%Y-%m-%dT%H:%M:%SZ"
 _MAX_ITEMS = 64
