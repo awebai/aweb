@@ -46,7 +46,7 @@ COPY --from=builder --chown=aweb:aweb /naapp-lib /naapp-lib
 ENV PATH="/app/.venv/bin:$PATH"
 ENV PYTHONUNBUFFERED=1
 
-USER aweb
+USER 1001:1001
 
 EXPOSE 8000
 
