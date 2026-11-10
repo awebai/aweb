@@ -385,8 +385,9 @@ database transaction and lock, reopen each slot through the custody opener
 under the context pinned at assignment: the exact sealed version for native
 custody, or the pinned 1Password observation, checked before and after the
 read. Never fall back to the current version. The reopen grants no send
-authority, records no use and counts toward no rate limit. Each reopened value
-must equal its stored digest, compared in constant time. The result
+authority, records no use and counts toward no rate limit. The keyed digest
+computed over each reopened value must equal the stored digest, compared in
+constant time. The result
 transaction then rechecks, as release does, that the slot is enabled, that its
 active version is the pinned one and that its state is active. Only then does
 the server redact with the reopened values.
@@ -398,7 +399,7 @@ the server redact with the reopened values.
 - the slot's digest row has been disposed of;
 - custody or the vault cannot be read, or a 1Password observation differs from
   its pin;
-- a reopened value does not match its digest;
+- a reopened value's keyed digest does not match the stored digest;
 - the result transaction's recheck fails;
 - a slot's value was minted at release (§9.5 `short_lived` or `mint` slots,
   which decision 95 refuses before admission). A minted value cannot be
@@ -411,8 +412,10 @@ and never authorizes a new run.
 **Disposal.** Dispose of a dispatch's digest rows in the same transaction as
 its final result, `outcome_unknown`, reconciliation or sweep. Also dispose of
 them in the same transaction as any destroy, rotate, disable or containment
-that affects the slot's secret, and in team retirement. Disposing of the row
-destroys the sealed key, so no means of confirming a value outlives it.
+that affects the slot's secret, and in team retirement. Disposal removes the
+sealed key and digest from the live database, so no live means of confirming a
+value outlives it. Copies in backups and the write-ahead log follow the
+retention of other sealed material (secrets design §5.2 and §15, item 5).
 
 Local redaction is still required and is not a substitute for the server
 check.
