@@ -241,9 +241,24 @@ async def test_a_designation_must_be_applied_in_the_transaction_that_consumed_it
 
 
 async def test_only_a_designate_act_designates_a_holder(pw: PasskeyWorld):
-    with pytest.raises(DesignationRefused):
-        await designate(pw, holder(), act="human-credential.replace")
+    """A replacement act, valid in every other respect, designates nobody:
+    the role is not held, so only the act's kind refuses it."""
+    member = holder()
+    subject = holding_subject(member.body)
+    signer = owner(pw)
+    prepared = await signer.prepare("human-credential.replace", subject)
+    async with pw.passkeys.db.transaction() as tx:
+        verified = await signer.consume(tx, prepared, subject)
+        with pytest.raises(DesignationRefused):
+            await pw.passkeys.designate_holder(
+                tx,
+                act=verified,
+                credential=member.credential,
+                certificate=CERTIFICATE,
+                notice_contact=None,
+            )
     assert await stored_holding(pw) is None
+    assert not await pw.passkeys.db.fetch_value("SELECT count(*) FROM {{tables.passkey_approvers}}")
 
 
 @pytest.mark.parametrize(
