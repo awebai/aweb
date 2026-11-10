@@ -539,6 +539,68 @@ describe("refused delay resets", () => {
   });
 });
 
+// Section 8: a refusal episode starts with a refusal and ends only when the
+// server serves this caller: an event other than the opening connected event,
+// or an open connection reaching its planned close. A heartbeat or connected
+// ends the quarantine but not the episode, so a server that accepts the open,
+// sends them and refuses again stays in one episode.
+describe("a refusal episode", () => {
+  const starts = (policy: StreamPolicy, script: Attempt) => attempt(policy, script).end.startedRefusalEpisode;
+  const flap = (...reads: Read[]): Attempt => ({ reads: ["comment", ...reads], error: grantClosed("grant_revoked") });
+
+  test("starts with the first refusal and not with a retry refused again", () => {
+    const { policy } = newPolicy();
+    expect(starts(policy, fails(httpFailure(401)))).toBe(true);
+    expect(starts(policy, fails(httpFailure(401)))).toBe(false);
+    expect(starts(policy, fails(httpFailure(503)))).toBe(false);
+    expect(starts(policy, fails(httpFailure(403)))).toBe(false);
+  });
+
+  test("is not started by a transient failure or a planned close", () => {
+    const { policy } = newPolicy();
+    expect(starts(policy, fails(httpFailure(503)))).toBe(false);
+    expect(starts(policy, { reads: [CONNECTED] })).toBe(false);
+    expect(starts(policy, { reads: [CONNECTED], plannedClose: true })).toBe(false);
+  });
+
+  test("a heartbeat, connected and a terminal event, six times, is one episode", () => {
+    const { policy } = newPolicy();
+    const cycles = Array.from({ length: 6 }, () => attempt(policy, flap(CONNECTED)).end);
+    // Every cycle enters the quarantine again; only the first starts the episode.
+    expect(cycles.map((end) => end.enteredRefused)).toEqual(Array(6).fill(true));
+    expect(cycles.map((end) => end.startedRefusalEpisode)).toEqual([true, false, false, false, false, false]);
+  });
+
+  test("a stream confirmed by a heartbeat or connected and then closed does not end it", () => {
+    const { policy } = newPolicy();
+    expect(starts(policy, fails(httpFailure(401)))).toBe(true);
+    expect(attempt(policy, { reads: ["comment", CONNECTED] }).end.kind).toBe("transient");
+    expect(policy.refused).toBe(false);
+    expect(starts(policy, fails(httpFailure(401)))).toBe(false);
+  });
+
+  test("an event other than connected ends it: the next refusal starts another", () => {
+    const { policy } = newPolicy();
+    expect(starts(policy, fails(httpFailure(401)))).toBe(true);
+    expect(starts(policy, flap(CONNECTED, MAIL))).toBe(true);
+    expect(starts(policy, flap(CONNECTED))).toBe(false);
+  });
+
+  test("an open connection reaching its planned close ends it", () => {
+    const { policy } = newPolicy();
+    expect(starts(policy, fails(httpFailure(401)))).toBe(true);
+    attempt(policy, { reads: ["comment"], plannedClose: true });
+    expect(starts(policy, fails(httpFailure(401)))).toBe(true);
+  });
+
+  test("an attempt that reaches the deadline without opening does not end it", () => {
+    const { policy } = newPolicy();
+    expect(starts(policy, fails(httpFailure(401)))).toBe(true);
+    policy.connect().reachedPlannedClose();
+    expect(starts(policy, fails(httpFailure(401)))).toBe(false);
+  });
+});
+
 // The defaults are the real clock and random source.
 test("defaults", () => {
   const policy = new StreamPolicy();

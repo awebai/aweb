@@ -8,7 +8,8 @@ import { createActivityEmitter } from "../src/activity/runtime.js";
 import { APIError, type APIClient } from "../src/api/client.js";
 import { formatEventStreamState, streamAgentEvents, type EventStreamOptions, type EventStreamState } from "../src/api/events.js";
 import {
-  createChannelClient, createChannelCredentialReload, PinStore, ReceiveStreamReceipt, SenderTrustManager, startChannelLoop,
+  createChannelClient, createChannelCredentialReload, eventStreamRefusedAwakening, formatAwakeningForAgent, PinStore,
+  ReceiveStreamReceipt, SenderTrustManager, startChannelLoop, type ChannelAwakening,
 } from "../src/index.js";
 import { resolveConfig, type AgentConfig } from "../src/config.js";
 import { writeTestPrincipal } from "./helpers/config_fixture.js";
@@ -150,7 +151,7 @@ describe("refusals", () => {
 
     // The highest draw waits just under the delay of 1 minute.
     expect(stream.states).toEqual([
-      { state: "refused", cause: "401", retryInMs: MINUTE - 1, nextAttemptAt: START + MINUTE - 1 },
+      { state: "refused", cause: "401", retryInMs: MINUTE - 1, nextAttemptAt: START + MINUTE - 1, startsEpisode: true },
     ]);
     await vi.advanceTimersByTimeAsync(MINUTE - 2);
     expect(openSSE).toHaveBeenCalledTimes(1);
@@ -170,7 +171,7 @@ describe("refusals", () => {
     const stream = run(client, { random: () => 0 });
     await settle();
     expect(stream.states).toEqual([
-      { state: "refused", cause: "401", retryInMs: 30 * SECOND, nextAttemptAt: START + 30 * SECOND },
+      { state: "refused", cause: "401", retryInMs: 30 * SECOND, nextAttemptAt: START + 30 * SECOND, startsEpisode: true },
     ]);
 
     // The lowest draw waits half of 1, 2, 4 and 8 minutes; a 5xx inside the
@@ -218,6 +219,8 @@ describe("refusals", () => {
       ["refused", "grant_revoked", 2 * MINUTE],
     ]);
     expect(stream.received).toEqual(["connected", "connected", "connected"]);
+    // The three refusals are one episode: the server never served this caller.
+    expect(stream.states.map((state) => state.startsEpisode)).toEqual([undefined, true, undefined, undefined, undefined, undefined]);
 
     stream.abort.abort();
     await stream.done;
@@ -237,7 +240,7 @@ describe("refusals", () => {
     await settle();
     expect(openSSE).toHaveBeenCalledTimes(4);
     expect(restarted.states).toEqual([
-      { state: "refused", cause: "401", retryInMs: 30 * SECOND, nextAttemptAt: Date.now() + 30 * SECOND },
+      { state: "refused", cause: "401", retryInMs: 30 * SECOND, nextAttemptAt: Date.now() + 30 * SECOND, startsEpisode: true },
     ]);
 
     restarted.abort.abort();
@@ -562,6 +565,157 @@ describe("credentials", () => {
 
     abort.abort();
     await loop;
+  });
+});
+
+// Stream state is an operator diagnostic and is not presented to the agent,
+// with one exception: the start of a refusal episode.
+describe("the refused notice to the agent", () => {
+  let workdir: string;
+
+  beforeEach(() => {
+    workdir = realpathSync(mkdtempSync(join(tmpdir(), "channel-stream-notice-")));
+    // The lowest draw waits half of each delay.
+    vi.spyOn(Math, "random").mockReturnValue(0);
+  });
+
+  afterEach(() => {
+    vi.restoreAllMocks();
+    rmSync(workdir, { recursive: true, force: true });
+  });
+
+  function loop(client: never, onAwakening?: (awakening: ChannelAwakening) => Promise<void> | void) {
+    const abort = new AbortController();
+    const awakenings: ChannelAwakening[] = [];
+    const states: EventStreamState[] = [];
+    const logs: string[] = [];
+    const done = startChannelLoop({
+      client,
+      pinStore: new PinStore(),
+      trust: {} as never,
+      self: { alias: "agent", address: "aweb.test/agent", did: "did:key:z6Mktest", stableID: "did:aw:agent" },
+      signal: abort.signal,
+      teamID: "backend:aweb.test",
+      workdir,
+      onAwakening: onAwakening ?? ((awakening) => { awakenings.push(awakening); }),
+      onStreamState: (state) => states.push(state),
+      log: (message) => logs.push(message),
+    });
+    const notices = () => awakenings.filter((awakening) => awakening.kind === "channel");
+    const stop = async () => {
+      abort.abort();
+      await done;
+    };
+    return { awakenings, states, logs, notices, stop };
+  }
+
+  const stateNames = (states: EventStreamState[]) => states.map((state) => state.state);
+
+  test("is presented once on entering refused, not on a refused retry and not on leaving", async () => {
+    const { client, openSSE } = scriptedClient(answers(401), answers(401), streams(frame("connected")));
+    const channel = loop(client);
+    await vi.waitFor(() => expect(stateNames(channel.states)).toEqual(["refused"]));
+    await settle();
+
+    expect(channel.awakenings).toEqual([{
+      kind: "channel",
+      content: "The aweb server refused this channel's event stream (401). Mail and chat will not arrive until the stream is accepted again. "
+        + `The next attempt is at ${formatEventStreamState(channel.states[0]).slice(-5)}.`,
+      deliveryIntent: "wake",
+      meta: {
+        type: "channel",
+        notice: "event_stream_refused",
+        cause: "401",
+        next_attempt_at: new Date(channel.states[0].nextAttemptAt!).toISOString(),
+      },
+    }]);
+
+    await vi.advanceTimersByTimeAsync(30 * SECOND);
+    expect(openSSE).toHaveBeenCalledTimes(2);
+    expect(channel.awakenings).toHaveLength(1);
+
+    await vi.advanceTimersByTimeAsync(MINUTE);
+    await vi.waitFor(() => expect(stateNames(channel.states)).toEqual(["refused", "reconnected"]));
+    await settle();
+    // The operator surface has both transitions; the agent has the one notice.
+    expect(channel.awakenings).toHaveLength(1);
+    await channel.stop();
+  });
+
+  test("is presented once across a heartbeat, connected and a grant terminal event repeated six times", async () => {
+    const { client, openSSE } = scriptedClient(
+      closes(heartbeat(), frame("connected"), frame("grant_revoked", { detail: "identity grant revoked" })),
+    );
+    const channel = loop(client);
+    await vi.waitFor(() => expect(openSSE).toHaveBeenCalledTimes(1));
+    for (const [cycle, wait] of [30 * SECOND, MINUTE, 2 * MINUTE, 4 * MINUTE, 7.5 * MINUTE].entries()) {
+      await vi.advanceTimersByTimeAsync(wait);
+      await vi.waitFor(() => expect(openSSE).toHaveBeenCalledTimes(cycle + 2));
+    }
+    await vi.waitFor(() => expect(channel.states.filter((state) => state.state === "refused")).toHaveLength(6));
+    await settle();
+
+    // Every transition reaches the operator surface.
+    expect(stateNames(channel.states)).toEqual([
+      "connected", "refused",
+      "reconnected", "refused", "reconnected", "refused", "reconnected", "refused", "reconnected", "refused", "reconnected", "refused",
+    ]);
+    expect(channel.notices()).toHaveLength(1);
+    expect(channel.notices()[0].meta.cause).toBe("grant_revoked");
+    expect(channel.awakenings).toHaveLength(1);
+    await channel.stop();
+  });
+
+  test("is presented again for a refusal after the server served an ordinary event", async () => {
+    const { client } = scriptedClient(
+      answers(401),
+      closes(frame("connected"), frame("work_available", { task_id: "t-1", title: "Review the plan" })),
+      answers(403),
+    );
+    const channel = loop(client);
+    await vi.waitFor(() => expect(stateNames(channel.states)).toEqual(["refused"]));
+    await vi.advanceTimersByTimeAsync(30 * SECOND);
+    await vi.waitFor(() => expect(stateNames(channel.states)).toEqual(["refused", "reconnected", "disconnected"]));
+    await vi.advanceTimersByTimeAsync(SECOND);
+    await vi.waitFor(() => expect(stateNames(channel.states)).toEqual(["refused", "reconnected", "disconnected", "refused"]));
+    await vi.waitFor(() => expect(channel.notices()).toHaveLength(2));
+
+    expect(channel.awakenings.map((awakening) => [awakening.kind, awakening.meta.cause])).toEqual([
+      ["channel", "401"], ["work", undefined], ["channel", "403"],
+    ]);
+    await channel.stop();
+  });
+
+  test("that cannot be presented is logged and the stream keeps retrying", async () => {
+    const { client, openSSE } = scriptedClient(answers(401));
+    const channel = loop(client, () => Promise.reject(new Error("session closed")));
+    await vi.waitFor(() => expect(channel.logs).toEqual([
+      "aweb: could not present the refused event stream to the agent: session closed",
+    ]));
+    await vi.advanceTimersByTimeAsync(30 * SECOND);
+    expect(openSSE).toHaveBeenCalledTimes(2);
+    expect(channel.logs).toHaveLength(1);
+    await channel.stop();
+  });
+
+  test("is built only from a refusal that starts an episode", () => {
+    const nextAttemptAt = new Date(2026, 2, 1, 9, 5, 59).getTime();
+    const notice = eventStreamRefusedAwakening({ state: "refused", cause: "grant_revoked", retryInMs: MINUTE, nextAttemptAt, startsEpisode: true });
+    expect(notice.content).toBe(
+      "The aweb server refused this channel's event stream (grant_revoked). Mail and chat will not arrive until the stream is accepted again. The next attempt is at 09:05.",
+    );
+    // It carries no sender and no trust status: nothing in it can pass as a verified peer message.
+    expect(Object.keys(notice.meta).sort()).toEqual(["cause", "next_attempt_at", "notice", "type"]);
+  });
+
+  test("reads as coming from the channel itself where the host formats awakenings as text", () => {
+    const nextAttemptAt = new Date(2026, 2, 1, 9, 5).getTime();
+    const notice = eventStreamRefusedAwakening({ state: "refused", cause: "401", retryInMs: MINUTE, nextAttemptAt, startsEpisode: true });
+    expect(formatAwakeningForAgent(notice)).toBe([
+      "aweb channel notice, from the aweb channel itself and not from another agent.",
+      "",
+      notice.content,
+    ].join("\n"));
   });
 });
 
