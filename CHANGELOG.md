@@ -66,6 +66,36 @@
   `docs/vectors/README.md` states what each implementation does with any other
   number, and `docs/vectors/canonical-json-v1.json` pins it.
 
+- A request that a trusted proxy forwards for an agent is admitted only while
+  that agent is an active member of the forwarded team: its row has status
+  `active` and is not deleted. The MCP endpoint, `GET /v1/events/subscriptions`,
+  the `/v1/apps` routes and the hook-binding routes answer 403 for an actor
+  that names an agent that is retired, archived, deleted or another team's.
+  The MCP endpoint and the subscription listing, which act as an agent, also
+  refuse an actor that names no agent.
+
+- Task changes made through the MCP task tools (`task_create`, `task_update`,
+  `task_claim`, `task_close`, `task_reopen`, `task_comment_add`) publish the
+  same task events as the HTTP routes, with the same context, so they reach the
+  team and workspace event streams. A task's claims are released in the same
+  transaction as the status change that ends them, whether or not a mutation
+  hook runs, and the `task.status_changed` hook context names the released
+  workspaces in `released_claim_workspace_ids`. The MCP task tools apply the
+  input bounds of the routes and answer a refusal or a conflict as an error. A
+  task response does not carry `claim_preacquired`. The task service functions
+  (`create_task`, `update_task`, `soft_delete_task`, `add_dependency`,
+  `remove_dependency`, `add_comment`) take the acting member and the
+  `on_mutation` callback as required arguments and fire the events themselves;
+  an embedding host that calls them passes both and does not fire task events
+  of its own.
+
+- Add the one-off operator command `aweb release-closed-task-claims [--apply]`
+  for claims that existing data leaves on closed tasks. By default it reports,
+  as JSON, the number of such claims in total and the number of tasks and
+  claims per team id, and changes nothing; `--apply` releases them through the
+  same release as a status change and reports the number released. Run it once
+  after deploying the release of claims with the status change.
+
 - The channel client (the Claude Code plugin, the Pi extension and `aw wake`)
   signs every certificate and identity request with the
   [v2 request envelope](docs/team-auth-envelope-v2.md), which binds the
@@ -114,6 +144,14 @@
   size can encode is refused without being decoded, and the DID fields of
   address registration and reassignment are limited to 256 characters like
   every other DID field. The limiter is `awid.request_body_limit`.
+
+- `awid.request_body_limit` logs each refusal with the method and the request
+  path, without its query string or fragment, with what is not printable
+  escaped and at most 256 characters, then the declared or received
+  byte count and the limit, for example `Request body too large: POST /echo
+  declared 65 bytes, limit 64`. A host whose paths carry secrets of its own
+  passes `logged_path`, the rule that writes the path the line shows; a rule
+  that raises gives the default form, and the refusal stays a 413.
 
 - The channel client (the Claude Code plugin, the Pi extension and `aw wake`)
   reports mail and chat as verified only when the displayed body, subject,

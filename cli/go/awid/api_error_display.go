@@ -1,6 +1,7 @@
 package awid
 
 import (
+	"context"
 	"encoding/json"
 	"net/http"
 	"net/url"
@@ -48,12 +49,40 @@ func newAPIError(resp *http.Response, body string) *APIError {
 	}
 }
 
-// AnsweringMountHeader is a response header the client sets for itself, never
-// one a server's value is taken from: a transport that finds the API answering
-// at another mount of the configured server puts that mount's URL here on the
-// 404 it returns, for the error display. Such a transport deletes any value a
-// server sent under this name.
-const AnsweringMountHeader = "X-Aw-Client-Answering-Mount"
+// answeringMountNote is where a transport that finds the API answering at
+// another mount of the configured server records that mount's URL, for the
+// display of the error made from that request's response. It travels on the
+// request's context, so nothing a server sends can write to it: no response
+// header or body is read for the mount. The transport writes it within its
+// RoundTrip, which the client's Do waits for before the response is read.
+type answeringMountNote struct {
+	mount string
+}
+
+type answeringMountNoteKey struct{}
+
+// withAnsweringMountNote returns ctx carrying an empty note of its own.
+func withAnsweringMountNote(ctx context.Context) context.Context {
+	return context.WithValue(ctx, answeringMountNoteKey{}, &answeringMountNote{})
+}
+
+func answeringMountNoteOf(req *http.Request) *answeringMountNote {
+	if req == nil {
+		return nil
+	}
+	note, _ := req.Context().Value(answeringMountNoteKey{}).(*answeringMountNote)
+	return note
+}
+
+// NoteAnsweringMount records mount as the API base found answering on the
+// origin req was sent to. A transport calls it with the request it was given;
+// the error made from a 404 response to that request then names the mount. It
+// does nothing for a request this package did not send.
+func NoteAnsweringMount(req *http.Request, mount string) {
+	if note := answeringMountNoteOf(req); note != nil {
+		note.mount = mount
+	}
+}
 
 // SameOrigin reports whether a and b have the same scheme, host and port.
 func SameOrigin(a, b *url.URL) bool {
@@ -63,12 +92,19 @@ func SameOrigin(a, b *url.URL) bool {
 	return strings.EqualFold(a.Scheme, b.Scheme) && strings.EqualFold(a.Host, b.Host)
 }
 
-// answeringMountOf is the mount named by AnsweringMountHeader on a 404, or ""
-// unless it is a plain URL on the origin the request was sent to. Only its
-// scheme, host and path are displayed.
+// answeringMountOf is the mount noted on the request of a 404 response by
+// NoteAnsweringMount, or "" unless it is a plain URL on the origin the request
+// was sent to. Only its scheme, host and path are displayed.
 func answeringMountOf(resp *http.Response) string {
-	raw := resp.Header.Get(AnsweringMountHeader)
-	if raw == "" || len(raw) > 128 || resp.StatusCode != http.StatusNotFound || resp.Request == nil {
+	if resp.StatusCode != http.StatusNotFound || resp.Request == nil {
+		return ""
+	}
+	note := answeringMountNoteOf(resp.Request)
+	if note == nil {
+		return ""
+	}
+	raw := note.mount
+	if raw == "" || len(raw) > 128 {
 		return ""
 	}
 	mount, err := url.Parse(raw)
