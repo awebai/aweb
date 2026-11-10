@@ -37,7 +37,7 @@ COPY --from=builder /out/aweb-a2a-gw /usr/local/bin/aweb-a2a-gw
 ENV AWEB_A2A_GW_CONFIG=/config/gateway.yaml
 ENV PORT=8080
 
-USER aweb
+USER 1001:1001
 
 EXPOSE 8080
 

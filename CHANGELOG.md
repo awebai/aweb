@@ -22,6 +22,13 @@
   directory; export any settings kept in such a file (for example `AWEB_URL` or
   `AWEB_API_KEY`) in the shell that runs `aw` instead.
 
+- The `aweb` server, `awid` and A2A gateway images declare their user as the
+  numeric `USER 1001:1001`, so Kubernetes admits them under
+  `securityContext.runAsNonRoot: true` without a `runAsUser` override. The
+  ids are those of the images' `aweb` and `awid` accounts, so ownership of
+  existing files and volumes is unaffected. See
+  [container users](docs/self-hosting-guide.md#container-users).
+
 - Self-custodial humans can select their OS-keychain identity with `aw --human
   <did:aw> --human-domain <domain>` to fetch a controller-issued team certificate,
   connect, send/read/reply to plaintext mail, and make ordinary team-auth naapp

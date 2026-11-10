@@ -42,7 +42,7 @@ COPY --from=builder --chown=awid:awid /app/server /app/server
 ENV PATH="/app/awid/.venv/bin:$PATH"
 ENV PYTHONUNBUFFERED=1
 
-USER awid
+USER 1001:1001
 
 EXPOSE 8010
 

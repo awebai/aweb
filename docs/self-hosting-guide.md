@@ -302,6 +302,15 @@ The OSS compose stack runs four components:
 - PostgreSQL
 - Redis
 
+### Container Users
+
+The `aweb`, `awid` and A2A gateway images run as the non-root user
+`1001:1001`. Their `USER` is numeric, so a Kubernetes pod with
+`securityContext.runAsNonRoot: true` admits them without setting `runAsUser`.
+A file or volume mounted into any of them, such as the gateway's
+configuration, workspace or audit directory, must be readable (and, for the
+audit directory, writable) by uid `1001`.
+
 ### Important Server Settings
 
 For `aweb`:

@@ -1,4 +1,7 @@
+import re
 from pathlib import Path
+
+import pytest
 
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
@@ -30,3 +33,29 @@ def test_awid_e2e_image_installs_from_committed_lock():
         "RUN cd awid && uv sync --frozen --no-dev --no-install-project",
         "RUN cd awid && uv sync --frozen --no-dev",
     ]
+
+
+SERVICE_DOCKERFILES = (
+    "server/Dockerfile",
+    "awid/Dockerfile",
+    "awid/Dockerfile.release",
+    "cli/go/Dockerfile.a2a-gw",
+)
+
+
+def final_user(dockerfile: str) -> str:
+    users = [
+        line.split(None, 1)[1].strip()
+        for line in dockerfile.splitlines()
+        if line.startswith("USER ")
+    ]
+    assert users, "no USER instruction"
+    return users[-1]
+
+
+@pytest.mark.parametrize("path", SERVICE_DOCKERFILES)
+def test_service_image_runs_as_numeric_non_root_user(path):
+    # Kubernetes verifies runAsNonRoot from the image only when USER is numeric.
+    user = final_user((REPO_ROOT / path).read_text(encoding="utf-8"))
+
+    assert re.fullmatch(r"[1-9][0-9]*:[1-9][0-9]*", user), f"{path}: USER {user}"
