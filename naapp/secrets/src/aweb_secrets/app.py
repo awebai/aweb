@@ -15,6 +15,7 @@ from __future__ import annotations
 from collections.abc import Awaitable, Callable, Mapping, Sequence
 from contextlib import AbstractAsyncContextManager, AsyncExitStack, asynccontextmanager
 from enum import StrEnum
+from functools import partial
 from ipaddress import IPv4Network, IPv6Network
 from pathlib import Path
 
@@ -22,7 +23,7 @@ import httpx
 from aweb_naapp.egress import Egress
 from aweb_naapp.idempotency import apply_idempotency_migrations
 from aweb_naapp.ratelimit import apply_ratelimit_migrations
-from aweb_naapp.roles import apply_roles_migrations, purge_team
+from aweb_naapp.roles import apply_roles_migrations
 from aweb_naapp.runtime.app import NaappRuntime, mount_manifest_routes
 from aweb_naapp.runtime.authorization import ActionPolicy, Authorization, GrantSource
 from aweb_naapp.runtime.health import HealthCheck, mount_health
@@ -38,6 +39,7 @@ from pgdbm import AsyncDatabaseManager
 
 from aweb_secrets.config import SecretsSettings
 from aweb_secrets.manifest import MANIFEST_PATH
+from aweb_secrets.retirement import retire_team
 from aweb_secrets.revisions import apply_revision_migrations
 
 MIGRATIONS_PATH = Path(__file__).resolve().parent / "migrations"
@@ -89,10 +91,12 @@ def installation_fence(
     """The service's installation fence.
 
     Retiring an installation, on a confirmed uninstall or when a new
-    installation id is admitted, purges the team's role assignments in the
-    same transaction, so a reinstall starts with no roles (decision 48b).
+    installation id is admitted, purges roles and live credential material with
+    a value-free destruction receipt in the same transaction (decision 48b).
     """
-    return InstallationFence(db, app_id=app_id, grants=grants, on_retire=purge_team)
+    return InstallationFence(
+        db, app_id=app_id, grants=grants, on_retire=partial(retire_team, app_id=app_id)
+    )
 
 
 def create_app(

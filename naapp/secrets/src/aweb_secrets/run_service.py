@@ -56,10 +56,12 @@ from aweb_secrets.custody import (
     CustodyUnavailable,
     Plaintext,
     SealContext,
+    SealedValue,
     ValueInvalid,
     decode_value,
 )
 from aweb_secrets.custody.opening import BackendObservation, UseSecretOpener
+from aweb_secrets.custody.run_redaction import RunRedaction
 from aweb_secrets.grant import is_secrets_role
 from aweb_secrets.member_types import MemberSubmission, ToolReply
 from aweb_secrets.policy import IDENTIFIER
@@ -111,13 +113,7 @@ class _Opened:
     values: tuple[Plaintext, ...]
     observations: tuple[BackendObservation | None, ...]
     contexts: tuple[SealContext, ...]
-    known: KnownValues
-
-
-@dataclass(frozen=True, repr=False)
-class _ReleaseContext:
-    known: KnownValues
-    deadline: datetime
+    redaction: SealedValue
 
 
 def _job(original: OriginalRun) -> jobs.JobDefinition:
@@ -219,6 +215,7 @@ class RunDispatch:
         *,
         fence: InstallationFence,
         opener: UseSecretOpener,
+        redaction: RunRedaction,
         committer: UseCommitter,
         response_key: ResponseKey,
         service_key: SigningKey,
@@ -246,6 +243,7 @@ class RunDispatch:
         ):
             raise ValueError("run composition requires valid keys and bounded lifetimes")
         self._db, self._fence, self._opener = db, fence, opener
+        self._redaction = redaction
         self._committer, self._response_key, self._service_key = (
             committer,
             response_key,
@@ -262,9 +260,6 @@ class RunDispatch:
             derived_max_ttl_s=derived_max_ttl_s,
             internal_destinations=internal_destinations,
         )
-        # Only original known values live here. This is not a work/assignment
-        # registry; another worker safely withholds output if context was lost.
-        self._release_context: dict[UUID, _ReleaseContext] = {}
 
     def _machine(
         self,
@@ -839,7 +834,8 @@ class RunDispatch:
                     known.add_basic(slot.body["label"], fields["username"], fields["password"])
                 values.append(value)
                 observations.append(observation)
-        return _Opened(tuple(values), tuple(observations), contexts, known)
+        redaction = await self._redaction.seal(original.installation, original.dispatch_id, known)
+        return _Opened(tuple(values), tuple(observations), contexts, redaction)
 
     async def _published(
         self,
@@ -977,17 +973,19 @@ class RunDispatch:
                 expires,
                 current.attempts,
             )
+            await self._redaction.retain(
+                tx,
+                scope,
+                original.dispatch_id,
+                deadline=recovery_deadline,
+                sealed=opened.redaction,
+            )
             await self._consume(tx, submission, grant)
             # Nonce/outbox/sealing await work too: the sole aggregate final
             # fence follows all of them, before this transaction commits.
             await fence.check(tx, current)
             if expires <= self._clock():
                 raise RunnerRefused("runner_dispatch_state_conflict")
-        self._prune_contexts()
-        self._release_context[original.dispatch_id] = _ReleaseContext(
-            opened.known,
-            recovery_deadline,
-        )
         return RunnerReply(200, wire)
 
     async def _preparation_failed(
@@ -1021,12 +1019,6 @@ class RunDispatch:
             await self._consume(tx, submission, grant)
             await self._fence.check(tx, scope)
         raise RunnerRefused("runner_unavailable")
-
-    def _prune_contexts(self) -> None:
-        now = self._clock()
-        for dispatch_id, context in tuple(self._release_context.items()):
-            if context.deadline <= now:
-                self._release_context.pop(dispatch_id, None)
 
     async def result_body_limit(
         self, *, dispatch_ref: str, header: str, method: str, raw_target: str
@@ -1163,11 +1155,41 @@ class RunDispatch:
         )
         if type(attempt) is not int:
             raise UseAuditUnavailable()
-        return await record(tx, original.dispatch_id, dict(reply.body), expected_attempt=attempt)
+        selected = await record(
+            tx, original.dispatch_id, dict(reply.body), expected_attempt=attempt
+        )
+        await self._redaction.drop(tx, original.installation, original.dispatch_id)
+        return selected
+
+    async def _original_redaction(
+        self, dispatch_ref: str, submission: RunnerSubmission, grant: Grant, runner_id: str
+    ) -> tuple[KnownValues, datetime] | None:
+        # Authenticate and scope the original before touching its secret-bearing
+        # snapshot. Provider I/O happens after this short transaction releases.
+        # The result transaction still consumes the nonce and checks every final
+        # runner/F6/version fence, including after another worker or retirement.
+        async with self._db.transaction() as tx:
+            scope = await self._fence.admit(tx, grant)
+            await self._verify(tx, submission, grant)
+            original = await self._assigned(tx, dispatch_ref, runner_id, grant)
+            snapshot = await self._redaction.read(
+                tx, scope, original.dispatch_id, now=self._clock()
+            )
+            await self._fence.check(tx, scope)
+        if snapshot is None:
+            return None
+        try:
+            known = await self._redaction.open(snapshot)
+        except CustodyUnavailable:
+            return None
+        return (known, snapshot.deadline) if snapshot.deadline > self._clock() else None
 
     async def result(self, dispatch_ref: str, submission: RunnerSubmission) -> RunnerReply:
         parsed = parse_request(submission.header)
         grant = await self._runner_grant(parsed)
+        original_known = await self._original_redaction(
+            dispatch_ref, submission, grant, parsed.runner_id
+        )
         async with self._db.transaction() as tx:
             scope = await self._fence.admit(tx, grant)
             await self._consume(tx, submission, grant)
@@ -1187,10 +1209,8 @@ class RunDispatch:
             if previous is not None and bytes(previous) != digest:
                 raise RunnerRefused("runner_result_conflict")
             if previous is None:
-                self._prune_contexts()
-                context = self._release_context.get(original.dispatch_id)
-                known = None if context is None else context.known
-                # Disable/rotation observations discard the original in-memory
+                known = None if original_known is None else original_known[0]
+                # Disable/rotation observations discard the recovered original
                 # context; they never cause a replacement value to be opened.
                 try:
                     await require_enabled(tx, scope.installation_id, scope.team_id)
@@ -1211,6 +1231,8 @@ class RunDispatch:
                         ):
                             known = None
                 except ContainmentRefused:
+                    known = None
+                if original_known is not None and original_known[1] <= self._clock():
                     known = None
                 try:
                     handled = process_runner_result(
@@ -1263,7 +1285,6 @@ class RunDispatch:
             # The nonce inserted above rolls back with any refusal or effect.
             await self._verify(tx, submission, grant)
             await self._fence.check(tx, scope)
-        self._release_context.pop(original.dispatch_id, None)
         return RunnerReply(204)
 
     async def reconcile(
@@ -1293,6 +1314,7 @@ class RunDispatch:
         ):
             raise UseAuditUnavailable()
         await self._machine(frozen).reconcile(tx, original.dispatch_id, state, dict(result))
+        await self._redaction.drop(tx, frozen.installation, frozen.dispatch_id)
 
     async def deregister_runner(
         self,
@@ -1407,11 +1429,9 @@ class RunDispatch:
                             tx, original, State.OUTCOME_UNKNOWN, reply, None, approvals
                         )
                     )
-                self._release_context.pop(row["dispatch_id"], None)
             except (UseAuditUnavailable, ApprovalRefused):
                 _LOG.error(
                     "run recovery context unavailable",
                     extra={"dispatch_id": str(row["dispatch_id"])},
                 )
-        self._prune_contexts()
         return swept

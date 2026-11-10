@@ -22,7 +22,6 @@ from aweb_naapp.hooks.owner_act import APP_ACTS
 from aweb_naapp.hooks.owner_act_nonces import OwnerActVerifier, apply_owner_act_migrations
 from aweb_naapp.key_file import read_key_file
 from aweb_naapp.nonces import apply_nonce_migrations
-from aweb_naapp.roles import purge_team
 from aweb_naapp.runtime.app import NaappRuntime
 from aweb_naapp.runtime.approvals import (
     ActionPolicy,
@@ -97,6 +96,7 @@ from aweb_secrets.owners import OwnerDirectory, apply_owner_migrations, is_owner
 from aweb_secrets.passkey_context import PasskeyContexts
 from aweb_secrets.passkey_email import PasskeyEmailDelivery
 from aweb_secrets.response_audit import ResponseKey
+from aweb_secrets.retirement import retire_team
 from aweb_secrets.run_context import apply_run_dispatch_migrations
 from aweb_secrets.run_service import RunDispatch
 from aweb_secrets.runner_routes import runner_dispatch_router, runner_registration_router
@@ -165,7 +165,7 @@ async def _compose(
     db = runtime.db()
     fence = runtime.installation_fence()
     # Configure the shared fence; never create another G1 source or fence.
-    fence.on_retire = purge_team
+    fence.on_retire = partial(retire_team, app_id=settings.app_id)
     registrations = runtime.hook_registrations()
     store = PgApprovalStore(db)
     await store.migrate()
@@ -363,6 +363,7 @@ async def _compose(
     runs = run_dispatch(
         db,
         **common,
+        redaction=custody.run_redaction,
         passkeys=passkeys,
         origin=settings.public_origin,
         assignment_ttl=timedelta(seconds=settings.runner_assignment_ttl_seconds),

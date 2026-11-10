@@ -103,12 +103,14 @@ class KnownValues:
     """The values to redact from one dispatch's output, each under its ref."""
 
     def __init__(self) -> None:
+        self._values: list[tuple[str, str]] = []
         self._forms: list[_Form] = []
         self._pattern: re.Pattern[bytes] | None = None
 
     def add(self, secret_ref: str, value: str) -> None:
         if not value:
             raise ValueError("a known value must not be empty")
+        self._values.append((secret_ref, value))
         self._forms += _forms(value, f"[REDACTED:{secret_ref}]".encode())
         # Longest first, so a value never leaves part of a longer one behind.
         self._forms.sort(key=lambda form: len(form.literal), reverse=True)
@@ -119,6 +121,44 @@ class KnownValues:
         whose base64 is what the Authorization header carries."""
         self.add(secret_ref, password)
         self.add(secret_ref, f"{username}:{password}")
+
+    def snapshot(self) -> bytes:
+        """Secret plaintext inputs, for sealing before durable storage.
+
+        Store original inputs rather than compiled patterns or encoded caches;
+        restoration uses the same renderer as a newly opened assignment.
+        """
+        return json.dumps(
+            {"version": 1, "values": self._values}, ensure_ascii=False, separators=(",", ":")
+        ).encode("utf-8")
+
+    @classmethod
+    def restore(cls, snapshot: bytes) -> KnownValues:
+        """Rebuild the original renderer from an authenticated, unsealed snapshot."""
+        try:
+            document = json.loads(snapshot)
+        except (ValueError, UnicodeError, RecursionError):
+            raise ValueError("invalid redaction snapshot") from None
+        if (
+            not isinstance(document, dict)
+            or set(document) != {"version", "values"}
+            or type(document["version"]) is not int
+            or document["version"] != 1
+            or not isinstance(document["values"], list)
+        ):
+            raise ValueError("invalid redaction snapshot")
+        known = cls()
+        for pair in document["values"]:
+            if (
+                not isinstance(pair, list)
+                or len(pair) != 2
+                or not isinstance(pair[0], str)
+                or not isinstance(pair[1], str)
+                or not pair[1]
+            ):
+                raise ValueError("invalid redaction snapshot")
+            known.add(pair[0], pair[1])
+        return known
 
     def redact(self, data: bytes) -> tuple[bytes, int]:
         """``data`` with every known form replaced, and the number replaced."""

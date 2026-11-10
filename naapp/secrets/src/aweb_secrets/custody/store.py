@@ -44,6 +44,7 @@ from pgdbm.core import TransactionManager
 
 from aweb_secrets.secret import SecretRecord, sealed_shape
 
+from .run_redaction import RunRedaction
 from .sealing import (
     CustodyUnavailable,
     KeyProvider,
@@ -345,6 +346,7 @@ class Custody:
         self.opener = SecretOpener(provider, db)
         self.backend_credential_opener = BackendCredentialOpener(provider, db)
         self.backend_credential_preview = BackendCredentialPreview(provider, db)
+        self.run_redaction = RunRedaction(provider)
 
     async def stage_backend_credential(
         self,
