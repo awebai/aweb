@@ -56,7 +56,9 @@ async def test_same_installation_waits_until_original_transaction_ends(db, rollb
                 await prepare_retirement(tx, installation=INSTALLATION)
                 holder = await tx.fetch_value("SELECT pg_backend_pid()")
                 started = asyncio.get_running_loop().create_future()
-                task = asyncio.create_task(acquire(db, started, replace(INSTALLATION, generation=2)))
+                task = asyncio.create_task(
+                    acquire(db, started, replace(INSTALLATION, generation=2))
+                )
                 waiter = await asyncio.wait_for(started, 5)
                 await wait_for_holder(db, holder, waiter, task)
                 if rollback:
