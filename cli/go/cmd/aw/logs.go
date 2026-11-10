@@ -59,6 +59,7 @@ func init() {
 	logsCmd.GroupID = groupUtility
 	rootCmd.AddCommand(logsCmd)
 	identityHomeNeutralCommandExemptions[logsVerifyCmd] = struct{}{}
+	offlineCommands[logsVerifyCmd] = struct{}{}
 }
 
 // logsVerifyError is a verify that could not run: exit 2, with a stable code.
@@ -177,7 +178,11 @@ func logsVerifySummary(report logschain.BundleReport) string {
 		}
 		if epoch.Unanchored != nil {
 			unanchored = true
-			fmt.Fprintf(&b, "  Unanchored: team_seq %d-%d, present and verified, covered by no checkpoint.\n", epoch.Unanchored[0], epoch.Unanchored[1])
+			if epoch.Chain.Intact() {
+				fmt.Fprintf(&b, "  Unanchored: team_seq %d-%d, present and verified, covered by no checkpoint.\n", epoch.Unanchored[0], epoch.Unanchored[1])
+			} else {
+				fmt.Fprintf(&b, "  Unanchored: team_seq %d-%d, present, covered by no checkpoint.\n", epoch.Unanchored[0], epoch.Unanchored[1])
+			}
 		}
 		if br := epoch.Chain.FirstBreak; br != nil {
 			fmt.Fprintf(&b, "  Breaks at team_seq %d: %s.\n", br.TeamSeq, br.Reason)
@@ -207,7 +212,7 @@ func logsVerifySummary(report logschain.BundleReport) string {
 		"this was the producer's declared key, nor its kid, purposes, installation,\n" +
 		"generation or bindings.\n")
 	if unanchored {
-		b.WriteString("The unanchored ranges above are verified, but no checkpoint covers them.\n")
+		b.WriteString("No checkpoint covers the unanchored ranges above.\n")
 	}
 	return b.String()
 }

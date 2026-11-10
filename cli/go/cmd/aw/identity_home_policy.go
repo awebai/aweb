@@ -11,6 +11,22 @@ var identityHomeNeutralCommandExemptions = map[*cobra.Command]struct{}{
 	upgradeCmd:               {},
 }
 
+// offlineCommands is the complete pointer-identity set of commands that read
+// only the inputs they are given. No identity home is resolved for them, not
+// even the pre-dispatch selector that plugins need, so no principal selector,
+// however stale or malformed, can stop them. Each is also identity-home neutral.
+var offlineCommands = map[*cobra.Command]struct{}{}
+
+// namesOfflineCommand is whether argv names an offline command.
+func namesOfflineCommand(args []string) bool {
+	cmd, _, err := rootCmd.Find(args)
+	if err != nil {
+		return false
+	}
+	_, ok := offlineCommands[cmd]
+	return ok
+}
+
 func isIdentityHomeNeutralCommand(cmd *cobra.Command) bool {
 	_, ok := identityHomeNeutralCommandExemptions[cmd]
 	return ok || (cmd.Annotations[hostHumanOrgAnnotation] == "true" && cmd.Flags().Changed("org"))
