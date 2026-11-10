@@ -32,7 +32,7 @@ from aweb_naapp.roles import (
     holding_scope,
     read_holding,
 )
-from aweb_naapp.runtime.approvals import AuthenticationFailed, DeliveryStatus
+from aweb_naapp.runtime.approvals import AuthenticationFailed, DeliveryStatus, Refusal
 from aweb_naapp.runtime.human_roles import HumanRoleHoldings
 from aweb_naapp.runtime.installation import AdmittedInstallation
 from aweb_naapp.runtime.passkeys import (
@@ -42,14 +42,20 @@ from aweb_naapp.runtime.passkeys import (
     NoticeKind,
     contact_sha256,
 )
+from tests.runtime.approvals.support import SCOPE as CONTACT_SCOPE
+from tests.runtime.approvals.support import policy
 from tests.runtime.approvals.test_passkeys import (
     ORIGIN,
+    REQUEST,
     PasskeyWorld,
+    designate_by_act,
     pw,  # noqa: F401
+    refusal,
 )
 
 ROLE = "example.reader"
 PRINCIPAL = "did:aw:2Wq7mXn4kP9rT1vY5zA8bC3dE6"
+OTHER_PRINCIPAL = "did:aw:3Xr8nYo5mQ1sU2wZ6aB9cD4eF7"
 RP_ID = "app.example.com"
 NOTICE = "reader@example.com"
 CERTIFICATE = b'{"certificate_id":"cert-1"}'
@@ -472,3 +478,86 @@ async def test_a_held_holding_blocks_replace_and_revoke_until_the_reader_commits
         if writing is not None and not writing.done():
             writing.cancel()
             await asyncio.gather(writing, return_exceptions=True)
+
+
+# The holder as an approver
+
+
+async def test_a_holder_is_its_principals_approver_in_the_directory(pw: PasskeyWorld):
+    await migrated(pw)
+    designation = await designate(pw, holder(), notice=NOTICE)
+    approver = await pw.passkeys.designated_approver(SCOPE)
+    assert approver is not None
+    assert (approver.subject, approver.principal_did, approver.contact) == (
+        designation.approver.subject,
+        PRINCIPAL,
+        NOTICE,
+    )
+
+
+@pytest.mark.parametrize("requester", [PRINCIPAL, OTHER_PRINCIPAL])
+async def test_a_holder_never_approves_its_own_principals_request(pw: PasskeyWorld, requester: str):
+    await migrated(pw)
+    designation = await designate(pw, holder(), notice=NOTICE)
+    pw.policies.set(policy(approver_scopes=(SCOPE,)))
+    minting = pw.approvals.mint(request=REQUEST, policy_ref="send-charge", requested_by=requester)
+    if requester == PRINCIPAL:
+        assert await refusal(minting) is Refusal.NO_ELIGIBLE_APPROVER
+        return
+    view = await minting
+    approval = await pw.approvals.for_request(view.request_id)
+    [candidate] = approval.candidates
+    assert (candidate.subject, candidate.principal_did) == (
+        designation.approver.subject,
+        PRINCIPAL,
+    )
+
+
+# A contact approver whose scope became a holding (16.43's backfill)
+
+
+async def backfilled(pw: PasskeyWorld) -> None:
+    """What 16.43's backfill writes for an existing contact approver: the
+    holding record of its scope, and the principal on every approver row of
+    that scope, in one transaction."""
+    async with pw.passkeys.db.transaction() as tx:
+        await begin_holding(tx, **KEY, certificate=None)
+        await tx.execute(
+            "UPDATE {{tables.passkey_approvers}} SET principal = $2 WHERE scope = $1",
+            SCOPE,
+            PRINCIPAL,
+        )
+
+
+async def test_a_backfilled_contact_approver_keeps_its_credential_and_leaves_the_contact_paths(
+    pw: PasskeyWorld,
+):
+    await migrated(pw)
+    designation = await designate_by_act(pw, "app-role.designate", NOTICE, SCOPE)
+    device = SoftAuthenticator(ORIGIN)
+    token = pw.contacts.last(NOTICE)
+    await pw.passkeys.complete_enrolment(
+        token, device.create(await pw.passkeys.enrolment_options(token))
+    )
+    await backfilled(pw)
+    for act in ("app-role.designate", "app-credential.recover"):
+        with pytest.raises(DesignationRefused):
+            await designate_by_act(pw, act, NOTICE, SCOPE)
+    options = await pw.passkeys.login_options(SCOPE)
+    login = await pw.passkeys.verify_login(SCOPE, device.get(options))
+    assert login.subject == designation.approver.subject
+    assert (await holding(pw)).subject == designation.approver.subject
+
+
+async def test_a_backfilled_scope_gets_no_enrolment_link_while_a_contact_scope_does(
+    pw: PasskeyWorld,
+):
+    await migrated(pw)
+    await designate_by_act(pw, "app-role.designate", NOTICE, SCOPE)
+    await designate_by_act(pw, "app-role.designate", NOTICE, CONTACT_SCOPE)
+    await backfilled(pw)
+    async with pw.passkeys.db.transaction() as tx:
+        with pytest.raises(EnrolmentRefused):
+            await pw.passkeys.reissue_enrolment(tx, scope=SCOPE)
+    async with pw.passkeys.db.transaction() as tx:
+        assert (await pw.passkeys.reissue_enrolment(tx, scope=CONTACT_SCOPE)).link_token

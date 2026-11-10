@@ -110,7 +110,10 @@ class MappedApprovers:
 
     async def candidates(self, policy, request) -> list[Approver]:
         return [
-            replace(approver, principal_did=self.principals.get(approver.subject))
+            replace(
+                approver,
+                principal_did=self.principals.get(approver.subject, approver.principal_did),
+            )
             for approver in await self.passkeys.candidates(policy, request)
         ]
 
