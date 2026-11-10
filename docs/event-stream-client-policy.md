@@ -67,7 +67,8 @@ moment rather than the caller (408, 409, 425, 429) are transient.
 - Each wait is drawn uniformly between half of the delay and all of it.
 - The delay returns to 1 second only once a stream is confirmed live: its
   first event or heartbeat has been read. An open that returns 200 and then
-  closes does not reset it.
+  closes does not reset it. This is the transient delay; the refused delay
+  has its own rule in section 4.
 - When the answer carries `Retry-After`, the client waits at least that long,
   up to 5 minutes, plus the jitter above. A larger or unparsable value is
   treated as 5 minutes.
@@ -98,7 +99,13 @@ So a refused stream is **quarantined**:
 - An explicit request for the stream (a registration with the wake broker, a
   new `aw run` session, a restart of the channel) retries at once and, if
   refused again, continues from the 1-minute delay.
-- The first successful, confirmed stream ends the quarantine.
+- The first successful, confirmed stream ends the quarantine: the client
+  reports that it left `refused`.
+- The refused delay returns to 1 minute only after the stream delivers an
+  event that is not a comment, or a connection reaches its planned close. A
+  heartbeat confirms the stream and ends the quarantine but leaves the delay
+  where it is, so a server that accepts the open, sends its heartbeat and
+  then refuses again is retried at a growing interval, not once a minute.
 
 `verification_unavailable` is not a refusal. It says the server could not
 check the grant; it is transient and follows section 3.

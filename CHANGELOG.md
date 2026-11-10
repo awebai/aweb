@@ -17,7 +17,8 @@
   where it was 4 minutes. Both close a connection that has delivered nothing,
   heartbeat included, for 75 seconds. A repeated `aw wake register` retries a
   refused stream at once. `wake.Config` takes `StreamPolicy` in place of
-  `StreamTTL`, `BackoffMin` and `BackoffMax`.
+  `StreamTTL`, `BackoffMin` and `BackoffMax`, and its `OpenStream` takes a
+  context.
 
 - AWID bounds its request input. The registry service refuses a request body
   over `AWID_MAX_REQUEST_BODY_BYTES` with 413 before parsing it (default 4 MiB,
