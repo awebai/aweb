@@ -243,6 +243,8 @@ export class APIError extends Error {
     public body: string,
     /** A Retry-After given as whole seconds; absent when missing or another form. */
     public retryAfterSeconds?: number,
+    /** The Retry-After header as the server sent it; absent when missing. */
+    public retryAfter?: string,
   ) {
     super(body ? `aweb: http ${statusCode}: ${body}` : `aweb: http ${statusCode}`);
   }
