@@ -2,6 +2,13 @@
 
 ## Unreleased
 
+- The channel client (the Claude Code plugin, the Pi extension and `aw wake`)
+  reports mail and chat as verified only when the displayed body, subject,
+  message id, conversation id, sender and recipient agree with the claims in
+  the signed payload, by the same rules `aw` applies. A message whose displayed
+  fields differ is presented with trust status `failed` and its fields as
+  received. Room posts use the same comparison.
+
 - AWID bounds its request input. The registry service refuses a request body
   over `AWID_MAX_REQUEST_BODY_BYTES` with 413 before parsing it (default 4 MiB,
   following a raised `AWID_ROTATE_MAX_BODY_BYTES`; a value below the rotate
