@@ -104,7 +104,7 @@ func canonicalCreationResponse(response awid.IDTreeCreationResponse) (string, er
 	if err := decoder.Decode(&value); err != nil {
 		return "", err
 	}
-	return awid.CanonicalJSONValue(value)
+	return awid.CanonicalJSONValueEscapingLineSeparators(value)
 }
 
 type hostedHumanParent struct {
@@ -354,5 +354,5 @@ func canonicalHostedCreationResponse(response any, tree awid.IDTreeCreationRespo
 		delete(value, "id_chain")
 		delete(value, "registration_request")
 	}
-	return awid.CanonicalJSONValue(value)
+	return awid.CanonicalJSONValueEscapingLineSeparators(value)
 }

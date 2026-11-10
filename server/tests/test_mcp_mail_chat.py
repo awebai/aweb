@@ -416,6 +416,73 @@ async def test_mcp_auth_accepts_trusted_proxy_headers(aweb_cloud_db, monkeypatch
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize("status", ["retired", "archived", "deleted"])
+async def test_mcp_auth_refuses_a_forwarded_actor_that_is_not_an_active_member(aweb_cloud_db, monkeypatch, status):
+    """A proxy forwards a request for an agent row that is still there (deleted_at is NULL) but is
+    not an active member: the request is refused, with the proxy's signature valid."""
+    team_id = "ops:acme.com"
+    agent_id = uuid4()
+    secret = "proxy-secret"
+
+    await aweb_cloud_db.aweb_db.execute(
+        """
+        INSERT INTO {{tables.teams}} (team_id, namespace, team_name, team_did_key)
+        VALUES ($1, 'acme.com', 'ops', 'did:key:z6MkkopcdRMf2qPVBdcugyhrVQorfEfz2uUigTwZDvZ15poA' /* z6MkTeam */)
+        """,
+        team_id,
+    )
+    await aweb_cloud_db.aweb_db.execute(
+        """
+        INSERT INTO {{tables.agents}}
+            (agent_id, team_id, did_key, did_aw, address, alias, identity_scope, status, did_aw_verified_key)
+        VALUES ($1, $2, 'did:key:z6MkggGwZHMkBygNAy7tZGtCZxrkWBHQ5fpEm6fSAxfkuvqE' /* z6MkAlice */, 'did:aw:alice', 'acme.com/alice', 'alice', 'global', $3, 'did:key:z6MkggGwZHMkBygNAy7tZGtCZxrkWBHQ5fpEm6fSAxfkuvqE' /* z6MkAlice */)
+        """,
+        agent_id,
+        team_id,
+        status,
+    )
+    await aweb_cloud_db.aweb_db.execute(
+        """
+        INSERT INTO {{tables.workspaces}}
+            (workspace_id, team_id, agent_id, alias, workspace_type)
+        VALUES ($1, $2, $3, 'alice', 'hosted_mcp')
+        """,
+        uuid4(),
+        team_id,
+        agent_id,
+    )
+    row = await aweb_cloud_db.aweb_db.fetch_one(
+        "SELECT status, deleted_at FROM {{tables.agents}} WHERE agent_id = $1", agent_id
+    )
+    assert (row["status"], row["deleted_at"]) == (status, None)
+
+    monkeypatch.setenv("AWEB_TRUST_PROXY_HEADERS", "1")
+    monkeypatch.setenv("AWEB_INTERNAL_AUTH_SECRET", secret)
+
+    user_id = str(uuid4())
+    middleware = mcp_auth.MCPAuthMiddleware(app=lambda *_args, **_kwargs: None, db_infra=DBInfra(aweb_cloud_db.aweb_db))
+    with pytest.raises(HTTPException) as refused:
+        await middleware._resolve_auth(
+            _request_with_headers(
+                {
+                    "X-Team-ID": team_id,
+                    "X-User-ID": user_id,
+                    "X-AWEB-Actor-ID": str(agent_id),
+                    "X-AWEB-Auth": build_internal_auth_header_value(
+                        secret=secret,
+                        team_id=team_id,
+                        principal_type="u",
+                        principal_id=user_id,
+                        actor_id=str(agent_id),
+                    ),
+                },
+                verified_bindings=[("did:aw:alice", named_did_key("z6MkAlice"), "acme.com/alice")],
+            )
+        )
+    assert refused.value.status_code == 403
+
+
+@pytest.mark.asyncio
 async def test_mcp_auth_rejects_bad_trusted_proxy_signature(aweb_cloud_db, monkeypatch):
     secret = "proxy-secret"
     team_id = "ops:acme.com"

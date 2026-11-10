@@ -198,6 +198,109 @@ implementations still owe nonce, release, CAS, late-evidence and redaction-conte
 proofs; these examples do not authorize a dispatch. The existing signed/sealed
 `secrets-runner-protocol-v1.json` bytes are unchanged.
 
+### `canonical-json-v1.json`
+
+JSON values and the exact canonical bytes (`canonical_hex`) that signed and
+hashed payloads are built from: keys sorted by code point, no insignificant
+whitespace, and only the quotation mark, the reverse solidus and
+U+0000-U+001F escaped. The cases hold U+2028 and U+2029 in string values and
+object keys, `<`, `>` and `&`, a character outside the Basic Multilingual
+Plane, control characters, a reverse solidus followed by the text of a
+separator escape, and key order with non-ASCII keys. The reference is Python
+`awid.signing.canonical_json_bytes`; `awid/tests/test_canonical_json_vectors.py`
+reproduces every case. Go `cli/go/awid/canonical_json_vector_test.go`
+reproduces every case with `CanonicalJSONValue`, `StrictCanonicalJSON` and the
+ID-certificate canonical form, and the string cases with the message envelope.
+TypeScript `channel-core/test/canonical_json_vector.test.ts` reproduces every
+case with `canonicalJSONValue`. The file is ASCII: every other character is
+written as an escape, and expected bytes are hex.
+
+#### Key order
+
+Object keys are sorted by Unicode code point in the three implementations.
+This is not the order of RFC 8785 (JCS), which sorts by UTF-16 code unit. The
+two orders differ only where a key holding a character outside the Basic
+Multilingual Plane (a surrogate pair in UTF-16) is compared with a key holding
+a character in U+E000-U+FFFF at the first position where the keys differ: by
+code point the U+E000-U+FFFF key comes first. `code_point_key_order_cases`
+holds such keys (against U+E000, against U+FFFF, pairs of keys outside the
+plane, nested objects); the three tests assert every case. Go sorts the UTF-8
+bytes of the keys, Python compares `str` values, and TypeScript compares code
+points with `compareByCodePoint` (`channel-core/src/identity/canonical.ts`).
+
+#### Numbers
+
+A signed or hashed payload carries only integers of magnitude at most 2^53-1,
+written in decimal: no fraction, no exponent, no sign on zero. Anything else
+(a number with a fraction, an integral float such as `1.0`, an integer beyond
+2^53-1, negative zero, an exponent form) is outside the contract: the
+implementations do not write the same bytes for it, so a signature over such
+a payload does not verify across languages. `out_of_contract_number_cases`
+records, as measured, what each implementation does with the JSON text of each
+case, parsed with its own parser; the three tests pin their own column.
+
+| JSON text | Python `canonical_json_bytes` | Go `CanonicalJSONValue` (`float64`) | Go `CanonicalJSONValue` (`json.Number`) | Go `StrictCanonicalJSON` | TypeScript `canonicalJSONValue` |
+|---|---|---|---|---|---|
+| `1.5` | `1.5` | `1.5` | `1.5` | refused | refused |
+| `1.0` | `1.0` | `1` | `1.0` | refused | `1` |
+| `9007199254740993` | `9007199254740993` | `9007199254740992` | `9007199254740993` | refused | refused |
+| `-0` | `0` | `-0` | `-0` | `0` | `0` |
+| `-0.0` | `-0.0` | `-0` | `-0.0` | refused | `0` |
+| `1e2` | `100.0` | `100` | `1e2` | refused | `100` |
+| `1e21` | `1e+21` | `1e+21` | `1e21` | refused | refused |
+
+- Python `canonical_json_bytes` writes every number, in the form of
+  `json.dumps`: an `int` in full, a `float` with a fraction or an exponent.
+- Go `CanonicalJSONValue` writes every number. A value decoded by
+  `encoding/json` into an interface is a `float64` and is written in the form
+  `encoding/json` gives a double; a value decoded with `UseNumber` is a
+  `json.Number` and is written as the text it was read from. A Go integer is
+  written in full.
+- Go `StrictCanonicalJSON` refuses every `float64`, every `json.Number` that
+  is not a plain integer and every integer beyond 2^53-1. It writes the
+  `json.Number` `-0` as `0`.
+- TypeScript `canonicalJSONValue` refuses every number that is not a safe
+  integer. `JSON.parse` has already turned `1.0` and `1e2` into the integers
+  `1` and `100` and negative zero into a value written `0`, so those are
+  written as integers and not refused.
+
+The payloads the protocol defines keep to the contract: their numeric members
+are versions (`v`, `version`, `message_version`, `inner_version`), sequence
+numbers (`seq`, `from_seq`, `issuer_key_seq`, `current_key_seq`) and sizes
+(`ciphertext_size`, attachment `size`), each an integer in every
+implementation. Timestamps are strings. Hook event envelopes, owner acts and
+logs-chain entries go through `strictjson` (Go) and
+`aweb_naapp.hooks.strictjson` (Python), which refuse floats and integers
+beyond 2^53-1 when reading and when writing. Three commands sign JSON a
+caller supplies, and read it with `UseNumber`, so a number in it is signed as
+the text the caller typed: `aw id sign` (the payload), `aw id request
+--team-auth --sign` (the additional signed fields) and `aw agent status`
+(the status document). A caller who needs such a signature to verify in
+another language keeps those numbers within the contract.
+
+#### Unpaired surrogates
+
+A string or key holding an unpaired surrogate is outside the contract.
+`lone_surrogate_cases` records what each implementation does with one: Python
+`canonical_json_bytes` refuses it (`UnicodeEncodeError`), Go's parser has
+replaced it by U+FFFD before any serializer sees it, and TypeScript writes it
+as a six-character escape and orders a key by the surrogate's own value
+(U+D800-U+DFFF, between U+D7FF and U+E000), which is how Python orders it
+before refusing to encode it.
+
+#### The escaped form
+
+`escaped_line_separator_cases` pins a second form, written only by Go
+`CanonicalJSONValueEscapingLineSeparators`: the canonical form except that
+U+2028 and U+2029 are written as the six ASCII characters `\u2028` and
+`\u2029`, in string values and in object keys. Keys are still ordered by code
+point. It serves digests that only `aw` computes and that another `aw` build
+or a stored record reproduces: the [A2A Agent Card digest](../a2a.md), custody
+request digests, blueprint payload digests and the stored hosted creation
+response. One case is an Agent Card with its `card_digest`.
+`cli/go/awid/canonical_json_vector_test.go` reproduces every case, and
+`cli/go/a2a/card_test.go` reproduces the card case through `CardDigest`.
+
 ### `message-signing-v1.json`
 
 Canonical UTF-8 message payloads and expected Ed25519 signatures, including
@@ -283,8 +386,11 @@ includes a neutral OSS task request, the same request carrying a signed
 `trace_id` member (an additive case: extra signed members are signed and
 ignored by the auth layer, which is how aw-hooks carries its trace), and a
 hosted-route interoperability case; negative cases cover cross-endpoint/origin replay, body tampering, and a missing
-protocol version. The aweb server, Go conformance suite, and public naapp
-verifiers consume it. See
+protocol version. `identity_cases` holds identity-only requests, which sign
+`did_aw` in place of `team_id`: one for a stable identity and one for a local
+identity, whose `did_aw` is the empty string. The aweb server, Go conformance
+suite, and channel-core request signer consume every case; the public naapp
+verifiers consume the certificate cases. See
 [`team-auth-envelope-v2.md`](../team-auth-envelope-v2.md).
 
 ### `federation-origin-ip-v1.json`
@@ -789,6 +895,7 @@ reference duplication are mutation-tested failures.
 | `a2a-awid-publication-v1.json` | Python AWID `test_a2a_publication_route.py`; Go AWID `a2a_publication_test.go`; Go shared `conformance_test.go` |
 | `a2a-bridge-envelope-v0.json` | Go gateway `envelope_vector_test.go` |
 | `a2a-v1.json` | Go A2A `card_test.go`; Go gateway `gateway_rpc_test.go`; Go shared `conformance_test.go` |
+| `canonical-json-v1.json` | Python AWID `test_canonical_json_vectors.py`; Go AWID `canonical_json_vector_test.go`; Go A2A `card_test.go`; TypeScript channel-core `canonical_json_vector.test.ts` |
 | `atomic-address-claim-conflict-codes-v1.json` | Python AWID `test_atomic_claim_route.py`; Go AWID `atomic_address_claim_test.go` |
 | `atomic-address-claim-v1.json` | Python AWID `test_atomic_claim.py`; Go AWID `atomic_address_claim_test.go` |
 | `dns-txt-v1.json` | Python AWID `test_conformance_vectors.py`; Python aweb `test_identity_conformance_vectors.py`; TypeScript channel-core `registry.test.ts` |
@@ -806,7 +913,7 @@ reference duplication are mutation-tested failures.
 | `stable-id-v1.json` | Python AWID and aweb conformance tests; Go shared `conformance_test.go` |
 | `secrets-runner-protocol-v1.json` | secrets `test_runner_protocol_vectors.py` and production-server `test_runner_server_protocol.py` |
 | `secrets-runner-http-v1.json` | secrets `test_runner_protocol_vectors.py` |
-| `team-auth-envelope-v2.json` | Python aweb `test_team_auth_envelope.py`; naapp-lib `test_team_auth_vectors.py`; Go shared `conformance_test.go`, including its root-equality check for the managed embedded copy |
+| `team-auth-envelope-v2.json` | Python aweb `test_team_auth_envelope.py`; naapp-lib `test_team_auth_vectors.py`; Go shared `conformance_test.go`, including its root-equality check for the managed embedded copy; TypeScript channel-core `request_auth_v2.test.ts` |
 | `federation-origin-ip-v1.json` | Python AWID `test_federation_authority_vectors.py` and `test_external_authority.py`; Python aweb pre-activation federation harness; Go AWID `federation_authority_test.go`; Go shared `federation_authority_vectors_test.go` |
 | `federation-discovery-v1.json` | Python AWID `test_federation_authority_vectors.py` and `test_external_authority.py`; Python aweb pre-activation federation harness; Go AWID `federation_authority_test.go`; Go shared `federation_authority_vectors_test.go` |
 | `federation-authority-state-v1.json` | Python AWID `test_federation_authority_vectors.py`; Python aweb `test_federation_authority_core.py`, `test_federation_authority_schema.py`, and pre-activation federation harness; Go AWID `federation_authority_test.go`; Go shared `federation_authority_vectors_test.go`; generated `federation-error-reference.md` response-shape cross-check through `generate_federation_error_reference.py` (reason/status/retryability source is `awid/src/awid/federation_errors.py`); federation SOT/support coverage in `check-extension-docs.py` |

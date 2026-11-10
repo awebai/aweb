@@ -18,52 +18,52 @@
     },
     {
       "source": "server/src/aweb/coordination/routes/tasks.py",
-      "function": "add_comment_route",
+      "function": "answer_task_route",
       "event": "task.comment_added"
     },
     {
       "source": "server/src/aweb/coordination/routes/tasks.py",
-      "function": "add_dependency_route",
+      "function": "answer_task_route",
+      "event": "task.status_changed"
+    },
+    {
+      "source": "server/src/aweb/coordination/tasks_service.py",
+      "function": "add_comment",
+      "event": "task.comment_added"
+    },
+    {
+      "source": "server/src/aweb/coordination/tasks_service.py",
+      "function": "add_dependency",
       "event": "task.dependency_added"
     },
     {
-      "source": "server/src/aweb/coordination/routes/tasks.py",
-      "function": "answer_task_route",
-      "event": "task.comment_added"
-    },
-    {
-      "source": "server/src/aweb/coordination/routes/tasks.py",
-      "function": "answer_task_route",
-      "event": "task.status_changed"
-    },
-    {
-      "source": "server/src/aweb/coordination/routes/tasks.py",
-      "function": "create_task_route",
+      "source": "server/src/aweb/coordination/tasks_service.py",
+      "function": "create_task",
       "event": "task.created"
     },
     {
-      "source": "server/src/aweb/coordination/routes/tasks.py",
-      "function": "delete_task_route",
-      "event": "task.deleted"
-    },
-    {
-      "source": "server/src/aweb/coordination/routes/tasks.py",
-      "function": "remove_dependency_route",
+      "source": "server/src/aweb/coordination/tasks_service.py",
+      "function": "remove_dependency",
       "event": "task.dependency_removed"
     },
     {
-      "source": "server/src/aweb/coordination/routes/tasks.py",
-      "function": "update_task_route",
+      "source": "server/src/aweb/coordination/tasks_service.py",
+      "function": "soft_delete_task",
+      "event": "task.deleted"
+    },
+    {
+      "source": "server/src/aweb/coordination/tasks_service.py",
+      "function": "update_task",
       "event": "task.assignee_changed"
     },
     {
-      "source": "server/src/aweb/coordination/routes/tasks.py",
-      "function": "update_task_route",
+      "source": "server/src/aweb/coordination/tasks_service.py",
+      "function": "update_task",
       "event": "task.status_changed"
     },
     {
-      "source": "server/src/aweb/coordination/routes/tasks.py",
-      "function": "update_task_route",
+      "source": "server/src/aweb/coordination/tasks_service.py",
+      "function": "update_task",
       "event": "task.updated"
     },
     {

@@ -228,46 +228,17 @@ func signAgentStatus(raw []byte, identity *localSigningIdentity) (map[string]str
 	if document["publisher_did"] != identity.DIDKey {
 		return nil, fmt.Errorf("publisher_did must equal the signing identity's did:key %s", identity.DIDKey)
 	}
-	payload, err := canonicalUTF8JSON(document)
-	if err != nil {
-		return nil, err
-	}
-	if len(payload) > 2048 {
-		return nil, fmt.Errorf("canonical status document exceeds 2048 bytes")
-	}
-	return map[string]string{"signed_payload": base64.RawURLEncoding.EncodeToString(payload), "signature": base64.RawStdEncoding.EncodeToString(ed25519.Sign(identity.SigningKey, payload))}, nil
-}
-
-// canonicalUTF8JSON is the canonical encoding of signed status and activity
-// documents: keys sorted by code point, no insignificant whitespace, raw UTF-8.
-func canonicalUTF8JSON(document any) ([]byte, error) {
+	// Signed status documents are canonical JSON: keys sorted by code point,
+	// no insignificant whitespace, raw UTF-8.
 	canonical, err := awid.CanonicalJSONValue(document)
 	if err != nil {
 		return nil, err
 	}
-	// encoding/json always escapes U+2028/U+2029. Signed documents require
-	// raw UTF-8; walk escape tokens so literal backslash-u text stays untouched.
 	payload := []byte(canonical)
-	var utf8 bytes.Buffer
-	for i := 0; i < len(payload); {
-		if payload[i] == '\\' && i+1 < len(payload) {
-			if i+6 <= len(payload) && (string(payload[i:i+6]) == `\u2028` || string(payload[i:i+6]) == `\u2029`) {
-				if payload[i+5] == '8' {
-					utf8.WriteRune('\u2028')
-				} else {
-					utf8.WriteRune('\u2029')
-				}
-				i += 6
-				continue
-			}
-			utf8.Write(payload[i : i+2])
-			i += 2
-			continue
-		}
-		utf8.WriteByte(payload[i])
-		i++
+	if len(payload) > 2048 {
+		return nil, fmt.Errorf("canonical status document exceeds 2048 bytes")
 	}
-	return utf8.Bytes(), nil
+	return map[string]string{"signed_payload": base64.RawURLEncoding.EncodeToString(payload), "signature": base64.RawStdEncoding.EncodeToString(ed25519.Sign(identity.SigningKey, payload))}, nil
 }
 
 func runStatusRequest(cmd *cobra.Command, method, path string, body any) error {

@@ -24,6 +24,7 @@ import (
 	"github.com/awebai/aw/awconfig"
 	"github.com/awebai/aw/awid"
 	"github.com/awebai/aw/internal/appmanifest"
+	"github.com/awebai/aw/internal/atomicfile"
 	"github.com/awebai/aw/internal/pathpreflight"
 	"github.com/spf13/cobra"
 )
@@ -373,7 +374,7 @@ func addPluginGrantGuidance(cmd *cobra.Command, out *pluginInstallOutput) {
 	if err != nil {
 		return
 	}
-	client, sel, err := buildClientForSelectionAtIdentityHome(ctx, workingDir, sel.IdentityHome, sel)
+	client, sel, err := buildClientForSelectionAtIdentityHome(ctx, workingDir, sel.IdentityHome, sel, resolveAuthenticatedBaseURLContext)
 	if err != nil {
 		return
 	}
@@ -756,11 +757,7 @@ func installManagedManifestPlugin(source, dir string, update bool, devOrigin str
 			return nil, err
 		}
 	}
-	if err := os.WriteFile(manifestPath+".tmp", manifestBytes, 0o600); err != nil {
-		return nil, err
-	}
-	if err := os.Rename(manifestPath+".tmp", manifestPath); err != nil {
-		_ = os.Remove(manifestPath + ".tmp")
+	if err := atomicfile.Write(manifestPath, manifestBytes, 0o600); err != nil {
 		return nil, err
 	}
 	if err := savePluginProvenance(provenancePath, &provenance); err != nil {
@@ -1013,15 +1010,7 @@ func savePluginProvenance(path string, provenance *pluginProvenance) error {
 	if err != nil {
 		return err
 	}
-	tmp := path + ".tmp"
-	if err := os.WriteFile(tmp, append(data, '\n'), 0o600); err != nil {
-		return err
-	}
-	if err := os.Rename(tmp, path); err != nil {
-		_ = os.Remove(tmp)
-		return err
-	}
-	return nil
+	return atomicfile.Write(path, append(data, '\n'), 0o600)
 }
 
 func loadPluginProvenance(path string) (*pluginProvenance, error) {

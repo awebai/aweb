@@ -1412,6 +1412,34 @@ full ordered SQL, not a copied `001` snapshot.
 
 ---
 
+## Health probes
+
+Three unauthenticated routes report the registry's state. None is rate limited.
+
+| Route | Checks | Answers | Use it for |
+|---|---|---|---|
+| `GET /live` | Nothing | `200 {"status": "ok"}` whenever the process serves requests | Liveness probes and container healthchecks: anything that restarts the process |
+| `GET /ready` | Redis and the database | 200 when both answer, 503 when either fails | Readiness probes, load-balancer routing, start-up ordering |
+| `GET /health` | The same as `/ready` | The same response as `/ready` | Monitoring and manual checks |
+
+`/ready`, `/health` and its alias `/ops/health` are one handler. Their body is
+`{"status": "ok" | "unhealthy", "version": "<awid-service version>", "checks": {...}}`
+with either status code. `checks` holds `redis` and `database` (`"ok"` or
+`"error"`), the database `schema` and the `rate_limiter` class in use; failure
+details go to the service log, never the body.
+
+Point a restarting probe at `/live` only. A probe that restarts the process on
+`/ready` or `/health` restarts every replica during a Redis or database outage,
+into the same outage. The `awid/Dockerfile` and `awid/Dockerfile.release`
+`HEALTHCHECK`s probe `/live`; the compose files' healthchecks, which order
+start-up, probe `/ready`.
+
+The registry client's `health()` reads `GET /health` and raises `RegistryError`
+on the 503. An aweb server's start-up check treats that health report as a
+registry it reached, logs a warning and starts.
+
+---
+
 ## Configuration
 
 ### Environment variables

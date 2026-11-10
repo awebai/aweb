@@ -92,7 +92,7 @@ func (s IDRequestFileStore) Put(r *IDOutgoingRequest) error {
 	if err != nil {
 		return err
 	}
-	return durableWriteFile(path, append(data, '\n'))
+	return atomicWriteFile(path, append(data, '\n'))
 }
 
 // ForInvitation recovers the exact outgoing exchange after an interrupted join.

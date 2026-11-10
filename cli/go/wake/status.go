@@ -58,15 +58,24 @@ func (s *Status) ClassifyDaemonVersion() {
 type StreamStatus struct {
 	IdentityHome string `json:"identity_home"`
 	TeamID       string `json:"team_id,omitempty"`
-	Phase        string `json:"phase"`
-	LastError    string `json:"last_error,omitempty"`
+	// Phase is starting, streaming, retrying, refused, stopped or over-bound.
+	Phase string `json:"phase"`
+	// Cause is why a retrying or refused stream is not streaming: the HTTP
+	// status, the terminal event's name or "silence". For a refused stream it
+	// is the refusal that holds the quarantine. It is empty when the failure
+	// has no such name; LastError describes it.
+	Cause string `json:"cause,omitempty"`
+	// NextAttemptAt is when a retrying or refused stream is tried next.
+	NextAttemptAt time.Time `json:"next_attempt_at,omitzero"`
+	LastError     string    `json:"last_error,omitempty"`
 	// LastErrorDetail is LastError's stable description; LastError's wording
 	// is not a contract.
 	LastErrorDetail *awid.ErrorDetail `json:"last_error_detail,omitempty"`
 	UnreadCount     int               `json:"unread_count,omitempty"`
 	ConnectedAt     time.Time         `json:"connected_at,omitempty"`
-	// Admitted is false for a registration past the configured stream bound.
-	// Such a registration is reported here, never silently dropped (§4).
+	// Admitted is false for a registration past the configured stream bound,
+	// and for an identity whose stream the server refuses. Such a
+	// registration is reported here, never silently dropped (§4).
 	Admitted bool `json:"admitted"`
 }
 
@@ -80,7 +89,11 @@ type ReceiveIdentityStatus struct {
 	Controls       bool     `json:"controls,omitempty"`
 	StreamAdmitted bool     `json:"stream_admitted"`
 	StreamPhase    string   `json:"stream_phase,omitempty"`
-	StreamError    string   `json:"stream_error,omitempty"`
+	// StreamCause and StreamNextAttemptAt are the stream's Cause and
+	// NextAttemptAt.
+	StreamCause         string    `json:"stream_cause,omitempty"`
+	StreamNextAttemptAt time.Time `json:"stream_next_attempt_at,omitzero"`
+	StreamError         string    `json:"stream_error,omitempty"`
 	// StreamErrorDetail is StreamError's stable description; StreamError's
 	// wording is not a contract.
 	StreamErrorDetail *awid.ErrorDetail `json:"stream_error_detail,omitempty"`

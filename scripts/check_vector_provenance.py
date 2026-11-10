@@ -557,8 +557,9 @@ ROOT_CONSUMERS = {
         '"../../../docs/vectors/hook-catalog-v1.json"',
     ),
     PurePosixPath("cli/go/a2a/card_test.go"): _consumer(
-        "a2a-v1.json",
+        {"a2a-v1.json", "canonical-json-v1.json"},
         'filepath.Join(root, "docs", "vectors", "a2a-v1.json")',
+        'filepath.Join(root, "docs", "vectors", "canonical-json-v1.json")',
     ),
     PurePosixPath("cli/go/a2agw/envelope_vector_test.go"): _consumer(
         "a2a-bridge-envelope-v0.json",
@@ -697,6 +698,10 @@ ROOT_CONSUMERS = {
         "pin-store-raw-wire-v1.json",
         'join(testDir, "..", "..", "docs", "vectors", "pin-store-raw-wire-v1.json")',
     ),
+    PurePosixPath("channel-core/test/request_auth_v2.test.ts"): _consumer(
+        "team-auth-envelope-v2.json",
+        'join(import.meta.dirname, "..", "..", "docs", "vectors", "team-auth-envelope-v2.json")',
+    ),
     PurePosixPath("channel-core/test/registry.test.ts"): _consumer(
         {
             "dns-txt-v1.json",
@@ -708,6 +713,18 @@ ROOT_CONSUMERS = {
         'join(testDir, "..", "..", "docs", "vectors", "identity-log-v1.json")',
         'join(testDir, "..", "..", "docs", "vectors", "identity-log-raw-wire-v1.json")',
         'join(testDir, "..", "..", "docs", "vectors", "identity-log-negative-v1.json")',
+    ),
+    PurePosixPath("awid/tests/test_canonical_json_vectors.py"): _consumer(
+        "canonical-json-v1.json",
+        'Path(__file__).parents[2] / "docs" / "vectors" / "canonical-json-v1.json"',
+    ),
+    PurePosixPath("cli/go/awid/canonical_json_vector_test.go"): _consumer(
+        "canonical-json-v1.json",
+        'filepath.Join("..", "..", "..", "docs", "vectors", "canonical-json-v1.json")',
+    ),
+    PurePosixPath("channel-core/test/canonical_json_vector.test.ts"): _consumer(
+        "canonical-json-v1.json",
+        'new URL("../../docs/vectors/canonical-json-v1.json", import.meta.url)',
     ),
     PurePosixPath("scripts/check-extension-docs.py"): _consumer(
         {
