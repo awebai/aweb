@@ -998,6 +998,23 @@ relevant. When more matching workspaces exist than the requested limit, the
 response sets `has_more=true`. Human CLI output must state plainly when this
 bounded response is incomplete.
 
+A task claim is made and released by the task's status change, in the same
+PostgreSQL transaction, for every caller of the task service (the HTTP routes,
+the MCP task tools and an embedding host alike). Setting `in_progress` records
+the claim of the acting member's workspace, or answers `409` when another
+workspace holds one. A change of status to `open` or `closed` releases every
+claim on the task, whichever workspace holds it, and sets each released
+workspace's focus to its most recent remaining claim, else to the released
+focus task while that task is not closed, else to none. A request that does not
+change the status releases nothing, and a change that rolls back leaves the
+claim. The release does not depend on the mutation
+hook; the hook only announces it, as `task.unclaimed` workspace and team
+events. Answering a task (`POST /v1/tasks/{ref}/answer`) and cancelling an app
+request close the task and release its claims the same way. Closing a parent
+closes its open descendants without changing their claims, and deleting a task
+releases its claims through the `task.deleted` hook cascade rather than in the
+deleting transaction.
+
 Task claims have no time-based expiry or implicit lease in v1.
 `GET /v1/tasks/active` includes `owner_last_seen_at` for claim-backed tasks.
 Active-work reads report claim age together with the claimant workspace's last
