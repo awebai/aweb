@@ -43,7 +43,16 @@ def run(argv):
 
 
 def as_user(user, argv):
-    return run(['/usr/bin/sudo', '-n', '-u', user, '--', *argv])
+    # A sudo/PAM failure is not a permission denial by the target process.
+    # Only an executed command inside this UID-attested envelope has a result.
+    expected_uid = pwd.getpwnam(user).pw_uid
+    command = "import json,os,subprocess,sys\nuid=os.geteuid();assert uid==int(sys.argv[1])\np=subprocess.run(sys.argv[2:],stdin=subprocess.DEVNULL,stdout=subprocess.PIPE,stderr=subprocess.PIPE,text=True,timeout=50)\nprint(json.dumps({'uid':uid,'returncode':p.returncode,'stdout':p.stdout,'stderr':p.stderr}))"
+    outer = run(['/usr/bin/sudo', '-n', '-u', user, '--', '/usr/bin/python3',
+                 '-I', '-B', '-c', command, str(expected_uid), *argv])
+    require(outer.returncode == 0)
+    result = json.loads(outer.stdout)
+    require(result['uid'] == expected_uid and type(result['returncode']) is int)
+    return subprocess.CompletedProcess(argv, result['returncode'], result['stdout'], result['stderr'])
 
 
 def main():
@@ -54,6 +63,12 @@ def main():
     operator = sys.argv[4]
     require(all(p.is_absolute() and p.is_file() for p in (archive, manifest_path, probe)))
     STAGE = 'archive-and-input-hashes'
+    for path in (archive, manifest_path, probe):
+        for node in [*reversed(path.parents), path]:
+            info = node.lstat()
+            require(info.st_uid == 0 and not stat.S_ISLNK(info.st_mode)
+                    and not info.st_mode & 0o022)
+            require(stat.S_ISREG(info.st_mode) if node == path else stat.S_ISDIR(info.st_mode))
     require(digest(archive) == ARCHIVE_SHA and digest(manifest_path) == MANIFEST_SHA)
     require(digest(probe) == PROBE_SHA)
     manifest = json.loads(manifest_path.read_text())
@@ -107,8 +122,23 @@ def main():
     for name, actor in actors.items():
         groups = sorted(os.getgrouplist(name, actor.pw_gid))
         actor_metadata[name] = {'uid': actor.pw_uid, 'gid': actor.pw_gid, 'groups': groups}
-    docker_group = grp.getgrnam('docker')
-    require(docker_group.gr_gid not in actor_metadata['oatsagent']['groups'])
+    for name, actor in [('oatsagent', agent), ('aweb-runner', runner)]:
+        identity_control = as_user(name, ['/usr/bin/id', '-u'])
+        require(identity_control.returncode == 0 and identity_control.stdout.strip() == str(actor.pw_uid))
+    require(as_user('oatsagent', ['/usr/bin/test', '-r', '/etc/hostname']).returncode == 0)
+    require(as_user('oatsagent', ['/usr/bin/test', '-x', '/etc']).returncode == 0)
+    privileged_groups = {0}
+    for name in ('docker', 'sudo', 'adm'):
+        try:
+            privileged_groups.add(grp.getgrnam(name).gr_gid)
+        except KeyError:
+            continue
+    require(not privileged_groups.intersection(actor_metadata['aweb-runner']['groups']))
+    try:
+        require(grp.getgrnam('docker').gr_gid not in actor_metadata['oatsagent']['groups'])
+    except KeyError:
+        pass
+    require(as_user('aweb-runner', ['/usr/bin/test', '-r', str(probe)]).returncode == 0)
     config, state = PREFIX / 'runner-config.json', PREFIX / 'runner-state'
     for path, mode, directory in [(config, 0o600, False), (state, 0o700, True)]:
         info = path.lstat()
@@ -130,13 +160,17 @@ def main():
         identity_read = 'denied; operator confirmed file exists, no value read'
     STAGE = 'sudo-and-socket-denials'
     require(as_user('oatsagent', ['/usr/bin/sudo', '-n', '-u', 'root', '--', '/usr/bin/id', '-u']).returncode != 0)
-    socket_path = '/run/docker.sock'
-    require(stat.S_ISSOCK(os.stat(socket_path).st_mode))
-    with socket.socket(socket.AF_UNIX) as connection:
-        connection.settimeout(2)
-        connection.connect(socket_path)  # Operator positive control; send no Docker request.
-    socket_check = "import socket,sys\ns=socket.socket(socket.AF_UNIX);s.settimeout(2)\ntry:s.connect('/run/docker.sock')\nexcept PermissionError:sys.exit(1)\nexcept OSError:sys.exit(2)\nelse:sys.exit(0)"
-    require(as_user('oatsagent', ['/usr/bin/python3', '-I', '-B', '-c', socket_check]).returncode == 1)
+    sockets_checked = []
+    for socket_path in ['/run/docker.sock', '/run/containerd/containerd.sock']:
+        if socket_path != '/run/docker.sock' and not Path(socket_path).exists():
+            continue
+        require(stat.S_ISSOCK(os.stat(socket_path).st_mode))
+        with socket.socket(socket.AF_UNIX) as connection:
+            connection.settimeout(2)
+            connection.connect(socket_path)  # Operator positive control, no RPC request.
+        socket_check = "import socket,sys\ns=socket.socket(socket.AF_UNIX);s.settimeout(2)\ntry:s.connect(sys.argv[1])\nexcept PermissionError:sys.exit(1)\nexcept OSError:sys.exit(2)\nelse:sys.exit(0)"
+        require(as_user('oatsagent', ['/usr/bin/python3', '-I', '-B', '-c', socket_check, socket_path]).returncode == 1)
+        sockets_checked.append(socket_path)
     require(run(['/usr/sbin/visudo', '-c']).returncode == 0)
     inventories = {}
     for name in actors:
@@ -157,7 +191,7 @@ def main():
                       'archive_sha256': ARCHIVE_SHA, 'platform': platform.platform(),
                       'node': platform.node(), 'actors': actor_metadata,
                       'public_config_hashes': public_configs, 'agent_reads_denied': denied,
-                      'identity_read_control': identity_read, 'sudo_inventory': inventories,
+                      'identity_read_control': identity_read, 'sockets_checked': sockets_checked, 'sudo_inventory': inventories,
                       'closure': closure_metadata,
                       'limits': 'Operator must check the exact narrow sudo policy. No registration, worker, job, signal/grace or journal-recovery acceptance ran.'}, sort_keys=True))
 
