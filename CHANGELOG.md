@@ -2,6 +2,19 @@
 
 ## Unreleased
 
+- A chat session stream delivers every message and read receipt committed
+  after it opened, in commit order, whatever the senders' clocks say. Each
+  session numbers its messages and read receipts as they are written; `message`
+  and `read_receipt` frames and chat history items carry that number as `seq`,
+  and the stream, the MCP reply wait and `up_to_message_id` read by it.
+  `after_seq=<n>` on the stream resumes after number `n`; `after=<timestamp>`
+  replays the messages after the last one stamped at or before it; the two
+  together are refused with 422.
+  Writers of one session, read receipts included, commit one at a time.
+  Migration `048_chat_session_seq.sql` adds `chat_sessions.last_seq`,
+  `chat_messages.seq` and `chat_read_receipts.seq` and must be applied before
+  this server runs; see [Migrations](docs/aweb-sot.md#migrations).
+
 - A chat session stream opened without `after` delivers every message sent
   after the client received the 200 response. The stream takes its live cursor
   before the response starts, so a message sent while the stream was still
