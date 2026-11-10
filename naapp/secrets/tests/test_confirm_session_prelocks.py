@@ -109,7 +109,17 @@ async def test_whole_b2_union_is_free_until_session_preparation_finishes(uses, b
                 )
             task = asyncio.create_task(prepare())
             waiter = await asyncio.wait_for(ready, 5)
-            await wait_blocked(w, waiter, blocker_pid)
+            monitor = asyncio.create_task(wait_blocked(w, waiter, blocker_pid))
+            try:
+                done, _ = await asyncio.wait({task, monitor}, return_when=asyncio.FIRST_COMPLETED)
+                if task in done:
+                    await task
+                    pytest.fail("preparation completed before the held upstream row")
+                await monitor
+            finally:
+                if not monitor.done():
+                    monitor.cancel()
+                await asyncio.gather(monitor, return_exceptions=True)
             if blocked_phase == "upstream":
                 assert not calls
                 async with w.db.transaction() as observer:

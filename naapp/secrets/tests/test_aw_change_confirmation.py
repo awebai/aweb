@@ -27,14 +27,23 @@ from aweb_secrets.custody import Custody, LocalKeyFileProvider, apply_custody_mi
 from aweb_secrets.runners import apply_runner_migrations, mint_runner_id
 from aweb_secrets.tokens import ProcessTokenCache
 from aweb_secrets.use_approvals import apply_use_approval_migrations
+from tests.governance import view as governance_view
 from tests.test_change_set_runners import runner_item
 from tests.test_change_sets import Inbox, by_member, change_set
-from tests.test_console_changes import Registrations
 from tests.test_handoff_sessions import API, journey, signed_request  # noqa: F401
 from tests.test_owner_bootstrap import world  # noqa: F401
 from tests.test_owner_directory import Audit
 
 ROOT = f"/installations/{INSTALLATION_ID}/change-sets"
+
+
+@dataclass(frozen=True)
+class Registrations:
+    team_id: str
+
+    async def view(self, team_id, hook):
+        assert team_id == self.team_id and hook == "post-governance-hook"
+        return replace(governance_view(), team_id=team_id)
 
 
 @dataclass(repr=False)
@@ -186,7 +195,7 @@ async def confirmation_journey(journey, tmp_path):  # noqa: F811
         console=console,
         changes=writer,
         approvals=approvals,
-        registrations=Registrations(),
+        registrations=Registrations(w.admitted.team_id),
         after_commit=after_commit,
         approval_kind=approval_kind,
         handoffs=journey.factory,
@@ -281,6 +290,9 @@ async def test_unmarked_draft_keeps_browser_confirmation(confirmation_journey, v
                 ),
                 changes=[runner_item(runner)],
             )
+            change["team_id"] = c.handoff.world.admitted.team_id
+            change["drafter"]["member_did_key"] = c.handoff.member.did_key
+            change["drafter"]["certificate_id"] = c.handoff.member.certificate()["certificate_id"]
             async with c.handoff.world.db.transaction() as tx:
                 pending = await c.writer.draft(tx, change)
             await c.approvals.deliver(pending)
