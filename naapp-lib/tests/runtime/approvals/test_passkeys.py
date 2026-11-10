@@ -142,9 +142,13 @@ async def pw(test_db_factory, registry) -> PasskeyWorld:
     return await passkey_world(test_db_factory, registry)
 
 
-async def passkey_world(test_db_factory, registry, **passkeys_options) -> PasskeyWorld:
+async def passkey_world(
+    test_db_factory, registry, *, database_options=None, **passkeys_options
+) -> PasskeyWorld:
     """The composed passkey world; `passkeys_options` are further `Passkeys` options."""
-    db = await test_db_factory.create_db(suffix="passkeys", schema="app")
+    db = await test_db_factory.create_db(
+        suffix="passkeys", schema="app", **(database_options or {})
+    )
     audit = AuditOutbox(db)
     await audit.create()
     clock = Clock()
