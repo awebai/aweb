@@ -326,12 +326,6 @@ describe.sequential("channel integration", () => {
     expect(mailNotification.meta.conversation_id).toBe(mail.conversation_id);
     expect(mailNotification.meta.verified).toBe("true");
 
-    const unreadAfterNotification = await runAwJSON<{ messages: Array<{ message_id: string }> }>(
-      homeDir,
-      bobDir,
-      server.awidURL,
-      ["--json", "mail", "inbox"],
-    );
     // Presentation is what acknowledges the message, so it is no longer
     // unread once the notification above has been received. The guarantee is
     // ORDERING - never acknowledge before presenting, so a bridge that dies
@@ -339,8 +333,24 @@ describe.sequential("channel integration", () => {
     // forever. A message still unread after presentation would be re-delivered
     // on every reconnect, which is the replay this design exists to avoid.
     // The assertions above prove it was presented; this proves it was then
-    // acknowledged exactly once.
-    expect(unreadAfterNotification.messages.some((item) => item.message_id === mail.message_id)).toBe(false);
+    // acknowledged. The acknowledgment is sent after the notification is
+    // accepted, so it reaches the server shortly after the notification
+    // arrives here, not before.
+    const mailIsUnread = async () => {
+      const inbox = await runAwJSON<{ messages: Array<{ message_id: string }> }>(
+        homeDir,
+        bobDir,
+        server.awidURL,
+        ["--json", "mail", "inbox"],
+      );
+      return inbox.messages.some((item) => item.message_id === mail.message_id);
+    };
+    await waitUntil(
+      async () => !(await mailIsUnread()),
+      10_000,
+      () => `mail ${mail.message_id} is still unread after its notification\nchannel stderr:\n${channelStderr}`,
+    );
+    expect(await mailIsUnread()).toBe(false);
 
     const chatBody = `channel verified chat ${Date.now()}`;
     await sendChatViaAW(homeDir, aliceDir, server.awidURL, "bob", chatBody);
