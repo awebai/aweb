@@ -62,9 +62,10 @@ def _both_past_the_lookup(monkeypatch):
     both see no row, so both go on to insert."""
     import asyncio
 
+    import aweb.messaging.mail_send as mail_send
     import aweb.routes.messages as message_routes
 
-    lookup = message_routes._stored_exact_send
+    lookup = mail_send._stored_exact_send
     arrived = 0
     both = asyncio.Event()
 
@@ -78,7 +79,9 @@ def _both_past_the_lookup(monkeypatch):
             await asyncio.wait_for(both.wait(), timeout=5)
         return result
 
+    # A first send looks the stored send up from the route, a continuation from the send module.
     monkeypatch.setattr(message_routes, "_stored_exact_send", held)
+    monkeypatch.setattr(mail_send, "_stored_exact_send", held)
 
 
 async def _counts(db):

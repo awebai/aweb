@@ -1067,9 +1067,12 @@ async def test_own_route_current_binding_unavailable_refuses(same_origin, foreig
     Exercise the shared classification boundary directly so sender auth cannot
     consume the dependency failure before recipient validation is reached.
     """
+    from dataclasses import replace
+
     from awid.registry import RegistryClient
     from fastapi import HTTPException
     from aweb.messaging.address_auth import local_recipient_for_own_route
+    from aweb.messaging.runtime import messaging_runtime
 
     env = same_origin.env
     response, first = await same_origin.send("mail", "global")
@@ -1088,12 +1091,10 @@ async def test_own_route_current_binding_unavailable_refuses(same_origin, foreig
     with socket.socket() as unavailable:
         unavailable.bind(("127.0.0.1", 0))
         client = RegistryClient(f"http://127.0.0.1:{unavailable.getsockname()[1]}", timeout_seconds=0.2)
-        request = SimpleNamespace(app=SimpleNamespace(state=SimpleNamespace(awid_registry_client=client)), state=SimpleNamespace())
+        runtime = replace(messaging_runtime(env.app.state), registry_client=client)
         try:
             with pytest.raises(HTTPException) as refused:
-                await local_recipient_for_own_route(
-                    env.infra, route, request=request, origins={env.app.state.public_origin},
-                )
+                await local_recipient_for_own_route(env.infra, route, runtime)
         finally:
             await client.aclose()
     assert refused.value.status_code == 503

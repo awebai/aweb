@@ -10,11 +10,12 @@ from awid.registry import RegistryError
 from fastapi import HTTPException
 from awid.log import canonical_server_origin
 from awid.signing import verify_did_key_signature
-from aweb.identity_binding import verify_identity_binding
+from aweb.identity_binding import observe_current_identity_binding
 from aweb.awid_error_handling import AWID_DEPENDENCY_ERRORS
 from aweb.federation.errors import RecipientNotResidentError
 from aweb.federation.origins import is_own_origin
 from aweb.messaging.alias_targets import namespace_exists
+from aweb.messaging.runtime import MessagingRuntime
 
 
 def local_recipient_visible_to_auth(row: Mapping[str, Any] | None, auth: Any) -> bool:
@@ -73,14 +74,14 @@ def refuse_same_origin_nonresident(delivery_origin: str, *, origins: set[str]) -
         raise RecipientNotResidentError()
 
 
-async def local_recipient_for_own_route(db, route: Mapping[str, Any], *, request, origins: set[str]) -> dict | None:
+async def local_recipient_for_own_route(db, route: Mapping[str, Any], runtime: MessagingRuntime) -> dict | None:
     """Classify a stored/refreshed route before forwarding or persisting it.
 
     The stored route supplies identity, never current-key evidence. Residence
     and delivery policy remain separate. A foreign route is unchanged.
     """
     origin = str(route.get("delivery_origin") or "")
-    if not is_own_origin(origin, origins):
+    if not is_own_origin(origin, runtime.public_origins):
         return None
     did = str(route.get("did_aw") or route.get("did") or route.get("did_key") or "")
     if did.startswith("did:aw:"):
@@ -94,14 +95,13 @@ async def local_recipient_for_own_route(db, route: Mapping[str, Any], *, request
         from aweb.messaging.messages import resolve_agent_by_did
         recipient = await resolve_agent_by_did(db, did)
     if recipient is None:
-        refuse_same_origin_nonresident(origin, origins=origins)
+        refuse_same_origin_nonresident(origin, origins=runtime.public_origins)
     if did.startswith("did:aw:"):
         # As with a stable-only signed continuation, discover the current key
         # through the existing binding authority, outside database transactions.
         # This validation context never repairs a participant or agent marker.
         try:
-            client = request.app.state.awid_registry_client
-            resolution = await client.resolve_key_fresh(did)
+            resolution = await runtime.registry_client.resolve_key_fresh(did)
         except Exception as exc:
             mismatch = isinstance(exc, RegistryError) and exc.status_code == 404
             if not mismatch:
@@ -111,9 +111,10 @@ async def local_recipient_for_own_route(db, route: Mapping[str, Any], *, request
                 detail="identity_binding_mismatch" if mismatch else "identity_binding_unavailable",
             ) from exc
         address = str(route.get("address") or "")
-        binding = await verify_identity_binding(
-            request, did_key=resolution.current_did_key, did_aw=did,
-            address=address if "/" in address else "", fresh=True,
+        binding = await observe_current_identity_binding(
+            runtime.registry_client, runtime.identity_binding_cache,
+            did_key=resolution.current_did_key, did_aw=did,
+            address=address if "/" in address else "",
         )
         recipient["did_key"] = binding.did_key
     return recipient

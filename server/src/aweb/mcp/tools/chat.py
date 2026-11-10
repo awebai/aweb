@@ -73,16 +73,18 @@ from aweb.mcp.signing import (
     sign_hosted_message,
 )
 from aweb.mcp.tools.federation import (
-    mcp_federation_request,
     mcp_messaging_auth,
+    mcp_messaging_runtime,
     registry_delivery_origin,
+)
+from aweb.messaging.chat_send import (
+    deliver_federated_chat,
+    resolve_stored_remote_chat_route,
+    validate_encrypted_chat_payload,
 )
 from aweb.routes.chat import (
     CreateSessionRequest,
     SendMessageRequest as ChatSendMessageRequest,
-    _deliver_federated_chat,
-    _resolve_stored_remote_chat_route,
-    _validate_encrypted_chat_payload,
 )
 from aweb.service_errors import ServiceError
 from aweb.e2ee_messages import encrypted_message_storage_metadata
@@ -725,14 +727,14 @@ async def chat_send(
                     signed_payload=signed.signed_payload if signed else None,
                 )
             try:
-                remote = await _deliver_federated_chat(
-                    mcp_federation_request(
-                        public_origin=public_origin, request=auth.request,
-                        chat_transport=federation_transport,
+                remote = await deliver_federated_chat(
+                    mcp_messaging_runtime(
+                        auth, public_origin=public_origin, chat_transport=federation_transport,
                     ),
                     payload,
                     db=db_infra, auth=mcp_messaging_auth(auth),
                     sender_address=sender_address,
+                    id_chain=None,
                     route=route,
                     session_id=str(sid),
                 )
@@ -806,7 +808,8 @@ async def chat_send(
         try:
             for recipient in recipient_rows:
                 local = await local_recipient_for_own_route(
-                    db_infra, recipient, request=auth.request, origins=public_origins(auth.request, public_origin=public_origin),
+                    db_infra, recipient,
+                    mcp_messaging_runtime(auth, public_origin=public_origin, chat_transport=federation_transport),
                 )
                 if local is not None:
                     localized_own_route = True
@@ -845,7 +848,7 @@ async def chat_send(
             if len(recipient_rows) != 1 or len(remote_recipients) != 1:
                 return json.dumps({"error": "Federated chat continuation requires exactly one remote recipient"})
             try:
-                route = await _resolve_stored_remote_chat_route(
+                route = await resolve_stored_remote_chat_route(
                     registry_client=registry_client,
                     recipient=remote_recipients[0],
                 )
@@ -939,7 +942,7 @@ async def chat_send(
                 # Local handoff must retain the encrypted-target validation
                 # that the federation receiver would have performed.
                 try:
-                    _validate_encrypted_chat_payload(
+                    validate_encrypted_chat_payload(
                         payload, auth=mcp_messaging_auth(auth), actor_did=session_actor_did,
                         session_id=str(sid), recipient_rows=recipient_rows,
                     )
@@ -948,14 +951,14 @@ async def chat_send(
 
         if remote_recipients:
             try:
-                remote = await _deliver_federated_chat(
-                    mcp_federation_request(
-                        public_origin=public_origin, request=auth.request,
-                        chat_transport=federation_transport,
+                remote = await deliver_federated_chat(
+                    mcp_messaging_runtime(
+                        auth, public_origin=public_origin, chat_transport=federation_transport,
                     ),
                     payload,
                     db=db_infra, auth=mcp_messaging_auth(auth),
                     sender_address=sender_address,
+                    id_chain=None,
                     route=recipient_rows[0],
                     session_id=str(sid),
                 )

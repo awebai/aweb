@@ -36,8 +36,8 @@ from aweb.mcp.signing import (
 )
 from aweb.e2ee_messages import encrypted_message_storage_metadata
 from aweb.mcp.tools.federation import (
-    mcp_federation_request,
     mcp_messaging_auth,
+    mcp_messaging_runtime,
     registry_delivery_origin,
 )
 from aweb.messaging.sender_address import sender_address as _sender_address
@@ -77,10 +77,8 @@ from aweb.messaging.mail_routing import (
     recipient_for_conversation_participant,
     remote_recipient_from_participant,
 )
-from aweb.routes.messages import (
-    SendMessageRequest,
-    _deliver_remote_mail_and_project_locally,
-)
+from aweb.messaging.mail_send import deliver_remote_mail_and_project_locally
+from aweb.routes.messages import SendMessageRequest
 from aweb.service_errors import ForbiddenError, NotFoundError, ServiceError, ValidationError
 
 async def list_threads(
@@ -309,8 +307,8 @@ async def send_mail(
                     recipient_participant,
                 )
                 local = await local_recipient_for_own_route(
-                    db_infra, remote_recipient, request=auth.request,
-                    origins=public_origins(auth.request, public_origin=public_origin),
+                    db_infra, remote_recipient,
+                    mcp_messaging_runtime(auth, public_origin=public_origin, mail_transport=federation_transport),
                 )
                 if local is not None:
                     remote_recipient["did_key"] = local["did_key"]
@@ -403,10 +401,9 @@ async def send_mail(
                     signature=None if encrypted is not None else signature,
                     signed_payload=None if encrypted is not None else signed_payload,
                 )
-                response = await _deliver_remote_mail_and_project_locally(
-                    mcp_federation_request(
-                        public_origin=public_origin, request=auth.request,
-                        mail_transport=federation_transport,
+                response = await deliver_remote_mail_and_project_locally(
+                    mcp_messaging_runtime(
+                        auth, public_origin=public_origin, mail_transport=federation_transport,
                     ),
                     payload,
                     db_infra,
@@ -414,6 +411,7 @@ async def send_mail(
                     registry_client=registry_client,
                     sender_address=sender_address,
                     sender_did=sender_did,
+                    id_chain=None,
                     recipient=remote_recipient,
                     recipient_did=recipient_did,
                     to_agent_id=None,
@@ -666,10 +664,9 @@ async def send_mail(
                 signature=None if encrypted is not None else signature,
                 signed_payload=None if encrypted is not None else signed_payload,
             )
-            response = await _deliver_remote_mail_and_project_locally(
-                mcp_federation_request(
-                    public_origin=public_origin, request=auth.request,
-                    mail_transport=federation_transport,
+            response = await deliver_remote_mail_and_project_locally(
+                mcp_messaging_runtime(
+                    auth, public_origin=public_origin, mail_transport=federation_transport,
                 ),
                 payload,
                 db_infra,
@@ -677,6 +674,7 @@ async def send_mail(
                 registry_client=registry_client,
                 sender_address=sender_address,
                 sender_did=sender_did,
+                id_chain=None,
                 recipient=recipient,
                 recipient_did=recipient_did,
                 to_agent_id=None,

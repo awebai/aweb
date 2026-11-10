@@ -119,8 +119,10 @@ inventory of `fire_mutation_hook`, `fire_mutation_callback` and
 federation fires through its outbox instead, so the inventory does not list it. Repeated rows preserve multiplicity when one function has multiple
 calls for the same event. The table below groups those exact call sites by their
 public HTTP behavior. The create, update, delete, dependency and comment rows of
-`/v1/tasks` fire from the task service the route calls; every other row fires
-from its route.
+`/v1/tasks` fire from the task service the route calls, and a `POST /v1/messages`
+send over a stored conversation route or to another server fires from
+`server/src/aweb/messaging/mail_send.py`, which the route and the MCP `send_mail`
+tool both call; every other row fires from its route.
 
 | HTTP route | Event | When called |
 |---|---|---|
