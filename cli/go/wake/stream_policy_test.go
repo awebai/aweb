@@ -442,3 +442,45 @@ func TestBrokerReloadsThroughOpenStreamWithTheStreamContext(t *testing.T) {
 		t.Fatal("shutting the broker down did not end the reload")
 	}
 }
+
+// The flap as today's server produces it: heartbeat, the opening connected
+// event, then a grant terminal event, every time. The connected event
+// confirms the stream but does not return the refused delay to 1 minute.
+func TestStreamFlapWithTheConnectedEventGrowsTheRefusedDelay(t *testing.T) {
+	clock := manualclock.New(streamPolicyStart)
+	sources := make(chan *streamtest.Source, 1)
+	open := func(context.Context, time.Time) (awid.EventSource, error) {
+		source := streamtest.NewSource()
+		sources <- source
+		return source, nil
+	}
+	broker, _, _ := policyBroker(t, clock, func(context.Context, string, string) (run.EventStreamOpener, error) { return open, nil })
+
+	revoked := streamtest.Item{Err: &awid.AgentEventStreamClosedError{Event: "grant_revoked", Detail: "identity grant revoked"}}
+	started := 0
+	for cycle, want := range []time.Duration{30 * time.Second, time.Minute, 2 * time.Minute, 4 * time.Minute, 7*time.Minute + 30*time.Second, 7*time.Minute + 30*time.Second} {
+		source := <-sources
+		source.Feed(streamtest.Item{Comment: true})
+		source.FeedEvent(awid.AgentEvent{Type: awid.AgentEventConnected, AgentID: "a"})
+		if stream := onlyStream(t, broker); stream.Phase != string(StreamLive) || !stream.Admitted {
+			t.Fatalf("cycle %d: stream %+v after the connected event, want streaming", cycle, stream)
+		}
+		source.Feed(revoked)
+		// Planned close, silence watch, and the wait after the refusal.
+		started += 3
+		wait := awaitStreamRetryWait(t, clock, started)
+		if wait != want {
+			t.Fatalf("cycle %d: retry in %s, want %s", cycle, wait, want)
+		}
+		clock.Advance(wait)
+	}
+
+	// Any other event is the server serving this caller: the delay starts over.
+	source := <-sources
+	source.FeedEvent(awid.AgentEvent{Type: awid.AgentEventConnected, AgentID: "a"})
+	source.FeedEvent(awid.AgentEvent{Type: awid.AgentEventWorkAvailable, TaskID: "t1", Title: "x"})
+	source.Feed(revoked)
+	if wait := awaitStreamRetryWait(t, clock, started+3); wait != 30*time.Second {
+		t.Fatalf("refused after a work event: retry in %s, want half of 1 minute", wait)
+	}
+}

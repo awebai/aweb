@@ -681,7 +681,7 @@ func TestStreamPolicyQuarantine(t *testing.T) {
 			streamtest.Fails(streamtest.HTTPFailure(401)),
 			streamtest.Fails(streamtest.HTTPFailure(403)),
 			streamtest.Opens(newFakeEventSource()),
-			streamtest.Opens(newFakeEventSource(confirmedEvent())),
+			streamtest.Opens(newFakeEventSource(confirmedEvent(), awid.AgentEvent{Type: awid.AgentEventActionableMail, MessageID: "m-1"})),
 			streamtest.Fails(streamtest.HTTPFailure(401)),
 		)
 		policy := NewStreamPolicy(opener.Open, nil, policyConfig(clock))
@@ -1012,6 +1012,54 @@ func TestStreamPolicyRefusedDelayResets(t *testing.T) {
 		want := []string{"", "grant_revoked", "grant_revoked", "grant_revoked", "grant_revoked", "grant_revoked", "grant_revoked", "grant_revoked"}
 		if fmt.Sprint(ended) != fmt.Sprint(want) {
 			t.Fatalf("confirmations reported the end of %q, want %q", ended, want)
+		}
+	})
+
+	t.Run("a heartbeat, the opening connected event, then a terminal event, repeated, grows to the ceiling", func(t *testing.T) {
+		// What the server sends today: it writes its heartbeat and the
+		// connected event before it checks the grant.
+		clock := manualclock.New(policyStart)
+		policy, source := flappingPolicy(clock)
+		connected := streamtest.Item{Event: &awid.AgentEvent{Type: awid.AgentEventConnected, AgentID: "a"}}
+		for cycle, delay := range []time.Duration{
+			time.Minute, 2 * time.Minute, 4 * time.Minute, 8 * time.Minute, 15 * time.Minute, 15 * time.Minute,
+		} {
+			end, confirmations := flapCycle(t, policy, source(), connected, grantRevoked())
+			if end.Kind != StreamEndRefused || !end.EnteredRefused || end.Wait != delay/2 {
+				t.Fatalf("cycle %d ended %+v, want an entry into refused waiting half of %s", cycle, end, delay)
+			}
+			if len(confirmations) != 1 {
+				t.Fatalf("cycle %d: confirmations=%q, want one", cycle, confirmations)
+			}
+		}
+	})
+
+	t.Run("the connected event confirms the stream and leaves the refused delay", func(t *testing.T) {
+		clock := manualclock.New(policyStart)
+		refusal := streamtest.Fails(streamtest.HTTPFailure(401))
+		opener := streamtest.NewOpener(clock.Now, refusal, refusal, streamtest.Fails(streamtest.HTTPFailure(503)),
+			streamtest.Opens(newFakeEventSource(confirmedEvent())), refusal)
+		policy := NewStreamPolicy(opener.Open, nil, policyConfig(clock))
+		attemptOnce(policy)
+		attemptOnce(policy)
+		attemptOnce(policy)
+
+		// Refused delay at 8 minutes; no heartbeat, only the connected event.
+		var ended []string
+		conn := policy.Connect(context.Background(), func(cause string) { ended = append(ended, cause) })
+		source, err := conn.Open()
+		if err != nil {
+			t.Fatal(err)
+		}
+		end := conn.End(consumeConnection(conn, source))
+		if len(ended) != 1 || ended[0] != "401" || policy.Refused() {
+			t.Fatalf("confirmations=%q refused=%t, want the connected event to end the refusal", ended, policy.Refused())
+		}
+		if end.Kind != StreamEndTransient || end.Wait != time.Second/2 {
+			t.Fatalf("early end after the connected event %+v, want transient from 1 second", end)
+		}
+		if again := attemptOnce(policy); again.Kind != StreamEndRefused || !again.EnteredRefused || again.Wait != 4*time.Minute {
+			t.Fatalf("refused after a connected-only stream %+v, want half of 8 minutes", again)
 		}
 	})
 

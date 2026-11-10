@@ -522,3 +522,45 @@ func TestEventBusReportsAHeartbeatThenRefusalFlapAtAGrowingInterval(t *testing.T
 		}
 	}
 }
+
+// The same flap as today's server produces it: heartbeat, the opening
+// connected event, then the grant terminal event. The connected event does
+// not return the refused delay to 1 minute.
+func TestEventBusFlapWithTheConnectedEventGrowsTheRefusedDelay(t *testing.T) {
+	clock := manualclock.New(policyStart)
+	sources := make(chan *streamtest.Source, 1)
+	open := func(context.Context, time.Time) (awid.EventSource, error) {
+		source := streamtest.NewSource()
+		sources <- source
+		return source, nil
+	}
+	bus, _ := startManualBus(t, clock, open, nil)
+
+	var waits []time.Duration
+	started := 0
+	for cycle := 0; cycle < 6; cycle++ {
+		source := <-sources
+		source.Feed(streamtest.Item{Comment: true})
+		source.FeedEvent(awid.AgentEvent{Type: awid.AgentEventConnected, AgentID: "a"})
+		if bus.State() != ConnStreaming {
+			t.Fatalf("cycle %d: state=%s after the connected event, want streaming", cycle, bus.State())
+		}
+		source.Feed(streamtest.Item{Err: &awid.AgentEventStreamClosedError{Event: "grant_revoked", Detail: "identity grant revoked"}})
+		// Planned close, silence watch, and the wait after the refusal.
+		started += 3
+		waits = append(waits, advanceToNextAttempt(t, clock, started))
+	}
+	want := []time.Duration{30 * time.Second, time.Minute, 2 * time.Minute, 4 * time.Minute, 7*time.Minute + 30*time.Second, 7*time.Minute + 30*time.Second}
+	if fmt.Sprint(waits) != fmt.Sprint(want) {
+		t.Fatalf("waits=%v, want %v", waits, want)
+	}
+
+	// Any other event is the server serving this caller: the delay starts over.
+	source := <-sources
+	source.FeedEvent(awid.AgentEvent{Type: awid.AgentEventConnected, AgentID: "a"})
+	source.FeedEvent(awid.AgentEvent{Type: awid.AgentEventActionableMail, MessageID: "m-1", FromAlias: "alice"})
+	source.Feed(streamtest.Item{Err: &awid.AgentEventStreamClosedError{Event: "grant_revoked", Detail: "identity grant revoked"}})
+	if wait := advanceToNextAttempt(t, clock, started+3); wait != 30*time.Second {
+		t.Fatalf("refused after a mail event waits %s, want half of 1 minute", wait)
+	}
+}
