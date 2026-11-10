@@ -13,8 +13,10 @@
   federates with servers on a private network (for example
   `https://aweb.acme.internal` resolving to `10.0.0.5`) lists those exact
   origins in `AWEB_FEDERATION_PRIVATE_DELIVERY_ORIGINS`, comma-separated
-  `https://host[:port]` entries; a listed origin may resolve to private,
-  loopback or link-local addresses and keeps every other check. The setting
+  `https://host[:port]` entries; besides public addresses, a listed origin may
+  resolve only to `10.0.0.0/8`, `172.16.0.0/12`, `192.168.0.0/16`,
+  `100.64.0.0/10` and `fc00::/7` (loopback and link-local stay refused) and
+  keeps every other check. The setting
   applies to delivery only, not to registry reads, and an invalid entry refuses
   start-up naming it. A failed delivery returns its status and a fixed reason
   (`delivery_origin_refused`, `delivery_address_refused`,

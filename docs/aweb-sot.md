@@ -795,7 +795,11 @@ delivery origins only by listing them, comma-separated, in
 named by host (`https://host[:port]`), canonicalised as every delivery origin
 is and compared for equality, never a CIDR, wildcard or pattern; an invalid
 entry refuses start-up naming the entry, and unset or empty admits none. A
-listed origin's answers may be private, loopback or link-local; every other
+listed origin's answers may each be public or in `10.0.0.0/8`,
+`172.16.0.0/12`, `192.168.0.0/16`, `100.64.0.0/10` or `fc00::/7`
+(`PRIVATE_DELIVERY_NETWORKS`; an IPv4-mapped answer is judged by its IPv4
+address), and one answer outside those refuses it, so loopback, link-local,
+unspecified and the other special-purpose ranges stay refused; every other
 check above still applies to it. Only the delivery transport receives the list:
 ID-tree registry reads call the same address admission without it, and awid's
 registry client is not given it, so registry reads keep requiring public

@@ -257,9 +257,14 @@ canonicalisation every delivery origin gets (lowercase host, no trailing dot,
 the default port dropped). It is not a pattern: a different port, a subdomain
 or `http` is not covered, and address literals, CIDR ranges, wildcards, paths,
 queries and user information are not accepted. The server refuses to start
-when an entry is not such an origin, naming the entry. A listed origin may
-resolve to private, loopback and link-local addresses; CGNAT, multicast,
-reserved and unspecified addresses stay refused. Delivery to it is otherwise
+when an entry is not such an origin, naming the entry. Besides public
+addresses, a listed origin may resolve only to `10.0.0.0/8`, `172.16.0.0/12`,
+`192.168.0.0/16`, `100.64.0.0/10` (CGNAT) and `fc00::/7` (an IPv4-mapped IPv6
+answer is judged by its IPv4 address). Loopback, link-local (including
+`169.254.169.254`), `0.0.0.0`, documentation, benchmarking, reserved and
+multicast addresses stay refused, and one such answer refuses the origin; for
+servers on one host, use the isolated development settings below. Delivery to
+it is otherwise
 unchanged: the host is resolved once, the connection goes to the checked
 address, TLS is verified against the host name, and redirects are not
 followed. The setting applies to federated mail and chat delivery only;
