@@ -196,7 +196,12 @@ receipt, recorded under the consumed owner act, as for the contact acts
 - **Revoke.** One `APPROVER_RETIRED`, a `role.revoked` narrowing, under the
   owner-act actor.
 - **Containment** that revokes a holder's credential names it through the
-  authorization row's credential, since no completion link exists for it.
+  authorization row's `credential_sha256`, since no completion link exists
+  for it. It computes that digest from the stored credential of the event's
+  subject and `credential_id`, exactly as [Three acts](#three-acts) defines
+  it: the credential id and COSE public key bytes, each unpadded base64url,
+  and the stored `rp_id`. A digest that differs from the row's names no
+  credential, and the recorder refuses the event.
 
 ### Use
 
