@@ -277,6 +277,31 @@ async def test_retryable_failures_back_off_per_target_and_are_never_dropped(db) 
     assert (await _states(db))["a"] == "pending"
 
 
+async def test_one_targets_failing_deliveries_do_not_hold_back_another_targets(db) -> None:
+    # No backoff: a failed delivery is due again at once, as it is when the
+    # sends ahead of it take longer than its backoff.
+    policy = RetryPolicy(stalled_after=timedelta(hours=1), base_seconds=0)
+    failing_team = "failing:example.com"
+    failing = [_event(team_id=failing_team) for _ in range(5)]
+    waiting = _event(b"waiting")
+    async with db.transaction() as tx:
+        for event in (*failing, waiting):
+            await enqueue(tx, event)
+
+    async def resolver(event: StoredEvent) -> Sequence[Target]:
+        return [Target("a" if event.team_id == failing_team else "b")]
+
+    transport = Scripted({"a": Retryable("ConnectError"), "b": Acked("delivered", None)})
+    # Each pass resolves three events and sends three deliveries, the longest
+    # due first: the waiting delivery is materialized on the second pass and
+    # sent on the third.
+    for _ in range(3):
+        await drain(
+            db, channel="default", resolver=resolver, transport=transport, policy=policy, limit=3
+        )
+    assert [sent[0] for sent in transport.sent if sent[1] == "b"] == [waiting.event_id]
+
+
 async def test_the_backoff_is_capped(db) -> None:
     policy = RetryPolicy(stalled_after=timedelta(hours=1), base_seconds=5, max_seconds=30)
     async with db.transaction() as tx:
