@@ -690,10 +690,11 @@ rejections retry with bounded backoff, in case a registry cache is stale, then
 become `rejected` and are surfaced. Network errors and 5xx retry with capped
 exponential backoff and are **never dropped**. After the operator-disclosed
 delivery horizon, a delivery becomes `stalled` and is surfaced to the owner.
-After drain the producer keeps a minimal tombstone of `event_id` and digest.
-It also keeps at least the **highest receipt per (team, binding)**, because
-that receipt's `event_hash` commits to the target's entire chain prefix. This
-is what makes producers witnesses (§B3). The outbox is delivery
+After drain the producer keeps `event_id` and digest until
+`DRAINED_RETENTION` after the drain. It keeps the **latest receipt per
+target** at any age, because that receipt's `event_hash` commits to the
+target's entire chain prefix: the event holding it is the one drained event
+the 30 days never delete. This is what makes producers witnesses (§B3). The outbox is delivery
 infrastructure, not an audit store (hooks-spec §7).
 
 **Failure mode.**
@@ -942,7 +943,7 @@ Per team and chain epoch, under a row lock on the team's chain head:
 - **Receipt**, signed by logs: `aweb.logs-receipt/1`
   `{v, type, team_id, event_id, chain_epoch, team_seq, event_hash,
   received_at, logs_origin, kid, did_key}`.
-  Producers keep at least their highest receipt per (team, binding) (§A7).
+  Producers keep their latest receipt per target (§A7).
   Each such receipt commits to the whole chain prefix, so every producer is an
   independent witness of the chain.
 - **Checkpoint**, signed by logs: `aweb.logs-checkpoint/1`
