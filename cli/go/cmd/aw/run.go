@@ -46,9 +46,10 @@ var (
 	runNewProvider     = awrun.NewProvider
 	runNewLoop         = awrun.NewLoop
 	runExecuteLoop     = func(loop *awrun.Loop, ctx context.Context, opts awrun.LoopOptions) error { return loop.Run(ctx, opts) }
-	runNewEventBus     = func(client *aweb.Client) *awrun.EventBus {
+	runNewEventBus     = func(client *aweb.Client, reload func() (awrun.EventStreamOpener, error)) *awrun.EventBus {
 		return awrun.NewEventBus(awrun.EventBusConfig{
 			Stream: awrun.NewEventStreamOpener(client.Client),
+			Reload: reload,
 		})
 	}
 	runNewScreenController   = awrun.NewScreenController
@@ -172,7 +173,7 @@ func runRun(cmd *cobra.Command, args []string) error {
 	loop := runNewLoop(provider, cmd.OutOrStdout())
 	lastSessionID := ""
 	var lastBuildOptions awrun.BuildOptions
-	loop.EventBus = runNewEventBus(client)
+	loop.EventBus = runNewEventBus(client, runEventStreamReload(workingDir))
 	loop.Control = screen
 	loop.Dispatch = newRunDispatcher(settings, newRunWakeValidator(client, sel.Alias))
 	loop.StatusIdentity = statusIdentity
@@ -528,6 +529,21 @@ func resolveRunClientForDir(cmd *cobra.Command, workingDir string, interactive b
 		return nil, nil, nil, err
 	}
 	return client, sel, nil, nil
+}
+
+// runEventStreamReload returns the function the event bus calls before each
+// retry of a refused stream: it reads the identity for workingDir again from
+// where it is kept, by the selection path `aw run` started with, so a
+// certificate or grant renewed on disk is used without a restart. It selects
+// the same identity home every time; it is not a way to another identity.
+func runEventStreamReload(workingDir string) func() (awrun.EventStreamOpener, error) {
+	return func() (awrun.EventStreamOpener, error) {
+		client, _, err := runResolveClientForDir(workingDir)
+		if err != nil {
+			return nil, err
+		}
+		return awrun.NewEventStreamOpener(client.Client), nil
+	}
 }
 
 func resolveRunWorkspaceStateForDir(workingDir string) (runWorkspaceState, error) {

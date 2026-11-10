@@ -11,10 +11,11 @@ import (
 
 // Clock is a manually advanced clock. The zero value is not usable; use New.
 type Clock struct {
-	mu     sync.Mutex
-	now    time.Time
-	timers []*timer
-	random float64
+	mu      sync.Mutex
+	now     time.Time
+	timers  []*timer
+	started int
+	random  float64
 }
 
 type timer struct {
@@ -53,6 +54,7 @@ func (c *Clock) Random() float64 {
 func (c *Clock) Timer(d time.Duration) (<-chan time.Time, func()) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
+	c.started++
 	t := &timer{at: c.now.Add(d), fired: make(chan time.Time, 1)}
 	if d <= 0 {
 		t.fired <- c.now
@@ -98,6 +100,14 @@ func (c *Clock) Timers() int {
 	return len(c.timers)
 }
 
+// Started reports how many timers have been started since the clock was made,
+// whether or not they have fired or been withdrawn.
+func (c *Clock) Started() int {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	return c.started
+}
+
 // NextTimer reports how long until the earliest waiting timer fires.
 func (c *Clock) NextTimer() (time.Duration, bool) {
 	c.mu.Lock()
@@ -118,12 +128,30 @@ func (c *Clock) NextTimer() (time.Duration, bool) {
 // knows the code under test has gone to sleep before it advances the clock.
 // It reports false if that does not happen within a real-time bound.
 func (c *Clock) AwaitTimers(n int) bool {
+	return c.await(func() bool { return len(c.timers) == n })
+}
+
+// AwaitStarted blocks until started timers have been started in all and
+// exactly waiting of them are waiting. Code that starts a known number of
+// timers per step is at a known place when both hold, where the number
+// waiting alone can be the same at two places. It reports false if that does
+// not happen within a real-time bound.
+func (c *Clock) AwaitStarted(started, waiting int) bool {
+	return c.await(func() bool { return c.started == started && len(c.timers) == waiting })
+}
+
+func (c *Clock) await(reached func() bool) bool {
+	check := func() bool {
+		c.mu.Lock()
+		defer c.mu.Unlock()
+		return reached()
+	}
 	deadline := time.Now().Add(5 * time.Second)
 	for time.Now().Before(deadline) {
-		if c.Timers() == n {
+		if check() {
 			return true
 		}
 		time.Sleep(time.Millisecond)
 	}
-	return c.Timers() == n
+	return check()
 }

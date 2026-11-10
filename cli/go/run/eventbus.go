@@ -10,13 +10,17 @@ import (
 	awid "github.com/awebai/aw/awid"
 )
 
-// ConnectionState tracks the SSE connection lifecycle.
+// ConnectionState tracks the SSE connection lifecycle. While the bus runs it
+// is one of the three states of docs/event-stream-client-policy.md §8:
+// streaming, retrying (ConnReconnecting) or refused. ConnDisconnected is a
+// bus that is not running.
 type ConnectionState int32
 
 const (
 	ConnDisconnected ConnectionState = iota
 	ConnReconnecting
 	ConnStreaming
+	ConnRefused
 )
 
 func (s ConnectionState) String() string {
@@ -25,6 +29,8 @@ func (s ConnectionState) String() string {
 		return "streaming"
 	case ConnReconnecting:
 		return "reconnecting"
+	case ConnRefused:
+		return "refused"
 	case ConnDisconnected:
 		return "disconnected"
 	default:
@@ -147,13 +153,11 @@ func (q *PriorityQueue) Ready() <-chan struct{} {
 // through an interrupt channel (for high-priority) and a priority queue
 // (for deferred events).
 type EventBus struct {
-	stream EventStreamOpener
-	now    func() time.Time
+	policy *StreamPolicy
 
 	interrupts chan BusEvent
 	queue      *PriorityQueue
 	deduper    *recentEventDeduper
-	streamTTL  time.Duration
 
 	connState          atomic.Int32
 	onStateChange      func(ConnectionState)
@@ -166,10 +170,16 @@ type EventBus struct {
 
 // EventBusConfig holds construction parameters for an EventBus.
 type EventBusConfig struct {
-	Stream        EventStreamOpener
+	Stream EventStreamOpener
+	// Reload reads the credentials again from where they are kept and
+	// returns the opener that uses them. The bus calls it before each retry
+	// of a refused stream. Without it a retry uses Stream.
+	Reload        func() (EventStreamOpener, error)
 	Now           func() time.Time
 	OnStateChange func(ConnectionState)
-	StreamTTL     time.Duration
+	// Policy supplies the reconnect policy's timer and random source; its
+	// clock defaults to Now.
+	Policy StreamPolicyConfig
 }
 
 func NewEventBus(cfg EventBusConfig) *EventBus {
@@ -177,18 +187,17 @@ func NewEventBus(cfg EventBusConfig) *EventBus {
 	if nowFn == nil {
 		nowFn = time.Now
 	}
+	policyCfg := cfg.Policy
+	if policyCfg.Now == nil {
+		policyCfg.Now = nowFn
+	}
 	b := &EventBus{
-		stream:        cfg.Stream,
-		now:           nowFn,
+		policy:        NewStreamPolicy(cfg.Stream, cfg.Reload, policyCfg),
 		interrupts:    make(chan BusEvent, 8),
 		queue:         NewPriorityQueue(),
 		deduper:       newRecentEventDeduper(256),
-		streamTTL:     cfg.StreamTTL,
 		onStateChange: cfg.OnStateChange,
 		done:          make(chan struct{}),
-	}
-	if b.streamTTL <= 0 {
-		b.streamTTL = streamDeadline
 	}
 	b.connState.Store(int32(ConnDisconnected))
 	return b
@@ -240,78 +249,59 @@ func (b *EventBus) InjectAutofeed() {
 	})
 }
 
-const streamDeadline = 10 * time.Minute
-
+// run keeps the stream open for the life of the bus. When a connection
+// closes, what its end means and how long to wait are decided by the event
+// stream client policy (streampolicy.go); this loop reports the state.
 func (b *EventBus) run(ctx context.Context) {
 	defer close(b.done)
 	defer b.setState(ConnDisconnected)
 
-	delay := 250 * time.Millisecond
-	maxDelay := 2 * time.Second
-	recoveryPending := false
-	disconnectReported := false
+	outageReported := false
+	b.setState(ConnReconnecting)
 
 	for ctx.Err() == nil {
-		b.setState(ConnReconnecting)
-
-		deadline := b.now().Add(b.streamTTL)
-		streamCtx, cancel := context.WithDeadline(ctx, deadline)
-		source, err := b.stream(streamCtx, deadline)
-		if err != nil {
-			cancel()
-			if code, ok := awid.HTTPStatusCode(err); ok && code >= 400 && code < 500 {
-				b.connectionNotice("aweb: event stream disconnected (authentication or request rejected); not retrying")
-				b.setState(ConnDisconnected)
-				return
-			}
-			recoveryPending = true
-			if !disconnectReported {
-				disconnectReported = true
-				b.connectionNotice(formatStreamDisconnectNotice(err, delay))
-			}
-			if !sleepForRetry(ctx, b.now, deadline, delay) {
-				return
-			}
-			delay = nextRetryDelay(delay, maxDelay)
-			continue
-		}
-
 		// Opening the HTTP response is not proof that the event stream is live:
 		// a proxy can return 200 and immediately close the body. Confirm health
-		// only after the stream produces an event. This prevents early-EOF flaps
-		// from oscillating recovery/down and queueing false catch-up wakes.
-		streamConfirmed := false
-		confirmStream := func() {
-			if streamConfirmed {
-				return
-			}
-			streamConfirmed = true
-			delay = 250 * time.Millisecond
+		// only after the stream produces an event or a heartbeat. This prevents
+		// early-EOF flaps from oscillating recovery/down and queueing false
+		// catch-up wakes.
+		conn := b.policy.Connect(ctx, func(endedRefusal string) {
+			outageReported = false
 			b.setState(ConnStreaming)
-			if recoveryPending {
-				recoveryPending = false
-				disconnectReported = false
-				// Transport recovery is observable through connection state and
-				// diagnostics, but it is not communication. The fresh stream snapshot
-				// is the only catch-up source for real actionable events.
+			if endedRefusal != "" {
+				b.connectionNotice(formatStreamAcceptedNotice(endedRefusal))
+			}
+			// Transport recovery is observable through connection state and
+			// diagnostics, but it is not communication. The fresh stream snapshot
+			// is the only catch-up source for real actionable events.
+		})
+		source, err := conn.Open()
+		if err == nil {
+			err = b.consumeStream(conn, source)
+			_ = source.Close()
+		}
+		end := conn.End(err)
+		switch end.Kind {
+		case StreamEndStopped:
+			return
+		case StreamEndPlannedClose:
+			// Not an outage: the state stays as it is and nothing is reported.
+		case StreamEndTransient:
+			b.setState(ConnReconnecting)
+			if !outageReported {
+				outageReported = true
+				b.connectionNotice(formatStreamDisconnectNotice(end.Err, end.Wait))
+			}
+		case StreamEndRefused:
+			// Reported once on entering the quarantine; a retry that is refused
+			// again moves the next attempt and says nothing.
+			b.setState(ConnRefused)
+			if end.EnteredRefused {
+				b.connectionNotice(formatStreamRefusedNotice(end.Cause, end.NextAttempt))
 			}
 		}
-
-		consumeErr := b.consumeStream(streamCtx, source, confirmStream)
-		streamContextErr := streamCtx.Err()
-		_ = source.Close()
-		cancel()
-		if consumeErr != nil && ctx.Err() == nil && streamContextErr == nil {
-			b.setState(ConnReconnecting)
-			recoveryPending = true
-			if !disconnectReported {
-				disconnectReported = true
-				b.connectionNotice(formatStreamDisconnectNotice(consumeErr, delay))
-			}
-			if !sleepForRetry(ctx, b.now, time.Time{}, delay) {
-				return
-			}
-			delay = nextRetryDelay(delay, maxDelay)
+		if !b.policy.Wait(ctx, end) {
+			return
 		}
 	}
 }
@@ -322,9 +312,20 @@ func (b *EventBus) connectionNotice(message string) {
 	}
 }
 
+func formatStreamRefusedNotice(cause string, nextAttempt time.Time) string {
+	return "aweb: event stream refused: " + cause + ", next try " + nextAttempt.Local().Format("15:04")
+}
+
+func formatStreamAcceptedNotice(endedRefusal string) string {
+	return "aweb: event stream accepted again (was refused: " + endedRefusal + ")"
+}
+
 func formatStreamDisconnectNotice(err error, delay time.Duration) string {
 	cause := "connection failed"
-	text := strings.ToLower(strings.TrimSpace(err.Error()))
+	text := ""
+	if err != nil {
+		text = strings.ToLower(strings.TrimSpace(err.Error()))
+	}
 	switch {
 	case strings.Contains(text, "connection refused"):
 		cause = "connection refused"
@@ -337,18 +338,17 @@ func formatStreamDisconnectNotice(err error, delay time.Duration) string {
 	case strings.Contains(text, "fetch"), strings.Contains(text, "network"), strings.Contains(text, "503"):
 		cause = "network unavailable"
 	}
-	return "aweb: event stream disconnected (" + cause + ") — retrying in " + delay.String()
+	return "aweb: event stream disconnected (" + cause + ") — retrying in " + delay.Round(100*time.Millisecond).String()
 }
 
-func (b *EventBus) consumeStream(ctx context.Context, source awid.EventSource, confirmStream func()) error {
+func (b *EventBus) consumeStream(conn *StreamConnection, source awid.EventSource) error {
+	ctx := conn.Context()
 	for ctx.Err() == nil {
 		ev, err := source.Next(ctx)
 		if err != nil {
 			return err
 		}
-		if confirmStream != nil {
-			confirmStream()
-		}
+		conn.Event()
 
 		if ev.Type == awid.AgentEventConnected {
 			continue
