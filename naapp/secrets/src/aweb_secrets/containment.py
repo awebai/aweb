@@ -26,6 +26,7 @@ from aweb_naapp.runtime.passkeys import (
     PasskeyProofUnavailable,
     Passkeys,
     RetirementRefused,
+    prepare_retirement,
 )
 from aweb_naapp.runtime.team_auth import Principal
 from pgdbm import AsyncDatabaseManager
@@ -321,6 +322,8 @@ class Containment:
             actor["did_aw"] = principal.did_aw
         async with self.db.transaction() as tx:
             installed = await self.fence.admit(tx, grant)
+            if action == "revoke-approver":
+                await prepare_retirement(tx, installation=installed)
             if not await hold_role(tx, key, OWNER_ROLE):
                 if action != "revoke-approvals" or target is None:
                     raise ContainmentRefused("owner_required")
@@ -978,6 +981,10 @@ class Containment:
 
         The caller admits the installation first and uses S4 for session expiry
         and CSRF. Application authority locks precede B3's scope/credential locks.
+        For retirement, enter with F6 already held and before any actor/target
+        role, B3 or S4 holds: this call takes the shared retirement entry gate.
+        Do not refresh or upgrade F6 afterward; recheck the original evidence
+        deadline after waits and at the final effect fence.
         Return whether the authorized caller is an owner.
         """
         owner, _ = await self._authorize_console(
@@ -1000,6 +1007,8 @@ class Containment:
         target: str | None,
         member_principal: str | None,
     ) -> tuple[bool, bool]:
+        if action == "revoke-approver":
+            await prepare_retirement(tx, installation=admitted)
         owner = await self._console_authority(
             tx,
             admitted=admitted,
