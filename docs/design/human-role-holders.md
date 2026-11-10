@@ -286,7 +286,9 @@ async def refresh_holding_certificate(
   holding's record with `holding_record_of_scope(tx, b3_scope)`. It returns
   the installation, team, role, principal and scope of the holding that scope
   belongs to, current or ended, and `None` for a scope never recorded or
-  purged with its team. It takes no lock. It is history, not a holding: it
+  purged with its team. A team retirement that needs these scopes, such as to
+  destroy holders' credentials, reads them before it purges the team. It
+  takes no lock. It is history, not a holding: it
   grants nothing and never stands in for `read_holding`,
   `read_holding_of_scope` or `hold_holding` before a login, an approval or an
   effect. The caller refuses a record whose installation or team is not the
