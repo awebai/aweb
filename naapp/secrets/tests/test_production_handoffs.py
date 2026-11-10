@@ -86,7 +86,9 @@ async def test_production_credential_handoff_uses_both_origins_and_grants_no_hol
     key, verifier, body, headers = start_request(root, member, principal)
     started = await client.post(settings.public_origin + "/handoffs", content=body, headers=headers)
     assert started.status_code == 201
-    assert sum(route.path == "/handoffs" for route in service.api_app.routes) == 1
+    wrong_method = await client.get(settings.public_origin + "/handoffs")
+    assert wrong_method.status_code == 405
+    assert wrong_method.headers["allow"] == "POST"
     handoff = started.json()["handoff_id"]
     prefix = f"/handoff/{handoff}/credential"
     human = settings.console_origin
@@ -142,7 +144,7 @@ async def test_production_human_origin_refuses_team_auth_and_partial_signed_cook
         settings.console_origin + "/handoffs", content=body, headers=headers
     )
     assert response.status_code == 403
-    assert response.json()["detail"] == "team_auth_refused"
+    assert response.json()["code"] == "team_auth_refused"
     assert (await client.get(settings.console_origin + "/activity")).status_code == 200
     response = await client.get(
         settings.console_origin + "/activity", headers={"X-Console-Key": member.did_key}
