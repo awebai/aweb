@@ -291,59 +291,35 @@ func VerifyBundle(
 		}
 	}
 
-	// A line and its newline fit the buffer, so a longer one is refused
-	// before it is read whole. The input is wrapped so the buffer is always
-	// the verifier's own: bufio.NewReaderSize returns a caller's larger
-	// *bufio.Reader unchanged, which would lift the bound.
-	reader := bufio.NewReaderSize(struct{ io.Reader }{r}, MaxLineBytes+1)
 	teamID := ""
-	number := 0
-	for {
-		slice, err := reader.ReadSlice('\n')
-		if errors.Is(err, io.EOF) && len(slice) == 0 {
-			break
-		}
-		number++
-		if errors.Is(err, bufio.ErrBufferFull) {
-			return report, &BundleMalformed{number, fmt.Sprintf("a line is at most %d bytes", MaxLineBytes)}
-		}
-		if err != nil && !errors.Is(err, io.EOF) {
-			return report, err
-		}
-		raw := bytes.Clone(slice)
-		if !bytes.HasSuffix(raw, []byte("\n")) {
-			return report, &BundleMalformed{number, "a line ends with a newline"}
-		}
-		record, perr := strictjson.ParseCanonicalObject(raw[:len(raw)-1])
-		if perr != nil {
-			return report, &BundleMalformed{number, "not a strict canonical JSON object: " + perr.Error()}
-		}
+	number, err := readLines(r, func(number int, record map[string]any) error {
 		if teamID == "" {
+			var err error
 			if teamID, err = bundleHeader(record, number); err != nil {
-				return report, err
+				return err
 			}
 			for _, w := range witnesses {
 				if w.teamID != teamID {
 					held[[2]any{w.kind, w.index}] = "wrong_chain"
 				}
 			}
-			continue
+			return nil
 		}
 		name, value, err := bundleRecord(record, number)
 		if err != nil {
-			return report, err
+			return err
 		}
 		switch name {
 		case "genesis":
 			genesis, err := bundleGenesis(value, number)
 			if err != nil {
-				return report, err
+				return err
 			}
 			linked := genesis.ChainEpoch == 1
 			if current != nil {
 				previous := current.state.genesis.ChainEpoch
 				if genesis.ChainEpoch <= previous {
-					return report, &BundleMalformed{number, "epochs are not in increasing order"}
+					return &BundleMalformed{number, "epochs are not in increasing order"}
 				}
 				closeEpoch(current)
 				linked = genesis.ChainEpoch == previous+1 && current.headCheckpoints[genesis.PreviousCheckpointSHA256]
@@ -356,24 +332,24 @@ func VerifyBundle(
 				}
 			}
 			if current, err = newBundleEpoch(genesis, linked, witnessed); err != nil {
-				return report, &BundleMalformed{number, "genesis: " + err.Error()}
+				return &BundleMalformed{number, "genesis: " + err.Error()}
 			}
 		case "event":
 			if current == nil {
-				return report, &BundleMalformed{number, "an event record precedes its epoch's genesis"}
+				return &BundleMalformed{number, "an event record precedes its epoch's genesis"}
 			}
 			event, err := bundleEvent(value, number)
 			if err != nil {
-				return report, err
+				return err
 			}
 			current.event(event)
 		default:
 			if current == nil {
-				return report, &BundleMalformed{number, "a " + name + " record precedes its epoch's genesis"}
+				return &BundleMalformed{number, "a " + name + " record precedes its epoch's genesis"}
 			}
 			artefact, err := bundleArtefact(value, number)
 			if err != nil {
-				return report, err
+				return err
 			}
 			if current.artefact(name, artefact, keys[name]) && name == "checkpoint" {
 				report.LastCheckpoint = &LastCheckpoint{
@@ -382,6 +358,10 @@ func VerifyBundle(
 				}
 			}
 		}
+		return nil
+	})
+	if err != nil {
+		return report, err
 	}
 	if teamID == "" {
 		return report, &BundleMalformed{number + 1, "the bundle has no header"}
@@ -606,4 +586,39 @@ func bundleArtefact(value map[string]any, number int) (Artefact, error) {
 		return Artefact{}, &BundleMalformed{number, "artefact"}
 	}
 	return Artefact{SigningBytes: signing, Signature: signature}, nil
+}
+
+// readLines reads a bundle's or a witness file's lines in order, each a strict
+// canonical JSON object ending with a newline, and hands each to line. It
+// returns the number of lines read. A line and its newline fit the buffer, so a
+// longer one is refused before it is read whole. The input is wrapped so the
+// buffer is always the verifier's own: bufio.NewReaderSize returns a caller's
+// larger *bufio.Reader unchanged, which would lift the bound.
+func readLines(r io.Reader, line func(number int, record map[string]any) error) (int, error) {
+	reader := bufio.NewReaderSize(struct{ io.Reader }{r}, MaxLineBytes+1)
+	number := 0
+	for {
+		slice, err := reader.ReadSlice('\n')
+		if errors.Is(err, io.EOF) && len(slice) == 0 {
+			return number, nil
+		}
+		number++
+		if errors.Is(err, bufio.ErrBufferFull) {
+			return number, &BundleMalformed{number, fmt.Sprintf("a line is at most %d bytes", MaxLineBytes)}
+		}
+		if err != nil && !errors.Is(err, io.EOF) {
+			return number, err
+		}
+		raw := bytes.Clone(slice)
+		if !bytes.HasSuffix(raw, []byte("\n")) {
+			return number, &BundleMalformed{number, "a line ends with a newline"}
+		}
+		record, perr := strictjson.ParseCanonicalObject(raw[:len(raw)-1])
+		if perr != nil {
+			return number, &BundleMalformed{number, "not a strict canonical JSON object: " + perr.Error()}
+		}
+		if err := line(number, record); err != nil {
+			return number, err
+		}
+	}
 }
