@@ -156,6 +156,18 @@ class Holding:
     held_since: datetime
 
 
+@dataclass(frozen=True)
+class HoldingRecord:
+    """The installation's record of a holding, kept as history after the
+    holding ends. It grants nothing: it names whose scope ``b3_scope`` is."""
+
+    installation_id: str
+    team_id: str
+    role: str
+    principal: str
+    b3_scope: str
+
+
 # A holding: the live assignment joined to the installation's record of it.
 _HOLDINGS = """
     SELECT h.b3_scope, h.certificate, a.assigned_at,
@@ -174,6 +186,10 @@ _ASSIGNMENT = """
     WHERE team_id = $1 AND role = $2 AND principal_did = $3
 """
 _RECORD = "SELECT 1 FROM {{tables.role_holdings}} WHERE b3_scope = $1"
+_RECORD_OF_SCOPE = """
+    SELECT installation_id, team_id, role, principal_did, b3_scope
+    FROM {{tables.role_holdings}} WHERE b3_scope = $1
+"""
 
 
 def _holding(row: Any) -> Holding | None:
@@ -206,6 +222,23 @@ async def read_holding_of_scope(db: Executor, b3_scope: str) -> Holding | None:
     for one whose holding has ended. The caller checks the holding is its own
     installation's."""
     return _holding(await db.fetch_one(_HOLDING_OF_SCOPE, b3_scope))
+
+
+async def holding_record_of_scope(db: Executor, b3_scope: str) -> HoldingRecord | None:
+    """The installation's record for ``b3_scope``, current or ended, by SQL
+    reads only. It grants nothing: it names the installation, team, role and
+    principal whose scope this is, such as for a credential event after the
+    holding ended. None for a scope never recorded."""
+    row = await db.fetch_one(_RECORD_OF_SCOPE, b3_scope)
+    if row is None:
+        return None
+    return HoldingRecord(
+        installation_id=row["installation_id"],
+        team_id=row["team_id"],
+        role=row["role"],
+        principal=row["principal_did"],
+        b3_scope=row["b3_scope"],
+    )
 
 
 async def is_holding_scope(db: Executor, b3_scope: str) -> bool:

@@ -14,12 +14,14 @@ import pytest
 from pgdbm import AsyncDatabaseManager
 
 from aweb_naapp.roles import (
+    HoldingRecord,
     PrincipalKey,
     apply_roles_migrations,
     assign,
     begin_holding,
     end_holding,
     hold_holding,
+    holding_record_of_scope,
     holding_scope,
     is_holding_scope,
     lock_holding,
@@ -284,3 +286,27 @@ async def test_a_purged_team_holds_nothing_by_scope(db: AsyncDatabaseManager) ->
     async with db.transaction() as tx:
         await purge_team(tx, TEAM)
         assert await read_holding_of_scope(tx, begun.b3_scope) is None
+
+
+async def test_a_scope_names_its_record_while_held_and_after_it_ends(
+    db: AsyncDatabaseManager,
+) -> None:
+    scope = holding_scope(INSTALLATION, TEAM, READER, PRINCIPAL)
+    record = HoldingRecord(**KEY, b3_scope=scope)
+    async with db.transaction() as tx:
+        assert await holding_record_of_scope(tx, scope) is None
+    await _begin(db)
+    async with db.transaction() as tx:
+        assert await holding_record_of_scope(tx, scope) == record
+        assert await end_holding(tx, **KEY)
+        assert await holding_record_of_scope(tx, scope) == record
+    async with db.transaction() as tx:
+        assert await holding_record_of_scope(tx, scope) == record
+        assert (
+            await holding_record_of_scope(
+                tx, holding_scope(OTHER_INSTALLATION, TEAM, READER, PRINCIPAL)
+            )
+            is None
+        )
+        await purge_team(tx, TEAM)
+        assert await holding_record_of_scope(tx, scope) is None
