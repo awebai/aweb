@@ -122,7 +122,6 @@ failure, with operational/refusal outbox and nonce recorded atomically. No SDK
 I/O under locks, second authority path, approval rearm or replacement-version
 transplant. See [runner protocol §4.2](secrets-runner-protocol.md#42-one-dispatch-one-assignment).
 
-
 ## Runner read costs and quota
 
 Each 1Password slot costs two SDK item reads at assignment release

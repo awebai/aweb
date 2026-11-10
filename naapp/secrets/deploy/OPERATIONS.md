@@ -159,8 +159,8 @@ three decimal places and does not assume any result concurrency.
 | Individual / Families | 3 | 111 | 66 | 66 | 2.777 |
 | Individual / Families | 5 | 66 | 40 | 40 | 1.666 |
 
-Re-derivation raises the item reads per slot per completed run from two to
-five, reducing these read-budget ceilings by a factor of 2.5. For example,
+Result-time re-derivation accounts for three of the five reads, so a
+completed run reads 2.5 times what release alone needs. For example,
 Teams at three slots has a daily-budget mean below 14 runs/hour, and
 Individual/Families at five slots has a ceiling of 40 runs/day.
 
