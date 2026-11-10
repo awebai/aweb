@@ -105,8 +105,8 @@ So a refused stream is **quarantined**:
 - An explicit request for the stream (a registration with the wake broker, a
   new `aw run` session, a restart of the channel) retries at once and, if
   refused again, continues from the 1-minute delay.
-- The first successful, confirmed stream ends the quarantine: the client
-  reports that it left `refused`.
+- The first successful, confirmed stream ends the quarantine: the client's
+  state is no longer `refused` (section 8 says who is told).
 - The refused delay returns to 1 minute only after the stream delivers an
   event other than a comment or the opening `connected` event (which the
   server sends before it checks the grant), or a connection that opened
@@ -158,8 +158,8 @@ next attempt where there is one:
 
 A planned close does not leave `streaming`.
 
-`refused` reaches a person or the agent once per transition, never once per
-retry:
+`refused` is reported when a stream enters it and when it leaves it, never
+once per retry. Who is told what depends on the client:
 
 - The wake broker's status shows the identity as refused, with the status or
   event name and the time of the next attempt. It never shows a refused
