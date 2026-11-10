@@ -230,13 +230,18 @@ async def current_session(journey, key, issued):
     headers = signed_request(
         key, journey.device.origin, "GET", "/protected", b"", session_id=issued["session_id"]
     )
+
+    async def receive():
+        return {"type": "http.request", "body": b"", "more_body": False}
+
     request = Request(
         {
             "type": "http",
             "method": "GET",
             "path": "/protected",
             "headers": [(name.lower().encode(), value.encode()) for name, value in headers.items()],
-        }
+        },
+        receive=receive,
     )
     return await journey.factory.current(request)
 
