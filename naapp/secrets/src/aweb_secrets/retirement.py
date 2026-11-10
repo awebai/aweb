@@ -28,9 +28,15 @@ async def retire_team(tx: TransactionManager, team_id: str, *, app_id: str) -> N
         installation_id = row["installation_id"]
         scopes = await tx.fetch_all(
             "SELECT scope FROM {{tables.owner_principals}} WHERE installation_id=$1 AND team_id=$2"
-            " UNION SELECT scope FROM {{tables.approvers}} WHERE installation_id=$1 AND team_id=$2",
+            " UNION SELECT scope FROM {{tables.approvers}} WHERE installation_id=$1 AND team_id=$2"
+            # Designation retains this binding in the same transaction. Unlike
+            # coverage, it survives approver revocation; use it only to destroy
+            # this installation's material, never as current authority.
+            " UNION SELECT scope FROM {{tables.credential_authorizations}}"
+            " WHERE installation_id=$1 AND team_id=$2 AND app_id=$3",
             installation_id,
             team_id,
+            app_id,
         )
         scope_names = [scope["scope"] for scope in scopes]
         subjects = await tx.fetch_all(

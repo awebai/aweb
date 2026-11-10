@@ -10,11 +10,15 @@ from aweb_naapp.roles import PrincipalKey
 
 from aweb_secrets.app import installation_fence
 from aweb_secrets.custody import encode_value
-from aweb_secrets.owners import owner_scope, record_owner
+from aweb_secrets.owners import approver_scope, owner_scope, record_owner
 from tests.test_change_sets import ALICE, enrol_owner
 from tests.test_change_sets import world as world
 from tests.test_console_changes import clients, sign_in, token_draft
+from tests.test_containment_service import act as containment_act
+from tests.test_containment_service import service as containment_service
 from tests.test_reinstall import TeamServer, _grant
+from tests.test_use_approvals import designate, install
+from tests.test_use_approvals import uses as uses
 
 
 async def staged(world):
@@ -91,8 +95,7 @@ async def test_retirement_receipt_failure_rolls_back_credential_destruction(worl
     )
 
 
-async def test_retirement_keeps_another_installations_sealed_value_and_passkey(world):
-    fence, authority = await staged(world)
+async def another_installation(world):
     other = PrincipalKey(team_id="other:example.com", principal_did=ALICE.principal_did)
     scope = owner_scope("other-installation", other.team_id, other.principal_did)
     subject = str(uuid4())
@@ -122,6 +125,12 @@ async def test_retirement_keeps_another_installations_sealed_value_and_passkey(w
             credential_id,
             subject,
         )
+    return credential_id
+
+
+async def test_retirement_keeps_another_installations_sealed_value_and_passkey(world):
+    fence, authority = await staged(world)
+    credential_id = await another_installation(world)
     authority.state = "uninstalled"
     await fence.refresh(world.admitted.team_id)
     assert await world.db.fetch_value("SELECT count(*) FROM {{tables.sealed_versions}}") == 1
@@ -132,3 +141,92 @@ async def test_retirement_keeps_another_installations_sealed_value_and_passkey(w
         == 1
     )
     assert await world.db.fetch_value("SELECT count(*) FROM {{tables.passkey_credentials}}") == 1
+
+
+async def test_revoked_non_owner_material_is_destroyed_on_uninstall(uses):
+    w = uses.world
+    await install(uses)
+    contact = "finance@acme.com"
+    await designate(uses, "finance", contact)
+    scope = approver_scope(w.admitted.installation_id, w.admitted.team_id, "finance")
+    holder = await w.passkeys.designated_approver(scope)
+    assert holder is not None
+    # Establish real retained LOGIN evidence and a session, plus an outstanding
+    # challenge. The non-owner never acquires owner-console authority.
+    async with clients(w) as (human, _):
+        headers = await sign_in(
+            w,
+            human,
+            owner_scope(w.admitted.installation_id, w.admitted.team_id, ALICE.principal_did),
+        )
+        await token_draft(w, human, headers)
+        logged = await w.passkeys.verify_login(
+            scope, w.devices[contact].get(await w.passkeys.login_options(scope))
+        )
+        await w.console.sessions.open(
+            subject=logged.subject, scope=scope, evidence_ref=logged.evidence_ref
+        )
+    await w.passkeys.login_options(scope)
+    unrelated_credential = await another_installation(w)
+    svc = await containment_service(uses)
+    await containment_act(svc, uses, "revoke-approver", "finance")
+    assert not await w.db.fetch_value(
+        "SELECT EXISTS(SELECT 1 FROM {{tables.approvers}} WHERE scope=$1)", scope
+    )
+    assert await w.db.fetch_value(
+        "SELECT EXISTS(SELECT 1 FROM {{tables.credential_authorizations}}"
+        " WHERE subject=$1 AND scope=$2 AND installation_id=$3 AND team_id=$4)",
+        holder.subject,
+        scope,
+        w.admitted.installation_id,
+        w.admitted.team_id,
+    )
+    tables = (
+        "passkey_credentials",
+        "passkey_assertions",
+        "passkey_challenges",
+        "passkey_enrolments",
+        "console_sessions",
+    )
+    for table in tables:
+        assert (
+            await w.db.fetch_value(
+                f"SELECT count(*) FROM {{{{tables.{table}}}}} WHERE subject=$1", holder.subject
+            )
+            > 0
+        )
+    assert (
+        await w.db.fetch_value(
+            "SELECT count(*) FROM {{tables.passkey_proofs}} p"
+            " JOIN {{tables.passkey_assertions}} a USING(evidence_ref) WHERE a.subject=$1",
+            holder.subject,
+        )
+        > 0
+    )
+    authority = TeamServer()
+    authority.grant = _grant(w.admitted.installation_id, w.admitted.generation, w.admitted.team_id)
+    authority.state = "uninstalled"
+    fence = installation_fence(w.db, app_id="secrets", grants=authority)
+    await fence.refresh(w.admitted.team_id)
+    for table in tables:
+        assert (
+            await w.db.fetch_value(
+                f"SELECT count(*) FROM {{{{tables.{table}}}}} WHERE subject=$1", holder.subject
+            )
+            == 0
+        )
+    assert not await w.db.fetch_value(
+        "SELECT EXISTS(SELECT 1 FROM {{tables.passkey_proofs}} WHERE evidence_ref=$1)",
+        logged.evidence_ref,
+    )
+    assert await w.db.fetch_value(
+        "SELECT EXISTS(SELECT 1 FROM {{tables.passkey_credentials}} WHERE credential_id=$1)",
+        unrelated_credential,
+    )
+    assert (
+        await w.db.fetch_value(
+            "SELECT count(*) FROM {{tables.credential_authorizations}} WHERE subject=$1",
+            holder.subject,
+        )
+        == 1
+    )

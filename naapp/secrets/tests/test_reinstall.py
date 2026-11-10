@@ -5,6 +5,7 @@ from __future__ import annotations
 
 import time
 from collections.abc import AsyncIterator
+from pathlib import Path
 from types import SimpleNamespace
 
 import pytest
@@ -17,6 +18,7 @@ from aweb_naapp.roles import (
 )
 from aweb_naapp.runtime.authorization import Grant
 from aweb_naapp.runtime.clock import seconds_to_ns
+from aweb_naapp.runtime.credential_audit import recorder as credential_recorder
 from aweb_naapp.runtime.installation import InstallationRefused, apply_installation_migrations
 from aweb_naapp.runtime.passkeys.service import MIGRATION_MODULE as PASSKEY_MODULE
 from aweb_naapp.runtime.passkeys.service import MIGRATIONS as PASSKEY_MIGRATIONS
@@ -24,6 +26,7 @@ from pgdbm import AsyncDatabaseManager, AsyncMigrationManager
 
 from aweb_secrets.app import MIGRATIONS_PATH, MODULE_NAME, installation_fence
 from aweb_secrets.change_sets import apply_change_set_migrations
+from aweb_secrets.credential_governance import CREDENTIAL_AUDIT_MIGRATIONS
 from aweb_secrets.custody import apply_custody_migrations
 from aweb_secrets.owners import apply_owner_migrations
 
@@ -87,6 +90,11 @@ async def db(test_db_factory) -> AsyncIterator[AsyncDatabaseManager]:
         await migrate(database)
     await AsyncMigrationManager(
         database, migrations_path=str(PASSKEY_MIGRATIONS), module_name=PASSKEY_MODULE
+    ).apply_pending_migrations()
+    await AsyncMigrationManager(
+        database,
+        migrations_path=str(Path(credential_recorder.__file__).with_name("migrations")),
+        module_name=CREDENTIAL_AUDIT_MIGRATIONS,
     ).apply_pending_migrations()
     yield database
 
