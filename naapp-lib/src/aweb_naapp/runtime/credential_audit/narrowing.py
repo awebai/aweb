@@ -13,7 +13,7 @@ from pgdbm.core import TransactionManager
 from webauthn.helpers import base64url_to_bytes
 
 from aweb_naapp.hooks.owner_act import HumanCredential
-from aweb_naapp.roles import HoldingRecord, principal_key
+from aweb_naapp.roles import HoldingRecord, principal_key, read_holding
 from aweb_naapp.runtime.audit import AuditEvent, AuditKind
 from aweb_naapp.runtime.credential_audit.recorder import (
     GovernanceUnavailable,
@@ -218,7 +218,8 @@ async def _narrowing_authority(
         )
     # An owner act revokes a role; it never revokes one passkey. A scope whose
     # role is declared human pairs only with human-role.revoke, bound to the
-    # holding the act names; any other scope only with app-role.revoke.
+    # holding the act names, which must exist; any other scope only with
+    # app-role.revoke.
     if (
         isinstance(context, _OwnerActContext)
         and context.owner is owner
@@ -227,11 +228,13 @@ async def _narrowing_authority(
         scope = event.details.get("scope")
         if not isinstance(scope, str) or not scope:
             raise GovernanceUnavailable()
-        holding = await owner.declared_human_record(tx, scope)
-        if holding is not None:
+        holding = None
+        if await owner.scope_role(tx, scope) in owner._human_roles:
             holding = await owner.human_record(
                 tx, scope, context.admitted, owner.signed_subject(context)
             )
+            if holding is None:
+                raise GovernanceUnavailable()
         expected = "app-role.revoke" if holding is None else "human-role.revoke"
         digest = await owner._consumed_act(tx, context, event, expected)
         return _NarrowingAuthority(
@@ -309,8 +312,17 @@ async def _require_holding_ended(
     in this very transaction. Its subject is the holding's latest approver,
     retired now or earlier by containment, or the principal of a holding that
     never had an approver; nothing is made up for either."""
-    if holding.ended_in is None or holding.ended_in != await tx.fetch_value(
-        "SELECT txid_current()"
+    if (
+        holding.ended_in is None
+        or holding.ended_in != await tx.fetch_value("SELECT txid_current()")
+        or await read_holding(
+            tx,
+            installation_id=holding.installation_id,
+            team_id=holding.team_id,
+            role=holding.role,
+            principal=holding.principal,
+        )
+        is not None
     ):
         raise GovernanceUnavailable()
     latest = await tx.fetch_one(

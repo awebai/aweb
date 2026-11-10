@@ -13,11 +13,11 @@ from typing import Any
 
 import asyncpg
 import pytest
-from aweb_naapp_testing.owner_acts import APP_ID, INSTALLATION_ID, TEAM_ID
+from aweb_naapp_testing.owner_acts import APP_ID, INSTALLATION_ID, TEAM_ID, revocation_subject
 from pgdbm.core import TransactionManager
 
 from aweb_naapp.hooks.owner_act import VerifiedOwnerAct
-from aweb_naapp.roles import begin_holding, end_holding, holding_scope
+from aweb_naapp.roles import PrincipalKey, assign, begin_holding, end_holding, holding_scope
 from aweb_naapp.runtime.audit import AuditEvent, AuditKind
 from aweb_naapp.runtime.credential_audit import GovernanceUnavailable
 from aweb_naapp.runtime.passkeys import DesignationRefused, contact_sha256
@@ -28,9 +28,11 @@ from tests.runtime.credential_audit.support import (
     ROLE,
     World,
     bind,
+    enrol,
     events,
     owner_act,
 )
+from tests.runtime.credential_audit.support import designate as designate_contact
 
 PRINCIPAL = "did:aw:2Wq7mXn4kP9rT1vY5zA8bC3dE6"
 OTHER_PRINCIPAL = "did:aw:3Xr8nYo5mQ1sU2wZ6aB9cD4eF7"
@@ -411,3 +413,88 @@ async def test_an_authorization_is_exactly_one_model(world: World, columns: dict
             "commitment",
             *columns.values(),
         )
+
+
+async def test_a_revoke_event_under_a_replacement_act_records_nothing(world: World):
+    # The act the event claims is the signed act's own kind, not its label.
+    scope = await holding(world)
+    await backfilled(world)
+
+    async def relabelled(tx: TransactionManager, act: VerifiedOwnerAct) -> None:
+        await end_holding(tx, **key())
+        await world.recorder.emit(retired_event(act, scope, PRINCIPAL), tx)
+
+    with pytest.raises(GovernanceUnavailable):
+        await owner_act(world, "human-credential.replace", subject(holder()), relabelled)
+    assert await payloads(world) == []
+
+
+async def test_a_designation_event_under_a_replacement_act_records_nothing(world: World):
+    scope = await holding(world)
+    member = holder()
+    designation = await designate(world, member)
+    recorded = await payloads(world)
+
+    async def relabelled(tx: TransactionManager, act: VerifiedOwnerAct) -> None:
+        await world.recorder.emit(
+            AuditEvent(
+                kind=AuditKind.APPROVER_DESIGNATED,
+                actor=str(act.fields["team_key_did"]),
+                subject=designation.approver.subject,
+                occurred_at=datetime.now(UTC),
+                details={
+                    "scope": scope,
+                    "owner_act_id": f"{act.team_id}:{act.nonce}",
+                    "owner_act_kind": "human-role.designate",
+                },
+            ),
+            tx,
+        )
+
+    with pytest.raises(GovernanceUnavailable):
+        await owner_act(world, "human-credential.replace", subject(member), relabelled)
+    assert await payloads(world) == recorded
+
+
+async def test_a_contact_revoke_of_a_role_now_declared_human_without_its_holding_records_nothing(
+    world: World,
+):
+    # A contact approver retained from before its role was declared with the
+    # human-role acts, and not yet backfilled into a holding: no contact act
+    # revokes it, and no human-role act can either until the holding exists.
+    scope = await bind(world)
+    await designate_contact(world, scope)
+    await enrol(world)
+    for table in ("example_bindings", "credential_authorizations"):
+        await world.db.execute(
+            f"UPDATE {{{{tables.{table}}}}} SET role=$1 WHERE scope=$2", HOLDER_ROLE, scope
+        )
+    approver = await world.db.fetch_value(
+        "SELECT subject FROM {{tables.passkey_approvers}} WHERE scope=$1", scope
+    )
+    recorded = await payloads(world)
+
+    async def effect(tx: TransactionManager, act: VerifiedOwnerAct) -> None:
+        await world.passkeys.retire(tx, scope=scope, evidence=act)
+
+    with pytest.raises(GovernanceUnavailable):
+        await owner_act(world, "app-role.revoke", revocation_subject(scope, approver), effect)
+    assert await payloads(world) == recorded
+
+
+async def test_a_revoke_event_for_a_holding_held_again_in_its_transaction_records_nothing(
+    world: World,
+):
+    # The holding ended in this transaction, then its role was assigned again:
+    # it is held now, so no end of it is recorded.
+    scope = await holding(world)
+    await backfilled(world)
+
+    async def reassigned(tx: TransactionManager, act: VerifiedOwnerAct) -> None:
+        await end_holding(tx, **key())
+        await assign(tx, PrincipalKey(TEAM_ID, PRINCIPAL), HOLDER_ROLE)
+        await world.recorder.emit(retired_event(act, scope, PRINCIPAL), tx)
+
+    with pytest.raises(GovernanceUnavailable):
+        await owner_act(world, "human-role.revoke", subject(None), reassigned)
+    assert await payloads(world) == []

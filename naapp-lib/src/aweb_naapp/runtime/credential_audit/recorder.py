@@ -655,12 +655,20 @@ class CredentialAudit:
         return (None, record.principal, signed["credential_sha256"], notice, _new_credential_ref())
 
     @staticmethod
-    def signed_subject(context: _OwnerActContext) -> dict[str, Any]:
-        """The subject of the prepared act, from its retained signing bytes,
-        which the consumed nonce's digest binds."""
+    def signed_document(context: _OwnerActContext) -> dict[str, Any]:
+        """The prepared act as signed, from its retained signing bytes, which
+        the consumed nonce's digest binds."""
         if not context.signing.startswith(PREFIX):
             raise GovernanceUnavailable()
-        subject = json.loads(context.signing[len(PREFIX) :]).get("subject")
+        document = json.loads(context.signing[len(PREFIX) :])
+        if not isinstance(document, dict):
+            raise GovernanceUnavailable()
+        return document
+
+    @classmethod
+    def signed_subject(cls, context: _OwnerActContext) -> dict[str, Any]:
+        """The subject of the prepared act, as signed."""
+        subject = cls.signed_document(context).get("subject")
         if not isinstance(subject, dict):
             raise GovernanceUnavailable()
         return subject
@@ -691,6 +699,19 @@ class CredentialAudit:
             raise GovernanceUnavailable()
         return record
 
+    async def scope_role(self, tx, scope: str) -> str | None:
+        """The role ``scope`` belongs to, current or ended: its holding
+        record's, or else the role retained with its latest authorization."""
+        if self._human_roles:
+            record = await holding_record_of_scope(tx, scope)
+            if record is not None:
+                return record.role
+        return await tx.fetch_value(
+            "SELECT role FROM {{tables.credential_authorizations}} WHERE scope=$1 "
+            "ORDER BY created_at DESC LIMIT 1",
+            scope,
+        )
+
     async def declared_human_record(self, tx, scope: str) -> HoldingRecord | None:
         """The installation's holding record for ``scope`` when its role is
         declared with the human-role acts; None for any other scope."""
@@ -701,7 +722,8 @@ class CredentialAudit:
 
     async def _consumed_act(self, tx, context: _OwnerActContext, event, expected_act) -> str:
         """The SHA-256 of the prepared act, which this event names and which
-        was consumed for this team under this app's owner-act scope."""
+        was consumed for this team under this app's owner-act scope. The act
+        it signs, not only the event's label for it, is ``expected_act``."""
         digest = hashlib.sha256(context.signing).hexdigest()
         nonce = await tx.fetch_one(
             "SELECT nonce FROM {{tables.owner_act_nonces}} WHERE scope=$1 AND team_id=$2 AND act_sha256=$3",
@@ -713,6 +735,7 @@ class CredentialAudit:
             nonce is None
             or event.details.get("owner_act_id") != f"{context.admitted.team_id}:{nonce['nonce']}"
             or event.details.get("owner_act_kind") != expected_act
+            or self.signed_document(context).get("act") != expected_act
         ):
             raise GovernanceUnavailable()
         return digest
