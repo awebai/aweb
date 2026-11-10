@@ -118,7 +118,8 @@
 - `awid.request_body_limit` logs each refusal with the method and the request
   path, without its query string or fragment, then the declared or received
   byte count and the limit, for example `Request body too large: POST /echo
-  declared 65 bytes, limit 64`.
+  declared 65 bytes, limit 64`. A host whose paths carry secrets of its own
+  passes `logged_path`, the rule that writes the path the line shows.
 
 - The channel client (the Claude Code plugin, the Pi extension and `aw wake`)
   reports mail and chat as verified only when the displayed body, subject,

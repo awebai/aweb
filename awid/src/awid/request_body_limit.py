@@ -11,6 +11,7 @@ streams its body under a tighter limit of its own keeps doing so.
 from __future__ import annotations
 
 import logging
+from collections.abc import Callable
 
 from starlette.exceptions import HTTPException
 from starlette.responses import JSONResponse
@@ -27,11 +28,18 @@ class RequestBodyTooLarge(HTTPException):
 
 
 class RequestBodyLimitMiddleware:
-    def __init__(self, app: ASGIApp, *, max_body_bytes: int) -> None:
+    """`logged_path` writes the request path that a refusal's log line shows; it is given the
+    decoded path. The default drops a query or fragment. A host whose paths carry secrets of its
+    own (invite codes, tokens) passes its rule for those."""
+
+    def __init__(
+        self, app: ASGIApp, *, max_body_bytes: int, logged_path: Callable[[str], str] | None = None,
+    ) -> None:
         if max_body_bytes < 1:
             raise ValueError("max_body_bytes must be positive")
         self.app = app
         self.max_body_bytes = max_body_bytes
+        self.logged_path = logged_path or _logged_path
 
     async def __call__(self, scope: Scope, receive: Receive, send: Send) -> None:
         if scope["type"] != "http":
@@ -42,7 +50,7 @@ class RequestBodyLimitMiddleware:
             # Answered before the app runs, so this is the request's only record.
             logger.warning(
                 "Request body too large: %s %s declared %d bytes, limit %d",
-                scope["method"], _logged_path(scope["path"]), declared, self.max_body_bytes,
+                scope["method"], self.logged_path(scope["path"]), declared, self.max_body_bytes,
             )
             await _too_large(scope, receive, send)
             return
@@ -60,7 +68,7 @@ class RequestBodyLimitMiddleware:
                         refused = True
                         logger.warning(
                             "Request body too large: %s %s received %d bytes, limit %d",
-                            scope["method"], _logged_path(scope["path"]), received, self.max_body_bytes,
+                            scope["method"], self.logged_path(scope["path"]), received, self.max_body_bytes,
                         )
                     raise RequestBodyTooLarge()
             return message
