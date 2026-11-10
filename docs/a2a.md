@@ -386,7 +386,8 @@ that JWS verification ships today:
 
 A signed card MUST follow A2A v1.0 semantics:
 
-- The card is canonicalized as for `card_digest` (section 5.2), with the `signatures` field absent: the signed bytes are the bytes the digest covers. They are the bytes of A2A's JCS signing rules except in the cases section 5.2 lists. For a card in one of those cases a validator that applies RFC 8785 computes other bytes, and the signature does not verify there.
+- The card is canonicalized according to the A2A signing rules, RFC 8785 (JCS), with the `signatures` field absent: the signed bytes are JCS bytes, which any A2A validator computes.
+- A producer MUST refuse to sign a card whose JCS bytes differ from the bytes its `card_digest` covers (section 5.2), and the refusal MUST name which of the four cases of section 5.2 applies: a U+2028 or U+2029 character; object keys whose order differs between code points and UTF-16 code units; a negative zero; an unpaired surrogate. Every signed card's bytes are then both its JCS bytes and its digest bytes.
 - The JWS signing input is the protected header plus `.` plus base64url payload, as defined by JWS.
 - The protected header MUST include `alg`, `typ`, and `kid`.
 - `typ` SHOULD remain the A2A/JWS-compatible value expected by validators, such as `JOSE`; do not use a custom MIME marker unless validator compatibility is proven.
