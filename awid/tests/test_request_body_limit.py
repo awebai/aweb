@@ -223,3 +223,42 @@ async def test_a_host_redacts_the_logged_path_with_its_own_rule(seen, caplog):
         f"Request body too large: POST /[Filtered] received {LIMIT + 1} bytes, limit {LIMIT}",
     ]
     assert "secret" not in caplog.text and "/echo" not in caplog.text
+
+
+@pytest.mark.asyncio
+async def test_a_host_rule_that_raises_still_refuses_with_413_and_logs_the_default_form(seen, caplog):
+    def broken_rule(path: str) -> str:
+        raise RuntimeError("rule failed")
+
+    app = _app(seen, logged_path=broken_rule)
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://testserver") as http:
+        with caplog.at_level(logging.WARNING, logger=LOGGER):
+            declared = await http.post("/echo?token=secret", content=b"x" * (LIMIT + 1))
+            counted = await http.post("/echo?token=secret", content=_chunks(b"x" * LIMIT, b"x"))
+    assert (declared.status_code, counted.status_code) == (413, 413)
+    assert declared.json() == counted.json() == {"detail": "Request body too large"}
+    assert _refusals(caplog) == [
+        f"Request body too large: POST /echo declared {LIMIT + 1} bytes, limit {LIMIT}",
+        f"Request body too large: POST /echo received {LIMIT + 1} bytes, limit {LIMIT}",
+    ]
+    assert "secret" not in caplog.text
+
+
+@pytest.mark.asyncio
+async def test_the_logged_path_escapes_control_characters_so_a_line_cannot_be_forged(http, caplog):
+    with caplog.at_level(logging.WARNING, logger=LOGGER):
+        response = await http.post("/echo%0D%0AINFO%20forged%09line%1B", content=b"x" * (LIMIT + 1))
+    assert response.status_code == 413
+    (line,) = _refusals(caplog)
+    assert "\n" not in line and "\r" not in line and "\t" not in line and "\x1b" not in line
+    assert line == f"Request body too large: POST /echo\\r\\nINFO forged\\tline\\x1b declared {LIMIT + 1} bytes, limit {LIMIT}"
+
+
+@pytest.mark.asyncio
+async def test_the_logged_path_is_capped(http, caplog):
+    with caplog.at_level(logging.WARNING, logger=LOGGER):
+        response = await http.post("/" + "a" * 5000, content=b"x" * (LIMIT + 1))
+    assert response.status_code == 413
+    (line,) = _refusals(caplog)
+    shown = line.removeprefix("Request body too large: POST ").removesuffix(f" declared {LIMIT + 1} bytes, limit {LIMIT}")
+    assert shown == "/" + "a" * 255 + "…"
