@@ -110,28 +110,7 @@ func writeStrictString(out *bytes.Buffer, s string) error {
 		return fmt.Errorf("string is not valid UTF-8")
 	}
 	out.WriteByte('"')
-	for _, r := range s {
-		switch {
-		case r == '"':
-			out.WriteString(`\"`)
-		case r == '\\':
-			out.WriteString(`\\`)
-		case r == '\n':
-			out.WriteString(`\n`)
-		case r == '\r':
-			out.WriteString(`\r`)
-		case r == '\t':
-			out.WriteString(`\t`)
-		case r == '\b':
-			out.WriteString(`\b`)
-		case r == '\f':
-			out.WriteString(`\f`)
-		case r < 0x20:
-			fmt.Fprintf(out, `\u%04x`, r)
-		default:
-			out.WriteRune(r)
-		}
-	}
+	writeEscapedString(out, s)
 	out.WriteByte('"')
 	return nil
 }

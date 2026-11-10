@@ -194,3 +194,27 @@ func cloneMapForTest(in map[string]any) map[string]any {
 	}
 	return out
 }
+
+// Card digests are published by one aw and recomputed by another, so their
+// canonical bytes write U+2028 and U+2029 as six-character escapes. This
+// digest was computed at commit 8e8d008c8.
+func TestCardDigestOfTextWithLineSeparatorsIsStable(t *testing.T) {
+	lineSeparator, paragraphSeparator := string(rune(0x2028)), string(rune(0x2029))
+	card := Card{
+		Name: "agent", Description: "line" + lineSeparator + "paragraph" + paragraphSeparator + "end <&>", Version: "1",
+		Capabilities: &Capabilities{}, DefaultInputModes: []string{"text/plain"}, DefaultOutputModes: []string{"text/plain"},
+		SupportedInterfaces: []Interface{}, Skills: []Skill{},
+	}
+	digest, err := CardDigest(card)
+	if err != nil {
+		t.Fatal(err)
+	}
+	wantCanonical := `{"capabilities":{},"defaultInputModes":["text/plain"],"defaultOutputModes":["text/plain"],"description":"line` +
+		"\\u2028" + `paragraph` + "\\u2029" + `end <&>","name":"agent","skills":[],"supportedInterfaces":[],"version":"1"}`
+	if digest.CanonicalNoSignatures != wantCanonical {
+		t.Fatalf("canonical = %q, want %q", digest.CanonicalNoSignatures, wantCanonical)
+	}
+	if want := "sha256:774f392afd24f5dafec9f81ad2ab84047292da7f95ad1a4ed57e727ba6e9be4d"; digest.Value != want {
+		t.Fatalf("digest = %s, want %s", digest.Value, want)
+	}
+}

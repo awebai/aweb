@@ -1,0 +1,148 @@
+{
+  "name": "canonical-json-v1",
+  "status": "current (aweb-acxc.24)",
+  "scheme": {
+    "canonical": "UTF-8 JSON; object keys sorted by Unicode code point; separators ',' and ':' with no whitespace; arrays keep their order",
+    "strings": "the quotation mark, the reverse solidus and U+0000-U+001F are escaped (short forms for U+0008, U+0009, U+000A, U+000C, U+000D; lowercase four-digit hex for the rest); every other code point, including U+2028, U+2029, U+007F, '<', '>', '&' and characters outside the Basic Multilingual Plane, is written as its UTF-8 bytes",
+    "numbers": "integers of magnitude at most 2^53-1; other numbers are outside this vector",
+    "reference": "awid.signing.canonical_json_bytes: json.dumps(value, sort_keys=True, separators=(',', ':'), ensure_ascii=False) encoded as UTF-8",
+    "value": "the JSON value to encode, after parsing this file",
+    "canonical_hex": "lowercase hex of the exact canonical bytes",
+    "cases": "every implementation reproduces every case",
+    "code_point_key_order_cases": "object keys whose UTF-16 code unit order differs from their code point order; an implementation that sorts keys by UTF-16 code unit does not reproduce these"
+  },
+  "cases": [
+    {
+      "name": "line_separator_in_string",
+      "note": "U+2028 in a string value is written as its three UTF-8 bytes e2 80 a8",
+      "value": {
+        "text": "line\u2028separator"
+      },
+      "canonical_hex": "7b2274657874223a226c696e65e280a8736570617261746f72227d"
+    },
+    {
+      "name": "paragraph_separator_in_string",
+      "note": "U+2029 in a string value is written as its three UTF-8 bytes e2 80 a9",
+      "value": {
+        "text": "paragraph\u2029separator"
+      },
+      "canonical_hex": "7b2274657874223a22706172616772617068e280a9736570617261746f72227d"
+    },
+    {
+      "name": "line_separator_in_key",
+      "note": "U+2028 in an object key is written as its UTF-8 bytes",
+      "value": {
+        "line\u2028key": 1
+      },
+      "canonical_hex": "7b226c696e65e280a86b6579223a317d"
+    },
+    {
+      "name": "paragraph_separator_in_key",
+      "note": "U+2029 in an object key is written as its UTF-8 bytes",
+      "value": {
+        "paragraph\u2029key": 1
+      },
+      "canonical_hex": "7b22706172616772617068e280a96b6579223a317d"
+    },
+    {
+      "name": "reverse_solidus_before_separator_text",
+      "note": "a reverse solidus followed by the six ASCII characters of a separator escape stays an escaped reverse solidus followed by that text; a real separator next to it is written raw",
+      "value": {
+        "text": "\\u2028\u2028\\\\u2029\u2029",
+        "key\\u2028": "\\"
+      },
+      "canonical_hex": "7b226b65795c5c7532303238223a225c5c222c2274657874223a225c5c7532303238e280a85c5c5c5c7532303239e280a9227d"
+    },
+    {
+      "name": "html_characters",
+      "note": "less-than, greater-than and ampersand are written as themselves",
+      "value": {
+        "text": "<a href=\"x\">&amp;</a>",
+        "<&>": "<&>"
+      },
+      "canonical_hex": "7b223c263e223a223c263e222c2274657874223a223c6120687265663d5c22785c223e26616d703b3c2f613e227d"
+    },
+    {
+      "name": "non_bmp_character",
+      "note": "a character outside the Basic Multilingual Plane is written as its four UTF-8 bytes, not as a surrogate pair escape",
+      "value": {
+        "text": "grin \ud83d\ude00",
+        "\ud83d\ude00": "\ud83d\ude00"
+      },
+      "canonical_hex": "7b2274657874223a226772696e20f09f9880222c22f09f9880223a22f09f9880227d"
+    },
+    {
+      "name": "control_characters",
+      "note": "U+0000-U+001F are escaped: the short forms for backspace, tab, line feed, form feed and carriage return, lowercase four-digit hex for the others",
+      "value": {
+        "text": "\u0000\u0001\u0002\u0003\u0004\u0005\u0006\u0007\b\t\n\u000b\f\r\u000e\u000f\u0010\u0011\u0012\u0013\u0014\u0015\u0016\u0017\u0018\u0019\u001a\u001b\u001c\u001d\u001e\u001f"
+      },
+      "canonical_hex": "7b2274657874223a225c75303030305c75303030315c75303030325c75303030335c75303030345c75303030355c75303030365c75303030375c625c745c6e5c75303030625c665c725c75303030655c75303030665c75303031305c75303031315c75303031325c75303031335c75303031345c75303031355c75303031365c75303031375c75303031385c75303031395c75303031615c75303031625c75303031635c75303031645c75303031655c7530303166227d"
+    },
+    {
+      "name": "delete_and_c1_controls",
+      "note": "U+007F and U+0080-U+009F are written as their UTF-8 bytes",
+      "value": {
+        "text": "\u007f\u0080\u0085\u009f"
+      },
+      "canonical_hex": "7b2274657874223a227fc280c285c29f227d"
+    },
+    {
+      "name": "quotation_mark_and_reverse_solidus",
+      "note": "the quotation mark and the reverse solidus take a reverse solidus; the solidus does not",
+      "value": {
+        "text": "\"\\/",
+        "\"\\/": 1
+      },
+      "canonical_hex": "7b225c225c5c2f223a312c2274657874223a225c225c5c2f227d"
+    },
+    {
+      "name": "key_order_bmp",
+      "note": "keys sort by code point: uppercase before lowercase ASCII, then Latin-1, then U+2028, then U+FF5E; the empty key sorts first",
+      "value": {
+        "\uff5e": 1,
+        "\u2028": 2,
+        "\u00e9": 3,
+        "a": 4,
+        "Z": 5,
+        "": 6,
+        "aa": 7
+      },
+      "canonical_hex": "7b22223a362c225a223a352c2261223a342c226161223a372c22c3a9223a332c22e280a8223a322c22efbd9e223a317d"
+    },
+    {
+      "name": "scalars_and_nesting",
+      "note": "booleans, null, integers up to 2^53-1 in magnitude, empty containers and nested key order",
+      "value": {
+        "b": {
+          "d": "",
+          "c": [],
+          "a": {}
+        },
+        "a": [
+          true,
+          false,
+          null,
+          0,
+          -1,
+          9007199254740991,
+          -9007199254740991
+        ]
+      },
+      "canonical_hex": "7b2261223a5b747275652c66616c73652c6e756c6c2c302c2d312c393030373139393235343734303939312c2d393030373139393235343734303939315d2c2262223a7b2261223a7b7d2c2263223a5b5d2c2264223a22227d7d"
+    }
+  ],
+  "code_point_key_order_cases": [
+    {
+      "name": "key_order_non_bmp_after_bmp",
+      "note": "keys sort by code point, so U+FF5E and U+FFFD precede U+1F600; sorting by UTF-16 code unit puts U+1F600 (d83d de00) first",
+      "value": {
+        "\ud83d\ude00": 1,
+        "\uff5e": 2,
+        "\ufffd": 3,
+        "a": 4
+      },
+      "canonical_hex": "7b2261223a342c22efbd9e223a322c22efbfbd223a332c22f09f9880223a317d"
+    }
+  ]
+}

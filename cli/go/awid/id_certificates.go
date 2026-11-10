@@ -85,27 +85,7 @@ func idCertificateCanonical(value any) ([]byte, error) {
 	if err != nil {
 		return nil, idCertificateRefusal("invalid_json")
 	}
-	// Go escapes these JSON codepoints even with EscapeHTML disabled. Process
-	// complete escapes so a literal backslash-u sequence remains unchanged.
-	out := make([]byte, 0, len(raw))
-	for i := 0; i < len(raw); {
-		if raw[i] == '\\' && i+1 < len(raw) {
-			if strings.HasPrefix(raw[i:], `\u2028`) {
-				out = append(out, []byte("\u2028")...)
-				i += 6
-			} else if strings.HasPrefix(raw[i:], `\u2029`) {
-				out = append(out, []byte("\u2029")...)
-				i += 6
-			} else {
-				out = append(out, raw[i:i+2]...)
-				i += 2
-			}
-		} else {
-			out = append(out, raw[i])
-			i++
-		}
-	}
-	return out, nil
+	return []byte(raw), nil
 }
 
 // IDCertificateSigningBytes also supports negative-shape fixtures. Computing a

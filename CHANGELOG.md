@@ -2,6 +2,20 @@
 
 ## Unreleased
 
+- `aw` writes U+2028 (line separator) and U+2029 (paragraph separator) as UTF-8
+  in the canonical JSON it signs, as the Python reference
+  (`awid.signing.canonical_json_bytes`) and TypeScript do; Go's JSON encoder
+  writes them as six-character escapes. This covers `aw id sign`, `aw id
+  request` signed fields and bodies assembled from an app manifest, v2 request
+  envelopes, controller and onboarding requests, team and identity operations
+  signed for a server or registry, and the inner payload of encrypted messages.
+  The local-identity key replacement request also writes `<`, `>` and `&` as
+  themselves. Payloads without these characters produce the same bytes as
+  before. Custody request digests, A2A card digests, blueprint payload digests
+  and the stored hosted-creation response keep the escaped form, which other
+  `aw` builds and stored records reproduce. `docs/vectors/canonical-json-v1.json`
+  pins the canonical bytes for Go, Python and TypeScript.
+
 - The channel client (the Claude Code plugin, the Pi extension and `aw wake`)
   signs every certificate and identity request with the
   [v2 request envelope](docs/team-auth-envelope-v2.md), which binds the

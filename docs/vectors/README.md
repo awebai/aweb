@@ -198,6 +198,24 @@ implementations still owe nonce, release, CAS, late-evidence and redaction-conte
 proofs; these examples do not authorize a dispatch. The existing signed/sealed
 `secrets-runner-protocol-v1.json` bytes are unchanged.
 
+### `canonical-json-v1.json`
+
+JSON values and the exact canonical bytes (`canonical_hex`) that signed and
+hashed payloads are built from: keys sorted by code point, no insignificant
+whitespace, and only the quotation mark, the reverse solidus and
+U+0000-U+001F escaped. The cases hold U+2028 and U+2029 in string values and
+object keys, `<`, `>` and `&`, a character outside the Basic Multilingual
+Plane, control characters, a reverse solidus followed by the text of a
+separator escape, and key order with non-ASCII keys. The reference is Python
+`awid.signing.canonical_json_bytes`; `awid/tests/test_canonical_json_vectors.py`
+reproduces every case. Go `cli/go/awid/canonical_json_vector_test.go`
+reproduces every case with `CanonicalJSONValue`, `StrictCanonicalJSON` and the
+ID-certificate canonical form, and the string cases with the message envelope.
+TypeScript `channel-core/test/canonical_json_vector.test.ts` reproduces
+`cases` with `canonicalJSONValue`; it does not assert
+`code_point_key_order_cases`, whose keys order differently by UTF-16 code unit
+than by code point.
+
 ### `message-signing-v1.json`
 
 Canonical UTF-8 message payloads and expected Ed25519 signatures, including
