@@ -17,6 +17,13 @@
   an embedding host that calls them passes both and does not fire task events
   of its own.
 
+- Add the one-off operator command `aweb release-closed-task-claims [--apply]`
+  for claims that existing data leaves on closed tasks. By default it reports,
+  as JSON, the number of such claims in total and the number of tasks and
+  claims per team id, and changes nothing; `--apply` releases them through the
+  same release as a status change and reports the number released. Run it once
+  after deploying the release of claims with the status change.
+
 - The channel client (the Claude Code plugin, the Pi extension and `aw wake`)
   signs every certificate and identity request with the
   [v2 request envelope](docs/team-auth-envelope-v2.md), which binds the

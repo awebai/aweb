@@ -1755,6 +1755,19 @@ operators that layer billing on top of aweb may schedule GC according
 to their own per-tier retention policies; that scheduling is the
 operator's concern, not aweb's.
 
+### Releasing claims on closed tasks
+
+`aweb release-closed-task-claims` (module function
+`aweb.closed_task_claims.release_closed_task_claims(db, apply=False)`) is a
+one-off for claims left on closed tasks by data written before a task's claims
+were released in the transaction of its status change. By default it is a dry
+run that changes nothing and prints, as JSON, the total number of claims on
+closed tasks and, per team id, the number of tasks and claims. With `--apply`
+it releases each task's claims through `release_task_claims_on`, in a
+transaction of its own that first confirms the task is still closed, which
+also sets each released workspace's focus; it prints the same counts plus the
+number released. A second apply releases nothing.
+
 ### Rate limiting
 
 Rate limiting at the **coordination layer** is not enforced by aweb
