@@ -39,6 +39,11 @@ class HumanMemberProof:
     checked_at: int
     fresh_until: int
 
+    @property
+    def team_id(self) -> str:
+        """The team checked by the original membership proof."""
+        return self.membership.team_id
+
     def require_fresh(self) -> None:
         """Recheck the original remote deadline after local authority waits."""
         now = monotonic_ns()

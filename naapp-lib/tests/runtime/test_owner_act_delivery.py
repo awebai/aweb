@@ -1,13 +1,17 @@
 """Delivery evidence uses the real runtime H2 verifier and retains its artifact."""
 
+import asyncio
 import json
+from time import monotonic_ns
 
 import pytest
 from nacl.signing import SigningKey
 
 from aweb_naapp.runtime.owner_act_delivery import OwnerActDeliveryRefused
-from tests.runtime.test_human_member import TEAM, human  # noqa: F401
+from tests.runtime.test_human_member import TEAM
 from tests.runtime.test_runtime_team_services import _runtime
+
+pytest_plugins = ("tests.runtime.test_human_member",)
 
 
 @pytest.mark.parametrize("certificate", [b"", b"not-json", b"[]", b"\xff"])
@@ -68,3 +72,25 @@ async def test_delivery_maps_definite_membership_loss_to_its_typed_refusal(
             identity_client=client,
         )
     assert refused.value.code == "principal_not_member"
+
+
+async def test_delivery_keeps_the_original_proof_deadline(human, registry, tmp_path):
+    member, principal, client, _, _ = human
+    runtime = _runtime(
+        tmp_path,
+        registry=registry,
+        database_url=registry.db.config.get_dsn(),
+        auth_cache_ttl_seconds=1,
+    )
+    checked = await runtime.check_human_role_member(
+        TEAM,
+        principal=principal,
+        certificate=json.dumps(member.certificate()).encode(),
+        identity_client=client,
+    )
+    original_deadline = checked.proof.fresh_until
+    await asyncio.sleep(max(0, (original_deadline - monotonic_ns()) / 1_000_000_000) + 0.01)
+    with pytest.raises(OwnerActDeliveryRefused) as refused:
+        checked.require_fresh()
+    assert refused.value.code == "principal_status_unavailable"
+    assert checked.proof.fresh_until == original_deadline
