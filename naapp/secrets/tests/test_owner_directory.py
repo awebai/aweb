@@ -94,6 +94,7 @@ class World:
     directory: OwnerDirectory
     owner: TeamOwner
     contacts: Contacts
+    devices: dict[str, SoftAuthenticator] = field(default_factory=dict)
 
 
 @pytest.fixture
@@ -178,6 +179,7 @@ async def designate_owner(
     await world.passkeys.complete_enrolment(
         token, device.create(await world.passkeys.enrolment_options(token))
     )
+    world.devices[scope] = device
     return scope
 
 
