@@ -12,6 +12,7 @@ the fenced transaction; registration and login use B3's distinct ceremonies.
 """
 
 import base64
+from collections.abc import Awaitable, Callable
 from datetime import timedelta
 from typing import TYPE_CHECKING, Annotated, Any, Protocol
 
@@ -84,6 +85,7 @@ class OwnerConsole:
         installation: InstallationLookup,
         credential_audit: "CredentialAudit",
         limiter: LoginLimiter | None = None,
+        key_bound: Callable[[Request], Awaitable[ConsoleSession]] | None = None,
     ) -> None:
         self.db = db
         self.passkeys = passkeys
@@ -92,7 +94,9 @@ class OwnerConsole:
         self.verifier = verifier
         self.installation = installation
         self.credential_audit = credential_audit
-        self.sessions = ConsoleSessions(db, passkeys=passkeys, scopes=self.admits_scope)
+        self.sessions = ConsoleSessions(
+            db, passkeys=passkeys, scopes=self.admits_scope, key_bound=key_bound
+        )
         self.limiter = limiter or LoginLimiter(
             db, client_identity=ClientIdentity(), limit=12, window=timedelta(minutes=1)
         )
