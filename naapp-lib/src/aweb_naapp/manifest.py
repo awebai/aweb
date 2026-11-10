@@ -10,6 +10,12 @@ version. It validates them exactly as the aw CLI does and resolves what a
 consumer acts on: tool invocation contexts, surfaces, usage, lifecycle, the
 hooks slot and purpose-split app keys. Both implementations pass the shared
 vectors in ``test-vectors/app-manifests/``; their error codes are the contract.
+
+This module is standard library only, so a declared did:key is checked for its
+shape alone: the ``did:key:z`` prefix, awid's encoded-length bound and the
+base58 alphabet. It is never decoded here. Whether it is an Ed25519 key is
+checked by :func:`aweb_naapp.manifest_keys.check_manifest_keys`, which every
+consumer that acts on a manifest's keys calls; the aw CLI checks both at load.
 """
 
 from __future__ import annotations
@@ -203,7 +209,10 @@ _KEY_ID = re.compile(r"[A-Za-z0-9][A-Za-z0-9._:-]{0,127}")
 _HOOK_NAME = re.compile(r"[A-Za-z0-9][A-Za-z0-9._:-]{0,127}")
 _SCOPE_NAME = re.compile(r"[A-Za-z0-9][A-Za-z0-9:._/-]{0,127}")
 _DIGEST = re.compile(r"sha256:[0-9a-f]{64}")
-_B58 = "123456789ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnopqrstuvwxyz"
+# awid.did._DID_KEY_ENCODED_MAX: the most base58 characters an Ed25519
+# did:key's 34 bytes encode to. A test pins the two equal.
+_DID_KEY_ENCODED_MAX = 47
+_DID_KEY_SHAPE = re.compile(f"did:key:z[1-9A-HJ-NP-Za-km-z]{{1,{_DID_KEY_ENCODED_MAX}}}")
 
 
 class ManifestError(ValueError):
@@ -528,25 +537,8 @@ def _decode(doc: Any) -> dict[str, Any]:
     return out
 
 
-def _b58decode(text: str) -> bytes:
-    number = 0
-    for char in text:
-        digit = _B58.find(char)
-        if digit < 0:
-            raise ValueError("invalid base58 character")
-        number = number * 58 + digit
-    body = number.to_bytes((number.bit_length() + 7) // 8, "big") if number else b""
-    return b"\x00" * (len(text) - len(text.lstrip("1"))) + body
-
-
-def _is_ed25519_did_key(value: str) -> bool:
-    if not value.startswith("did:key:z"):
-        return False
-    try:
-        decoded = _b58decode(value[len("did:key:z"):])
-    except ValueError:
-        return False
-    return len(decoded) == 34 and decoded[:2] == b"\xed\x01"
+def _is_did_key_shaped(value: str) -> bool:
+    return _DID_KEY_SHAPE.fullmatch(value) is not None
 
 
 def _valid_origin(raw: str) -> bool:
@@ -696,8 +688,8 @@ def _validate_common(d: dict[str, Any], reserved: frozenset[str]) -> str:
         seen.add(kid)
         if not did_key:
             raise _invalid("event_emitters[].did_key is required")
-        if not _is_ed25519_did_key(did_key):
-            raise _invalid(f"event emitter kid {kid!r} did_key is not an Ed25519 did:key")
+        if not _is_did_key_shaped(did_key):
+            raise _invalid(f"event emitter kid {kid!r} did_key is not a well-formed did:key")
     return app_id
 
 
@@ -749,8 +741,8 @@ def _validate_app_keys(keys: list[tuple[str, str, list[str]]]) -> None:
         if kid in kids:
             raise _refuse("app_keys_invalid", f"duplicate app key kid {kid!r}")
         kids.add(kid)
-        if not _is_ed25519_did_key(did_key):
-            raise _refuse("app_keys_invalid", f"app key {kid!r} did_key is not an Ed25519 did:key")
+        if not _is_did_key_shaped(did_key):
+            raise _refuse("app_keys_invalid", f"app key {kid!r} did_key is not a well-formed did:key")
         if not 1 <= len(purposes) <= 8:
             raise _refuse("app_keys_invalid", f"app key {kid!r} must declare 1 to 8 purposes")
         if not all(_PURPOSE.fullmatch(p) for p in purposes) or len(set(purposes)) != len(purposes):
