@@ -7,6 +7,7 @@ logs in with real WebAuthn assertions; no enrolment link exists."""
 from __future__ import annotations
 
 import asyncio
+import json
 import os
 from dataclasses import dataclass
 from typing import Any
@@ -24,7 +25,13 @@ from aweb_naapp_testing.webauthn import SoftAuthenticator, SoftCredential, b64ur
 from cryptography.hazmat.primitives.asymmetric import ec
 
 from aweb_naapp.hooks.owner_act import HUMAN_ROLE_ACTS, HumanCredential
-from aweb_naapp.roles import apply_roles_migrations, hold_holding, holding_scope, read_holding
+from aweb_naapp.roles import (
+    apply_roles_migrations,
+    begin_holding,
+    hold_holding,
+    holding_scope,
+    read_holding,
+)
 from aweb_naapp.runtime.approvals import AuthenticationFailed, DeliveryStatus
 from aweb_naapp.runtime.human_roles import HumanRoleHoldings
 from aweb_naapp.runtime.installation import AdmittedInstallation
@@ -368,6 +375,21 @@ async def test_a_revoked_holding_ends_with_its_credential(pw: PasskeyWorld):
     assert await holding(pw) is None
     with pytest.raises(AuthenticationFailed):
         await log_in(pw, member)
+
+
+async def test_ending_a_holding_that_never_had_an_approver_is_audited(pw: PasskeyWorld):
+    await migrated(pw)
+    async with pw.passkeys.db.transaction() as tx:
+        await begin_holding(tx, **KEY, certificate=None)
+    await revoke(pw)
+    assert await stored_holding(pw) is None
+    [ended] = [row for row in await pw.audit.rows() if row["kind"] == "approver_retired"]
+    details = json.loads(ended["details"])
+    assert (details["scope"], details["principal"], details["owner_act_kind"]) == (
+        SCOPE,
+        PRINCIPAL,
+        "human-role.revoke",
+    )
 
 
 async def test_a_revoked_role_is_held_again_as_a_new_holding(pw: PasskeyWorld):
