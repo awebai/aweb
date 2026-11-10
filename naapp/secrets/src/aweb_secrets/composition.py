@@ -44,6 +44,7 @@ from aweb_secrets.app import Authorized, ConsoleRouter, SecretsService, create_a
 from aweb_secrets.approval_email import ApprovalEmailDelivery
 from aweb_secrets.approval_kind import approval_kind
 from aweb_secrets.audit_sink import SecretsAudit
+from aweb_secrets.broker_outcomes import prepare_legacy_broker_outcomes
 from aweb_secrets.broker_service import BrokerRequests
 from aweb_secrets.catalog import Catalog
 from aweb_secrets.change import TYPE as CHANGE_TYPE
@@ -175,7 +176,7 @@ async def _compose(
         apply_change_policy_migrations,
         apply_custody_migrations,
         apply_change_set_migrations,
-        apply_dispatch_migrations,
+        partial(apply_dispatch_migrations, before_upgrade=prepare_legacy_broker_outcomes),
         apply_nonce_migrations,
         apply_job_migrations,
         apply_runner_migrations,

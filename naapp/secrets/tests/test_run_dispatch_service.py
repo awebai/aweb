@@ -78,6 +78,10 @@ async def test_one_admitted_run_replays_the_same_signed_sealed_assignment(uses):
     assert replay == first
     assert await uses.world.db.fetch_value("SELECT count(*) FROM {{tables.dispatches}}") == 1
     assert await uses.world.db.fetch_value("SELECT attempts FROM {{tables.dispatches}}") == 1
+    assert (
+        await uses.world.db.fetch_value("SELECT assignment_attempt FROM {{tables.run_deliveries}}")
+        == 1
+    )
     assert [
         event["payload"]["action"]
         for event in await envelopes(uses.world.db)
@@ -127,6 +131,13 @@ async def test_report_exact_replay_is_idempotent_and_conflicting_bytes_rollback(
     )
     receipt = await context.service.submit(job=context.job.job_id, submission=context.submission)
     assert receipt.status == 200 and receipt.body["state"] == "completed"
+    assert receipt.body["result"]["body"] is not None
+    assert (
+        await uses.world.db.fetch_value(
+            "SELECT count(*) FROM {{tables.dispatch_observations}} WHERE kind='outcome' AND attempt=1"
+        )
+        == 1
+    )
     assert [
         event["payload"]["action"]
         for event in await envelopes(uses.world.db)

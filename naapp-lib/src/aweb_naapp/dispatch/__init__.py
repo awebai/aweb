@@ -176,10 +176,36 @@ class FenceTookLock(RuntimeError):
     """A fence's check took a lock, which it must take in prepare instead."""
 
 
-async def apply_dispatch_migrations(db: AsyncDatabaseManager) -> None:
+async def apply_dispatch_migrations(
+    db: AsyncDatabaseManager,
+    *,
+    before_upgrade: Callable[[AsyncDatabaseManager], Awaitable[None]] | None = None,
+) -> None:
+    """Upgrade S3 after the application's recorded legacy-retention migration.
+
+    The callback runs before immutable legacy snapshots are imported. It must
+    be idempotent and recorded by the application; shared S3 knows no app schema.
+    """
+    if before_upgrade is not None:
+        await before_upgrade(db)
     await AsyncMigrationManager(
         db, migrations_path=str(MIGRATIONS_PATH), module_name=MIGRATIONS_MODULE
     ).apply_pending_migrations()
+
+
+async def settlement_result(tx: TransactionManager, dispatch_id: UUID) -> Any:
+    """The canonical settlement receipt, never a late observation.
+
+    A pre-upgrade settlement is an explicitly labelled legacy snapshot.
+    """
+    value = await tx.fetch_value(
+        "SELECT result FROM {{tables.dispatch_observations}} WHERE dispatch_id=$1"
+        " AND kind IN ('settlement','snapshot')"
+        " AND state IN ('reconciled_completed','reconciled_failed','reconciled_unknown')"
+        " ORDER BY (kind='settlement') DESC,observation_id DESC LIMIT 1",
+        dispatch_id,
+    )
+    return json.loads(value) if isinstance(value, str) else value
 
 
 class Dispatches:
@@ -325,21 +351,48 @@ class Dispatches:
             self._sweep_after,
         )
 
-    async def complete(self, tx: TransactionManager, dispatch_id: UUID, result: Any) -> bool:
+    async def complete(
+        self,
+        tx: TransactionManager,
+        dispatch_id: UUID,
+        result: Any,
+        *,
+        expected_attempt: int | None = None,
+    ) -> bool:
         """Record a definite response; False if the sweep got there first."""
-        return await self._settle(tx, dispatch_id, State.COMPLETED, result)
+        return await self._settle(
+            tx, dispatch_id, State.COMPLETED, result, expected_attempt=expected_attempt
+        )
 
-    async def not_sent(self, tx: TransactionManager, dispatch_id: UUID, result: Any) -> bool:
+    async def not_sent(
+        self,
+        tx: TransactionManager,
+        dispatch_id: UUID,
+        result: Any,
+        *,
+        expected_attempt: int | None = None,
+    ) -> bool:
         """Record that nothing reached the upstream; False if the sweep got there first."""
-        return await self._settle(tx, dispatch_id, State.NOT_SENT, result)
+        return await self._settle(
+            tx, dispatch_id, State.NOT_SENT, result, expected_attempt=expected_attempt
+        )
 
-    async def outcome_unknown(self, tx: TransactionManager, dispatch_id: UUID, result: Any) -> bool:
+    async def outcome_unknown(
+        self,
+        tx: TransactionManager,
+        dispatch_id: UUID,
+        result: Any,
+        *,
+        expected_attempt: int | None = None,
+    ) -> bool:
         """Record an ambiguous transport outcome now; sweep remains crash recovery.
 
         As with complete/not_sent, an already unknown or reconciled dispatch
         retains this report as late evidence and returns False.
         """
-        return await self._settle(tx, dispatch_id, State.OUTCOME_UNKNOWN, result)
+        return await self._settle(
+            tx, dispatch_id, State.OUTCOME_UNKNOWN, result, expected_attempt=expected_attempt
+        )
 
     async def reconcile(
         self, tx: TransactionManager, dispatch_id: UUID, state: State, result: Any
@@ -347,7 +400,9 @@ class Dispatches:
         if state not in RECONCILED_STATES:
             raise ValueError(f"{state} does not reconcile a dispatch")
         current = await self._lock(tx, dispatch_id)
-        return await self._write(tx, current, state, "result = $3::jsonb", json.dumps(result))
+        _check(current, state)
+        await self._observe(tx, current, "settlement", state, result)
+        return await self._write(tx, current, state)
 
     async def resolve_original(
         self, tx: TransactionManager, continuation_id: UUID, state: State, result: Any
@@ -365,7 +420,9 @@ class Dispatches:
         original = await self._lock(tx, continuation.continues)
         if original.state in RECONCILED_STATES:
             return None
-        return await self._write(tx, original, state, "result = $3::jsonb", json.dumps(result))
+        _check(original, state)
+        await self._observe(tx, original, "settlement", state, result)
+        return await self._write(tx, original, state)
 
     async def sweep(self, db: AsyncDatabaseManager) -> int:
         """Declare every dispatch past its bound ``outcome_unknown``, one per transaction.
@@ -393,7 +450,9 @@ class Dispatches:
                     if row is None:
                         return swept
                     dispatch_id = row["dispatch_id"]
-                    await self._write(tx, _dispatch(row), State.OUTCOME_UNKNOWN)
+                    current = _dispatch(row)
+                    await self._observe(tx, current, "outcome", State.OUTCOME_UNKNOWN, None)
+                    await self._write(tx, current, State.OUTCOME_UNKNOWN)
                 swept += 1
             except Exception:
                 if dispatch_id is None:
@@ -403,23 +462,55 @@ class Dispatches:
                 )
                 tried.append(dispatch_id)
 
+    async def _observe(
+        self,
+        tx: TransactionManager,
+        current: Dispatch,
+        kind: str,
+        state: State,
+        result: Any,
+        *,
+        attempt: int | None = None,
+    ) -> None:
+        await tx.execute(
+            "INSERT INTO {{tables.dispatch_observations}}"
+            " (dispatch_id,attempt,kind,state,result,provenance)"
+            " VALUES ($1,$2,$3,$4,$5::jsonb,'live')",
+            current.dispatch_id,
+            current.attempts if attempt is None else attempt,
+            kind,
+            state.value,
+            None if result is None else json.dumps(result),
+        )
+
     async def _settle(
-        self, tx: TransactionManager, dispatch_id: UUID, state: State, result: Any
+        self,
+        tx: TransactionManager,
+        dispatch_id: UUID,
+        state: State,
+        result: Any,
+        *,
+        expected_attempt: int | None = None,
     ) -> bool:
         current = await self._lock(tx, dispatch_id)
-        if current.state is State.DISPATCHING:
-            await self._write(tx, current, state, "result = $3::jsonb", json.dumps(result))
+        attempt = current.attempts if expected_attempt is None else expected_attempt
+        if type(attempt) is not int or not 0 < attempt <= current.attempts:
+            raise InvalidTransition("outcome does not name an allocated attempt")
+        if current.state is State.DISPATCHING and attempt == current.attempts:
+            await self._observe(tx, current, "outcome", state, result, attempt=attempt)
+            await self._write(tx, current, state)
             return True
-        if current.state is State.OUTCOME_UNKNOWN or current.state in RECONCILED_STATES:
+        if (
+            attempt < current.attempts
+            or current.state is State.OUTCOME_UNKNOWN
+            or current.state in RECONCILED_STATES
+        ):
+            await self._observe(tx, current, "late", state, result, attempt=attempt)
+            # Refresh only the guarded evidence projection; no transition/event.
             await tx.execute(
-                """
-                UPDATE {{tables.dispatches}}
-                SET late_results = late_results || jsonb_build_array($2::jsonb),
-                    updated_at = clock_timestamp()
-                WHERE dispatch_id = $1
-                """,
+                "UPDATE {{tables.dispatches}} SET updated_at=clock_timestamp()"
+                " WHERE dispatch_id=$1",
                 dispatch_id,
-                json.dumps(result),
             )
             return False
         raise InvalidTransition(f"{dispatch_id} is {current.state}, not dispatching")

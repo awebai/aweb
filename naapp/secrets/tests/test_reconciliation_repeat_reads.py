@@ -80,7 +80,9 @@ async def test_broker_repeat_states_are_read_only_and_keep_the_original_pins(db,
         "UPDATE {{tables.dispatches}} SET state='outcome_unknown' WHERE dispatch_id=$1", repeat_id
     )
     async with db.transaction() as tx:
-        await machine.reconcile(tx, original_id, State.RECONCILED_UNKNOWN, {"state": "closed"})
+        await machine.reconcile(
+            tx, original_id, State.RECONCILED_UNKNOWN, {"state": "reconciled_unknown"}
+        )
     before = await snapshot(db)
     async with db.transaction() as blocker:
         await blocker.fetch_one(
