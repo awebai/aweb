@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+import logging
 from datetime import datetime, timezone
 from uuid import uuid4
 
@@ -444,6 +445,45 @@ async def test_federation_delivery_logs_a_bounded_sanitized_error_answer(caplog)
     assert "\x1b" not in message
     assert "\n" not in message
     assert "\x00" not in message
+    assert len(message) <= 512
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("status", "content", "reason", "envelope_type"),
+    [
+        (200, b"not json\x1b[31m\nnext " + b"y" * 60_000, "invalid JSON", "mail"),
+        (200, b'["not", "an object\\u001b", "' + b"y" * 60_000 + b'"]', "invalid response", "mail"),
+        (422, b'{"reason": "recipient_human_mail_only", "retryable": false, "recipients": [],'
+              b' "detail": "free text\\u001b ' + b"y" * 60_000 + b'"}', None, "chat"),
+    ],
+)
+async def test_federation_delivery_logs_the_remote_text_it_does_not_relay(
+    status, content, reason, envelope_type, caplog,
+):
+    from aweb.messaging.chat_policy import HumanChatRefused
+
+    transport = MockTransport(lambda _request: Response(status, content=content))
+    envelope = _envelope().model_copy(update={"type": envelope_type})
+
+    with caplog.at_level("WARNING", logger="aweb.federation.mail"):
+        with pytest.raises((FederatedMailDeliveryError, HumanChatRefused)) as caught:
+            await deliver_federated_message(
+                delivery_origin="https://target.example",
+                envelope=envelope,
+                signature="signature",
+                transport=transport,
+            )
+    if reason is not None:
+        assert str(caught.value) == f"Federated mail delivery to https://target.example failed: {reason}"
+    [record] = [record for record in caplog.records if record.name == "aweb.federation.mail"]
+    message = record.getMessage()
+    assert record.levelno == logging.WARNING
+    assert "https://target.example" in message
+    assert str(status) in message
+    assert "\x1b" not in message
+    assert "\n" not in message
+    assert "y" * 32 in message
     assert len(message) <= 512
 
 

@@ -183,10 +183,14 @@ async def _deliver(origin: str, transport) -> dict:
     )
 
 
-def _assert_refused(error: FederatedMailDeliveryError, origin: str) -> None:
+def _assert_refused(error: FederatedMailDeliveryError, origin: str, reason: str = "delivery_origin_refused") -> None:
     assert error.status_code == 502
-    assert error.reason == "delivery_origin_refused"
-    assert str(error) == f"Federated mail delivery to {origin} failed: delivery_origin_refused"
+    assert error.reason == reason
+    assert str(error) == f"Federated mail delivery to {origin} failed: {reason}"
+
+
+def _assert_address_refused(error: FederatedMailDeliveryError, origin: str) -> None:
+    _assert_refused(error, origin, "delivery_address_refused")
 
 
 @pytest.mark.asyncio
@@ -210,7 +214,7 @@ async def test_delivery_origin_resolving_to_a_non_public_address_is_refused(addr
         origin = f"https://peer.example:{listener.port}"
         with pytest.raises(FederatedMailDeliveryError) as caught:
             await _deliver(origin, _transport(hosts))
-        _assert_refused(caught.value, origin)
+        _assert_address_refused(caught.value, origin)
         assert hosts.queries == ["peer.example"]
         assert dials == []
         assert listener.connections == 0
@@ -224,7 +228,7 @@ async def test_refused_loopback_answer_reaches_no_listener(address):
         origin = f"https://peer.example:{listener.port}"
         with pytest.raises(FederatedMailDeliveryError) as caught:
             await _deliver(origin, _transport(hosts))
-        _assert_refused(caught.value, origin)
+        _assert_address_refused(caught.value, origin)
         assert listener.connections == 0
 
 
@@ -237,7 +241,7 @@ async def test_every_answer_must_be_public(answers, dials):
     hosts = Hosts({"peer.example": answers})
     with pytest.raises(FederatedMailDeliveryError) as caught:
         await _deliver("https://peer.example", _transport(hosts))
-    _assert_refused(caught.value, "https://peer.example")
+    _assert_address_refused(caught.value, "https://peer.example")
     assert dials == []
 
 
@@ -343,7 +347,7 @@ async def test_each_delivery_resolves_and_checks_again(dials):
     with pytest.raises(FederatedMailDeliveryError) as caught:
         await _deliver("https://peer.example", transport)
 
-    _assert_refused(caught.value, "https://peer.example")
+    _assert_address_refused(caught.value, "https://peer.example")
     assert hosts.queries == ["peer.example", "peer.example"]
     assert len(dials) == 1
 
@@ -375,11 +379,11 @@ async def test_isolated_development_delivers_over_http_to_the_resolved_address(n
 async def test_isolated_development_allowance_needs_every_condition(context, host):
     async with Listener() as listener:
         hosts = Hosts({host: ("127.0.0.1",)})
-        for scheme in ("http", "https"):
+        for scheme, reason in (("http", "delivery_origin_refused"), ("https", "delivery_address_refused")):
             origin = f"{scheme}://{host}:{listener.port}"
             with pytest.raises(FederatedMailDeliveryError) as caught:
                 await _deliver(origin, _transport(hosts, context))
-            _assert_refused(caught.value, origin)
+            _assert_refused(caught.value, origin, reason)
         assert listener.connections == 0
 
 
@@ -530,12 +534,186 @@ def test_federation_authority_carries_the_delivery_transport(monkeypatch):
     assert delivery_transport(SimpleNamespace()) is None
 
 
+PRIVATE_DELIVERY_ORIGINS = "AWEB_FEDERATION_PRIVATE_DELIVERY_ORIGINS"
+PRIVATE_ORIGIN = "https://aweb.acme.internal"
+
+
+class Rows:
+    """Answers every single-row query with one row."""
+
+    def __init__(self, row: dict) -> None:
+        self.row = row
+
+    async def fetch_one(self, *_args):
+        return self.row
+
+
+def _authority(monkeypatch, setting: str | None, row: dict | None = None):
+    from aweb.federation.activation import build_federation_authority_activation
+
+    for name in ("APP_ENV", "AWEB_FEDERATION_TEST", "AWEB_FEDERATION_TEST_DEFAULT_REGISTRY"):
+        monkeypatch.delenv(name, raising=False)
+    if setting is None:
+        monkeypatch.delenv(PRIVATE_DELIVERY_ORIGINS, raising=False)
+    else:
+        monkeypatch.setenv(PRIVATE_DELIVERY_ORIGINS, setting)
+    database = SimpleNamespace(get_manager=lambda _name: Rows(row or {}))
+    return build_federation_authority_activation(database, public_origin="https://aweb.example")
+
+
+def _private_hosts() -> Hosts:
+    return Hosts({
+        "aweb.acme.internal": ("10.0.0.5",),
+        "mail.aweb.acme.internal": ("10.0.0.5",),
+        "acme.internal": ("10.0.0.5",),
+    })
+
+
+@pytest.mark.asyncio
+async def test_private_delivery_origin_is_refused_by_default_and_the_log_names_the_setting(
+    monkeypatch, dials, caplog,
+):
+    authority = _authority(monkeypatch, None)
+    authority.resolver.host_resolver = hosts = _private_hosts()
+
+    with caplog.at_level(logging.WARNING, logger="aweb.federation.transport"):
+        with pytest.raises(FederatedMailDeliveryError) as caught:
+            await _deliver(PRIVATE_ORIGIN, authority.delivery_transport)
+
+    _assert_address_refused(caught.value, PRIVATE_ORIGIN)
+    assert PRIVATE_DELIVERY_ORIGINS not in str(caught.value)
+    assert hosts.queries == ["aweb.acme.internal"]
+    assert dials == []
+    [record] = [record for record in caplog.records if record.name == "aweb.federation.transport"]
+    assert record.levelno == logging.WARNING
+    assert PRIVATE_ORIGIN in record.getMessage()
+    assert PRIVATE_DELIVERY_ORIGINS in record.getMessage()
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "setting",
+    [PRIVATE_ORIGIN, "https://AWEB.acme.internal.:443/", f" https://other.internal , {PRIVATE_ORIGIN} "],
+)
+async def test_listed_private_delivery_origin_is_delivered_to_the_checked_address(
+    setting, monkeypatch, dials, no_system_resolution,
+):
+    authority = _authority(monkeypatch, setting)
+    authority.resolver.host_resolver = hosts = _private_hosts()
+
+    assert await _deliver(PRIVATE_ORIGIN, authority.delivery_transport) == {}
+
+    assert hosts.queries == ["aweb.acme.internal"]
+    [request] = dials
+    assert request.url.scheme == "https"
+    assert request.url.host == "10.0.0.5"
+    assert request.url.port is None
+    assert request.url.path == "/v1/federation/messages"
+    assert request.headers["Host"] == "aweb.acme.internal"
+    assert request.extensions["sni_hostname"] == "aweb.acme.internal"
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("origin", "reason"),
+    [
+        ("https://aweb.acme.internal:8443", "delivery_address_refused"),
+        ("http://aweb.acme.internal", "delivery_origin_refused"),
+        ("https://mail.aweb.acme.internal", "delivery_address_refused"),
+        ("https://acme.internal", "delivery_address_refused"),
+    ],
+)
+async def test_origin_differing_from_the_listed_one_is_refused(origin, reason, monkeypatch, dials):
+    authority = _authority(monkeypatch, PRIVATE_ORIGIN)
+    authority.resolver.host_resolver = _private_hosts()
+
+    with pytest.raises(FederatedMailDeliveryError) as caught:
+        await _deliver(origin, authority.delivery_transport)
+
+    _assert_refused(caught.value, origin, reason)
+    assert dials == []
+
+
+@pytest.mark.asyncio
+async def test_listed_private_delivery_origin_does_not_widen_id_tree_registry_reads(monkeypatch, dials):
+    from awid.federation_errors import FederationAuthorityError
+
+    row = {
+        "authority_selection": "dns", "authority_name": "acme.internal", "controller_did": "did:key:controller",
+        "inherited": False, "registry_explicit": True, "registry_origin": PRIVATE_ORIGIN,
+        "authority_statement_digest": "digest",
+    }
+    authority = _authority(monkeypatch, PRIVATE_ORIGIN, row)
+    authority.resolver.host_resolver = hosts = _private_hosts()
+    token = SimpleNamespace(
+        canonical_address="acme.internal/bob", did_aw="did:aw:bob", checkpoint_revision=1, cohort_generation=1,
+    )
+
+    with pytest.raises(FederationAuthorityError) as caught:
+        async with authority.received_registry_client(token, named_did_key("bob"), None):
+            pass
+
+    assert caught.value.reason == "sender_registry_origin_forbidden"
+    assert hosts.queries == ["aweb.acme.internal"]
+    assert dials == []
+    assert await _deliver(PRIVATE_ORIGIN, authority.delivery_transport) == {}
+    assert len(dials) == 1
+
+
+def test_only_the_delivery_transport_receives_the_private_delivery_origins():
+    """Registry reads admit addresses without the delivery allowlist."""
+    callers = []
+    for path in SOURCE.rglob("*.py"):
+        for call in _calls(ast.parse(path.read_text()), "admitted_addresses"):
+            keywords = {keyword.arg for keyword in call.keywords}
+            callers.append((path.relative_to(SOURCE).as_posix(), "private_origins" in keywords))
+    assert sorted(callers) == [("federation/id_tree_registry.py", False), ("federation/transport.py", True)]
+
+
+@pytest.mark.parametrize(
+    "entry",
+    [
+        "aweb.acme.internal",
+        "https://aweb.acme.internal/v1",
+        "https://aweb.acme.internal?x=1",
+        "https://aweb.acme.internal#top",
+        "https://ops@aweb.acme.internal",
+        "10.0.0.0/8",
+        "https://10.0.0.0/8",
+        "https://10.0.0.5",
+        "https://[fd00::1]",
+        "https://*.acme.internal",
+        "*",
+        "http://aweb.acme.internal",
+        "ftp://aweb.acme.internal",
+    ],
+)
+def test_invalid_private_delivery_origin_refuses_start_up_naming_the_entry(entry, monkeypatch):
+    with pytest.raises(ValueError) as caught:
+        _authority(monkeypatch, f"{PRIVATE_ORIGIN},{entry}")
+    assert PRIVATE_DELIVERY_ORIGINS in str(caught.value)
+    assert repr(entry) in str(caught.value)
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("setting", [None, "", "  ", " , "])
+async def test_unset_or_empty_private_delivery_origins_keep_the_default(setting, monkeypatch, dials):
+    authority = _authority(monkeypatch, setting)
+    authority.resolver.host_resolver = _private_hosts()
+
+    assert authority.delivery_transport.private_delivery_origins == frozenset()
+    with pytest.raises(FederatedMailDeliveryError) as caught:
+        await _deliver(PRIVATE_ORIGIN, authority.delivery_transport)
+    _assert_address_refused(caught.value, PRIVATE_ORIGIN)
+    assert dials == []
+
+
 def _private_origin_authority():
     hosts = Hosts({"remote.example": ("10.0.0.5",)})
     return SimpleNamespace(delivery_transport=_transport(hosts)), hosts
 
 
-REFUSED_DETAIL = "Federated mail delivery to https://remote.example failed: delivery_origin_refused"
+REFUSED_DETAIL = "Federated mail delivery to https://remote.example failed: delivery_address_refused"
 
 
 async def _signer_for(signing_key, did):
