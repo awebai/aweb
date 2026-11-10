@@ -690,6 +690,7 @@ class Passkeys:
             now,
             now,
             act=(act_id, HOLDER_DESIGNATE_ACT, actor),
+            event=AuditKind.APPROVER_DESIGNATED,
         )
 
     async def replace_holder_credential(
@@ -714,12 +715,15 @@ class Passkeys:
         held = await lock_holding(tx, **key)
         if held is None:
             raise DesignationRefused("the role is not held")
-        previous = await self._current_subject_for_update(tx, held.b3_scope)
+        current = await self._current_subject_for_update(tx, held.b3_scope)
         now = self._clock()
         effective_at = now + self._lockout.recovery_cooling_off
         notified = await self._recorded_contacts(tx, held.b3_scope)
-        if previous is not None:
-            await self._retire(tx, previous, actor, now)
+        if current is not None:
+            await self._retire(tx, current, actor, now)
+        # The predecessor is the holding's latest approver, current or already
+        # retired by containment; a holding that never had one has none.
+        previous = current or await self._latest_subject(tx, held.b3_scope)
         await refresh_holding_certificate(
             tx, **key, held_since=held.held_since, certificate=certificate
         )
@@ -732,6 +736,7 @@ class Passkeys:
             now,
             effective_at,
             act=(act_id, HOLDER_REPLACE_ACT, actor),
+            event=AuditKind.APPROVER_REDESIGNATED,
             previous=previous,
         )
         notice = Notice(NoticeKind.RECOVERY_STARTED, held.b3_scope, effective_at)
@@ -752,11 +757,7 @@ class Passkeys:
         now = self._clock()
         if current is not None:
             await self._retire(tx, current, actor, now)
-        retired = current or await tx.fetch_value(
-            "SELECT subject FROM {{tables.passkey_approvers}} "
-            "WHERE scope = $1 ORDER BY designated_at DESC LIMIT 1",
-            scope,
-        )
+        retired = current or await self._latest_subject(tx, scope)
         if retired is not None:
             await self._record_act(tx, act_id, HOLDER_REVOKE_ACT, actor, scope, retired, now)
         # Ending a holding is audited even when it never had an approver.
@@ -794,6 +795,14 @@ class Passkeys:
         if not is_public_cose_key(credential.public_key):
             raise DesignationRefused("the credential's key is not a public key")
 
+    async def _latest_subject(self, tx: TransactionManager, scope: str) -> str | None:
+        """The scope's latest approver, current or retired; None if it never had one."""
+        return await tx.fetch_value(
+            "SELECT subject FROM {{tables.passkey_approvers}} "
+            "WHERE scope = $1 ORDER BY designated_at DESC LIMIT 1",
+            scope,
+        )
+
     async def _current_subject_for_update(self, tx: TransactionManager, scope: str) -> str | None:
         return await tx.fetch_value(
             "SELECT subject FROM {{tables.passkey_approvers}} "
@@ -812,6 +821,7 @@ class Passkeys:
         effective_at: datetime,
         *,
         act: tuple[str, str, str],
+        event: AuditKind,
         previous: str | None = None,
     ) -> Designation:
         act_id, kind, actor = act
@@ -860,9 +870,7 @@ class Passkeys:
             details["previous_subject"] = previous
         await self._audit.emit(
             AuditEvent(
-                kind=AuditKind.APPROVER_REDESIGNATED
-                if previous is not None
-                else AuditKind.APPROVER_DESIGNATED,
+                kind=event,
                 actor=actor,
                 subject=approver.subject,
                 occurred_at=now,
