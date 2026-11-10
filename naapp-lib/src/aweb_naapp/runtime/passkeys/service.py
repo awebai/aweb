@@ -748,17 +748,18 @@ class Passkeys:
             "WHERE scope = $1 ORDER BY designated_at DESC LIMIT 1",
             scope,
         )
-        if retired is None:
-            return
-        await self._record_act(tx, act_id, HOLDER_REVOKE_ACT, actor, scope, retired, now)
+        if retired is not None:
+            await self._record_act(tx, act_id, HOLDER_REVOKE_ACT, actor, scope, retired, now)
+        # Ending a holding is audited even when it never had an approver.
         await self._audit.emit(
             AuditEvent(
                 kind=AuditKind.APPROVER_RETIRED,
                 actor=actor,
-                subject=retired,
+                subject=retired or key["principal"],
                 occurred_at=now,
                 details={
                     "scope": scope,
+                    "principal": key["principal"],
                     "owner_act_id": act_id,
                     "owner_act_kind": HOLDER_REVOKE_ACT,
                 },
