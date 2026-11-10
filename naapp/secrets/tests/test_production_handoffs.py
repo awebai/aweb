@@ -39,6 +39,7 @@ async def registered_member(root, registry):
         team_id=owner.team_id,
         team_key=owner.team_key,
         certificate_id="handoff-member",
+        alias="handoff-member",
     )
     principal = await registry.register_did(member.member_key)
     member.extra_cert_fields = {"member_did_aw": principal}
