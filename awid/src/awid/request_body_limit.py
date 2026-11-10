@@ -41,20 +41,27 @@ class RequestBodyLimitMiddleware:
         if declared is not None and declared > self.max_body_bytes:
             # Answered before the app runs, so this is the request's only record.
             logger.warning(
-                "Request body too large: %s declared %d bytes, limit %d",
-                scope["method"], declared, self.max_body_bytes,
+                "Request body too large: %s %s declared %d bytes, limit %d",
+                scope["method"], _logged_path(scope["path"]), declared, self.max_body_bytes,
             )
             await _too_large(scope, receive, send)
             return
 
         received = 0
+        refused = False
 
         async def counted_receive() -> Message:
-            nonlocal received
+            nonlocal received, refused
             message = await receive()
             if message["type"] == "http.request":
                 received += len(message.get("body", b""))
                 if received > self.max_body_bytes:
+                    if not refused:
+                        refused = True
+                        logger.warning(
+                            "Request body too large: %s %s received %d bytes, limit %d",
+                            scope["method"], _logged_path(scope["path"]), received, self.max_body_bytes,
+                        )
                     raise RequestBodyTooLarge()
             return message
 
@@ -72,6 +79,15 @@ class RequestBodyLimitMiddleware:
             if started:
                 raise
             await _too_large(scope, receive, send)
+
+
+def _logged_path(path: str) -> str:
+    """The request path as a log line shows it: without a query or fragment.
+
+    ASGI decodes the path, so an encoded ``?`` or ``#`` appears in it and
+    whatever follows is dropped as a query string would be.
+    """
+    return path.split("?", 1)[0].split("#", 1)[0]
 
 
 def _declared_length(scope: Scope) -> int | None:
