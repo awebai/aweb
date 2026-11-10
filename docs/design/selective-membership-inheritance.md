@@ -1,10 +1,10 @@
 # Selective membership inheritance
 
-Status: **proposal** (aweb-acwd.13). The product direction is approved; the
-semantic choices below are recommendations for R, Athena and Juan to review.
-This document commissions no implementation and does not change the currently
-supported certificate format. Implementation follows Juan's consideration of
-the reviewed contract.
+Status: **contract revision for review** (aweb-acwd.13). Juan has decided the
+local-context, depth, policy-edit and resource-team direction below. The
+contract realization and wire freeze still need review. This document changes
+no supported certificate format and commissions no implementation; that needs
+a separate go after the reviewed contract.
 
 Goal 2: make unattended customer-operated spawning preserve a limited,
 understandable membership choice without giving workers unrelated governance
@@ -69,31 +69,21 @@ single-team and permits an existing global identity to join multiple teams
 it can use several distinct local identity contexts. One instance with two
 local keys is not one local identity with two memberships.
 
-**Choice for Juan — local instance in several selected teams:**
+**Existing arrangement, confirmed by Juan:** use one local identity home and
+key per selected team, as oats.aweb joined teams already do. This is not a new
+product choice or a relaxation of local identity scope. A worker in deployment
+team D and resource team H uses B_D and B_H, each a distinct `did:key`, with
+separate certificates, publication, status and withdrawal. No global identity
+is needed. Cost is one key/context and admission per selected team, explicit
+credential selection per request and per-team receipts/recovery.
+Inherited-issuance orchestration still needs implementation.
 
-| Option | Result and cost |
-| --- | --- |
-| **Recommend: a local key/home per selected team within one instance.** | Preserve single-team identity scope. A worker in deployment team D and resource team H uses B_D and B_H, each a distinct `did:key`, with separate certificates, publication, status and withdrawal. No global identity is needed. Cost is one key/context and admission per selected team, explicit credential selection for each request, and per-team receipts/recovery. |
-| Relax local single-team scope for inherited membership. | One B `did:key` holds certificates for D and H. Certificates remain separately team-authorized, so this need not copy roles or controller power. It changes the canonical local-identity/reuse rule and requires versioned capability handling across CLI selection/storage, providers, registry scope checks and accepting consumers. Existing clients that refuse local reuse cannot be presumed compatible. |
-
-The recommended option reuses the provider's existing per-team local identity
-arrangement; new inherited-issuance orchestration still needs implementation.
-For each selected team, A must use its own membership context for that team
-and obtain policy authorization there. A global A in T1/T2 can admit a local
-B_T1 to T1 alone. A local-only parent instance can instead hold A_T1 and A_T2
-and select the corresponding key for each admission. Neither case requires
-creating a global child. Selecting two teams yields two local child principals,
-not silent reuse of either key.
-
-The second option saves a local key/context per additional team; it does not
-save the separate signed authorizations, publications, status checks or per-team
-failure recovery. A minimal relaxation could apply only to the new inherited
-lane, leaving v1 behavior unchanged, but would introduce a scope distinction
-by certificate version. A fresh client could then reuse a key where released
-clients refuse it. That compatibility and every local-scope assumption must be
-inventoried and explicitly approved before adopting it; this draft does not
-silently authorize the change. A global identity remains an optional existing
-route for users needing stable cross-team identity, not the default workaround.
+For each selected team, A uses its own membership context and obtains policy
+authorization there. A global A in T1/T2 can admit local B_T1 to T1 alone. A
+local-only parent instance can hold A_T1 and A_T2 and select the corresponding
+key for each admission. Selecting two teams yields two local child principals,
+not reuse of one local key across teams. A global identity remains an optional
+existing route for stable cross-team identity, not a requirement for spawning.
 
 ### Local evidence and the protected-resource flow
 
@@ -106,10 +96,11 @@ Every inheritance mechanism applies to local roots and children:
 | Use and status | B signs team-auth with the key named in that team's certificate. The shared verifier checks the signed path and effective leaf status exactly as for a global child; only the optional global-key continuity lookup is absent. |
 | Withdrawal and key replacement | Revoking the referenced parent/child certificate or policy denies that team path. A new local key is a new principal and needs new admission; no stable-DID rotation or automatic grant transfer is implied. Another team's separately authorized local context is unaffected. |
 
-For protected secrets, the recommended arrangement is one instance with B_D
-for deployment messaging and B_H for requests to the separately governed H
-installation. The parent needs an eligible membership in H to admit B_H; its
-membership in D cannot authorize that. H's controller stays outside worker
+For protected secrets, a third, independently governed team H admits A once
+as A_H, then its policy authorizes inheritance to B_H. One worker instance
+uses B_D for deployment messaging and B_H for H's secrets and audit. The
+parent needs eligible membership in H to admit B_H; membership in D cannot
+authorize that. H's controller stays outside worker
 custody. The app receives B_H's H certificate, not B_D's D certificate and not
 an instance-name assertion. Secrets already models a local principal as
 `(team_id, member_did_key)` and skips global-key lookup when `member_did_aw` is
@@ -125,65 +116,99 @@ way to cover these newly admitted local members without per-worker grants,
 that resource-policy gap remains explicit; inheritance does not invent one.
 
 If the operator insists on one local key/home only, the child can join D or H,
-not both under the recommended rule. It cannot simultaneously do deployment
+not both under the existing rule. It cannot simultaneously do deployment
 messaging and access H's same-team secrets installation with that one local
-identity. The choices are the recommended extra local context, an optional
-global identity, or Juan's explicit approval of the scope relaxation above.
+identity. Use the existing extra local context (or an optional global identity);
+this contract does not relax local identity scope.
 Several keys under the same worker UID remain one compromise boundary; the
 extra homes provide credential selection, not isolation from that worker.
 
-## Choices for review
+## Decisions and contract model
 
-None of these recommendations is an additional ruling attributed to Juan.
+Juan's decisions are separate from the remaining contract and wire review.
+They authorize no implementation by themselves.
 
-| Question | Recommendation | Alternative and consequence |
-| --- | --- | --- |
-| Local child needs several teams? | Separate local key/home per selected team within one instance; no global registration required. | Relaxing single-team scope for inherited local identities changes identity/reuse compatibility and needs explicit approval. |
-| Who enables inheritance? | The team's current controller publishes a signed, explicit policy; absent policy means disabled. | Treating ordinary membership or ID ancestry as permission would silently widen existing teams. |
-| Which parents qualify? | Controller signs a bounded eligibility grant per named directly admitted principal, or policy explicitly enables all directly admitted members. Current membership is required at issuance and use. | Allowing any former member preserves issuance/access after removal. |
-| Can children pass membership onward? | Ship depth 1 first; retain a bounded path format for later controller opt-in to greater depth. Every generation shares the policy and budget. | Unlimited recursion removes a simple bound; forbidding recursion entirely prevents nested worker spawning. |
-| What does withdrawal do? | Parent-certificate revocation, policy withdrawal/expiry or loss of a required dependency denies all memberships depending on that path. | Issued children could instead become independent; then removing A would not contain its existing admissions. |
-| What does a policy edit do? | Each signed revision is immutable; replacement withdraws the previous revision and requires re-admission of its dependants. Counters remain under the stable policy ID. | Preserve dependants for revisions that only increase allowance/rate or extend expiry; other edits withdraw. This needs explicit revision-continuity semantics before freeze. |
-| What limits are available? | Finite total issuance allowance and rate for the policy, shared across roots and descendants; finite depth and policy expiry. No live-worker count or soul-type claim. | Per-child resettable budgets permit spawning around limits; live counts need lifecycle evidence not present here. |
-| Can A revoke memberships? | Preserve controller-only explicit member revocation. A is an admission issuer, not a team administrator. | An issuer-revoke API could be added later but is not required for selective admission. |
-| How do several selected teams complete? | Independent per-team transactions, explicit per-team results, resumable idempotently. No distributed transaction. | All-or-nothing across unrelated registries needs a new coordination protocol. |
+| Question | Contract |
+| --- | --- |
+| Local child needs several teams? | Existing separate local key/home per team; no global registration or identity-scope change. |
+| Who enables inheritance? | Current controller publishes a signed explicit policy; absent means disabled. Membership or ID ancestry alone is insufficient. |
+| Which parents qualify? | Bounded controller eligibility grant per named direct member, or explicit all-direct-members mode. Current membership is required at issuance and use. |
+| Can children pass membership onward? | General bounded paths from the first release, with controller-set maximum depth within the format bound. All generations share the policy and budget; no depth-1 release exception. |
+| What does withdrawal do? | Parent revocation, narrowing policy edit, policy withdrawal/expiry or loss of a dependency denies memberships depending on that path. |
+| What does a policy edit do? | Widening preserves dependants; narrowing withdraws them. Signed revisions remain immutable; counters remain under the stable policy ID. |
+| What limits are available? | Finite total issuance allowance, rate, depth and expiry shared across roots and descendants. No live-worker count or unverified soul-type claim. |
+| Can A revoke memberships? | Explicit member revocation remains controller-only; an admission issuer is not a team administrator. |
+| How do selected teams complete? | Independent per-team transactions and receipts, resumable idempotently; no distributed transaction. |
+| Where are protected resources? | Independently governed H admits A once and B_H by inheritance. Secrets and its audit in H use same-team admission plus resource policy. |
 
-The remaining sections describe the recommended option consistently, so its
-cost and refusal behavior can be reviewed. A different decision updates the
-whole dependent contract before implementation.
+### Policy continuity
 
-### Two choices Juan must settle before freeze
+A policy has one current revision for **new issuance**. Existing certificates
+retain their signed issuance revision and bytes. A pure widening edit raises
+allowance or rate, or extends expiry, with no reduction or other authority
+change. It preserves dependants without re-admission or another charge. It
+does not extend a certificate's signed expiry, restore revoked membership,
+reset counters/rate windows, or revive withdrawn paths.
 
-**Depth:** recommend the first release accept only depth 1, including at
-registration and every verifier. The bounded path format can accommodate up to
-four edges, but a deeper policy is refused until the supported ceiling is
-raised. The alternative is enabling nested admission in the first release for
-a named customer flow; no such requirement has been established here. Raising
-the supported ceiling later requires consumer capability agreement and policy
-opt-in, not new wire bytes; maximum-depth vectors belong in the first freeze.
+A narrowing edit, including reducing allowance/rate/expiry/depth or removing
+parent eligibility, withdraws existing dependants of that policy. Any mixed
+edit containing a narrowing has the same result even if another limit rises.
+De-listing A while keeping A's direct membership therefore withdraws other
+roots' dependants too. Revoking only A's referenced direct certificate is the
+narrower existing operation, affecting that path, but removes that membership
+path rather than eligibility alone. No selective preservation of other roots
+across a narrowing edit is implied. Disclose that before controller signing.
 
-**Policy edits:** recommend strict replacement initially: **no edit keeps
-existing dependants**, even increasing allowance/rate or extending expiry.
-This can interrupt an unattended swarm and forces explicit re-admission, which
-itself consumes allowance. The owner must see that consequence before signing.
-It keeps one active revision and avoids an additional continuity mechanism.
-The alternative is preserving dependants only when allowance/rate increase or
-expiry extends, with every other edit withdrawing them. If Juan chooses it,
-the freeze must specify how old signed evidence remains authorized by the new
-revision, without rewriting it, resetting counters or growing carried history;
-child certificate expiry still cannot be extended by a policy edit alone.
-The rest of this draft follows strict replacement pending that choice.
+Preservation here covers Juan's named widening edits. Changes to eligibility
+mode, added eligibility or increased depth need explicit classification in
+the wire freeze; a caller's label is insufficient. Unclassified transitions
+refuse publication until specified. Adding another root grant under an unchanged
+named policy remains a controller-authorized operation, changing neither
+existing proof bytes nor resource grants. Exact policy replay changes nothing.
 
-**De-listing one named parent has the same cost:** while retaining A's direct
-membership, removing A's inheritance eligibility requires a whole-policy
-replacement. That withdraws the other parents' dependants too, not just A's.
-The narrower existing action is to revoke A's referenced direct membership
-certificate, denying its dependent path while leaving other roots alone; it
-is not an eligibility-only removal. If Juan chooses continuity across policy
-edits, he should also decide whether removing one parent's eligibility grant
-can preserve the other roots' dependants. That selective-removal case must be
-specified in the same continuity rule; it is not implied by the allowance,
-rate and expiry increases described above.
+**Bounded signed continuity (proposed realization for review):** revisions are
+ordered under the stable policy ID. The compact controller authorization
+includes a continuity floor: the first revision it preserves. Widening retains
+that floor; narrowing advances it to the new revision. The controller signature
+covers the floor and revision with the policy terms, also in named-root grants.
+The registry checks the transition against the published predecessor; caller
+fields or registry status cannot invent a compatible revision range. Revisions
+and the floor never move backward; replaying an older signed policy cannot
+reactivate it. Withdrawal
+or expiry ends continuity; re-enabling starts a new range, never reviving old
+paths.
+
+An old leaf keeps its original signed authorization and certificate; effective
+status confirms its revision remains in the current preserved range and every
+other dependency remains effective. Onward issuance after widening uses the
+current revision and carries its compact authorization for the same direct
+root, explicitly covering earlier revisions in that range, plus the unchanged
+signed parent path. Each edge must name that policy ID and a revision in range.
+A stale revision cannot authorize a **new** publication; attaching current
+authorization cannot repair an edge below the floor. Publication history keeps
+the actual issuance terms. This permits mixed-revision paths without a policy
+object per revision or edge. Updating carried authorization changes the proof
+hash, not the signed certificate or publication/charge; status must cover the
+exact proof bytes presented.
+
+The freeze must prove this bounded representation in both modes, including
+repeated widening followed by narrowing: constant-size controller evidence,
+no revision-history list, no additional consumer status reads and no registry
+signing authority. Exact signed fields, transition encoding and status binding
+remain review obligations, not implicit implementation choices.
+
+### Mixed laptops and managed servers
+
+Teams may mix agents on managed servers with agents on people's own computers.
+Container or host placement is not a condition of membership, inheritance or
+this secrets flow. Membership proves neither placement nor host-policy
+enforcement; a team label implies neither isolated per-agent custody nor a
+common custodian. Laptop callers need not move into a controlled host.
+
+Every caller still needs ordinary membership verification, resource
+authorization and applicable custody checks. Reachable keys and privileged
+interfaces determine compromise boundaries independently of team labels. No
+per-worker isolation follows from a certificate or an identity-home path.
 
 ## Team policy and custody
 
@@ -191,7 +216,8 @@ The policy is a signed admission authorization, verified under the team's
 current controller key and published at that team's authoritative AWID
 registry. Proposed logical fields are:
 
-- team ID, current team-key DID, policy ID and immutable revision;
+- team ID, current team-key DID, stable policy ID, immutable revision and
+  signed continuity floor;
 - named-parent mode, or an explicit all-direct-members mode (no roster);
 - activation time, expiry, maximum admission depth, total issuance allowance
   and issuance rate;
@@ -224,9 +250,10 @@ request or add this authority to an installation grant. Policy publication,
 replacement and withdrawal are controller-authenticated AWID operations, not
 new app owner acts or arbitrary coordinator assertions.
 
-Recommend one active policy revision per team initially. A replacement is an
-explicit controller action with the dependent-membership consequence shown
-before signing. A new revision does not reset the policy's cumulative count
+Use one current policy revision per team for new issuance. Earlier revisions
+remain usable only for dependencies preserved by signed continuity. Replacement
+is an explicit controller action with its preservation or withdrawal consequence
+shown before signing. A new revision does not reset the policy's cumulative count
 or rate window. A new policy ID and new allowance are explicit controller
 authorization, never an action available to a parent member.
 
@@ -241,8 +268,9 @@ team key, they can change that policy and the rest of team governance.
 
 1. B prepares its own key. A explicitly selects teams; omission selects none,
    never all of A's teams. For each T, A selects its exact current membership
-   certificate and the current policy. No caller flag can enable a disabled
-   team or substitute a different team certificate.
+   certificate and the current policy revision, including compatible earlier
+   parent dependencies under its signed continuity. No caller flag can enable
+   a disabled team or substitute a different team certificate.
 2. A signs an admission certificate/request binding T, the policy ID/revision,
    the exact parent certificate ID and hash, parent signing key, B's key and
    identity scope, optional verified global DID, alias, a fresh certificate ID,
@@ -253,11 +281,12 @@ team key, they can change that policy and the rest of team governance.
 3. AWID verifies the proofs, policy and complete membership dependency path.
    It checks current direct-root membership, all intervening publications,
    non-revocation, current keys where global continuity is claimed, policy
-   eligibility, depth and expiry. It also preserves existing alias/address and
-   identity-scope constraints. A child cannot name itself or repeat a parent
+   eligibility, signed revision continuity, depth and expiry. It also preserves
+   existing alias/address and identity-scope constraints. A child cannot name itself or repeat a parent
    certificate/key along the path; cycles and malformed paths refuse.
 4. In one team-registry transaction, AWID checks the locally authoritative
-   controller/policy revision, published parent chain and revocations, and
+   controller/current policy revision and continuity floor, published parent
+   chain and revocations, and
    allowance/rate; it records the signed certificate/provenance and charges
    one issuance. Those local dependencies are locked/version-checked through
    commit. Withdrawal serialized first means no publication or charge.
@@ -295,7 +324,9 @@ the existing raw-blob endpoint requires the member's own signature
 bounded extension: **one status read per leaf, never per edge or policy**.
 One response reports the leaf's effective state over the entire dependency
 path (policy revision, root eligibility authorization, every parent and the
-current team key), and the exact proof hash it covers. It exposes no roster.
+current team key, including current revision/continuity floor), and the exact
+proof hash it covers. A revision change alone is not denial: widening preserves
+covered older dependencies; narrowing denies them. It exposes no roster.
 A positive status is useful only alongside the locally verified signed proof;
 it is not a registry-issued replacement for controller authorization. Consumers
 cache this one fact under the original, at-most-60-second membership window,
@@ -305,8 +336,10 @@ No registry-wide service token becomes mandatory for naapps.
 
 The wire freeze must preserve the existing 8,192-byte encoded header bound
 (`awid/src/awid/team_certificate.py:27-48`) or separately justify a versioned
-transport change. Freeze a path format bounded to four edges, with the first
-release accepting only depth 1 as recommended above. Maximum-depth vectors
+transport change. Freeze a path format bounded to four edges. From the first
+release, the controller sets depth within that supported bound; every registry
+and verifier accepts paths within that limit and refuses paths beyond it.
+There is no additional depth-1 release gate. Maximum-depth vectors
 must fit the 8,192-byte encoded limit with the largest legal identities and
 all maximum-length fields, in both authorization modes. If they cannot fit,
 reduce the proposed bounds before freeze; do not ship an advertised legal
@@ -347,7 +380,8 @@ Revoking a certificate does not replenish the allowance. A new certificate
 after rotation/re-admission counts again; exact replay does not. The rate and
 total are shared across every descendant admitted under that stable policy ID,
 so onward delegation does not create fresh buckets. Policy expiry bounds both
-issuance and dependent use. Child expiry cannot exceed policy expiry or any
+issuance and dependent use, subject to preserved revisions after widening.
+Child expiry cannot exceed the policy expiry at issuance or any
 expiring parent dependency. Existing version-1 parents have no expiry field;
 their currentness still depends on non-revocation and the current team key.
 
@@ -361,7 +395,10 @@ authority the controller grants; no unverified soul label narrows it.
 The shared verifier treats the membership proof as a dependency graph, with a
 bounded linear path in this revision. Revoking the parent certificate denies
 its dependent child certificates and their dependants in this team. Withdrawing
-or expiring the policy denies all certificates depending on that revision.
+or expiring the policy, or publishing a narrowing revision, denies certificates
+depending on the withdrawn continuity range. Widening preserves dependent
+certificates and compatible parent paths; it does not refresh an observation
+or extend a signed certificate expiry.
 Rows and issuance history remain for audit; authorization denial must not wait
 for an asynchronous row-deletion sweep.
 
@@ -408,8 +445,23 @@ is bounded by those observations, not claimed instantaneous across services.
 The request still proves possession of B's member key under team-auth. Shared
 verification adds the inherited-membership proof, policy and current published
 dependency checks. It returns the authenticated principal plus the original
-dependency/freshness evidence needed by callers. Installation scopes and app
-resource policy run afterward and remain unchanged.
+dependency/freshness evidence needed by callers. For an inherited leaf it also
+returns verified team ID, stable policy ID, direct-root principal, admission
+depth and ordered ancestor principals (root first, then each intermediate
+parent, ending before the leaf). Depth equals that ancestor count. A principal
+key is `(team_id, member_did_aw)` when the verified certificate carries a global
+DID, otherwise `(team_id, member_did_key)`. These come only from the verified
+path, never request fields. Direct membership returns no inherited-policy
+facts. A globally re-admitted root may keep its stable principal key, but old
+certificate dependencies never transfer; local key replacement is a new
+principal.
+
+Resource decisions consume these facts only while the original membership
+proof and effect-fence evidence remain usable. Membership denial precedes
+resource authorization; apps add no second membership verifier and restart no
+freshness window. Installation scopes and resource policy run afterward. The
+acwd.16 resource contract owns how these facts constrain grants and distinct
+approvers; this output does not grant those rights.
 
 Affected consumers to inventory at wire freeze, before rollout:
 
@@ -454,7 +506,9 @@ request-admission refusals leave app approvals and effects unchanged. Transport
 uncertainty and local installation failure follow reconciliation above and
 must not be reported as those definite refusals.
 
-The public decision corpus must cover both server and direct-naapp consumers:
+The public decision corpus below is updated with these decisions; exact signed
+byte vectors remain a joint freeze prerequisite. It must cover both server and
+direct-naapp consumers:
 
 | Case | Expected result |
 | --- | --- |
@@ -470,7 +524,7 @@ The public decision corpus must cover both server and direct-naapp consumers:
 | Parent belongs to another team, or policy names another parent | Refuse without a publication or charge. |
 | Parent signs for one child key; another key submits/proves possession | Refuse. |
 | Missing child proof, changed team/policy/parent/hash/alias or replay substitution | Refuse. |
-| Child attempts onward admission at depth one | Refuse; first release also refuses a deeper policy. A later supported depth admits only within the shared bound. |
+| Child attempts onward admission | Accept within controller-set depth and shared budget, including depth greater than 1 from the first release; refuse beyond policy or format depth. |
 | Parent signs unregistered child proof offline | Every inherited-membership consumer refuses, even with legacy publication optional. |
 | Local withdrawal serializes before issuance | Refuse; no publication or charge. |
 | Local issuance serializes before overlapping withdrawal | One publication/charge, then dependent use denied under bounded observations; no refund. |
@@ -486,11 +540,21 @@ The public decision corpus must cover both server and direct-naapp consumers:
 | Team, parent or child key rotation / parent certificate reissue | Old dependent proof refuses; explicit valid re-admission is the positive neighbor. |
 | Same identity/key/certificate and policy, refreshed observation | Still admits without a new charge or longer certificate lifetime. |
 | Circular path, repeated key, excessive depth or oversized header | Refuse before registration/effect. |
-| Maximum-format depth and largest legal fields, both authorization modes | Encoded proof fits 8,192 bytes; first-release depth gate still refuses depths above 1. |
+| Maximum-format depth and largest legal fields, both authorization modes | Encoded proof including continuity fits 8,192 bytes; admits if controller enables that depth, with no depth-1 exception. |
 | More named parents receive eligibility grants | Existing carried proof size is unchanged; an unrelated parent's grant cannot authorize this root. |
 | Registry claims active status without valid controller authorization | Refuse; status cannot forge membership authority. |
 | Currentness checked for a maximum-depth leaf | One effective-status read per leaf/window, no per-edge/policy reads; cache hits keep original expiry. |
-| Policy replacement only raises allowance/rate or extends expiry | Under the recommended strict choice, previous dependants still require re-admission; counters do not reset. |
+| Policy replacement only raises allowance/rate or extends expiry | Existing dependants still admit without re-admission/charge; counters and original observation deadlines do not reset. |
+| Repeated widening then onward admission from an older-revision parent | Current compact authorization covers unchanged parent path; one controller object and one leaf status read, no carried history. |
+| Old revision submitted for new issuance after widening | Refuse; existing dependants survive but new issuance names current revision. |
+| Narrowing allowance/rate/expiry/depth or removing root eligibility | Prior policy dependants deny under bounded freshness; direct membership does not restore them. |
+| Mixed widening/narrowing edit | Narrowing wins; prior dependants withdraw without counter reset or refund. |
+| Current authorization attached to an edge below its continuity floor | Refuse even with active status; no controller authorization for that path. |
+| Widening or old-policy replay after narrowing, withdrawal or expiry | Old withdrawn paths remain denied; retained issuance history is not revived. |
+| Policy expiry extended but old child/parent certificate expires | Refuse expired path; no signed certificate lifetime extension. |
+| Unclassified transition, forged floor or changed proof with old status hash | Refuse; transition validation and exact signed/status binding are mandatory. |
+| Laptop and managed-server children with equivalent evidence | Same membership/resource decisions; no placement condition or forced host migration. |
+| Direct member versus inherited leaf | Only inherited result exposes verified policy/root/ordered ancestors; caller fields cannot substitute. |
 | Local B reused across teams | Existing local-scope refusal; distinct local children or existing global B are the valid neighbors. |
 | T1 succeeds while T2 refuses in a selected set | Exact per-team receipt; no T2 access, no hidden rollback or silent overall success. |
 | Old client receives inherited proof | Unsupported/authentication refusal; existing v1 certificate still works. |
@@ -504,18 +568,24 @@ universal child-permission-subset rule.
 
 ## Resource-team fit and relationship to option (d)
 
-A human-controlled resource team can directly admit A once and authorize A's
-selected descendants through this policy, while keeping its controller key
-outside their reach. B becomes a member of that resource team, so its secrets
-installation's same-team admission remains intact. This does not introduce a
-foreign-team resource grant. It does not by itself make an A-specific grant
-apply to B: the resource owner must actually authorize the desired member or
-principal/role/subtree use through that resource's supported policy.
+Juan's selected flow uses a **third, independently governed team H**. H admits
+A_H once and authorizes inheritance; B_H then uses H membership for H's secrets
+and audit. H's controller stays outside worker reach. Deployment membership
+supplies no H authority. This uses same-team admission at the resource
+installation; the cross-team resource-grant proposal is **withdrawn for this
+flow**, not a prerequisite or parallel implementation request.
 
-Likewise, membership in a separately governed logs team supplies only the
-access that installation grants its members. It does not create a cross-team
-hook binding or guarantee an independent event feed from a worker-controlled
-team. That audit composition remains a distinct gap.
+Membership copies neither A_H's principal nor its role grants. The secrets
+owner must have a supported grant covering B_H, including local-only B_H.
+That remaining resource-policy fit is assigned to acwd.16 for review with this
+contract. The end-to-end gap remains open until the grant and inherited
+admission are implemented and qualified; no working-flow claim follows here.
+
+Secrets and its audit governed in H use H's same-team app, hook and membership
+authority and ordinary resource policies. Workers cannot change those controls
+merely by holding H membership. Audit of apps outside H is separate: this
+contract creates no cross-team hook binding or independent event feed from a
+deployment-controlled team. Laptop placement changes none of these requirements.
 
 This subsumes the membership-only portion of option (d), admission delegation
 to a named provisioner: designate A as an eligible current member, limit its
@@ -549,7 +619,8 @@ team-shared and other consumer baselines; there is no universal v1 cost-parity
 claim and no new caching mechanism proposed here.
 The shared verifier adds local Ed25519 verification of bounded evidence: one
 controller authorization, one direct-root certificate and one per admission
-edge (at most six at the four-edge format bound, three at initial depth 1).
+edge (at most six at the four-edge format bound). Signed continuity remains
+in the one controller authorization; repeated edits add no verifications.
 This excludes the ordinary request signature and any separate global-identity
 verification. Hundreds of microseconds of local CPU is a review estimate, not
 a measured benchmark or latency guarantee. Registration adds one AWID write
@@ -560,40 +631,49 @@ This is a reasonable proposed cost at spawn frequency, not a new registry
 write on every resource use. Measure it and the external evidence acquisition
 under realistic load; no implementation-time estimate is established here.
 
-Before implementation, settle the choices table, freeze exact signed bytes and
+Before implementation, review the decision realization, freeze signed bytes and
 status/capability interfaces, prove the size/depth bound with vectors, and
 enumerate every accepting consumer. R and Athena review the contract; Juan
-sees the reviewed choices before implementation is commissioned. No code,
+sees the reviewed contract and gives a separate implementation go. No code,
 migration, live policy publication or controller transfer follows from this
 document alone.
 
 ## Decision record and knowledge checkpoint
 
-This is the single canonical record for acwd.13's product direction and pending
-choices. Direction provenance: Juan in the servers conversation on 2026-11-09,
-relayed as `f0d7526e-ddb3-4bfe-97cc-ca7527c70d15`; assignment
-`7b73ac2a-ee6d-4876-bd46-af1ea0bfd4fe`. The direction is selective,
-team-authorized child membership without per-spawn approval or parent custody
-of the team key. Juan's local-child priority was relayed in
-`1500015a-6c61-4153-996a-fb4f8e14fd56`; local children are the primary case,
-and the multi-team identity choice above is explicit for his consideration. It does not settle the recommendations above.
+This is the single canonical record for acwd.13's direction and contract review.
+Original direction: Juan in the servers conversation on 2026-11-09, relayed as
+`f0d7526e-ddb3-4bfe-97cc-ca7527c70d15`; assignment
+`7b73ac2a-ee6d-4876-bd46-af1ea0bfd4fe`. His local-child priority was relayed in
+`1500015a-6c61-4153-996a-fb4f8e14fd56`.
+
+Juan's decisions relayed by the coordinator in
+`ed0a2bb7-413e-44ac-89fd-b2342a099bdc` (via secrets `2febbda1` and servers
+`baec6a1b`) supersede this proposal's depth-1-first and strict-replacement
+recommendations. Separate per-team local homes are existing behavior, not an
+open identity-scope choice. General controller-bounded depth applies from the
+first release; widening preserves dependants and narrowing withdraws them.
+Third-team H supplies same-team secrets/audit admission; the cross-team grant
+proposal for this flow is withdrawn. Resource grants need their own contract
+and implementation. Coordinator `70e101b0-8846-450a-8aa7-230d8b8892d5` records
+Juan's mixed laptop/server scope: placement is not admission authority.
 
 Prior accepted knowledge:
 `aweb/aweb-protocol-expert/decisions/team-certificates-are-controller-only.md@9a54c7392429`.
-That decision expressly deferred member-mediated admission until it became real
-scope. This assignment opens that condition; it does not retroactively change
-released certificates or mark the proposed delegated lane as shipped.
+Its reopen condition is in scope, but controller-only admission remains the
+current implementation contract. These decisions authorize contract revision,
+not code, migration, live policy publication or controller transfer. Bounded
+continuity realization, signed bytes, status/capabilities and maximum-field
+vectors remain subject to review and a separate implementation go. Record
+supported versions separately on landing; reviewed design is not shipped behavior.
 
-Checkpoint: the prior controller-only rule remains the current implementation
-contract. The approved product direction and proposed extension are recorded
-here rather than copied into a competing protocol knowledge note. At decision
-acceptance, record which choices were ruled, their review/approval provenance
-and the resulting supersession boundary in this section. Review revision:
-Athena `4fafc5c4-4acd-4c76-936e-4669a9d4b8ab` requires bounded carried
-eligibility evidence and one effective-status read; independent review
-`f7c178b1-6497-4d2b-bb33-31b787eae962` requires uncertain-outcome recovery
-and transaction claims limited to serializable local authority. These changes
-and the two explicit Juan choices above remain proposals, not an implementation
-approval. Knowledge promotion must point to this canonical decision record; it must not promote unsettled
-recommendations as accepted authority. At delivery, record the actual supported
-versions separately from the proposal's acceptance.
+Review provenance: Athena `4fafc5c4-4acd-4c76-936e-4669a9d4b8ab` required bounded
+controller evidence and one effective-status read; independent review
+`f7c178b1-6497-4d2b-bb33-31b787eae962` required uncertain-outcome recovery and
+local-only transaction claims. Prior head `fa6ff5bcac5b2d6eb63d387abfd6dcb79e47d851`
+had proposal ACKs from Athena `a142a526`, identity review `f9810279` and naapp
+review `0907b64e`; those do not approve this decision delta.
+
+Checkpoint: keep this record canonical. Knowledge promotion must point here
+rather than duplicate a protocol decision or promote an unreviewed realization
+as accepted authority. The direction and supersession boundary are recorded;
+released v1 authority is unchanged.
