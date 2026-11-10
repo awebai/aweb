@@ -112,7 +112,7 @@ async def test_withdrawal_between_projection_and_hold_refuses(enrolled):
     async with enrolled.db.transaction() as tx:
         with pytest.raises(HTTPException) as refused:
             await hold(service, tx, target)
-    assert refused.value.detail == "owner_required"
+    assert (refused.value.status_code, refused.value.detail) == (403, "owner_required")
 
 
 async def test_role_reassignment_does_not_heal_an_outstanding_target(enrolled):
@@ -152,6 +152,34 @@ async def test_recovery_does_not_retarget_the_original_subject(enrolled):
     async with enrolled.db.transaction() as tx:
         with pytest.raises(HTTPException):
             await hold(service, tx, target)
+
+
+async def test_recovery_between_projection_and_hold_requires_a_new_console_session(enrolled):
+    service = authority(enrolled)
+    target = await service.session_target(PublicScope())
+    await _apply(enrolled, "app-credential.recover", ALICE, "alice-new@example.com")
+    assert await enrolled.directory.owner_of(enrolled.db, target.b3_scope) == ALICE
+    assert await enrolled.passkeys.recovery_pending_until(target.b3_scope) is not None
+    async with enrolled.db.transaction() as tx:
+        with pytest.raises(HTTPException) as refused:
+            await hold(service, tx, target)
+    assert (refused.value.status_code, refused.value.detail) == (401, "console_session_required")
+
+
+@pytest.mark.parametrize("regrant", [False, True], ids=["revoked", "re-granted"])
+async def test_lost_holding_before_b3_preparation_is_final_even_during_recovery(enrolled, regrant):
+    service = authority(enrolled)
+    target = await service.session_target(PublicScope())
+    await _apply(enrolled, "app-credential.recover", ALICE, "alice-new@example.com")
+    assert await enrolled.passkeys.recovery_pending_until(target.b3_scope) is not None
+    async with enrolled.db.transaction() as tx:
+        await unassign(tx, ALICE, OWNER_ROLE)
+        if regrant:
+            await assign(tx, ALICE, OWNER_ROLE)
+    async with enrolled.db.transaction() as tx:
+        with pytest.raises(HTTPException) as refused:
+            await hold(service, tx, target)
+    assert (refused.value.status_code, refused.value.detail) == (403, "owner_required")
 
 
 @pytest.mark.parametrize("recovering", [False, True], ids=["enrolled", "cooling-off"])
