@@ -1203,8 +1203,9 @@ type answeringMountState struct {
 // answeringMountTransport sends every request exactly as it was built, to the
 // URL it was built for: requests are signed for their path, so none is sent
 // anywhere else. When the configured server URL answers 404, it looks for the
-// mount of that server which answers as the API and names it on the response
-// it returns, in awid.AnsweringMountHeader, for the error display.
+// mount of that server which answers as the API and notes it on the request
+// with awid.NoteAnsweringMount, for the error display. The response is
+// returned as the server sent it.
 type answeringMountTransport struct {
 	base  http.RoundTripper
 	state *answeringMountState
@@ -1226,18 +1227,12 @@ func (t *answeringMountTransport) RoundTrip(req *http.Request) (*http.Response, 
 	}
 
 	resp, err := awid.RoundTripServerRequest(base, req, t.state.configuredBaseURL)
-	if resp == nil {
-		return resp, err
-	}
-	// The header is this client's own: a server's value under its name is
-	// dropped from every response before anything reads it.
-	resp.Header.Del(awid.AnsweringMountHeader)
-	if err != nil || resp.StatusCode != http.StatusNotFound {
+	if resp == nil || err != nil || resp.StatusCode != http.StatusNotFound {
 		return resp, err
 	}
 	if mount := t.state.answeringMount(req.Context()); mount != "" {
 		debugLog("server answers at %s, not at the configured %s", mount, t.state.configuredBaseURL)
-		resp.Header.Set(awid.AnsweringMountHeader, mount)
+		awid.NoteAnsweringMount(req, mount)
 	}
 	return resp, nil
 }

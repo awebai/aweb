@@ -49,8 +49,8 @@ type movedMountServer struct {
 	streamAnswer int
 	// noAPIMount makes /api answer 404 like every other path.
 	noAPIMount bool
-	// sentMountHeader, when set, is sent on every 404 under the name the
-	// client keeps for the mount that answers.
+	// sentMountHeader, when set, is sent on every 404 as an
+	// X-Aw-Client-Answering-Mount response header.
 	sentMountHeader string
 }
 
@@ -315,9 +315,9 @@ func TestNotFoundAtAnAnsweringServerURLCarriesNoHint(t *testing.T) {
 	}
 }
 
-// The header that carries the answering mount to the error display is the
-// client's own. A value the server sends under that name is dropped: it is
-// never shown, whether or not the client finds a mount itself.
+// The answering mount reaches the error display on the request's context, not
+// in a response header. A value the server sends in a header is never shown,
+// whether or not the client finds a mount itself.
 func TestServerSentAnsweringMountHeaderIsNeverRendered(t *testing.T) {
 	t.Run("no mount answers", func(t *testing.T) {
 		server := newMovedMountServer(t)
@@ -353,8 +353,7 @@ func TestServerSentAnsweringMountHeaderIsNeverRendered(t *testing.T) {
 		}
 	})
 	t.Run("another origin", func(t *testing.T) {
-		// A client with no transport of its own to drop the header: the
-		// display still refuses a mount that is not on the request's origin.
+		// A client with no transport that looks for a mount.
 		server := newMovedMountServer(t)
 		server.set(func(ms *movedMountServer) {
 			ms.noAPIMount = true
