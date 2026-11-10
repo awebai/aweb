@@ -203,12 +203,12 @@ async def forwarded_agent(db, *, status="active", removed=False, team=TEAM):
     namespace = team.split(":", 1)[1]
     await db.execute(
         "INSERT INTO {{tables.teams}} (team_id, namespace, team_name, team_did_key) "
-        "VALUES ($1, $2, $3, 'did:key:z6MkkopcdRMf2qPVBdcugyhrVQorfEfz2uUigTwZDvZ15poA') ON CONFLICT DO NOTHING",
+        "VALUES ($1, $2, $3, 'did:key:z6MkkopcdRMf2qPVBdcugyhrVQorfEfz2uUigTwZDvZ15poA' /* z6MkTeam */) ON CONFLICT DO NOTHING",
         team, namespace, team.split(":", 1)[0],
     )
     await db.execute(
         "INSERT INTO {{tables.agents}} (agent_id, team_id, did_key, alias, identity_scope, status, deleted_at) "
-        "VALUES ($1, $2, 'did:key:z6MkggGwZHMkBygNAy7tZGtCZxrkWBHQ5fpEm6fSAxfkuvqE', 'alice', 'local', $3, "
+        "VALUES ($1, $2, 'did:key:z6MkggGwZHMkBygNAy7tZGtCZxrkWBHQ5fpEm6fSAxfkuvqE' /* z6MkAlice */, 'alice', 'local', $3, "
         "CASE WHEN $4 THEN NOW() END)",
         ACTOR, team, status, removed,
     )
