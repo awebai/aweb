@@ -27,8 +27,8 @@ func assertMode(t *testing.T, path string, want os.FileMode) {
 func TestWriteAppliesTheExactModeUnderAnyUmask(t *testing.T) {
 	for _, umask := range []int{0o022, 0o077, 0o000, 0o277} {
 		for _, mode := range []os.FileMode{0o600, 0o644, 0o755, 0o400} {
-			previous := syscall.Umask(umask)
 			dir := t.TempDir()
+			previous := syscall.Umask(umask)
 			path := filepath.Join(dir, "file")
 			exclusive := filepath.Join(dir, "exclusive")
 			err := Write(path, []byte("x"), mode)
