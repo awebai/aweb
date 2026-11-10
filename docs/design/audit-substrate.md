@@ -692,7 +692,7 @@ exponential backoff and are **never dropped**. After the operator-disclosed
 delivery horizon, a delivery becomes `stalled` and is surfaced to the owner.
 After drain the producer keeps `event_id` and digest until
 `DRAINED_RETENTION` after the drain. It keeps the **latest receipt per
-target** at any age, because that receipt's `event_hash` commits to the
+target** (one hook binding of one team) at any age, because that receipt's `event_hash` commits to the
 target's entire chain prefix: the event holding it is the one drained event
 the 30 days never delete. This is what makes producers witnesses (§B3). The outbox is delivery
 infrastructure, not an audit store (hooks-spec §7).
@@ -943,7 +943,8 @@ Per team and chain epoch, under a row lock on the team's chain head:
 - **Receipt**, signed by logs: `aweb.logs-receipt/1`
   `{v, type, team_id, event_id, chain_epoch, team_seq, event_hash,
   received_at, logs_origin, kid, did_key}`.
-  Producers keep their latest receipt per target (§A7).
+  Producers keep their latest receipt per target (one hook binding of one
+  team) (§A7).
   Each such receipt commits to the whole chain prefix, so every producer is an
   independent witness of the chain.
 - **Checkpoint**, signed by logs: `aweb.logs-checkpoint/1`
