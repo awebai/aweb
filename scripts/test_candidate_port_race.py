@@ -11,6 +11,8 @@ import multiprocessing
 import os
 from pathlib import Path
 import socket
+import subprocess
+import uuid
 import unittest
 
 ALLOCATOR = Path(__file__).with_name('candidate-ports.py')
@@ -69,6 +71,51 @@ class CandidatePortRaceTests(unittest.TestCase):
                 worker.terminate()
                 worker.join()
             parent.close()
+
+    @unittest.skipUnless(os.environ.get('AWEB_TEST_DOCKER_PORTS') == '1',
+                         'requires an approved Docker slot')
+    def test_journey_port_stays_reserved_until_service_binds(self):
+        # Execute the actual incident-path functions, not a model of them.
+        source = ALLOCATOR.with_name('e2e-oss-user-journey.sh').read_text()
+        functions = source[source.index('allocate_service_ports() {'):
+                           source.index('compose() {')]
+        project = 'acwx-race-' + uuid.uuid4().hex[:12]
+        env = {**os.environ, 'PROJECT': project, 'AWEB_PORT': '',
+               'AWID_PORT': '', 'PORT_ALLOCATOR': ''}
+        competitor, consumer = project + '-competitor', project + '-consumer'
+        try:
+            allocation = subprocess.run(
+                ['bash', '-seu'], input=functions + '\n'
+                'trap release_service_ports EXIT\n'
+                'allocate_service_ports\n'
+                'release_service_ports\n'
+                'printf "%s\\n" "$AWID_PORT"\n',
+                env=env, text=True, capture_output=True, timeout=60, check=True)
+            port = int(allocation.stdout.strip())
+            # The real journey then executes compose up using the returned
+            # port. Place a Docker consumer in precisely that scheduling gap.
+            command = ['docker', 'run', '-d', '--label', 'aweb.e2e.project=' + project,
+                       '--cpus', '.1', '--memory', '32m', '--pids-limit', '16',
+                       '-p', f'0.0.0.0:{port}:8010', '--entrypoint', '/bin/sleep']
+            winner = subprocess.run(
+                [*command, '--name', competitor, 'redis:7-alpine', 'infinity'],
+                text=True, capture_output=True, timeout=60)
+            if winner.returncode:
+                self.fail('competitor could not start; reproduction inconclusive: '
+                          + winner.stderr)
+            refused = subprocess.run(
+                [*command, '--name', consumer, 'redis:7-alpine', 'infinity'],
+                text=True, capture_output=True, timeout=60)
+            self.assertNotEqual(refused.returncode, 0, refused.stdout + refused.stderr)
+            self.assertRegex(refused.stderr.lower(),
+                             'port is already allocated|address already in use|ports are not available')
+            self.fail(f'journey returned unreserved awid port {port}; Docker '
+                      'competitor took it and the subsequent service bind failed: '
+                      + refused.stderr.strip())
+        finally:
+            for name in (project + '-ports', competitor, consumer):
+                subprocess.run(['docker', 'rm', '-fv', name],
+                               text=True, capture_output=True, timeout=30)
 
     def test_two_concurrent_allocators_do_not_return_the_same_port(self):
         # Both workers allocate on each round before either consumer binds.
