@@ -386,7 +386,7 @@ that JWS verification ships today:
 
 A signed card MUST follow A2A v1.0 semantics:
 
-- The card is canonicalized according to the A2A/JCS signing rules with the `signatures` field absent.
+- The card is canonicalized as for `card_digest` (section 5.2), with the `signatures` field absent: the signed bytes are the bytes the digest covers. They are the bytes of A2A's JCS signing rules except in the cases section 5.2 lists. For a card in one of those cases a validator that applies RFC 8785 computes other bytes, and the signature does not verify there.
 - The JWS signing input is the protected header plus `.` plus base64url payload, as defined by JWS.
 - The protected header MUST include `alg`, `typ`, and `kid`.
 - `typ` SHOULD remain the A2A/JWS-compatible value expected by validators, such as `JOSE`; do not use a custom MIME marker unless validator compatibility is proven.
