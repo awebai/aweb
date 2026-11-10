@@ -72,7 +72,25 @@ done
 uname -r
 getconf GNU_LIBC_VERSION
 id oatsagent
-sudo -n -l -U oatsagent
+visudo -c
+runner_sudo_inventory=$(mktemp /root/lab/runner-sudo-oatsagent.XXXXXX)
+if LC_ALL=C sudo -n -l -U oatsagent >"$runner_sudo_inventory" 2>&1; then
+  runner_sudo_status=0
+else
+  runner_sudo_status=$?
+  # Exit 1 is acceptable only for the explicit no-permissions result.
+  # Extra diagnostics, including policy/PAM/authentication errors, STOP.
+  if [ "$runner_sudo_status" -ne 1 ] || ! LC_ALL=C awk '
+    NF { if ($0 ~ /^User oatsagent is not allowed to run sudo on .+\.$/) seen++;
+         else bad=1 }
+    END { exit !(seen == 1 && !bad) }
+  ' "$runner_sudo_inventory"; then
+    echo "STOP: sudo inventory error; inspect $runner_sudo_inventory"
+    exit 1
+  fi
+fi
+printf 'oatsagent sudo listing exit=%s; private inventory=%s\n' \
+  "$runner_sudo_status" "$runner_sudo_inventory"
 
 # Fresh installation only: never adopt or overwrite an existing account/tree.
 if getent passwd aweb-runner; then echo 'STOP: existing runner account'; exit 1; fi
@@ -131,7 +149,12 @@ PY
 
 The administrator must confirm that the supervisor origin is the actual API
 origin already exercised over verified TLS. Syntax alone is not that mapping.
-The policy inventory must show no general sudo for oatsagent, and its groups
+Review the retained inventory before continuing, including when listing exits
+0. Any listed permission requires operator review; general sudo or a
+policy/authentication diagnostic is a STOP regardless of the listing status.
+Exit 1 continues only for the single explicit no-permissions message accepted
+above; other output needs diagnosis, not a new sudo grant. Keep the listing
+status with the inventory. The groups of oatsagent
 must exclude gid 0 and any docker/sudo/adm/lxd/incus groups. If either condition
 fails, STOP; do not silently change the OATS account or host policy to pass.
 
