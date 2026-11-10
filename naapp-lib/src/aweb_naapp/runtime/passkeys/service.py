@@ -1461,6 +1461,10 @@ class Passkeys:
         async with self.db.transaction() as tx:
             if fence is not None:
                 await fence.prepare(tx)
+            # A scope that became a human-role holding enrols nothing through a
+            # link issued before, even one already answered.
+            if await self._holds_a_human_role(tx, enrolment["scope"]):
+                raise EnrolmentRefused("a human-role holder enrols no passkey through a link")
             used = await tx.fetch_value(
                 "UPDATE {{tables.passkey_enrolments}} e SET used_at = $2 "
                 "FROM {{tables.passkey_approvers}} a "
