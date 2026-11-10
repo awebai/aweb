@@ -31,6 +31,25 @@
   - An unknown alias is refused with `Recipient agent not found`, an unknown
     bare `did:aw` with the route's first-contact text, and an unknown team with
     `Unknown team: <team>`.
+  - A refusal the caller can act on is returned as a sentence naming the next
+    action, with the code as `reason`; `POST /v1/messages` answers the same
+    refusals with the code, unchanged:
+    - `sender_registry_unavailable` while resolving an address: "the registry
+      can't confirm <address> right now; try again, or check the address".
+    - `recipient_custodial_no_e2ee` for a hosted sender's envelope: "your
+      encryption key isn't published yet; try again shortly, and if it persists
+      contact support".
+    - `federation_envelope_invalid` for a hosted sender's envelope: "your
+      published encryption key can't be verified right now; try again shortly,
+      and if it persists contact support".
+    - `recipient_encryption_assertion_invalid_or_stale`: "this recipient's
+      published encryption key can't be verified right now; try again later,
+      and if it persists contact support".
+    - `identity_binding_mismatch`, and an encrypted envelope addressed to a key
+      other than the one this server records for the recipient: "this
+      recipient's key changed; refresh and resend".
+    - `identity_binding_unavailable`: "the registry can't confirm this
+      recipient's key right now; try again shortly".
 
 - An MCP `send_mail` reply on a conversation whose stored route is a federation
   route to this server's own origin wakes the recipient's event stream when the
