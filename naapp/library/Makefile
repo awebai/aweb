@@ -52,15 +52,16 @@ compile:
 run:
 	PYTHONPATH=src:../aweb/awid/src:../pgdbm/src python3 -m uvicorn library.api:app --host 127.0.0.1 --port $(API_PORT) --reload
 
-e2e: release-wheels
-	set -e; \
+e2e e2e-up: SHELL := /bin/bash
+e2e:
+	set -e; source ../../scripts/prepare-release-wheels.sh; \
 	trap 'docker compose -p $(NAAPP_E2E_PROJECT) -f docker-compose.e2e.yml down -v --remove-orphans' EXIT; \
 	docker compose -p $(NAAPP_E2E_PROJECT) -f docker-compose.e2e.yml down -v --remove-orphans >/dev/null 2>&1 || true; \
 	docker compose -p $(NAAPP_E2E_PROJECT) -f docker-compose.e2e.yml up --build -d; \
 	LIBRARY_E2E=1 uv run pytest -q -m e2e
 
-e2e-up: release-wheels
-	docker compose -p $(NAAPP_E2E_PROJECT) -f docker-compose.e2e.yml up --build -d
+e2e-up:
+	set -e; source ../../scripts/prepare-release-wheels.sh; docker compose -p $(NAAPP_E2E_PROJECT) -f docker-compose.e2e.yml up --build -d
 
 e2e-down:
 	docker compose -p $(NAAPP_E2E_PROJECT) -f docker-compose.e2e.yml down -v --remove-orphans
@@ -141,7 +142,3 @@ aatk-validate-preplan:
 aatk-validate-release:
 	@[ -n "$$AATK_EVIDENCE_INDEX" ] || { echo "AATK_EVIDENCE_INDEX is required"; exit 2; }
 	uv run python scripts/aatk.py release --index "$$AATK_EVIDENCE_INDEX"
-
-.PHONY: release-wheels
-release-wheels:
-	bash -c 'source ../../scripts/prepare-release-wheels.sh'

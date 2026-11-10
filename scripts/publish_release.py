@@ -366,6 +366,13 @@ def write_json_version(path: Path, version: str, git_head: str | None = None) ->
     path.write_text(json.dumps(value, indent=2) + "\n", encoding="utf-8")
 
 
+def aw_ldflags(version: str, source_sha: str) -> str:
+    return (
+        f"-s -w -X main.version={version} -X main.commit={source_sha} "
+        "-X main.commitRepo=github.com/awebai/aweb -X main.date=1970-01-01T00:00:00Z"
+    )
+
+
 def build_aw_npm(root: Path, version: str, source_sha: str, npm_root: Path | None = None) -> list[str]:
     """Shared build operation; callers own retention and publication separately."""
     packages = {
@@ -377,10 +384,7 @@ def build_aw_npm(root: Path, version: str, source_sha: str, npm_root: Path | Non
         "windows/arm64": ("aw-windows-arm64", "aw.exe", "aweb-a2a-gw.exe"),
     }
     npm_root = npm_root or root / "cli/go/npm"
-    ldflags = (
-        f"-s -w -X main.version={version} -X main.commit={source_sha} "
-        "-X main.commitRepo=github.com/awebai/aweb -X main.date=1970-01-01T00:00:00Z"
-    )
+    ldflags = aw_ldflags(version, source_sha)
     for platform, (package_dir, aw_name, gateway_name) in packages.items():
         goos, goarch = platform.split("/")
         binary_dir = npm_root / package_dir / "bin"

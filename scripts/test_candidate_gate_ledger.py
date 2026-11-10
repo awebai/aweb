@@ -59,7 +59,7 @@ def main() -> None:
     with tempfile.TemporaryDirectory(prefix="aweb-ledger-proof.") as temporary:
         repo = Path(temporary)
         for name in ("candidate-docker-gate.sh", "candidate-suite.sh", "candidate-cleanup.sh",
-                     "release_artifacts.py", "release-build-constraints.txt", "publish_release.py", "candidate-host-pressure.py", "candidate-ports.py", "fetch_released_aw.py", "next_tag_version.py", "release_candidate.py", "release_versions.py"):
+                     "release_artifacts.py", "release_stamp.py", "release-build-constraints.txt", "publish_release.py", "candidate-host-pressure.py", "candidate-ports.py", "fetch_released_aw.py", "next_tag_version.py", "release_candidate.py", "release_versions.py"):
             destination = repo / "scripts" / name
             destination.parent.mkdir(exist_ok=True)
             shutil.copy2(ROOT / "scripts" / name, destination)
@@ -151,10 +151,13 @@ candidate-gate:
         assert len(rows) == len(STAGES.split()) and {row.split("\t")[1] for row in rows} == set(STAGES.split())
         assert all(row.split("\t")[2] == "passed" for row in rows)
         assert "no stages run" in invoke("same-tree-direct", *gate)
-        # CLI packages stamp SOURCE_COMMIT: identical trees at different commits produce different bytes.
+        # Reuse all test stages for the same tree; only stamped artifacts rebuild.
         checked(repo, "git", "commit", "--allow-empty", "-qm", "same tree new commit")
         assert "no stages run" not in invoke("same-tree-commit", "make", "candidate-gate")
-        rows = ledger.read_text().splitlines()
+        restamped = ledger.read_text().splitlines()
+        assert restamped[:-1] == rows and restamped[-1].split("\t")[1:3] == ["artifacts", "passed"]
+        assert restamped[-1].split("\t")[0] == rows[0].split("\t")[0]
+        rows = restamped
         refused_final = invoke("final-without-rc", sys.executable, "scripts/release_candidate.py",
                                "aw-v1.2.3", stages="checks", success=False)
         assert "final requires a prior RC" in refused_final

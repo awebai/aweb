@@ -29,6 +29,11 @@ services:
     build:
       context: ..
       dockerfile: awid/Dockerfile
+      additional_contexts:
+        candidate-wheels: ${CANDIDATE_WHEEL_CONTEXT:-../.candidate-artifacts}
+      args:
+        CANDIDATE_WHEEL_MODE: ${CANDIDATE_WHEEL_MODE:-0}
+        CANDIDATE_SOURCE_TREE: ${CANDIDATE_SOURCE_TREE:-}
     restart: unless-stopped
     ports:
       - "${AWEB_BIND_ADDRESS:-127.0.0.1}:${AWID_PORT:-8010}:8010"
@@ -61,6 +66,11 @@ services:
     build:
       context: ..
       dockerfile: server/Dockerfile
+      additional_contexts:
+        candidate-wheels: ${CANDIDATE_WHEEL_CONTEXT:-../.candidate-artifacts}
+      args:
+        CANDIDATE_WHEEL_MODE: ${CANDIDATE_WHEEL_MODE:-0}
+        CANDIDATE_SOURCE_TREE: ${CANDIDATE_SOURCE_TREE:-}
     restart: unless-stopped
     ports:
       - "${AWEB_BIND_ADDRESS:-127.0.0.1}:${AWEB_PORT:-8000}:8000"

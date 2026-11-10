@@ -160,15 +160,16 @@ to that run, and retains its evidence under the integration log directory's
 they create and remove their own bounded builder when none is supplied.
 
 `make candidate-gate`, direct `scripts/candidate-docker-gate.sh` calls and the
-release command use that same ledger. The key includes the source tree and source commit (the CLI embeds that commit),
+release command use that same ledger. The test-stage key includes the source tree,
 effective CLI/A2A versions, external Library/blueprint revisions, and non-default
-resource settings. Stage selection and log paths do not create another key. `AWEB_GATE_LEDGER` and `AWEB_GATE_LOG_DIR` relocate the ledger and
-retained logs; all callers must share them.
+resource settings. Stage selection and log paths do not create another key.
+`AWEB_GATE_LEDGER` and `AWEB_GATE_LOG_DIR` relocate the ledger and retained logs; all callers must share them.
 
 For focused pre-landing checks, use `AWEB_CANDIDATE_STAGES='checks unit' make
 candidate-gate`. Release candidates always require all five stages, even if that
 environment variable is set. Passes are reused across callers with equal inputs.
-A recorded failure blocks every stage for those inputs: fix the code and gate
+A recorded test failure blocks every stage for those tree inputs; an artifact
+failure blocks that commit's artifact identity: fix the code and gate
 the changed tree. For infrastructure failures only, the coordinator removes the
 failed ledger line and supplies `GATE_RERUN_REASON='<reason>'`; the next recorded
 result retains that reason. Cleanup failures also block reuse.
@@ -332,11 +333,26 @@ selections. It builds the Python wheels and sdists and the npm tarballs (includi
 all seven CLI packages) at the versions supplied by the candidate's manifests
 and CLI input. `CANDIDATE_ARTIFACT_DIR` holds those files, `manifest.json` and
 `SHA256SUMS`. The gate retains that directory with its logs and caches it under
-its gate key. The manifest binds that full key, source commit, effective CLI/A2A
-versions, lock hashes and the pinned backend constraints in
-`scripts/release-build-constraints.txt`. Reuse verifies this binding and hashes,
-including after an infrastructure reset removes the ledger row. An empty commit
-changes the CLI's stamped bytes and therefore requires a new qualification.
+its test-stage key plus source commit. The manifest binds that full key, source
+commit, effective CLI/A2A versions, lock hashes and the pinned backend constraints
+in `scripts/release-build-constraints.txt`. Reuse verifies this binding and hashes,
+including after an infrastructure reset removes the ledger row. An identical tree
+at another commit reuses checks, user-paths, unit and integration; only artifacts
+rebuild, because the CLI stamps the commit. Artifact ledger rows select both key
+and commit, while test rows select the tree-based key.
+
+Before accepting a restamp, the artifact stage compares it to the last retained
+manifest for that key. Tree, external inputs, file set and non-CLI hashes must be
+identical. CLI non-executable files must match except package.json gitHead. For
+executables, module path, dependencies with versions/sums, Go version and every
+embedded build setting are compared. Only vcs.revision, vcs.time, main.commit and
+a main-module pseudo-version derived from that exact revision/time may differ;
+both builds must have vcs.modified=false. Under pinned Go 1.26.10, -trimpath omits
+ldflags from embedded build info: the manifest therefore records the effective
+producer ldflags, compares them except main.commit, and requires that requested
+commit string in each executable. This is a mechanical check of the same code
+identity and build settings, not a machine-code equality claim. Journeys on
+commit A prove the tree's behavior for commit B when this restamp check passes.
 It does not silently regenerate a missing or changed wheel behind a green receipt.
 
 For an already-tagged Python version, the gate builds that release tag with the
@@ -360,7 +376,13 @@ The normal federation journey uses its existing
 exact-wheel mode. Explicit historical/skew wheel inputs retain their selected
 released server and constraints. Developer image builds without prepared
 candidate artifacts retain their source mode; maintained journeys prepare wheels
-before building those images.
+before building those images. Materialization creates a per-run temporary named
+BuildKit context outside the checkout; it never writes wheels under the source
+tree. Compose and direct callers pass CANDIDATE_WHEEL_MODE=1 and the verified
+CANDIDATE_SOURCE_TREE. The installer checks that tree against the manifest before
+installing. Without explicit wheel mode, images refuse a nonempty
+`.candidate-artifacts` (apart from `.gitignore`), so stale checkout files cannot
+silently override source. Standalone preparation requires a clean checkout.
 
 The maintained callers share these operations:
 

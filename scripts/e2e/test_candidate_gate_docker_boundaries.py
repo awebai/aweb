@@ -221,7 +221,7 @@ class DockerBoundaryTests(unittest.TestCase):
 
         artifact_mount = next(m for m in mounts if m["Destination"] == os.environ["CANDIDATE_ARTIFACT_DIR"])
         self.assertTrue(artifact_mount["RW"])
-        self.assertEqual(Path(artifact_mount["Source"]).name, os.environ["CANDIDATE_GATE_KEY"] + "-artifacts")
+        self.assertEqual(Path(artifact_mount["Source"]).name, os.environ["CANDIDATE_GATE_KEY"] + "-" + os.environ["SOURCE_COMMIT"] + "-artifacts")
 
     def test_go_module_cache_is_fresh_per_candidate_run(self) -> None:
         source = (

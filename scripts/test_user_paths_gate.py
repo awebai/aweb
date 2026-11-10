@@ -163,7 +163,7 @@ class FrozenGateInput(unittest.TestCase):
                 repo, commands = root / 'repo', root / 'bin'
                 (repo / 'scripts').mkdir(parents=True)
                 commands.mkdir()
-                for name in ['candidate-docker-gate.sh', 'candidate-suite.sh', 'candidate-cleanup.sh', 'candidate-ports.py', 'fetch_released_aw.py', 'release_artifacts.py', 'release-build-constraints.txt', 'publish_release.py', 'release_versions.py']:
+                for name in ['candidate-docker-gate.sh', 'candidate-suite.sh', 'candidate-cleanup.sh', 'candidate-ports.py', 'fetch_released_aw.py', 'release_artifacts.py', 'release_stamp.py', 'release-build-constraints.txt', 'publish_release.py', 'release_versions.py']:
                     shutil.copy2(ROOT / 'scripts' / name, repo / 'scripts' / name)
                 write_artifact_fixture(repo)
                 shutil.copy2(ROOT / 'scripts/e2e/user_paths_result.py', repo / 'scripts/user_paths_result.py')
@@ -293,22 +293,31 @@ if args[:2] in [['network','create'],['volume','create']]: print('owned');sys.ex
                     self.assertEqual(receipt['digest'], digest)
                     self.assertEqual(receipt['declared'], digest)
                     tree = git('rev-parse', 'HEAD^{tree}')
-                    external = f'SOURCE_COMMIT={git("rev-parse", "HEAD")}\nCLI_VERSION=1.36.54\nA2A_GATEWAY_VERSION=1.27.6\nRELEASED_AW={digest}\n'
+                    external = f'CLI_VERSION=1.36.54\nA2A_GATEWAY_VERSION=1.27.6\nRELEASED_AW={digest}\n'
                     self.assertEqual(ledger[0].split('\t')[0], tree+'-'+hashlib.sha256(external.encode()).hexdigest())
                     reused = invoke(None)
                     self.assertIn('no stages run', reused)
                     self.assertEqual(reused.count('NOT COVERED: pending aweb-actu'), 12)
                     self.assertIn('incomplete: human paths not covered', reused)
                     self.assertEqual(len(ledger_rows()), 5)
+                    original_rows = ledger_rows()
+                    git('commit', '--allow-empty', '-qm', 'same tree new commit')
+                    invoke(None)
+                    restamped_rows = ledger_rows()
+                    self.assertEqual(restamped_rows[:-1], original_rows)
+                    self.assertEqual(restamped_rows[-1].split('\t')[1:3], ['artifacts', 'passed'])
+                    self.assertEqual(restamped_rows[-1].split('\t')[0], original_rows[0].split('\t')[0])
+                    self.assertNotEqual(restamped_rows[-1].split('\t')[3], original_rows[0].split('\t')[3])
+                    self.assertIn('no stages run', invoke(None))
                     # Changing only the frozen artifact invalidates the key.
                     metadata['version'] = '1.36.55'
                     invoke('checks')
                     changed = ledger_rows()
-                    self.assertEqual(len(changed), 6)
+                    self.assertEqual(len(changed), 7)
                     self.assertNotEqual(changed[-1].split('\t')[0], ledger[0].split('\t')[0])
-                    self.assertEqual(server.requests, ['/@awebai%2faw/latest'] * 4)
+                    self.assertEqual(server.requests, ['/@awebai%2faw/latest'] * 6)
                     metadata['version'] = '1.36.54'
-                    retained = next((root / 'logs').glob('*-artifacts/fixture.whl'))
+                    retained = next((root / 'logs').glob('*-' + git('rev-parse', 'HEAD') + '-artifacts/fixture.whl'))
                     retained.write_bytes(b'changed after green gate')
                     refused = run_fixture(['bash', 'scripts/candidate-docker-gate.sh'], cwd=repo,
                                           env=env, capture_output=True, text=True, timeout=30)

@@ -782,9 +782,18 @@ async function ensureServer(tempRoot: string): Promise<ServerHandle> {
     );
   }
   if (!exactInputs.some(Boolean)) {
-    const prepared = await runCommand("bash", ["-c", "source scripts/prepare-release-wheels.sh"],
+    const prepared = await runCommand("bash", ["-c", "source scripts/prepare-release-wheels.sh; python3 -c 'import json,os; print(\"WHEEL_CONTEXT=\" + json.dumps({k: os.environ[k] for k in [\"CANDIDATE_WHEEL_CONTEXT\",\"CANDIDATE_SOURCE_TREE\"]}))'"],
       { cwd: repoRoot, timeoutMs: 300_000 });
     console.log(prepared.stdout);
+    const receipt = prepared.stdout.split("\n").find((line) => line.startsWith("WHEEL_CONTEXT="));
+    if (!receipt) throw new Error("wheel preparation returned no build context");
+    const wheelInput = JSON.parse(receipt.slice("WHEEL_CONTEXT=".length));
+    for (const service of ["awid", "aweb"]) {
+      overrideLines.push(`  ${service}:`, "    build:", "      additional_contexts:",
+        `        candidate-wheels: ${JSON.stringify(wheelInput.CANDIDATE_WHEEL_CONTEXT)}`,
+        "      args:", '        CANDIDATE_WHEEL_MODE: "1"',
+        `        CANDIDATE_SOURCE_TREE: ${JSON.stringify(wheelInput.CANDIDATE_SOURCE_TREE)}`);
+    }
   }
   await writeFile(overrideFilePath, overrideLines.join("\n"));
 

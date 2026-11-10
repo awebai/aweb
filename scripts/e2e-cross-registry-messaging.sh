@@ -201,7 +201,7 @@ services:
     image: redis:7-alpine
     healthcheck: {test: ["CMD", "redis-cli", "ping"], interval: 2s, timeout: 2s, retries: 45}
   awid-a:
-    build: {context: "$ROOT", dockerfile: awid/Dockerfile}
+    build: {context: "$ROOT", dockerfile: awid/Dockerfile, additional_contexts: {candidate-wheels: "\${CANDIDATE_WHEEL_CONTEXT:-$ROOT/.candidate-artifacts}"}, args: {CANDIDATE_WHEEL_MODE: "\${CANDIDATE_WHEEL_MODE:-0}", CANDIDATE_SOURCE_TREE: "\${CANDIDATE_SOURCE_TREE:-}"}}
     ports: ["$AWID_A_PORT:8010"]
     environment:
       AWID_DATABASE_URL: postgresql://aweb:disposable@postgres-a:5432/aweb
@@ -219,7 +219,7 @@ services:
       postgres-a: {condition: service_healthy}
       redis-a: {condition: service_healthy}
   awid-b:
-    build: {context: "$ROOT", dockerfile: awid/Dockerfile}
+    build: {context: "$ROOT", dockerfile: awid/Dockerfile, additional_contexts: {candidate-wheels: "\${CANDIDATE_WHEEL_CONTEXT:-$ROOT/.candidate-artifacts}"}, args: {CANDIDATE_WHEEL_MODE: "\${CANDIDATE_WHEEL_MODE:-0}", CANDIDATE_SOURCE_TREE: "\${CANDIDATE_SOURCE_TREE:-}"}}
     ports: ["$AWID_B_PORT:8010"]
     environment:
       AWID_DATABASE_URL: postgresql://aweb:disposable@postgres-b:5432/aweb
@@ -237,7 +237,7 @@ services:
       postgres-b: {condition: service_healthy}
       redis-b: {condition: service_healthy}
   aweb-a:
-    build: {context: "$ROOT", dockerfile: server/Dockerfile}
+    build: {context: "$ROOT", dockerfile: server/Dockerfile, additional_contexts: {candidate-wheels: "\${CANDIDATE_WHEEL_CONTEXT:-$ROOT/.candidate-artifacts}"}, args: {CANDIDATE_WHEEL_MODE: "\${CANDIDATE_WHEEL_MODE:-0}", CANDIDATE_SOURCE_TREE: "\${CANDIDATE_SOURCE_TREE:-}"}}
     ports: ["$AWEB_A_PORT:8000"]
     environment:
       AWEB_DATABASE_URL: postgresql://aweb:disposable@postgres-a:5432/aweb
@@ -256,7 +256,7 @@ services:
       awid-a: {condition: service_started}
       federation-dns: {condition: service_started}
   aweb-b:
-    build: {context: "$ROOT", dockerfile: server/Dockerfile}
+    build: {context: "$ROOT", dockerfile: server/Dockerfile, additional_contexts: {candidate-wheels: "\${CANDIDATE_WHEEL_CONTEXT:-$ROOT/.candidate-artifacts}"}, args: {CANDIDATE_WHEEL_MODE: "\${CANDIDATE_WHEEL_MODE:-0}", CANDIDATE_SOURCE_TREE: "\${CANDIDATE_SOURCE_TREE:-}"}}
     ports: ["$AWEB_B_PORT:8000"]
     environment:
       AWEB_DATABASE_URL: postgresql://aweb:disposable@postgres-b:5432/aweb

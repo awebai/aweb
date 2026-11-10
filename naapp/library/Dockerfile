@@ -1,6 +1,9 @@
 # syntax=docker/dockerfile:1
 # Build context: the aweb repository root, because library depends on the in-repo
 # awid and naapp-lib:  docker build -f naapp/library/Dockerfile .
+FROM scratch AS candidate-wheels
+COPY .candidate-artifacts /
+
 FROM python:3.12-slim
 
 ENV PYTHONDONTWRITEBYTECODE=1 \
@@ -28,7 +31,12 @@ COPY awid/src /app/awid/src
 COPY naapp-lib/pyproject.toml naapp-lib/README.md /app/naapp-lib/
 COPY naapp-lib/src /app/naapp-lib/src
 
-COPY .candidate-artifacts /candidate-artifacts
+COPY --from=candidate-wheels / /candidate-artifacts
+COPY scripts/install_release_wheels.py /usr/local/lib/aweb-install-wheels.py
+ARG CANDIDATE_WHEEL_MODE=0
+ARG CANDIDATE_SOURCE_TREE
+RUN python /usr/local/lib/aweb-install-wheels.py --validate-context --directory /candidate-artifacts \
+    --wheel-mode "$CANDIDATE_WHEEL_MODE" --source-tree "$CANDIDATE_SOURCE_TREE"
 
 WORKDIR /app/naapp/library
 
@@ -38,9 +46,9 @@ COPY naapp/library/pyproject.toml naapp/library/uv.lock naapp/library/README.md 
 RUN uv sync --frozen --no-install-project --no-dev --no-install-package awid-service --no-install-package aweb-naapp
 COPY naapp/library/src ./src
 COPY naapp/library/skills ./skills
-RUN if [ -f /candidate-artifacts/manifest.json ]; then \
+RUN if [ "$CANDIDATE_WHEEL_MODE" = 1 ]; then \
       uv sync --frozen --no-dev --no-editable --no-install-package awid-service --no-install-package aweb-naapp \
-      && python /candidate-artifacts/install.py --directory /candidate-artifacts --python /app/.venv/bin/python awid-service aweb-naapp; \
+      && python /candidate-artifacts/install.py --source-tree "$CANDIDATE_SOURCE_TREE" --directory /candidate-artifacts --python /app/.venv/bin/python awid-service aweb-naapp; \
     else uv sync --frozen --no-dev; fi
 
 RUN useradd --create-home --shell /usr/sbin/nologin library

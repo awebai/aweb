@@ -16,8 +16,9 @@ lint:
 	uv run ruff check .
 	uv run mypy src
 
-e2e: release-wheels
-	set -e; \
+e2e e2e-up: SHELL := /bin/bash
+e2e:
+	set -e; source ../../scripts/prepare-release-wheels.sh; \
 	network="$(NAAPP_E2E_PROJECT)_default"; connected=; \
 	cleanup() { \
 		status=$$?; trap - EXIT; \
@@ -37,8 +38,8 @@ e2e: release-wheels
 	fi; \
 	FOLIO_E2E=1 uv run pytest -q -m e2e
 
-e2e-up: release-wheels
-	docker compose -p $(NAAPP_E2E_PROJECT) -f docker-compose.e2e.yml up --build -d
+e2e-up:
+	set -e; source ../../scripts/prepare-release-wheels.sh; docker compose -p $(NAAPP_E2E_PROJECT) -f docker-compose.e2e.yml up --build -d
 
 e2e-down:
 	docker compose -p $(NAAPP_E2E_PROJECT) -f docker-compose.e2e.yml down -v --remove-orphans
@@ -76,7 +77,3 @@ prod-verify:
 
 prod-rollback:
 	uv run python -m aweb_naapp.ops --config $(PROD_CONFIG) rollback
-
-.PHONY: release-wheels
-release-wheels:
-	bash -c 'source ../../scripts/prepare-release-wheels.sh'

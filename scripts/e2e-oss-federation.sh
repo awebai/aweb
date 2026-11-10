@@ -531,7 +531,7 @@ case "$SERVER_MODE" in
     for context in "$ALPHA_SERVER_CONTEXT" "$BETA_SERVER_CONTEXT"; do
       mkdir "$context/candidate-wheels"
       if [[ "$candidate_wheels" == 1 ]]; then
-        cp -a "$REPO_ROOT/.candidate-artifacts/." "$context/candidate-wheels/"
+        cp -a "$CANDIDATE_WHEEL_CONTEXT/." "$context/candidate-wheels/"
       fi
     done
     cp "$REPO_ROOT/scripts/federation-wheel-server.Dockerfile" "$ALPHA_SERVER_CONTEXT/Dockerfile"
@@ -546,7 +546,8 @@ case "$SERVER_MODE" in
         AWEB_WHEEL_SHA256: $AWEB_ALPHA_WHEEL_SHA256
         AWEB_VERSION: $AWEB_ALPHA_VERSION
         MCP_VERSION: $AWEB_FED_E2E_MCP_VERSION
-        CANDIDATE_WHEELS: $candidate_wheels"
+        CANDIDATE_WHEELS: $candidate_wheels
+        CANDIDATE_SOURCE_TREE: ${CANDIDATE_SOURCE_TREE:-}"
     BETA_SERVER_BUILD="    build:
       context: $BETA_SERVER_CONTEXT
       dockerfile: Dockerfile
@@ -555,7 +556,8 @@ case "$SERVER_MODE" in
         AWEB_WHEEL_SHA256: $AWEB_BETA_WHEEL_SHA256
         AWEB_VERSION: $AWEB_BETA_VERSION
         MCP_VERSION: $AWEB_FED_E2E_MCP_VERSION
-        CANDIDATE_WHEELS: $candidate_wheels"
+        CANDIDATE_WHEELS: $candidate_wheels
+        CANDIDATE_SOURCE_TREE: ${CANDIDATE_SOURCE_TREE:-}"
     ;;
   *) echo "AWEB_FED_E2E_SERVER_MODE must be source or wheel, got $SERVER_MODE" >&2; exit 1 ;;
 esac
@@ -609,6 +611,11 @@ services:
     build:
       context: $REPO_ROOT
       dockerfile: awid/Dockerfile
+      additional_contexts:
+        candidate-wheels: ${CANDIDATE_WHEEL_CONTEXT:-$REPO_ROOT/.candidate-artifacts}
+      args:
+        CANDIDATE_WHEEL_MODE: ${CANDIDATE_WHEEL_MODE:-0}
+        CANDIDATE_SOURCE_TREE: ${CANDIDATE_SOURCE_TREE:-}
     ports:
       - "$AWID_PORT:8010"
     environment:

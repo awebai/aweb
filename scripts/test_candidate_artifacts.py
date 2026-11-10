@@ -81,8 +81,61 @@ class ManifestBytes(unittest.TestCase):
                         with self.assertRaisesRegex(VersionRefusal, 'build inputs'):
                             verify(out, root=root)
 
+    def test_image_build_requires_opt_in_and_matching_tree(self):
+        from install_release_wheels import validate_build_context
+        with tempfile.TemporaryDirectory() as temporary:
+            directory = Path(temporary)
+            (directory / '.gitignore').write_text('*\n')
+            validate_build_context(directory, '0', '')
+            (directory / 'manifest.json').write_text(json.dumps(dict(source_tree='a' * 40)))
+            with self.assertRaisesRegex(ValueError, 'CANDIDATE_WHEEL_MODE'):
+                validate_build_context(directory, '0', '')
+            with self.assertRaisesRegex(ValueError, 'source tree'):
+                validate_build_context(directory, '1', 'b' * 40)
+            with self.assertRaisesRegex(ValueError, 'source tree'):
+                validate_build_context(directory, '1', '')
+            validate_build_context(directory, '1', 'a' * 40)
+
+    def test_build_wrapper_rechecks_tree_before_invoking_docker(self):
+        from release_artifacts import build_inputs
+        with tempfile.TemporaryDirectory() as temporary:
+            directory = Path(temporary)
+            docker = directory / 'docker'
+            docker.write_text('#!/bin/sh\nprintf "BUILD_INVOKED\\n"\n')
+            docker.chmod(0o755)
+            payload = directory / 'fixture.whl'
+            payload.write_bytes(b'fixture')
+            tree = subprocess.check_output(['git', 'rev-parse', 'HEAD^{tree}'], cwd=ROOT, text=True).strip()
+            document = dict(source_tree=tree, build_inputs=build_inputs(ROOT),
+                files=[dict(path=payload.name, sha256=hashlib.sha256(payload.read_bytes()).hexdigest())])
+            manifest = directory / 'manifest.json'
+            manifest.write_text(json.dumps(document))
+            environment = dict(os.environ, CANDIDATE_ARTIFACT_DIR=str(directory),
+                CANDIDATE_CHECKOUT_ROOT=str(ROOT), AWEB_CANDIDATE_RESOURCE_LABEL='',
+                AWEB_CANDIDATE_REAL_DOCKER=str(docker))
+            command = ['bash', str(ROOT / 'candidate-gate/bin/docker'), 'build', '.']
+            good = subprocess.run(command, env=environment, capture_output=True, text=True)
+            self.assertEqual(good.returncode, 0, good.stderr)
+            self.assertIn('BUILD_INVOKED', good.stdout)
+            document['source_tree'] = 'b' * 40
+            manifest.write_text(json.dumps(document))
+            bad = subprocess.run(command, env=environment, capture_output=True, text=True)
+            self.assertNotEqual(bad.returncode, 0)
+            self.assertNotIn('BUILD_INVOKED', bad.stdout)
+            self.assertIn('different source tree', bad.stderr)
+
 
 class BuildOnce(unittest.TestCase):
+    def test_current_release_wheels_have_no_relocated_data(self):
+        import zipfile
+        with tempfile.TemporaryDirectory() as temporary:
+            for name, relative in PYTHON_PACKAGES.items():
+                with self.subTest(package=name):
+                    wheel = build_python(ROOT / relative, Path(temporary) / name)
+                    with zipfile.ZipFile(wheel) as archive:
+                        self.assertFalse([path for path in archive.namelist()
+                                          if path.split('/')[0].endswith('.data')])
+
     def test_all_python_release_files_are_retained_and_reuse_is_verified(self):
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
@@ -104,6 +157,15 @@ class BuildOnce(unittest.TestCase):
             manifest = verify(out, root=root)
             self.assertEqual(len(manifest['files']), 2 * len(PYTHON_PACKAGES))
             self.assertEqual({row['package'] for row in manifest['files']}, set(PYTHON_PACKAGES))
+            from release_artifacts import materialize
+            (root / 'scripts').mkdir(exist_ok=True)
+            for helper in ['install_release_wheels.py', 'release-wheel-entrypoint.sh']:
+                shutil.copy2(ROOT / 'scripts' / helper, root / 'scripts' / helper)
+            context = materialize(root, out)
+            self.assertFalse(context.is_relative_to(root))
+            self.assertFalse((root / '.candidate-artifacts').exists())
+            self.assertTrue((context / 'manifest.json').is_file())
+            shutil.rmtree(context)
             mtimes = {path.name: path.stat().st_mtime_ns for path in out.iterdir()}
             prepare_python(root, out)
             self.assertEqual({path.name: path.stat().st_mtime_ns for path in out.iterdir()}, mtimes,

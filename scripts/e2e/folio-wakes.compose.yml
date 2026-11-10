@@ -36,6 +36,11 @@ services:
     build:
       context: .
       dockerfile: awid/Dockerfile
+      additional_contexts:
+        candidate-wheels: ${CANDIDATE_WHEEL_CONTEXT:-../../.candidate-artifacts}
+      args:
+        CANDIDATE_WHEEL_MODE: ${CANDIDATE_WHEEL_MODE:-0}
+        CANDIDATE_SOURCE_TREE: ${CANDIDATE_SOURCE_TREE:-}
     environment:
       AWID_DATABASE_URL: postgresql://aweb:aweb@postgres:5432/aweb
       AWID_REDIS_URL: redis://redis:6379/0
@@ -69,6 +74,11 @@ services:
     build:
       context: .
       dockerfile: server/Dockerfile
+      additional_contexts:
+        candidate-wheels: ${CANDIDATE_WHEEL_CONTEXT:-../../.candidate-artifacts}
+      args:
+        CANDIDATE_WHEEL_MODE: ${CANDIDATE_WHEEL_MODE:-0}
+        CANDIDATE_SOURCE_TREE: ${CANDIDATE_SOURCE_TREE:-}
     environment:
       AWEB_DATABASE_URL: postgresql://aweb:aweb@postgres:5432/aweb
       AWEB_REDIS_URL: redis://redis:6379/0
@@ -109,6 +119,11 @@ services:
     build:
       context: .
       dockerfile: naapp/folio/Dockerfile
+      additional_contexts:
+        candidate-wheels: ${CANDIDATE_WHEEL_CONTEXT:-../../.candidate-artifacts}
+      args:
+        CANDIDATE_WHEEL_MODE: ${CANDIDATE_WHEEL_MODE:-0}
+        CANDIDATE_SOURCE_TREE: ${CANDIDATE_SOURCE_TREE:-}
     environment:
       FOLIO_DATABASE_URL: postgresql://aweb:aweb@postgres:5432/library
       FOLIO_AWID_REGISTRY_URL: http://awid:8010

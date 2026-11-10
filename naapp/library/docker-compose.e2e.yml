@@ -27,6 +27,11 @@ services:
     build:
       context: ${LIBRARY_E2E_AWEB_CONTEXT:-../..}
       dockerfile: awid/Dockerfile
+      additional_contexts:
+        candidate-wheels: ${CANDIDATE_WHEEL_CONTEXT:-../../.candidate-artifacts}
+      args:
+        CANDIDATE_WHEEL_MODE: ${CANDIDATE_WHEEL_MODE:-0}
+        CANDIDATE_SOURCE_TREE: ${CANDIDATE_SOURCE_TREE:-}
     environment:
       AWID_DATABASE_URL: postgresql://library:library@postgres:5432/library
       AWID_REDIS_URL: redis://redis:6379/0

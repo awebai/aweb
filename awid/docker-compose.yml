@@ -29,6 +29,11 @@ services:
     build:
       context: ..
       dockerfile: awid/Dockerfile
+      additional_contexts:
+        candidate-wheels: ${CANDIDATE_WHEEL_CONTEXT:-../.candidate-artifacts}
+      args:
+        CANDIDATE_WHEEL_MODE: ${CANDIDATE_WHEEL_MODE:-0}
+        CANDIDATE_SOURCE_TREE: ${CANDIDATE_SOURCE_TREE:-}
     restart: unless-stopped
     ports:
       - "${AWID_PORT:-8010}:8010"

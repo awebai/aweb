@@ -103,10 +103,16 @@ def write_manifest(root: Path, directory: Path) -> None:
         else:
             continue
         rows.append(dict(path=path.name, package=name, version=version, sha256=digest(path)))
+    from release_stamp import commit_time
     document = dict(schema=2, build_inputs=build_inputs(root),
         source_sha=subprocess.check_output(['git', 'rev-parse', 'HEAD'], cwd=root, text=True).strip(),
         source_tree=subprocess.check_output(['git', 'rev-parse', 'HEAD^{tree}'], cwd=root, text=True).strip(),
         files=rows)
+    document['source_time'] = commit_time(root, document['source_sha'])
+    cli = next((row for row in rows if row['package'] == '@awebai/aw'), None)
+    if cli:
+        from publish_release import aw_ldflags
+        document['cli_ldflags'] = aw_ldflags(cli['version'], document['source_sha'])
     manifest_path(directory).write_text(json.dumps(document, indent=2, sort_keys=True) + '\n')
     (directory / 'SHA256SUMS').write_text(''.join(f'{row["sha256"]}  {row["path"]}\n' for row in rows))
     verify(directory, root=root)
@@ -160,12 +166,12 @@ def prepare_npm(root: Path, directory: Path, prefix: str) -> None:
     write_manifest(root, directory)
 
 
-def materialize(root: Path, directory: Path) -> None:
+def materialize(root: Path, directory: Path) -> Path:
     """Docker contexts receive copies whose digests are checked at installation."""
     import shutil
     manifest = verify(directory, root=root)
-    destination = root / '.candidate-artifacts'
-    destination.mkdir(exist_ok=True)
+    import tempfile
+    destination = Path(tempfile.mkdtemp(prefix='candidate-wheel-context-'))
     for path in destination.glob('*.whl'):
         path.unlink()
     shutil.copy2(manifest_path(directory), destination / 'manifest.json')
@@ -174,13 +180,15 @@ def materialize(root: Path, directory: Path) -> None:
             shutil.copy2(directory / row['path'], destination / row['path'])
     shutil.copy2(root / 'scripts/install_release_wheels.py', destination / 'install.py')
     shutil.copy2(root / 'scripts/release-wheel-entrypoint.sh', destination / 'entrypoint.sh')
+    return destination
 
 
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument('action', choices=['python', 'npm', 'materialize', 'manifest', 'verify', 'wheel'])
+    parser.add_argument('action', choices=['python', 'npm', 'materialize', 'manifest', 'verify', 'wheel', 'compare'])
     parser.add_argument('--directory', type=Path, default=os.environ.get('CANDIDATE_ARTIFACT_DIR'))
     parser.add_argument('--root', type=Path, default=ROOT)
+    parser.add_argument('--previous-directory', type=Path)
     parser.add_argument('--package')
     parser.add_argument('--prefix', choices=[*NPM_LANES, 'aw-v'])
     args = parser.parse_args()
@@ -188,13 +196,18 @@ def main() -> int:
         parser.error('CANDIDATE_ARTIFACT_DIR or --directory is required')
     try:
         if args.action == 'python':
+            if subprocess.check_output(['git', 'status', '--porcelain', '--untracked-files=all'], cwd=args.root):
+                raise VersionRefusal('source checkout is dirty')
             prepare_python(args.root, args.directory.resolve())
         elif args.action == 'npm':
             prepare_npm(args.root, args.directory.resolve(), args.prefix)
         elif args.action == 'materialize':
-            materialize(args.root, args.directory.resolve())
+            print(materialize(args.root, args.directory.resolve()))
         elif args.action == 'manifest':
             write_manifest(args.root, args.directory.resolve())
+        elif args.action == 'compare':
+            from release_stamp import compare_restamp
+            compare_restamp(args.previous_directory, args.directory)
         elif args.action == 'verify':
             verify(args.directory, root=args.root)
         else:

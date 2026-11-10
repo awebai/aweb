@@ -142,6 +142,7 @@ test: test-egress-controls check-aw-commit-repo-stamp check-cli-go-tidy test-ide
 test-shipping:
 	python3 scripts/test_release_dependency_regression.py
 	python3 scripts/test_candidate_artifacts.py
+	python3 scripts/test_release_stamp.py
 	python3 scripts/test_fixture_repo.py
 	python3 scripts/test_shipping.py
 	python3 scripts/test_aw_npm_publication.py
@@ -654,7 +655,8 @@ _candidate-artifact-cli:
 
 _candidate-artifact-manifest:
 	python3 scripts/release_artifacts.py verify
-	python3 scripts/release_artifacts.py materialize
+	@if test -f "$$CANDIDATE_ARTIFACT_DIR/.previous/manifest.json"; then \
+		python3 scripts/release_artifacts.py compare --previous-directory "$$CANDIDATE_ARTIFACT_DIR/.previous"; fi
 
 # aweb-naapp's and aweb-naapp-testing's release artifacts as a consumer sees them:
 # each wheel ships its package files, pins its dependencies, and installs and

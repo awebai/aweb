@@ -3,12 +3,25 @@
 import argparse
 import hashlib
 import json
+import os
 from pathlib import Path
 import subprocess
 
 
-def selected_wheels(directory, packages):
+def validate_build_context(directory, wheel_mode, source_tree):
+    if wheel_mode != '1':
+        if any(path.name != '.gitignore' for path in directory.iterdir()):
+            raise ValueError('candidate artifacts require explicit CANDIDATE_WHEEL_MODE=1')
+        return
     document = json.loads((directory / 'manifest.json').read_text())
+    if not source_tree or document.get('source_tree') != source_tree:
+        raise ValueError('manifest source tree does not match the image build source tree')
+
+
+def selected_wheels(directory, packages, source_tree=None):
+    document = json.loads((directory / 'manifest.json').read_text())
+    if source_tree is not None:
+        validate_build_context(directory, '1', source_tree)
     selected = []
     for package in packages:
         rows = [row for row in document['files'] if row['package'] == package and row['path'].endswith('.whl')]
@@ -26,8 +39,8 @@ def selected_wheels(directory, packages):
     return selected
 
 
-def install(directory, python, packages, *, resolve=False, requirements=()):
-    selected = selected_wheels(directory, packages)
+def install(directory, python, packages, *, resolve=False, requirements=(), source_tree=None):
+    selected = selected_wheels(directory, packages, source_tree)
     subprocess.run(['uv', 'pip', 'install', '--python', str(python), '--reinstall',
                     *([] if resolve else ['--no-deps']), *requirements, *(str(path) for _, path in selected)], check=True)
     check(directory, python, packages)
@@ -74,13 +87,20 @@ for row in json.loads(sys.argv[1]):
 if __name__ == '__main__':
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('--directory', type=Path, required=True)
-    parser.add_argument('--python', type=Path, required=True)
+    parser.add_argument('--python', type=Path)
+    parser.add_argument('--source-tree', default=os.environ.get('CANDIDATE_SOURCE_TREE'))
+    parser.add_argument('--validate-context', action='store_true')
+    parser.add_argument('--wheel-mode', default='0')
     parser.add_argument('--check', action='store_true', help='verify the live environment without installing')
     parser.add_argument('--resolve', action='store_true')
     parser.add_argument('--with', dest='requirements', action='append', default=[])
-    parser.add_argument('packages', nargs='+')
+    parser.add_argument('packages', nargs='*')
     args = parser.parse_args()
-    if args.check:
+    if args.validate_context:
+        validate_build_context(args.directory, args.wheel_mode, args.source_tree)
+    elif not args.python or not args.packages:
+        parser.error('--python and at least one package are required')
+    elif args.check:
         check(args.directory, args.python, args.packages)
     else:
-        install(args.directory, args.python, args.packages, resolve=args.resolve, requirements=args.requirements)
+        install(args.directory, args.python, args.packages, resolve=args.resolve, requirements=args.requirements, source_tree=args.source_tree)

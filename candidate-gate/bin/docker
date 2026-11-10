@@ -12,6 +12,23 @@ if [[ -z "$cmd" ]]; then
 fi
 shift || true
 
+# Revalidate the retained manifest at the actual build boundary, not only when
+# a journey prepared its temporary context. Tool/bootstrap builds precede C1.
+verify_release_build() {
+  if [[ -n "${CANDIDATE_ARTIFACT_DIR:-}" && -f "$CANDIDATE_ARTIFACT_DIR/manifest.json" ]]; then
+    local root="${CANDIDATE_CHECKOUT_ROOT:-$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd -P)}"
+    python3 "$root/scripts/release_artifacts.py" verify --root "$root" --directory "$CANDIDATE_ARTIFACT_DIR"
+  fi
+}
+case "$cmd" in
+  build) verify_release_build ;;
+  buildx) [[ "${1:-}" != build ]] || verify_release_build ;;
+  compose)
+    for arg in "$@"; do
+      if [[ "$arg" == build || "$arg" == --build ]]; then verify_release_build; break; fi
+    done ;;
+esac
+
 label="${AWEB_CANDIDATE_RESOURCE_LABEL:-}"
 sibling_cpus="${AWEB_CANDIDATE_SIBLING_CPUS:-2}"
 sibling_memory="${AWEB_CANDIDATE_SIBLING_MEMORY:-4g}"

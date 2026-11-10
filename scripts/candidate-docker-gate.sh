@@ -107,7 +107,7 @@ A2A_GATEWAY_VERSION="${A2A_GATEWAY_VERSION:-$(python3 "$ROOT/scripts/next_tag_ve
 # are external inputs even when the caller did not supply an override.
 TREE="$(git -C "$ROOT" rev-parse 'HEAD^{tree}')"
 LEDGER="${AWEB_GATE_LEDGER:-$HOME/.cache/aweb-oss/candidate-gate-ledger.tsv}"
-external_inputs="SOURCE_COMMIT=$SOURCE_SHA"$'\n'"CLI_VERSION=$CLI_VERSION"$'\n'"A2A_GATEWAY_VERSION=$A2A_GATEWAY_VERSION"$'\n'
+external_inputs="CLI_VERSION=$CLI_VERSION"$'\n'"A2A_GATEWAY_VERSION=$A2A_GATEWAY_VERSION"$'\n'
 # The same tree must be requalified when the released client changes. Resolve
 # latest exactly once here, for every stage selection. Focused and full callers
 # must share a key so the full gate can reuse their completed stages.
@@ -173,19 +173,25 @@ exec 9>>"$(dirname "$LEDGER")/gate-locks/$TREE.lock"
 python3 -c 'import fcntl; fcntl.flock(9, fcntl.LOCK_EX | fcntl.LOCK_NB)' 2>/dev/null \
   || refuse "tree $TREE is already being gated"
 recorded() {
-  awk -F'\t' -v key="$KEY" -v stage="$1" '$1 == key && $2 == stage' "$LEDGER" | tail -1
+  awk -F'\t' -v key="$KEY" -v stage="$1" -v sha="$SOURCE_SHA" '$1 == key && $2 == stage && (stage != "artifacts" || $4 == sha)' "$LEDGER" | tail -1
 }
-failed="$(awk -F'\t' -v key="$KEY" '$1 == key && $3 == "failed"' "$LEDGER" | tail -1)"
+failed="$(awk -F'\t' -v key="$KEY" -v sha="$SOURCE_SHA" '$1 == key && $3 == "failed" && ($2 != "artifacts" || $4 == sha)' "$LEDGER" | tail -1)"
 if [[ -n "$failed" ]]; then
   printf 'gate: tree %s already FAILED %s (log %s).\n' "$TREE" "$(cut -f2 <<<"$failed")" "$(cut -f6 <<<"$failed")" >&2
   printf '%s\n' "Fix the code and gate the changed tree. For infrastructure failures only, the coordinator removes the failed ledger line and uses GATE_RERUN_REASON='<reason>'." >&2
   exit 1
 fi
-ARTIFACT_CACHE="$LEDGER_LOGS/$KEY-artifacts"
+ARTIFACT_CACHE="$LEDGER_LOGS/$KEY-$SOURCE_SHA-artifacts"
 if [[ " $REQUESTED " == *" artifacts "* && "$(recorded artifacts | cut -f3)" == passed ]]; then
   [[ -f "$ARTIFACT_CACHE/complete" ]] || refuse "retained release artifacts are missing; restore the gated bytes before reusing their results"
   python3 "$ROOT/scripts/release_artifacts.py" verify --directory "$ARTIFACT_CACHE" --root "$ROOT" \
     || refuse "retained release artifacts failed verification"
+fi
+# Compare a new commit's artifacts to the last proved stamp of this tree.
+previous_sha="$(awk -F'\t' -v key="$KEY" -v sha="$SOURCE_SHA" '$1 == key && $2 == "artifacts" && $3 == "passed" && $4 != sha {print $4}' "$LEDGER" | tail -1)"
+PREVIOUS_ARTIFACT_CACHE=""
+if [[ -n "$previous_sha" ]]; then
+  PREVIOUS_ARTIFACT_CACHE="$LEDGER_LOGS/$KEY-$previous_sha-artifacts"
 fi
 pending=""
 for stage in $REQUESTED; do
@@ -253,6 +259,13 @@ suite_projects=(
 [[ "$LOG_DIR" == "/tmp/aweb-candidate-gate-$SOURCE_SHA" ]] || refuse "unsafe log directory"
 rm -rf -- "$LOG_DIR"
 mkdir -p "$LOG_DIR/artifacts" "$ARTIFACT_CACHE"
+if [[ -n "$PREVIOUS_ARTIFACT_CACHE" && ! -f "$ARTIFACT_CACHE/complete" ]]; then
+  [[ -f "$PREVIOUS_ARTIFACT_CACHE/complete" ]] || refuse "previous stamp artifacts are missing"
+  python3 - "$PREVIOUS_ARTIFACT_CACHE" "$ARTIFACT_CACHE/.previous" <<'PYTHON'
+import shutil, sys
+shutil.copytree(sys.argv[1], sys.argv[2], dirs_exist_ok=True, ignore=shutil.ignore_patterns('.previous'))
+PYTHON
+fi
 : > "$LOG_DIR/owned-resources.tsv"
 printf '%s\n' "$run_id" > "$LOG_DIR/run-id"
 source "$ROOT/scripts/candidate-cleanup.sh"
