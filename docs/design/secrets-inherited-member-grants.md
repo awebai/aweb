@@ -168,20 +168,30 @@ independent stop.
 
 The consequences:
 
-- **Runner jobs.** A job admitted while no runner is connected, and claimed
-  after its deadline, refuses at the claim fence
+- **Refused before admission commits.** A brokered request is admitted and
+  dispatched in one flow, and an approval is consumed only when admission
+  commits ([§11.1](secrets.md#111-states)). A refusal there leaves the
+  request and any unconsumed approval available for exact re-submission (the
+  same `request_id` and request bytes), as `capacity_unavailable` does
+  ([§7.3](secrets.md#73-network-boundary-egress-guard)). The refusal is not
+  the request's final receipt. Re-admission takes fresh membership evidence,
+  with the grant, approval expiry and idempotency checks as normal. In
+  practice brokered requests are unaffected.
+- **Runner jobs refused at the claim fence.** A job admitted while no runner is
+  connected, and claimed after its deadline, refuses at the claim fence
   ([§9.3](secrets.md#93-transport)) with `current_membership_unavailable`.
-  The refusal is final for that dispatch, and only re-submission recovers it.
+  Admission has already committed, so any approval was consumed then, and
+  the claim's rollback does not restore it. The intent closes as `refused`, the
+  existing `admitted` to `refused` transition, in its own transaction after
+  the rollback, so it cannot be claimed again with the old deadline. No
+  assignment row exists and no credential is released. Recovery is a fresh
+  request; where the policy needs approval, that means a fresh approval.
   Because a cache hit keeps the original expiry, the deadline can fall under
   60 seconds after admission. That is the availability cost: a queued job
-  needs a connected runner, or a re-submit.
-- **Brokered requests** are admitted and dispatched in one flow, so in practice
-  they are unaffected.
+  needs a connected runner. Without one, every queued job that needs
+  approval needs a second human approval.
 - **Exposure to a withdrawn path** is the verifier's observation window, with
   no added queue delay.
-- Whether a re-submission reuses its `request_id` and the unconsumed approval
-  is fixed with the vectors, under the idempotency rules of
-  [§11.2](secrets.md#112-idempotency).
 
 ## Currentness, withdrawal and policy revisions
 
@@ -213,8 +223,12 @@ creates a child secret with a grant from pinned template terms. When the
 requester is an inherited member, that grant names the requester's own
 principal, never the inherited subject that admitted it. A credential one
 worker created is therefore not usable by the rest of its line unless an owner
-grants it. Today `store_as_secret` is refused (`store_as_secret_unavailable`),
-so the rule takes effect when derived-secret creation is enabled.
+grants it. Its use is counted in that leaf's own buckets. So each worker's
+child has its own bucket, and the number of such children is bounded by the
+line's use bucket and the child's lifetime cap. That is the one place where a
+line's spawning adds buckets. Today `store_as_secret` is refused
+(`store_as_secret_unavailable`), so the rule takes effect when derived-secret
+creation is enabled.
 
 ## Approvals and four eyes
 
@@ -299,9 +313,9 @@ Then, for each worker, with no human act:
 | Owner revokes the grant | `grant_missing` at admission; `grant_revoked` at the fence for admitted intents. |
 | Approver linked to A_H, `distinct_approver: required`, B_H requests | A_H's approver is excluded. |
 | Ten workers of A_H's line request S together | They share one `principal_secret` bucket; spawning more does not raise it. |
-| A request's membership deadline passes during a proven final-fence lock wait | `503 current_membership_unavailable` in that transaction: no approval consumed, no credential released, nothing sent. |
-| The deadline passes while the admission transaction persists it | Refused: no approval consumed, no credential released, nothing sent. |
-| Another worker claims a queued job after the requester's deadline | `current_membership_unavailable`: no approval consumed, no credential released, no assignment row; re-submission recovers. |
+| A brokered request's membership deadline passes during a proven final-fence lock wait | `503 current_membership_unavailable` in that transaction: no approval consumed, no credential released, nothing sent; exact re-submission recovers. |
+| The deadline passes while the admission transaction persists it | Refused: no approval consumed, no credential released, nothing sent; exact re-submission recovers. |
+| Another worker claims a queued job after the requester's deadline | `current_membership_unavailable`: the intent closes `refused`, no assignment row, no credential released, nothing sent; the approval consumed at admission stays consumed, and a fresh request recovers. |
 | Membership evidence unavailable | The verifier's 503; no grant is read and no fallback applies. |
 
 ## Work this creates, after acceptance
