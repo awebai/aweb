@@ -194,7 +194,13 @@ receipt, recorded under the consumed owner act, as for the contact acts
   part of that effect, not a separate `role.revoked` receipt, because the
   holding continues.
 - **Revoke.** One `APPROVER_RETIRED`, a `role.revoked` narrowing, under the
-  owner-act actor.
+  owner-act actor, recorded at the revoke's time. It records the end of the
+  holding, so it is recorded even when containment already retired the
+  holder's approver. Its `subject_ref` is the holding's latest approver
+  subject or, for a holding that never had an approver, the holding's
+  `principal`. The recorder accepts it only when the consumed act's `role`
+  and `principal` are the holding record's, and the holding has ended in the
+  same transaction.
 - **Containment** that revokes a holder's credential names it through the
   authorization row's `credential_sha256`, since no completion link exists
   for it. It computes that digest from the stored credential of the event's
