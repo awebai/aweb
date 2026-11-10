@@ -768,6 +768,34 @@ async def undelivered_critical_events(
     return UndeliveredFaults(tuple(events), rows[0]["total"] if rows else 0)
 
 
+async def oldest_undelivered_age_seconds(db: AsyncDatabaseManager) -> float | None:
+    """The age of the oldest event not yet delivered: one not materialized, or
+    one with a delivery pending or stalled. None when there is none.
+
+    It reads events that are not drained, oldest first through their partial
+    indexes, and stops at the first match, so delivered history is never read.
+    """
+    value = await db.fetch_value(
+        """
+        SELECT EXTRACT(EPOCH FROM NOW() - min(created_at))
+        FROM (
+            (SELECT created_at FROM {{tables.outbox_events}}
+             WHERE materialized_at IS NULL
+             ORDER BY position LIMIT 1)
+            UNION ALL
+            (SELECT e.created_at FROM {{tables.outbox_events}} e
+             WHERE e.materialized_at IS NOT NULL AND e.drained_at IS NULL
+               AND EXISTS (
+                 SELECT 1 FROM {{tables.outbox_deliveries}} d
+                 WHERE d.event_id = e.event_id AND d.state IN ('pending', 'stalled')
+               )
+             ORDER BY e.position LIMIT 1)
+        ) AS oldest
+        """
+    )
+    return float(value) if value is not None else None
+
+
 async def outbox_status(db: AsyncDatabaseManager, channel: str | None = None) -> OutboxStatus:
     """Per target: undelivered, stalled, dead-letter (conflict or rejected, not
     yet acknowledged) and cancelled counts, and the age of the oldest

@@ -52,7 +52,7 @@ or bypass Host routing to make a check pass.
 | Secrets `/health` and `/ready` | Inspect selected-provider, database and delivery checks. Both origins and all three health routes carry `labels.custody_mode`. The legacy `checks.kms` slot checks the selected provider, including local-key mode. A failed check and its mode are separate facts. | Source landed; packaged lab pending |
 | Secrets outbox age or stalled delivery | Use the owner audit-delivery view and the configured `hook_events_stalled_after_seconds` admission bound. Correlate target and event IDs with the receiver; do not delete outbox rows or treat retry as a new event. | Pending |
 | Logs `/live` | Liveness only. | Pending |
-| Logs `/ready` | Database and outbox query must answer. An old outbox does not itself make the current Logs readiness check fail. Inspect its age separately. | Pending |
+| Logs `/ready` | The database must answer. Neither an old outbox nor a backlog read that does not answer in time makes the readiness check fail. Inspect the age on `/health`. | Pending |
 | Logs `/health` | Always HTTP 200 with check detail; results are cached. A 200 alone is not a healthy dependency verdict. | Pending |
 | Logs checkpoint failure | The periodic checkpoint loop logs its failure; it is not currently a readiness check. Escalate a sanitized failure/status and last successful checkpoint metadata. Chain verification is available today only through a designated reader's console-session `/v1/verify`; there is no operator-side verification tool. | Operational gap: no dedicated checkpoint diagnostic or operator verification surface |
 

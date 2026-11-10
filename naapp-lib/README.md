@@ -274,7 +274,10 @@ Operator rules:
 the app's dependency checks and report each by name: `ready` is 503 when any
 check fails, and `health` always answers 200. The runtime checks its database
 and reports the age of its oldest undelivered outbox event
-(`NaappRuntime.health_checks()`). An app adds its own as async callables that
+(`NaappRuntime.health_checks()`). The age is a figure, not a dependency: no
+backlog fails the `outbox` check, the read stops at the oldest undelivered
+event without reading delivered history, and when it does not answer within
+2 s the figure is left out. An app adds its own as async callables that
 return a `CheckResult`. A check that raises, or does not answer within 5 s,
 fails, and its error is logged, never served. `/ready` serves only whether each
 check passed; `/health` adds each check's detail, whose values are numbers,
