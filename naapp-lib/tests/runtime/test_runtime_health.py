@@ -88,6 +88,21 @@ async def test_the_outbox_reports_the_age_of_its_oldest_undelivered_event(
         assert 90 <= detail["oldest_undelivered_age_seconds"] < 120
 
 
+async def test_a_backlog_read_that_does_not_answer_in_time_leaves_the_outbox_check_passing(
+    tmp_path: Path, database_url: str, monkeypatch: pytest.MonkeyPatch, caplog
+) -> None:
+    import aweb_naapp.runtime.app as app_module
+
+    monkeypatch.setattr(app_module, "OUTBOX_BACKLOG_READ_TIMEOUT_SECONDS", 0, raising=False)
+    runtime = _runtime(tmp_path, database_url)
+    app = FastAPI(lifespan=runtime.lifespan)
+    async with app.router.lifespan_context(app):
+        assert await _results(runtime) == {"database": (True, {}), "outbox": (True, {})}
+    assert [record.getMessage() for record in caplog.records if record.levelname == "ERROR"] == [
+        "Outbox backlog could not be read"
+    ]
+
+
 async def test_nothing_is_healthy_outside_the_lifespan(tmp_path: Path) -> None:
     runtime = _runtime(tmp_path, "postgresql://localhost/unused")
     assert await _results(runtime) == {"database": (False, {}), "outbox": (False, {})}

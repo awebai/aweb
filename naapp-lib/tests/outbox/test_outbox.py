@@ -36,6 +36,7 @@ from aweb_naapp.outbox import (
     latest_receipt,
     mint_event_id,
     next_sequence,
+    oldest_undelivered_age_seconds,
     outbox_status,
     redrive,
     undelivered_critical_events,
@@ -544,6 +545,80 @@ async def test_status_reports_per_target_backlog_and_its_oldest_age(db) -> None:
     assert status.targets["b"].pending == 0
     assert status.targets["b"].oldest_undelivered_age_seconds is None
     assert status.unmaterialized == {}
+
+
+async def _age_events(db: AsyncDatabaseManager, seconds: int) -> None:
+    await db.execute(
+        "UPDATE {{tables.outbox_events}} SET created_at = NOW() - $1 * INTERVAL '1 second'",
+        seconds,
+    )
+
+
+async def test_the_oldest_undelivered_age_covers_unresolved_events_and_retried_deliveries(
+    db,
+) -> None:
+    assert await oldest_undelivered_age_seconds(db) is None
+    async with db.transaction() as tx:
+        await enqueue(tx, _event())
+    await _age_events(db, 90)
+    unresolved = await oldest_undelivered_age_seconds(db)
+    assert unresolved is not None and 90 <= unresolved < 120
+
+    resolver = Targets([Target("a")])
+    await drain(
+        db,
+        channel="default",
+        resolver=resolver,
+        transport=Scripted({"a": Retryable("ConnectError")}),
+        policy=_POLICY,
+    )
+    retried = await oldest_undelivered_age_seconds(db)
+    assert retried is not None and 90 <= retried < 120
+
+    await _make_due(db)
+    await drain(
+        db,
+        channel="default",
+        resolver=resolver,
+        transport=Scripted({"a": Acked("delivered", None)}),
+        policy=_POLICY,
+    )
+    assert await oldest_undelivered_age_seconds(db) is None
+
+
+async def test_the_oldest_undelivered_age_skips_ended_deliveries_ahead_of_a_pending_one(
+    db,
+) -> None:
+    rejected, pending = _event(b"rejected"), _event(b"pending")
+    async with db.transaction() as tx:
+        await enqueue(tx, rejected)
+    await drain(
+        db,
+        channel="default",
+        resolver=Targets([Target("a")]),
+        transport=Scripted({"a": Unacceptable("too_large")}),
+        policy=_POLICY,
+    )
+    await _age_events(db, 600)
+    assert (await _states(db)) == {"a": "rejected"}
+    assert await oldest_undelivered_age_seconds(db) is None
+
+    async with db.transaction() as tx:
+        await enqueue(tx, pending)
+    await db.execute(
+        "UPDATE {{tables.outbox_events}} SET created_at = NOW() - INTERVAL '90 seconds'"
+        " WHERE event_id = $1",
+        pending.event_id,
+    )
+    await drain(
+        db,
+        channel="default",
+        resolver=Targets([Target("b")]),
+        transport=Scripted({"b": Retryable("ConnectError")}),
+        policy=_POLICY,
+    )
+    age = await oldest_undelivered_age_seconds(db)
+    assert age is not None and 90 <= age < 120
 
 
 async def test_a_critical_event_with_no_surviving_delivery_is_a_fault(db) -> None:
