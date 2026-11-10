@@ -289,19 +289,32 @@ async def test_apply_deletes_every_dead_row_in_batches(aweb_cloud_db):
 
 
 @pytest.mark.asyncio
-async def test_each_rule_has_an_index_on_its_age_column(aweb_cloud_db):
+async def test_each_rule_selects_its_dead_rows_through_an_index_on_the_age_column(aweb_cloud_db):
     db = aweb_cloud_db.aweb_db
-    rows = await db.fetch_all(
-        "SELECT tablename, indexdef FROM pg_indexes WHERE schemaname = 'aweb'"
-    )
+    indexes = {
+        "app_events": "idx_app_events_created",
+        "control_signals": "idx_control_signals_consumed",
+        "federation_mutation_outbox": "idx_federation_mutation_outbox_delivered",
+        "lifecycle_side_effect_outbox": "idx_lifecycle_side_effect_outbox_delivered",
+    }
     for rule in DEAD_ROW_RULES:
-        leading = [
-            row["indexdef"]
-            for row in rows
-            if row["tablename"] == rule.table
-            and f"({rule.age_column})" in row["indexdef"].replace(" DESC", "")
-        ]
-        assert leading, f"{rule.table} has no index on ({rule.age_column})"
+        async with db.transaction() as tx:
+            await tx.execute("SET LOCAL enable_seqscan = off")
+            plan = await tx.fetch_all(
+                f"""
+                EXPLAIN SELECT {rule.key} FROM {{{{tables.{rule.table}}}}}
+                WHERE {rule.age_column} < NOW() - INTERVAL '30 days'
+                LIMIT 1000
+                """
+            )
+        text = "\n".join(row["QUERY PLAN"] for row in plan)
+        assert indexes[rule.table] in text, text
+
+
+@pytest.mark.asyncio
+async def test_batch_size_below_one_is_refused(aweb_cloud_db):
+    with pytest.raises(ValueError):
+        await delete_dead_rows(aweb_cloud_db.aweb_db, apply=True, batch_size=0)
 
 
 @pytest.mark.asyncio
