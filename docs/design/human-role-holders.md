@@ -278,7 +278,15 @@ async def refresh_holding_certificate(
   through `refresh_holding_certificate`, once the handoff has verified the
   new certificate and its team and principal equal the holding's. The
   refresh writes nothing and returns false when the holding's `held_since`
-  no longer equals the one given. It is `None` only for a holding that has
+  no longer equals the one given. It runs in its own short transaction,
+  after the login's transaction has committed: the installation fence, then
+  the refresh, and no B3 or session row. It never runs in a transaction
+  that holds the holding `FOR SHARE`, because upgrading that lock deadlocks
+  two concurrent logins for one holding. The certificate was verified in
+  the login under its original deadline, so committing it afterwards grants
+  nothing. When the refresh returns false, the session keeps its own
+  certificate and nothing else changes; the next use fails the holding
+  comparison. It is `None` only for a holding that has
   none retained, such as one made before this contract. Its use then
   refuses with `403 principal_not_member` until a `session` handoff
   refreshes it. A session keeps the certificate its own handoff presented,
@@ -356,4 +364,5 @@ Each is filed as one reviewed change:
   certificate refresh, to the signatures in
   [Reading a holding](#reading-a-holding), and logs' adoption of it
   (aweb-acgh.16.44). The console handoff reads a holding's certificate
-  through it and keeps no copy of a holding.
+  through it, keeps no copy of a holding, and refreshes the certificate after
+  its login commits, with a test of two concurrent logins for one holding.
