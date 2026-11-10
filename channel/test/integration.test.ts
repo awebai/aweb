@@ -782,7 +782,7 @@ async function ensureServer(tempRoot: string): Promise<ServerHandle> {
     );
   }
   if (!exactInputs.some(Boolean)) {
-    const prepared = await runCommand("bash", ["-c", "source scripts/prepare-release-wheels.sh; python3 -c 'import json,os; print(\"WHEEL_CONTEXT=\" + json.dumps({k: os.environ[k] for k in [\"CANDIDATE_WHEEL_CONTEXT\",\"CANDIDATE_SOURCE_TREE\"]}))'"],
+    const prepared = await runCommand("bash", ["-c", "set -e; source scripts/prepare-release-wheels.sh; cp -a \"$CANDIDATE_WHEEL_CONTEXT\" \"$1/candidate-wheels\"; export CANDIDATE_WHEEL_CONTEXT=\"$1/candidate-wheels\"; python3 -c 'import json,os; print(\"WHEEL_CONTEXT=\" + json.dumps({k: os.environ[k] for k in [\"CANDIDATE_WHEEL_CONTEXT\",\"CANDIDATE_SOURCE_TREE\"]}))'", "--", tempRoot],
       { cwd: repoRoot, timeoutMs: 300_000 });
     console.log(prepared.stdout);
     const receipt = prepared.stdout.split("\n").find((line) => line.startsWith("WHEEL_CONTEXT="));

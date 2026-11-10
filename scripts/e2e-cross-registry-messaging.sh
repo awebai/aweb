@@ -29,6 +29,7 @@ cleanup() {
   fi
   if [[ "${AWEB_CROSS_REGISTRY_KEEP:-0}" == "1" ]]; then
     echo "Keeping $PROJECT at $RUNTIME" >&2
+    if declare -F cleanup_release_wheels >/dev/null; then cleanup_release_wheels || status=1; fi
     return "$status"
   fi
   if [[ -f "$COMPOSE_FILE" ]]; then
@@ -47,6 +48,7 @@ cleanup() {
     done
   fi
   rm -rf "$RUNTIME"
+  if declare -F cleanup_release_wheels >/dev/null; then cleanup_release_wheels || status=1; fi
   exit "$status"
 }
 trap cleanup EXIT

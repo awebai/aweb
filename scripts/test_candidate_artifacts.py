@@ -4,6 +4,7 @@ import os
 import json
 import hashlib
 import shutil
+import sys
 from release_artifacts import verify, build_python, prepare_python, PYTHON_PACKAGES
 from fixture_repo import init_fixture_repo
 from install_release_wheels import install
@@ -34,6 +35,40 @@ class ArtifactOrdering(unittest.TestCase):
             stages = [row.split('\t')[0] for row in (root / 'summary.tsv').read_text().splitlines()]
             self.assertEqual(stages, ['artifacts', 'user-paths'],
                              'focused journey bypassed the release artifact prerequisite')
+
+
+class ContextCleanup(unittest.TestCase):
+    def test_preparation_removes_each_context_and_preserves_exit_status(self):
+        for status in (0, 17):
+            with self.subTest(status=status), tempfile.TemporaryDirectory() as temporary:
+                root = Path(temporary)
+                commands = root / 'bin'
+                commands.mkdir()
+                python = commands / 'python3'
+                python.write_text('#!' + sys.executable + '\n' +
+                    'import os,pathlib,sys,tempfile\n'
+                    'if sys.argv[2] == "materialize":\n'
+                    ' p=tempfile.mkdtemp(prefix="candidate-wheel-context-",dir=os.environ["CONTEXT_PARENT"])\n'
+                    ' with open(os.environ["CONTEXT_RECEIPT"],"a") as f: f.write(p+"\\n")\n'
+                    ' print(p)\n')
+                python.chmod(0o755)
+                artifacts = root / 'retained'
+                artifacts.mkdir()
+                (artifacts / 'keep').write_text('retained bytes')
+                environment = dict(os.environ, PATH=str(commands)+os.pathsep+os.environ['PATH'],
+                    CONTEXT_PARENT=str(root), CONTEXT_RECEIPT=str(root / 'contexts'),
+                    CANDIDATE_ARTIFACT_DIR=str(artifacts))
+                prepared = subprocess.run(['bash', '-c',
+                    'set -eu; source "$1"; source "$1"; cp -R "$CANDIDATE_WHEEL_CONTEXT" "$CONTEXT_PARENT/parent-owned"; export CANDIDATE_WHEEL_CONTEXT="$CONTEXT_PARENT/parent-owned"; exit "$2"', '--',
+                    str(ROOT / 'scripts/prepare-release-wheels.sh'), str(status)], env=environment,
+                    capture_output=True, text=True)
+                self.assertEqual(prepared.returncode, status, prepared.stderr)
+                contexts = (root / 'contexts').read_text().splitlines()
+                self.assertEqual(len(contexts), 2)
+                self.assertFalse([path for path in contexts if Path(path).exists()],
+                                 'preparation leaked temporary wheel contexts')
+                self.assertEqual((artifacts / 'keep').read_text(), 'retained bytes')
+                self.assertTrue((root / 'parent-owned').is_dir(), 'child deleted the parent-owned channel context')
 
 
 class ManifestBytes(unittest.TestCase):
@@ -166,6 +201,13 @@ class BuildOnce(unittest.TestCase):
             self.assertFalse((root / '.candidate-artifacts').exists())
             self.assertTrue((context / 'manifest.json').is_file())
             shutil.rmtree(context)
+            (root / 'scripts/release-wheel-entrypoint.sh').unlink()
+            context_parent = root / 'failed-contexts'
+            context_parent.mkdir()
+            with patch('tempfile.tempdir', str(context_parent)):
+                with self.assertRaises(FileNotFoundError):
+                    materialize(root, out)
+            self.assertEqual(list(context_parent.iterdir()), [], 'failed materialization leaked a context')
             mtimes = {path.name: path.stat().st_mtime_ns for path in out.iterdir()}
             prepare_python(root, out)
             self.assertEqual({path.name: path.stat().st_mtime_ns for path in out.iterdir()}, mtimes,

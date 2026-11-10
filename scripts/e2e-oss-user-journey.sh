@@ -236,6 +236,7 @@ cleanup() {
   fi
   remove_e2e_root || status=1
   echo ""
+  if declare -F cleanup_release_wheels >/dev/null; then cleanup_release_wheels || status=1; fi
   if [[ $fail -gt 0 ]]; then
     echo "FAILED: $fail failures, $pass passed"
     exit 1

@@ -55,7 +55,7 @@ run:
 e2e e2e-up: SHELL := /bin/bash
 e2e:
 	set -e; source ../../scripts/prepare-release-wheels.sh; \
-	trap 'docker compose -p $(NAAPP_E2E_PROJECT) -f docker-compose.e2e.yml down -v --remove-orphans' EXIT; \
+	trap 'status=$$?; docker compose -p $(NAAPP_E2E_PROJECT) -f docker-compose.e2e.yml down -v --remove-orphans || status=1; cleanup_release_wheels || status=1; exit "$$status"' EXIT; \
 	docker compose -p $(NAAPP_E2E_PROJECT) -f docker-compose.e2e.yml down -v --remove-orphans >/dev/null 2>&1 || true; \
 	docker compose -p $(NAAPP_E2E_PROJECT) -f docker-compose.e2e.yml up --build -d; \
 	LIBRARY_E2E=1 uv run pytest -q -m e2e

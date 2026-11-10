@@ -93,6 +93,7 @@ cleanup() {
   docker compose -p "$PROJECT" --env-file "$ENV_FILE" -f "$COMPOSE_FILE" down -v --rmi local >/dev/null 2>&1 || true
   docker image rm "$GATEWAY_IMAGE" >/dev/null 2>&1 || true
   rm -rf "$TMP_ROOT"
+  if declare -F cleanup_release_wheels >/dev/null; then cleanup_release_wheels || status=1; fi
   if [[ $fail -gt 0 ]]; then
     echo "FAILED: $fail failures, $pass passed"
     exit 1

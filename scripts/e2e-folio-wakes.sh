@@ -24,6 +24,7 @@ cleanup() {
     docker buildx rm "$BUILDER" >/dev/null 2>&1 || true
   fi
   echo "Evidence: $EVIDENCE"
+  if declare -F cleanup_release_wheels >/dev/null; then cleanup_release_wheels || status=1; fi
   exit "$status"
 }
 if [[ -n "$(docker ps -aq --filter "label=com.docker.compose.project=$FOLIO_WAKES_PROJECT")" ]]; then

@@ -172,14 +172,16 @@ def materialize(root: Path, directory: Path) -> Path:
     manifest = verify(directory, root=root)
     import tempfile
     destination = Path(tempfile.mkdtemp(prefix='candidate-wheel-context-'))
-    for path in destination.glob('*.whl'):
-        path.unlink()
-    shutil.copy2(manifest_path(directory), destination / 'manifest.json')
-    for row in manifest['files']:
-        if row['path'].endswith('.whl'):
-            shutil.copy2(directory / row['path'], destination / row['path'])
-    shutil.copy2(root / 'scripts/install_release_wheels.py', destination / 'install.py')
-    shutil.copy2(root / 'scripts/release-wheel-entrypoint.sh', destination / 'entrypoint.sh')
+    try:
+        shutil.copy2(manifest_path(directory), destination / 'manifest.json')
+        for row in manifest['files']:
+            if row['path'].endswith('.whl'):
+                shutil.copy2(directory / row['path'], destination / row['path'])
+        shutil.copy2(root / 'scripts/install_release_wheels.py', destination / 'install.py')
+        shutil.copy2(root / 'scripts/release-wheel-entrypoint.sh', destination / 'entrypoint.sh')
+    except BaseException:
+        shutil.rmtree(destination)
+        raise
     return destination
 
 

@@ -378,7 +378,11 @@ released server and constraints. Developer image builds without prepared
 candidate artifacts retain their source mode; maintained journeys prepare wheels
 before building those images. Materialization creates a per-run temporary named
 BuildKit context outside the checkout; it never writes wheels under the source
-tree. Compose and direct callers pass CANDIDATE_WHEEL_MODE=1 and the verified
+tree. Callers remove their temporary contexts in EXIT handlers; failed
+materialization removes its partial context. Channel integration copies into its
+existing parent-owned test directory before the preparation shell exits, and
+that directory follows the test's cleanup. Retained manifest artifacts survive
+this cleanup. Compose and direct callers pass CANDIDATE_WHEEL_MODE=1 and the verified
 CANDIDATE_SOURCE_TREE. The installer checks that tree against the manifest before
 installing. Without explicit wheel mode, images refuse a nonempty
 `.candidate-artifacts` (apart from `.gitignore`), so stale checkout files cannot

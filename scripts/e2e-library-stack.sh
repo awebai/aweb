@@ -255,7 +255,7 @@ case "$ACTION" in
     stack_down
     ;;
   all)
-    trap 'status=$?; trap - EXIT; cleanup=0; if [[ "${KEEP_UP:-}" != "1" || $status -ne 0 ]]; then stack_down || cleanup=$?; fi; if (( status != 0 )); then exit "$status"; fi; exit "$cleanup"' EXIT
+    trap 'status=$?; trap - EXIT; cleanup=0; if [[ "${KEEP_UP:-}" != "1" || $status -ne 0 ]]; then stack_down || cleanup=$?; fi; if declare -F cleanup_release_wheels >/dev/null; then cleanup_release_wheels || cleanup=1; fi; if (( status != 0 )); then exit "$status"; fi; exit "$cleanup"' EXIT
     stack_up
     stack_seed
     echo ""

@@ -26,6 +26,7 @@ e2e:
 			docker network disconnect "$$network" "$$CANDIDATE_RUNNER_NAME" || status=1; \
 		fi; \
 		docker compose -p $(NAAPP_E2E_PROJECT) -f docker-compose.e2e.yml down -v --remove-orphans || status=1; \
+		cleanup_release_wheels || status=1; \
 		exit "$$status"; \
 	}; trap cleanup EXIT; \
 	docker compose -p $(NAAPP_E2E_PROJECT) -f docker-compose.e2e.yml down -v --remove-orphans >/dev/null 2>&1 || true; \
