@@ -121,9 +121,11 @@ For a send to a global address (`domain/name`):
 5. Federation delivery uses the resolved delivery origin and the target identity
    binding. The recipient server re-resolves the target address/key and fails
    closed on mismatch. The sending server connects only to an `https` delivery
-   origin whose host resolves to public addresses, at the address it checked,
-   and does not follow redirects. A failed delivery returns the status and one
-   fixed reason (`delivery_origin_refused`, `delivery_origin_unreachable`,
+   origin whose host resolves to public addresses (or private ones, for an
+   origin its operator lists in `AWEB_FEDERATION_PRIVATE_DELIVERY_ORIGINS`), at
+   the address it checked, and does not follow redirects. A failed delivery
+   returns the status and one fixed reason (`delivery_origin_refused`,
+   `delivery_address_refused`, `delivery_origin_unreachable`,
    `delivery_timeout`, `HTTP <status>`, or the recipient server's typed
    federation `reason`); other response text is not relayed.
 

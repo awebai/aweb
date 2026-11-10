@@ -789,13 +789,26 @@ and non-public answers are admitted only under the isolated-development
 conditions of that vector: `APP_ENV=development`, `AWEB_FEDERATION_TEST=1`, and
 both this server's public origin and the destination host isolated (a
 single-label name, `localhost`, `*.localhost`, `*.test`, `*.test.local`, or a
-loopback literal). A delivery is bounded to 10 seconds, a 10 MiB success body
+loopback literal). Outside those conditions, an operator admits private
+delivery origins only by listing them, comma-separated, in
+`AWEB_FEDERATION_PRIVATE_DELIVERY_ORIGINS`: each entry is one exact origin
+named by host (`https://host[:port]`), canonicalised as every delivery origin
+is and compared for equality, never a CIDR, wildcard or pattern; an invalid
+entry refuses start-up naming the entry, and unset or empty admits none. A
+listed origin's answers may be private, loopback or link-local; every other
+check above still applies to it. Only the delivery transport receives the list:
+ID-tree registry reads call the same address admission without it, and awid's
+registry client is not given it, so registry reads keep requiring public
+answers. A delivery is bounded to 10 seconds, a 10 MiB success body
 and a 64 KiB error body. A failed delivery reaches the sender as the status and
-one fixed reason: `delivery_origin_refused`, `delivery_origin_unreachable`,
-`delivery_timeout`, a response-bound reason, `HTTP <status>`, or the remote's
-`reason` when it is a federation reason from
+one fixed reason: `delivery_origin_refused` (the origin is not `https` named by
+host), `delivery_address_refused` (an answer is not admitted; the server also
+logs a warning naming the origin and the setting),
+`delivery_origin_unreachable`, `delivery_timeout`, a response-bound reason,
+`HTTP <status>`, or the remote's `reason` when it is a federation reason from
 [`federation-error-reference.md`](federation-error-reference.md). Other text the
-remote answers is logged at a bounded length and is not returned.
+remote answers, on an error status or on a success answer that is not a JSON
+object, is logged at a bounded length and is not returned.
 
 **Receiver-wide replay identity:** every accepted local or federated mail/chat,
 plaintext or encrypted, claims one `message_ingress_receipts` row keyed solely

@@ -238,9 +238,33 @@ first contact. Hosted aweb.ai namespaces are configured by the hosted service.
 
 Other servers deliver to this origin only when it is an `https` origin named by
 host (not an address literal) and every address the host resolves to is public.
-A sending aweb server refuses an origin that is `http` or resolves to a
-loopback, private, link-local, CGNAT or otherwise non-public address, and
-reports `delivery_origin_refused` to the sender.
+By default a sending aweb server refuses an origin that is `http`, reporting
+`delivery_origin_refused` to the sender, and an origin that resolves to a
+loopback, private, link-local, CGNAT or otherwise non-public address, reporting
+`delivery_address_refused` and logging a warning that names the origin and the
+setting below.
+
+When the servers that federate are on one private network, as
+`https://aweb.acme.internal` resolving to `10.0.0.5` is, list the private
+delivery origins on each sending server:
+
+```bash
+AWEB_FEDERATION_PRIVATE_DELIVERY_ORIGINS=https://aweb.acme.internal,https://aweb.partner.internal:8443
+```
+
+Each entry is one exact origin, `https://host[:port]`, compared after the
+canonicalisation every delivery origin gets (lowercase host, no trailing dot,
+the default port dropped). It is not a pattern: a different port, a subdomain
+or `http` is not covered, and address literals, CIDR ranges, wildcards, paths,
+queries and user information are not accepted. The server refuses to start
+when an entry is not such an origin, naming the entry. A listed origin may
+resolve to private, loopback and link-local addresses; CGNAT, multicast,
+reserved and unspecified addresses stay refused. Delivery to it is otherwise
+unchanged: the host is resolved once, the connection goes to the checked
+address, TLS is verified against the host name, and redirects are not
+followed. The setting applies to federated mail and chat delivery only;
+registry reads keep requiring public addresses. Unset or empty, no private
+delivery origin is admitted.
 
 For federation between servers on one development machine or compose network,
 set `APP_ENV=development` and `AWEB_FEDERATION_TEST=1` on each aweb server. With
