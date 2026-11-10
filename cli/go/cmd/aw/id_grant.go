@@ -148,7 +148,7 @@ func resolveGrantClientSelection(workingDir string, home awconfig.IdentityHome) 
 }
 
 func resolveGrantClientSelectionForTeam(workingDir string, home awconfig.IdentityHome, requestedTeam string) (*aweb.Client, *awconfig.Selection, error) {
-	c, sel, err := buildGrantClientSelectionForTeam(context.Background(), workingDir, home, requestedTeam)
+	c, sel, err := buildGrantClientSelectionForTeam(context.Background(), workingDir, home, requestedTeam, resolveAuthenticatedBaseURLContext)
 	if err != nil {
 		return nil, nil, err
 	}
@@ -156,7 +156,7 @@ func resolveGrantClientSelectionForTeam(workingDir string, home awconfig.Identit
 	return c, sel, nil
 }
 
-func buildGrantClientSelectionForTeam(ctx context.Context, workingDir string, home awconfig.IdentityHome, requestedTeam string) (*aweb.Client, *awconfig.Selection, error) {
+func buildGrantClientSelectionForTeam(ctx context.Context, workingDir string, home awconfig.IdentityHome, requestedTeam string, resolveBaseURL baseURLResolver) (*aweb.Client, *awconfig.Selection, error) {
 	grant, err := awconfig.LoadGrantHome(home.Root)
 	if err != nil {
 		return nil, nil, err
@@ -172,7 +172,7 @@ func buildGrantClientSelectionForTeam(ctx context.Context, workingDir string, ho
 	if err != nil {
 		return nil, nil, fmt.Errorf("load grant session key: %w", err)
 	}
-	baseURL, err := resolveAuthenticatedBaseURLContext(ctx, grant.AwebURL)
+	baseURL, err := resolveBaseURL(ctx, grant.AwebURL)
 	if err != nil {
 		return nil, nil, err
 	}

@@ -374,7 +374,7 @@ func addPluginGrantGuidance(cmd *cobra.Command, out *pluginInstallOutput) {
 	if err != nil {
 		return
 	}
-	client, sel, err := buildClientForSelectionAtIdentityHome(ctx, workingDir, sel.IdentityHome, sel)
+	client, sel, err := buildClientForSelectionAtIdentityHome(ctx, workingDir, sel.IdentityHome, sel, resolveAuthenticatedBaseURLContext)
 	if err != nil {
 		return
 	}

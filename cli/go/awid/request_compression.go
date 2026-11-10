@@ -73,7 +73,8 @@ func traceServerCall(req *http.Request, resp *http.Response) {
 }
 
 func sendServerRequest(client *http.Client, req *http.Request, serverBase string, timeout time.Duration) (*http.Response, error) {
-	// A relocating transport must negotiate after it selects each actual base.
+	// A transport that acts on a server's answers negotiates itself, below
+	// that, so the discovery request is not one it acts on.
 	if client != nil {
 		if owner, ok := client.Transport.(interface{ HandlesServerRequestCompression() bool }); ok && owner.HandlesServerRequestCompression() {
 			return doNoRedirect(client, req, timeout)
@@ -85,9 +86,9 @@ func sendServerRequest(client *http.Client, req *http.Request, serverBase string
 	return resp, err
 }
 
-// RoundTripServerRequest lets a transport that selects API bases negotiate at
-// its actual-send boundary. transport must be the underlying sender, without
-// base recovery, and serverBase must be the base selected for this attempt.
+// RoundTripServerRequest lets a transport that acts on a server's answers
+// negotiate at its actual-send boundary. transport must be the underlying
+// sender, and serverBase must be the API base the request is sent to.
 // The outer http.Client still owns cancellation, deadlines and redirects.
 func RoundTripServerRequest(transport http.RoundTripper, req *http.Request, serverBase string) (*http.Response, error) {
 	if transport == nil {

@@ -85,11 +85,49 @@ func (e AgentEvent) IsInterruptWake() bool {
 // AgentEventStream decodes typed events from GET /v1/events/stream.
 // It is intentionally low-level: EOF and reconnect/backoff strategy are left to callers.
 type AgentEventStream struct {
-	sse *SSEStream
+	sse  *SSEStream
+	body *observedBody
 }
 
 func newAgentEventStream(body io.ReadCloser) *AgentEventStream {
-	return &AgentEventStream{sse: NewSSEStream(body)}
+	observed := &observedBody{ReadCloser: body}
+	return &AgentEventStream{sse: NewSSEStream(observed), body: observed}
+}
+
+// observedBody reports every read of the connection that returned bytes.
+type observedBody struct {
+	io.ReadCloser
+	onRead func()
+}
+
+func (b *observedBody) Read(p []byte) (int, error) {
+	n, err := b.ReadCloser.Read(p)
+	if n > 0 && b.onRead != nil {
+		b.onRead()
+	}
+	return n, err
+}
+
+// OnRead registers f to be called after every read of the connection that
+// returned bytes, whether or not they complete an event: heartbeat comments
+// and partial frames never reach Next's caller, and a consumer deciding
+// whether the stream has gone silent needs them. f runs on the goroutine that
+// calls Next. Register it before the first call to Next.
+func (s *AgentEventStream) OnRead(f func()) {
+	if s == nil || s.body == nil {
+		return
+	}
+	s.body.onRead = f
+}
+
+// OnComment registers f to be called for every comment line read, which is
+// how the server's heartbeat arrives. f runs on the goroutine that calls
+// Next. Register it before the first call to Next.
+func (s *AgentEventStream) OnComment(f func()) {
+	if s == nil || s.sse == nil {
+		return
+	}
+	s.sse.onComment = f
 }
 
 func (s *AgentEventStream) Close() error {

@@ -1519,7 +1519,7 @@ func TestAwWorkspaceAddWorktreeWithoutIdentityUsesDiscoveryAndMailRoundTrip(t *t
 		t.Fatalf("save parent cert: %v", err)
 	}
 	if err := awconfig.SaveWorktreeWorkspaceTo(filepath.Join(repo, ".aw", "workspace.yaml"), &awconfig.WorktreeWorkspace{
-		AwebURL: awebServer.URL,
+		AwebURL: awebServer.URL + "/api",
 		APIKey:  "workspace-sk-parent",
 		Memberships: []awconfig.WorktreeMembership{{
 			TeamID:      teamID,
