@@ -5,11 +5,10 @@ A message or receipt is stamped by the process that writes it, before its
 transaction commits. Two things follow, and each test here produces one of them
 deterministically:
 
-- Two writers can commit in the opposite order to their stamps. The earlier
-  stamped write is held in an open transaction, exactly as the attachment and
-  native-ingress send paths hold it (the same service function, run on a
-  transaction through TransactionInfra), while a later stamped write commits
-  and is delivered.
+- Two writers can commit in the opposite order to their stamps. Writers of one
+  session commit one at a time, so a request that has stamped its write waits
+  in line for the session row while a writer that holds the row stamps later
+  and commits first (_WritersInLine).
 - A writer whose clock is behind stamps a time the stream has already passed.
   The clock the send path reads (aweb.messaging.chat.datetime) is set back for
   one request, as it would be on a server process with a slow clock.
@@ -47,6 +46,81 @@ class _SlowClock(datetime):
     @classmethod
     def now(cls, tz=None):
         return datetime.now(tz) - CLOCK_LAG
+
+
+def _clock_announcing_its_first_read(read: asyncio.Event):
+    class _AnnouncingClock(datetime):
+        @classmethod
+        def now(cls, tz=None):
+            read.set()
+            return datetime.now(tz)
+
+    return _AnnouncingClock
+
+
+class _WritersInLine:
+    """Three writers of one session, committing one at a time.
+
+    The first holds the session row the way native ingress and federated
+    delivery do before they write. The second is in line for it and keeps it
+    until released. The third is a request that has stamped its write and waits
+    for the session, so it commits last although it stamped before the first
+    writer wrote.
+    """
+
+    SECOND_IN_LINE = "SELECT 'second in line' FROM {{tables.chat_sessions}} WHERE session_id = $1 FOR UPDATE"
+
+    def __init__(self, env, session_id, monkeypatch, stamped_first):
+        self.env, self.session_id, self.monkeypatch = env, session_id, monkeypatch
+        self._stamped_first = stamped_first
+        self._second_holds = asyncio.Event()
+        self._release_second = asyncio.Event()
+
+    async def _second(self):
+        async with self.env.db.transaction() as tx:
+            await tx.execute(self.SECOND_IN_LINE, self.session_id)
+            self._second_holds.set()
+            await self._release_second.wait()
+
+    async def _second_is_in_line(self):
+        while not await self.env.db.fetch_value(
+            "SELECT count(*) FROM pg_stat_activity WHERE wait_event_type = 'Lock' "
+            "AND query LIKE '%second in line%' AND pid <> pg_backend_pid()"
+        ):
+            await asyncio.sleep(0.01)
+
+    @asynccontextmanager
+    async def first_writer(self):
+        """Yield the first writer's transaction once the request has stamped; it commits on exit."""
+        stamped = asyncio.Event()
+        async with self.env.db.transaction() as tx:
+            await tx.execute(
+                "SELECT 1 FROM {{tables.chat_sessions}} WHERE session_id = $1 FOR UPDATE", self.session_id,
+            )
+            self.second = asyncio.create_task(self._second())
+            async with asyncio.timeout(DELIVERY_BOUND_SECONDS):
+                await self._second_is_in_line()
+            with self.monkeypatch.context() as observed:
+                observed.setattr(chat_service, "datetime", _clock_announcing_its_first_read(stamped))
+                self.stamped_first = asyncio.create_task(self._stamped_first())
+                async with asyncio.timeout(DELIVERY_BOUND_SECONDS):
+                    await asyncio.wait(
+                        {asyncio.ensure_future(stamped.wait()), self.stamped_first},
+                        return_when=asyncio.FIRST_COMPLETED,
+                    )
+                assert not self.stamped_first.done(), self.stamped_first.result()
+            yield tx
+        async with asyncio.timeout(DELIVERY_BOUND_SECONDS):
+            await self._second_holds.wait()
+
+    async def let_the_stamped_request_commit(self):
+        self._release_second.set()
+        await self.second
+        return await self.stamped_first
+
+    async def close(self):
+        self._release_second.set()
+        await asyncio.gather(self.second, self.stamped_first, return_exceptions=True)
 
 
 async def _group_chat(env) -> UUID:
@@ -106,23 +180,32 @@ async def _expect_frame(frames, what):
 
 
 @pytest.mark.asyncio
-async def test_message_committed_after_a_later_stamped_one_is_delivered(privacy_app):  # noqa: F811
+async def test_message_committed_after_a_later_stamped_one_is_delivered(privacy_app, monkeypatch):  # noqa: F811
     env = privacy_app
     session_id = await _group_chat(env)
     async with _bob_live_frames(env, session_id, "message") as frames:
-        async with env.db.transaction() as tx:
-            stamped_first = await chat_service.send_in_session(
-                TransactionInfra(env.infra, tx),
-                session_id=session_id, sender_did=env.actors["alice"].did, body="stamped first, committed second",
-            )
-            assert stamped_first is not None
-            stamped_second = await _post_message(env, "carol", session_id, "stamped second, committed first")
+        writers = _WritersInLine(
+            env, session_id, monkeypatch,
+            lambda: _post_message(env, "carol", session_id, "stamped first, committed second"),
+        )
+        try:
+            async with writers.first_writer() as tx:
+                stamped_second = await chat_service.send_in_session(
+                    TransactionInfra(env.infra, tx),
+                    session_id=session_id, sender_did=env.actors["alice"].did, body="stamped second, committed first",
+                )
+                assert stamped_second is not None
+            await publish_chat_session_signal(env.redis, session_id=str(session_id), signal_type="message")
             delivered = await _expect_frame(frames, "the message committed first")
-            assert delivered["message_id"] == stamped_second
-        await publish_chat_session_signal(env.redis, session_id=str(session_id), signal_type="message")
+            assert delivered["message_id"] == str(stamped_second["message_id"])
+            stamped_first = await writers.let_the_stamped_request_commit()
+        finally:
+            await writers.close()
         late_commit = await _expect_frame(frames, "the message stamped first and committed second")
-    assert late_commit["message_id"] == str(stamped_first["message_id"])
+        assert late_commit["message_id"] == stamped_first
     assert late_commit["body"] == "stamped first, committed second"
+    stamps = [datetime.fromisoformat(frame["timestamp"]) for frame in (delivered, late_commit)]
+    assert stamps[1] < stamps[0]
 
 
 @pytest.mark.asyncio
@@ -142,24 +225,32 @@ async def test_message_stamped_by_a_slow_clock_is_delivered(privacy_app, monkeyp
 
 
 @pytest.mark.asyncio
-async def test_read_receipt_committed_after_a_later_stamped_one_is_delivered(privacy_app):  # noqa: F811
+async def test_read_receipt_committed_after_a_later_stamped_one_is_delivered(privacy_app, monkeypatch):  # noqa: F811
     env = privacy_app
     session_id = await _group_chat(env)
     from_bob = await _post_message(env, "bob", session_id, "read me")
     async with _bob_live_frames(env, session_id, "read_receipt") as frames:
-        async with env.db.transaction() as tx:
-            stamped_first = await chat_service.mark_messages_read(
-                TransactionInfra(env.infra, tx),
-                session_id=session_id, participant_did=env.actors["alice"].did, message_ids=[from_bob],
-            )
-            assert stamped_first["messages_marked"] == 1
-            await _post_read(env, "carol", session_id, from_bob)
+        writers = _WritersInLine(
+            env, session_id, monkeypatch, lambda: _post_read(env, "carol", session_id, from_bob),
+        )
+        try:
+            async with writers.first_writer() as tx:
+                stamped_second = await chat_service.mark_messages_read(
+                    TransactionInfra(env.infra, tx),
+                    session_id=session_id, participant_did=env.actors["alice"].did, message_ids=[from_bob],
+                )
+                assert stamped_second["messages_marked"] == 1
+            await publish_chat_session_signal(env.redis, session_id=str(session_id), signal_type="read_receipt")
             delivered = await _expect_frame(frames, "the read receipt committed first")
-            assert delivered["reader_alias"] == "carol"
-        await publish_chat_session_signal(env.redis, session_id=str(session_id), signal_type="read_receipt")
+            assert delivered["reader_alias"] == "alice"
+            await writers.let_the_stamped_request_commit()
+        finally:
+            await writers.close()
         late_commit = await _expect_frame(frames, "the read receipt stamped first and committed second")
-    assert late_commit["reader_alias"] == "alice"
+    assert late_commit["reader_alias"] == "carol"
     assert late_commit["up_to_message_id"] == from_bob
+    stamps = [datetime.fromisoformat(frame["timestamp"]) for frame in (delivered, late_commit)]
+    assert stamps[1] < stamps[0]
 
 
 @pytest.mark.asyncio
