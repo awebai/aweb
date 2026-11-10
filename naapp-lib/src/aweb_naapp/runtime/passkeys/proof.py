@@ -85,6 +85,25 @@ class PasskeyProofUnavailable(AuthenticationFailed):
         super().__init__(self.code)
 
 
+def is_public_cose_key(cose: bytes) -> bool:
+    """Whether ``cose`` is exactly one complete COSE key with public
+    parameters only. py_webauthn reads public values only, so a key that also
+    carries private parameters would pass its decoder; it must not be kept."""
+    # Decode exactly one complete COSE object without rewriting its bytes.
+    stream = io.BytesIO(cose)
+    try:
+        key = cbor2.CBORDecoder(stream, allow_duplicate_keys=False).decode()
+    except cbor2.CBORDecodeError:
+        return False
+    if not isinstance(key, dict) or stream.tell() != len(cose) or type(key.get(1)) is not int:
+        return False
+    if key[1] in (1, 2):  # OKP and EC2: d is private.
+        return -4 not in key
+    if key[1] == 3:  # RSA: only n/e are public negative-label parameters.
+        return not any(label in key for label in (-3, -4, -5, -6, -7, -8, -9))
+    return True
+
+
 def _require(condition: bool) -> None:
     if not condition:
         raise PasskeyProofUnavailable()
@@ -392,20 +411,7 @@ def _checked(proof: RetainedPasskeyProof) -> tuple[dict[str, Any], dict[str, Any
     _require(hashlib.sha256(proof.challenge_preimage).digest() == proof.expected_challenge)
     rp = RelyingParty(context["origin"], "retained proof")
     _require(rp.rp_id == context["rp_id"])
-    # Decode exactly one complete COSE object without rewriting its bytes.
-    stream = io.BytesIO(proof.credential_public_key_cose)
-    try:
-        key = cbor2.CBORDecoder(stream, allow_duplicate_keys=False).decode()
-    except cbor2.CBORDecodeError:
-        raise PasskeyProofUnavailable() from None
-    _require(isinstance(key, dict) and stream.tell() == len(proof.credential_public_key_cose))
-    # py_webauthn intentionally reads public values only. Retention must also
-    # reject private key parameters that its decoder would otherwise ignore.
-    _require(type(key.get(1)) is int)
-    if key[1] in (1, 2):  # OKP and EC2: d is private.
-        _require(-4 not in key)
-    elif key[1] == 3:  # RSA: only n/e are public negative-label parameters.
-        _require(not any(label in key for label in (-3, -4, -5, -6, -7, -8, -9)))
+    _require(is_public_cose_key(proof.credential_public_key_cose))
 
     def b64(value):
         return base64.urlsafe_b64encode(value).rstrip(b"=").decode("ascii")
