@@ -8,6 +8,7 @@ from __future__ import annotations
 import ast
 import asyncio
 import inspect
+import ipaddress
 import json
 import logging
 import socket
@@ -611,6 +612,98 @@ async def test_listed_private_delivery_origin_is_delivered_to_the_checked_addres
     assert request.url.path == "/v1/federation/messages"
     assert request.headers["Host"] == "aweb.acme.internal"
     assert request.extensions["sni_hostname"] == "aweb.acme.internal"
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "answers",
+    [
+        ("10.0.0.5",),
+        ("172.16.0.1",),
+        ("172.31.255.255",),
+        ("192.168.1.1",),
+        ("100.64.1.2",),
+        ("100.127.255.254",),
+        ("fd00::5",),
+        ("fc00::1",),
+        ("::ffff:10.0.0.5",),
+        ("172.32.0.1",),
+        ("10.0.0.5", PUBLIC_IPV4),
+        ("100.64.1.2", "fd00::5"),
+    ],
+)
+async def test_listed_delivery_origin_admits_private_networks_at_the_checked_address(
+    answers, monkeypatch, dials, no_system_resolution,
+):
+    authority = _authority(monkeypatch, PRIVATE_ORIGIN)
+    authority.resolver.host_resolver = hosts = Hosts({"aweb.acme.internal": answers})
+
+    assert await _deliver(PRIVATE_ORIGIN, authority.delivery_transport) == {}
+
+    assert hosts.queries == ["aweb.acme.internal"]
+    [request] = dials
+    assert request.url.host == str(ipaddress.ip_address(answers[0]))
+    assert request.headers["Host"] == "aweb.acme.internal"
+    assert request.extensions["sni_hostname"] == "aweb.acme.internal"
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "answers",
+    [
+        ("169.254.169.254",),
+        ("169.254.1.1",),
+        ("127.0.0.1",),
+        ("0.0.0.0",),
+        ("::1",),
+        ("::",),
+        ("fe80::1",),
+        ("::ffff:169.254.169.254",),
+        ("::ffff:127.0.0.1",),
+        ("192.0.2.1",),
+        ("198.18.0.1",),
+        ("240.0.0.1",),
+        ("224.0.0.1",),
+        ("255.255.255.255",),
+        ("ff02::1",),
+        ("10.0.0.5", "169.254.169.254"),
+        ("fd00::5", "fe80::1"),
+        (PUBLIC_IPV4, "127.0.0.1"),
+        (),
+    ],
+)
+async def test_listed_delivery_origin_refuses_addresses_outside_the_private_networks(
+    answers, monkeypatch, dials, caplog,
+):
+    authority = _authority(monkeypatch, PRIVATE_ORIGIN)
+    authority.resolver.host_resolver = Hosts({"aweb.acme.internal": answers})
+
+    with caplog.at_level(logging.WARNING, logger="aweb.federation.transport"):
+        with pytest.raises(FederatedMailDeliveryError) as caught:
+            await _deliver(PRIVATE_ORIGIN, authority.delivery_transport)
+
+    _assert_address_refused(caught.value, PRIVATE_ORIGIN)
+    assert dials == []
+    [record] = [record for record in caplog.records if record.name == "aweb.federation.transport"]
+    assert record.levelno == logging.WARNING
+    message = record.getMessage()
+    assert PRIVATE_ORIGIN in message
+    for network in ("10.0.0.0/8", "172.16.0.0/12", "192.168.0.0/16", "100.64.0.0/10", "fc00::/7"):
+        assert network in message
+    assert "add" not in message
+
+
+@pytest.mark.parametrize("address", ["100.64.1.2", "172.16.0.1", "fd00::5"])
+@pytest.mark.asyncio
+async def test_private_networks_of_listed_origins_stay_refused_for_unlisted_origins(address, monkeypatch, dials):
+    authority = _authority(monkeypatch, PRIVATE_ORIGIN)
+    authority.resolver.host_resolver = Hosts({"aweb.partner.internal": (address,)})
+
+    with pytest.raises(FederatedMailDeliveryError) as caught:
+        await _deliver("https://aweb.partner.internal", authority.delivery_transport)
+
+    _assert_address_refused(caught.value, "https://aweb.partner.internal")
+    assert dials == []
 
 
 @pytest.mark.asyncio
