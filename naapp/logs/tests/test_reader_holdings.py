@@ -38,9 +38,7 @@ async def test_a_held_reader_reads_its_own_installation_and_team(world: World) -
 
 async def test_a_holding_scope_is_a_reader_scope() -> None:
     assert is_reader_scope(reader_scope())
-    assert not is_reader_scope(
-        holding_scope(INSTALLATION_ID, TEAM_ID, "secrets.owner", READER)
-    )
+    assert not is_reader_scope(holding_scope(INSTALLATION_ID, TEAM_ID, "secrets.owner", READER))
 
 
 async def test_a_scope_no_one_holds_is_no_reader(world: World) -> None:

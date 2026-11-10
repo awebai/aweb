@@ -42,9 +42,7 @@ from aweb_logs.readers import READER_ROLE, ReaderDesignations, ReaderDirectory, 
 LOGS = "https://logs.example.test"
 
 
-# logs' human origin: the audience of the owner's acts, whose host is the
-# relying party a reader's credential is bound to.
-CONSOLE = "https://app.example.com"
+CONSOLE = "https://console.logs.example.test"
 
 
 READER = "did:aw:2Wq7mXn4kP9rT1vY5zA8bC3dE6"
@@ -340,17 +338,18 @@ def reader_scope(principal: str = READER) -> str:
     return holding_scope(INSTALLATION_ID, TEAM_ID, READER_ROLE, principal)
 
 
-def _credential() -> tuple[SoftAuthenticator, dict[str, str]]:
-    rp_id = CONSOLE.removeprefix("https://")
+def _credential(world: World) -> tuple[SoftAuthenticator, dict[str, str]]:
+    """A new authenticator with a credential for logs' relying party."""
+    rp = world.passkeys.rp
     soft = SoftCredential(
-        os.urandom(32), ec.generate_private_key(ec.SECP256R1()), rp_id, os.urandom(16)
+        os.urandom(32), ec.generate_private_key(ec.SECP256R1()), rp.rp_id, os.urandom(16)
     )
-    device = SoftAuthenticator(CONSOLE)
+    device = SoftAuthenticator(rp.origin)
     device.credentials[soft.credential_id] = soft
     return device, {
         "credential_id": b64url(soft.credential_id),
         "public_key": b64url(soft.cose_public_key()),
-        "rp_id": rp_id,
+        "rp_id": rp.rp_id,
     }
 
 
@@ -369,13 +368,12 @@ def _holding_subject(principal: str, credential: dict[str, str] | None) -> dict:
 async def _owner_act(world: World, act: str, subject: dict, apply) -> object:
     """Consume the owner's ``act`` and apply it, in one transaction under the
     installation's fence, as logs' owner-act routes do."""
-    signer = world.owner.for_acts(HUMAN_ROLE_ACTS)
+    # Addressed to logs' human origin, whose host is the credential's relying party.
+    signer = world.owner.for_acts(HUMAN_ROLE_ACTS, audience=world.passkeys.rp.origin)
     signing, signature = signer.sign(act, subject)
     admitted = (await world.fence.permit(TEAM_ID)).admitted
     prepared = await signer.verifier.prepare(signing, signature, team_id=TEAM_ID)
-    context = await world.recorder.prepare_owner_act(
-        admitted, signing=signing, signature=signature
-    )
+    context = await world.recorder.prepare_owner_act(admitted, signing=signing, signature=signature)
     with world.recorder.prepared(context):
         async with world.db.transaction() as tx:
             await world.fence.check(tx, admitted)
@@ -388,7 +386,7 @@ async def _owner_act(world: World, act: str, subject: dict, apply) -> object:
 async def held_reader(world: World, principal: str = READER) -> tuple[str, str]:
     """A reader the owner designated by a human-role act, with its credential
     bound and in effect: its scope and holder."""
-    device, credential = _credential()
+    device, credential = _credential(world)
 
     async def designate(tx, act):
         return await world.passkeys.designate_holder(
@@ -412,7 +410,7 @@ async def held_reader(world: World, principal: str = READER) -> tuple[str, str]:
 async def replaced_reader(world: World, principal: str = READER) -> None:
     """The owner replaces the reader's credential: the new one is not in effect
     until the cooling-off ends."""
-    device, credential = _credential()
+    device, credential = _credential(world)
 
     async def replace(tx, act):
         return await world.passkeys.replace_holder_credential(
