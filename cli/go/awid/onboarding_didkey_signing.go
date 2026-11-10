@@ -1,12 +1,10 @@
 package awid
 
 import (
-	"bytes"
 	"crypto/ed25519"
 	"crypto/sha256"
 	"encoding/base64"
 	"encoding/hex"
-	"encoding/json"
 	"fmt"
 	"net/url"
 	"strings"
@@ -90,14 +88,7 @@ func onboardingDIDKeySignPayloadWithAudience(audience, method, path, timestamp s
 // bytes are byte-identical across the Go CLI and the Python verifier
 // even if a field value contains <, >, or &.
 func encodeJSONString(b *strings.Builder, s string) {
-	var buf bytes.Buffer
-	enc := json.NewEncoder(&buf)
-	enc.SetEscapeHTML(false)
-	// json.Encoder.Encode always appends a trailing newline; strip it.
-	_ = enc.Encode(s)
-	out := buf.Bytes()
-	if n := len(out); n > 0 && out[n-1] == '\n' {
-		out = out[:n-1]
-	}
-	b.Write(out)
+	// A string always encodes.
+	encoded, _ := CanonicalJSONValue(s)
+	b.WriteString(encoded)
 }

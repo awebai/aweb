@@ -21,6 +21,8 @@ type SSEEvent struct {
 type SSEStream struct {
 	body io.ReadCloser
 	r    *bufio.Reader
+	// onComment, when set, is called for every comment line read.
+	onComment func()
 }
 
 func NewSSEStream(body io.ReadCloser) *SSEStream {
@@ -68,6 +70,9 @@ func (s *SSEStream) Next() (*SSEEvent, error) {
 			}, nil
 		}
 		if strings.HasPrefix(line, ":") {
+			if s.onComment != nil {
+				s.onComment()
+			}
 			continue
 		}
 

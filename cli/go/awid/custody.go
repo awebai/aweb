@@ -185,7 +185,7 @@ func custodyRequestDigest(req *PlainMessageSignRequest) (string, error) {
 		"aud":             req.Audience,
 		"envelope":        req.Envelope,
 	}
-	canonical, err := CanonicalJSONValue(payload)
+	canonical, err := CanonicalJSONValueEscapingLineSeparators(payload)
 	if err != nil {
 		return "", err
 	}
@@ -207,7 +207,7 @@ func custodyProofCanonical(req *PlainMessageSignRequest) (string, error) {
 		"timestamp":       req.Timestamp,
 		"request_digest":  req.RequestDigest,
 	}
-	return CanonicalJSONValue(payload)
+	return CanonicalJSONValueEscapingLineSeparators(payload)
 }
 
 func SignCustodyProof(key ed25519.PrivateKey, req *PlainMessageSignRequest) error {
@@ -371,7 +371,7 @@ func (c *UnixCustodyClient) UnwrapE2EEMessage(ctx context.Context, req *E2EEUnwr
 
 func custodyDigestValue(operation string, payload map[string]any) (string, error) {
 	payload["op"] = operation
-	canonical, err := CanonicalJSONValue(payload)
+	canonical, err := CanonicalJSONValueEscapingLineSeparators(payload)
 	if err != nil {
 		return "", err
 	}
@@ -400,7 +400,7 @@ func signCustodyProofFields(key ed25519.PrivateKey, version int, operation strin
 		*nonce = n
 	}
 	proof := map[string]any{"v": version, "op": operation, "grant_id": fields["grant_id"], "session_did_key": fields["session_did_key"], "team_id": fields["team_id"], "subject_did_aw": fields["subject_did_aw"], "subject_did_key": fields["subject_did_key"], "aud": fields["aud"], "nonce": *nonce, "timestamp": *timestamp, "request_digest": *requestDigest}
-	canonical, err := CanonicalJSONValue(proof)
+	canonical, err := CanonicalJSONValueEscapingLineSeparators(proof)
 	if err != nil {
 		return err
 	}
@@ -420,7 +420,7 @@ func verifyCustodyProofFields(version int, operation string, fields map[string]s
 		return fmt.Errorf("bad_signature")
 	}
 	proof := map[string]any{"v": version, "op": operation, "grant_id": fields["grant_id"], "session_did_key": fields["session_did_key"], "team_id": fields["team_id"], "subject_did_aw": fields["subject_did_aw"], "subject_did_key": fields["subject_did_key"], "aud": fields["aud"], "nonce": nonce, "timestamp": timestamp, "request_digest": requestDigest}
-	canonical, err := CanonicalJSONValue(proof)
+	canonical, err := CanonicalJSONValueEscapingLineSeparators(proof)
 	if err != nil {
 		return err
 	}

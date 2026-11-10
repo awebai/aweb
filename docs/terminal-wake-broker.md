@@ -90,9 +90,41 @@ successful registration update replaces them. Event routing never re-resolves a
 binding from mutable team files; a transient filesystem failure during refresh
 keeps the last accepted binding usable.
 
-Streams quarantine only HTTP 401, 403, 404 and 422. Other failures, including 408,
-409 and 429, use bounded retry. Child restart jitter shifts below its configured
-maximum near the cap, keeping both the bound and jitter.
+Each identity's stream follows the [event stream client
+policy](event-stream-client-policy.md): no answer stops a stream for the life
+of the daemon. A transient failure (a failure to open, an early end, 75 seconds
+of silence, any 5xx, and 408, 409, 425 or 429) is retried on a delay of 1 second
+doubling to 15 seconds with jitter, after `Retry-After` when the answer carries
+one. A refusal (any other 4xx on open, or a grant terminal event on an open
+stream) quarantines that one stream: it is retried on a delay of 1 minute
+doubling to 15 minutes, the identity home is read again before each attempt
+and the stream is signed for the
+[mount of the stored server URL that answers](configuration.md#server-url-and-api-mount),
+and the daemon and every other stream keep running. Each connection closes
+itself between 3 minutes 30 seconds and 4 minutes after it opens and is
+reopened at once.
+
+What is the broker's own:
+
+- `aw wake status` shows each stream's `phase`: `streaming`, `retrying` or
+  `refused` (`starting` before the first attempt ends, `stopped` once nothing
+  needs the stream, `over-bound` past `max_streams`). A stream that is retrying
+  or refused carries `cause` (the HTTP status, the terminal event's name, or
+  `silence`) and `next_attempt_at`. Each receive identity of a registration
+  repeats them as `stream_phase`, `stream_cause` and `stream_next_attempt_at`.
+- A refused identity is never shown as admitted: `admitted` on the stream, and
+  `stream_admitted` on the receive identity and on the registration, are false
+  while its stream is refused, as they are past the stream bound.
+- A registration (`aw wake register`, including a repeated one for a home that
+  is already registered) is the explicit request for the stream: a quarantined
+  stream is retried at once and, if refused again, continues from the 1-minute
+  delay. The daemon's periodic re-read of `registry.d` is not a request and
+  leaves a quarantined stream on its delay.
+- The daemon log records a quarantine when it starts and when it ends, not
+  each refused attempt in between.
+
+Child restart jitter shifts below its configured maximum near the cap, keeping
+both the bound and jitter.
 
 `~/.config/aw/wake/` contains only Go-owned lifecycle/status state:
 
@@ -191,7 +223,8 @@ raises actionable unread mail and pending chat. That means:
   server ack/read lands, a later snapshot may present the item again;
 - if the child dies after accepting an event but before completing presentation,
   Go does not force a reconnect or replay the in-flight offer; recovery waits for
-  the next stream snapshot, up to the stream cycle (about five minutes).
+  the next stream snapshot, up to the stream's planned close (at most four
+  minutes).
 
 Those are presentation crash windows, not guarantees of task completion. A
 crashed or compacted agent must recover procedurally from durable state instead
