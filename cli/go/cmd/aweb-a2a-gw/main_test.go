@@ -11,8 +11,8 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
-	"sync/atomic"
 	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -1800,5 +1800,25 @@ func TestA2AGatewayLiveChecksNoDependency(t *testing.T) {
 	runtimeHandler(gateway, cfg).ServeHTTP(health, httptest.NewRequest(http.MethodGet, "/health", nil))
 	if health.Code != http.StatusServiceUnavailable {
 		t.Fatalf("health status=%d with the registry answering 502; want 503", health.Code)
+	}
+}
+
+// The image's HEALTHCHECK restarts the container, so it probes the route that
+// checks no dependency.
+func TestA2AGatewayImageHealthcheckProbesLive(t *testing.T) {
+	dockerfile, err := os.ReadFile(filepath.Join("..", "..", "Dockerfile.a2a-gw"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	var probes []string
+	lines := strings.Split(string(dockerfile), "\n")
+	for i, line := range lines {
+		if strings.HasPrefix(line, "HEALTHCHECK") && i+1 < len(lines) {
+			probes = append(probes, strings.TrimSpace(lines[i+1]))
+		}
+	}
+	want := `CMD wget -qO- "http://127.0.0.1:${PORT}/live" >/dev/null || exit 1`
+	if len(probes) != 1 || probes[0] != want {
+		t.Fatalf("HEALTHCHECK probes=%q want [%q]", probes, want)
 	}
 }

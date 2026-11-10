@@ -2,6 +2,17 @@
 
 ## Unreleased
 
+- The A2A gateway serves `GET /live`, which answers `200 {"status":"ok"}`
+  whenever the process serves requests and checks no dependency. The gateway
+  image's `HEALTHCHECK` probes `/live`; `/health` remains the readiness and
+  monitoring route. The gateway's registry check treats AWID's health report
+  with status `unhealthy`, which AWID sends with 503 when its own Redis or
+  database check fails, as a registry it reached, so a registry dependency
+  outage does not make the gateway unhealthy. **Self-hosters:** an aweb server
+  older than this release treats any non-2xx answer from AWID's `/health` as
+  unreachable and refuses to start while its registry reports unhealthy;
+  upgrade the server together with the registry.
+
 - Self-custodial humans can select their OS-keychain identity with `aw --human
   <did:aw> --human-domain <domain>` to fetch a controller-issued team certificate,
   connect, send/read/reply to plaintext mail, and make ordinary team-auth naapp
