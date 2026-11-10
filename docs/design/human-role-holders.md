@@ -201,7 +201,12 @@ receipt, recorded under the consumed owner act, as for the contact acts
   subject and `credential_id`, exactly as [Three acts](#three-acts) defines
   it: the credential id and COSE public key bytes, each unpadded base64url,
   and the stored `rp_id`. A digest that differs from the row's names no
-  credential, and the recorder refuses the event.
+  credential, and the recorder refuses the event. The receipt's
+  `resource_ref` is a random opaque reference that the authorization row
+  retains from the designate or replace, as a completion link's reference is
+  for an enrolled key. It is never the digest: a security key with the `aweb:`
+  `rp_id` has the same digest in every app, and a digest in a receipt would
+  link the holder's receipts across apps.
 
 ### Use
 
