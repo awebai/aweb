@@ -474,10 +474,31 @@ resource contract adds the local comparison to `secrets.md` §11.3 and owns its
 re-submission/idempotency details. No cached hit or retained intent manufactures
 a new deadline. The generic path introduces no second verifier or network read.
 
+**Portable deadline (R/A refinement, secrets
+`1baed17f-8ad5-49ab-b9ff-12a23e5fdc8e`):** `MembershipProof` uses a process-local
+monotonic clock; never persist that value for another worker. In the admission
+transaction, sample the database `clock_timestamp()` **first**, then compute
+the minimum remaining original monotonic budget, rounded down to the persisted
+precision. Add that remaining budget to the earlier database timestamp and
+persist the resulting absolute deadline. A non-positive budget refuses.
+Adding an earlier budget to a later timestamp would extend authority and is
+forbidden. Persisting or queueing may consume that budget; it never extends it.
+
+The final fence compares the persisted deadline against the same database
+clock, sampled after its last lock wait. Dequeue, cache hits, retries and lock
+acquisition never rebase the deadline. The consumer inventory must cover
+admission, persistence, cross-worker queue claim, approval consumption and
+credential release using that representation. Expiry is the existing shared
+503 `current_membership_unavailable`, not a revocation finding. Recovery is
+fresh authenticated re-submission through normal grant, approval and
+idempotency checks; it never bypasses them. Grant revocation is an independent
+stop. Exact timestamp precision and representation belong in the joint freeze.
+
 Consequences for that consumer:
 
 - A queued runner job claimed after the deadline refuses at its claim fence
-  with `membership_evidence_expired`, final for that dispatch. Recovery requires
+  with the shared 503 `current_membership_unavailable`, final for that dispatch.
+  This is unavailable evidence, not a claim of revocation. Recovery requires
   requester re-submission through fresh admission, never automatic release of
   that old assignment. The remaining deadline can be less than 60 seconds at
   admission; queued jobs need a connected runner or a re-submit.
@@ -487,9 +508,10 @@ Consequences for that consumer:
   extra queue delay. This retains the earlier qualification for independent
   external-authority freshness. Grant revocation still cuts admitted unsent
   intents at the existing fence.
-- The expired-during-lock-wait and delayed-runner-claim vectors both assert no
-  approval consumption, no assignment row and no bytes released. Short waits
-  with usable evidence remain the positive neighbors.
+- Vectors cover expiry during a proven effect-lock wait, during deadline
+  persistence and in a queued cross-worker claim. Each asserts no approval
+  consumption, no assignment row, no credential release and no send. Short
+  waits with usable evidence remain the positive neighbors.
 
 Installation scopes and resource policy remain separate. Acwd.16 owns how the
 verified path constrains grants and distinct approvers; these output fields
@@ -588,7 +610,8 @@ direct-naapp consumers:
 | Laptop and managed-server children with equivalent evidence | Same membership/resource decisions; no placement condition or forced host migration. |
 | Direct member versus inherited leaf | Only inherited result exposes verified policy/root/ordered ancestors; caller fields cannot substitute. |
 | Membership deadline expires during the last effect-lock wait | Local final-fence refusal; no approval consumed, no assignment row, no released bytes. Short wait with unexpired evidence succeeds. |
-| Runner claims queued job after membership deadline | `membership_evidence_expired`, final for dispatch; no approval consumed, no assignment row or released bytes; re-submission requires fresh admission. |
+| Runner claims queued job after membership deadline, including another worker | 503 `current_membership_unavailable`, final for dispatch; no approval consumed, no assignment row, release or send; fresh authenticated re-submission runs normal grant/approval/idempotency checks. |
+| Evidence expires while its deadline is persisted | DB-first timestamp plus later rounded-down remaining budget does not extend authority; final fence refuses with no approval consumed, assignment, credential release or send. |
 | Local B reused across teams | Existing local-scope refusal; distinct local children or existing global B are the valid neighbors. |
 | T1 succeeds while T2 refuses in a selected set | Exact per-team receipt; no T2 access, no hidden rollback or silent overall success. |
 | Old client receives inherited proof | Unsupported/authentication refusal; existing v1 certificate still works. |
@@ -717,5 +740,7 @@ rather than duplicate a protocol decision or promote an unreviewed realization
 as accepted authority. The direction and supersession boundary are recorded;
 released v1 authority is unchanged. The later fence convergence
 `2bc86d1b-8ff1-4063-8686-8bb3633cb6c5` explicitly adds local original-deadline
-checks for both direct and inherited effects; it supersedes the provisional
+checks for both direct and inherited effects; the R/A refinement relayed in
+`1baed17f` adds the DB-anchored portable deadline and shared unavailable refusal.
+This supersedes the provisional
 admission-only option and must be qualified with the resource consumer.
