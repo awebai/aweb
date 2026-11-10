@@ -90,7 +90,9 @@ redirect on the same machine, as RFC 8252 describes for native apps:
    redirect URI, the verifier's SHA-256 and, for a session, the holder's
    scope, signed with team-auth v2 as the holder
    ([Membership evidence](#membership-evidence)). The app refuses a scope
-   whose principal is not the verified signer with `403 scope_not_signer`. `aw` builds the page and
+   whose principal is not the verified signer with `403 scope_not_signer`. A
+   start refusal ends the command: `aw` never renews on one, whether it
+   refuses a first start or a renewal's start. `aw` builds the page and
    result URLs from the pinned human origin, never from the response. The app accepts only a redirect URI of the form
    `http://127.0.0.1:<port>/<path>` or `http://[::1]:<port>/<path>`, a
    literal loopback address; `localhost` and every other URI are refused
@@ -144,7 +146,7 @@ An app that cannot emit that event refuses a fallback `session` handoff with
 `409 fallback_unavailable`. That includes an app whose hook catalog lacks the
 act, and the team server, which produces no hooks. It is not a session
 refusal: `aw` does not renew, and it reports the code and that a local browser
-is needed.
+is needed. Like every start refusal, it is not renewed.
 
 **Purposes:**
 
@@ -174,15 +176,19 @@ is needed.
   `503 principal_status_unavailable`. When the session's holding has been
   revoked, the app refuses with `403 role_not_held`, and a `session` handoff
   requested for a scope in which the signing principal holds no current
-  holding refuses the same way. `role_not_held` is final: no new handoff
+  holding refuses the same way. A `session` handoff requested while the
+  signing principal holds the role but no credential of the holding can log
+  in, as during a replace's cooling-off, is refused at its start with
+  `401 console_session_required`. `role_not_held` is final: no new handoff
   restores a holding, so `aw` never renews on it. A `human-credential.replace`
   retires the session's login credential at once and freezes the holder's
   approvals and the widening changes they gate until its cooling-off ends
   ([effects](human-role-holders.md#delivery-body-and-stage-3)). The principal still holds the
   role, so a session that logged in with the retired credential is refused
   with `401 console_session_required`, not `role_not_held`. During the
-  cooling-off no credential of the holding can log in, so the one renewal
-  fails and `aw` reports it. After the cooling-off, the renewal logs in with
+  cooling-off no credential of the holding can log in, so the app refuses the
+  renewal's start with `401 console_session_required`, and `aw` reports it
+  without renewing again. After the cooling-off, the renewal logs in with
   the replacement credential, which the holder of the new passkey passes and
   anyone with only the old one fails.
 
@@ -491,7 +497,8 @@ which stops.
    `confirm_already_applied`, its one-time output lost. Anything else reports
    the read's state.
 4. When the app refuses the session (`401 console_session_required`), `aw`
-   opens a fresh `session` handoff once, and reports a second refusal. If it
+   opens a fresh `session` handoff once, and reports a second refusal,
+   including a refusal of that handoff's start. If it
    has not yet sent the confirm, it resumes from step 1. If it has, it resumes in step 3: it only reads and
    reports, and never sends the confirm again, even when the read says
    `ready`, because the first confirm may still be committing. An invocation
@@ -574,6 +581,10 @@ Each item is filed after review, and each is one reviewed change.
   - a result requested without the loopback code is refused;
   - a replayed session request, an expired session and a request with a bad
     signature each get the same `401 console_session_required`;
+  - a `session` start by a holder whose holding has no credential that can
+    log in (a replace in cooling-off) gets `401 console_session_required`,
+    and a start for a scope with no current holding gets
+    `403 role_not_held`;
   - a team-auth-signed `POST /handoffs` reaches the handoff service on the
     app origin, and the same request, or any request carrying `Authorization`,
     `X-AWEB-*` or `X-AWID-*`, sent to the human origin is still refused with
