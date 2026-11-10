@@ -44,7 +44,7 @@ PYTHON = str(Path(sys.executable).resolve())
 
 
 @pytest.fixture
-def world(tmp_path):
+def world(tmp_path, monkeypatch):
     # The deployment policy checks all ancestors; tmp itself is intentionally
     # outside this existing-UID protocol test's boundary.
     prefix = tmp_path / "prefix"
@@ -70,22 +70,44 @@ def world(tmp_path):
     binary.write_text(f"#!{python} -I\n" + WORKER)
     binary.chmod(0o755)
     (prefix / "bin" / "aweb-secrets-supervisor").write_text(f"#!{python} -I\n")
+    # Test-owned analogue of /run, outside the installed runtime tree. Only
+    # Python Policy injection relocates it; the deployed protocol has no path.
+    marker = tmp_path / "run" / "aweb-secrets-runner" / "egress-ready"
+    marker.parent.mkdir(parents=True, mode=0o755)
+    marker.write_bytes(f"{os.geteuid()}\n".encode("ascii"))
+    marker.chmod(0o644)
+    monkeypatch.setattr("runner_supervisor.EGRESS_READY", marker, raising=False)
     policy = Policy(
         prefix,
         os.geteuid(),
         os.geteuid(),
-        ancestor_root=prefix,
+        ancestor_root=tmp_path,
         interpreter=python,
         python_paths=(str(prefix),),
     )
     module_dir = Path(__file__).resolve().parents[1] / "e2e"
-    bootstrap = (
-        f"import sys; sys.path.insert(0, {str(module_dir)!r}); "
-        "from runner_supervisor import Policy, supervise; "
-        f"raise SystemExit(supervise(Policy({str(prefix)!r}, {os.geteuid()}, "
-        f"{os.geteuid()}, ancestor_root={str(prefix)!r}, interpreter={str(python)!r}, "
-        f"python_paths=({str(prefix)!r},))))"
-    )
+    bootstrap = f"""
+import os, sys
+from pathlib import Path
+sys.path.insert(0, {str(module_dir)!r})
+import runner_supervisor as supervisor
+supervisor.EGRESS_READY = Path({str(marker)!r})
+supervisor_pid = os.getpid()
+class ObservedPolicy(supervisor.Policy):
+    def check(self):
+        super().check()
+        (self.state / 'installation-checked').touch()
+    def require_egress_ready(self):
+        # Plant the removal after the parent's check, in the real forked child.
+        # This creates no production flag or hook and still uses the real check.
+        if os.getpid() != supervisor_pid and (self.state / 'remove-before-exec').exists():
+            supervisor.EGRESS_READY.unlink()
+        return super().require_egress_ready()
+raise SystemExit(supervisor.supervise(ObservedPolicy(
+    {str(prefix)!r}, {os.geteuid()}, {os.geteuid()},
+    ancestor_root={str(tmp_path)!r}, interpreter={str(python)!r},
+    python_paths=({str(prefix)!r},))))
+"""
     command = (sys.executable, "-I", "-c", bootstrap)
     launcher = SupervisedLauncher(command=command, policy=policy)
     return policy, launcher, command
@@ -264,3 +286,156 @@ def test_external_python_base_and_venv_configuration_refuse(world):
     (policy.prefix / "pyvenv.cfg").write_text(f"home = {sys.base_prefix}\n")
     with pytest.raises(ValueError):
         policy.check()
+
+
+LINUX = pytest.mark.skipif(sys.platform != "linux", reason="Linux egress launch contract")
+
+
+async def supervisor_result(command, request):
+    driver = await asyncio.create_subprocess_exec(
+        *command,
+        stdin=asyncio.subprocess.PIPE,
+        stdout=asyncio.subprocess.PIPE,
+        stderr=asyncio.subprocess.PIPE,
+    )
+    try:
+        async with asyncio.timeout(5):
+            stdout, stderr = await driver.communicate(json.dumps(request).encode() + b"\n")
+        return driver.returncode, stdout, stderr
+    finally:
+        if driver.returncode is None:
+            driver.kill()
+            await driver.wait()
+
+
+@LINUX
+@pytest.mark.parametrize("operation", ["register", "run"])
+@pytest.mark.parametrize(
+    "fault",
+    [
+        "missing",
+        "wrong-uid",
+        "noncanonical",
+        "missing-lf",
+        "extra-lf",
+        "oversized",
+        "symlink",
+        "writable-file",
+        "writable-directory",
+        "linked-directory",
+        "fifo",
+    ],
+)
+async def test_linux_networked_launch_refuses_bad_marker_before_worker(world, fault, operation):
+    import runner_supervisor
+
+    policy, _, command = world
+    marker = runner_supervisor.EGRESS_READY
+    uid = os.geteuid()
+    if fault == "missing":
+        marker.unlink()
+    elif fault == "wrong-uid":
+        marker.write_bytes(f"{uid + 1}\n".encode())
+    elif fault == "noncanonical":
+        marker.write_bytes(f"0{uid}\n".encode())
+    elif fault == "missing-lf":
+        marker.write_bytes(str(uid).encode())
+    elif fault == "extra-lf":
+        marker.write_bytes(f"{uid}\n\n".encode())
+    elif fault == "oversized":
+        marker.write_bytes(f"{uid}\n".encode() + b"x" * 8192)
+    elif fault == "symlink":
+        target = marker.with_name("real")
+        marker.rename(target)
+        marker.symlink_to(target)
+    elif fault == "writable-file":
+        marker.chmod(0o666)
+    elif fault == "writable-directory":
+        marker.parent.chmod(0o777)
+    elif fault == "linked-directory":
+        target = marker.parent.with_name("real-directory")
+        marker.parent.rename(target)
+        marker.parent.symlink_to(target, target_is_directory=True)
+    elif fault == "fifo":
+        marker.unlink()
+        os.mkfifo(marker, 0o644)
+    request = {"command": operation}
+    if operation == "register":
+        request["code"] = secrets.token_urlsafe(24)
+    rc, stdout, stderr = await supervisor_result(command, request)
+    assert rc == 2, "unsafe egress readiness must refuse before worker creation"
+    assert stdout == stderr == b"", "a refused launch must not report a worker"
+    assert not (policy.state / "registered").exists()
+    assert not (policy.state / "ready").exists()
+
+
+@LINUX
+@pytest.mark.parametrize("operation", ["register", "run"])
+async def test_marker_removed_during_initial_input_wait_refuses(world, operation):
+    import runner_supervisor
+
+    policy, _, command = world
+    driver = await asyncio.create_subprocess_exec(
+        *command,
+        stdin=asyncio.subprocess.PIPE,
+        stdout=asyncio.subprocess.PIPE,
+        stderr=asyncio.subprocess.PIPE,
+    )
+    try:
+        async with asyncio.timeout(5):
+            while not (policy.state / "installation-checked").exists():
+                await asyncio.sleep(0.01)
+            runner_supervisor.EGRESS_READY.unlink()
+            request = {"command": operation}
+            if operation == "register":
+                request["code"] = secrets.token_urlsafe(24)
+            stdout, stderr = await driver.communicate(json.dumps(request).encode() + b"\n")
+        assert driver.returncode == 2, "initial policy check cannot cover the input wait"
+        assert stdout == stderr == b""
+        assert not (policy.state / "registered").exists()
+    finally:
+        if driver.returncode is None:
+            driver.kill()
+            await driver.wait()
+
+
+@LINUX
+@pytest.mark.parametrize("operation", ["register", "run"])
+async def test_child_rechecks_marker_immediately_before_exec(world, operation):
+    policy, _, command = world
+    (policy.state / "remove-before-exec").touch()
+    request = {"command": operation}
+    if operation == "register":
+        request["code"] = secrets.token_urlsafe(24)
+    rc, stdout, stderr = await supervisor_result(command, request)
+    frames = [json.loads(line) for line in stdout.splitlines()]
+    assert rc == 0 and stderr == b""
+    assert frames[1] == {"exec": False}, "the child must refuse removal after the parent check"
+    assert frames[2] == {"exit": 127}
+    assert not (policy.state / "registered").exists()
+    assert not (policy.state / "ready").exists()
+
+
+@LINUX
+async def test_doctor_and_installation_verification_work_without_marker(world):
+    import runner_supervisor
+
+    policy, launcher, _ = world
+    runner_supervisor.EGRESS_READY.unlink()
+    policy.check()
+    process = await launcher.launch(Invocation(policy.argv("doctor"), "unused"))
+    assert await process.wait() == 7
+
+
+@LINUX
+@pytest.mark.skipif(os.geteuid() != 0, reason="needs disposable root-owned fixture")
+@pytest.mark.parametrize("target", ["file", "directory"])
+async def test_marker_owned_by_another_uid_refuses(world, target):
+    import runner_supervisor
+
+    _, _, command = world
+    marker = runner_supervisor.EGRESS_READY
+    os.chown(marker if target == "file" else marker.parent, 1, -1)
+    rc, stdout, stderr = await supervisor_result(command, {"command": "run"})
+    assert rc == 2, "readiness owned by another UID must refuse"
+    assert stdout == stderr == b""
