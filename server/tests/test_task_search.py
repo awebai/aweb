@@ -10,6 +10,7 @@ import pytest
 
 from aweb.coordination.tasks_service import create_task, list_tasks, update_task
 from aweb.service_errors import ValidationError
+from test_tasks_http import member_identity
 
 
 class _DbShim:
@@ -64,6 +65,7 @@ class _BarrierManager:
 
 
 TEAM_ADDRESS = "myproj:acme.com"
+ALICE = member_identity(team_id=TEAM_ADDRESS)
 
 
 async def _seed_team(aweb_db):
@@ -163,15 +165,15 @@ async def test_search_returns_all_when_q_is_none(aweb_cloud_db):
 async def test_list_tasks_filters_by_parent_ref(aweb_cloud_db):
     db = _DbShim(aweb_cloud_db.aweb_db)
     await _seed_team(aweb_cloud_db.aweb_db)
-    parent = await create_task(db, team_id=TEAM_ADDRESS, created_by_alias="alice", title="Parent")
+    parent = await create_task(db, actor=ALICE, on_mutation=None, title="Parent")
     child = await create_task(
         db,
-        team_id=TEAM_ADDRESS,
-        created_by_alias="alice",
+        actor=ALICE,
+        on_mutation=None,
         title="Child",
         parent_task_id=parent["task_ref"],
     )
-    await create_task(db, team_id=TEAM_ADDRESS, created_by_alias="alice", title="Other root")
+    await create_task(db, actor=ALICE, on_mutation=None, title="Other root")
 
     results = await list_tasks(db, team_id=TEAM_ADDRESS, parent_task_id=parent["task_ref"])
 
@@ -182,47 +184,47 @@ async def test_list_tasks_filters_by_parent_ref(aweb_cloud_db):
 async def test_update_task_reparents_clears_and_rejects_cycles(aweb_cloud_db):
     db = _DbShim(aweb_cloud_db.aweb_db)
     await _seed_team(aweb_cloud_db.aweb_db)
-    first_parent = await create_task(db, team_id=TEAM_ADDRESS, created_by_alias="alice", title="First")
-    second_parent = await create_task(db, team_id=TEAM_ADDRESS, created_by_alias="alice", title="Second")
+    first_parent = await create_task(db, actor=ALICE, on_mutation=None, title="First")
+    second_parent = await create_task(db, actor=ALICE, on_mutation=None, title="Second")
     child = await create_task(
         db,
-        team_id=TEAM_ADDRESS,
-        created_by_alias="alice",
+        actor=ALICE,
+        on_mutation=None,
         title="Child",
         parent_task_id=first_parent["task_ref"],
     )
 
     moved = await update_task(
         db,
-        team_id=TEAM_ADDRESS,
+        actor=ALICE,
+        on_mutation=None,
         ref=child["task_ref"],
-        actor_alias="alice",
         parent_task_id=second_parent["task_ref"],
     )
     assert moved["parent_task_id"] == second_parent["task_id"]
 
     cleared = await update_task(
         db,
-        team_id=TEAM_ADDRESS,
+        actor=ALICE,
+        on_mutation=None,
         ref=child["task_ref"],
-        actor_alias="alice",
         parent_task_id=None,
     )
     assert cleared["parent_task_id"] is None
 
     await update_task(
         db,
-        team_id=TEAM_ADDRESS,
+        actor=ALICE,
+        on_mutation=None,
         ref=child["task_ref"],
-        actor_alias="alice",
         parent_task_id=first_parent["task_ref"],
     )
     with pytest.raises(ValidationError, match="cycle"):
         await update_task(
             db,
-            team_id=TEAM_ADDRESS,
+            actor=ALICE,
+            on_mutation=None,
             ref=first_parent["task_ref"],
-            actor_alias="alice",
             parent_task_id=child["task_ref"],
         )
 
@@ -233,33 +235,33 @@ async def test_concurrent_reparents_cannot_commit_a_cycle(aweb_cloud_db):
     setup_db = _DbShim(manager)
     await _seed_team(manager)
     second = await create_task(
-        setup_db, team_id=TEAM_ADDRESS, created_by_alias="alice", title="Second"
+        setup_db, actor=ALICE, on_mutation=None, title="Second"
     )
     first = await create_task(
         setup_db,
-        team_id=TEAM_ADDRESS,
-        created_by_alias="alice",
+        actor=ALICE,
+        on_mutation=None,
         title="First",
         parent_task_id=second["task_ref"],
     )
     third = await create_task(
-        setup_db, team_id=TEAM_ADDRESS, created_by_alias="alice", title="Third"
+        setup_db, actor=ALICE, on_mutation=None, title="Third"
     )
     concurrent_db = _DbShim(_BarrierManager(manager))
 
     results = await asyncio.gather(
         update_task(
             concurrent_db,
-            team_id=TEAM_ADDRESS,
+            actor=ALICE,
+            on_mutation=None,
             ref=third["task_ref"],
-            actor_alias="alice",
             parent_task_id=first["task_ref"],
         ),
         update_task(
             concurrent_db,
-            team_id=TEAM_ADDRESS,
+            actor=ALICE,
+            on_mutation=None,
             ref=second["task_ref"],
-            actor_alias="alice",
             parent_task_id=third["task_ref"],
         ),
         return_exceptions=True,
