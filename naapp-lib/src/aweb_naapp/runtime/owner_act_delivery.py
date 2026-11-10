@@ -82,8 +82,14 @@ class OwnerActDelivery:
     certificate is the decoded signed JSON artifact, not its base64 transport.
     It is required for designate/replace and absent for revoke. The HTTP parser
     owns presence/encoding checks and uses the existing HumanCredential parser.
+    signing and signature are the EXACT artifact the router authenticated;
+    they are not reconstructed from parsed fields. prepare passes them to the
+    recorder's prepare_owner_act outside locks, and apply uses that retained
+    recorder.prepared context around the canonical writer.
     """
 
+    signing: bytes
+    signature: str
     act: str
     team_id: str
     subject: Mapping[str, Any]
@@ -110,6 +116,8 @@ class OwnerActEffect(Protocol):
         the exact checked artifact and original proof for designate/replace;
         revoke performs no holder membership/kind lookup. Return a NEW prepared
         object per delivery; it is never shared across requests or retries.
+        Recorder preparation and its governance-registration prefetch also run
+        here, using delivery.signing and delivery.signature unchanged.
         """
         ...
 

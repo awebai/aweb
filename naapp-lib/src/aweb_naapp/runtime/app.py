@@ -473,6 +473,11 @@ class NaappRuntime:
             else:
                 code = "principal_status_unavailable"
             raise OwnerActDeliveryRefused(code) from None
+        except Exception:
+            # The delivery boundary cannot turn an unclassified dependency
+            # failure into a definitive non-member result or expose its detail.
+            # Cancellation inherits BaseException and still propagates.
+            raise OwnerActDeliveryRefused("principal_status_unavailable") from None
         return CheckedHumanRoleMember(certificate, proof)
 
     async def check_human_member(
