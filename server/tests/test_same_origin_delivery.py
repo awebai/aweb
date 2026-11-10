@@ -1029,6 +1029,7 @@ async def test_stored_own_route_rotation_requires_current_target(same_origin, fo
     if key == "obsolete":
         assert "error" in result or "detail" in result, result
         expected = (
+            "this recipient's key changed; refresh and resend" if encrypted and api == "mcp" and kind == "mail" else
             "encrypted envelope recipient did mismatch" if encrypted else
             "hosted custodial signer returned signed_payload for different fields" if api == "mcp" else
             "identity_binding_mismatch" if kind == "mail" else

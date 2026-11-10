@@ -460,7 +460,11 @@ async def test_mcp_encrypted_mail_to_a_hosted_recipient_needs_the_senders_hosted
         )
         assert row["content_mode"] == "encrypted_v2"
     else:
-        assert sent == {"error": "recipient_custodial_no_e2ee"}
+        assert sent == {
+            "error": "your encryption key isn't published yet; try again shortly, "
+                     "and if it persists contact support",
+            "reason": "recipient_custodial_no_e2ee",
+        }
         assert await _mail_state(server) == (0, 0)
 
 
@@ -584,3 +588,120 @@ def test_the_fields_mcp_signs_for_a_reply_satisfy_the_send_validation():
         priority="normal", subject="re", body="hello", from_did="did:key:zPilot",
         message_id=message_id, timestamp="2026-11-10T12:00:00Z", conversation_id=conversation_id,
     )
+
+
+def _authority_refusal(reason):
+    from awid.federation_errors import FederationAuthorityError
+
+    return FederationAuthorityError(reason)
+
+
+def _binding_refusal(status, code):
+    from fastapi import HTTPException
+
+    return HTTPException(status_code=status, detail=code)
+
+
+# (the refusal the send raises, what the tool knows about the send, what the tool answers)
+NEXT_ACTIONS = [
+    (lambda: _authority_refusal("sender_registry_unavailable"), {"address": "jane.aweb.ai/c3po"}, {
+        "error": "the registry can't confirm jane.aweb.ai/c3po right now; try again, or check the address",
+        "reason": "sender_registry_unavailable",
+    }),
+    (lambda: _authority_refusal("recipient_custodial_no_e2ee"), {"hosted_envelope": True}, {
+        "error": "your encryption key isn't published yet; try again shortly, and if it persists contact support",
+        "reason": "recipient_custodial_no_e2ee",
+    }),
+    (lambda: _authority_refusal("federation_envelope_invalid"), {"hosted_envelope": True}, {
+        "error": "your published encryption key can't be verified right now; try again shortly, "
+                 "and if it persists contact support",
+        "reason": "federation_envelope_invalid",
+    }),
+    (lambda: _authority_refusal("recipient_encryption_assertion_invalid_or_stale"), {"hosted_envelope": True}, {
+        "error": "this recipient's published encryption key can't be verified right now; try again later, "
+                 "and if it persists contact support",
+        "reason": "recipient_encryption_assertion_invalid_or_stale",
+    }),
+    (lambda: _binding_refusal(403, "identity_binding_mismatch"), {}, {
+        "error": "this recipient's key changed; refresh and resend",
+        "reason": "identity_binding_mismatch",
+    }),
+    (lambda: _binding_refusal(503, "identity_binding_unavailable"), {}, {
+        "error": "the registry can't confirm this recipient's key right now; try again shortly",
+        "reason": "identity_binding_unavailable",
+    }),
+]
+
+
+@pytest.mark.parametrize("refusal,known,answer", NEXT_ACTIONS)
+def test_mcp_mail_refusals_name_the_next_action_and_keep_their_code(refusal, known, answer):
+    from aweb.mcp.tools.mail import _send_refusal
+
+    assert json.loads(_send_refusal(refusal(), **known)) == answer
+
+
+@pytest.mark.parametrize("reason", [
+    "sender_registry_unavailable", "recipient_custodial_no_e2ee", "federation_envelope_invalid",
+    "recipient_encryption_assertion_invalid_or_stale",
+])
+def test_the_route_answers_a_federation_refusal_with_its_code_alone(reason):
+    from aweb.federation.errors import authority_error_body
+
+    body = authority_error_body(_authority_refusal(reason), correlation_id="c")
+    assert (body["detail"], body["reason"]) == (reason, reason)
+    assert set(body) == {"detail", "reason", "retryable", "correlation_id"}
+
+
+def test_mcp_mail_codes_without_a_next_action_are_answered_as_the_code():
+    from aweb.mcp.tools.mail import _send_refusal
+
+    # Outside a hosted envelope the custody refusal says nothing about the sender's key.
+    assert json.loads(_send_refusal(_authority_refusal("recipient_custodial_no_e2ee"))) == {
+        "error": "recipient_custodial_no_e2ee",
+    }
+    assert json.loads(_send_refusal(_authority_refusal("federation_rate_limited"), address="a.test/b")) == {
+        "error": "federation_rate_limited",
+    }
+    # An address the registry does not bind is refused in the words for a name nobody holds.
+    for refusal in (_authority_refusal("recipient_identity_not_found"),
+                    _authority_refusal("local_recipient_route_missing"),
+                    _binding_refusal(404, "Recipient address not found")):
+        assert json.loads(_send_refusal(refusal, address="a.test/b")) == {
+            "error": unreachable_address_refusal("a.test/b"),
+        }
+
+
+def test_an_envelope_for_a_key_this_server_does_not_record_is_refused_as_a_changed_key():
+    from fastapi import HTTPException
+
+    from aweb.identity_auth_deps import MessagingAuth
+    from aweb.mcp.tools.mail import _send_refusal
+    from aweb.messaging.mail_send import _validate_encrypted_payload
+    from aweb.routes.messages import SendMessageRequest
+
+    pilot_key, _, pilot_did = _make_keypair()
+    recorded_did, registry_did = _make_keypair()[2], _make_keypair()[2]
+    message_id, conversation_id = str(uuid4()), str(uuid4())
+    envelope = _encrypted_mail_envelope(
+        sender_sk=pilot_key, sender_did=pilot_did, sender_stable_id="did:aw:pilot",
+        recipient_did=registry_did, recipient_stable_id="did:aw:bob",
+        message_id=message_id, conversation_id=conversation_id,
+    )
+    payload = SendMessageRequest(
+        to_alias="bob", message_id=message_id, conversation_id=conversation_id,
+        content_mode="encrypted_v2", message_version=2, encrypted_envelope=envelope,
+    )
+
+    with pytest.raises(HTTPException) as refused:
+        _validate_encrypted_payload(
+            payload, auth=MessagingAuth(did_key=pilot_did, did_aw="did:aw:pilot", address="acme.com/pilot"),
+            sender_did="did:aw:pilot",
+            recipient={"did_key": recorded_did, "did_aw": "did:aw:bob", "address": "acme.com/bob"},
+            recipient_did="did:aw:bob",
+        )
+
+    # The route's answer is unchanged.
+    assert (refused.value.status_code, refused.value.detail) == (422, "encrypted envelope recipient did mismatch")
+    assert json.loads(_send_refusal(refused.value, hosted_envelope=True)) == {
+        "error": "this recipient's key changed; refresh and resend",
+    }
