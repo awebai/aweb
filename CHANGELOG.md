@@ -17,6 +17,11 @@
   fields differ is presented with trust status `failed` and its fields as
   received. Room posts use the same comparison.
 
+- `aw` reads its configuration from the process environment, flags and its own
+  config files. It does not read `.env` or `.env.aweb` files from the working
+  directory; export any settings kept in such a file (for example `AWEB_URL` or
+  `AWEB_API_KEY`) in the shell that runs `aw` instead.
+
 - Self-custodial humans can select their OS-keychain identity with `aw --human
   <did:aw> --human-domain <domain>` to fetch a controller-issued team certificate,
   connect, send/read/reply to plaintext mail, and make ordinary team-auth naapp
