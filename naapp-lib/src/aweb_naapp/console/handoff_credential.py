@@ -62,6 +62,7 @@ def credential_handoff_router(
     rp: RelyingParty,
     admits: Callable[[dict[str, str]], Awaitable[bool]],
     limiter: LoginLimiter,
+    session_result: Callable[[str, Request], Awaitable[dict | None]] | None = None,
 ) -> APIRouter:
     """The registration half of the handoff; `admits` checks the app namespace.
 
@@ -207,6 +208,10 @@ def credential_handoff_router(
 
     @router.post("/handoffs/{handoff_id}/result", dependencies=[Depends(require_json)])
     async def result(handoff_id: str, request: Request):
+        if session_result is not None:
+            answer = await session_result(handoff_id, request)
+            if answer is not None:
+                return answer
         value = await body(request, {"v", "code", "verifier"})
         if type(value["v"]) is not int or value["v"] != 1:
             raise HTTPException(403, "handoff_refused")

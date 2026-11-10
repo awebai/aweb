@@ -10,6 +10,7 @@ from uuid import UUID, uuid4
 from awid.did import public_key_from_did, strict_ed25519_point, validate_stable_id
 from fastapi import APIRouter, Depends, HTTPException, Request
 from pgdbm import AsyncDatabaseManager
+from pgdbm.core import TransactionManager
 
 from aweb_naapp.console import ConsoleRoute, LoginLimiter, require_json
 from aweb_naapp.console.handoff_authority import PublicScope
@@ -100,9 +101,11 @@ class HandoffStore:
     def __init__(self, db: AsyncDatabaseManager) -> None:
         self.db = db
 
-    async def create(self, start: HandoffStart) -> dict[str, str]:
+    async def create(
+        self, start: HandoffStart, *, tx: TransactionManager | None = None
+    ) -> dict[str, str]:
         handoff_id = uuid4()
-        expiry = await self.db.fetch_value(
+        expiry = await (tx or self.db).fetch_value(
             "INSERT INTO {{tables.console_handoffs}} "
             "(handoff_id,purpose,client_key,redirect_uri,verifier_sha256,public_scope,client_hostname,expires_at) "
             "VALUES($1,$2,$3,$4,$5,$6::jsonb,$7,clock_timestamp()+INTERVAL '10 minutes') RETURNING expires_at",
@@ -125,6 +128,8 @@ def handoff_start_router(
     store: HandoffStore,
     limiter: LoginLimiter,
     principal: Callable[[Request], Awaitable[Principal]],
+    session_start: Callable[[HandoffStart, Principal, Request], Awaitable[dict[str, str]]]
+    | None = None,
 ) -> APIRouter:
     """Mount on the API origin, with the runtime's verified principal dependency.
 
@@ -156,6 +161,10 @@ def handoff_start_router(
             ) from None
         if not signer.did_aw_registry_verified or parsed.scope.principal != signer.did_aw:
             raise HTTPException(403, "scope_not_signer")
+        if parsed.purpose == "session":
+            if session_start is None:
+                raise HTTPException(403, "role_not_held")
+            return await session_start(parsed, signer, request)
         return await store.create(parsed)
 
     return router

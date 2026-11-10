@@ -931,6 +931,7 @@ class Passkeys:
         evidence_ref: str,
         *,
         tx: TransactionManager | None = None,
+        hold: bool = True,
     ) -> bool:
         """Whether this login's exact credential still permits the session.
 
@@ -938,14 +939,17 @@ class Passkeys:
         With tx, hold the approver then credential FOR SHARE through the caller's
         fenced action transaction, in retirement order. Without tx, use a short
         owned transaction. The caller separately checks its session expiry and
-        application authority. This read confers no additional authority.
+        application authority. With hold=False this is a local predicate only:
+        the caller already holds its complete prepared B3 union, or uses a
+        negative result solely to refuse. It takes no new upstream locks.
+        This read confers no additional authority.
         """
         if tx is None:
             async with self.db.transaction() as own:
-                return await self.login_evidence_is_current(scope, subject, evidence_ref, tx=own)
+                return await self.login_evidence_is_current(scope, subject, evidence_ref, tx=own, hold=hold)
         current = await tx.fetch_value(
             "SELECT subject FROM {{tables.passkey_approvers}} "
-            f"WHERE scope=$1 AND {_CURRENT} AND subject=$3 FOR SHARE",
+            f"WHERE scope=$1 AND {_CURRENT} AND subject=$3" + (" FOR SHARE" if hold else ""),
             scope,
             self._clock(),
             subject,
@@ -957,7 +961,7 @@ class Passkeys:
                 "SELECT 1 FROM {{tables.passkey_assertions}} e "
                 "JOIN {{tables.passkey_credentials}} c ON c.credential_id=e.credential_id "
                 "AND c.subject=e.subject WHERE e.evidence_ref=$1 AND e.subject=$2 "
-                "AND e.purpose='login' AND c.revoked_at IS NULL FOR SHARE OF c",
+                "AND e.purpose='login' AND c.revoked_at IS NULL" + (" FOR SHARE OF c" if hold else ""),
                 evidence_ref,
                 subject,
             )
