@@ -690,7 +690,7 @@ async def test_listed_delivery_origin_refuses_addresses_outside_the_private_netw
     assert PRIVATE_ORIGIN in message
     for network in ("10.0.0.0/8", "172.16.0.0/12", "192.168.0.0/16", "100.64.0.0/10", "fc00::/7"):
         assert network in message
-    assert "add" not in message
+    assert f"add {PRIVATE_ORIGIN} to" not in message
 
 
 @pytest.mark.parametrize("address", ["100.64.1.2", "172.16.0.1", "fd00::5"])

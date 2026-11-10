@@ -7,13 +7,14 @@ request then connects to an admitted address, while TLS verification, SNI and
 ``Host`` keep naming the origin. Proxy settings in the environment are not read.
 
 Federated delivery alone also admits the origins the operator lists in
-``AWEB_FEDERATION_PRIVATE_DELIVERY_ORIGINS`` when they resolve to private,
-loopback or link-local addresses; registry reads never do.
+``AWEB_FEDERATION_PRIVATE_DELIVERY_ORIGINS`` when they resolve to addresses in
+``PRIVATE_DELIVERY_NETWORKS``; registry reads never do.
 """
 
 from __future__ import annotations
 
 import asyncio
+import ipaddress
 import logging
 import ssl
 from urllib.parse import urlsplit
@@ -34,6 +35,12 @@ logger = logging.getLogger(__name__)
 RESOLVE_TIMEOUT_SECONDS = 5
 FALLBACK_CONNECT_TIMEOUT_SECONDS = 2.0
 PRIVATE_DELIVERY_ORIGINS_SETTING = "AWEB_FEDERATION_PRIVATE_DELIVERY_ORIGINS"
+# The networks, besides public addresses, a listed delivery origin may resolve
+# to. Loopback, link-local and every other special-purpose range stay refused.
+PRIVATE_DELIVERY_NETWORKS = tuple(
+    ipaddress.ip_network(network)
+    for network in ("10.0.0.0/8", "172.16.0.0/12", "192.168.0.0/16", "100.64.0.0/10", "fc00::/7")
+)
 
 
 class DestinationRefused(httpx.TransportError):
@@ -79,18 +86,46 @@ async def admitted_addresses(
 ) -> tuple[str, ...]:
     """Resolve the origin's host once and return its addresses when every one is admitted.
 
-    Only an isolated development origin, or an origin in ``private_origins``,
-    may resolve to a private, loopback or link-local address. Federated
+    An isolated development origin may resolve to a private, loopback or
+    link-local address, and an origin in ``private_origins`` to an address in
+    ``PRIVATE_DELIVERY_NETWORKS``; every other answer must be public. Federated
     delivery is the only caller that passes ``private_origins``.
     """
     async with asyncio.timeout(RESOLVE_TIMEOUT_SECONDS):
         answers = await host_resolver.resolve_all(urlsplit(origin).hostname)
-    return validate_resolved_addresses(
-        answers,
-        allow_nonpublic_test=(
-            isolated_registry_test_enabled(origin, origin_context) or origin in private_origins
-        ),
-    )
+    if isolated_registry_test_enabled(origin, origin_context):
+        return validate_resolved_addresses(answers, allow_nonpublic_test=True)
+    if origin in private_origins:
+        return _admitted_private_delivery_addresses(answers)
+    return validate_resolved_addresses(answers)
+
+
+def _in_private_delivery_network(value: str) -> bool:
+    """Whether the address is in ``PRIVATE_DELIVERY_NETWORKS``; an IPv4-mapped
+    IPv6 address is judged by its IPv4 address."""
+    try:
+        address = ipaddress.ip_address(value)
+    except ValueError:
+        return False
+    if address.version == 6 and address.ipv4_mapped is not None:
+        address = address.ipv4_mapped
+    return any(address in network for network in PRIVATE_DELIVERY_NETWORKS)
+
+
+def _admitted_private_delivery_addresses(answers) -> tuple[str, ...]:
+    """The answers of a listed delivery origin, when each is public or in
+    ``PRIVATE_DELIVERY_NETWORKS``; one other answer refuses them all."""
+    approved: list[str] = []
+    for value in answers:
+        if _in_private_delivery_network(value):
+            canonical = str(ipaddress.ip_address(value))
+        else:
+            (canonical,) = validate_resolved_addresses((value,))
+        if canonical not in approved:
+            approved.append(canonical)
+    if not approved:
+        raise FederationAuthorityError("sender_registry_origin_forbidden")
+    return tuple(approved)
 
 
 class PinnedTransport(httpx.AsyncBaseTransport):
@@ -138,8 +173,8 @@ class AddressCheckedTransport(httpx.AsyncBaseTransport):
 
     An origin is ``https`` and named by host; only an isolated development
     deployment admits ``http`` or an address literal. An origin in
-    ``private_delivery_origins`` may resolve to a private, loopback or
-    link-local address. Every request is resolved and checked again, the admitted addresses are tried in order until one
+    ``private_delivery_origins`` may resolve to an address in
+    ``PRIVATE_DELIVERY_NETWORKS``. Every request is resolved and checked again, the admitted addresses are tried in order until one
     accepts a connection, and no connection outlives its response, so a
     connection is never shared between two origins.
     """
@@ -187,8 +222,9 @@ class AddressCheckedTransport(httpx.AsyncBaseTransport):
         if origin in self.private_delivery_origins:
             logger.warning(
                 "Federated delivery to %s refused: it resolves to an address that is "
-                "neither public nor private, loopback or link-local",
-                origin,
+                "neither public nor in the networks admitted for %s origins (%s)",
+                origin, PRIVATE_DELIVERY_ORIGINS_SETTING,
+                ", ".join(str(network) for network in PRIVATE_DELIVERY_NETWORKS),
             )
         else:
             logger.warning(
