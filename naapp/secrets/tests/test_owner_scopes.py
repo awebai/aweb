@@ -6,8 +6,9 @@ import hashlib
 import re
 
 import pytest
+from aweb_naapp.roles import holding_scope
 
-from aweb_secrets.owners import approver_scope, is_owner_scope, owner_scope
+from aweb_secrets.owners import OWNER_ROLE, approver_scope, is_owner_scope, owner_scope
 
 INSTALLATION = "1b4e28ba-2fa1-4d3b-a3f5-ef19b5a7633b"
 OTHER_INSTALLATION = "6f9619ff-8b86-4011-b42d-00c04fc964ff"
@@ -50,3 +51,11 @@ def test_only_owner_scopes_are_owner_scopes() -> None:
     assert not is_owner_scope(approver_scope(INSTALLATION, TEAM, "finance"))
     assert not is_owner_scope("secrets.owner")
     assert not is_owner_scope("secrets.owner." + "A" * 40)
+
+
+def test_an_owner_scope_is_the_shared_holding_scope_of_the_owner_role() -> None:
+    """Existing owners keep their B3 scope when they move onto the shared holding."""
+    for installation, team in ((INSTALLATION, TEAM), (OTHER_INSTALLATION, OTHER_TEAM)):
+        assert owner_scope(installation, team, PRINCIPAL) == holding_scope(
+            installation, team, OWNER_ROLE, PRINCIPAL
+        )

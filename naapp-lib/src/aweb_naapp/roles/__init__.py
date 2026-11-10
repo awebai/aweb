@@ -22,6 +22,7 @@ Imports only the standard library and pgdbm, so it needs no naapp runtime.
 
 from __future__ import annotations
 
+import hashlib
 import re
 from dataclasses import dataclass
 from pathlib import Path
@@ -67,6 +68,20 @@ class PrincipalKey:
 
 def is_role_name(role: str) -> bool:
     return len(role) <= MAX_ROLE_NAME_LENGTH and _ROLE_NAME.fullmatch(role) is not None
+
+
+def holding_scope(installation_id: str, team_id: str, role: str, principal: str) -> str:
+    """The B3 scope of ``principal``'s holding of ``role`` in the installation.
+
+    It is named by the installation, the team and the principal; the role is
+    its prefix only, so the scope of ``secrets.owner`` is the one secrets has
+    always given its owners. A holding is never named from a contact.
+    """
+    _require_role_name(role)
+    if not principal.startswith("did:aw:") or principal == "did:aw:":
+        raise ValueError("a human role is held by a did:aw principal")
+    named = f"{installation_id}\n{team_id}\n{principal}"
+    return f"{role}.{hashlib.sha256(named.encode()).hexdigest()[:40]}"
 
 
 def principal_key(member: CertifiedMember) -> PrincipalKey:
