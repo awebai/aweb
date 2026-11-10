@@ -221,6 +221,14 @@ async def hold_holding(
 ) -> HumanRoleHolding | None: ...
 
 
+async def read_holding_of_scope(
+    tx: TransactionManager,
+    *,
+    installation: AdmittedInstallation,
+    b3_scope: str,
+) -> HumanRoleHolding | None: ...
+
+
 async def refresh_holding_certificate(
     tx: TransactionManager,
     *,
@@ -229,10 +237,10 @@ async def refresh_holding_certificate(
 ) -> bool: ...
 ```
 
-- **Where they run.** In the caller's transaction, by SQL only. Neither
-  does a network or registry read or refreshes anything. `read_holding`
-  takes no lock: it projects a target before an effect transaction, and its
-  result protects nothing by itself.
+- **Where they run.** In the caller's transaction, by SQL only. None of
+  them does a network or registry read or refreshes anything. `read_holding`
+  and `read_holding_of_scope` take no lock: each projects a target before an
+  effect transaction, and its result protects nothing by itself.
 - **The hold.** `hold_holding` returns the same result as `read_holding`,
   and locks the holding row `FOR SHARE` until the caller's transaction ends.
   It locks no B3 row. While the caller holds it, no holding writer can
@@ -262,6 +270,16 @@ async def refresh_holding_certificate(
   no current holding: never designated, or revoked. It also returns `None`
   for a role the app does not declare with the human-role acts, and for a
   `principal` that is not a `did:aw`.
+- **Reading by scope.** A consumer that holds only a B3 scope, such as a
+  cookie session, reads its holding with `read_holding_of_scope`. The scope
+  is derived one way from the key below, so the consumer cannot recover the
+  principal from it, and the store reads it instead. The read returns what
+  `read_holding` returns for the same holding. It returns `None` when the
+  scope names no current holding, when the holding's installation or team is
+  not the admitted installation's, and for a role the app does not declare
+  with the human-role acts. There is no hold by scope. Before an effect, the
+  caller takes `principal` from this read, holds with `hold_holding`, and
+  compares `held_since`, `b3_scope` and `subject` with what it read.
 - **The key.** `installation_id` and `team_id` are the admitted
   installation's. `b3_scope` is derived from the installation, the team, the
   role and the principal only, as secrets derives an owner's scope
