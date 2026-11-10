@@ -369,3 +369,41 @@ async def test_real_recovery_retires_login_before_changed_holding_digest(journey
     assert owner_holding_identity(fresh) != owner_holding_identity(old_target)
     refused = await journey.request(key, issued)
     assert (refused.status_code, refused.json()["detail"]) == (401, "console_session_required")
+
+
+async def test_collection_deletes_ended_sessions_nonces_and_handoffs(journey):
+    key, issued = await journey.open()
+    assert (await journey.request(key, issued)).status_code == 200
+    digest = hashlib.sha256(issued["session_id"].encode()).digest()
+    assert (
+        await journey.world.db.fetch_value(
+            "SELECT count(*) FROM {{tables.console_session_nonces}} WHERE token_sha256=$1", digest
+        )
+        == 1
+    )
+    # Advance only this real, protocol-issued session's expiry; no authority or
+    # session row is seeded. The next genuine handoff must reclaim its storage.
+    await journey.world.db.execute(
+        "UPDATE {{tables.console_sessions}} SET expires_at=clock_timestamp()-INTERVAL '1 second' "
+        "WHERE token_sha256=$1",
+        digest,
+    )
+    await journey.open()
+    assert (
+        await journey.world.db.fetch_value(
+            "SELECT count(*) FROM {{tables.console_sessions}} WHERE token_sha256=$1", digest
+        )
+        == 0
+    )
+    assert (
+        await journey.world.db.fetch_value(
+            "SELECT count(*) FROM {{tables.console_session_nonces}} WHERE token_sha256=$1", digest
+        )
+        == 0
+    )
+    assert (
+        await journey.world.db.fetch_value(
+            "SELECT count(*) FROM {{tables.console_handoffs}} WHERE released_at IS NOT NULL"
+        )
+        == 0
+    )
