@@ -1432,28 +1432,45 @@ class ChangeSets:
         """Withdraw a pending change set: its approval is revoked and its sealed
         values destroyed."""
         row = await tx.fetch_one(
-            "SELECT * FROM {{tables.change_sets}} WHERE change_id = $1 FOR UPDATE", change_id
+            "SELECT * FROM {{tables.change_sets}} WHERE change_id = $1", change_id
         )
         if row is None or row["state"] != "pending":
             raise ChangeRefused("the change set is not pending", code="change_not_pending")
-        await self._close(tx, row, state="cancelled", by=cancelled_by)
+        # Match confirm: the bound B2 approval precedes the change row. The
+        # discovery above grants nothing; a confirmer may win while we wait.
+        await self._approvals.lock_many(tx, [row["approval_id"]])
+        locked = await tx.fetch_one(
+            "SELECT * FROM {{tables.change_sets}} WHERE change_id = $1 FOR UPDATE", change_id
+        )
+        if (
+            locked is None
+            or locked["state"] != "pending"
+            or locked["approval_id"] != row["approval_id"]
+        ):
+            raise ChangeRefused("the change set is not pending", code="change_not_pending")
+        await self._close(tx, locked, state="cancelled", by=cancelled_by)
 
     async def expire(self, *, now: datetime) -> int:
         """Close every pending change set past its expiry. Returns how many."""
         due = await self._db.fetch_all(
-            "SELECT change_id FROM {{tables.change_sets}}"
+            "SELECT change_id, approval_id FROM {{tables.change_sets}}"
             " WHERE state = 'pending' AND expires_at <= $1",
             now,
         )
         expired = 0
         for change in due:
             async with self._db.transaction() as tx:
+                await self._approvals.lock_many(tx, [change["approval_id"]])
                 row = await tx.fetch_one(
                     "SELECT * FROM {{tables.change_sets}}"
                     " WHERE change_id = $1 AND state = 'pending' FOR UPDATE SKIP LOCKED",
                     change["change_id"],
                 )
-                if row is None:
+                if (
+                    row is None
+                    or row["approval_id"] != change["approval_id"]
+                    or row["expires_at"] > now
+                ):
                     continue
                 await self._close(tx, row, state="expired", by="change_set_expiry")
                 expired += 1
