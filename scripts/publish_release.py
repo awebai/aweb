@@ -366,7 +366,8 @@ def write_json_version(path: Path, version: str, git_head: str | None = None) ->
     path.write_text(json.dumps(value, indent=2) + "\n", encoding="utf-8")
 
 
-def publish_aw_npm(root: Path, version: str, source_sha: str, *, staged_final: bool = False) -> None:
+def build_aw_npm(root: Path, version: str, source_sha: str, npm_root: Path | None = None) -> list[str]:
+    """Shared build operation; callers own retention and publication separately."""
     packages = {
         "linux/amd64": ("aw-linux-x64", "aw", "aweb-a2a-gw"),
         "linux/arm64": ("aw-linux-arm64", "aw", "aweb-a2a-gw"),
@@ -375,7 +376,7 @@ def publish_aw_npm(root: Path, version: str, source_sha: str, *, staged_final: b
         "windows/amd64": ("aw-windows-x64", "aw.exe", "aweb-a2a-gw.exe"),
         "windows/arm64": ("aw-windows-arm64", "aw.exe", "aweb-a2a-gw.exe"),
     }
-    npm_root = root / "cli/go/npm"
+    npm_root = npm_root or root / "cli/go/npm"
     ldflags = (
         f"-s -w -X main.version={version} -X main.commit={source_sha} "
         "-X main.commitRepo=github.com/awebai/aweb -X main.date=1970-01-01T00:00:00Z"
@@ -420,11 +421,17 @@ def publish_aw_npm(root: Path, version: str, source_sha: str, *, staged_final: b
         name: version for name in sorted(value.get("optionalDependencies", {}))
     }
     main_manifest.write_text(json.dumps(value, indent=2) + "\n", encoding="utf-8")
+    return [item[0] for item in packages.values()] + ["aw"]
+
+
+def publish_aw_npm(root: Path, version: str, source_sha: str, *, staged_final: bool = False) -> None:
+    package_dirs = build_aw_npm(root, version, source_sha)
+    npm_root = root / "cli/go/npm"
     # Hold all seven once-staged archives through one verifier invocation.
     # Publishing/adopting never becomes a retry action on readback uncertainty.
     with ExitStack() as staging:
         artifacts = []
-        for package_dir in [item[0] for item in packages.values()] + ["aw"]:
+        for package_dir in package_dirs:
             package = "@awebai/" + package_dir
             archive, _, environment = staging.enter_context(_npm_publish_staged(
                 root, str(Path("cli/go/npm") / package_dir), package, "", version,

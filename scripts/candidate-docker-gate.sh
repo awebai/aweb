@@ -84,7 +84,15 @@ LOG_DIR="/tmp/aweb-candidate-gate-$SOURCE_SHA"
 # Focused pre-landing proof uses the same stages and ledger. Release candidates
 # always request the complete list and retain the origin/main requirement.
 STAGES="${AWEB_CANDIDATE_STAGES:-}"
-REQUESTED="${STAGES:-checks user-paths unit artifacts integration}"
+REQUESTED="${STAGES:-artifacts checks user-paths unit integration}"
+case " $REQUESTED " in
+  *" artifacts "*|*" user-paths "*|*" integration "*)
+    ordered="artifacts"
+    for stage in $REQUESTED; do
+      [[ "$stage" == artifacts ]] || ordered+=" $stage"
+    done
+    REQUESTED="$ordered" ;;
+esac
 if [[ -z "$STAGES" ]]; then
   git -C "$ROOT" fetch --quiet origin main
   git -C "$ROOT" merge-base --is-ancestor "$SOURCE_SHA" origin/main \
@@ -172,6 +180,12 @@ if [[ -n "$failed" ]]; then
   printf '%s\n' "Fix the code and gate the changed tree. For infrastructure failures only, the coordinator removes the failed ledger line and uses GATE_RERUN_REASON='<reason>'." >&2
   exit 1
 fi
+ARTIFACT_CACHE="$LEDGER_LOGS/$KEY-artifacts"
+if [[ " $REQUESTED " == *" artifacts "* && "$(recorded artifacts | cut -f3)" == passed ]]; then
+  [[ -f "$ARTIFACT_CACHE/complete" ]] || refuse "retained release artifacts are missing; restore the gated bytes before reusing their results"
+  python3 "$ROOT/scripts/release_artifacts.py" verify --directory "$ARTIFACT_CACHE" --root "$ROOT" \
+    || refuse "retained release artifacts failed verification"
+fi
 pending=""
 for stage in $REQUESTED; do
   case "$stage" in checks|user-paths|unit|artifacts|integration) ;; *) refuse "unknown stage '$stage'" ;; esac
@@ -237,7 +251,7 @@ suite_projects=(
 # Install cleanup before the first Docker allocation. Logs outlive the run.
 [[ "$LOG_DIR" == "/tmp/aweb-candidate-gate-$SOURCE_SHA" ]] || refuse "unsafe log directory"
 rm -rf -- "$LOG_DIR"
-mkdir -p "$LOG_DIR"
+mkdir -p "$LOG_DIR/artifacts" "$ARTIFACT_CACHE"
 : > "$LOG_DIR/owned-resources.tsv"
 printf '%s\n' "$run_id" > "$LOG_DIR/run-id"
 source "$ROOT/scripts/candidate-cleanup.sh"
@@ -427,6 +441,7 @@ docker run --rm --init \
   -e A2A_GATEWAY_VERSION="${A2A_GATEWAY_VERSION:-}" \
   -e LIBRARY_E2E_BLUEPRINT_SRC="$LIBRARY_E2E_BLUEPRINT_SRC" \
   -e CANDIDATE_LOG_DIR="$LOG_DIR" \
+  -e CANDIDATE_ARTIFACT_DIR="$LOG_DIR/artifacts" \
   -e USER_PATHS_LATEST_METADATA="${USER_PATHS_LATEST_METADATA:-}" \
   -e USER_PATHS_LATEST_SHA256="${USER_PATHS_LATEST_SHA256:-}" \
   -e USER_PATHS_RESOLVE_SECONDS="${USER_PATHS_RESOLVE_SECONDS:-0}" \
@@ -463,12 +478,15 @@ docker run --rm --init \
   -v "$workspace_volume:$work" \
   -v "$docker_bind_root:$docker_bind_root" \
   -v "$LOG_DIR:$LOG_DIR" \
+  -v "$ARTIFACT_CACHE:$LOG_DIR/artifacts" \
   -w "$checkout" \
   "$IMAGE" \
   bash scripts/candidate-suite.sh "$pending" \
   2>&1 | tee "$LOG_DIR/gate.log"
 status="${PIPESTATUS[0]}"
 set -e
+# Retain a self-contained log directory for C3 and the later exact-byte publisher.
+cp -a "$ARTIFACT_CACHE/." "$LOG_DIR/artifacts/"
 
 if [[ "$status" -ne 0 ]]; then
   printf 'candidate gate FAILED; logs: %s\n' "$LOG_DIR" | tee -a "$LOG_DIR/wrapper-verdict.log" >&2

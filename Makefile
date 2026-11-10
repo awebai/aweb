@@ -140,6 +140,8 @@ build: sync-doc-copies
 test: test-egress-controls check-aw-commit-repo-stamp check-cli-go-tidy test-identity-primitives test-python-locks test-sot-source-inventories test-vector-provenance test-federation-error-reference test-federation-authority-mutations test-federation-harness test-cli-reference test-mcp-tools-reference test-server test-awid test-cli test-channel test-channel-name-live-contract test-channel-core test-wake-channel-core-bundle test-pi-extension test-oats test-oats-proof-helpers test-tmux-guard test-release-cli-version test-npm-exact-publish test-pypi-exact-publish test-oci-exact-publish test-go-vulnerability-audit
 
 test-shipping:
+	python3 scripts/test_release_dependency_regression.py
+	python3 scripts/test_candidate_artifacts.py
 	python3 scripts/test_fixture_repo.py
 	python3 scripts/test_shipping.py
 	python3 scripts/test_aw_npm_publication.py
@@ -381,8 +383,8 @@ test-channel-name-live-contract:
 # skew observation, which requires the five exact-server inputs (wheel, wheel
 # sha, version, constraints, constraints sha); ship supplies none of them, so a
 # clean run would die on "skew observation lacks server runtime inventory"
-# rather than exercise the journey. Ship builds the server from source and this
-# target exercises Channel against THAT. Measuring against a PUBLISHED server is
+# rather than exercise the journey. The ordinary journey installs the candidate
+# manifest wheels, including when CI invokes npm directly. Measuring against a PUBLISHED server is
 # the skew harness's job, with the exact artifacts it resolves itself.
 test-channel-integration:
 	cd channel && npm run test:integration
@@ -639,26 +641,20 @@ _candidate-oats-proof-helpers:
 	OATS_TEST_ROOT="$(OATS_TEST_ROOT)" python3 scripts/e2e/test_oats_tmux_safety.py
 
 _candidate-artifact-server:
-	rm -rf server/dist
-	cd server && uv build
-	test -f server/dist/aweb-$(SERVER_VERSION).tar.gz
-	test -f server/dist/aweb-$(SERVER_VERSION)-py3-none-any.whl
+	python3 scripts/release_artifacts.py python
+	python3 scripts/release_artifacts.py wheel --package aweb
 
 _candidate-artifact-awid-package:
-	rm -rf awid/dist
-	cd awid && uv build
-	test -f awid/dist/awid_service-$(AWID_VERSION).tar.gz
-	test -f awid/dist/awid_service-$(AWID_VERSION)-py3-none-any.whl
+	python3 scripts/release_artifacts.py wheel --package awid-service
 
 _candidate-artifact-naapp-package: check-naapp-lib-package
-	rm -rf naapp-lib/dist
-	cd naapp-lib && uv build
-	test -f naapp-lib/dist/aweb_naapp-$(NAAPP_LIB_VERSION).tar.gz
-	test -f naapp-lib/dist/aweb_naapp-$(NAAPP_LIB_VERSION)-py3-none-any.whl
-	rm -rf naapp-lib/testing/dist
-	cd naapp-lib/testing && uv build
-	test -f naapp-lib/testing/dist/aweb_naapp_testing-$(NAAPP_LIB_VERSION).tar.gz
-	test -f naapp-lib/testing/dist/aweb_naapp_testing-$(NAAPP_LIB_VERSION)-py3-none-any.whl
+
+_candidate-artifact-cli:
+	python3 scripts/release_artifacts.py npm --prefix aw-v
+
+_candidate-artifact-manifest:
+	python3 scripts/release_artifacts.py verify
+	python3 scripts/release_artifacts.py materialize
 
 # aweb-naapp's and aweb-naapp-testing's release artifacts as a consumer sees them:
 # each wheel ships its package files, pins its dependencies, and installs and
@@ -673,19 +669,13 @@ _candidate-artifact-awid-image:
 	test -s /tmp/aweb-candidate-gate/awid.oci.tar
 
 _candidate-artifact-channel:
-	@mkdir -p /tmp/aweb-candidate-gate
-	cd channel && npm run build
-	cd channel && npm pack --ignore-scripts --pack-destination /tmp/aweb-candidate-gate
+	python3 scripts/release_artifacts.py npm --prefix channel-v
 
 _candidate-artifact-pi:
-	@mkdir -p /tmp/aweb-candidate-gate
-	cd pi-extension && npm run build
-	cd pi-extension && npm pack --ignore-scripts --pack-destination /tmp/aweb-candidate-gate
+	python3 scripts/release_artifacts.py npm --prefix pi-v
 
 _candidate-artifact-skills: sync-doc-copies
-	@mkdir -p /tmp/aweb-candidate-gate
-	cd packages/claude-skills && npm run sync-skills && npm pack --ignore-scripts --pack-destination /tmp/aweb-candidate-gate
-	cd packages/claude-ai-skills && ./build-zips.sh
+	python3 scripts/release_artifacts.py npm --prefix skills-v
 	node scripts/skill-packaging.mjs check-zips packages/claude-ai-skills/dist
 
 _candidate-artifact-a2a-image:

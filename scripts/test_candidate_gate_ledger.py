@@ -10,15 +10,15 @@ import sys
 import tempfile
 
 from test_candidate_ports import held_library_default
-from fixture_repo import init_fixture_repo, run_fixture
+from fixture_repo import init_fixture_repo, run_fixture, write_artifact_fixture
 
 ROOT = Path(__file__).resolve().parents[1]
-STAGES = "checks user-paths unit artifacts integration"
+STAGES = "artifacts checks user-paths unit integration"
 # The targets the fixture gives real recipes: the stage assertions below
 # use real tools and services, never a replacement runner.
 REAL_RECIPES = frozenset({
     "test-shipping", "_candidate-node-deps", "build", "_candidate-unit-suites",
-    "_candidate-artifact-server", "freshness", "e2e-naapp", "cli-e2e",
+    "_candidate-artifact-server", "_candidate-artifact-manifest", "freshness", "e2e-naapp", "cli-e2e",
 })
 
 
@@ -59,10 +59,11 @@ def main() -> None:
     with tempfile.TemporaryDirectory(prefix="aweb-ledger-proof.") as temporary:
         repo = Path(temporary)
         for name in ("candidate-docker-gate.sh", "candidate-suite.sh", "candidate-cleanup.sh",
-                     "candidate-host-pressure.py", "candidate-ports.py", "fetch_released_aw.py", "next_tag_version.py", "release_candidate.py", "release_versions.py"):
+                     "release_artifacts.py", "publish_release.py", "candidate-host-pressure.py", "candidate-ports.py", "fetch_released_aw.py", "next_tag_version.py", "release_candidate.py", "release_versions.py"):
             destination = repo / "scripts" / name
             destination.parent.mkdir(exist_ok=True)
             shutil.copy2(ROOT / "scripts" / name, destination)
+        write_artifact_fixture(repo)
         (repo / "candidate-gate/bin").mkdir(parents=True)
         shutil.copy2(ROOT / "candidate-gate/bin/docker", repo / "candidate-gate/bin/docker")
         (repo / "candidate-gate/Dockerfile").write_text(
@@ -80,7 +81,9 @@ def main() -> None:
         (repo / "server").mkdir()
         (repo / "server/pyproject.toml").write_text('[project]\nname="ledger-proof"\nversion="1.2.3"\n')
         recipes = f".PHONY: candidate-gate {' '.join(SOURCE_CHECKS)}\n{' '.join(SOURCE_CHECKS)}:\n\t@git diff --exit-code\n"
-        recipes += '''test-shipping:
+        recipes += '''_candidate-artifact-manifest:
+\t@python3 scripts/artifact_fixture.py
+test-shipping:
 \t@python3 -c 'assert 6 * 7 == 42'
 _candidate-node-deps:
 \t@echo node >> "$$CANDIDATE_LOG_DIR/setup.log"
@@ -159,7 +162,7 @@ candidate-gate:
         checked(repo, "git", "tag", "aw-v1.2.3-rc.1")
         # The real RC must require all stages despite an inherited focused selector.
         output = invoke("rc-reuse", sys.executable, "scripts/release_candidate.py", "aw-v1.2.3", stages="checks")
-        assert "no stages run" in output and "checks user-paths unit artifacts integration" in output
+        assert "no stages run" in output and "artifacts checks user-paths unit integration" in output
         assert checked(repo, "git", "rev-parse", "aw-v1.2.3^{commit}") == checked(repo, "git", "rev-parse", "HEAD")
         assert ledger.read_text().splitlines() == rows
         # An effective version is an external input, even with an unchanged tree.

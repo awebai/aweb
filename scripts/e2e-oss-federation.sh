@@ -58,7 +58,28 @@ BETA_ORIGIN="http://aweb-beta:8000"
 ALPHA_URL="$ALPHA_ORIGIN"
 BETA_URL="$BETA_ORIGIN"
 PROJECT="${AWEB_FED_E2E_PROJECT:-aweb-fed-e2e-$RANDOM}"
-SERVER_MODE="${AWEB_FED_E2E_SERVER_MODE:-source}"
+candidate_wheels=0
+if [[ -z "${AWEB_FED_E2E_SERVER_MODE:-}" ]]; then
+  source "$REPO_ROOT/scripts/prepare-release-wheels.sh"
+  # Use the existing exact-wheel journey, with both sides on C1's server wheel.
+  eval "$(python3 - "$CANDIDATE_ARTIFACT_DIR" "$SERVER_DIR/uv.lock" <<'PYENV'
+import json, pathlib, shlex, sys, tomllib
+root = pathlib.Path(sys.argv[1])
+manifest = json.loads((root / 'manifest.json').read_text())
+row = next(row for row in manifest['files'] if row['package'] == 'aweb' and row['path'].endswith('.whl'))
+for side in ('ALPHA', 'BETA'):
+ for field, value in [('WHEEL', str(root / row['path'])), ('WHEEL_SHA256', row['sha256']), ('VERSION', row['version'])]:
+  print('export AWEB_' + side + '_' + field + '=' + shlex.quote(value))
+lock = tomllib.loads(pathlib.Path(sys.argv[2]).read_text())
+mcp = next(row['version'] for row in lock['package'] if row['name'] == 'mcp')
+print('export AWEB_FED_E2E_MCP_VERSION=' + shlex.quote(mcp))
+PYENV
+)"
+  SERVER_MODE=wheel
+  candidate_wheels=1
+else
+  SERVER_MODE="$AWEB_FED_E2E_SERVER_MODE"
+fi
 CELL_DIRECTION="${AWEB_FED_E2E_DIRECTION:-a-to-b}"
 CELL_ID="${AWEB_FED_E2E_CELL_ID:-source-journey}"
 ROUTE_PROBE_ONLY="${AWEB_FED_E2E_ROUTE_PROBE_ONLY:-0}"
@@ -507,6 +528,12 @@ case "$SERVER_MODE" in
     ALPHA_SERVER_CONTEXT="$E2E_ROOT/alpha-server-context"
     BETA_SERVER_CONTEXT="$E2E_ROOT/beta-server-context"
     mkdir "$ALPHA_SERVER_CONTEXT" "$BETA_SERVER_CONTEXT"
+    for context in "$ALPHA_SERVER_CONTEXT" "$BETA_SERVER_CONTEXT"; do
+      mkdir "$context/candidate-wheels"
+      if [[ "$candidate_wheels" == 1 ]]; then
+        cp -a "$REPO_ROOT/.candidate-artifacts/." "$context/candidate-wheels/"
+      fi
+    done
     cp "$REPO_ROOT/scripts/federation-wheel-server.Dockerfile" "$ALPHA_SERVER_CONTEXT/Dockerfile"
     cp "$REPO_ROOT/scripts/federation-wheel-server.Dockerfile" "$BETA_SERVER_CONTEXT/Dockerfile"
     cp "$AWEB_ALPHA_WHEEL" "$ALPHA_SERVER_CONTEXT/$ALPHA_WHEEL_NAME"
@@ -518,7 +545,8 @@ case "$SERVER_MODE" in
         AWEB_WHEEL: $ALPHA_WHEEL_NAME
         AWEB_WHEEL_SHA256: $AWEB_ALPHA_WHEEL_SHA256
         AWEB_VERSION: $AWEB_ALPHA_VERSION
-        MCP_VERSION: $AWEB_FED_E2E_MCP_VERSION"
+        MCP_VERSION: $AWEB_FED_E2E_MCP_VERSION
+        CANDIDATE_WHEELS: $candidate_wheels"
     BETA_SERVER_BUILD="    build:
       context: $BETA_SERVER_CONTEXT
       dockerfile: Dockerfile
@@ -526,7 +554,8 @@ case "$SERVER_MODE" in
         AWEB_WHEEL: $BETA_WHEEL_NAME
         AWEB_WHEEL_SHA256: $AWEB_BETA_WHEEL_SHA256
         AWEB_VERSION: $AWEB_BETA_VERSION
-        MCP_VERSION: $AWEB_FED_E2E_MCP_VERSION"
+        MCP_VERSION: $AWEB_FED_E2E_MCP_VERSION
+        CANDIDATE_WHEELS: $candidate_wheels"
     ;;
   *) echo "AWEB_FED_E2E_SERVER_MODE must be source or wheel, got $SERVER_MODE" >&2; exit 1 ;;
 esac

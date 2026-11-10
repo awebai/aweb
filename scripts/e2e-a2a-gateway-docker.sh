@@ -263,6 +263,7 @@ AWID_RATE_LIMIT_DISABLED=1
 AWID_SERVICE_TOKEN=aweb-a2a-gateway-e2e-service-token-32-bytes
 AWID_SKIP_DNS_VERIFY=1
 EOF
+source "$REPO_ROOT/scripts/prepare-release-wheels.sh"
 docker compose -p "$PROJECT" --env-file "$ENV_FILE" -f "$COMPOSE_FILE" up --build -d
 wait_for_http "aweb health" "$AWEB_URL/health"
 wait_for_http "awid health" "$AWID_URL/health"

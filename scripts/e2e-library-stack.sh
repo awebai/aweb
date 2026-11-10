@@ -122,6 +122,7 @@ stack_up() {
   # Reset this exact project first and prove it has no residue. A failed reset
   # must not silently reuse state or redirect cleanup to another invocation.
   remove_stack
+  source "$REPO_ROOT/scripts/prepare-release-wheels.sh"
   "${COMPOSE[@]}" up --build -d
   wait_health awid "$AWID_URL/health"
   wait_health aweb "$AWEB_URL/health"

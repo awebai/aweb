@@ -36,6 +36,7 @@ if [[ -z "${BUILDX_BUILDER:-}" ]]; then
     --driver-opt memory=2g,cpu-period=100000,cpu-quota=200000 >/dev/null
   OWN_BUILDER=1
 fi
+source "$ROOT/scripts/prepare-release-wheels.sh"
 "${COMPOSE[@]}" build --builder "$BUILDER" >"$EVIDENCE/build.log" 2>&1
 # Named volumes and Docker API copies also work when this runner is a container;
 # bind paths in that container would otherwise be resolved on the daemon's host.

@@ -26,3 +26,14 @@ def init_fixture_repo(root: Path) -> None:
     existing = ignore.read_text() if ignore.exists() else ""
     ignore.write_text(existing + ("\n" if existing and not existing.endswith("\n") else "")
                       + "__pycache__/\n")
+
+
+def write_artifact_fixture(root: Path) -> None:
+    """Small retained bytes for scheduler/ledger boundary fixtures."""
+    (root / 'scripts/artifact_fixture.py').write_text(
+        'import hashlib,json,os,pathlib,subprocess\n'
+        'out=pathlib.Path(os.environ["CANDIDATE_ARTIFACT_DIR"]);out.mkdir(parents=True,exist_ok=True)\n'
+        'payload=b"retained artifact fixture"; (out/"fixture.whl").write_bytes(payload)\n'
+        'tree=subprocess.check_output(["git","rev-parse","HEAD^{tree}"],text=True).strip()\n'
+        'row=dict(path="fixture.whl",package="fixture",version="1.0.0",sha256=hashlib.sha256(payload).hexdigest())\n'
+        '(out/"manifest.json").write_text(json.dumps(dict(source_tree=tree,files=[row])))\n')

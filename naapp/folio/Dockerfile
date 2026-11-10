@@ -26,15 +26,20 @@ COPY awid/src /app/awid/src
 COPY naapp-lib/pyproject.toml naapp-lib/README.md /app/naapp-lib/
 COPY naapp-lib/src /app/naapp-lib/src
 
+COPY .candidate-artifacts /candidate-artifacts
+
 WORKDIR /app/naapp/folio
 
 # Resolve dependencies from the committed lock first (cached layer), then the
 # project, with `uv sync --frozen` so the build is reproducible and never re-resolves.
 COPY naapp/folio/pyproject.toml naapp/folio/uv.lock naapp/folio/README.md ./
-RUN uv sync --frozen --no-install-project --no-dev
+RUN uv sync --frozen --no-install-project --no-dev --no-install-package awid-service --no-install-package aweb-naapp
 COPY naapp/folio/src ./src
 COPY naapp/folio/skills ./skills
-RUN uv sync --frozen --no-dev
+RUN if [ -f /candidate-artifacts/manifest.json ]; then \
+      uv sync --frozen --no-dev --no-install-package awid-service --no-install-package aweb-naapp \
+      && python /candidate-artifacts/install.py --directory /candidate-artifacts --python /app/.venv/bin/python awid-service aweb-naapp; \
+    else uv sync --frozen --no-dev; fi
 
 RUN useradd --create-home --shell /usr/sbin/nologin folio
 USER folio

@@ -702,6 +702,7 @@ EOF
 
 cd "$SERVER_DIR"
 compose down -v --rmi local --remove-orphans 2>/dev/null || true
+source "$REPO_ROOT/scripts/prepare-release-wheels.sh"
 compose build --no-cache
 # Release the reservation immediately before Compose binds the same ports.
 release_service_ports

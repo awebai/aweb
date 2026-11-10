@@ -19,7 +19,18 @@ if [[ "${1:-}" == "--isolated-suites" ]]; then
 fi
 
 log_dir="${CANDIDATE_LOG_DIR:?CANDIDATE_LOG_DIR is required}"
-stages="${1:-checks user-paths unit artifacts integration}"
+export CANDIDATE_ARTIFACT_DIR="${CANDIDATE_ARTIFACT_DIR:-$log_dir/artifacts}"
+stages="${1:-artifacts checks user-paths unit integration}"
+# Focused consumers have the same build prerequisite as full/RC callers. The
+# producer reuses a verified manifest rather than rebuilding retained bytes.
+case " $stages " in
+  *" artifacts "*|*" user-paths "*|*" integration "*)
+    ordered="artifacts"
+    for stage in $stages; do
+      [[ "$stage" == artifacts ]] || ordered+=" $stage"
+    done
+    stages="$ordered" ;;
+esac
 checks() {
   run check-private-boundary
   run _candidate-gate-docker-boundaries
@@ -51,6 +62,11 @@ unit() {
   run _candidate-unit-suites
 }
 artifacts() {
+  mkdir -p "$CANDIDATE_ARTIFACT_DIR"
+  if [[ -f "$CANDIDATE_ARTIFACT_DIR/complete" ]]; then
+    run _candidate-artifact-manifest
+    return
+  fi
   run _candidate-artifact-server
   run _candidate-artifact-awid-package
   run _candidate-artifact-awid-image
@@ -58,8 +74,11 @@ artifacts() {
   run _candidate-artifact-channel
   run _candidate-artifact-pi
   run _candidate-artifact-skills
+  run _candidate-artifact-cli
+  run _candidate-artifact-manifest
   run _candidate-artifact-a2a-image
   docker buildx prune --all --force --keep-storage=10GB --builder "${BUILDX_BUILDER:?}"
+  touch "$CANDIDATE_ARTIFACT_DIR/complete"
 }
 integration() {
   # A reused stage proves its tests, not the continued existence of its

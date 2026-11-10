@@ -8,6 +8,9 @@ ARG AWEB_WHEEL
 ARG AWEB_WHEEL_SHA256
 ARG AWEB_VERSION
 ARG MCP_VERSION
+ARG CANDIDATE_WHEELS=0
+COPY --from=ghcr.io/astral-sh/uv:0.11.32 /uv /usr/local/bin/uv
+COPY candidate-wheels /opt/candidate-wheels
 
 RUN groupadd --system --gid 1001 aweb \
     && useradd --system --uid 1001 --gid 1001 aweb \
@@ -15,8 +18,11 @@ RUN groupadd --system --gid 1001 aweb \
     && chown -R aweb:aweb /opt/aweb-wheel
 COPY --chown=aweb:aweb ${AWEB_WHEEL} /opt/aweb-wheel/${AWEB_WHEEL}
 RUN printf '%s  %s\n' "$AWEB_WHEEL_SHA256" "/opt/aweb-wheel/$AWEB_WHEEL" | sha256sum -c - \
-    && pip install --no-cache-dir "mcp==$MCP_VERSION" "/opt/aweb-wheel/$AWEB_WHEEL" \
-    && EXPECTED="$AWEB_VERSION" MCP_EXPECTED="$MCP_VERSION" python -c 'import importlib.metadata, os; aweb = importlib.metadata.version("aweb"); mcp = importlib.metadata.version("mcp"); assert aweb == os.environ["EXPECTED"], (aweb, os.environ["EXPECTED"]); assert mcp == os.environ["MCP_EXPECTED"], (mcp, os.environ["MCP_EXPECTED"])'
+    && if [ "$CANDIDATE_WHEELS" = 1 ]; then \
+      python /opt/candidate-wheels/install.py --directory /opt/candidate-wheels --python /usr/local/bin/python \
+        --resolve --with "mcp==$MCP_VERSION" aweb awid-service aweb-naapp; \
+    else pip install --no-cache-dir "mcp==$MCP_VERSION" "/opt/aweb-wheel/$AWEB_WHEEL"; fi
+RUN EXPECTED="$AWEB_VERSION" MCP_EXPECTED="$MCP_VERSION" python -c 'import importlib.metadata, os; aweb = importlib.metadata.version("aweb"); mcp = importlib.metadata.version("mcp"); assert aweb == os.environ["EXPECTED"], (aweb, os.environ["EXPECTED"]); assert mcp == os.environ["MCP_EXPECTED"], (mcp, os.environ["MCP_EXPECTED"])'
 
 ENV PYTHONUNBUFFERED=1
 USER aweb

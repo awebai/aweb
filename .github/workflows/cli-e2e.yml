@@ -21,6 +21,9 @@ on:
       - "docker-compose.e2e.cache.yml"
       - "scripts/e2e-library-stack.sh"
       - "scripts/e2e/**"
+      - "scripts/*release*"
+      - "scripts/check-naapp-lib-package.py"
+      - ".candidate-artifacts/**"
       - "awid/**"
       - "server/**"
       - "naapp-lib/**"
@@ -43,6 +46,7 @@ jobs:
         uses: actions/checkout@v7
         with:
           path: aweb
+          fetch-depth: 0
 
       - name: Checkout blueprints
         uses: actions/checkout@v7
@@ -57,6 +61,9 @@ jobs:
           # The Go module lives at cli/go; point the build/module cache at its
           # go.sum so `make build` reuses modules and compiled packages.
           cache-dependency-path: aweb/cli/go/go.sum
+
+      - name: Set up uv for release-wheel preparation
+        uses: astral-sh/setup-uv@v7
 
       - name: Set up Python
         uses: actions/setup-python@v6

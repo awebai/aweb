@@ -4,6 +4,7 @@ import json
 import os
 from pathlib import Path
 import subprocess
+import sys
 import tempfile
 import unittest
 
@@ -19,9 +20,12 @@ class FolioGateTests(unittest.TestCase):
             make.write_text('#!/bin/bash\nprintf "%s\\n" "$1" >> "$CALLS"\n'
                             '[[ "$1" != e2e-folio-wakes ]] || exit 86\n')
             make.chmod(0o755)
+            docker = root / "docker"
+            docker.write_text("#!/bin/sh\nexit 0\n")
+            docker.chmod(0o755)
             result = subprocess.run(["bash", str(ROOT / "scripts/candidate-suite.sh"), "integration"],
                                     env=dict(os.environ, PATH=f"{root}:{os.environ['PATH']}",
-                                             CALLS=str(calls), CANDIDATE_LOG_DIR=str(root)),
+                                             CALLS=str(calls), CANDIDATE_LOG_DIR=str(root), BUILDX_BUILDER="fixture"),
                                     text=True, capture_output=True)
             self.assertEqual(result.returncode, 86, result.stdout + result.stderr)
             targets = calls.read_text().splitlines()
@@ -38,6 +42,9 @@ class FolioGateTests(unittest.TestCase):
                           'with open(os.environ["CALLS"], "a") as f: f.write(json.dumps(sys.argv[1:])+"\\n")\n'
                           'if sys.argv[1] == "ps" and os.environ.get("EXISTING_PROJECT"): print("existing")\n')
         docker.chmod(0o755)
+        python = root / "python3"
+        python.write_text(f'#!/bin/sh\ncase "$1" in */release_artifacts.py) exit 0;; esac\nexec {sys.executable} "$@"\n')
+        python.chmod(0o755)
         env = dict(os.environ, PATH=f"{root}:{os.environ['PATH']}", CALLS=str(root / "calls"),
                    FOLIO_WAKE_EVIDENCE=str(root / "evidence"))
         for key in ("FOLIO_WAKES_PROJECT", "AWEB_CANDIDATE_RESOURCE_LABEL", "BUILDX_BUILDER"):

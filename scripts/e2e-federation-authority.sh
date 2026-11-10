@@ -6,6 +6,7 @@
 set -euo pipefail
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd -P)"
+source "$ROOT/scripts/prepare-release-wheels.sh"
 PROJECT="${AWEB_FED_AUTH_PROJECT:-aweb-fed-auth-$RANDOM-$$}"
 DOCKER_BIND_ROOT="${AWEB_DOCKER_BIND_ROOT:-${TMPDIR:-/tmp}}"
 [[ "$DOCKER_BIND_ROOT" = /* && -d "$DOCKER_BIND_ROOT" ]] \

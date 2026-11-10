@@ -16,6 +16,7 @@ and, at the same version, its test support aweb-naapp-testing. For each:
 from __future__ import annotations
 
 import re
+import os
 import subprocess
 import sys
 import tempfile
@@ -26,6 +27,7 @@ from email.message import Message
 from pathlib import Path
 
 from release_versions import PYTHON_VERSION, VersionRefusal, python_version_key
+from release_artifacts import build_python as _build, wheel as manifest_wheel, prepare_python
 
 ROOT = Path(__file__).resolve().parents[1]
 NAAPP_LIB = ROOT / "naapp-lib"
@@ -48,17 +50,6 @@ def _version(pyproject: Path) -> tuple[int, ...]:
         return python_version_key(_version_text(pyproject))
     except VersionRefusal as error:
         raise PackageRefusal(str(error)) from error
-
-
-def _build(project: Path, out_dir: Path) -> Path:
-    subprocess.run(
-        ["uv", "build", "--sdist", "--wheel", "--out-dir", str(out_dir), str(project)],
-        check=True, capture_output=True, text=True,
-    )
-    wheels = sorted(out_dir.glob("*.whl"))
-    if len(wheels) != 1 or len(list(out_dir.glob("*.tar.gz"))) != 1:
-        raise PackageRefusal(f"expected one wheel and one sdist from {project.name}")
-    return wheels[0]
 
 
 def _check_contents(project: Path, wheel: Path) -> None:
@@ -130,12 +121,28 @@ def _check_install(project: Path, wheel: Path, metadata: Message, find_links: li
     requirement = f"{wheel}[{extras}]" if extras else str(wheel)
     probe = "import importlib\nfor name in %r:\n    importlib.import_module(name)\n" % (_modules(project),)
     links = [argument for path in find_links for argument in ("--find-links", str(path))]
-    result = subprocess.run(
-        ["uv", "run", "--isolated", "--no-project", *links, "--with", requirement, "python", "-c", probe],
-        capture_output=True, text=True, cwd=tempfile.gettempdir(),
-    )
-    if result.returncode != 0:
-        raise PackageRefusal(f"{wheel.name}[{extras}] does not install and import from its wheel:\n{result.stderr}")
+    # Local wheels can be newer than the declared minimum. Test each in-repo
+    # dependency at its declared floor too, so a fresh local AWID cannot hide a
+    # module absent from the release that downstream resolvers may select.
+    floors = []
+    for dependency in metadata.get_all("Requires-Dist") or []:
+        match = re.match(r"(awid-service|aweb-naapp)(?:\[[^]]+\])?\s*>=\s*([^,;\s]+)", dependency)
+        if match:
+            floors.extend(("--with", f"{match[1]}=={match[2]}"))
+    local = [path for directory in find_links for path in directory.glob("*.whl") if path != wheel]
+    candidate = [argument for path in local for argument in ("--with", str(path))]
+    modes = [("candidate wheels", candidate)]
+    if floors:
+        modes.append(("declared floors", floors))
+    for mode, dependencies in modes:
+        result = subprocess.run(
+            ["uv", "run", "--isolated", "--no-project", *links, "--with", requirement,
+             *dependencies, "python", "-I", "-c", probe],
+            capture_output=True, text=True, cwd=tempfile.gettempdir(),
+        )
+        if result.returncode != 0:
+            raise PackageRefusal(f"{wheel.name}[{extras}] does not install and import from {mode}:\n{result.stderr}")
+        print(f"wheel imports PASSED ({mode}): {wheel}", flush=True)
 
 
 def main() -> int:
@@ -148,19 +155,27 @@ def main() -> int:
                 raise PackageRefusal(
                     f"aweb-naapp-testing {testing_version} must be released at aweb-naapp's version {naapp_version}"
                 )
-            naapp_wheel = _build(NAAPP_LIB, out / "naapp-lib")
-            testing_wheel = _build(NAAPP_TESTING, out / "naapp-testing")
-            _build(AWID, out / "awid")
-            _build(SERVER, out / "server")
+            if os.environ.get("CANDIDATE_ARTIFACT_DIR"):
+                artifacts = Path(os.environ["CANDIDATE_ARTIFACT_DIR"])
+                naapp_wheel = manifest_wheel(artifacts, "aweb-naapp")
+                testing_wheel = manifest_wheel(artifacts, "aweb-naapp-testing")
+                links = [artifacts]
+            else:
+                # Standalone/CI uses the same producer as the candidate stage.
+                prepare_python(ROOT, out)
+                naapp_wheel = manifest_wheel(out, "aweb-naapp")
+                testing_wheel = manifest_wheel(out, "aweb-naapp-testing")
+                links = [out]
             for project, wheel, pin in (
+                (SERVER, manifest_wheel(links[0], "aweb"), None),
                 (NAAPP_LIB, naapp_wheel, None),
                 (NAAPP_TESTING, testing_wheel, naapp_version),
             ):
                 _check_contents(project, wheel)
                 metadata = _metadata(wheel)
                 _check_requirements(wheel, metadata, aweb_naapp_version=pin)
-                _check_install(project, wheel, metadata, [out / "awid", out / "naapp-lib", out / "server"])
-        except PackageRefusal as refused:
+                _check_install(project, wheel, metadata, links)
+        except (PackageRefusal, VersionRefusal) as refused:
             print(f"check-naapp-lib-package: {refused}", file=sys.stderr)
             return 1
         except subprocess.CalledProcessError as failed:

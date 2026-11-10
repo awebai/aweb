@@ -297,3 +297,92 @@ def require_final_promotion(root: Path, tag: str, final_commit: str) -> str | No
     print(f"Package source identity ({PROMOTION_TREES[prefix]}) matches {rc_tag} plus version promotion only; "
           f"the coordinator must separately verify the {gate} green receipt for that exact RC before final tagging.")
     return rc_tag
+
+
+def installed_wheel(path: Path) -> tuple[dict[str, bytes], list[str]]:
+    """Compare installer-visible bytes; ZIP layout and RECORD are derived data."""
+    from email import message_from_bytes
+    import zipfile
+    files = {}
+    excluded = []
+    with zipfile.ZipFile(path) as archive:
+        for name in sorted(archive.namelist()):
+            if name.endswith('/'):
+                continue
+            content = archive.read(name)
+            if '.dist-info/' in name and name.endswith('/RECORD'):
+                excluded.append(name)
+                continue
+            if '.dist-info/' in name and name.endswith('/METADATA'):
+                metadata = message_from_bytes(content)
+                fields = ('Name', 'Version', 'Requires-Dist', 'Requires-Python', 'Provides-Extra')
+                content = json.dumps({field: sorted(metadata.get_all(field, [])) for field in fields},
+                                     sort_keys=True).encode()
+                excluded.append(name + ': long description and non-runtime headers')
+            files[name] = content
+    return files, excluded
+
+
+def require_same_installed_wheel(name: str, version: str, candidate: Path, released: Path) -> None:
+    current, excluded = installed_wheel(candidate)
+    previous, _ = installed_wheel(released)
+    changed = sorted(path for path in current.keys() | previous.keys()
+                     if current.get(path) != previous.get(path))
+    print(f'{name} {version}: excluded from installed comparison: ' + ', '.join(excluded), flush=True)
+    if changed:
+        raise VersionRefusal(f'{name} {version} installed wheel differs from its release; '
+                             f'bump its version before publication: {changed[0]}')
+
+
+def require_unpublished_changes(root: Path, candidate_wheels: dict[str, Path] | None = None) -> None:
+    """Same-version releases must deliver the same installed files and metadata.
+
+    Build the release tag with the same toolchain as the candidate; no registry
+    query participates in admission. Source-only changes are visible in the log
+    but do not force a version bump when the installed content is identical.
+    """
+    import io
+    import tarfile
+    import tempfile
+    from publish_release import PYPI_LANES
+    from release_artifacts import build_python
+
+    for prefix, (_, packages) in PYPI_LANES.items():
+        for name, directory in packages:
+            path = root / directory / 'pyproject.toml'
+            if not path.exists():
+                continue
+            document = tomllib.loads(path.read_text())['project']
+            version = document['version']
+            tag = prefix + version
+            if not _git(root, 'tag', '--list', tag).strip():
+                continue
+            with tempfile.TemporaryDirectory(prefix='released-wheel-') as temporary:
+                work = Path(temporary)
+                result = subprocess.run(['git', 'archive', tag, directory], cwd=root, capture_output=True, check=True)
+                with tarfile.open(fileobj=io.BytesIO(result.stdout)) as archive:
+                    archive.extractall(work / 'release', filter='data')
+                released = build_python(work / 'release' / directory, work / 'released-dist')
+                candidate = (candidate_wheels or {}).get(name)
+                if candidate is None:
+                    candidate = build_python(root / directory, work / 'candidate-dist')
+                require_same_installed_wheel(name, version, candidate, released)
+                changed = _git(root, 'diff', '--name-only', tag, '--', directory).splitlines()
+                changed += _git(root, 'ls-files', '--others', '--exclude-standard', '--', directory).splitlines()
+                if changed:
+                    print(f'{name} {version}: installed content unchanged; source differences excluded: '
+                          + ', '.join(changed), flush=True)
+
+
+if __name__ == '__main__':
+    import argparse
+    import sys
+    parser = argparse.ArgumentParser(description='Check published package versions before building release artifacts.')
+    parser.add_argument('--check-unpublished', action='store_true', required=True)
+    parser.add_argument('--root', type=Path, default=Path.cwd())
+    arguments = parser.parse_args()
+    try:
+        require_unpublished_changes(arguments.root)
+    except (VersionRefusal, OSError, ValueError) as error:
+        print(f'release versions refused: {error}', file=sys.stderr)
+        sys.exit(1)

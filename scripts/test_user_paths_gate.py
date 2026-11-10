@@ -6,7 +6,7 @@ import tempfile
 import unittest
 import importlib.util
 
-from fixture_repo import fixture_env, init_fixture_repo, run_fixture
+from fixture_repo import write_artifact_fixture, fixture_env, init_fixture_repo, run_fixture
 
 ROOT = Path(__file__).resolve().parents[1]
 spec = importlib.util.spec_from_file_location('user_paths_result', ROOT / 'scripts/e2e/user_paths_result.py')
@@ -102,9 +102,12 @@ class UserPathsAdmission(unittest.TestCase):
             make = root / 'make'
             make.write_text('#!/bin/bash\nprintf "%s\\n" "$1" >> "$CALLS"\n[[ "$1" != e2e-user-paths ]] || exit 86\n')
             make.chmod(0o755)
+            docker = root / 'docker'
+            docker.write_text('#!/bin/sh\nexit 0\n')
+            docker.chmod(0o755)
             result = run_fixture(['bash', str(ROOT / 'scripts/candidate-suite.sh'), 'checks user-paths unit'],
                                     env=dict(os.environ, PATH=f'{root}:{os.environ["PATH"]}',
-                                             CALLS=str(root / 'calls'), CANDIDATE_LOG_DIR=str(root)),
+                                             CALLS=str(root / 'calls'), CANDIDATE_LOG_DIR=str(root), BUILDX_BUILDER="fixture"),
                                     capture_output=True, text=True)
             self.assertEqual(result.returncode, 86, result.stdout + result.stderr)
             self.assertNotIn('_candidate-unit-suites', (root / 'calls').read_text())
@@ -118,11 +121,14 @@ class UserPathsAdmission(unittest.TestCase):
             make = root / 'make'
             make.write_text('#!/bin/bash\nmkdir -p "$CANDIDATE_LOG_DIR/user-paths"\nprintf "%s\\n" "incomplete: human paths not covered" > "$CANDIDATE_LOG_DIR/user-paths/coverage-summary.txt"\n')
             make.chmod(0o755)
+            docker = root / 'docker'
+            docker.write_text('#!/bin/sh\nexit 0\n')
+            docker.chmod(0o755)
             result = run_fixture(['bash', str(ROOT / 'scripts/candidate-suite.sh'), 'user-paths'],
-                                    env=dict(os.environ, PATH=f'{root}:{os.environ["PATH"]}', CANDIDATE_LOG_DIR=str(root)),
+                                    env=dict(os.environ, PATH=f'{root}:{os.environ["PATH"]}', CANDIDATE_LOG_DIR=str(root), BUILDX_BUILDER="fixture"),
                                     capture_output=True, text=True)
             self.assertEqual(result.returncode, 0, result.stderr)
-            row = (root / 'summary.tsv').read_text().strip().split('\t')
+            row = (root / 'summary.tsv').read_text().splitlines()[-1].split('\t')
             self.assertEqual(row[:2], ['user-paths', 'PASSED'])
             self.assertEqual(row[-1], 'incomplete: human paths not covered')
 
@@ -157,8 +163,9 @@ class FrozenGateInput(unittest.TestCase):
                 repo, commands = root / 'repo', root / 'bin'
                 (repo / 'scripts').mkdir(parents=True)
                 commands.mkdir()
-                for name in ['candidate-docker-gate.sh', 'candidate-suite.sh', 'candidate-cleanup.sh', 'candidate-ports.py', 'fetch_released_aw.py']:
+                for name in ['candidate-docker-gate.sh', 'candidate-suite.sh', 'candidate-cleanup.sh', 'candidate-ports.py', 'fetch_released_aw.py', 'release_artifacts.py', 'publish_release.py', 'release_versions.py']:
                     shutil.copy2(ROOT / 'scripts' / name, repo / 'scripts' / name)
+                write_artifact_fixture(repo)
                 shutil.copy2(ROOT / 'scripts/e2e/user_paths_result.py', repo / 'scripts/user_paths_result.py')
                 (repo / 'scripts/coverage_fixture.py').write_text('from user_paths_result import qualification\nr=qualification({},0,[])\nfor h in r["required_humans"]: print(h["case"]+": "+h["status"])\nprint(r["coverage_summary"])\n')
                 (repo / 'scripts/candidate-host-pressure.py').write_text('import pathlib,sys\nif sys.argv[1]=="capture": pathlib.Path(sys.argv[2]).write_text("{}")\n')
@@ -168,6 +175,8 @@ class FrozenGateInput(unittest.TestCase):
                 (repo / 'naapp/library/test-vectors/blueprints/team/proof').touch()
                 (repo / 'Makefile').write_text(''' .DEFAULT:
 \t@true
+_candidate-artifact-manifest:
+\t@python3 scripts/artifact_fixture.py
 naapp-e2e-packages:
 \t@echo proof/one
 e2e-user-paths:
@@ -227,8 +236,19 @@ if args[0]=='run' and 'scripts/candidate-suite.sh' in args:
   if a=='-e': k,v=args[i+1].split('=',1);env[k]=v
  checkout=args[args.index('-w')+1]
  env['PATH']={str(commands)!r}+os.pathsep+env['PATH']
- # The fixture executes the actual stage script at the runner boundary.
- sys.exit(subprocess.run(['bash','scripts/candidate-suite.sh',args[-1]],cwd=checkout,env=env).returncode)
+ # Model this bind mount before executing the actual stage script.
+ import pathlib,shutil
+ for i,a in enumerate(args):
+  if a=='-v' and args[i+1].endswith('/artifacts'):
+   source,target=args[i+1].split(':',1)
+   target=pathlib.Path(target)
+   shutil.copytree(source,target,dirs_exist_ok=True)
+ status=subprocess.run(['bash','scripts/candidate-suite.sh',args[-1]],cwd=checkout,env=env).returncode
+ for i,a in enumerate(args):
+  if a=='-v' and args[i+1].endswith('/artifacts'):
+   source,target=args[i+1].split(':',1)
+   shutil.copytree(target,source,dirs_exist_ok=True)
+ sys.exit(status)
 if args[0]=='run': print('1000' if 'stat' in args else 'service');sys.exit(0)
 if args[:2] in [['network','create'],['volume','create']]: print('owned');sys.exit(0)
 ''')
@@ -287,6 +307,15 @@ if args[:2] in [['network','create'],['volume','create']]: print('owned');sys.ex
                     self.assertEqual(len(changed), 6)
                     self.assertNotEqual(changed[-1].split('\t')[0], ledger[0].split('\t')[0])
                     self.assertEqual(server.requests, ['/@awebai%2faw/latest'] * 4)
+                    metadata['version'] = '1.36.54'
+                    retained = next((root / 'logs').glob('*-artifacts/fixture.whl'))
+                    retained.write_bytes(b'changed after green gate')
+                    refused = run_fixture(['bash', 'scripts/candidate-docker-gate.sh'], cwd=repo,
+                                          env=env, capture_output=True, text=True, timeout=30)
+                    self.assertNotEqual(refused.returncode, 0)
+                    self.assertIn('artifact sha256 mismatch: fixture.whl', refused.stderr)
+                    self.assertEqual(ledger_rows(), changed)
+
                 finally:
                     shutil.rmtree('/tmp/aweb-candidate-gate-' + git('rev-parse', 'HEAD'), ignore_errors=True)
         finally:

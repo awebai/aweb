@@ -291,6 +291,7 @@ volumes:
 EOF
 
 compose down -v --remove-orphans >/dev/null 2>&1 || true
+source "$ROOT/scripts/prepare-release-wheels.sh"
 compose build awid-a awid-b aweb-a aweb-b cli
 compose up -d federation-dns postgres-a postgres-b redis-a redis-b
 DNS_IP="$(docker inspect -f '{{range .NetworkSettings.Networks}}{{.IPAddress}}{{end}}' "$(compose ps -q federation-dns)")"

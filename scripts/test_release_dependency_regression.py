@@ -65,6 +65,30 @@ class PublishedVersionRegression(unittest.TestCase):
             bumped = run_fixture(command, text=True, capture_output=True)
             self.assertEqual(bumped.returncode, 0, bumped.stderr)
 
+    def test_naapp_readme_only_passes_but_installed_code_change_refuses(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            tag = 'aweb-naapp-v0.5.1'
+            archive(root, tag, 'naapp-lib')
+            init_fixture_repo(root)
+            git(root, 'add', '.')
+            git(root, '-c', 'user.name=fixture', '-c', 'user.email=fixture@example.test',
+                'commit', '-qm', 'published naapp 0.5.1')
+            git(root, 'tag', tag)
+            readme = root / 'naapp-lib/README.md'
+            readme.write_text(readme.read_text() + '\nDocs-only control.\n')
+            command = [sys.executable, str(ROOT / 'scripts/release_versions.py'),
+                       '--check-unpublished', '--root', str(root)]
+            docs = run_fixture(command, text=True, capture_output=True)
+            self.assertEqual(docs.returncode, 0, docs.stderr)
+            self.assertIn('source differences excluded: naapp-lib/README.md', docs.stdout)
+            source = root / 'naapp-lib/src/aweb_naapp/__init__.py'
+            source.write_text(source.read_text() + '\nRELEASE_REGRESSION = True\n')
+            code = run_fixture(command, text=True, capture_output=True)
+            self.assertNotEqual(code.returncode, 0, code.stdout)
+            self.assertIn('aweb-naapp 0.5.1 installed wheel differs', code.stderr)
+            self.assertIn('aweb_naapp/__init__.py', code.stderr)
+
     def test_rc2_server_import_is_checked_at_declared_awid_floor(self):
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
@@ -85,6 +109,13 @@ class PublishedVersionRegression(unittest.TestCase):
             with self.assertRaisesRegex(PACKAGE.PackageRefusal, r'awid.identity_observation'):
                 PACKAGE._check_install(root / 'probe', wheel, PACKAGE._metadata(wheel),
                                        [root / 'dist/awid', root / 'dist/naapp'])
+            # The shipped rc3 repair bumps AWID and raises the server floor.
+            archive(root, '182f9ef49', 'server', 'awid', 'naapp-lib')
+            fixed = PACKAGE._build(server, root / 'fixed/server')
+            PACKAGE._build(awid, root / 'fixed/awid')
+            PACKAGE._build(root / 'naapp-lib', root / 'fixed/naapp')
+            PACKAGE._check_install(root / 'probe', fixed, PACKAGE._metadata(fixed),
+                                   [root / 'fixed/awid', root / 'fixed/naapp'])
 
 
 if __name__ == '__main__':

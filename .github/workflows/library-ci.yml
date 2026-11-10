@@ -73,6 +73,8 @@ jobs:
       # stops matching the moment someone edits awid/.
       - name: Checkout aweb
         uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
 
       - name: Set up Python
         uses: actions/setup-python@v6

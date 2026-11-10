@@ -781,6 +781,11 @@ async function ensureServer(tempRoot: string): Promise<ServerHandle> {
       '      dockerfile: "Dockerfile"',
     );
   }
+  if (!exactInputs.some(Boolean)) {
+    const prepared = await runCommand("bash", ["-c", "source scripts/prepare-release-wheels.sh"],
+      { cwd: repoRoot, timeoutMs: 300_000 });
+    console.log(prepared.stdout);
+  }
   await writeFile(overrideFilePath, overrideLines.join("\n"));
 
   const awidURL = `http://${publishedHost}:${awidPort}`;

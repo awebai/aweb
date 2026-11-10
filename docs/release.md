@@ -325,3 +325,51 @@ publish the version-only OSS finals and deploy the paired Cloud/Folio release.
 
 There are no release-intent tags, done tags, release branches, workflow
 monitors, or cross-repository release transactions.
+
+## Candidate artifact inputs
+
+The artifact stage precedes journeys and integration, including focused stage
+selections. It builds the Python wheels and sdists and the npm tarballs (including
+all seven CLI packages) at the versions supplied by the candidate's manifests
+and CLI input. `CANDIDATE_ARTIFACT_DIR` holds those files, `manifest.json` and
+`SHA256SUMS`. The gate retains that directory with its logs and caches it under
+its existing gate key; a reused stage verifies hashes before consuming it.
+It does not silently regenerate a missing or changed wheel behind a green receipt.
+
+For an already-tagged Python version, the gate builds that release tag with the
+same toolchain and compares the installed file set, file bytes, requirements,
+Python requirement, extras and entry points. ZIP timestamps, RECORD and metadata
+long descriptions do not decide this comparison. An unchanged installed package
+passes with excluded source differences logged; changed installed code or metadata
+requires a coordinated version bump. The package import check additionally runs
+at declared in-repository dependency floors so a newer local AWID cannot hide a
+missing module in an older allowed release.
+
+The shared wheel installer verifies each input hash, replaces editable installs,
+checks installed payload bytes and logs `installed manifest wheel:` with the
+package, version and SHA-256. The normal federation journey uses its existing
+exact-wheel mode. Explicit historical/skew wheel inputs retain their selected
+released server and constraints. Developer image builds without prepared
+candidate artifacts retain their source mode; maintained journeys prepare wheels
+before building those images.
+
+The maintained callers share these operations:
+
+| Operation | Callers |
+|---|---|
+| Artifact targets and stage ordering | `candidate-suite.sh`, reached by `candidate-docker-gate.sh`, `make candidate-gate` and `release_candidate.py` / `make release-candidate` |
+| Python build and manifest | `_candidate-artifact-server`, standalone `check-naapp-lib-package.py`, and `prepare-release-wheels.sh` |
+| Package import checks | `_candidate-artifact-naapp-package` and `make check-naapp-lib-package` |
+| npm build operations | Candidate artifact targets and `publish_release.py`; tag workflows invoke that publisher |
+| Standing user paths | `make e2e-user-paths` → `e2e-user-paths.sh` → the existing `user_paths_stack.py` |
+| OSS and federation journeys | `make test-e2e`, `make test-federation-e2e`, and federation CI's direct script calls |
+| Channel integration | `make test-channel-integration` and direct `npm run test:integration` invoke the same test setup |
+| A2A gateway journey | `make test-a2a-gateway-e2e` → `e2e-a2a-gateway-docker.sh` |
+| CLI/Library stack | `make cli-e2e`, `make -C cli e2e`, CLI CI and direct `e2e-library-stack.sh up` |
+| Naapp integration | `make e2e-naapp` and Folio/Library CI's `make e2e`; their `e2e-up` targets prepare the same wheels |
+| Folio wakes | `make e2e-folio-wakes` and Folio CI's direct `e2e-folio-wakes.sh` |
+
+CI callers fetch release-tag history and use the same preparation scripts. These
+changes retain the existing RC/final promotion policy. Publishing directly from
+the retained manifest is a separate change; the current publisher still builds
+its publication inputs.
