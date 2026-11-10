@@ -620,6 +620,21 @@ drain.
   team.
 - `outbox_targets`: the channel each target id belongs to.
 
+**Retention.** An event every target acknowledged is deleted, with its
+delivery rows, 30 days after it drained (`DRAINED_RETENTION`,
+`prune_drained` in `aweb_naapp.outbox`). The drain loop does it: once an hour
+it deletes up to 500 such events, oldest first, and again after its next pass
+while a batch comes back full, so a deployment runs nothing extra. An event
+that is not drained is kept at any age: one not materialized, or with a
+delivery pending, stalled, or dead-lettered and not acknowledged as lost. A
+drained event is also kept while a reader needs its rows: one with a delivery
+that was cancelled, rejected or in conflict, a critical event materialized
+with no target, and the one holding a target's latest receipt. The consequence
+for producers: enqueueing an event id again is a no-op, or a conflict on other
+bytes, only while the event is stored. Its id and `payload_sha256` are
+forgotten with it, so the same enqueue more than 30 days after the event
+drained stores and delivers a new event.
+
 The event row is written **in the same transaction as the effect**, which is
 the fail-closed point. Deliveries are materialized at drain time from the
 current registry: one per active registration with `active_from <=
