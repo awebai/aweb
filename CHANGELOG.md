@@ -2,6 +2,22 @@
 
 ## Unreleased
 
+- The channel (the Claude Code plugin and the Pi extension) follows the
+  reconnect policy for the event stream, `docs/event-stream-client-policy.md`.
+  A failed open, an early end, 408, 409, 425, 429 and 5xx are retried from
+  1 second to 15 seconds with jitter, where the ceiling was 5 seconds without
+  jitter, and `Retry-After` is honoured as a minimum wait up to 5 minutes. A
+  refusal (any other 4xx, or a grant terminal event) is retried from 1 minute to
+  15 minutes, where it was retried every 5 seconds, with the identity home read
+  again before each attempt, and is reported once on the way in,
+  `aweb: event stream refused: <status>, next try HH:MM`, and once on the way
+  out. Each connection's planned close is between 3 min 30 s and 4 min, where
+  it was 4 minutes with a local deadline of 5, and a heartbeat confirms a
+  stream as an event does. `streamAgentEvents` reports the state `refused`
+  and takes `reloadCredentials`; `EVENT_STREAM_DEADLINE_MS` is removed. The
+  `aw wake` child opens no stream of its own and is unchanged apart from its
+  rebuilt bundle.
+
 - The channel client (the Claude Code plugin, the Pi extension and `aw wake`)
   signs every certificate and identity request with the
   [v2 request envelope](docs/team-auth-envelope-v2.md), which binds the

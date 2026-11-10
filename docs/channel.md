@@ -189,11 +189,33 @@ unread and caused the reconnect replay burst, default-aajy). Replying with
 required to prevent redelivery. Running `aw mail inbox` marks displayed unread
 mail as read. `aw mail show` is read-only.
 
-Event-stream health is separate from initial workspace connectivity. A stream
-failure changes the runtime status to events-down/retrying and emits one concise
-`aweb:` line with the summarized cause and retry cadence; steady retries stay
-silent. Recovery emits one reconnected line and tells the agent to check unread
-mail and pending chat for newly waiting work. After an uncertain crash, recover
+Event-stream health is separate from initial workspace connectivity. The
+channel reconnects under the event stream client policy,
+`docs/event-stream-client-policy.md`: no answer from the server stops the
+stream for the life of the process.
+
+- A transient failure (a failed open, an early end, 75 seconds of silence, any
+  5xx, and 408, 409, 425 or 429) changes the runtime status to
+  events-down/retrying and emits one concise `aweb:` line with the summarized
+  cause and the first wait. It is retried on a delay of 1 second doubling to
+  15 seconds with jitter, after `Retry-After` when the answer carries one;
+  steady retries stay silent. Recovery emits one reconnected line.
+- A refusal (any other 4xx on open, or a grant terminal event on an open
+  stream) is retried on a delay of 1 minute doubling to 15 minutes. Before each
+  of those attempts the channel reads its identity home again, so a certificate
+  or grant renewed on disk is used without a restart; it does not take
+  credentials for another identity, team or server. It emits
+  `aweb: event stream refused: <status or event>, next try HH:MM` once on the
+  way in and `aweb: event stream accepted again (was refused: <status or event>)`
+  once when a stream is confirmed; a retry that is refused again emits nothing.
+  Restarting the channel (the plugin process, or a Pi session) retries at once.
+- Each connection closes itself between 3 minutes 30 seconds and 4 minutes
+  after it opens and is reopened at once, without a line.
+
+These lines are diagnostics on the plugin's standard error and in the Pi status
+line and log, not model input. The snapshot the server sends when a stream
+opens raises unread mail and pending chat; nothing else is replayed after a
+reconnect. After an uncertain crash, recover
 known mail IDs with `aw mail show --message-id <id> --json` or page
 `aw mail inbox --show-all --json` with `--cursor`; unread-only checks do not
 prove previously presented work completed.
