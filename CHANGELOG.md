@@ -2,6 +2,10 @@
 
 ## Unreleased
 
+- `POST /v1/connect` with the `repo_origin` of a repo the team deleted restores
+  the team's repo row and binds the workspace to it, as `PATCH /v1/agents/me`
+  and `POST /v1/repos/ensure` do; it answered 500.
+
 - Activating a team instructions version deactivates the active version and
   activates the chosen one in one transaction, and activations of one team run
   one at a time. A failed activation leaves the active version as it was, and
