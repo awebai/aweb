@@ -26,7 +26,7 @@ from aweb_naapp.runtime.authorization import Grant
 from aweb_naapp.runtime.clock import seconds_to_ns
 from aweb_naapp.runtime.credential_audit import CredentialAudit
 from aweb_naapp.runtime.installation import InstallationFence, apply_installation_migrations
-from aweb_naapp.runtime.passkeys import Passkeys, RelyingParty, contact_sha256
+from aweb_naapp.runtime.passkeys import Passkeys, RelyingParty
 from aweb_naapp_testing.owner_acts import APP_ID, INSTALLATION_ID, TEAM_ID, TeamOwner, team_owner
 from aweb_naapp_testing.webauthn import SoftAuthenticator, SoftCredential, b64url
 from awid_service.testing import running_registry
@@ -37,7 +37,7 @@ from pgdbm import AsyncDatabaseManager, AsyncMigrationManager
 from aweb_logs import MIGRATIONS_MODULE, MIGRATIONS_PATH
 from aweb_logs.governance import SELF_RECORDED_ACTS, LogsGovernance
 from aweb_logs.ledger import LogsSigner
-from aweb_logs.readers import READER_ROLE, ReaderDesignations, ReaderDirectory, ReaderRemovals
+from aweb_logs.readers import READER_ROLE, ReaderDirectory, ReaderRemovals
 
 LOGS = "https://logs.example.test"
 
@@ -54,12 +54,6 @@ OTHER_READER = "did:aw:3Xr8nYo5mQ1sU2wZ6aB9cD4eF7"
 # The member's team certificate a designation retains; the reads here never
 # check it.
 CERTIFICATE = b'{"certificate_id":"cert-reader"}'
-
-
-CONTACT = "reader@example.com"
-
-
-OTHER_CONTACT = "someone-else@example.com"
 
 
 class Installations:
@@ -131,7 +125,6 @@ class World:
     registered: list[bool]
     grant: Grant
     fence: InstallationFence
-    designations: ReaderDesignations = field(init=False)
     governance: LogsGovernance = field(init=False)
     removals: ReaderRemovals = field(init=False)
     recorder: CredentialAudit = field(init=False)
@@ -212,13 +205,6 @@ async def world_fixture(test_db_factory) -> AsyncIterator[World]:
             holding_scopes=is_holding_scope,
         )
         await state.passkeys.migrate()
-        state.designations = ReaderDesignations(
-            directory,
-            fence=fence,
-            verifier=owner.verifier,
-            passkeys=state.passkeys,
-            recorder=state.recorder,
-        )
         state.governance = LogsGovernance(
             db, fence=fence, verifier=owner.verifier, recorder=state.recorder, logs_origin=LOGS
         )
@@ -226,26 +212,6 @@ async def world_fixture(test_db_factory) -> AsyncIterator[World]:
             directory, fence=fence, passkeys=state.passkeys, recorder=state.recorder
         )
         yield state
-
-
-async def slot(world: World, contact: str = CONTACT) -> str:
-    async with world.db.transaction() as tx:
-        issued = await world.directory.create_slot(
-            tx,
-            installation_id=INSTALLATION_ID,
-            team_id=TEAM_ID,
-            contact_sha256=contact_sha256(contact),
-        )
-    return issued.scope
-
-
-def designation(scope: str, contact: str = CONTACT) -> dict:
-    return {
-        "app_id": APP_ID,
-        "installation_id": INSTALLATION_ID,
-        "role": scope,
-        "contact_sha256": contact_sha256(contact),
-    }
 
 
 async def chained(world: World) -> list[dict]:
@@ -272,58 +238,11 @@ async def count(world: World, table: str) -> int:
     return await world.db.fetch_value(f"SELECT count(*) FROM {{{{tables.{table}}}}}")
 
 
-async def nothing_took_effect(world: World, scope: str) -> None:
-    assert await world.directory.reader(scope) is None
-    assert world.inbox.enrolments == {}
-    assert await count(world, "outbox_events") == 0
-    assert await count(world, "owner_act_nonces") == 0
-    assert await chained(world) == []
-
-
-async def designated_reader(world: World, contact: str = CONTACT) -> tuple[str, str]:
-    """A reader the owner designated that has not enrolled yet: its scope and holder."""
-    scope = await slot(world, contact)
-    signing, signature = world.owner.sign("app-role.designate", designation(scope, contact))
-    await world.designations.designate(
-        signing=signing, signature=signature, scope=scope, contact=contact
-    )
-    current = await holder(world, scope)
-    assert current is not None
-    return scope, current
-
-
-async def enrolled_reader(world: World, contact: str = CONTACT) -> tuple[str, str]:
-    """A designated reader that has enrolled its passkey: its scope and holder."""
-    scope, _ = await designated_reader(world, contact)
-    token = world.inbox.enrolments[contact][-1]
-    device = SoftAuthenticator(CONSOLE)
-    enrolment = await world.recorder.prepare_enrolment(token)
-    with world.recorder.prepared(enrolment):
-        await world.passkeys.complete_enrolment(
-            token,
-            device.create(await world.passkeys.enrolment_options(token)),
-            fence=enrolment,
-        )
-    world.devices[scope] = device
-    current = await holder(world, scope)
-    assert current is not None
-    return scope, current
-
-
 async def holder(world: World, scope: str) -> str | None:
     return await world.db.fetch_value(
         "SELECT subject FROM {{tables.passkey_approvers}} WHERE scope = $1 AND superseded_at IS NULL",
         scope,
     )
-
-
-def revocation(scope: str, subject_ref: str) -> dict:
-    return {
-        "app_id": APP_ID,
-        "installation_id": INSTALLATION_ID,
-        "role": scope,
-        "subject_ref": subject_ref,
-    }
 
 
 def act_body(signing: bytes, signature: str, **fields) -> dict:
