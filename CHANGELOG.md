@@ -116,10 +116,12 @@
   every other DID field. The limiter is `awid.request_body_limit`.
 
 - `awid.request_body_limit` logs each refusal with the method and the request
-  path, without its query string or fragment, then the declared or received
+  path, without its query string or fragment, with what is not printable
+  escaped and at most 256 characters, then the declared or received
   byte count and the limit, for example `Request body too large: POST /echo
   declared 65 bytes, limit 64`. A host whose paths carry secrets of its own
-  passes `logged_path`, the rule that writes the path the line shows.
+  passes `logged_path`, the rule that writes the path the line shows; a rule
+  that raises gives the default form, and the refusal stays a 413.
 
 - The channel client (the Claude Code plugin, the Pi extension and `aw wake`)
   reports mail and chat as verified only when the displayed body, subject,
