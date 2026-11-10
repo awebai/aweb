@@ -689,6 +689,10 @@ ROOT_CONSUMERS = {
         "pin-store-raw-wire-v1.json",
         'join(testDir, "..", "..", "docs", "vectors", "pin-store-raw-wire-v1.json")',
     ),
+    PurePosixPath("channel-core/test/request_auth_v2.test.ts"): _consumer(
+        "team-auth-envelope-v2.json",
+        'join(import.meta.dirname, "..", "..", "docs", "vectors", "team-auth-envelope-v2.json")',
+    ),
     PurePosixPath("channel-core/test/registry.test.ts"): _consumer(
         {
             "dns-txt-v1.json",

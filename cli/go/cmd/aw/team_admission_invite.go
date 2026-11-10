@@ -83,7 +83,6 @@ func init() {
 }
 
 func runTeamAdmissionInvite(ctx context.Context, cmd *cobra.Command) error {
-	loadDotenvBestEffort()
 	teamID := strings.TrimSpace(teamAdmissionInviteTeamID)
 	if teamID == "" {
 		return usageError("--team-id is required")

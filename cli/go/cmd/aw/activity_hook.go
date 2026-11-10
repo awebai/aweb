@@ -20,6 +20,7 @@ import (
 
 	"github.com/awebai/aw/awconfig"
 	"github.com/awebai/aw/awid"
+	"github.com/awebai/aw/internal/atomicfile"
 	"github.com/spf13/cobra"
 )
 
@@ -474,6 +475,6 @@ func (h *codexActivityHook) save() {
 		return
 	}
 	if data, err := json.Marshal(h.state); err == nil {
-		_ = writeFileAtomic(h.root, activityHookStateFile, data, 0o600)
+		_ = atomicfile.Write(filepath.Join(h.root, activityHookStateFile), data, 0o600)
 	}
 }
