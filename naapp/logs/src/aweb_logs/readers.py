@@ -26,8 +26,9 @@ from aweb_naapp.hooks.envelope import verify
 from aweb_naapp.hooks.owner_act import VerifiedOwnerAct
 from aweb_naapp.hooks.owner_act_nonces import OwnerActVerifier, PreparedOwnerAct
 from aweb_naapp.hooks.strictjson import Refused
-from aweb_naapp.roles import principal_key
+from aweb_naapp.roles import principal_key, read_holding_of_scope
 from aweb_naapp.runtime.authorization import Grant
+from aweb_naapp.runtime.human_roles import HumanRoleHolding, HumanRoleHoldings
 from aweb_naapp.runtime.installation import AdmittedInstallation, InstallationFence
 from aweb_naapp.runtime.passkeys import (
     DesignationRefused,
@@ -50,7 +51,7 @@ if TYPE_CHECKING:
 
 READER_ROLE = "logs.reader"
 SLOT_TTL = timedelta(hours=1)
-_SCOPE = re.compile(r"logs\.reader\.[0-9a-f]{32}")
+_SCOPE = re.compile(r"logs\.reader\.[0-9a-f]{40}")
 _SHA256 = re.compile(r"[0-9a-f]{64}")
 
 
@@ -173,14 +174,51 @@ class ReaderDirectory:
         return Reader(scope=scope, installation_id=installation_id, team_id=team_id)
 
     async def reader(self, scope: str) -> Reader | None:
+        """The reader ``scope`` admits now: the current holder of
+        ``logs.reader`` whose holding B3 scope it is, in that holding's active
+        installation, with a credential that can sign in. None for any other
+        scope, a pre-ruling slot among them, and while a replaced credential
+        is in its cooling-off."""
         if not is_reader_scope(scope):
             return None
-        row = await self.db.fetch_one(
-            "SELECT scope, installation_id, team_id FROM {{tables.readers}}"
-            " WHERE scope = $1 AND claimed_at IS NOT NULL",
-            scope,
+        async with self.db.transaction() as tx:
+            held = await self._held(tx, scope)
+        if held is None or held.subject is None:
+            return None
+        return Reader(
+            scope=scope,
+            installation_id=held.installation_id,
+            team_id=held.team_id,
+            principal=held.principal,
         )
-        return Reader(**row) if row is not None else None
+
+    async def _held(self, tx: TransactionManager, scope: str) -> HumanRoleHolding | None:
+        """The current holding of ``scope`` in its own installation, provided
+        that installation is still logs' active one; SQL reads only."""
+        record = await read_holding_of_scope(tx, scope)
+        if record is None or record.role != READER_ROLE:
+            return None
+        try:
+            context = await installation_context(
+                tx,
+                app_id=self.app_id,
+                team_id=record.team_id,
+                installation_id=record.installation_id,
+            )
+        except ProofContextUnavailable:
+            return None
+        admitted = AdmittedInstallation(
+            team_id=context.team_id,
+            app_id=context.app_id,
+            installation_id=context.installation_id,
+            generation=context.generation,
+        )
+        return await self._holdings().read_holding_of_scope(
+            tx, installation=admitted, b3_scope=scope
+        )
+
+    def _holdings(self) -> HumanRoleHoldings:
+        return HumanRoleHoldings(roles=frozenset({READER_ROLE}), passkeys=self._passkeys())
 
     async def readers(self, *, installation_id: str, team_id: str) -> list[Reader]:
         rows = await self.db.fetch_all(
@@ -214,17 +252,10 @@ class ReaderDirectory:
         return [Reader(**row) for row in rows]
 
     async def is_current_reader(self, scope: str) -> bool:
-        """Whether ``scope`` is a claimed slot a holder currently fills: the
-        console sessions' admission of a reader scope."""
-        if not is_reader_scope(scope):
-            return False
-        current: bool = await self.db.fetch_value(
-            "SELECT EXISTS (SELECT 1 FROM {{tables.readers}} r"
-            " JOIN {{tables.passkey_approvers}} a ON a.scope = r.scope AND a.superseded_at IS NULL"
-            " WHERE r.scope = $1 AND r.claimed_at IS NOT NULL)",
-            scope,
-        )
-        return current
+        """Whether ``scope`` admits a reader now (see :meth:`reader`): the
+        console sessions' admission of a reader scope, at login and on every
+        request."""
+        return await self.reader(scope) is not None
 
     async def pending(self, scope: str) -> Pending | None:
         """The unexpired, unclaimed slot ``scope``, before any transaction."""
@@ -240,16 +271,12 @@ class ReaderDirectory:
     async def role_of(
         self, tx: TransactionManager, *, scope: str, admitted: AdmittedInstallation
     ) -> str | None:
-        """The B3 role ``scope`` holds in ``admitted``: a claimed slot of that
-        installation and team is a reader."""
-        claimed = await tx.fetch_value(
-            "SELECT EXISTS (SELECT 1 FROM {{tables.readers}} WHERE scope = $1"
-            " AND installation_id = $2 AND team_id = $3 AND claimed_at IS NOT NULL)",
-            scope,
-            admitted.installation_id,
-            admitted.team_id,
+        """The B3 role ``scope`` holds in ``admitted``: a current holding of
+        ``logs.reader`` in that installation is a reader."""
+        held = await self._holdings().read_holding_of_scope(
+            tx, installation=admitted, b3_scope=scope
         )
-        return READER_ROLE if claimed else None
+        return READER_ROLE if held is not None else None
 
     def proof_context(self, *, app_id: str) -> ProofContextResolver:
         """B3's proof context of a reader scope: the installation its claimed
