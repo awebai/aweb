@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import hashlib
 import os
+import socket
 import subprocess
 import time
 import tempfile
@@ -66,18 +67,20 @@ def worker_test_services(worker_id):
     previous_url = os.environ.get("REDIS_URL")
     # pgdbm retains a fresh UUID database per test, with visible worker ownership.
     DEFAULT_TEST_CONFIG.test_db_prefix = f"test_{worker_id}_"
-    # Redis pub/sub crosses logical databases, so each worker needs a process,
-    # not merely a different /db number. A short socket also fits macOS limits.
+    # Redis pub/sub crosses logical databases: isolate processes, not /db numbers.
+    # Loopback TCP preserves the real RedisFaultProxy fault-injection path.
     with tempfile.TemporaryDirectory(prefix="aw-test-redis-", dir="/tmp") as root:
-        socket = Path(root) / "redis.sock"
+        with socket.socket() as listener:
+            listener.bind(("127.0.0.1", 0))
+            port = listener.getsockname()[1]
         with (Path(root) / "redis.log").open("w+") as log:
             process = subprocess.Popen(
-                ["redis-server", "--port", "0", "--unixsocket", str(socket),
-                 "--unixsocketperm", "700", "--save", "", "--appendonly", "no"],
+                ["redis-server", "--bind", "127.0.0.1", "--port", str(port),
+                 "--save", "", "--appendonly", "no"],
                 stdout=log, stderr=subprocess.STDOUT,
             )
             try:
-                os.environ["REDIS_URL"] = f"unix://{socket}"
+                os.environ["REDIS_URL"] = f"redis://127.0.0.1:{port}/0"
                 with Redis.from_url(os.environ["REDIS_URL"]) as client:
                     deadline = time.monotonic_ns() + 5_000_000_000
                     while True:

@@ -157,12 +157,13 @@ class FrozenGateInput(unittest.TestCase):
                 repo, commands = root / 'repo', root / 'bin'
                 (repo / 'scripts').mkdir(parents=True)
                 commands.mkdir()
-                for name in ['candidate-docker-gate.sh', 'candidate-suite.sh', 'candidate-cleanup.sh', 'candidate-ports.py', 'fetch_released_aw.py']:
+                for name in ['candidate-docker-gate.sh', 'candidate-suite.sh', 'candidate-cleanup.sh', 'gate_settings.py', 'gate_budgets.py', 'candidate-ports.py', 'fetch_released_aw.py']:
                     shutil.copy2(ROOT / 'scripts' / name, repo / 'scripts' / name)
                 shutil.copy2(ROOT / 'scripts/e2e/user_paths_result.py', repo / 'scripts/user_paths_result.py')
                 (repo / 'scripts/coverage_fixture.py').write_text('from user_paths_result import qualification\nr=qualification({},0,[])\nfor h in r["required_humans"]: print(h["case"]+": "+h["status"])\nprint(r["coverage_summary"])\n')
                 (repo / 'scripts/candidate-host-pressure.py').write_text('import pathlib,sys\nif sys.argv[1]=="capture": pathlib.Path(sys.argv[2]).write_text("{}")\n')
                 (repo / 'candidate-gate').mkdir()
+                shutil.copy2(ROOT / 'candidate-gate/unit-settings.json', repo / 'candidate-gate/unit-settings.json')
                 (repo / 'candidate-gate/Dockerfile').write_text('FROM scratch\n')
                 (repo / 'naapp/library/test-vectors/blueprints/team').mkdir(parents=True)
                 (repo / 'naapp/library/test-vectors/blueprints/team/proof').touch()
@@ -239,7 +240,7 @@ if args[:2] in [['network','create'],['volume','create']]: print('owned');sys.ex
                 (root / 'home').mkdir()
                 env.pop('OATS_INSTANCE', None)
                 env.update(PATH=f'{commands}:{env["PATH"]}', AWEB_GATE_LEDGER=str(root / 'ledger.tsv'),
-                           AWEB_GATE_LOG_DIR=str(root / 'logs'), CLI_VERSION='1.36.54', A2A_GATEWAY_VERSION='1.27.6',
+                           AWEB_GATE_PROFILE='lane', AWEB_GATE_LOG_DIR=str(root / 'logs'), CLI_VERSION='1.36.54', A2A_GATEWAY_VERSION='1.27.6',
                            HOME=str(root / 'home'), SNAPSHOT_RECEIPT=str(root / 'snapshot.json'),
                            ID_LOOKUP_RECEIPT=str(root / 'id-lookups'))
                 def invoke(stages):
@@ -273,7 +274,7 @@ if args[:2] in [['network','create'],['volume','create']]: print('owned');sys.ex
                     self.assertEqual(receipt['digest'], digest)
                     self.assertEqual(receipt['declared'], digest)
                     tree = git('rev-parse', 'HEAD^{tree}')
-                    external = f'CLI_VERSION=1.36.54\nA2A_GATEWAY_VERSION=1.27.6\nRELEASED_AW={digest}\n'
+                    external = f'CLI_VERSION=1.36.54\nA2A_GATEWAY_VERSION=1.27.6\nRELEASED_AW={digest}\nAWEB_GATE_PROFILE=lane\n'
                     self.assertEqual(ledger[0].split('\t')[0], tree+'-'+hashlib.sha256(external.encode()).hexdigest())
                     reused = invoke(None)
                     self.assertIn('no stages run', reused)

@@ -4,19 +4,6 @@
 set -euo pipefail
 
 run() { printf '\n=== candidate: %s ===\n' "$1"; make "$1"; }
-if [[ "${1:-}" == "--isolated-suites" ]]; then
-  export TEST_EGRESS_RUNNER=
-  run test-server
-  run test-awid
-  run test-naapp
-  run test-cli
-  run test-cli-auth-v2
-  run _candidate-unit-channel
-  run test-channel-name-live-contract
-  run _candidate-unit-channel-core
-  run _candidate-unit-pi
-  exit 0
-fi
 
 log_dir="${CANDIDATE_LOG_DIR:?CANDIDATE_LOG_DIR is required}"
 stages="${1:-checks user-paths unit artifacts integration}"
@@ -89,7 +76,7 @@ cli_ready=0
 for stage in $stages; do
   case "$stage" in checks|user-paths|unit|artifacts|integration) ;; *) echo "unknown candidate stage: $stage" >&2; exit 2;; esac
   case "$stage" in
-    unit|artifacts|integration)
+    artifacts|integration)
       if [[ "$node_ready" == 0 ]]; then run _candidate-node-deps; node_ready=1; fi ;;
   esac
   case "$stage" in
@@ -101,14 +88,12 @@ for stage in $stages; do
   ( set -e; "$stage" ) 2>&1 | tee "$log_dir/$stage.log"
   status=${PIPESTATUS[0]}
   set -e
-  result=PASSED
-  [[ "$status" == 0 ]] || result=FAILED
   coverage=""
   if [[ "$stage" == user-paths && -f "$log_dir/user-paths/coverage-summary.txt" ]]; then
     coverage="$(cat "$log_dir/user-paths/coverage-summary.txt")"
     printf 'user-paths coverage: %s\n' "$coverage"
   fi
-  printf '%s\t%s\t%s.log\t%ss\t%s\n' "$stage" "$result" "$stage" "$((SECONDS-started))" "$coverage" >> "$log_dir/summary.tsv"
+  python3 scripts/gate_budgets.py "$log_dir" "$stage" "$status" "$((SECONDS-started))" "$coverage"
   [[ "$status" == 0 ]] || exit "$status"
 done
 printf '\ncandidate suite PASSED\n'

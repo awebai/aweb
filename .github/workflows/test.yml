@@ -15,24 +15,36 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
+  prepare:
+    name: Prepare isolated suites once
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    outputs:
+      matrix: ${{ steps.groups.outputs.matrix }}
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
+      - id: groups
+        run: echo "matrix=$(python3 scripts/gate_settings.py matrix)" >> "$GITHUB_OUTPUT"
+      - name: Prepare the shared source and dependency image
+        run: |
+          python3 scripts/test-egress/docker.py --evidence "${{ runner.temp }}/prepare" --build-image aweb-unit:${{ github.sha }}
+          docker save aweb-unit:${{ github.sha }} | gzip > "${{ runner.temp }}/unit-image.tar.gz"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: isolated-image
+          path: ${{ runner.temp }}/unit-image.tar.gz
+          retention-days: 1
+
   isolated:
     name: Isolated (${{ matrix.suite }})
+    needs: prepare
     runs-on: ubuntu-latest
     timeout-minutes: 45
     strategy:
       fail-fast: false
-      matrix:
-        include:
-          - suite: server-1
-            targets: test-server PYTEST_SERVER_SHARD=1/2
-          - suite: server-2
-            targets: test-server PYTEST_SERVER_SHARD=2/2
-          - suite: awid
-            targets: test-awid
-          - suite: cli
-            targets: test-cli
-          - suite: channel-pi
-            targets: test-channel test-channel-name-live-contract test-channel-core test-pi-extension
+      matrix: ${{ fromJSON(needs.prepare.outputs.matrix) }}
     steps:
       - uses: actions/checkout@v7
         with:
@@ -40,8 +52,14 @@ jobs:
       - uses: actions/setup-python@v6
         with:
           python-version: "3.12"
-      - name: Run isolated suites
-        run: python3 scripts/test-egress/docker.py --evidence "${{ runner.temp }}/test-egress" ${{ matrix.targets }}
+      - uses: actions/download-artifact@v4
+        with:
+          name: isolated-image
+          path: ${{ runner.temp }}/prepared
+      - name: Load the prepared image
+        run: docker load < "${{ runner.temp }}/prepared/unit-image.tar.gz"
+      - name: Run the shared make group
+        run: python3 scripts/test-egress/docker.py --image aweb-unit:${{ github.sha }} --profile lane --group "${{ matrix.suite }}" --evidence "${{ runner.temp }}/test-egress"
       - name: Preserve network isolation evidence
         if: always()
         uses: actions/upload-artifact@v4
@@ -140,10 +158,11 @@ jobs:
   test:
     name: Test suite
     if: ${{ always() }}
-    needs: [isolated, remaining]
+    needs: [prepare, isolated, remaining]
     runs-on: ubuntu-latest
     steps:
       - name: Require every suite to pass
         run: |
+          test "${{ needs.prepare.result }}" = success
           test "${{ needs.isolated.result }}" = success
           test "${{ needs.remaining.result }}" = success

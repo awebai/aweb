@@ -102,7 +102,7 @@ async def test_exact_peer_check_keeps_a_local_peer_literal(aweb_cloud_db):
 
 
 @pytest.mark.asyncio
-@pytest.mark.parametrize("conversation_id,peer", [("not-a-uuid", PEER), (str(uuid4()), "peer"), (str(uuid4()), "did:web:example.test")])
+@pytest.mark.parametrize("conversation_id,peer", [("not-a-uuid", PEER), pytest.param(str(uuid4()), "peer", id="alias-peer"), pytest.param(str(uuid4()), "did:web:example.test", id="unsupported-peer-did")])
 async def test_exact_peer_check_validates_native_locators(aweb_cloud_db, conversation_id, peer):
     with pytest.raises(HTTPException) as error:
         await conversations.require_mail_thread_peer_for_auth(

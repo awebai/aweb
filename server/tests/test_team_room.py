@@ -114,16 +114,17 @@ async def test_room_is_shared_and_history_includes_posts_before_join(privacy_app
     "field,value",
     [
         ("to", "team-room:other:example.test"),
-        ("conversation_id", str(uuid4())),
+        pytest.param("conversation_id", str(uuid4()), id="wrong-conversation"),
         ("from_did", "did:key:wrong"),
         ("from_stable_id", "did:aw:unverified"),
         ("type", "mail"),
         ("to_did", "did:key:some-recipient"),
-        (
+        pytest.param(
             "timestamp",
             (datetime.now(timezone.utc) - timedelta(hours=1)).strftime(
                 "%Y-%m-%dT%H:%M:%SZ"
             ),
+            id="stale-timestamp",
         ),
     ],
 )

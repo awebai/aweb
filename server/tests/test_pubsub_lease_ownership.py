@@ -24,7 +24,6 @@ from aweb.events import stream_events_multi
 from aweb.routes.dashboard import _sse_dashboard_events
 from test_dashboard_privacy import privacy_app  # noqa: F401
 
-REDIS_URL = os.environ.get("REDIS_URL", "redis://localhost:6379/0")
 CYCLES = 10
 
 
@@ -42,7 +41,7 @@ async def settled(redis: Redis, expected: int, timeout: float = 2.0) -> int:
 
 @pytest_asyncio.fixture
 async def redis():
-    async with Redis.from_url(REDIS_URL, decode_responses=True) as client:
+    async with Redis.from_url(os.environ.get("REDIS_URL", "redis://localhost:6379/0"), decode_responses=True) as client:
         await client.ping()
         yield client
 

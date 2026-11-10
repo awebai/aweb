@@ -1,5 +1,27 @@
 # Test egress boundaries
 
+The CI matrix and candidate unit stage use the same `make test-unit-*` groups:
+`server-1`, `server-2`, `awid`, `naapp`, `cli`, and `channel-pi`. The CLI group
+includes request-auth-v2; the Node group retains channel, live-name contract,
+channel-core and Pi tests in order. Naapp runs each existing package target in
+parallel, retaining its own log and lock check. Server shards retain the full
+collection, partitioned by the SHA256 of each relative module path. Each worker
+has a private TCP Redis process; shared Node build users stay in one loadgroup.
+
+`make test-isolated` prepares one image, then runs the groups in separate
+filesystems and internal networks. The candidate gate uses the same scheduler.
+`candidate-gate/unit-settings.json` defines shard/worker counts, the release and
+lane allocations, and report-only stage budgets. `AWEB_GATE_PROFILE=release`
+selects concurrent groups; the lane profile runs them sequentially within its
+smaller total allocation. The settings validator includes the outer runner,
+builder and services in the aggregate. The unit stage records effective Docker
+limits and restores the previous outer limits even after a group fails.
+
+Each group retains `suite.log`, network/runner inspection, resource limits and
+runner wall time. The parent `summary.tsv` includes group setup and cleanup;
+the stage summary adds a budget next to duration. A stage overrun prints
+`BUDGET EXCEEDED` in the wrapper verdict but does not yet change the test result.
+
 `make test-cli`, `test-server`, and `test-awid` prepare dependencies, then run
 behind the native deny proxy. Loopback stays direct. The exact existing
 `127.0.0.1.nip.io` fixture is forwarded to 127.0.0.1 without DNS. Reserved test

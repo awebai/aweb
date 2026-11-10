@@ -58,13 +58,14 @@ def main() -> None:
     print(f"Ledger integration evidence: {evidence}", flush=True)
     with tempfile.TemporaryDirectory(prefix="aweb-ledger-proof.") as temporary:
         repo = Path(temporary)
-        for name in ("candidate-docker-gate.sh", "candidate-suite.sh", "candidate-cleanup.sh",
+        for name in ("candidate-docker-gate.sh", "candidate-suite.sh", "candidate-cleanup.sh", "gate_settings.py", "gate_budgets.py",
                      "candidate-host-pressure.py", "candidate-ports.py", "fetch_released_aw.py", "next_tag_version.py", "release_candidate.py", "release_versions.py"):
             destination = repo / "scripts" / name
             destination.parent.mkdir(exist_ok=True)
             shutil.copy2(ROOT / "scripts" / name, destination)
         (repo / "candidate-gate/bin").mkdir(parents=True)
         shutil.copy2(ROOT / "candidate-gate/bin/docker", repo / "candidate-gate/bin/docker")
+        shutil.copy2(ROOT / "candidate-gate/unit-settings.json", repo / "candidate-gate/unit-settings.json")
         (repo / "candidate-gate/Dockerfile").write_text(
             "FROM docker:27-cli\n"
             "RUN apk add --no-cache bash git make python3 postgresql-client redis "
@@ -115,7 +116,7 @@ candidate-gate:
         env = {key: value for key, value in os.environ.items()
                if key in {"AWEB_GATE_MIN_FREE_GB", "AWEB_GATE_RESERVE_GB"}
                or not key.startswith(("AWEB_CANDIDATE_", "AWEB_GATE_", "CANDIDATE_", "GATE_", "LIBRARY_E2E_"))}
-        env.update(AWEB_GATE_LEDGER=str(evidence / "ledger.tsv"),
+        env.update(AWEB_GATE_PROFILE="lane", AWEB_GATE_LEDGER=str(evidence / "ledger.tsv"),
                    AWEB_GATE_LOG_DIR=str(evidence / "logs"),
                    CLI_VERSION="1.2.3", A2A_GATEWAY_VERSION="1.2.3",
                    AWEB_CANDIDATE_RUNNER_MEMORY="1g", AWEB_CANDIDATE_BUILDER_MEMORY="1g")

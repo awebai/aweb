@@ -14,7 +14,7 @@ TEST_EGRESS_RUNNER ?= python3 $(abspath scripts/test-egress/native.py) --
 	sync-doc-copies sync-skill-copies list-awid-site-docs sync-awid-site-docs check-awid-site-docs verify-site deploy-site \
 	test-npm-exact-publish test-pypi-exact-publish test-oci-exact-publish \
 	cli-e2e _candidate-gate-docker-boundaries _candidate-channel-version _candidate-node-deps \
-	_candidate-unit-channel _candidate-unit-channel-core _candidate-unit-pi _candidate-oats _candidate-oats-proof-helpers \
+	_candidate-oats _candidate-oats-proof-helpers \
 	_candidate-artifact-server _candidate-artifact-awid-package _candidate-artifact-awid-image \
 	_candidate-artifact-naapp-package check-naapp-lib-package \
 	_candidate-artifact-channel _candidate-artifact-pi _candidate-artifact-skills _candidate-artifact-a2a-image
@@ -140,6 +140,8 @@ build: sync-doc-copies
 test: test-egress-controls check-aw-commit-repo-stamp check-cli-go-tidy test-identity-primitives test-python-locks test-sot-source-inventories test-vector-provenance test-federation-error-reference test-federation-authority-mutations test-federation-harness test-cli-reference test-mcp-tools-reference test-server test-awid test-cli test-channel test-channel-name-live-contract test-channel-core test-wake-channel-core-bundle test-pi-extension test-oats test-oats-proof-helpers test-tmux-guard test-release-cli-version test-npm-exact-publish test-pypi-exact-publish test-oci-exact-publish test-go-vulnerability-audit
 
 test-shipping:
+	python3 scripts/test_isolated_suites.py
+	python3 scripts/test_gate_budgets.py
 	python3 scripts/test_fixture_repo.py
 	python3 scripts/test_shipping.py
 	python3 scripts/test_aw_npm_publication.py
@@ -288,7 +290,7 @@ check-awid-site-docs: sync-awid-site-docs
 verify-site: check-awid-site-docs
 	cd awid/site && hugo --minify --cleanDestinationDir
 
-PYTEST_SERVER_ARGS ?= -n 4 --dist=loadgroup --durations=25
+PYTEST_SERVER_ARGS ?= -n $(shell python3 scripts/gate_settings.py server_workers) --dist=loadgroup --durations=25
 
 test-server:
 	cd server && UV_CACHE_DIR=/tmp/uv-cache uv sync --frozen
@@ -325,14 +327,10 @@ lint-naapp:
 		git diff --exit-code -- $$package/uv.lock; \
 	done
 
-test-naapp:
-	set -e; for package in $(NAAPP_PACKAGES); do \
-		echo "=== test $$package ==="; \
-		UV_CACHE_DIR=/tmp/uv-cache uv sync --frozen --project $$package; \
-		UV_CACHE_DIR=/tmp/uv-cache UV_FROZEN=1 UV_OFFLINE=1 PYTHONPYCACHEPREFIX=/tmp/pycache \
-			NAAPP_REQUIRE_TEST_DATABASE=1 LIBRARY_REQUIRE_TEST_DATABASE=1 $(TEST_EGRESS_RUNNER) $(MAKE) -C $$package test; \
-		git diff --exit-code -- $$package/uv.lock; \
-	done
+test-naapp: naapp-sync
+	UV_CACHE_DIR=/tmp/uv-cache UV_FROZEN=1 UV_OFFLINE=1 PYTHONPYCACHEPREFIX=/tmp/pycache \
+		NAAPP_REQUIRE_TEST_DATABASE=1 LIBRARY_REQUIRE_TEST_DATABASE=1 $(TEST_EGRESS_RUNNER) \
+		python3 scripts/test_naapp_suites.py $(NAAPP_PACKAGES)
 
 test-awid:
 	cd awid && UV_CACHE_DIR=/tmp/uv-cache uv sync --frozen
@@ -575,7 +573,7 @@ test-candidate-ledger:
 	python3 scripts/test_candidate_gate_ledger.py
 
 _candidate-unit-suites:
-	python3 scripts/test-egress/docker.py --evidence "$$CANDIDATE_LOG_DIR/test-egress" --command bash scripts/candidate-suite.sh --isolated-suites
+	python3 scripts/isolated_suites.py --evidence "$$CANDIDATE_LOG_DIR/test-egress"
 
 # The gate's own ledger test runs first, on the host, so a gate change that
 # breaks it stops every train and release candidate before any stage runs.
@@ -632,15 +630,6 @@ _candidate-node-deps:
 	cd channel-core && npm ci --no-audit --no-fund
 	cd channel && npm ci --no-audit --no-fund
 	cd pi-extension && npm ci --no-audit --no-fund
-
-_candidate-unit-channel:
-	cd channel && $(TEST_EGRESS_RUNNER) npm test
-
-_candidate-unit-channel-core:
-	cd channel-core && $(TEST_EGRESS_RUNNER) npm test
-
-_candidate-unit-pi:
-	cd pi-extension && $(TEST_EGRESS_RUNNER) npm test
 
 _candidate-oats: check-oats-launch-environment-contract check-oats-pi-launch-order
 	PATH="$(CURDIR)/cli/go:$(CURDIR)/pi-extension/node_modules/.bin:$$PATH" OATS_TEST_ROOT="$(OATS_TEST_ROOT)" node --test oats/test/*.test.mjs
@@ -733,7 +722,7 @@ clean:
 
 .PHONY: test-isolated
 test-isolated:
-	python3 scripts/test-egress/docker.py --evidence "$${TEST_EGRESS_EVIDENCE:-/tmp/aweb-test-egress-$$(date +%s)}"
+	python3 scripts/isolated_suites.py --evidence "$${TEST_EGRESS_EVIDENCE:-/tmp/aweb-test-egress-$$(date +%s)}"
 
 .PHONY: test-egress-controls
 test-egress-controls:
@@ -748,3 +737,23 @@ check-page-renderer-bundle:
 .PHONY: e2e-user-paths
 e2e-user-paths:
 	USER_PATHS_EVIDENCE="$${CANDIDATE_LOG_DIR:-/tmp/aweb-user-paths-evidence}/user-paths" bash scripts/e2e-user-paths.sh
+
+# These group entry points are identical in the CI matrix and candidate runner.
+# One Node group keeps its builds/readers serial inside its private filesystem.
+.PHONY: test-unit-awid test-unit-naapp test-unit-cli test-unit-channel-pi
+
+test-unit-server-%:
+	$(MAKE) test-server PYTEST_SERVER_SHARD=$*/$(shell python3 scripts/gate_settings.py server_shards)
+	cd server && $(TEST_EGRESS_RUNNER) uv run --offline --no-sync python ../scripts/test_server_workers.py
+
+test-unit-awid:
+	$(MAKE) test-awid
+
+test-unit-naapp:
+	$(MAKE) test-naapp
+
+test-unit-cli:
+	$(MAKE) test-cli test-cli-auth-v2
+
+test-unit-channel-pi:
+	$(MAKE) test-channel test-channel-name-live-contract test-channel-core test-pi-extension

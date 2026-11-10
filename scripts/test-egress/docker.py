@@ -7,6 +7,9 @@ Evidence survives cleanup. No host credentials or identity directories are mount
 import argparse
 import json
 import hashlib
+import math
+import os
+import sys
 from pathlib import Path
 import subprocess
 import shutil
@@ -15,18 +18,21 @@ import time
 import uuid
 
 ROOT = Path(__file__).resolve().parents[2]
+sys.path.insert(0, str(ROOT / "scripts"))
+from gate_settings import allocation, load_settings, resource_args
 
 
 def docker(*args):
     return subprocess.check_output(['docker', *args], text=True).strip()
 
 
-def postgres_args(runner):
+def postgres_args(runner, limits=None):
+    limits = limits or allocation(load_settings(), "lane", "server-1")["postgres"]
     # Disposable databases must not wait on the host disk's WAL fsync. Bound
     # both RAM and WAL growth, and prohibit swapping the tmpfs back to disk.
     return ['run', '-d', '--network', 'container:' + runner,
-            '--cpus', '1', '--memory', '2g', '--memory-swap', '2g', '--pids-limit', '512',
-            '--tmpfs', '/var/lib/postgresql/data:rw,noexec,nosuid,size=1g',
+            *resource_args(limits),
+            '--tmpfs', f'/var/lib/postgresql/data:rw,noexec,nosuid,size={limits["memory_mib"] * 3 // 4}m',
             '-e', 'PGDATA=/var/lib/postgresql/data/pgdata',
             '-e', 'POSTGRES_PASSWORD=postgres', 'postgres:17',
             '-c', 'max_wal_size=128MB', '-c', 'min_wal_size=32MB']
@@ -68,15 +74,23 @@ def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('--evidence', type=Path, required=True)
     parser.add_argument('--image', help='already prepared source/dependency image')
+    parser.add_argument('--build-image', help='prepare this image once and exit, retaining it')
+    parser.add_argument('--profile', choices=['release', 'lane'], default=os.environ.get('AWEB_GATE_PROFILE', 'lane'))
+    parser.add_argument('--group', help='shared make test-unit group')
     parser.add_argument('--command', nargs=argparse.REMAINDER, help='guard qualification command instead of make targets')
     parser.add_argument('targets', nargs='*', default=['test-server', 'test-awid', 'test-cli', 'test-channel', 'test-channel-name-live-contract', 'test-channel-core', 'test-pi-extension'])
     args = parser.parse_args()
+    if args.image and args.build_image:
+        parser.error('--image and --build-image are mutually exclusive')
+    settings = load_settings()
+    limits = allocation(settings, args.profile, args.group or 'server-1')
+    gomaxprocs = max(1, math.ceil(limits['runner']['cpus']))
     args.evidence.mkdir(parents=True, exist_ok=False)
     evidence = args.evidence.resolve()
     (evidence / 'source-sha').write_text(subprocess.check_output(['git', '-C', str(ROOT), 'rev-parse', 'HEAD'], text=True))
     (evidence / 'source-status').write_text(subprocess.check_output(['git', '-C', str(ROOT), 'status', '--short'], text=True))
     token = 'aw-egress-' + uuid.uuid4().hex[:12]
-    image = args.image or token
+    image = args.image or args.build_image or token
     containers = []
     network = None
     try:
@@ -109,25 +123,29 @@ def main():
         for service in ('postgres:17', 'redis:7'):
             subprocess.run(['docker', 'image', 'inspect', service], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, check=False)
             docker('pull', service)
+        if args.build_image:
+            return 0
         network = docker('network', 'create', '--internal', token)
         dns = docker('run', '-d', '--network', token, '--name', token + '-dns',
-                     '--cpus', '.5', '--memory', '128m', '--pids-limit', '128',
+                     *resource_args(limits['dns']),
                      '-v', f'{evidence}:/evidence', image, 'python3',
                      'scripts/test-egress/dns.py', '--log', '/evidence/dns-denied.log')
         containers.append(dns)
         info = json.loads(docker('inspect', dns))[0]
         dns_ip = info['NetworkSettings']['Networks'][token]['IPAddress']
+        runner_started = time.monotonic()
         runner = docker('run', '-d', '--init', '--user', '1000:1000', '--network', token, '--dns', dns_ip,
                         '--dns-search', '.',  # Do not expand reserved fixtures using the host's search suffix.
                         '--add-host', '127.0.0.1.nip.io:127.0.0.1',
-                        '--name', token + '-runner', '--cpus', '2', '--memory', '8g', '--pids-limit', '2048',
+                        '--name', token + '-runner', *resource_args(limits['runner']),
+                        '-e', f'GOMAXPROCS={gomaxprocs}',
                         '-e', 'PGHOST=127.0.0.1', '-e', 'PGUSER=postgres', '-e', 'PGPASSWORD=postgres',
                         '-e', 'REDIS_URL=redis://127.0.0.1:6379/0',
                         image, 'sleep', 'infinity')
         containers.append(runner)
-        containers.append(docker(*postgres_args(runner)))
+        containers.append(docker(*postgres_args(runner, limits['postgres'])))
         containers.append(docker('run', '-d', '--network', 'container:' + runner,
-                                 '--cpus', '1', '--memory', '1g', '--pids-limit', '512', 'redis:7'))
+                                 *resource_args(limits['redis']), 'redis:7'))
         wait_for_postgres(containers[-2])
         storage = require_memory_postgres(containers[-2])
         (evidence / 'postgres-storage.json').write_text(json.dumps(storage, indent=2) + '\n')
@@ -144,8 +162,20 @@ def main():
         # Retain inspect evidence proving that the runner has only the internal network.
         (evidence / 'network.json').write_text(docker('network', 'inspect', token))
         (evidence / 'runner.json').write_text(docker('inspect', runner))
+        with (evidence / 'resource-limits.tsv').open('w') as receipt:
+            for role, container in zip(('dns', 'runner', 'postgres', 'redis'), containers):
+                actual = json.loads(docker('inspect', container))[0]['HostConfig']
+                expected = limits[role]
+                if actual['NanoCpus'] != round(expected['cpus'] * 1e9) or actual['Memory'] != expected['memory_mib'] * 1024**2:
+                    raise RuntimeError(f'{role} effective allocation differs from settings')
+                receipt.write(f'{args.group or "focused"}/{role}\tcpus={actual["NanoCpus"]/1e9:g}\tmemory={actual["Memory"]}\tpids={actual["PidsLimit"]}\tGOMAXPROCS={gomaxprocs}\n')
+        command = args.command or ['make', 'TEST_EGRESS_RUNNER=', *([f'test-unit-{args.group}'] if args.group else args.targets)]
         with (evidence / 'suite.log').open('w') as log:
-            result = subprocess.run(['docker', 'exec', runner, *(args.command or ['make', 'TEST_EGRESS_RUNNER=', *args.targets])], stdout=log, stderr=subprocess.STDOUT)
+            result = subprocess.run(['docker', 'exec', runner, *command], stdout=log, stderr=subprocess.STDOUT)
+        duration = time.monotonic() - runner_started
+        # Keep child-created per-package logs before removing its filesystem.
+        if args.group == 'naapp':
+            subprocess.run(['docker', 'cp', runner + ':/tmp/naapp-unit-logs', str(evidence / 'packages')], check=True)
         print(f'Test child exit status: {result.returncode}; evidence: {evidence}', flush=True)
         if result.returncode:
             print('\n'.join((evidence / 'suite.log').read_text().splitlines()[-100:]), flush=True)
@@ -157,15 +187,19 @@ def main():
         denied = (evidence / 'dns-denied.log').read_text()
         if denied:
             print('TEST DNS EGRESS DENIED:\n' + denied)
-            return 1
-        return result.returncode
+        status = result.returncode or (1 if denied else 0)
+        (evidence / 'summary.tsv').write_text(f'{args.group or "focused"}\t{"FAILED" if status else "PASSED"}\tsuite.log\t{duration:.3f}s\t{settings["budgets"]["unit"]}s\n')
+        return status
     finally:
+        cleanup_failed = False
         for container in reversed(containers):
-            subprocess.run(['docker', 'rm', '-f', '-v', container], stdout=subprocess.DEVNULL, check=True)
+            cleanup_failed |= subprocess.run(['docker', 'rm', '-f', '-v', container], stdout=subprocess.DEVNULL).returncode != 0
         if network:
-            subprocess.run(['docker', 'network', 'rm', network], stdout=subprocess.DEVNULL, check=True)
-        if not args.image:
+            cleanup_failed |= subprocess.run(['docker', 'network', 'rm', network], stdout=subprocess.DEVNULL).returncode != 0
+        if not args.image and not args.build_image:
             subprocess.run(['docker', 'image', 'rm', image], stdout=subprocess.DEVNULL, check=False)
+        if cleanup_failed:
+            raise RuntimeError('isolated suite cleanup failed; all owned containers were attempted')
 
 
 if __name__ == '__main__':

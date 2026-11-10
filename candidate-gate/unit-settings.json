@@ -1,0 +1,89 @@
+{
+  "server_shards": 2,
+  "server_workers": 4,
+  "budgets": {"checks": 360, "unit": 900, "artifacts": 240, "integration": 900},
+  "profiles": {
+    "release": {
+      "cpus": 10, "memory_mib": 32768, "concurrency": 6,
+      "reserve": {
+        "outer": {"cpus": 0.25, "memory_mib": 2048, "pids": 2048},
+        "builder": {"cpus": 0.5, "memory_mib": 2048, "pids": 2048},
+        "postgres": {"cpus": 0.1, "memory_mib": 512, "pids": 512},
+        "redis": {"cpus": 0.1, "memory_mib": 128, "pids": 512}
+      },
+      "groups": {
+        "server": {
+          "runner": {"cpus": 2, "memory_mib": 4096, "pids": 2048},
+          "postgres": {"cpus": 0.35, "memory_mib": 1536, "pids": 512},
+          "redis": {"cpus": 0.025, "memory_mib": 128, "pids": 512},
+          "dns": {"cpus": 0.025, "memory_mib": 64, "pids": 128}
+        },
+        "awid": {
+          "runner": {"cpus": 0.5, "memory_mib": 1536, "pids": 2048},
+          "postgres": {"cpus": 0.15, "memory_mib": 1024, "pids": 512},
+          "redis": {"cpus": 0.025, "memory_mib": 128, "pids": 512},
+          "dns": {"cpus": 0.025, "memory_mib": 64, "pids": 128}
+        },
+        "naapp": {
+          "runner": {"cpus": 1.5, "memory_mib": 4096, "pids": 2048},
+          "postgres": {"cpus": 0.35, "memory_mib": 1536, "pids": 512},
+          "redis": {"cpus": 0.025, "memory_mib": 128, "pids": 512},
+          "dns": {"cpus": 0.025, "memory_mib": 64, "pids": 128}
+        },
+        "cli": {
+          "runner": {"cpus": 0.75, "memory_mib": 3072, "pids": 2048},
+          "postgres": {"cpus": 0.25, "memory_mib": 1024, "pids": 512},
+          "redis": {"cpus": 0.025, "memory_mib": 128, "pids": 512},
+          "dns": {"cpus": 0.025, "memory_mib": 64, "pids": 128}
+        },
+        "channel-pi": {
+          "runner": {"cpus": 0.5, "memory_mib": 2048, "pids": 2048},
+          "postgres": {"cpus": 0.05, "memory_mib": 512, "pids": 512},
+          "redis": {"cpus": 0.025, "memory_mib": 128, "pids": 512},
+          "dns": {"cpus": 0.025, "memory_mib": 64, "pids": 128}
+        }
+      }
+    },
+    "lane": {
+      "cpus": 2, "memory_mib": 8192, "concurrency": 1,
+      "reserve": {
+        "outer": {"cpus": 0.05, "memory_mib": 512, "pids": 2048},
+        "builder": {"cpus": 0.05, "memory_mib": 512, "pids": 2048},
+        "postgres": {"cpus": 0.05, "memory_mib": 512, "pids": 512},
+        "redis": {"cpus": 0.05, "memory_mib": 128, "pids": 512}
+      },
+      "groups": {
+        "server": {
+          "runner": {"cpus": 1.4, "memory_mib": 5120, "pids": 2048},
+          "postgres": {"cpus": 0.35, "memory_mib": 1024, "pids": 512},
+          "redis": {"cpus": 0.025, "memory_mib": 128, "pids": 512},
+          "dns": {"cpus": 0.025, "memory_mib": 64, "pids": 128}
+        },
+        "awid": {
+          "runner": {"cpus": 1.4, "memory_mib": 5120, "pids": 2048},
+          "postgres": {"cpus": 0.35, "memory_mib": 1024, "pids": 512},
+          "redis": {"cpus": 0.025, "memory_mib": 128, "pids": 512},
+          "dns": {"cpus": 0.025, "memory_mib": 64, "pids": 128}
+        },
+        "naapp": {
+          "runner": {"cpus": 1.4, "memory_mib": 5120, "pids": 2048},
+          "postgres": {"cpus": 0.35, "memory_mib": 1024, "pids": 512},
+          "redis": {"cpus": 0.025, "memory_mib": 128, "pids": 512},
+          "dns": {"cpus": 0.025, "memory_mib": 64, "pids": 128}
+        },
+        "cli": {
+          "runner": {"cpus": 1.4, "memory_mib": 5120, "pids": 2048},
+          "postgres": {"cpus": 0.35, "memory_mib": 1024, "pids": 512},
+          "redis": {"cpus": 0.025, "memory_mib": 128, "pids": 512},
+          "dns": {"cpus": 0.025, "memory_mib": 64, "pids": 128}
+        },
+        "channel-pi": {
+          "runner": {"cpus": 1.4, "memory_mib": 5120, "pids": 2048},
+          "postgres": {"cpus": 0.35, "memory_mib": 1024, "pids": 512},
+          "redis": {"cpus": 0.025, "memory_mib": 128, "pids": 512},
+          "dns": {"cpus": 0.025, "memory_mib": 64, "pids": 128}
+        }
+      }
+    }
+  }
+}

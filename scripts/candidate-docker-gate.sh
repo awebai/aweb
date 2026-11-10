@@ -131,8 +131,15 @@ gate_setting() {
   printf -v "$name" '%s' "$value"
   [[ "$value" == "$default" ]] || external_inputs+="$name=$value"$'\n'
 }
-gate_setting AWEB_CANDIDATE_RUNNER_CPUS 2
-gate_setting AWEB_CANDIDATE_RUNNER_MEMORY 8g
+# Full release qualification uses the release profile; focused lanes stay small.
+profile_default=lane
+[[ -n "$STAGES" ]] || profile_default=release
+AWEB_GATE_PROFILE="${AWEB_GATE_PROFILE:-$profile_default}"
+external_inputs+="AWEB_GATE_PROFILE=$AWEB_GATE_PROFILE"$'\n'
+read -r profile_cpus profile_memory < <(python3 "$ROOT/scripts/gate_settings.py" profile "$AWEB_GATE_PROFILE")
+[[ -n "${profile_cpus:-}" && -n "${profile_memory:-}" ]] || refuse "invalid gate profile"
+gate_setting AWEB_CANDIDATE_RUNNER_CPUS "$profile_cpus"
+gate_setting AWEB_CANDIDATE_RUNNER_MEMORY "$profile_memory"
 gate_setting AWEB_CANDIDATE_RUNNER_PIDS 2048
 gate_setting AWEB_CANDIDATE_BUILDER_CPUS 2
 gate_setting AWEB_CANDIDATE_BUILDER_MEMORY 6g
@@ -419,6 +426,10 @@ docker run --rm --init \
   -e COMPOSE_BAKE=true \
   -e CANDIDATE_SOURCE_SHA="$SOURCE_SHA" \
   -e CANDIDATE_RUNNER_NAME="$runner_name" \
+  -e AWEB_GATE_PROFILE="$AWEB_GATE_PROFILE" \
+  -e CANDIDATE_BUILDER_NAME="$builder_container" \
+  -e CANDIDATE_POSTGRES_NAME="$pg_name" \
+  -e CANDIDATE_REDIS_NAME="$redis_name" \
   -e CANDIDATE_CHECKOUT_ROOT="$checkout" \
   -e GIT_CONFIG_COUNT=1 \
   -e GIT_CONFIG_KEY_0=safe.directory \
