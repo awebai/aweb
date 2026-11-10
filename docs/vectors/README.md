@@ -788,6 +788,17 @@ the Python owner-act verifier. No implementation consumes the manifest,
 prepare and client families until the version 3 interpreters and the generic
 routes exist.
 
+### `human-role-holding-v1.json`
+
+The public identity a console session binds a human-role holding to,
+`aweb.human-role-holding/1` (aweb-acwd.4.10; contract in
+[`human-role-holders.md`](../design/human-role-holders.md#reading-a-holding)).
+Specified, not shipped. Each case gives the nine fields, their strict
+canonical JSON and the identity; the refused cases have no identity. The
+`b3_scope` of every case is the one derived from its installation, team, role
+and principal. No implementation consumes it until the shared
+`HumanRoleHandoffAuthority` exists.
+
 ## Experimental and compatibility A2A fixtures
 
 A2A is shipped but experimental and optional. These fixtures are release gates
