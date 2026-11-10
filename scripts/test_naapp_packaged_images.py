@@ -7,11 +7,16 @@ No Docker operation runs during ordinary test discovery.
 """
 
 import argparse
+import ast
 import json
 import os
 import re
+import shutil
+import signal
 import subprocess
 import sys
+import tempfile
+import time
 import unittest
 import uuid
 from pathlib import Path
@@ -21,19 +26,58 @@ CONFIG = None
 
 
 def docker(*args, input=None):
-    return subprocess.check_output(["docker", *args], input=input, text=True).strip()
+    return subprocess.check_output(
+        ["docker", *args],
+        input=input,
+        text=True,
+        timeout=600 if args[0] == "build" else 30,
+    ).strip()
 
 
-def lab_resources():
-    result = set()
-    for kind, args in (
-        ("container", ["ps", "-a", "--format", "{{.ID}} {{.Names}}"]),
-        ("network", ["network", "ls", "--format", "{{.ID}} {{.Name}}"]),
-    ):
-        for row in docker(*args).splitlines():
-            if re.search(r" (secrets|logs)-package-", row):
-                result.add((kind, row))
-    return result
+def owned_resources(label):
+    return {
+        "containers": docker("ps", "-aq", "--filter", "label=" + label).split(),
+        "networks": docker("network", "ls", "-q", "--filter", "label=" + label).split(),
+    }
+
+
+def clean_owned(label):
+    """Creation-time labels bind ownership even if the creator dies mid-call."""
+    errors = []
+    owned = owned_resources(label)
+    for kind, identifiers in owned.items():  # containers before networks
+        for identifier in identifiers:
+            try:
+                if kind == "containers":
+                    docker("rm", "-f", "-v", identifier)
+                else:
+                    docker("network", "rm", identifier)
+            except (subprocess.SubprocessError, OSError):
+                errors.append((kind, identifier))
+    remaining = owned_resources(label)
+    if errors or any(remaining.values()):
+        raise AssertionError(f"owned cleanup failed: {errors}; remaining={remaining}")
+
+
+def docker_shim(real, label):
+    # Only this run's private lab sees the shim. The actual Docker CLI handles
+    # every operation; creation labels also cover the old unlabelled lab.
+    # Its own container removals include anonymous PG volumes, too.
+    return (
+        "#!/usr/bin/env python3\nimport os,sys\na=sys.argv[1:]\n"
+        + f"label={label!r}\nreal={real!r}\n"
+        + "if a[:1]==['run']: a[1:1]=['--label',label]\n"
+        + "elif a[:2]==['network','create']: a[2:2]=['--label',label]\n"
+        + "elif a[:1]==['rm'] and '-v' not in a: a[1:1]=['-v']\n"
+        + "os.execv(real,[real,*a])\n"
+    )
+
+
+class WrapperSource(unittest.TestCase):
+    def test_private_wrapper_quotes_paths_without_a_shell(self):
+        ast.parse(
+            docker_shim("/path with spaces/real-docker", "aweb.package-proof=abc")
+        )
 
 
 class PackagedImageControls(unittest.TestCase):
@@ -51,15 +95,25 @@ class PackagedImageControls(unittest.TestCase):
 
     def setUp(self):
         self.created_images = []
-        self.before = lab_resources()
+        self.runs = []
 
     def tearDown(self):
-        remaining = lab_resources() - self.before
+        errors = []
+        for record in self.runs:
+            try:
+                clean_owned(record["label"])
+            except (AssertionError, subprocess.SubprocessError, OSError) as exc:
+                errors.append(str(exc))
+            if record["directory"].exists():
+                errors.append("private run directory remains")
         for image in reversed(self.created_images):
-            docker("image", "rm", image)
-        self.assertFalse(remaining, "packaged lab leaked its containers or network")
+            try:
+                docker("image", "rm", image)
+            except (subprocess.SubprocessError, OSError):
+                errors.append("mutant image removal failed: " + image)
+        self.assertFalse(errors, errors)
 
-    def run_lab(self, name, image):
+    def run_lab(self, name, image, *, force_timeout=False):
         script = self.lab_source / "naapp" / name / "e2e/package_lab.py"
         command = [sys.executable, str(script), "--image", image]
         environment = dict(os.environ)
@@ -83,14 +137,75 @@ class PackagedImageControls(unittest.TestCase):
         )
         if "--source-commit" in help_result.stdout:
             command += ["--source-commit", self.commit]
-        return subprocess.run(
-            command,
-            capture_output=True,
-            text=True,
-            timeout=240,
-            check=False,
-            env=environment,
-        )
+        label = "aweb.package-proof=" + uuid.uuid4().hex
+        real_docker = shutil.which("docker")
+        self.assertIsNotNone(real_docker)
+        with tempfile.TemporaryDirectory(prefix="naapp-proof-") as directory:
+            root = Path(directory)
+            record = {"label": label, "directory": root}
+            self.runs.append(record)
+            (root / "tmp").mkdir(mode=0o700)
+            (root / "bin").mkdir(mode=0o700)
+            shim = root / "bin/docker"
+            # This executes the real Docker CLI. It only adds the ownership
+            # label at CREATE, including for the frozen, previously-unlabelled lab.
+            shim.write_text(docker_shim(real_docker, label))
+            shim.chmod(0o700)
+            environment["PATH"] = str(root / "bin") + os.pathsep + environment["PATH"]
+            environment["TMPDIR"] = str(root / "tmp")
+            process = subprocess.Popen(
+                command,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
+                text=True,
+                env=environment,
+                start_new_session=True,
+            )
+            try:
+                if force_timeout:
+                    # A short timeout before creation would be a vacuous control.
+                    # Require real containers, a network and private fixture inputs first.
+                    deadline = time.monotonic() + 60
+                    while True:
+                        observed = owned_resources(label)
+                        if (
+                            len(observed["containers"]) >= 2
+                            and observed["networks"]
+                            and any((root / "tmp").rglob("service.env"))
+                        ):
+                            record["before_timeout"] = observed
+                            break
+                        if process.poll() is not None or time.monotonic() >= deadline:
+                            raise AssertionError(
+                                "timeout control never created its real fixture"
+                            )
+                        time.sleep(0.2)
+                stdout, stderr = process.communicate(
+                    timeout=0.001 if force_timeout else 240
+                )
+                return subprocess.CompletedProcess(
+                    command, process.returncode, stdout, stderr
+                )
+            finally:
+                try:
+                    if process.poll() is None:
+                        # Kill the exact session we created, including pending CLI
+                        # children, before querying/removing daemon-side resources.
+                        os.killpg(process.pid, signal.SIGKILL)
+                        process.communicate(timeout=10)
+                finally:
+                    clean_owned(label)
+
+    def test_00_forced_timeouts_remove_owned_resources_and_private_files(self):
+        for name in ("secrets", "logs"):
+            with self.subTest(service=name):
+                with self.assertRaises(subprocess.TimeoutExpired):
+                    self.run_lab(name, self.base_ids[name], force_timeout=True)
+                record = self.runs[-1]
+                self.assertGreaterEqual(len(record["before_timeout"]["containers"]), 2)
+                self.assertTrue(record["before_timeout"]["networks"])
+                self.assertFalse(any(owned_resources(record["label"]).values()))
+                self.assertFalse(record["directory"].exists())
 
     def mutant(self, name, instruction):
         source = self.images[name]

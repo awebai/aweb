@@ -74,7 +74,7 @@ def wait_until(check, seconds=90):
 
 def remove_container(name: str) -> None:
     if docker("ps", "-aq", "--filter", f"name=^/{name}$"):
-        docker("rm", "-f", name)
+        docker("rm", "-f", "-v", name)
 
 
 def run_package_lab(image: str, service: PackagedService, *, expected_commit: str) -> None:
