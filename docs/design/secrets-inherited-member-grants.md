@@ -152,44 +152,46 @@ or read by another worker. So the admission transaction samples the database's
 `clock_timestamp()` first, adds the smallest remaining original budget,
 rounded down, and persists that absolute deadline; a non-positive budget
 refuses. It is never rebased after a wait; adding an earlier budget to a later timestamp would extend authority.
-The final fence transaction compares it with the same database clock, read
-after its last effect-lock wait. That transaction covers approval consumption, credential
-opening and release, and the dispatch or assignment commit. The rule applies to
-direct and inherited members alike and makes no network call, so §11.3 gains
-"membership evidence deadline" in its list of re-checks. An expired deadline
-refuses with the shared `503 current_membership_unavailable`, a fixed
-unavailable refusal and not a claim that membership was withdrawn. The refusal
-happens inside the transaction, which rolls back: no approval is consumed, no
-credential is released, no assignment is persisted and no bytes are sent. The
-requester recovers by a fresh authenticated re-submission, through the normal
-grant, approval and idempotency checks. Dequeueing, cache hits, retries and
+The deadline is compared with the same database clock at two checkpoints,
+each after its own last effect-lock wait. The rule applies to direct and
+inherited members alike and makes no network call, so §11.3 gains "membership
+evidence deadline" in its list of re-checks. An expired deadline refuses with
+the shared `503 current_membership_unavailable`, a fixed unavailable refusal
+and not a claim that membership was withdrawn. What the refusal leaves behind
+depends on the checkpoint, not on the kind of request:
+
+1. **In the admission transaction**: the B2 compare-and-set, intent row and
+   outbox, where any approval is consumed ([§10.5](secrets.md#105-single-use-admission),
+   [§11.1](secrets.md#111-states)). The transaction rolls back: no approval
+   is consumed and no intent is committed. Exact re-submission (the same
+   `request_id` and request bytes) recovers, as for `capacity_unavailable`
+   ([§7.3](secrets.md#73-network-boundary-egress-guard)). The refusal is not
+   the request's final receipt.
+2. **At the dispatch fence or the runner's claim fence**, for brokered requests
+   and runner jobs alike. That transaction rolls back, and the intent then
+   closes `refused`, the existing `admitted` to `refused` transition, in its
+   own transaction, so it cannot be claimed again with the old deadline. The
+   approval consumed at admission stays consumed. No assignment row exists,
+   no credential is released and nothing is sent. A fresh request recovers,
+   with a fresh approval where the policy needs one.
+
+Re-admission always takes fresh membership evidence, with the grant, approval
+expiry and idempotency checks as normal. Dequeueing, cache hits, retries and
 lock acquisition never restart the old window. Grant revocation remains an
 independent stop.
 
 The consequences:
 
-- **Refused before admission commits.** A brokered request is admitted and
-  dispatched in one flow, and an approval is consumed only when admission
-  commits ([§11.1](secrets.md#111-states)). A refusal there leaves the
-  request and any unconsumed approval available for exact re-submission (the
-  same `request_id` and request bytes), as `capacity_unavailable` does
-  ([§7.3](secrets.md#73-network-boundary-egress-guard)). The refusal is not
-  the request's final receipt. Re-admission takes fresh membership evidence,
-  with the grant, approval expiry and idempotency checks as normal. In
-  practice brokered requests are unaffected.
-- **Runner jobs refused at the claim fence.** A job admitted while no runner is
-  connected, and claimed after its deadline, refuses at the claim fence
-  ([§9.3](secrets.md#93-transport)) with `current_membership_unavailable`.
-  Admission has already committed, so any approval was consumed then, and
-  the claim's rollback does not restore it. The intent closes as `refused`, the
-  existing `admitted` to `refused` transition, in its own transaction after
-  the rollback, so it cannot be claimed again with the old deadline. No
-  assignment row exists and no credential is released. Recovery is a fresh
-  request; where the policy needs approval, that means a fresh approval.
-  Because a cache hit keeps the original expiry, the deadline can fall under
-  60 seconds after admission. That is the availability cost: a queued job
-  needs a connected runner. Without one, every queued job that needs
-  approval needs a second human approval.
+- **Brokered requests** are admitted and dispatched in one flow, milliseconds
+  apart, so a refusal at the dispatch fence (checkpoint 2) is rare for them,
+  though possible. In practice they are unaffected.
+- **Runner jobs.** A job admitted while no runner is connected, and claimed
+  after its deadline, refuses at the claim fence
+  ([§9.3](secrets.md#93-transport)) under checkpoint 2. Because a cache hit
+  keeps the original expiry, the deadline can fall under 60 seconds after
+  admission. That is the availability cost: a queued job needs a connected
+  runner. Without one, every queued job that needs approval needs a second
+  human approval.
 - **Exposure to a withdrawn path** is the verifier's observation window, with
   no added queue delay.
 
@@ -313,8 +315,8 @@ Then, for each worker, with no human act:
 | Owner revokes the grant | `grant_missing` at admission; `grant_revoked` at the fence for admitted intents. |
 | Approver linked to A_H, `distinct_approver: required`, B_H requests | A_H's approver is excluded. |
 | Ten workers of A_H's line request S together | They share one `principal_secret` bucket; spawning more does not raise it. |
-| A brokered request's membership deadline passes during a proven final-fence lock wait | `503 current_membership_unavailable` in that transaction: no approval consumed, no credential released, nothing sent; exact re-submission recovers. |
-| The deadline passes while the admission transaction persists it | Refused: no approval consumed, no credential released, nothing sent; exact re-submission recovers. |
+| The deadline passes during the admission transaction's lock wait, or while it persists the deadline | `503 current_membership_unavailable`, rolled back: no approval consumed, no intent committed; exact re-submission recovers. |
+| The deadline passes during a proven dispatch-fence lock wait | `current_membership_unavailable`: the intent closes `refused`, the approval consumed at admission stays consumed, no credential released, nothing sent; a fresh request recovers. |
 | Another worker claims a queued job after the requester's deadline | `current_membership_unavailable`: the intent closes `refused`, no assignment row, no credential released, nothing sent; the approval consumed at admission stays consumed, and a fresh request recovers. |
 | Membership evidence unavailable | The verifier's 503; no grant is read and no fallback applies. |
 
@@ -332,10 +334,13 @@ Then, for each worker, with no human act:
   [§12](secrets.md#12-containment-from-day-one) and
   [§16](secrets.md#16-tests) change with it.
 - **Vectors**: the grant subject encoding, and the refusals above for both
-  local and global roots. That includes expiry during a proven effect-lock
-  wait, expiry while the deadline is persisted, and a queued job claimed by
-  another worker after the deadline. Each asserts that no approval was
-  consumed, no credential was released and nothing was sent.
+  local and global roots. That includes expiry during the admission
+  transaction's lock wait, expiry while the deadline is persisted, expiry
+  during a dispatch-fence lock wait, and a queued job claimed by another
+  worker after the deadline. Each asserts its checkpoint's outcome: at
+  admission no approval consumed and no intent; at a fence the intent closed
+  `refused` with the approval consumed; and in every case no credential
+  released and nothing sent.
 
 The hook catalog's `post-secret-use-hook` refusal codes gain
 `current_membership_unavailable`, through a reviewed catalog revision. No payload field changes:
