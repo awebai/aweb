@@ -13,6 +13,8 @@ import (
 	"time"
 
 	awid "github.com/awebai/aw/awid"
+	"github.com/awebai/aw/internal/manualclock"
+	"github.com/awebai/aw/internal/streamtest"
 	"github.com/awebai/aw/run"
 	"github.com/awebai/aw/wake/session"
 )
@@ -146,6 +148,18 @@ func liveBroker(t *testing.T, cfg Config) (*Broker, context.CancelFunc) {
 		}
 	})
 	return broker, cancel
+}
+
+// sleepCtx sleeps for d and reports false if ctx ended first.
+func sleepCtx(ctx context.Context, d time.Duration) bool {
+	timer := time.NewTimer(d)
+	defer timer.Stop()
+	select {
+	case <-ctx.Done():
+		return false
+	case <-timer.C:
+		return true
+	}
 }
 
 func waitFor(t *testing.T, what string, cond func() bool) {
@@ -298,39 +312,81 @@ func TestBrokerNeverFetchesOrAcknowledgesAnything(t *testing.T) {
 	}
 }
 
-// TestPlannedCloseIsNotReportedAsAnOutage: the broker closes at its own TTL
-// inside the server's cap, so the close is never a server EOF it has to
-// classify, and the reopen must not look like a recovery.
+// TestPlannedCloseIsNotReportedAsAnOutage: the broker closes each connection
+// at its planned close, drawn between 3 min 30 s and 4 min inside the
+// server's cap, and the reopen must not look like a recovery
+// (docs/event-stream-client-policy.md §2).
 func TestPlannedCloseIsNotReportedAsAnOutage(t *testing.T) {
-	server := newRecordingServer(t, sseEvent("work_available", `{"task_id":"t1","title":"x"}`))
 	store := tempStore(t)
 	home := tempHome(t, "instance")
 	logs := &logCapture{}
+	clock := manualclock.New(time.Date(2026, 3, 1, 12, 0, 0, 0, time.UTC))
+	sources := []*streamtest.Source{streamtest.NewSource(), streamtest.NewSource(), streamtest.NewSource()}
+	opener := streamtest.NewOpener(clock.Now, streamtest.Opens(sources[0]), streamtest.Opens(sources[1]), streamtest.Opens(sources[2]))
 
 	broker, _ := liveBroker(t, Config{
-		Store:     store,
-		Session:   session.NewFake(session.Inspection{Home: home, Present: true, State: session.StateBusy, RawState: "working"}),
-		Log:       logs.log,
-		StreamTTL: 80 * time.Millisecond,
+		Store:        store,
+		Session:      session.NewFake(session.Inspection{Home: home, Present: true, State: session.StateBusy, RawState: "working"}),
+		Log:          logs.log,
+		StreamPolicy: run.StreamPolicyConfig{Now: clock.Now, Timer: clock.Timer, Rand: clock.Random},
 		OpenStream: func(string, string) (run.EventStreamOpener, error) {
-			return openerFor(t, server.URL), nil
+			return opener.Open, nil
 		},
 	})
 	if err := broker.Register(Registration{Home: home, IdentityHome: home + "/.aw", Delivery: DeliverySession}); err != nil {
 		t.Fatal(err)
 	}
 
-	waitFor(t, "the stream to be reopened after its planned close", func() bool { return server.openCount() >= 3 })
+	// The lowest draw for the first connection, the middle one for the second.
+	wantPlanned := []time.Duration{3*time.Minute + 30*time.Second, 3*time.Minute + 45*time.Second}
+	opened := time.Duration(0)
+	for connection, want := range wantPlanned {
+		waitFor(t, "the stream to open", func() bool { return opener.Opens() == connection+1 })
+		planned := opener.LastDeadline().Sub(clock.Now())
+		if planned != want {
+			t.Fatalf("connection %d planned its close after %s, want %s", connection, planned, want)
+		}
+		source := sources[connection]
+		source.FeedEvent(awid.AgentEvent{Type: awid.AgentEventWorkAvailable, TaskID: "t1", Title: "x"})
+		// Heartbeats keep the stream from being silent up to its close.
+		elapsed := time.Duration(0)
+		for planned-elapsed > 30*time.Second {
+			if !clock.AwaitTimers(2) {
+				t.Fatalf("timers waiting=%d, want the planned close and the silence watch", clock.Timers())
+			}
+			clock.Advance(30 * time.Second)
+			elapsed += 30 * time.Second
+			source.Feed(streamtest.Item{Comment: true})
+		}
+		if !clock.AwaitTimers(2) {
+			t.Fatalf("timers waiting=%d, want the planned close and the silence watch", clock.Timers())
+		}
+		// The next connection draws its planned close when it connects.
+		clock.SetRandom(0.5)
+		clock.Advance(planned - elapsed)
+		opened += planned
+	}
+	waitFor(t, "the stream to be reopened after its planned close", func() bool { return opener.Opens() >= 3 })
+	if times := opener.OpenTimes(); times[2].Sub(times[0]) != opened {
+		t.Fatalf("reopened %s after the first open, want at the planned closes, %s", times[2].Sub(times[0]), opened)
+	}
 	captured := logs.all()
 	if strings.Contains(captured, "stream outage") || strings.Contains(captured, "stream reconnected") {
 		t.Fatalf("a planned close was reported as an outage:\n%s", captured)
 	}
-	if DefaultStreamTTL != 4*time.Minute {
-		t.Fatalf("DefaultStreamTTL=%s; the note fixes four minutes inside the server's five-minute cap", DefaultStreamTTL)
+	for _, stream := range broker.Status().Streams {
+		if stream.Phase != string(StreamLive) {
+			t.Fatalf("phase=%s across a planned close; a planned close does not leave streaming", stream.Phase)
+		}
+	}
+	if run.StreamPlannedCloseMin != 3*time.Minute+30*time.Second || run.StreamPlannedCloseMax != 4*time.Minute {
+		t.Fatalf("planned close between %s and %s; the policy fixes 3 min 30 s to 4 min inside the server's five-minute cap", run.StreamPlannedCloseMin, run.StreamPlannedCloseMax)
 	}
 }
 
-// TestFourXXQuarantinesOneIdentityAndLeavesOthersStreaming (§4).
+// TestFourXXQuarantinesOneIdentityAndLeavesOthersStreaming (§4): the refused
+// identity is reported as refused with its cause and next attempt, and never
+// as admitted (docs/event-stream-client-policy.md §4, §8).
 func TestFourXXQuarantinesOneIdentityAndLeavesOthersStreaming(t *testing.T) {
 	good := newRecordingServer(t, sseEvent("actionable_mail", `{"message_id":"m1","from_alias":"alice"}`))
 	bad := newRecordingServer(t)
@@ -364,7 +420,7 @@ func TestFourXXQuarantinesOneIdentityAndLeavesOthersStreaming(t *testing.T) {
 	waitFor(t, "one identity to be quarantined and the other to stream", func() bool {
 		quarantined, streaming := false, false
 		for _, stream := range broker.Status().Streams {
-			if strings.HasPrefix(stream.IdentityHome, badHome) && stream.Phase == string(StreamQuarantined) {
+			if strings.HasPrefix(stream.IdentityHome, badHome) && stream.Phase == string(StreamRefused) {
 				quarantined = true
 			}
 			if strings.HasPrefix(stream.IdentityHome, goodHome) && stream.Phase == string(StreamLive) {
@@ -387,6 +443,9 @@ func TestFourXXQuarantinesOneIdentityAndLeavesOthersStreaming(t *testing.T) {
 		if stream.LastErrorDetail == nil || stream.LastErrorDetail.Code != "http_error" || stream.LastErrorDetail.HTTPStatus != http.StatusUnauthorized || stream.LastError == "" {
 			t.Fatalf("quarantined stream error %q detail %+v", stream.LastError, stream.LastErrorDetail)
 		}
+		if stream.Admitted || stream.Cause != "401" || !stream.NextAttemptAt.After(time.Now()) {
+			t.Fatalf("quarantined stream admitted=%t cause=%q next_attempt=%s; want refused by 401 with a later attempt", stream.Admitted, stream.Cause, stream.NextAttemptAt)
+		}
 	}
 }
 
@@ -396,7 +455,7 @@ func TestReceiveIdentityCarriesItsStreamErrorDetail(t *testing.T) {
 	home := tempHome(t, "receiver")
 	detail := &awid.ErrorDetail{Code: "http_error", HTTPStatus: 403, Detail: "grant revoked"}
 	instances := []InstanceStatus{{ReceiveIdentities: []ReceiveIdentityStatus{{IdentityHome: home + "/.aw"}}}}
-	enrichInstancesWithStreamStatus(instances, []StreamStatus{{IdentityHome: home + "/.aw", Phase: string(StreamQuarantined), LastError: "aweb: http 403", LastErrorDetail: detail}})
+	enrichInstancesWithStreamStatus(instances, []StreamStatus{{IdentityHome: home + "/.aw", Phase: string(StreamRefused), LastError: "aweb: http 403", LastErrorDetail: detail}})
 	got := instances[0].ReceiveIdentities[0]
 	if got.StreamError != "aweb: http 403" || got.StreamErrorDetail != detail {
 		t.Fatalf("receive binding %+v", got)
@@ -445,12 +504,11 @@ func TestReconnectAfterAnOutageDeliversOnlySnapshotItems(t *testing.T) {
 	logs := &logCapture{}
 
 	broker, _ := liveBroker(t, Config{
-		Store:      store,
-		Session:    oats,
-		Log:        logs.log,
-		BackoffMin: 10 * time.Millisecond,
-		BackoffMax: 20 * time.Millisecond,
-		OpenStream: func(string, string) (run.EventStreamOpener, error) { return openerFor(t, server.URL), nil },
+		Store:        store,
+		Session:      oats,
+		Log:          logs.log,
+		StreamPolicy: run.StreamPolicyConfig{Timer: streamtest.ScaledTimer(100)},
+		OpenStream:   func(string, string) (run.EventStreamOpener, error) { return openerFor(t, server.URL), nil },
 	})
 	if err := broker.Register(Registration{Home: home, IdentityHome: home + "/.aw", Delivery: DeliverySession}); err != nil {
 		t.Fatal(err)
@@ -470,7 +528,7 @@ func TestReconnectAfterAnOutageDeliversOnlySnapshotItems(t *testing.T) {
 
 func TestSnapshotRequestsCoalesceAndStopWithStream(t *testing.T) {
 	server := newRecordingServer(t, sseEvent("connected", `{"agent_id":"self"}`))
-	stream := newStreamRunner("test", "/identity", "team", openerFor(t, server.URL), func(awid.AgentEvent) {}, func(string, ...any) {}, time.Now, time.Minute, time.Millisecond, time.Second)
+	stream := newStreamRunner("test", "/identity", "team", openerFor(t, server.URL), nil, func(awid.AgentEvent) {}, func(string, ...any) {}, time.Now, run.StreamPolicyConfig{})
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 	stream.start(ctx)

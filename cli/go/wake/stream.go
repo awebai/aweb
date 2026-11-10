@@ -2,7 +2,6 @@ package wake
 
 import (
 	"context"
-	"math/rand"
 	"strings"
 	"sync"
 	"time"
@@ -11,62 +10,57 @@ import (
 	"github.com/awebai/aw/run"
 )
 
-// Reconnect bounds from docs/terminal-wake-broker.md §4.
+// The broker's streams follow docs/event-stream-client-policy.md: when a
+// connection closes, what its end means and how long to wait are decided by
+// run.StreamPolicy, the implementation `aw run` uses too. This file keeps
+// what is the broker's own: one runner per identity, the phase it reports in
+// status, and the snapshot requests that reopen a live stream.
 //
-// The broker closes at four minutes — channel-core's planned-close margin
-// inside the server's five-minute cap — so the close is always the broker's,
-// never a server EOF it has to classify. Backoff is 1 s doubling to 15 s with
-// jitter, per identity: jitter is required at a hundred connections and
-// neither cli/go/run/eventbus.go nor channel-core has it, and a ceiling above
-// 15 s would spend a visible fraction of every five-minute cycle deaf.
-//
-// This is the part of eventbus.go the broker could not use as is (§7): its TTL
-// is a 10-minute local deadline and its 250 ms→2 s backoff has no jitter. The
-// stream *source* is reused unchanged through run.EventStreamOpener, and
-// `aw run` is not touched.
+// The policy's bounds in short, for a hundred streams on one host: a planned
+// close drawn between 3 min 30 s and 4 min, inside the server's five-minute
+// cap, so streams that connected together drift apart; 1 s doubling to 15 s
+// with jitter after a transient failure; 1 min doubling to 15 min after a
+// refusal, with the identity read again before each attempt; and a connection
+// closed after 75 s without a byte.
 const (
-	DefaultStreamTTL   = 4 * time.Minute
-	DefaultBackoffMin  = 1 * time.Second
-	DefaultBackoffMax  = 15 * time.Second
 	snapshotBackoffMin = 5 * time.Second
 	snapshotBackoffMax = 5 * time.Minute
 )
 
-// StreamPhase is a stream's reported condition.
+// StreamPhase is a stream's reported condition. A running stream is in one of
+// the policy's three states (§8): streaming, retrying or refused. Starting is
+// a stream that has not finished its first attempt; stopped is one its owner
+// stopped.
 type StreamPhase string
 
 const (
-	StreamStarting    StreamPhase = "starting"
-	StreamLive        StreamPhase = "streaming"
-	StreamRetrying    StreamPhase = "retrying"
-	StreamQuarantined StreamPhase = "quarantined"
-	StreamStopped     StreamPhase = "stopped"
+	StreamStarting StreamPhase = "starting"
+	StreamLive     StreamPhase = "streaming"
+	StreamRetrying StreamPhase = "retrying"
+	StreamRefused  StreamPhase = "refused"
+	StreamStopped  StreamPhase = "stopped"
 )
 
 type streamRunner struct {
 	key          string
 	identityHome string
 	teamID       string
-	open         run.EventStreamOpener
+	policy       *run.StreamPolicy
 	onEvent      func(awid.AgentEvent)
 	log          func(string, ...any)
 	now          func() time.Time
-	ttl          time.Duration
-	backoffMin   time.Duration
-	backoffMax   time.Duration
 
 	mu              sync.Mutex
 	phase           StreamPhase
+	cause           string
+	nextAttempt     time.Time
 	lastError       string
 	lastErrorDetail *awid.ErrorDetail
 	unread          int
 	connectedAt     time.Time
-	streamCancel    context.CancelFunc
+	streamCancel    func()
 	snapshotTimer   *time.Timer
 	snapshotBackoff time.Duration
-
-	randMu sync.Mutex
-	rng    *rand.Rand
 
 	cancel    context.CancelFunc
 	done      chan struct{}
@@ -74,29 +68,22 @@ type streamRunner struct {
 	stopOnce  sync.Once
 }
 
-func newStreamRunner(key, identityHome, teamID string, open run.EventStreamOpener, onEvent func(awid.AgentEvent), log func(string, ...any), now func() time.Time, ttl, backoffMin, backoffMax time.Duration) *streamRunner {
-	if ttl <= 0 {
-		ttl = DefaultStreamTTL
-	}
-	if backoffMin <= 0 {
-		backoffMin = DefaultBackoffMin
-	}
-	if backoffMax < backoffMin {
-		backoffMax = DefaultBackoffMax
+// newStreamRunner builds one identity's stream. reload reads the identity's
+// credentials again from its home; the policy calls it before each retry of a
+// refused stream.
+func newStreamRunner(key, identityHome, teamID string, open run.EventStreamOpener, reload func() (run.EventStreamOpener, error), onEvent func(awid.AgentEvent), log func(string, ...any), now func() time.Time, policy run.StreamPolicyConfig) *streamRunner {
+	if policy.Now == nil {
+		policy.Now = now
 	}
 	return &streamRunner{
 		key:          key,
 		identityHome: identityHome,
 		teamID:       teamID,
-		open:         open,
+		policy:       run.NewStreamPolicy(open, reload, policy),
 		onEvent:      onEvent,
 		log:          log,
 		now:          now,
-		ttl:          ttl,
-		backoffMin:   backoffMin,
-		backoffMax:   backoffMax,
 		phase:        StreamStarting,
-		rng:          rand.New(rand.NewSource(time.Now().UnixNano() ^ int64(len(identityHome)))),
 		done:         make(chan struct{}),
 	}
 }
@@ -128,23 +115,41 @@ func (s *streamRunner) snapshot() StreamStatus {
 		IdentityHome:    s.identityHome,
 		TeamID:          s.teamID,
 		Phase:           string(s.phase),
+		Cause:           s.cause,
+		NextAttemptAt:   s.nextAttempt,
 		LastError:       s.lastError,
 		LastErrorDetail: s.lastErrorDetail,
 		UnreadCount:     s.unread,
 		ConnectedAt:     s.connectedAt,
-		Admitted:        true,
+		// A refused identity is never shown as admitted (§8).
+		Admitted: s.phase != StreamRefused,
 	}
 }
 
-// setPhase records the stream's phase and the error that put it there, as
-// text and as its stable detail; a nil err clears both.
-func (s *streamRunner) setPhase(p StreamPhase, err error) {
+// refused reports whether the stream is quarantined.
+func (s *streamRunner) refused() bool {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.phase == StreamRefused
+}
+
+// requestNow is an explicit request for the stream: a quarantined stream
+// retries at once.
+func (s *streamRunner) requestNow() {
+	s.policy.Request()
+}
+
+// setPhase records the stream's phase and, for a stream that is not
+// streaming, the end that put it there: its cause, the time of the next
+// attempt, and the error as text and as its stable detail.
+func (s *streamRunner) setPhase(p StreamPhase, end run.StreamEnd) {
 	s.mu.Lock()
 	s.phase = p
+	s.cause, s.nextAttempt = end.Cause, end.NextAttempt
 	s.lastError, s.lastErrorDetail = "", nil
-	if err != nil {
-		detail := awid.DescribeError(err)
-		s.lastError, s.lastErrorDetail = err.Error(), &detail
+	if end.Err != nil {
+		detail := awid.DescribeError(end.Err)
+		s.lastError, s.lastErrorDetail = end.Err.Error(), &detail
 	}
 	if p == StreamLive && s.connectedAt.IsZero() {
 		s.connectedAt = s.now()
@@ -161,18 +166,6 @@ func (s *streamRunner) noteUnread(n int) {
 	s.mu.Unlock()
 }
 
-// jittered returns the sleep for one retry: between half and all of base.
-func (s *streamRunner) jittered(base time.Duration) time.Duration {
-	half := base / 2
-	if half <= 0 {
-		return base
-	}
-	s.randMu.Lock()
-	extra := time.Duration(s.rng.Int63n(int64(half) + 1))
-	s.randMu.Unlock()
-	return half + extra
-}
-
 // Coalesce exhausted-delivery requests into one fresh snapshot. Resume can
 // advance that request immediately. Repeated refusal backs off independently
 // of transport reconnects, and coalesced requests do not advance the backoff.
@@ -184,7 +177,7 @@ func (s *streamRunner) requestSnapshot(delay time.Duration) {
 	}
 	if s.streamCancel == nil {
 		return
-	} // no live attempt (or quarantined/stopped)
+	} // no live attempt (between attempts, or stopped)
 	if s.snapshotTimer != nil {
 		if delay > 0 {
 			return
@@ -247,108 +240,78 @@ func (s *streamRunner) run(ctx context.Context) {
 	defer func() {
 		s.mu.Lock()
 		s.clearSnapshotLocked()
-		if s.phase != StreamQuarantined {
-			s.phase = StreamStopped
-		}
+		s.phase = StreamStopped
+		s.cause, s.nextAttempt = "", time.Time{}
 		s.mu.Unlock()
 	}()
 
-	delay := s.backoffMin
-	recoveryPending := false
 	outageReported := false
 
 	for ctx.Err() == nil {
-		deadline := s.now().Add(s.ttl)
-		streamCtx, cancel := context.WithDeadline(ctx, deadline)
-		s.mu.Lock()
-		s.clearSnapshotLocked()
-		s.streamCancel = cancel
-		s.mu.Unlock()
-		source, err := s.open(streamCtx, deadline)
-		if err != nil {
-			plannedClose := streamCtx.Err() != nil && ctx.Err() == nil
-			cancel()
-			s.mu.Lock()
-			s.clearSnapshotLocked()
-			s.mu.Unlock()
-			if plannedClose {
-				continue
-			}
-			if code, ok := awid.HTTPStatusCode(err); ok && (code == 401 || code == 403 || code == 404 || code == 422) {
-				// One identity is quarantined and reported; the daemon and
-				// every other stream keep running (§4).
-				s.setPhase(StreamQuarantined, err)
-				s.log("stream quarantined identity_home=%s status=%d err=%v", s.identityHome, code, err)
-				return
-			}
-			recoveryPending = true
-			if !outageReported {
-				outageReported = true
-				s.setPhase(StreamRetrying, err)
-				s.log("stream outage identity_home=%s err=%v", s.identityHome, err)
-			}
-			if !sleepCtx(ctx, s.jittered(delay)) {
-				return
-			}
-			delay = doubleUpTo(delay, s.backoffMax)
-			continue
-		}
-
-		confirmed := false
-		consumeErr := s.consume(streamCtx, source, func() {
-			if confirmed {
-				return
-			}
-			confirmed = true
-			delay = s.backoffMin
-			s.setPhase(StreamLive, nil)
-			if recoveryPending {
-				recoveryPending = false
-				outageReported = false
+		conn := s.policy.Connect(ctx, func(endedRefusal string) {
+			s.setPhase(StreamLive, run.StreamEnd{})
+			switch {
+			case endedRefusal != "":
+				s.log("stream quarantine ended identity_home=%s cause=%s", s.identityHome, endedRefusal)
+			case outageReported:
 				s.log("stream reconnected identity_home=%s", s.identityHome)
-				// Transport recovery is diagnostic-only. The fresh stream snapshot
-				// re-raises real actionable events; reconnect itself never becomes
-				// terminal/model input.
 			}
+			outageReported = false
+			// Transport recovery is diagnostic-only. The fresh stream snapshot
+			// re-raises real actionable events; reconnect itself never becomes
+			// terminal/model input.
 		})
-		plannedClose := streamCtx.Err() != nil && ctx.Err() == nil
-		_ = source.Close()
-		cancel()
+		s.mu.Lock()
+		s.clearSnapshotLocked()
+		s.streamCancel = conn.Reopen
+		s.mu.Unlock()
+		source, err := conn.Open()
+		if err == nil {
+			err = s.consume(conn, source)
+			_ = source.Close()
+		}
 		s.mu.Lock()
 		s.clearSnapshotLocked()
 		s.mu.Unlock()
 
-		if ctx.Err() != nil {
+		end := conn.End(err)
+		switch end.Kind {
+		case run.StreamEndStopped:
 			return
-		}
-		if plannedClose {
-			// The broker's own four-minute close. Not an outage: it is
-			// reopened immediately and the fresh stream's snapshot is what
-			// re-raises anything still unread.
-			continue
-		}
-		if consumeErr != nil {
-			recoveryPending = true
+		case run.StreamEndPlannedClose:
+			// The stream's own planned close, or a snapshot request. Not an
+			// outage: it is reopened immediately and the fresh stream's
+			// snapshot is what re-raises anything still unread.
+		case run.StreamEndTransient:
+			s.setPhase(StreamRetrying, end)
 			if !outageReported {
 				outageReported = true
-				s.setPhase(StreamRetrying, consumeErr)
-				s.log("stream outage identity_home=%s err=%v", s.identityHome, consumeErr)
+				s.log("stream outage identity_home=%s err=%v", s.identityHome, end.Err)
 			}
-			if !sleepCtx(ctx, s.jittered(delay)) {
-				return
+		case run.StreamEndRefused:
+			// One identity is quarantined and reported; the daemon and every
+			// other stream keep running. The quarantine is logged when it
+			// starts; a retry that is refused again only moves the time of
+			// the next attempt in status.
+			s.setPhase(StreamRefused, end)
+			if end.EnteredRefused {
+				s.log("stream quarantined identity_home=%s cause=%s next_attempt=%s err=%v", s.identityHome, end.Cause, end.NextAttempt.UTC().Format(time.RFC3339), end.Err)
 			}
-			delay = doubleUpTo(delay, s.backoffMax)
+		}
+		if !s.policy.Wait(ctx, end) {
+			return
 		}
 	}
 }
 
-func (s *streamRunner) consume(ctx context.Context, source awid.EventSource, confirm func()) error {
+func (s *streamRunner) consume(conn *run.StreamConnection, source awid.EventSource) error {
+	ctx := conn.Context()
 	for ctx.Err() == nil {
 		ev, err := source.Next(ctx)
 		if err != nil {
 			return err
 		}
-		confirm()
+		conn.Event()
 		if ev == nil {
 			continue
 		}
@@ -374,17 +337,6 @@ func doubleUpTo(delay, max time.Duration) time.Duration {
 		return max
 	}
 	return next
-}
-
-func sleepCtx(ctx context.Context, d time.Duration) bool {
-	timer := time.NewTimer(d)
-	defer timer.Stop()
-	select {
-	case <-ctx.Done():
-		return false
-	case <-timer.C:
-		return true
-	}
 }
 
 func truncateLog(s string) string {

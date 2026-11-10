@@ -122,7 +122,6 @@ func TestWakeBrokerOpensGrantHomeStream(t *testing.T) {
 		Store:      store,
 		Session:    oats,
 		OpenStream: wakeStreamOpener,
-		StreamTTL:  time.Minute,
 	})
 	if err != nil {
 		t.Fatal(err)

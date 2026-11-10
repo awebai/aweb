@@ -192,14 +192,6 @@ func isDigits(s string) bool {
 	return true
 }
 
-func doubleUpTo(delay, max time.Duration) time.Duration {
-	next := delay * 2
-	if next <= 0 || next > max {
-		return max
-	}
-	return next
-}
-
 // StreamPolicy holds one stream's reconnect state across its connections.
 // One goroutine drives it: Connect, then the connection's Open and End, then
 // Wait. Request and Refused may be called from any goroutine.
@@ -326,10 +318,10 @@ func (p *StreamPolicy) failed(kind StreamEndKind, cause string, err error) Strea
 	if p.refused {
 		end.Kind, end.Cause = StreamEndRefused, p.refusedCause
 		delay = p.refusedDelay
-		p.refusedDelay = doubleUpTo(delay, StreamRefusedDelayMax)
+		p.refusedDelay = min(delay*2, StreamRefusedDelayMax)
 	} else {
 		delay = p.retryDelay
-		p.retryDelay = doubleUpTo(delay, StreamRetryDelayMax)
+		p.retryDelay = min(delay*2, StreamRetryDelayMax)
 	}
 	end.Wait = streamRetryAfter(err, now) + p.jittered(delay)
 	end.NextAttempt = now.Add(end.Wait)

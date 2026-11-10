@@ -13,6 +13,7 @@ import (
 
 	awid "github.com/awebai/aw/awid"
 	"github.com/awebai/aw/internal/manualclock"
+	"github.com/awebai/aw/internal/streamtest"
 )
 
 // `aw run` on the event stream client policy
@@ -21,10 +22,7 @@ import (
 // fastStreamPolicy runs the policy's waits a hundred times faster, for tests
 // that reconnect over real connections and bound themselves in real time.
 func fastStreamPolicy() StreamPolicyConfig {
-	return StreamPolicyConfig{Timer: func(d time.Duration) (<-chan time.Time, func()) {
-		timer := time.NewTimer(d / 100)
-		return timer.C, func() { timer.Stop() }
-	}}
+	return StreamPolicyConfig{Timer: streamtest.ScaledTimer(100)}
 }
 
 type busRecord struct {
@@ -134,9 +132,9 @@ func popQueued(t *testing.T, bus *EventBus) BusEvent {
 // `aw run` agent deaf until it was restarted (§1, §3).
 func TestEventBusRetriesAfter429AndDeliversEvents(t *testing.T) {
 	clock := manualclock.New(policyStart)
-	source := newRawSource()
-	opener := newScriptedOpener(clock, attemptFails(httpFailure(429)), attemptOpens(source))
-	bus, record := startManualBus(t, clock, opener.open, nil)
+	source := streamtest.NewSource()
+	opener := streamtest.NewOpener(clock.Now, streamtest.Fails(streamtest.HTTPFailure(429)), streamtest.Opens(source))
+	bus, record := startManualBus(t, clock, opener.Open, nil)
 
 	awaitRetryWait(t, clock, 2)
 	if busStopped(bus) {
@@ -148,12 +146,12 @@ func TestEventBusRetriesAfter429AndDeliversEvents(t *testing.T) {
 	if wait := advanceToNextAttempt(t, clock, 2); wait != time.Second/2 {
 		t.Fatalf("waited %s after a 429, want the transient delay", wait)
 	}
-	eventually(t, "the second open", func() bool { return opener.opens() == 2 })
-	source.feed(rawItem{event: &awid.AgentEvent{Type: awid.AgentEventConnected}})
+	eventually(t, "the second open", func() bool { return opener.Opens() == 2 })
+	source.Feed(streamtest.Item{Event: &awid.AgentEvent{Type: awid.AgentEventConnected}})
 	if bus.State() != ConnStreaming {
 		t.Fatalf("state after the stream is confirmed = %s", bus.State())
 	}
-	source.feed(rawItem{event: &awid.AgentEvent{Type: awid.AgentEventActionableMail, MessageID: "m-1", FromAlias: "alice"}})
+	source.Feed(streamtest.Item{Event: &awid.AgentEvent{Type: awid.AgentEventActionableMail, MessageID: "m-1", FromAlias: "alice"}})
 	if event := popQueued(t, bus); event.Event.MessageID != "m-1" {
 		t.Fatalf("delivered %+v", event.Event)
 	}
@@ -166,12 +164,12 @@ func TestEventBusRetriesAfter429AndDeliversEvents(t *testing.T) {
 // Retry-After on a rate limit is a minimum wait (§3).
 func TestEventBusHonoursRetryAfter(t *testing.T) {
 	clock := manualclock.New(policyStart)
-	opener := newScriptedOpener(clock, attemptFails(httpFailureRetryAfter(429, "90")), attemptOpens(newRawSource()))
-	startManualBus(t, clock, opener.open, nil)
+	opener := streamtest.NewOpener(clock.Now, streamtest.Fails(streamtest.HTTPFailureRetryAfter(429, "90")), streamtest.Opens(streamtest.NewSource()))
+	startManualBus(t, clock, opener.Open, nil)
 	if wait := advanceToNextAttempt(t, clock, 2); wait != 90*time.Second+time.Second/2 {
 		t.Fatalf("waited %s, want Retry-After plus the jittered delay", wait)
 	}
-	eventually(t, "the second open", func() bool { return opener.opens() == 2 })
+	eventually(t, "the second open", func() bool { return opener.Opens() == 2 })
 }
 
 // A 401 on open quarantines the stream instead of ending it: the bus says so
@@ -236,8 +234,8 @@ func TestEventBusRetriesAMinuteAfter401(t *testing.T) {
 // scheduled until its owner stops it (§1).
 func TestEventBusStaysAliveOnClientError(t *testing.T) {
 	clock := manualclock.New(policyStart)
-	opener := newScriptedOpener(clock, attemptFails(&awid.APIError{StatusCode: 404, Body: "not found"}))
-	bus, _ := startManualBus(t, clock, opener.open, nil)
+	opener := streamtest.NewOpener(clock.Now, streamtest.Fails(&awid.APIError{StatusCode: 404, Body: "not found"}))
+	bus, _ := startManualBus(t, clock, opener.Open, nil)
 
 	for attempt := 1; attempt <= 3; attempt++ {
 		awaitRetryWait(t, clock, 2*attempt)
@@ -248,7 +246,7 @@ func TestEventBusStaysAliveOnClientError(t *testing.T) {
 			t.Fatalf("state after %d refusals = %s, want refused", attempt, bus.State())
 		}
 		advanceToNextAttempt(t, clock, 2*attempt)
-		eventually(t, "the next attempt", func() bool { return opener.opens() == attempt+1 })
+		eventually(t, "the next attempt", func() bool { return opener.Opens() == attempt+1 })
 	}
 }
 
@@ -256,28 +254,28 @@ func TestEventBusStaysAliveOnClientError(t *testing.T) {
 // per retry (§8).
 func TestEventBusReportsRefusalOncePerTransition(t *testing.T) {
 	clock := manualclock.New(policyStart)
-	source := newRawSource()
-	opener := newScriptedOpener(clock,
-		attemptFails(httpFailure(401)),
-		attemptFails(httpFailure(401)),
-		attemptFails(httpFailure(403)),
-		attemptFails(httpFailure(503)),
-		attemptFails(httpFailure(401)),
-		attemptOpens(source),
+	source := streamtest.NewSource()
+	opener := streamtest.NewOpener(clock.Now,
+		streamtest.Fails(streamtest.HTTPFailure(401)),
+		streamtest.Fails(streamtest.HTTPFailure(401)),
+		streamtest.Fails(streamtest.HTTPFailure(403)),
+		streamtest.Fails(streamtest.HTTPFailure(503)),
+		streamtest.Fails(streamtest.HTTPFailure(401)),
+		streamtest.Opens(source),
 	)
-	bus, record := startManualBus(t, clock, opener.open, nil)
+	bus, record := startManualBus(t, clock, opener.Open, nil)
 
 	var waits []time.Duration
 	for attempt := 1; attempt <= 5; attempt++ {
 		waits = append(waits, advanceToNextAttempt(t, clock, 2*attempt))
-		eventually(t, "the next attempt", func() bool { return opener.opens() == attempt+1 })
+		eventually(t, "the next attempt", func() bool { return opener.Opens() == attempt+1 })
 	}
 	// The lowest draw is half of each delay: 1, 2, 4, 8 and 15 minutes.
 	wantWaits := []time.Duration{30 * time.Second, time.Minute, 2 * time.Minute, 4 * time.Minute, 7*time.Minute + 30*time.Second}
 	if fmt.Sprint(waits) != fmt.Sprint(wantWaits) {
 		t.Fatalf("waits=%v, want %v", waits, wantWaits)
 	}
-	source.feed(rawItem{event: &awid.AgentEvent{Type: awid.AgentEventConnected}})
+	source.Feed(streamtest.Item{Event: &awid.AgentEvent{Type: awid.AgentEventConnected}})
 	if bus.State() != ConnStreaming {
 		t.Fatalf("state=%s after the stream is confirmed", bus.State())
 	}
@@ -298,12 +296,12 @@ func TestEventBusReportsRefusalOncePerTransition(t *testing.T) {
 // A grant terminal event on an open stream is a refusal (§4).
 func TestEventBusQuarantinesOnAGrantTerminalEvent(t *testing.T) {
 	clock := manualclock.New(policyStart)
-	source := newRawSource()
-	opener := newScriptedOpener(clock, attemptOpens(source), attemptFails(httpFailure(403)))
-	bus, record := startManualBus(t, clock, opener.open, nil)
-	eventually(t, "the first open", func() bool { return opener.opens() == 1 })
-	source.feed(rawItem{event: &awid.AgentEvent{Type: awid.AgentEventConnected}})
-	source.feed(rawItem{err: &awid.AgentEventStreamClosedError{Event: "grant_revoked", Detail: "identity grant revoked"}})
+	source := streamtest.NewSource()
+	opener := streamtest.NewOpener(clock.Now, streamtest.Opens(source), streamtest.Fails(streamtest.HTTPFailure(403)))
+	bus, record := startManualBus(t, clock, opener.Open, nil)
+	eventually(t, "the first open", func() bool { return opener.Opens() == 1 })
+	source.Feed(streamtest.Item{Event: &awid.AgentEvent{Type: awid.AgentEventConnected}})
+	source.Feed(streamtest.Item{Err: &awid.AgentEventStreamClosedError{Event: "grant_revoked", Detail: "identity grant revoked"}})
 
 	// Planned close, silence watch, and the wait after the refusal.
 	awaitRetryWait(t, clock, 3)
@@ -321,35 +319,35 @@ func TestEventBusQuarantinesOnAGrantTerminalEvent(t *testing.T) {
 func TestEventBusReconnectsAtItsPlannedCloseWithoutANotice(t *testing.T) {
 	clock := manualclock.New(policyStart)
 	clock.SetRandom(0.5)
-	first, second := newRawSource(), newRawSource()
-	opener := newScriptedOpener(clock, attemptOpens(first), attemptOpens(second))
-	bus, record := startManualBus(t, clock, opener.open, nil)
+	first, second := streamtest.NewSource(), streamtest.NewSource()
+	opener := streamtest.NewOpener(clock.Now, streamtest.Opens(first), streamtest.Opens(second))
+	bus, record := startManualBus(t, clock, opener.Open, nil)
 
-	eventually(t, "the first open", func() bool { return opener.opens() == 1 })
+	eventually(t, "the first open", func() bool { return opener.Opens() == 1 })
 	planned := 3*time.Minute + 45*time.Second
-	if got := opener.lastDeadline().Sub(policyStart); got != planned {
+	if got := opener.LastDeadline().Sub(policyStart); got != planned {
 		t.Fatalf("asked the server to close after %s, want %s for the middle draw", got, planned)
 	}
-	first.feed(rawItem{event: &awid.AgentEvent{Type: awid.AgentEventConnected}})
+	first.Feed(streamtest.Item{Event: &awid.AgentEvent{Type: awid.AgentEventConnected}})
 	elapsed := time.Duration(0)
 	for planned-elapsed > 30*time.Second {
 		awaitTimers(t, clock, 2)
 		clock.Advance(30 * time.Second)
 		elapsed += 30 * time.Second
-		first.feed(rawItem{comment: true})
+		first.Feed(streamtest.Item{Comment: true})
 	}
 	awaitTimers(t, clock, 2)
-	if opener.opens() != 1 {
+	if opener.Opens() != 1 {
 		t.Fatal("reconnected before the planned close")
 	}
 	clock.Advance(planned - elapsed)
 
 	// No wait: the second open happens without the clock moving again.
-	eventually(t, "the reconnect", func() bool { return opener.opens() == 2 })
-	if at := opener.openTimes()[1]; !at.Equal(policyStart.Add(planned)) {
+	eventually(t, "the reconnect", func() bool { return opener.Opens() == 2 })
+	if at := opener.OpenTimes()[1]; !at.Equal(policyStart.Add(planned)) {
 		t.Fatalf("reconnected at %s, want at the planned close %s", at, policyStart.Add(planned))
 	}
-	second.feed(rawItem{event: &awid.AgentEvent{Type: awid.AgentEventActionableMail, MessageID: "m-2", FromAlias: "alice"}})
+	second.Feed(streamtest.Item{Event: &awid.AgentEvent{Type: awid.AgentEventActionableMail, MessageID: "m-2", FromAlias: "alice"}})
 	if event := popQueued(t, bus); event.Event.MessageID != "m-2" {
 		t.Fatalf("delivered %+v", event.Event)
 	}
@@ -366,11 +364,11 @@ func TestEventBusReconnectsAtItsPlannedCloseWithoutANotice(t *testing.T) {
 // as a transient failure (§6).
 func TestEventBusReconnectsAfterSilence(t *testing.T) {
 	clock := manualclock.New(policyStart)
-	first, second := newRawSource(), newRawSource()
-	opener := newScriptedOpener(clock, attemptOpens(first), attemptOpens(second))
-	bus, record := startManualBus(t, clock, opener.open, nil)
-	eventually(t, "the first open", func() bool { return opener.opens() == 1 })
-	first.feed(rawItem{event: &awid.AgentEvent{Type: awid.AgentEventConnected}})
+	first, second := streamtest.NewSource(), streamtest.NewSource()
+	opener := streamtest.NewOpener(clock.Now, streamtest.Opens(first), streamtest.Opens(second))
+	bus, record := startManualBus(t, clock, opener.Open, nil)
+	eventually(t, "the first open", func() bool { return opener.Opens() == 1 })
+	first.Feed(streamtest.Item{Event: &awid.AgentEvent{Type: awid.AgentEventConnected}})
 	awaitTimers(t, clock, 2)
 	clock.Advance(75 * time.Second)
 
@@ -378,7 +376,7 @@ func TestEventBusReconnectsAfterSilence(t *testing.T) {
 	if wait := advanceToNextAttempt(t, clock, 3); wait != time.Second/2 {
 		t.Fatalf("waited %s after silence, want the transient delay", wait)
 	}
-	eventually(t, "the reconnect", func() bool { return opener.opens() == 2 })
+	eventually(t, "the reconnect", func() bool { return opener.Opens() == 2 })
 	if bus.State() != ConnReconnecting {
 		t.Fatalf("state=%s, want reconnecting", bus.State())
 	}
@@ -395,7 +393,7 @@ func TestEventBusReloadsCredentialsBetweenRefusedAttempts(t *testing.T) {
 	stored := "expired"
 	var used []string
 	reloads := 0
-	source := newRawSource()
+	source := streamtest.NewSource()
 	openerWith := func(credential string) EventStreamOpener {
 		return func(context.Context, time.Time) (awid.EventSource, error) {
 			mu.Lock()
@@ -404,7 +402,7 @@ func TestEventBusReloadsCredentialsBetweenRefusedAttempts(t *testing.T) {
 			if credential == "renewed" {
 				return source, nil
 			}
-			return nil, httpFailure(401)
+			return nil, streamtest.HTTPFailure(401)
 		}
 	}
 	reload := func() (EventStreamOpener, error) {
@@ -427,7 +425,7 @@ func TestEventBusReloadsCredentialsBetweenRefusedAttempts(t *testing.T) {
 	mu.Unlock()
 	advanceToNextAttempt(t, clock, 4)
 	eventually(t, "the third attempt", func() bool { return attempts() == 3 })
-	source.feed(rawItem{event: &awid.AgentEvent{Type: awid.AgentEventConnected}})
+	source.Feed(streamtest.Item{Event: &awid.AgentEvent{Type: awid.AgentEventConnected}})
 	if bus.State() != ConnStreaming {
 		t.Fatalf("state=%s with the renewed credential", bus.State())
 	}

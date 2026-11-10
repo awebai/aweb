@@ -10,13 +10,13 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"strconv"
-	"sync"
 	"sync/atomic"
 	"testing"
 	"time"
 
 	awid "github.com/awebai/aw/awid"
 	"github.com/awebai/aw/internal/manualclock"
+	"github.com/awebai/aw/internal/streamtest"
 )
 
 // These tests state docs/event-stream-client-policy.md one rule at a time.
@@ -28,136 +28,6 @@ var almostOne = math.Nextafter(1, 0)
 
 func policyConfig(clock *manualclock.Clock) StreamPolicyConfig {
 	return StreamPolicyConfig{Now: clock.Now, Timer: clock.Timer, Rand: clock.Random}
-}
-
-type streamAttempt func(ctx context.Context, deadline time.Time) (awid.EventSource, error)
-
-func attemptFails(err error) streamAttempt {
-	return func(context.Context, time.Time) (awid.EventSource, error) { return nil, err }
-}
-
-func attemptOpens(source awid.EventSource) streamAttempt {
-	return func(context.Context, time.Time) (awid.EventSource, error) { return source, nil }
-}
-
-func httpFailure(status int) error {
-	return &awid.APIError{StatusCode: status}
-}
-
-func httpFailureRetryAfter(status int, retryAfter string) error {
-	return &awid.APIError{StatusCode: status, RetryAfter: retryAfter}
-}
-
-// scriptedOpener plays its attempts in order and repeats the last one. It
-// records when each attempt was made and the deadline it was given.
-type scriptedOpener struct {
-	clock *manualclock.Clock
-
-	mu        sync.Mutex
-	attempts  []streamAttempt
-	openedAt  []time.Time
-	deadlines []time.Time
-}
-
-func newScriptedOpener(clock *manualclock.Clock, attempts ...streamAttempt) *scriptedOpener {
-	return &scriptedOpener{clock: clock, attempts: attempts}
-}
-
-func (o *scriptedOpener) open(ctx context.Context, deadline time.Time) (awid.EventSource, error) {
-	o.mu.Lock()
-	index := len(o.openedAt)
-	if index >= len(o.attempts) {
-		index = len(o.attempts) - 1
-	}
-	attempt := o.attempts[index]
-	o.openedAt = append(o.openedAt, o.clock.Now())
-	o.deadlines = append(o.deadlines, deadline)
-	o.mu.Unlock()
-	return attempt(ctx, deadline)
-}
-
-func (o *scriptedOpener) opens() int {
-	o.mu.Lock()
-	defer o.mu.Unlock()
-	return len(o.openedAt)
-}
-
-func (o *scriptedOpener) openTimes() []time.Time {
-	o.mu.Lock()
-	defer o.mu.Unlock()
-	return append([]time.Time(nil), o.openedAt...)
-}
-
-func (o *scriptedOpener) lastDeadline() time.Time {
-	o.mu.Lock()
-	defer o.mu.Unlock()
-	return o.deadlines[len(o.deadlines)-1]
-}
-
-// rawItem is one thing a rawSource reads: a heartbeat comment, bytes that
-// complete no line, an event, or the end of the stream.
-type rawItem struct {
-	comment bool
-	partial bool
-	event   *awid.AgentEvent
-	err     error
-}
-
-// rawSource is an event source whose reads the test feeds one at a time. Like
-// the real stream it reports every read, and every comment, to its observers
-// from the goroutine that calls Next.
-type rawSource struct {
-	items     chan rawItem
-	handled   chan struct{}
-	onRead    func()
-	onComment func()
-	// delivered is true while the consumer holds an event Next returned.
-	delivered bool
-}
-
-func newRawSource() *rawSource {
-	return &rawSource{items: make(chan rawItem), handled: make(chan struct{})}
-}
-
-func (s *rawSource) OnRead(f func())    { s.onRead = f }
-func (s *rawSource) OnComment(f func()) { s.onComment = f }
-func (s *rawSource) Close() error       { return nil }
-
-func (s *rawSource) Next(ctx context.Context) (*awid.AgentEvent, error) {
-	if s.delivered {
-		// The consumer is back for more, so it has dealt with the event.
-		s.delivered = false
-		s.handled <- struct{}{}
-	}
-	for {
-		select {
-		case <-ctx.Done():
-			return nil, ctx.Err()
-		case item := <-s.items:
-			if item.err != nil {
-				s.handled <- struct{}{}
-				return nil, item.err
-			}
-			if s.onRead != nil {
-				s.onRead()
-			}
-			if item.comment && s.onComment != nil {
-				s.onComment()
-			}
-			if item.event != nil {
-				s.delivered = true
-				return item.event, nil
-			}
-			s.handled <- struct{}{}
-		}
-	}
-}
-
-// feed hands the source one read and returns once the source has reported
-// it and, for an event, once the consumer has dealt with it.
-func (s *rawSource) feed(item rawItem) {
-	s.items <- item
-	<-s.handled
 }
 
 // consumeConnection reads a source the way a client does: every event read
@@ -213,29 +83,29 @@ func TestStreamPolicyClassifiesEveryAnswer(t *testing.T) {
 		if isTransientStatus(status) {
 			kind = StreamEndTransient
 		}
-		cases = append(cases, classification{name: fmt.Sprintf("http %d", status), err: httpFailure(status), kind: kind, cause: strconv.Itoa(status)})
+		cases = append(cases, classification{name: fmt.Sprintf("http %d", status), err: streamtest.HTTPFailure(status), kind: kind, cause: strconv.Itoa(status)})
 	}
 	for status := 500; status <= 599; status++ {
-		cases = append(cases, classification{name: fmt.Sprintf("http %d", status), err: httpFailure(status), kind: StreamEndTransient, cause: strconv.Itoa(status)})
+		cases = append(cases, classification{name: fmt.Sprintf("http %d", status), err: streamtest.HTTPFailure(status), kind: StreamEndTransient, cause: strconv.Itoa(status)})
 	}
 	for _, event := range []string{"grant_expired", "grant_revoked", "grant_subject_inactive", "grant_issuer_revoked"} {
 		cases = append(cases, classification{name: event, err: &awid.AgentEventStreamClosedError{Event: event, Detail: event}, kind: StreamEndRefused, cause: event})
 	}
 	cases = append(cases,
-		classification{name: "the named refusals 401", err: httpFailure(401), kind: StreamEndRefused, cause: "401"},
-		classification{name: "the named refusals 403", err: httpFailure(403), kind: StreamEndRefused, cause: "403"},
-		classification{name: "the named refusals 404", err: httpFailure(404), kind: StreamEndRefused, cause: "404"},
-		classification{name: "the named refusals 422", err: httpFailure(422), kind: StreamEndRefused, cause: "422"},
-		classification{name: "other 4xx 400", err: httpFailure(400), kind: StreamEndRefused, cause: "400"},
-		classification{name: "other 4xx 405", err: httpFailure(405), kind: StreamEndRefused, cause: "405"},
-		classification{name: "other 4xx 410", err: httpFailure(410), kind: StreamEndRefused, cause: "410"},
-		classification{name: "other 4xx 451", err: httpFailure(451), kind: StreamEndRefused, cause: "451"},
-		classification{name: "moment 408", err: httpFailure(408), kind: StreamEndTransient, cause: "408"},
-		classification{name: "moment 409", err: httpFailure(409), kind: StreamEndTransient, cause: "409"},
-		classification{name: "moment 425", err: httpFailure(425), kind: StreamEndTransient, cause: "425"},
-		classification{name: "moment 429", err: httpFailure(429), kind: StreamEndTransient, cause: "429"},
-		classification{name: "wrapped refusal", err: fmt.Errorf("open: %w", httpFailure(401)), kind: StreamEndRefused, cause: "401"},
-		classification{name: "redirect answer", err: httpFailure(302), kind: StreamEndTransient, cause: "302"},
+		classification{name: "the named refusals 401", err: streamtest.HTTPFailure(401), kind: StreamEndRefused, cause: "401"},
+		classification{name: "the named refusals 403", err: streamtest.HTTPFailure(403), kind: StreamEndRefused, cause: "403"},
+		classification{name: "the named refusals 404", err: streamtest.HTTPFailure(404), kind: StreamEndRefused, cause: "404"},
+		classification{name: "the named refusals 422", err: streamtest.HTTPFailure(422), kind: StreamEndRefused, cause: "422"},
+		classification{name: "other 4xx 400", err: streamtest.HTTPFailure(400), kind: StreamEndRefused, cause: "400"},
+		classification{name: "other 4xx 405", err: streamtest.HTTPFailure(405), kind: StreamEndRefused, cause: "405"},
+		classification{name: "other 4xx 410", err: streamtest.HTTPFailure(410), kind: StreamEndRefused, cause: "410"},
+		classification{name: "other 4xx 451", err: streamtest.HTTPFailure(451), kind: StreamEndRefused, cause: "451"},
+		classification{name: "moment 408", err: streamtest.HTTPFailure(408), kind: StreamEndTransient, cause: "408"},
+		classification{name: "moment 409", err: streamtest.HTTPFailure(409), kind: StreamEndTransient, cause: "409"},
+		classification{name: "moment 425", err: streamtest.HTTPFailure(425), kind: StreamEndTransient, cause: "425"},
+		classification{name: "moment 429", err: streamtest.HTTPFailure(429), kind: StreamEndTransient, cause: "429"},
+		classification{name: "wrapped refusal", err: fmt.Errorf("open: %w", streamtest.HTTPFailure(401)), kind: StreamEndRefused, cause: "401"},
+		classification{name: "redirect answer", err: streamtest.HTTPFailure(302), kind: StreamEndTransient, cause: "302"},
 		classification{name: "verification_unavailable", err: &awid.AgentEventStreamClosedError{Event: "verification_unavailable"}, kind: StreamEndTransient, cause: "verification_unavailable"},
 		classification{name: "early end", err: io.EOF, kind: StreamEndTransient},
 		classification{name: "read error", err: io.ErrUnexpectedEOF, kind: StreamEndTransient},
@@ -261,8 +131,8 @@ func TestStreamPolicyJitterBounds(t *testing.T) {
 		err   error
 		delay time.Duration
 	}{
-		{"transient", httpFailure(503), time.Second},
-		{"refused", httpFailure(401), time.Minute},
+		{"transient", streamtest.HTTPFailure(503), time.Second},
+		{"refused", streamtest.HTTPFailure(401), time.Minute},
 	}
 	draws := []struct {
 		name   string
@@ -280,8 +150,8 @@ func TestStreamPolicyJitterBounds(t *testing.T) {
 			t.Run(ladder.name+"/"+draw.name, func(t *testing.T) {
 				clock := manualclock.New(policyStart)
 				clock.SetRandom(draw.random)
-				opener := newScriptedOpener(clock, attemptFails(ladder.err))
-				policy := NewStreamPolicy(opener.open, nil, policyConfig(clock))
+				opener := streamtest.NewOpener(clock.Now, streamtest.Fails(ladder.err))
+				policy := NewStreamPolicy(opener.Open, nil, policyConfig(clock))
 				end := attemptOnce(policy)
 				if !draw.check(ladder.delay, end.Wait) {
 					t.Fatalf("wait=%s for a delay of %s with draw %v", end.Wait, ladder.delay, draw.random)
@@ -303,18 +173,18 @@ func TestStreamPolicyLaddersGrowToTheirCeilings(t *testing.T) {
 		kind StreamEndKind
 		want []time.Duration
 	}{
-		{"transient", httpFailure(503), StreamEndTransient, []time.Duration{
+		{"transient", streamtest.HTTPFailure(503), StreamEndTransient, []time.Duration{
 			time.Second, 2 * time.Second, 4 * time.Second, 8 * time.Second, 15 * time.Second, 15 * time.Second, 15 * time.Second,
 		}},
-		{"refused", httpFailure(403), StreamEndRefused, []time.Duration{
+		{"refused", streamtest.HTTPFailure(403), StreamEndRefused, []time.Duration{
 			time.Minute, 2 * time.Minute, 4 * time.Minute, 8 * time.Minute, 15 * time.Minute, 15 * time.Minute, 15 * time.Minute,
 		}},
 	}
 	for _, ladder := range ladders {
 		t.Run(ladder.name, func(t *testing.T) {
 			clock := manualclock.New(policyStart)
-			opener := newScriptedOpener(clock, attemptFails(ladder.err))
-			policy := NewStreamPolicy(opener.open, nil, policyConfig(clock))
+			opener := streamtest.NewOpener(clock.Now, streamtest.Fails(ladder.err))
+			policy := NewStreamPolicy(opener.Open, nil, policyConfig(clock))
 			for step, delay := range ladder.want {
 				end := attemptOnce(policy)
 				if end.Kind != ladder.kind {
@@ -334,13 +204,13 @@ func TestStreamPolicyLaddersGrowToTheirCeilings(t *testing.T) {
 func TestStreamPolicyResetsOnlyOnAConfirmedStream(t *testing.T) {
 	t.Run("an open that closes without an event does not reset", func(t *testing.T) {
 		clock := manualclock.New(policyStart)
-		opener := newScriptedOpener(clock,
-			attemptFails(httpFailure(503)),
-			attemptFails(httpFailure(503)),
-			attemptOpens(newFakeEventSource()),
-			attemptFails(httpFailure(503)),
+		opener := streamtest.NewOpener(clock.Now,
+			streamtest.Fails(streamtest.HTTPFailure(503)),
+			streamtest.Fails(streamtest.HTTPFailure(503)),
+			streamtest.Opens(newFakeEventSource()),
+			streamtest.Fails(streamtest.HTTPFailure(503)),
 		)
-		policy := NewStreamPolicy(opener.open, nil, policyConfig(clock))
+		policy := NewStreamPolicy(opener.Open, nil, policyConfig(clock))
 		want := []time.Duration{time.Second, 2 * time.Second, 4 * time.Second, 8 * time.Second}
 		for step, delay := range want {
 			if end := attemptOnce(policy); end.Kind != StreamEndTransient || end.Wait != delay/2 {
@@ -351,13 +221,13 @@ func TestStreamPolicyResetsOnlyOnAConfirmedStream(t *testing.T) {
 
 	t.Run("the first event resets", func(t *testing.T) {
 		clock := manualclock.New(policyStart)
-		opener := newScriptedOpener(clock,
-			attemptFails(httpFailure(503)),
-			attemptFails(httpFailure(503)),
-			attemptOpens(newFakeEventSource(confirmedEvent())),
-			attemptFails(httpFailure(503)),
+		opener := streamtest.NewOpener(clock.Now,
+			streamtest.Fails(streamtest.HTTPFailure(503)),
+			streamtest.Fails(streamtest.HTTPFailure(503)),
+			streamtest.Opens(newFakeEventSource(confirmedEvent())),
+			streamtest.Fails(streamtest.HTTPFailure(503)),
 		)
-		policy := NewStreamPolicy(opener.open, nil, policyConfig(clock))
+		policy := NewStreamPolicy(opener.Open, nil, policyConfig(clock))
 		want := []time.Duration{time.Second, 2 * time.Second, time.Second, 2 * time.Second}
 		for step, delay := range want {
 			if end := attemptOnce(policy); end.Kind != StreamEndTransient || end.Wait != delay/2 {
@@ -368,14 +238,14 @@ func TestStreamPolicyResetsOnlyOnAConfirmedStream(t *testing.T) {
 
 	t.Run("the first heartbeat resets", func(t *testing.T) {
 		clock := manualclock.New(policyStart)
-		source := newRawSource()
-		opener := newScriptedOpener(clock,
-			attemptFails(httpFailure(503)),
-			attemptFails(httpFailure(503)),
-			attemptOpens(source),
-			attemptFails(httpFailure(503)),
+		source := streamtest.NewSource()
+		opener := streamtest.NewOpener(clock.Now,
+			streamtest.Fails(streamtest.HTTPFailure(503)),
+			streamtest.Fails(streamtest.HTTPFailure(503)),
+			streamtest.Opens(source),
+			streamtest.Fails(streamtest.HTTPFailure(503)),
 		)
-		policy := NewStreamPolicy(opener.open, nil, policyConfig(clock))
+		policy := NewStreamPolicy(opener.Open, nil, policyConfig(clock))
 		attemptOnce(policy)
 		attemptOnce(policy)
 
@@ -387,10 +257,10 @@ func TestStreamPolicyResetsOnlyOnAConfirmedStream(t *testing.T) {
 		}
 		ended := make(chan error, 1)
 		go func() { ended <- consumeConnection(conn, opened) }()
-		source.feed(rawItem{partial: true})
-		source.feed(rawItem{comment: true})
-		source.feed(rawItem{comment: true})
-		source.feed(rawItem{err: io.EOF})
+		source.Feed(streamtest.Item{Partial: true})
+		source.Feed(streamtest.Item{Comment: true})
+		source.Feed(streamtest.Item{Comment: true})
+		source.Feed(streamtest.Item{Err: io.EOF})
 		end := conn.End(<-ended)
 		if confirmed != 1 {
 			t.Fatalf("confirmed %d times, want once for the first heartbeat", confirmed)
@@ -402,9 +272,9 @@ func TestStreamPolicyResetsOnlyOnAConfirmedStream(t *testing.T) {
 
 	t.Run("bytes that are neither an event nor a heartbeat do not reset", func(t *testing.T) {
 		clock := manualclock.New(policyStart)
-		source := newRawSource()
-		opener := newScriptedOpener(clock, attemptFails(httpFailure(503)), attemptOpens(source))
-		policy := NewStreamPolicy(opener.open, nil, policyConfig(clock))
+		source := streamtest.NewSource()
+		opener := streamtest.NewOpener(clock.Now, streamtest.Fails(streamtest.HTTPFailure(503)), streamtest.Opens(source))
+		policy := NewStreamPolicy(opener.Open, nil, policyConfig(clock))
 		attemptOnce(policy)
 
 		conn := policy.Connect(context.Background(), func(string) { t.Error("confirmed without an event or heartbeat") })
@@ -414,8 +284,8 @@ func TestStreamPolicyResetsOnlyOnAConfirmedStream(t *testing.T) {
 		}
 		ended := make(chan error, 1)
 		go func() { ended <- consumeConnection(conn, opened) }()
-		source.feed(rawItem{partial: true})
-		source.feed(rawItem{err: io.EOF})
+		source.Feed(streamtest.Item{Partial: true})
+		source.Feed(streamtest.Item{Err: io.EOF})
 		if end := conn.End(<-ended); end.Kind != StreamEndTransient || end.Wait != time.Second {
 			t.Fatalf("kind=%v wait=%s, want transient and half of 2s", end.Kind, end.Wait)
 		}
@@ -467,8 +337,8 @@ func TestStreamPolicyHonoursRetryAfter(t *testing.T) {
 				t.Run(fmt.Sprintf("%s/%s/draw %v", answer.name, tc.name, random), func(t *testing.T) {
 					clock := manualclock.New(policyStart)
 					clock.SetRandom(random)
-					opener := newScriptedOpener(clock, attemptFails(httpFailureRetryAfter(answer.status, tc.header)))
-					policy := NewStreamPolicy(opener.open, nil, policyConfig(clock))
+					opener := streamtest.NewOpener(clock.Now, streamtest.Fails(streamtest.HTTPFailureRetryAfter(answer.status, tc.header)))
+					policy := NewStreamPolicy(opener.Open, nil, policyConfig(clock))
 					end := attemptOnce(policy)
 					jitter := answer.delay/2 + time.Duration(random*float64(answer.delay/2))
 					if end.Wait != tc.want+jitter {
@@ -481,8 +351,8 @@ func TestStreamPolicyHonoursRetryAfter(t *testing.T) {
 
 	t.Run("an answer without the header does not carry one over", func(t *testing.T) {
 		clock := manualclock.New(policyStart)
-		opener := newScriptedOpener(clock, attemptFails(httpFailureRetryAfter(429, "120")), attemptFails(httpFailure(429)))
-		policy := NewStreamPolicy(opener.open, nil, policyConfig(clock))
+		opener := streamtest.NewOpener(clock.Now, streamtest.Fails(streamtest.HTTPFailureRetryAfter(429, "120")), streamtest.Fails(streamtest.HTTPFailure(429)))
+		policy := NewStreamPolicy(opener.Open, nil, policyConfig(clock))
 		attemptOnce(policy)
 		if end := attemptOnce(policy); end.Wait != time.Second {
 			t.Fatalf("wait=%s, want half of 2s with no Retry-After", end.Wait)
@@ -506,22 +376,22 @@ func TestStreamPolicyPlannedClose(t *testing.T) {
 		t.Run(draw.name, func(t *testing.T) {
 			clock := manualclock.New(policyStart)
 			clock.SetRandom(draw.random)
-			source := newRawSource()
-			opener := newScriptedOpener(clock, attemptOpens(source))
-			policy := NewStreamPolicy(opener.open, nil, policyConfig(clock))
+			source := streamtest.NewSource()
+			opener := streamtest.NewOpener(clock.Now, streamtest.Opens(source))
+			policy := NewStreamPolicy(opener.Open, nil, policyConfig(clock))
 
 			conn := policy.Connect(context.Background(), nil)
 			opened, err := conn.Open()
 			if err != nil {
 				t.Fatal(err)
 			}
-			planned := opener.lastDeadline().Sub(policyStart)
+			planned := opener.LastDeadline().Sub(policyStart)
 			if !draw.check(planned) {
 				t.Fatalf("planned close after %s with draw %v", planned, draw.random)
 			}
 			ended := make(chan error, 1)
 			go func() { ended <- consumeConnection(conn, opened) }()
-			source.feed(rawItem{event: &awid.AgentEvent{Type: awid.AgentEventConnected}})
+			source.Feed(streamtest.Item{Event: &awid.AgentEvent{Type: awid.AgentEventConnected}})
 
 			// Heartbeats keep the stream from being silent up to its close.
 			elapsed := time.Duration(0)
@@ -529,7 +399,7 @@ func TestStreamPolicyPlannedClose(t *testing.T) {
 				awaitTimers(t, clock, 2)
 				clock.Advance(30 * time.Second)
 				elapsed += 30 * time.Second
-				source.feed(rawItem{comment: true})
+				source.Feed(streamtest.Item{Comment: true})
 			}
 			awaitTimers(t, clock, 2)
 			if conn.Context().Err() != nil {
@@ -551,22 +421,22 @@ func TestStreamPolicyPlannedClose(t *testing.T) {
 
 	t.Run("a draw is made for each connection", func(t *testing.T) {
 		clock := manualclock.New(policyStart)
-		opener := newScriptedOpener(clock, attemptFails(httpFailure(503)))
-		policy := NewStreamPolicy(opener.open, nil, policyConfig(clock))
+		opener := streamtest.NewOpener(clock.Now, streamtest.Fails(streamtest.HTTPFailure(503)))
+		policy := NewStreamPolicy(opener.Open, nil, policyConfig(clock))
 		attemptOnce(policy)
-		first := opener.lastDeadline()
+		first := opener.LastDeadline()
 		clock.SetRandom(0.5)
 		attemptOnce(policy)
-		if second := opener.lastDeadline(); second.Sub(first) != 15*time.Second {
+		if second := opener.LastDeadline(); second.Sub(first) != 15*time.Second {
 			t.Fatalf("deadlines %s then %s; want each connection to draw its own", first, second)
 		}
 	})
 
 	t.Run("a planned close does not move the transient delay", func(t *testing.T) {
 		clock := manualclock.New(policyStart)
-		blocking := attemptOpens(blockingEventSource{})
-		opener := newScriptedOpener(clock, attemptFails(httpFailure(503)), blocking, attemptFails(httpFailure(503)))
-		policy := NewStreamPolicy(opener.open, nil, policyConfig(clock))
+		blocking := streamtest.Opens(blockingEventSource{})
+		opener := streamtest.NewOpener(clock.Now, streamtest.Fails(streamtest.HTTPFailure(503)), blocking, streamtest.Fails(streamtest.HTTPFailure(503)))
+		policy := NewStreamPolicy(opener.Open, nil, policyConfig(clock))
 		attemptOnce(policy)
 
 		conn := policy.Connect(context.Background(), nil)
@@ -589,9 +459,9 @@ func TestStreamPolicyPlannedClose(t *testing.T) {
 		// The deadline travels as whole seconds, so the server may close up
 		// to a second before the client's own timer.
 		clock := manualclock.New(policyStart.Add(400 * time.Millisecond))
-		source := newRawSource()
-		opener := newScriptedOpener(clock, attemptOpens(source))
-		policy := NewStreamPolicy(opener.open, nil, policyConfig(clock))
+		source := streamtest.NewSource()
+		opener := streamtest.NewOpener(clock.Now, streamtest.Opens(source))
+		policy := NewStreamPolicy(opener.Open, nil, policyConfig(clock))
 		conn := policy.Connect(context.Background(), nil)
 		opened, err := conn.Open()
 		if err != nil {
@@ -599,15 +469,15 @@ func TestStreamPolicyPlannedClose(t *testing.T) {
 		}
 		ended := make(chan error, 1)
 		go func() { ended <- consumeConnection(conn, opened) }()
-		source.feed(rawItem{event: &awid.AgentEvent{Type: awid.AgentEventConnected}})
+		source.Feed(streamtest.Item{Event: &awid.AgentEvent{Type: awid.AgentEventConnected}})
 		for i := 0; i < 6; i++ {
 			awaitTimers(t, clock, 2)
 			clock.Advance(30 * time.Second)
-			source.feed(rawItem{comment: true})
+			source.Feed(streamtest.Item{Comment: true})
 		}
 		awaitTimers(t, clock, 2)
 		clock.Advance(29*time.Second + 600*time.Millisecond)
-		source.feed(rawItem{err: io.EOF})
+		source.Feed(streamtest.Item{Err: io.EOF})
 		if end := conn.End(<-ended); end.Kind != StreamEndPlannedClose {
 			t.Fatalf("server close at the requested deadline ended as %v", end.Kind)
 		}
@@ -615,8 +485,8 @@ func TestStreamPolicyPlannedClose(t *testing.T) {
 
 	t.Run("the server closing before the deadline is an early end", func(t *testing.T) {
 		clock := manualclock.New(policyStart)
-		opener := newScriptedOpener(clock, attemptOpens(newFakeEventSource(confirmedEvent())))
-		policy := NewStreamPolicy(opener.open, nil, policyConfig(clock))
+		opener := streamtest.NewOpener(clock.Now, streamtest.Opens(newFakeEventSource(confirmedEvent())))
+		policy := NewStreamPolicy(opener.Open, nil, policyConfig(clock))
 		if end := attemptOnce(policy); end.Kind != StreamEndTransient {
 			t.Fatalf("early end classified as %v", end.Kind)
 		}
@@ -626,12 +496,12 @@ func TestStreamPolicyPlannedClose(t *testing.T) {
 // Section 6: nothing read for 75 seconds closes the connection and is a
 // transient failure. Every byte counts, including comments.
 func TestStreamPolicySilence(t *testing.T) {
-	open := func(t *testing.T) (*manualclock.Clock, *rawSource, *StreamConnection, chan error) {
+	open := func(t *testing.T) (*manualclock.Clock, *streamtest.Source, *StreamConnection, chan error) {
 		t.Helper()
 		clock := manualclock.New(policyStart)
-		source := newRawSource()
-		opener := newScriptedOpener(clock, attemptOpens(source))
-		policy := NewStreamPolicy(opener.open, nil, policyConfig(clock))
+		source := streamtest.NewSource()
+		opener := streamtest.NewOpener(clock.Now, streamtest.Opens(source))
+		policy := NewStreamPolicy(opener.Open, nil, policyConfig(clock))
 		conn := policy.Connect(context.Background(), nil)
 		opened, err := conn.Open()
 		if err != nil {
@@ -661,17 +531,17 @@ func TestStreamPolicySilence(t *testing.T) {
 
 	reads := []struct {
 		name string
-		item rawItem
+		item streamtest.Item
 	}{
-		{"a comment-only read", rawItem{comment: true}},
-		{"bytes that complete no line", rawItem{partial: true}},
-		{"an event", rawItem{event: &awid.AgentEvent{Type: awid.AgentEventConnected}}},
+		{"a comment-only read", streamtest.Item{Comment: true}},
+		{"bytes that complete no line", streamtest.Item{Partial: true}},
+		{"an event", streamtest.Item{Event: &awid.AgentEvent{Type: awid.AgentEventConnected}}},
 	}
 	for _, read := range reads {
 		t.Run(read.name+" resets the deadline", func(t *testing.T) {
 			clock, source, conn, ended := open(t)
 			clock.Advance(60 * time.Second)
-			source.feed(read.item)
+			source.Feed(read.item)
 			clock.Advance(15 * time.Second)
 			// The watchdog looked at 75 seconds, found a read 15 seconds
 			// old, and waits out the rest.
@@ -692,8 +562,8 @@ func TestStreamPolicySilence(t *testing.T) {
 
 	t.Run("a source that reports events only is watched by its events", func(t *testing.T) {
 		clock := manualclock.New(policyStart)
-		opener := newScriptedOpener(clock, attemptOpens(blockingEventSource{}))
-		policy := NewStreamPolicy(opener.open, nil, policyConfig(clock))
+		opener := streamtest.NewOpener(clock.Now, streamtest.Opens(blockingEventSource{}))
+		policy := NewStreamPolicy(opener.Open, nil, policyConfig(clock))
 		conn := policy.Connect(context.Background(), nil)
 		opened, err := conn.Open()
 		if err != nil {
@@ -772,8 +642,8 @@ func TestStreamPolicySilenceIsResetByAHeartbeatOnTheWire(t *testing.T) {
 func TestStreamPolicyQuarantine(t *testing.T) {
 	t.Run("a refusal is reported once, on entry", func(t *testing.T) {
 		clock := manualclock.New(policyStart)
-		opener := newScriptedOpener(clock, attemptFails(httpFailure(401)))
-		policy := NewStreamPolicy(opener.open, nil, policyConfig(clock))
+		opener := streamtest.NewOpener(clock.Now, streamtest.Fails(streamtest.HTTPFailure(401)))
+		policy := NewStreamPolicy(opener.Open, nil, policyConfig(clock))
 		first := attemptOnce(policy)
 		if first.Kind != StreamEndRefused || first.Cause != "401" || !first.EnteredRefused {
 			t.Fatalf("first refusal %+v", first)
@@ -787,9 +657,9 @@ func TestStreamPolicyQuarantine(t *testing.T) {
 
 	t.Run("a grant terminal event on an open stream quarantines it", func(t *testing.T) {
 		clock := manualclock.New(policyStart)
-		source := newRawSource()
-		opener := newScriptedOpener(clock, attemptOpens(source))
-		policy := NewStreamPolicy(opener.open, nil, policyConfig(clock))
+		source := streamtest.NewSource()
+		opener := streamtest.NewOpener(clock.Now, streamtest.Opens(source))
+		policy := NewStreamPolicy(opener.Open, nil, policyConfig(clock))
 		conn := policy.Connect(context.Background(), nil)
 		opened, err := conn.Open()
 		if err != nil {
@@ -797,8 +667,8 @@ func TestStreamPolicyQuarantine(t *testing.T) {
 		}
 		ended := make(chan error, 1)
 		go func() { ended <- consumeConnection(conn, opened) }()
-		source.feed(rawItem{event: &awid.AgentEvent{Type: awid.AgentEventConnected}})
-		source.feed(rawItem{err: &awid.AgentEventStreamClosedError{Event: "grant_revoked", Detail: "identity grant revoked"}})
+		source.Feed(streamtest.Item{Event: &awid.AgentEvent{Type: awid.AgentEventConnected}})
+		source.Feed(streamtest.Item{Err: &awid.AgentEventStreamClosedError{Event: "grant_revoked", Detail: "identity grant revoked"}})
 		end := conn.End(<-ended)
 		if end.Kind != StreamEndRefused || end.Cause != "grant_revoked" || !end.EnteredRefused || end.Wait != 30*time.Second {
 			t.Fatalf("end=%+v, want a refusal by grant_revoked waiting from 1 minute", end)
@@ -807,14 +677,14 @@ func TestStreamPolicyQuarantine(t *testing.T) {
 
 	t.Run("the first confirmed stream ends it and names what it ended", func(t *testing.T) {
 		clock := manualclock.New(policyStart)
-		opener := newScriptedOpener(clock,
-			attemptFails(httpFailure(401)),
-			attemptFails(httpFailure(403)),
-			attemptOpens(newFakeEventSource()),
-			attemptOpens(newFakeEventSource(confirmedEvent())),
-			attemptFails(httpFailure(401)),
+		opener := streamtest.NewOpener(clock.Now,
+			streamtest.Fails(streamtest.HTTPFailure(401)),
+			streamtest.Fails(streamtest.HTTPFailure(403)),
+			streamtest.Opens(newFakeEventSource()),
+			streamtest.Opens(newFakeEventSource(confirmedEvent())),
+			streamtest.Fails(streamtest.HTTPFailure(401)),
 		)
-		policy := NewStreamPolicy(opener.open, nil, policyConfig(clock))
+		policy := NewStreamPolicy(opener.Open, nil, policyConfig(clock))
 		attemptOnce(policy)
 		attemptOnce(policy)
 		if !policy.Refused() {
@@ -859,8 +729,8 @@ func TestStreamPolicyQuarantine(t *testing.T) {
 
 	t.Run("a confirmation outside a quarantine names none", func(t *testing.T) {
 		clock := manualclock.New(policyStart)
-		opener := newScriptedOpener(clock, attemptOpens(newFakeEventSource(confirmedEvent())))
-		policy := NewStreamPolicy(opener.open, nil, policyConfig(clock))
+		opener := streamtest.NewOpener(clock.Now, streamtest.Opens(newFakeEventSource(confirmedEvent())))
+		policy := NewStreamPolicy(opener.Open, nil, policyConfig(clock))
 		var ended []string
 		conn := policy.Connect(context.Background(), func(cause string) { ended = append(ended, cause) })
 		source, err := conn.Open()
@@ -875,8 +745,8 @@ func TestStreamPolicyQuarantine(t *testing.T) {
 
 	t.Run("a transient failure does not end it", func(t *testing.T) {
 		clock := manualclock.New(policyStart)
-		opener := newScriptedOpener(clock, attemptFails(httpFailure(401)), attemptFails(httpFailure(503)), attemptFails(io.EOF))
-		policy := NewStreamPolicy(opener.open, nil, policyConfig(clock))
+		opener := streamtest.NewOpener(clock.Now, streamtest.Fails(streamtest.HTTPFailure(401)), streamtest.Fails(streamtest.HTTPFailure(503)), streamtest.Fails(io.EOF))
+		policy := NewStreamPolicy(opener.Open, nil, policyConfig(clock))
 		attemptOnce(policy)
 		for step, delay := range []time.Duration{2 * time.Minute, 4 * time.Minute} {
 			end := attemptOnce(policy)
@@ -889,8 +759,8 @@ func TestStreamPolicyQuarantine(t *testing.T) {
 	t.Run("waits a minute by the clock", func(t *testing.T) {
 		clock := manualclock.New(policyStart)
 		clock.SetRandom(almostOne)
-		opener := newScriptedOpener(clock, attemptFails(httpFailure(401)))
-		policy := NewStreamPolicy(opener.open, nil, policyConfig(clock))
+		opener := streamtest.NewOpener(clock.Now, streamtest.Fails(streamtest.HTTPFailure(401)))
+		policy := NewStreamPolicy(opener.Open, nil, policyConfig(clock))
 		end := attemptOnce(policy)
 		waited := make(chan bool, 1)
 		go func() { waited <- policy.Wait(context.Background(), end) }()
@@ -909,8 +779,8 @@ func TestStreamPolicyQuarantine(t *testing.T) {
 
 	t.Run("an explicit request retries at once and continues from 1 minute", func(t *testing.T) {
 		clock := manualclock.New(policyStart)
-		opener := newScriptedOpener(clock, attemptFails(httpFailure(401)))
-		policy := NewStreamPolicy(opener.open, nil, policyConfig(clock))
+		opener := streamtest.NewOpener(clock.Now, streamtest.Fails(streamtest.HTTPFailure(401)))
+		policy := NewStreamPolicy(opener.Open, nil, policyConfig(clock))
 		attemptOnce(policy)
 		attemptOnce(policy)
 		end := attemptOnce(policy)
@@ -942,8 +812,8 @@ func TestStreamPolicyQuarantine(t *testing.T) {
 
 	t.Run("a request made while an attempt is in flight is kept", func(t *testing.T) {
 		clock := manualclock.New(policyStart)
-		opener := newScriptedOpener(clock, attemptFails(httpFailure(401)))
-		policy := NewStreamPolicy(opener.open, nil, policyConfig(clock))
+		opener := streamtest.NewOpener(clock.Now, streamtest.Fails(streamtest.HTTPFailure(401)))
+		policy := NewStreamPolicy(opener.Open, nil, policyConfig(clock))
 		attemptOnce(policy)
 		policy.Request()
 		end := attemptOnce(policy)
@@ -957,8 +827,8 @@ func TestStreamPolicyQuarantine(t *testing.T) {
 
 	t.Run("a request outside a quarantine changes nothing", func(t *testing.T) {
 		clock := manualclock.New(policyStart)
-		opener := newScriptedOpener(clock, attemptFails(httpFailure(503)), attemptFails(httpFailure(503)), attemptFails(httpFailure(401)))
-		policy := NewStreamPolicy(opener.open, nil, policyConfig(clock))
+		opener := streamtest.NewOpener(clock.Now, streamtest.Fails(streamtest.HTTPFailure(503)), streamtest.Fails(streamtest.HTTPFailure(503)), streamtest.Fails(streamtest.HTTPFailure(401)))
+		policy := NewStreamPolicy(opener.Open, nil, policyConfig(clock))
 		policy.Request()
 		end := attemptOnce(policy)
 		waited := make(chan bool, 1)
@@ -1001,9 +871,9 @@ func TestStreamPolicyReloadsCredentialsBeforeEachRefusedRetry(t *testing.T) {
 				used = append(used, credential)
 				switch credential {
 				case "first":
-					return nil, httpFailure(503)
+					return nil, streamtest.HTTPFailure(503)
 				case "expired":
-					return nil, httpFailure(401)
+					return nil, streamtest.HTTPFailure(401)
 				default:
 					return newFakeEventSource(confirmedEvent()), nil
 				}
@@ -1047,13 +917,13 @@ func TestStreamPolicyReloadsCredentialsBeforeEachRefusedRetry(t *testing.T) {
 
 	t.Run("credentials that cannot be read fail the attempt without opening", func(t *testing.T) {
 		clock := manualclock.New(policyStart)
-		opener := newScriptedOpener(clock, attemptFails(httpFailure(401)))
+		opener := streamtest.NewOpener(clock.Now, streamtest.Fails(streamtest.HTTPFailure(401)))
 		unreadable := errors.New("certificate unreadable")
-		policy := NewStreamPolicy(opener.open, func() (EventStreamOpener, error) { return nil, unreadable }, policyConfig(clock))
+		policy := NewStreamPolicy(opener.Open, func() (EventStreamOpener, error) { return nil, unreadable }, policyConfig(clock))
 		attemptOnce(policy)
 		end := attemptOnce(policy)
-		if opener.opens() != 1 {
-			t.Fatalf("opened %d times; the retry must not go out with credentials that were not read again", opener.opens())
+		if opener.Opens() != 1 {
+			t.Fatalf("opened %d times; the retry must not go out with credentials that were not read again", opener.Opens())
 		}
 		if end.Kind != StreamEndRefused || end.EnteredRefused || !errors.Is(end.Err, unreadable) || end.Wait != time.Minute {
 			t.Fatalf("end=%+v, want still refused, at the quarantine pace, carrying the read error", end)
@@ -1064,8 +934,8 @@ func TestStreamPolicyReloadsCredentialsBeforeEachRefusedRetry(t *testing.T) {
 // Section 1: only the owner stops a stream.
 func TestStreamPolicyStopsOnlyWhenItsOwnerDoes(t *testing.T) {
 	clock := manualclock.New(policyStart)
-	opener := newScriptedOpener(clock, attemptOpens(blockingEventSource{}))
-	policy := NewStreamPolicy(opener.open, nil, policyConfig(clock))
+	opener := streamtest.NewOpener(clock.Now, streamtest.Opens(blockingEventSource{}))
+	policy := NewStreamPolicy(opener.Open, nil, policyConfig(clock))
 	ctx, cancel := context.WithCancel(context.Background())
 	conn := policy.Connect(ctx, nil)
 	source, err := conn.Open()
@@ -1086,7 +956,7 @@ func TestStreamPolicyStopsOnlyWhenItsOwnerDoes(t *testing.T) {
 		t.Fatalf("%d timers left after the owner stopped", clock.Timers())
 	}
 
-	refused := attemptOnce(NewStreamPolicy(newScriptedOpener(clock, attemptFails(httpFailure(401))).open, nil, policyConfig(clock)))
+	refused := attemptOnce(NewStreamPolicy(streamtest.NewOpener(clock.Now, streamtest.Fails(streamtest.HTTPFailure(401))).Open, nil, policyConfig(clock)))
 	stopped, stop := context.WithCancel(context.Background())
 	stop()
 	if policy.Wait(stopped, refused) {
@@ -1096,7 +966,7 @@ func TestStreamPolicyStopsOnlyWhenItsOwnerDoes(t *testing.T) {
 
 // The defaults are the real clock, timer and random source.
 func TestStreamPolicyDefaults(t *testing.T) {
-	policy := NewStreamPolicy(EventStreamOpener(attemptFails(httpFailure(503))), nil, StreamPolicyConfig{})
+	policy := NewStreamPolicy(EventStreamOpener(streamtest.Fails(streamtest.HTTPFailure(503))), nil, StreamPolicyConfig{})
 	before := time.Now()
 	end := attemptOnce(policy)
 	if end.Wait < time.Second/2 || end.Wait > time.Second {

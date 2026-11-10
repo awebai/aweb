@@ -8,6 +8,7 @@ import (
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"strings"
 	"sync"
 	"testing"
 	"time"
@@ -16,6 +17,8 @@ import (
 	"github.com/awebai/aw/awid"
 	"github.com/awebai/aw/internal/manualclock"
 	awrun "github.com/awebai/aw/run"
+	"github.com/awebai/aw/wake"
+	"github.com/awebai/aw/wake/session"
 )
 
 // docs/event-stream-client-policy.md §4: before each retry of a refused
@@ -240,5 +243,89 @@ func TestRunEventStreamReloadReadsTheGrantHomeOnEachCall(t *testing.T) {
 	}
 	if opener, err := reload(); err == nil || opener != nil {
 		t.Fatalf("reload with no grant on disk returned opener=%v err=%v", opener != nil, err)
+	}
+}
+
+// The wake broker: OpenStream is wakeStreamOpener, which resolves the identity
+// home from disk each time it is called, and the broker calls it again before
+// each retry of a refused stream.
+func TestWakeBrokerUsesAGrantRenewedOnDiskAfterARefusal(t *testing.T) {
+	root := resolvedTempDir(t)
+	isolateIdentityResolution(t, root)
+	server := newGrantStreamServer(t)
+	grantHome := filepath.Join(root, "grant.aweb-identity")
+	writeTestGrantHome(t, grantHome, expiredTestGrantID, server.URL)
+	instanceHome := filepath.Join(root, "instance")
+	if err := os.MkdirAll(instanceHome, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	store, err := wake.NewStore(filepath.Join(root, "state"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	clock := manualclock.New(time.Now())
+	broker, err := wake.NewBroker(wake.Config{
+		Store:        store,
+		Session:      session.NewFake(session.Inspection{Home: instanceHome, Backend: "herdr", Present: true, State: session.StateIdle, RawState: "idle"}),
+		OpenStream:   wakeStreamOpener,
+		StreamPolicy: awrun.StreamPolicyConfig{Now: clock.Now, Timer: clock.Timer, Rand: clock.Random},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := broker.Register(wake.Registration{Home: instanceHome, IdentityHome: grantHome, Delivery: wake.DeliverySession, Backend: "herdr", RegisteredAt: time.Now().UTC()}); err != nil {
+		t.Fatal(err)
+	}
+	ctx, cancel := context.WithCancel(context.Background())
+	done := make(chan error, 1)
+	go func() { done <- broker.Run(ctx) }()
+	defer func() {
+		cancel()
+		select {
+		case <-done:
+		case <-time.After(5 * time.Second):
+			t.Errorf("broker did not stop")
+		}
+	}()
+	stream := func() wake.StreamStatus {
+		streams := broker.Status().Streams
+		if len(streams) != 1 {
+			t.Fatalf("streams=%+v, want one", streams)
+		}
+		return streams[0]
+	}
+
+	// First attempt: planned-close timer, then the wait after the refusal.
+	if !clock.AwaitStarted(2, 1) {
+		t.Fatal("the stream is not waiting to retry after the refusal")
+	}
+	refused := stream()
+	if refused.Phase != string(wake.StreamRefused) || refused.Admitted || refused.Cause != "401" {
+		t.Fatalf("stream %+v, want refused by 401 and not admitted", refused)
+	}
+	text := formatWakeStatus(broker.Status())
+	wantLine := "  refused  " + grantHome + "  [refused by the server: 401; next try " + refused.NextAttemptAt.UTC().Format(time.RFC3339) + "]"
+	if !strings.Contains(text, wantLine) {
+		t.Fatalf("status text does not show the refusal as %q:\n%s", wantLine, text)
+	}
+	if strings.Contains(text, "over the stream bound") || strings.Contains(text, "stream_admitted=true") {
+		t.Fatalf("status text shows a refused identity as over the bound or admitted:\n%s", text)
+	}
+	if !strings.Contains(text, "stream_admitted=false stream_phase=refused stream_cause=401 stream_next_try="+refused.NextAttemptAt.UTC().Format(time.RFC3339)) {
+		t.Fatalf("status text does not show the receive identity as refused:\n%s", text)
+	}
+
+	writeTestGrantHome(t, grantHome, renewedTestGrantID, server.URL)
+	clock.Advance(time.Minute)
+	waitForCondition(t, "the stream to be accepted with the renewed grant", func() bool { return stream().Phase == string(wake.StreamLive) })
+	if accepted := stream(); !accepted.Admitted || accepted.Cause != "" || !accepted.NextAttemptAt.IsZero() {
+		t.Fatalf("stream %+v, want streaming and admitted", accepted)
+	}
+	want := []string{expiredTestGrantID, renewedTestGrantID}
+	if got := server.presented(); fmt.Sprint(got) != fmt.Sprint(want) {
+		t.Fatalf("grants presented %v, want %v", got, want)
+	}
+	if text := formatWakeStatus(broker.Status()); !strings.Contains(text, "  streaming  "+grantHome) || strings.Contains(text, "refused") {
+		t.Fatalf("status text after the stream was accepted:\n%s", text)
 	}
 }

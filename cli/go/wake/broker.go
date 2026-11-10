@@ -70,9 +70,10 @@ type Config struct {
 	IdleProbe     time.Duration
 	PendingExpiry time.Duration
 	Reconcile     time.Duration
-	StreamTTL     time.Duration
-	BackoffMin    time.Duration
-	BackoffMax    time.Duration
+	// StreamPolicy supplies the timer and random source of the streams'
+	// reconnect policy (docs/event-stream-client-policy.md); its clock
+	// defaults to Now.
+	StreamPolicy run.StreamPolicyConfig
 
 	// Version and Commit identify the daemon's own build. They are reported in
 	// Status so readers see the running daemon, not the CLI asking.
@@ -407,7 +408,13 @@ func orDash(s string) string {
 }
 
 // ensureStream opens the identity's stream if it is not already open and the
-// stream bound allows it. It reports whether the identity has a stream.
+// stream bound allows it. It reports whether the identity is admitted: it has
+// a stream and the server is not refusing it. A refused stream keeps its slot
+// and its retries; it is reported as refused, never as admitted.
+//
+// Reconcile calls this for every binding on its timer, so it is not an
+// explicit request for the stream: a quarantined stream keeps its pace. An
+// explicit request is a registration (Register), which calls requestStreams.
 func (b *Broker) ensureStream(binding ReceiveIdentity) bool {
 	key, err := bindingKey(binding.IdentityHome, binding.TeamID)
 	if err != nil || strings.TrimSpace(binding.IdentityHome) == "" {
@@ -415,9 +422,9 @@ func (b *Broker) ensureStream(binding ReceiveIdentity) bool {
 	}
 	teamID := binding.TeamID
 	b.mu.Lock()
-	if _, ok := b.streams[key]; ok {
+	if existing, ok := b.streams[key]; ok {
 		b.mu.Unlock()
-		return true
+		return !existing.refused()
 	}
 	if len(b.streams) >= b.cfg.MaxStreams {
 		b.overBound[key] = struct{}{}
@@ -435,14 +442,20 @@ func (b *Broker) ensureStream(binding ReceiveIdentity) bool {
 		b.cfg.Log("stream unavailable identity_home=%s team=%s err=%v", binding.IdentityHome, teamID, err)
 		return false
 	}
-	runner := newStreamRunner(key, binding.IdentityHome, teamID, opener, func(ev awid.AgentEvent) {
+	identityHome := binding.IdentityHome
+	// OpenStream resolves the identity home from disk, so calling it again is
+	// how a refused stream's retry picks up a renewed certificate or grant.
+	reload := func() (run.EventStreamOpener, error) {
+		return b.cfg.OpenStream(identityHome, teamID)
+	}
+	runner := newStreamRunner(key, identityHome, teamID, opener, reload, func(ev awid.AgentEvent) {
 		b.dispatchStream(key, ev)
-	}, b.cfg.Log, b.cfg.Now, b.cfg.StreamTTL, b.cfg.BackoffMin, b.cfg.BackoffMax)
+	}, b.cfg.Log, b.cfg.Now, b.cfg.StreamPolicy)
 
 	b.mu.Lock()
-	if _, ok := b.streams[key]; ok {
+	if existing, ok := b.streams[key]; ok {
 		b.mu.Unlock()
-		return true
+		return !existing.refused()
 	}
 	b.streams[key] = runner
 	delete(b.overBound, key)
@@ -451,6 +464,24 @@ func (b *Broker) ensureStream(binding ReceiveIdentity) bool {
 		runner.start(ctx)
 	}
 	return true
+}
+
+// requestStreams is the explicit request a registration makes for its
+// identities' streams: one that is quarantined retries at once and, if refused
+// again, continues from the 1-minute delay.
+func (b *Broker) requestStreams(reg Registration) {
+	for _, binding := range reg.ReceiveBindings() {
+		key, err := bindingKey(binding.IdentityHome, binding.TeamID)
+		if err != nil {
+			continue
+		}
+		b.mu.Lock()
+		stream := b.streams[key]
+		b.mu.Unlock()
+		if stream != nil {
+			stream.requestNow()
+		}
+	}
 }
 
 // pruneStreams stops streams no registration needs any more.
@@ -623,6 +654,9 @@ func (b *Broker) Register(reg Registration) error {
 			}
 		}
 	}
+	// Before the registration is applied, so the request reaches only streams
+	// that already exist: one this registration creates starts with an attempt.
+	b.requestStreams(reg)
 	b.applyRegistrationLocked(reg, "")
 	if hadExistingRunner || hadExistingRegistration {
 		if runner, ok := b.instanceRunner(reg.Home); ok && !runner.hasPendingRegistration() {
@@ -806,7 +840,12 @@ func enrichInstancesWithStreamStatus(instances []InstanceStatus, streams []Strea
 				continue
 			}
 			instances[i].ReceiveIdentities[j].StreamAdmitted = stream.Admitted
+			if !stream.Admitted {
+				instances[i].StreamAdmitted = false
+			}
 			instances[i].ReceiveIdentities[j].StreamPhase = stream.Phase
+			instances[i].ReceiveIdentities[j].StreamCause = stream.Cause
+			instances[i].ReceiveIdentities[j].StreamNextAttemptAt = stream.NextAttemptAt
 			instances[i].ReceiveIdentities[j].StreamError = stream.LastError
 			instances[i].ReceiveIdentities[j].StreamErrorDetail = stream.LastErrorDetail
 			instances[i].ReceiveIdentities[j].UnreadCount = stream.UnreadCount

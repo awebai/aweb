@@ -545,8 +545,13 @@ func formatWakeStatus(v any) string {
 		b.WriteString("\nStreams:\n")
 		for _, stream := range status.Streams {
 			line := fmt.Sprintf("  %s  %s", stream.Phase, stream.IdentityHome)
-			if !stream.Admitted {
+			switch {
+			case stream.Phase == string(wake.StreamRefused):
+				line += "  [refused by the server: " + dashIfEmpty(stream.Cause) + "; next try " + stampOrDash(stream.NextAttemptAt) + "]"
+			case !stream.Admitted:
 				line += "  [over the stream bound; registration kept]"
+			case stream.Phase == string(wake.StreamRetrying) && !stream.NextAttemptAt.IsZero():
+				line += "  [next try " + stampOrDash(stream.NextAttemptAt) + "]"
 			}
 			if stream.UnreadCount > 0 {
 				line += fmt.Sprintf("  unread=%d", stream.UnreadCount)
@@ -573,6 +578,12 @@ func formatWakeStatus(v any) string {
 				recv.IdentityHome, dashIfEmpty(recv.DeliveryOwner), recv.Controls, recv.StreamAdmitted)
 			if strings.TrimSpace(recv.StreamPhase) != "" {
 				line += " stream_phase=" + recv.StreamPhase
+			}
+			if strings.TrimSpace(recv.StreamCause) != "" {
+				line += " stream_cause=" + recv.StreamCause
+			}
+			if !recv.StreamNextAttemptAt.IsZero() {
+				line += " stream_next_try=" + stampOrDash(recv.StreamNextAttemptAt)
 			}
 			if strings.TrimSpace(recv.StreamError) != "" {
 				line += " stream_error=" + recv.StreamError
