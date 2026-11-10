@@ -182,10 +182,10 @@ contact roles.
 
 ### Reading a holding
 
-The app that writes a role's holdings owns its one read of them: one table,
-one owner. A consumer, such as a console handoff, maps that read onto its
-own interface and never reads the holding table itself. The read has this
-signature in `aweb_naapp` terms:
+The app that writes a role's holdings owns its one read of them and the
+hold that pins it: one table, one owner. A consumer, such as a console
+handoff, maps them onto its own interface and never reads or locks the
+holding table itself. Their signatures, in `aweb_naapp` terms:
 
 ```python
 @dataclass(frozen=True)
@@ -206,11 +206,36 @@ async def read_holding(
     role: str,
     principal: str,
 ) -> HumanRoleHolding | None: ...
+
+
+async def hold_holding(
+    tx: TransactionManager,
+    *,
+    installation: AdmittedInstallation,
+    role: str,
+    principal: str,
+) -> HumanRoleHolding | None: ...
 ```
 
-- **Where it runs.** In the caller's transaction, by SQL reads only. It does
-  no network or registry read, takes no lock, and refreshes nothing. The
-  caller orders its locks and calls it again after them to compare.
+- **Where they run.** In the caller's transaction, by SQL only. Neither
+  does a network or registry read or refreshes anything. `read_holding`
+  takes no lock: it projects a target before an effect transaction, and its
+  result protects nothing by itself.
+- **The hold.** `hold_holding` returns the same result as `read_holding`,
+  and locks what it read `FOR SHARE` until the caller's transaction ends:
+  the holding row, and the B3 approver and credential rows that the app's
+  writers change with it. Before an effect, the caller holds the holding
+  and compares `held_since` and `subject` with the target it projected. A
+  difference, or `None`, refuses the effect. A revoke or replace therefore
+  cannot commit between the comparison and the effect.
+- **Lock order.** The caller takes the installation's dispatch fence first,
+  then `hold_holding`, then B3's current-approver preparation, then its own
+  approval, change-set and session rows. Every writer of the holding row
+  locks it `FOR UPDATE` in the same order, after the fence and before any B3
+  row: designate, replace and revoke under the owner act (stage 3), and any
+  app path that ends a holding. On the hold side, secrets' owner holding
+  takes this order with `hold_role` (`naapp-lib/src/aweb_naapp/roles/__init__.py:158`) on the
+  role row as its hold.
 - **No holding.** It returns `None` when (installation, role, principal) has
   no current holding: never designated, or revoked. It also returns `None`
   for a role the app does not declare with the human-role acts, and for a
@@ -226,8 +251,10 @@ async def read_holding(
   log in. It is `None` while none can: from a replace until the end of its
   cooling-off. The holding still exists then, so the caller refuses the login
   without treating the role as unheld.
-- **The holding's version.** `held_since` is set when designate creates the
-  holding. A replace keeps it. A revoke followed by a designate gives a new
+- **The holding's version.** `held_since` is the database's
+  `clock_timestamp()` in the designate transaction that creates the holding,
+  never a request's or client's time. Consumers compare it only for
+  equality. A replace keeps it. A revoke followed by a designate gives a new
   value, so a consumer that bound a session to the earlier holding sees that
   it changed. A consumer's binding to a holding uses only installation, team,
   role, principal and `held_since`, none of which is secret.
@@ -235,7 +262,8 @@ async def read_holding(
   `principal` is a current human member ([Use](#use)). That check is the
   runtime's shared exact-principal check
   (`aweb_naapp.runtime.human_member.check_human_member`). The caller runs it
-  before its effect transaction and keeps its proof fresh around each read.
+  before its effect transaction and keeps its proof fresh around each read
+  and hold.
   The read runs no copy of that check. A holding whose principal has left
   the team still reads as a holding, so revoke can target it (stage 3
   above), and the shared check refuses its use.
