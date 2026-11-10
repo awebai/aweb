@@ -2,6 +2,13 @@
 
 ## Unreleased
 
+- The channel client (the Claude Code plugin, the Pi extension and `aw wake`)
+  signs every certificate and identity request with the
+  [v2 request envelope](docs/team-auth-envelope-v2.md), which binds the
+  audience, method, path with query, body and timestamp, as `aw` does. It does
+  not send the compact v1 form and does not fall back to it; a server that
+  refuses v2 refuses the request.
+
 - AWID bounds its request input. The registry service refuses a request body
   over `AWID_MAX_REQUEST_BODY_BYTES` with 413 before parsing it (default 4 MiB,
   following a raised `AWID_ROTATE_MAX_BODY_BYTES`; a value below the rotate

@@ -3,7 +3,8 @@
 // signed claims before a message is reported verified. The rules are the Go
 // client's (cli/go/awid/signed_payload.go), so both clients agree.
 
-export type DisplayedFields = Readonly<Record<string, string | undefined>>;
+/** Response fields as received. An absent or null field is an empty one. */
+export type DisplayedFields = Readonly<Record<string, string | null | undefined>>;
 
 /** Who is reading: their current did:key and their did:aw, each empty when unknown. */
 export interface ReaderIdentity {
@@ -62,8 +63,9 @@ export function signedMailDisplayMatches(
 }
 
 function everyClaimMatches(signed: Record<string, unknown>, displayed: DisplayedFields): boolean {
-  for (const [name, shown = ""] of Object.entries(displayed)) {
+  for (const [name, value] of Object.entries(displayed)) {
     if (!(name in signed)) continue;
+    const shown = value ?? "";
     const claim = signed[name];
     if (typeof claim !== "string") return false;
     if (claim === shown) continue;

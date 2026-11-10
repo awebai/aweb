@@ -3218,6 +3218,17 @@ async function readBoundedJSON(response) {
   return JSON.parse(await readBoundedResponse(response));
 }
 
+// channel-core/src/identity/canonical.ts
+function canonicalJSONValue(value, unsupported) {
+  if (Array.isArray(value)) return `[${value.map((item) => canonicalJSONValue(item, unsupported)).join(",")}]`;
+  if (value !== null && typeof value === "object") {
+    const obj = value;
+    return `{${Object.keys(obj).sort().map((key) => `${JSON.stringify(key)}:${canonicalJSONValue(obj[key], unsupported)}`).join(",")}}`;
+  }
+  if (typeof value === "string" || typeof value === "boolean" || value === null || typeof value === "number" && Number.isSafeInteger(value)) return JSON.stringify(value);
+  throw new Error(unsupported);
+}
+
 // channel-core/src/identity/did.ts
 import { createHash } from "node:crypto";
 
@@ -3408,32 +3419,44 @@ etc.sha512Sync = (...m) => sha512(etc.concatBytes(...m));
 function canonicalTimestamp() {
   return (/* @__PURE__ */ new Date()).toISOString().replace(/\.\d{3}Z$/, "Z");
 }
-function canonicalGrantPayload(fields) {
-  const entries = Object.entries(fields).sort(([a], [b]) => a < b ? -1 : a > b ? 1 : 0);
-  return `{${entries.map(([key, value]) => `${JSON.stringify(key)}:${typeof value === "number" ? String(value) : JSON.stringify(value)}`).join(",")}}`;
+function signedTarget(baseURL, path, method, bodyText) {
+  const url = new URL(baseURL + path);
+  return {
+    aud: `${url.protocol}//${url.host}`,
+    method: method.toUpperCase(),
+    path: `${url.pathname}${url.search}` || "/",
+    body_sha256: createHash2("sha256").update(bodyText, "utf-8").digest("hex")
+  };
+}
+function signCanonical(payload, signingKey) {
+  const canonicalPayload = canonicalJSONValue(payload, "unsupported request signing value");
+  return {
+    did: computeDIDKey(getPublicKey(signingKey)),
+    signature: Buffer.from(sign(new TextEncoder().encode(canonicalPayload), signingKey)).toString("base64").replace(/=+$/, ""),
+    canonicalPayload,
+    signedPayload: Buffer.from(canonicalPayload, "utf-8").toString("base64url")
+  };
+}
+function signRequestHeaders(options) {
+  const target = signedTarget(options.baseURL, options.path, options.method, options.bodyText || "");
+  const signed = signCanonical({ v: 2, ...target, [options.claim]: options.value, timestamp: options.timestamp }, options.signingKey);
+  return {
+    Authorization: `DIDKey ${signed.did} ${signed.signature}`,
+    "X-AWEB-Timestamp": options.timestamp,
+    "X-AWEB-Signed-Payload": signed.signedPayload,
+    canonicalPayload: signed.canonicalPayload
+  };
 }
 function signIdentityGrantHeaders(options) {
-  const bodyText = options.bodyText || "";
-  const bodyHash = createHash2("sha256").update(bodyText, "utf-8").digest("hex");
-  const url = new URL(options.baseURL + options.path);
-  const canonicalPayload = canonicalGrantPayload({
-    v: 1,
-    auth: "identity-grant",
-    aud: `${url.protocol}//${url.host}`,
-    method: options.method.toUpperCase(),
-    path: `${url.pathname}${url.search}` || "/",
-    grant_id: options.grantID,
-    body_sha256: bodyHash,
-    timestamp: options.timestamp
-  });
-  const signature = Buffer.from(sign(new TextEncoder().encode(canonicalPayload), options.signingKey)).toString("base64").replace(/=+$/, "");
+  const target = signedTarget(options.baseURL, options.path, options.method, options.bodyText || "");
+  const signed = signCanonical({ v: 1, auth: "identity-grant", ...target, grant_id: options.grantID, timestamp: options.timestamp }, options.signingKey);
   return {
-    Authorization: `AWEB-Grant DIDKey ${computeDIDKey(getPublicKey(options.signingKey))} ${signature}`,
+    Authorization: `AWEB-Grant DIDKey ${signed.did} ${signed.signature}`,
     "X-AWEB-Grant-ID": options.grantID,
     "X-AWEB-Timestamp": options.timestamp,
-    "X-AWEB-Signed-Payload": Buffer.from(canonicalPayload, "utf-8").toString("base64url"),
-    canonicalPayload,
-    bodySHA256: bodyHash
+    "X-AWEB-Signed-Payload": signed.signedPayload,
+    canonicalPayload: signed.canonicalPayload,
+    bodySHA256: target.body_sha256
   };
 }
 var APIClient = class {
@@ -3516,10 +3539,7 @@ var APIClient = class {
     if (this.auth.authMode === "grant") {
       return this.grantAuthHeaders(method, path, bodyText);
     }
-    if (this.usesIdentityMessagingAuth(path)) {
-      return this.identityAuthHeaders(bodyText);
-    }
-    return this.teamAuthHeaders(bodyText);
+    return this.usesIdentityMessagingAuth(path) ? this.identityAuthHeaders(method, path, bodyText) : this.teamAuthHeaders(method, path, bodyText);
   }
   usesIdentityMessagingAuth(path) {
     const cleanPath = path.split("?", 1)[0] ?? path;
@@ -3536,32 +3556,23 @@ var APIClient = class {
       "X-AWEB-Signed-Payload": signed["X-AWEB-Signed-Payload"]
     };
   }
-  identityAuthHeaders(bodyText) {
-    const timestamp2 = canonicalTimestamp();
-    const bodyHash = createHash2("sha256").update(bodyText, "utf-8").digest("hex");
-    const payload = `{"body_sha256":${JSON.stringify(bodyHash)},"did_aw":${JSON.stringify(this.auth.stableID)},"timestamp":${JSON.stringify(timestamp2)}}`;
-    const signature = Buffer.from(
-      sign(new TextEncoder().encode(payload), this.auth.signingKey)
-    ).toString("base64").replace(/=+$/, "");
-    const headers = {
-      Authorization: `DIDKey ${this.auth.did} ${signature}`,
-      "X-AWEB-Timestamp": timestamp2
+  rootAuthHeaders(method, path, bodyText, claim, value) {
+    const signed = signRequestHeaders({ baseURL: this.baseURL, path, method, bodyText, signingKey: this.auth.signingKey, claim, value, timestamp: canonicalTimestamp() });
+    return {
+      Authorization: signed.Authorization,
+      "X-AWEB-Timestamp": signed["X-AWEB-Timestamp"],
+      "X-AWEB-Signed-Payload": signed["X-AWEB-Signed-Payload"]
     };
-    if (this.auth.stableID.trim()) {
-      headers["X-AWEB-DID-AW"] = this.auth.stableID;
-    }
+  }
+  identityAuthHeaders(method, path, bodyText) {
+    const stableID = this.auth.stableID.trim();
+    const headers = this.rootAuthHeaders(method, path, bodyText, "did_aw", stableID);
+    if (stableID) headers["X-AWEB-DID-AW"] = stableID;
     return headers;
   }
-  teamAuthHeaders(bodyText) {
-    const timestamp2 = canonicalTimestamp();
-    const bodyHash = createHash2("sha256").update(bodyText, "utf-8").digest("hex");
-    const payload = `{"body_sha256":${JSON.stringify(bodyHash)},"team_id":${JSON.stringify(this.auth.teamID)},"timestamp":${JSON.stringify(timestamp2)}}`;
-    const signature = Buffer.from(
-      sign(new TextEncoder().encode(payload), this.auth.signingKey)
-    ).toString("base64").replace(/=+$/, "");
+  teamAuthHeaders(method, path, bodyText) {
     return {
-      Authorization: `DIDKey ${this.auth.did} ${signature}`,
-      "X-AWEB-Timestamp": timestamp2,
+      ...this.rootAuthHeaders(method, path, bodyText, "team_id", this.auth.teamID),
       "X-AWID-Team-Certificate": this.auth.teamCertificateHeader
     };
   }
@@ -3749,17 +3760,6 @@ function signedPayloadConversationStatus(signedPayload, conversationID) {
   }
 }
 
-// channel-core/src/identity/canonical.ts
-function canonicalJSONValue(value, unsupported) {
-  if (Array.isArray(value)) return `[${value.map((item) => canonicalJSONValue(item, unsupported)).join(",")}]`;
-  if (value !== null && typeof value === "object") {
-    const obj = value;
-    return `{${Object.keys(obj).sort().map((key) => `${JSON.stringify(key)}:${canonicalJSONValue(obj[key], unsupported)}`).join(",")}}`;
-  }
-  if (typeof value === "string" || typeof value === "boolean" || value === null || typeof value === "number" && Number.isSafeInteger(value)) return JSON.stringify(value);
-  throw new Error(unsupported);
-}
-
 // channel-core/src/identity/encrypted.ts
 function isEncryptedMessage(msg) {
   return msg.content_mode === "encrypted_v2" || msg.message_version === 2 || msg.encrypted_envelope != null;
@@ -3884,8 +3884,9 @@ function signedMailDisplayMatches(signedPayload, displayed, reader) {
   return everyClaimMatches(signed, displayed);
 }
 function everyClaimMatches(signed, displayed) {
-  for (const [name, shown = ""] of Object.entries(displayed)) {
+  for (const [name, value] of Object.entries(displayed)) {
     if (!(name in signed)) continue;
+    const shown = value ?? "";
     const claim = signed[name];
     if (typeof claim !== "string") return false;
     if (claim === shown) continue;
