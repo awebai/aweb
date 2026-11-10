@@ -388,13 +388,16 @@ class Approvals:
         presentation: PresentationKind,
     ) -> list[Approver]:
         """The directory's approvers in the policy's scopes, one per subject,
-        without the requester unless the policy allows it. A task presentation
-        needs each candidate's principal, to match the answer's."""
+        without the requester unless the policy allows it. A link presentation
+        needs each candidate's contact, where its link goes; a task
+        presentation needs each candidate's principal, to match the answer's."""
         eligible: dict[str, Approver] = {}
         for approver in await self._approvers.candidates(policy, request):
             if approver.scope not in policy.approver_scopes:
                 continue
             if _is_requester(approver, requested_by) and not policy.allow_requester_approval:
+                continue
+            if presentation is PresentationKind.LINK and approver.contact is None:
                 continue
             if presentation is PresentationKind.TASK and approver.principal_did is None:
                 continue
