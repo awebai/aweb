@@ -173,8 +173,9 @@ type EventBusConfig struct {
 	Stream EventStreamOpener
 	// Reload reads the credentials again from where they are kept and
 	// returns the opener that uses them. The bus calls it before each retry
-	// of a refused stream. Without it a retry uses Stream.
-	Reload        func() (EventStreamOpener, error)
+	// of a refused stream, in a context that ends when the bus stops.
+	// Without it a retry uses Stream.
+	Reload        StreamReload
 	Now           func() time.Time
 	OnStateChange func(ConnectionState)
 	// Policy supplies the reconnect policy's timer and random source; its

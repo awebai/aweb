@@ -338,18 +338,35 @@ func resolveClientSelectionForDir(workingDir string) (*aweb.Client, *awconfig.Se
 }
 
 func resolveClientSelectionForDirWithTeamOverride(workingDir, teamIDOverride string) (*aweb.Client, *awconfig.Selection, error) {
+	c, sel, err := buildClientSelectionForDir(context.Background(), workingDir, teamIDOverride)
+	if err != nil {
+		return nil, nil, err
+	}
+	lastClient = c
+	return c, sel, nil
+}
+
+// buildClientSelectionForDir resolves the identity home for workingDir and
+// builds its client, grant-authenticated or certificate-authenticated. It
+// does not record the client as the command's last client, so it is safe off
+// the command's goroutine. Probes it makes run within ctx.
+func buildClientSelectionForDir(ctx context.Context, workingDir, teamIDOverride string) (*aweb.Client, *awconfig.Selection, error) {
 	identityHome, err := identityHomeForDir(workingDir)
 	if err != nil {
 		return nil, nil, err
 	}
 	if awconfig.IsGrantHome(identityHome.Root) {
-		return resolveGrantClientSelection(workingDir, identityHome)
+		return buildGrantClientSelectionForTeam(ctx, workingDir, identityHome, teamFlag)
 	}
 	sel, err := resolveSelectionAtIdentityHome(workingDir, teamIDOverride, identityHome)
 	if err != nil {
 		return nil, nil, err
 	}
-	return resolveClientForSelection(workingDir, sel)
+	selectedHome := ""
+	if sel != nil {
+		selectedHome = strings.TrimSpace(sel.IdentityHome)
+	}
+	return buildClientForSelectionAtIdentityHome(ctx, workingDir, selectedHome, sel)
 }
 
 func resolveClientSelectionAtIdentityHome(workingDir string, identityHome awconfig.IdentityHome) (*aweb.Client, *awconfig.Selection, error) {

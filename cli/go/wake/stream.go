@@ -71,7 +71,7 @@ type streamRunner struct {
 // newStreamRunner builds one identity's stream. reload reads the identity's
 // credentials again from its home; the policy calls it before each retry of a
 // refused stream.
-func newStreamRunner(key, identityHome, teamID string, open run.EventStreamOpener, reload func() (run.EventStreamOpener, error), onEvent func(awid.AgentEvent), log func(string, ...any), now func() time.Time, policy run.StreamPolicyConfig) *streamRunner {
+func newStreamRunner(key, identityHome, teamID string, open run.EventStreamOpener, reload run.StreamReload, onEvent func(awid.AgentEvent), log func(string, ...any), now func() time.Time, policy run.StreamPolicyConfig) *streamRunner {
 	if policy.Now == nil {
 		policy.Now = now
 	}

@@ -1,6 +1,7 @@
 package wake
 
 import (
+	"context"
 	"os"
 	"path/filepath"
 	"sync"

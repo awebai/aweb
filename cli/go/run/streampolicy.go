@@ -48,8 +48,14 @@ var ErrStreamSilent = errors.New("event stream silent for " + StreamSilenceLimit
 
 var (
 	errStreamPlannedClose = errors.New("event stream planned close")
+	errStreamReopened     = errors.New("event stream reopened by its client")
 	errStreamEnded        = errors.New("event stream connection ended")
 )
+
+// StreamReload reads a stream's credentials again from where they are kept
+// and returns the opener that uses them. ctx is the context of the connection
+// attempt the reload serves: it ends when the stream's owner stops it.
+type StreamReload func(ctx context.Context) (EventStreamOpener, error)
 
 // StreamPolicyConfig is what the policy takes from outside. Every field has
 // a real default; tests supply a clock they advance by hand.
@@ -197,7 +203,7 @@ func isDigits(s string) bool {
 // Wait. Request and Refused may be called from any goroutine.
 type StreamPolicy struct {
 	cfg    StreamPolicyConfig
-	reload func() (EventStreamOpener, error)
+	reload StreamReload
 
 	mu           sync.Mutex
 	open         EventStreamOpener
@@ -210,11 +216,10 @@ type StreamPolicy struct {
 }
 
 // NewStreamPolicy returns the policy for one stream. open makes a connection.
-// reload, when not nil, reads the stream's credentials again from where they
-// are kept and returns the opener that uses them; it is called before every
-// retry of a refused stream (§4). It must read the same identity from the
-// same place: a refused client retries as itself or not at all (§5).
-func NewStreamPolicy(open EventStreamOpener, reload func() (EventStreamOpener, error), cfg StreamPolicyConfig) *StreamPolicy {
+// reload, when not nil, is called before every retry of a refused stream
+// (§4). It must read the same identity from the same place: a refused client
+// retries as itself or not at all (§5).
+func NewStreamPolicy(open EventStreamOpener, reload StreamReload, cfg StreamPolicyConfig) *StreamPolicy {
 	cfg.applyDefaults()
 	return &StreamPolicy{
 		cfg:          cfg,
@@ -281,14 +286,17 @@ func (p *StreamPolicy) jittered(delay time.Duration) time.Duration {
 	return half + time.Duration(p.cfg.Rand()*float64(delay-half))
 }
 
-// confirmed records that a stream is live: both delays return to their
-// starts and a quarantine ends. It returns the cause of the quarantine it
-// ended, or "".
+// confirmed records that a stream is streaming: its first event or heartbeat
+// has been read. The transient delay returns to its start and the refused
+// state ends. It returns the cause of the refusal it ended, or "".
+//
+// The refused delay is left where it is: a server can accept the open, send
+// its heartbeat and then refuse, every time, and a heartbeat that reset the
+// delay would have that stream retried once a minute for ever.
 func (p *StreamPolicy) confirmed() string {
 	p.mu.Lock()
 	defer p.mu.Unlock()
 	p.retryDelay = StreamRetryDelayMin
-	p.refusedDelay = StreamRefusedDelayMin
 	cause := ""
 	if p.refused {
 		cause = p.refusedCause
@@ -299,6 +307,15 @@ func (p *StreamPolicy) confirmed() string {
 	default:
 	}
 	return cause
+}
+
+// served records that the server is serving this caller: a non-comment event
+// was read, or a connection reached its planned close. Only then does the
+// refused delay return to its start (§4).
+func (p *StreamPolicy) served() {
+	p.mu.Lock()
+	p.refusedDelay = StreamRefusedDelayMin
+	p.mu.Unlock()
 }
 
 // failed records a failure and decides the wait before the next attempt.
@@ -347,8 +364,14 @@ type StreamConnection struct {
 
 	confirmOnce sync.Once
 	lastRead    atomic.Int64
-	opened      chan struct{}
-	done        chan struct{}
+	// opened carries the silence watch's timer from Open to watch.
+	opened chan streamTimer
+	done   chan struct{}
+}
+
+type streamTimer struct {
+	fired   <-chan time.Time
+	release func()
 }
 
 // Connect starts a connection attempt and draws its planned close. onConfirm,
@@ -362,7 +385,7 @@ func (p *StreamPolicy) Connect(ctx context.Context, onConfirm func(endedRefusal 
 		parent:    ctx,
 		deadline:  p.cfg.Now().Add(plannedIn),
 		onConfirm: onConfirm,
-		opened:    make(chan struct{}),
+		opened:    make(chan streamTimer, 1),
 		done:      make(chan struct{}),
 	}
 	conn.ctx, conn.cancel = context.WithCancelCause(ctx)
@@ -376,10 +399,12 @@ func (p *StreamPolicy) Connect(ctx context.Context, onConfirm func(endedRefusal 
 func (c *StreamConnection) watch(planned <-chan time.Time, releasePlanned func()) {
 	defer close(c.done)
 	defer releasePlanned()
-	opened := c.opened
-	var silence <-chan time.Time
-	releaseSilence := func() {}
-	defer func() { releaseSilence() }()
+	var silence streamTimer
+	defer func() {
+		if silence.release != nil {
+			silence.release()
+		}
+	}()
 	for {
 		select {
 		case <-c.ctx.Done():
@@ -387,16 +412,14 @@ func (c *StreamConnection) watch(planned <-chan time.Time, releasePlanned func()
 		case <-planned:
 			c.cancel(errStreamPlannedClose)
 			return
-		case <-opened:
-			opened = nil
-			silence, releaseSilence = c.policy.cfg.Timer(StreamSilenceLimit)
-		case <-silence:
+		case silence = <-c.opened:
+		case <-silence.fired:
 			idle := c.policy.cfg.Now().Sub(time.Unix(0, c.lastRead.Load()))
 			if idle >= StreamSilenceLimit {
 				c.cancel(ErrStreamSilent)
 				return
 			}
-			silence, releaseSilence = c.policy.cfg.Timer(StreamSilenceLimit - idle)
+			silence.fired, silence.release = c.policy.cfg.Timer(StreamSilenceLimit - idle)
 		}
 	}
 }
@@ -414,7 +437,7 @@ func (c *StreamConnection) Open() (awid.EventSource, error) {
 	open, reload := p.open, p.refused && p.reload != nil
 	p.mu.Unlock()
 	if reload {
-		reloaded, err := p.reload()
+		reloaded, err := p.reload(c.ctx)
 		if err != nil {
 			return nil, err
 		}
@@ -432,7 +455,10 @@ func (c *StreamConnection) Open() (awid.EventSource, error) {
 		activity.OnRead(c.read)
 		activity.OnComment(c.confirm)
 	}
-	close(c.opened)
+	// The silence watch starts here, not in watch, so that a connection that
+	// opened always has one, however soon it ends.
+	fired, release := p.cfg.Timer(StreamSilenceLimit)
+	c.opened <- streamTimer{fired: fired, release: release}
 	return source, nil
 }
 
@@ -441,8 +467,8 @@ func (c *StreamConnection) read() {
 	c.lastRead.Store(c.policy.cfg.Now().UnixNano())
 }
 
-// confirm records the stream as live: its first event or heartbeat has been
-// read (§3).
+// confirm records the stream as streaming: its first event or heartbeat has
+// been read (§3).
 func (c *StreamConnection) confirm() {
 	c.confirmOnce.Do(func() {
 		ended := c.policy.confirmed()
@@ -457,12 +483,14 @@ func (c *StreamConnection) confirm() {
 func (c *StreamConnection) Event() {
 	c.read()
 	c.confirm()
+	c.policy.served()
 }
 
 // Reopen closes the connection because its client wants a fresh one. It ends
-// as a planned close: reconnect at once, not an outage.
+// like a planned close — reconnect at once, not an outage — but the
+// connection has not reached its planned close, so the refused delay stays.
 func (c *StreamConnection) Reopen() {
-	c.cancel(errStreamPlannedClose)
+	c.cancel(errStreamReopened)
 }
 
 // End finishes the attempt and classifies it. err is what Open returned, or
@@ -472,10 +500,19 @@ func (c *StreamConnection) End(err error) StreamEnd {
 	closedBy := context.Cause(c.ctx)
 	c.cancel(errStreamEnded)
 	<-c.done
+	select {
+	case unwatched := <-c.opened:
+		// The connection ended before watch took its silence timer.
+		unwatched.release()
+	default:
+	}
 	switch {
 	case stopped:
 		return StreamEnd{Kind: StreamEndStopped, Err: err}
+	case errors.Is(closedBy, errStreamReopened):
+		return StreamEnd{Kind: StreamEndPlannedClose}
 	case errors.Is(closedBy, errStreamPlannedClose):
+		c.policy.served()
 		return StreamEnd{Kind: StreamEndPlannedClose}
 	case errors.Is(closedBy, ErrStreamSilent):
 		return c.policy.failed(StreamEndTransient, "silence", ErrStreamSilent)
@@ -484,6 +521,7 @@ func (c *StreamConnection) End(err error) StreamEnd {
 	// closes at the deadline it was asked for can do so up to a second before
 	// this connection's own timer. That end is the planned close.
 	if errors.Is(err, io.EOF) && !c.policy.cfg.Now().Before(c.deadline.Truncate(time.Second)) {
+		c.policy.served()
 		return StreamEnd{Kind: StreamEndPlannedClose}
 	}
 	kind, cause := ClassifyStreamFailure(err)

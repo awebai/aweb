@@ -57,7 +57,9 @@ type Config struct {
 	// OpenStream builds the event stream source for one identity home. It is
 	// injected so the broker can be tested with no server and no credentials,
 	// and so credential resolution stays in cmd/aw where it already lives.
-	OpenStream func(identityHome, teamID string) (run.EventStreamOpener, error)
+	// The broker calls it when it creates a stream and again before each retry
+	// of a refused one; anything it waits on must end with ctx.
+	OpenStream func(ctx context.Context, identityHome, teamID string) (run.EventStreamOpener, error)
 	// Heartbeat uses the same explicit identity/team selection as OpenStream.
 	// The runner calls it only after this tick's fresh inspect says present.
 	Heartbeat         func(ctx context.Context, identityHome, teamID string) error
@@ -437,7 +439,11 @@ func (b *Broker) ensureStream(binding ReceiveIdentity) bool {
 	if b.cfg.OpenStream == nil {
 		return false
 	}
-	opener, err := b.cfg.OpenStream(binding.IdentityHome, teamID)
+	ctx := b.runningContext()
+	if ctx == nil {
+		ctx = context.Background()
+	}
+	opener, err := b.cfg.OpenStream(ctx, binding.IdentityHome, teamID)
 	if err != nil {
 		b.cfg.Log("stream unavailable identity_home=%s team=%s err=%v", binding.IdentityHome, teamID, err)
 		return false
@@ -445,8 +451,8 @@ func (b *Broker) ensureStream(binding ReceiveIdentity) bool {
 	identityHome := binding.IdentityHome
 	// OpenStream resolves the identity home from disk, so calling it again is
 	// how a refused stream's retry picks up a renewed certificate or grant.
-	reload := func() (run.EventStreamOpener, error) {
-		return b.cfg.OpenStream(identityHome, teamID)
+	reload := func(ctx context.Context) (run.EventStreamOpener, error) {
+		return b.cfg.OpenStream(ctx, identityHome, teamID)
 	}
 	runner := newStreamRunner(key, identityHome, teamID, opener, reload, func(ev awid.AgentEvent) {
 		b.dispatchStream(key, ev)
@@ -460,8 +466,8 @@ func (b *Broker) ensureStream(binding ReceiveIdentity) bool {
 	b.streams[key] = runner
 	delete(b.overBound, key)
 	b.mu.Unlock()
-	if ctx := b.runningContext(); ctx != nil {
-		runner.start(ctx)
+	if running := b.runningContext(); running != nil {
+		runner.start(running)
 	}
 	return true
 }

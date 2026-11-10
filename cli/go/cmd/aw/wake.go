@@ -443,8 +443,8 @@ func wakeStore() (*wake.Store, error) {
 // path every other identity-home-aware command uses. The broker needs
 // stream-read and presence authority — it never opens a message, so it never
 // needs decryption material for any identity.
-func wakeStreamOpener(identityHome, teamID string) (run.EventStreamOpener, error) {
-	client, err := wakeIdentityClient(context.Background(), identityHome, teamID)
+func wakeStreamOpener(ctx context.Context, identityHome, teamID string) (run.EventStreamOpener, error) {
+	client, err := wakeIdentityClient(ctx, identityHome, teamID)
 	if err != nil {
 		return nil, err
 	}
