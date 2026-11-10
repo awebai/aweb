@@ -130,6 +130,7 @@ router = APIRouter(prefix="/v1/chat", tags=["aweb-chat"])
 
 MAX_CHAT_STREAM_DURATION = 300
 CHAT_STREAM_FALLBACK_POLL_SECONDS = 2.0
+CHAT_STREAM_PAGE_SIZE = 200
 CHAT_STREAM_KEEPALIVE_SECONDS = 30.0
 
 
@@ -2094,6 +2095,7 @@ async def history(
                 "sender_membership": memberships[(str(sess["team_id"] or ""), str(msg.get("from_agent_id") or ""))],
                 "conversation_id": str(session_uuid),
                 "message_id": msg["message_id"],
+                "seq": msg["seq"],
                 "from_agent": msg["from_alias"],
                 "from_address": from_address,
                 "body": msg["body"],
@@ -2216,8 +2218,8 @@ async def _sse_events(
     contact_owner_dids: list[str],
     deadline: datetime,
     auth: MessagingAuth,
-    opened_at: datetime,
-    after: datetime | None = None,
+    cursor: int,
+    receipts_after: int,
     delivery_team_id: str | None = None,
     include_activity: bool = False,
 ) -> AsyncIterator[str]:
@@ -2337,14 +2339,9 @@ async def _sse_events(
             yield grant_terminal_sse(reason)
             return
 
-        # Without after, the stream delivers messages and read receipts created
-        # after opened_at, the instant the handler took before the response
-        # started, so a message posted once the client has the 200 is delivered
-        # whatever setup is still running here.
-        woken_at_open = False
         if activity is not None and pubsub is not None:
             try:
-                frames, woken_at_open = await _open_activity(pubsub)
+                frames, _ = await _open_activity(pubsub)
             except (RedisError, TimeoutError):
                 logger.info("Chat session activity subscribe failed; retrying with the pubsub", exc_info=True)
                 await _close_session_pubsub(pubsub, channel)
@@ -2355,76 +2352,12 @@ async def _sse_events(
                 for frame in frames:
                     yield frame
 
-        if after is not None:
-            recent = await aweb_db.fetch_all(
-                """
-                SELECT message_id, from_agent_id, from_alias, from_address,
-                       CASE WHEN content_mode = 'encrypted_v2' THEN '' ELSE body END AS body,
-                       content_mode, message_version, encrypted_envelope, created_at,
-                       sender_leaving, hang_on, reply_to, from_did, signature, signed_payload, id_chain
-                FROM {{tables.chat_messages}}
-                WHERE session_id = $1 AND created_at > $2
-                ORDER BY created_at ASC
-                LIMIT 50
-                """,
-                session_id,
-                after,
-            )
-            last_message_at = recent[-1]["created_at"] if recent else after
-            sender_dids = [str(r["from_did"]) for r in recent if r.get("from_did")]
-            waiting = set(await get_waiting_agents(redis, session_id_str, list(set(sender_dids))))
-            identity_map = await lookup_identity_metadata_by_did(db, sender_dids)
-            reason = await _stream_grant_reason()
-            if reason:
-                yield grant_terminal_sse(reason)
-                return
-            if datetime.now(timezone.utc) >= deadline:
-                return
-            memberships = await sender_memberships(request, db, [dict(r, team_id=delivery_team_id) for r in recent])
-            for row in recent:
-                is_hang_on = bool(row["hang_on"])
-                from_did = (row.get("from_did") or "").strip()
-                from_address = row.get("from_address") or routable_chat_address(
-                    identity_map.get(from_did, {}),
-                    viewer_team_id,
-                    row["from_alias"],
-                )
-                payload = {
-                    "sender_membership": memberships[(str(delivery_team_id or ""), str(row.get("from_agent_id") or ""))].model_dump(),
-                    "type": "message",
-                    "session_id": session_id_str,
-                    "conversation_id": session_id_str,
-                    "message_id": str(row["message_id"]),
-                    "from_agent": row["from_alias"],
-                    "from_address": from_address,
-                    "from_stable_id": identity_map.get(from_did, {}).get("stable_id") or None,
-                    "body": row["body"],
-                    "content_mode": row.get("content_mode") or "legacy_plaintext_v1",
-                    "message_version": row.get("message_version") or 1,
-                    "encrypted_envelope": row.get("encrypted_envelope"),
-                    "sender_leaving": bool(row["sender_leaving"]),
-                    "sender_waiting": from_did in waiting,
-                    "hang_on": is_hang_on,
-                    "extends_wait_seconds": HANG_ON_EXTENSION_SECONDS if is_hang_on else 0,
-                    "reply_to": str(row["reply_to"]) if row.get("reply_to") is not None else None,
-                    "timestamp": _utc_iso(row["created_at"]),
-                    "to_address": _chat_to_address(participant_rows, from_did=from_did),
-                    "from_did": row.get("from_did"),
-                    "signature": row.get("signature"),
-                    "signed_payload": row.get("signed_payload"),
-                    "id_chain": stored_id_chain(row.get("id_chain")),
-                    **verified_signed_recipient_fields({**row, "conversation_id": session_id_str}),
-                    "is_contact": is_address_in_contacts(from_address, contact_addrs),
-                }
-                yield f"event: message\ndata: {json.dumps(payload)}\n\n"
-        else:
-            last_message_at = opened_at
-
-        last_receipt_at = opened_at
-        # A session wake consumed while activity subscriptions were confirmed
-        # means a message may be waiting: poll at once rather than on the
-        # fallback cadence.
-        last_db_poll = 0.0 if woken_at_open else time.monotonic()
+        # cursor is the session number this stream has delivered up to: every
+        # message and read receipt with a greater number is delivered, in number
+        # order; read receipts only above receipts_after as well. The first
+        # poll is immediate: it replays what the cursor asks for and delivers
+        # what was committed while the stream was being set up.
+        last_db_poll = 0.0
 
         while datetime.now(timezone.utc) < deadline:
             reason = await _stream_grant_reason()
@@ -2494,96 +2427,116 @@ async def _sse_events(
                 if reason:
                     yield grant_terminal_sse(reason)
                     return
-                new_msgs = await aweb_db.fetch_all(
-                    """
-                    SELECT message_id, from_agent_id, from_alias, from_address,
-                           CASE WHEN content_mode = 'encrypted_v2' THEN '' ELSE body END AS body,
-                           content_mode, message_version, encrypted_envelope, created_at,
-                           sender_leaving, hang_on, reply_to, from_did, signature, signed_payload, id_chain
-                    FROM {{tables.chat_messages}}
-                    WHERE session_id = $1 AND created_at > $2
-                    ORDER BY created_at ASC
-                    LIMIT 200
-                    """,
-                    session_id,
-                    last_message_at,
+                # Numbers are given out under the session's row lock, held to
+                # commit, so every number up to last_seq is committed when
+                # last_seq is read. Both kinds are read up to that one bound,
+                # and the cursor moves to it: a number committed while the two
+                # queries run is above the bound and waits for the next poll.
+                bound = await aweb_db.fetch_value(
+                    "SELECT last_seq FROM {{tables.chat_sessions}} WHERE session_id = $1", session_id,
                 )
-                sender_dids = list({str(row["from_did"]) for row in new_msgs if row.get("from_did")})
-                sender_waiting = set(await get_waiting_agents(redis, session_id_str, sender_dids)) if sender_dids else set()
-                identity_map = await lookup_identity_metadata_by_did(db, sender_dids)
-                reason = await _stream_grant_reason()
-                if reason:
-                    yield grant_terminal_sse(reason)
-                    return
-                memberships = await sender_memberships(request, db, [dict(r, team_id=delivery_team_id) for r in new_msgs])
-                for row in new_msgs:
-                    last_message_at = max(last_message_at, row["created_at"])
-                    is_hang_on = bool(row["hang_on"])
-                    from_did = (row.get("from_did") or "").strip()
-                    from_address = row.get("from_address") or routable_chat_address(
-                        identity_map.get(from_did, {}),
-                        viewer_team_id,
-                        row["from_alias"],
+                page_full = False
+                if bound is not None and bound > cursor:
+                    new_msgs = await aweb_db.fetch_all(
+                        """
+                        SELECT message_id, seq, from_agent_id, from_alias, from_address,
+                               CASE WHEN content_mode = 'encrypted_v2' THEN '' ELSE body END AS body,
+                               content_mode, message_version, encrypted_envelope, created_at,
+                               sender_leaving, hang_on, reply_to, from_did, signature, signed_payload, id_chain
+                        FROM {{tables.chat_messages}}
+                        WHERE session_id = $1 AND seq > $2 AND seq <= $3
+                        ORDER BY seq ASC
+                        LIMIT $4
+                        """,
+                        session_id,
+                        cursor,
+                        bound,
+                        CHAT_STREAM_PAGE_SIZE,
                     )
-                    payload = {
-                        "sender_membership": memberships[(str(delivery_team_id or ""), str(row.get("from_agent_id") or ""))].model_dump(),
-                        "type": "message",
-                        "session_id": session_id_str,
-                        "conversation_id": session_id_str,
-                        "message_id": str(row["message_id"]),
-                        "from_agent": row["from_alias"],
-                        "from_address": from_address,
-                        "from_stable_id": identity_map.get(from_did, {}).get("stable_id") or None,
-                        "body": row["body"],
-                        "content_mode": row.get("content_mode") or "legacy_plaintext_v1",
-                        "message_version": row.get("message_version") or 1,
-                        "encrypted_envelope": row.get("encrypted_envelope"),
-                        "sender_leaving": bool(row["sender_leaving"]),
-                        "sender_waiting": from_did in sender_waiting,
-                        "hang_on": is_hang_on,
-                        "extends_wait_seconds": HANG_ON_EXTENSION_SECONDS if is_hang_on else 0,
-                        "reply_to": str(row["reply_to"]) if row.get("reply_to") is not None else None,
-                        "timestamp": _utc_iso(row["created_at"]),
-                        "to_address": _chat_to_address(participant_rows, from_did=from_did),
-                        "from_did": row.get("from_did"),
-                        "signature": row.get("signature"),
-                        "signed_payload": row.get("signed_payload"),
-                    "id_chain": stored_id_chain(row.get("id_chain")),
-                        **verified_signed_recipient_fields({**row, "conversation_id": session_id_str}),
-                        "is_contact": is_address_in_contacts(from_address, contact_addrs),
-                    }
-                    yield f"event: message\ndata: {json.dumps(payload)}\n\n"
+                    if len(new_msgs) == CHAT_STREAM_PAGE_SIZE:
+                        page_full = True
+                        bound = new_msgs[-1]["seq"]
+                    receipts = await aweb_db.fetch_all(
+                        """
+                        SELECT rr.did, rr.seq, rr.last_read_message_id, rr.last_read_at, p.alias
+                        FROM {{tables.chat_read_receipts}} rr
+                        JOIN {{tables.chat_participants}} p
+                          ON p.session_id = rr.session_id AND p.did = rr.did
+                        WHERE rr.session_id = $1
+                          AND rr.did <> $2
+                          AND rr.last_read_at IS NOT NULL
+                          AND rr.seq > $3 AND rr.seq <= $4
+                        ORDER BY rr.seq ASC
+                        """,
+                        session_id,
+                        viewer_did,
+                        max(cursor, receipts_after),
+                        bound,
+                    )
+                    sender_dids = list({str(row["from_did"]) for row in new_msgs if row.get("from_did")})
+                    sender_waiting = set(await get_waiting_agents(redis, session_id_str, sender_dids)) if sender_dids else set()
+                    identity_map = await lookup_identity_metadata_by_did(db, sender_dids)
+                    reason = await _stream_grant_reason()
+                    if reason:
+                        yield grant_terminal_sse(reason)
+                        return
+                    memberships = await sender_memberships(request, db, [dict(r, team_id=delivery_team_id) for r in new_msgs])
+                    numbered_frames: list[tuple[int, str]] = []
+                    for row in new_msgs:
+                        is_hang_on = bool(row["hang_on"])
+                        from_did = (row.get("from_did") or "").strip()
+                        from_address = row.get("from_address") or routable_chat_address(
+                            identity_map.get(from_did, {}),
+                            viewer_team_id,
+                            row["from_alias"],
+                        )
+                        payload = {
+                            "sender_membership": memberships[(str(delivery_team_id or ""), str(row.get("from_agent_id") or ""))].model_dump(),
+                            "type": "message",
+                            "session_id": session_id_str,
+                            "conversation_id": session_id_str,
+                            "message_id": str(row["message_id"]),
+                            "seq": row["seq"],
+                            "from_agent": row["from_alias"],
+                            "from_address": from_address,
+                            "from_stable_id": identity_map.get(from_did, {}).get("stable_id") or None,
+                            "body": row["body"],
+                            "content_mode": row.get("content_mode") or "legacy_plaintext_v1",
+                            "message_version": row.get("message_version") or 1,
+                            "encrypted_envelope": row.get("encrypted_envelope"),
+                            "sender_leaving": bool(row["sender_leaving"]),
+                            "sender_waiting": from_did in sender_waiting,
+                            "hang_on": is_hang_on,
+                            "extends_wait_seconds": HANG_ON_EXTENSION_SECONDS if is_hang_on else 0,
+                            "reply_to": str(row["reply_to"]) if row.get("reply_to") is not None else None,
+                            "timestamp": _utc_iso(row["created_at"]),
+                            "to_address": _chat_to_address(participant_rows, from_did=from_did),
+                            "from_did": row.get("from_did"),
+                            "signature": row.get("signature"),
+                            "signed_payload": row.get("signed_payload"),
+                            "id_chain": stored_id_chain(row.get("id_chain")),
+                            **verified_signed_recipient_fields({**row, "conversation_id": session_id_str}),
+                            "is_contact": is_address_in_contacts(from_address, contact_addrs),
+                        }
+                        numbered_frames.append((row["seq"], f"event: message\ndata: {json.dumps(payload)}\n\n"))
+                    for row in receipts:
+                        payload = {
+                            "type": "read_receipt",
+                            "session_id": session_id_str,
+                            "conversation_id": session_id_str,
+                            "seq": row["seq"],
+                            "reader_alias": row["alias"],
+                            "up_to_message_id": str(row["last_read_message_id"]) if row["last_read_message_id"] else "",
+                            "extends_wait_seconds": HANG_ON_EXTENSION_SECONDS,
+                            "timestamp": _utc_iso(row["last_read_at"]),
+                        }
+                        numbered_frames.append((row["seq"], f"event: read_receipt\ndata: {json.dumps(payload)}\n\n"))
+                    for _, frame in sorted(numbered_frames):
+                        yield frame
+                    cursor = bound
 
-                receipts = await aweb_db.fetch_all(
-                    """
-                    SELECT rr.did, rr.last_read_message_id, rr.last_read_at, p.alias
-                    FROM {{tables.chat_read_receipts}} rr
-                    JOIN {{tables.chat_participants}} p
-                      ON p.session_id = rr.session_id AND p.did = rr.did
-                    WHERE rr.session_id = $1
-                      AND rr.did <> $2
-                      AND rr.last_read_at IS NOT NULL
-                      AND rr.last_read_at > $3
-                    ORDER BY rr.last_read_at ASC
-                    """,
-                    session_id,
-                    viewer_did,
-                    last_receipt_at,
-                )
-                for row in receipts:
-                    last_receipt_at = max(last_receipt_at, row["last_read_at"])
-                    payload = {
-                        "type": "read_receipt",
-                        "session_id": session_id_str,
-                        "conversation_id": session_id_str,
-                        "reader_alias": row["alias"],
-                        "up_to_message_id": str(row["last_read_message_id"]) if row["last_read_message_id"] else "",
-                        "extends_wait_seconds": HANG_ON_EXTENSION_SECONDS,
-                        "timestamp": _utc_iso(row["last_read_at"]),
-                    }
-                    yield f"event: read_receipt\ndata: {json.dumps(payload)}\n\n"
-
-                last_db_poll = time.monotonic()
+                # A full page leaves more to deliver: poll again at once.
+                last_db_poll = 0.0 if page_full else time.monotonic()
 
             current_time = time.monotonic()
             if current_time - last_keepalive >= CHAT_STREAM_KEEPALIVE_SECONDS:
@@ -2619,6 +2572,7 @@ async def stream(
     session_id: str,
     deadline: str = Query(..., min_length=1),
     after: str | None = Query(None),
+    after_seq: int | None = Query(None, ge=0),
     include: str | None = Query(None),
     db=Depends(get_db),
     redis=Depends(get_redis),
@@ -2649,11 +2603,28 @@ async def stream(
         deadline_dt = max_deadline
     deadline_dt = clamp_deadline_to_grant(deadline_dt, auth)
 
+    if after is not None and after_seq is not None:
+        raise HTTPException(status_code=422, detail="Provide after or after_seq, not both")
     after_dt = _parse_timestamp(after, "after") if after is not None else None
     await require_valid_stream_grant(request, db, auth)
+    replay_cursor = after_seq
+    if after_dt is not None:
+        # A timestamp names the last message stamped at or before it; replay
+        # starts after that message's number.
+        replay_cursor = await aweb_db.fetch_value(
+            "SELECT COALESCE(MAX(seq), 0) FROM {{tables.chat_messages}} WHERE session_id = $1 AND created_at <= $2",
+            session_uuid,
+            after_dt,
+        )
     # The live cursor is taken before the stream announces itself: a peer that
-    # answers the waiting registration or the wake sends after this instant.
-    opened_at = datetime.now(timezone.utc)
+    # answers the waiting registration or the wake commits after this read.
+    live_cursor = await aweb_db.fetch_value(
+        "SELECT last_seq FROM {{tables.chat_sessions}} WHERE session_id = $1", session_uuid,
+    )
+    if live_cursor is None:
+        raise HTTPException(status_code=404, detail=RESOURCE_NOT_FOUND_DETAIL)
+    # A cursor past the session's counter would hide the numbers up to it.
+    cursor = live_cursor if replay_cursor is None else min(replay_cursor, live_cursor)
     await register_waiting(redis, str(session_uuid), actor_did)
     await wake_chat_session_participants(
         aweb_db, agent_wake_publisher(request.app.state), session_id=session_uuid
@@ -2670,8 +2641,9 @@ async def stream(
             contact_owner_dids=owner_dids,
             deadline=deadline_dt,
             auth=auth,
-            opened_at=opened_at,
-            after=after_dt,
+            cursor=cursor,
+            # A timestamp replays messages only; read receipts start live.
+            receipts_after=live_cursor if after_dt is not None else cursor,
             delivery_team_id=sess.get("team_id"),
             include_activity="agent_activity" in {value.strip() for value in (include or "").split(",")},
         ),

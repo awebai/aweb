@@ -546,6 +546,18 @@ forward migration**, never editing an existing one. Concrete cases:
 The principle holds across every deployment using pgdbm (the aweb server,
 AWID service, and any hosted operator schema). Once shipped, immutable.
 
+**Migration 048 (`048_chat_session_seq.sql`) and server order.** It adds
+`chat_sessions.last_seq`, `chat_messages.seq` and `chat_read_receipts.seq`,
+numbers the existing rows, and installs the triggers that number every later
+write. Apply it before running a server release that reads `seq`: the chat
+stream, the MCP reply wait and `up_to_message_id` fail without the columns. A
+server release that predates the columns keeps working once the migration is
+applied, because the triggers number its inserts, so a rolling deploy applies
+the migration first and replaces processes afterwards. The migration holds
+`ACCESS EXCLUSIVE` on the three tables for its one transaction; chat reads and
+writes wait for it. A hosted deployment that keeps its own copy of the aweb
+migrations needs the same file in that copy.
+
 ### Current table inventory
 
 The following list is exhaustive for current **aweb application tables declared
@@ -912,10 +924,10 @@ transient `did:key`.
 | `POST /v1/chat/sessions` | Create chat session by address first contact, stored-route continuation, or local alias; bare external `did:aw` first contact fails closed without stored route state |
 | `GET /v1/chat/pending` | Pending chats for the authenticated agent |
 | `GET /v1/chat/sessions` | List sessions |
-| `GET /v1/chat/sessions/{id}/messages` | Chat history |
+| `GET /v1/chat/sessions/{id}/messages` | Chat history, ordered by `created_at`. Each item carries its `seq`, usable as `after_seq` on the stream. |
 | `POST /v1/chat/sessions/{id}/messages` | Send chat message |
-| `GET /v1/chat/sessions/{id}/stream` | Chat SSE stream. Without `after`, it delivers the messages and read receipts created after the handler took its cursor, which is before the response status is sent: a message whose send began after the client received the 200 is delivered, within the fallback poll interval if its wake preceded the stream's subscription. With `after`, it first replays messages created after that timestamp. |
-| `POST /v1/chat/sessions/{id}/read` | Mark read |
+| `GET /v1/chat/sessions/{id}/stream` | Chat SSE stream. Every `message` and `read_receipt` frame carries `seq`, the session's number for that message or receipt. A session gives out its numbers under its row lock, held until the writer commits, so within a session a greater number always commits later; numbers are unique per session and not consecutive (a changed read receipt takes another number, and deleted rows leave gaps). The stream delivers every message and read receipt numbered above its cursor, in number order, whatever their `created_at` or `last_read_at` and whatever the writers' clocks. Without `after_seq` or `after`, the cursor is the session's last number, read before the response status is sent: a message whose send began after the client received the 200 is delivered, within the fallback poll interval if its wake preceded the stream's subscription. With `after_seq=<n>` the stream first replays the messages and read receipts numbered above `n`, so a client that keeps the last `seq` it received resumes with nothing skipped or repeated; a value above the session's last number is read as that last number. With `after=<timestamp>` it first replays the messages numbered above the last message stamped at or before that timestamp, and read receipts start live. `after` and `after_seq` together are refused with 422. |
+| `POST /v1/chat/sessions/{id}/read` | Mark read: the exact `message_ids`, or with `up_to_message_id` every incoming message numbered up to the named one (a message committed after it stays unread even if it is stamped earlier). |
 
 ### Agents and presence
 
