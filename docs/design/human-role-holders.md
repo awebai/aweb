@@ -167,6 +167,36 @@ checks reuse the 60-second team-facts cache where it applies.
 
 Each emits `post-governance-hook` with `authority: owner_act`.
 
+**What the credential audit retains.** Each act is one B3 audit event and one
+receipt, recorded under the consumed owner act, as for the contact acts
+([secrets design, B3 stages](secrets.md)):
+
+- **Pairing.** `APPROVER_DESIGNATED` pairs only with `human-role.designate`,
+  `APPROVER_REDESIGNATED` only with `human-credential.replace`, and an
+  owner-act `APPROVER_RETIRED` only with `human-role.revoke`, for a role the
+  app declares with the human-role acts. A contact act for such a role, or a
+  human-role act for a contact role, is refused (H1). These acts are owner
+  acts only: no passkey-session path designates or replaces a holder.
+- **No enrolment.** The credential arrives in the act, so there is no
+  enrolment link, no `APPROVER_ENROLLED` event and no completion link. The
+  designate or replace receipt records the credential.
+- **The authorization row.** It retains `principal` and `credential_sha256`,
+  which the retained signed act commits to. It retains no enrolment contact:
+  that binding belongs to the contact model and is absent here, never a
+  placeholder. A role that declares a notice contact retains its
+  `notice_contact_sha256` apart from it, so a notice contact never reads as
+  an enrolment or approval channel. The receipt's payload keeps its catalog
+  fields; its commitment already binds the signed act.
+- **Replace.** One `APPROVER_REDESIGNATED`, a `credential.recovered`
+  widening, retains the new subject, the previous subject and the effective
+  time at the end of the cooling-off. Retiring the previous credential is
+  part of that effect, not a separate `role.revoked` receipt, because the
+  holding continues.
+- **Revoke.** One `APPROVER_RETIRED`, a `role.revoked` narrowing, under the
+  owner-act actor.
+- **Containment** that revokes a holder's credential names it through the
+  authorization row's credential, since no completion link exists for it.
+
 ### Use
 
 A holder logs in and approves with the bound credential: by default in a
