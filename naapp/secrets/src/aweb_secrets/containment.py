@@ -15,7 +15,7 @@ from datetime import UTC, datetime, timedelta
 from typing import TYPE_CHECKING, Any, Protocol
 from uuid import UUID
 
-from aweb_naapp.console import ConsoleSession, session_is_current
+from aweb_naapp.console import ConsoleSession, KeyBoundConsoleSession, session_is_current
 from aweb_naapp.idempotency import IdempotencyConflict, IdempotencyExpired, claim
 from aweb_naapp.roles import PrincipalKey, hold_role, principal_key, unassign
 from aweb_naapp.runtime.approvals import Approvals
@@ -32,6 +32,7 @@ from pgdbm import AsyncDatabaseManager
 from pgdbm.core import TransactionManager
 
 from aweb_secrets import derived_lineage, use_approvals
+from aweb_secrets.console import KeyBoundPreparation
 from aweb_secrets.containment_state import ContainmentRefused
 from aweb_secrets.containment_state import require_enabled as require_enabled
 from aweb_secrets.custody import Custody, SealContext
@@ -271,6 +272,7 @@ class Containment:
         governance: GovernanceEnqueue,
         credential_audit: "CredentialAudit",
         deregister_runner: RunnerDeregistration | None = None,
+        prepare_key_bound: KeyBoundPreparation | None = None,
     ) -> None:
         self.db = db
         self.fence = fence
@@ -282,6 +284,7 @@ class Containment:
         self.governance = governance
         self.credential_audit = credential_audit
         self.deregister_runner = deregister_runner
+        self._prepare_key_bound = prepare_key_bound
 
     async def evict(self, installation_id: str, team_id: str, ids: tuple[str, ...]) -> None:
         for secret_id in ids:
@@ -419,8 +422,8 @@ class Containment:
                     actor={"authority_mode": "system", "attestations": []},
                     evidence_sha256=commitment,
                 )
-            await self._session_current(tx, session)
             await self.fence.check(tx, admitted)
+            await self._session_current(tx, session)
             self._session_unexpired(session)
         try:
             await self.evict(admitted.installation_id, admitted.team_id, result.affected_secret_ids)
@@ -440,7 +443,9 @@ class Containment:
         # F6, application authority and exact LOGIN credential precede this
         # session lock. Logout only updates the session row. Holding it makes
         # logout serialize with the effect, while a completed logout is seen.
-        if not await session_is_current(tx, session, hold=True):
+        if not await session_is_current(
+            tx, session, hold=not isinstance(session, KeyBoundConsoleSession)
+        ):
             raise ContainmentRefused("console_session_required", 401)
 
     @staticmethod
@@ -1007,11 +1012,19 @@ class Containment:
         role_present = action == "remove-role-member" and await self._lock_role_member(
             tx, admitted, target, member_principal
         )
+        signed = isinstance(session, KeyBoundConsoleSession)
+        if signed:
+            if self._prepare_key_bound is None:
+                raise ContainmentRefused("console_session_required", 401)
+            await self._prepare_key_bound(
+                tx, session, approver_pairs=[(session.scope, session.subject)]
+            )
         if not await self.passkeys.login_evidence_is_current(
             session.scope,
             session.subject,
             session.evidence_ref,
             tx=tx,
+            hold=not signed,
         ):
             raise ContainmentRefused("login_evidence_unavailable", 401)
         return owner, role_present

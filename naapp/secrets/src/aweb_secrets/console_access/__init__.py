@@ -1,9 +1,11 @@
 """Owner-scoped configured access: which agent can use which secret, and on what terms.
 
-Read-only. One REPEATABLE READ transaction holds the owner's F6, OWNER, LOGIN
-and S4 authority before any configuration read, reads custody's confirmed
+Read-only. Cookie reads use REPEATABLE READ; signed reads use READ COMMITTED
+with a configuration-revision check around the projection. The transaction
+holds the owner's F6, OWNER, LOGIN and S4 authority before configuration reads,
+reads custody's confirmed
 candidates for each configured principal with that principal's own secrets
-roles, and ends with the live F6 and session-expiry checks. Coverage is
+roles, and ends with the live F6 and session/proof checks. Coverage is
 admission's own predicate. A listed row is configured access with its
 conditions, never a promise that a future request will be admitted.
 """
@@ -19,7 +21,12 @@ from typing import Any
 from urllib.parse import quote
 
 import asyncpg
-from aweb_naapp.console import ConsoleRoute, ConsoleSession, session_is_current
+from aweb_naapp.console import (
+    ConsoleRoute,
+    ConsoleSession,
+    KeyBoundConsoleSession,
+    session_is_current,
+)
 from aweb_naapp.roles import PrincipalKey, hold_role, members_of, roles_of
 from aweb_naapp.runtime.installation import AdmittedInstallation
 from fastapi import APIRouter, HTTPException, Request
@@ -223,11 +230,13 @@ async def hold_owner(
         or not await hold_role(tx, owner, OWNER_ROLE)
     ):
         raise HTTPException(403, "owner_required")
+    await console.prepare_session(tx, current, approver_pairs=[(current.scope, current.subject)])
+    signed = isinstance(current, KeyBoundConsoleSession)
     if not await console.passkeys.login_evidence_is_current(
-        current.scope, current.subject, current.evidence_ref, tx=tx
+        current.scope, current.subject, current.evidence_ref, tx=tx, hold=not signed
     ):
         raise HTTPException(401, "console_session_required")
-    if not await session_is_current(tx, current, hold=True):
+    if not await session_is_current(tx, current, hold=not signed):
         raise HTTPException(401, "console_session_required")
 
 
@@ -239,8 +248,13 @@ class ConsoleAccess:
         installation_id, admitted = await owner_installation(self.console, current)
         try:
             async with self.console.db.transaction() as tx:
-                await tx.execute("SET TRANSACTION ISOLATION LEVEL REPEATABLE READ")
+                signed = isinstance(current, KeyBoundConsoleSession)
+                if not signed:
+                    await tx.execute("SET TRANSACTION ISOLATION LEVEL REPEATABLE READ")
                 await hold_owner(self.console, tx, current, admitted, installation_id)
+                # The canonical signed authority requires READ COMMITTED.
+                # Detect configuration commits across its multi-query view.
+                before_revision = await config_revision(tx, installation_id) if signed else None
                 secret_id = None
                 if secret_ref is not None:
                     stored = await records.secret_by_ref(
@@ -251,7 +265,10 @@ class ConsoleAccess:
                     secret_id = stored.record.secret_id
                 agents = await self._agents(tx, admitted, secret_id)
                 revision = await config_revision(tx, installation_id)
+                if before_revision is not None and revision != before_revision:
+                    raise HTTPException(409, "access_changed", headers={"Retry-After": "0"})
                 await self.console.fence.check(tx, admitted)
+                await self.console.check_key_bound(tx, current)
                 # No awaited work follows the final live F6 and S4 deadline samples.
                 if current.expires_at <= datetime.now(UTC):
                     raise HTTPException(401, "console_session_required")

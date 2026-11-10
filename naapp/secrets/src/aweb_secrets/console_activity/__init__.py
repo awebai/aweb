@@ -98,6 +98,9 @@ class ConsoleActivity:
                 or not await hold_role(tx, owner, OWNER_ROLE)
             ):
                 raise HTTPException(403, "owner_required")
+            await self.console.prepare_session(
+                tx, current, approver_pairs=[(current.scope, current.subject)]
+            )
             result = await self.reads.page(
                 tx,
                 installation_id=installation_id,
@@ -106,6 +109,7 @@ class ConsoleActivity:
                 limit=limit,
             )
             await self.console.fence.check(tx, admitted)
+            await self.console.check_key_bound(tx, current)
             if current.expires_at <= datetime.now(UTC):
                 raise HTTPException(401, "console_session_required")
         return result, admitted.team_id
