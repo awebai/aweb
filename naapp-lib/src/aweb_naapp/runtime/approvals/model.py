@@ -357,6 +357,28 @@ class ApprovalDelivery(Protocol):
     ) -> DeliveryStatus: ...
 
 
+class ApprovalDecisionFence(Protocol):
+    """Caller-owned authority around one B2 decision effect.
+
+    Acquire remote evidence before calling decide and retain its original
+    deadline. B3 verifies its fresh assertion before prepare is called: no
+    LOGIN credential lock may span that verification. prepare holds the
+    complete application/B3/session union before the first B2 decision lock.
+    check is local and non-locking, after decision/audit and before commit;
+    it rechecks authority and the original evidence deadline after waits.
+
+    Both callbacks receive the identical supplied caller transaction, or the
+    owned effect transaction opened after verification when none was supplied.
+    Neither callback opens a transaction, performs network I/O or refreshes a
+    proof. A refusal rolls back the decision and its audit; the previously
+    verified assertion and its challenge remain spent.
+    """
+
+    async def prepare(self, tx: TransactionManager) -> None: ...
+
+    async def check(self, tx: TransactionManager) -> None: ...
+
+
 class Authenticator(Protocol):
     """An adapter that proves which human acted, at one assurance level.
 
