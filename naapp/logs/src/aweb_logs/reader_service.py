@@ -38,7 +38,7 @@ from aweb_logs.console_ui import console_pages_router
 from aweb_logs.governance import SELF_RECORDED_ACTS, LogsGovernance
 from aweb_logs.ledger import LogsSigner
 from aweb_logs.read_routes import ReaderReads, reader_read_router, reader_removal_router
-from aweb_logs.readers import ReaderDirectory, ReaderRemovals
+from aweb_logs.readers import READER_ROLE, ReaderDirectory, ReaderRemovals
 
 GOVERNANCE_HOOK = "post-governance-hook"
 CREDENTIAL_AUDIT_MODULE = "aweb_logs_credential_audit"
@@ -134,6 +134,7 @@ async def reader_service(
         migration_module=CREDENTIAL_AUDIT_MODULE,
         after_enqueue=directory.appender(signer),
         ungated_acts=SELF_RECORDED_ACTS,
+        human_roles=frozenset({READER_ROLE}),
     )
     passkeys = Passkeys(
         db,

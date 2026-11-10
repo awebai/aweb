@@ -191,6 +191,7 @@ async def world_fixture(test_db_factory) -> AsyncIterator[World]:
             migration_module="aweb_logs_credential_audit",
             after_enqueue=append,
             ungated_acts=SELF_RECORDED_ACTS,
+            human_roles=frozenset({READER_ROLE}),
         )
         await state.recorder.migrate()
         state.passkeys = Passkeys(
