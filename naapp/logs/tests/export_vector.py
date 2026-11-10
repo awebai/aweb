@@ -40,7 +40,7 @@ def _lines(lines: list[bytes]) -> list[str]:
 def build_vector() -> dict[str, Any]:
     return {
         "name": "logs-export-v1",
-        "status": "proposed (aweb-acgh.16.23); frozen once reviewed",
+        "status": "frozen (aweb-acgh.16.23; witness_lines aweb-acgh.16.24), ACKed by the contract owner, Athena and R at 5ff06110f; a change needs a new version",
         "scheme": SCHEME,
         "cases": [
             {

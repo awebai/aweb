@@ -1336,5 +1336,5 @@
     "malformed": "a bundle the verifier refuses; line is the number, from 1, of its first bad line",
     "max_line_bytes": 1048576
   },
-  "status": "proposed (aweb-acgh.16.23); frozen once reviewed"
+  "status": "frozen (aweb-acgh.16.23; witness_lines aweb-acgh.16.24), ACKed by the contract owner, Athena and R at 5ff06110f; a change needs a new version"
 }
