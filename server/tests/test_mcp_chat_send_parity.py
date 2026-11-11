@@ -26,6 +26,7 @@ from aweb.mcp.server import create_mcp_app
 from aweb.mcp.signing import HostedMessageSigningResult, canonical_signed_payload
 from aweb.messaging.address_auth import unreachable_address_refusal
 from aweb.messaging.chat_policy import HumanChatRefused
+from aweb.messaging.runtime import messaging_runtime
 from aweb.routes.chat import router as chat_router
 from test_mcp_mail_conversation_parity import _AddressRegistry
 from test_messages_http import (
@@ -74,11 +75,19 @@ async def chat_server(aweb_cloud_db, monkeypatch):
         }
     monkeypatch.setenv("AWEB_TRUST_PROXY_HEADERS", "1")
     monkeypatch.setenv("AWEB_INTERNAL_AUTH_SECRET", INTERNAL_SECRET)
-    current_actor = {"alias": "pilot"}
     signed_payloads = []
+    alias_of = {agent_id: alias for alias, agent_id in agents.items()}
+    # When set, custody holds each signature until two sends are waiting for
+    # one, so both resolved their recipient before either stores anything.
+    together = SimpleNamespace(waiting=0, released=None)
 
     async def signer(**kwargs):
-        sk, did_key = keys[current_actor["alias"]]
+        sk, did_key = keys[alias_of[kwargs["agent_id"]]]
+        if together.released is not None:
+            together.waiting += 1
+            if together.waiting >= 2:
+                together.released.set()
+            await together.released.wait()
         signed_payloads.append(dict(kwargs["payload"]))
         signed = canonical_signed_payload(dict(kwargs["payload"]))
         return HostedMessageSigningResult(
@@ -90,7 +99,7 @@ async def chat_server(aweb_cloud_db, monkeypatch):
         payload = kwargs["payload"]
         by_did = {identity["did"]: identity for identity in custody.values()}
         envelope = encrypt_e2ee_chat(
-            sender=custody[current_actor["alias"]],
+            sender=custody[alias_of[kwargs["agent_id"]]],
             recipients=[by_did[recipient["did_key"]] for recipient in kwargs["recipients"]],
             body=payload["body"], message_id=payload["message_id"],
             conversation_id=payload["conversation_id"],
@@ -117,7 +126,6 @@ async def chat_server(aweb_cloud_db, monkeypatch):
         async with httpx.AsyncClient(transport=httpx.ASGITransport(app=app), base_url="http://test") as client:
 
             async def mcp_chat(alias, **arguments):
-                current_actor["alias"] = alias
                 principal = str(uuid4())
                 headers = {
                     "Accept": "application/json, text/event-stream", "X-Team-ID": TEAM,
@@ -162,18 +170,25 @@ async def chat_server(aweb_cloud_db, monkeypatch):
                     sent = await rest_chat(alias, body)
                 return sent["session_id"], sent["message_id"]
 
-            async def continued_chat(via, alias, session_id, message):
+            async def continued_chat(via, alias, session_id, message, *, wait_seconds=None):
                 if via == "mcp":
-                    sent = await mcp_chat(alias, conversation_id=session_id, message=message, plaintext=True)
+                    arguments = {"conversation_id": session_id, "message": message, "plaintext": True}
+                    if wait_seconds is not None:
+                        arguments.update(wait=True, wait_seconds=wait_seconds)
+                    sent = await mcp_chat(alias, **arguments)
                     assert "error" not in sent, sent
                 else:
-                    sent = await rest_chat(alias, {"body": message}, session_id=session_id)
+                    body = {"body": message}
+                    if wait_seconds is not None:
+                        body["wait_seconds"] = wait_seconds
+                    sent = await rest_chat(alias, body, session_id=session_id)
                 return sent["message_id"]
 
             yield SimpleNamespace(
                 db=db, agents=agents, keys=keys, custody=custody, registry=registry, mutations=mutations,
                 signed_payloads=signed_payloads, mcp_chat=mcp_chat, rest_chat=rest_chat,
-                first_chat=first_chat, continued_chat=continued_chat,
+                first_chat=first_chat, continued_chat=continued_chat, together=together,
+                infra=app.state.db, runtime=messaging_runtime(app.state),
             )
     finally:
         await mcp.shutdown()
@@ -216,23 +231,22 @@ async def test_a_send_that_waits_records_the_wait_on_the_session(chat_server, vi
     }
 
 
-@pytest.mark.asyncio
-@pytest.mark.parametrize("via", ["mcp", "rest"])
-async def test_a_recorded_wait_keeps_the_chat_pending_for_the_other_party_after_they_read_it(chat_server, via):
+async def _pending_for_bob_while_pilot_waits(server, sending, *, earlier_message_ids=()):
+    """Bob reads everything pilot sent while ``sending``, a send that waits 60 seconds, is in flight.
+
+    Returns the session, the waiting message and bob's pending conversations;
+    bob then answers, which ends the wait. The MCP tool answers when the wait
+    ends; the route answers at once.
+    """
     from aweb.messaging.chat import get_pending_conversations, mark_messages_read
 
-    server = chat_server
-    infra = SimpleNamespace(get_manager=lambda name="aweb": server.db)
-    # The MCP tool answers when the wait ends; the route answers at once.
-    sending = asyncio.create_task(
-        server.first_chat(via, "pilot", "are you there?", to_alias="bob", wait_seconds=60)
-    )
     try:
         waited = None
         for _ in range(100):
             waited = await server.db.fetch_one(
-                """SELECT s.session_id, m.message_id
-                   FROM {{tables.chat_sessions}} s JOIN {{tables.chat_messages}} m USING (session_id)
+                """SELECT s.session_id, s.wait_started_at, m.message_id
+                   FROM {{tables.chat_sessions}} s
+                   JOIN {{tables.chat_messages}} m ON m.session_id = s.session_id AND m.created_at = s.wait_started_at
                    WHERE s.wait_seconds IS NOT NULL"""
             )
             if waited is not None or sending.done():
@@ -241,22 +255,173 @@ async def test_a_recorded_wait_keeps_the_chat_pending_for_the_other_party_after_
         assert waited is not None
         session_id, message_id = str(waited["session_id"]), str(waited["message_id"])
         await mark_messages_read(
-            infra, session_id=UUID(session_id), participant_did="did:aw:bob",
-            participant_agent_id=server.agents["bob"], message_ids=[message_id],
+            server.infra, session_id=UUID(session_id), participant_did="did:aw:bob",
+            participant_agent_id=server.agents["bob"], message_ids=[*earlier_message_ids, message_id],
         )
-
         pending = await get_pending_conversations(
-            infra, participant_did="did:aw:bob", participant_agent_id=server.agents["bob"],
+            server.infra, participant_did="did:aw:bob", participant_agent_id=server.agents["bob"],
         )
-
-        assert [(item["session_id"], item["unread_count"], item["wait_seconds"]) for item in pending] == [
-            (session_id, 0, 60),
-        ]
-        # Bob's answer ends the wait.
         await server.rest_chat("bob", {"body": "here"}, session_id=session_id)
-        assert await asyncio.wait_for(sending, timeout=10) == (session_id, message_id)
+        await asyncio.wait_for(sending, timeout=10)
+        return session_id, message_id, pending
     finally:
         sending.cancel()
+
+
+def _seconds_left(item):
+    return item["wait_seconds"] - (datetime.now(timezone.utc) - item["wait_started_at"]).total_seconds()
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("via", ["mcp", "rest"])
+async def test_a_recorded_wait_keeps_the_chat_pending_for_the_other_party_after_they_read_it(chat_server, via):
+    server = chat_server
+    sending = asyncio.create_task(
+        server.first_chat(via, "pilot", "are you there?", to_alias="bob", wait_seconds=60)
+    )
+
+    session_id, _, pending = await _pending_for_bob_while_pilot_waits(server, sending)
+
+    assert [(item["session_id"], item["unread_count"], item["wait_seconds"]) for item in pending] == [
+        (session_id, 0, 60),
+    ]
+    assert _seconds_left(pending[0]) > 0
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("via", ["mcp", "rest"])
+async def test_a_waiting_message_in_a_session_records_the_wait_and_keeps_the_chat_pending(chat_server, via):
+    server = chat_server
+    session_id, opened = await server.first_chat(via, "pilot", "hello bob", to_alias="bob")
+    sending = asyncio.create_task(
+        server.continued_chat(via, "pilot", session_id, "are you there?", wait_seconds=60)
+    )
+
+    waited_session, waiting_message, pending = await _pending_for_bob_while_pilot_waits(
+        server, sending, earlier_message_ids=[opened],
+    )
+
+    assert waited_session == session_id
+    assert [(item["session_id"], item["unread_count"], item["wait_seconds"]) for item in pending] == [
+        (session_id, 0, 60),
+    ]
+    assert _seconds_left(pending[0]) > 0
+    session = await server.db.fetch_one(
+        "SELECT wait_started_by FROM {{tables.chat_sessions}} WHERE session_id=$1", UUID(session_id),
+    )
+    assert session["wait_started_by"] == UUID(server.agents["pilot"])
+    assert waiting_message != opened
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("via", ["mcp", "rest"])
+async def test_a_message_that_does_not_wait_leaves_the_recorded_wait_as_it_is(chat_server, via):
+    server = chat_server
+
+    async def recorded_wait(session_id):
+        return dict(await server.db.fetch_one(
+            """SELECT wait_seconds, wait_started_at, wait_started_by
+               FROM {{tables.chat_sessions}} WHERE session_id=$1""",
+            UUID(session_id),
+        ))
+
+    session_id, _ = await server.first_chat(via, "pilot", "are you there?", to_alias="bob", wait_seconds=0)
+    before = await recorded_wait(session_id)
+    assert before["wait_seconds"] == 0
+
+    await server.continued_chat(via, "pilot", session_id, "one more thing")
+    assert await recorded_wait(session_id) == before
+    # The other party's message starts no wait of its own and leaves pilot's recorded.
+    await server.continued_chat(via, "bob", session_id, "here")
+    assert await recorded_wait(session_id) == before
+
+
+async def _chat_sessions(server):
+    """Every chat conversation with its status, and the bodies stored in each."""
+    conversations = await server.db.fetch_all(
+        """SELECT conversation_id, status FROM {{tables.conversations}}
+           WHERE conversation_type='chat' ORDER BY created_at"""
+    )
+    messages = await server.db.fetch_all(
+        "SELECT session_id, body FROM {{tables.chat_messages}} ORDER BY body"
+    )
+    return (
+        [(str(row["conversation_id"]), row["status"]) for row in conversations],
+        [(str(row["session_id"]), row["body"]) for row in messages],
+    )
+
+
+@pytest.mark.asyncio
+async def test_two_interleaved_sends_that_reuse_or_create_share_one_session_and_close_none(chat_server):
+    from aweb.identity_auth_deps import MessagingAuth
+    from aweb.messaging.chat_send import ChatSessionChanged, resolve_chat_targets, send_chat
+    from aweb.routes.chat import CreateSessionRequest
+
+    server = chat_server
+    pilot = MessagingAuth(
+        did_key=server.keys["pilot"][1], did_aw="did:aw:pilot", address="acme.com/pilot",
+        team_id=TEAM, alias="pilot", agent_id=server.agents["pilot"], identity_scope="global",
+    )
+
+    async def resolve():
+        return await resolve_chat_targets(
+            server.infra, pilot, CreateSessionRequest(to_aliases=["bob"], message=""), server.runtime, "test",
+            reuse_or_create=True,
+        )
+
+    async def send(target, session_id, message):
+        return await send_chat(
+            server.infra, pilot, target,
+            CreateSessionRequest(to_aliases=["bob"], session_id=str(session_id), message=message),
+            server.runtime,
+        )
+
+    # Both sends resolve before either stores anything: neither finds a session.
+    target_a, target_b = await resolve(), await resolve()
+    assert (target_a.shared_session_id, target_b.shared_session_id) == (None, None)
+    proposed_a, proposed_b = uuid4(), uuid4()
+
+    sent_b = await send(target_b, proposed_b, "from b")
+    assert sent_b.session_id == proposed_b
+    # A's target was resolved when the pair shared no session: nothing is stored or closed.
+    with pytest.raises(ChatSessionChanged):
+        await send(target_a, proposed_a, "from a")
+    assert await _chat_sessions(server) == ([(str(proposed_b), "active")], [(str(proposed_b), "from b")])
+
+    # A resolves again, finds B's session and sends into it.
+    target_a = await resolve()
+    assert target_a.shared_session_id == proposed_b
+    sent_a = await send(target_a, proposed_b, "from a")
+
+    assert sent_a.session_id == proposed_b
+    assert await _chat_sessions(server) == (
+        [(str(proposed_b), "active")],
+        [(str(proposed_b), "from a"), (str(proposed_b), "from b")],
+    )
+
+
+@pytest.mark.asyncio
+async def test_two_concurrent_mcp_sends_for_one_pair_end_with_one_live_session(chat_server):
+    server = chat_server
+    # Custody releases the two signatures together, after both sends resolved.
+    server.together.released = asyncio.Event()
+
+    from_pilot, from_bob = await asyncio.wait_for(asyncio.gather(
+        server.mcp_chat("pilot", to="bob", message="from pilot", plaintext=True),
+        server.mcp_chat("bob", to="pilot", message="from bob", plaintext=True),
+    ), timeout=30)
+
+    assert "error" not in from_pilot, from_pilot
+    assert "error" not in from_bob, from_bob
+    assert from_pilot["session_id"] == from_bob["session_id"]
+    session_id = from_pilot["session_id"]
+    assert await _chat_sessions(server) == (
+        [(session_id, "active")],
+        [(session_id, "from bob"), (session_id, "from pilot")],
+    )
+    # Each message is signed for the session it is stored in.
+    stored = await server.db.fetch_all("SELECT signed_payload FROM {{tables.chat_messages}}")
+    assert {json.loads(row["signed_payload"])["conversation_id"] for row in stored} == {session_id}
 
 
 @pytest.mark.asyncio
@@ -315,9 +480,7 @@ async def test_mcp_signed_chat_payloads_are_stored_as_signed_for_each_way_of_nam
         assert payload["conversation_id"] == session_id
         assert (payload["to"], payload["to_did"], payload["to_stable_id"]) == ("bob", bob_did, "did:aw:bob")
         assert (payload["from"], payload["from_stable_id"]) == ("pilot", "did:aw:pilot")
-    # The wait a send naming its recipient starts is signed; a message in a
-    # session signs no wait and may ask its recipients to hang on.
-    assert [payload.get("wait_seconds") for payload in signed] == [0, None, None, None, None, None]
+    assert [payload.get("wait_seconds") for payload in signed] == [0, None, None, 0, None, None]
     assert [payload.get("hang_on") for payload in signed] == [None, None, None, None, True, None]
     assert [payload.get("sender_leaving") for payload in signed] == [None, None, None, None, None, True]
 
@@ -416,16 +579,16 @@ FIRST_CHAT_RECIPIENTS = [
 
 @pytest.mark.parametrize("named,named_alias,row,signed_from", FIRST_CHAT_RECIPIENTS)
 @pytest.mark.parametrize("wait_seconds", [None, 120])
-@pytest.mark.parametrize("leaving", [False, True])
+@pytest.mark.parametrize("leaving,hang_on", [(False, False), (True, False), (False, True)])
 def test_the_fields_mcp_signs_for_a_first_chat_satisfy_the_send_validation(
-    named, named_alias, row, signed_from, wait_seconds, leaving,
+    named, named_alias, row, signed_from, wait_seconds, leaving, hang_on,
 ):
     from aweb.messaging.chat_send import _validate_signed_chat_payload
 
     sender = _sender()
     fields = _signed(
         sender, [row], named_alias=named_alias, signed_from=signed_from,
-        wait_seconds=wait_seconds, leaving=leaving,
+        wait_seconds=wait_seconds, leaving=leaving, hang_on=hang_on,
     )
 
     # The send validates a first chat with these arguments.
@@ -445,6 +608,7 @@ def test_the_fields_mcp_signs_for_a_first_chat_satisfy_the_send_validation(
         reply_to=None,
         conversation_id=fields["conversation_id"],
         sender_leaving=leaving,
+        hang_on=hang_on,
     )
 
 
@@ -465,15 +629,15 @@ SESSION_RECIPIENTS = [
 
 @pytest.mark.parametrize("others,rows,signed_from,recipient_fields", SESSION_RECIPIENTS)
 @pytest.mark.parametrize("hang_on", [False, True])
+@pytest.mark.parametrize("wait_seconds", [None, 120])
 def test_the_fields_mcp_signs_for_a_message_in_a_session_satisfy_the_send_validation(
-    others, rows, signed_from, recipient_fields, hang_on,
+    others, rows, signed_from, recipient_fields, hang_on, wait_seconds,
 ):
     from aweb.messaging.chat_send import _validate_signed_chat_payload
 
     sender = _sender()
-    fields = _signed(sender, rows, signed_from=signed_from, hang_on=hang_on)
+    fields = _signed(sender, rows, signed_from=signed_from, hang_on=hang_on, wait_seconds=wait_seconds)
     assert (fields["to"], fields["to_did"], fields.get("to_stable_id", "")) == recipient_fields
-    assert "wait_seconds" not in fields
 
     # The send validates a message in a session with these arguments.
     _validate_signed_chat_payload(
@@ -487,6 +651,7 @@ def test_the_fields_mcp_signs_for_a_message_in_a_session_satisfy_the_send_valida
         from_did=sender.did_key,
         message_id=fields["message_id"],
         timestamp=fields["timestamp"],
+        wait_seconds=wait_seconds,
         reply_to=None,
         conversation_id=fields["conversation_id"],
         sender_leaving=False,
@@ -494,7 +659,7 @@ def test_the_fields_mcp_signs_for_a_message_in_a_session_satisfy_the_send_valida
     )
 
 
-def test_a_wait_signed_in_a_session_message_is_refused_by_the_send_validation():
+def test_a_signed_wait_the_message_does_not_carry_is_refused_by_the_send_validation():
     from aweb.messaging.chat_send import _validate_signed_chat_payload
 
     sender = _sender()
@@ -507,11 +672,18 @@ def test_a_wait_signed_in_a_session_message_is_refused_by_the_send_validation():
             signed_payload=canonical_signed_payload(fields),
             recipient_rows=rows, from_alias=sender.alias, from_address=sender.address,
             from_stable_id=sender.did_aw, body="hello", from_did=sender.did_key,
-            message_id=fields["message_id"], timestamp=fields["timestamp"], reply_to=None,
+            message_id=fields["message_id"], timestamp=fields["timestamp"], wait_seconds=None, reply_to=None,
             conversation_id=fields["conversation_id"], sender_leaving=False, hang_on=False,
         )
 
     assert refused.value.detail == "signed_payload wait_seconds must match the chat message"
+
+
+def test_the_request_that_opens_a_session_may_carry_hang_on():
+    from aweb.routes.chat import CreateSessionRequest
+
+    assert CreateSessionRequest(to_aliases=["bob"], message="hello").hang_on is False
+    assert CreateSessionRequest(to_aliases=["bob"], message="hello", hang_on=True).hang_on is True
 
 
 def _authority_refusal(reason):

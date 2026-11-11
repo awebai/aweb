@@ -1713,12 +1713,11 @@ async def test_mcp_chat_send_uses_hosted_signer_for_trusted_proxy(aweb_cloud_db,
     assert seen[0]["payload"]["to_did"] == named_did_key("z6MkBob")
     assert seen[0]["payload"]["to_stable_id"] == "did:aw:bob"
     assert seen[0]["payload"]["sender_leaving"] is True
-    # The two share no session yet, so no one is waiting to be asked to hang on.
-    assert "hang_on" not in seen[0]["payload"]
+    assert seen[0]["payload"]["hang_on"] is True
 
     row = await aweb_cloud_db.aweb_db.fetch_one("SELECT * FROM {{tables.chat_messages}}")
     assert row["from_did"] == "did:aw:alice"
-    assert row["hang_on"] is False
+    assert row["hang_on"] is True
     assert row["signature"]
     assert row["signed_payload"] == canonical_signed_payload(seen[0]["payload"])
 
@@ -2248,8 +2247,7 @@ async def test_mcp_chat_send_existing_session_uses_hosted_signer(aweb_cloud_db, 
     assert len(seen) == 1
     assert seen[0]["message_type"] == "chat"
     assert seen[0]["payload"]["from_did"] == alice_did
-    # A message in a session signs no wait, as the route's send validates it.
-    assert "wait_seconds" not in seen[0]["payload"]
+    assert seen[0]["payload"]["wait_seconds"] == 7
     assert seen[0]["payload"]["hang_on"] is True
     assert seen[0]["payload"]["to"] == "bob"
     assert seen[0]["payload"]["to_did"] == named_did_key("z6MkBob")
