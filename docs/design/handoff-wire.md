@@ -148,6 +148,8 @@ including `credential`, keeps the same-signer rule.
   member, `holder_certificate`: H's team certificate in the
   `X-AWID-Team-Certificate` encoding. It is required exactly when the signer is
   not `scope.principal`, and refused when the signer is H.
+- `return` is `loopback`. The `user_code` fallback is not available when Q
+  signs, so the code always goes to the loopback on the browser's own machine.
 
 **What the app checks,** before creating anything, all from current evidence:
 
@@ -169,7 +171,8 @@ including `credential`, keeps the same-signer rule.
 
 - `400 handoff_invalid`: `holder_certificate` is malformed, is absent when
   the signer is not H, is present when the signer is H, or is present on any
-  purpose other than `session`.
+  purpose other than `session`. It is also refused for `return: user_code` together with
+  `holder_certificate`.
 - `403 scope_not_signer`: the signer is neither H nor a verified direct child
   of H. That covers a missing chain, another parent, a deeper descendant, and
   a revoked or stale edge.
@@ -192,6 +195,13 @@ from H before H's app-RP LOGIN and the explicit Allow.
 **aw:** a holder command run in Q's identity home takes H from Q's installed
 chain (its direct parent), shows both, and signs as Q. With no qualifying
 requester, aw refuses `requester_missing` and names the onboarding command.
+
+Onboarding (`aw id create --human-parent H`) issues the laptop agent under H
+with H's one live approval. It does not make the agent a team member. Q gets
+its membership separately, through the team's agent admission: an admission
+under the team's protected admission policy (`GET /protected-admission-policies`)
+or a team-controller admission with its own live approval. Until then, a
+start by Q is refused by team-auth.
 
 ## 2. The ceremony and the loopback redirect
 
