@@ -224,10 +224,6 @@ func buildGrantClientSelectionForTeam(ctx context.Context, workingDir string, ho
 	return c, sel, nil
 }
 
-func parseGrantScopes(values []string) ([]string, error) {
-	return parseGrantScopesWithBundles(values, nil)
-}
-
 func parseGrantScopesWithBundles(values []string, bundles []string) ([]string, error) {
 	scopes := make([]string, 0, len(values)+len(bundles))
 	seen := make(map[string]struct{}, len(values)+len(bundles))
