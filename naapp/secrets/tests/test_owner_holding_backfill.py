@@ -12,7 +12,9 @@ import pytest
 from aweb_naapp.roles import PrincipalKey
 from aweb_naapp.runtime.human_roles import HumanRoleHoldings
 from aweb_naapp.runtime.installation import InstallationFence
+from aweb_naapp.runtime.passkeys import EnrolmentRefused
 from aweb_naapp_testing.owner_acts import APP_ID, INSTALLATION_ID
+from aweb_naapp_testing.webauthn import SoftAuthenticator
 from pgdbm.errors import MigrationError
 
 from aweb_secrets.owners import (
@@ -243,3 +245,70 @@ async def test_owner_hold_retains_both_shared_rows(bootstrap_world):
     for sql, args in probes:
         async with w.db.transaction() as observer:
             assert await observer.fetch_value(sql, *args) is not None
+
+
+async def test_an_owner_enrolment_link_issued_before_cutover_enrols_nothing_after_it(
+    bootstrap_world,
+):
+    w = bootstrap_world
+    history = await load_owner_history(w)
+    scope = history["tables"]["owner_principals"][0]["scope"]
+    subject = history["tables"]["passkey_approvers"][0]["subject"]
+    # Fork captured historical data to a retired-key owner. The shared B3
+    # reissue API creates a real pending link; no owner or holding is written.
+    await w.db.execute(
+        "UPDATE {{tables.passkey_credentials}} SET revoked_at=clock_timestamp() WHERE subject=$1",
+        subject,
+    )
+    async with w.db.transaction() as tx:
+        await w.console.fence.check(tx, w.admitted)
+        designation = await w.passkeys.reissue_enrolment(tx, scope=scope)
+    await w.passkeys.deliver(designation)
+    token = designation.link_token
+    assert token
+    assert await w.db.fetch_value("SELECT count(*) FROM {{tables.role_holdings}}") == 0
+    # Even a valid registration already answering real pre-cutover options
+    # cannot cross the migration's contact-to-human boundary.
+    device = SoftAuthenticator(w.passkeys.rp.origin)
+    credential = device.create(await w.passkeys.enrolment_options(token))
+    spent_before = await w.db.fetch_value(
+        "SELECT count(*) FROM {{tables.passkey_challenges}}"
+        " WHERE subject=$1 AND purpose='enrolment' AND used_at IS NOT NULL",
+        subject,
+    )
+    await apply_owner_migrations(w.db)
+    prepared = await w.credential_audit.prepare_enrolment(token)
+    before = await authority_snapshot(w.db)
+    retained = {
+        table: [dict(row) for row in await w.db.fetch_all("SELECT * FROM {{tables." + table + "}}")]
+        for table in ("credential_completion_links", "credential_audit_events", "outbox_events")
+    }
+    with w.credential_audit.prepared(prepared), pytest.raises(EnrolmentRefused):
+        await w.passkeys.complete_enrolment(token, credential, fence=prepared)
+    assert await authority_snapshot(w.db) == before
+    assert {
+        table: [dict(row) for row in await w.db.fetch_all("SELECT * FROM {{tables." + table + "}}")]
+        for table in retained
+    } == retained
+    assert (
+        await w.db.fetch_value(
+            "SELECT count(*) FROM {{tables.passkey_credentials}} WHERE subject=$1 AND revoked_at IS NULL",
+            subject,
+        )
+        == 0
+    )
+    pending = await w.db.fetch_one(
+        "SELECT used_at,revoked_at,expires_at>clock_timestamp() AS unexpired"
+        " FROM {{tables.passkey_enrolments}} WHERE subject=$1 AND used_at IS NULL AND revoked_at IS NULL",
+        subject,
+    )
+    assert pending is not None and pending["unexpired"]
+    # Assertion spending is separate from the refused enrolment effect.
+    assert (
+        await w.db.fetch_value(
+            "SELECT count(*) FROM {{tables.passkey_challenges}}"
+            " WHERE subject=$1 AND purpose='enrolment' AND used_at IS NOT NULL",
+            subject,
+        )
+        == spent_before + 1
+    )
