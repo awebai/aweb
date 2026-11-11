@@ -4,8 +4,12 @@ PostgreSQL, which accept or refuse them."""
 
 from __future__ import annotations
 
+import contextlib
+
+import httpx
 import pytest
 from awid.did import generate_keypair
+from awid.registry import CachedRegistryClient
 from awid.registry_auth import RegistryRequestAuth
 
 from test_team_visibility_enforcement import (
@@ -151,3 +155,34 @@ def test_the_service_token_rides_on_every_request(method, path, signed_by_caller
 
 def test_a_blank_service_token_is_no_token():
     assert RegistryRequestAuth(service_token="  ").headers("GET", "/v1/did/x/key") == {}
+
+
+@pytest.mark.asyncio
+async def test_a_cached_registry_client_signs_and_files_its_reads_under_one_key(fake_redis):
+    """The key that signs a team's reads is the key its cached reads are
+    filed under: neither the supplied mapping nor the client's own can be
+    changed afterwards to make them differ."""
+    first, _ = generate_keypair()
+    second, _ = generate_keypair()
+    supplied = {"ops:example.com": first}
+    requests = []
+
+    async def handle(request):
+        requests.append(request)
+        return httpx.Response(200, json={})
+
+    registry = CachedRegistryClient(
+        "https://registry.example",
+        fake_redis,
+        member_signing_keys=supplied,
+        transport=httpx.MockTransport(handle),
+    )
+    try:
+        supplied["ops:example.com"] = second
+        with contextlib.suppress(TypeError):
+            registry.member_signing_keys["ops:example.com"] = second
+        await registry._request_json("GET", "/v1/namespaces/example.com/teams/ops")
+        signer = requests[-1].headers["Authorization"].split()[1]
+        assert registry._team_reader_cache_suffix("example.com", "ops") == f":member-reader:{signer}"
+    finally:
+        await registry.aclose()
