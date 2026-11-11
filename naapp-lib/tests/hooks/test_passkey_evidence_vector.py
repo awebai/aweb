@@ -294,3 +294,131 @@ def test_console_actor_affects_a_different_subject_and_catalog_fields_are_sha256
     document = json.loads(path.read_bytes())
     for hook in ("post-governance-hook", "post-secret-use-hook"):
         assert document["hooks"][hook]["fields"]["approval_evidence_sha256"]["type"] == "sha256_hex"
+
+
+CHANGE = json.loads(
+    (
+        Path(__file__).resolve().parents[3]
+        / "docs"
+        / "vectors"
+        / "passkey-credential-change-v1.json"
+    ).read_bytes()
+)
+
+
+def _credential_digest(credential):
+    if not isinstance(credential, dict) or set(credential) != {
+        "credential_id",
+        "public_key",
+        "rp_id",
+    }:
+        _refuse("binding_mismatch")
+    return hashlib.sha256(
+        CHANGE["credential_prefix"].encode() + canonical_json_bytes(credential)
+    ).hexdigest()
+
+
+def _verify_change(case, *, trusted_anchor):
+    """The credential_change binding, read independently of B3: the preimage
+    names exactly its operation's fields, the sidecar's credentials hash to
+    them at the proof's relying party, and a current credential, never the new
+    one, made the assertion."""
+    context, metadata = case["context"], _metadata(case["metadata"])
+    if (context["origin"], context["rp_id"]) != (trusted_anchor["origin"], trusted_anchor["rp_id"]):
+        _refuse("context_mismatch")
+    binary = {key: _hex(value) for key, value in case["binary_hex"].items()}
+    if binary["credential_public_key_cose"] != _hex(trusted_anchor["public_key_cose_hex"]):
+        _refuse("untrusted_key")
+    prefix = CHANGE["challenge_prefix"].encode()
+    preimage = binary["challenge_preimage"]
+    if context["binding_kind"] != "credential_change" or not preimage.startswith(prefix):
+        _refuse("binding_mismatch")
+    fields = json.loads(preimage[len(prefix) :])
+    if prefix + canonical_json_bytes(fields) != preimage:
+        _refuse("binding_mismatch")
+    replacing = fields.get("operation") == "replace"
+    expected = {"credential_sha256", "nonce", "operation", "scope", "subject"}
+    if replacing:
+        expected.add("retire_credential_sha256")
+    if (
+        set(fields) != expected
+        or fields["operation"] not in {"add", "replace"}
+        or fields["scope"] != context["scope"]
+        or fields["subject"] != metadata["subject"]
+        or metadata["purpose"] != "credential_change"
+        or any(
+            not isinstance(fields[key], str) or not re.fullmatch("[0-9a-f]{64}", fields[key])
+            for key in expected - {"operation", "scope", "subject"}
+        )
+    ):
+        _refuse("binding_mismatch")
+    request_prefix = CHANGE["request_prefix"].encode()
+    covered = _hex(case["covered_request_hex"])
+    if not covered.startswith(request_prefix):
+        _refuse("binding_mismatch")
+    body = json.loads(covered[len(request_prefix) :])
+    if request_prefix + canonical_json_bytes(body) != covered:
+        _refuse("binding_mismatch")
+    names = {"credential", "retire_credential"} if replacing else {"credential"}
+    if set(body) != names:
+        _refuse("binding_mismatch")
+    for name, digest in (("credential", "credential_sha256"), ("retire_credential", None)):
+        if name not in body:
+            continue
+        if body[name]["rp_id"] != context["rp_id"]:
+            _refuse("binding_mismatch")
+        if _credential_digest(body[name]) != fields[digest or "retire_credential_sha256"]:
+            _refuse("binding_mismatch")
+    if (
+        b64url(binary["credential_id"]) == body["credential"]["credential_id"]
+        or b64url(binary["credential_public_key_cose"]) == body["credential"]["public_key"]
+    ):
+        _refuse("self_approval")
+    challenge = hashlib.sha256(preimage).digest()
+    client_data = json.loads(binary["client_data_json"])
+    if challenge != _hex(case["expected_challenge_hex"]) or client_data["challenge"] != b64url(
+        challenge
+    ):
+        _refuse("challenge_mismatch")
+    cid = b64url(binary["credential_id"])
+    try:
+        verify_assertion(
+            {
+                "id": cid,
+                "rawId": cid,
+                "type": "public-key",
+                "response": {
+                    "authenticatorData": b64url(binary["authenticator_data"]),
+                    "clientDataJSON": b64url(binary["client_data_json"]),
+                    "signature": b64url(binary["signature"]),
+                },
+            },
+            challenge=challenge,
+            rp=RelyingParty(context["origin"], "vector"),
+            credential_id=binary["credential_id"],
+            public_key=binary["credential_public_key_cose"],
+            sign_count=metadata["sign_count_before"],
+        )
+    except WebAuthnRefused:
+        _refuse("bad_assertion")
+    pieces = [canonical_json_bytes(context), canonical_json_bytes(metadata)]
+    pieces.extend(binary[name] for name in CHANGE["binary_order"])
+    message = CHANGE["domain"].encode() + b"".join(
+        struct.pack(">Q", len(piece)) + piece for piece in pieces
+    )
+    if hashlib.sha256(message).hexdigest() != case["commitment_sha256"]:
+        _refuse("commitment_mismatch")
+    return message
+
+
+@pytest.mark.parametrize("case", CHANGE["cases"], ids=lambda case: case["name"])
+def test_a_credential_change_matches_its_frozen_bytes_and_trusted_key(case):
+    message = _verify_change(case, trusted_anchor=CHANGE["trust_anchors"][case["trusted_key"]])
+    assert message == _hex(case["commitment_input_hex"])
+
+
+@pytest.mark.parametrize("case", CHANGE["negative_cases"], ids=lambda case: case["name"])
+def test_a_swapped_or_self_approved_credential_change_is_refused(case):
+    with pytest.raises(ProofRefused) as refused:
+        _verify_change(case, trusted_anchor=CHANGE["trust_anchors"][case["trusted_key"]])
+    assert str(refused.value) == case["error"]

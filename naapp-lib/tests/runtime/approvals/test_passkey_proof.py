@@ -195,3 +195,150 @@ def test_signed_approval_proofs_refuse_noninteger_pins_and_invalid_task_refs(cha
 def test_signed_approval_proofs_accept_integer_pins_and_optional_valid_task_refs(task_answer_ref):
     proof = signed_approval_proof(task_answer_ref=task_answer_ref)
     assert len(passkey_evidence_commitment(proof)) == 64
+
+
+def credential_digest(credential: dict[str, str]) -> str:
+    return hashlib.sha256(
+        b"aweb.human-credential/1\n" + canonical_json_bytes(credential)
+    ).hexdigest()
+
+
+def a_credential(rp_id: str) -> dict[str, str]:
+    key = SoftCredential(os.urandom(32), ec.generate_private_key(ec.SECP256R1()), rp_id, b"")
+    return {
+        "credential_id": b64url(key.credential_id),
+        "public_key": b64url(key.cose_public_key()),
+        "rp_id": rp_id,
+    }
+
+
+def signed_credential_change_proof(
+    operation="add",
+    *,
+    fields=None,
+    sidecar=None,
+    prefix=b"aweb.passkey-credential-change/1\n",
+    by_the_new_credential=False,
+):
+    """A real assertion over a credential_change challenge, signed whatever its
+    binding says, so a rejection cannot rely on corruption. `fields` and
+    `sidecar` change the signed challenge fields and the retained sidecar."""
+    original = proof_for(next(c for c in VECTOR["cases"] if c["name"] == "console_login"))
+    context, metadata = original.context, original.metadata
+    context["binding_kind"] = "credential_change"
+    metadata["purpose"] = "credential_change"
+    credential = SoftCredential(
+        os.urandom(32), ec.generate_private_key(ec.SECP256R1()), context["rp_id"], os.urandom(32)
+    )
+    new = (
+        {
+            "credential_id": b64url(credential.credential_id),
+            "public_key": b64url(credential.cose_public_key()),
+            "rp_id": context["rp_id"],
+        }
+        if by_the_new_credential
+        else a_credential(context["rp_id"])
+    )
+    body = {"credential": new}
+    signed = {
+        "credential_sha256": credential_digest(new),
+        "nonce": os.urandom(32).hex(),
+        "operation": operation,
+        "scope": context["scope"],
+        "subject": metadata["subject"],
+    }
+    if operation == "replace":
+        body["retire_credential"] = a_credential(context["rp_id"])
+        signed["retire_credential_sha256"] = credential_digest(body["retire_credential"])
+    signed.update(fields or {})
+    body.update(sidecar or {})
+    covered = b"aweb.passkey-credential-change-request/1\n" + canonical_json_bytes(
+        {key: value for key, value in body.items() if value is not None}
+    )
+    preimage = prefix + canonical_json_bytes(
+        {key: value for key, value in signed.items() if value is not None}
+    )
+    challenge = hashlib.sha256(preimage).digest()
+    authenticator = SoftAuthenticator(context["origin"])
+    authenticator.credentials[credential.credential_id] = credential
+    assertion = authenticator.get(dict(rpId=context["rp_id"], challenge=b64url(challenge)))
+    metadata.update(sign_count_before=0, sign_count_after=1)
+    return RetainedPasskeyProof.from_parts(
+        context=context,
+        metadata=metadata,
+        challenge_preimage=preimage,
+        expected_challenge=challenge,
+        credential_public_key_cose=credential.cose_public_key(),
+        credential_id=credential.credential_id,
+        authenticator_data=from_b64url(assertion["response"]["authenticatorData"]),
+        client_data_json=from_b64url(assertion["response"]["clientDataJSON"]),
+        signature=from_b64url(assertion["response"]["signature"]),
+        covered_request=covered,
+    )
+
+
+@pytest.mark.parametrize("operation", ["add", "replace"])
+def test_a_credential_change_proof_commits_its_exact_binding(operation):
+    proof = signed_credential_change_proof(operation)
+    assert len(passkey_evidence_commitment(proof)) == 64
+    assert RetainedPasskeyProof.from_export(proof.export()) == proof
+
+
+@pytest.mark.parametrize(
+    "operation,changes",
+    [
+        ("add", {"fields": {"scope": "another.scope"}}),
+        ("add", {"fields": {"subject": "another-subject"}}),
+        ("add", {"fields": {"operation": "replace"}}),
+        ("add", {"fields": {"retire_credential_sha256": "0" * 64}}),
+        ("replace", {"fields": {"operation": "add"}}),
+        ("replace", {"fields": {"retire_credential_sha256": None}}),
+        ("replace", {"fields": {"retire_credential_sha256": "0" * 64}}),
+        ("add", {"fields": {"credential_sha256": "0" * 64}}),
+        ("add", {"sidecar": {"credential": a_credential("elsewhere.example.com")}}),
+        ("add", {"sidecar": {"retire_credential": a_credential("app.example.com")}}),
+        ("replace", {"sidecar": {"retire_credential": None}}),
+        ("add", {"prefix": b"aweb.passkey-contact-change/1\n"}),
+        ("add", {"prefix": b"aweb.passkey-login/1\n"}),
+        ("add", {"fields": {"nonce": "A" * 64}}),
+    ],
+)
+def test_a_credential_change_proof_refuses_a_swapped_binding(operation, changes):
+    proof = signed_credential_change_proof(operation, **changes)
+    with pytest.raises(PasskeyProofUnavailable):
+        passkey_evidence_commitment(proof)
+
+
+def test_a_credential_change_proof_needs_its_sidecar_and_no_approval_fields():
+    proof = signed_credential_change_proof()
+    with pytest.raises(PasskeyProofUnavailable):
+        passkey_evidence_commitment(replace(proof, covered_request=None))
+    metadata = proof.metadata
+    metadata["approval_id"] = "approval-1"
+    with_approval = replace(proof, metadata_canonical=canonical_json_bytes(metadata))
+    with pytest.raises(PasskeyProofUnavailable):
+        passkey_evidence_commitment(with_approval)
+
+
+def test_a_credential_change_proof_signed_by_the_new_credential_is_refused():
+    proof = signed_credential_change_proof(by_the_new_credential=True)
+    with pytest.raises(PasskeyProofUnavailable):
+        passkey_evidence_commitment(proof)
+
+
+CHANGE_VECTOR = json.loads(
+    (
+        Path(__file__).resolve().parents[4] / "docs/vectors/passkey-credential-change-v1.json"
+    ).read_bytes()
+)
+
+
+@pytest.mark.parametrize("case", CHANGE_VECTOR["cases"], ids=lambda case: case["name"])
+def test_the_shared_helper_matches_the_credential_change_vectors(case):
+    assert passkey_evidence_commitment(proof_for(case)) == case["commitment_sha256"]
+
+
+@pytest.mark.parametrize("case", CHANGE_VECTOR["negative_cases"], ids=lambda case: case["name"])
+def test_the_shared_helper_refuses_the_credential_change_negatives(case):
+    with pytest.raises(PasskeyProofUnavailable):
+        passkey_evidence_commitment(proof_for(case))
