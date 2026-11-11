@@ -828,7 +828,8 @@ and a 64 KiB error body. A failed delivery reaches the sender as the status and
 one fixed reason: `delivery_origin_refused` (the origin is not `https` named by
 host), `delivery_address_refused` (an answer is not admitted; the server also
 logs a warning naming the origin and the setting),
-`delivery_origin_unreachable`, `delivery_timeout`, a response-bound reason,
+`delivery_origin_unreachable`, `delivery_timeout`, `delivery_unavailable` (the
+server has no delivery transport and makes no request), a response-bound reason,
 `HTTP <status>`, or the remote's `reason` when it is a federation reason from
 [`federation-error-reference.md`](federation-error-reference.md). Other text the
 remote answers, on an error status or on a success answer that is not a JSON

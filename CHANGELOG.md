@@ -28,7 +28,8 @@
   applies to delivery only, not to registry reads, and an invalid entry refuses
   start-up naming it. A failed delivery returns its status and a fixed reason
   (`delivery_origin_refused`, `delivery_address_refused`,
-  `delivery_origin_unreachable`, `delivery_timeout`, `HTTP <status>`, or the
+  `delivery_origin_unreachable`, `delivery_timeout`, `delivery_unavailable`
+  when the server has no delivery transport, `HTTP <status>`, or the
   recipient server's typed federation reason) in place of the remote's response
   text; a refused private address also logs a warning naming the origin and the
   setting. `deliver_federated_message` requires its `transport`, and
