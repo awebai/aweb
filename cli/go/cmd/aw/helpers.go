@@ -1291,20 +1291,8 @@ func resolveReloadBaseURLContext(ctx context.Context, stored string) (string, er
 	return working, nil
 }
 
-func resolveBaseURLForInit(urlVal, serverVal string) (baseURL string, serverName string, err error) {
-	baseURL, serverName, err = selectInitBaseURL(urlVal, serverVal)
-	if err != nil {
-		return "", "", err
-	}
-	baseURL, err = resolveWorkingBaseURL(baseURL)
-	if err != nil {
-		return "", "", err
-	}
-	return baseURL, serverName, nil
-}
-
 // Select the requested/default URL without contacting it. Reachability and
-// API-mount discovery belong to resolveBaseURLForInit's separate network step.
+// API-mount discovery belong to resolveWorkingBaseURLContext, the network step.
 func selectInitBaseURL(urlVal, serverVal string) (baseURL string, serverName string, err error) {
 	baseURL = strings.TrimSpace(urlVal)
 	serverName = strings.TrimSpace(serverVal)
