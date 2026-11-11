@@ -2484,7 +2484,7 @@ Q8 decided that neither `--unsafe-inject` nor `result_handling: return` exists.
 | T8 | Runner host and its OS user | running pinned jobs; holding job credentials | Same-user agents or a writable config defeat it. Documented, partly detected by `doctor`. |
 | T9 | Approver, authenticator and contact channel | decisions; enrolment and recovery delivery | A passkey proves an enrolled authenticator, not a named human or humanity. A compromised contact mailbox plus an owner-initiated enrolment can add an authenticator, hence notifications and delays. |
 | T10 | AWID and team controller | membership and keys | A controller can certify new keys. New principals get nothing without grants, but a controller who re-certifies an existing `did:aw` inherits its grants. |
-| T11 | Team controller (owner act) | designating the first owner and re-designating after a lockout (§10.2) | It is the root of trust for the installation's policy. Install or admin authority alone cannot bootstrap or recover secrets. A custodial deployment holding the controller key signs owner acts only after fresh interactive step-up. |
+| T11 | Team controller (owner act) | designating the first owner and re-designating after a lockout (§10.2) | It is the root of trust for the installation's policy. Install or admin authority alone cannot bootstrap or recover secrets. The controller key signs an owner act only after a live, exact-act passkey approval by the current team owner, consumed once (§10.2). |
 | T12 | Hook targets (logs) | storing redacted events | They receive metadata, hashes and identifiers, never values. |
 | T13 | Network path and DNS | nothing | TLS verification, address checks and connection pinning (§7.3) |
 
@@ -2684,12 +2684,12 @@ surface host must meet them:
 3. **Render the secrets surface through D1's generic surface host.** That covers
    the read-only views, containment and `propose-change` forms, and the link-out
    to the console (§6.1, §13.2).
-4. **Sign the team owner act only after fresh interactive step-up.** Where a
-   custodial deployment holds a team's controller key, it signs
+4. **Sign the team owner act only after a live exact-act approval.** The
+   deployment holds the team's controller key outside worker access and signs
    `aweb.owner-act/1`, which secrets needs for bootstrap and re-designation
-   (§10.2), only for an organization owner and only after a fresh, interactive
-   step-up by that owner. A session or a stored credential alone is never
-   enough.
+   (§10.2), only for the current team owner and only after that owner's live
+   passkey approval bound to exactly that act and consumed once. A session, a
+   stored credential, an API key or a token alone is never enough.
 
 No secrets-specific branch in aw-core is needed. Everything else is either
 secrets-local or generic.
