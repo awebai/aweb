@@ -163,3 +163,23 @@ async def test_unknown_operation_is_a_configuration_error():
     _, headers, body = signed_request()
     with pytest.raises(ValueError, match='operation'):
         await verify(request(headers, body), operation='arbitrary_sign')
+
+
+@pytest.mark.asyncio
+async def test_get_proof_cannot_carry_a_body_even_when_correctly_signed():
+    operation = 'protected_operation_receipt'
+    _, headers, body = signed_request(operation=operation, method='GET', body=b'{}')
+    with pytest.raises(HTTPException) as exc:
+        await verify(request(headers, body, method='GET'), operation=operation)
+    assert exc.value.status_code == 401
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize('field', ['signature', 'payload'])
+async def test_padded_wire_encodings_refuse(field):
+    _, headers, body = signed_request()
+    name = 'Authorization' if field == 'signature' else 'X-AWEB-Signed-Payload'
+    headers[name] += '='
+    with pytest.raises(HTTPException) as exc:
+        await verify(request(headers, body))
+    assert exc.value.status_code == 401
