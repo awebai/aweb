@@ -1,5 +1,12 @@
 # Knowledge log
 
+## 2026-11-11
+* **Harvest**: OKF proposal from aweb-expert/aweb-expert-testing-servers (per-run gate VMs).
+* **Creation**: decision [every full gate runs on its own VM](/aweb-expert/decisions/full-gates-run-on-per-run-vms.md), decided by the operator 2026-11-11 (source-reported).
+* **Creation**: decision [gate capacity is guarded by refusal at create](/aweb-expert/decisions/gate-capacity-is-guarded-by-refusal-at-create.md).
+* **Creation**: decision [a timed-out qualification completes with its never-run stages](/aweb-expert/decisions/timed-out-qualification-completes-with-never-run-stages.md).
+* **Creation**: lessons [the first run on a new host type is a portability test](/aweb-expert/lessons/first-run-on-a-new-host-is-a-portability-test.md) and [a forwarding wrapper keeps exec](/aweb-expert/lessons/a-forwarding-wrapper-keeps-exec.md).
+
 ## 2026-11-04
 * **Harvest**: OKF proposal from aweb-expert/aweb-expert-fresh-eyes (tasks aweb-acst and aweb-actf).
 * **Update**: [identity and routing review needs the real client](/aweb-expert/lessons/identity-and-routing-review-needs-the-real-client.md) gains that the real client includes the last released binary and that a skipped released-client case is not evidence.
