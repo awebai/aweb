@@ -134,7 +134,16 @@ async def test_an_add_is_one_enrolment_under_its_approving_assertion(world: Worl
 async def test_a_replace_enrols_the_new_key_and_revokes_the_old_under_one_commitment(
     world: World,
 ):
+    """The enrolled key predates relying-party binding (rp_id NULL), so its
+    digest is recomputed at the app's own relying party."""
     scope, device = await enrolled(world)
+    assert (
+        await world.db.fetch_value(
+            "SELECT rp_id FROM {{tables.passkey_credentials}} WHERE credential_id = $1",
+            credential_of(device),
+        )
+        is None
+    )
     old_ref = await completion_ref(world, credential_of(device))
     before = len(await payloads(world))
     result, _ = await change(world, scope, device, replace_id=credential_of(device))
@@ -403,6 +412,22 @@ async def test_an_add_recorded_as_a_replace_is_refused(world: World):
         return replace(event, kind=AuditKind.APPROVER_PASSKEY_REPLACED)
 
     await refused_and_rolled_back(world, scope, device, tamper)
+
+
+async def test_a_replace_approval_recorded_against_an_add_is_refused(world: World):
+    """The holder approved replacing a key; the row and event claim a plain
+    add, which would leave the key it meant to retire live."""
+    scope, device = await enrolled(world)
+
+    async def tamper(event, tx):
+        await tx.execute(
+            "UPDATE {{tables.passkey_credentials}} SET replaced_credential_id = NULL "
+            "WHERE added_by_evidence = $1",
+            event.details["evidence_ref"],
+        )
+        return replace(event, kind=AuditKind.APPROVER_PASSKEY_ADDED)
+
+    await refused_and_rolled_back(world, scope, device, tamper, replace_id=credential_of(device))
 
 
 async def test_one_change_is_recorded_once(world: World):

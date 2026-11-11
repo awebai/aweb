@@ -1249,12 +1249,17 @@ class CredentialAudit:
         # The digests the approval signed are those of the stored credentials,
         # at their effective relying party.
         fields = json.loads(proof.challenge_preimage.split(b"\n", 1)[1])
+        retired_id = added["replaced_credential_id"]
+        # The operation the holder signed is the one B3 wrote.
+        if fields.get("operation") != ("add" if retired_id is None else "replace") or (
+            retired_id is None and "retire_credential_sha256" in fields
+        ):
+            raise GovernanceUnavailable()
         rp_id = passkeys.rp.rp_id
         if HumanCredential(
             credential_id, bytes(added["public_key"]), added["rp_id"] or rp_id
         ).sha256 != fields.get("credential_sha256"):
             raise GovernanceUnavailable()
-        retired_id = added["replaced_credential_id"]
         if retired_id is not None:
             retired = await tx.fetch_one(
                 "SELECT * FROM {{tables.passkey_credentials}} WHERE credential_id = $1", retired_id
