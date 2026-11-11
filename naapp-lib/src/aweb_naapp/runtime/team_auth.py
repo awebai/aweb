@@ -399,7 +399,8 @@ class AWIDTeamCache:
         for team_id, credential in self._member_credentials.items():
             certificate_id = credential.certificate_id
             try:
-                facts = await self._refresh_team_facts(team_id, time.monotonic_ns())
+                # A check, not a load: requests read their own facts.
+                facts = await self._refresh_team_facts(team_id, time.monotonic_ns(), store=False)
                 _require_active_certificate(facts, certificate_id)
                 verify_team_certificate_signature(dict(credential.certificate), facts.team_did_key)
             except (HTTPException, TeamCertificateError) as exc:
@@ -409,7 +410,9 @@ class AWIDTeamCache:
                     f"cannot read the team's AWID facts ({detail})"
                 ) from None
 
-    async def _refresh_team_facts(self, team_id: str, now: int) -> CachedTeamFacts:
+    async def _refresh_team_facts(
+        self, team_id: str, now: int, *, store: bool = True
+    ) -> CachedTeamFacts:
         domain, team_name = parse_team_id(team_id)
         try:
             async with self._client() as client:
@@ -484,7 +487,8 @@ class AWIDTeamCache:
             fetched_at=now,
             expires_at=now + seconds_to_ns(self.ttl_seconds),
         )
-        self._cache[team_id] = facts
+        if store:
+            self._cache[team_id] = facts
         return facts
 
     async def _get_certificate_status(

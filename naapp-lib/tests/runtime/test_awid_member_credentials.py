@@ -168,3 +168,13 @@ async def test_the_app_does_not_start_on_a_certificate_the_current_team_key_did_
             pass
     assert TEAM_ID in str(refused.value)
     assert "service" in str(refused.value)
+
+
+async def test_the_startup_check_reads_but_does_not_load_the_cache(
+    registry, app_database_url, tmp_path
+):
+    _, service = await private_team(registry)
+    settings = settings_for(app_database_url, {TEAM_ID: aw_files(tmp_path / "aw", service)})
+    runtime = runtime_for(registry, settings, tmp_path / "app")
+    async for _ in running(runtime):
+        assert TEAM_ID not in runtime.team_cache()._cache
