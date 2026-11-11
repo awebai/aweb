@@ -163,6 +163,69 @@ def cases() -> list[dict]:
     ]
 
 
+# What the naapp runtime verifier answers today for each case.
+NAAPP_RUNTIME_TODAY = {
+    "valid": "accepted",
+    "valid_issued_long_ago": "accepted",
+    "not_base64": "refused",
+    "not_json": "refused",
+    "not_an_object": "refused",
+    "oversized_header": "refused",
+    "version_2": "accepted",
+    "version_string": "accepted",
+    "version_true": "accepted",
+    "version_absent": "accepted",
+    "alias_absent": "refused",
+    "alias_empty": "refused",
+    "alias_not_a_string": "accepted",
+    "certificate_id_absent": "refused",
+    "team_id_absent": "refused",
+    "member_did_key_absent": "refused",
+    "member_key_mismatch": "refused",
+    "signature_absent": "refused",
+    "signature_tampered": "refused",
+    "signed_by_another_key": "refused",
+    "revoked": "refused",
+    "unregistered": "refused",
+}
+
+
+# What the library's own verifier answers today for each case.
+LIBRARY_TODAY = {
+    **NAAPP_RUNTIME_TODAY,
+    "oversized_header": "accepted",
+    "unregistered": "accepted",
+}
+
+# What the hook delivery receiver answers today: acceptance, or its refusal code.
+# It leaves revocation to its caller and compares the certificate with the
+# delivery's producer where the others compare it with the request's signer.
+HOOKS_TODAY = {
+    "valid": "accepted",
+    "valid_issued_long_ago": "accepted",
+    "not_base64": "certificate_invalid",
+    "not_json": "certificate_invalid",
+    "not_an_object": "certificate_invalid",
+    "oversized_header": "certificate_invalid",
+    "version_2": "accepted",
+    "version_string": "accepted",
+    "version_true": "accepted",
+    "version_absent": "accepted",
+    "alias_absent": "accepted",
+    "alias_empty": "accepted",
+    "alias_not_a_string": "accepted",
+    "certificate_id_absent": "certificate_mismatch",
+    "team_id_absent": "certificate_mismatch",
+    "member_did_key_absent": "certificate_mismatch",
+    "member_key_mismatch": "certificate_mismatch",
+    "signature_absent": "certificate_invalid",
+    "signature_tampered": "certificate_invalid",
+    "signed_by_another_key": "certificate_invalid",
+    "revoked": "accepted",
+    "unregistered": "accepted",
+}
+
+
 def document() -> str:
     doc = {
         "version": 1,
@@ -181,8 +244,22 @@ def document() -> str:
         "today_verifiers": {
             "awid": "awid.team_certificate: decode_team_certificate, then verify_team_certificate_signature",
             "server": "aweb.team_auth.parse_and_verify_certificate",
+            "naapp_runtime": "aweb_naapp.runtime.team_auth.authenticate_request, behind a correctly signed request",
+            "library": "library.auth.authenticate_request, behind a correctly signed request",
+            "hooks": "aweb_naapp.hooks.delivery: the client certificate of a delivery from the case's signer",
         },
-        "cases": cases(),
+        "cases": [
+            {
+                **case,
+                "today": {
+                    **case["today"],
+                    "naapp_runtime": NAAPP_RUNTIME_TODAY[case["name"]],
+                    "library": LIBRARY_TODAY[case["name"]],
+                    "hooks": HOOKS_TODAY[case["name"]],
+                },
+            }
+            for case in cases()
+        ],
     }
     return json.dumps(doc, indent=2, ensure_ascii=False) + "\n"
 
