@@ -8,7 +8,7 @@ from __future__ import annotations
 
 from aweb.human_kind import is_verified_human
 
-from aweb.identity_auth_deps import _enforce_current_membership
+from aweb.identity_auth_deps import current_membership
 
 
 async def messaging_participants_by_aliases(
@@ -17,7 +17,7 @@ async def messaging_participants_by_aliases(
     team_id: str,
     aliases: list[str],
     selected_team_id: str | None,
-    request=None,
+    registry_client=None,
 ) -> list[dict]:
     if not aliases:
         return []
@@ -45,9 +45,7 @@ async def messaging_participants_by_aliases(
             # Follow the existing admitting-certificate policy. An unavailable
             # revocation authority must not silently make a human routable.
             if row.get("certificate_id"):
-                if request is None:
-                    continue
-                current = await _enforce_current_membership(request, row)
+                current = await current_membership(registry_client, row)
                 if not current or current.get("team_id") != team_id:
                     continue
         result.append(row)
@@ -60,14 +58,14 @@ async def messaging_participant_by_alias(
     team_id: str,
     alias: str,
     selected_team_id: str | None,
-    request=None,
+    registry_client=None,
 ) -> dict | None:
     rows = await messaging_participants_by_aliases(
         db,
         team_id=team_id,
         aliases=[alias],
         selected_team_id=selected_team_id,
-        request=request,
+        registry_client=registry_client,
     )
     # Database uniqueness normally enforces this; ambiguous data never picks a
     # "most recent" actor or crosses into another team.

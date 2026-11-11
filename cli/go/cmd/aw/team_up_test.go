@@ -769,7 +769,7 @@ func TestConfirmClaudeChannelPromptDoesNotSendBlindBeforePrompt(t *testing.T) {
 	if err == nil {
 		t.Fatal("expected timeout error")
 	}
-	for _, want := range []string{"timed out waiting", "no known prompt (trust-folder / dev-channel)", "prompt wording may have changed", "claudeChannelPromptVisible", "claudeTrustFolderPromptVisible", "loading plugin..."} {
+	for _, want := range []string{"timed out waiting", "no known prompt (trust-folder / dev-channel)", "prompt wording may have changed", "claudeChannelPromptComplete", "claudeBlockingPromptKind", "loading plugin..."} {
 		if !strings.Contains(err.Error(), want) {
 			t.Fatalf("timeout error missing %q:\n%v", want, err)
 		}

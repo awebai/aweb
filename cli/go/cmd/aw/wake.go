@@ -85,7 +85,7 @@ var wakeRunCmd = &cobra.Command{
 			return err
 		}
 
-		lock, err := wake.AcquireLock(store.LockDir())
+		lock, err := wake.AcquireLock(store.LockPath())
 		if err != nil {
 			var running *wake.ErrDaemonAlreadyRunning
 			if errors.As(err, &running) {
@@ -97,15 +97,16 @@ var wakeRunCmd = &cobra.Command{
 		defer func() { _ = lock.Release() }()
 
 		broker, err := wake.NewBroker(wake.Config{
-			Store:       store,
-			Session:     &session.ExecClient{Bin: strings.TrimSpace(wakeOatsBin)},
-			ChannelCore: wake.NewChannelCoreRunner(store),
-			OpenStream:  wakeStreamOpener,
-			Heartbeat:   wakeHeartbeat,
-			MaxStreams:  wakeMaxStreams,
-			Version:     version,
-			Commit:      daemonCommitForStatus(),
-			Log:         wakeLogger(),
+			Store:        store,
+			Session:      &session.ExecClient{Bin: strings.TrimSpace(wakeOatsBin)},
+			ChannelCore:  wake.NewChannelCoreRunner(store),
+			OpenStream:   wakeStreamOpener,
+			ReloadStream: wakeStreamReload,
+			Heartbeat:    wakeHeartbeat,
+			MaxStreams:   wakeMaxStreams,
+			Version:      version,
+			Commit:       daemonCommitForStatus(),
+			Log:          wakeLogger(),
 		})
 		if err != nil {
 			return err
@@ -247,8 +248,7 @@ var wakeDeregisterCmd = &cobra.Command{
 		"instance and never removes a registration on its own; an instance it observed\n" +
 		"stopped is marked inactive and waits here.\n\n" +
 		"An unknown or already-retired home exits 0 with a note: the hook may run twice,\n" +
-		"or after the pending expiry already dropped the registration, and neither is a\n" +
-		"failed retirement.\n\n" +
+		"and that is not a failed retirement.\n\n" +
 		"For observed managed-worker completion, use --require-managed-stop with\n" +
 		"--expect-registration FILE containing managed_receiver from live wake status.\n" +
 		"This strict mode requires an eligible captured child and a supporting daemon,\n" +
@@ -443,16 +443,29 @@ func wakeStore() (*wake.Store, error) {
 // path every other identity-home-aware command uses. The broker needs
 // stream-read and presence authority — it never opens a message, so it never
 // needs decryption material for any identity.
-func wakeStreamOpener(identityHome, teamID string) (run.EventStreamOpener, error) {
-	client, err := wakeIdentityClient(context.Background(), identityHome, teamID)
+func wakeStreamOpener(ctx context.Context, identityHome, teamID string) (run.EventStreamOpener, error) {
+	client, _, err := wakeIdentityClient(ctx, identityHome, teamID, resolveAuthenticatedBaseURLContext)
 	if err != nil {
 		return nil, err
 	}
 	return run.NewEventStreamOpener(client.Client), nil
 }
 
+// wakeStreamReload builds one identity's event stream source before a retry
+// of a refused stream. It reads the identity home again as wakeStreamOpener
+// does, and builds the client for the mount of the stored server URL that
+// answers as the API (resolveReloadBaseURLContext); that mount is stored once
+// a stream opens there (reloadedEventStreamOpener).
+func wakeStreamReload(ctx context.Context, identityHome, teamID string) (run.EventStreamOpener, error) {
+	client, sel, err := wakeIdentityClient(ctx, identityHome, teamID, resolveReloadBaseURLContext)
+	if err != nil {
+		return nil, err
+	}
+	return reloadedEventStreamOpener(client, sel), nil
+}
+
 func wakeHeartbeat(ctx context.Context, identityHome, teamID string) error {
-	client, err := wakeIdentityClient(ctx, identityHome, teamID)
+	client, _, err := wakeIdentityClient(ctx, identityHome, teamID, resolveAuthenticatedBaseURLContext)
 	if err != nil {
 		return err
 	}
@@ -460,10 +473,10 @@ func wakeHeartbeat(ctx context.Context, identityHome, teamID string) error {
 	return err
 }
 
-func wakeIdentityClient(ctx context.Context, identityHome, teamID string) (*aweb.Client, error) {
+func wakeIdentityClient(ctx context.Context, identityHome, teamID string, resolveBaseURL baseURLResolver) (*aweb.Client, *awconfig.Selection, error) {
 	identityHome = strings.TrimSpace(identityHome)
 	if identityHome == "" || !filepath.IsAbs(identityHome) {
-		return nil, fmt.Errorf("identity home must be an absolute path, got %q", identityHome)
+		return nil, nil, fmt.Errorf("identity home must be an absolute path, got %q", identityHome)
 	}
 	home := awconfig.IdentityHome{Root: identityHome, Source: awconfig.IdentityHomeFlag}
 	workingDir := awconfig.WorktreeRootFromIdentityPath(filepath.Join(identityHome, "identity.yaml"))
@@ -471,23 +484,23 @@ func wakeIdentityClient(ctx context.Context, identityHome, teamID string) (*aweb
 		workingDir = filepath.Dir(identityHome)
 	}
 	var client *aweb.Client
+	var selection *awconfig.Selection
 	var err error
 	if awconfig.IsGrantHome(home.Root) {
 		if err := validateGrantHomeTeam(home.Root, teamID); err != nil {
-			return nil, err
+			return nil, nil, err
 		}
-		client, _, err = buildGrantClientSelectionForTeam(ctx, workingDir, home, teamID)
+		client, selection, err = buildGrantClientSelectionForTeam(ctx, workingDir, home, teamID, resolveBaseURL)
 	} else {
-		var selection *awconfig.Selection
 		selection, err = resolveSelectionAtIdentityHome(workingDir, teamID, home)
 		if err == nil {
-			client, _, err = buildClientForSelectionAtIdentityHome(ctx, workingDir, externalIdentityHomeRoot(home), selection)
+			client, selection, err = buildClientForSelectionAtIdentityHome(ctx, workingDir, externalIdentityHomeRoot(home), selection, resolveBaseURL)
 		}
 	}
 	if err != nil {
-		return nil, err
+		return nil, nil, err
 	}
-	return client, nil
+	return client, selection, nil
 }
 
 func validateGrantHomeTeam(identityHome, teamID string) error {
@@ -509,13 +522,6 @@ func wakeLogger() func(string, ...any) {
 	return func(format string, args ...any) {
 		fmt.Fprintf(os.Stderr, "%s wake: %s\n", time.Now().UTC().Format(time.RFC3339), fmt.Sprintf(format, args...))
 	}
-}
-
-func millis(v int) time.Duration {
-	if v <= 0 {
-		return 0
-	}
-	return time.Duration(v) * time.Millisecond
 }
 
 func formatWakeStatus(v any) string {
@@ -545,8 +551,13 @@ func formatWakeStatus(v any) string {
 		b.WriteString("\nStreams:\n")
 		for _, stream := range status.Streams {
 			line := fmt.Sprintf("  %s  %s", stream.Phase, stream.IdentityHome)
-			if !stream.Admitted {
+			switch {
+			case stream.Phase == string(wake.StreamRefused):
+				line += "  [refused by the server: " + dashIfEmpty(stream.Cause) + "; next try " + stampOrDash(stream.NextAttemptAt) + "]"
+			case !stream.Admitted:
 				line += "  [over the stream bound; registration kept]"
+			case stream.Phase == string(wake.StreamRetrying) && !stream.NextAttemptAt.IsZero():
+				line += "  [next try " + stampOrDash(stream.NextAttemptAt) + "]"
 			}
 			if stream.UnreadCount > 0 {
 				line += fmt.Sprintf("  unread=%d", stream.UnreadCount)
@@ -573,6 +584,12 @@ func formatWakeStatus(v any) string {
 				recv.IdentityHome, dashIfEmpty(recv.DeliveryOwner), recv.Controls, recv.StreamAdmitted)
 			if strings.TrimSpace(recv.StreamPhase) != "" {
 				line += " stream_phase=" + recv.StreamPhase
+			}
+			if strings.TrimSpace(recv.StreamCause) != "" {
+				line += " stream_cause=" + recv.StreamCause
+			}
+			if !recv.StreamNextAttemptAt.IsZero() {
+				line += " stream_next_try=" + stampOrDash(recv.StreamNextAttemptAt)
 			}
 			if strings.TrimSpace(recv.StreamError) != "" {
 				line += " stream_error=" + recv.StreamError

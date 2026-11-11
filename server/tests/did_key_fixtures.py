@@ -15,6 +15,10 @@ from nacl.signing import SigningKey
 from awid.did import did_from_public_key
 
 
+def named_signing_key(label: str) -> bytes:
+    """The signing key whose did:key is named_did_key(label)."""
+    return hashlib.sha256(f"aweb-test-did-key:{label}".encode()).digest()
+
+
 def named_did_key(label: str) -> str:
-    seed = hashlib.sha256(f"aweb-test-did-key:{label}".encode()).digest()
-    return did_from_public_key(bytes(SigningKey(seed).verify_key))
+    return did_from_public_key(bytes(SigningKey(named_signing_key(label)).verify_key))

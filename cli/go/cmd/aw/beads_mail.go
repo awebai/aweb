@@ -2,7 +2,6 @@ package main
 
 import (
 	"fmt"
-	"strings"
 
 	aweb "github.com/awebai/aw"
 	"github.com/spf13/cobra"
@@ -78,26 +77,6 @@ func beadsMailWantsHelp(args []string) bool {
 	return false
 }
 
-// beadsMailStub declares a verb the design record marks as implemented, ahead
-// of its implementation subtask. Flag parsing stays disabled so gt-shaped
-// input can never crash the router; the real verb defines its flags when it
-// lands.
-func beadsMailStub(use, short string, aliases ...string) *cobra.Command {
-	verb := strings.Fields(use)[0]
-	return &cobra.Command{
-		Use:                use,
-		Short:              short,
-		Aliases:            aliases,
-		DisableFlagParsing: true,
-		RunE: func(cmd *cobra.Command, args []string) error {
-			if beadsMailWantsHelp(args) {
-				return cmd.Help()
-			}
-			return usageError("beads-mail %s is not implemented yet in this build; the delegate frame landed first. Run 'aw beads-mail help' for the current surface", verb)
-		},
-	}
-}
-
 // beadsMailUnsupported declares a verb the design record decides against for
 // v1. The message is the product surface a beads user meets: it says what the
 // verb would do, why not here, and what to use instead.
@@ -147,10 +126,10 @@ func init() {
 			"bd mail mark-unread is not supported: the aweb server has no way to clear read state, and read state drives the wake path. If you need this, ask for it - it requires a server-side change"),
 		beadsMailUnsupported("archive [message-id...]", "Not supported: the beads graph is the archive",
 			"bd mail archive is not supported: aweb mail is delivery, not an archive - the durable record is your beads graph. Use 'bd mail mark-read' to clear unread state"),
-		beadsMailUnsupported("delete <message-id>", "Not supported: server mail expires on its own",
-			"bd mail delete is not supported: messages cannot be deleted from the aweb server; they expire under the server's retention policy. The durable record is your beads graph"),
-		beadsMailUnsupported("clear [target]", "Not supported: server mail expires on its own",
-			"bd mail clear is not supported: messages cannot be deleted from the aweb server; they expire under the server's retention policy. Use 'bd mail mark-read --all' to clear unread state"),
+		beadsMailUnsupported("delete <message-id>", "Not supported: aweb mail cannot be deleted",
+			"bd mail delete is not supported: messages cannot be deleted from the aweb server. The durable record is your beads graph"),
+		beadsMailUnsupported("clear [target]", "Not supported: aweb mail cannot be deleted",
+			"bd mail clear is not supported: messages cannot be deleted from the aweb server. Use 'bd mail mark-read --all' to clear unread state"),
 		beadsMailUnsupported("search <query>", "Not supported in v1: no server-side mail search",
 			"bd mail search is not supported in v1: the aweb server has no mail search. With dual-write enabled your messages are beads issues - search them with bd. Without dual-write, 'aw log' shows the local send/fetch record"),
 		beadsMailUnsupported("claim [queue-name]", "Not supported in v1: no message queues",

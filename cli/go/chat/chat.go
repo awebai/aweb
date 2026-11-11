@@ -549,15 +549,6 @@ func participantIdentityCount(participants []string, participantDIDs []string, p
 	return len(chatParticipantRows(participants, participantDIDs, participantAddresses))
 }
 
-func pendingParticipantIdentityAt(participants []string, participantDIDs []string, participantAddresses []string, idx int) (alias, address, did string) {
-	rows := chatParticipantRows(participants, participantDIDs, participantAddresses)
-	if idx >= 0 && idx < len(rows) {
-		row := rows[idx]
-		return row.Alias, row.Address, row.DID
-	}
-	return "", "", ""
-}
-
 func pendingParticipantIdentityByLastFrom(participants []string, participantDIDs []string, participantAddresses []string, lastFrom string) (address, stableID, did string) {
 	lastFrom = strings.TrimSpace(lastFrom)
 	if lastFrom == "" {
@@ -1683,24 +1674,6 @@ func ShowPending(ctx context.Context, client *awid.Client, targetAlias string) (
 	}
 
 	return nil, fmt.Errorf("no pending conversation with %s", targetAlias)
-}
-
-func chatEventMatchesTarget(ev Event, target string) bool {
-	target = strings.TrimSpace(target)
-	if target == "" {
-		return false
-	}
-	for _, candidate := range []string{
-		strings.TrimSpace(ev.FromAgent),
-		strings.TrimSpace(ev.FromAddress),
-		strings.TrimSpace(ev.FromStableID),
-		strings.TrimSpace(ev.FromDID),
-	} {
-		if candidate != "" && candidate == target {
-			return true
-		}
-	}
-	return false
 }
 
 func normalizedChatEventNames(ev Event, participants []awid.ChatParticipant) []string {

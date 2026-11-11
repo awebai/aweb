@@ -20,6 +20,7 @@ import (
 
 	"github.com/awebai/aw/awconfig"
 	"github.com/awebai/aw/awid"
+	"github.com/awebai/aw/internal/atomicfile"
 	"github.com/spf13/cobra"
 )
 
@@ -445,10 +446,13 @@ func isSharedResource404(body []byte) bool {
 
 // signActivityEvent returns the request body for POST /v1/agents/me/activity.
 func signActivityEvent(event map[string]any, key ed25519.PrivateKey) (map[string]string, error) {
-	payload, err := canonicalUTF8JSON(event)
+	// Signed activity documents are canonical JSON: keys sorted by code point,
+	// no insignificant whitespace, raw UTF-8.
+	canonical, err := awid.CanonicalJSONValue(event)
 	if err != nil {
 		return nil, err
 	}
+	payload := []byte(canonical)
 	return map[string]string{
 		"signed_payload": base64.RawURLEncoding.EncodeToString(payload),
 		"signature":      base64.RawStdEncoding.EncodeToString(ed25519.Sign(key, payload)),
@@ -471,6 +475,6 @@ func (h *codexActivityHook) save() {
 		return
 	}
 	if data, err := json.Marshal(h.state); err == nil {
-		_ = writeFileAtomic(h.root, activityHookStateFile, data, 0o600)
+		_ = atomicfile.Write(filepath.Join(h.root, activityHookStateFile), data, 0o600)
 	}
 }

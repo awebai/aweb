@@ -180,16 +180,6 @@ func ownerOptions(aud string, acts []string, subject map[string]any) map[string]
 	return options
 }
 
-func ownerSign(t *testing.T, seed []byte, act map[string]any) ([]byte, string) {
-	t.Helper()
-	canonical, err := strictjson.Canonical(act)
-	if err != nil {
-		t.Fatal(err)
-	}
-	signing := append([]byte(OwnerActPrefix), canonical...)
-	return signing, base64.RawStdEncoding.EncodeToString(ed25519.Sign(ownerKey(seed), signing))
-}
-
 func ownerSet(act map[string]any, key string, value any) map[string]any {
 	copied := map[string]any{}
 	for k, v := range act {

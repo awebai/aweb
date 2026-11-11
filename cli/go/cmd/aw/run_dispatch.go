@@ -251,10 +251,6 @@ func selfIdentityDIDs(client *aweb.Client) []string {
 	return uniqueIdentityDIDs(client.StableID(), client.DID())
 }
 
-func pendingIdentityCount(pending awid.ChatPendingItem) int {
-	return len(pendingIdentityRows(pending.Participants, pending.ParticipantAddresses, pending.ParticipantDIDs))
-}
-
 func pendingIdentityByAlias(pending awid.ChatPendingItem, alias string) (address, stableID, did string) {
 	if row, ok := pendingIdentityByAliasSlices(pending.Participants, pending.ParticipantAddresses, pending.ParticipantDIDs, alias); ok {
 		return row.Address, row.StableID, row.DID

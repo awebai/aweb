@@ -1,4 +1,12 @@
-"""The naapp ``/health``, ``/live`` and ``/ready`` routes."""
+"""The naapp ``/health``, ``/live`` and ``/ready`` routes.
+
+They follow the probe contract of the aweb server and AWID
+(``docs/aweb-sot.md``, "Health probes"): ``/live`` answers 200 whenever the
+process serves requests and checks no dependency; ``/ready`` answers 200 when
+every dependency check passes and 503 otherwise, with ``status`` ``ok`` or
+``unhealthy`` and each check named in ``checks`` as ``ok`` or ``error``;
+``/health`` answers as ``/ready`` does and adds the checks' figures.
+"""
 
 from __future__ import annotations
 
@@ -30,9 +38,10 @@ _monotonic = time.monotonic
 
 @dataclass(frozen=True)
 class CheckResult:
-    """One dependency's state. ``detail`` is served on ``/health``, so its
-    values are numbers, booleans or ``None``: never text, which could carry an
-    error message or a credential."""
+    """One dependency's state. ``detail`` is served under the check's name in
+    ``details`` on ``/health``, so its values are numbers, booleans or
+    ``None``: never text, which could carry an error message or a
+    credential."""
 
     ok: bool
     detail: Mapping[str, int | float | bool | None] = field(default_factory=dict)
@@ -73,11 +82,13 @@ def mount_health(
     They never accept free-form text or environment mappings.
 
     ``checks`` are the app's dependencies, reported by name on ``/health`` and
-    ``/ready``: ``/ready`` serves only whether each passed, ``/health`` also
-    its detail. They run at most once per ``HEALTH_CHECK_CACHE_SECONDS``:
-    concurrent requests wait for the one run in flight, and later ones get its
-    result until it expires. ``/ready`` answers 503 when any of them fails;
-    ``/health`` reports the same and always answers 200; ``/live`` runs none.
+    ``/ready`` as ``ok`` or ``error``; ``/health`` also serves each check's
+    detail under ``details``. They run at most once per
+    ``HEALTH_CHECK_CACHE_SECONDS``: concurrent requests wait for the one run in
+    flight, and later ones get its result until it expires. ``/ready`` and
+    ``/health`` answer 503 with ``status`` ``unhealthy`` when any of them
+    fails; ``/live`` runs none and always answers 200, so it is the route for a
+    probe that restarts the process.
     """
     # Static deployment identity is distinct from check details. Restrict it
     # to declared enums so free-form errors/credentials cannot become labels.
@@ -115,24 +126,31 @@ def mount_health(
             return True, payload
         results = await checked()
         ready = all(result.ok for result in results.values())
-        return ready, {
+        body = {
             **payload,
-            "status": "ok" if ready else "unavailable",
-            "checks": {
-                name: {"ok": result.ok, **(result.detail if with_detail else {})}
-                for name, result in results.items()
-            },
+            "status": "ok" if ready else "unhealthy",
+            "checks": {name: "ok" if result.ok else "error" for name, result in results.items()},
         }
+        if with_detail:
+            body["details"] = {
+                name: dict(result.detail) for name, result in results.items() if result.detail
+            }
+        return ready, body
+
+    async def probe(*, with_detail: bool) -> JSONResponse:
+        is_ready, body = await report(with_detail=with_detail)
+        return JSONResponse(body, status_code=200 if is_ready else 503)
 
     @app.get("/live")
     async def live() -> dict[str, object]:
+        # Checks no dependency: a database outage must not make an
+        # orchestrator restart a process that is serving requests.
         return payload
 
     @app.get("/health")
-    async def health() -> dict[str, object]:
-        return (await report(with_detail=True))[1]
+    async def health() -> JSONResponse:
+        return await probe(with_detail=True)
 
     @app.get("/ready")
     async def ready() -> JSONResponse:
-        is_ready, body = await report(with_detail=False)
-        return JSONResponse(body, status_code=200 if is_ready else 503)
+        return await probe(with_detail=False)

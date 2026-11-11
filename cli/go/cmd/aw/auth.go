@@ -183,7 +183,6 @@ type cliAuthStatusOutput struct {
 }
 
 func runAuthLogin(ctx context.Context, cmd *cobra.Command) error {
-	loadDotenvBestEffort()
 	rawScope := cliAuthScopeFlag
 	// Login, status and logout share a flag destination, but login requests a
 	// bundle by default. Read this command's default rather than the last flag
@@ -253,7 +252,6 @@ func runAuthLogin(ctx context.Context, cmd *cobra.Command) error {
 }
 
 func runAuthStatus(ctx context.Context, cmd *cobra.Command) error {
-	loadDotenvBestEffort()
 	scope, err := selectedCLIAuthScope()
 	if err != nil {
 		return err
@@ -304,7 +302,6 @@ func runAuthStatus(ctx context.Context, cmd *cobra.Command) error {
 }
 
 func runAuthLogout(ctx context.Context, cmd *cobra.Command) error {
-	loadDotenvBestEffort()
 	scope, err := selectedCLIAuthScope()
 	if err != nil {
 		return err
@@ -761,10 +758,6 @@ func saveCLIAuthConfigForScope(scope string, cfg cliAuthConfig) error {
 	}
 	data = append(data, '\n')
 	return awid.AtomicWriteFile(path, data)
-}
-
-func removeCLIAuthConfig() error {
-	return removeCLIAuthConfigForScope(cliAuthScope)
 }
 
 func removeCLIAuthConfigForScope(scope string) error {

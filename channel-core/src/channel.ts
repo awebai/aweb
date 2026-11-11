@@ -5,8 +5,12 @@ import { homedir } from "node:os";
 import { appendFile, mkdir, open, readFile, rename, rm } from "node:fs/promises";
 import { lock } from "proper-lockfile";
 
+import type { ActivityEmitter } from "./activity/emitter.js";
+import { activitySigner } from "./activity/runtime.js";
 import { APIClient } from "./api/client.js";
-import { streamAgentEvents, formatEventStreamState, type AgentEvent, type EventStreamState, type EventStreamObserver } from "./api/events.js";
+import type { AgentConfig } from "./config.js";
+import type { ReceiveStreamReceipt } from "./receive.js";
+import { streamAgentEvents, formatEventStreamState, localClockTime, type AgentEvent, type EventStreamOptions, type EventStreamState, type EventStreamObserver } from "./api/events.js";
 import { ackMessage, fetchInbox, type InboxMessage } from "./api/mail.js";
 import { fetchHistory, markRead, type ChatMessage } from "./api/chat.js";
 import { fetchRoomMessage, ackRoomNotice } from "./api/room.js";
@@ -14,7 +18,7 @@ import { terminalInputSafeText } from "./terminal.js";
 import { PinStore, type PinStoreWriter } from "./identity/pinstore.js";
 import { RegistryResolver, type ResolveTxt } from "./identity/registry.js";
 import { SenderTrustManager } from "./identity/trust.js";
-import { verifyDecryptedMessage } from "./identity/encrypted.js";
+import { isEncryptedMessage, verifyDecryptedMessage } from "./identity/encrypted.js";
 import type { VerificationStatus } from "./identity/signing.js";
 import {
   createLocalAWDecryptProvider,
@@ -44,7 +48,8 @@ export interface SelfIdentity {
   stableID: string;
 }
 
-export type ChannelAwakeningKind = "mail" | "chat" | "room" | "control" | "work" | "claim" | "claim_removed" | "app";
+/** "channel" is a notice from the channel itself; every other kind carries an event of the stream. */
+export type ChannelAwakeningKind = "mail" | "chat" | "room" | "control" | "work" | "claim" | "claim_removed" | "app" | "channel";
 export type ChannelDeliveryIntent = "wake" | "steer" | "ambient";
 
 export interface ChannelAwakening {
@@ -84,9 +89,21 @@ export interface ChannelLoopOptions {
   awCommand?: string;
   pinStoreWriter?: PinStoreWriter;
   log?: (message: string) => void;
-  /** Operator diagnostics only; stream state must never become an awakening. */
+  /**
+   * Operator diagnostics: every change of the stream's state. Stream state is
+   * not presented to the agent, with one exception the loop makes itself: the
+   * refusal that starts a refusal episode is presented once through
+   * onAwakening (eventStreamRefusedAwakening). A refused retry, the end of a
+   * quarantine and every other state present nothing.
+   */
   onStreamState?: (state: EventStreamState) => void;
   streamObserver?: EventStreamObserver;
+  /**
+   * Reads the channel's credentials again from where they are kept, before
+   * each retry of a refused event stream (createChannelCredentialReload).
+   * Without it a refused stream is retried with the credentials the client holds.
+   */
+  reloadCredentials?: EventStreamOptions["reloadCredentials"];
   onTrace?: (entry: ChannelTraceEntry) => void;
   /**
    * A chat message of this session is about to be presented to the agent, so
@@ -357,7 +374,9 @@ export function createRegistryResolver(
   });
 }
 
-export function createChannelClient(config: {
+export interface ChannelClientConfig {
+  /** The credential directory the configuration was read from. */
+  identityHome?: string;
   baseURL: string;
   did: string;
   stableID: string;
@@ -366,7 +385,9 @@ export function createChannelClient(config: {
   teamCertificateHeader: string;
   authMode?: "team" | "grant";
   grantID?: string;
-}): APIClient {
+}
+
+export function createChannelClient(config: ChannelClientConfig): APIClient {
   const client = new APIClient(config.baseURL, {
     did: config.did,
     stableID: config.stableID,
@@ -380,6 +401,73 @@ export function createChannelClient(config: {
     throw new Error(`selected active team ${config.teamID} is missing certificate signing authentication`);
   }
   return client;
+}
+
+export interface ChannelCredentialReloadOptions {
+  client: APIClient;
+  /** The configuration the channel started with. */
+  config: AgentConfig;
+  /** Reads the configuration again from the identity home the channel started with. */
+  load: () => Promise<AgentConfig>;
+  /** The reader identity the channel loop dispatches with. */
+  self: SelfIdentity;
+  /** The sender trust check the channel loop dispatches with. */
+  trust: SenderTrustManager;
+  receipt?: ReceiveStreamReceipt;
+  /** The session's activity emitter, when it has one. */
+  activity?: () => ActivityEmitter | undefined;
+}
+
+/**
+ * Returns the function a channel loop calls before each retry of a refused
+ * event stream. It reads the configuration again with load and gives the
+ * client the certificate or grant found there, so one renewed on disk, or the
+ * key and certificate a key rotation left there, is used without a restart.
+ * It is not a way to another identity: a configuration that names another
+ * identity home, server, identity, team or way to authenticate is refused
+ * and the channel keeps what it holds.
+ *
+ * A key rotation changes the identity's did:key. Everything that holds it
+ * beside the client is given the one read: the reader identity, the sender
+ * trust check, the receive receipt and the activity signer.
+ */
+export function createChannelCredentialReload(options: ChannelCredentialReloadOptions): (signal: AbortSignal) => Promise<void> {
+  return async (signal) => {
+    const renewed = await options.load();
+    // A stream that stopped while the files were read takes nothing from them.
+    signal.throwIfAborted();
+    if ((renewed.identityHome || "") !== (options.config.identityHome || "")) {
+      throw new Error("the credentials read again come from another identity home");
+    }
+    options.client.renewCredentialsFrom(createChannelClient(renewed));
+    options.self.did = renewed.did;
+    options.trust.renewSelfDID(renewed.did);
+    options.receipt?.renewDID(renewed.did);
+    options.activity?.()?.renewSigner(activitySigner(renewed));
+  };
+}
+
+/**
+ * The notice the agent is given when a refusal episode starts: the status or
+ * terminal event name, the time of the next attempt, and what it means for
+ * the agent. It is from the channel itself: it names no sender and carries no
+ * trust status.
+ */
+export function eventStreamRefusedAwakening(state: EventStreamState): ChannelAwakening {
+  const nextAttemptAt = state.nextAttemptAt ?? Date.now();
+  return {
+    kind: "channel",
+    content: `The aweb server refused this channel's event stream (${state.cause}). `
+      + "Mail and chat will not arrive until the stream is accepted again. "
+      + `The next attempt is at ${localClockTime(nextAttemptAt)}.`,
+    deliveryIntent: "wake",
+    meta: {
+      type: "channel",
+      notice: "event_stream_refused",
+      cause: state.cause || "",
+      next_attempt_at: new Date(nextAttemptAt).toISOString(),
+    },
+  };
 }
 
 function emitTrace(
@@ -432,6 +520,9 @@ export async function startChannelLoop(options: ChannelLoopOptions & { teamID: s
       teamID: options.teamID,
     }) : undefined
   );
+  const reportStreamState = options.onStreamState || ((state: EventStreamState) => {
+    if (state.state !== "connected") (options.log || console.error)(formatEventStreamState(state));
+  });
   await consumeAgentEvents(
     // Retain the undelivered log: dropping it silently loses failure evidence (aweb-aayl).
     { ...options, deliveryStore, undeliveredLog, localDecrypt },
@@ -439,11 +530,22 @@ export async function startChannelLoop(options: ChannelLoopOptions & { teamID: s
     streamAgentEvents(
       options.client,
       options.signal,
-      options.onStreamState || ((state) => {
-        if (state.state !== "connected") (options.log || console.error)(formatEventStreamState(state));
-      }),
+      (state) => {
+        reportStreamState(state);
+        if (state.state !== "refused" || !state.startsEpisode) return;
+        // The agent hears nothing while its stream is refused, so it is told
+        // once that the episode started. Nothing is presented when it ends:
+        // the next event shows that.
+        Promise.resolve()
+          .then(() => options.onAwakening(eventStreamRefusedAwakening(state)))
+          .catch((error) => {
+            const detail = error instanceof Error ? error.message : String(error);
+            (options.log || console.error)(`aweb: could not present the refused event stream to the agent: ${detail}`);
+          });
+      },
       (event) => emitTrace(options, "frame_parsed", event, eventDispatchLane(event)),
       options.streamObserver,
+      { reloadCredentials: options.reloadCredentials },
     ),
     options.log || (() => {}),
   );
@@ -697,7 +799,7 @@ async function dispatchMailEvent(
   log: (message: string) => void,
 ): Promise<void> {
   emitTrace(options, "exact_fetch_started", event, "mail");
-  const messages = await fetchInbox(options.client, true, MAIL_FETCH_LIMIT, event.message_id, log);
+  const messages = await fetchInbox(options.client, true, MAIL_FETCH_LIMIT, event.message_id, log, options.self);
   emitTrace(options, "exact_fetch_completed", event, "mail");
   for (const msg of messages) {
     const messageEvent = eventForMessage(event, msg.message_id, msg.conversation_id);
@@ -1105,10 +1207,6 @@ async function resolveChatForDelivery(
   }
 }
 
-function isEncryptedMessage(msg: Pick<InboxMessage | ChatMessage, "content_mode" | "message_version" | "encrypted_envelope">): boolean {
-  return msg.content_mode === "encrypted_v2" || msg.message_version === 2 || msg.encrypted_envelope != null;
-}
-
 function encryptedDeliveryFailureMeta(
   type: "mail" | "chat",
   from: string,
@@ -1157,6 +1255,9 @@ function awakeningClosingLine(kind: ChannelAwakening["kind"]): string {
 }
 
 export function formatAwakeningForAgent(awakening: ChannelAwakening): string {
+  if (awakening.kind === "channel") {
+    return ["aweb channel notice, from the aweb channel itself and not from another agent.", "", awakening.content].join("\n");
+  }
   const rawType = awakening.meta.type || awakening.kind;
   const type = awakening.kind === "app" ? sanitizeSummaryComponent(rawType) || "app" : rawType;
   const lines: string[] = [`aweb ${type} event received.`];

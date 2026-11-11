@@ -13,6 +13,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/awebai/aw/internal/atomicfile"
 	"github.com/awebai/aw/internal/custodypath"
 	"gopkg.in/yaml.v3"
 )
@@ -44,7 +45,8 @@ const (
 //	<dir>/registry.d/<key>.json    one registration per instance home
 //	<dir>/instances.d/<key>.json   lifecycle, pause, readiness and delivery status
 //	<dir>/status.json              what `aw wake status` reads when the daemon is down
-//	<dir>/lock/                    the one-daemon-per-host lock
+//	<dir>/daemon.lock              the one-daemon-per-host lock
+//	<dir>/daemon.lock.pid          the pid of the daemon holding it
 //	<dir>/control.sock             the daemon's local control socket
 //
 // <key> is the SHA-256 of the canonical instance home path. Go stores no
@@ -52,7 +54,10 @@ const (
 // delivery state: it dedupes accepted terminal presentations and is not a proof
 // of completed agent work.
 var wakeReadFile = os.ReadFile
-var wakeRename = os.Rename
+
+// wakeBeforeCommit, when set, observes a state file write after its content is
+// complete and before it replaces the file at path.
+var wakeBeforeCommit func(path string)
 
 type Store struct {
 	dir string
@@ -82,8 +87,8 @@ func NewStore(dir string) (*Store, error) {
 	return s, nil
 }
 
-func (s *Store) Dir() string     { return s.dir }
-func (s *Store) LockDir() string { return filepath.Join(s.dir, "lock") }
+func (s *Store) Dir() string      { return s.dir }
+func (s *Store) LockPath() string { return filepath.Join(s.dir, "daemon.lock") }
 func (s *Store) SocketPath() string {
 	return custodypath.Shorten(filepath.Join(s.dir, "control.sock"), maxSocketPath)
 }
@@ -542,16 +547,6 @@ func (r Registration) hasBinding(want ReceiveIdentity) bool {
 	return false
 }
 
-func (b ReceiveIdentity) label() string {
-	if strings.TrimSpace(b.Label) != "" {
-		return strings.TrimSpace(b.Label)
-	}
-	if strings.TrimSpace(b.TeamID) != "" {
-		return strings.TrimSpace(b.TeamID)
-	}
-	return strings.TrimSpace(b.IdentityHome)
-}
-
 func (b ReceiveIdentity) allowsEventClass(class string) bool {
 	if class == "" {
 		return false
@@ -763,46 +758,18 @@ func writeJSONAtomic(path string, value any) error {
 
 // reusable is owned by a serialized writer, never shared between Store objects.
 // Recreate exclusively: an unexpected file or symlink is a failure, not a path
-// to truncate or remove. Only files created by this call enter cleanup below.
+// to truncate or remove. Only files created by this call enter cleanup.
 func writeJSONAtomicWithTempName(path string, value any, reusable *string) error {
-	if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
-		return err
-	}
 	data, err := json.MarshalIndent(value, "", "  ")
 	if err != nil {
 		return err
 	}
 	data = append(data, '\n')
-	var tmp *os.File
-	if reusable == nil || *reusable == "" {
-		tmp, err = os.CreateTemp(filepath.Dir(path), ".tmp-*")
-		if err == nil && reusable != nil {
-			*reusable = tmp.Name()
-		}
-	} else {
-		tmp, err = os.OpenFile(*reusable, os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0o600)
+	options := atomicfile.Options{Mode: 0o600, ParentMode: 0o700, TempName: reusable}
+	if wakeBeforeCommit != nil {
+		options.BeforeCommit = func() { wakeBeforeCommit(path) }
 	}
-	if err != nil {
-		return err
-	}
-	tmpName := tmp.Name()
-	defer func() { _ = os.Remove(tmpName) }()
-	if err := tmp.Chmod(0o600); err != nil {
-		_ = tmp.Close()
-		return err
-	}
-	if _, err := tmp.Write(data); err != nil {
-		_ = tmp.Close()
-		return err
-	}
-	if err := tmp.Sync(); err != nil {
-		_ = tmp.Close()
-		return err
-	}
-	if err := tmp.Close(); err != nil {
-		return err
-	}
-	return wakeRename(tmpName, path)
+	return options.Write(path, data)
 }
 
 func readJSON(path string, into any) (bool, error) {
