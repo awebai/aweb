@@ -3,6 +3,7 @@ package run
 import (
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 )
 
@@ -180,6 +181,25 @@ func TestLoadUserConfigIgnoresALocalConfigChangedSinceItWasTrusted(t *testing.T)
 		t.Fatalf("TrustLocalConfig returned error: %v", err)
 	}
 	requireLocalConfigState(t, workspaceRoot, LocalConfigTrusted)
+}
+
+func TestIgnoredNoteNamesTheFileAndTheRemedyOnlyWhenIgnored(t *testing.T) {
+	for state, wantReason := range map[LocalConfigState]string{
+		LocalConfigUntrusted: "you have not trusted it",
+		LocalConfigChanged:   "it changed since you trusted it",
+	} {
+		note := state.IgnoredNote("/work/.aw/run.json")
+		for _, want := range []string{"/work/.aw/run.json", wantReason, "--trust-config"} {
+			if !strings.Contains(note, want) {
+				t.Errorf("%s note %q does not mention %q", state, note, want)
+			}
+		}
+	}
+	for _, state := range []LocalConfigState{LocalConfigAbsent, LocalConfigTrusted} {
+		if note := state.IgnoredNote("/work/.aw/run.json"); note != "" {
+			t.Errorf("%s note=%q, want none", state, note)
+		}
+	}
 }
 
 func TestLocalConfigAbsentAndTrustWithNothingToTrust(t *testing.T) {

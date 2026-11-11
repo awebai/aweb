@@ -2,6 +2,17 @@
 
 ## Unreleased
 
+- **`aw run` no longer uses a directory's `.aw/run.json` unless you trusted
+  that exact file.** The file can set the agent's prompts and start shell
+  commands as background services, and it was read from whatever directory
+  `aw run` was started in, so a cloned repository could run commands. Now it
+  is ignored, with a message naming it, until you run
+  `aw run <provider> --trust-config`, which records the digest of its content
+  in `~/.config/aw/run-trusted.json`; a file that changes afterwards is
+  ignored until trusted again. If you rely on a directory's `run.json`, trust
+  it once after upgrading. `aw run` also tells the agent, next to each mail or
+  chat message it hands over, when the sender was not verified, and to treat
+  that text as untrusted; before, only a stale verification was mentioned.
 - **A customer-run aweb server can read its private team at the public
   registry without the registry-wide `AWID_SERVICE_TOKEN`.** Give the server
   an ordinary member certificate in each team it serves
