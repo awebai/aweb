@@ -1,12 +1,14 @@
 # The logs chain: commitments, event hashes, receipts and checkpoints
 
-Status: **specified experimental public contract, not yet shipped**. Owner: the
-aweb OSS hooks lane (aweb-acgh.16.21). This document is the source of truth for
-the bytes logs commits to and signs. Its vector is
-`docs/vectors/logs-chain-v1.json`. The Python implementation in
-`naapp/logs/src/aweb_logs/chain.py` and `verify.py` regenerates it byte for
-byte. The Go verifier in `cli/go/logschain`, on which `aw logs verify` is to be
-built, passes it. The design and its rationale are in
+Status: **experimental public contract**. Owner: the aweb OSS hooks lane
+(aweb-acgh.16.21). Anything unmarked is on main; a part that is not carries its
+release status and task id. This document is the source of truth for the bytes
+logs commits to and signs. Its vector is `docs/vectors/logs-chain-v1.json`. The
+Python implementation in `naapp/logs/src/aweb_logs/chain.py` and `verify.py`
+regenerates it byte for byte, and `naapp/logs/src/aweb_logs/ledger.py` stores
+the chain. The Go verifier in `cli/go/logschain`, which `aw logs verify
+--bundle` runs, passes it. **In flight (aweb-acgh.16.24):** `aw logs query`,
+`tail` and `export`. The design and its rationale are in
 [the audit substrate design](design/audit-substrate.md), §B3 and §B6.
 
 ## What the chain proves, and what it does not
@@ -83,7 +85,9 @@ The link fields are the event's **skeleton**. Retention and erasure purge the
 content (signing bytes, signature and salt) and every projection, index and
 cache derived from it. They keep the skeleton, so the chain still verifies
 across a purged event. Deleting the salt makes the commitment unlinkable to
-guessed content.
+guessed content. The owner's retention and erasure acts
+([owner acts](owner-act.md)) purge content; the chain schema records the purge act,
+and `verify` handles a purged event.
 
 ## Signed artefacts
 
@@ -127,8 +131,9 @@ JSON. `team_seq` and `event_hash` are the chain head it witnesses. A checkpoint
 of an empty epoch has `team_seq` 0 and the epoch's `genesis_hash`.
 `previous_checkpoint_sha256` is the SHA-256 of the signing bytes of the
 epoch's previous checkpoint; the first checkpoint of an epoch has none. Logs
-issues checkpoints periodically while events arrive and on demand, and the
-owner can export them.
+issues checkpoints periodically while events arrive
+(`naapp/logs/src/aweb_logs/app.py`, `run_checkpoints`), and an export carries
+them. **Open (aweb-acgh.16.22):** checkpoints on demand.
 
 The receipt and checkpoint prefixes are unique to logs, so neither verifies as
 any other signed aweb object, and no other object verifies as either.
@@ -213,19 +218,22 @@ required sequence and are excluded from this calculation.
 older stored events), invalid retained content or purged content. An uncertain
 observation suppresses hole inference for its producer identity, or its
 hook/origin when the producer identity is no longer available. No lifecycle
-history is fabricated from today's resolver view. An empty observed-hole list
+history is fabricated from the resolver's present view. An empty observed-hole list
 proves neither an unobserved prefix nor trailing delivery completeness. Missing
 integers alone do not prove that every integer was owed to this interval, or
-establish a loss cause. Terminal cancellation coverage still needs the paired
-terminal implementation; ordinary admission remains active-only.
+establish a loss cause. Ordinary admission is active-only. **After the first
+release (aweb-acgh.16.30, aweb-acgh.16.32):** terminal cancellation coverage,
+which explains a gap left by a revoked binding.
 
 ## Exporting a team's log: `aweb.logs-export/1`
 
-A designated reader downloads it from logs' console origin, in a reader
-session, as `GET /v1/export` (`application/jsonl`, streamed); the reader's
-viewer links to it from its integrity page. This section specifies what it
-produces and how a holder verifies it, with no server. Its vector is
-`docs/vectors/logs-export-v1.json`.
+Logs writes an export with `export_bundle`
+(`naapp/logs/src/aweb_logs/export.py`). A designated reader downloads it from
+logs' console origin as `GET /v1/export` (`application/jsonl`, streamed), in
+its passkey session, where the viewer links to it from its integrity page, or
+in the key-bound session its aw collects through the handoff. This section
+specifies what an export holds and how a holder verifies it, with no server.
+Its vector is `docs/vectors/logs-export-v1.json`.
 
 An export holds one team's whole log: every epoch from 1, each with its
 genesis, its stored events (skeleton, retained content or purge act, and key
@@ -353,3 +361,28 @@ the events after the last checkpoint, or whole trailing epochs, and the rest
 still verifies. Only an artefact held independently of the exporter proves the
 tail: give it as a witness, and a receipt or checkpoint past the bundle's end
 is contradicted as `not_in_chain`, or `epoch_absent` for a dropped epoch.
+
+### Witness files
+
+A verifier is given its witnesses as witness files. A witness file follows a
+bundle's line rules: each line is one strict canonical JSON object followed by
+a newline, and no line, its newline excluded, is longer than the bundle's line
+bound. Each line is `{"receipt": artefact}` or `{"checkpoint": artefact}`, with
+the artefact as above: the same lines a bundle carries. Any other line makes
+the file unusable, reported by its line number from 1. Witnesses are indexed
+per kind in the order given: file by file, then line by line.
+
+A checkpoint line cut from an earlier export is a witness as it stands. So is
+a producer's receipt. Logs answers every delivery it accepts, `appended` or
+`duplicate`, with `{"event_id", "disposition", "receipt"}`, and its `receipt` is
+this artefact object, so `{"receipt": <the ack's receipt>}` is a witness line.
+
+`aw logs verify --bundle FILE|- --receipt-key DID_KEY --checkpoint-key DID_KEY
+[--witness FILE]... [--json]` verifies a bundle offline: it reads only the
+files it is given and reaches no workspace, identity or server. It requires at
+least one key of each kind, each an Ed25519 `did:key`, and never takes a key
+from the bundle. `--bundle -` reads stdin; a witness file cannot. `--json`
+prints the report above. It exits 0 when the bundle is intact, 1 when it is
+verified and not intact, and 2 when it could not be verified, with the error
+codes `usage`, `keys_invalid`, `input_unreadable`, `bundle_malformed`,
+`witness_malformed` and, for anything else, `verify_failed`.
