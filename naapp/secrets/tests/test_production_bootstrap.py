@@ -17,6 +17,7 @@ from aweb_naapp.egress import DnsResolver, InternalDestinations
 from aweb_naapp.hooks.envelope import KID_PATTERN, verify
 from aweb_naapp.roles import PrincipalKey, unassign
 from aweb_naapp.runtime.passkeys import contact_sha256
+from aweb_naapp.runtime.settings import AWIDMemberCredentialFiles
 from aweb_naapp_testing import Member
 from aweb_naapp_testing.network import DnsServer
 from aweb_naapp_testing.owner_acts import AUDIENCE, TeamOwner
@@ -59,7 +60,11 @@ async def envelopes(db, team_id):
 @pytest.fixture
 async def root(test_db_factory, registry, tmp_path, request):
     member = Member(team_id="root:example.com", member_key=member_key("alice"))
-    async with authority(test_db_factory, registry, member) as (aweb_db, transport):
+    options = getattr(request, "param", {})
+    private = options.get("private_team", False)
+    async with authority(
+        test_db_factory, registry, member, visibility="private" if private else "public"
+    ) as (aweb_db, transport):
         database = await test_db_factory.create_db(suffix="production_bootstrap")
         with SmtpServer(tmp_path / "smtp") as smtp:
             configured = settings(database, tmp_path, smtp).model_copy(
@@ -68,6 +73,37 @@ async def root(test_db_factory, registry, tmp_path, request):
                     "awid_service_token": SERVICE_TOKEN,
                 }
             )
+            service_member = None
+            if private:
+                # An ordinary, separate service seat reads this private team.
+                # The production loader consumes its files, never test injection.
+                service_member = Member(
+                    team_id=member.team_id,
+                    team_key=member.team_key,
+                    certificate_id="secrets-service",
+                    alias="secrets-service",
+                )
+                await registry.add_certificate(service_member.certificate())
+                key_file = tmp_path / "service-member.key"
+                key_file.write_text(
+                    "-----BEGIN ED25519 PRIVATE KEY-----\n"
+                    + base64.b64encode(bytes(service_member.member_key)).decode()
+                    + "\n-----END ED25519 PRIVATE KEY-----\n"
+                )
+                key_file.chmod(0o600)
+                cert_file = tmp_path / "service-member.pem"
+                cert_file.write_text(json.dumps(service_member.certificate()))
+                cert_file.chmod(0o600)
+                configured = configured.model_copy(
+                    update={
+                        "awid_service_token": None,
+                        "awid_member_credentials": {
+                            member.team_id: AWIDMemberCredentialFiles(
+                                signing_key_file=key_file, certificate_file=cert_file
+                            )
+                        },
+                    }
+                )
             service = create_service(
                 configured,
                 awid_transport=registry.transport,
@@ -89,6 +125,7 @@ async def root(test_db_factory, registry, tmp_path, request):
                 async with service.api_app.router.lifespan_context(service.api_app):
                     async with httpx.AsyncClient(transport=httpx.ASGITransport(service)) as client:
                         client.owner_fixture_registry = registry
+                        client.service_fixture_member = service_member
                         version = getattr(request, "param", {}).get("manifest_version", 2)
                         manifest = await client.get(AUDIENCE + f"/manifests/v{version}.json")
                         assert manifest.status_code == 200

@@ -93,7 +93,7 @@ async def effects(service, installation_id):
     )
 
 
-async def test_first_owner_is_designated_by_controller_act_and_can_log_in(root, registry):
+async def assert_first_owner_and_login(root, registry):
     service, client, settings, member, installed, *_ = root
     body, principal, device = await delivery(root, registry)
     db = service.runtime.db()
@@ -132,14 +132,20 @@ async def test_first_owner_is_designated_by_controller_act_and_can_log_in(root, 
     assert logged.status_code == 200
 
 
+async def test_first_owner_is_designated_by_controller_act_and_can_log_in(root, registry):
+    await assert_first_owner_and_login(root, registry)
+
+
 @pytest.mark.parametrize(
-    "fault", ["member-signature", "missing-certificate", "contact", "api-origin"]
+    "fault",
+    ["member-signature", "missing-certificate", "contact", "api-origin", "cookie", "team-auth"],
 )
 async def test_refused_delivery_changes_no_owner_revision_nonce_or_audit(root, registry, fault):
     service, client, settings, member, installed, *_ = root
     body, _, _ = await delivery(root, registry)
     before = await effects(service, installed["installation_id"])
     origin = settings.console_origin
+    headers = {}
     if fault == "member-signature":
         signing = base64.b64decode(body["signing"])
         body["signature"] = (
@@ -149,9 +155,13 @@ async def test_refused_delivery_changes_no_owner_revision_nonce_or_audit(root, r
         del body["certificate"]
     elif fault == "contact":
         body["notice_contact"] = "different@example.com"
-    else:
+    elif fault == "api-origin":
         origin = settings.public_origin
-    response = await client.post(origin + PATH, json=body, headers={"Cookie": "session=untrusted"})
+    elif fault == "cookie":
+        headers["Cookie"] = "session=untrusted"
+    elif fault == "team-auth":
+        headers["X-AWID-Team-Certificate"] = body["certificate"]
+    response = await client.post(origin + PATH, json=body, headers=headers)
     assert response.status_code == (404 if fault == "api-origin" else 403)
     if fault == "missing-certificate":
         assert response.json()["detail"] == "principal_not_member"

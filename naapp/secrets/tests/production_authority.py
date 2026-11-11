@@ -32,7 +32,7 @@ async def no_dns_override(domain):
 
 
 @asynccontextmanager
-async def authority(test_db_factory, registry, member):
+async def authority(test_db_factory, registry, member, *, visibility="public"):
     database = await test_db_factory.create_db(suffix="root_external_aweb")
     pool = await AsyncDatabaseManager.create_shared_pool(
         build_database_config(
@@ -47,7 +47,7 @@ async def authority(test_db_factory, registry, member):
             "SELECT current_database()"
         )
         name, domain = member.team_id.split(":", 1)
-        await registry.add_team(member.team_id, member.team_did_key)
+        await registry.add_team(member.team_id, member.team_did_key, visibility=visibility)
         await registry.add_certificate(member.certificate())
         await db.execute(
             "INSERT INTO {{tables.teams}} (team_id,namespace,team_name,team_did_key) VALUES ($1,$2,$3,$4)",
