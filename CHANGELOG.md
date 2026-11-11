@@ -2,6 +2,32 @@
 
 ## Unreleased
 
+- Federated mail and chat delivery connects only to the addresses the
+  recipient's delivery origin resolves to, over one address-checked transport
+  shared by the HTTP routes and the MCP tools. The origin must be `https` and
+  named by host, every resolved address must be public, the connection goes to
+  the address that was checked, and redirects are not followed; `http` and
+  non-public destinations remain available only to isolated development
+  deployments (`APP_ENV=development` with `AWEB_FEDERATION_TEST=1`). **Private
+  delivery origins are refused by default**: a self-hosted server that
+  federates with servers on a private network (for example
+  `https://aweb.acme.internal` resolving to `10.0.0.5`) lists those exact
+  origins in `AWEB_FEDERATION_PRIVATE_DELIVERY_ORIGINS`, comma-separated
+  `https://host[:port]` entries; besides public addresses, a listed origin may
+  resolve only to `10.0.0.0/8`, `172.16.0.0/12`, `192.168.0.0/16`,
+  `100.64.0.0/10` and `fc00::/7` (loopback and link-local stay refused) and
+  keeps every other check. The setting
+  applies to delivery only, not to registry reads, and an invalid entry refuses
+  start-up naming it. A failed delivery returns its status and a fixed reason
+  (`delivery_origin_refused`, `delivery_address_refused`,
+  `delivery_origin_unreachable`, `delivery_timeout`, `HTTP <status>`, or the
+  recipient server's typed federation reason) in place of the remote's response
+  text; a refused private address also logs a warning naming the origin and the
+  setting. `deliver_federated_message` requires its `transport`, and
+  `deliver_federated_mail` is removed in favour of it; hosts that embed the
+  server get the transport from the federation authority
+  (`FederationAuthorityActivation.delivery_transport`).
+
 - `aw` writes U+2028 (line separator) and U+2029 (paragraph separator) as UTF-8
   in the canonical JSON it signs, as the Python reference
   (`awid.signing.canonical_json_bytes`) and TypeScript do; Go's JSON encoder
