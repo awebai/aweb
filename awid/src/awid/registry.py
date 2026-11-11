@@ -115,6 +115,7 @@ _TEAM_METADATA_CACHE_TTL_SECONDS = 10 * 60  # 10 minutes
 # window below, the hard worst case is 2x this value; the cache lives in Redis
 # and survives process restarts, so the TTL is the only bound.
 _TEAM_REVOCATIONS_CACHE_TTL_SECONDS = 60
+_TEAM_KEY_SIGNATURE_REFRESH_COOLDOWN_SECONDS = 5
 # Team-controller keys share this freshness bound, with synchronous refresh.
 # Registry-outage grace adopted for revocations (Juan 2026-08-17; see
 # trust-model.md "Registry availability posture"); team-controller keys share
@@ -1542,6 +1543,7 @@ class CachedRegistryClient(RegistryClient):
     _refresh_tasks: dict[str, asyncio.Task[None]]
     _domain_verifier: DomainVerifier | None
     _id_status_refreshes: dict[str, asyncio.Task[_IDStatusRefresh]]
+    _team_key_signature_refreshes: dict[str, asyncio.Task[str | None]]
 
     def __init__(
         self,
@@ -1569,6 +1571,7 @@ class CachedRegistryClient(RegistryClient):
         object.__setattr__(self, "_refresh_tasks", {})
         object.__setattr__(self, "_domain_verifier", domain_verifier)
         object.__setattr__(self, "_id_status_refreshes", {})
+        object.__setattr__(self, "_team_key_signature_refreshes", {})
 
     async def id_chain_evidence(
         self, bundle: dict[str, Any] | None, subject: dict[str, Any], *, domain: str,
@@ -1871,6 +1874,59 @@ class CachedRegistryClient(RegistryClient):
             retention_seconds=ttl_seconds + grace_seconds,
         )
         return key
+
+    async def refresh_team_key_after_signature_failure(
+        self, domain: str, name: str, *, rejected_key: str,
+    ) -> str | None:
+        """Retry a rejected cached key with bounded, coalesced registry work.
+
+        The five-second Redis admission window starts before the attempt and
+        is shared across clients. A client's callers share an in-flight task
+        even if the attempt outlasts that window. An unchanged or failed read
+        never renews the old key's fact age.
+        """
+        cache_key = self._team_public_key_cache_key(domain, name)
+        task = self._team_key_signature_refreshes.get(cache_key)
+        if task is None:
+            task = asyncio.create_task(self._refresh_rejected_team_key(
+                domain, name, cache_key=cache_key, rejected_key=rejected_key,
+            ))
+            self._team_key_signature_refreshes[cache_key] = task
+            task.add_done_callback(lambda _task: self._team_key_signature_refreshes.pop(cache_key, None))
+        return await asyncio.shield(task)
+
+    async def _refresh_rejected_team_key(
+        self, domain: str, name: str, *, cache_key: str, rejected_key: str,
+    ) -> str | None:
+        try:
+            cached = await self._read_cache_entry(cache_key, decode=lambda value: value)
+            if cached is not None and cached["fresh"] and cached["value"] != rejected_key:
+                return cached["value"]
+            # The admission key is per registry/team, independent of the
+            # reader's cache partition. No Redis means no attacker-driven read.
+            admitted = await self.redis_client.set(
+                f"awid:team_key_signature_refresh:{self.registry_url}:{domain}/{name}",
+                "1", nx=True, ex=_TEAM_KEY_SIGNATURE_REFRESH_COOLDOWN_SECONDS,
+            )
+            if not admitted:
+                return None
+            key = await self.get_team_public_key_fresh(domain, name)
+            if key and key != rejected_key:
+                await self._write_cache_entry(
+                    cache_key, value=key,
+                    ttl_seconds=_TEAM_REVOCATIONS_CACHE_TTL_SECONDS,
+                    retention_seconds=(
+                        _TEAM_REVOCATIONS_CACHE_TTL_SECONDS + _TEAM_REVOCATIONS_OUTAGE_GRACE_SECONDS
+                    ),
+                    encode=lambda value: value,
+                )
+                return key
+        except Exception:
+            logger.warning(
+                "AWID team key signature-failure refresh failed for %s/%s",
+                domain, name, exc_info=True,
+            )
+        return None
 
     async def get_team(self, domain: str, name: str) -> Team | None:
         return await self._cached_read(
