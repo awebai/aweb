@@ -19,7 +19,9 @@ logs reads its settings from `LOGS_`-prefixed environment variables:
 - `LOGS_DATABASE_URL` and `LOGS_PUBLIC_ORIGIN`;
 - `LOGS_CONSOLE_ORIGIN`, the plain `https` origin where designated readers enrol,
   sign in and read. It must be on a host of its own, not `LOGS_PUBLIC_ORIGIN`'s:
-  readers' passkeys are bound to its hostname;
+  readers' passkeys are bound to its hostname. A human-role act's audience must
+  be this origin, since its credential is bound to the same hostname; one bound
+  to any other host is refused;
 - `LOGS_CLIENT_ADDRESS_HEADER`, the header the deployment's proxy sets to the
   client address it saw, such as `X-Real-IP`. The console login limit (12
   requests a minute) is kept per that address, read from the header's last
@@ -50,7 +52,7 @@ grant and `logs-governance` signs the governance events of logs' readers.
 
 ```bash
 uvicorn aweb_logs.app:serve --factory
-docker build -f naapp/logs/Dockerfile .   # from the repository root
+docker build -f naapp/logs/Dockerfile --build-arg SOURCE_COMMIT="$(git rev-parse HEAD)" .   # from the repository root
 ```
 
 The image takes the same environment; mount the key files and the mail password

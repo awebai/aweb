@@ -131,9 +131,9 @@ PUBLIC_EXTENSION_DOCS = (
 HOOK_INVENTORY = "vectors/mutation-hook-call-sites-v1.json"
 # Functions that fire app.state.on_mutation, mapped to the position of their
 # event_type argument: HTTP routes pass the request first, services pass the
-# callback first, MCP tools pass neither. A call inside one of these functions
-# forwards its caller's event and is not a call site.
-HOOK_FIRING_FUNCTIONS = {"fire_mutation_hook": 1, "fire_mutation_callback": 1, "fire_mcp_mutation_hook": 0}
+# callback first. A call inside one of these functions forwards its caller's
+# event and is not a call site.
+HOOK_FIRING_FUNCTIONS = {"fire_mutation_hook": 1, "fire_mutation_callback": 1}
 # Functions that deliver events recorded by a call site, by file and name: they
 # forward events whose names a call site gave, and are not call sites themselves.
 HOOK_FORWARDING_FUNCTIONS = {("server/src/aweb/hooks.py", "fire")}
@@ -217,7 +217,8 @@ MANAGED_GATEWAY_PRIVATE_TOKENS = (
 
 HOOK_SOURCES = (
     "server/src/aweb/routes/messages.py",
-    "server/src/aweb/routes/chat.py",
+    "server/src/aweb/messaging/mail_send.py",
+    "server/src/aweb/messaging/chat_send.py",
     "server/src/aweb/routes/federation.py",
     "server/src/aweb/routes/reservations.py",
     "server/src/aweb/routes/agent_status.py",
@@ -225,7 +226,6 @@ HOOK_SOURCES = (
     "server/src/aweb/coordination/routes/app_tasks.py",
     "server/src/aweb/coordination/tasks_service.py",
     "server/src/aweb/mcp/tools/mail.py",
-    "server/src/aweb/mcp/tools/chat.py",
 )
 
 FORBIDDEN_PUBLIC_REFERENCES = (
@@ -888,7 +888,7 @@ def self_test(root: Path) -> int:
         message_text += '\n\nasync def negative_new_hook_call_site():\n    await fire_mutation_hook(None, "message.sent", {})\n'
         message_source.write_text(message_text, encoding="utf-8")
 
-        chat_source = tmp / "server/src/aweb/routes/chat.py"
+        chat_source = tmp / "server/src/aweb/messaging/chat_send.py"
         chat_source.write_text(
             chat_source.read_text(encoding="utf-8").replace('"chat.message_sent",', "dynamic_event_name,", 1),
             encoding="utf-8",

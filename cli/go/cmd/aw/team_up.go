@@ -738,7 +738,7 @@ func confirmClaudeChannelPrompt(tmuxContext teamUpTmuxContext, session string, a
 		}
 		time.Sleep(500 * time.Millisecond)
 	}
-	return fmt.Errorf("timed out waiting for Claude Code to load the aweb channel in tmux window %q within %s; no known prompt (trust-folder / dev-channel) reached completion. Claude's prompt wording may have changed; update the prompt signatures in team_up.go (claudeChannelPromptVisible / claudeTrustFolderPromptVisible). Last pane output:\n%s", target, teamUpConfirmClaudePromptWait, last)
+	return fmt.Errorf("timed out waiting for Claude Code to load the aweb channel in tmux window %q within %s; no known prompt (trust-folder / dev-channel) reached completion. Claude's prompt wording may have changed; update the prompt signatures in team_up.go (claudeChannelPromptComplete / claudeBlockingPromptKind). Last pane output:\n%s", target, teamUpConfirmClaudePromptWait, last)
 }
 
 func teamUpWindowTarget(tmuxContext teamUpTmuxContext, session, agentName string) string {
@@ -773,16 +773,8 @@ func claudeBlockingPromptKind(pane string) string {
 	}
 }
 
-func claudeTrustFolderPromptVisible(pane string) bool {
-	return claudeTrustFolderPromptIndex(strings.ToLower(pane)) >= 0
-}
-
 func claudeTrustFolderPromptIndex(lower string) int {
 	return maxStringIndex(lower, "trust this folder", "is this a project you created or one you trust")
-}
-
-func claudeChannelPromptVisible(pane string) bool {
-	return claudeChannelPromptIndex(strings.ToLower(pane)) >= 0
 }
 
 func claudeChannelPromptIndex(lower string) int {

@@ -22,10 +22,10 @@ from aweb.id_chain_auth import authenticate_id_chain
 from aweb.team_auth_deps import (
     TeamIdentity,
     _aweb_db,
-    _get_registered_certificates,
-    _get_revoked_certificates,
     _team_auth_allowed_audiences,
     get_team_identity,
+    registered_certificates,
+    revoked_certificates,
 )
 from aweb.team_auth_envelope import identity_auth_signature_payload
 
@@ -205,13 +205,19 @@ async def _enforce_current_membership(request: Request, row: dict | None) -> dic
     recording (migration 017) and passes unchanged; it heals at the next
     certificate-authenticated connect or request.
     """
+    return await current_membership(getattr(request.app.state, "awid_registry_client", None), row)
+
+
+async def current_membership(registry_client, row: dict | None) -> dict | None:
+    """The row with its team context, or stripped of it when the admitting
+    certificate is revoked or unregistered, as this registry client reports it."""
     if not row:
         return row
     team_id = (row.get("team_id") or "").strip()
     certificate_id = (row.get("certificate_id") or "").strip()
     if not team_id or not certificate_id:
         return row
-    revoked = await _get_revoked_certificates(request, team_id)
+    revoked = await revoked_certificates(registry_client, team_id)
     if certificate_id not in revoked:
         # Staged existence requirement (default OFF): an unregistered
         # certificate can never appear in the revocation set, so once
@@ -222,7 +228,7 @@ async def _enforce_current_membership(request: Request, row: dict | None) -> dic
         # remedy as revocation here: strip membership, keep the identity.
         if not require_registered_certificates():
             return row
-        registered = await _get_registered_certificates(request, team_id)
+        registered = await registered_certificates(registry_client, team_id)
         if certificate_id in registered:
             return row
         logger.warning(

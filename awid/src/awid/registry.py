@@ -12,7 +12,8 @@ import json
 import logging
 from json import loads as json_loads
 import time
-from dataclasses import asdict, dataclass, field
+from collections.abc import Mapping
+from dataclasses import InitVar, asdict, dataclass, field
 from datetime import datetime, timezone
 from typing import Any, Awaitable, Callable
 from urllib.parse import quote, urlparse
@@ -52,13 +53,15 @@ from awid.log import (
     initial_registration_entry,
     log_entry_payload,
 )
-from awid.ratelimit import AWID_SERVICE_TOKEN_HEADER, normalize_service_token
+from awid.ratelimit import normalize_service_token
+from awid.registry_auth import RegistryRequestAuth, path_signature_headers
 from awid.registry_types import (
     RegistryError as RegistryError,
     DIDKeyNotFoundError as DIDKeyNotFoundError,
     IDTreeEnrollment as IDTreeEnrollment,
 )
 from awid.signing import canonical_json_bytes, sign_message
+from awid.team_ids import build_team_id
 
 
 DomainRegistryResolver = Callable[[str], Awaitable[str]]
@@ -322,10 +325,25 @@ class RegistryClient:
     base_url: str | None = None
     domain_registry_resolver: DomainRegistryResolver | None = None
     service_token: str | None = field(default=None, repr=False, compare=False)
+    domain_verifier: InitVar[DomainVerifier | None] = field(default=None, kw_only=True)
+    _domain_verifier: DomainVerifier | None = field(init=False, repr=False, compare=False)
+    member_signing_keys: Mapping[str, bytes] = field(default_factory=dict, repr=False, compare=False)
+    _request_auth: RegistryRequestAuth = field(init=False, repr=False, compare=False)
     _http_client: httpx.AsyncClient = field(init=False, repr=False, compare=False)
 
-    def __post_init__(self) -> None:
+    def __post_init__(self, domain_verifier: DomainVerifier | None = None) -> None:
+        object.__setattr__(self, "_domain_verifier", domain_verifier)
         object.__setattr__(self, "service_token", normalize_service_token(self.service_token))
+        object.__setattr__(
+            self,
+            "_request_auth",
+            RegistryRequestAuth(
+                service_token=self.service_token, member_signing_keys=self.member_signing_keys
+            ),
+        )
+        # One immutable key map: the keys that sign are the keys the cache
+        # namespaces reads under.
+        object.__setattr__(self, "member_signing_keys", self._request_auth.member_signing_keys)
         object.__setattr__(
             self,
             "_http_client",
@@ -354,6 +372,56 @@ class RegistryClient:
     async def registry_audience(self, domain: str) -> str:
         """The audience a write for ``domain`` signs: the canonical origin of the registry it is routed to."""
         return canonical_server_origin(await self._registry_url_for_domain(domain))
+
+    async def id_chain_evidence(
+        self, bundle: dict[str, Any] | None, subject: dict[str, Any], *, domain: str,
+    ) -> IDChainEvidence:
+        """Acquire current namespace authority and routed status without a cache.
+
+        Age starts before acquisition and rounds upward, under the same bounded
+        attempt as the cached client. Failures return unavailable evidence;
+        cancellation propagates. Every invocation performs the required live
+        reads; callers choose explicitly between this and CachedRegistryClient.
+        Capability-detecting callers now discover this method and perform live
+        DNS authority and status reads instead of treating evidence as unavailable.
+        """
+        try:
+            request = status_request(bundle, subject, domain=domain)
+        except IDCertificateError:
+            request = None
+        if request is None:
+            return IDChainEvidence(status={}, namespace_authority={}, age_seconds=None)
+        started_ns = _monotonic_ns()
+        try:
+            async with asyncio.timeout(self.timeout_seconds):
+                entry = await self._acquire_id_status(request)
+        except Exception as exc:
+            logger.warning("AWID live identity-tree evidence failed for %s: %r", domain, exc)
+            return IDChainEvidence(status={}, namespace_authority={}, age_seconds=None)
+        return _id_status_evidence(entry, age=_whole_seconds_up(_monotonic_ns() - started_ns))
+
+    async def _acquire_id_status(self, request: dict[str, Any]) -> dict[str, Any]:
+        """One live producer, called inside the owner's timeout and age window.
+
+        MalformedIDStatusError remains distinct for cached-entry invalidation.
+        Neither the registry URL nor status alone supplies namespace authority.
+        """
+        domain = request["domain"]
+        verify_domain = self._domain_verifier
+        if verify_domain is None:
+            from awid.dns_verify import verify_domain as dns_verify_domain
+            verify_domain = dns_verify_domain
+        authority = await verify_domain(domain)
+        status = await self.fetch_id_certificate_status(domain, request)
+        return {
+            "status": status,
+            "namespace_authority": {
+                "domain": domain,
+                "dns_name": authority.dns_name,
+                "inherited": authority.inherited,
+                "controller_key": authority.controller_did,
+            },
+        }
 
     async def _registry_url_for_domain(self, domain: str) -> str:
         if self.domain_registry_resolver is not None:
@@ -441,12 +509,18 @@ class RegistryClient:
             if key.strip().lower() != "accept-encoding"
         }
         request_headers["Accept-Encoding"] = "identity"
-        if self.service_token and (
+        home_registry = (
             registry_url is None
-            or canonical_server_origin(registry_url)
-            == canonical_server_origin(self.registry_url)
-        ):
-            request_headers[AWID_SERVICE_TOKEN_HEADER] = self.service_token
+            or canonical_server_origin(registry_url) == canonical_server_origin(self.registry_url)
+        )
+        if home_registry:
+            request_headers.update(
+                self._request_auth.headers(
+                    method,
+                    path,
+                    signed_by_caller=any(name.lower() == "authorization" for name in request_headers),
+                )
+            )
         try:
             async with asyncio.timeout(self.timeout_seconds):
                 async with self._http_client.stream(
@@ -664,7 +738,7 @@ class RegistryClient:
             await self._request_json(
                 "GET",
                 path,
-                headers=self._signed_path_headers("GET", path, signing_key),
+                headers=path_signature_headers("GET", path, signing_key),
             )
         )
 
@@ -1222,7 +1296,7 @@ class RegistryClient:
         base_path = f"/v1/namespaces/{domain}/teams/{name}/certificates"
         registry_url = await self._registry_url_for_domain(domain)
         headers = (
-            self._signed_path_headers("GET", base_path, signing_key)
+            path_signature_headers("GET", base_path, signing_key)
             if signing_key is not None
             else None
         )
@@ -1392,14 +1466,6 @@ class RegistryClient:
             )
         )
 
-    def _signed_path_headers(self, method: str, path: str, signing_key: bytes) -> dict[str, str]:
-        timestamp = _utc_timestamp()
-        payload = f"{timestamp}\n{method}\n{path}".encode("utf-8")
-        return {
-            "Authorization": f"DIDKey {_did_key_from_signing_key(signing_key)} {sign_message(signing_key, payload)}",
-            "X-AWEB-Timestamp": timestamp,
-        }
-
     def _signed_namespace_headers(
         self,
         *,
@@ -1535,6 +1601,7 @@ class CachedRegistryClient(RegistryClient):
         base_url: str | None = None,
         domain_registry_resolver: DomainRegistryResolver | None = None,
         service_token: str | None = None,
+        member_signing_keys: dict[str, bytes] | None = None,
         domain_verifier: DomainVerifier | None = None,
     ) -> None:
         super().__init__(
@@ -1544,10 +1611,11 @@ class CachedRegistryClient(RegistryClient):
             base_url=base_url,
             domain_registry_resolver=domain_registry_resolver,
             service_token=service_token,
+            domain_verifier=domain_verifier,
+            member_signing_keys=dict(member_signing_keys or {}),
         )
         object.__setattr__(self, "redis_client", redis_client)
         object.__setattr__(self, "_refresh_tasks", {})
-        object.__setattr__(self, "_domain_verifier", domain_verifier)
         object.__setattr__(self, "_id_status_refreshes", {})
 
     async def id_chain_evidence(
@@ -1604,14 +1672,10 @@ class CachedRegistryClient(RegistryClient):
         """
         domain = request["domain"]
         started_ns = _monotonic_ns()
-        verify_domain = self._domain_verifier
-        if verify_domain is None:
-            from awid.dns_verify import verify_domain
         try:
             async with asyncio.timeout(self.timeout_seconds):
                 fetched_at = await self._redis_time()
-                authority = await verify_domain(domain)
-                status = await self.fetch_id_certificate_status(domain, request)
+                acquired = await self._acquire_id_status(request)
         except MalformedIDStatusError:
             logger.warning("AWID identity-tree status for %s is malformed; no evidence is served", domain)
             await self._invalidate_keys(cache_key)
@@ -1619,16 +1683,7 @@ class CachedRegistryClient(RegistryClient):
         except Exception as exc:
             logger.warning("AWID identity-tree status refresh failed for %s: %r", domain, exc)
             return _IDStatusRefresh(entry=None, age=None)
-        entry = {
-            "fetched_at": fetched_at,
-            "status": status,
-            "namespace_authority": {
-                "domain": domain,
-                "dns_name": authority.dns_name,
-                "inherited": authority.inherited,
-                "controller_key": authority.controller_did,
-            },
-        }
+        entry = {"fetched_at": fetched_at, **acquired}
         if fetched_at is not None:
             await self._redis_set(
                 cache_key, json.dumps(entry, separators=(",", ":"), sort_keys=True), ex=_ID_STATUS_FRESH_SECONDS,
@@ -1826,6 +1881,9 @@ class CachedRegistryClient(RegistryClient):
             # Bind to HTTP, bypassing get_team's metadata cache entirely.
             team = await RegistryClient.get_team(self, domain, name)
         except Exception as exc:
+            if isinstance(exc, RegistryError) and exc.status_code in (401, 403):
+                await self._invalidate_keys(cache_key)
+                raise
             age = max(0, _cache_now() - fetched_at) if fetched_at is not None else None
             if cached is not None and age is not None and age <= grace_seconds:
                 logger.warning(
@@ -1923,6 +1981,9 @@ class CachedRegistryClient(RegistryClient):
         try:
             fresh_value = await fetcher()
         except Exception as exc:
+            if isinstance(exc, RegistryError) and exc.status_code in (401, 403):
+                await self._invalidate_keys(cache_key)
+                raise
             if (
                 cached is not None
                 and cached_age is not None
@@ -2480,6 +2541,10 @@ class CachedRegistryClient(RegistryClient):
                 extra_from_value=extra_from_value,
             )
         except Exception as exc:
+            if isinstance(exc, RegistryError) and exc.status_code in (401, 403):
+                await self._invalidate_keys(cache_key)
+                logger.warning("AWID cache refresh authorization refused for %s", cache_key)
+                return
             if on_failure is not None:
                 on_failure(exc)
             else:
@@ -2638,14 +2703,20 @@ class CachedRegistryClient(RegistryClient):
     def _address_cache_key_prefix(self, domain: str, name: str, *, registry_url: str) -> str:
         return f"awid:registry_cache:v2:address:{registry_url}:{domain}:{name}"
 
+    def _team_reader_cache_suffix(self, domain: str, name: str) -> str:
+        if not self.member_signing_keys or self.service_token:
+            return ""
+        key = self.member_signing_keys.get(build_team_id(domain, name))
+        return ":member-reader:" + (_did_key_from_signing_key(key) if key is not None else "anon")
+
     def _team_metadata_cache_key(self, domain: str, name: str) -> str:
-        return f"awid:registry_cache:v2:team:{self.registry_url}:{domain}/{name}"
+        return f"awid:registry_cache:v2:team:{self.registry_url}:{domain}/{name}{self._team_reader_cache_suffix(domain, name)}"
 
     def _team_revocations_cache_key(self, domain: str, name: str) -> str:
-        return f"awid:registry_cache:v1:team_revocations:{self.registry_url}:{domain}/{name}"
+        return f"awid:registry_cache:v1:team_revocations:{self.registry_url}:{domain}/{name}{self._team_reader_cache_suffix(domain, name)}"
 
     def _team_public_key_cache_key(self, domain: str, name: str) -> str:
-        return f"awid:registry_cache:v1:team_public_key:{self.registry_url}:{domain}/{name}"
+        return f"awid:registry_cache:v1:team_public_key:{self.registry_url}:{domain}/{name}{self._team_reader_cache_suffix(domain, name)}"
 
     def _team_certificates_cache_key(
         self,
@@ -2662,7 +2733,7 @@ class CachedRegistryClient(RegistryClient):
         )
 
     def _team_certificates_cache_key_prefix(self, domain: str, name: str) -> str:
-        return f"awid:registry_cache:v2:team_certificates:{self.registry_url}:{domain}/{name}"
+        return f"awid:registry_cache:v2:team_certificates:{self.registry_url}:{domain}/{name}{self._team_reader_cache_suffix(domain, name)}"
 
     def _team_certificates_cache_scope(self, signing_key: bytes | None) -> str:
         if signing_key is not None:

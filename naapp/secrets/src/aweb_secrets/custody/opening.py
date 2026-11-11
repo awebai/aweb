@@ -183,7 +183,9 @@ class OnePasswordOpener:
         Broker calls after dispatching commits: a pre-send failure is not_sent.
         Runner calls for the original durably admitted run before the fresh
         DB-only release fence; only a still-admitted failure may be refused.
-        Never substitute a newer version or reopen a published assignment.
+        Never substitute a newer version. Assignment replay does not reopen.
+        Runner result re-derivation (§4.3) reopens these original pins outside
+        transactions and separately verifies whole-value equivalence.
         """
         binding = await active_binding(self._db, context)
         credential = await self._credential_opener.open(binding.credential_context)
@@ -242,7 +244,7 @@ class UseSecretOpener:
             raise CustodyUnavailable("unusable secret record") from None
 
     async def observe(self, context: SealContext) -> BackendObservation | None:
-        """Before S3, outside all authority transactions/locks. No plaintext is retained."""
+        """Outside authority transactions/locks, for release or pinned result recovery."""
         if await self._backend(self._db, context) == "onepassword":
             return await self._onepassword.observe(context)
         return None

@@ -492,7 +492,7 @@ def test_every_server_caller_passes_the_delivery_transport():
         for call in _calls(ast.parse(path.read_text()), "deliver_federated_message"):
             callers.append(path.relative_to(SOURCE).as_posix())
             assert "transport" in {keyword.arg for keyword in call.keywords}, path
-    assert sorted(callers) == ["routes/chat.py", "routes/messages.py"]
+    assert sorted(callers) == ["messaging/chat_send.py", "messaging/mail_send.py"]
 
 
 def test_one_module_makes_destination_named_requests():

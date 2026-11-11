@@ -520,10 +520,6 @@ func (r *RegistryResolver) resolveAddressFresh(ctx context.Context, domain, name
 	return value, nil
 }
 
-func (r *RegistryResolver) resolveTeamMember(ctx context.Context, teamID, alias string) (*registryTeamMemberCacheValue, error) {
-	return r.resolveTeamMemberFresh(ctx, teamID, alias, false)
-}
-
 func (r *RegistryResolver) resolveTeamMemberFresh(ctx context.Context, teamID, alias string, forceRefresh bool) (*registryTeamMemberCacheValue, error) {
 	cacheKey := teamID + "/" + alias
 	if !forceRefresh {
@@ -557,10 +553,6 @@ func (r *RegistryResolver) resolveTeamMemberFresh(ctx context.Context, teamID, a
 	}
 	r.storeMemberCache(cacheKey, value, registryAddressTTL)
 	return value, nil
-}
-
-func (r *RegistryResolver) resolveKey(ctx context.Context, registryURL, didAW string) (*DidKeyResolution, error) {
-	return r.resolveKeyFresh(ctx, registryURL, didAW, false)
 }
 
 func (r *RegistryResolver) resolveKeyFresh(ctx context.Context, registryURL, didAW string, forceRefresh bool) (*DidKeyResolution, error) {

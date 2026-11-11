@@ -391,16 +391,16 @@ class NativeMessagingService:
     def _validate_envelope(self, auth, value, recipient):
         # Reuse native validators: this facade neither re-signs nor rewrites the
         # signed content, signature, IDs, native v2 header or ciphertext.
-        from aweb.routes.chat import (
-            CreateSessionRequest,
-            _validate_encrypted_chat_payload,
+        from aweb.messaging.chat_send import (
             _validate_signed_chat_payload,
+            validate_encrypted_chat_payload,
         )
-        from aweb.routes.messages import (
-            SendMessageRequest,
+        from aweb.messaging.mail_send import (
             _validate_encrypted_payload,
             _validate_signed_mail_payload,
         )
+        from aweb.routes.chat import CreateSessionRequest
+        from aweb.routes.messages import SendMessageRequest
 
         try:
             if value["format"] == "native_plaintext":
@@ -502,7 +502,7 @@ class NativeMessagingService:
                         session_id=cid,
                         message="",
                     )
-                    metadata = _validate_encrypted_chat_payload(
+                    metadata = validate_encrypted_chat_payload(
                         model,
                         auth=auth,
                         actor_did=_principal(auth),
@@ -861,14 +861,9 @@ class NativeMessagingUnitOfWork:
             "id_chain": self.auth.id_chain,
             "message_id": UUID(value["message_id"]),
         }
-        request = SimpleNamespace(
-            app=SimpleNamespace(
-                state=SimpleNamespace(
-                    attachment_backend=self.service.attachment_backend
-                )
-            )
+        attachment_context = prepare_attachment_send(
+            self.service.attachment_backend, payload, self.auth
         )
-        attachment_context = prepare_attachment_send(request, payload, self.auth)
 
         async def persist():
             if value["kind"] == "mail":
