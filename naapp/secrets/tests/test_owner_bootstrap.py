@@ -38,7 +38,6 @@ from aweb_naapp_testing.owner_acts import (
     TeamOwner,
     team_owner,
 )
-from aweb_naapp_testing.webauthn import SoftAuthenticator
 from awid_service.testing import running_registry
 from nacl.signing import SigningKey
 from pgdbm import AsyncMigrationManager
@@ -245,17 +244,6 @@ def _policy(scope: str, *, allow_requester_approval: bool = True) -> ActionPolic
         approver_scopes=(scope,),
         allow_requester_approval=allow_requester_approval,
     )
-
-
-async def _enrol(world: World, contact: str) -> SoftAuthenticator:
-    token = world.contacts.inbox[contact][-1]
-    device = SoftAuthenticator(ORIGIN)
-    prepared = await world.credential_audit.prepare_enrolment(token)
-    with world.credential_audit.prepared(prepared):
-        await world.passkeys.complete_enrolment(
-            token, device.create(await world.passkeys.enrolment_options(token)), fence=prepared
-        )
-    return device
 
 
 async def test_the_canonical_component_writer_binds_a_human_owner(world: World) -> None:

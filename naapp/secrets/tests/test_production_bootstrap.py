@@ -246,9 +246,13 @@ async def test_a_canonical_component_holder_logs_into_the_production_console(roo
     assert listed.status_code == 200, listed.text
     assert listed.json()["result"]["secrets"] == []
     assert (await client.get(AUDIENCE + "/v1/secrets")).status_code == 401
-    assert (
-        await client.post(human + "/enrolment/options", json={"link_token": token})
-    ).status_code == 403
+    # Human-role-holders: the act binds the credential; no enrolment link is
+    # issued. A holder's LOGIN session cannot replace the route's token body.
+    assert token is None
+    assert await db.fetch_value("SELECT count(*) FROM passkey_enrolments") == 0
+    options = await client.post(human + "/enrolment/options", json={"scope": scope})
+    assert options.status_code == 400
+    assert options.json() == {"detail": "request_invalid"}
     async with asyncio.timeout(5):
         while dns.queries[("logs.example", "A")] == 0:
             await asyncio.sleep(0.01)
