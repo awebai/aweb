@@ -32,6 +32,7 @@ from aweb_naapp.runtime.hook_egress import HookEgress
 from aweb_naapp.runtime.origins import OriginApps
 from aweb_naapp.runtime.passkeys.email import PasskeyEmailDelivery
 from aweb_naapp.runtime.team_auth import Principal
+from awid.dns_verify import DomainVerifier
 from fastapi import FastAPI, HTTPException, Request
 from pgdbm import AsyncDatabaseManager
 
@@ -92,6 +93,7 @@ def create_runtime(
     *,
     awid_transport: httpx.AsyncBaseTransport | None = None,
     team_server_transport: httpx.AsyncBaseTransport | None = None,
+    awid_domain_verifier: DomainVerifier | None = None,
 ) -> NaappRuntime:
     """logs' runtime: its schema, its manifest, with the reader role its owner
     designates on the console origin, and its hook events leaving through ``hooks``."""
@@ -103,6 +105,7 @@ def create_runtime(
         owner_acts=OWNER_ACTS,
         owner_acts_origin=settings.console_origin,
         awid_transport=awid_transport,
+        awid_domain_verifier=awid_domain_verifier,
         team_server_transport=team_server_transport,
         hook_egress=hooks.egress,
         hook_internal_cidr=hooks.internal_cidr,
@@ -117,14 +120,20 @@ def create_app(
     awid_transport: httpx.AsyncBaseTransport | None = None,
     team_server_transport: httpx.AsyncBaseTransport | None = None,
     resolver: Resolver | None = None,
+    awid_domain_verifier: DomainVerifier | None = None,
     now: Callable[[], datetime] = lambda: datetime.now(UTC),
 ) -> OriginApps:
     """logs on its public origin and its console origin. ``email`` sends the
     enrolment links of designated readers. Hook events leave through the guard
-    the settings configure; ``resolver`` replaces its DNS resolver."""
+    the settings configure; ``resolver`` replaces its DNS resolver, and
+    ``awid_domain_verifier`` the DNS check of an AWID domain's authority."""
     hooks = HookEgress.from_settings(settings, resolver=resolver)
     runtime = create_runtime(
-        settings, hooks, awid_transport=awid_transport, team_server_transport=team_server_transport
+        settings,
+        hooks,
+        awid_transport=awid_transport,
+        team_server_transport=team_server_transport,
+        awid_domain_verifier=awid_domain_verifier,
     )
     signer = chain_signer(settings, runtime.manifest)
     authorized = runtime.authorized(grants=runtime.installation_grants(), policy=admit_members)

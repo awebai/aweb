@@ -178,48 +178,51 @@ async def deployment(
         **getattr(request, "param", {}),
     )
     with blocked_dns() as looked_up, SmtpServer(tmp_path / "smtp") as smtp:
-        service = create_app(
-            settings,
-            email=email_settings(smtp, tmp_path),
-            awid_transport=coordination.registry.transport,
-            team_server_transport=coordination.server.transport,
-            resolver=Unresolved(),
-        )
-        # Installed at the version 3 logs publishes, as an owner who designates
-        # readers pins it.
-        manifest = service.api_app.state.runtime.manifest_bytes
-        installation = await install(server_db, member.team_id, manifest)
-        async with (
-            service.api_app.router.lifespan_context(service.api_app),
-            human_namespace(coordination.registry, member.team_id.split(":", 1)[1]) as humans,
-        ):
-            async with (
-                httpx.AsyncClient(
-                    transport=httpx.ASGITransport(app=service), base_url=ORIGIN
-                ) as agent,
-                httpx.AsyncClient(
-                    transport=httpx.ASGITransport(app=service), base_url=CONSOLE
-                ) as human,
-            ):
-                yield Deployment(
-                    member=member,
-                    # The owner addresses its human-role acts to the console origin.
-                    owner=TeamOwner(
-                        team_key=member.team_key,
-                        verifier=None,  # type: ignore[arg-type]
-                        team_id=member.team_id,
-                        audience=CONSOLE,
-                    ),
-                    installation_id=installation["installation_id"],
-                    smtp=smtp,
-                    agent=agent,
-                    console=human,
-                    looked_up=looked_up,
-                    manifest=manifest,
-                    server_db=server_db,
-                    db=db,
-                    humans=humans,
-                )
+        async with human_namespace(
+            coordination.registry, member.team_id.split(":", 1)[1]
+        ) as humans:
+            # logs reads AWID with the namespace's authority, where production
+            # checks it in DNS.
+            service = create_app(
+                settings,
+                email=email_settings(smtp, tmp_path),
+                awid_transport=coordination.registry.transport,
+                team_server_transport=coordination.server.transport,
+                resolver=Unresolved(),
+                awid_domain_verifier=humans.authority,
+            )
+            # Installed at the version 3 logs publishes, as an owner who
+            # designates readers pins it.
+            manifest = service.api_app.state.runtime.manifest_bytes
+            installation = await install(server_db, member.team_id, manifest)
+            async with service.api_app.router.lifespan_context(service.api_app):
+                async with (
+                    httpx.AsyncClient(
+                        transport=httpx.ASGITransport(app=service), base_url=ORIGIN
+                    ) as agent,
+                    httpx.AsyncClient(
+                        transport=httpx.ASGITransport(app=service), base_url=CONSOLE
+                    ) as human,
+                ):
+                    yield Deployment(
+                        member=member,
+                        # The owner addresses its human-role acts to the console origin.
+                        owner=TeamOwner(
+                            team_key=member.team_key,
+                            verifier=None,  # type: ignore[arg-type]
+                            team_id=member.team_id,
+                            audience=CONSOLE,
+                        ),
+                        installation_id=installation["installation_id"],
+                        smtp=smtp,
+                        agent=agent,
+                        console=human,
+                        looked_up=looked_up,
+                        manifest=manifest,
+                        server_db=server_db,
+                        db=db,
+                        humans=humans,
+                    )
 
 
 async def member_post(deployment: Deployment, path: str, value: dict) -> httpx.Response:

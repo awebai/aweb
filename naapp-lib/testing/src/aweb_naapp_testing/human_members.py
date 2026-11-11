@@ -5,7 +5,7 @@ certificate of the team for it."""
 from __future__ import annotations
 
 import base64
-from collections.abc import AsyncGenerator
+from collections.abc import AsyncGenerator, Awaitable, Callable
 from contextlib import aclosing, asynccontextmanager
 from dataclasses import dataclass
 from datetime import UTC, datetime
@@ -36,12 +36,14 @@ class HumanMember:
 @dataclass(frozen=True)
 class HumanNamespace:
     """A namespace on the tests' AWID registry whose controller certifies its
-    members as humans; ``client`` reads AWID with the namespace's authority."""
+    members as humans; ``client`` reads AWID with the namespace's authority,
+    and ``authority`` is that domain verifier, for an app's own AWID client."""
 
     registry: Registry
     client: RegistryClient
     controller: SigningKey
     domain: str
+    authority: Callable[[str], Awaitable[DomainAuthority]]
 
     async def register(self, member: Member) -> HumanMember:
         """Register ``member`` as a human member of its team, whose team the
@@ -102,7 +104,7 @@ async def human_namespace(registry: Registry, domain: str) -> AsyncGenerator[Hum
         )
     ) as client:
         await client.register_namespace(domain, did_key(controller), bytes(controller))
-        yield HumanNamespace(registry, client, controller, domain)
+        yield HumanNamespace(registry, client, controller, domain, authority)
 
 
 @asynccontextmanager
