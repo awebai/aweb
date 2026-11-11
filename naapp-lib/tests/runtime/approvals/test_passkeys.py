@@ -160,6 +160,7 @@ async def passkey_world(test_db_factory, registry, **passkeys_options) -> Passke
             raise ProofContextUnavailable()
         return PasskeyInstallationContext("fixture", "team", "installation", generation)
 
+    passkeys_options.setdefault("owner_scopes", is_owner_scope)
     passkeys = Passkeys(
         db,
         rp=RelyingParty(origin=ORIGIN, name="Example app"),
@@ -169,7 +170,6 @@ async def passkey_world(test_db_factory, registry, **passkeys_options) -> Passke
         enrolment_ttl=timedelta(hours=1),
         challenge_ttl=timedelta(minutes=5),
         clock=clock,
-        owner_scopes=is_owner_scope,
         proof_context=resolve_context,
         **passkeys_options,
     )

@@ -156,31 +156,53 @@ class Holding:
     held_since: datetime
 
 
+@dataclass(frozen=True)
+class HoldingRecord:
+    """The installation's record of a holding, kept as history after the
+    holding ends. It grants nothing: it names whose scope ``b3_scope`` is.
+    ``ended_in`` is the ``txid_current()`` of the transaction that ended the
+    holding, or None while it is held or has never ended."""
+
+    installation_id: str
+    team_id: str
+    role: str
+    principal: str
+    b3_scope: str
+    ended_in: int | None
+
+
 # A holding: the live assignment joined to the installation's record of it.
-_HOLDING = """
-    SELECT h.b3_scope, h.certificate, a.assigned_at
+_HOLDINGS = """
+    SELECT h.b3_scope, h.certificate, a.assigned_at,
+        h.installation_id, h.team_id, h.role, h.principal_did
     FROM {{tables.role_assignments}} a
     JOIN {{tables.role_holdings}} h
         ON h.team_id = a.team_id AND h.role = a.role AND h.principal_did = a.principal_did
-    WHERE h.installation_id = $1 AND a.team_id = $2 AND a.role = $3 AND a.principal_did = $4
 """
+_HOLDING = (
+    _HOLDINGS
+    + "WHERE h.installation_id = $1 AND a.team_id = $2 AND a.role = $3 AND a.principal_did = $4"
+)
+_HOLDING_OF_SCOPE = _HOLDINGS + "WHERE h.b3_scope = $1"
 _ASSIGNMENT = """
     SELECT assigned_at FROM {{tables.role_assignments}}
     WHERE team_id = $1 AND role = $2 AND principal_did = $3
 """
 _RECORD = "SELECT 1 FROM {{tables.role_holdings}} WHERE b3_scope = $1"
+_RECORD_OF_SCOPE = """
+    SELECT installation_id, team_id, role, principal_did, b3_scope, ended_in
+    FROM {{tables.role_holdings}} WHERE b3_scope = $1
+"""
 
 
-def _holding(
-    installation_id: str, team_id: str, role: str, principal: str, row: Any
-) -> Holding | None:
+def _holding(row: Any) -> Holding | None:
     if row is None:
         return None
     return Holding(
-        installation_id=installation_id,
-        team_id=team_id,
-        role=role,
-        principal=principal,
+        installation_id=row["installation_id"],
+        team_id=row["team_id"],
+        role=row["role"],
+        principal=row["principal_did"],
         b3_scope=row["b3_scope"],
         certificate=None if row["certificate"] is None else bytes(row["certificate"]),
         held_since=row["assigned_at"],
@@ -194,7 +216,33 @@ async def read_holding(
     no holding, and for a bare role assignment the installation has no record of."""
     holding_scope(installation_id, team_id, role, principal)
     row = await db.fetch_one(_HOLDING, installation_id, team_id, role, principal)
-    return _holding(installation_id, team_id, role, principal, row)
+    return _holding(row)
+
+
+async def read_holding_of_scope(db: Executor, b3_scope: str) -> Holding | None:
+    """The current holding whose record is ``b3_scope``, by SQL reads only: no
+    lock and no refresh. None for a scope the installation never recorded, and
+    for one whose holding has ended. The caller checks the holding is its own
+    installation's."""
+    return _holding(await db.fetch_one(_HOLDING_OF_SCOPE, b3_scope))
+
+
+async def holding_record_of_scope(db: Executor, b3_scope: str) -> HoldingRecord | None:
+    """The installation's record for ``b3_scope``, current or ended, by SQL
+    reads only. It grants nothing: it names the installation, team, role and
+    principal whose scope this is, such as for a credential event after the
+    holding ended. None for a scope never recorded."""
+    row = await db.fetch_one(_RECORD_OF_SCOPE, b3_scope)
+    if row is None:
+        return None
+    return HoldingRecord(
+        installation_id=row["installation_id"],
+        team_id=row["team_id"],
+        role=row["role"],
+        principal=row["principal_did"],
+        b3_scope=row["b3_scope"],
+        ended_in=row["ended_in"],
+    )
 
 
 async def is_holding_scope(db: Executor, b3_scope: str) -> bool:
@@ -220,7 +268,7 @@ async def _lock(
     if await tx.fetch_one(f"{_RECORD} FOR {mode}", scope) is None:
         return None
     row = await tx.fetch_one(_HOLDING, installation_id, team_id, role, principal)
-    return _holding(installation_id, team_id, role, principal, row)
+    return _holding(row)
 
 
 async def hold_holding(
@@ -270,7 +318,7 @@ async def begin_holding(
         INSERT INTO {{tables.role_holdings}} AS h
             (b3_scope, installation_id, team_id, role, principal_did, certificate)
         VALUES ($1, $2, $3, $4, $5, $6)
-        ON CONFLICT (b3_scope) DO UPDATE SET certificate = EXCLUDED.certificate
+        ON CONFLICT (b3_scope) DO UPDATE SET certificate = EXCLUDED.certificate, ended_in = NULL
         WHERE (h.installation_id, h.team_id, h.role, h.principal_did)
             = (EXCLUDED.installation_id, EXCLUDED.team_id, EXCLUDED.role,
                EXCLUDED.principal_did)
@@ -310,7 +358,13 @@ async def end_holding(
         principal,
         role,
     )
-    return ended is not None
+    if ended is None:
+        return False
+    await tx.execute(
+        "UPDATE {{tables.role_holdings}} SET ended_in = txid_current() WHERE b3_scope = $1",
+        holding_scope(installation_id, team_id, role, principal),
+    )
+    return True
 
 
 async def refresh_holding_certificate(
