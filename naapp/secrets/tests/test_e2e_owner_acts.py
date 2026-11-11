@@ -120,6 +120,18 @@ class Holder:
         )
         assert started.returncode == 0, started.stdout + started.stderr
 
+    def act(self, principal: str, *args: str) -> pexpect.spawn:
+        """aw as the holder for a command that a holder-signed start begins.
+
+        This is the one place that chooses how the holder authenticates. Today
+        it is the existing --human participation (the human key in this
+        machine's Secret Service, unlocked at the terminal). The protected
+        profile (package 1 rule (b)) replaces only this method: a restricted
+        requester credential, a B3 UV login at the protected service, and the
+        server's holder-signed start. The H acceptance (acxy.9/11) runs there.
+        """
+        return self.spawn("--human", principal, "--human-domain", DOMAIN, *args)
+
     def spawn(self, *args: str) -> pexpect.spawn:
         """aw on the holder's terminal: docker exec -it gives it a real PTY."""
         return pexpect.spawn(
@@ -282,7 +294,7 @@ def test_the_owner_designates_a_human_holder_registered_on_another_machine(lane:
     aw(controller, "init", "--url", AWEB, "--name", "owner", "--do-not-touch-agents-md")
     added = aw(controller, "id", "team", "add-member", "--team", TEAM, "--namespace", DOMAIN,
                "--did", human["did_key"], "--did-aw", principal, "--name", "holder", "--global")
-    child = holder.spawn("--human", principal, "--human-domain", DOMAIN, "--json", "id", "team", "fetch-cert",
+    child = holder.act(principal, "--json", "id", "team", "fetch-cert",
                          "--namespace", DOMAIN, "--team", TEAM, "--cert-id", added["certificate_id"], "--registry", REGISTRY)
     output = holder.answer_passphrases(child)
     child.close()
@@ -293,12 +305,12 @@ def test_the_owner_designates_a_human_holder_registered_on_another_machine(lane:
     lane.up("secrets", "front")
     installed = aw(controller, "plugin", "install", API)
     assert installed["approved"], installed
-    child = holder.spawn("--human", principal, "--human-domain", DOMAIN, "plugin", "install", API)
+    child = holder.act(principal, "plugin", "install", API)
     holder.answer_passphrases(child)
     child.close()
 
     # The holder registers a passkey on their own machine and exports it.
-    child = holder.spawn("--human", principal, "--human-domain", DOMAIN, "app", "credential", "register",
+    child = holder.act(principal, "app", "credential", "register",
                          "secrets", "--role", ROLE, "--out", "/runtime/holder/export.json")
     output = holder.answer_passphrases(child, until=r"Open this page to continue: (\S+)")
     page = re.search(r"Open this page to continue: (\S+)", output).group(1)
@@ -324,6 +336,6 @@ def test_the_owner_designates_a_human_holder_registered_on_another_machine(lane:
     assert code == "owner_required", code
 
     # The holder holds the role: a session handoff starts for it.
-    child = holder.spawn("--human", principal, "--human-domain", DOMAIN, "--json", "app", "human", "secrets", "--help")
+    child = holder.act(principal, "--json", "app", "human", "secrets", "--help")
     listed = holder.answer_passphrases(child)
     assert "confirm" in listed and "draft-change" in listed, listed
