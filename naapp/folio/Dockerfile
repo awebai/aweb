@@ -36,8 +36,9 @@ COPY naapp/folio/src ./src
 COPY naapp/folio/skills ./skills
 RUN uv sync --frozen --no-dev
 
-RUN useradd --create-home --shell /usr/sbin/nologin folio
-USER folio
+RUN groupadd --gid 10001 folio \
+    && useradd --uid 10001 --gid 10001 --create-home --shell /usr/sbin/nologin folio
+USER 10001:10001
 
 EXPOSE 8765
 # Probes /live, which checks no dependency: a database outage must not make an

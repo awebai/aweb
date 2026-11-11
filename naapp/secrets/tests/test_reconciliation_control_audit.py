@@ -66,19 +66,19 @@ async def control_world(uses, *, approval_required=False):
     )
 
     class Policies:
-        async def current(self, ref):
+        async def current(self, ref, *, tx=None):
             if ref.startswith("secrets.reconcile|"):
-                return await policies.current(ref)
-            return await prior_policies.current(ref)
+                return await policies.current(ref, tx=tx)
+            return await prior_policies.current(ref, tx=tx)
 
     class Approvers:
-        async def candidates(self, policy, request):
+        async def candidates(self, policy, request, *, tx=None):
             if policy.policy_ref.startswith("secrets.reconcile|"):
-                return await approvers.candidates(policy, request)
-            return await prior_approvers.candidates(policy, request)
+                return await approvers.candidates(policy, request, tx=tx)
+            return await prior_approvers.candidates(policy, request, tx=tx)
 
-        async def is_current(self, scope, subject):
-            return await prior_approvers.is_current(scope, subject)
+        async def is_current(self, scope, subject, *, tx=None):
+            return await prior_approvers.is_current(scope, subject, tx=tx)
 
     class Audit:
         async def emit(self, event, tx):

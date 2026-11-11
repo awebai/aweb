@@ -118,6 +118,7 @@ def test_only_the_verified_type_the_signing_bytes_and_constants_are_public() -> 
         "APP_ACTS",
         "CORE_ACTS",
         "HUMAN_ROLE_ACTS",
+        "HumanCredential",
         "LOGS_ACTS",
         "PREFIX",
         "Refused",
