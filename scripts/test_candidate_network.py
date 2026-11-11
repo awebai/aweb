@@ -40,6 +40,28 @@ def gate_work():
                 raise AssertionError('gate work cleanup failed: ' + result.stdout + result.stderr)
 
 
+class ComposeVersionTests(unittest.TestCase):
+    def test_installed_package_must_match_the_image_pin(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            query = Path(tmp) / 'dpkg-query'
+            query.write_text('#!/bin/sh\nprintf "%s\\n" "$TEST_PACKAGE_VERSION"\nexit "${TEST_QUERY_STATUS:-0}"\n')
+            query.chmod(0o755)
+            for installed, query_status, expected_status in (
+                    ('5.7.1-1~debian.12~bookworm', '0', 0),
+                    ('5.7.2-1~debian.12~bookworm', '0', 1),
+                    ('', '2', 2)):
+                with self.subTest(installed=installed, query_status=query_status):
+                    result = subprocess.run(
+                        ['bash', str(ROOT / 'candidate-gate/check-compose-version.sh'),
+                         '5.7.1-1~debian.12~bookworm'], capture_output=True, text=True,
+                        env={**os.environ, 'PATH': tmp + os.pathsep + os.environ['PATH'],
+                             'TEST_PACKAGE_VERSION': installed, 'TEST_QUERY_STATUS': query_status})
+                    self.assertEqual(result.returncode, expected_status, result.stderr)
+                    if installed and expected_status:
+                        self.assertIn('candidate Compose package mismatch', result.stderr)
+                        self.assertIn(installed, result.stderr)
+
+
 class WorkCleanupTests(unittest.TestCase):
     def test_real_gate_cleanup_removes_overlays_and_detects_retention(self):
         for retain in (False, True):
@@ -190,14 +212,16 @@ class EndpointTests(unittest.TestCase):
 
 
 class ComposeConfigTests(unittest.TestCase):
-    def test_external_overlay_preserves_service_aliases_and_network_names(self):
+    def test_adopted_network_overlay_preserves_creation_options_and_aliases(self):
         real = os.environ.get('AWEB_CANDIDATE_REAL_DOCKER') or shutil.which('docker')
         with tempfile.TemporaryDirectory() as tmp:
             config_path = Path(tmp) / 'compose.json'
             config_path.write_text(json.dumps({
                 'services': {'awid': {'image': 'python:3.12-slim',
                                      'networks': {'data': {'aliases': ['registry.test']}}}},
-                'networks': {'data': {'internal': True}}}))
+                'networks': {'data': {'internal': True, 'driver': 'bridge',
+                                      'driver_opts': {'com.docker.network.driver.mtu': '1400'},
+                                      'ipam': {'config': [{'subnet': '172.30.0.0/24'}]}}}}))
             args = [real, 'compose', '-p', 'proof', '-f', str(config_path)]
             original = json.loads(subprocess.run([*args, 'config', '--format', 'json'],
                                                 check=True, capture_output=True, text=True).stdout)
@@ -206,9 +230,8 @@ class ComposeConfigTests(unittest.TestCase):
             merged = json.loads(subprocess.run([*args, '-f', str(overlay), 'config', '--format', 'json'],
                                               check=True, capture_output=True, text=True).stdout)
             self.assertEqual(merged['networks']['data']['name'], 'proof_data')
-            self.assertTrue(merged['networks']['data']['external'])
-            self.assertNotIn('internal', merged['networks']['data'])
-            self.assertFalse(merged['networks']['data'].get('ipam'))
+            self.assertFalse(merged['networks']['data'].get('external', False))
+            self.assertEqual(merged['networks'], original['networks'])
             self.assertEqual(set(merged['services']['awid']['networks']['data']['aliases']),
                              {'registry.test', 'proof-awid.test'})
 
@@ -354,6 +377,11 @@ class ComposeExitStatusTests(unittest.TestCase):
                                         'down', '-v', '--remove-orphans')
                     if result.returncode:
                         cleanup_errors.append(result.stderr)
+                    project = cmd[cmd.index('-p') + 1]
+                    remaining = docker('network', 'ls', '-q', '--filter',
+                                       'label=com.docker.compose.project=' + project).stdout.strip()
+                    if remaining:
+                        cleanup_errors.append(f'{project}: Compose down retained networks: {remaining}')
                 owned = docker('ps', '-aq', '--filter', 'label=aweb.candidate-gate=' + label).stdout.split()
                 if owned:
                     docker('rm', '-fv', *owned)
@@ -592,7 +620,7 @@ class ComposeNetworkTests(unittest.TestCase):
                            '-p', project, '-f', str(compose_file)]
                     commands.append(cmd)
                     # Folio's real setup creates containers before its first up.
-                    # Both operations must find the pre-owned external network.
+                    # Both operations must adopt the pre-owned network.
                     result = subprocess.run([*cmd, 'create'], env=env, capture_output=True, text=True, timeout=90)
                     self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
                     result = subprocess.run([*cmd, 'up', '-d'], env=env, capture_output=True, text=True, timeout=90)
@@ -624,6 +652,11 @@ class ComposeNetworkTests(unittest.TestCase):
                                             capture_output=True, text=True, timeout=60)
                     if result.returncode:
                         cleanup_errors.append(result.stderr)
+                    project = cmd[cmd.index('-p') + 1]
+                    remaining = docker('network', 'ls', '-q', '--filter',
+                                       'label=com.docker.compose.project=' + project).stdout.strip()
+                    if remaining:
+                        cleanup_errors.append(f'{project}: Compose down retained networks: {remaining}')
                 owned = docker('ps', '-aq', '--filter', 'label=aweb.candidate-gate=' + label).stdout.split()
                 if owned:
                     docker('rm', '-fv', *owned)
