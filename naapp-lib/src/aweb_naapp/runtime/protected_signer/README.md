@@ -82,3 +82,59 @@ focused positive, wrong-authority/payload, original-deadline, concurrent execute
 and audit rollback/retry cases. B3 migration 006 follows the holder stack's 004;
 coordinate the credential-change branch's 005 before the combined release.
 No deployment, key import or production migration is authorized by this seam.
+
+
+## Shared request-origin HTTP mount
+
+```python
+from aweb_naapp.runtime.protected_signer import ProtectedOperationsHTTP
+
+http = ProtectedOperationsHTTP(
+    signer, request_origin=configured_request_origin,
+    requester=authenticate_prepare, reader=authenticate_receipt,
+    limiter=shared_login_limiter,
+)
+# Either include http.api_router() on the configured request-origin server,
+# or pass protected_operations=http into the one ConsoleHandoffs factory.
+```
+
+`authenticate_prepare(request, operation)` returns an authenticated
+`RestrictedRequester` for the exact proposed context.
+`authenticate_receipt(request, operation_id)` returns a `ReceiptReader` for the
+original authorized scope. The callback resolves trusted current profile/scope,
+uses `.4`'s `awid.protected_request.verify_protected_request` for possession
+proofs (or the explicitly supported team-auth/hosted restricted lane), and
+checks current key/association. It never derives authority merely from the
+operation ID, a cookie or JSON scope. The service independently enforces
+current authority and original requester binding after authentication.
+Do not mount it on an unconfigured origin; forwarded headers do not select it.
+The factory rejects a protected mount with a different database or B3 instance.
+
+POST `/protected-operations` takes the operation's `intent()` fields and an
+optional `redirect_uri`. The callback is validated by the existing literal
+loopback parser and frozen in the covered request. The response is exactly
+`operation_id`, `handoff_id`, `digest`, `payload`, `expires_at`, with no URL.
+For HTTP, `payload` is the existing B2 covered object
+`{"policy":{"ref":POLICY_REF,"version":VERSION},"request":REQUEST}`;
+the digest is SHA-256 of `aweb.approval-request/1` plus LF plus that canonical
+object. This wraps the library's `PreparedOperation.payload` (REQUEST).
+REQUEST retains the input fields unchanged. Its only server additions are
+`requester`, `policy_ref`, `policy_version`, `artifact`; the owner-act nonce,
+issued/expiry, team key and signed subject live inside `artifact`.
+Clients must verify both this digest and their exact intent before displaying
+the comparison link.
+
+GET `/protected-operations/{operation_id}` returns HTTP 200 with a closed
+receipt: `pending` has `reason` and `expires_at`; `committed` has `result`;
+`refused` and `unknown` have `code`. Authentication errors are 401
+`requester_invalid`, scope denial 403 `scope_refused`, absent record 404
+`operation_not_found`, changed intent 409 `operation_conflict`, and availability
+503 `receipt_unavailable`, all with fixed `detail` and no private exception
+text. Every response is no-store. Unknown/duplicate input fields, noninteger
+numbers and malformed callbacks refuse. Cookies and console session headers
+cannot substitute for a restricted request proof.
+
+This slice adds the request-origin mounts only. Governance human routes and
+the shared page mode remain a separate composition; until mounted, a returned
+handoff association is not a working browser ceremony. No request-origin
+execute route permits this live-floor operation.

@@ -484,6 +484,7 @@ class ProtectedSigner:
             s["installation_id"],
             s["role"],
             s["principal"],
+            request.get("redirect_uri"),
         )
 
     def _receipt(self, row):

@@ -77,18 +77,27 @@ class RevokeHumanRole:
     installation_id: str
     role: str
     principal: str
+    redirect_uri: str | None = None
 
     def __post_init__(self):
         if str(UUID(self.operation_id)) != self.operation_id:
             raise SignerRefused("request_invalid")
         if self.context.authority_kind != "team_controller":
             raise SignerRefused("scope_refused")
+        if self.redirect_uri is not None:
+            from aweb_naapp.console.handoff_wire import HandoffWireRefused, loopback_redirect
+
+            try:
+                loopback_redirect(self.redirect_uri)
+            except HandoffWireRefused:
+                raise SignerRefused("redirect_uri_refused") from None
 
     def intent(self) -> dict[str, Any]:
         return {
             "operation_id": self.operation_id,
             "operation": "human-role.revoke",
             "variant": "default",
+            **({"redirect_uri": self.redirect_uri} if self.redirect_uri is not None else {}),
             "scope": self.context.fields(),
             "audience": self.audience,
             "subject": {

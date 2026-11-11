@@ -2,6 +2,7 @@
 
 from aweb_naapp.runtime.passkeys.proof import ProtectedKeyContext
 
+from .http import ProtectedOperationsHTTP
 from .service import POLICY_REF, ProtectedSigner
 from .types import (
     AdmittedHuman,
@@ -26,6 +27,7 @@ __all__ = [
     "PreparedOperation",
     "ProtectedKeyContext",
     "ProtectedSigner",
+    "ProtectedOperationsHTTP",
     "ReceiptReader",
     "RestrictedRequester",
     "RevokeHumanRole",
