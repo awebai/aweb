@@ -1,7 +1,7 @@
 # ruff: noqa: F811 -- imported pre-cutover component fixtures.
 """16.43a upgrades populated legacy owners; this is component evidence only.
 
-Legacy state is created through the pre-cutover owner-act/B3 component path.
+Legacy state is checked-in data captured through the genuine pre-cutover path.
 No test inserts a new generic holding or treats a login as a holding writer.
 """
 
@@ -11,16 +11,17 @@ import pytest
 from aweb_naapp.roles import PrincipalKey
 from aweb_naapp.runtime.human_roles import HumanRoleHoldings
 from aweb_naapp.runtime.installation import InstallationFence
-from aweb_naapp_testing import did_key
-from aweb_naapp_testing.owner_acts import INSTALLATION_ID
+from aweb_naapp_testing.owner_acts import APP_ID, INSTALLATION_ID
 from pgdbm.errors import MigrationError
 
 from aweb_secrets.owners import OWNER_ROLE, OwnerRequired, apply_owner_migrations
+from tests.owner_history import load_owner_history
 from tests.test_change_sets import Installations
-from tests.test_owner_bootstrap import _apply, _enrol
+from tests.test_owner_bootstrap import ALICE, BOB, TEAM, _apply
 from tests.test_owner_bootstrap import world as bootstrap_world  # noqa: F401
-from tests.test_owner_directory import ALICE, BOB, TEAM, _policy, designate_owner
-from tests.test_owner_directory import world as legacy_world  # noqa: F401
+from tests.test_owner_directory import _policy
+
+pytestmark = pytest.mark.parametrize("bootstrap_world", [{"owner_history": True}], indirect=True)
 
 
 async def authority_snapshot(db):
@@ -40,18 +41,16 @@ async def authority_snapshot(db):
 
 
 async def admitted_owner_installation(db):
-    installations = Installations()
+    installations = Installations(team_id=TEAM, app_id=APP_ID)
     fence = InstallationFence(db, app_id=installations.app_id, grants=installations)
     async with db.transaction() as tx:
         return await fence.admit(tx, installations.grant)
 
 
-async def test_populated_upgrade_preserves_scopes_stamps_subjects_and_credentials(legacy_world):
-    w = legacy_world
-    scopes = [
-        await designate_owner(w, ALICE, "alice@example.com"),
-        await designate_owner(w, BOB, "bob@example.com"),
-    ]
+async def test_populated_upgrade_preserves_scopes_stamps_subjects_and_credentials(bootstrap_world):
+    w = bootstrap_world
+    history = await load_owner_history(w)
+    scopes = [r["scope"] for r in history["tables"]["owner_principals"]]
     before = await authority_snapshot(w.db)
     assert before["role_holdings"] == []
     await apply_owner_migrations(w.db)
@@ -79,6 +78,7 @@ async def test_populated_upgrade_preserves_scopes_stamps_subjects_and_credential
             "role": OWNER_ROLE,
             "principal_did": principal.principal_did,
             "certificate": None,
+            "ended_in": None,
         }
         async with w.db.transaction() as tx:
             held = await holdings.hold_holding(
@@ -92,27 +92,23 @@ async def test_populated_upgrade_preserves_scopes_stamps_subjects_and_credential
                 None,
             )
         # The migration neither replaces the passkey nor issues a new subject.
-        login = await w.passkeys.verify_login(
-            scope, w.devices[scope].get(await w.passkeys.login_options(scope))
-        )
+        login = await w.passkeys.verify_login(scope, history["login_assertions"][scope])
         assert login.subject == subjects[scope]
 
 
-async def test_one_did_key_owner_refuses_the_whole_upgrade_atomically(legacy_world):
-    w = legacy_world
-    await designate_owner(w, ALICE, "alice@example.com")
-    legacy_key = PrincipalKey(TEAM, did_key(w.owner.team_key))
-    await designate_owner(w, legacy_key, "legacy@example.com")
+async def test_one_did_key_owner_refuses_the_whole_upgrade_atomically(bootstrap_world):
+    w = bootstrap_world
+    await load_owner_history(w, mixed_key=True)
     before = await authority_snapshot(w.db)
     with pytest.raises(MigrationError):
         await apply_owner_migrations(w.db)
     assert await authority_snapshot(w.db) == before
 
 
-async def test_directory_uses_the_generic_holding_for_exclusion_and_withdrawal(legacy_world):
-    w = legacy_world
-    alice = await designate_owner(w, ALICE, "alice@example.com")
-    bob = await designate_owner(w, BOB, "bob@example.com")
+async def test_directory_uses_the_generic_holding_for_exclusion_and_withdrawal(bootstrap_world):
+    w = bootstrap_world
+    history = await load_owner_history(w)
+    alice, bob = [r["scope"] for r in history["tables"]["owner_principals"]]
     await apply_owner_migrations(w.db)
     policy = _policy(alice, allow_requester_approval=False)
     for drafter in (
@@ -147,9 +143,8 @@ async def test_directory_uses_the_generic_holding_for_exclusion_and_withdrawal(l
 @pytest.mark.parametrize("existing", [False, True], ids=["new-owner", "recovery"])
 async def test_legacy_entry_refuses_before_any_binding_nonce_or_delivery(bootstrap_world, existing):
     w = bootstrap_world
-    if existing:
-        await _apply(w, "app-role.designate", ALICE, "alice@example.com")
-        await _enrol(w, "alice@example.com")
+    await load_owner_history(w)
+    principal = ALICE if existing else PrincipalKey(TEAM, "did:aw:3Uq51iFVLnqmgbVY3vLZtMD5PR87")
     await apply_owner_migrations(w.db)
     before = await authority_snapshot(w.db)
     delivered = deepcopy((w.contacts.inbox, w.contacts.notices))
@@ -157,7 +152,7 @@ async def test_legacy_entry_refuses_before_any_binding_nonce_or_delivery(bootstr
         await _apply(
             w,
             "app-credential.recover" if existing else "app-role.designate",
-            ALICE,
+            principal,
             "new-contact@example.com",
         )
     assert await authority_snapshot(w.db) == before

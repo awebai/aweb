@@ -102,7 +102,7 @@ class World:
 
 
 @pytest.fixture
-async def world(test_db_factory) -> AsyncIterator[World]:
+async def world(test_db_factory, request) -> AsyncIterator[World]:
     db = await test_db_factory.create_db(suffix="secrets_bootstrap")
     registry_db = await test_db_factory.create_db(suffix="secrets_bootstrap_awid")
     await db.execute(
@@ -131,7 +131,23 @@ async def world(test_db_factory) -> AsyncIterator[World]:
     ).apply_pending_migrations()
     await apply_roles_migrations(db)
     await apply_owner_act_migrations(db)
-    await apply_owner_migrations(db)
+    if getattr(request, "param", {}).get("owner_history"):
+        # Migration tests load captured history into the actual old schema.
+        from aweb_secrets.owners import MIGRATIONS_MODULE
+        from aweb_secrets.owners import MIGRATIONS_PATH as OWNER_MIGRATIONS
+
+        migrations = AsyncMigrationManager(
+            db, migrations_path=str(OWNER_MIGRATIONS), module_name=MIGRATIONS_MODULE
+        )
+        await migrations.ensure_migrations_table()
+        original = next(
+            m
+            for m in await migrations.find_migration_files()
+            if m.filename == "001_owner_principals.sql"
+        )
+        await migrations.apply_migration(original)
+    else:
+        await apply_owner_migrations(db)
     await apply_change_set_migrations(db)
     await apply_installation_migrations(db)
     await apply_change_policy_migrations(db)
