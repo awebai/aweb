@@ -218,7 +218,7 @@ async def test_actual_production_root_serves_both_tls_origins_once(
                     f"https://127.0.0.1:{running.ports[0]}",
                     f"https://localhost:{running.ports[1]}",
                 )
-                assert (await client.get(api + "/health")).json()["checks"]["kms"]["ok"]
+                assert (await client.get(api + "/health")).json()["checks"]["kms"] == "ok"
                 assert (await client.get(human + "/enrolment")).status_code == 200
                 assert (await client.get(api + "/enrolment")).status_code == 404
                 assert (await client.get(human + "/")).status_code == 303

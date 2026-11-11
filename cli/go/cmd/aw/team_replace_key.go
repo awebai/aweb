@@ -110,26 +110,21 @@ func init() {
 }
 
 func localIdentityKeyReplacementAuthPayload(alias string, payload localIdentityKeyReplacementRequest, timestamp string) ([]byte, error) {
-	// Field order is lexicographic to match Python canonical_json_bytes.
-	return json.Marshal(struct {
-		AgentAlias       string `json:"agent_alias"`
-		NewCertificateID string `json:"new_certificate_id"`
-		NewDIDKey        string `json:"new_did_key"`
-		OldCertificateID string `json:"old_certificate_id"`
-		OldDIDKey        string `json:"old_did_key"`
-		Operation        string `json:"operation"`
-		TeamID           string `json:"team_id"`
-		Timestamp        string `json:"timestamp"`
-	}{
-		AgentAlias:       alias,
-		NewCertificateID: payload.NewCertificateID,
-		NewDIDKey:        payload.NewDIDKey,
-		OldCertificateID: payload.OldCertificateID,
-		OldDIDKey:        payload.OldDIDKey,
-		Operation:        "replace_local_identity_key",
-		TeamID:           payload.TeamID,
-		Timestamp:        timestamp,
+	// The server verifies over Python canonical_json_bytes of these fields.
+	canonical, err := awid.CanonicalJSONValue(map[string]any{
+		"agent_alias":        alias,
+		"new_certificate_id": payload.NewCertificateID,
+		"new_did_key":        payload.NewDIDKey,
+		"old_certificate_id": payload.OldCertificateID,
+		"old_did_key":        payload.OldDIDKey,
+		"operation":          "replace_local_identity_key",
+		"team_id":            payload.TeamID,
+		"timestamp":          timestamp,
 	})
+	if err != nil {
+		return nil, err
+	}
+	return []byte(canonical), nil
 }
 
 func runTeamHumanReplaceKey(cmd *cobra.Command, args []string) (runErr error) {

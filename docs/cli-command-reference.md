@@ -19,7 +19,7 @@ to refresh it.
 | Identity | `auth`, `custody`, `id`, `mcp-config`, `org`, `team`, `whoami` |
 | Messaging & Network | `a2a`, `beads-mail`, `chat`, `contacts`, `control`, `directory`, `events`, `gc-mail`, `heartbeat`, `inbound-mode`, `log`, `mail`, `room`, `wake` |
 | Coordination & Runtime | `activity`, `agent`, `instructions`, `lock`, `notify`, `role-name`, `roles`, `run`, `status`, `status-host`, `task`, `work` |
-| Utility | `completion`, `doctor`, `help`, `plugin`, `upgrade`, `version` |
+| Utility | `completion`, `doctor`, `help`, `hooks`, `plugin`, `upgrade`, `version` |
 | Additional Commands | `blueprint`, `session`, `who` |
 
 ## Global Flags
@@ -1432,9 +1432,28 @@ Flags:
 
 ### `id team request`
 
-Protocol/admin bridge: print the add-member command the team owner should run
+Print the public add-member command for the team controller.
+
+On a fresh worker, --create-local-key prepares a self-custodial local key
+without contacting a registry or server. It accepts only an empty identity
+home or a valid signing.key alone; retries reuse that key. Existing identity
+state must use request without the flag. Select the current directory's .aw
+or an explicit absolute --identity-home; an inherited AWEB_IDENTITY_HOME is
+not a preparation destination. Unsafe or symlinked paths refuse.
+
+Preparation writes only signing.key (0600). It grants no membership, address
+or global identity. JSON adds status=prepared, identity_scope=local,
+custody=self, identity_home and key_created. The home is a custody locator,
+not a security boundary.
+
+Have the controller run the printed add-member command, then use its
+certificate ID with id team fetch-cert on this machine, selecting the same
+identity home. Connect afterward with aw workspace connect --service <url>.
+Without --create-local-key, request remains read-only and requires an
+existing signing key.
 
 Flags:
+- `--create-local-key Prepare a local key in an empty or key-only identity home; membership still requires controller approval`
 - `-h, --help help for request`
 - `--name string Suggested member name for the new team membership`
 - `--team string Canonical team ID (<name>:<domain>)`
@@ -2136,8 +2155,8 @@ Subcommands:
 - `archive` Not supported: the beads graph is the archive
 - `check` Check for unread mail (for hooks)
 - `claim` Not supported in v1: no message queues
-- `clear` Not supported: server mail expires on its own
-- `delete` Not supported: server mail expires on its own
+- `clear` Not supported: aweb mail cannot be deleted
+- `delete` Not supported: aweb mail cannot be deleted
 - `drain` Not supported in v1
 - `help` Show help for a beads-mail verb ('bd mail' swallows --help; this reaches us)
 - `inbox` List unread messages (read-only; reading is what marks read)
@@ -2204,7 +2223,7 @@ Flags:
 
 ### `beads-mail clear`
 
-Not supported: server mail expires on its own
+Not supported: aweb mail cannot be deleted
 
 Flags:
 - `-h, --help help for clear`
@@ -2213,7 +2232,7 @@ Flags:
 
 ### `beads-mail delete`
 
-Not supported: server mail expires on its own
+Not supported: aweb mail cannot be deleted
 
 Flags:
 - `-h, --help help for delete`
@@ -2715,8 +2734,7 @@ Flags:
 
 Lists one page of this workspace's mail, read and unread. gc's Provider
 documents this as "all open messages"; aweb has no open/closed state, so
-it is every message the inbox still holds within the server's retention
-window.
+it is every message the inbox holds.
 
 Flags:
 - `-h, --help help for all`
@@ -2745,8 +2763,8 @@ Flags:
 
 ### `gc-mail count`
 
-Counts this workspace's mail. "Total" counts what the inbox holds inside
-the server's retention window — aweb mail is delivery, not an archive, so
+Counts this workspace's mail. "Total" counts what the inbox holds
+now — aweb mail is delivery, not an archive, so
 it is not a cumulative all-time total. Counting stops after 4000 messages; a larger
 inbox reports that ceiling rather than a wrong number.
 
@@ -3145,8 +3163,7 @@ instance and never removes a registration on its own; an instance it observed
 stopped is marked inactive and waits here.
 
 An unknown or already-retired home exits 0 with a note: the hook may run twice,
-or after the pending expiry already dropped the registration, and neither is a
-failed retirement.
+and that is not a failed retirement.
 
 For observed managed-worker completion, use --require-managed-stop with
 --expect-registration FILE containing managed_receiver from live wake status.
@@ -4206,6 +4223,55 @@ Simply type aw help [path to command] for full details.
 
 Flags:
 - `-h, --help help for help`
+
+## `hooks`
+
+### `hooks`
+
+Read the team's app hook bindings and activate or revoke them as the team owner.
+Activation and revocation are aweb.owner-act/1 acts signed with the team's controller key,
+which only the team owner holds.
+
+Subcommands:
+- `activate` Activate a pending hook binding as the team owner
+- `bindings` List an installed app's hook bindings in the selected team
+- `revoke` Revoke a pending or active hook binding as the team owner
+
+Flags:
+- `-h, --help help for hooks`
+
+## `hooks activate`
+
+### `hooks activate`
+
+Activate a pending hook binding as the team owner.
+The binding is checked against the app manifest fetched from its origin at its pinned digest.
+What will be signed is shown before the team's controller key signs it.
+
+Flags:
+- `-h, --help help for activate`
+- `--yes Sign without asking for confirmation (what is signed is still shown)`
+
+## `hooks bindings`
+
+### `hooks bindings`
+
+List an installed app's hook bindings in the selected team
+
+Flags:
+- `-h, --help help for bindings`
+
+## `hooks revoke`
+
+### `hooks revoke`
+
+Revoke a pending or active hook binding as the team owner.
+The act names the binding as the server stores it; the app's origin is not contacted.
+What will be signed is shown before the team's controller key signs it.
+
+Flags:
+- `-h, --help help for revoke`
+- `--yes Sign without asking for confirmation (what is signed is still shown)`
 
 ## `plugin`
 

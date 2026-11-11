@@ -1,6 +1,6 @@
 {
   "name": "hook-binding-cases-v1",
-  "status": "proposed (aweb-acgh.16.1); frozen once reviewed",
+  "status": "frozen (aweb-acgh.16.1)",
   "scheme": {
     "authority": "docs/hook-events.md, Bindings",
     "states": [

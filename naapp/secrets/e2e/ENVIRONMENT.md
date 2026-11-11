@@ -146,20 +146,28 @@ to traverse another user's private state or create users. Full scenario tests
 must still establish real broker effects, passkey approvals, durable job
 execution, revocation and audit ingestion into logs as described in RELEASE.md.
 
-## BYOT native/KMS lab profile
+## BYOT native custody lab profile
 
 The LF rehearsal uses a separate, explicit profile. It neither calls the hosted
 provisioner nor changes the 24 required release inputs or their acceptance.
 `lab_environment.load_lab_environment(mapping, private_dns=...)` selects exactly
-these 18 names, under the same `AWEB_SECRETS_E2E_` prefix:
+these 16 common names, under the same `AWEB_SECRETS_E2E_` prefix, plus the
+references for the explicitly selected custody mode:
 
 | Group | Suffixes |
 | --- | --- |
 | Team and services | `TEAM_ID`, `API_ORIGIN`, `CONSOLE_ORIGIN`, `LOGS_ORIGIN`, `LOGS_CONSOLE_ORIGIN` |
-| Native custody | `KMS_KEY_ARN`, `AWS_REGION`, `KMS_CREDENTIALS_FILE` |
+| Native custody selection | `CUSTODY_MODE` (`kms` or `local_key_file`) |
 | Separate-user runner | `RUNNER_BINARY`, `RUNNER_CONFIG_FILE`, `RUNNER_USER`, `RUNNER_STATE_DIR` |
 | CLI selection | `AW_BINARY`, `HUMAN_IDENTITY_HOME`, `AGENT_A_IDENTITY_HOME`, `AGENT_B_IDENTITY_HOME` |
 | Customer authority | `AWID_REGISTRY_URL`, `COORDINATION_ORIGIN` |
+
+`kms` additionally requires `KMS_KEY_ARN`, `AWS_REGION` and
+`KMS_CREDENTIALS_FILE` (19 selected names). `local_key_file` additionally requires
+`CUSTODY_KEY_FILE` (17 selected names), the private key-file reference that S19
+maps to the service's `custody_key_file` setting. It requires no KMS references.
+Populated references from the other mode are refused rather than silently ignored.
+KMS is recommended, while either custody mode is valid for this lab.
 
 Binary and identity-home paths are absolute. Agent homes are the actual credential
 directories used by `aw --identity-home`, usually the selected workspace's `.aw`.
@@ -170,9 +178,10 @@ canonical directory and name a registered human.
 There is no fallback to the driver identity. All three homes and their certified
 principals are distinct. `AWID_REGISTRY_URL` and `COORDINATION_ORIGIN` are HTTPS
 origins without credentials, query strings or fragments. Service-origin separation
-has the same rules as the release profile. The KMS key ARN must name the selected
-region; the AWS credential reference is a private regular file, never opened by
-the reference checker. KMS is required: this profile offers no local-key fallback.
+has the same rules as the release profile. In KMS mode the key ARN must name the
+selected region. The selected AWS credential or custody-key reference is an
+absolute private regular file owned by the driver, never opened by the reference
+checker. The actual service validates and uses its selected custody provider.
 
 `RUNNER_USER` must resolve to a real non-root OS account different from the driver.
 The checker does not traverse its protected config/state. S19 must still use
@@ -228,14 +237,21 @@ not resource grants, human user verification, B2/B3 confirmation or readiness.
 
 The new publication directory is 0700 and its sole `runtime.json` is 0600;
 an existing directory is never adopted. The context removes its own snapshot
-on normal exit or caller failure. The JSON has `profile="byot-native-kms-lab/1"`,
-`inputs`, `actors`, the configured account's `runner_uid`, and `coverage` with
-the selected DNS scenario and `full_release_gate=false`. It contains references
+on normal exit or caller failure. The JSON has `profile="byot-native-lab/1"`,
+`custody_mode`, `inputs`, `actors`, the configured account's `runner_uid`, and
+`coverage` with the selected DNS scenario and `full_release_gate=false`.
+`coverage.custody` records the selected backend as `not_tested` and the other
+as `excluded`: publication is prerequisite evidence, never backend execution.
+S19 must compare the actual service's `labels.custody_mode` with the selected
+mode and establish successful execution separately. `checks.kms` is the canary
+slot for the selected provider, so its success with a key file is not KMS proof;
+a failed KMS canary reporting mode `kms` is not successful KMS execution either.
+It contains references
 and public metadata, not entered values or command streams. The optional
 `registry_transport` argument supports S19's real in-process registry, as the
 runtime does; normal operation uses the configured registry over HTTPS.
 
-The lab uses direct protected native-value input and real KMS. Its profile does
+The lab uses direct protected native-value input and its chosen custody provider. Its profile does
 not require 1Password, Cloud accounts, hosted agent IDs, MCP OAuth files or a
 hosted MCP endpoint. Those inputs are never adopted as BYOT authority. Protected
 human terminal input and one-time runner-code delivery remain the reviewed G-B
@@ -243,3 +259,6 @@ client flow; no native-value/code file workaround is introduced. S19 still owns
 actual service/bootstrap/TLS/SMTP configuration and installation/grant setup;
 the typed job and its synthetic database fixture supply their reviewed target.
 Passing this lab never satisfies the supported-backend or full release gate.
+The custody key file configures native encryption; it does not provide a new
+file-input path for secret values or backend tokens. Full release acceptance
+still requires its real KMS and 1Password proofs, separately from a key-file lab.

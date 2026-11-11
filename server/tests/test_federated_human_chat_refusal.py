@@ -19,6 +19,8 @@ from identity_binding_support import seed_verified_bindings
 from test_chat_http import _make_keypair, _signed_identity_headers
 from test_federation_preactivation_harness import two_receiver_databases  # noqa: F401
 
+__all__ = ["two_receiver_databases"]
+
 
 @pytest.mark.asyncio
 @pytest.mark.parametrize('adapter', ['http', 'mcp'])
@@ -126,7 +128,7 @@ async def test_remote_human_refusal_keeps_typed_body_through_source(two_receiver
     assert refused.get('reason') == 'recipient_human_mail_only', refused
     assert refused['retryable'] is False
     assert refused['recipients'] == ['beta.test/bob']
-    assert 'did:aw:bob' in kind_lookups
+    assert kind_lookups == []  # The source preflight makes no registry lookups.
     assert await source_db.fetch_val('SELECT count(*) FROM {{tables.chat_messages}}') == 1
     assert await receiver_db.fetch_val('SELECT count(*) FROM {{tables.chat_messages}}') == 1
     assert await receiver_db.fetch_val('SELECT count(*) FROM {{tables.message_ingress_receipts}}') == 1

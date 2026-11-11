@@ -156,13 +156,14 @@ class ActionPolicy:
 @dataclass(frozen=True)
 class Approver:
     """An owner-designated human in one scope, with the contact the owner
-    registered. `principal_did` is the team principal the approver stands for,
-    when the app has mapped one; a task presentation needs it."""
+    registered; a human-role holder whose role declares no notice contact has
+    none. `principal_did` is the team principal the approver stands for, when
+    the app has mapped one; a task presentation needs it."""
 
     scope: str
     subject: str
     subject_type: str
-    contact: str
+    contact: str | None
     principal_did: str | None = None
 
 
@@ -317,23 +318,35 @@ class Admission:
 
 
 class PolicySource(Protocol):
-    async def current(self, policy_ref: str) -> ActionPolicy | None: ...
+    async def current(
+        self, policy_ref: str, *, tx: TransactionManager | None = None
+    ) -> ActionPolicy | None:
+        """Use the supplied transaction for every SQL read; never acquire another connection."""
+        ...
 
 
 class ApproverDirectory(Protocol):
     """The app's trusted source of approvers. A caller never names one."""
 
     async def candidates(
-        self, policy: ActionPolicy, request: Mapping[str, Any]
+        self,
+        policy: ActionPolicy,
+        request: Mapping[str, Any],
+        *,
+        tx: TransactionManager | None = None,
     ) -> Sequence[Approver]:
         """The individually designated approvers eligible for this request
         under this policy, one per person: never a group, role or shared
-        subject. The app may read the frozen request to find them."""
+        subject. The app may read the frozen request to find them. All SQL
+        reads use tx when supplied, including nested directory/B3 reads."""
         ...
 
-    async def is_current(self, scope: str, subject: str) -> bool:
+    async def is_current(
+        self, scope: str, subject: str, *, tx: TransactionManager | None = None
+    ) -> bool:
         """Whether this approver is still designated in this scope. A decision
-        is only as good as its approver's current designation."""
+        is only as good as its approver's current designation. A supplied tx
+        owns every read; a provider never checks out a second connection."""
         ...
 
 
@@ -355,6 +368,28 @@ class ApprovalDelivery(Protocol):
     async def deliver_approval_link(
         self, approver: Approver, link_token: str, approval: Approval
     ) -> DeliveryStatus: ...
+
+
+class ApprovalDecisionFence(Protocol):
+    """Caller-owned authority around one B2 decision effect.
+
+    Acquire remote evidence before calling decide and retain its original
+    deadline. B3 verifies its fresh assertion before prepare is called: no
+    LOGIN credential lock may span that verification. prepare holds the
+    complete application/B3/session union before the first B2 decision lock.
+    check is local and non-locking, after decision/audit and before commit;
+    it rechecks authority and the original evidence deadline after waits.
+
+    Both callbacks receive the identical supplied caller transaction, or the
+    owned effect transaction opened after verification when none was supplied.
+    Neither callback opens a transaction, performs network I/O or refreshes a
+    proof. A refusal rolls back the decision and its audit; the previously
+    verified assertion and its challenge remain spent.
+    """
+
+    async def prepare(self, tx: TransactionManager) -> None: ...
+
+    async def check(self, tx: TransactionManager) -> None: ...
 
 
 class Authenticator(Protocol):

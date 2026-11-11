@@ -330,7 +330,7 @@ ok "oci never retries an authorization failure"
 # The observed digest must be the sha256 of the EXACT bytes the registry
 # returned. Variable capture strips a trailing newline and a here-string adds
 # one, so either hashes bytes skopeo never sent - the hazard the production
-# workflow documents at awid-image-release.yml. A response ending in a newline
+# workflow documents at service-image-release.yml. A response ending in a newline
 # is the case that separates a byte-exact reader from a nearly-right one.
 make_fake_skopeo 0 newline
 true_digest="sha256:$(printf '{"schemaVersion":2,"manifests":[]}\n' \

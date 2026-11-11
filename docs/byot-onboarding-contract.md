@@ -158,10 +158,30 @@ aw id team request --team engineering:example.com --name alice
 ```
 
 `aw id create` needs the local controller key for the address namespace; a fresh
-machine without that authority cannot claim `example.com/alice`. For a
-cross-machine join, the joining directory must already hold a global signing
-identity/address under a namespace it controls before running
-`aw id team request`; local identities are not reused across teams.
+machine without that authority cannot claim `example.com/alice`.
+
+A fresh local worker on another machine can instead prepare its own key without
+any controller key, registration or address:
+
+```bash
+aw id team request --create-local-key \
+  --team engineering:example.com \
+  --name worker
+```
+
+This accepts an empty `.aw` or a valid `signing.key` alone; a retry reuses that
+key. An explicit absolute `--identity-home` may select the same kind of target,
+but an inherited `AWEB_IDENTITY_HOME` is refused for preparation. Preparation
+grants no membership or address. Send the printed public `add-member` command
+to the team controller; after approval, fetch the certificate into that same
+identity home and connect as shown below. Use the same explicit
+`--identity-home` for fetch and connect if one was selected for preparation.
+
+Reusing an identity across teams is a different path: the joining directory
+must already hold its global signing identity/address before running
+`aw id team request` without `--create-local-key`. An existing local identity
+cannot be reused across teams; use a fresh local worker directory or the
+existing global-identity path instead.
 
 The request prints the exact `aw id team add-member` command for the team
 controller machine. After approval, the member installs the public certificate,

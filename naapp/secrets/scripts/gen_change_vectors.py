@@ -417,6 +417,49 @@ POSITIVE.append(
 )
 
 
+# D1 is an explicitly reviewed pre-deployment re-freeze of destination/1.
+# Keep old cases intact; append cases for its optional response bound.
+response_destination = next(
+    item["after"]
+    for name, change in POSITIVE
+    if name == "member-refund-records"
+    for item in change["changes"]
+    if item["kind"] == "destination"
+)
+response_limits = [
+    ("default", None, 16 * 1024 * 1024),
+    ("explicit", 1024, 1024),
+    ("raised", 32 * 1024 * 1024, 32 * 1024 * 1024),
+    ("ceiling", 64 * 1024 * 1024, 64 * 1024 * 1024),
+]
+response_expected = {}
+for index, (suffix, limit, expected) in enumerate(response_limits):
+    after = copy.deepcopy(response_destination)
+    after["destination_id"] = f"dst_response{index}"
+    if limit is not None:
+        after["response_max_bytes"] = limit
+    name = f"destination-response-limit-{suffix}"
+    response_expected[name] = expected
+    POSITIVE.append(
+        (
+            name,
+            envelope(
+                f"chg_response{index}",
+                MEMBER,
+                [
+                    {
+                        "kind": "destination",
+                        "op": "create",
+                        "ref": after["destination_id"],
+                        "after": after,
+                    }
+                ],
+                "Confirm the destination response bound",
+            ),
+        )
+    )
+
+
 def b64(data: bytes) -> str:
     return base64.urlsafe_b64encode(data).rstrip(b"=").decode()
 
@@ -434,6 +477,9 @@ def positive_case(name, change):
 
 
 positives = [positive_case(n, c) for n, c in POSITIVE]
+for case in positives:
+    if case["name"] in response_expected:
+        case["expected_max_response_bytes"] = response_expected[case["name"]]
 reference = POSITIVE[0][1]
 ref_raw = json.dumps(reference)
 
@@ -795,6 +841,28 @@ negatives = (
         },
     ]
 )
+response_reference = next(
+    change for name, change in POSITIVE if name == "destination-response-limit-explicit"
+)
+for suffix, limit in [
+    ("above-ceiling", 64 * 1024 * 1024 + 1),
+    ("zero", 0),
+    ("boolean", True),
+    ("fractional", 1.5),
+    ("string", "1024"),
+]:
+    change = copy.deepcopy(response_reference)
+    change["changes"][0]["after"]["response_max_bytes"] = limit
+    negatives.append(
+        {
+            "name": f"destination-response-limit-{suffix}",
+            "of": "destination-response-limit-explicit",
+            "raw_json": json.dumps(change),
+            "expected": "refused",
+        }
+    )
+
+
 CONFIRMATION_CASES = [
     ("same-installation-revision-in-time", {}, 12, "2026-10-20T12:14:59Z", "confirmable"),
     ("later-revision", {}, 13, "2026-10-20T12:05:00Z", "base_revision_stale"),

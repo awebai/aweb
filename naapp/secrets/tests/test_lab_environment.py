@@ -17,6 +17,7 @@ def configured(tmp_path: Path) -> dict[str, str]:
     runner = next(p for p in pwd.getpwall() if p.pw_uid > 0 and p.pw_uid != os.geteuid())
     inputs = {
         "TEAM_ID": "lab:example.test",
+        "CUSTODY_MODE": "kms",
         "API_ORIGIN": "https://api.secrets.test",
         "CONSOLE_ORIGIN": "https://console.secrets.test",
         "LOGS_ORIGIN": "https://logs.secrets.test",
@@ -42,15 +43,93 @@ def configured(tmp_path: Path) -> dict[str, str]:
     return {PREFIX + name: value for name, value in inputs.items()}
 
 
-def test_eighteen_reference_selectors_need_no_hosted_or_vault_credentials(tmp_path):
+def local_custody(inputs, tmp_path):
+    selected = dict(inputs)
+    for name in ("KMS_KEY_ARN", "AWS_REGION", "KMS_CREDENTIALS_FILE"):
+        selected.pop(PREFIX + name)
+    key = tmp_path / "custody.key"
+    key.write_text(os.urandom(32).hex() + "\n")
+    key.chmod(0o600)
+    selected[PREFIX + "CUSTODY_MODE"] = "local_key_file"
+    selected[PREFIX + "CUSTODY_KEY_FILE"] = str(key)
+    return selected
+
+
+def test_kms_reference_selectors_need_no_hosted_or_vault_credentials(tmp_path):
     inputs = configured(tmp_path)
     result = load_lab_environment(inputs, private_dns="excluded")
-    assert len(result) == len(LAB_REQUIRED_NAMES) == 18
+    assert len(LAB_REQUIRED_NAMES) == 16
+    assert len(result) == 19
     assert dict(result) == inputs
     with pytest.raises(TypeError):
         result[PREFIX + "TEAM_ID"] = "other:example.test"
     with pytest.raises(ConfigurationError):
         load_environment(inputs)
+
+
+def test_local_key_file_is_valid_without_any_kms_reference(tmp_path):
+    from aweb_secrets.custody import LocalKeyFileProvider
+
+    inputs = local_custody(configured(tmp_path), tmp_path)
+    LocalKeyFileProvider(Path(inputs[PREFIX + "CUSTODY_KEY_FILE"]))
+    result = load_lab_environment(inputs, private_dns="excluded")
+    assert dict(result) == inputs
+    assert len(result) == 17
+    assert not any(
+        PREFIX + name in result for name in ("KMS_KEY_ARN", "AWS_REGION", "KMS_CREDENTIALS_FILE")
+    )
+    with pytest.raises(ConfigurationError):
+        load_environment(inputs)
+
+
+@pytest.mark.parametrize("mode", ["", "auto", "key_file"])
+def test_custody_mode_is_explicit_and_known(tmp_path, mode):
+    inputs = configured(tmp_path)
+    inputs[PREFIX + "CUSTODY_MODE"] = mode
+    with pytest.raises(LabConfigurationError) as caught:
+        load_lab_environment(inputs, private_dns="excluded")
+    assert PREFIX + "CUSTODY_MODE" in str(caught.value)
+
+
+@pytest.mark.parametrize("name", ["KMS_KEY_ARN", "AWS_REGION", "KMS_CREDENTIALS_FILE"])
+def test_kms_mode_requires_its_complete_reference_group(tmp_path, name):
+    inputs = configured(tmp_path)
+    inputs.pop(PREFIX + name)
+    with pytest.raises(LabConfigurationError) as caught:
+        load_lab_environment(inputs, private_dns="excluded")
+    assert PREFIX + name in str(caught.value)
+
+
+@pytest.mark.parametrize("mode", ["kms", "local_key_file"])
+def test_mixed_custody_references_are_refused(tmp_path, mode):
+    kms = configured(tmp_path)
+    local = local_custody(kms, tmp_path)
+    inputs = {**kms, **local, PREFIX + "CUSTODY_MODE": mode}
+    with pytest.raises(LabConfigurationError):
+        load_lab_environment(inputs, private_dns="excluded")
+
+
+@pytest.mark.parametrize("problem", ["absent", "public", "symlink", "directory", "relative"])
+def test_local_custody_key_is_a_private_regular_reference(tmp_path, problem):
+    inputs = local_custody(configured(tmp_path), tmp_path)
+    key = Path(inputs[PREFIX + "CUSTODY_KEY_FILE"])
+    if problem == "absent":
+        inputs.pop(PREFIX + "CUSTODY_KEY_FILE")
+    elif problem == "public":
+        key.chmod(0o644)
+    elif problem == "relative":
+        inputs[PREFIX + "CUSTODY_KEY_FILE"] = "custody.key"
+    else:
+        key.unlink()
+        if problem == "directory":
+            key.mkdir()
+        else:
+            target = tmp_path / "other.key"
+            target.write_bytes(os.urandom(32))
+            target.chmod(0o600)
+            key.symlink_to(target)
+    with pytest.raises(LabConfigurationError):
+        load_lab_environment(inputs, private_dns="excluded")
 
 
 def test_native_identity_directories_can_be_readable_without_being_writable_by_others(tmp_path):
@@ -191,7 +270,7 @@ def test_explicit_lab_command_fails_missing_inputs_without_hosted_requirements()
         timeout=10,
     )
     assert result.returncode == 2
-    assert PREFIX + "KMS_CREDENTIALS_FILE" in result.stderr
+    assert PREFIX + "CUSTODY_MODE" in result.stderr
     assert PREFIX + "AGENT_A_IDENTITY_HOME" in result.stderr
     assert "MCP_URL" not in result.stderr and "ONEPASSWORD" not in result.stderr
     assert result.stdout == ""

@@ -38,8 +38,13 @@ COPY naapp/library/src ./src
 COPY naapp/library/skills ./skills
 RUN uv sync --frozen --no-dev
 
-RUN useradd --create-home --shell /usr/sbin/nologin library
-USER library
+RUN groupadd --gid 10001 library \
+    && useradd --uid 10001 --gid 10001 --create-home --shell /usr/sbin/nologin library
+USER 10001:10001
 
 EXPOSE 8765
+# Probes /live, which checks no dependency: a database outage must not make an
+# orchestrator restart a process that is serving requests.
+HEALTHCHECK --interval=30s --timeout=5s --start-period=30s \
+    CMD ["/app/.venv/bin/python", "-c", "import os,urllib.request; urllib.request.urlopen('http://127.0.0.1:'+os.environ.get('PORT','8765')+'/live',timeout=4).close()"]
 CMD ["sh", "-c", "/app/.venv/bin/uvicorn library.api:app --host 0.0.0.0 --port ${PORT:-8765}"]

@@ -15,6 +15,7 @@ from datetime import datetime, timedelta
 from pathlib import Path
 
 import pytest
+from aweb_naapp.egress import InternalDestinations
 from aweb_naapp.runtime.approvals import (
     ActionPolicy,
     Approvals,
@@ -38,6 +39,7 @@ from aweb_secrets.change import (
     parse_change,
     validate_change,
 )
+from aweb_secrets.destination import DestinationRecord
 from aweb_secrets.grant import GrantTemplate
 from aweb_secrets.operation import OperationInvalid, OperationTemplate, operation_digest
 
@@ -103,6 +105,20 @@ def test_positive_cases_cover_both_drafters_and_every_shape_in_force() -> None:
     assert kinds == {kind for kind, _ in AFTER_SHAPES}
 
 
+@pytest.mark.parametrize(
+    "case",
+    [case for case in POSITIVE if case["name"].startswith("destination-response-limit-")],
+    ids=lambda case: case["name"],
+)
+def test_generated_response_limits_are_read_by_the_destination_consumer(case: dict) -> None:
+    after = case["request"]["changes"][0]["after"]
+    record = DestinationRecord.from_after(
+        after, internal_destinations=InternalDestinations.DISABLED
+    )
+    assert record.max_response_bytes == case["expected_max_response_bytes"]
+    assert record.after == after
+
+
 @pytest.mark.parametrize("case", DERIVED_OPERATIONS, ids=lambda case: case["name"])
 def test_derived_operation_shapes_and_digest_pins(case: dict) -> None:
     assert operation_digest(case["after"]) == case["operation_digest"]
@@ -164,7 +180,7 @@ class _Policies:
     def __init__(self, policy: ActionPolicy) -> None:
         self._policy = policy
 
-    async def current(self, policy_ref: str) -> ActionPolicy | None:
+    async def current(self, policy_ref: str, *, tx=None) -> ActionPolicy | None:
         return self._policy if policy_ref == self._policy.policy_ref else None
 
 
@@ -176,10 +192,10 @@ class _Directory:
         contact="owner@example.com",
     )
 
-    async def candidates(self, policy: ActionPolicy, request) -> list[Approver]:
+    async def candidates(self, policy: ActionPolicy, request, *, tx=None) -> list[Approver]:
         return [self.approver]
 
-    async def is_current(self, scope: str, subject: str) -> bool:
+    async def is_current(self, scope: str, subject: str, *, tx=None) -> bool:
         return (scope, subject) == (self.approver.scope, self.approver.subject)
 
 

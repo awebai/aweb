@@ -38,10 +38,10 @@ async def test_static_enum_labels_are_independent_of_check_availability(ok):
     ) as client:
         for path in ("/health", "/ready", "/live"):
             response = await client.get(path)
-            assert response.status_code == (503 if path == "/ready" and not ok else 200)
+            assert response.status_code == (503 if path != "/live" and not ok else 200)
             assert response.json()["labels"] == {"custody_mode": "local_key_file"}
             if path != "/live":
-                assert response.json()["checks"]["custody"]["ok"] is ok
+                assert response.json()["checks"]["custody"] == ("ok" if ok else "error")
 
 
 @pytest.mark.parametrize("value", ["local_key_file", True, None, 1, object()])

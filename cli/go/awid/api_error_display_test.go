@@ -106,3 +106,24 @@ func TestAPIErrorBlockedFirewallGuidanceBoundary(t *testing.T) {
 		})
 	}
 }
+
+// A response header is never where the answering mount is taken from: a
+// server that names a mount on the request's own origin gets no hint shown.
+func TestNewAPIErrorIgnoresAServerSentAnsweringMountHeader(t *testing.T) {
+	req, err := http.NewRequest(http.MethodGet, "https://aweb.example/v1/agents/heartbeat", nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	const sent = "https://aweb.example/api"
+	response := &http.Response{StatusCode: http.StatusNotFound, Request: req, Header: http.Header{
+		"Content-Type":                []string{"application/json"},
+		"X-Aw-Client-Answering-Mount": []string{sent},
+	}}
+	out := newAPIError(response, `{"detail":"Not Found"}`).Error()
+	if strings.Contains(out, "answers at") || strings.Contains(out, sent) {
+		t.Fatalf("a response header's value was rendered: %s", out)
+	}
+	if want := `aweb: http 404: {"detail":"Not Found"}`; out != want {
+		t.Fatalf("error %q, want %q", out, want)
+	}
+}

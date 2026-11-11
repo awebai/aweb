@@ -79,6 +79,44 @@
       "signature_b64": "3YYUCllNhvT1AM9V+ZyVKMnciQHCKdTRcJW1rS/pROPLn3Rr7iNvklW97qDFkt5WWPfHeBaor4Fgjb1fqpvgCg"
     }
   ],
+  "identity_cases": [
+    {
+      "name": "identity_inbox_read",
+      "seed_hex": "000102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f",
+      "did_key": "did:key:z6MkehRgf7yJbgaGfYsdoAsKdBPE3dj2CYhowQdcjqSJgvVd",
+      "body": "",
+      "payload": {
+        "aud": "https://coordination.example.com",
+        "body_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+        "did_aw": "did:aw:2CiZ88hVF4JuQim8nnSuyeiV2HF2",
+        "method": "GET",
+        "path": "/v1/messages/inbox?unread_only=true",
+        "timestamp": "2026-06-12T10:00:00Z",
+        "v": 2
+      },
+      "canonical_payload": "{\"aud\":\"https://coordination.example.com\",\"body_sha256\":\"e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855\",\"did_aw\":\"did:aw:2CiZ88hVF4JuQim8nnSuyeiV2HF2\",\"method\":\"GET\",\"path\":\"/v1/messages/inbox?unread_only=true\",\"timestamp\":\"2026-06-12T10:00:00Z\",\"v\":2}",
+      "signed_payload_b64url": "eyJhdWQiOiJodHRwczovL2Nvb3JkaW5hdGlvbi5leGFtcGxlLmNvbSIsImJvZHlfc2hhMjU2IjoiZTNiMGM0NDI5OGZjMWMxNDlhZmJmNGM4OTk2ZmI5MjQyN2FlNDFlNDY0OWI5MzRjYTQ5NTk5MWI3ODUyYjg1NSIsImRpZF9hdyI6ImRpZDphdzoyQ2laODhoVkY0SnVRaW04bm5TdXllaVYySEYyIiwibWV0aG9kIjoiR0VUIiwicGF0aCI6Ii92MS9tZXNzYWdlcy9pbmJveD91bnJlYWRfb25seT10cnVlIiwidGltZXN0YW1wIjoiMjAyNi0wNi0xMlQxMDowMDowMFoiLCJ2IjoyfQ",
+      "signature_b64": "BG34whSSVoWRFKxEd9mBR+EhO5EgWA7QryXBKP3soy4XeggL5IQFKSPi9RGblev3DZlXyz/OUU8bGfVTYy/DAQ"
+    },
+    {
+      "name": "local_identity_chat_pending",
+      "seed_hex": "202122232425262728292a2b2c2d2e2f303132333435363738393a3b3c3d3e3f",
+      "did_key": "did:key:z6MkhFwXNFWosLeugvSf4wcL9t3uuRXueGSFTRgSvHhWj5G2",
+      "body": "",
+      "payload": {
+        "aud": "https://coordination.example.com",
+        "body_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+        "did_aw": "",
+        "method": "GET",
+        "path": "/v1/chat/pending",
+        "timestamp": "2026-06-12T10:00:00Z",
+        "v": 2
+      },
+      "canonical_payload": "{\"aud\":\"https://coordination.example.com\",\"body_sha256\":\"e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855\",\"did_aw\":\"\",\"method\":\"GET\",\"path\":\"/v1/chat/pending\",\"timestamp\":\"2026-06-12T10:00:00Z\",\"v\":2}",
+      "signed_payload_b64url": "eyJhdWQiOiJodHRwczovL2Nvb3JkaW5hdGlvbi5leGFtcGxlLmNvbSIsImJvZHlfc2hhMjU2IjoiZTNiMGM0NDI5OGZjMWMxNDlhZmJmNGM4OTk2ZmI5MjQyN2FlNDFlNDY0OWI5MzRjYTQ5NTk5MWI3ODUyYjg1NSIsImRpZF9hdyI6IiIsIm1ldGhvZCI6IkdFVCIsInBhdGgiOiIvdjEvY2hhdC9wZW5kaW5nIiwidGltZXN0YW1wIjoiMjAyNi0wNi0xMlQxMDowMDowMFoiLCJ2IjoyfQ",
+      "signature_b64": "0jouXtMB4FQ4yUzloJjXximI3enSo2+X6lx52UH59beVsR8kSB9IhRgJy+W1E8wNJjE+ZssFjUo+DDMIZmLRDA"
+    }
+  ],
   "negative_cases": [
     {
       "name": "cross_endpoint_replay",

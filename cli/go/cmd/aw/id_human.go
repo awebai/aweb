@@ -421,6 +421,12 @@ func formatIDHumanInit(v any) string {
 	sb.WriteString(fmt.Sprintf("Key:         %s\n", out.DIDKey))
 	sb.WriteString(fmt.Sprintf("Domain:      %s\n", out.Domain))
 	sb.WriteString(fmt.Sprintf("Registry:    %s\n", out.RegistryURL))
-	sb.WriteString("Registered at AWID; authority is checked against the tree at each use.\n")
+	switch out.Status {
+	case "prepared":
+		sb.WriteString("Prepared locally; not registered at AWID.\n")
+		sb.WriteString("Complete enrollment with your issuer using `aw id parent request` and `aw id parent import`.\n")
+	case "registered":
+		sb.WriteString("Registered at AWID; authority is checked against the tree at each use.\n")
+	}
 	return sb.String()
 }

@@ -1,6 +1,6 @@
 {
   "name": "passkey-evidence-v1",
-  "status": "decision 84 proposed for R+A; replaces held summary-HMAC draft; no private key retained in vector",
+  "status": "frozen under decision 84 (aweb-acgh.39); no private key retained in vector",
   "authority": "docs/hook-events.md#passkey-evidence-commitments-and-console-actors",
   "domain": "aweb.passkey-evidence/1\n",
   "algorithm": "SHA-256, lowercase hex; no producer commitment key",

@@ -1,14 +1,17 @@
 package awid
 
 import (
+	"context"
 	"encoding/json"
 	"net/http"
+	"net/url"
 	"regexp"
 	"strings"
 )
 
 // Response IDs are untrusted input. Three headers capped at 128 ASCII bytes,
-// plus fixed labels and summaries, keep non-JSON error display below 1024 bytes.
+// an answering mount capped likewise and shown twice, plus fixed labels and
+// summaries, keep non-JSON error display below 1024 bytes.
 // The bounded raw body remains available through HTTPErrorBody for existing
 // structured error handling; it is not printed as a non-JSON diagnostic.
 func errorHeaderValue(value string) string {
@@ -40,8 +43,83 @@ func newAPIError(resp *http.Response, body string) *APIError {
 		RequestID:       resp.Header.Get("X-Request-ID"),
 		CfRay:           resp.Header.Get("Cf-Ray"),
 		CfMitigated:     resp.Header.Get("Cf-Mitigated"),
+		RetryAfter:      resp.Header.Get("Retry-After"),
 		responseSummary: summary,
+		answeringMount:  answeringMountOf(resp),
 	}
+}
+
+// answeringMountNote is where a transport that finds the API answering at
+// another mount of the configured server records that mount's URL, for the
+// display of the error made from that request's response. It travels on the
+// request's context, so nothing a server sends can write to it: no response
+// header or body is read for the mount. The transport writes it within its
+// RoundTrip, which the client's Do waits for before the response is read.
+type answeringMountNote struct {
+	mount string
+}
+
+type answeringMountNoteKey struct{}
+
+// withAnsweringMountNote returns ctx carrying an empty note of its own.
+func withAnsweringMountNote(ctx context.Context) context.Context {
+	return context.WithValue(ctx, answeringMountNoteKey{}, &answeringMountNote{})
+}
+
+func answeringMountNoteOf(req *http.Request) *answeringMountNote {
+	if req == nil {
+		return nil
+	}
+	note, _ := req.Context().Value(answeringMountNoteKey{}).(*answeringMountNote)
+	return note
+}
+
+// NoteAnsweringMount records mount as the API base found answering on the
+// origin req was sent to. A transport calls it with the request it was given;
+// the error made from a 404 response to that request then names the mount. It
+// does nothing for a request this package did not send.
+func NoteAnsweringMount(req *http.Request, mount string) {
+	if note := answeringMountNoteOf(req); note != nil {
+		note.mount = mount
+	}
+}
+
+// SameOrigin reports whether a and b have the same scheme, host and port.
+func SameOrigin(a, b *url.URL) bool {
+	if a == nil || b == nil || a.Scheme == "" || a.Host == "" {
+		return false
+	}
+	return strings.EqualFold(a.Scheme, b.Scheme) && strings.EqualFold(a.Host, b.Host)
+}
+
+// answeringMountOf is the mount noted on the request of a 404 response by
+// NoteAnsweringMount, or "" unless it is a plain URL on the origin the request
+// was sent to. Only its scheme, host and path are displayed.
+func answeringMountOf(resp *http.Response) string {
+	if resp.StatusCode != http.StatusNotFound || resp.Request == nil {
+		return ""
+	}
+	note := answeringMountNoteOf(resp.Request)
+	if note == nil {
+		return ""
+	}
+	raw := note.mount
+	if raw == "" || len(raw) > 128 {
+		return ""
+	}
+	mount, err := url.Parse(raw)
+	if err != nil || !SameOrigin(resp.Request.URL, mount) || mount.User != nil || mount.RawQuery != "" || mount.Fragment != "" || mount.Opaque != "" {
+		return ""
+	}
+	display := (&url.URL{Scheme: mount.Scheme, Host: mount.Host, Path: mount.Path}).String()
+	if len(display) > 128 || errorHeaderValue(display) != display {
+		return ""
+	}
+	return display
+}
+
+func answeringMountAdvice(mount string) string {
+	return "The server answers at " + mount + ". The configured server URL should be that: set aweb_url in workspace.yaml to " + mount + "."
 }
 
 var knownErrorPageTitle = regexp.MustCompile(`(?is)<title\s*>\s*(blocked|just a moment\.\.\.)\s*</title\s*>`)

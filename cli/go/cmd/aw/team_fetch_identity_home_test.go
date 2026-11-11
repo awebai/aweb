@@ -27,10 +27,19 @@ func TestFetchCertificateUsesSelectedKeyAndStoresOnlyAtSelectedRoot(t *testing.T
 	}
 	bin := filepath.Join(root, awBinaryNameForTest())
 	buildAwBinary(t, ctx, bin)
-	for _, source := range []string{"flag", "environment"} {
+	for _, source := range []string{"flag", "environment", "prepared"} {
 		t.Run(source, func(t *testing.T) {
 			selected := filepath.Join(root, source, "principal")
-			writeStandaloneSelectedIdentityForTest(t, selected)
+			if source == "prepared" {
+				prepare := exec.CommandContext(ctx, bin, "--identity-home", selected, "id", "team", "request", "--team", "backend:acme.com", "--name", "alice", "--create-local-key", "--json")
+				prepare.Dir = root
+				prepare.Env = append(testCommandEnv(root), "AWEB_IDENTITY_HOME=", "AW_NO_UPDATE_CHECK=1")
+				if out, err := prepare.CombinedOutput(); err != nil {
+					t.Fatalf("prepare: %v\n%s", err, out)
+				}
+			} else {
+				writeStandaloneSelectedIdentityForTest(t, selected)
+			}
 			key, err := awid.LoadSigningKey(filepath.Join(selected, "signing.key"))
 			if err != nil {
 				t.Fatal(err)
@@ -71,7 +80,7 @@ func TestFetchCertificateUsesSelectedKeyAndStoresOnlyAtSelectedRoot(t *testing.T
 			before := snapshotJoinFiles(t, cwd)
 			args := []string{"id", "team", "fetch-cert", "--team", "backend", "--namespace", "acme.com", "--cert-id", cert.CertificateID, "--json"}
 			env := append(testCommandEnv(filepath.Join(root, "user")), "AWEB_IDENTITY_HOME=", "AWID_REGISTRY_URL="+server.URL, "AWEB_URL=", "AW_NO_UPDATE_CHECK=1")
-			if source == "flag" {
+			if source != "environment" {
 				args = append([]string{"--identity-home", selected}, args...)
 			} else {
 				env = append(env, "AWEB_IDENTITY_HOME="+selected)

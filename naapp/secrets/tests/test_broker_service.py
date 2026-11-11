@@ -75,8 +75,10 @@ async def setup(
     registration_view=None,
     clock=None,
     sweep_margin=timedelta(seconds=5),
+    response_budget_bytes=None,
+    policy_body=None,
 ):
-    await _install(db, installation_id=INSTALLATION, active_version=None)
+    await _install(db, installation_id=INSTALLATION, active_version=None, policy_body=policy_body)
     for migration in (
         apply_dispatch_migrations,
         apply_outbox_migrations,
@@ -150,6 +152,11 @@ async def setup(
         derived_max_ttl_s=3600,
         internal_destinations=InternalDestinations.ALLOWED,
         clock=clock or (lambda: NOW),
+        **(
+            {}
+            if response_budget_bytes is None
+            else {"response_budget_bytes": response_budget_bytes}
+        ),
     )
 
 
@@ -178,7 +185,12 @@ async def test_fresh_authenticated_submission_sends_once_and_replays_stored_resu
             ),
         )
         second = await service.submit(secret=SECRET["ref"], submission=renewed)
-        assert second == first
+        assert second.body["state"] == first.body["state"]
+        assert second.body["request_ref"] == first.body["request_ref"]
+        assert second.body["result"]["body"] is None
+        assert second.body["result"]["headers"] is None
+        for field in ("status", "truncated", "upstream_bytes", "redaction_count"):
+            assert second.body["result"][field] == first.body["result"][field]
         assert upstream.paths == ["/bearer/echo"]
         assert await db.fetch_value("SELECT count(*) FROM {{tables.intents}}") == 1
         assert await db.fetch_value("SELECT count(*) FROM {{tables.dispatches}}") == 1

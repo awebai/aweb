@@ -17,20 +17,22 @@ from __future__ import annotations
 
 import hashlib
 import json
-from collections.abc import Awaitable, Callable, Iterator
+from collections.abc import Awaitable, Callable, Iterator, Mapping
 from contextlib import contextmanager
 from contextvars import ContextVar
 from dataclasses import dataclass, field
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
-from typing import TYPE_CHECKING, Protocol
+from typing import TYPE_CHECKING, Any, Protocol
 from uuid import UUID, uuid4
 
 from pgdbm import AsyncDatabaseManager, AsyncMigrationManager
 from pgdbm.core import TransactionManager
 from webauthn.helpers import base64url_to_bytes
 
+from aweb_naapp.hooks.owner_act import PREFIX, HumanCredential, VerifiedOwnerAct
 from aweb_naapp.hooks.producer import HookProducerFactory, RegistrationView
+from aweb_naapp.roles import HoldingRecord, holding_record_of_scope, holding_scope
 from aweb_naapp.runtime.approvals import Approval, ApprovalState, Assurance
 from aweb_naapp.runtime.audit import AuditEvent, AuditKind
 from aweb_naapp.runtime.installation import (
@@ -129,6 +131,26 @@ class _OwnerActContext:
     view: RegistrationView | None
     signing: bytes
     signature: str
+
+
+# The owner act each designation event is paired with, by whether the scope's
+# role is declared with the human-role acts (human-role-holders.md, What the
+# credential audit retains). Neither pairing stands in for the other.
+_DESIGNATION_ACTS = {
+    False: {
+        AuditKind.APPROVER_DESIGNATED: "app-role.designate",
+        AuditKind.APPROVER_REDESIGNATED: "app-credential.recover",
+    },
+    True: {
+        AuditKind.APPROVER_DESIGNATED: "human-role.designate",
+        AuditKind.APPROVER_REDESIGNATED: "human-credential.replace",
+    },
+}
+
+
+def _new_credential_ref() -> str:
+    """An opaque reference for a key's receipts, never derived from the key."""
+    return "key_" + uuid4().hex
 
 
 def _owner_act_actor(event: AuditEvent) -> dict:
@@ -257,7 +279,14 @@ class CredentialAudit:
         migration_module: str,
         approvals: ApprovalGovernance | None = None,
         after_enqueue: Callable[[TransactionManager, UUID], Awaitable[None]] | None = None,
+        ungated_acts: frozenset[str] = frozenset(),
+        human_roles: frozenset[str] = frozenset(),
     ) -> None:
+        if ungated_acts and after_enqueue is None:
+            raise ValueError(
+                "an act recorded with no registered target must be written to the app's"
+                " own record in the transaction that enqueued it"
+            )
         if (
             not app_id
             or app_id != fence.app_id
@@ -274,6 +303,12 @@ class CredentialAudit:
         self._role_of, self._approvals = role_of, approvals
         self._view, self._max_backlog_age = registration_view, max_backlog_age
         self._migration_module, self._after_enqueue = migration_module, after_enqueue
+        # Fixed in the app's reviewed code, never configuration (ruling ed36580d).
+        self._ungated_acts = ungated_acts
+        # The roles the app declares with the human-role acts, fixed in its
+        # reviewed code: the declaration, never a stored row, decides which
+        # owner acts a scope's events pair with.
+        self._human_roles = human_roles
         self._prepared: ContextVar[
             _OwnerActContext
             | _ApprovalContext
@@ -382,6 +417,52 @@ class CredentialAudit:
             self, admitted, await self._view(admitted.team_id), signing, signature
         )
 
+    async def record_owner_act(
+        self,
+        tx: TransactionManager,
+        act: VerifiedOwnerAct,
+        payload: Mapping[str, Any],
+        *,
+        occurred_at: datetime,
+    ) -> UUID:
+        """Record the governance event of one of the app's own owner acts in the
+        effect's transaction ``tx``, under the act prepared by
+        :meth:`prepare_owner_act` and consumed in ``tx``. ``payload`` is the
+        event's act fields; the recorder adds the owner-act authority and the
+        act's digest. A widening act needs a current registered target unless
+        the app exempts it."""
+        context = self._prepared.get()
+        if not isinstance(context, _OwnerActContext) or context.owner is not self:
+            raise GovernanceUnavailable()
+        digest = hashlib.sha256(context.signing).hexdigest()
+        consumed = await tx.fetch_one(
+            "SELECT nonce FROM {{tables.owner_act_nonces}} WHERE scope=$1 AND team_id=$2 AND act_sha256=$3",
+            self._owner_act_scope,
+            context.admitted.team_id,
+            digest,
+        )
+        if (
+            consumed is None
+            or consumed["nonce"] != act.nonce
+            or act.team_id != context.admitted.team_id
+            or act.transaction_id != await tx.fetch_value("SELECT txid_current()")
+            or {"authority", "owner_act_sha256"} & set(payload)
+        ):
+            raise GovernanceUnavailable()
+        actor = {
+            "authority_mode": "owner_act",
+            "did_key": act.fields["team_key_did"],
+            "attestations": [],
+        }
+        return await self._enqueue(
+            tx,
+            context.admitted,
+            {**payload, "authority": "owner_act", "owner_act_sha256": digest},
+            actor,
+            occurred_at,
+            context.view,
+        )
+
     async def prepare_enrolment(self, token: str) -> PreparedEnrolment:
         row = await self.db.fetch_one(
             "SELECT a.*,c.enrolment_id FROM {{tables.credential_authorizations}} a "
@@ -486,26 +567,33 @@ class CredentialAudit:
         if holder is None or holder["designated_by"] != event.actor:
             raise GovernanceUnavailable()
         role = await self._role(tx, scope, context.admitted)
+        human = role in self._human_roles
         approval_id, signing, signature, retained = None, None, None, None
         if isinstance(context, _OwnerActContext):
             digest = await self._consumed_act(
-                tx,
-                context,
-                event,
-                "app-role.designate"
-                if event.kind is AuditKind.APPROVER_DESIGNATED
-                else "app-credential.recover",
+                tx, context, event, _DESIGNATION_ACTS[human][event.kind]
             )
             authority, signing, signature = "owner_act", context.signing, context.signature
             actor = _owner_act_actor(event)
+        elif human:
+            # An approval never designates or replaces a human-role holder.
+            raise GovernanceUnavailable()
         else:
             digest, retained = await self._approved_proof(tx, context, event, scope)
             authority, approval_id, actor = "passkey_session", context.evidence.approval_id, _SYSTEM
+        if human:
+            assert isinstance(context, _OwnerActContext)
+            model = await self._holder_model(tx, context, event, holder, scope, role)
+        elif holder["principal"] is not None:
+            raise GovernanceUnavailable()
+        else:
+            model = (contact_sha256(holder["contact"]), None, None, None, None)
         await tx.execute(
             "INSERT INTO {{tables.credential_authorizations}} "
             "(subject,scope,app_id,team_id,installation_id,generation,role,contact_sha256,effective_at,"
-            "authority,commitment,approval_id,signing,signature,retained_proof,created_at) "
-            "VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15::jsonb,$16)",
+            "authority,commitment,approval_id,signing,signature,retained_proof,created_at,"
+            "principal,credential_sha256,notice_contact_sha256,credential_ref) "
+            "VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15::jsonb,$16,$17,$18,$19,$20)",
             event.subject,
             scope,
             self._app_id,
@@ -513,7 +601,7 @@ class CredentialAudit:
             context.admitted.installation_id,
             context.admitted.generation,
             role,
-            contact_sha256(holder["contact"]),
+            model[0],
             holder["effective_at"],
             authority,
             digest,
@@ -522,6 +610,7 @@ class CredentialAudit:
             signature,
             retained,
             event.occurred_at,
+            *model[1:],
         )
         await self._associate_links(tx, event.subject)
         payload = dict(
@@ -537,9 +626,104 @@ class CredentialAudit:
         )
         await self._enqueue(tx, context.admitted, payload, actor, event.occurred_at, context.view)
 
+    async def _holder_model(self, tx, context, event, holder, scope, role):
+        """The human model's authorization columns for a holder the consumed act
+        binds: its principal, its credential and notice contact as the act names
+        them, and a new opaque key reference. Each is checked against the act's
+        own subject and the stored credential, never taken from the event."""
+        signed = self.signed_subject(context)
+        record = await self.human_record(tx, scope, context.admitted, signed)
+        if record is None or record.role != role or holder["principal"] != record.principal:
+            raise GovernanceUnavailable()
+        keys = await tx.fetch_all(
+            "SELECT credential_id,public_key,rp_id FROM {{tables.passkey_credentials}} "
+            "WHERE subject=$1 AND revoked_at IS NULL",
+            event.subject,
+        )
+        notice = signed.get("notice_contact_sha256")
+        if (
+            len(keys) != 1
+            or keys[0]["rp_id"] is None
+            or HumanCredential(
+                bytes(keys[0]["credential_id"]), bytes(keys[0]["public_key"]), keys[0]["rp_id"]
+            ).sha256
+            != signed.get("credential_sha256")
+            or (holder["contact"] is None) != (notice is None)
+            or (holder["contact"] is not None and contact_sha256(holder["contact"]) != notice)
+        ):
+            raise GovernanceUnavailable()
+        return (None, record.principal, signed["credential_sha256"], notice, _new_credential_ref())
+
+    @staticmethod
+    def signed_document(context: _OwnerActContext) -> dict[str, Any]:
+        """The prepared act as signed, from its retained signing bytes, which
+        the consumed nonce's digest binds."""
+        if not context.signing.startswith(PREFIX):
+            raise GovernanceUnavailable()
+        document = json.loads(context.signing[len(PREFIX) :])
+        if not isinstance(document, dict):
+            raise GovernanceUnavailable()
+        return document
+
+    @classmethod
+    def signed_subject(cls, context: _OwnerActContext) -> dict[str, Any]:
+        """The subject of the prepared act, as signed."""
+        subject = cls.signed_document(context).get("subject")
+        if not isinstance(subject, dict):
+            raise GovernanceUnavailable()
+        return subject
+
+    async def human_record(
+        self, tx, scope: str, admitted: AdmittedInstallation, signed: Mapping[str, Any]
+    ) -> HoldingRecord | None:
+        """The holding record the consumed act names, when ``scope`` is exactly
+        that holding's scope in the admitted installation and its role is
+        declared human; None when the scope is not a human-declared holding's.
+        A scope that is not the act's own holding refuses."""
+        record = await self.declared_human_record(tx, scope)
+        if record is None:
+            return None
+        try:
+            named = holding_scope(
+                admitted.installation_id, admitted.team_id, signed["role"], signed["principal"]
+            )
+        except (KeyError, TypeError, ValueError):
+            raise GovernanceUnavailable() from None
+        if (
+            signed.get("app_id") != self._app_id
+            or signed.get("installation_id") != admitted.installation_id
+            or scope != named
+            or (record.installation_id, record.team_id, record.role, record.principal)
+            != (admitted.installation_id, admitted.team_id, signed["role"], signed["principal"])
+        ):
+            raise GovernanceUnavailable()
+        return record
+
+    async def scope_role(self, tx, scope: str) -> str | None:
+        """The role ``scope`` belongs to, current or ended: its holding
+        record's, or else the role retained with its latest authorization."""
+        if self._human_roles:
+            record = await holding_record_of_scope(tx, scope)
+            if record is not None:
+                return record.role
+        return await tx.fetch_value(
+            "SELECT role FROM {{tables.credential_authorizations}} WHERE scope=$1 "
+            "ORDER BY created_at DESC LIMIT 1",
+            scope,
+        )
+
+    async def declared_human_record(self, tx, scope: str) -> HoldingRecord | None:
+        """The installation's holding record for ``scope`` when its role is
+        declared with the human-role acts; None for any other scope."""
+        if not self._human_roles:
+            return None
+        record = await holding_record_of_scope(tx, scope)
+        return record if record is not None and record.role in self._human_roles else None
+
     async def _consumed_act(self, tx, context: _OwnerActContext, event, expected_act) -> str:
         """The SHA-256 of the prepared act, which this event names and which
-        was consumed for this team under this app's owner-act scope."""
+        was consumed for this team under this app's owner-act scope. The act
+        it signs, not only the event's label for it, is ``expected_act``."""
         digest = hashlib.sha256(context.signing).hexdigest()
         nonce = await tx.fetch_one(
             "SELECT nonce FROM {{tables.owner_act_nonces}} WHERE scope=$1 AND team_id=$2 AND act_sha256=$3",
@@ -551,6 +735,7 @@ class CredentialAudit:
             nonce is None
             or event.details.get("owner_act_id") != f"{context.admitted.team_id}:{nonce['nonce']}"
             or event.details.get("owner_act_kind") != expected_act
+            or self.signed_document(context).get("act") != expected_act
         ):
             raise GovernanceUnavailable()
         return digest
@@ -921,6 +1106,17 @@ class CredentialAudit:
             producer.producer.generation,
         ) != (admitted.app_id, admitted.installation_id, admitted.generation):
             raise GovernanceUnavailable()
+        if payload["act"] in self._ungated_acts:
+            event_id = await producer.enqueue_self_recorded(
+                tx,
+                team_id=admitted.team_id,
+                payload=payload,
+                actor=actor,
+                occurred_at=occurred_at,
+                signed_trace_id=signed_trace_id,
+            )
+            await self._after_enqueue(tx, event_id)
+            return event_id
         if payload["direction"] == "widening":
             await producer.require_admission(
                 tx,

@@ -80,12 +80,14 @@ class ConsoleActivity:
         if not 1 <= limit <= 100:
             raise HTTPException(400, "activity_limit_invalid")
         cursor = _decode(before)
-        installation_id = await self.console.db.fetch_value(
-            "SELECT installation_id FROM {{tables.owner_principals}} WHERE scope=$1", current.scope
+        row = await self.console.db.fetch_one(
+            "SELECT installation_id,team_id FROM {{tables.owner_principals}} WHERE scope=$1",
+            current.scope,
         )
-        if installation_id is None:
+        if row is None:
             raise HTTPException(403, "owner_required")
-        admitted = await self.console.installation(installation_id)
+        installation_id = row["installation_id"]
+        admitted = await self.console.installation(installation_id, team_id=row["team_id"])
         async with self.console.db.transaction() as tx:
             await self.console.fence.check(tx, admitted)
             owner = await self.console.directory.owner_of(tx, current.scope)
@@ -98,6 +100,9 @@ class ConsoleActivity:
                 or not await hold_role(tx, owner, OWNER_ROLE)
             ):
                 raise HTTPException(403, "owner_required")
+            await self.console.prepare_session(
+                tx, current, approver_pairs=[(current.scope, current.subject)]
+            )
             result = await self.reads.page(
                 tx,
                 installation_id=installation_id,
@@ -106,6 +111,7 @@ class ConsoleActivity:
                 limit=limit,
             )
             await self.console.fence.check(tx, admitted)
+            await self.console.check_key_bound(tx, current)
             if current.expires_at <= datetime.now(UTC):
                 raise HTTPException(401, "console_session_required")
         return result, admitted.team_id

@@ -3,7 +3,6 @@ package main
 import (
 	"context"
 	"crypto/ed25519"
-	"encoding/json"
 	"errors"
 	"io"
 	"net/http"
@@ -138,10 +137,6 @@ func (r *doctorRunner) runTeamDoctorChecks() {
 
 func (s *doctorAwebState) hasNoWorkspaceContext() bool {
 	return s != nil && errors.Is(s.workspaceErr, os.ErrNotExist)
-}
-
-func collectDoctorAwebState(workingDir string) *doctorAwebState {
-	return collectDoctorAwebStateAt(workingDir, "")
 }
 
 func collectDoctorAwebStateAt(workingDir, identityHome string) *doctorAwebState {
@@ -590,19 +585,4 @@ func awebCheck(id string, status doctorStatus, target *doctorTarget, message, ne
 		Detail:        detail,
 		NextStep:      nextStep,
 	}
-}
-
-func readJSONBody(resp *http.Response, out any) error {
-	defer resp.Body.Close()
-	data, err := io.ReadAll(io.LimitReader(resp.Body, awid.MaxResponseSize))
-	if err != nil {
-		return err
-	}
-	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
-		return &awid.APIError{StatusCode: resp.StatusCode, Body: string(data)}
-	}
-	if out == nil {
-		return nil
-	}
-	return json.Unmarshal(data, out)
 }

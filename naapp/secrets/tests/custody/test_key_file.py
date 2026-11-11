@@ -44,10 +44,10 @@ def test_a_world_readable_key_file_loads(tmp_path: Path) -> None:
     LocalKeyFileProvider(write_key_file(tmp_path / "kek", os.urandom(32), 0o644))
 
 
-@pytest.mark.parametrize("key", [os.urandom(16), os.urandom(33)])
-def test_a_key_of_the_wrong_length_is_refused(tmp_path: Path, key: bytes) -> None:
+@pytest.mark.parametrize("length", [16, 33])
+def test_a_key_of_the_wrong_length_is_refused(tmp_path: Path, length: int) -> None:
     with pytest.raises(KeyFileError):
-        LocalKeyFileProvider(write_key_file(tmp_path / "kek", key))
+        LocalKeyFileProvider(write_key_file(tmp_path / "kek", os.urandom(length)))
 
 
 def test_the_refusal_never_carries_the_file_contents(tmp_path: Path) -> None:

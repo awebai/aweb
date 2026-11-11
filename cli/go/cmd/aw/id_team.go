@@ -474,9 +474,10 @@ var teamAddMemberCmd = &cobra.Command{
 }
 
 var teamFetchCertCmd = &cobra.Command{
-	Use:   "fetch-cert",
-	Short: "Protocol/admin bridge: fetch and install an approved team certificate",
-	RunE:  runTeamFetchCert,
+	Annotations: map[string]string{identityKeyOnlyTargetAnnotation: "true"},
+	Use:         "fetch-cert",
+	Short:       "Protocol/admin bridge: fetch and install an approved team certificate",
+	RunE:        runTeamFetchCert,
 }
 
 var teamRemoveMemberCmd = &cobra.Command{
@@ -1234,13 +1235,6 @@ func resolveTeamAcceptInviteScope(cmd *cobra.Command) (string, error) {
 		return awid.IdentityModeGlobal, nil
 	}
 	return awid.IdentityModeLocal, nil
-}
-
-func teamAcceptScopeForAddress(address string) string {
-	if strings.TrimSpace(address) != "" {
-		return awid.IdentityModeGlobal
-	}
-	return awid.IdentityModeLocal
 }
 
 func teamAcceptScopeFromGlobal(global bool) string {
@@ -2128,6 +2122,23 @@ func acceptHostedTeamInviteWithDetails(workingDir, token string, opts teamAccept
 		return nil, err
 	}
 
+	// A global join reuses existing identity material. Refuse before the
+	// recovery lock can create a new .aw directory or alter an existing one.
+	var pub ed25519.PublicKey
+	var signingKey ed25519.PrivateKey
+	var didKey string
+	stableID := ""
+	if scope == awid.IdentityModeGlobal {
+		identity, globalSigningKey, err := resolveGlobalIdentityForTeamAccept(workingDir, opts.IdentityHome)
+		if err != nil {
+			return nil, err
+		}
+		signingKey = globalSigningKey
+		pub = signingKey.Public().(ed25519.PublicKey)
+		didKey = strings.TrimSpace(identity.DID)
+		stableID = strings.TrimSpace(identity.StableID)
+	}
+
 	home, err := identityHomeForTarget(workingDir, opts.IdentityHome)
 	if err != nil {
 		return nil, err
@@ -2149,20 +2160,7 @@ func acceptHostedTeamInviteWithDetails(workingDir, token string, opts teamAccept
 		return nil, err
 	}
 
-	var pub ed25519.PublicKey
-	var signingKey ed25519.PrivateKey
-	var didKey string
-	stableID := ""
-	if scope == awid.IdentityModeGlobal {
-		identity, globalSigningKey, err := resolveGlobalIdentityForTeamAccept(workingDir, opts.IdentityHome)
-		if err != nil {
-			return nil, err
-		}
-		signingKey = globalSigningKey
-		pub = signingKey.Public().(ed25519.PublicKey)
-		didKey = strings.TrimSpace(identity.DID)
-		stableID = strings.TrimSpace(identity.StableID)
-	} else {
+	if scope == awid.IdentityModeLocal {
 		// Persist the generated signing key to the home BEFORE calling AC, so a retry
 		// after AC has committed presents the SAME key and hits AC's idempotent
 		// re-mint instead of generating a new key (which AC 409s as a mismatch).
@@ -3989,10 +3987,6 @@ func saveAcceptedTeamCertificate(workingDir, identityHome, teamID string, cert *
 	return awconfig.SaveTeamCertificateForTeam(workingDir, teamID, cert)
 }
 
-func requireTeamStateForMembership(workingDir string) (*awconfig.TeamState, error) {
-	return requireTeamStateForMembershipAt(workingDir, "")
-}
-
 func requireTeamStateForMembershipAt(workingDir, identityHome string) (*awconfig.TeamState, error) {
 	var teamState *awconfig.TeamState
 	var err error
@@ -4516,10 +4510,6 @@ func validateMemberAddressForCertificate(
 	return nil
 }
 
-func resolveOrGenerateMemberDIDKey(workingDir string, localMember bool) (string, error) {
-	return resolveOrGenerateMemberDIDKeyAt(workingDir, "", localMember)
-}
-
 func resolveOrGenerateMemberDIDKeyAt(workingDir, identityHome string, localMember bool) (string, error) {
 	// Try to load existing identity.
 	identityPath := awconfig.WorktreeIdentityPath(workingDir)
@@ -4585,10 +4575,6 @@ func resolveIdentityFieldsForCert(workingDir string) (didAW, address string) {
 		return "", ""
 	}
 	return strings.TrimSpace(identity.StableID), strings.TrimSpace(identity.Address)
-}
-
-func resolveAliasFromIdentity(workingDir string) string {
-	return resolveAliasFromIdentityAt(workingDir, "")
 }
 
 func resolveAliasFromIdentityAt(workingDir, identityHome string) string {

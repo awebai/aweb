@@ -9,6 +9,8 @@ from test_messages_http import _signed_identity_headers
 from test_mcp_mail_conversation_parity import mail_server  # noqa: F401
 from test_human_channels_native_send import native_send  # noqa: F401
 
+__all__ = ["privacy_app", "mail_server", "native_send"]
+
 
 async def request(env, path, payload):
     sender = env.actors['alice']
@@ -80,46 +82,44 @@ async def test_mcp_human_chat_refusal_precedes_custody_and_send(mail_server, con
 
 
 @pytest.mark.asyncio
-@pytest.mark.parametrize('case_name, expected', [
-    ('human-leaf-is-itself', True), ('registered-agent', False),
-    ('human-leaf-is-itself-unavailable', False),
-    ('human-leaf-is-itself-wrong-key', False),
-])
-async def test_remote_kind_uses_shared_current_verifier_not_nearest_human(privacy_app, case_name, expected):
-    from copy import deepcopy
-    from types import SimpleNamespace
-    from awid.id_certificates import IDChainEvidence
-    from awid.registry import IDTreeEnrollment, KeyResolution
+@pytest.mark.parametrize('scope', ['local', 'global'])
+@pytest.mark.parametrize('projection', ['verified-human', 'raw-human', 'wrong-key', 'agent', 'unknown'])
+async def test_chat_preflight_uses_projections_without_any_registry_io(privacy_app, scope, projection):
+    import os
+    from awid.registry import CachedRegistryClient
+    from awid_service.testing import ServiceTransport
+    from redis.asyncio import Redis
     from aweb.messaging.chat_policy import HumanChatRefused, require_agent_chat
-    from test_id_chain_request_auth import VECTORS
 
-    case = next(c for c in VECTORS['verification_cases'] if c['name'] == case_name.split('-unavailable')[0].split('-wrong-key')[0])
-    subject = case['subject']
-    status = deepcopy(VECTORS['status_fixtures'][case['status']])
-    epoch = next(e for e in status['namespace']['epochs'] if e['retired_at'] is None)
-    authority = dict(domain=status['domain'], dns_name='_awid.' + status['domain'], inherited=False, controller_key=epoch['did_key'])
-    calls = []
-    async def resolve(did):
-        calls.append(did)
-        if case_name.endswith('unavailable'):
-            raise TimeoutError('kind unavailable')
-        return KeyResolution(did, subject['did_key'], id_tree=IDTreeEnrollment(True, status['domain']))
-    async def evidence(bundle, bound, *, domain):
-        assert bundle is None
-        assert bound == {'id': subject['id'], 'did_key': subject['did_key']}
-        assert domain == status['domain']
-        return IDChainEvidence(status, authority, 0)
-    recipient = dict(did_aw=subject['id'], did_key=subject['did_key'], address='alias.example/person')
-    if case_name.endswith('wrong-key'):
-        recipient['did_key'] = privacy_app.actors['carol'].did
-    client = SimpleNamespace(resolve_key_fresh=resolve, id_chain_evidence=evidence)
-    if expected:
-        with pytest.raises(HumanChatRefused) as refused:
-            await require_agent_chat(privacy_app.infra, [recipient], registry_client=client)
-        assert refused.value.reason == 'recipient_human_mail_only'
-    else:
-        await require_agent_chat(privacy_app.infra, [recipient], registry_client=client)
-    assert calls == [subject['id']]
+    env = privacy_app
+    actor = env.actors['bob']
+    identity = None
+    if scope == 'global':
+        identity = (await env.app.state.awid_registry_client.register_did(actor.did, actor.sk)).did_aw
+    kind = 'agent' if projection == 'agent' else 'human'
+    marker = actor.did if projection == 'verified-human' else env.actors['carol'].did if projection == 'wrong-key' else None
+    if projection != 'unknown':
+        await env.db.execute(
+            "UPDATE {{tables.agents}} SET did_aw=$2,did_aw_verified_key=did_key,agent_type=$3,human_verified_key=$4 WHERE agent_id=$1",
+            actor.id, identity, kind, marker,
+        )
+    recipient = dict(did_key=actor.did, did_aw=identity, alias='bob')
+    if projection == 'unknown':
+        recipient = dict(did_key=env.actors['carol'].did, did_aw=identity, alias='unknown')
+    recording = ServiceTransport(env.registry_app)
+    redis = Redis.from_url(os.environ.get('REDIS_URL', 'redis://localhost:6379/0'))
+    client = CachedRegistryClient('http://registry.test', redis, transport=recording)
+    try:
+        if projection == 'verified-human':
+            with pytest.raises(HumanChatRefused) as refused:
+                await require_agent_chat(env.infra, [recipient], registry_client=client)
+            assert refused.value.reason == 'recipient_human_mail_only'
+        else:
+            await require_agent_chat(env.infra, [recipient], registry_client=client)
+        assert recording.calls == []
+    finally:
+        await client.aclose()
+        await redis.aclose()
 
 
 @pytest.mark.asyncio
@@ -200,3 +200,40 @@ async def test_native_legacy_label_grants_no_human_chat_treatment(native_send, s
     else:
         await complete(env, prepared)
     assert await env['db'].fetch_val('SELECT count(*) FROM {{tables.chat_messages}}') == (0 if stamp_before_accept else 1)
+
+
+@pytest.mark.asyncio
+async def test_agent_with_verified_human_ancestor_is_allowed_without_registry_io(privacy_app):
+    import os
+    from copy import deepcopy
+    from pathlib import Path
+    from awid.id_certificates import IDChainEvidence, verify_id_chain
+    from awid.registry import CachedRegistryClient
+    from awid_service.testing import ServiceTransport
+    from redis.asyncio import Redis
+    from aweb.messaging.chat_policy import require_agent_chat
+
+    vectors = json.loads((Path(__file__).resolve().parents[2] / 'docs/vectors/id-certificates-v1.json').read_text())
+    case = next(case for case in vectors['verification_cases'] if case['name'] == 'registered-agent')
+    status = deepcopy(vectors['status_fixtures'][case['status']])
+    epoch = next(epoch for epoch in status['namespace']['epochs'] if epoch['retired_at'] is None)
+    authority = dict(domain=status['domain'], dns_name='_awid.' + status['domain'], inherited=False, controller_key=epoch['did_key'])
+    bundle = {'v': 1, 'type': 'aweb.id-chain', 'certificates': [deepcopy(vectors['certificates'][name]['signed']) for name in case['chain']]}
+    observed = verify_id_chain(bundle, subject=case['subject'], evidence=IDChainEvidence(status, authority, 0), domain=status['domain'])
+    assert observed['identity_valid'] is True and observed['kind'] == 'agent'
+    assert observed['human_id'] is not None
+    env = privacy_app
+    subject = case['subject']
+    await env.db.execute(
+        "UPDATE {{tables.agents}} SET did_key=$2,did_aw=$3,did_aw_verified_key=$2,agent_type='agent',human_verified_key=NULL WHERE agent_id=$1",
+        env.actors['bob'].id, subject['did_key'], subject['id'],
+    )
+    recording = ServiceTransport(env.registry_app)
+    redis = Redis.from_url(os.environ.get('REDIS_URL', 'redis://localhost:6379/0'))
+    client = CachedRegistryClient('http://registry.test', redis, transport=recording)
+    try:
+        await require_agent_chat(env.infra, [dict(did_aw=subject['id'], did_key=subject['did_key'], alias='bob')], registry_client=client)
+        assert recording.calls == []
+    finally:
+        await client.aclose()
+        await redis.aclose()

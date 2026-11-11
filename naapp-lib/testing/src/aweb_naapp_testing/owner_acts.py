@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import base64
 import secrets
+from collections.abc import Awaitable, Callable
 from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
 from typing import Any
@@ -37,6 +38,15 @@ class TeamOwner:
     team_key: SigningKey
     verifier: OwnerActVerifier
     team_id: str = TEAM_ID
+    team_key_for: Callable[[str], Awaitable[str]] | None = None
+
+    def for_acts(self, acts: tuple[str, ...]) -> TeamOwner:
+        """The same owner and registry, through a verifier for ``acts``."""
+        assert self.team_key_for is not None, "an owner made by team_owner()"
+        verifier = OwnerActVerifier(
+            scope=APP_ID, audience=AUDIENCE, acts=acts, team_key_for=self.team_key_for
+        )
+        return TeamOwner(self.team_key, verifier, self.team_id, self.team_key_for)
 
     def sign(self, act: str, subject: dict[str, Any]) -> tuple[bytes, str]:
         issued = datetime.now(UTC).replace(microsecond=0)
@@ -85,8 +95,11 @@ def revocation_subject(scope: str, subject_ref: str) -> dict[str, Any]:
     }
 
 
-async def team_owner(registry, *, team_id: str = TEAM_ID) -> TeamOwner:
-    """Register a real owner key for the team the app fixture actually uses."""
+async def team_owner(
+    registry, *, team_id: str = TEAM_ID, acts: tuple[str, ...] = APP_ACTS
+) -> TeamOwner:
+    """Register a real owner key for the team the app fixture actually uses,
+    with a verifier for ``acts``."""
     key = SigningKey.generate()
     await registry.add_team(team_id, did_key(key))
     cache = AWIDTeamCache(
@@ -100,6 +113,8 @@ async def team_owner(registry, *, team_id: str = TEAM_ID) -> TeamOwner:
         return (await cache.get(team_id)).team_did_key
 
     verifier = OwnerActVerifier(
-        scope=APP_ID, audience=AUDIENCE, acts=APP_ACTS, team_key_for=current_team_key
+        scope=APP_ID, audience=AUDIENCE, acts=acts, team_key_for=current_team_key
     )
-    return TeamOwner(team_key=key, verifier=verifier, team_id=team_id)
+    return TeamOwner(
+        team_key=key, verifier=verifier, team_key_for=current_team_key, team_id=team_id
+    )

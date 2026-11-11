@@ -139,15 +139,6 @@ func writeDefaultTeamStateForTest(t *testing.T, workingDir string) string {
 	return writeTeamStateForTest(t, workingDir, defaultTeamState())
 }
 
-func writeContextForTest(t *testing.T, workingDir string, ctx awconfig.WorktreeContext) string {
-	t.Helper()
-	path := filepath.Join(workingDir, ".aw", "context")
-	if err := awconfig.SaveWorktreeContextTo(path, &ctx); err != nil {
-		t.Fatalf("write worktree context: %v", err)
-	}
-	return path
-}
-
 func writeIdentityForTest(t *testing.T, workingDir string, state awconfig.WorktreeIdentity) string {
 	t.Helper()
 	path := filepath.Join(workingDir, awconfig.DefaultWorktreeIdentityRelativePath())

@@ -23,7 +23,7 @@ from lab_environment import LabConfigurationError
 from lab_publication import publish_lab_runtime
 
 from tests.test_aw_surface import aw_binary as aw_binary
-from tests.test_lab_environment import PREFIX, configured
+from tests.test_lab_environment import PREFIX, configured, local_custody
 
 
 def write_home(home, member, registry, server, *, file_key=True):
@@ -235,8 +235,13 @@ async def lab(tmp_path, registry, aw_binary, human_fixture_binary, monkeypatch, 
         dns.asyncresolver.default_resolver = previous
 
 
-async def test_private_publication_records_actual_certified_principals_and_coverage(lab, tmp_path):
+@pytest.mark.parametrize("custody_mode", ["kms", "local_key_file"])
+async def test_private_publication_records_actual_certified_principals_and_coverage(
+    lab, tmp_path, custody_mode
+):
     inputs, members, registry = lab
+    if custody_mode == "local_key_file":
+        inputs = local_custody(inputs, tmp_path)
     directory = tmp_path / "published"
     async with publish_lab_runtime(
         inputs,
@@ -245,11 +250,16 @@ async def test_private_publication_records_actual_certified_principals_and_cover
         registry_transport=registry.transport,
     ) as path:
         body = json.loads(path.read_text())
-        assert body["profile"] == "byot-native-kms-lab/1"
+        assert body["profile"] == "byot-native-lab/1"
+        assert body["custody_mode"] == custody_mode
         assert body["inputs"] == inputs
         assert body["coverage"] == {
             "private_address_refusal": "excluded",
             "full_release_gate": False,
+            "custody": {
+                mode: "not_tested" if mode == custody_mode else "excluded"
+                for mode in ("kms", "local_key_file")
+            },
         }
         assert {key: value["principal_did"] for key, value in body["actors"].items()} == {
             actor: member.extra_cert_fields.get("member_did_aw", member.did_key)
@@ -397,7 +407,7 @@ async def test_included_dns_scenario_is_recorded_as_selected_not_as_passed(lab, 
     ) as path:
         body = json.loads(path.read_text())
         assert body["coverage"]["private_address_refusal"] == "included"
-        assert len(body["inputs"]) == 19
+        assert len(body["inputs"]) == 20
         assert body["coverage"]["full_release_gate"] is False
 
 

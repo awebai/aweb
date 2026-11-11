@@ -173,7 +173,12 @@ Current behavior:
 - the server caps a response at five minutes;
 - the stream has **no resumable server cursor**, SSE `id`, or `Last-Event-ID`;
 - the low-level command does not reconnect;
-- `aw run` adds retry/backoff and bounded in-memory dedupe, not a durable cursor.
+- `aw run` reconnects under the [event stream client
+  policy](event-stream-client-policy.md) and adds bounded in-memory dedupe, not
+  a durable cursor. It never stops its stream for the life of the process: a
+  refused stream is retried from 1 minute to 15 minutes and logged once as
+  `aweb: event stream refused: <status>, next try HH:MM` and once when it is
+  accepted again.
 
 For `actionable_mail`:
 

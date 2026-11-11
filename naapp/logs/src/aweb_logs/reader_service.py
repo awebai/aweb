@@ -22,7 +22,7 @@ from aweb_naapp.console import (
     console_login_router,
     credential_router,
 )
-from aweb_naapp.hooks.owner_act import APP_ACTS
+from aweb_naapp.hooks.owner_act import APP_ACTS, LOGS_ACTS
 from aweb_naapp.hooks.owner_act_nonces import OwnerActVerifier, apply_owner_act_migrations
 from aweb_naapp.hooks.producer import RegistrationView
 from aweb_naapp.runtime.app import NaappRuntime
@@ -34,6 +34,7 @@ from fastapi import APIRouter
 from pgdbm import AsyncDatabaseManager
 
 from aweb_logs.console_ui import console_pages_router
+from aweb_logs.governance import SELF_RECORDED_ACTS, LogsGovernance
 from aweb_logs.ledger import LogsSigner
 from aweb_logs.read_routes import (
     ReaderReads,
@@ -49,7 +50,9 @@ CREDENTIAL_AUDIT_MODULE = "aweb_logs_credential_audit"
 
 
 class ReaderService:
-    """The reader routes of each origin, over one composed set of services."""
+    """The reader routes of each origin, over one composed set of services.
+    ``sessions`` is the console origin's one session service: every console
+    route admits only a current reader through it."""
 
     def __init__(
         self,
@@ -63,20 +66,22 @@ class ReaderService:
         sessions: ConsoleSessions,
         limiter: LoginLimiter,
         chain_keys: frozenset[str],
+        governance: LogsGovernance,
     ) -> None:
         self.directory = directory
+        # The owner's retention, erasure and hold acts. No route delivers them
+        # yet: owner-act delivery covers only the app-role and credential acts.
+        self.governance = governance
         self.fence = fence
+        self.sessions = sessions
         self.removals = ReaderRemovals(directory, fence=fence, passkeys=passkeys, recorder=recorder)
+        reads = ReaderReads(db, sessions=sessions, directory=directory, chain_keys=chain_keys)
         router = APIRouter()
         router.include_router(console_login_router(sessions=sessions, limiter=limiter))
         router.include_router(credential_router(passkeys=passkeys, recorder=recorder))
         router.include_router(reader_governance_router(designations))
-        router.include_router(console_pages_router(sessions=sessions))
-        router.include_router(
-            reader_read_router(
-                ReaderReads(db, sessions=sessions, directory=directory, chain_keys=chain_keys)
-            )
-        )
+        router.include_router(console_pages_router(reads))
+        router.include_router(reader_read_router(reads))
         self.console_router = router
 
     def agent_router(self, authorized: Callable[..., Awaitable[Authorization]]) -> APIRouter:
@@ -94,6 +99,7 @@ async def reader_service(
     *,
     signer: LogsSigner,
     console_origin: str,
+    client_address_header: str | None,
     delivery: PasskeyDelivery,
     backlog_age: timedelta,
 ) -> ReaderService:
@@ -137,6 +143,7 @@ async def reader_service(
         max_backlog_age=backlog_age,
         migration_module=CREDENTIAL_AUDIT_MODULE,
         after_enqueue=directory.appender(signer),
+        ungated_acts=SELF_RECORDED_ACTS,
     )
     passkeys = Passkeys(
         db,
@@ -150,21 +157,21 @@ async def reader_service(
     )
     await recorder.migrate()
     await passkeys.migrate()
+    verifier = OwnerActVerifier(
+        scope=app_id,
+        audience=runtime.settings.public_origin,
+        acts=APP_ACTS + LOGS_ACTS,
+        team_key_for=team_key,
+    )
     designations = ReaderDesignations(
-        directory,
-        fence=fence,
-        verifier=OwnerActVerifier(
-            scope=app_id,
-            audience=runtime.settings.public_origin,
-            acts=APP_ACTS,
-            team_key_for=team_key,
-        ),
-        passkeys=passkeys,
-        recorder=recorder,
+        directory, fence=fence, verifier=verifier, passkeys=passkeys, recorder=recorder
     )
     sessions = ConsoleSessions(db, passkeys=passkeys, scopes=directory.is_current_reader)
     limiter = LoginLimiter(
-        db, client_identity=ClientIdentity(), limit=12, window=timedelta(minutes=1)
+        db,
+        client_identity=ClientIdentity(trusted_header=client_address_header),
+        limit=12,
+        window=timedelta(minutes=1),
     )
     return ReaderService(
         db=db,
@@ -176,4 +183,11 @@ async def reader_service(
         sessions=sessions,
         limiter=limiter,
         chain_keys=frozenset({signer.did_key}),
+        governance=LogsGovernance(
+            db,
+            fence=fence,
+            verifier=verifier,
+            recorder=recorder,
+            logs_origin=runtime.settings.public_origin,
+        ),
     )

@@ -175,4 +175,4 @@ async def test_public_routes_mount_only_on_api_and_keep_manifest_assets_and_heal
         health = await client.get("/ready")
         assert health.status_code == 503
         assert set(health.json()["checks"]) == {"database", "outbox", "kms"}
-        assert health.json()["checks"]["kms"] == {"ok": False}
+        assert health.json()["checks"]["kms"] == "error"

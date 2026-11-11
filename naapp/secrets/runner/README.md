@@ -19,8 +19,23 @@ uv run aweb-secrets-runner register --origin https://secrets.example \
   --state-dir /absolute/private/runner-state
 ```
 
-Enter the one-use owner-issued code at the hidden prompt. Automation supplies one
-line on stdin; the code is never an argument or echoed by the command.
+Today, obtain the one-use owner-issued code from the owner's confirmation result
+on the console. Run this command in the dedicated runner user's terminal and type
+that code at the existing hidden prompt, which reads it with echo off.
+
+[N4's protected runner-code journey](../../../docs/design/human-confirmation-from-aw.md#n4-terminal-input-and-the-runner-code)
+specifies that `aw` shows the code only on its controlling terminal, and the
+operator types it at the same runner prompt. Under N4, `aw`'s machine-readable
+output carries `runner_id` and `registration_required: true`, never the code.
+That `aw` confirmation and terminal-display support is tracked by
+`aweb-acwd.4.6` and is not yet shipped.
+
+For automation without a terminal, the caller supplies exactly one line on a
+private stdin pipe, as `RunnerHarness.register` does. This path is outside the
+protected journey because another program holds the code. Registration consumes
+the first line without waiting for the pipe to close. The command accepts no code
+argument: passing `--code` is refused with `runner_arguments_invalid`. Neither
+input path echoes or stores the code.
 
 The command generates Ed25519 and X25519 keys locally, sends their public halves
 over verified TLS, then pins the exact origin, runner ID and service signing key.

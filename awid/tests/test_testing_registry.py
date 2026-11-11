@@ -12,7 +12,7 @@ import httpx
 import pytest
 import pytest_asyncio
 from awid.did import did_from_public_key
-from awid.registry import RegistryClient
+from awid.registry import RegistryClient, RegistryError
 from awid.signing import canonical_json_bytes, sign_message
 from awid.team_server_record import verify_team_server_record
 from nacl.signing import SigningKey
@@ -134,3 +134,18 @@ async def test_the_registry_reports_its_health_with_the_redis_it_is_given(databa
             health = await client.health()
     assert health["status"] == "ok"
     assert health["checks"]["redis"] == health["checks"]["database"] == "ok"
+
+
+@pytest.mark.asyncio
+async def test_the_registry_without_redis_is_live_and_not_ready(database_url) -> None:
+    async with running_registry(database_url) as registry:
+        client = RegistryClient(registry_url=REGISTRY_URL, transport=registry.transport)
+        with pytest.raises(RegistryError) as unhealthy:
+            await client.health()
+        async with httpx.AsyncClient(transport=registry.transport, base_url=REGISTRY_URL) as http:
+            live = await http.get("/live")
+    assert unhealthy.value.status_code == 503
+    assert unhealthy.value.body["checks"] == {
+        "redis": "error", "database": "ok", "schema": "awid", "rate_limiter": "NoOpRateLimiter",
+    }
+    assert (live.status_code, live.json()) == (200, {"status": "ok"})

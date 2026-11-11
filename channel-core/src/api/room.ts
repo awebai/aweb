@@ -1,5 +1,6 @@
 import type { APIClient } from "./client.js";
 import type { InboxMessage } from "./mail.js";
+import { signedClaimsEqual } from "../identity/signed_display.js";
 import { verifySignedPayload, type MessageEnvelope } from "../identity/signing.js";
 
 export interface RoomMessage extends Omit<InboxMessage, "from_agent_id" | "priority"> {
@@ -14,12 +15,16 @@ export async function fetchRoomMessage(client: APIClient, team: string, room: st
   const status = await verifySignedPayload(message.signed_payload || "", message.signature || "", message.from_did || "", message.signing_key_id || "");
   if (status !== "verified") throw new Error("room post signature failed");
   const signed = JSON.parse(message.signed_payload!) as MessageEnvelope;
+  const displayed = {
+    type: "chat", to: `team-room:${team}`, conversation_id: room, message_id: id,
+    from_did: message.from_did, from: message.from_alias,
+    subject: message.subject, body: message.body, timestamp: message.timestamp,
+  };
   if (message.team_id !== team || message.room_id !== room || message.conversation_id !== room || message.message_id !== id
-      || signed.type !== "chat" || signed.to !== `team-room:${team}` || signed.conversation_id !== room || signed.message_id !== id
-      || signed.to_did || signed.to_stable_id || signed.from_did !== message.from_did || message.signing_key_id !== message.from_did
-      || (signed.from_stable_id || "") !== (message.from_stable_id || "") || signed.from !== message.from_alias
-      || signed.subject !== message.subject || signed.body !== message.body || signed.timestamp !== message.timestamp
-      || (message.from_address && message.from_address !== signed.from)) {
+      || signed.to_did || signed.to_stable_id || message.signing_key_id !== message.from_did
+      || (signed.from_stable_id || "") !== (message.from_stable_id || "")
+      || (message.from_address && message.from_address !== signed.from)
+      || !signedClaimsEqual(message.signed_payload!, displayed)) {
     throw new Error("room post signed bindings failed");
   }
   message.verification_status = status;

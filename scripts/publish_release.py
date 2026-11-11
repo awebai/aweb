@@ -24,6 +24,7 @@ from release_versions import (
     SEMVER,
     VersionRefusal as PublishRefusal,
     require_final_promotion,
+    require_runner_values,
     tag_parts,
     valid_version,
 )
@@ -36,6 +37,9 @@ MANIFESTS = {
     "channel-v": "channel/package.json",
     "pi-v": "pi-extension/package.json",
     "skills-v": "packages/claude-skills/package.json",
+    "secrets-v": "naapp/secrets/pyproject.toml",
+    "logs-v": "naapp/logs/pyproject.toml",
+    "aweb-secrets-runner-v": "naapp/secrets/runner/pyproject.toml",
 }
 # Each PyPI lane: whether it depends on the in-repo awid-service, which must be
 # public first, and the (package, directory) pairs it publishes, in order. A
@@ -44,6 +48,10 @@ PYPI_LANES = {
     "server-v": (True, (("aweb", "server"),)),
     "awid-service-v": (False, (("awid-service", "awid"),)),
     "aweb-naapp-v": (True, (("aweb-naapp", "naapp-lib"), ("aweb-naapp-testing", "naapp-lib/testing"))),
+    "aweb-secrets-runner-v": (False, (
+        ("aweb-secrets-values", "naapp/secrets/values"),
+        ("aweb-secrets-runner", "naapp/secrets/runner"),
+    )),
 }
 NPM_LANES = {
     "channel-v": ("channel", "@awebai/claude-channel", "channel"),
@@ -115,6 +123,8 @@ def tag_identity(root: Path, tag: str) -> tuple[str, str, str]:
             raise PublishRefusal(
                 f"{tag} does not match {manifest} version {manifest_version_at(root, source_sha, manifest)}"
             )
+    if prefix == "aweb-secrets-runner-v":
+        require_runner_values(root, source_sha)
     require_final_promotion(root, tag, source_sha)
     return prefix, version, source_sha
 
@@ -443,9 +453,12 @@ def publish_oci(root: Path, prefix: str, version: str, source_sha: str) -> None:
         raise PublishRefusal("GHCR_USERNAME and GHCR_TOKEN are required")
     if not shutil.which("skopeo"):
         raise PublishRefusal("skopeo is required for exact OCI publication")
-    repository = (
-        "ghcr.io/awebai/awid" if prefix == "awid-v" else "ghcr.io/awebai/a2a-gateway"
-    )
+    repository = {
+        "awid-v": "ghcr.io/awebai/awid",
+        "a2a-gw-v": "ghcr.io/awebai/a2a-gateway",
+        "secrets-v": "ghcr.io/awebai/secrets",
+        "logs-v": "ghcr.io/awebai/logs",
+    }[prefix]
     with tempfile.TemporaryDirectory(prefix="aweb-oci-") as temporary:
         staging = Path(temporary)
         archive = staging / "image.oci.tar"
@@ -456,6 +469,17 @@ def publish_oci(root: Path, prefix: str, version: str, source_sha: str) -> None:
                 "--platform", "linux/amd64,linux/arm64", "--provenance=false", "--sbom=false",
                 "--label", "org.opencontainers.image.title=awid",
                 "--label", "org.opencontainers.image.description=Thin awid.ai registry service wrapper around aweb",
+                "--label", f"org.opencontainers.image.version={version}",
+                "--label", f"org.opencontainers.image.revision={source_sha}",
+                "--output", f"type=oci,dest={archive}", ".",
+            ]
+        elif prefix in {"secrets-v", "logs-v"}:
+            service = "secrets" if prefix == "secrets-v" else "logs"
+            build = [
+                "docker", "buildx", "build", "--file", f"naapp/{service}/Dockerfile",
+                "--platform", "linux/amd64,linux/arm64", "--provenance=false", "--sbom=false",
+                "--build-arg", f"SOURCE_COMMIT={source_sha}",
+                "--label", f"org.opencontainers.image.title=aweb {service}",
                 "--label", f"org.opencontainers.image.version={version}",
                 "--label", f"org.opencontainers.image.revision={source_sha}",
                 "--output", f"type=oci,dest={archive}", ".",
