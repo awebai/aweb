@@ -29,7 +29,7 @@ from aweb_naapp.console import (
 from aweb_naapp.hooks.envelope import verify
 from aweb_naapp.runtime.origins import split_origins
 from aweb_naapp_testing.owner_acts import TEAM_ID
-from fastapi import FastAPI, HTTPException
+from fastapi import APIRouter, FastAPI, HTTPException
 
 from aweb_logs.ledger import append
 from aweb_logs.reader_service import ReaderService, reader_sessions
@@ -141,6 +141,8 @@ def viewer_service(world: World, *, login_limit: int = 12) -> ReaderService:
         handoffs=handoffs,
         limiter=limiter,
         chain_keys=frozenset({world.signer.did_key}),
+        # This world designates its readers directly: no owner-act delivery.
+        owner_acts=APIRouter(),
     )
 
 

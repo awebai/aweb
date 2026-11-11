@@ -35,7 +35,7 @@ from awid.id_certificates import id_certificate_signing_bytes
 from awid.registry import RegistryClient
 from awid.signing import canonical_json_bytes
 from awid_service.deps import get_domain_verifier
-from fastapi import FastAPI, Request
+from fastapi import APIRouter, FastAPI, Request
 from nacl.signing import SigningKey
 
 from aweb_logs.export import verify_bundle
@@ -272,6 +272,8 @@ async def aw(world: World) -> AsyncIterator[Aw]:
             limiter=limiter,
             chain_keys=frozenset({world.signer.did_key}),
             governance=world.governance,
+            # This world designates its readers directly: no owner-act delivery.
+            owner_acts=APIRouter(),
         )
         api, human = FastAPI(), FastAPI()
         api.include_router(service.handoff_router)
