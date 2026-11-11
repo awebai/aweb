@@ -108,6 +108,20 @@ async def charge_client_quota(
         raise IngestRefused(429, "client_quota_exceeded", f"member {member}")
 
 
+PRIVATE_TEAM_UNREADABLE = "team_private_unreadable"
+
+
+def _private_team_unreadable(exc: HTTPException) -> bool:
+    """Whether the runtime's AWID authority refused because it cannot read the
+    team's private facts: a configuration Logs' operator must fix, not an
+    outage."""
+    return (
+        exc.status_code == 403
+        and isinstance(exc.detail, dict)
+        and exc.detail.get("code") == PRIVATE_TEAM_UNREADABLE
+    )
+
+
 class Ingestor:
     """One process's admission pipeline, on its runtime's one hook resolver.
 
@@ -211,8 +225,8 @@ class Ingestor:
         try:
             team_did_key = await self.runtime.team_cache().current_team_did_key(team_id)
         except HTTPException as exc:
-            if exc.status_code == 403 and isinstance(exc.detail, dict):
-                raise IngestRefused(403, str(exc.detail.get("code"))) from exc
+            if _private_team_unreadable(exc):
+                raise IngestRefused(403, PRIVATE_TEAM_UNREADABLE) from exc
             raise IngestRefused(503, "client_authority_unavailable") from exc
         except ValueError as exc:
             raise IngestRefused(503, "client_authority_unavailable") from exc
@@ -255,6 +269,8 @@ class Ingestor:
                     certificate_id=producer["certificate_id"],
                 )
             except HTTPException as exc:
+                if _private_team_unreadable(exc):
+                    raise IngestRefused(403, PRIVATE_TEAM_UNREADABLE) from exc
                 status = 401 if exc.status_code == 401 else 503
                 code = "provenance_client_certificate" if status == 401 else "client_authority_unavailable"
                 raise IngestRefused(status, code) from exc

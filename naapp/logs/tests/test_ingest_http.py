@@ -405,6 +405,24 @@ async def test_revoking_logs_own_certificate_stops_its_reads_of_the_private_team
     assert (response.status_code, _code(response)) == (403, "team_private_unreadable")
 
 
+@pytest.mark.parametrize("world", [{"customer_hosted": True}], indirect=True)
+async def test_a_private_team_unreadable_at_provenance_is_refused_like_at_the_key_read(world):
+    """The controller key reads, then the certificate history does not: the
+    same condition gets the same code at either read."""
+
+    def certificates_private(request: httpx.Request, response: httpx.Response):
+        signed_by_logs = request.headers.get("Authorization", "").startswith("DIDKey ")
+        if signed_by_logs and request.url.path.endswith("/certificates"):
+            return httpx.Response(
+                403, json={"detail": {"code": "team_private", "message": "private"}}, request=request
+            )
+        return None
+
+    world.coordination.registry.transport.fault = certificates_private
+    response = await world.send(world.delivery("client"))
+    assert (response.status_code, _code(response)) == (403, "team_private_unreadable")
+
+
 async def test_identical_redelivery_returns_the_original_receipt_without_spending_quota(world):
     delivery = world.delivery("client")
     first = await world.send(delivery)
