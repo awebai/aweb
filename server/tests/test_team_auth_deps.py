@@ -12,7 +12,7 @@ from datetime import datetime, timezone
 from types import SimpleNamespace
 
 import pytest
-from fastapi import HTTPException
+from fastapi import FastAPI, HTTPException
 from starlette.requests import Request
 
 from nacl.signing import SigningKey
@@ -69,6 +69,7 @@ def _request_with_headers(headers: dict[str, str]) -> Request:
             "server": ("testserver", 80),
             "client": ("127.0.0.1", 12345),
             "http_version": "1.1",
+            "app": FastAPI(),
         }
     )
 
