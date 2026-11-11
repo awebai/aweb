@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-from aweb.agent_wake import agent_wake_publisher, agent_wake_scope, record_did_wakes
 from aweb.messaging.mail_attribution import incoming_mail_sql, readable_mail_sql
 
 from aweb.identity_auth_deps import participant_dids
@@ -17,12 +16,12 @@ from pydantic import BaseModel, ConfigDict, Field, field_validator, model_serial
 
 from awid.pagination import decode_cursor, encode_cursor, validate_pagination_params
 from aweb.deps import get_db
-from aweb.hooks import fire_mutation_hook
 from aweb.id_chain_auth import stored_id_chain
 from aweb.identity_metadata import lookup_identity_metadata_by_did
 from aweb.identity_auth_deps import MessagingAuth, get_messaging_auth
 from aweb.messaging.alias_targets import validate_alias_selector
 from aweb.messaging.handle_addresses import normalize_hosted_handle_reference
+from aweb.messaging.mail_ack import acknowledge_mail
 from aweb.messaging.mail_send import SentMail, resolve_mail_target, send_mail
 from aweb.messaging.runtime import messaging_runtime
 from aweb.messaging.messages import MessagePriority
@@ -658,23 +657,11 @@ async def ack_message(
     if not inbox_dids:
         raise HTTPException(status_code=401, detail="Authenticated identity is missing a routing DID")
 
-    with agent_wake_scope(agent_wake_publisher(request.app.state)):
-        result = await aweb_db.fetch_one(
-            f"""
-            UPDATE {{{{tables.messages}}}} m
-            SET read_at = $1
-            WHERE m.message_id = $2 AND {incoming_mail_sql('$3')}
-              AND read_at IS NULL
-            RETURNING message_id, from_alias, subject, content_mode
-            """,
-            now,
-            msg_uuid,
-            inbox_dids,
-        )
-        if result:
-            record_did_wakes(inbox_dids, "mail")
+    acknowledged = await acknowledge_mail(
+        db, auth, [msg_uuid], messaging_runtime(request.app.state), read_at=now,
+    )
 
-    if not result:
+    if not acknowledged:
         # Either already read or not found — check existence
         existing = await aweb_db.fetch_one(
             f"""
@@ -686,21 +673,6 @@ async def ack_message(
         )
         if not existing:
             raise HTTPException(status_code=404, detail="Message not found")
-
-    if result:
-        await fire_mutation_hook(
-            request,
-            "message.acknowledged",
-            {
-                "team_id": auth.team_id,
-                "agent_id": auth.agent_id,
-                "alias": auth.alias,
-                "message_id": str(msg_uuid),
-                "from_alias": result["from_alias"],
-                "subject": result["subject"] or "",
-                "content_mode": result["content_mode"] or "legacy_plaintext_v1",
-            },
-        )
 
     return AckResponse(
         message_id=str(msg_uuid),

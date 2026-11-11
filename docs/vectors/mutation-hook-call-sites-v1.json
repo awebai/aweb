@@ -67,14 +67,14 @@
       "event": "task.updated"
     },
     {
-      "source": "server/src/aweb/mcp/tools/mail.py",
-      "function": "check_inbox",
-      "event": "message.acknowledged"
-    },
-    {
       "source": "server/src/aweb/messaging/chat_send.py",
       "function": "_fire_chat_message_sent",
       "event": "chat.message_sent"
+    },
+    {
+      "source": "server/src/aweb/messaging/mail_ack.py",
+      "function": "acknowledge_mail",
+      "event": "message.acknowledged"
     },
     {
       "source": "server/src/aweb/messaging/mail_send.py",
@@ -95,11 +95,6 @@
       "source": "server/src/aweb/routes/agent_status.py",
       "function": "publish_agent_status",
       "event": "agent.status"
-    },
-    {
-      "source": "server/src/aweb/routes/messages.py",
-      "function": "ack_message",
-      "event": "message.acknowledged"
     },
     {
       "source": "server/src/aweb/routes/reservations.py",
