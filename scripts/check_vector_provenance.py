@@ -255,6 +255,18 @@ ROOT_CONSUMERS = {
         "team-certificate-verification-v1.json",
         '(Path(__file__).resolve().parents[2] / "docs/vectors/team-certificate-verification-v1.json")',
     ),
+    PurePosixPath("naapp-lib/tests/runtime/test_team_certificate_vectors.py"): _consumer(
+        "team-certificate-verification-v1.json",
+        '(Path(__file__).resolve().parents[3] / "docs/vectors/team-certificate-verification-v1.json")',
+    ),
+    PurePosixPath("naapp-lib/tests/hooks/test_team_certificate_vectors.py"): _consumer(
+        "team-certificate-verification-v1.json",
+        '(Path(__file__).resolve().parents[3] / "docs/vectors/team-certificate-verification-v1.json")',
+    ),
+    PurePosixPath("naapp/library/tests/test_team_certificate_vectors.py"): _consumer(
+        "team-certificate-verification-v1.json",
+        '(Path(__file__).resolve().parents[3] / "docs/vectors/team-certificate-verification-v1.json")',
+    ),
     PurePosixPath("awid/tests/test_principal_attestation_vectors.py"): _consumer(
         "principal-attestation-v1.json",
         'Path(__file__).parents[2] / "docs" / "vectors" / "principal-attestation-v1.json"',
