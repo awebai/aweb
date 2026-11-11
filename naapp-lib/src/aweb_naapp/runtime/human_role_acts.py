@@ -91,10 +91,12 @@ class HumanRoleActs:
     async def prepare(
         self, *, installation: AdmittedInstallation, delivery: OwnerActDelivery
     ) -> PreparedHumanRoleAct:
-        """Check the delivery against the app's declaration and, for an act
-        that holds a role, the member and their certificate, before any lock.
-        A revoke reads no membership: a holder who left the team is revoked
-        too."""
+        """Check the delivery against the app's declaration, then the holding,
+        then, for an act that holds a role, the member and their certificate,
+        in the delivery contract's order and before any lock. The holding is
+        read without a lock or a transaction; the writer reads it again under
+        its lock. A revoke reads no membership: a holder who left the team is
+        revoked too."""
         act = delivery.act
         role = delivery.subject.get("role")
         principal = delivery.subject.get("principal")
@@ -106,23 +108,33 @@ class HumanRoleActs:
             or not isinstance(principal, str)
         ):
             raise OwnerActDeliveryRefused("owner_required")
-        member = None
         if act in _HOLDING_ACTS:
             if delivery.credential is None or (
                 role in self._notice_roles and delivery.notice_contact is None
             ):
                 raise OwnerActDeliveryRefused("owner_required")
-            if delivery.certificate is None:
-                raise OwnerActDeliveryRefused("principal_not_member")
-            member = await self._check_member(
-                installation.team_id, principal=principal, certificate=delivery.certificate
-            )
         elif (
             delivery.credential is not None
             or delivery.certificate is not None
             or delivery.notice_contact is not None
         ):
             raise OwnerActDeliveryRefused("owner_required")
+        held = await roles.read_holding(
+            self._passkeys.db,
+            installation_id=installation.installation_id,
+            team_id=installation.team_id,
+            role=role,
+            principal=principal,
+        )
+        if (held is not None) if act == HOLDER_DESIGNATE_ACT else (held is None):
+            raise OwnerActDeliveryRefused("owner_required")
+        member = None
+        if act in _HOLDING_ACTS:
+            if delivery.certificate is None:
+                raise OwnerActDeliveryRefused("principal_not_member")
+            member = await self._check_member(
+                installation.team_id, principal=principal, certificate=delivery.certificate
+            )
         context = await self._recorder.prepare_owner_act(
             installation, signing=delivery.signing, signature=delivery.signature
         )
