@@ -37,10 +37,13 @@ def mcp_messaging_runtime(
 ) -> MessagingRuntime:
     """The serving application's messaging runtime as this MCP app sends with it.
 
-    The origin, the federation authority and the federation transports are the
-    ones the MCP app was created with, as is the registry client when a tool
-    passes its own; the wake publisher and identity binding cache are the
-    serving application's, and so is the registry client otherwise.
+    The origin and the federation authority are the ones the MCP app was
+    created with, as is the registry client when a tool passes its own. The
+    federation transports are the ones ``register_tools`` hands each tool: the
+    host's, or else the federation authority's address-checked delivery
+    transport; with neither, a federated send is refused before any request is
+    made. The wake publisher and identity binding cache are the serving
+    application's, and so is the registry client otherwise.
     """
     state = getattr(getattr(auth.request, "app", None), "state", None)
     origin = (public_origin or "").strip()

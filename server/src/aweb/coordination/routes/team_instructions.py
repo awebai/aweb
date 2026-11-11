@@ -227,25 +227,33 @@ async def activate_team_instructions(
     if target["team_id"] != team_id:
         raise HTTPException(status_code=404, detail=RESOURCE_NOT_FOUND_DETAIL)
 
-    # Deactivate the currently active version (if any)
-    await db.execute(
-        """
-        UPDATE {{tables.team_instructions}}
-        SET is_active = false
-        WHERE team_id = $1 AND is_active = true
-        """,
-        team_id,
-    )
+    async with db.transaction() as tx:
+        # Activations of one team run one at a time, so each deactivates the
+        # version the one before it activated.
+        await tx.fetch_value(
+            "SELECT pg_advisory_xact_lock(hashtextextended($1, 0))",
+            f"team-instructions-activation:{team_id}",
+        )
 
-    # Activate the target version
-    await db.execute(
-        """
-        UPDATE {{tables.team_instructions}}
-        SET is_active = true
-        WHERE id = $1
-        """,
-        instructions_id,
-    )
+        # Deactivate the currently active version (if any)
+        await tx.execute(
+            """
+            UPDATE {{tables.team_instructions}}
+            SET is_active = false
+            WHERE team_id = $1 AND is_active = true
+            """,
+            team_id,
+        )
+
+        # Activate the target version
+        await tx.execute(
+            """
+            UPDATE {{tables.team_instructions}}
+            SET is_active = true
+            WHERE id = $1
+            """,
+            instructions_id,
+        )
 
     return True
 

@@ -112,7 +112,7 @@ async def test_member_keeps_original_authority_without_duplicate_or_audit_target
 async def human_client(world, service, audit):
     await apply_console_migrations(world.db)
 
-    async def installation(installation_id, *, team_id=None):
+    async def installation(installation_id, *, team_id: str):
         assert installation_id == world.admitted.installation_id
         return world.admitted
 
