@@ -1,0 +1,17 @@
+[hidden] { display: none !important; }
+body { margin: 0; }
+.handoff { max-width: 44rem; margin: 0 auto; padding: clamp(1.25rem, 5vw, 3rem); }
+.handoff h1 { font-size: var(--step-3); line-height: 1.15; margin: 0 0 var(--s3); }
+.handoff p { margin: var(--s2) 0; }
+.handoff-eyebrow { color: var(--muted); font-size: var(--step--1); }
+.handoff-origin { overflow-wrap: anywhere; color: var(--muted); }
+.handoff .card { margin: var(--s3) 0; }
+.handoff dl { margin: 0; }
+.handoff dt { font-weight: 600; margin-top: var(--s2); }
+.handoff dt:first-child { margin-top: 0; }
+.handoff dd { margin: 0.25rem 0 0; overflow-wrap: anywhere; font-family: var(--font-mono); font-size: var(--step--1); }
+.handoff .btn { min-height: 44px; white-space: normal; text-align: center; }
+.handoff button:disabled { opacity: 0.65; cursor: wait; }
+#handoff-status { min-height: 3em; }
+#handoff-allow { border-top: 1px solid var(--line); margin-top: var(--s3); padding-top: var(--s3); }
+#handoff-allow h2 { font-size: var(--step-2); }

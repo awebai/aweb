@@ -129,7 +129,7 @@ func runAppCredentialRegister(cmd *cobra.Command, args []string) error {
 // registerHolderCredential runs a credential handoff as this command's signing
 // identity and returns its export.
 func registerHolderCredential(cmd *cobra.Command, app *holderApp, roleName string) (*holderCredentialExport, error) {
-	opts, err := app.holderOptions(cmd, roleName)
+	opts, err := app.holderOptions(cmd, roleName, "credential")
 	if err != nil {
 		return nil, err
 	}

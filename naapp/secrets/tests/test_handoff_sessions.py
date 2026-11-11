@@ -241,6 +241,8 @@ async def journey(world, request, human_member_cache_seconds) -> AsyncIterator[J
                 expected_head=None,
                 invitation_id=None,
             )
+            # The signed human identity, for tests that certify an agent under it.
+            member.id_certificate = signed
             device = SoftAuthenticator(world.passkeys.rp.origin)
             if options.get("designated", True):
                 who = PrincipalKey(team, principal)
@@ -285,6 +287,11 @@ async def journey(world, request, human_member_cache_seconds) -> AsyncIterator[J
             human_member=human_member,
             limiter=LoginLimiter(
                 world.db, client_identity=ClientIdentity(), limit=100, window=timedelta(minutes=1)
+            ),
+            # A start by the holder's direct-child agent (handoff-wire 1a),
+            # verified against this registry; off unless a test asks for it.
+            requester_parent=(
+                options["requester_parent"](registry) if "requester_parent" in options else None
             ),
         )
         api, human = FastAPI(), FastAPI()
