@@ -16,6 +16,9 @@ hosted session never reaches these routes.
   unless ``chain_epoch`` is given). ``POST /v1/verify`` also checks receipts
   and checkpoints given as ``{"signing": <base64>, "signature": <base64>}``.
   Verify returns no event content.
+- ``GET /v1/export``: the team's whole log as an ``aweb.logs-export/1`` bundle
+  (:mod:`aweb_logs.export`), streamed as it is read, for verification with no
+  server (docs/logs-chain.md).
 
 On the agent origin, ``POST /v1/reader-removals`` removes a reader by the
 member's team authority alone, never the installation's last reader able to sign in.
@@ -24,6 +27,7 @@ member's team authority alone, never the installation's last reader able to sign
 import base64
 import binascii
 import logging
+import re
 from collections.abc import Awaitable, Callable
 from typing import Annotated, Any
 
@@ -36,8 +40,10 @@ from aweb_naapp.runtime.authorization import Authorization
 from aweb_naapp.runtime.credential_audit import GovernanceUnavailable
 from aweb_naapp.runtime.installation import InstallationRefused
 from fastapi import APIRouter, Depends, HTTPException, Request
+from fastapi.responses import StreamingResponse
 from pgdbm import AsyncDatabaseManager
 
+from aweb_logs.export import export_bundle
 from aweb_logs.ledger import verify_epoch
 from aweb_logs.read_store import DEFAULT_LIMIT, EventFilter, InvalidRead, Page, query, tail
 from aweb_logs.readers import Reader, ReaderDirectory, ReaderRemovals, RemovalRefused
@@ -145,6 +151,19 @@ def reader_read_router(reads: ReaderReads) -> APIRouter:
         )
         return {"events": page.events, "next_cursor": page.next_cursor}
 
+    @router.get("/v1/export")
+    async def export(reader: Annotated[Reader, Depends(current_reader)]) -> StreamingResponse:
+        """The reader's team's whole log as an ``aweb.logs-export/1`` bundle,
+        streamed as it is read, saved as a file named for the team; a holder
+        verifies it with no server (docs/logs-chain.md)."""
+        return StreamingResponse(
+            export_bundle(reads.db, reader.team_id),
+            media_type="application/jsonl",
+            headers={
+                "Content-Disposition": f'attachment; filename="{_export_filename(reader.team_id)}"'
+            },
+        )
+
     @router.get("/v1/verify")
     async def verify(
         reader: Annotated[Reader, Depends(current_reader)], chain_epoch: int | None = None
@@ -171,6 +190,12 @@ def reader_read_router(reads: ReaderReads) -> APIRouter:
         )
 
     return router
+
+
+def _export_filename(team_id: str) -> str:
+    """The file a team's exported log is saved as: its team id, with every
+    character outside letters, digits, ``-``, ``.`` and ``_`` written as ``_``."""
+    return "logs-" + re.sub(r"[^A-Za-z0-9._-]", "_", team_id) + ".jsonl"
 
 
 def read_query(
