@@ -22,6 +22,7 @@ from aweb_naapp_testing.human_members import HumanMember, registered_human
 from aweb_naapp_testing.owner_acts import APP_ID, INSTALLATION_ID, TEAM_ID
 from pgdbm.core import TransactionManager
 
+from aweb_naapp.console import apply_console_migrations
 from aweb_naapp.hooks.owner_act_nonces import Refused
 from aweb_naapp.roles import holding_scope
 from aweb_naapp.runtime.human_role_acts import HumanRoleActs
@@ -401,6 +402,7 @@ async def test_a_membership_proof_past_its_deadline_is_refused_before_commit(fx,
 
 
 async def test_retiring_the_installation_ends_its_holdings_and_their_credentials(fx):
+    await apply_console_migrations(fx.world.db)
     await deliver(fx, delivery(fx, DESIGNATE, holder()))
     async with fx.world.db.transaction() as tx:
         retired = await fx.acts.retire(tx, app_id=APP_ID, team_id=TEAM_ID)
