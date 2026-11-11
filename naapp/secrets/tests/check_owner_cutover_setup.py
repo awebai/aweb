@@ -11,6 +11,153 @@ argument cases remain with the assigned native run; this is not that proof.
 """
 
 
+def check_production_fixture_inputs(credential, origin):
+    """Evaluate the real fixture expressions, then validate their local inputs.
+
+    Registration I/O is not replaced or simulated: the exact certificate
+    arguments are constructed and checked for the registry's active-alias and
+    certificate-ID uniqueness requirements before opening any connection.
+    """
+    import ast
+    import importlib
+    from datetime import UTC, datetime
+    from pathlib import Path
+    from types import SimpleNamespace
+
+    from aweb_naapp.hooks.owner_act import HUMAN_ROLE_ACTS, Refused, _check_owner_act
+    from aweb_naapp.hooks.owner_act_nonces import OwnerActVerifier
+    from aweb_naapp.runtime.installation import AdmittedInstallation
+    from aweb_naapp_testing.owner_acts import TeamOwner
+    from awid.team_certificate import verify_team_certificate_signature
+
+    from tests import human_owner, production_authority, test_uninstall_cleanup
+
+    def tree(module, function):
+        return next(
+            n
+            for n in ast.parse(Path(module.__file__).read_text()).body
+            if isinstance(n, (ast.FunctionDef, ast.AsyncFunctionDef)) and n.name == function
+        )
+
+    def call(module, function, name):
+        return next(
+            n
+            for n in ast.walk(tree(module, function))
+            if isinstance(n, ast.Call)
+            and (
+                isinstance(n.func, ast.Name)
+                and n.func.id == name
+                or isinstance(n.func, ast.Attribute)
+                and n.func.attr == name
+            )
+        )
+
+    def evaluate(node, module, **values):
+        return eval(
+            compile(ast.fix_missing_locations(ast.Expression(node)), module.__file__, "eval"),
+            {**vars(module), **values},
+        )
+
+    failures = []
+    registrations = 0
+    for module_name, function in (
+        ("tests.test_production_bootstrap", "root"),
+        (
+            "tests.test_production_hook_network",
+            "test_production_hook_delivery_uses_explicit_dns_ca_and_internal_network",
+        ),
+    ):
+        module = importlib.import_module(module_name)
+        root_member = evaluate(call(module, function, "Member"), module)
+        principal = human_owner.fixture_principal(root_member.team_id, "alice")
+        holder = evaluate(
+            call(human_owner, "human", "Member"),
+            human_owner,
+            world=SimpleNamespace(owner=SimpleNamespace(team_key=root_member.team_key)),
+            principal=principal,
+            alias="alice",
+        )
+        certificates = (
+            evaluate(
+                call(production_authority, "authority", "add_certificate").args[0],
+                production_authority,
+                member=root_member,
+            ),
+            evaluate(
+                call(human_owner, "human", "add_certificate").args[0], human_owner, member=holder
+            ),
+        )
+        for certificate in certificates:
+            verify_team_certificate_signature(certificate, root_member.team_did_key)
+        for field in ("alias", "certificate_id"):
+            keys = [(c["team_id"], c[field]) for c in certificates]
+            if len(set(keys)) != len(keys):
+                failures.append(f"{module_name}: duplicate active registration {field}")
+        registrations += len(certificates)
+
+    other = human_owner.fixture_principal("other:example.com", "other")
+    grant = evaluate(
+        call(test_uninstall_cleanup, "another_installation", "_grant"),
+        test_uninstall_cleanup,
+        other=other,
+    )
+    admitted = AdmittedInstallation(
+        team_id=grant.team_id,
+        app_id="secrets",
+        installation_id=grant.installation_id,
+        generation=grant.generation,
+    )
+    subject_assignment = next(
+        n
+        for n in ast.walk(tree(human_owner, "apply_holder"))
+        if isinstance(n, ast.Assign)
+        and any(isinstance(t, ast.Name) and t.id == "subject" for t in n.targets)
+    )
+    subject = evaluate(subject_assignment.value, human_owner, admitted=admitted, principal=other)
+    update = next(
+        n
+        for n in ast.walk(tree(human_owner, "apply_holder"))
+        if isinstance(n, ast.Call)
+        and isinstance(n.func, ast.Attribute)
+        and isinstance(n.func.value, ast.Name)
+        and n.func.value.id == "subject"
+        and n.func.attr == "update"
+    )
+    evaluate(
+        update, human_owner, subject=subject, credential=credential, contact="other@example.com"
+    )
+
+    async def current_key(team_id):
+        assert team_id == other.team_id
+        return root_member.team_did_key
+
+    verifier = OwnerActVerifier(
+        scope=admitted.app_id, audience=origin, acts=HUMAN_ROLE_ACTS, team_key_for=current_key
+    )
+    owner = TeamOwner(root_member.team_key, verifier, other.team_id)
+    signing, signature = evaluate(
+        call(human_owner, "apply_holder", "sign"),
+        human_owner,
+        owner=owner,
+        act="human-role.designate",
+        subject=subject,
+    )
+    try:
+        _check_owner_act(
+            signing,
+            signature,
+            team_id=other.team_id,
+            current_team_key_did=root_member.team_did_key,
+            audience=origin,
+            acts=HUMAN_ROLE_ACTS,
+            now=datetime.now(UTC),
+        )
+    except Refused as exc:
+        failures.append(f"another_installation/apply_holder: {exc}")
+    assert not failures, failures
+    return {"production_registration_arguments": registrations, "uninstall_subject": "verified"}
+
+
 def main():
     import ast
     import importlib
@@ -250,8 +397,6 @@ def main():
         "socket_io": False,
         "result": "PASS",
     }
-    print(json.dumps(result, indent=2))
-
     # Genuine local crypto and HTTPS configuration setup, with no listener/driver.
     import ssl
     import tempfile
@@ -290,6 +435,9 @@ def main():
     device.credentials[soft.credential_id] = soft
     credential = HumanCredential(soft.credential_id, soft.cose_public_key(), soft.rp_id)
     assert credential.rp_id == passkeys.rp.rp_id and credential.sha256
+    result["production_fixture_inputs"] = check_production_fixture_inputs(
+        credential, passkeys.rp.origin
+    )
     owner = TeamOwner(member.team_key, verifier, member.team_id, current_team_key)
     signing, signature = owner.sign("app-role.designate", {"role": "fixture"})
     assert signing and signature
