@@ -1,13 +1,13 @@
 # Human assurance and protected signing
 
-Status: **contract draft for aweb-acxy.1; not an implementation or release
-claim**. Juan approved the architecture on 2026-11-11 at 19:06 UTC. This
-document specifies its shared policy boundary for hosted and independent
-deployments. The typed catalog and behavioral cases live in
-[`vectors/human-assurance-v1.json`](vectors/human-assurance-v1.json).
-Consumer interfaces and contributor sections must be reviewed together before
-this draft is frozen. Existing installations do not become conforming merely
-by installing this document.
+Status: **frozen implementation contract for aweb-acxy.1**. Juan approved
+the architecture on 2026-11-11 at 19:06 UTC; the coordinator directed this
+freeze after the settled review decisions. This document and the typed catalog
+[`vectors/human-assurance-v1.json`](vectors/human-assurance-v1.json) define the
+shared policy boundary for hosted and independent implementations. This is not
+a release claim: implementations must pass their positive, refusal and race
+cases. Unclassified operations and missing required evidence refuse; they do
+not block implementation of the settled groups.
 
 ## 1. Independent facts and authorities
 
@@ -383,34 +383,38 @@ authority is not an arbitrary path/body signing escape.
 
 For app `session` purpose, use the app's own B3 LOGIN and explicit Allow; there
 is no protected-service LOGIN or H-signed intermediary start. The paired wire
-delta is [handoff-wire section 1a at 90d41719f](https://github.com/awebai/aweb/blob/90d41719f47d933e8c4457e4f1debdb862d26c05/docs/design/handoff-wire.md).
+delta is [handoff-wire section 1a at 27169df70](https://github.com/awebai/aweb/blob/27169df70f04aae137d214697ffd1155e11a64e2/docs/design/handoff-wire.md).
 This changes only session-start admission, not human signing or governance.
 
 A current agent member Q whose freshly verified chain has H as its **direct**
 human parent may prepare H's app-session start. Q signs team-auth v2 with Q's
 OWN current team certificate, and sends Q's chain in `X-AWID-ID-Chain` using
 the existing encoding. The signed start body preserves aw's purpose, scope,
-client_key, redirect_uri and verifier_sha256; scope.principal is H. Add
-`holder_certificate`, H's public team certificate in the existing
-`X-AWID-Team-Certificate` encoding, exactly when Q differs from H. The field
-is refused on a same-signer H start. H's carried certificate never substitutes
-for Q's team-auth admission. A registered non-member laptop is refused; this
-change adds no possession-proof app start surface.
+client_key, redirect_uri and verifier_sha256; scope.principal is H. The body
+carries no certificate of H: `holder_certificate` is refused with HTTP 400
+`handoff_invalid` on every start. The factory loads H's certificate from the
+exact holding's retained evidence. It never substitutes for Q's team-auth
+admission. A registered non-member laptop is refused; this change adds no
+possession-proof app start surface.
 
 Before creating a handoff the app verifies Q's chain for Q's registered did:aw
 and the key authenticated by team-auth, with the existing status bound of
 60 seconds, current head and no revoked edge. Q's own leaf certificate must
 have H as its direct issuer, and that issuer's own verified kind must be human.
 A deeper descendant with the same nearest human does not qualify. The app
-independently verifies H's certificate under the team key for the installation's
-team and member_did_aw=H, current published/unrevoked membership, H's own human
+independently verifies H's retained holding certificate under the current team
+key for the installation's team and member_did_aw=H, current published/unrevoked
+membership, H's own human
 kind and H's exact current holding. Retain H's certificate as session evidence.
 Q's ancestry authorizes preparing this request only: it is never H's LOGIN,
 membership, holding, session, resource grant or exact-act approval.
 
-A malformed, missing or surplus `holder_certificate` is 400 `handoff_invalid`;
-an ineligible direct edge is 403 `scope_not_signer`. H's failed membership/kind
-is `principal_not_member` / `principal_not_human`; unavailable chain/certificate
+A supplied `holder_certificate` is 400 `handoff_invalid`; an ineligible direct
+edge is 403 `scope_not_signer`. Missing, renewed, replaced or otherwise unusable
+retained membership evidence is `principal_not_member`, and H's failed own-kind
+check is `principal_not_human`. Q can neither supply nor refresh that evidence.
+aw explains that the app's retained membership record is not current and names
+the H-signed credential-start refresh below. Unavailable chain/certificate
 status is 503 `principal_status_unavailable`, not a manufactured mismatch.
 Other existing handoff refusal rules remain. The page records/displays
 `requester: {id,address,key_fingerprint}` separately from H before H's app-RP
@@ -419,9 +423,9 @@ verifier preimage and single-use loopback code can collect the existing result.
 The resulting session is H's, with its exact holding and current membership
 checks unchanged. No other purpose, including `credential`, gains this
 same-signer exception. A Q-not-H session is **loopback only**:
-`holder_certificate` with `return: user_code` refuses with HTTP 400
-`handoff_invalid` before any handoff is created. H's own same-signer fallback
-is unchanged.
+`return: user_code` refuses with HTTP 400 `handoff_invalid` before any handoff
+is created, whether or not the forbidden certificate field is also present.
+H's own same-signer fallback is unchanged.
 
 aw derives H from Q's installed direct-parent chain and shows both identities.
 No qualifying requester means `requester_missing`. Onboarding is explicit:
@@ -451,6 +455,27 @@ them to the app's `/handoffs`. No server key/verifier/callback substitution or
 local human keychain fallback is permitted. The app's same-signer rule still
 sees H. This is LOGIN-bounded authentication for inert credential registration,
 not an exact-act approval to bind the new credential.
+
+**Membership evidence refresh happens at start acceptance.** The H-signed
+credential start carries H's current certificate in its existing team-auth
+header, not a body field. Once the app accepts and verifies that start, it
+refreshes the existing holding's retained certificate only when the verified
+team and principal match that exact holding. It checks the current team key,
+H's current member key, published/unrevoked certificate status and H's own
+human kind. The old retained certificate does not block this refresh; the
+fresh H-authenticated evidence supplies it. Q's signature, body data or ancestry
+cannot do so. A mismatch or failed verification changes no retained evidence.
+The refresh and accepted start are committed together, with the holding
+rechecked at that effect; no holding is created or rebound.
+
+This refresh does not wait for app credential registration or completion and
+requires no new passkey or owner act. It changes only the retained membership
+evidence, never a credential, session, approval or holding authority. It
+supersedes the older claim that credential handoffs leave no retained state;
+credential registration itself remains inert. Same-signer session refresh
+keeps its existing successful-login condition. The paired human-confirmation
+and handoff documents must carry this credential-start exception when their
+implementation lands.
 
 The shared receipt retains `signing=committed` and the known app 201 result
 `receiver={handoff_id,expires_at}`. aw constructs the app page from that ID and
@@ -986,20 +1011,29 @@ refusal, and prove ordinary request authentication and agent admission while
 worker-held human/controller shortcuts fail. Hosted tests must trace all
 issuance routes, including cached/recovery certificate paths and channel mail.
 Each release names exact package/client/server/registry versions; no version
-is claimed by this contract draft. Fresh setup and supported existing-state
+is claimed by this contract. Fresh setup and supported existing-state
 upgrade are separate acceptance journeys.
 
 ## 10. Review boundary and evidence
 
-Juan's one-approval setup and no-new-timers decisions are recorded in sections
-2, 3 and 6. The revised catalog, non-team cap/recovery evidence, HTTP requester
-proofs and explicit unresolved app-start behavior require the assembled
-delta's consumer and security review before implementation freezes. Concrete adapter route tables
-remain .2/.4/.5/.6 deliverables: each direct/cached/recovery key use must map to
-a catalog row or explicitly refuse. Review those routes at their implementation
-SHA, not from this document's existence. New credential-change recorder kinds
-must compose with the installed app's transactional recorder; a plain local-sink
-test is not proof of that integration. No bootstrap depends on remote Logs.
+All catalog operation groups, requester/receipt ports and policy cases are
+frozen for implementation, including the final loopback-only direct-child
+start, retained-certificate source and H-signed credential-start refresh,
+laptop admission, and server-frozen endorsement policy. There is no remaining
+policy decision blocking these groups. A runtime adapter with no implemented
+trusted evidence producer, custody binding or classified route must refuse
+that operation until its implementation is available; it must not invent a
+fallback or hold the other groups.
+
+Concrete adapter route tables remain .2/.4/.5/.6 deliverables: every
+direct/cached/recovery key use maps to a catalog row or explicitly refuses.
+Implementation handbacks give an exact SHA and focused positive, refusal and
+race evidence, with one independent implementation review and security review
+where a boundary changes. No repeated unchanged consumer FIT round is needed.
+New credential-change recorder kinds must compose with the installed app's
+transactional recorder; a plain local-sink test is not proof of that integration.
+No bootstrap depends on remote Logs. Release and install acceptance remain
+separate from this contract freeze.
 
 Source contracts are [ID certificates](id-certificates.md),
 [AWID](awid-sot.md), [owner acts](owner-act.md),
