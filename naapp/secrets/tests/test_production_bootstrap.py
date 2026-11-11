@@ -142,24 +142,39 @@ class EnrolledOwner:
     csrf_token: str
 
 
+def mounted_owner_console(service):
+    """Find the one original dependency through pinned FastAPI's lazy includes."""
+    import inspect
+
+    from fastapi.routing import APIRoute, _IncludedRouter
+
+    def original_routes(routes):
+        for route in routes:
+            if isinstance(route, _IncludedRouter):
+                yield from original_routes(route.original_router.routes)
+            elif isinstance(route, APIRoute):
+                yield route
+
+    [route] = [
+        route
+        for route in original_routes(service.console_app.routes)
+        if route.path == "/installations/{installation_id}/owner-acts" and "POST" in route.methods
+    ]
+    return inspect.getclosurevars(route.endpoint).nonlocals["services"]
+
+
 async def enrolled_owner(root):
     """Existing-holder component setup, followed by real production LOGIN.
 
     This does not claim a supported bootstrap journey between16.43a and b.
     The retired owner-acts HTTP route is tested independently for refusal.
     """
-    import inspect
     from types import SimpleNamespace
 
     service, client, configured, member, installed, smtp, transport, dns = root
-    route = next(
-        r
-        for r in service.console_app.routes
-        if getattr(r, "path", "") == "/installations/{installation_id}/owner-acts"
-    )
     # Read the actual mounted dependency; do not build a second app service or
     # replace its verifier, audit sink, installation lookup or Passkeys.
-    console = inspect.getclosurevars(route.endpoint).nonlocals["services"]
+    console = mounted_owner_console(service)
     fixture = getattr(client, "owner_fixture", None)
     principal = fixture_principal(member.team_id, "alice")
     member.extra_cert_fields = {"member_did_aw": principal.principal_did}

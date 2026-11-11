@@ -146,6 +146,7 @@ async def apply_holder(world, act, principal, contact, *, member=None, client=No
             cert = holder.certificate()
             cache = AWIDTeamCache(
                 registry_url=REGISTRY_URL,
+                ttl_seconds=60,
                 transport=world.registry.transport,
                 service_token=SERVICE_TOKEN,
             )
