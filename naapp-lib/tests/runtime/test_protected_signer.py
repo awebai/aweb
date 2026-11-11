@@ -415,3 +415,14 @@ async def test_execute_during_spent_assertion_uncommitted_decision_is_pending(wo
         if first is not None and not first.done():
             first.cancel()
             await asyncio.gather(first, return_exceptions=True)
+
+
+async def test_policy_change_after_options_is_distinct_from_invalid_proof(world):
+    prepared, proof = await approve(world)
+    old = await world.signer.policies.current("aweb.human-assurance/1")
+    world.signer.policies.set(replace(old, version=2))
+    with pytest.raises(SignerRefused, match="policy_changed"):
+        await world.signer.execute(prepared.operation_id, proof, human=world.human)
+    receipt = await world.signer.receipt(prepared.operation_id, reader=world.reader)
+    assert receipt.state == "refused" and receipt.code == "policy_changed"
+    assert "protected_operation_signed" not in await world.audit.kinds()
