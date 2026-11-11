@@ -18,7 +18,7 @@ from collections.abc import Collection
 
 from fastapi import HTTPException
 
-from awid.team_certificate import TeamCertificateError, check_team_certificate
+from awid.team_certificate import TeamCertificateError, check_team_certificate, refusal_answer
 from aweb.identity_scope import legacy_lifetime_for_scope, normalize_identity_scope
 
 logger = logging.getLogger(__name__)
@@ -30,16 +30,10 @@ logger = logging.getLogger(__name__)
 
 
 def certificate_refusal(error: TeamCertificateError) -> HTTPException:
-    """What the server answers for a certificate the shared check refuses.
-
-    Every fault of the certificate is an invalid credential: 401, with the
-    reason and, for ``invalid_field``, the field's name. Nothing the
-    certificate carries is in the answer. A team key from the registry that
-    does not decode is the registry's fault: 503.
-    """
-    if error.reason == "invalid_team_key":
-        return HTTPException(status_code=503, detail="authority_unavailable")
-    return HTTPException(status_code=401, detail=str(error))
+    """What the server answers for a certificate the shared check refuses
+    (awid.team_certificate.refusal_answer)."""
+    status_code, detail = refusal_answer(error)
+    return HTTPException(status_code=status_code, detail=detail)
 
 
 def parse_and_verify_certificate(

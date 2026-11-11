@@ -83,6 +83,18 @@
   the setting and the limit. The shipped `.env.example` set
   `LIBRARY_AUTH_CACHE_TTL_SECONDS=600`; a deployment made from it must lower
   it to 60 or remove the line before upgrading.
+- **Changed: the naapp runtime verifier (`aweb_naapp.runtime.team_auth`)
+  checks a team certificate with awid's one check.** Apps built on naapp-lib
+  now refuse a certificate whose `version` is not the integer 1 and one whose
+  `alias` is not a string, which they accepted. A certificate that fails is
+  401 with the check's reason as the detail (`malformed`,
+  `unsupported_version`, `invalid_field: <field>`, `member_key_mismatch`,
+  `bad_signature`, `revoked`, `unregistered`) where the detail was a
+  sentence; a registry key that does not decode is 503
+  `authority_unavailable`. The reason-to-status table is awid's
+  (`awid.team_certificate.refusal_answer`), shared with the server.
+  `AWIDTeamCache` refuses a lifetime above 60 seconds at construction, where
+  it read a larger one as 60; the settings already refused it.
 - **Changed: the server checks a team certificate with awid's one check, and
   its refusals change.** Every team-authenticated request, app task
   authorization and room read now calls
