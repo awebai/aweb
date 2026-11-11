@@ -147,7 +147,7 @@ async def test_external_rotation_recovers_on_first_request_and_updates_cache(wor
     assert (await _verify(env))["verified_team_did_key"] == env.new_did
     assert env.key_reads == 1
     assert await env.registry.get_team_public_key("acme.com", "backend") == env.new_did
-    assert await _refused(env, signer="old") == "Certificate signature verification failed"
+    assert await _refused(env, signer="old") == "bad_signature"
     assert env.key_reads == 1
 
 
@@ -175,9 +175,9 @@ async def test_bad_certificate_flood_is_coalesced_including_slow_attempt(world):
 async def test_cooldown_is_shared_by_clients_and_independent_per_team(world):
     env = world
     other_client = env.client()
-    assert await _refused(env) == "Certificate signature verification failed"
+    assert await _refused(env) == "bad_signature"
     assert env.key_reads == 1
-    assert await _refused(env, registry=other_client) == "Certificate signature verification failed"
+    assert await _refused(env, registry=other_client) == "bad_signature"
     assert env.key_reads == 1
     await _refused(env, name="other", registry=other_client)
     assert env.key_reads == 2
@@ -205,7 +205,7 @@ async def test_new_key_retry_reads_revocations_again(world):
     env = world
     env.keys["backend"] = env.new_did
     env.revoked = ["cert-001"]
-    assert await _refused(env) == "Certificate cert-001 has been revoked"
+    assert await _refused(env) == "revoked"
     assert env.key_reads == 1
     assert env.revocation_reads == 1
 
@@ -218,7 +218,7 @@ async def test_unchanged_or_failed_refresh_keeps_401_and_original_fact_age(world
     before = env.redis.values[cache_key]
     env.clock[0] += 2
     env.status = status
-    assert await _refused(env) == "Certificate signature verification failed"
+    assert await _refused(env) == "bad_signature"
     assert env.key_reads == 1
     assert env.redis.values[cache_key] == before
     await _refused(env)
@@ -229,7 +229,7 @@ async def test_unchanged_or_failed_refresh_keeps_401_and_original_fact_age(world
 async def test_member_mismatch_never_refreshes_team_key(world):
     _, _, wrong_member = _make_keypair()
     detail = await _refused(world, cert_patch={"member_did_key": wrong_member})
-    assert "did_key mismatch" in detail
+    assert detail == "member_key_mismatch"
     assert world.key_reads == 0
 
 
@@ -263,7 +263,7 @@ async def test_non_signature_refusals_never_refresh(world, headers_patch, cert_p
 
 @pytest.mark.asyncio
 async def test_unknown_team_has_only_its_existing_discovery_read(world):
-    assert await _refused(world, name="missing") == "Unknown team: missing:acme.com"
+    assert await _refused(world, name="missing") == "unknown_team"
     assert world.key_reads == 1
 
 
@@ -273,5 +273,5 @@ async def test_cached_revocation_never_triggers_key_refresh(world):
     entry = json.loads(world.redis.values[key])
     entry["value"] = ["cert-001"]
     world.redis.values[key] = json.dumps(entry)
-    assert await _refused(world, signer="old") == "Certificate cert-001 has been revoked"
+    assert await _refused(world, signer="old") == "revoked"
     assert world.key_reads == 0

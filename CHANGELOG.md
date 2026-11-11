@@ -83,6 +83,28 @@
   the setting and the limit. The shipped `.env.example` set
   `LIBRARY_AUTH_CACHE_TTL_SECONDS=600`; a deployment made from it must lower
   it to 60 or remove the line before upgrading.
+- **Changed: the server checks a team certificate with awid's one check, and
+  its refusals change.** Every team-authenticated request, app task
+  authorization and room read now calls
+  `awid.team_certificate.check_team_certificate`.
+  - **Newly refused:** a certificate whose `version` is `true`, and one whose
+    `alias` is absent, empty or not a string. Production holds no such
+    certificate.
+  - **One answer per reason.** A certificate that fails is 401 with the
+    reason as the detail: `malformed`, `unsupported_version`,
+    `invalid_field: <field>`, `member_key_mismatch`, `bad_signature`,
+    `revoked`, `unregistered`; an unknown team is 401 `unknown_team`. The
+    details no longer carry the team id, the certificate id or the version
+    presented. A registry key that does not decode is 503
+    `authority_unavailable`.
+  - **Status changes:** a certificate that is not registered, with
+    `AWEB_REQUIRE_REGISTERED_CERTIFICATES` on, was 403 and is 401; a room
+    read with a certificate that fails was 403 and is 401 ("Room membership
+    changed" stays 403); app task requests answer `revoked` where they
+    answered `certificate_revoked`, and the certificate's own reason where
+    they answered `signature_invalid` for it.
+  - With the registered-certificate requirement on, the registered set is
+    read with the revoked set, before the check, where it was read after.
 - **awid-service has one check for a team certificate,
   `awid.team_certificate.check_team_certificate`.** It takes the header, the
   key the certificate must name, the team's current key, and the team's
