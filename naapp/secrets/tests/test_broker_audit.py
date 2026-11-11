@@ -5,6 +5,7 @@ import json
 import secrets
 from dataclasses import replace
 from datetime import UTC, datetime, timedelta
+from types import SimpleNamespace
 from uuid import uuid4
 
 import asyncpg
@@ -43,6 +44,20 @@ INSTALLATION = "1b4e28ba-2fa1-4d3b-a3f5-ef19b5a7633b"
 class Installed:
     async def grant_for(self, team_id, certificate_id=None):
         return _grant_source_grant(installation_id=INSTALLATION) if team_id == TEAM else None
+
+    async def status_for(self, team_id):
+        grant = await self.grant_for(team_id)
+        if grant is None:
+            return None
+        return SimpleNamespace(
+            team_id=grant.team_id,
+            app_id="secrets",
+            state="active",
+            installation_id=grant.installation_id,
+            generation=grant.generation,
+            granted_scopes=grant.scopes,
+            fresh_until=grant.fresh_until,
+        )
 
 
 @pytest.fixture

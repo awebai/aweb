@@ -9,6 +9,7 @@ import time
 from collections.abc import AsyncIterator
 from dataclasses import replace
 from datetime import UTC, datetime
+from types import SimpleNamespace
 from typing import Any
 
 import asyncpg
@@ -103,6 +104,20 @@ def _grant_source_grant(
 class InstalledSecrets:
     async def grant_for(self, team_id: str, certificate_id: str | None = None) -> Grant | None:
         return _grant_source_grant() if team_id == TEAM else None
+
+    async def status_for(self, team_id: str) -> SimpleNamespace | None:
+        grant = await self.grant_for(team_id)
+        if grant is None:
+            return None
+        return SimpleNamespace(
+            team_id=grant.team_id,
+            app_id="secrets",
+            state="active",
+            installation_id=grant.installation_id,
+            generation=grant.generation,
+            granted_scopes=grant.scopes,
+            fresh_until=grant.fresh_until,
+        )
 
 
 def _request(request_id: str = "req_1", body: bytes = b"GET /v1/status", **changes) -> UseRequest:
