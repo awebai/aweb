@@ -293,6 +293,10 @@ ROOT_CONSUMERS = {
         "identity-log-v1.json",
         '_IDENTITY_VECTOR = _ROOT / "docs" / "vectors" / "identity-log-v1.json"',
     ),
+    PurePosixPath("awid/tests/test_did_key_from_signing_key.py"): _consumer(
+        "identity-log-v1.json",
+        'Path(__file__).resolve().parents[2] / "docs" / "vectors" / "identity-log-v1.json"',
+    ),
     PurePosixPath("awid/tests/test_federation_authority_vectors.py"): _consumer(
         {
             "federation-authority-state-v1.json",
@@ -513,10 +517,6 @@ ROOT_CONSUMERS = {
     PurePosixPath("cli/go/logschain/bundle_vectors_test.go"): _consumer(
         "logs-export-v1.json",
         '"../../../docs/vectors/logs-export-v1.json"',
-    ),
-    PurePosixPath("cli/go/cmd/aw/logs_verify_binary_test.go"): _consumer(
-        "logs-export-v1.json",
-        '"../../../../docs/vectors/logs-export-v1.json"',
     ),
     PurePosixPath("naapp/logs/tests/export_vector.py"): _consumer(
         "logs-export-v1.json",
