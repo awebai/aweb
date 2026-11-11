@@ -466,8 +466,14 @@ async def test_delivery_without_a_transport_makes_no_request(dials):
         await deliver_federated_message(
             delivery_origin="https://peer.example", envelope=_envelope(), signature="signature",
         )
-    with pytest.raises(TypeError):
+    assert dials == []
+
+
+@pytest.mark.asyncio
+async def test_a_server_with_no_delivery_transport_refuses_and_makes_no_request(dials):
+    with pytest.raises(FederatedMailDeliveryError) as refused:
         await _deliver("https://peer.example", None)
+    assert (refused.value.reason, refused.value.status_code) == ("delivery_unavailable", 502)
     assert dials == []
 
 
