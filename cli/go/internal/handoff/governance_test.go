@@ -46,7 +46,15 @@ func newSignerStub(t *testing.T, receipts ...string) *signerStub {
 			request["requester"] = "did:aw:requester"
 			request["policy_ref"] = "aweb.human-assurance/1"
 			request["policy_version"] = 1
-			request["artifact"] = map[string]any{"v": 1, "type": "aweb.owner-act", "act": s.prepared["operation"], "aud": s.prepared["audience"], "subject": s.prepared["subject"], "nonce": "n"}
+			authority, _ := s.prepared["scope"].(map[string]any)["authority"].(map[string]any)
+			artifact := map[string]any{"v": 1, "type": "aweb.owner-act", "act": s.prepared["operation"], "team_id": authority["id"], "aud": s.prepared["audience"], "subject": s.prepared["subject"], "nonce": "n"}
+			switch s.tamper {
+			case "act":
+				artifact["act"] = "human-role.designate"
+			case "team":
+				artifact["team_id"] = "other:example.com"
+			}
+			request["artifact"] = artifact
 			switch s.tamper {
 			case "intent":
 				request["subject"] = map[string]any{"app_id": "other"}
@@ -107,14 +115,15 @@ var (
 func revokeIntent() map[string]any {
 	return map[string]any{
 		"operation": "human-role.revoke", "variant": "default",
-		"scope":    map[string]any{"v": 1, "kind": "protected_key", "service_id": "svc"},
+		"scope": map[string]any{"v": 1, "kind": "protected_key", "service_id": "svc",
+			"authority": map[string]any{"kind": "team_controller", "id": "h:example.com", "domain": "example.com"}},
 		"audience": "https://console.example",
 		"subject":  map[string]any{"app_id": "example", "installation_id": "i", "role": "example.owner", "principal": "did:aw:holder"},
 	}
 }
 
 func TestAPreparedOperationThatIsNotWhatAwSentShowsNoLink(t *testing.T) {
-	for _, tamper := range []string{"digest", "intent", "extra"} {
+	for _, tamper := range []string{"digest", "intent", "extra", "act", "team"} {
 		stub := newSignerStub(t, committedReceipt)
 		stub.tamper = tamper
 		var opened string

@@ -201,6 +201,13 @@ func verifyPrepared(sent map[string]any, prepared *Prepared) error {
 		return mismatch("its policy differs from its request")
 	}
 	if artifact, ok := request["artifact"].(map[string]any); ok {
+		// The artifact is what gets signed: its act, team, subject and
+		// audience are exactly what aw asked for.
+		scope, _ := sent["scope"].(map[string]any)
+		authority, _ := scope["authority"].(map[string]any)
+		if !sameJSON(artifact["act"], sent["operation"]) || !sameJSON(artifact["team_id"], authority["id"]) {
+			return mismatch("its artifact is for another act or team")
+		}
 		if !sameJSON(artifact["subject"], sent["subject"]) || !sameJSON(artifact["aud"], sent["audience"]) {
 			return mismatch("its artifact names another subject or audience")
 		}
