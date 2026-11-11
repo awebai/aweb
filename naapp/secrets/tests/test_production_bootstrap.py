@@ -304,8 +304,10 @@ async def test_a_canonical_component_holder_logs_into_the_production_console(roo
     assert listed.status_code == 200, listed.text
     assert listed.json()["result"]["secrets"] == []
     assert (await client.get(AUDIENCE + "/v1/secrets")).status_code == 401
-    # No enrolment link exists after the cutover: a well-formed token B3 never
-    # issued is refused, and governance records nothing.
+    # No enrolment link exists after the cutover: none is stored, a
+    # well-formed token B3 never issued is refused, and governance records
+    # nothing.
+    assert await db.fetch_value("SELECT count(*) FROM passkey_enrolments") == 0
     refused = await client.post(
         human + "/enrolment/options", json={"link_token": secrets.token_urlsafe(32)}
     )

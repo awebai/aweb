@@ -8,19 +8,16 @@ from pathlib import Path
 from tempfile import TemporaryDirectory
 
 import httpx
-from aweb_naapp.roles import PrincipalKey, assign
 from aweb_naapp.runtime.app import NaappRuntime
 from aweb_naapp.runtime.origins import split_origins
-from aweb_naapp_testing import Member
 from awid_service.testing import REGISTRY_URL
 from fastapi import FastAPI
 
 from aweb_secrets.app import MIGRATIONS_PATH, MODULE_NAME, STORES
 from aweb_secrets.containment_routes import containment_api_router
 from aweb_secrets.manifest import MANIFEST_PATH
-from aweb_secrets.owners import OWNER_ROLE
 from tests.test_app import API, CONSOLE, _settings, allow_all
-from tests.test_change_sets import TEAM, Installations, world  # noqa: F401
+from tests.test_change_sets import ALICE, TEAM, Installations, world  # noqa: F401
 from tests.test_containment_service import service
 from tests.test_use_approval_lineage import seed
 from tests.test_use_approvals import SECRET_ID
@@ -76,13 +73,10 @@ async def running(uses, registry):
         assert discovery_domains
 
 
-async def test_signed_owner_can_contain_and_unsigned_cookie_or_console_cannot(uses, registry):
+async def test_signed_owner_can_contain_and_unsigned_cookie_or_console_cannot(uses):
     await seed(uses)
-    member = Member(team_id=TEAM)
-    await registry.add_team(TEAM, member.team_did_key)
-    await registry.add_certificate(member.certificate())
-    async with uses.world.db.transaction() as tx:
-        await assign(tx, PrincipalKey(team_id=TEAM, principal_did=member.did_key), OWNER_ROLE)
+    registry = uses.world.registry
+    member = uses.world.human_members[ALICE]
     body = json.dumps(
         {"request_id": "api-disable", "action": "disable-secret", "target": SECRET_ID}
     ).encode()
@@ -101,13 +95,10 @@ async def test_signed_owner_can_contain_and_unsigned_cookie_or_console_cannot(us
         assert "cookie" not in response.headers
 
 
-async def test_bad_body_and_reenable_never_echo_arbitrary_input(uses, registry):
+async def test_bad_body_and_reenable_never_echo_arbitrary_input(uses):
     await seed(uses)
-    member = Member(team_id=TEAM)
-    await registry.add_team(TEAM, member.team_did_key)
-    await registry.add_certificate(member.certificate())
-    async with uses.world.db.transaction() as tx:
-        await assign(tx, PrincipalKey(team_id=TEAM, principal_did=member.did_key), OWNER_ROLE)
+    registry = uses.world.registry
+    member = uses.world.human_members[ALICE]
     canary = os.urandom(24).hex()
     async with running(uses, registry) as api:
         for value in (

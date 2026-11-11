@@ -222,6 +222,80 @@ def check_legacy_owner_setups(root):
     return {"test_files": len(paths), "intentional_raw_role_contexts": len(intentional)}
 
 
+def check_metadata_owner_constructors(db):
+    """Execute the new helper's real local constructors; never its DB steps."""
+    import ast
+    from datetime import timedelta
+    from pathlib import Path
+
+    from aweb_naapp.roles import is_holding_scope, principal_key
+    from aweb_naapp.runtime.approvals import ApprovalRevocation, PgApprovalStore
+    from aweb_naapp.runtime.installation import AdmittedInstallation
+    from aweb_naapp.runtime.passkeys import Passkeys, RelyingParty
+    from aweb_naapp_testing import Member
+    from aweb_naapp_testing.owner_acts import INSTALLATION_ID
+
+    from aweb_secrets.owners import is_owner_scope
+    from aweb_secrets.passkey_context import PasskeyContexts
+    from tests import human_owner
+    from tests.test_owner_directory import Audit, Contacts
+
+    admitted = AdmittedInstallation(
+        app_id="secrets", team_id="backend:acme.com", installation_id=INSTALLATION_ID, generation=1
+    )
+    function = next(
+        n
+        for n in ast.parse(Path(human_owner.__file__).read_text()).body
+        if isinstance(n, ast.AsyncFunctionDef) and n.name == "bind_owner"
+    )
+    namespace = {
+        **vars(human_owner),
+        "db": db,
+        "admitted": admitted,
+        "timedelta": timedelta,
+        "is_holding_scope": is_holding_scope,
+        "is_owner_scope": is_owner_scope,
+        "ApprovalRevocation": ApprovalRevocation,
+        "PgApprovalStore": PgApprovalStore,
+        "Passkeys": Passkeys,
+        "RelyingParty": RelyingParty,
+        "PasskeyContexts": PasskeyContexts,
+        "Audit": Audit,
+        "Contacts": Contacts,
+    }
+    for name in ("store", "audit", "passkeys"):
+        expression = next(
+            n.value
+            for n in function.body
+            if isinstance(n, ast.Assign)
+            and any(isinstance(t, ast.Name) and t.id == name for t in n.targets)
+        )
+        namespace[name] = eval(
+            compile(ast.Expression(expression), human_owner.__file__, "eval"), namespace
+        )
+    assert namespace["passkeys"].db is db
+    principal = human_owner.fixture_principal(admitted.team_id, "alice")
+    member = Member(
+        team_id=admitted.team_id,
+        member_key=human_owner.member_key("alice"),
+        certificate_id="owner-alice",
+        alias="owner-alice",
+        extra_cert_fields={"member_did_aw": principal.principal_did},
+    )
+    from types import SimpleNamespace
+
+    actor = human_owner.canonical_actor(
+        SimpleNamespace(human_members={principal: member}), principal
+    )
+    assert principal_key(actor) == principal
+    assert (actor.did_key, actor.certificate_id, actor.alias) == (
+        member.did_key,
+        member.certificate_id,
+        member.alias,
+    )
+    return {"local_constructors": 3, "canonical_actor": "matches actual registered member fields"}
+
+
 def main():
     import ast
     import importlib
@@ -503,6 +577,7 @@ def main():
         credential, passkeys.rp.origin
     )
     result["legacy_owner_fixture_sweep"] = check_legacy_owner_setups(root)
+    result["metadata_owner_setup"] = check_metadata_owner_constructors(db)
     owner = TeamOwner(member.team_key, verifier, member.team_id, current_team_key)
     signing, signature = owner.sign("app-role.designate", {"role": "fixture"})
     assert signing and signature
