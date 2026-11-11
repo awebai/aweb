@@ -118,11 +118,11 @@ func runRun(cmd *cobra.Command, args []string) error {
 	}
 
 	if runTrustConfig {
-		trusted, err := awrun.TrustLocalConfig(workingDir)
+		trusted, digest, err := awrun.TrustLocalConfig(workingDir)
 		if err != nil {
 			return err
 		}
-		fmt.Fprintf(cmd.ErrOrStderr(), "aw run: trusted %s as it is now.\n", trusted)
+		fmt.Fprintf(cmd.ErrOrStderr(), "aw run: trusted %s as it is now (%s).\n", trusted, digest)
 	}
 	runCfg, err := runLoadUserConfig(workingDir)
 	if err != nil {

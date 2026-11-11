@@ -112,10 +112,15 @@ aw run claude --trust-config
 ```
 
 `--trust-config` records the digest of the file's content in
-`~/.config/aw/run-trusted.json`. Trust is of that exact content: if the file
+`~/.config/aw/run-trusted.json` and prints the file's path and that digest, so
+you see exactly what you trusted. Trust is of that exact content: if the file
 changes, by a pull or by anything else, `aw run` ignores it again until you
 trust the new content. When a file is ignored, `aw run` says so, names the
 file, and starts with your own configuration.
+
+Pass `--trust-config` by hand, after reading the file. Never put it in a
+script, a shell alias or a launcher's default arguments: there it would trust
+every future change to the file without anyone reading it.
 
 ### Messages whose sender is not verified
 

@@ -140,30 +140,31 @@ func LocalConfig(startDir string) (path string, state LocalConfigState, err erro
 }
 
 // TrustLocalConfig records that the user trusts the directory's run.json as it
-// is now, and returns its path.
-func TrustLocalConfig(startDir string) (string, error) {
+// is now, and returns its path and the digest of the content that was trusted.
+func TrustLocalConfig(startDir string) (path, digest string, err error) {
 	path, key, data, found, err := readLocalConfig(startDir)
 	if err != nil {
-		return "", err
+		return "", "", err
 	}
 	if !found {
-		return "", fmt.Errorf("no .aw/run.json to trust in %s", startDir)
+		return "", "", fmt.Errorf("no .aw/run.json to trust in %s", startDir)
 	}
 	trusted, err := loadTrustedLocalConfigs()
 	if err != nil {
-		return "", err
+		return "", "", err
 	}
-	trusted.Files[key] = localConfigDigest(data)
+	digest = localConfigDigest(data)
+	trusted.Files[key] = digest
 	encoded, err := json.MarshalIndent(trusted, "", "  ")
 	if err != nil {
-		return "", err
+		return "", "", err
 	}
 	recordPath, err := trustedLocalConfigsPath()
 	if err != nil {
-		return "", err
+		return "", "", err
 	}
 	if err := (atomicfile.Options{Mode: 0o600, ParentMode: 0o700}).Write(recordPath, append(encoded, '\n')); err != nil {
-		return "", err
+		return "", "", err
 	}
-	return path, nil
+	return path, digest, nil
 }
