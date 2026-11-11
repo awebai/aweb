@@ -22,13 +22,13 @@ VECTOR = Path(__file__).resolve().parents[1] / "docs/vectors/team-certificate-ve
 TEAM_ID = "backend:acme.com"
 
 # What a verifier answers for a certificate it refuses. `None` is acceptance.
-# `missing_field` names the field, from the certificate's own schema and never
-# from what was presented. `bad_signature` is a signature that is present and
+# `invalid_field` names a required field that is absent, empty or of the wrong
+# type, from the certificate's own schema and never from what was presented. `bad_signature` is a signature that is present and
 # does not verify under the team key the registry holds.
 REASONS = [
     "malformed",
     "unsupported_version",
-    "missing_field",
+    "invalid_field",
     "member_key_mismatch",
     "bad_signature",
     "revoked",
@@ -84,7 +84,7 @@ def _unsigned() -> dict:
 def _case(name: str, about: str, header: str, expected: str | None, today: dict[str, str], **context) -> dict:
     reason, _, field = (expected or "").partition(":")
     assert expected is None or reason in REASONS, expected
-    assert bool(field) == (reason == "missing_field"), expected
+    assert bool(field) == (reason == "invalid_field"), expected
     verdict = None if expected is None else {"reason": reason, **({"field": field} if field else {})}
     return {
         "name": name,
@@ -114,6 +114,23 @@ def cases() -> list[dict]:
             None,
             ACCEPTED,
         ),
+        *[
+            _case(
+                f"{name}_absent",
+                f"{name} is not a required field: a certificate without it is accepted.",
+                _header(_certificate(drop=(name,))),
+                None,
+                ACCEPTED,
+            )
+            for name in ("team_did_key", "identity_scope", "issued_at", "member_did_aw", "member_address")
+        ],
+        _case(
+            "extra_signed_field",
+            "A member the verifier does not know is signed with the rest, not injected: the certificate is accepted.",
+            _header(_certificate(lifetime="persistent", note="from a later issuer")),
+            None,
+            ACCEPTED,
+        ),
         _case("not_base64", "The header is not base64.", "%%%not-base64%%%", "malformed", refused("malformed", "refused")),
         _case("not_json", "The header decodes to text that is not JSON.", base64.b64encode(b"not json").decode(), "malformed", refused("malformed", "refused")),
         _case("not_an_object", "The header decodes to a JSON list.", _header([1, 2]), "malformed", refused("malformed", "refused")),
@@ -127,13 +144,13 @@ def cases() -> list[dict]:
         _case("version_2", "A version this verifier does not know.", _header(_certificate(version=2)), "unsupported_version", refused("accepted", "refused")),
         _case("version_string", 'version is the string "1".', _header(_certificate(version="1")), "unsupported_version", refused("accepted", "refused")),
         _case("version_true", "version is true, which equals 1 in some languages.", _header(_certificate(version=True)), "unsupported_version", refused("accepted", "accepted")),
-        _case("version_absent", "No version.", _header(_certificate(drop=("version",))), "missing_field:version", refused("accepted", "refused")),
-        _case("alias_absent", "No alias.", _header(_certificate(drop=("alias",))), "missing_field:alias", refused("accepted", "accepted")),
-        _case("alias_empty", "An empty alias.", _header(_certificate(alias="")), "missing_field:alias", refused("accepted", "accepted")),
-        _case("alias_not_a_string", "alias is a number.", _header(_certificate(alias=7)), "missing_field:alias", refused("accepted", "accepted")),
-        _case("certificate_id_absent", "No certificate_id.", _header(_certificate(drop=("certificate_id",))), "missing_field:certificate_id", refused("accepted", "refused")),
-        _case("team_id_absent", "No team_id.", _header(_certificate(drop=("team_id",))), "missing_field:team_id", refused("accepted", "refused")),
-        _case("member_did_key_absent", "No member_did_key.", _header(_certificate(drop=("member_did_key",))), "missing_field:member_did_key", refused("accepted", "refused")),
+        _case("version_absent", "No version.", _header(_certificate(drop=("version",))), "invalid_field:version", refused("accepted", "refused")),
+        _case("alias_absent", "No alias.", _header(_certificate(drop=("alias",))), "invalid_field:alias", refused("accepted", "accepted")),
+        _case("alias_empty", "An empty alias.", _header(_certificate(alias="")), "invalid_field:alias", refused("accepted", "accepted")),
+        _case("alias_not_a_string", "alias is a number.", _header(_certificate(alias=7)), "invalid_field:alias", refused("accepted", "accepted")),
+        _case("certificate_id_absent", "No certificate_id.", _header(_certificate(drop=("certificate_id",))), "invalid_field:certificate_id", refused("accepted", "refused")),
+        _case("team_id_absent", "No team_id.", _header(_certificate(drop=("team_id",))), "invalid_field:team_id", refused("accepted", "refused")),
+        _case("member_did_key_absent", "No member_did_key.", _header(_certificate(drop=("member_did_key",))), "invalid_field:member_did_key", refused("accepted", "refused")),
         _case(
             "member_key_mismatch",
             "The request is signed by a key the certificate does not name.",
@@ -142,7 +159,7 @@ def cases() -> list[dict]:
             refused("accepted", "refused"),
             request_did_key=KEYS["another-member"]["did_key"],
         ),
-        _case("signature_absent", "No signature.", _header(_unsigned()), "missing_field:signature", refused("missing_signature", "refused")),
+        _case("signature_absent", "No signature.", _header(_unsigned()), "invalid_field:signature", refused("missing_signature", "refused")),
         _case("signature_tampered", "A field was changed after signing.", _header(_tampered()), "bad_signature", refused("bad_signature", "refused")),
         _case(
             "signed_by_another_key",
@@ -166,6 +183,12 @@ def cases() -> list[dict]:
 # What the naapp runtime verifier answers today for each case.
 NAAPP_RUNTIME_TODAY = {
     "valid": "accepted",
+    "team_did_key_absent": "accepted",
+    "identity_scope_absent": "accepted",
+    "issued_at_absent": "accepted",
+    "member_did_aw_absent": "accepted",
+    "member_address_absent": "accepted",
+    "extra_signed_field": "accepted",
     "valid_issued_long_ago": "accepted",
     "not_base64": "refused",
     "not_json": "refused",
@@ -202,6 +225,12 @@ LIBRARY_TODAY = {
 # delivery's producer where the others compare it with the request's signer.
 HOOKS_TODAY = {
     "valid": "accepted",
+    "team_did_key_absent": "certificate_invalid",
+    "identity_scope_absent": "accepted",
+    "issued_at_absent": "accepted",
+    "member_did_aw_absent": "accepted",
+    "member_address_absent": "accepted",
+    "extra_signed_field": "accepted",
     "valid_issued_long_ago": "accepted",
     "not_base64": "certificate_invalid",
     "not_json": "certificate_invalid",
@@ -233,8 +262,10 @@ def document() -> str:
             "Verification of one team certificate, apart from the request that carries it: the header's shape, "
             "the certificate's fields, its binding to the request's signer, its signature under the team key the "
             "registry holds, and its standing at the registry. `expected` is the verdict every verifier is to "
-            "give: null for acceptance, or a `reason` from `reasons`, with the `field` a `missing_field` names. "
-            "A field that is present with a value that cannot be one (an empty or numeric alias) is missing. "
+            "give: null for acceptance, or a `reason` from `reasons`, with the `field` an `invalid_field` names: "
+            "a required field that is absent, empty or of the wrong type. The required fields are version, "
+            "certificate_id, team_id, member_did_key, alias and signature; any other member is signed with "
+            "the rest and is not the verifier's to judge. "
             "`today` records what each verifier named there "
             "answers now, where that differs or has not been unified: accepted, refused, or the reason it gives."
         ),
