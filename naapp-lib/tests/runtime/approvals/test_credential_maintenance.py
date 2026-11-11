@@ -990,7 +990,6 @@ async def test_a_contact_act_waits_for_a_change_in_flight(pw, contact_act):
         contact_options = await pw.passkeys.contact_cancel_options(SCOPE)
     else:
         contact_options = await pw.passkeys.contact_change_options(SCOPE, "other@example.com")
-    contact_assertion = device.get(dict(contact_options))
     prepared = await prepare(pw.passkeys)
     fence = Fence(pw.passkeys, hold=asyncio.Event())
     pw.contacts.notices.clear()
@@ -1000,6 +999,8 @@ async def test_a_contact_act_waits_for_a_change_in_flight(pw, contact_act):
     contact = None
     try:
         await asyncio.wait_for(fence.holding.wait(), WAIT)
+        # Asserted after the change's own assertion, as one authenticator's counter requires.
+        contact_assertion = device.get(dict(contact_options))
         contact = asyncio.create_task(
             pw.passkeys.change_contact(SCOPE, "other@example.com", contact_assertion)
             if contact_act == "change"

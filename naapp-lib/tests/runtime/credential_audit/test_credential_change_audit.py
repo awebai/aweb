@@ -261,8 +261,9 @@ class Tampering:
 
 
 def with_audit(world: World, sink) -> Passkeys:
-    """The world's B3 with another audit port in front of its recorder."""
-    return Passkeys(
+    """The world's B3, with another audit port in front of its recorder. It
+    becomes the app's one B3, which the recorder prepares through."""
+    world.passkeys = Passkeys(
         world.db,
         rp=RelyingParty(origin=ORIGIN, name="example"),
         delivery=world.inbox,
@@ -273,10 +274,12 @@ def with_audit(world: World, sink) -> Passkeys:
         proof_context=world.passkeys._proof_context,
         holding_scopes=world.passkeys._holding_scopes,
     )
+    return world.passkeys
 
 
 async def refused_and_rolled_back(world: World, scope: str, device, tamper, **kw) -> None:
     keys = await world.db.fetch_value("SELECT count(*) FROM {{tables.passkey_credentials}}")
+    added = await world.db.fetch_value("SELECT count(*) FROM {{tables.credential_added_keys}}")
     recorded = len(await payloads(world))
     with pytest.raises(GovernanceUnavailable):
         await change(
@@ -284,7 +287,9 @@ async def refused_and_rolled_back(world: World, scope: str, device, tamper, **kw
         )
     assert await world.db.fetch_value("SELECT count(*) FROM {{tables.passkey_credentials}}") == keys
     assert len(await payloads(world)) == recorded
-    assert await world.db.fetch_value("SELECT count(*) FROM {{tables.credential_added_keys}}") == 0
+    assert (
+        await world.db.fetch_value("SELECT count(*) FROM {{tables.credential_added_keys}}") == added
+    )
 
 
 async def test_an_event_naming_other_evidence_is_refused(world: World):
