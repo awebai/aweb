@@ -6,10 +6,13 @@
   It cached a team's key and revocations for `LIBRARY_AUTH_CACHE_TTL_SECONDS`,
   10 minutes by default and with no upper limit, so a revoked member
   certificate kept working there for that long; the server and the other
-  apps cap the same cache at 60 seconds. The library now caps it at 60
-  seconds and the accepted clock skew (`LIBRARY_TIMESTAMP_SKEW_SECONDS`) at
-  300, whatever is configured: a larger value is read as the cap, and the
-  default cache lifetime is 60.
+  apps cap the same cache at 60 seconds. The library now has the same
+  limits: 60 seconds for that cache, its new default, and 300 for the
+  accepted clock skew (`LIBRARY_TIMESTAMP_SKEW_SECONDS`). **Self-hosters: a
+  library configured past either limit no longer starts.** The error names
+  the setting and the limit. The shipped `.env.example` set
+  `LIBRARY_AUTH_CACHE_TTL_SECONDS=600`; a deployment made from it must lower
+  it to 60 or remove the line before upgrading.
 - **A customer-run aweb server can read its private team at the public
   registry without the registry-wide `AWID_SERVICE_TOKEN`.** Give the server
   an ordinary member certificate in each team it serves

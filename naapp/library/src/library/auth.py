@@ -24,7 +24,7 @@ from awid.team_ids import parse_team_id
 from fastapi import HTTPException, Request
 from pgdbm import AsyncDatabaseManager
 
-from library.config import Settings
+from library.config import MAX_TEAM_FACTS_TTL_SECONDS, Settings
 
 logger = logging.getLogger(__name__)
 
@@ -73,13 +73,6 @@ def _raise_if_private_team_unreadable(response: httpx.Response) -> None:
         )
 
 
-# The verifier's own limits: a deployment cannot configure past them. A revoked
-# certificate is accepted for as long as its team's facts stay cached, and a
-# captured request for as long as the clock skew allows.
-MAX_TIMESTAMP_SKEW_SECONDS = 300
-MAX_TEAM_FACTS_TTL_SECONDS = 60
-
-
 class AWIDTeamCache:
     """Small in-memory cache of AWID team authentication facts."""
 
@@ -87,7 +80,12 @@ class AWIDTeamCache:
         self, *, registry_url: str, ttl_seconds: int, service_token: str | None = None
     ) -> None:
         self.registry_url = registry_url.rstrip("/")
-        self.ttl_seconds = min(ttl_seconds, MAX_TEAM_FACTS_TTL_SECONDS)
+        if ttl_seconds > MAX_TEAM_FACTS_TTL_SECONDS:
+            raise ValueError(
+                f"ttl_seconds is {ttl_seconds}: AWID team facts are cached for at most "
+                f"{MAX_TEAM_FACTS_TTL_SECONDS} seconds"
+            )
+        self.ttl_seconds = ttl_seconds
         self._headers = (
             {"X-AWID-Service-Token": service_token.strip()}
             if service_token and service_token.strip()
@@ -387,7 +385,7 @@ async def authenticate_request(
         raise HTTPException(status_code=401, detail="Missing X-AWEB-Timestamp")
     parsed_timestamp = _parse_rfc3339_utc(timestamp)
     skew = abs((datetime.now(UTC) - parsed_timestamp).total_seconds())
-    if skew > min(settings.timestamp_skew_seconds, MAX_TIMESTAMP_SKEW_SECONDS):
+    if skew > settings.timestamp_skew_seconds:
         raise HTTPException(status_code=401, detail="X-AWEB-Timestamp outside allowed clock skew")
 
     cert_header = request.headers.get("X-AWID-Team-Certificate") or request.headers.get("x-awid-team-certificate") or ""
