@@ -65,6 +65,25 @@
   beads-mail` and `aw gc-mail` help and the mail documentation say so where they
   described a 30-day expiry.
 
+- `aw --json` prints every number with the digits the command produced.
+  Integers above 2^53 were rounded to the nearest value a 64-bit float holds.
+
+- `RegistryClient.list_addresses` and `RegistryClient.list_did_addresses` (and
+  their cached forms) follow the registry's cursor until `has_more` is false
+  and return every address; they returned the first 50. A cursor that does not
+  advance raises `RegistryError` with status 502. `list_team_certificates`
+  reads its pages through the same code and reports that case as `AWID
+  certificates pagination did not advance`.
+
+- `POST /v1/connect` with the `repo_origin` of a repo the team deleted restores
+  the team's repo row and binds the workspace to it, as `PATCH /v1/agents/me`
+  and `POST /v1/repos/ensure` do; it answered 500.
+
+- Activating a team instructions version deactivates the active version and
+  activates the chosen one in one transaction, and activations of one team run
+  one at a time. A failed activation leaves the active version as it was, and
+  concurrent activations leave exactly one version active.
+
 - `aw` writes U+2028 (line separator) and U+2029 (paragraph separator) as UTF-8
   in the canonical JSON it signs, as the Python reference
   (`awid.signing.canonical_json_bytes`) and TypeScript do; Go's JSON encoder
