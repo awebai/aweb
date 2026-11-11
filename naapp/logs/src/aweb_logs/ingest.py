@@ -13,7 +13,6 @@ from datetime import UTC, datetime, timedelta
 from typing import Any
 from uuid import UUID
 
-import httpx
 from aweb_naapp.hooks.catalog import Catalog, PayloadRefused
 from aweb_naapp.hooks.delivery import (
     AUTH_SCHEME,
@@ -39,9 +38,7 @@ from aweb_naapp.runtime.hook_resolver import (
 from aweb_naapp.runtime.manifest_hooks import bounded_body
 from aweb_naapp.runtime.team_auth import raw_request_target, require_active_certificate
 from awid.log import canonical_server_origin
-from awid.registry import RegistryClient, RegistryError
 from awid.team_certificate import decode_team_certificate
-from awid.team_ids import parse_team_id
 from fastapi import HTTPException, Request
 
 from aweb_logs.chain import format_time
@@ -123,13 +120,11 @@ class Ingestor:
 
     def __init__(
         self, runtime: NaappRuntime, signer: LogsSigner, catalog: Catalog, quota: ClientQuota,
-        *, registry: RegistryClient,
     ) -> None:
         self.runtime = runtime
         self.signer = signer
         self.catalog = catalog
         self.quota = quota
-        self.registry = registry
         self.resolver = runtime.hook_resolver()
 
     async def admit(self, request: Request, *, received_at: datetime) -> dict[str, Any]:
@@ -211,14 +206,19 @@ class Ingestor:
         }
 
     async def _current_team_key(self, team_id: str) -> str:
-        domain, name = parse_team_id(team_id)
+        # Read fresh through the runtime's AWID authority: the service token
+        # of a hosted Logs, or a customer-hosted Logs' own member certificate.
         try:
-            team = await self.registry.get_team_fresh(domain, name)
-        except (RegistryError, httpx.HTTPError, TimeoutError, ValueError) as exc:
+            team_did_key = await self.runtime.team_cache().current_team_did_key(team_id)
+        except HTTPException as exc:
+            if exc.status_code == 403 and isinstance(exc.detail, dict):
+                raise IngestRefused(403, str(exc.detail.get("code"))) from exc
             raise IngestRefused(503, "client_authority_unavailable") from exc
-        if team is None or not team.team_did_key:
+        except ValueError as exc:
+            raise IngestRefused(503, "client_authority_unavailable") from exc
+        if team_did_key is None:
             raise IngestRefused(401, "transport_certificate_invalid")
-        return team.team_did_key
+        return team_did_key
 
     async def _binding(
         self, event: Envelope, binding_id: UUID, occurred_at: datetime, request: Request

@@ -32,7 +32,6 @@ from aweb_naapp.runtime.hook_egress import HookEgress
 from aweb_naapp.runtime.origins import OriginApps
 from aweb_naapp.runtime.passkeys.email import PasskeyEmailDelivery
 from aweb_naapp.runtime.team_auth import Principal
-from awid.registry import RegistryClient
 from fastapi import FastAPI, HTTPException, Request
 from pgdbm import AsyncDatabaseManager
 
@@ -119,15 +118,7 @@ def create_app(
         link_text="Open Logs",
     )
 
-    async def configured_registry(domain: str) -> str:
-        # Match the runtime verifier's configured authority; no event selects a registry.
-        return settings.awid_registry_url
-
-    registry = RegistryClient(
-        registry_url=settings.awid_registry_url, service_token=settings.awid_service_token,
-        transport=awid_transport, domain_registry_resolver=configured_registry,
-    )
-    ingestor = Ingestor(runtime, signer, packaged_catalog(), settings.client_quota, registry=registry)
+    ingestor = Ingestor(runtime, signer, packaged_catalog(), settings.client_quota)
     console = FastAPI(docs_url=None, redoc_url=None, openapi_url=None)
 
     @asynccontextmanager
@@ -173,7 +164,6 @@ def create_app(
         finally:
             api.router.routes[:] = api_routes
             console.router.routes[:] = console_routes
-            await registry.aclose()
 
     api = FastAPI(lifespan=lifespan, docs_url=None, redoc_url=None, openapi_url=None)
     mount_manifest_routes(api, runtime=runtime)
