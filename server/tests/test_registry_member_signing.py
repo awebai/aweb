@@ -1,11 +1,13 @@
 """A server's ordinary member key can read only its configured private teams."""
 import asyncio
+import base64
+import os
+import subprocess
 import json
 
 import httpx
 import pytest
 from cryptography.hazmat.primitives import serialization
-from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey
 
 import awid.registry as registry_module
 from awid.did import did_from_public_key, generate_keypair
@@ -22,10 +24,8 @@ BASE = f"/v1/namespaces/{DOMAIN}/teams/{TEAM}"
 
 def configure_member(monkeypatch, tmp_path):
     key, public = generate_keypair()
-    pem = Ed25519PrivateKey.from_private_bytes(key).private_bytes(
-        serialization.Encoding.PEM, serialization.PrivateFormat.PKCS8,
-        serialization.NoEncryption(),
-    )
+    # awid.SaveSigningKey emits a PEM-wrapped 32-byte seed, not PKCS8.
+    pem = b"-----BEGIN ED25519 PRIVATE KEY-----\n" + base64.b64encode(key) + b"\n-----END ED25519 PRIVATE KEY-----\n"
     key_path = tmp_path / "server.pem"
     key_path.write_bytes(pem)
     config = tmp_path / "members.json"
@@ -311,3 +311,47 @@ def test_relative_member_key_paths_and_non_ed25519_refusal(monkeypatch, tmp_path
     (tmp_path / "server.pem").write_bytes(wrong_key)
     with pytest.raises(ValueError, match="AWID_MEMBER_KEYS_FILE"):
         get_settings()
+
+
+@pytest.mark.asyncio
+async def test_server_loads_key_emitted_by_existing_cli(aw_cli_binary, monkeypatch, tmp_path):
+    from aweb.config import get_settings
+    from awid.signing import sign_message
+
+    identity = tmp_path / "identity"
+    identity.mkdir()
+    env = {k: v for k, v in os.environ.items() if not k.startswith(("AWEB_", "AWID_"))}
+    # Local preparation does not register an identity or contact a service.
+    result = subprocess.run([
+        str(aw_cli_binary), "--identity-home", str(identity), "id", "team", "request",
+        "--create-local-key", "--team", TEAM_ID, "--name", "server",
+    ], env=env, cwd=tmp_path, text=True, capture_output=True, timeout=30)
+    assert result.returncode == 0, result.stderr
+    key_path = identity / "signing.key"
+    assert key_path.read_bytes().startswith(b"-----BEGIN ED25519 PRIVATE KEY-----")
+    manifest = tmp_path / "member-keys.json"
+    manifest.write_text(json.dumps({TEAM_ID: str(key_path)}))
+    monkeypatch.setenv("AWID_MEMBER_KEYS_FILE", str(manifest))
+    monkeypatch.delenv("AWID_SERVICE_TOKEN", raising=False)
+    monkeypatch.setenv("AWEB_DATABASE_URL", "postgresql://unused/test")
+    seed = get_settings().awid_member_signing_keys[TEAM_ID]
+    from nacl.signing import SigningKey
+    did = did_from_public_key(bytes(SigningKey(seed).verify_key))
+    assert did in result.stdout
+    payload = b"existing CLI key signs through the shared primitive"
+    verify_did_key_signature(did_key=did, signature_b64=sign_message(seed, payload), payload=payload)
+
+
+@pytest.mark.parametrize("pem", [
+    b"not a PEM file",
+    b"-----BEGIN PRIVATE KEY-----\n" + base64.b64encode(bytes(32)) + b"\n-----END PRIVATE KEY-----",
+    b"-----BEGIN ED25519 PRIVATE KEY-----\n!!not-base64!!\n-----END ED25519 PRIVATE KEY-----",
+    b"-----BEGIN ED25519 PRIVATE KEY-----\n" + base64.b64encode(bytes(31)) + b"\n-----END ED25519 PRIVATE KEY-----",
+    b"-----BEGIN ED25519 PRIVATE KEY-----\n" + base64.b64encode(bytes(64)) + b"\n-----END ED25519 PRIVATE KEY-----",
+])
+def test_shared_member_key_loader_refuses_wrong_format(pem):
+    from awid.signing import load_signing_key_pem
+
+    with pytest.raises(ValueError) as caught:
+        load_signing_key_pem(pem)
+    assert pem.decode() not in str(caught.value)
