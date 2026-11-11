@@ -103,8 +103,10 @@ class ConsoleChanges:
         self.approval_kind = approval_kind
         self.handoffs = handoffs
 
-    async def _installation(self, installation_id: str) -> AdmittedInstallation:
-        admitted = await self.console.installation(installation_id)
+    async def _installation(
+        self, current: ConsoleSession, installation_id: str
+    ) -> AdmittedInstallation:
+        admitted = await self.console.session_installation(current, installation_id)
         if admitted.installation_id != installation_id:
             raise HTTPException(403, "owner_required")
         return admitted
@@ -184,7 +186,7 @@ class ConsoleChanges:
     async def draft(
         self, current: ConsoleSession, installation_id: str, body: dict[str, Any]
     ) -> dict[str, Any]:
-        admitted = await self._installation(installation_id)
+        admitted = await self._installation(current, installation_id)
         self._supported(body["changes"])
         if not isinstance(body["sealed"], list):
             raise HTTPException(400, "request_invalid")
@@ -248,7 +250,7 @@ class ConsoleChanges:
     async def read(
         self, current: ConsoleSession, installation_id: str, change_id: str
     ) -> dict[str, Any]:
-        admitted = await self._installation(installation_id)
+        admitted = await self._installation(current, installation_id)
         async with self.console.db.transaction() as tx:
             await self._owner(tx, current, admitted)
             row = await self._row(tx, admitted, change_id)
@@ -280,7 +282,7 @@ class ConsoleChanges:
         )
         if installation_id is None:
             raise HTTPException(403, "owner_required")
-        admitted = await self._installation(installation_id)
+        admitted = await self._installation(current, installation_id)
         async with self.console.db.transaction() as tx:
             await self._owner(tx, current, admitted)
         return str(installation_id)
@@ -376,7 +378,7 @@ class ConsoleChanges:
     async def _candidate(
         self, current: ConsoleSession, installation_id: str, change_id: str, token: str
     ) -> str:
-        admitted = await self._installation(installation_id)
+        admitted = await self._installation(current, installation_id)
         async with self.console.db.transaction() as tx:
             await self._owner(tx, current, admitted)
             row = await self._row(tx, admitted, change_id)
@@ -429,7 +431,7 @@ class ConsoleChanges:
     async def confirm(
         self, current: ConsoleSession, installation_id: str, change_id: str
     ) -> Confirmation:
-        admitted = await self._installation(installation_id)
+        admitted = await self._installation(current, installation_id)
         # The shared resolver may do network I/O. Fetch before authority locks.
         view = await self.registrations.view(admitted.team_id, "post-governance-hook")
         async with self.console.db.transaction() as tx:

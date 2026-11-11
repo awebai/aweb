@@ -533,7 +533,7 @@ func TestWakeRunIsIdempotentAndServesItsSocket(t *testing.T) {
 		}
 		time.Sleep(20 * time.Millisecond)
 	}
-	if _, alive := wake.LockOwner(filepath.Join(stateDir, "lock")); !alive {
+	if _, alive := wake.LockOwner(filepath.Join(stateDir, "daemon.lock")); !alive {
 		t.Fatal("the daemon did not take the host lock")
 	}
 

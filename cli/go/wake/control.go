@@ -282,7 +282,7 @@ func StatusFromStore(store *Store, maxStreams int) (Status, error) {
 		Streams:    []StreamStatus{},
 		Instances:  []InstanceStatus{},
 	}
-	if pid, alive := LockOwner(store.LockDir()); alive {
+	if pid, alive := LockOwner(store.LockPath()); alive {
 		status.DaemonRunning = true
 		status.DaemonPID = pid
 	}

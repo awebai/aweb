@@ -145,7 +145,7 @@ def console_forms_router(*, changes: ConsoleChanges) -> APIRouter:
         async with _errors(changes.console, current):
             if installation_id is None:
                 installation_id = await changes.installation_for_session(current)
-            admitted = await changes._installation(installation_id)
+            admitted = await changes._installation(current, installation_id)
             async with changes.console.db.transaction() as tx:
                 await changes._owner(tx, current, admitted)
                 version = await tx.fetch_value(

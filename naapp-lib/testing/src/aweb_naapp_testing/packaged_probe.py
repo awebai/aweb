@@ -39,7 +39,7 @@ async def probe(
         )
         health_response.raise_for_status()
         checks = health_response.json()["checks"]
-        assert all(checks[name]["ok"] for name in health)
+        assert all(checks[name] == "ok" for name in health)
         ready = await client.get(f"http://127.0.0.1:{port}/ready", headers={"Host": host})
         assert ready.status_code == 200
         assert (

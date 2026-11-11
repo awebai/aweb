@@ -371,11 +371,8 @@ async def test_health_reports_the_commit_the_database_kms_and_the_outbox(
         body = response.json()
         assert body["service"] == "secrets-test"
         assert body["build"] == {"git_sha": COMMIT}
-        assert body["checks"] == {
-            "database": {"ok": True},
-            "outbox": {"ok": True, "oldest_undelivered_age_seconds": None},
-            "kms": {"ok": True},
-        }
+        assert body["checks"] == {"database": "ok", "outbox": "ok", "kms": "ok"}
+        assert body["details"] == {"outbox": {"oldest_undelivered_age_seconds": None}}
         assert (await app.api.get("/ready")).status_code == 200
 
 
@@ -383,8 +380,11 @@ async def test_the_service_is_not_ready_without_kms(registry, database_url) -> N
     async with running(registry, database_url, grants=InstalledTeams({}), kms_ok=False) as app:
         ready = await app.api.get("/ready")
         assert ready.status_code == 503
-        assert ready.json()["checks"]["kms"] == {"ok": False}
+        assert ready.json()["status"] == "unhealthy"
+        assert ready.json()["checks"]["kms"] == "error"
         assert (await app.console.get("/ready")).status_code == 503
+        assert (await app.api.get("/health")).status_code == 503
+        assert (await app.api.get("/live")).status_code == 200
 
 
 async def test_a_failing_check_serves_no_error_detail(registry, database_url, tmp_path) -> None:
@@ -405,8 +405,8 @@ async def test_a_failing_check_serves_no_error_detail(registry, database_url, tm
             response = await api.get(client_path)
             assert "KMSInvalidState" not in response.text
             assert "arn:" not in response.text
-            assert response.json()["checks"]["kms"] == {"ok": False}
-            assert response.json()["checks"]["database"] == {"ok": False}
+            assert response.json()["checks"]["kms"] == "error"
+            assert response.json()["checks"]["database"] == "error"
         assert set((await api.get("/ready")).json()["checks"]) == {"database", "outbox", "kms"}
 
 

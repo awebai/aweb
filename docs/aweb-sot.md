@@ -558,6 +558,14 @@ the migration first and replaces processes afterwards. The migration holds
 writes wait for it. A hosted deployment that keeps its own copy of the aweb
 migrations needs the same file in that copy.
 
+**Migration 049 (`049_dead_row_indexes.sql`).** It adds an index on
+`app_events.created_at`, `control_signals.consumed_at` and
+`federation_mutation_outbox.delivered_at` for
+[`aweb delete-dead-rows`](#garbage-collection). Each index build blocks writes
+to its table, and not reads, until the migration's transaction commits. No
+server code depends on the indexes. A hosted deployment that keeps its own copy
+of the aweb migrations needs the same file in that copy.
+
 ### Current table inventory
 
 The following list is exhaustive for current **aweb application tables declared
@@ -782,6 +790,51 @@ registry dependency failure returns
 `federation_authority_coordination_unavailable` (503, retryable) with exception
 logging preserved.
 
+**Outbound delivery transport:** federated mail and chat leave through one
+function, `deliver_federated_message`, and one transport,
+`aweb.federation.transport`. The delivery origin comes from a registry record or
+a stored participant route, so the transport admits it before any connection:
+the origin is `https` and named by host, the host is resolved once, and every
+answer is a public address (loopback, private, link-local, shared CGNAT,
+unique-local, multicast, reserved, unspecified and IPv4-mapped forms of those
+are refused, and one refused answer refuses the name). The connection goes to an
+admitted address, trying the answers in order until one accepts a connection,
+while TLS verification, SNI and `Host` name the origin; proxy
+settings in the environment are not read, redirects are not followed, each
+delivery resolves and checks again, and no connection outlives its response.
+Routes and MCP tools both take the transport from the federation authority, which
+shares its resolver, origin policy and trust anchors with strict registry reads
+(`docs/vectors/federation-origin-ip-v1.json`). `http` origins, address literals
+and non-public answers are admitted only under the isolated-development
+conditions of that vector: `APP_ENV=development`, `AWEB_FEDERATION_TEST=1`, and
+both this server's public origin and the destination host isolated (a
+single-label name, `localhost`, `*.localhost`, `*.test`, `*.test.local`, or a
+loopback literal). Outside those conditions, an operator admits private
+delivery origins only by listing them, comma-separated, in
+`AWEB_FEDERATION_PRIVATE_DELIVERY_ORIGINS`: each entry is one exact origin
+named by host (`https://host[:port]`), canonicalised as every delivery origin
+is and compared for equality, never a CIDR, wildcard or pattern; an invalid
+entry refuses start-up naming the entry, and unset or empty admits none. A
+listed origin's answers may each be public or in `10.0.0.0/8`,
+`172.16.0.0/12`, `192.168.0.0/16`, `100.64.0.0/10` or `fc00::/7`
+(`PRIVATE_DELIVERY_NETWORKS`; an IPv4-mapped answer is judged by its IPv4
+address), and one answer outside those refuses it, so loopback, link-local,
+unspecified and the other special-purpose ranges stay refused; every other
+check above still applies to it. Only the delivery transport receives the list:
+ID-tree registry reads call the same address admission without it, and awid's
+registry client is not given it, so registry reads keep requiring public
+answers. A delivery is bounded to 10 seconds, a 10 MiB success body
+and a 64 KiB error body. A failed delivery reaches the sender as the status and
+one fixed reason: `delivery_origin_refused` (the origin is not `https` named by
+host), `delivery_address_refused` (an answer is not admitted; the server also
+logs a warning naming the origin and the setting),
+`delivery_origin_unreachable`, `delivery_timeout`, `delivery_unavailable` (the
+server has no delivery transport and makes no request), a response-bound reason,
+`HTTP <status>`, or the remote's `reason` when it is a federation reason from
+[`federation-error-reference.md`](federation-error-reference.md). Other text the
+remote answers, on an error status or on a success answer that is not a JSON
+object, is logged at a bounded length and is not returned.
+
 **Receiver-wide replay identity:** every accepted local or federated mail/chat,
 plaintext or encrypted, claims one `message_ingress_receipts` row keyed solely
 by `message_id`. An exact federated canonical-envelope retry returns the stored
@@ -971,6 +1024,7 @@ the repair is observable. Repo association remains workspace state.
 `POST /v1/connect` also retains a `repo_origin` compatibility field. When it is
 non-empty, the server canonicalizes it, ensures the team-scoped repo row, and
 binds that repo to the workspace; a newly created workspace is typed `agent`.
+On both paths, ensuring the row of a repo the team deleted restores that row.
 An invalid origin returns HTTP 422. Omitting the field leaves an existing repo
 binding unchanged and creates a new workspace as `manual`. The current `aw
 init` client intentionally omits `repo_origin`; heartbeat's
@@ -1745,27 +1799,36 @@ callers planning around it.
 
 ### Garbage collection
 
-aweb provides three GC functions in `aweb.gc` that operators run on a
-schedule (cron, Kubernetes Job, or equivalent). All default to a
-30-day TTL and are configurable per-call:
+`aweb delete-dead-rows` (module function
+`aweb.gc.delete_dead_rows(db, apply=False)`) deletes rows that no reader of
+their table needs again. By default it is a dry run that changes nothing and
+prints, as JSON, per table: the rule's age in days (`older_than_days`), the
+number of dead rows (`dead_rows`) and `deleted_rows: 0`. With `--apply` it
+deletes them and prints the same counts with the number deleted.
 
-| Function | Default TTL | What it deletes |
+| Table | A row is dead when | Why no reader needs it |
 |---|---|---|
-| `gc_expired_messages(db_infra, ttl_days=30)` | 30 days | Mail messages and chat messages older than `ttl_days` (raw `created_at < now - ttl_days`). |
-| `gc_delivered_lifecycle_side_effects(db_infra, ttl_days=30)` | 30 days | Delivered lifecycle outbox rows older than `ttl_days`; pending rows are never removed. |
-| `gc_inactive_scopes(db_infra, ttl_days=30)` | 30 days | Teams with no message activity (mail or chat) for `ttl_days`, hard-deleted with all dependent rows (chat sessions, agents, workspaces, tasks, locks, etc.). |
+| `app_events` | `created_at` is more than 30 days ago | The event stream reads app events from a five-minute lookback window; nothing reads older ones. |
+| `control_signals` | `consumed_at` is set and more than 30 days ago | A stream consumes a signal once, by setting `consumed_at`; only unconsumed signals are read. A signal its target has not consumed is kept at any age. |
+| `federation_mutation_outbox` | `delivered_at` is set and more than 30 days ago | Delivery and recovery read only undelivered rows. An undelivered row is kept at any age. |
+| `lifecycle_side_effect_outbox` | `delivered_at` is set and more than 30 days ago | Replay and recovery read only undelivered rows. An undelivered row is kept at any age. |
 
-The GC functions are deletion-only — they do NOT cascade up to awid.
-Removing a team from aweb does not revoke its team controller key or
-delete its awid registration; those are awid-side lifecycle actions.
-Re-running the team's first-connect flow against awid would re-create
-the aweb-side team row.
+The command deletes from no other table. It never deletes a team, an agent, a
+task, a message, an `audit_log` row or an identity session grant, whatever
+their age or activity: aweb defines no retention period for `audit_log`, and
+expired and revoked grants are read by the grant list and by agent health.
+The server deletes no mail or chat message automatically.
 
-GC is not run automatically by the aweb server process. Operators
-choose how often to call these functions (typically nightly). Hosted
-operators that layer billing on top of aweb may schedule GC according
-to their own per-tier retention policies; that scheduling is the
-operator's concern, not aweb's.
+Each `DELETE` statement removes at most 1000 rows and commits on its own, so a
+run holds no long lock and may be stopped and run again. Each rule selects its
+rows through an index on the dated column; migration `049_dead_row_indexes.sql`
+adds the three that `app_events`, `control_signals` and
+`federation_mutation_outbox` need; without it the command scans those tables
+whole.
+
+The aweb server process does not run the command. Operators run it on a
+schedule (cron, a Kubernetes CronJob, or equivalent; typically nightly) with
+`AWEB_DATABASE_URL` set as for the server.
 
 ### Releasing claims on closed tasks
 
@@ -1818,6 +1881,10 @@ Point a restarting probe at `/live` only. A probe that restarts the process on
 `/ready` or `/health` restarts every replica during a Redis or database outage,
 into the same outage. The `server/Dockerfile` `HEALTHCHECK` probes `/live`; the
 compose files' healthchecks, which order start-up, probe `/ready`.
+
+The naapp runtime serves the same three routes with the same status codes and
+the same `status` and `checks` fields, for the dependencies each app checks;
+see [Health](../naapp-lib/README.md#health).
 
 A host that mounts the app under a prefix serves the three routes under that
 prefix. The CLI's request-compression discovery reads `GET /health` and treats

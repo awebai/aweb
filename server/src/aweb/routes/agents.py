@@ -850,7 +850,7 @@ async def patch_agent_workspace(
     if payload.repo_origin is not None:
         try:
             canonical_origin = canonicalize_git_url(payload.repo_origin)
-            new_repo_id = await ensure_repo(db, identity.team_id, payload.repo_origin)
+            new_repo_id = await ensure_repo(aweb_db, identity.team_id, payload.repo_origin)
         except ValueError as exc:
             raise HTTPException(status_code=422, detail=f"invalid repo_origin: {exc}") from exc
 

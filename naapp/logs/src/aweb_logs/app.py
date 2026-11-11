@@ -153,6 +153,7 @@ def create_app(
                     runtime,
                     signer=signer,
                     console_origin=settings.console_origin,
+                    client_address_header=settings.client_address_header,
                     delivery=delivery,
                     backlog_age=timedelta(seconds=settings.hook_events_stalled_after_seconds),
                 )

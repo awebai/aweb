@@ -101,7 +101,7 @@ def containment_console_router(
     ) -> dict[str, Any]:
         body = await _request(request)
         try:
-            admitted = await console.installation(installation_id)
+            admitted = await console.session_installation(current, installation_id)
             if admitted.installation_id != installation_id:
                 raise HTTPException(403, "owner_required")
             return asdict(await services.by_console(admitted=admitted, session=current, **body))

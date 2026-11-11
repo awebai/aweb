@@ -181,8 +181,8 @@ func idCertificateIDValid(value any, keyOnly bool) bool {
 		return e == nil && ComputeDIDKey(k) == id && idCertificatePrimePoint(k)
 	}
 	if !keyOnly && strings.HasPrefix(id, "did:aw:") {
-		b, e := base58.Decode(strings.TrimPrefix(id, "did:aw:"))
-		return e == nil && len(b) == 20 && "did:aw:"+base58.Encode(b) == id
+		b, e := DecodeStableID(strings.TrimPrefix(id, "did:aw:"))
+		return e == nil && "did:aw:"+base58.Encode(b) == id
 	}
 	return false
 }

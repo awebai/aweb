@@ -22,6 +22,13 @@ logs reads its settings from `LOGS_`-prefixed environment variables:
   readers' passkeys are bound to its hostname. A human-role act's audience must
   be this origin, since its credential is bound to the same hostname; one bound
   to any other host is refused;
+- `LOGS_CLIENT_ADDRESS_HEADER`, the header the deployment's proxy sets to the
+  client address it saw, such as `X-Real-IP`. The console login limit (12
+  requests a minute) is kept per that address, read from the header's last
+  comma-separated entry. Set it whenever logs runs behind a proxy or load
+  balancer: unset, the limit is kept per TCP peer, so every reader behind the
+  proxy shares one limit. Name only a header the proxy overwrites, because a
+  client can send any other;
 - `LOGS_EMAIL_SMTP_HOST`, `LOGS_EMAIL_SMTP_PORT`, `LOGS_EMAIL_TLS` (`starttls`,
   the default, or `implicit`), `LOGS_EMAIL_USERNAME`, `LOGS_EMAIL_PASSWORD_FILE`
   (the password is read only from this file), `LOGS_EMAIL_FROM` and, for a
