@@ -7,10 +7,12 @@ observer uses its own connection, so observing starvation never needs the pool.
 
 import asyncio
 import json
+from contextlib import asynccontextmanager
 
 import asyncpg
 import pytest
 from aweb_naapp_testing.webauthn import SoftAuthenticator
+from pgdbm import AsyncDatabaseManager
 
 from aweb_naapp.runtime.approvals import (
     Approvals,
@@ -55,13 +57,17 @@ class FencedEffects:
         self.first = asyncio.Event()
         self.release = asyncio.Event()
         self.holder = None
+        self.holder_task = None
+        self.lock_timeouts = {}
 
     async def prepare(self, tx):
         pid = await tx.fetch_value("SELECT pg_backend_pid()")
         self.pids.add(pid)
+        self.lock_timeouts[pid] = await tx.fetch_value("SHOW lock_timeout")
         self.admitted[id(tx)] = await self.fence.admit(tx, self.current)
         if self.holder is None:
             self.holder = pid
+            self.holder_task = asyncio.current_task()
             self.first.set()
             await self.release.wait()
 
@@ -95,6 +101,64 @@ def waits_for(rows, pid, holder):
     return False
 
 
+class PoolAcquireExpired(Exception):
+    """A real checkout expired; evidence was captured before its caller unwound."""
+
+
+class ObservedDatabase(AsyncDatabaseManager):
+    """Borrow the factory's real pool; bound only the F6 holder's next checkout.
+
+    Pool.acquire(timeout=...) is the real asyncpg operation. No SQL, provider
+    or verifier is substituted, and the original factory still owns cleanup.
+    """
+
+    def __init__(self, original):
+        assert original._pool is not None
+        super().__init__(pool=original._pool, schema=original.schema)
+        self.config = original.config
+        self.effects = self.observer = self.starvation = None
+        self.borrowers = {}
+
+    @asynccontextmanager
+    async def acquire(self):
+        task = asyncio.current_task()
+        holder = self.effects is not None and self.effects.holder_task is task
+        try:
+            connection = await self._pool.acquire(timeout=0.5 if holder else None)
+        except TimeoutError:
+            if not holder:
+                raise
+            # The original effect transaction STILL holds F6 here. Capture
+            # before raising, releasing its connection or cancelling any task.
+            self.starvation = {
+                "holder_pid": self.effects.holder,
+                "holder_task": self.effects.holder_task is task,
+                "holder_connections": self.borrowers.get(task, 0),
+                "pool_max": self._pool.get_max_size(),
+                "pool_size": self._pool.get_size(),
+                "pool_idle": self._pool.get_idle_size(),
+                "acquire_timeout_s": 0.5,
+                "lock_timeouts": self.effects.lock_timeouts.copy(),
+                "rows": await snapshot(self.observer, self.effects),
+                "locks": [
+                    dict(row)
+                    for row in await self.observer.fetch(
+                        "SELECT pid,locktype,mode,granted,relation::regclass::text AS relation,"
+                        "transactionid::text AS xid FROM pg_locks WHERE pid=ANY($1::int[]) "
+                        "ORDER BY pid,locktype,mode",
+                        sorted(self.effects.pids),
+                    )
+                ],
+            }
+            raise PoolAcquireExpired() from None
+        self.borrowers[task] = self.borrowers.get(task, 0) + 1
+        try:
+            yield connection
+        finally:
+            self.borrowers[task] -= 1
+            await self._pool.release(connection)
+
+
 @pytest.mark.parametrize("database_policy", [False, True], ids=["directory", "policy"])
 @pytest.mark.parametrize("phase", ["mint", "decide", "admit", "retry"])
 async def test_five_fenced_operations_do_not_checkout_a_sixth_connection(
@@ -103,7 +167,8 @@ async def test_five_fenced_operations_do_not_checkout_a_sixth_connection(
     # pgdbm's fixture already caps the pool at five. Its factory supplies the
     # pool keywords explicitly, so passing them again is not an override.
     world = await passkey_world(test_db_factory, registry)
-    db = world.passkeys.db
+    db = ObservedDatabase(world.passkeys.db)
+    world.passkeys.db = db
     await apply_installation_migrations(db)
     await db.execute(
         "CREATE TABLE {{tables.approval_test_policies}} (policy_ref text PRIMARY KEY, scope text)"
@@ -159,6 +224,7 @@ async def test_five_fenced_operations_do_not_checkout_a_sixth_connection(
     # Use an existing fence row, as concurrent requests of an installed team do.
     await effects.fence.refresh(current.team_id)
     observer = await asyncpg.connect(db.config.get_dsn())
+    db.effects, db.observer = effects, observer
     pool = db._pool
     assert pool is not None and pool.get_max_size() == 5
     tasks = []
@@ -207,16 +273,21 @@ async def test_five_fenced_operations_do_not_checkout_a_sixth_connection(
         assert pool.get_size() == 5 and pool.get_idle_size() == 0
         effects.release.set()
         _, unfinished = await asyncio.wait(tasks, timeout=5)
-        if unfinished:
-            # Capture BEFORE cancelling: pool waits are not PostgreSQL lock waits.
-            rows = await snapshot(observer, effects)
-            assert pool.get_idle_size() == 0, "unexpected stall without pool saturation"
-            assert sum(waits_for(rows, r["pid"], effects.holder) for r in rows) == 4, rows
+        if (evidence := db.starvation) is not None:
+            assert evidence["holder_task"] and evidence["holder_connections"] == 1, evidence
+            assert evidence["pool_max"] == evidence["pool_size"] == 5, evidence
+            assert evidence["pool_idle"] == 0, evidence
+            rows = evidence["rows"]
+            waiters = {r["pid"] for r in rows if waits_for(rows, r["pid"], effects.holder)}
+            assert len(waiters) == 4, rows
+            assert {r["pid"] for r in evidence["locks"] if not r["granted"]} == waiters, evidence
             holder = next(r for r in rows if r["pid"] == effects.holder)
             assert holder["state"] == "idle in transaction" and not holder["blockers"], rows
             pytest.fail(
-                "pool starvation: retained F6 holder needs a sixth checkout; " + json.dumps(rows)
+                "pool starvation: F6 holder's sixth checkout expired with all five occupied; "
+                + json.dumps(evidence)
             )
+        assert not unfinished, "effects did not finish; no holder checkout expiry was captured"
         results = [task.result() for task in tasks]
         if phase == "decide":
             assert all(result.state is ApprovalState.APPROVED for result in results)
