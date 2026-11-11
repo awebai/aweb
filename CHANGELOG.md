@@ -9,23 +9,36 @@
   send through the tool behaves as the same send through the routes:
   - A chat that names its recipient by address records the recipient as the
     sender's contact under the conditions the routes apply.
-  - `wait=true` on a send that names its recipient records the wait on the
-    session (`chat_sessions.wait_seconds`, `wait_started_at`,
-    `wait_started_by`). While the wait lasts the conversation stays pending
-    for the other party after they read the message, until they answer. A wait
-    on a `conversation_id` send is not recorded, as on
-    `POST /v1/chat/sessions/{session_id}/messages`.
+  - `wait=true` records the wait on the session (`chat_sessions.wait_seconds`,
+    `wait_started_at`, `wait_started_by`), for a send that names its recipient
+    and for one sent by `conversation_id`. While the wait lasts the
+    conversation stays pending for the other party after they read the
+    message, until they answer.
+  - **`POST /v1/chat/sessions/{session_id}/messages` records `wait_seconds`**
+    on the session as `POST /v1/chat/sessions` does; the field was accepted
+    and not recorded. A signed message must sign the `wait_seconds` it is sent
+    with, as on `POST /v1/chat/sessions`: a request that carries
+    `wait_seconds` with a signed payload that omits it is refused with 422. A
+    message to a participant on another server records no wait, as a new
+    session with one does not.
+  - A send that names its recipient goes to the conversation the two already
+    share, or opens one. The choice is made when the message is stored, under
+    a lock per pair, so two such sends at once open one conversation and
+    neither closes the other's. A send that finds the pair's conversation
+    changed after its fields were signed signs again; after three attempts it
+    is refused with "this conversation changed while the message was being
+    sent; send it again".
+  - **`POST /v1/chat/sessions` accepts an optional `hang_on`** (default
+    `false`), stored on the message and bound by a signed payload like
+    `leaving`; `send_chat` with a named recipient and `hang_on` sends it this
+    way, as it did. This adds one optional field to the request schema.
   - A hosted identity's signed payload and encrypted envelope are validated
-    before they are stored. A message sent by `conversation_id` signs no
-    `wait_seconds`, and a message to more than one recipient signs an empty
-    `to_did` and no `to_stable_id`. Encrypted chat to a recipient whose
+    before they are stored. A message to more than one recipient signs an
+    empty `to_did` and no `to_stable_id`. Encrypted chat to a recipient whose
     published encryption key is in hosted custody is delivered when the
     sender's own hosted key is published to this server, and is otherwise
     refused with `recipient_custodial_no_e2ee`; `plaintext` sends are
     unaffected.
-  - `hang_on` with a named recipient is sent as a message in the conversation
-    the two already share. With no such conversation the message is sent
-    without `hang_on`.
   - A full address or `@handle` outside the sender's team reaches a recipient
     on this server when the registry binds that address to it; `@handle`
     references follow the same rule as full addresses. An address that reaches
