@@ -347,7 +347,7 @@ identical. CLI non-executable files must match except package.json gitHead. For
 executables, module path, dependencies with versions/sums, Go version and every
 embedded build setting are compared. Only vcs.revision, vcs.time, main.commit and
 a main-module pseudo-version derived from that exact revision/time may differ;
-both builds must have vcs.modified=false. Under pinned Go 1.26.10, -trimpath omits
+both builds must have vcs.modified=false. Under pinned Go 1.26.11 (also verified with 1.26.10), -trimpath omits
 ldflags from embedded build info: the manifest therefore records the effective
 producer ldflags, compares them except main.commit, and requires that requested
 commit string in each executable. This is a mechanical check of the same code
