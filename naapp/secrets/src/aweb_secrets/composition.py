@@ -22,7 +22,6 @@ from aweb_naapp.hooks.owner_act import APP_ACTS
 from aweb_naapp.hooks.owner_act_nonces import OwnerActVerifier, apply_owner_act_migrations
 from aweb_naapp.key_file import read_key_file
 from aweb_naapp.nonces import apply_nonce_migrations
-from aweb_naapp.roles import purge_team
 from aweb_naapp.runtime.app import NaappRuntime
 from aweb_naapp.runtime.approvals import (
     ActionPolicy,
@@ -44,6 +43,7 @@ from aweb_secrets.app import Authorized, ConsoleRouter, SecretsService, create_a
 from aweb_secrets.approval_email import ApprovalEmailDelivery
 from aweb_secrets.approval_kind import approval_kind
 from aweb_secrets.audit_sink import SecretsAudit
+from aweb_secrets.broker_outcomes import prepare_legacy_broker_outcomes
 from aweb_secrets.broker_service import BrokerRequests
 from aweb_secrets.catalog import Catalog
 from aweb_secrets.change import TYPE as CHANGE_TYPE
@@ -96,6 +96,7 @@ from aweb_secrets.owners import OwnerDirectory, apply_owner_migrations, is_owner
 from aweb_secrets.passkey_context import PasskeyContexts
 from aweb_secrets.passkey_email import PasskeyEmailDelivery
 from aweb_secrets.response_audit import ResponseKey
+from aweb_secrets.retirement import retire_team
 from aweb_secrets.run_context import apply_run_dispatch_migrations
 from aweb_secrets.run_service import RunDispatch
 from aweb_secrets.runner_routes import runner_dispatch_router, runner_registration_router
@@ -164,7 +165,7 @@ async def _compose(
     db = runtime.db()
     fence = runtime.installation_fence()
     # Configure the shared fence; never create another G1 source or fence.
-    fence.on_retire = purge_team
+    fence.on_retire = partial(retire_team, app_id=settings.app_id)
     registrations = runtime.hook_registrations()
     store = PgApprovalStore(db)
     await store.migrate()
@@ -175,7 +176,7 @@ async def _compose(
         apply_change_policy_migrations,
         apply_custody_migrations,
         apply_change_set_migrations,
-        apply_dispatch_migrations,
+        partial(apply_dispatch_migrations, before_upgrade=prepare_legacy_broker_outcomes),
         apply_nonce_migrations,
         apply_job_migrations,
         apply_runner_migrations,
@@ -362,6 +363,7 @@ async def _compose(
     runs = run_dispatch(
         db,
         **common,
+        pins=custody.run_pins,
         passkeys=passkeys,
         origin=settings.public_origin,
         assignment_ttl=timedelta(seconds=settings.runner_assignment_ttl_seconds),

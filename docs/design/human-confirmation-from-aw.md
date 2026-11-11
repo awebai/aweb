@@ -59,29 +59,53 @@ lines 127-145, 157 and 173.
 ## The handoff
 
 One mechanism connects `aw` to a browser ceremony. It is L6's planned device
-flow (aweb-acgh.16.24), specified here once for every naapp and served on the
-installation's pinned `owner_acts.origin`. By default the result comes back
-to `aw` through a loopback redirect on the same machine, as RFC 8252 describes
-for native apps:
+flow (aweb-acgh.16.24), specified here once for every naapp. It spans the
+installation's two pinned origins: the app origin (the manifest's `origin`,
+the agent origin where member-signed tools are served) and the human origin
+(`owner_acts.origin`). The human origin never accepts team-auth: a request
+carrying `Authorization`, `X-AWEB-*` or `X-AWID-*` is refused there with
+`403 team_auth_refused` before any route
+(`naapp-lib/src/aweb_naapp/runtime/origins.py`). So the team-auth-signed
+start runs on the app origin, and the browser page and the result run on the
+human origin:
+
+| Step | Origin | Method and path | Authentication | `aud` |
+| --- | --- | --- | --- | --- |
+| Start | app origin | `POST /handoffs` | team-auth v2, as the holder | the app origin |
+| Page | human origin | `GET /handoff/{id}` | none; the browser's own ceremony | none |
+| Result | human origin | `POST /handoffs/{id}/result` | the code and the verifier in the body, signed by the ephemeral key in the console headers | the human origin |
+| Session requests | human origin | the console's routes | the session id, signed by the ephemeral key in the console headers | the human origin |
+| Owner-act delivery | human origin | `POST /.well-known/aweb-owner-act` | the act alone, unchanged | the human origin |
+
+The console headers are `X-Console-Key`, `X-Console-Signature`,
+`X-Console-Timestamp` and `X-Console-Signed-Payload`, and the handoff wire
+design (aweb-acwd.4.6) defines their signed bytes; none is a team-auth
+header, so the human origin admits them. The handoff id ties the steps
+together; both origins are one service with shared state. By default the result comes back to `aw` through a loopback
+redirect on the same machine, as RFC 8252 describes for native apps:
 
 1. `aw` makes an ephemeral key, held only in memory, listens on
    `127.0.0.1:<random port>`, and makes a random verifier. It calls
-   `POST <origin>/handoffs` with its purpose, the public key, that loopback
+   `POST <app origin>/handoffs` with its purpose, the public key, that loopback
    redirect URI, the verifier's SHA-256 and, for a session, the holder's
-   scope. The app accepts only a redirect URI of the form
+   scope, signed with team-auth v2 as the holder
+   ([Membership evidence](#membership-evidence)). The app refuses a scope
+   whose principal is not the verified signer with `403 scope_not_signer`. `aw` builds the page and
+   result URLs from the pinned human origin, never from the response. The app accepts only a redirect URI of the form
    `http://127.0.0.1:<port>/<path>` or `http://[::1]:<port>/<path>`, a
    literal loopback address; `localhost` and every other URI are refused
    (RFC 8252 §8.3). It answers a handoff id and a ten-minute expiry. The
    handoff grants nothing.
-2. `aw` opens `<origin>/handoff/{id}` in the local browser. The page names
+2. `aw` opens `<human origin>/handoff/{id}` in the local browser. The page names
    the purpose, the app and the installation.
 3. The browser runs the purpose's ceremony (below) with B3's existing
    routes, challenges and checks.
 4. The page then redirects the browser to the stored loopback URI, never to
    one taken from a request, with a single-use code. That is a redirect the browser follows to `aw`, not one
    that `aw` follows.
-5. `aw` collects the result from `POST <origin>/handoffs/{id}/result` with
-   the code and the verifier, signed by the ephemeral key. The app releases
+5. `aw` collects the result from `POST <human origin>/handoffs/{id}/result`
+   with the code and the verifier in the body, signed by the ephemeral key in
+   the console headers, and with no team-auth header. The app releases
    the result only for all three, once, before the handoff expires.
 
 **Why the loopback.** A typed user code ties nothing to the `aw` that started
@@ -100,7 +124,7 @@ not listening, and the attacker's result request is refused without it.
 
 **Fallback: no local browser** (`aw --no-browser`, for example over SSH). The
 app answers a short user code instead of a loopback. `aw` shows it, and the
-human types it into `<origin>/handoff` on any device; the URL never carries
+human types it into `<human origin>/handoff` on any device; the URL never carries
 it. The page:
 
 - says to continue only if this person started it in their own terminal,
@@ -108,13 +132,22 @@ it. The page:
 - shows the requesting `aw`'s hostname, as reported.
 
 Each completed fallback `session` handoff emits a `post-governance-hook`
-event, so the owner sees it. The `credential` purpose may use either path,
+event, `session.handoff_completed`
+([hook events](../hook-events.md#post-governance-hook)), in the transaction
+that releases the result, so the owner sees it; a handoff whose event cannot
+be admitted releases nothing. The `credential` purpose may use either path,
 because it grants nothing: a phished registration gives the attacker only a
 public key, and binding still needs the owner's act and the
 [fingerprint comparison](human-role-holders.md#what-the-owners-client-shows-and-signs).
 
-`aw` sends these requests only to the pinned origin and follows no
-redirects. The app rate-limits handoffs as it rate-limits login.
+`aw` sends these requests only to the installation's two pinned origins,
+each step to its own, and follows no redirects. The app rate-limits handoffs as it rate-limits login.
+
+An app that cannot emit that event refuses a fallback `session` handoff with
+`409 fallback_unavailable`. That includes an app whose hook catalog lacks the
+act, and the team server, which produces no hooks. It is not a session
+refusal: `aw` does not renew, and it reports the code and that a local browser
+is needed.
 
 **Purposes:**
 
@@ -133,8 +166,105 @@ redirects. The app rate-limits handoffs as it rate-limits login.
   ([Authentication](../aweb-sot.md#authentication): `aud`, `method`, `path`,
   `body_sha256`, `timestamp`), with the session id in place of `team_id` and
   a random `nonce`. The app refuses a timestamp outside the 300-second window
-  and a nonce already seen in that session. Each request re-checks that the principal is a current human member
-  ([Use](human-role-holders.md#use)).
+  and a nonce already seen in that session. Every session refusal (a session
+  that is unknown, closed or expired, a signature that does not verify, a
+  timestamp outside the window, a nonce already seen) is
+  `401 console_session_required`, the console's existing code, and it does
+  not say which check failed. Each request re-checks that the principal is a
+  current human member ([Use](human-role-holders.md#use)), from the session's
+  retained certificate ([Membership evidence](#membership-evidence)), and
+  refuses with `403 principal_not_member`, `403 principal_not_human` or
+  `503 principal_status_unavailable`. When the session's holding has been
+  revoked, the app refuses with `403 role_not_held`, and a `session` handoff
+  requested for a scope in which the signing principal holds no current
+  holding refuses the same way. `role_not_held` is final: no new handoff
+  restores a holding, so `aw` never renews on it. A `human-credential.replace`
+  retires the session's login credential at once and freezes the holder's
+  approvals and the widening changes they gate until its cooling-off ends
+  ([effects](human-role-holders.md#delivery-body-and-stage-3)). The principal still holds the
+  role, so a session that logged in with the retired credential is refused
+  with `401 console_session_required`, not `role_not_held`. During the
+  cooling-off no credential of the holding can log in, so the one renewal
+  fails and `aw` reports it. After the cooling-off, the renewal logs in with
+  the replacement credential, which the holder of the new passkey passes and
+  anyone with only the old one fails.
+
+### Membership evidence
+
+An app learns that a holder is a current human member of its team from the
+holder's own signed team certificate, not from a registry read of the team's
+members. `aweb_naapp` owns this evidence once, for every app: no app stores
+or verifies it on its own. The certificate is evidence, never authority by
+itself. Passkey, owner-act and session authority stay as they are, and each
+must still pass on its own.
+
+- **Presented.** The holder's existing team certificate is presented in
+  two places, in the encoding team-auth's `X-AWID-Team-Certificate` uses:
+  - At designation and replacement, it travels in the
+    [delivery body](../owner-act-delivery.md#delivery) next to `credential`.
+    The holder's `aw` exports it with the public credential, and the owner's
+    client passes it through. A team certificate is a public statement signed
+    by the team key, so it needs no proof of who carried it. The owner's
+    signature still covers the credential and the binding.
+  - At a `session` handoff, `aw` signs `POST <app origin>/handoffs` with
+    [team-auth v2](../team-auth-envelope-v2.md) as the holder, so the request
+    carries the certificate, which team-auth verifies as for any request. An
+    unsigned handoff request is refused.
+
+  A `credential` handoff is also signed this way, which keeps its
+  rate-limit identity, but the app retains nothing from it: no state is kept
+  for a credential that no act has bound yet.
+- **Retained.** The app keeps the exact certificate bytes of a verified
+  designation or replacement with the holding. It keeps those of a `session`
+  handoff with the session, for at most the session's lifetime. Retaining
+  them extends no session, approval or holding, and resets no freshness.
+- **Bound.** The certificate's `team_id` is the installation's team and its
+  `member_did_aw` is the holding's principal. A `session` handoff whose login
+  is for a holding of another principal refuses, and nothing changes.
+  Retained evidence is never borrowed from one holding or session for
+  another. The same public certificate may still be presented on its own for
+  each of the human's holdings and sessions in that team, and passes each
+  binding there.
+- **Checked at each use:** at designation and replacement (delivery stage
+  3), and at each login and each approval. Each check covers:
+  - the certificate's signature under the team's current key;
+  - its `member_did_key` against the principal's current key;
+  - its publication and revocation, through AWID's anonymous certificate
+    status;
+  - the principal's own registered ID kind `human`.
+
+  Each read keeps its existing freshness bound of at most 60 seconds and
+  fails closed. A designate or replace uses the certificate in its body. A
+  `session` handoff uses the certificate it presents. A browser login that
+  `aw` did not start presents none, so it uses the holding's.
+- **Outcomes.** A revoked certificate, a wrong team, principal or key, a
+  signature the current team key does not verify, or no usable certificate
+  retained gives `403 principal_not_member`. A kind other than `human` gives
+  `403 principal_not_human`. Neither starts a session or changes a holding.
+  Status that cannot be read gives `503 principal_status_unavailable`, never
+  "not human". "No usable certificate" means that none was presented and
+  retained, as for a holding or session made before this contract. The
+  holder then runs a fresh handoff, which presents a current one. No caller
+  flag, certificate id or matching metadata stands in for verifying the
+  bytes.
+- **Refresh.** After a team-key rotation, the old signature no longer
+  verifies. After a member-key rotation, `member_did_key` is no longer
+  current. Either way, the retained certificate fails at its next use. The
+  holder refreshes it with a `session` handoff that presents the reissued
+  certificate. That certificate, once verified, replaces the holding's
+  retained one only when its team and principal equal the holding's, and only
+  when the handoff's login succeeds; a failed assertion changes nothing. A
+  stale holding certificate therefore never blocks this refresh. Nothing
+  rewrites a certificate, rebinds the passkey, or treats the same
+  certificate id as current.
+- **Compatibility.** An AWID row with no stored certificate blob is not
+  refused for that reason, because the presented bytes are what the
+  unchanged verifier and status contract check. The app never fetches member
+  certificates from AWID and never builds one from metadata. A holder with
+  none gets one through the existing membership path. Ordinary team-auth
+  verification is unchanged.
+- **No other authority.** No app holds a registry-wide token, and no use
+  needs a human unlock beyond what each operation already requires.
 
 ## Confirming a frozen request
 
@@ -257,6 +387,145 @@ and its display of the runner code stay available, outside this journey.
   `aw` never writes the code anywhere but the controlling terminal.
 - Its limits are unchanged: ten minutes, single use, stored as a hash.
 
+## Session actions: what `aw` drives
+
+`aw` drives an app's human-origin routes in a `session` handoff only through
+actions the pinned manifest declares, in `owner_acts.session_actions`
+([manifest version 3](../app-manifest.md#manifest-version-3)). `aw` carries no
+per-app code: the declaration names the route, which inputs come only from
+the terminal, which outputs go only to the terminal, and how a confirm
+completes. An app with no such action declares none. logs declares none,
+since its reader needs only the `session` handoff.
+
+```json
+"session_actions": [
+  {"name": "change-set", "kind": "read", "role": "secrets.owner",
+   "method": "GET", "path": "/installations/{installation_id}/change-sets/{change_id}",
+   "input_schema": {"type": "object", "properties": {"installation_id": {"type": "string"},
+     "change_id": {"type": "string"}}, "required": ["installation_id", "change_id"]},
+   "params": [{"name": "installation_id", "in": "path"}, {"name": "change_id", "in": "path"}]},
+  {"name": "onepassword-token", "kind": "stage", "role": "secrets.owner",
+   "method": "POST", "path": "/installations/{installation_id}/backend-credentials/onepassword/versions",
+   "input_schema": {"type": "object", "properties": {"installation_id": {"type": "string"},
+     "value": {"type": "string"}}, "required": ["installation_id", "value"]},
+   "params": [{"name": "installation_id", "in": "path"},
+              {"name": "value", "in": "body", "protected": true}],
+   "body": {"mode": "json"}},
+  {"name": "confirm", "kind": "confirm", "role": "secrets.owner",
+   "method": "POST", "path": "/installations/{installation_id}/change-sets/{change_id}/confirm",
+   "input_schema": {"type": "object", "properties": {"installation_id": {"type": "string"},
+     "change_id": {"type": "string"}}, "required": ["installation_id", "change_id"]},
+   "params": [{"name": "installation_id", "in": "path"}, {"name": "change_id", "in": "path"}],
+   "body": {"mode": "json"},
+   "terminal_output": ["/runner_registrations/*/registration_code"],
+   "completion": {"read": "change-set",
+                  "ready": {"member": "can_confirm", "in": [true]},
+                  "done": {"member": "state", "in": ["applied"]},
+                  "stop": [{"member": "state", "in": ["cancelled", "expired"]},
+                           {"member": "approval_state", "in": ["rejected", "revoked", "expired"]}]}}
+]
+```
+
+An action is a tool object of version 2 with these differences:
+
+- `name` is unique among the session actions. `aw app human <app> <name>`
+  runs it, and `aw app human <app> --help` lists the declared actions with
+  their descriptions. Session actions are not agent tools: they never appear
+  in `aw <app> --help`, a grant snapshot or an MCP tool list, and an agent
+  call to one is not possible, because its route is on the human origin.
+- `role` names a role of `owner_acts.roles`. `aw` runs the action in a
+  `session` handoff for that role's holder scope, on `owner_acts.origin`. It
+  reuses one live session for every action of one invocation, and signs each
+  request as the `session` purpose requires.
+- `path` is relative to `owner_acts.origin`, under the version 2 path and
+  parameter rules. A path parameter named `installation_id` is filled by `aw`
+  with the resolved installation and is not a flag. `scopes`, `mutation` and
+  `invocation_contexts` are not declared: authority is the holder's session.
+- `kind` is one of:
+  - **`read`**: a `GET` with no protected input. It changes nothing.
+  - **`stage`**: a `POST` that stages a value or a vault reference. The app
+    guarantees that what it stages grants nothing until a change that names
+    it is confirmed.
+  - **`draft`**: a `POST` that creates a change for approval. A draft made in
+    a key-bound session is what sets the confirm mark
+    ([Change set](#confirming-a-frozen-request)); `aw` does nothing more.
+  - **`confirm`**: a `POST` that applies an approved change, with the
+    `completion` rules below.
+- A param may declare `protected: true`, only on an `in: body` param of a
+  `stage` action. Every other kind declares none.
+- `terminal_output` lists the response members that go only to the
+  terminal, as JSON pointers (RFC 6901) in which a `*` segment matches every
+  index of an array. Only a `confirm` action may declare it.
+
+**Protected input.** `aw` reads each protected field from the controlling
+terminal with echo off, as in [N4](#n4-terminal-input-and-the-runner-code),
+and never from a flag, the environment, a pipe or a file: a protected field
+has no flag. With no controlling terminal, or under an agent-runtime marker,
+`aw` refuses with `protected_input_unavailable` before it opens a handoff.
+The request body is excluded from `--trace` and every log, and wiped after
+sending.
+
+**Terminal output.** Before it calls an action that declares
+`terminal_output`, `aw` requires a controlling terminal and no agent-runtime
+marker, or refuses with `protected_output_unavailable`, so a one-time value
+is never produced where it cannot be shown. It writes each matching value
+only to the controlling terminal, labelled with its concrete pointer (for
+example `/runner_registrations/0/registration_code`). It removes those
+members from the response it prints or returns as JSON, and keeps every
+other member, such as `runner_id` and `registration_required`. A value is
+never logged, traced or stored.
+
+**Completion of a confirm.** `completion.read` names a `read` action each of
+whose params names an input of the confirm, so `aw` builds the read from the
+confirm's own invocation and needs nothing more from the human. A predicate names a top-level
+member of that read's response and the JSON values that satisfy it, compared
+by JSON type and value: `true` never satisfies `1`. `ready`
+and `done` are one predicate each; `stop` is a list of predicates, any of
+which stops.
+
+1. `aw` reads the state. `done` means the change is already applied: `aw`
+   reports `confirm_already_applied` and does not call confirm. `stop` refuses
+   with `confirm_stopped`, naming the member's value. Otherwise it waits,
+   reading again at most every two seconds, until `ready`, `done` or `stop`,
+   for as long as the session lives.
+2. On `ready`, `aw` calls the confirm action once, and shows its result under
+   the terminal-output rule.
+3. On a lost reply (no response, or a `5xx` with no JSON body), `aw` never
+   calls confirm again. It reads the state: `done` reports
+   `confirm_result_lost`, because the change applied and a one-time output
+   with it is not recovered; `ready` reports `confirm_not_applied`, meaning
+   not applied when read: a confirm still committing can land after that
+   read, and a later run's first read then reports it as
+   `confirm_already_applied`, its one-time output lost. Anything else reports
+   the read's state.
+4. When the app refuses the session (`401 console_session_required`), `aw`
+   opens a fresh `session` handoff once, and reports a second refusal. If it
+   has not yet sent the confirm, it resumes from step 1. If it has, it resumes in step 3: it only reads and
+   reports, and never sends the confirm again, even when the read says
+   `ready`, because the first confirm may still be committing. An invocation
+   sends the confirm at most once.
+5. A `403 role_not_held` ends the invocation. `aw` does not renew; it reports
+   the code and, when it had already sent the confirm, that the confirm's
+   outcome was not read.
+
+The app's own refusals pass through with their status and `detail`, such as
+`409 change_not_approved` or `403 owner_required`. `aw`'s own codes are
+`protected_input_unavailable`, `protected_output_unavailable`,
+`session_action_unknown` (no declared action of that name),
+`confirm_already_applied`, `confirm_stopped`, `confirm_result_lost` and
+`confirm_not_applied`. Each exits non-zero except `confirm_already_applied`.
+
+**secrets** declares, for `secrets.owner`:
+- the change-set `read`, `draft` and `confirm`, with the runner code as
+  `terminal_output`, as in the example;
+- `stage` actions for the 1Password service-account token (its `value`
+  protected) and for a 1Password reference
+  (`POST /installations/{installation_id}/onepassword/references`, nothing
+  protected).
+
+A native secret value is declared the same way, its value protected, on the
+route that stages it.
+
 ## L6: the `aw logs` reader
 
 `aw logs` signs in through a `session` handoff on logs' origin, with the
@@ -311,7 +580,21 @@ Each item is filed after review, and each is one reviewed change.
   human-kind check at use. Tests:
   - a handoff registering a non-loopback redirect URI is refused;
   - a result requested without the loopback code is refused;
-  - a replayed session request is refused.
+  - a replayed session request, an expired session and a request with a bad
+    signature each get the same `401 console_session_required`;
+  - a team-auth-signed `POST /handoffs` reaches the handoff service on the
+    app origin, and the same request, or any request carrying `Authorization`,
+    `X-AWEB-*` or `X-AWID-*`, sent to the human origin is still refused with
+    `403 team_auth_refused`;
+  - membership evidence: a certificate for another principal, team or key, a
+    revoked certificate, one signed under a rotated team key, and none
+    presented or retained each refuse with `403 principal_not_member`; a
+    `credential` handoff leaves no state; unreadable status
+    gives `503 principal_status_unavailable`; a refreshed certificate
+    presented in a session for another holding refuses and changes nothing;
+    retaining a certificate does not extend a session; a valid certificate
+    whose AWID row has no stored blob passes; ordinary team-auth requests are
+    unchanged.
 - **B2 (`aweb_naapp`):** the session-issued link, with tests:
   - a non-candidate session is refused;
   - an ineligible session is refused;
@@ -330,9 +613,18 @@ Each item is filed after review, and each is one reviewed change.
   - a repeated confirm does not apply it again.
 
   And a team-auth-drafted change set stays confirmable on the console.
+- **Manifest readers** (Go `cli/go/internal/appmanifest`, `aweb_naapp.manifest`):
+  `owner_acts.session_actions`, against the `manifest` cases of
+  `docs/vectors/owner-act-delivery-v1.json`.
 - **`aw`:** opening the browser, the loopback listener and the handoff, and
-  `--no-browser`; N4's terminal input and code output and their exclusion
-  from tracing.
+  `--no-browser`; `aw app human` driving the declared
+  [session actions](#session-actions-what-aw-drives), with N4's terminal
+  input and output, their exclusion from tracing, and a confirm's
+  completion and lost-reply rules. Tests include the sequence: confirm sent,
+  reply lost, `401` on the next read, fresh handoff, read still `ready`
+  while the first confirm commits; `aw` reports and never sends a second
+  confirm. Predicates compare by JSON type.
+- **secrets:** the `session_actions` declaration.
 - **The runner:** the registration runbook for the protected journey (the
   operator types the code at the runner's existing terminal prompt), and a
   test that the private-stdin path still reads one line.

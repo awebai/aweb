@@ -31,9 +31,10 @@ import hashlib
 import json
 import logging
 from collections.abc import AsyncIterator, Awaitable, Callable, Mapping, Sequence
-from contextlib import asynccontextmanager
+from contextlib import aclosing, asynccontextmanager
 from dataclasses import replace
 from datetime import UTC, datetime
+from enum import StrEnum
 from ipaddress import IPv4Network, IPv6Network
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
@@ -41,6 +42,7 @@ from urllib.parse import urlsplit
 from uuid import UUID
 
 import httpx
+from awid.registry import RegistryClient
 from fastapi import FastAPI, HTTPException, Request
 from fastapi.dependencies.models import Dependant
 from fastapi.responses import HTMLResponse, PlainTextResponse, Response
@@ -88,6 +90,12 @@ from aweb_naapp.runtime.event_emit import AppEvents, is_loopback_host
 from aweb_naapp.runtime.health import CheckResult, HealthCheck, mount_health
 from aweb_naapp.runtime.hook_resolver import HookResolver
 from aweb_naapp.runtime.hooks import RuntimeHooks
+from aweb_naapp.runtime.human_member import (
+    HumanMemberProof,
+)
+from aweb_naapp.runtime.human_member import (
+    check_human_member as observe_human_member,
+)
 from aweb_naapp.runtime.installation import InstallationFence
 from aweb_naapp.runtime.manifest_hooks import ManifestEvidence, bounded_body, prepare
 from aweb_naapp.runtime.settings import NaappSettings
@@ -416,6 +424,32 @@ class NaappRuntime:
             team_id, certificate_id=certificate_id, team_did_key=team_did_key
         )
 
+    async def check_human_member(
+        self, team_id: str, *, principal: str, certificate: Mapping[str, Any],
+        identity_client: RegistryClient | None = None,
+    ) -> HumanMemberProof:
+        """Current certificate/key and the exact subject's own human kind.
+
+        This is an explicit human-role call, never part of ordinary agent
+        authentication. Without an existing caller-owned SDK client it uses a
+        live client for this check and closes it; an injected CachedRegistryClient
+        retains its own bounded cache/lifecycle. No Redis setting is required.
+        App holdings, B3 admission and the caller's effect fence stay separate.
+        """
+        if identity_client is not None:
+            return await observe_human_member(
+                self.team_cache(), identity_client, team_id=team_id,
+                principal=principal, certificate=certificate,
+            )
+        async with aclosing(RegistryClient(
+            self.settings.awid_registry_url, transport=self._awid_transport,
+            service_token=self.settings.awid_service_token,
+        )) as client:
+            return await observe_human_member(
+                self.team_cache(), client, team_id=team_id,
+                principal=principal, certificate=certificate,
+            )
+
     async def principal(self, request: Request) -> Principal:
         """FastAPI dependency: the team member who signed this request.
 
@@ -698,6 +732,7 @@ def mount_naapp_routes(
     robots_disallow: Sequence[str] = (),
     noindex_paths: Sequence[str] = (),
     health_checks: Mapping[str, HealthCheck] | None = None,
+    health_labels: Mapping[str, StrEnum] | None = None,
 ) -> None:
     """Serve the standard naapp public surface.
 
@@ -781,4 +816,9 @@ def mount_naapp_routes(
         return PlainTextResponse(skill, headers=_NOSNIFF)
 
     mount_manifest_routes(app, runtime=runtime)
-    mount_health(app, settings, checks={**runtime.health_checks(), **(health_checks or {})})
+    mount_health(
+        app,
+        settings,
+        checks={**runtime.health_checks(), **(health_checks or {})},
+        labels=health_labels,
+    )

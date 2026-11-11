@@ -122,7 +122,9 @@ Stages 1 and 2 are unchanged. For an authenticated act, stage 3 checks:
 - the installation, admitted, whose team is the act's `team_id`;
 - the nonce, consumed in the effect's transaction;
 - for designate and replace only: `principal` holds a current certificate of
-  that team, and its own registered ID kind is `human` (H2). The kind is the subject's own, never the
+  that team, shown by the team certificate the delivery body carries
+  ([membership evidence](human-confirmation-from-aw.md#membership-evidence)),
+  and its own registered ID kind is `human` (H2). The kind is the subject's own, never the
   kind of its nearest human ancestor or a label. A registry that cannot answer
   refuses with `503 principal_status_unavailable`. Nothing takes effect, and
   the outcome depends only on the act. `aweb_naapp` lacks this wiring:
@@ -198,9 +200,9 @@ It then signs. The holder's `aw` obtains the public credential through a
 browser creates the passkey on the app's human origin and B3 verifies the
 registration. When the owner is the holder, one client runs the handoff and
 signs the act in one sitting. When the holder is someone else, the holder's
-client exports the public credential, and the owner signs only after the two
-clients show the same fingerprint (H4). That comparison helps only
-under two conditions:
+client exports the public credential with its team certificate, and the
+owner signs only after the two clients show the same fingerprint (H4). That
+comparison helps only under two conditions:
 
 - the holder's client read the credential from the intended authenticator;
 - the fingerprint travels over a channel that the holder's custodian does not

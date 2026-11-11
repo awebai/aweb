@@ -168,3 +168,5 @@ Their [Logs fixture](../tests/production_logs.py) uses the existing S19 serving
 lifecycle and actual served Logs manifest. Receiver installation and activated
 bindings are external fixture preconditions; the owner activation ceremony and
 designated-reader journey remain separate acceptance.
+
+Runner sizing: see [1Password quota and exhaustion guidance](OPERATIONS.md#1password-runner-quota).

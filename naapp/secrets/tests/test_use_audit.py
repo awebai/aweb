@@ -328,11 +328,19 @@ async def test_s3_cannot_close_without_the_matching_lifecycle_receipt(uses, stat
 
 async def test_s3_cannot_start_waiting_when_the_requested_receipt_is_missing(uses):
     _, _, _, machine, dispatch_id = await composition(uses, awaiting=False)
-    # Remove the operational receipt from an actual mint. The signed outbox
-    # remains; a missing original receipt must still refuse this transition.
-    await uses.world.db.execute(
-        "DELETE FROM {{tables.broker_use_events}} WHERE dispatch_id=$1", dispatch_id
-    )
+    # Simulate damage predating the retention migration, in this disposable DB.
+    # Ordinary DELETE is now refused (covered by test_broker_audit). Keep the
+    # independent missing-history refusal, with protection restored before use.
+    async with uses.world.db.transaction() as tx:
+        await tx.execute(
+            "ALTER TABLE {{tables.broker_use_events}} DISABLE TRIGGER broker_use_events_no_delete"
+        )
+        await tx.execute(
+            "DELETE FROM {{tables.broker_use_events}} WHERE dispatch_id=$1", dispatch_id
+        )
+        await tx.execute(
+            "ALTER TABLE {{tables.broker_use_events}} ENABLE TRIGGER broker_use_events_no_delete"
+        )
     with pytest.raises(ValueError):
         async with uses.world.db.transaction() as tx:
             await machine.await_approval(tx, dispatch_id)
