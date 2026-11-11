@@ -125,8 +125,9 @@ async def test_a_renewed_holder_certificate_refuses_until_the_holders_credential
     renewed = Member(team_id=TEAM, team_key=journey.member.team_key, member_key=journey.member.member_key,
                      alias="alice", certificate_id="cert-1-renewed",
                      extra_cert_fields=dict(journey.member.extra_cert_fields))
-    await journey.world.registry.add_certificate(renewed.certificate())
+    # One active certificate per alias: the old one is revoked as the new one is issued.
     await journey.world.registry.revoke(journey.member.certificate_id)
+    await journey.world.registry.add_certificate(renewed.certificate())
 
     refused = await start(journey, laptop, chain)
     assert refused.status_code == 403 and refused.json() == {"detail": "principal_not_member"}
