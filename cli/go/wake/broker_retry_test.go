@@ -4,31 +4,57 @@ import (
 	"context"
 	"fmt"
 	awid "github.com/awebai/aw/awid"
+	"github.com/awebai/aw/internal/manualclock"
+	"github.com/awebai/aw/run"
 	"testing"
 	"time"
 )
 
+// docs/event-stream-client-policy.md §3 and §4: 408, 409, 425 and 429 and any
+// 5xx are retried on the transient delay; every other 4xx quarantines the
+// stream, which is retried a minute later and not before.
 func TestStreamQuarantinesOnlyPermanentRegistrationErrors(t *testing.T) {
-	for _, code := range []int{400, 401, 403, 404, 408, 409, 422, 429, 500} {
+	for _, code := range []int{400, 401, 403, 404, 408, 409, 422, 425, 429, 500} {
 		t.Run(fmt.Sprint(code), func(t *testing.T) {
 			server := newRecordingServer(t)
 			server.status = code
-			runner := newStreamRunner("key", "identity", "team", openerFor(t, server.URL), func(awid.AgentEvent) {}, func(string, ...any) {}, time.Now, time.Minute, time.Millisecond, 2*time.Millisecond)
+			clock := manualclock.New(time.Date(2026, 3, 1, 12, 0, 0, 0, time.UTC))
+			clock.SetRandom(0.5)
+			runner := newStreamRunner("key", "identity", "team", openerFor(t, server.URL), nil, func(awid.AgentEvent) {}, func(string, ...any) {}, clock.Now, run.StreamPolicyConfig{Timer: clock.Timer, Rand: clock.Random})
 			runner.start(context.Background())
 			defer runner.stop()
-			permanent := code == 401 || code == 403 || code == 404 || code == 422
-			waitForCond(t, "HTTP error classified", func() bool {
-				if permanent {
-					return runner.snapshot().Phase == string(StreamQuarantined)
+			permanent := code >= 400 && code < 500 && code != 408 && code != 409 && code != 425 && code != 429
+			// The attempt's planned-close timer, then the wait before a retry.
+			if !clock.AwaitStarted(2, 1) {
+				t.Fatal("the stream is not waiting to retry")
+			}
+			status := runner.snapshot()
+			wait, _ := clock.NextTimer()
+			if permanent {
+				if status.Phase != string(StreamRefused) || status.Admitted || status.Cause != fmt.Sprint(code) {
+					t.Fatalf("status %+v, want refused by %d and not admitted", status, code)
 				}
-				return server.openCount() >= 2
-			})
-			if permanent && server.openCount() != 1 {
-				t.Fatal("permanent error was retried")
+				if wait != 45*time.Second {
+					t.Fatalf("retry in %s, want three quarters of a minute for the middle draw", wait)
+				}
+			} else {
+				if status.Phase != string(StreamRetrying) || !status.Admitted {
+					t.Fatalf("retryable error: status %+v, want retrying", status)
+				}
+				if wait != 750*time.Millisecond {
+					t.Fatalf("retry in %s, want three quarters of a second for the middle draw", wait)
+				}
 			}
-			if !permanent && runner.snapshot().Phase == string(StreamQuarantined) {
-				t.Fatal("retryable error quarantined")
+			if !status.NextAttemptAt.Equal(clock.Now().Add(wait)) {
+				t.Fatalf("next attempt %s, want %s", status.NextAttemptAt, clock.Now().Add(wait))
 			}
+			clock.Advance(wait - time.Nanosecond)
+			time.Sleep(20 * time.Millisecond)
+			if server.openCount() != 1 {
+				t.Fatal("retried before the wait was over")
+			}
+			clock.Advance(time.Nanosecond)
+			waitForCond(t, "the retry", func() bool { return server.openCount() == 2 })
 		})
 	}
 }

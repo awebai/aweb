@@ -54,7 +54,7 @@ func SaveInstalledIDChain(identityHome string, bundle map[string]any) error {
 	if err != nil {
 		return err
 	}
-	return durableWriteFile(installedIDChainPath(identityHome), canonical)
+	return atomicWriteFile(installedIDChainPath(identityHome), canonical)
 }
 
 // Subject is the authenticated subject the chain's leaf names, with the

@@ -137,12 +137,27 @@ type runtimeIdentityHealth struct {
 
 func runtimeHandler(gateway *a2agw.Gateway, cfg fileConfig) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if r.URL.Path != "/health" {
+		if !serveProbe(w, r, gateway, cfg) {
 			gateway.ServeHTTP(w, r)
-			return
 		}
-		writeRuntimeHealth(w, gateway, cfg)
 	})
+}
+
+// serveProbe answers the gateway's own probe routes and reports whether it
+// did. /live answers whenever the process serves requests and checks no
+// dependency, so a probe that restarts the gateway does not restart it for a
+// registry outage. /health reports whether the gateway can serve its routes.
+func serveProbe(w http.ResponseWriter, r *http.Request, gateway *a2agw.Gateway, cfg fileConfig) bool {
+	switch r.URL.Path {
+	case "/live":
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"status":"ok"}` + "\n"))
+	case "/health":
+		writeRuntimeHealth(w, gateway, cfg)
+	default:
+		return false
+	}
+	return true
 }
 
 type managedGateway struct {
@@ -261,11 +276,9 @@ func (m *managedGateway) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	gateway := m.gateway
 	cfg := m.cfg
 	m.mu.RUnlock()
-	if r.URL.Path == "/health" {
-		writeRuntimeHealth(w, gateway, cfg)
-		return
+	if !serveProbe(w, r, gateway, cfg) {
+		gateway.ServeHTTP(w, r)
 	}
-	gateway.ServeHTTP(w, r)
 }
 
 func managedConfigPollInterval() time.Duration {
@@ -371,7 +384,12 @@ func checkRegistryHealth(registryURL string) runtimeRegistryHealth {
 			} else if value := stringField(payload, "service_version"); value != "" {
 				out.Version = value
 			}
-			if value := stringField(payload, "status"); value != "" {
+			// The registry answers 503 with its health report when one of its
+			// own dependencies fails. It answered, so it is reached.
+			if resp.StatusCode == http.StatusServiceUnavailable && stringField(payload, "status") == "unhealthy" {
+				out.Reachable = true
+			}
+			if value := stringField(payload, "status"); value != "" && out.Reachable {
 				out.Status = value
 			}
 		}

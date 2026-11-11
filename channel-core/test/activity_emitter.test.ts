@@ -90,6 +90,32 @@ describe("events", () => {
     expect(sent[0].turn_id).toMatch(/^[A-Za-z0-9_.:-]{1,64}$/);
   });
 
+  test("a turn started after a key rotation is signed with the rotated key", async () => {
+    optIn();
+    const rotatedSeed = new Uint8Array(32).fill(7);
+    const rotatedDID = computeDIDKey(ed.getPublicKey(rotatedSeed));
+    const signatures: Array<{ payload: string; signature: string }> = [];
+    const e = emitter({
+      publish: async (body: SignedActivity) => {
+        sent.push(JSON.parse(Buffer.from(body.signed_payload, "base64url").toString("utf8")));
+        signatures.push({ payload: body.signed_payload, signature: body.signature });
+        return { kind: "accepted" };
+      },
+    });
+    e.turnStarted();
+    await settle();
+    expect(sent[0].from_did).toBe(DID);
+
+    e.renewSigner({ did: rotatedDID, stableID: "did:aw:agent", teamID: "default:acme.aweb.ai", seed: rotatedSeed });
+    e.turnEnded();
+    await settle();
+    e.turnStarted();
+    await settle();
+    const last = signatures.at(-1)!;
+    expect(sent.at(-1)).toMatchObject({ phase: "turn_started", from_did: rotatedDID, from_stable_id: "did:aw:agent" });
+    expect(ed.verify(Buffer.from(last.signature, "base64"), Buffer.from(last.payload, "base64url"), ed.getPublicKey(rotatedSeed))).toBe(true);
+  });
+
   test("an identity without a stable id omits from_stable_id", async () => {
     optIn();
     const e = emitter({ signer: { did: DID, teamID: "default:acme.aweb.ai", seed: SEED } });

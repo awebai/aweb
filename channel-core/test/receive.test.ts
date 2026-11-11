@@ -63,3 +63,15 @@ test("real stream reads count comments, and disconnect removes proof before reco
   await expect(readFile(path)).rejects.toThrow();
   await consume;
 });
+
+test("a receipt names the did:key a key rotation gave the identity", async () => {
+  const home = await mkdtemp(join(tmpdir(), "aweb-receive-")); homes.push(home);
+  const path = join(home, "receive", "stream.json");
+  const receipt = new ReceiveStreamReceipt({ identityHome: home, kind: "pi-extension", did: "did:key:retired", stableID: "did:aw:resident" });
+  receipt.onRead(1000, 1000); await receipt.flush();
+  expect(JSON.parse(await readFile(path, "utf8")).did).toBe("did:key:retired");
+
+  receipt.renewDID("did:key:rotated");
+  receipt.onRead(2000, 2000); await receipt.flush();
+  expect(JSON.parse(await readFile(path, "utf8"))).toMatchObject({ did: "did:key:rotated", stable_id: "did:aw:resident" });
+});

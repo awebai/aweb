@@ -28,6 +28,11 @@ docker compose up --build -d
 curl http://localhost:8000/health
 ```
 
+`/health` and `/ready` answer 503 when the Redis or database check fails;
+`/live` answers 200 whenever the process serves requests. Use `/live` for
+liveness probes and container healthchecks, `/ready` for readiness and routing.
+See [health probes](../docs/aweb-sot.md#health-probes).
+
 That stack runs `aweb`, `awid`, Postgres, and Redis together. It publishes aweb
 on `localhost:8000` and AWID on `localhost:8010` by default.
 

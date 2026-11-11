@@ -2,6 +2,7 @@ import { createHash } from "node:crypto";
 import * as ed from "@noble/ed25519";
 import { sha512 } from "@noble/hashes/sha2.js";
 import { readBoundedJSON, readSafeErrorExcerpt } from "./response.js";
+import { canonicalJSONValue } from "../identity/canonical.js";
 import { computeDIDKey } from "../identity/did.js";
 
 ed.etc.sha512Sync = (...m) => sha512(ed.etc.concatBytes(...m));
@@ -10,33 +11,60 @@ function canonicalTimestamp(): string {
   return new Date().toISOString().replace(/\.\d{3}Z$/, "Z");
 }
 
-function canonicalGrantPayload(fields: Record<string, string | number>): string {
-  const entries = Object.entries(fields).sort(([a], [b]) => a < b ? -1 : a > b ? 1 : 0);
-  return `{${entries.map(([key, value]) => `${JSON.stringify(key)}:${typeof value === "number" ? String(value) : JSON.stringify(value)}`).join(",")}}`;
+interface SignedTarget {
+  aud: string;
+  method: string;
+  path: string;
+  body_sha256: string;
+}
+
+/** The request a signature is bound to: the origin and full path, with query, that the client sends. */
+function signedTarget(baseURL: string, path: string, method: string, bodyText: string): SignedTarget {
+  const url = new URL(baseURL + path);
+  return {
+    aud: `${url.protocol}//${url.host}`,
+    method: method.toUpperCase(),
+    path: `${url.pathname}${url.search}` || "/",
+    body_sha256: createHash("sha256").update(bodyText, "utf-8").digest("hex"),
+  };
+}
+
+function signCanonical(payload: Record<string, string | number>, signingKey: Uint8Array): { did: string; signature: string; canonicalPayload: string; signedPayload: string } {
+  const canonicalPayload = canonicalJSONValue(payload, "unsupported request signing value");
+  return {
+    did: computeDIDKey(ed.getPublicKey(signingKey)),
+    signature: Buffer.from(ed.sign(new TextEncoder().encode(canonicalPayload), signingKey)).toString("base64").replace(/=+$/, ""),
+    canonicalPayload,
+    signedPayload: Buffer.from(canonicalPayload, "utf-8").toString("base64url"),
+  };
+}
+
+/**
+ * Sign one request with the v2 request envelope (docs/team-auth-envelope-v2.md).
+ * A certificate request binds `team_id`; an identity request binds `did_aw`,
+ * the empty string for a local identity.
+ */
+export function signRequestHeaders(options: { baseURL: string; path: string; method: string; bodyText?: string; signingKey: Uint8Array; claim: "team_id" | "did_aw"; value: string; timestamp: string }): Record<string, string> & { canonicalPayload: string } {
+  const target = signedTarget(options.baseURL, options.path, options.method, options.bodyText || "");
+  const signed = signCanonical({ v: 2, ...target, [options.claim]: options.value, timestamp: options.timestamp }, options.signingKey);
+  return {
+    Authorization: `DIDKey ${signed.did} ${signed.signature}`,
+    "X-AWEB-Timestamp": options.timestamp,
+    "X-AWEB-Signed-Payload": signed.signedPayload,
+    canonicalPayload: signed.canonicalPayload,
+  };
 }
 
 export function signIdentityGrantHeaders(options: { baseURL: string; path: string; method: string; bodyText?: string; signingKey: Uint8Array; grantID: string; timestamp: string }): Record<string, string> & { canonicalPayload: string; bodySHA256: string } {
-  const bodyText = options.bodyText || "";
-  const bodyHash = createHash("sha256").update(bodyText, "utf-8").digest("hex");
-  const url = new URL(options.baseURL + options.path);
-  const canonicalPayload = canonicalGrantPayload({
-    v: 1,
-    auth: "identity-grant",
-    aud: `${url.protocol}//${url.host}`,
-    method: options.method.toUpperCase(),
-    path: `${url.pathname}${url.search}` || "/",
-    grant_id: options.grantID,
-    body_sha256: bodyHash,
-    timestamp: options.timestamp,
-  });
-  const signature = Buffer.from(ed.sign(new TextEncoder().encode(canonicalPayload), options.signingKey)).toString("base64").replace(/=+$/, "");
+  const target = signedTarget(options.baseURL, options.path, options.method, options.bodyText || "");
+  const signed = signCanonical({ v: 1, auth: "identity-grant", ...target, grant_id: options.grantID, timestamp: options.timestamp }, options.signingKey);
   return {
-    Authorization: `AWEB-Grant DIDKey ${computeDIDKey(ed.getPublicKey(options.signingKey))} ${signature}`,
+    Authorization: `AWEB-Grant DIDKey ${signed.did} ${signed.signature}`,
     "X-AWEB-Grant-ID": options.grantID,
     "X-AWEB-Timestamp": options.timestamp,
-    "X-AWEB-Signed-Payload": Buffer.from(canonicalPayload, "utf-8").toString("base64url"),
-    canonicalPayload,
-    bodySHA256: bodyHash,
+    "X-AWEB-Signed-Payload": signed.signedPayload,
+    canonicalPayload: signed.canonicalPayload,
+    bodySHA256: target.body_sha256,
   };
 }
 
@@ -55,6 +83,30 @@ export class APIClient {
     private baseURL: string,
     private auth: APIClientAuth,
   ) {}
+
+  /**
+   * Take the credentials of a client built from the same identity home read
+   * again: a renewed certificate or grant, or the key and certificate a key
+   * rotation left there. The client keeps acting as the same identity towards
+   * the same server; credentials that say otherwise are refused.
+   *
+   * An identity with a stable id is that stable id, whatever did:key it
+   * holds. An identity without one is its did:key.
+   */
+  renewCredentialsFrom(renewed: APIClient): void {
+    if (renewed.baseURL !== this.baseURL) {
+      throw new Error("the credentials read again name another server");
+    }
+    const stableID = this.auth.stableID.trim();
+    const sameIdentity = renewed.auth.stableID.trim() === stableID
+      && (stableID !== "" || renewed.auth.did === this.auth.did)
+      && renewed.auth.teamID === this.auth.teamID
+      && (renewed.auth.authMode ?? "team") === (this.auth.authMode ?? "team");
+    if (!sameIdentity) {
+      throw new Error("the credentials read again name another identity");
+    }
+    this.auth = renewed.auth;
+  }
 
   hasTeamCertificateAuth(teamID: string): boolean {
     return this.auth.teamID === teamID
@@ -151,7 +203,8 @@ export class APIClient {
 
     if (!resp.ok) {
       const text = await readSafeErrorExcerpt(resp).catch(() => "");
-      throw new APIError(resp.status, text);
+      const retryAfter = resp.headers.get("Retry-After");
+      throw new APIError(resp.status, text, retryAfterSeconds(retryAfter), retryAfter ?? undefined);
     }
 
     return resp;
@@ -161,10 +214,9 @@ export class APIClient {
     if (this.auth.authMode === "grant") {
       return this.grantAuthHeaders(method, path, bodyText);
     }
-    if (this.usesIdentityMessagingAuth(path)) {
-      return this.identityAuthHeaders(bodyText);
-    }
-    return this.teamAuthHeaders(bodyText);
+    return this.usesIdentityMessagingAuth(path)
+      ? this.identityAuthHeaders(method, path, bodyText)
+      : this.teamAuthHeaders(method, path, bodyText);
   }
 
   private usesIdentityMessagingAuth(path: string): boolean {
@@ -186,33 +238,25 @@ export class APIClient {
     };
   }
 
-  private identityAuthHeaders(bodyText: string): Record<string, string> {
-    const timestamp = canonicalTimestamp();
-    const bodyHash = createHash("sha256").update(bodyText, "utf-8").digest("hex");
-    const payload = `{"body_sha256":${JSON.stringify(bodyHash)},"did_aw":${JSON.stringify(this.auth.stableID)},"timestamp":${JSON.stringify(timestamp)}}`;
-    const signature = Buffer.from(
-      ed.sign(new TextEncoder().encode(payload), this.auth.signingKey),
-    ).toString("base64").replace(/=+$/, "");
-    const headers: Record<string, string> = {
-      Authorization: `DIDKey ${this.auth.did} ${signature}`,
-      "X-AWEB-Timestamp": timestamp,
+  private rootAuthHeaders(method: string, path: string, bodyText: string, claim: "team_id" | "did_aw", value: string): Record<string, string> {
+    const signed = signRequestHeaders({ baseURL: this.baseURL, path, method, bodyText, signingKey: this.auth.signingKey, claim, value, timestamp: canonicalTimestamp() });
+    return {
+      Authorization: signed.Authorization,
+      "X-AWEB-Timestamp": signed["X-AWEB-Timestamp"],
+      "X-AWEB-Signed-Payload": signed["X-AWEB-Signed-Payload"],
     };
-    if (this.auth.stableID.trim()) {
-      headers["X-AWEB-DID-AW"] = this.auth.stableID;
-    }
+  }
+
+  private identityAuthHeaders(method: string, path: string, bodyText: string): Record<string, string> {
+    const stableID = this.auth.stableID.trim();
+    const headers = this.rootAuthHeaders(method, path, bodyText, "did_aw", stableID);
+    if (stableID) headers["X-AWEB-DID-AW"] = stableID;
     return headers;
   }
 
-  private teamAuthHeaders(bodyText: string): Record<string, string> {
-    const timestamp = canonicalTimestamp();
-    const bodyHash = createHash("sha256").update(bodyText, "utf-8").digest("hex");
-    const payload = `{"body_sha256":${JSON.stringify(bodyHash)},"team_id":${JSON.stringify(this.auth.teamID)},"timestamp":${JSON.stringify(timestamp)}}`;
-    const signature = Buffer.from(
-      ed.sign(new TextEncoder().encode(payload), this.auth.signingKey),
-    ).toString("base64").replace(/=+$/, "");
+  private teamAuthHeaders(method: string, path: string, bodyText: string): Record<string, string> {
     return {
-      Authorization: `DIDKey ${this.auth.did} ${signature}`,
-      "X-AWEB-Timestamp": timestamp,
+      ...this.rootAuthHeaders(method, path, bodyText, "team_id", this.auth.teamID),
       "X-AWID-Team-Certificate": this.auth.teamCertificateHeader,
     };
   }
@@ -224,6 +268,8 @@ export class APIError extends Error {
     public body: string,
     /** A Retry-After given as whole seconds; absent when missing or another form. */
     public retryAfterSeconds?: number,
+    /** The Retry-After header as the server sent it; absent when missing. */
+    public retryAfter?: string,
   ) {
     super(body ? `aweb: http ${statusCode}: ${body}` : `aweb: http ${statusCode}`);
   }

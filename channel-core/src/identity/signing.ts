@@ -2,6 +2,7 @@ import * as ed from "@noble/ed25519";
 import { sha512 } from "@noble/hashes/sha2.js";
 import { extractPublicKey } from "./did.js";
 import { decodeRawStdBase64 } from "./base64.js";
+import { compareByCodePoint } from "./canonical.js";
 
 // @noble/ed25519 v2 requires setting the hash function
 ed.etc.sha512Sync = (...m) => sha512(ed.etc.concatBytes(...m));
@@ -55,7 +56,7 @@ export function canonicalJSON(env: MessageEnvelope): string {
   if (env.message_id) fields.push(["message_id", env.message_id]);
   if (env.to_stable_id) fields.push(["to_stable_id", env.to_stable_id]);
 
-  fields.sort((a, b) => (a[0] < b[0] ? -1 : a[0] > b[0] ? 1 : 0));
+  fields.sort((a, b) => compareByCodePoint(a[0], b[0]));
 
   let result = "{";
   for (let i = 0; i < fields.length; i++) {

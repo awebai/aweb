@@ -196,3 +196,44 @@ async def test_admin_reverify_only_queues_and_management_exposes_pending_reason(
     assert read.status_code == 200, read.text
     assert read.json()["state"] == "pending_origin_verification"
     assert read.json()["lifecycle"]["report"] == {"available": False}
+
+
+async def forwarded_agent(db, *, status="active", removed=False, team=TEAM):
+    """The agent row the forwarded actor id names, in `team`."""
+    namespace = team.split(":", 1)[1]
+    await db.execute(
+        "INSERT INTO {{tables.teams}} (team_id, namespace, team_name, team_did_key) "
+        "VALUES ($1, $2, $3, 'did:key:z6MkkopcdRMf2qPVBdcugyhrVQorfEfz2uUigTwZDvZ15poA' /* z6MkTeam */) ON CONFLICT DO NOTHING",
+        team, namespace, team.split(":", 1)[0],
+    )
+    await db.execute(
+        "INSERT INTO {{tables.agents}} (agent_id, team_id, did_key, alias, identity_scope, status, deleted_at) "
+        "VALUES ($1, $2, 'did:key:z6MkggGwZHMkBygNAy7tZGtCZxrkWBHQ5fpEm6fSAxfkuvqE' /* z6MkAlice */, 'alice', 'local', $3, "
+        "CASE WHEN $4 THEN NOW() END)",
+        ACTOR, team, status, removed,
+    )
+
+
+async def test_a_forwarded_actor_that_names_an_active_member_or_no_agent_reads_installations(client, db):
+    # The proxy's placeholder for a caller with no agent names no agent row.
+    assert (await client.get(f"/api/v1/apps/installed?team_id={TEAM}", headers=headers())).status_code == 200
+    await forwarded_agent(db)
+    assert (await client.get(f"/api/v1/apps/installed?team_id={TEAM}", headers=headers())).status_code == 200
+
+
+@pytest.mark.parametrize("state", ["retired", "archived", "deleted", "removed", "other-team"])
+async def test_a_forwarded_actor_that_names_an_agent_that_is_not_an_active_member_is_refused(client, db, origin, state):
+    if state == "removed":
+        await forwarded_agent(db, removed=True)
+    elif state == "other-team":
+        await forwarded_agent(db, team="elsewhere:example.com")
+    else:
+        await forwarded_agent(db, status=state)
+    await admin(db)
+
+    listed = await client.get(f"/api/v1/apps/installed?team_id={TEAM}", headers=headers())
+    assert listed.status_code == 403, listed.text
+    # An installation by this person's admin authority is refused the same way, and nothing is installed.
+    installed = await post(client, confirmation(origin))
+    assert installed.status_code == 403, installed.text
+    assert await store_fixture.current(db) is None

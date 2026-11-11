@@ -1,0 +1,386 @@
+{
+  "name": "canonical-json-v1",
+  "status": "current (aweb-acxc.24)",
+  "scheme": {
+    "canonical": "UTF-8 JSON; object keys sorted by Unicode code point; separators ',' and ':' with no whitespace; arrays keep their order",
+    "strings": "the quotation mark, the reverse solidus and U+0000-U+001F are escaped (short forms for U+0008, U+0009, U+000A, U+000C, U+000D; lowercase four-digit hex for the rest); every other code point, including U+2028, U+2029, U+007F, '<', '>', '&' and characters outside the Basic Multilingual Plane, is written as its UTF-8 bytes",
+    "numbers": "integers of magnitude at most 2^53-1, written in decimal with no sign for zero, no fraction and no exponent; any other number is outside the contract and the implementations do not agree on it (out_of_contract_number_cases)",
+    "reference": "awid.signing.canonical_json_bytes: json.dumps(value, sort_keys=True, separators=(',', ':'), ensure_ascii=False) encoded as UTF-8",
+    "value": "the JSON value to encode, after parsing this file",
+    "canonical_hex": "lowercase hex of the exact canonical bytes",
+    "cases": "every implementation reproduces every case",
+    "code_point_key_order_cases": "object keys whose UTF-16 code unit order differs from their code point order; every implementation reproduces every case, and one that sorts keys by UTF-16 code unit (as RFC 8785 does) does not",
+    "escaped_line_separator_cases": "the escaped form: the canonical form except that U+2028 and U+2029 are written as the six ASCII characters of their lowercase escapes (reverse solidus, u, 2028 or 2029), in string values and in object keys; Go awid.CanonicalJSONValueEscapingLineSeparators writes it, for the A2A Agent Card digest and the other digests that only aw computes; card_digest, where present, is 'sha256:' and the lowercase hex SHA-256 of the bytes",
+    "out_of_contract_number_cases": "numbers outside the contract: json is the JSON text each implementation parses with its own parser; each implementation field is 'refused' or the lowercase hex of the bytes that implementation writes. python_canonical_json_bytes: json.loads then awid.signing.canonical_json_bytes. go_canonical_json_value: encoding/json Unmarshal into an interface value (numbers become float64) then awid.CanonicalJSONValue. go_canonical_json_value_use_number: a Decoder with UseNumber (numbers keep their text) then awid.CanonicalJSONValue. go_strict_canonical_json_use_number: a Decoder with UseNumber then awid.StrictCanonicalJSON, which refuses every float64. typescript_canonical_json_value: JSON.parse then canonicalJSONValue. These cases record behaviour; they do not define a canonical form",
+    "lone_surrogate_cases": "unpaired surrogates, which are outside the contract: same fields as out_of_contract_number_cases. Python refuses to encode them, Go's parser replaces each by U+FFFD, TypeScript writes each as a six-character escape and orders a key by the surrogate's own value"
+  },
+  "cases": [
+    {
+      "name": "line_separator_in_string",
+      "note": "U+2028 in a string value is written as its three UTF-8 bytes e2 80 a8",
+      "value": {
+        "text": "line\u2028separator"
+      },
+      "canonical_hex": "7b2274657874223a226c696e65e280a8736570617261746f72227d"
+    },
+    {
+      "name": "paragraph_separator_in_string",
+      "note": "U+2029 in a string value is written as its three UTF-8 bytes e2 80 a9",
+      "value": {
+        "text": "paragraph\u2029separator"
+      },
+      "canonical_hex": "7b2274657874223a22706172616772617068e280a9736570617261746f72227d"
+    },
+    {
+      "name": "line_separator_in_key",
+      "note": "U+2028 in an object key is written as its UTF-8 bytes",
+      "value": {
+        "line\u2028key": 1
+      },
+      "canonical_hex": "7b226c696e65e280a86b6579223a317d"
+    },
+    {
+      "name": "paragraph_separator_in_key",
+      "note": "U+2029 in an object key is written as its UTF-8 bytes",
+      "value": {
+        "paragraph\u2029key": 1
+      },
+      "canonical_hex": "7b22706172616772617068e280a96b6579223a317d"
+    },
+    {
+      "name": "reverse_solidus_before_separator_text",
+      "note": "a reverse solidus followed by the six ASCII characters of a separator escape stays an escaped reverse solidus followed by that text; a real separator next to it is written raw",
+      "value": {
+        "text": "\\u2028\u2028\\\\u2029\u2029",
+        "key\\u2028": "\\"
+      },
+      "canonical_hex": "7b226b65795c5c7532303238223a225c5c222c2274657874223a225c5c7532303238e280a85c5c5c5c7532303239e280a9227d"
+    },
+    {
+      "name": "html_characters",
+      "note": "less-than, greater-than and ampersand are written as themselves",
+      "value": {
+        "text": "<a href=\"x\">&amp;</a>",
+        "<&>": "<&>"
+      },
+      "canonical_hex": "7b223c263e223a223c263e222c2274657874223a223c6120687265663d5c22785c223e26616d703b3c2f613e227d"
+    },
+    {
+      "name": "non_bmp_character",
+      "note": "a character outside the Basic Multilingual Plane is written as its four UTF-8 bytes, not as a surrogate pair escape",
+      "value": {
+        "text": "grin \ud83d\ude00",
+        "\ud83d\ude00": "\ud83d\ude00"
+      },
+      "canonical_hex": "7b2274657874223a226772696e20f09f9880222c22f09f9880223a22f09f9880227d"
+    },
+    {
+      "name": "control_characters",
+      "note": "U+0000-U+001F are escaped: the short forms for backspace, tab, line feed, form feed and carriage return, lowercase four-digit hex for the others",
+      "value": {
+        "text": "\u0000\u0001\u0002\u0003\u0004\u0005\u0006\u0007\b\t\n\u000b\f\r\u000e\u000f\u0010\u0011\u0012\u0013\u0014\u0015\u0016\u0017\u0018\u0019\u001a\u001b\u001c\u001d\u001e\u001f"
+      },
+      "canonical_hex": "7b2274657874223a225c75303030305c75303030315c75303030325c75303030335c75303030345c75303030355c75303030365c75303030375c625c745c6e5c75303030625c665c725c75303030655c75303030665c75303031305c75303031315c75303031325c75303031335c75303031345c75303031355c75303031365c75303031375c75303031385c75303031395c75303031615c75303031625c75303031635c75303031645c75303031655c7530303166227d"
+    },
+    {
+      "name": "delete_and_c1_controls",
+      "note": "U+007F and U+0080-U+009F are written as their UTF-8 bytes",
+      "value": {
+        "text": "\u007f\u0080\u0085\u009f"
+      },
+      "canonical_hex": "7b2274657874223a227fc280c285c29f227d"
+    },
+    {
+      "name": "quotation_mark_and_reverse_solidus",
+      "note": "the quotation mark and the reverse solidus take a reverse solidus; the solidus does not",
+      "value": {
+        "text": "\"\\/",
+        "\"\\/": 1
+      },
+      "canonical_hex": "7b225c225c5c2f223a312c2274657874223a225c225c5c2f227d"
+    },
+    {
+      "name": "key_order_bmp",
+      "note": "keys sort by code point: uppercase before lowercase ASCII, then Latin-1, then U+2028, then U+FF5E; the empty key sorts first",
+      "value": {
+        "\uff5e": 1,
+        "\u2028": 2,
+        "\u00e9": 3,
+        "a": 4,
+        "Z": 5,
+        "": 6,
+        "aa": 7
+      },
+      "canonical_hex": "7b22223a362c225a223a352c2261223a342c226161223a372c22c3a9223a332c22e280a8223a322c22efbd9e223a317d"
+    },
+    {
+      "name": "scalars_and_nesting",
+      "note": "booleans, null, integers up to 2^53-1 in magnitude, empty containers and nested key order",
+      "value": {
+        "b": {
+          "d": "",
+          "c": [],
+          "a": {}
+        },
+        "a": [
+          true,
+          false,
+          null,
+          0,
+          -1,
+          9007199254740991,
+          -9007199254740991
+        ]
+      },
+      "canonical_hex": "7b2261223a5b747275652c66616c73652c6e756c6c2c302c2d312c393030373139393235343734303939312c2d393030373139393235343734303939315d2c2262223a7b2261223a7b7d2c2263223a5b5d2c2264223a22227d7d"
+    }
+  ],
+  "code_point_key_order_cases": [
+    {
+      "name": "key_order_non_bmp_after_bmp",
+      "note": "keys sort by code point, so U+FF5E and U+FFFD precede U+1F600; sorting by UTF-16 code unit puts U+1F600 (d83d de00) first",
+      "value": {
+        "\ud83d\ude00": 1,
+        "\uff5e": 2,
+        "\ufffd": 3,
+        "a": 4
+      },
+      "canonical_hex": "7b2261223a342c22efbd9e223a322c22efbfbd223a332c22f09f9880223a317d"
+    },
+    {
+      "name": "key_order_non_bmp_against_u_e000",
+      "note": "U+D7FF, then U+E000, then U+10000; sorting by UTF-16 code unit puts U+10000 (d800 dc00) before U+E000",
+      "value": {
+        "\ud800\udc00": 1,
+        "\ue000": 2,
+        "\ud7ff": 3
+      },
+      "canonical_hex": "7b22ed9fbf223a332c22ee8080223a322c22f0908080223a317d"
+    },
+    {
+      "name": "key_order_non_bmp_against_u_ffff",
+      "note": "U+FFFF, the last code point of the Basic Multilingual Plane, precedes U+1F600 and U+10FFFF; sorting by UTF-16 code unit puts both surrogate pairs first",
+      "value": {
+        "\udbff\udfff": 1,
+        "\uffff": 2,
+        "\ud83d\ude00": 3
+      },
+      "canonical_hex": "7b22efbfbf223a322c22f09f9880223a332c22f48fbfbf223a317d"
+    },
+    {
+      "name": "key_order_non_bmp_pair",
+      "note": "two keys outside the Basic Multilingual Plane order by code point (U+10000, U+1F600, U+1F601, U+10FFFF), each after U+FFFD; a shared ASCII prefix does not change the order of what follows it",
+      "value": {
+        "\ud83d\ude01": 1,
+        "\udbff\udfff": 2,
+        "\ud83d\ude00": 3,
+        "\ud800\udc00": 4,
+        "\ufffd": 5,
+        "a\ud83d\ude00": 6,
+        "a\uffff": 7,
+        "a": 8
+      },
+      "canonical_hex": "7b2261223a382c2261efbfbf223a372c2261f09f9880223a362c22efbfbd223a352c22f0908080223a342c22f09f9880223a332c22f09f9881223a312c22f48fbfbf223a327d"
+    },
+    {
+      "name": "key_order_non_bmp_nested",
+      "note": "the same order inside a nested object and inside an object held by an array",
+      "value": {
+        "outer": {
+          "\ud83d\ude00": {
+            "\ud800\udc00": 1,
+            "\ue000": 2
+          },
+          "\uffff": [
+            {
+              "\udbff\udfff": 1,
+              "\ufffd": 2
+            }
+          ]
+        }
+      },
+      "canonical_hex": "7b226f75746572223a7b22efbfbf223a5b7b22efbfbd223a322c22f48fbfbf223a317d5d2c22f09f9880223a7b22ee8080223a322c22f0908080223a317d7d7d"
+    }
+  ],
+  "escaped_line_separator_cases": [
+    {
+      "name": "escaped_line_separator_in_string",
+      "note": "U+2028 in a string value is written as the six ASCII characters of its lowercase escape",
+      "value": {
+        "text": "line\u2028separator"
+      },
+      "canonical_hex": "7b2274657874223a226c696e655c7532303238736570617261746f72227d"
+    },
+    {
+      "name": "escaped_paragraph_separator_in_string",
+      "note": "U+2029 in a string value is written as the six ASCII characters of its lowercase escape",
+      "value": {
+        "text": "paragraph\u2029separator"
+      },
+      "canonical_hex": "7b2274657874223a227061726167726170685c7532303239736570617261746f72227d"
+    },
+    {
+      "name": "escaped_separators_in_keys",
+      "note": "U+2028 and U+2029 in object keys are written as escapes; the keys are ordered by code point, so U+2027 precedes them and U+202A follows them, which is not the order of the escaped text",
+      "value": {
+        "\u2028": 1,
+        "\u2029": 2,
+        "\u2027": 3,
+        "\u202a": 4,
+        "z": 5
+      },
+      "canonical_hex": "7b227a223a352c22e280a7223a332c225c7532303238223a312c225c7532303239223a322c22e280aa223a347d"
+    },
+    {
+      "name": "escaped_separator_after_reverse_solidus_text",
+      "note": "a reverse solidus followed by the text u2028 is an escaped reverse solidus followed by that text; the separator next to it is written as its escape",
+      "value": {
+        "text": "\\u2028\u2028"
+      },
+      "canonical_hex": "7b2274657874223a225c5c75323032385c7532303238227d"
+    },
+    {
+      "name": "escaped_form_other_characters",
+      "note": "every other character is written as in cases: less-than, greater-than, ampersand, U+007F and a character outside the Basic Multilingual Plane as UTF-8, control characters as their escapes",
+      "value": {
+        "text": "<>&\u007f\ud83d\ude00\b\u001f\n"
+      },
+      "canonical_hex": "7b2274657874223a223c3e267ff09f98805c625c75303031665c6e227d"
+    },
+    {
+      "name": "escaped_form_code_point_key_order",
+      "note": "keys are ordered by code point, as in code_point_key_order_cases",
+      "value": {
+        "\ud83d\ude00": 1,
+        "\uffff": 2,
+        "\ue000": 3,
+        "\u2028": 4
+      },
+      "canonical_hex": "7b225c7532303238223a342c22ee8080223a332c22efbfbf223a322c22f09f9880223a317d"
+    },
+    {
+      "name": "a2a_agent_card_with_line_separators",
+      "note": "an A2A Agent Card whose description holds both separators; card_digest is sha256 over these bytes, lowercase hex",
+      "value": {
+        "capabilities": {},
+        "defaultInputModes": [
+          "text/plain"
+        ],
+        "defaultOutputModes": [
+          "text/plain"
+        ],
+        "description": "line\u2028paragraph\u2029end <&>",
+        "name": "agent",
+        "skills": [],
+        "supportedInterfaces": [],
+        "version": "1"
+      },
+      "canonical_hex": "7b226361706162696c6974696573223a7b7d2c2264656661756c74496e7075744d6f646573223a5b22746578742f706c61696e225d2c2264656661756c744f75747075744d6f646573223a5b22746578742f706c61696e225d2c226465736372697074696f6e223a226c696e655c75323032387061726167726170685c7532303239656e64203c263e222c226e616d65223a226167656e74222c22736b696c6c73223a5b5d2c22737570706f72746564496e7465726661636573223a5b5d2c2276657273696f6e223a2231227d",
+      "card_digest": "sha256:774f392afd24f5dafec9f81ad2ab84047292da7f95ad1a4ed57e727ba6e9be4d"
+    }
+  ],
+  "out_of_contract_number_cases": [
+    {
+      "name": "number_with_fraction",
+      "note": "a number with a fractional part",
+      "json": "{\"n\":1.5}",
+      "python_canonical_json_bytes": "7b226e223a312e357d",
+      "go_canonical_json_value": "7b226e223a312e357d",
+      "go_canonical_json_value_use_number": "7b226e223a312e357d",
+      "go_strict_canonical_json_use_number": "refused",
+      "typescript_canonical_json_value": "refused"
+    },
+    {
+      "name": "integral_float",
+      "note": "a number written with a fraction of zero",
+      "json": "{\"n\":1.0}",
+      "python_canonical_json_bytes": "7b226e223a312e307d",
+      "go_canonical_json_value": "7b226e223a317d",
+      "go_canonical_json_value_use_number": "7b226e223a312e307d",
+      "go_strict_canonical_json_use_number": "refused",
+      "typescript_canonical_json_value": "7b226e223a317d"
+    },
+    {
+      "name": "integer_above_safe_range",
+      "note": "2^53+1, which a double cannot hold",
+      "json": "{\"n\":9007199254740993}",
+      "python_canonical_json_bytes": "7b226e223a393030373139393235343734303939337d",
+      "go_canonical_json_value": "7b226e223a393030373139393235343734303939327d",
+      "go_canonical_json_value_use_number": "7b226e223a393030373139393235343734303939337d",
+      "go_strict_canonical_json_use_number": "refused",
+      "typescript_canonical_json_value": "refused"
+    },
+    {
+      "name": "negative_zero",
+      "note": "negative zero written as an integer",
+      "json": "{\"n\":-0}",
+      "python_canonical_json_bytes": "7b226e223a307d",
+      "go_canonical_json_value": "7b226e223a2d307d",
+      "go_canonical_json_value_use_number": "7b226e223a2d307d",
+      "go_strict_canonical_json_use_number": "7b226e223a307d",
+      "typescript_canonical_json_value": "7b226e223a307d"
+    },
+    {
+      "name": "negative_zero_float",
+      "note": "negative zero written with a fraction",
+      "json": "{\"n\":-0.0}",
+      "python_canonical_json_bytes": "7b226e223a2d302e307d",
+      "go_canonical_json_value": "7b226e223a2d307d",
+      "go_canonical_json_value_use_number": "7b226e223a2d302e307d",
+      "go_strict_canonical_json_use_number": "refused",
+      "typescript_canonical_json_value": "7b226e223a307d"
+    },
+    {
+      "name": "exponent_form",
+      "note": "an integer value written with an exponent",
+      "json": "{\"n\":1e2}",
+      "python_canonical_json_bytes": "7b226e223a3130302e307d",
+      "go_canonical_json_value": "7b226e223a3130307d",
+      "go_canonical_json_value_use_number": "7b226e223a3165327d",
+      "go_strict_canonical_json_use_number": "refused",
+      "typescript_canonical_json_value": "7b226e223a3130307d"
+    },
+    {
+      "name": "exponent_form_large",
+      "note": "a value that the float formatters write with an exponent",
+      "json": "{\"n\":1e21}",
+      "python_canonical_json_bytes": "7b226e223a31652b32317d",
+      "go_canonical_json_value": "7b226e223a31652b32317d",
+      "go_canonical_json_value_use_number": "7b226e223a316532317d",
+      "go_strict_canonical_json_use_number": "refused",
+      "typescript_canonical_json_value": "refused"
+    }
+  ],
+  "lone_surrogate_cases": [
+    {
+      "name": "lone_surrogate_in_string",
+      "note": "an unpaired high surrogate in a string value",
+      "json": "{\"k\":\"\\ud800\"}",
+      "python_canonical_json_bytes": "refused",
+      "go_canonical_json_value": "7b226b223a22efbfbd227d",
+      "go_canonical_json_value_use_number": "7b226b223a22efbfbd227d",
+      "go_strict_canonical_json_use_number": "7b226b223a22efbfbd227d",
+      "typescript_canonical_json_value": "7b226b223a225c7564383030227d"
+    },
+    {
+      "name": "lone_surrogate_in_key",
+      "note": "an unpaired high surrogate in an object key",
+      "json": "{\"\\ud800\":1}",
+      "python_canonical_json_bytes": "refused",
+      "go_canonical_json_value": "7b22efbfbd223a317d",
+      "go_canonical_json_value_use_number": "7b22efbfbd223a317d",
+      "go_strict_canonical_json_use_number": "7b22efbfbd223a317d",
+      "typescript_canonical_json_value": "7b225c7564383030223a317d"
+    },
+    {
+      "name": "lone_surrogate_key_order",
+      "note": "an unpaired surrogate key next to U+D7FF, U+E000 and a surrogate pair: TypeScript orders it by its own value (U+D83D), between U+D7FF and U+E000; Go has replaced it by U+FFFD before ordering",
+      "json": "{\"\\ud83d\":1,\"\\ud83d\\ude00\":2,\"\\ue000\":3,\"\\ud7ff\":4}",
+      "python_canonical_json_bytes": "refused",
+      "go_canonical_json_value": "7b22ed9fbf223a342c22ee8080223a332c22efbfbd223a312c22f09f9880223a327d",
+      "go_canonical_json_value_use_number": "7b22ed9fbf223a342c22ee8080223a332c22efbfbd223a312c22f09f9880223a327d",
+      "go_strict_canonical_json_use_number": "7b22ed9fbf223a342c22ee8080223a332c22efbfbd223a312c22f09f9880223a327d",
+      "typescript_canonical_json_value": "7b22ed9fbf223a342c225c7564383364223a312c22ee8080223a332c22f09f9880223a327d"
+    }
+  ]
+}

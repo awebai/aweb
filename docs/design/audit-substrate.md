@@ -620,6 +620,21 @@ drain.
   team.
 - `outbox_targets`: the channel each target id belongs to.
 
+**Retention.** An event every target acknowledged is deleted, with its
+delivery rows, 30 days after it drained (`DRAINED_RETENTION`,
+`prune_drained` in `aweb_naapp.outbox`). The drain loop does it: once an hour
+it deletes up to 500 such events, oldest first, and again after its next pass
+while a batch comes back full, so a deployment runs nothing extra. An event
+that is not drained is kept at any age: one not materialized, or with a
+delivery pending, stalled, or dead-lettered and not acknowledged as lost. A
+drained event is also kept while a reader needs its rows: one with a delivery
+that was cancelled, rejected or in conflict, a critical event materialized
+with no target, and the one holding a target's latest receipt. The consequence
+for producers: enqueueing an event id again is a no-op, or a conflict on other
+bytes, only while the event is stored. Its id and `payload_sha256` are
+forgotten with it, so the same enqueue more than 30 days after the event
+drained stores and delivers a new event.
+
 The event row is written **in the same transaction as the effect**, which is
 the fail-closed point. Deliveries are materialized at drain time from the
 current registry: one per active registration with `active_from <=
@@ -675,10 +690,11 @@ rejections retry with bounded backoff, in case a registry cache is stale, then
 become `rejected` and are surfaced. Network errors and 5xx retry with capped
 exponential backoff and are **never dropped**. After the operator-disclosed
 delivery horizon, a delivery becomes `stalled` and is surfaced to the owner.
-After drain the producer keeps a minimal tombstone of `event_id` and digest.
-It also keeps at least the **highest receipt per (team, binding)**, because
-that receipt's `event_hash` commits to the target's entire chain prefix. This
-is what makes producers witnesses (§B3). The outbox is delivery
+After drain the producer keeps `event_id` and digest until
+`DRAINED_RETENTION` after the drain. It keeps the **latest receipt per
+target** (one hook binding of one team) at any age, because that receipt's `event_hash` commits to the
+target's entire chain prefix: the event holding it is the one drained event
+the 30 days never delete. This is what makes producers witnesses (§B3). The outbox is delivery
 infrastructure, not an audit store (hooks-spec §7).
 
 **Failure mode.**
@@ -927,7 +943,8 @@ Per team and chain epoch, under a row lock on the team's chain head:
 - **Receipt**, signed by logs: `aweb.logs-receipt/1`
   `{v, type, team_id, event_id, chain_epoch, team_seq, event_hash,
   received_at, logs_origin, kid, did_key}`.
-  Producers keep at least their highest receipt per (team, binding) (§A7).
+  Producers keep their latest receipt per target (one hook binding of one
+  team) (§A7).
   Each such receipt commits to the whole chain prefix, so every producer is an
   independent witness of the chain.
 - **Checkpoint**, signed by logs: `aweb.logs-checkpoint/1`

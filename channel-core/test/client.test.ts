@@ -1,5 +1,7 @@
 import { afterEach, beforeEach, describe, expect, test, vi } from "vitest";
+import * as ed from "@noble/ed25519";
 import { APIClient, createChannelClient } from "../src/index.js";
+import { computeDIDKey } from "../src/identity/did.js";
 
 describe("createChannelClient", () => {
   test("refuses to start without the selected team's certificate auth", () => {
@@ -16,10 +18,12 @@ describe("createChannelClient", () => {
 
 describe("APIClient URL construction", () => {
   const fetchMock = vi.fn<typeof fetch>();
+  const signingKey = new Uint8Array(32).fill(1);
+  const did = computeDIDKey(ed.getPublicKey(signingKey));
   const auth = {
-    did: "did:key:z6Mktest",
+    did,
     stableID: "did:aw:test",
-    signingKey: new Uint8Array(32).fill(1),
+    signingKey,
     teamID: "backend:acme.com",
     teamCertificateHeader: "cert-header",
   };
@@ -73,7 +77,8 @@ describe("APIClient URL construction", () => {
       expect.objectContaining({
         method: "GET",
         headers: expect.objectContaining({
-          Authorization: expect.stringMatching(/^DIDKey did:key:z6Mktest /),
+          Authorization: expect.stringContaining(`DIDKey ${did} `),
+          "X-AWEB-Signed-Payload": expect.any(String),
           "X-AWEB-Timestamp": expect.any(String),
           "X-AWEB-DID-AW": "did:aw:test",
         }),
@@ -97,7 +102,8 @@ describe("APIClient URL construction", () => {
       expect.objectContaining({
         method: "GET",
         headers: expect.objectContaining({
-          Authorization: expect.stringMatching(/^DIDKey did:key:z6Mktest /),
+          Authorization: expect.stringContaining(`DIDKey ${did} `),
+          "X-AWEB-Signed-Payload": expect.any(String),
           "X-AWEB-Timestamp": expect.any(String),
           "X-AWEB-DID-AW": "did:aw:test",
         }),
@@ -128,7 +134,8 @@ describe("APIClient URL construction", () => {
       expect.objectContaining({
         signal: controller.signal,
         headers: expect.objectContaining({
-          Authorization: expect.stringMatching(/^DIDKey did:key:z6Mktest /),
+          Authorization: expect.stringContaining(`DIDKey ${did} `),
+          "X-AWEB-Signed-Payload": expect.any(String),
           Accept: "text/event-stream",
           "X-AWEB-Timestamp": expect.any(String),
           "X-AWID-Team-Certificate": "cert-header",

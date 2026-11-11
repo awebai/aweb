@@ -79,6 +79,32 @@ describe("SenderTrustManager", () => {
     },
   );
 
+  test("binds recipients to the did:key a key rotation gave this identity", async () => {
+    const { did } = await didFromSeed(2);
+    const trust = new SenderTrustManager(
+      { get: vi.fn() } as never,
+      {
+        verifyStableIdentity: async () => ({ outcome: "OK_DEGRADED" }),
+        resolveIdentity: async () => ({
+          did,
+          stableID: "did:aw:custodial",
+          address: "acme.com/alice",
+          controllerDid: "did:key:zcontroller",
+          custody: "custodial",
+          identityScope: "global",
+        }),
+      } as never,
+      "backend:acme.com",
+      "did:key:zretired",
+    );
+    trust.renewSelfDID("did:key:zrotated");
+
+    const toRotated = await trust.normalizeTrust(new PinStore(), "verified", "acme.com/alice", did, undefined, "did:key:zrotated", undefined);
+    expect(toRotated.status).toBe("verified_custodial");
+    const toRetired = await trust.normalizeTrust(new PinStore(), "verified", "acme.com/alice", did, undefined, "did:key:zretired", undefined);
+    expect(toRetired.status).toBe("identity_mismatch");
+  });
+
   test("returns verified_custodial for custodial senders", async () => {
     const { did } = await didFromSeed(2);
     const store = new PinStore();

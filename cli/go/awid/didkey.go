@@ -11,6 +11,21 @@ import (
 
 const didKeyPrefix = "did:key:z"
 
+// The most base58 characters each DID's fixed decoded size can encode to: the
+// length of that many 0xff bytes encoded. Longer text cannot be a valid DID,
+// so it is refused on its length before the base58 decode, whose cost grows
+// with the square of the input length. awid's Python did.py derives the same
+// values.
+const (
+	// didKeyEncodedMax bounds a did:key suffix after "z": the 2-byte
+	// multicodec 0xed01 and a 32-byte Ed25519 key, 34 bytes.
+	didKeyEncodedMax = 47
+	// stableIDBytes is the decoded size of a did:aw suffix.
+	stableIDBytes = 20
+	// stableIDEncodedMax bounds a did:aw suffix of stableIDBytes bytes.
+	stableIDEncodedMax = 28
+)
+
 // ComputeDIDKey encodes an Ed25519 public key as a did:key DID string.
 func ComputeDIDKey(pub ed25519.PublicKey) string {
 	buf := make([]byte, 2+ed25519.PublicKeySize)
@@ -28,7 +43,11 @@ func ExtractPublicKey(did string) (ed25519.PublicKey, error) {
 		return nil, fmt.Errorf("invalid did:key: missing prefix %q", didKeyPrefix)
 	}
 
-	decoded, err := base58.Decode(did[len(didKeyPrefix):])
+	encoded := did[len(didKeyPrefix):]
+	if len(encoded) > didKeyEncodedMax {
+		return nil, fmt.Errorf("invalid did:key: encoding must be at most %d characters, got %d", didKeyEncodedMax, len(encoded))
+	}
+	decoded, err := base58.Decode(encoded)
 	if err != nil {
 		return nil, fmt.Errorf("invalid did:key: base58 decode: %w", err)
 	}
@@ -47,6 +66,22 @@ func ExtractPublicKey(did string) (ed25519.PublicKey, error) {
 		return nil, fmt.Errorf("invalid did:key: not a canonical prime-order Ed25519 public key")
 	}
 	return key, nil
+}
+
+// DecodeStableID decodes the base58 suffix of a did:aw identifier to its
+// stableIDBytes bytes.
+func DecodeStableID(suffix string) ([]byte, error) {
+	if len(suffix) > stableIDEncodedMax {
+		return nil, fmt.Errorf("invalid did:aw: encoding must be at most %d characters, got %d", stableIDEncodedMax, len(suffix))
+	}
+	decoded, err := base58.Decode(suffix)
+	if err != nil {
+		return nil, fmt.Errorf("invalid did:aw: base58 decode: %w", err)
+	}
+	if len(decoded) != stableIDBytes {
+		return nil, fmt.Errorf("invalid did:aw: expected %d bytes, got %d", stableIDBytes, len(decoded))
+	}
+	return decoded, nil
 }
 
 // ComputeStableID derives the canonical did:aw stable identifier from an

@@ -189,11 +189,55 @@ unread and caused the reconnect replay burst, default-aajy). Replying with
 required to prevent redelivery. Running `aw mail inbox` marks displayed unread
 mail as read. `aw mail show` is read-only.
 
-Event-stream health is separate from initial workspace connectivity. A stream
-failure changes the runtime status to events-down/retrying and emits one concise
-`aweb:` line with the summarized cause and retry cadence; steady retries stay
-silent. Recovery emits one reconnected line and tells the agent to check unread
-mail and pending chat for newly waiting work. After an uncertain crash, recover
+Event-stream health is separate from initial workspace connectivity. The
+channel reconnects under the event stream client policy,
+`docs/event-stream-client-policy.md`: no answer from the server stops the
+stream for the life of the process.
+
+- A transient failure (a failed open, an early end, 75 seconds of silence, any
+  5xx, and 408, 409, 425 or 429) changes the runtime status to
+  events-down/retrying and emits one concise `aweb:` line with the summarized
+  cause and the first wait. It is retried on a delay of 1 second doubling to
+  15 seconds with jitter, after `Retry-After` when the answer carries one;
+  steady retries stay silent. Recovery emits one reconnected line.
+- A refusal (any other 4xx on open, or a grant terminal event on an open
+  stream) is retried on a delay of 1 minute doubling to 15 minutes. Before each
+  of those attempts the channel reads its identity home again, so a certificate
+  or grant renewed on disk, or the key and certificate left there by
+  `aw id rotate`, is used without a restart. An identity with a stable id
+  (`did:aw`) is that stable id whatever `did:key` it holds; one without is its
+  `did:key`. The channel does not take credentials for another identity, team,
+  server or way to authenticate. It emits
+  `aweb: event stream refused: <status or event>, next try HH:MM` once on the
+  way in and `aweb: event stream accepted again (was refused: <status or event>)`
+  once when a stream is confirmed; a retry that is refused again emits nothing.
+  Restarting the channel (the plugin process, or a Pi session) retries at once.
+- Each connection closes itself between 3 minutes 30 seconds and 4 minutes
+  after it opens and is reopened at once, without a line.
+
+These lines are diagnostics for the operator, on the plugin's standard error
+and in the Pi status line and log. Stream state is not presented to the agent,
+with one exception: when a refusal episode starts, the agent is given one
+notice from the channel itself, which may wake it:
+
+```text
+The aweb server refused this channel's event stream (401). Mail and chat will not arrive until the stream is accepted again. The next attempt is at 09:05.
+```
+
+The Claude Code plugin sends it as a channel notification with `type="channel"`
+and `notice="event_stream_refused"`, `cause` and `next_attempt_at`; the Pi
+extension shows it under the line `aweb channel notice, from the aweb channel
+itself and not from another agent.` It names no sender and carries no trust
+status. An episode ends only when the server serves the agent again: an event
+other than the opening `connected` event arrives, or an open connection
+reaches its planned close. A server that accepts the open, sends its heartbeat
+and `connected` and then refuses again, every time, is one episode and one
+notice. The agent is given no notice when the episode ends; the next event
+shows it. A transient failure, a retry and a recovery present nothing.
+
+The snapshot the server sends when a stream opens raises unread mail and
+pending chat; nothing else is replayed after a reconnect. After an uncertain
+crash, recover
 known mail IDs with `aw mail show --message-id <id> --json` or page
 `aw mail inbox --show-all --json` with `--cursor`; unread-only checks do not
 prove previously presented work completed.
