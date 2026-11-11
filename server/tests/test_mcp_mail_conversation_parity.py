@@ -705,3 +705,14 @@ def test_an_envelope_for_a_key_this_server_does_not_record_is_refused_as_a_chang
     assert json.loads(_send_refusal(refused.value, hosted_envelope=True)) == {
         "error": "this recipient's key changed; resend the message",
     }
+
+
+def test_a_refusal_whose_detail_is_an_object_is_answered_with_that_object():
+    from aweb.mcp.tools.mail import _send_refusal
+
+    # A retired participant is refused with a code and a message, as one object.
+    retired = {"code": "participant_retired", "message": "human has moved; start a new mail to human in ops:acme.com"}
+    assert json.loads(_send_refusal(_binding_refusal(410, retired))) == {"error": retired}
+    assert json.loads(_send_refusal(_binding_refusal(410, retired), address="a.test/b", hosted_envelope=True)) == {
+        "error": retired,
+    }
