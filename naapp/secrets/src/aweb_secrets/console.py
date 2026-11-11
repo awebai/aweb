@@ -57,10 +57,10 @@ if TYPE_CHECKING:
 
 
 class InstallationLookup(Protocol):
-    async def __call__(
-        self, installation_id: str, *, team_id: str | None = None
-    ) -> AdmittedInstallation:
-        """Refresh authoritative G1/F6; team_id is an untrusted lookup hint."""
+    async def __call__(self, installation_id: str, *, team_id: str) -> AdmittedInstallation:
+        """Refresh authoritative G1/F6 for team_id: the team a console session's
+        scope was enrolled under, or an untrusted hint before any session exists.
+        An id that team does not hold raises LookupError."""
         ...
 
 
@@ -71,7 +71,8 @@ class OwnerConsole:
     The installation lookup refreshes F6 outside any write transaction and must
     return its authoritative installation identity, or refuse an unavailable one.
     For first-owner bootstrap it receives an untrusted team lookup hint before
-    any local F6 row exists. ID-only calls resolve existing admitted state.
+    any local F6 row exists. Every other call names the team of the session or
+    record it acts for, so another team's installation id is never resolved.
     """
 
     def __init__(
@@ -115,6 +116,21 @@ class OwnerConsole:
                 scope,
             )
         )
+
+    async def session_installation(
+        self, current: ConsoleSession, installation_id: str
+    ) -> AdmittedInstallation:
+        """The installation as the session's own team holds it. The team is the
+        one the session's scope was enrolled under, as an owner or an approver;
+        an id that team does not hold raises LookupError, as an unknown id does."""
+        team_id = await self.db.fetch_value(
+            "SELECT team_id FROM {{tables.owner_principals}} WHERE scope=$1", current.scope
+        ) or await self.db.fetch_value(
+            "SELECT team_id FROM {{tables.approvers}} WHERE scope=$1", current.scope
+        )
+        if team_id is None:
+            raise LookupError("installation not found")
+        return await self.installation(installation_id, team_id=team_id)
 
     async def apply_owner_act(
         self,

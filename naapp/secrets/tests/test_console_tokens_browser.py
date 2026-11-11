@@ -51,7 +51,7 @@ async def token_service(world):
     await apply_dispatch_migrations(world.db)
     await apply_use_context_migrations(world.db)
 
-    async def installation(installation_id, *, team_id=None):
+    async def installation(installation_id, *, team_id: str):
         assert installation_id == INSTALLATION_ID
         return world.admitted
 

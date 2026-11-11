@@ -63,7 +63,9 @@ class ConsoleUseApprovals:
         if row is None:
             raise HTTPException(404, "approval_unknown")
         frozen = json.loads(row["request"])
-        admitted = await self.console.installation(row["installation_id"])
+        admitted = await self.console.installation(
+            row["installation_id"], team_id=row["team_id"]
+        )
         if (
             admitted.installation_id != row["installation_id"]
             or admitted.team_id != row["team_id"]
