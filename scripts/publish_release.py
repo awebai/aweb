@@ -551,6 +551,13 @@ def publish_oci(root: Path, prefix: str, version: str, source_sha: str) -> None:
         print(f"release-index={json.dumps({'digest': staged, 'source_sha': source_sha, 'version': version}, sort_keys=True, separators=(',', ':'))}")
 
 
+def gated_publish_set(directory: Path, *, prefix: str, version: str, source_sha: str, cloud_checkout: Path,
+                      cloud_tree: str, manifest_sha256: str, expected_aw_released: str,
+                      npm_latest_aw: str) -> list[dict]:
+    return [dict(path=str(path), sha256=sha256(path)) for path in sorted(directory.iterdir())
+            if path.name != "manifest.json"]
+
+
 def publish(root: Path, tag: str) -> None:
     prefix, version, source_sha = tag_identity(root, tag)
     # The annotated release tag carries the choice across the distribution

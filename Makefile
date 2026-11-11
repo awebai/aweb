@@ -143,6 +143,7 @@ test-shipping:
 	python3 scripts/test_release_dependency_regression.py
 	python3 scripts/test_candidate_artifacts.py
 	python3 scripts/test_release_stamp.py
+	python3 scripts/test_publish_verdict.py
 	python3 scripts/test_fixture_repo.py
 	python3 scripts/test_shipping.py
 	python3 scripts/test_aw_npm_publication.py
