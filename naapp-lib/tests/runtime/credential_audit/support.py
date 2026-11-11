@@ -172,7 +172,7 @@ class World:
     passkeys: Passkeys = field(init=False)
 
 
-@pytest.fixture
+@pytest.fixture(name="world")
 async def world(test_db_factory) -> AsyncIterator[World]:
     db = await test_db_factory.create_db(suffix="credential_audit_owner_act_app")
     registry_db = await test_db_factory.create_db(suffix="credential_audit_owner_act_app_awid")
