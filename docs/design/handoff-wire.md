@@ -155,8 +155,8 @@ including `credential`, keeps the same-signer rule.
 2. Q's chain verifies for subject (Q's `did:aw`, the `did:key` team-auth
    verified), with status evidence no older than the existing 60-second
    freshness bound. The issuer of Q's own certificate (its direct parent) is
-   a human whose stable ID equals `scope.principal`, and that edge is current
-   (not revoked, current head). A deeper descendant, or a chain naming another
+   a human whose stable ID equals `scope.principal`, and that issuer's own
+   verified kind is `human`. The edge is current (not revoked, current head). A deeper descendant, or a chain naming another
    parent, does not qualify.
 3. `holder_certificate` is checked exactly as a holder's certificate is
    today: it decodes, verifies under the team's current key, names the
@@ -168,7 +168,8 @@ including `credential`, keeps the same-signer rule.
 **Refusals:**
 
 - `400 handoff_invalid`: `holder_certificate` is malformed, is absent when
-  the signer is not H, or is present when the signer is H.
+  the signer is not H, is present when the signer is H, or is present on any
+  purpose other than `session`.
 - `403 scope_not_signer`: the signer is neither H nor a verified direct child
   of H. That covers a missing chain, another parent, a deeper descendant, and
   a revoked or stale edge.
