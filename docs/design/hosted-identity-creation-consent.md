@@ -49,8 +49,14 @@ Export retains the original private key and exact semantic selection before
 remote effects. It performs the existing child-signed `did:aw` mapping
 registration required by hosted creation, then exports only the public request.
 This is **pending consent**, not a registered, attributed deployment root.
+An abandoned export leaves the existing bare `did:aw` state:
+`unknown/unregistered_identity`, with no registered ID ancestry.
 It prints the selected service's browser page `/account/identity-creations`.
 No request body, token or key goes in that URL; no browser is opened implicitly.
+Export also prints the child-key fingerprint and explains: “Approve within
+300 seconds of export. If it expires, rerun the same export with the original
+root and parameters to refresh the proof.” The window includes upload, preview
+and approval; re-export preserves the child key and request UUID.
 
 The request is the existing creation object:
 
@@ -95,6 +101,11 @@ validates at approval, refuse; never substitute another human or selected resour
 The browser submits the uploaded request, never a reconstruction from editable
 display fields. The existing timestamp skew bound (300 seconds) applies at
 preview and again at approval.
+Preview shows the same child-key fingerprint printed by export beside “Compare
+with your terminal before approving.” Use the existing request-exchange
+fingerprint format from [ID certificates](../id-certificates.md#self-custodial-child-requests-and-re-sign-transport).
+This comparison helps the person detect a request prepared with someone else's
+child key; it adds no new approval mechanism.
 
 The download is `{v:1, request:<approved request>, result:<existing hosted
 creation response>}`. The wrapper is correlation, not a new signed
@@ -117,9 +128,24 @@ successful browser approval alone is not completion.
 
 The root retains one key, request UUID, service/account, organization/team,
 name, mode and human/domain. Deliberate re-export may refresh only the proof's
-timestamp/signature; approval still checks current authority. An expired proof
-cannot authorize a browser retry. Exact retries reuse the retained creation;
-changed semantic bindings refuse. Import accepts an earlier exact exported
+timestamp/signature. At every approval, validate the fresh child proof and
+current browser session, H/key and organization/team authority **before looking
+up any retained result**. A request UUID alone never authorizes its retrieval.
+
+The idempotency key is `(current actor, request_id)`. Compare the **complete
+semantic creation request excluding `proof`**: retain the exact signed
+organization/team selectors and entire `id_tree`, not merely equivalent resolved
+IDs. Equal semantics return the original retained issuance result, wrapped with
+the newly approved request; different semantics refuse. The fresh proof is
+mandatory on every approval but is not part of this semantic comparison. The
+new browser adapter supplies this complete binding to the existing retention
+composition without changing the old CLI route's comparison or wire behavior.
+
+Thus approval-success/download-lost, followed after 300 seconds by deliberate
+re-export and approval, recovers the same result without another issuance.
+An expired proof cannot authorize that browser retry. CLI import still matches
+one saved exported request **including that export's proof**, independently of
+the server's semantic retry comparison. Import accepts an earlier exact exported
 request after a timestamp refresh, and never treats that timestamp as authority
 to bypass current certificate/registry checks. Once a complete result is saved,
 continuation uses it without another browser creation. Partial failures preserve
@@ -140,7 +166,10 @@ through broader login or owner authority.
 Required proof after review: admission-only bearer or child proof alone cannot
 create/approve; preview creates nothing; wrong browser/H/team, tampering and
 expiry refuse; exact retry reuses while changed retry refuses; another local
-key or altered result fails import; lost-response and interrupted-registration
-recovery keep the original key/chain. The real browser-to-CLI journey must
+key or altered result fails import; approval succeeds but the download is lost,
+then a re-export after 300 seconds recovers the same key/chain with no second
+issuance; an unauthorized session cannot retrieve a retained result.
+Lost-response and interrupted-registration recovery keep the original key/chain.
+The real browser-to-CLI journey must
 register the root, verify H, create ordinary descendants unattended and verify
 root revocation invalidates them. Priority remains acxt/acxv before acxu.
