@@ -27,10 +27,10 @@ from nacl.signing import SigningKey
 
 from aweb_secrets.owners import OWNER_ROLE
 from tests.human_owner import apply_holder
-from tests.test_handoff_sessions import API, b64, journey
+from tests.test_handoff_sessions import API, b64, journey, world
 from tests.test_owner_bootstrap import TEAM
 
-__all__ = ["journey"]
+__all__ = ["journey", "world"]
 
 REQUESTER = {"requester_parent": requester_parent}
 
