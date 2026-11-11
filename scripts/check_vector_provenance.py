@@ -293,6 +293,10 @@ ROOT_CONSUMERS = {
         "identity-log-v1.json",
         '_IDENTITY_VECTOR = _ROOT / "docs" / "vectors" / "identity-log-v1.json"',
     ),
+    PurePosixPath("awid/tests/test_did_key_from_signing_key.py"): _consumer(
+        "identity-log-v1.json",
+        'Path(__file__).resolve().parents[2] / "docs" / "vectors" / "identity-log-v1.json"',
+    ),
     PurePosixPath("awid/tests/test_federation_authority_vectors.py"): _consumer(
         {
             "federation-authority-state-v1.json",
