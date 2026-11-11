@@ -86,6 +86,7 @@ from aweb_naapp.runtime.authorization import (
     authorize_request,
     is_placeholder,
 )
+from aweb_naapp.runtime.awid_member_credentials import read_member_credentials
 from aweb_naapp.runtime.db import NaappDatabase, Store
 from aweb_naapp.runtime.event_emit import AppEvents, is_loopback_host
 from aweb_naapp.runtime.health import CheckResult, HealthCheck, mount_health
@@ -193,6 +194,7 @@ class NaappRuntime:
             registry_url=settings.awid_registry_url,
             ttl_seconds=settings.auth_cache_ttl_seconds,
             service_token=settings.awid_service_token,
+            member_credentials=read_member_credentials(settings.awid_member_credentials),
             transport=awid_transport,
         )
         self._team_server_directory = TeamServerDirectory(
@@ -261,6 +263,9 @@ class NaappRuntime:
     @asynccontextmanager
     async def lifespan(self, app: FastAPI) -> AsyncIterator[None]:
         self.check_authorized_routes(app)
+        # A configured member credential AWID does not currently publish is the
+        # operator's misconfiguration: refuse to start, naming it.
+        await self._team_cache.check_member_credentials()
         database = NaappDatabase(
             self.settings,
             module_name=self.module_name,
