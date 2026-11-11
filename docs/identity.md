@@ -707,9 +707,10 @@ CLI reports verification status on reads such as `aw mail inbox` and
 `aw chat open`.
 
 The clients use Trust on First Use (TOFU) pinning for globally addressed peer
-continuity. A stable identity is pinned by `did:aw` when available, together
-with its observed current key and durable DID-log checkpoint; otherwise the
-first verified contact is pinned by `did:key`. Future changes require verified
+continuity. A sender is pinned only after the registry confirms that its
+address belongs to it: by `did:aw` when a stable identity is available,
+together with its current key and durable DID-log checkpoint, otherwise by
+`did:key`. Future changes require verified
 DID-log/rotation continuity or a namespace-controller-signed address
 replacement. Local single-team identities are refreshed against the live team
 roster rather than persisted as global address pins. See

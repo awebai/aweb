@@ -2,6 +2,22 @@
 
 ## Unreleased
 
+- **`aw` and the channel client report the first message from an address as
+  verified, and remember the sender, only after the registry confirms the
+  address belongs to the signing key.** Until now the first key seen for an
+  address was pinned and the message reported verified whatever the registry
+  said: in `aw` even when the registry named a different key or could not be
+  reached, in the channel client when the registry named a different key. Now
+  a first message is `identity_mismatch` when the registry names another key
+  or has no such address, and `verification_stale` when the registry cannot be
+  asked or the stable-identity check cannot be made; the next read asks again.
+  You will see fewer `verified` first contacts, and during a registry outage
+  the first message from a new address is not verified until the registry is
+  back. Senders already known keep verifying by their pin through an outage,
+  in the channel client too, which used to report them stale. A known sender
+  is an `identity_mismatch` once the registry names another key for its
+  address. New pins record `confirmed_by: registry` in `known_agents.yaml`;
+  existing pins are left as they are.
 - **A customer-run aweb server can read its private team at the public
   registry without the registry-wide `AWID_SERVICE_TOKEN`.** Give the server
   an ordinary member certificate in each team it serves
