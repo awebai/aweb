@@ -80,7 +80,9 @@ class ConsoleReconciliation:
         )
         if row is None:
             raise HTTPException(403, "owner_required")
-        admitted = await self.console.installation(row["installation_id"])
+        admitted = await self.console.installation(
+            row["installation_id"], team_id=row["team_id"]
+        )
         if (admitted.installation_id, admitted.team_id) != (row["installation_id"], row["team_id"]):
             raise HTTPException(403, "owner_required")
         return admitted

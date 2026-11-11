@@ -35,7 +35,7 @@ from tests.test_credential_audit import audit_for, events
 async def client(w, audit, *, registrations=None):
     await apply_console_migrations(w.db)
 
-    async def installation(installation_id, *, team_id=None):
+    async def installation(installation_id, *, team_id: str):
         assert installation_id == INSTALLATION_ID
         return w.admitted
 

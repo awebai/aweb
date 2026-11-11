@@ -40,7 +40,7 @@ async def clients(
 ) -> AsyncIterator[tuple[httpx.AsyncClient, httpx.AsyncClient]]:
     await apply_console_migrations(world.db)
 
-    async def installation(installation_id: str, *, team_id: str | None = None):
+    async def installation(installation_id: str, *, team_id: str):
         if lookup_hints is not None:
             lookup_hints.append(team_id)
         # The real admitted F6 record this fixture already stored.

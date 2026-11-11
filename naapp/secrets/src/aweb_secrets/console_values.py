@@ -87,7 +87,7 @@ class ConsoleValues:
             or initial.kind != reference.kind
         ):
             raise HTTPException(status_code=400, detail="request_invalid")
-        admitted = await self.console.installation(installation_id)
+        admitted = await self.console.session_installation(current, installation_id)
         if admitted.installation_id != installation_id:
             raise HTTPException(status_code=403, detail="owner_required")
         async with self.console.db.transaction() as tx:
@@ -135,7 +135,7 @@ class ConsoleValues:
         value: bytes,
     ) -> SealContext:
         # Authoritative F6 lookup/refresh is outside the write transaction.
-        admitted = await self.console.installation(installation_id)
+        admitted = await self.console.session_installation(current, installation_id)
         if admitted.installation_id != installation_id:
             raise HTTPException(status_code=403, detail="owner_required")
         async with self.console.db.transaction() as tx:

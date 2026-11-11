@@ -84,6 +84,62 @@
   one at a time. A failed activation leaves the active version as it was, and
   concurrent activations leave exactly one version active.
 
+- The naapp runtime (`aweb_naapp.runtime.health`) serves the probe contract of
+  the server and AWID. `/live` answers 200 whenever the process serves requests
+  and checks no dependency. `/ready` and `/health` answer 200 when every
+  dependency check passes and 503 otherwise; `/health` answered 200 in both
+  cases. Their body reports `status` as `ok` or `unhealthy` (it was
+  `unavailable`) and names each check in `checks` as `ok` or `error` (it was an
+  object with an `ok` boolean); `/health` adds `details`, which holds each
+  check's figures under the check's name, such as
+  `details.outbox.oldest_undelivered_age_seconds`. This applies to folio, logs
+  and secrets. The secrets image `HEALTHCHECK` probes `/live` (it probed
+  `/ready`), and the folio, library and logs images gain a `HEALTHCHECK` on
+  `/live`. A platform health check that restarts an instance on failure should
+  use `/live`: on `/health` or `/ready` it restarts every instance during a
+  database outage. Folio's Render health check path is `/live`, in
+  `naapp/folio/render.yaml` and `naapp/folio/ops/render-production.json`; the
+  live service's setting has to be changed to match before this version is
+  deployed. The folio and library end-to-end compose files wait on `/ready`.
+
+- The naapp outbox (`aweb_naapp.outbox`) keeps one team's failures from
+  delaying other teams. An event whose targets cannot be resolved is resolved
+  again after a backoff (5 seconds doubling to 5 minutes by default, the
+  delivery `RetryPolicy`), and each drain pass claims events and deliveries in
+  the order they fell due, so a failed one is tried again only after those that
+  fell due before its retry did. Outbox migration `004_resolution_backoff.sql`
+  adds `outbox_events.resolve_attempts` and `outbox_events.next_resolve_at`;
+  the runtime applies it at start-up.
+
+- The naapp outbox deletes an event, with its delivery rows, 30 days after
+  every target acknowledged it. The drain loop does it, once an hour and up to
+  500 events at a time, so a deployment runs nothing extra; outbox migration
+  `005_drained_retention.sql` adds the index it reads. Kept at any age: an
+  event that is not materialized or has a delivery pending, stalled, or
+  dead-lettered and not acknowledged; an event with a cancelled, rejected or
+  conflicting delivery; a critical event materialized with no target; and the
+  event holding a target's latest receipt. An event's id and payload digest
+  are forgotten with it: enqueueing the same event id more than 30 days after
+  it drained stores and delivers a new event, where before it was a no-op or
+  a conflict.
+
+- The naapp runtime's `outbox` health check reports
+  `oldest_undelivered_age_seconds` from the events not yet drained, without
+  reading delivered history, and no backlog fails it: `/ready` answers 503 for
+  the outbox only while the database is not connected. When the age cannot be
+  read within 2 seconds, `/health` reports the check without the figure.
+
+- The secrets console resolves an installation for the team of the signed-in
+  owner or approver, or of the approval record it acts on, never from the
+  installation id alone. An installation id that another team holds answers as
+  an unknown id does, and a team whose server reports another team's
+  installation id no longer makes that team's console refuse its owners.
+
+- logs reads `LOGS_CLIENT_ADDRESS_HEADER`, the header the deployment's proxy
+  sets to the client address it saw, and keeps the console login limit per that
+  address. Unset, the limit is kept per TCP peer, which behind a proxy is one
+  limit for every reader.
+
 - `aw` writes U+2028 (line separator) and U+2029 (paragraph separator) as UTF-8
   in the canonical JSON it signs, as the Python reference
   (`awid.signing.canonical_json_bytes`) and TypeScript do; Go's JSON encoder
