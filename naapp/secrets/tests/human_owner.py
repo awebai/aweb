@@ -85,7 +85,7 @@ async def human(world, principal, *, member=None, client=None):
                 team_key=world.owner.team_key,
                 member_key=member_key(alias),
                 certificate_id="owner-" + alias,
-                alias=alias,
+                alias="owner-" + alias,
             )
             mapping = await registry.register_did(member.did_key, bytes(member.member_key))
             assert mapping.did_aw == principal.principal_did
