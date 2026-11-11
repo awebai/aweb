@@ -24,6 +24,7 @@ import (
 	"github.com/awebai/aw/awconfig"
 	"github.com/awebai/aw/awid"
 	"github.com/awebai/aw/internal/appmanifest"
+	"github.com/awebai/aw/internal/atomicfile"
 	"github.com/awebai/aw/internal/pathpreflight"
 	"github.com/spf13/cobra"
 )
@@ -373,7 +374,7 @@ func addPluginGrantGuidance(cmd *cobra.Command, out *pluginInstallOutput) {
 	if err != nil {
 		return
 	}
-	client, sel, err := buildClientForSelectionAtIdentityHome(ctx, workingDir, sel.IdentityHome, sel)
+	client, sel, err := buildClientForSelectionAtIdentityHome(ctx, workingDir, sel.IdentityHome, sel, resolveAuthenticatedBaseURLContext)
 	if err != nil {
 		return
 	}
@@ -592,24 +593,16 @@ func isManifestInstallSource(source string) bool {
 	return err == nil && (u.Scheme == "http" || u.Scheme == "https")
 }
 
-func installManifestPlugin(source, dir string) (*pluginInstallOutput, error) {
-	return installOrUpdateManifestPlugin(source, dir, false, "")
-}
-
-// installOrUpdateManifestPlugin installs (or updates) a manifest app. devOrigin,
-// when set, overrides the app's origin to that base URL and skips the
-// origin/fetch-URL self-consistency check, so aw can point at a self-hosted app
-// whose served manifest still advertises a different (e.g. production) origin.
 type manifestManagementPolicy struct {
 	residentHome, expectedName string
 	registerEvents             bool
 	grantedScopes              []string
 }
 
-func installOrUpdateManifestPlugin(source, dir string, update bool, devOrigin string) (*pluginInstallOutput, error) {
-	return installManagedManifestPlugin(source, dir, update, devOrigin, manifestManagementPolicy{})
-}
-
+// installManagedManifestPlugin installs (or updates) a manifest app. devOrigin,
+// when set, overrides the app's origin to that base URL and skips the
+// origin/fetch-URL self-consistency check, so aw can point at a self-hosted app
+// whose served manifest still advertises a different (e.g. production) origin.
 func installManagedManifestPlugin(source, dir string, update bool, devOrigin string, policy manifestManagementPolicy) (*pluginInstallOutput, error) {
 	var catalog *appApprovalCatalog
 	var approval appInstallationApproval
@@ -756,11 +749,7 @@ func installManagedManifestPlugin(source, dir string, update bool, devOrigin str
 			return nil, err
 		}
 	}
-	if err := os.WriteFile(manifestPath+".tmp", manifestBytes, 0o600); err != nil {
-		return nil, err
-	}
-	if err := os.Rename(manifestPath+".tmp", manifestPath); err != nil {
-		_ = os.Remove(manifestPath + ".tmp")
+	if err := atomicfile.Write(manifestPath, manifestBytes, 0o600); err != nil {
 		return nil, err
 	}
 	if err := savePluginProvenance(provenancePath, &provenance); err != nil {
@@ -1013,15 +1002,7 @@ func savePluginProvenance(path string, provenance *pluginProvenance) error {
 	if err != nil {
 		return err
 	}
-	tmp := path + ".tmp"
-	if err := os.WriteFile(tmp, append(data, '\n'), 0o600); err != nil {
-		return err
-	}
-	if err := os.Rename(tmp, path); err != nil {
-		_ = os.Remove(tmp)
-		return err
-	}
-	return nil
+	return atomicfile.Write(path, append(data, '\n'), 0o600)
 }
 
 func loadPluginProvenance(path string) (*pluginProvenance, error) {
@@ -1614,15 +1595,6 @@ func resolveTrustedPluginCommand(name string) (pluginResolution, error) {
 		return pluginResolution{}, nil
 	}
 	return pluginResolution{Kind: pluginResolutionExternal, Path: path}, nil
-}
-
-func resolveTrustedExternalPlugin(name string) (string, bool, error) {
-	dir, err := pluginDir()
-	if err != nil {
-		debugLog("resolve plugin dir: %v", err)
-		return "", false, nil
-	}
-	return resolveTrustedExternalPluginInDir(dir, name)
 }
 
 func resolveTrustedExternalPluginInDir(dir, name string) (string, bool, error) {

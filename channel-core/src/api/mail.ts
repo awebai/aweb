@@ -1,6 +1,8 @@
 import type { APIClient } from "./client.js";
 import type { MessageEnvelope, VerificationStatus } from "../identity/signing.js";
 import type { ReplacementAnnouncement, RotationAnnouncement, SenderMembership } from "../identity/trust.js";
+import { isEncryptedMessage } from "../identity/encrypted.js";
+import { signedMailDisplayMatches, type ReaderIdentity } from "../identity/signed_display.js";
 import {
   signedPayloadConversationStatus,
   verifyMessage,
@@ -50,6 +52,7 @@ export async function fetchInbox(
   limit: number = 50,
   messageID?: string,
   log: (message: string) => void = (message) => console.error(message),
+  reader: ReaderIdentity = { did: "", stableID: "" },
 ): Promise<InboxMessage[]> {
   const params = new URLSearchParams();
   if (unreadOnly) params.set("unread_only", "true");
@@ -66,6 +69,13 @@ export async function fetchInbox(
   for (const msg of resp.messages) {
     try {
       msg.verification_error = false;
+      if (!displayMatchesSignedClaims(msg, reader)) {
+        // The response is left as received: signed metadata is not projected
+        // over fields the signature does not cover.
+        msg.projected_from_did = msg.from_did;
+        msg.verification_status = "failed";
+        continue;
+      }
       hydrateAddressesFromSignedPayload(msg);
       msg.verification_status = await verifyInboxMessage(msg);
     } catch {
@@ -82,6 +92,19 @@ export async function fetchInbox(
   }
 
   return resp.messages;
+}
+
+function displayMatchesSignedClaims(msg: InboxMessage, reader: ReaderIdentity): boolean {
+  if (!msg.signed_payload || isEncryptedMessage(msg)) return true;
+  return signedMailDisplayMatches(msg.signed_payload, {
+    type: "mail",
+    body: msg.body,
+    subject: msg.subject,
+    message_id: msg.message_id,
+    conversation_id: msg.conversation_id,
+    from_did: msg.from_did,
+    to_did: msg.to_did,
+  }, reader);
 }
 
 function hydrateAddressesFromSignedPayload(msg: InboxMessage): void {

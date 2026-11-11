@@ -127,6 +127,11 @@ docker compose up --build -d
 curl http://localhost:8010/health
 ```
 
+`/health` and `/ready` answer 503 when the Redis or database check fails;
+`/live` answers 200 whenever the process serves requests. Use `/live` for
+liveness probes and container healthchecks, `/ready` for readiness and routing.
+See [health probes](../docs/awid-sot.md#health-probes).
+
 ## Release
 
 `awid` is released as a GHCR container image through the repository's `release`

@@ -5,14 +5,10 @@ import (
 	"crypto/ed25519"
 	"encoding/json"
 	"errors"
-	"net"
 	"net/http"
-	"net/http/httptest"
-	"os"
 	"os/exec"
 	"path/filepath"
 	"strings"
-	"sync"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -35,94 +31,6 @@ func writeNetworkWorkspace(t *testing.T, workingDir, serverURL, handle, namespac
 		CreatedAt:     "2026-04-04T00:00:00Z",
 	})
 	return writeWorkspaceBindingForTest(t, workingDir, state)
-}
-
-func TestResolveClientSelectionEventStreamFallsBackFromStaleBaseURL(t *testing.T) {
-	var pathsMu sync.Mutex
-	var paths []string
-
-	l, err := net.Listen("tcp4", "127.0.0.1:0")
-	if err != nil {
-		t.Fatalf("listen: %v", err)
-	}
-	server := &httptest.Server{
-		Listener: l,
-		Config: &http.Server{Handler: http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-			pathsMu.Lock()
-			paths = append(paths, r.URL.Path)
-			pathsMu.Unlock()
-
-			switch r.URL.Path {
-			case "/v1/events/stream":
-				http.NotFound(w, r)
-			case "/v1/agents/heartbeat":
-				http.NotFound(w, r)
-			case "/api/v1/agents/heartbeat":
-				w.WriteHeader(http.StatusOK)
-			case "/api/v1/events/stream":
-				w.Header().Set("Content-Type", "text/event-stream")
-				_, _ = w.Write([]byte("event: connected\ndata: {\"agent_id\":\"ag_123\",\"team_id\":\"backend:demo\"}\n\n"))
-			default:
-				t.Fatalf("unexpected %s %s", r.Method, r.URL.Path)
-			}
-		})},
-	}
-	server.Start()
-	t.Cleanup(server.Close)
-
-	tmp := t.TempDir()
-	workspacePath := writeNetworkWorkspace(t, tmp, server.URL, "", "")
-
-	t.Setenv("HOME", tmp)
-	t.Setenv("AW_CONFIG_PATH", "")
-	t.Setenv("AWEB_URL", "")
-
-	client, _, err := resolveClientSelectionForDir(tmp)
-	if err != nil {
-		t.Fatalf("resolveClientSelectionForDir: %v", err)
-	}
-
-	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
-	defer cancel()
-	stream, err := client.EventStream(ctx, time.Now().Add(5*time.Second))
-	if err != nil {
-		t.Fatalf("EventStream: %v", err)
-	}
-	t.Cleanup(func() { _ = stream.Close() })
-
-	event, err := stream.Next(ctx)
-	if err != nil {
-		t.Fatalf("Next: %v", err)
-	}
-	if event.Type != "connected" {
-		t.Fatalf("event=%#v", event)
-	}
-
-	cfgData, err := os.ReadFile(workspacePath)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if !strings.Contains(string(cfgData), "aweb_url: "+server.URL+"/api") {
-		t.Fatalf("expected workspace binding to persist recovered /api URL under aweb_url, got:\n%s", string(cfgData))
-	}
-
-	pathsMu.Lock()
-	gotPaths := append([]string(nil), paths...)
-	pathsMu.Unlock()
-	want := []string{
-		"/v1/events/stream",
-		"/v1/agents/heartbeat",
-		"/api/v1/agents/heartbeat",
-		"/api/v1/events/stream",
-	}
-	if len(gotPaths) != len(want) {
-		t.Fatalf("paths=%v", gotPaths)
-	}
-	for i := range want {
-		if gotPaths[i] != want[i] {
-			t.Fatalf("paths=%v", gotPaths)
-		}
-	}
 }
 
 func TestResolveWorkingBaseURLContextHonorsCancellation(t *testing.T) {

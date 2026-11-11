@@ -44,8 +44,9 @@ describe.each(["grant", "team"] as const)("%s receiver authoritative roster", mo
       } else {
         expect(auth).toMatch(/^DIDKey /);
         expect(headers.get("X-AWID-Team-Certificate")).toBe("synthetic-certificate");
-        signed = JSON.stringify({ body_sha256: createHash("sha256").update("").digest("hex"),
-          team_id: team, timestamp: headers.get("X-AWEB-Timestamp") });
+        signed = Buffer.from(headers.get("X-AWEB-Signed-Payload")!, "base64url").toString();
+        expect(JSON.parse(signed)).toEqual({ v: 2, aud: "https://aweb.example", method: "GET", path: "/v1/agents",
+          body_sha256: createHash("sha256").update("").digest("hex"), team_id: team, timestamp: headers.get("X-AWEB-Timestamp") });
       }
       expect(ed.verify(signatureBytes, Buffer.from(signed), ed.getPublicKey(receiver))).toBe(true);
       if (variant === "unavailable") return new Response("unavailable", { status: 503 });

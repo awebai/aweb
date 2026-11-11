@@ -27,10 +27,12 @@ func TestControlSocketDrivesTheRunningDaemon(t *testing.T) {
 	logs := &logCapture{}
 
 	broker, _ := liveBroker(t, Config{
-		Store:      store,
-		Session:    oats,
-		Log:        logs.log,
-		OpenStream: func(string, string) (run.EventStreamOpener, error) { return nil, errors.New("no stream in this test") },
+		Store:   store,
+		Session: oats,
+		Log:     logs.log,
+		OpenStream: func(context.Context, string, string) (run.EventStreamOpener, error) {
+			return nil, errors.New("no stream in this test")
+		},
 	})
 
 	ctx, cancel := context.WithCancel(context.Background())
@@ -126,10 +128,12 @@ func TestFallbackFilesAreReconciledByTheDaemon(t *testing.T) {
 	logs := &logCapture{}
 	oats := session.NewFake(session.Inspection{Home: home, Present: true, State: session.StateIdle, RawState: "idle"})
 	broker, _ := liveBroker(t, Config{
-		Store:      store,
-		Session:    oats,
-		Log:        logs.log,
-		OpenStream: func(string, string) (run.EventStreamOpener, error) { return nil, errors.New("no stream in this test") },
+		Store:   store,
+		Session: oats,
+		Log:     logs.log,
+		OpenStream: func(context.Context, string, string) (run.EventStreamOpener, error) {
+			return nil, errors.New("no stream in this test")
+		},
 	})
 
 	waitFor(t, "the daemon to reconcile the fallback file", func() bool {

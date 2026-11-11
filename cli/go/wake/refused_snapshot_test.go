@@ -100,7 +100,7 @@ func TestRefusedMessageReturnsFromFreshSnapshot(t *testing.T) {
 				defer traceMu.Unlock()
 				trace = append(trace, time.Now().Format("15:04:05.000")+" "+fmt.Sprintf(format, args...))
 			}
-			broker, cancel := liveBroker(t, Config{Log: record, Store: store, Session: &session.ExecClient{Bin: oats}, ChannelCore: NewChannelCoreRunner(store), OpenStream: func(string, string) (run.EventStreamOpener, error) {
+			broker, cancel := liveBroker(t, Config{Log: record, Store: store, Session: &session.ExecClient{Bin: oats}, ChannelCore: NewChannelCoreRunner(store), OpenStream: func(context.Context, string, string) (run.EventStreamOpener, error) {
 				return func(ctx context.Context, _ time.Time) (awid.EventSource, error) {
 					mu.Lock()
 					openedAt := time.Now()

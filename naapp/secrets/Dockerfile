@@ -37,5 +37,5 @@ RUN uv sync --frozen --no-dev \
 USER secrets
 EXPOSE 8770
 HEALTHCHECK --interval=30s --timeout=5s --start-period=30s \
-    CMD ["/app/.venv/bin/python", "-c", "import os,urllib.request; r=urllib.request.Request('http://127.0.0.1:8770/ready',headers={'Host':__import__('urllib.parse',fromlist=['urlsplit']).urlsplit(os.environ['SECRETS_PUBLIC_ORIGIN']).netloc}); urllib.request.urlopen(r,timeout=4).close()"]
+    CMD ["/app/.venv/bin/python", "-c", "import os,urllib.request; r=urllib.request.Request('http://127.0.0.1:8770/live',headers={'Host':__import__('urllib.parse',fromlist=['urlsplit']).urlsplit(os.environ['SECRETS_PUBLIC_ORIGIN']).netloc}); urllib.request.urlopen(r,timeout=4).close()"]
 CMD ["/app/.venv/bin/uvicorn", "aweb_secrets.deployment:create_app", "--factory", "--host", "0.0.0.0", "--port", "8770", "--no-access-log", "--no-proxy-headers"]

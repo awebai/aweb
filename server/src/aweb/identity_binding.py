@@ -52,10 +52,7 @@ async def verify_identity_binding(
     client = registry_client if registry_client is not None else getattr(request.app.state, "awid_registry_client", None)
     if client is None:
         raise HTTPException(status_code=503, detail="identity_binding_unavailable")
-    cache = getattr(request.app.state, "identity_binding_cache", None)
-    if cache is None:
-        cache = OrderedDict()
-        request.app.state.identity_binding_cache = cache
+    cache = identity_binding_cache(request.app.state)
     key = (did_aw, did_key, address)
     if registry_client is not None:
         key += (getattr(registry_client, "registry_url", "federation"),)
@@ -71,9 +68,39 @@ async def verify_identity_binding(
     if (not fresh and cached is not None and cached[0] > started
             and cached[1].id_tree is not None):
         return replace(cached[1], fresh_observation=False)
+    binding = await _observe_into_cache(client, cache, key, started)
+    observations[key] = binding
+    return binding
+
+
+def identity_binding_cache(app_state) -> OrderedDict:
+    """The application's cache of observed identity bindings, kept on its state."""
+    cache = getattr(app_state, "identity_binding_cache", None)
+    if cache is None:
+        cache = OrderedDict()
+        app_state.identity_binding_cache = cache
+    return cache
+
+
+async def observe_current_identity_binding(
+    registry_client, cache: OrderedDict, *, did_key: str, did_aw: str, address: str = "",
+) -> IdentityBinding:
+    """Observe a did:aw's binding at the registry now and cache it for the application.
+
+    For callers that hold no request. It never answers from the cache.
+    """
+    did_aw, address = (did_aw or "").strip(), (address or "").strip()
+    if not did_aw.startswith("did:aw:"):
+        raise HTTPException(status_code=403, detail="identity_binding_mismatch")
+    if registry_client is None:
+        raise HTTPException(status_code=503, detail="identity_binding_unavailable")
+    return await _observe_into_cache(registry_client, cache, (did_aw, did_key, address), monotonic())
+
+
+async def _observe_into_cache(client, cache: OrderedDict, key: tuple, started: float) -> IdentityBinding:
+    did_aw, did_key, address = key[:3]
     cache.pop(key, None)
     binding = await observe_identity_binding(client, did_key=did_key, did_aw=did_aw, address=address)
-    observations[key] = binding
     # A newly observed current key supersedes older positive cache entries.
     for cached_key in list(cache):
         if cached_key[0] == did_aw and cached_key[1] != did_key:

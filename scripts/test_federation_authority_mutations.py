@@ -459,46 +459,47 @@ def main() -> None:
         )
         federation_route.write_text(original_federation_route, encoding="utf-8")
 
-        mcp_mail = checkout / "server" / "src" / "aweb" / "mcp" / "tools" / "mail.py"
-        original_mcp_mail = mcp_mail.read_text(encoding="utf-8")
+        mail_send = checkout / "server" / "src" / "aweb" / "messaging" / "mail_send.py"
+        original_mail_send = mail_send.read_text(encoding="utf-8")
         replace_exact(
-            mcp_mail,
-            """                    resolved = await federation_authority.resolve_contact(
-                        recipient_ref,
-                        source_ip="mcp:" + str(auth.did_key or auth.did_aw or "unknown"),
-                    )
+            mail_send,
+            """                resolved = await strict_authority.resolve_contact(
+                    address,
+                    source_ip=source,
+                )
 """,
-            """                    resolved = await registry_client.resolve_address(
-                        domain, name, did_key=auth.did_key
-                    )
+            """                resolved = await registry_client.resolve_address(
+                    domain, name, did_key=auth.did_key
+                )
 """,
         )
         require_killed(
             run_server_tests(checkout, activation_nodes[7]),
             "test_mcp_cross_registry_uses_production_strict_authority_not_home_registry",
         )
-        mcp_mail.write_text(original_mcp_mail, encoding="utf-8")
+        mail_send.write_text(original_mail_send, encoding="utf-8")
 
-        mcp_chat = checkout / "server" / "src" / "aweb" / "mcp" / "tools" / "chat.py"
-        original_mcp_chat = mcp_chat.read_text(encoding="utf-8")
+        chat_send = checkout / "server" / "src" / "aweb" / "messaging" / "chat_send.py"
+        original_chat_send = chat_send.read_text(encoding="utf-8")
         replace_exact(
-            mcp_chat,
-            """                        resolved = await federation_authority.resolve_contact(
-                            to_address,
-                            source_ip="mcp:"
-                            + str(auth.did_key or auth.did_aw or "unknown"),
-                        )
+            chat_send,
+            """            try:
+                resolution = await strict_authority.resolve_contact(
+                    address,
+                    source_ip=source,
+                )
 """,
-            """                        resolved = await registry_client.resolve_address(
-                            domain, name, did_key=auth.did_key
-                        )
+            """            try:
+                resolution = await registry_client.resolve_address(
+                    domain, name, did_key=auth.did_key
+                )
 """,
         )
         require_killed(
             run_server_tests(checkout, activation_nodes[7]),
             "test_mcp_cross_registry_uses_production_strict_authority_not_home_registry",
         )
-        mcp_chat.write_text(original_mcp_chat, encoding="utf-8")
+        chat_send.write_text(original_chat_send, encoding="utf-8")
 
         mcp_contacts = (
             checkout
@@ -565,9 +566,8 @@ def main() -> None:
             "test_contact_reassignment_requires_signed_explicit_acceptance",
         )
 
-        messages_route = checkout / "server" / "src" / "aweb" / "routes" / "messages.py"
         replace_exact(
-            messages_route,
+            mail_send,
             '                    "current_did_key": sender_current_did,\n',
             "",
         )
@@ -589,10 +589,8 @@ def main() -> None:
         )
         chat_service.write_text(original_chat_service, encoding="utf-8")
 
-        chat_route = checkout / "server" / "src" / "aweb" / "routes" / "chat.py"
-        original_chat_route = chat_route.read_text(encoding="utf-8")
         replace_exact(
-            chat_route,
+            chat_send,
             '                    "_authority_route_current": home_namespace or strict_authority is not None,\n',
             "",
         )
@@ -600,10 +598,10 @@ def main() -> None:
             run_server_tests(checkout, activation_nodes[15]),
             "test_chat_to_external_address_posts_federated_chat_and_projects_locally",
         )
-        chat_route.write_text(original_chat_route, encoding="utf-8")
+        chat_send.write_text(original_chat_send, encoding="utf-8")
 
         replace_exact(
-            chat_route,
+            chat_send,
             "    except (HTTPException, FederationAuthorityError):\n        raise\n",
             "    except HTTPException:\n        raise\n",
         )
@@ -611,10 +609,10 @@ def main() -> None:
             run_server_tests(checkout, activation_nodes[16]),
             "test_remote_chat_route_refresh_preserves_stable_authority_error",
         )
-        chat_route.write_text(original_chat_route, encoding="utf-8")
+        chat_send.write_text(original_chat_send, encoding="utf-8")
 
         replace_exact(
-            chat_route,
+            chat_send,
             "                current_did_key = $4,\n                transport_hint = 'federation:' || $3\n",
             "                current_did_key = $4\n",
         )

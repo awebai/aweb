@@ -81,8 +81,6 @@ type screenOutputLine struct {
 	text string
 }
 
-const screenFooterBaseLines = 3
-
 var screenSpinnerFrames = []string{"⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏"}
 
 func NewScreenController(in io.Reader, out io.Writer) *ScreenController {

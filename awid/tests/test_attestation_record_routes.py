@@ -449,9 +449,10 @@ async def test_a_stored_team_server_record_must_be_re_signed_unchanged(controlle
 @pytest.mark.asyncio
 async def test_a_re_signed_team_server_record_must_be_newer_than_the_stored_one(controller_app):
     env = controller_app
-    await _publish_team_server(env, _team_server(env.team, issued_at=_now(-30)))
+    issued_at = _now(-30)
+    await _publish_team_server(env, _team_server(env.team, issued_at=issued_at))
     new = keypair()
-    same_time = await _rotate(env, new[1], {"team_server": _team_server(new, issued_at=_now(-30))})
+    same_time = await _rotate(env, new[1], {"team_server": _team_server(new, issued_at=issued_at)})
     assert same_time.status_code == 409, same_time.text
     assert same_time.json()["detail"]["changed"]["team_server"] is True
     assert await _team_key(env) == env.team[1]

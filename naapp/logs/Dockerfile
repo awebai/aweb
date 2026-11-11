@@ -39,6 +39,11 @@ RUN useradd --create-home --shell /usr/sbin/nologin logs
 USER logs
 
 EXPOSE 8765
+# Probes /live, which checks no dependency: a database outage must not make an
+# orchestrator restart a process that is serving requests. The public origin's
+# host selects the app that serves the route.
+HEALTHCHECK --interval=30s --timeout=5s --start-period=30s \
+    CMD ["/app/.venv/bin/python", "-c", "import os,urllib.request; r=urllib.request.Request('http://127.0.0.1:'+os.environ.get('PORT','8765')+'/live',headers={'Host':__import__('urllib.parse',fromlist=['urlsplit']).urlsplit(os.environ['LOGS_PUBLIC_ORIGIN']).netloc}); urllib.request.urlopen(r,timeout=4).close()"]
 # Configured by its LOGS_ environment (LOGS_DATABASE_URL, LOGS_PUBLIC_ORIGIN,
 # LOGS_CONSOLE_ORIGIN, LOGS_APP_ID, LOGS_APP_KEY_FILES, LOGS_EMAIL_*); the key
 # files and the mail password file are mounted, never built in.

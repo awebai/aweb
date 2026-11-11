@@ -921,6 +921,7 @@ DISTINGUISHABLE_REGISTRY_CLIENT_FIELDS = {
     "base_url": "http://named-base.test",
     "domain_registry_resolver": _unused_domain_registry_resolver,
     "service_token": "distinguishable-service-token-of-sufficient-length",
+    "member_signing_keys": {"engineering:example.com": bytes(range(32))},
 }
 
 

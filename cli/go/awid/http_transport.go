@@ -97,6 +97,9 @@ func doNoRedirect(client *http.Client, req *http.Request, defaultTimeout time.Du
 	if req.Header.Get("User-Agent") == "" {
 		setUserAgent(req, "")
 	}
+	// Every request sent carries a note of its own for the client's transport
+	// to name the answering mount in.
+	req = req.WithContext(withAnsweringMountNote(req.Context()))
 	tracedRequest, diagnostic := beginHTTPDiagnostics(req)
 	resp, err := noRedirectClient.Do(tracedRequest)
 	diagnostic.finish(err)

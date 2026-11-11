@@ -34,9 +34,11 @@ The destination is a fresh, explicitly chosen directory. Native state lives in
 its `.aw/`. Do not target an existing resident, use another identity's ambient
 selection, or manufacture native files. An operator runner must remove foreign
 `AWEB_*`/`AWID_*`, `AW_CONFIG_PATH`, `AW_DEBUG`, `AW_TRACE` and proxy overrides,
-then select only the required inputs. Set `AW_NO_UPDATE_CHECK=1`; check that the
-chosen cwd contains neither `.env` nor `.env.aweb` (the latter can override the
-child environment). Keep the real HOME; do not borrow another resident's home.
+then select only the required inputs. Set `AW_NO_UPDATE_CHECK=1`. `aw` reads its
+configuration from the process environment, flags and its own config; it does
+not read `.env` or `.env.aweb` files from the cwd, so the child environment is
+exactly what the runner passes. Keep the real HOME; do not borrow another
+resident's home.
 
 After establishing private capture below, run the selected command once:
 

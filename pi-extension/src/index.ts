@@ -4,9 +4,11 @@ import {
   createActivityEmitter,
   endActivity,
   createChannelClient,
+  createChannelCredentialReload,
   createRegistryResolver,
   type ChannelAwakening,
   formatEventStreamState,
+  localClockTime,
   loadSessionPinStore,
   type RegistryIdentityConfig,
   type ResolveTxt,
@@ -256,6 +258,9 @@ export function handlePiStreamState(
     const theme = ctx.ui.theme;
     if (state.state === "disconnected") {
       ctx.ui.setStatus("aweb-channel", `${theme.fg("error", "✕")} ${theme.fg("dim", "aweb events down; retrying")}`);
+    } else if (state.state === "refused") {
+      const nextTry = localClockTime(state.nextAttemptAt ?? Date.now());
+      ctx.ui.setStatus("aweb-channel", `${theme.fg("error", "✕")} ${theme.fg("dim", `aweb events refused (${state.cause}); next try ${nextTry}`)}`);
     } else {
       ctx.ui.setStatus("aweb-channel", `${theme.fg("success", "✓")} ${theme.fg("dim", "aweb connected")}`);
     }
@@ -430,22 +435,26 @@ export default function awebPiExtension(pi: ExtensionAPI) {
       onError: (message) => console.warn(message),
     });
     wakeDispatcher = createWakeDispatcher(pi, wakeLog);
+    const self = {
+      alias: config.alias,
+      address: config.address,
+      did: config.did,
+      stableID: config.stableID,
+    };
     channelLoop = startChannelLoop({
       client,
       pinStore,
       trust,
-      self: {
-        alias: config.alias,
-        address: config.address,
-        did: config.did,
-        stableID: config.stableID,
-      },
+      self,
       signal,
       teamID: config.teamID,
       workdir: ctx.cwd,
       onAwakening: (awakening) => createPiAwakeningHandler(wakeDispatcher)(awakening),
       onChatPresented: (sessionID, options) => activity?.chatWakeDelivered(sessionID, options),
       onStreamState: (state) => handlePiStreamState(state, ctx),
+      reloadCredentials: createChannelCredentialReload({
+        client, config, load: () => loadChannelConfig(ctx.cwd), self, trust, receipt, activity: () => activity,
+      }),
       streamObserver: receipt,
       log: (message) => {
         if (ctx.hasUI) ctx.ui.notify(message, "warning");

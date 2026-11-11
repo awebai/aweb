@@ -334,3 +334,22 @@ func listFiles(t *testing.T, root string) []string {
 	sort.Strings(files)
 	return files
 }
+
+// A profile payload digest is recorded when a profile is materialized and
+// recomputed on refresh, so its canonical bytes write U+2028 and U+2029 in a
+// file path as six-character escapes. This digest was computed at commit
+// 8e8d008c8.
+func TestLibraryProfilePayloadDigestOfPathWithLineSeparatorsIsStable(t *testing.T) {
+	path := "docs/a" + string(rune(0x2028)) + "b" + string(rune(0x2029)) + "c.md"
+	digest, err := libraryProfilePayloadDigest([]LibraryProfilePayloadFile{{
+		Path:        path,
+		SHA256:      "sha256:5891b5b522d5df086d0ff0b110fbd9d21bb4fc7163af34d08286a2e846f6be03",
+		ContentUTF8: "hello\n",
+	}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if want := "sha256:ac56d1908616e5e0e350e9d927f9106537fafaf5dde16a6269c14b91119a21d6"; digest != want {
+		t.Fatalf("digest = %s, want %s", digest, want)
+	}
+}
