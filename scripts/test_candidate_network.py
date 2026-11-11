@@ -334,17 +334,27 @@ else:
                             try:
                                 stdout, stderr = child.communicate(timeout=8)
                             except subprocess.TimeoutExpired:
+                                print(json.dumps({'mode': mode, 'outer_timeout': True,
+                                                  'members': group_members(child.pid),
+                                                  'overlays': [p.name for p in Path(overlays).glob('aweb-candidate-compose-*')]}),
+                                      flush=True)
                                 self.fail('subprocess.run timeout exceeded the outer 8s bound')
                             self.assertEqual(child.returncode, 0, stderr)
                             result = json.loads(stdout)
+                            members = group_members(child.pid)
+                            leftovers = list(Path(overlays).glob('aweb-candidate-compose-*'))
+                            print(json.dumps({'mode': mode, **result,
+                                              'ready': 'timeout-probe-ready' in result.get('output', ''),
+                                              'members': members, 'overlays': [p.name for p in leftovers]}),
+                                  flush=True)
                             with self.subTest(property='timeout'):
                                 self.assertTrue(result['timed_out'], result)
                                 self.assertLess(result['elapsed'], 5, result)
                                 self.assertIn('timeout-probe-ready', result['output'])
                             with self.subTest(property='client-processes'):
-                                self.assertEqual(group_members(child.pid), [])
+                                self.assertEqual(members, [])
                             with self.subTest(property='overlays'):
-                                self.assertEqual(list(Path(overlays).glob('aweb-candidate-compose-*')), [])
+                                self.assertEqual(leftovers, [])
                         finally:
                             try:
                                 os.killpg(child.pid, signal.SIGKILL)
