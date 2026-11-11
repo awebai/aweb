@@ -377,7 +377,6 @@ class ComposeExitStatusTests(unittest.TestCase):
                                         'down', '-v', '--remove-orphans')
                     if result.returncode:
                         cleanup_errors.append(result.stderr)
-                    project = cmd[cmd.index('-p') + 1]
                     remaining = docker('network', 'ls', '-q', '--filter',
                                        'label=com.docker.compose.project=' + project).stdout.strip()
                     if remaining:
