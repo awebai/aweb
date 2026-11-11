@@ -27,6 +27,7 @@ from aweb_naapp.hooks.owner_act_nonces import Refused
 from aweb_naapp.roles import holding_scope
 from aweb_naapp.runtime.human_role_acts import HumanRoleActs, PreparedHumanRoleAct
 from aweb_naapp.runtime.human_roles import HumanRoleHoldings
+from aweb_naapp.runtime.installation import AdmittedInstallation
 from aweb_naapp.runtime.owner_act_delivery import (
     OwnerActDelivery,
     OwnerActDeliveryRefused,
@@ -56,7 +57,7 @@ class Effects:
     human: HumanMember
     runtime: Any
     holdings: HumanRoleHoldings
-    applied: list[tuple[int, OwnerActEffectResult]]
+    applied: list[tuple[int, AdmittedInstallation, OwnerActEffectResult]]
     acts: HumanRoleActs
 
     @property
@@ -150,14 +151,16 @@ def effects(
     world: World,
     human: HumanMember,
     runtime: Any,
-    applied: list[tuple[int, OwnerActEffectResult]],
+    applied: list[tuple[int, AdmittedInstallation, OwnerActEffectResult]],
     **options: Any,
 ) -> HumanRoleActs:
     """The app's effect for its two declared human roles, with an app hook that
     records the transaction it runs in."""
 
-    async def hook(tx: TransactionManager, result: OwnerActEffectResult) -> None:
-        applied.append((await tx.fetch_value("SELECT txid_current()"), result))
+    async def hook(
+        tx: TransactionManager, installation: AdmittedInstallation, result: OwnerActEffectResult
+    ) -> None:
+        applied.append((await tx.fetch_value("SELECT txid_current()"), installation, result))
 
     return HumanRoleActs(
         roles=frozenset({HOLDER_ROLE}),
@@ -177,7 +180,7 @@ async def fx(world: World, tmp_path) -> AsyncIterator[Effects]:
         runtime = _runtime(
             tmp_path, registry=world.registry, database_url=world.db.config.get_dsn()
         )
-        applied: list[tuple[int, OwnerActEffectResult]] = []
+        applied: list[tuple[int, AdmittedInstallation, OwnerActEffectResult]] = []
         acts = effects(world, human, runtime, applied)
         state = Effects(world, human, runtime, holdings, applied, acts)
         await bind(world, state.scope(), HOLDER_ROLE)
@@ -227,8 +230,10 @@ async def test_a_designation_holds_the_role_with_the_exact_certificate_and_recor
 
 async def test_the_app_hook_runs_in_the_effect_transaction(fx):
     result = await deliver(fx, delivery(fx, DESIGNATE, holder()))
-    [(txid, hooked)] = fx.applied
+    [(txid, installation, hooked)] = fx.applied
     assert hooked == result
+    # The hook is told the installation the act was admitted for.
+    assert installation == fx.world.admitted
     # The governance event was enqueued in the same transaction.
     assert [handed for handed, _ in fx.world.handed] == [txid]
 

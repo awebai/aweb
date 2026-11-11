@@ -48,7 +48,9 @@ from aweb_naapp.runtime.passkeys.service import (
 __all__ = ["CheckMember", "HumanRoleActs"]
 
 type CheckMember = Callable[..., Awaitable[CheckedHumanRoleMember]]
-type AppliedHook = Callable[[TransactionManager, OwnerActEffectResult], Awaitable[None]]
+type AppliedHook = Callable[
+    [TransactionManager, AdmittedInstallation, OwnerActEffectResult], Awaitable[None]
+]
 
 # The acts that hold a role with a credential, and so carry a certificate.
 _HOLDING_ACTS = frozenset({HOLDER_DESIGNATE_ACT, HOLDER_REPLACE_ACT})
@@ -64,7 +66,8 @@ class HumanRoleActs:
     ``check_member`` is the runtime's ``check_human_role_member``. A role in
     ``notice_roles`` takes no act that names no notice contact. ``on_applied``
     is the app's own write, run in the effect's transaction after the holder
-    writer, such as bumping a configuration revision.
+    writer, with the installation the act was admitted for, such as bumping
+    that installation's configuration revision.
     """
 
     def __init__(
@@ -247,7 +250,7 @@ class PreparedHumanRoleAct:
                 raise OwnerActDeliveryRefused("owner_required") from None
         result = OwnerActEffectResult(self.act, self.role, self.principal, effective_at)
         if self._acts._on_applied is not None:
-            await self._acts._on_applied(tx, result)
+            await self._acts._on_applied(tx, installation, result)
         return result
 
     def require_fresh(self) -> None:
