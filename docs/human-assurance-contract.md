@@ -65,8 +65,11 @@ reference is `aweb.human-assurance/1`; each deployment also retains an integer
 policy version. Artifact versions such as `aweb.owner-act/1` remain separate.
 
 `enforced_by` distinguishes the protected `signer`, an `app_b3` live-approval
-consumer and an `app_verifier` checking already granted authority. A
-passkey-only application effect need not manufacture a controller signature.
+consumer and an `app_verifier` checking already granted authority.
+`agent_client` denotes the existing local agent-key implementation, not a
+request to import that key into protected custody. The protected signer
+executes protected-key rows only; it does not take over ordinary agent
+issuance, rotation or revocation. A passkey-only application effect need not manufacture a controller signature.
 `key_role=none` means no protected key is needed, not no authorization.
 
 `live_floor` requires a current eligible human, fresh UV bound to the exact
@@ -154,6 +157,84 @@ a human-role holding through a side door. Last-owner protection still applies.
 These restrictions also apply to SCIM-triggered containment. Re-enabling access
 requires live approval. Containment must not wait for a ceremony or remote Logs.
 
+### Controller operations and admission policy
+
+Namespace/team creation and deletion, controller permission changes, namespace
+routing changes and new/changed team-server records are live floor operations.
+The catalog names them explicitly. Exact replay of an already committed signed
+publication is receipt recovery, not a new governance act. Unchanged
+reconciliation may replay the same retained artifact and idempotency key under
+current publication authority; it cannot refresh timestamps, key, destination,
+member rights or content without the separately classified operation.
+
+A namespace address for a human, or reassignment/change of an existing address,
+requires its namespace-authorized human. A fresh agent address may use a bounded
+provisioning policy only when that approved policy names the namespace, name
+allocation rule, target agent and permitted route, with no existing-address
+replacement or change to human responsibility. No policy means refusal.
+Namespace-parented `no_human` agent issuance remains a distinct supported
+profile, never a human-endorsed root. Its protected namespace authority requires
+a live approval for new issuance; no token exception, manufactured H or agent
+parent is allowed. It cannot satisfy the endorsed-root acceptance journey.
+
+Protected provisioning authorizes **one exact default admission policy** under
+operator authority. It lists the teams and fixes the root selector to "the root
+endorsed under this service_id by a current authorizer", agent kind only,
+member role only, and an immutable policy version and digest. Endorsing that
+root is **one live approval of one act**: its screen discloses the resulting
+bounded admission. Endorsement satisfies the existing policy; it neither
+creates nor widens it. Later changes require their own
+`team.admission-policy.change` approval. A deployment without that provisioned
+policy must not silently create one during endorsement.
+
+A protected admission policy names each canonical team, the authorized root
+selector (resolved to one exact current endorsed root ID before use; ambiguous
+selection refuses),
+permitted agent subject kinds, maximum active admissions and a finite rate
+window/count. It specifies the default ordinary member role only, never admin
+or a role carrying governance scopes. It grants no new resource access beyond
+already applicable team/role policy. Counts are enforced under the admission
+transaction; an exact replay does not spend the quota twice. A stolen root
+agent key can request admissions within those explicit bounds; subject rotation/revocation and existing resource
+permissions remain independent. The contract
+does not claim to prevent that use of the root's actual authority.
+
+Local `did:key` and registered agent subjects are both allowed when the policy
+permits them. Local membership certificates retain local subject fields and
+no invented `did:aw`. The requester is the explicitly authorized root, not any
+agent whose chain happens to contain it. Grandchild issuance stays with its
+actual eligible parent; root-side admission supplies membership separately.
+Hosted and independent profiles use this same boundary and command semantics.
+Every agent admission **and renewal** on a protected team passes the bounded
+policy, including cache/reconciliation and hosted routes. Ordinary member
+invites cannot bypass it: legacy invite admission returns HTTP 403
+`protected_admission_required`. Clients explain the configured service/root
+admission path rather than retrying the invite or reminting an identity.
+Legacy teams retain their existing behavior until an explicit operator-approved
+migration under section 7; installing a client does not protect a team.
+
+An endorsement target is an ordinary registered agent: a current stable ID/key
+mapping in the selected registry, possession of that key, and no conflicting
+or revoked ancestry/head. An existing chainless agent is eligible for its first
+certificate; absence of its first ID certificate is distinct from an unknown
+mapping or failed registry read. Existing matching endorsement is receipt
+recovery, not fresh issuance; a different parent/head requires the corresponding
+reparent/re-endorsement operation. Team membership is not a prerequisite for
+preparing endorsement. A local did:key cannot be the registered root. Setup
+submits the root's own proof in both profiles, without a Cloud login token.
+Registration of the resulting certificate still requires subject proof and
+registry read-back before setup reports an attributed registered root.
+
+`team.agent.remove` is authorized narrowing: the configured root may remove an
+agent membership inside its team/scope, and an agent may leave its own
+membership. It uses the protected controller, never a raw worker key. It does
+not revoke a human, remove a human-role holding, or acquire resource rights.
+Existing last-owner and containment limits apply.
+
+Hook retargeting uses the existing owner-act vocabulary: revoke the old
+binding and activate the new binding as separate exact acts, with separate
+live approvals. There is no hidden multi-act queue behind one gesture.
+
 ## 3. Origin, holding and bootstrap
 
 The server exposes the shared ceremony at a configured, pinned HTTPS human
@@ -219,8 +300,12 @@ existing B3 enrollment and recovery checks. In the independent profile it is
 one recorded administrator action on the protected signer host, not a
 worker-accessible network endpoint. The action binds the first explicit human,
 key authority and credential at the pinned origin, and is consumed once.
-Bootstrap establishes only the first authorizer set; later set changes are
-live floor acts. These proofs establish account/operator authority, not
+Bootstrap establishes only the first authorizer set and the one exact default
+agent-admission policy described in section 2. It does not authorize a queue of
+later human acts. Later authorizer-set or policy changes are live floor acts.
+Every authorizer-set change notifies all current authorizers and preserves at
+least one usable authorizer. Adding/removing an authorizer takes effect with
+its committed exact act; this build adds no authorizer-removal timer. These proofs establish account/operator authority, not
 personhood.
 Generate/retain any initial human key only in protected custody. A provisional
 bootstrap record permits only that exact enrollment and associated initial
@@ -273,6 +358,32 @@ the shared page/module and pinned service profile, not a local human keychain
 or passphrase fallback. Applicable app RP/login checks remain distinct; no
 account cookie is promoted to B3 LOGIN by this bootstrap of the session.
 
+`prepare_session_start` freezes the entire aw-supplied start: `purpose`,
+`scope`, `client_key`, `return` when that purpose uses it, `redirect_uri`,
+`verifier_sha256`, and the pinned destination. The server signs those exact
+start bytes after a LOGIN for the **same human and exact scope**. It cannot
+substitute its own ephemeral key, verifier, scope or callback. The app still
+checks `scope_not_signer` and current authority; aw collects the existing app
+result from its pinned human origin using aw's in-memory key and verifier.
+The routine start requires LOGIN, not another floor APPROVE gesture.
+
+The existing app `POST /handoffs` is not idempotent: identical signed starts
+can create multiple pending handoffs, although each result remains bound to
+the same aw ephemeral key/verifier/loopback. This contract preserves that
+receiver behavior. The protected service records the immutable signing result
+separately from whether the app returned a handoff ID. If the target response
+is lost or ambiguous, report `unknown/external_effect_unresolved`; do not
+silently retry POST, generate another key/timestamp/signature, or claim that a
+signing receipt proves target creation. The client exits with its operation ID
+and the unresolved delivery status. A known response retains the original app
+handoff ID/result reference. Reading it never starts another handoff.
+Original-handoff recovery using receiver deduplication/tombstones is separate
+reliability work, not a security requirement or new store in this build.
+Existing authenticated-start timestamp/rate/expiry checks and result
+key/verifier/code protections remain. A deliberate new start is a new prepare
+under a still-valid same-human/scope LOGIN; it is never an automatic recovery
+from this unresolved operation.
+
 Channel MAIL remains a separate narrow operation: verified retained speaker,
 current linked-channel/delivery authorization, recipient and exact retained
 mail/chat payload only. It does not require a B3 UV login or periodic
@@ -302,44 +413,163 @@ in-memory ephemeral keys and X-Console request protections remain as specified
 in [human confirmation](design/human-confirmation-from-aw.md). Scope adaptation
 is additive for existing app consumers.
 
-Before opening the browser, prepare gives the client the operation identifier,
-digest and frozen typed payload. The client retains the non-secret identifier
-and digest for recovery; this creates no authority. The server retains the same
-binding under the authenticated requester and authority scope. A different payload, key, target, human or policy
-under that identifier refuses; retries must not issue a different act. An
-authorized read of that identifier returns the retained outcome. An approval
-alone is not a committed effect.
+### Shared mounts and requester authentication
 
-CLI preparation and lookup authenticate the same requester under an explicit
-restricted credential: an agent/root request proof or scoped discovery login
-can prepare a human act, never approve it. They do not require the worker to
-hold a controller key. The human browser separately checks its current
-approver session and the explicit holding. A cookie or operation ID alone
-cannot execute the act. The shared page displays the same frozen payload,
-digest and fingerprint that the CLI displays.
+These are the shared mounts for .2/.5 and the .4/.6 embeddings, not routes that
+already exist in a released server. Extend the existing
+`ConsoleHandoffs.api_router()` / `human_router()` and shared page dispatcher.
+No adapter implements its own ceremony, request parser or receipt store.
 
-The receipt states are `pending`, `refused`, `committed` or `unknown`, with
-explicit reasons such as expired approval, spent-but-uncommitted proof or an
-unreconciled external effect. A missing record is distinct from a refusal and
-from proof that no effect occurred. Pending carries its expiry; refused carries
-a stable reason. A running effect is pending. Unknown causes the CLI to report the identifier and exit nonzero,
-never automatically prepare a new act. A redirect only wakes the client; only
-a receipt establishes committed. Bounded polling is part of this product
-client flow. Access is checked before
-revealing a receipt. A response lost after commit recovers the exact result
-without another signature. A state reader must serialize with an in-flight effect before
-reporting spent-but-uncommitted. Concurrent requests produce one outcome.
+| Origin | Method and path | Authority and effect |
+| --- | --- | --- |
+| Request | POST `/protected-operations` | Restricted prepare; no signing or human approval. |
+| Request | GET `/protected-operations/{operation_id}` | Authorized exact-scope receipt; never re-signs. |
+| Request | POST `/protected-operations/{operation_id}/execute` | Bounded unattended operation only, rechecking its catalog authority; live-floor operations refuse here. |
+| Request | POST `/protected-session-starts` | Restricted preparation of the exact aw app-start body; section 4 LOGIN before H signs. |
+| Request | GET `/protected-admission-policies?team_id=T` | Nonsecret setup/status read for an authorized requester. |
+| Human | GET `/handoff/{handoff_id}` | Existing shared page in its stored governance or LOGIN mode. |
+| Human | GET `/handoff/{handoff_id}/governance` | Current authorized human reads the frozen operation/state. |
+| Human | POST `/handoff/{handoff_id}/governance/options` | B3 options for this exact act/current human. |
+| Human | POST `/handoff/{handoff_id}/governance/execute` | Existing browser/CSRF protections, bound UV and current authority; execute once. |
 
-The shared library ports are `prepare(CatalogOperation) -> PreparedOperation`,
-`approval_options(operation_id)`, `execute(operation_id, proof)` and
-`receipt(operation_id)`. The prepared record freezes the client-known ID,
-request digest, typed holding, key identity/generation, policy reference/version
-and protocol payload. Tokens/cookies can authenticate preparation or authorized
-lookup within their scope; they never fulfill the live floor. An internal
-typed custody adapter resolves an existing protected key reference; missing
-references refuse, never generate or rotate a replacement. A current-authorizer
-adapter supplies original-transaction prepare/check and synchronous deadline
-checks. `AuditSink.emit(event, transaction)` remains the local audit port.
+The request origin accepts one of these mutually exclusive requester proofs:
+
+* An agent/root possession proof using the existing covering-v2 encoding in
+  [AWID request binding](awid-controller-requests.md). Headers are
+  `Authorization: DIDKey <did:key> <signature>`, `X-AWEB-Timestamp` and
+  `X-AWEB-Signed-Payload`. The signature is unpadded standard base64; the
+  canonical payload is unpadded base64url. Bind the configured request-origin
+  `aud`, exact method, external raw path/query, exact body SHA-256 (empty body
+  for GET), timestamp, selected authority domain and operation. The allowed
+  operation labels here are `protected_operation_prepare`,
+  `protected_operation_receipt`, `protected_operation_execute`,
+  `protected_session_start` and `protected_admission_policy_read`. Each adds
+  exactly `service_id` and `scope_sha256` to the covering-v2 base fields;
+  `scope_sha256` is SHA-256 of the canonical typed scope. For an operation it
+  is the frozen operation's scope; for policy read it is exactly
+  `{service_id, team_id}`. Prepare bodies carry their scope explicitly; receipt
+  reads match the retained one before disclosure. An operational team read
+  does not fabricate a human holding. Timestamp skew is at
+  most 300 seconds. These new receiver labels reuse the encoding, not AWID
+  controller privileges. Resolve the selected registered identity's current
+  mapping/key; possession alone supplies no human or controller authority.
+  Endorsement preparation requires the subject root's key; subsequent bounded
+  admission requires the configured root and current policy.
+* Existing team-auth v2 from a current agent member, with `aud` equal to the
+  request origin and an explicitly permitted requester scope. Its signer is
+  the requester, never implicitly the human whose approval is requested.
+* A hosted scoped CLI discovery/admission bearer, accepted by that embedding
+  only for prepare/read of its exact account-to-H/authority association. It
+  cannot execute bounded root authority or sign/approve as H. It is optional;
+  independent operation and the root-proof path require no Cloud credential.
+
+A cookie or API key is not a request-origin fallback. Every proof is checked
+against the selected service, authority and operation; accepting an envelope
+does not authorize its requested effect. Requester scope comes from the
+provisioned profile/current policy, not from untrusted scope fields. Remote
+evidence failure refuses; no public-registry fallback. Team-auth and the
+requester proof do not cross to the human origin. Browser lookup independently
+checks the same human/holding or key authority that could prepare the act;
+a cookie authenticates that inspection only with the current association,
+never a signing approval.
+
+The policy read returns `service_id`, `team_id`, `mode` (`protected` or
+`legacy`), and `policy` (the immutable version, digest, listed teams, root
+selector and bounds, or null when this service has no policy for the team).
+An eligible prospective root can perform this read for the profile's listed
+teams before endorsement, using its own registered-key proof; being already
+endorsed is not a circular prerequisite for setup. It contains no secret key
+material and grants no admission. Unknown authority
+or unavailable evidence is an error, never `policy:null`. .4/.6 expose this
+same read; .5 maps it into setup/status. On a protected team with no applicable
+policy, setup reports `admission_policy_missing` and directs the operator to
+provision or approve the policy rather than creating it itself.
+
+### Frozen operation, display and receipt
+
+The client chooses and persists an operation UUID before prepare; retries use
+the same UUID and exact body. Prepare returns `operation_id`, `handoff_id`,
+`digest`, `payload` (the complete frozen request) and `expires_at`, **no URL**.
+aw constructs `/handoff/{handoff_id}` on its pinned human origin; any echoed
+origin mismatch refuses. The server binds the identifier to its original
+requester and exact authority scope. Changed body, key, target, human, policy or
+callback under that identifier refuses `operation_conflict`. Pending lifetime
+uses the existing shared handoff's bounded expiry (at most 600 seconds), capped
+by every frozen artifact/policy deadline. It is never extended by polling or
+retry. A new explicit attempt after expiry has a new operation ID; it cannot
+silently recover by re-signing the old one.
+
+Use B2's existing covered-request digest, not a second digest engine:
+SHA-256 of `aweb.approval-request/1` plus LF plus canonical UTF-8 JSON of
+`{"policy":{"ref":POLICY_REF,"version":POLICY_VERSION},"request":REQUEST}`.
+REQUEST freezes the typed operation/variant, service/origins, requester, scope,
+key authority/generation, every artifact field, expected state/head, operation
+ID, protocol nonce/issued/expiry and validated completion binding. Canonical
+JSON is the existing B2 safe-integer/no-float form; unknown and duplicate fields
+refuse. The `digest` is 64 lowercase hex characters. Both page and CLI display
+the full digest and its comparison fingerprint: the first 16 hex characters in
+four groups of four separated by a single space. The page displays the selected
+identity/key and scope alongside that value; a short fingerprint is a human
+comparison aid, never the authentication check. Clients verify the full digest.
+
+Governance prepare accepts an optional `redirect_uri` under the existing
+literal-loopback parser. Invalid input is HTTP 400 `redirect_uri_refused`.
+Freeze that callback; completion carries only `handoff_id` as a wake hint,
+never a code, signature or authority. Without callback, aw polls the authorized
+receipt with a bounded interval until final state or expiry. Only a receipt,
+never a browser redirect or approval alone, establishes committed.
+
+The closed receipt shape is `pending(reason, expires_at)`,
+`refused(code)`, `committed(result)`, or `unknown(code)`. The codes are stable:
+
+| State | Codes |
+| --- | --- |
+| pending | `awaiting_human`, `awaiting_execute`, `effect_in_progress` |
+| refused | `human_refused`, `operation_expired`, `approval_expired`, `proof_invalid`, `approval_spent`, `operation_mismatch`, `authority_changed`, `policy_changed`, `scope_refused`, `stale_binding`, `no_notice_contact`, `cap_reached`, `last_authorizer_protected`, `last_owner_protected`, `issuer_kind_forbidden`, `subject_ineligible`, `provenance_refused`, `admission_policy_missing`, `admission_limit_reached`, `protected_admission_required`, `live_approval_required`, `operation_refused` |
+| unknown | `receipt_unavailable`, `external_effect_unresolved` |
+
+`operation_refused` retains the typed downstream diagnostic for operators;
+clients do not parse prose or infer an alternate operation from it. Parsing
+failures before prepare use HTTP 400 `request_invalid`/`redirect_uri_refused`;
+invalid authentication is 401 `requester_invalid`, scope denial 403
+`scope_refused`, binding conflict 409 `operation_conflict`. Authenticated
+lookup with no authorized matching record returns 404 `operation_not_found`,
+not proof that a previously sent request never committed. Availability failure
+is 503 `receipt_unavailable`. Receipt states themselves use HTTP 200.
+No authorization failure discloses another scope's operation.
+
+A running effect is pending, including the gap after assertion verification
+commits but before its effect starts. A state reader serializes with execution
+and can report spent-uncommitted as `refused/approval_spent` only after a final
+failure or expiry prevents a later commit. Unknown is not final success or
+refusal: aw prints the operation ID, exits nonzero and never re-prepares on
+its own. A lost response after commit returns the exact retained result, not
+another signature, nonce or approval. A committed signature is distinct from
+remote registry/app delivery; that delivery has its own status/reference.
+For a signed app start, expose `signing=committed` and `receiver=unknown` when
+the app committed but its response was dropped. The client must not report a
+usable session from that pair; acceptance checks that it sends no second POST.
+
+The typed library ports take trusted adapter evidence explicitly:
+`prepare(CatalogOperation, requester=RestrictedRequester)`,
+`approval_options(operation_id, human=AdmittedHuman)`,
+`execute(operation_id, proof, human=AdmittedHuman)` and
+`receipt(operation_id, reader=ReceiptReader)`. The bounded request-origin
+execute path supplies its typed catalog authority instead of a human proof;
+it cannot select a floor variant. `prepare_session_start` uses the same store
+and receipt with its distinct LOGIN rule. These are closed unions, not raw
+bytes, caller-supplied authorization booleans or generic key locators.
+The receipt reader is the still-authorized original requester in exact scope,
+or a separately authenticated current human for that holding/key authority.
+An operation ID is never a capability. A retired credential cannot inspect
+through its retired session; an independently authorized reader can still
+recover the committed result.
+
+An internal typed custody adapter resolves an existing protected key reference;
+missing references refuse, never generate or rotate a replacement. A
+current-authorizer adapter supplies original-transaction prepare/check and
+synchronous deadline checks. `AuditSink.emit(event, transaction)` remains the
+local audit port.
 
 Several explicit domain-authority bindings may refer to the same existing
 protected key reference. Each binding must match current authoritative
@@ -357,9 +587,14 @@ does not authorize an unreceipted new signing path. Receipt access expires only
 under an explicit retention/access policy; retiring a credential must not
 erase its committed operation result. Lookup grants no renewed action rights.
 
-Credential mutation uses ordered write preparation: authority/typed retirement
-gate and role holds, then one B3 write preparation, then the consumer's
-remaining authority holds. Its mutation fence returns the original-transaction
+Every writer, and every receipt/status reader that also takes authority/B3
+locks, serializes the operation **before** those locks. Prepare the operation
+association before caller authority acquisition; the receipt hook must not
+first acquire it later in inverse order. Credential mutation then uses the
+existing consumer order: F6, the typed retirement
+gate, role holds, B3 `prepare_credential_change(tx, scope)` with ordered write
+locks, then S4. These are the existing authority/effect-fence components, not
+a second approval engine. Its mutation fence returns the original-transaction
 `PreparedCredentialChange`, which B3 validates and reuses. A shared-lock
 usability check followed by a write-lock upgrade is not equivalent. Existing
 enrollment/contact fence contracts remain compatible. Retained proof is
@@ -371,10 +606,11 @@ to a separate registry/app, signing and remote application are separate states:
 retain the exact signed artifact before release, reuse its existing nonce/head
 and reconcile the remote outcome. Never claim cross-service atomic commit or
 blindly re-sign after a timeout. No network call belongs inside the final
-effect fence. Exact API types/routes are assembled with package .2; these
-requirements are not permission for each adapter to create its own store.
+effect fence. The ports and mounts above are shared implementation requirements,
+not permission for each adapter to create its own store.
 
-The signer enforces a UV age of at most **300 seconds at the signing effect**,
+For `live_floor` operations, the signer enforces a UV age of at most
+**300 seconds at the signing effect**,
 bound to one request. Conservatively use the original approval challenge's
 issuance time plus 300 seconds, capped by its original expiry and every other
 applicable deadline. Do not start at a `verified_at` stamp written after an
@@ -412,8 +648,30 @@ refuses stale binding and rolls back.
 Default maximum active credentials is **5 per holding**. An owner-approved
 `human-credential.cap-set` changes the finite bound; stricter bounds may be
 lower, never zero. A full set refuses additions without eviction. Replacing
-one credential may succeed at the cap because the count is unchanged. Lowering
-a cap does not evict credentials from an already larger set.
+one credential is allowed at or above the cap if the final active count does
+not increase and at least one usable credential remains. Zero, negative or
+above-ceiling bounds refuse. Lowering
+a cap does not evict credentials from an already larger set. No cap-change
+delay is added.
+
+For app holdings, `human-credential.cap-set/app` is the existing owner-act/1
+encoding with subject exactly `app_id`, `installation_id`, `role`, `cap`;
+it names no principal and sets the role's per-holding cap. Its current team
+owner supplies live approval, even if that person also holds the app role.
+For protected-key holdings, `human-credential.cap-set/protected_key` binds
+exactly the versioned protected-key context, `cap`, `old_policy_version` and
+`new_policy_version`. Any current member of that key's authorizer set may
+approve the exact selected holding/policy. B2's consumed exact approval and B3
+retained proof plus current authority fence are the evidence; no fictitious
+team-controller `VerifiedOwnerAct` is manufactured. The shared executor mints an opaque `VerifiedProtectedEffect` bound to the
+original transaction, operation ID/digest, context/generation, current
+authorizer and B3 evidence reference. It is not deserializable from a client
+body. The shared cap effect accepts this evidence for protected scopes and
+`VerifiedOwnerAct` for app scopes, dispatching to one cap mutation/check.
+It writes the cap/receipt/audit in that same transaction. The legacy app
+helper keeps its `VerifiedOwnerAct` contract; .2/.3 add the protected-context
+adapter, not an alternate engine. All variants enforce 1..finite deployment
+ceiling, default 5, and take effect at commit.
 
 `human-credential.replace/controller_recovery` remains distinct: no usable
 credential means separately authenticated recovery, with the **72-hour**
@@ -424,11 +682,32 @@ before the act. Notice failure does not reverse a committed result. Notice
 delivery and no-contact holding behavior must match the shared B3 decision;
 this contract does not create an independent retry subsystem.
 
+For a non-team protected holding, the `protected_recovery` variant of
+`human-credential.replace` changes the approval credential only, preserving
+the human ID, protected signing key, authority and registry bindings. Its exact
+request binds the protected context/generation, existing holder, selected new
+credential digest, RP/origin, effective notice-contact digest and recovery
+record. The recovery principal is the one explicitly designated for that
+authority at provisioning or by a later live policy change. Hosted recovery
+requires the existing verified-browser/recovery proof tied to the same current
+account/H/domain; independent recovery requires a separately recorded protected-
+host administrator recovery action for that exact authority. An ordinary CLI
+token, generic cookie, worker call or reusable initial bootstrap is refused.
+The adapter supplies a typed `RecoveryAuthority` proof of that existing route,
+not a caller boolean and not a synthetic team owner. B3 disables the old
+credential/freezes approvals, applies its 72-hour recovery floor and existing
+notices/cancellation rules. It never calls initial enrollment to skip the wait.
+Changing the protected signing key is `protected-key.recover` separately.
+This adapter and its scope checks need their own implementation/security review.
+
 The approved B3 notice behavior is best-effort delivery after commit, with a
 structured delivery outcome and contact hash in the committed audit. A crash
 between commit and send can lose the notice; no durable notice outbox/retry
-has been approved here. A holding with no notice contact needs the shared
-policy ruling before its working-credential change can be declared supported.
+has been approved here. A holding with no effective notice contact refuses
+current-passkey add and replace with `no_notice_contact`, before any challenge and again under the
+effect lock. A pending-only contact counts as none. The unchanged 72-hour
+controller-recovery path remains available. No role declaration, mailbox
+resolver or delivery subsystem is created to bypass this rule.
 
 A usable stolen passkey plus its UV factor can add a credential. Notices
 provide detection, not prevention of that case. The receipt exposes committed
@@ -448,11 +727,32 @@ authorization.
 
 Inventory the existing human keychain entries and encrypted backups,
 namespace controller stores, team-key stores, hosted DB custody, custody
-sockets and worker-visible grants. A key for another team is not safe merely
-because a worker selects a different active team. The isolation finding is
+sockets and worker-visible grants. Include OATS deployment roots under
+`.aweb-roots/<label>/.aw` and configured `settings.oats.aweb.root`/`roots`.
+A path-only scanner can report known findings but cannot certify isolation:
+OS-keychain accessibility, inherited mounts, sockets and backups matter too.
+A co-resident protected signer is possible only with an actual separate
+protection boundary (for example a different OS security principal without
+worker access); a separate process under the worker user is insufficient.
+A key for another team is not safe merely because a worker selects a different active team. The isolation finding is
 about accessibility and authority, not a directory basename. Package .8 owns
 per-installation migration approval, backup/removal and rollback limits.
 
+Released local BYOT owner-act signing continues to produce artifacts that
+remote verifiers accept under the unchanged wire rules. It is unsupported in
+the protected profile, not cryptographically distinguishable or universally
+rejected. Package .8 must name every affected BYOT team/client and its explicit
+transition before activation; a documentation change does not perform cutover.
+Protecting an existing team is an operator-approved .8 migration, announced to
+all affected deployment owners before it takes effect. Inventory even clients
+that never opted in but currently use that team's member invites. Their exact
+fix is the configured protected-service/root admission path; coordinate their
+upgrade/cutover before enforcing the narrowing. No silent automatic opt-in,
+identity remint or local invite fallback is permitted. .7 reports findings to
+the coordinator/.8 as deployment/team/service identifiers, custody category,
+public key/ID references, affected consumer/version, readiness finding and
+proposed operator action. Reports contain no private keys or unlock material;
+an unavailable inventory result is unknown, not clean.
 Legacy artifacts remain verifiable under their original formats. The new
 signer removes unsupported human/controller signing entry points rather than
 calling them as a fallback. Existing client requests must either use the
@@ -464,8 +764,25 @@ Agent identity creation remains in the released parent/child exchange. A local
 agent can parent a local child; registered children require an eligible
 registered issuer under the existing ID contract. A deployment root can issue
 a registered descendant when it is that actual issuer; the chain must show the
-real parent, never an invented local intermediary. Membership admission is a
+real parent, never an invented local intermediary. This includes first
+certification of an eligible existing chainless registered agent, after subject
+possession/current registry checks; a session grant seat retains its resident's
+ancestry and does not acquire a new parent of its own. Membership admission is a
 separate controller effect and does not mint or endorse an identity itself.
+
+
+Protected-issuer `identity.ancestry.resign/unchanged_protected_issuer` requires
+retained evidence that the original was issued by this signer after live
+approval or an explicitly approved re-endorsement. Legacy token-issued artifacts
+imported during custody migration refuse; a routine re-sign cannot upgrade
+that provenance. Require the unchanged current child ID, key, domain, kind and
+parent, its subject-possession proof, current non-revoked head and the same
+verified issuer identity/authority. Only the current issuer key (after valid
+continuity), issued timestamp and corresponding signature/certificate digest
+may change. No child-key change, parent change, rights change, expiry extension
+or refresh of a revoked/replaced endorsement qualifies. ID v1 has no new
+assurance or expiry field added by this rule. A genuinely new endorsement uses
+its own live act.
 
 ## 8. Existing entry points and task mapping
 
@@ -484,6 +801,13 @@ route every key use through its classified operation or refuse it.
 | Human reads/connect/team-auth/mail | `cli/go/cmd/aw/human_participation.go`, `id_request.go`, `id_registry_read.go` | Section 4 typed restricted server authentication; no arbitrary installed tool/path signer. |
 | Resident custody app/message signing | `cli/go/cmd/aw/custody.go`, `custody_app.go` | Agent resident work remains scoped; never load a protected human/controller key into worker custody. |
 | Controller owner/hook acts | `cli/go/cmd/aw/hooks.go`; [owner act](owner-act.md) | Shared signer live approval and existing downstream verification/nonce consumption. |
+| Anonymous owner-act delivery | [Owner-act delivery](owner-act-delivery.md) | Allow only the valid controller act; designation checks the human's own kind/current membership, not nearest-human ancestry. |
+| Team-auth on the human origin | [Human confirmation](design/human-confirmation-from-aw.md) | Refuse; neither a valid signature nor a typed payload crosses this origin boundary. |
+| App-origin handoff starts | [Human confirmation](design/human-confirmation-from-aw.md) | Allow exact same-human scoped start after protected LOGIN; no governance authority is created. |
+| Secrets narrowing through team-auth | [Secrets](design/secrets.md) | Allow only authorized narrowing/containment, with last-owner protection; no holding removal or re-enable. |
+| Logs `reader-slot` / `remove-reader` tools and old reader designation route | [Human-role holders](design/human-role-holders.md) | Refuse/remove together in package .9; use protected `human-role.*` owner acts. |
+| Token/session-only or browser-only grant completion | [Human confirmation](design/human-confirmation-from-aw.md) | Refuse; exact frozen-request passkey approval and the existing aw confirmation binding remain required. |
+| Runner register/claim/result and Logs ingest | [Secrets](design/secrets.md), catalog `runner.execute` / `logs.ingest` | Existing typed operational authority only; not owner designation or governance signing. |
 
 Hosted adapter inventories must cover every browser-session, CLI-token,
 installed-tool and linked-channel signer, including cached-member projections,
@@ -511,7 +835,10 @@ Existing tasks remain tracked; the build does not discard their delivery scope:
 The vectors pin the policy distinctions, including same/different/unknown
 nearest human, old-key continuity versus new-child lost-key recovery, issuer
 kind, first enrollment, approver sets versus credential sets and recovery.
-They are policy scenarios, not new cryptographic test vectors or a duplicate
+Each scenario varies the named inputs with all other row preconditions valid;
+its decision reason is distinct from the HTTP receipt code (an unmapped typed
+reason remains diagnostic under `operation_refused`). They are policy
+scenarios, not new cryptographic test vectors or a duplicate
 signer engine. Packages .2–.6 must exercise them against their actual shared
 implementation; static catalog validation alone is not runtime acceptance.
 
@@ -524,24 +851,17 @@ Each release names exact package/client/server/registry versions; no version
 is claimed by this contract draft. Fresh setup and supported existing-state
 upgrade are separate acceptance journeys.
 
-## 10. Draft freeze questions and evidence
+## 10. Review boundary and evidence
 
-The following details still require paired contract/security review; they are
-not permission for consumers to invent fallback behavior:
-
-* The exact cap-change subject and trusted evidence port for non-team
-  protected-key scopes, alongside the app team-controller owner-act variant.
-* The working-credential change policy for a holding with no notice contact.
-  The shared credential owner is obtaining that ruling; no contact-remint or
-  delivery subsystem is implied here.
-* The unchanged-ancestry re-sign variant for a protected human/namespace
-  issuer: it implements the approved routine re-sign exception, requiring
-  unchanged ancestry, subject possession and exact retained provenance. It
-  must not become new endorsement or a human-edge change without approval.
-* The complete controller operation inventory and exact restricted route union
-  in each adapter, with the shared versioned context/receipt API and actual
-  public HTTP mounts. Preparation ports above define the boundary; this draft
-  does not claim an already released endpoint.
+Juan's one-approval setup and no-new-timers decisions are recorded in sections
+2, 3 and 6. The revised catalog, non-team cap/recovery evidence, HTTP requester
+proofs and explicit unresolved app-start behavior require the assembled
+delta's consumer and security review before implementation freezes. Concrete adapter route tables
+remain .2/.4/.5/.6 deliverables: each direct/cached/recovery key use must map to
+a catalog row or explicitly refuse. Review those routes at their implementation
+SHA, not from this document's existence. New credential-change recorder kinds
+must compose with the installed app's transactional recorder; a plain local-sink
+test is not proof of that integration. No bootstrap depends on remote Logs.
 
 Source contracts are [ID certificates](id-certificates.md),
 [AWID](awid-sot.md), [owner acts](owner-act.md),

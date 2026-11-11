@@ -216,10 +216,11 @@ whether a holding or installation exists. It checks in three stages:
       `app_id`, the installation, the act's `role`, its `principal` or, for
       cap-set, its `cap`, and, for
       designate and replace, the SHA-256 of the body's `credential` and of its
-      `notice_contact` when the role declares one. The holding is re-read under
-      the transaction's lock, and the act's `expires_at` is checked again
-      against the clock read after that lock: an act that expired while
-      stage 3 waited is refused and the transaction rolls back.
+      `notice_contact` when the role declares one. For holder acts, the holding
+      is re-read under the transaction's lock. For every act, `expires_at` is
+      checked again against the clock read after the effect's locks: an act
+      that expired while stage 3 waited is refused and the transaction rolls
+      back.
 
 Revoke checks no membership or kind. It targets the stored holding, so a
 controller act can retire a holder whose membership has already ended, and a
@@ -283,7 +284,8 @@ same act again until it expires.
   have. It is B3's per-holding credential cap, 5 by default. A holding at the
   cap refuses another credential, and none is evicted; a lower cap leaves an
   existing larger set in place, and the holding adds none until it is under
-  the cap. Replacing one credential keeps the count, so it succeeds at the cap.
+  the cap. Replacing one credential keeps the count, so it succeeds at or
+  above the cap when at least one usable credential remains.
 
 Each emits `post-governance-hook` with `authority: owner_act`, and the app
 sends no enrolment link. Cap-set emits `policy.changed`, a widening act
