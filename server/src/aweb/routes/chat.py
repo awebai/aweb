@@ -288,18 +288,26 @@ class CreateSessionResponse(BaseModel):
     targets_left: list[str]
 
 
-async def _create_session_response(db, redis, *, session_id: UUID, message_id: str, target_dids: list[str]) -> CreateSessionResponse:
-    """Project the sent message and current session without repeating effects."""
-    aweb_db = db.get_manager("aweb")
-    participants_rows = await aweb_db.fetch_all(
-        """
-        SELECT did, alias, address
-        FROM {{tables.chat_participants}}
-        WHERE session_id = $1
-        ORDER BY alias ASC
-        """,
-        session_id,
-    )
+async def _create_session_response(
+    db, redis, *, session_id: UUID, message_id: str, target_dids: list[str],
+    participants_rows: list[dict[str, Any]] | None = None,
+) -> CreateSessionResponse:
+    """Project the sent message and current session without repeating effects.
+
+    ``participants_rows`` are the session's participants when the send already
+    read them; without them they are read here.
+    """
+    if participants_rows is None:
+        aweb_db = db.get_manager("aweb")
+        participants_rows = await aweb_db.fetch_all(
+            """
+            SELECT did, alias, address
+            FROM {{tables.chat_participants}}
+            WHERE session_id = $1
+            ORDER BY alias ASC
+            """,
+            session_id,
+        )
     participant_address_map = await _lookup_addresses_by_did(
         db,
         [(row.get("did") or "").strip() for row in participants_rows],
@@ -371,7 +379,7 @@ async def create_or_send(
     )
     target_dids = sorted({_target_did(row) for row in target.recipients if _target_did(row)})
     sent = await send_chat(db, sender, target, payload, runtime)
-    if sent.participants is not None:
+    if sent.federated:
         return CreateSessionResponse(
             session_id=str(sent.session_id),
             conversation_id=str(sent.session_id),
@@ -391,6 +399,7 @@ async def create_or_send(
         )
     return await _create_session_response(
         db, redis, session_id=sent.session_id, message_id=str(sent.message["message_id"]), target_dids=target_dids,
+        participants_rows=sent.participants,
     )
 
 
