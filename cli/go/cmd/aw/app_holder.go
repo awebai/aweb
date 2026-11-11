@@ -10,6 +10,7 @@ import (
 	"net/url"
 	"os"
 	"os/exec"
+	"path/filepath"
 	"runtime"
 	"strings"
 
@@ -99,12 +100,14 @@ func holderSessionOptions(cmd *cobra.Command, appName, roleName string) (handoff
 	if err != nil {
 		return handoff.Options{}, err
 	}
-	return app.holderOptions(cmd, roleName)
+	return app.holderOptions(cmd, roleName, "session")
 }
 
-// holderOptions are the handoff options for a holding of roleName by this
-// command's signing identity.
-func (a *holderApp) holderOptions(cmd *cobra.Command, roleName string) (handoff.Options, error) {
+// holderOptions are the handoff options for a holding of roleName. A human
+// signs for itself. An agent certified directly by a human signs a session
+// start for that human (handoff-wire 1a), sending its ID chain so the app
+// can verify the edge; it never starts any other purpose for the human.
+func (a *holderApp) holderOptions(cmd *cobra.Command, roleName, purpose string) (handoff.Options, error) {
 	role, err := a.role(roleName)
 	if err != nil {
 		return handoff.Options{}, err
@@ -112,6 +115,16 @@ func (a *holderApp) holderOptions(cmd *cobra.Command, roleName string) (handoff.
 	identity, err := resolveParticipationRequestIdentity()
 	if err != nil {
 		return handoff.Options{}, err
+	}
+	principal, chainHeader, err := holderFor(identity)
+	if err != nil {
+		return handoff.Options{}, err
+	}
+	if principal != identity.StableID {
+		if purpose != "session" {
+			return handoff.Options{}, withErrorCode("requester_not_holder", fmt.Errorf("only %s itself can start a %s handoff for its holding; an agent may start sessions only", principal, purpose))
+		}
+		fmt.Fprintf(cmd.ErrOrStderr(), "Requesting as %s for the holder %s.\n", identity.StableID, principal)
 	}
 	client, selection, err := participationClient()
 	if err != nil {
@@ -125,12 +138,37 @@ func (a *holderApp) holderOptions(cmd *cobra.Command, roleName string) (handoff.
 	}
 	return handoff.Options{
 		Origins: a.Origins,
-		Scope:   handoff.Scope{InstallationID: installationID, Role: role.Name, Principal: identity.StableID},
-		Sign:    teamAuthSigner(identity),
+		Scope:   handoff.Scope{InstallationID: installationID, Role: role.Name, Principal: principal},
+		Sign:    teamAuthSigner(identity, chainHeader),
 		Open:    openBrowser,
 		Notify:  cmd.ErrOrStderr(),
 		HTTP:    &http.Client{Timeout: awid.APITimeout(), Transport: awid.NewAPITransport()},
 	}, nil
+}
+
+// holderFor is the holder this identity starts handoffs for, and the
+// X-AWID-ID-Chain value it sends when that holder is its parent. A human,
+// or an identity with no installed chain, is its own holder.
+func holderFor(identity *localSigningIdentity) (string, string, error) {
+	if activeHuman != nil {
+		return identity.StableID, "", nil
+	}
+	installed, err := awconfig.LoadInstalledIDChain(filepath.Dir(identity.SigningKeyPath))
+	if err != nil {
+		return "", "", err
+	}
+	if installed == nil {
+		return identity.StableID, "", nil
+	}
+	certificates, _ := installed.Bundle["certificates"].([]any)
+	if len(certificates) == 0 || idCertificateFields(certificates[len(certificates)-1])["kind"] != "agent" {
+		return identity.StableID, "", nil
+	}
+	holder, err := directHumanParent(installed.Bundle)
+	if err != nil {
+		return "", "", err
+	}
+	return holder, installed.Header, nil
 }
 
 // participationClient is the aweb client of the team this command acts in,
@@ -143,11 +181,15 @@ func participationClient() (*aweb.Client, *awconfig.Selection, error) {
 }
 
 // teamAuthSigner sends a request to an app origin signed with team-auth v2
-// as identity, following no redirect.
-func teamAuthSigner(identity *localSigningIdentity) handoff.Signer {
+// as identity, following no redirect, with chainHeader as X-AWID-ID-Chain
+// when it is set.
+func teamAuthSigner(identity *localSigningIdentity, chainHeader string) handoff.Signer {
 	return func(_ context.Context, method string, target *url.URL, body []byte) (*http.Response, error) {
 		headers := http.Header{}
 		headers.Set("Content-Type", "application/json")
+		if chainHeader != "" {
+			headers.Set("X-AWID-ID-Chain", chainHeader)
+		}
 		result, err := executeSignedIDRequest(method, target, identity, body, headers, map[string]any{}, true)
 		if err != nil {
 			return nil, err
@@ -172,4 +214,34 @@ func openBrowser(target string) error {
 	}
 	go command.Wait() //nolint:errcheck // the opener's exit says nothing about the page
 	return nil
+}
+
+// directHumanParent is the human an agent may prepare app session starts
+// for: the direct parent of its own (leaf) ID certificate, when that parent's
+// certificate is the one before it in the chain and its kind is human. The
+// app verifies the chain and its current status; this only selects the
+// holder and refuses a chain that can never qualify (handoff-wire 1a).
+func directHumanParent(chain map[string]any) (string, error) {
+	missing := withErrorCode("requester_missing", fmt.Errorf("this identity is not an agent certified directly by a human, so it cannot start a session for one; create one under the human with aw id create --human-parent <human>"))
+	certificates, _ := chain["certificates"].([]any)
+	if len(certificates) < 2 {
+		return "", missing
+	}
+	leaf := idCertificateFields(certificates[len(certificates)-1])
+	parent := idCertificateFields(certificates[len(certificates)-2])
+	edge, _ := leaf["parent"].(map[string]any)
+	if leaf["kind"] != "agent" || edge["kind"] != "identity" || parent["kind"] != "human" {
+		return "", missing
+	}
+	holder, _ := edge["id"].(string)
+	if holder == "" || parent["id"] != holder {
+		return "", missing
+	}
+	return holder, nil
+}
+
+func idCertificateFields(signed any) map[string]any {
+	envelope, _ := signed.(map[string]any)
+	fields, _ := envelope["certificate"].(map[string]any)
+	return fields
 }

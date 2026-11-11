@@ -147,7 +147,7 @@ func runAppHuman(cmd *cobra.Command, args []string) error {
 			return err
 		}
 	}
-	opts, err := app.holderOptions(cmd, action.Role)
+	opts, err := app.holderOptions(cmd, action.Role, "session")
 	if err != nil {
 		return err
 	}
