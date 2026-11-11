@@ -162,11 +162,29 @@ def sha256(path: Path) -> str:
     return digest.hexdigest()
 
 
+def require_gated_bytes(selected: list[dict]) -> None:
+    for row in selected:
+        if sha256(Path(row["path"])) != row["sha256"]:
+            raise PublishRefusal(f"gated file {Path(row['path']).name} changed after verification")
+
+
+def stage_gated(rows: list[dict], destination: Path) -> list[Path]:
+    """Copy gated files for upload; the copies must still be the verified bytes."""
+    staged = []
+    for row in rows:
+        target = destination / Path(row["path"]).name
+        shutil.copyfile(row["path"], target)
+        require_gated_bytes([dict(row, path=str(target))])
+        staged.append(target)
+    return staged
+
+
 def publish_pypi(root: Path, prefix: str, version: str, selected: list[dict]) -> None:
     needs_awid, packages = PYPI_LANES[prefix]
     token = os.environ.get("UV_PUBLISH_TOKEN", "").strip()
     if not token:
         raise PublishRefusal("UV_PUBLISH_TOKEN is required")
+    require_gated_bytes(selected)
     if needs_awid:
         awid_version = manifest_version(root, "awid/pyproject.toml")
         deadline = time.monotonic() + 180
@@ -181,11 +199,10 @@ def publish_pypi(root: Path, prefix: str, version: str, selected: list[dict]) ->
                     f"awid-service {awid_version} is not publicly available before {prefix} publication"
                 )
             time.sleep(6)
-    for package, directory in packages:
+    for package, _ in packages:
         with tempfile.TemporaryDirectory(prefix="aweb-pypi-") as temporary:
             dist = Path(temporary)
-            run(root, "uv", "build", "--sdist", "--wheel", "--out-dir", str(dist), directory)
-            (dist / ".gitignore").unlink(missing_ok=True)
+            stage_gated([row for row in selected if row["package"] == package], dist)
             run(
                 root,
                 "bash",
@@ -273,7 +290,7 @@ def require_pi_aw_floor(root: Path, timeout_seconds: float = 180) -> str:
 
 
 @contextmanager
-def _npm_publish_staged(root: Path, directory: str, package: str, profile: str, version: str, *, staged_final: bool = False):
+def _npm_publish_staged(root: Path, row: dict, package: str, profile: str, version: str, *, staged_final: bool = False):
     """Publish/adopt once; keep the exact archive alive until readback finishes."""
     token = os.environ.get("NODE_AUTH_TOKEN", "").strip() or os.environ.get("NPM_TOKEN", "").strip()
     if not token:
@@ -281,26 +298,21 @@ def _npm_publish_staged(root: Path, directory: str, package: str, profile: str, 
     environment = {**os.environ, "NODE_AUTH_TOKEN": token, "NPM_TOKEN": token}
     with tempfile.TemporaryDirectory(prefix="aweb-npm-") as temporary:
         staging = Path(temporary)
+        [archive] = stage_gated([row], staging)
         run(
             root,
             "bash",
             "scripts/npm-exact-publish.sh",
-            "pack-inspect",
-            "--dir",
-            directory,
+            "inspect-tgz",
+            "--tgz",
+            str(archive),
             "--version",
             version,
-            "--out",
-            str(staging),
             "--profile",
             profile,
             "--source-root",
             ".",
         )
-        packages = list(staging.glob("*.tgz"))
-        if len(packages) != 1:
-            raise PublishRefusal("npm staging did not contain exactly one package")
-        archive = packages[0]
         status, observed = request_json(
             f"https://registry.npmjs.org/{urllib.parse.quote(package, safe='')}/{version}"
         )
@@ -337,8 +349,8 @@ def _npm_publish_staged(root: Path, directory: str, package: str, profile: str, 
         yield archive, action, environment
 
 
-def npm_publish_exact(root: Path, directory: str, package: str, profile: str, version: str, *, staged_final: bool = False) -> None:
-    with _npm_publish_staged(root, directory, package, profile, version, staged_final=staged_final) as staged:
+def npm_publish_exact(root: Path, row: dict, package: str, profile: str, version: str, *, staged_final: bool = False) -> None:
+    with _npm_publish_staged(root, row, package, profile, version, staged_final=staged_final) as staged:
         archive, action, environment = staged
         run(
             root,
@@ -359,13 +371,13 @@ def npm_publish_exact(root: Path, directory: str, package: str, profile: str, ve
         )
 
 
-def publish_npm(root: Path, prefix: str, version: str) -> None:
+def publish_npm(root: Path, prefix: str, version: str, selected: list[dict]) -> None:
+    require_gated_bytes(selected)
     if prefix == "pi-v":
         require_pi_aw_floor(root)
-    directory, package, profile = build_npm_lane(root, prefix)
-    npm_publish_exact(root, directory, package, profile, version)
-    if prefix == "skills-v":
-        print("skill ZIPs are staged locally; hosted release assets can be uploaded later")
+    _, package, profile = NPM_LANES[prefix]
+    [row] = selected
+    npm_publish_exact(root, row, package, profile, version)
 
 
 def write_json_version(path: Path, version: str, git_head: str | None = None) -> None:
@@ -433,17 +445,17 @@ def build_aw_npm(root: Path, version: str, source_sha: str, npm_root: Path | Non
 
 
 def publish_aw_npm(root: Path, version: str, source_sha: str, selected: list[dict], *, staged_final: bool = False) -> None:
-    package_dirs = build_aw_npm(root, version, source_sha)
+    """Upload the seven gated archives, platforms before the wrapper that pins them."""
+    require_gated_bytes(selected)
     npm_root = root / "cli/go/npm"
     # Hold all seven once-staged archives through one verifier invocation.
     # Publishing/adopting never becomes a retry action on readback uncertainty.
     with ExitStack() as staging:
         artifacts = []
-        for package_dir in package_dirs:
-            package = "@awebai/" + package_dir
+        for row in selected:
+            package = row["package"]
             archive, _, environment = staging.enter_context(_npm_publish_staged(
-                root, str(Path("cli/go/npm") / package_dir), package, "", version,
-                staged_final=staged_final,
+                root, row, package, "", version, staged_final=staged_final,
             ))
             artifacts.extend(("--artifact", f"{package}={archive}"))
         run(
@@ -647,6 +659,7 @@ def released_aw() -> str:
 def publish(root: Path, tag: str, *, artifacts: Path, cloud_checkout: Path, cloud_tree: str, manifest_sha256: str,
             expected_aw_released: str, dry_run: bool = False) -> None:
     prefix, version, source_sha = tag_identity(root, tag)
+    selected: list[dict] = []
     if prefix in PYPI_LANES or prefix in NPM_LANES or prefix == "aw-v":
         selected = gated_publish_set(
             artifacts, prefix=prefix, version=version, source_sha=source_sha, cloud_checkout=cloud_checkout,
@@ -657,11 +670,11 @@ def publish(root: Path, tag: str, *, artifacts: Path, cloud_checkout: Path, clou
         if dry_run:
             print(f"dry run: {tag} passed the Cloud verdict for manifest {manifest_sha256}; nothing uploaded")
             return
-        raise PublishRefusal(f"{tag}: uploading the gated manifest files is not available")
-    print(f"{tag} is not manifest-gated: its image is built from the tag, without a Cloud verdict")
-    if dry_run:
-        print(f"dry run: {tag}; nothing built or uploaded")
-        return
+    else:
+        print(f"{tag} is not manifest-gated: its image is built from the tag, without a Cloud verdict")
+        if dry_run:
+            print(f"dry run: {tag}; nothing built or uploaded")
+            return
     # The annotated release tag carries the choice across the distribution
     # repository too; an ambient environment override would be lost there.
     staged_final = False
@@ -674,11 +687,11 @@ def publish(root: Path, tag: str, *, artifacts: Path, cloud_checkout: Path, clou
         run(root, "git", "worktree", "add", "--detach", str(checkout), source_sha, timeout=120)
         try:
             if prefix in PYPI_LANES:
-                publish_pypi(checkout, prefix, version)
+                publish_pypi(checkout, prefix, version, selected)
             elif prefix in NPM_LANES:
-                publish_npm(checkout, prefix, version)
+                publish_npm(checkout, prefix, version, selected)
             elif prefix == "aw-v":
-                publish_aw_npm(checkout, version, source_sha, staged_final=staged_final)
+                publish_aw_npm(checkout, version, source_sha, selected, staged_final=staged_final)
             else:
                 publish_oci(checkout, prefix, version, source_sha)
         finally:

@@ -297,13 +297,49 @@ before publishing their package, and `make check-naapp-lib-package` refuses an
 ## Runnerless publication
 
 Every registry-backed tag can publish from the operator machine using the same
-tag dispatcher:
+tag dispatcher. OSS publishes only bytes that Cloud has passed. Every input is
+mandatory and has no default:
 
 ```sh
-make release-publish TAG=server-v1.35.0
-make release-publish TAG=channel-v1.2.3
-make release-publish TAG=awid-v0.5.19
+make release-publish TAG=server-v1.35.0 \
+  CANDIDATE_ARTIFACT_DIR=<the gate's retained artifacts directory> \
+  CLOUD_CHECKOUT=<Cloud checkout holding candidate-oss-verdict and its ledger> \
+  CLOUD_TREE=<git tree id of current Cloud main> \
+  OSS_MANIFEST_SHA256=<sha256 of the exact manifest.json bytes> \
+  EXPECTED_AW_RELEASED=<npm latest @awebai/aw, X.Y.Z>
 ```
+
+`DRY_RUN=1` runs every check and prints the publish set without uploading.
+A missing input exits 2 before anything runs.
+
+For the PyPI, npm and `aw-v` lanes, the publisher uploads exactly the tag's
+rows of the candidate gate's `manifest.json`, and nothing it builds. It refuses
+unless all of the following hold, in this order:
+
+1. `manifest.json` hashes to `OSS_MANIFEST_SHA256`, and every file it lists
+   re-hashes to its row.
+2. The manifest's source commit is the tag's commit.
+3. The manifest holds exactly one file of each kind for every package in the
+   lane, at the tag version: a wheel and an sdist per PyPI package, and one
+   tarball per npm package (seven for `aw-v`).
+4. npm `latest` for `@awebai/aw` equals `EXPECTED_AW_RELEASED`. This is read
+   once, before any upload, so it names the released client Cloud was gated
+   against, even when this release moves `latest`.
+5. After fetching only Cloud's `origin/main` remote-tracking ref, its tree
+   equals `CLOUD_TREE`. The checkout's branches, index and working tree are not
+   touched. If Cloud main moved after the gate, publication refuses and the
+   Cloud gate must run again.
+6. `make -C "$CLOUD_CHECKOUT" candidate-oss-verdict CLOUD_TREE=...
+   OSS_MANIFEST_SHA256=... EXPECTED_AW_RELEASED=...` exits 0 and prints JSON
+   with `schema` 1, `passed` true, the requested tree and digest, and at least
+   one qualifying key, every one of them bound to this digest and this
+   `aw-released`. Anything else refuses, including `gate-in-progress` and
+   output that does not parse. `AWEB_GATE_LEDGER` passes through when set.
+
+Each file is copied for upload and re-hashed again. The publisher then
+publishes or adopts it and reads it back, as before. Image tags (`awid-v`,
+`a2a-gw-v`, `secrets-v`, `logs-v`) are not in the manifest. The publisher says
+so and builds them from the tag, as before.
 
 Provide the credential required by the destination:
 
@@ -311,10 +347,10 @@ Provide the credential required by the destination:
 - npm: `NODE_AUTH_TOKEN` or `NPM_TOKEN`
 - GHCR: `GHCR_USERNAME` and `GHCR_TOKEN`
 
-The runnerless path builds from a detached worktree at the local tag and
-refuses a same-version byte conflict. `aw-v` can publish all npm platform
-packages directly; hosted binary assets remain resumable when GitHub returns.
-Skills ZIPs are likewise resumable hosted assets after the npm package is safe.
+Publication refuses a same-version byte conflict. `aw-v` publishes all npm
+platform packages directly; hosted binary assets remain resumable when GitHub
+returns. Skills ZIPs are not in the manifest and are not part of this
+publication.
 
 ## Repository boundary
 

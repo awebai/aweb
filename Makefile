@@ -95,13 +95,14 @@ help:
 	@echo "  RELEASING - test locally, then push the exact local tags:"
 	@echo "    make release-candidate TAGS='server-vX.Y.Z awid-service-vX.Y.Z ...'"
 	@echo "    git push origin refs/tags/<tag> [...]"
-	@echo "    make release-publish TAG=<tag>   # runnerless registry publisher"
+	@echo "    make release-publish TAG=<tag> CANDIDATE_ARTIFACT_DIR=... CLOUD_CHECKOUT=... \\"
+	@echo "      CLOUD_TREE=... OSS_MANIFEST_SHA256=... EXPECTED_AW_RELEASED=...   # gated publisher"
 	@echo "    docs/release.md is the authoritative specification."
 	@echo ""
 	@echo "  verify-site  Verify the awid.ai Hugo site without deploying"
 	@echo "  deploy-site  Advance the verified origin/main commit to $(SITE_DEPLOY_BRANCH)"
 	@echo "  release-candidate TAGS='...'          complete missing Docker stages, then create local tags"
-	@echo "  release-publish TAG=<tag>             publish one local tag without GitHub Actions"
+	@echo "  release-publish TAG=<tag> ...         publish one tag's gated manifest files with a passing Cloud verdict"
 	@echo "  clean        Remove all build artifacts and caches"
 
 .PHONY: e2e-naapp e2e-folio-wakes naapp-e2e-packages
