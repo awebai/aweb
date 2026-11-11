@@ -47,8 +47,6 @@ DESIGNATE = "human-role.designate"
 REPLACE = "human-credential.replace"
 REVOKE = "human-role.revoke"
 NOTICE = "holder@example.com"
-# A role whose holders must name a contact for notices, as secrets.owner does.
-NOTICE_ROLE = "example.noticed"
 
 
 @dataclass
@@ -151,8 +149,7 @@ def effects(
         applied.append((await tx.fetch_value("SELECT txid_current()"), result))
 
     return HumanRoleActs(
-        roles=frozenset({HOLDER_ROLE, NOTICE_ROLE}),
-        notice_roles=frozenset({NOTICE_ROLE}),
+        roles=frozenset({HOLDER_ROLE}),
         passkeys=world.passkeys,
         recorder=world.recorder,
         check_member=partial(runtime.check_human_role_member, identity_client=human.client),
@@ -165,17 +162,14 @@ def effects(
 async def fx(world: World, tmp_path) -> AsyncIterator[Effects]:
     member = Member(team_id=TEAM_ID, team_key=world.owner.team_key, certificate_id="cert-holder")
     async with registered_human(world.registry, member) as human:
-        holdings = HumanRoleHoldings(
-            roles=frozenset({HOLDER_ROLE, NOTICE_ROLE}), passkeys=world.passkeys
-        )
+        holdings = HumanRoleHoldings(roles=frozenset({HOLDER_ROLE}), passkeys=world.passkeys)
         runtime = _runtime(
             tmp_path, registry=world.registry, database_url=world.db.config.get_dsn()
         )
         applied: list[tuple[int, OwnerActEffectResult]] = []
         acts = effects(world, human, runtime, applied)
         state = Effects(world, human, runtime, holdings, applied, acts)
-        for role in (HOLDER_ROLE, NOTICE_ROLE):
-            await bind(world, state.scope(role), role)
+        await bind(world, state.scope(), HOLDER_ROLE)
         yield state
 
 
@@ -264,11 +258,18 @@ async def test_the_act_binds_the_credential_the_delivery_carries(fx):
     assert not await consumed(fx, sent)
 
 
-async def test_a_notice_role_needs_a_notice_contact(fx):
-    sent = delivery(fx, DESIGNATE, holder(), role=NOTICE_ROLE)
-    assert await refused(fx, sent) == "owner_required"
-    await deliver(fx, delivery(fx, DESIGNATE, holder(), role=NOTICE_ROLE, notice=NOTICE))
-    assert await read(fx, NOTICE_ROLE) is not None
+async def test_a_role_whose_holders_take_notices_needs_a_notice_contact(fx):
+    noticed = replace(
+        fx,
+        acts=effects(
+            fx.world, fx.human, fx.runtime, fx.applied, notice_roles=frozenset({HOLDER_ROLE})
+        ),
+    )
+    sent = delivery(fx, DESIGNATE, holder())
+    assert await refused(noticed, sent) == "owner_required"
+    assert not await consumed(fx, sent)
+    await deliver(noticed, delivery(fx, DESIGNATE, holder(), notice=NOTICE))
+    assert await read(fx) is not None
 
 
 async def test_a_designation_of_a_held_role_rolls_back_with_its_nonce(fx):
