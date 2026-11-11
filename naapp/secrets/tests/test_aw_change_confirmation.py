@@ -219,7 +219,9 @@ async def confirmation_journey(journey, tmp_path):  # noqa: F811
     ) as client:
         composed = replace(journey, client=client)
         # Public B3 scope returned by the original app projection; no new holding.
-        projected = await journey.factory.authority.session_target(journey.scope)
+        projected = await journey.factory.authority.session_target(
+            journey.scope, team_id=journey.member.team_id
+        )
         yield ConfirmationJourney(
             composed, inbox, writer, approvals, projected.b3_scope, console, disclosure
         )

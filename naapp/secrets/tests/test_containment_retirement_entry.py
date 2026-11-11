@@ -41,7 +41,9 @@ async def session(holder, kind):
     # Genuine B3 verification and an actual S4 cookie row, rather than a
     # constructed ConsoleSession. Ceremony-only H2 composition is separate.
     w = holder.world
-    target = await holder.factory.authority.session_target(holder.scope)
+    target = await holder.factory.authority.session_target(
+        holder.scope, team_id=holder.member.team_id
+    )
     logged = await w.passkeys.verify_login(
         target.b3_scope,
         holder.device.get(await w.passkeys.login_options(target.b3_scope)),
@@ -299,7 +301,9 @@ async def test_team_auth_retirement_waits_before_holding_its_owner_role(journey,
 
     second = await other_owner(journey)
     w = journey.world
-    target = await second.factory.authority.session_target(second.scope)
+    target = await second.factory.authority.session_target(
+        second.scope, team_id=second.member.team_id
+    )
     service = await containment_service(journey, tmp_path)
     cache = AWIDTeamCache(
         registry_url=REGISTRY_URL,

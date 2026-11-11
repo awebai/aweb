@@ -40,7 +40,9 @@ async def prepare_inputs(context):
     await application(w)
     adapter = authority(w)
     targets = [
-        await adapter.session_target(OwnerPublicScope(INSTALLATION_ID, OWNER_ROLE, p.principal_did))
+        await adapter.session_target(
+            OwnerPublicScope(INSTALLATION_ID, OWNER_ROLE, p.principal_did), team_id=p.team_id
+        )
         for p in (ALICE, BOB)
     ]
     pairs = sorted((target.b3_scope, target.subject) for target in targets)
