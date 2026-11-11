@@ -393,7 +393,8 @@ recorded here. No cluster is bought or set up for this review.
 - **Image.** The image is pulled from the registry the cluster operator
   designates, with its pull secret.
 - **Origin.** The agents use the deployment's configured canonical aweb origin
-  and its audience; which origin is a deployment input.
+  and its audience. Hosted aweb coordination and registry are an acceptable
+  starting profile; a customer-run server and registry stay supported.
 
 ## 6. Agent identity and team authority
 
@@ -905,7 +906,7 @@ the harness runs in a container.
 | O6 | OATS kernel | refuse (server and container targets) or warn (laptops) when a `/login` credential is present at harness start; the same assertion as the section 12 check (Athena c49ca080) | decided by both sides: refuse with `E_CLAUDE_LOGIN_CREDENTIAL` when OATS sets `CLAUDE_CODE_OAUTH_TOKEN`; otherwise silent (a personal laptop login is supported); in #1787 |
 | G1 | Secrets + aweb | GitHub App installation-token minting service and the git credential helper | open; not on the first slice |
 | H1 | Hestia | Compose bundle, forwarder, resolver, nft chains, provision.sh actions, build checks 1–6, bypass checks | design ACKed at 8b86e9ca with notes now folded in; build after the host egress receipt and the go |
-| L1 | the Kubernetes target owner | cluster inputs and section 5 | ownership accepted; NetworkPolicy enforcement, sshd in pods, operator port-forward, namespace model and origin to be confirmed |
+| L1 | the Kubernetes target owner | cluster inputs and section 5 | ownership accepted; NetworkPolicy enforcement, sshd in pods, operator port-forward and namespace placement to be confirmed as configuration |
 | S1 | Secrets | first-owner chain (section 9, item 2) | in progress |
 
 ## 11. Decisions
