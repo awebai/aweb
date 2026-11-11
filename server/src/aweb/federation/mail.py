@@ -86,7 +86,7 @@ async def deliver_federated_message(
     delivery_origin: str,
     envelope: FederationEnvelope,
     signature: str,
-    transport: httpx.AsyncBaseTransport,
+    transport: httpx.AsyncBaseTransport | None,
     id_chain: dict | None = None,
     timeout: float = 10.0,
     own_origins: set[str] | None = None,
@@ -95,11 +95,15 @@ async def deliver_federated_message(
 
     The request goes through ``transport`` alone: the delivery origin comes from
     a record another party publishes, and the transport decides which origins
-    and addresses are connected to.
+    and addresses are connected to. A server that has no delivery transport
+    (``None``: neither its host nor a federation authority gave one) delivers
+    nowhere, and the send is refused as a failed delivery.
     """
+    origin = canonical_server_origin(delivery_origin)
+    if transport is None:
+        raise FederatedMailDeliveryError(origin, "delivery_unavailable", status_code=502)
     if not isinstance(transport, httpx.AsyncBaseTransport):
         raise TypeError("federated delivery requires a transport")
-    origin = canonical_server_origin(delivery_origin)
     origins = set(own_origins or ())
     if envelope.sender_delivery_origin:
         origins.add(canonical_server_origin(envelope.sender_delivery_origin))
