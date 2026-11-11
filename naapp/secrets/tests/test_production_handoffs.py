@@ -146,10 +146,14 @@ async def test_production_human_origin_refuses_team_auth_and_partial_signed_cook
     assert response.status_code == 403
     assert response.json()["code"] == "team_auth_refused"
     assert (await client.get(settings.console_origin + "/activity")).status_code == 200
-    response = await client.get(
-        settings.console_origin + "/activity", headers={"X-Console-Key": member.did_key}
-    )
-    assert response.status_code == 401
+    assert (await client.get(settings.console_origin + "/activity/events")).status_code == 200
+    partial = {"X-Console-Key": member.did_key}
+    response = await client.get(settings.console_origin + "/activity", headers=partial)
+    assert response.status_code == 303, response.text
+    assert response.headers["location"] == "/login"
+    assert response.content == b""
+    response = await client.get(settings.console_origin + "/activity/events", headers=partial)
+    assert response.status_code == 401, response.text
     assert response.json()["detail"] == "console_session_required"
 
 
