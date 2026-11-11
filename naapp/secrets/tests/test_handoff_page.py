@@ -11,13 +11,15 @@ import json
 import secrets
 import socket
 from dataclasses import asdict
+from datetime import timedelta
 from urllib.parse import parse_qs
 from uuid import uuid4
 
 import httpx
 import pytest
 import uvicorn
-from aweb_naapp.console import CONSOLE_HEADERS
+from aweb_naapp.console import CONSOLE_HEADERS, ClientIdentity, LoginLimiter
+from aweb_naapp.console.handoff_sessions import ConsoleHandoffs
 from aweb_naapp.runtime.origins import split_origins
 from aweb_naapp.runtime.passkeys import RelyingParty
 from aweb_naapp_testing import did_key
@@ -87,7 +89,7 @@ async def test_factory_human_router_serves_the_page_and_assets_without_completin
     )
 
 
-@pytest.mark.parametrize("fault", ["malformed", "unknown", "expired", "completed"])
+@pytest.mark.parametrize("fault", ["malformed", "unknown", "expired", "completed", "released"])
 async def test_page_refuses_invalid_or_ended_handoffs_without_reflecting_inputs(journey, fault):
     handoff, _, _ = await start(journey, "credential")
     if fault == "malformed":
@@ -95,19 +97,63 @@ async def test_page_refuses_invalid_or_ended_handoffs_without_reflecting_inputs(
     elif fault == "unknown":
         handoff = str(uuid4())
     else:
-        column = "expires_at" if fault == "expired" else "completed_at"
+        column = {"expired": "expires_at", "completed": "completed_at", "released": "released_at"}[
+            fault
+        ]
         await journey.world.db.execute(
             "UPDATE {{tables.console_handoffs}} SET " + column + "=clock_timestamp() "
             "WHERE handoff_id=$1::uuid",
             handoff,
         )
     response = await journey.client.get("/handoff/" + handoff)
-    assert (response.status_code, response.json()) == (403, {"detail": "handoff_refused"})
+    assert response.status_code == 403
+    assert response.headers["content-type"].startswith("text/html")
+    assert "<main" in response.text and "<h1" in response.text
+    assert 'role="status"' in response.text
+    assert handoff not in response.text
+    assert "<script" not in response.text and "<button" not in response.text
     assert all(response.headers[name] == value for name, value in CONSOLE_HEADERS.items())
 
 
+def limited_factory(original):
+    return ConsoleHandoffs(
+        db=original.db,
+        passkeys=original.passkeys,
+        authority=original.authority,
+        principal=original.principal,
+        human_member=original.human_member,
+        limiter=LoginLimiter(
+            original.db, client_identity=ClientIdentity(), limit=1, window=timedelta(minutes=1)
+        ),
+    )
+
+
+async def test_throttled_page_is_html_with_retry_after_and_ceremony_refusal_stays_json(journey):
+    handoff, _, _ = await start(journey, "credential")
+    factory = limited_factory(journey.factory)
+    human = FastAPI()
+    human.include_router(factory.human_router())
+    async with httpx.AsyncClient(
+        transport=httpx.ASGITransport(app=human, client=("192.0.2.123", 9000)),
+        base_url=factory.passkeys.rp.origin,
+    ) as client:
+        path = "/handoff/" + handoff
+        assert (await client.get(path)).status_code == 200
+        response = await client.get(path)
+        assert response.status_code == 429
+        assert response.headers["content-type"].startswith("text/html")
+        assert 0 < int(response.headers["Retry-After"]) <= 60
+        assert all(response.headers[name] == value for name, value in CONSOLE_HEADERS.items())
+        assert 'role="status"' in response.text and "<h1" in response.text
+        assert handoff not in response.text
+        assert "<script" not in response.text and "<button" not in response.text
+        ceremony = await client.get(path + "/credential")
+        assert (ceremony.status_code, ceremony.json()) == (429, {"detail": "handoff_rate_limited"})
+        assert int(ceremony.headers["Retry-After"]) > 0
+
+
 @pytest.fixture
-async def page_service(journey):
+async def page_service(journey, request):
     sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
     sock.bind(("127.0.0.1", 0))
     port = sock.getsockname()[1]
@@ -115,7 +161,10 @@ async def page_service(journey):
     journey.world.passkeys.rp = RelyingParty(origin=origin, name="Secrets")
     member, scope, device = await journey.enrol_owner("browser")
     human, loopback = FastAPI(), FastAPI()
-    human.include_router(journey.factory.human_router())
+    factory = (
+        limited_factory(journey.factory) if getattr(request, "param", False) else journey.factory
+    )
+    human.include_router(factory.human_router())
     callback = asyncio.get_running_loop().create_future()
 
     @loopback.get("/callback")
@@ -168,6 +217,41 @@ async def test_browser_without_user_verification_never_completes_or_calls_back(
     purpose,
 ):
     await browser_flow(journey, browser, page_service, tmp_path, purpose, 375, user_verified=False)
+
+
+@pytest.mark.parametrize("width", [375, 1440])
+@pytest.mark.parametrize(
+    "page_service,expected_status", [(False, 403), (True, 429)], indirect=["page_service"]
+)
+async def test_unavailable_link_renders_recovery_without_starting_a_ceremony(
+    browser,
+    page_service,
+    tmp_path,
+    width,
+    expected_status,
+):
+    origin, _, callback, _, _, _ = page_service
+    async with await browser.new_context(viewport={"width": width, "height": 900}) as context:
+        page = await context.new_page()
+        requests = []
+        page.on("request", lambda request: requests.append(request.url))
+        response = await page.goto(origin + "/handoff/not-a-handoff")
+        assert response.status == 403
+        # One more navigation makes the small real shared limiter return429;
+        # ordinary capacity remains403. Both are inert HTML browser pages.
+        response = await page.reload()
+        assert response.status == expected_status
+        await expect(page.get_by_role("heading", level=1)).to_be_visible()
+        await expect(page.get_by_role("status")).to_be_visible()
+        assert await page.get_by_role("button").count() == 0
+        assert not [
+            url for url in requests if url.endswith(("/options", "/credential", "/session"))
+        ]
+        assert not callback.done()
+        assert await page.evaluate("document.documentElement.scrollWidth <= innerWidth")
+        await page.screenshot(
+            path=tmp_path / f"handoff-unavailable-{response.status}-{width}.png", full_page=True
+        )
 
 
 async def browser_flow(journey, browser, service, tmp_path, purpose, width, *, user_verified):
