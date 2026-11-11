@@ -47,9 +47,11 @@ lines 127-145, 157 and 173.
   (`naapp-lib/src/aweb_naapp/runtime/passkeys/webauthn.py:37-50`), so the
   evidence proves the credential and the origin the client reported, as for
   any WebAuthn relying party.
-- A `session` handoff returns its result only to the loopback on the machine
-  whose browser completed the ceremony ([The handoff](#the-handoff)), so a
-  phished sign-in yields nothing to a remote attacker.
+- A loopback `session` handoff returns its result only to the loopback on
+  the machine whose browser completed the ceremony
+  ([The handoff](#the-handoff)), so a phished sign-in yields nothing to a
+  remote attacker. A `session` handoff that the holder's direct child starts
+  is always a loopback one.
 - An agent running as the same OS user can drive the browser and the
   terminal. It cannot produce the authenticator's user verification, which
   is why every effect needs a fresh assertion.
@@ -71,7 +73,7 @@ human origin:
 
 | Step | Origin | Method and path | Authentication | `aud` |
 | --- | --- | --- | --- | --- |
-| Start | app origin | `POST /handoffs` | team-auth v2, as the holder | the app origin |
+| Start | app origin | `POST /handoffs` | team-auth v2, as the holder or, for a `session`, as the holder's direct child | the app origin |
 | Page | human origin | `GET /handoff/{id}` | none; the browser's own ceremony | none |
 | Result | human origin | `POST /handoffs/{id}/result` | the code and the verifier in the body, signed by the ephemeral key in the console headers | the human origin |
 | Session requests | human origin | the console's routes | the session id, signed by the ephemeral key in the console headers | the human origin |
@@ -90,7 +92,9 @@ redirect on the same machine, as RFC 8252 describes for native apps:
    redirect URI, the verifier's SHA-256 and, for a session, the holder's
    scope, signed with team-auth v2 as the holder
    ([Membership evidence](#membership-evidence)). The app refuses a scope
-   whose principal is not the verified signer with `403 scope_not_signer`. A
+   whose principal is not the verified signer with `403 scope_not_signer`,
+   except for a `session` start by the holder's direct child
+   ([Starts by the holder's direct child](#starts-by-the-holders-direct-child)). A
    start refusal ends the command: `aw` never renews on one, whether it
    refuses a first start or a renewal's start. `aw` builds the page and
    result URLs from the pinned human origin, never from the response. The app accepts only a redirect URI of the form
@@ -134,7 +138,10 @@ it. The page:
 - shows the requesting `aw`'s hostname, as reported.
 
 Each completed fallback `session` handoff emits a `post-governance-hook`
-event, so the owner sees it. The `credential` purpose may use either path,
+event, so the owner sees it. The fallback is the holder's own: a start that
+the holder's direct child signs with `return: user_code` refuses with
+`400 handoff_invalid` before any handoff exists, because the typed code would
+put the holder's session in an `aw` on another machine. The `credential` purpose may use either path,
 because it grants nothing: a phished registration gives the attacker only a
 public key, and binding still needs the owner's act and the
 [fingerprint comparison](human-role-holders.md#what-the-owners-client-shows-and-signs).
@@ -147,6 +154,46 @@ An app that cannot emit that event refuses a fallback `session` handoff with
 act, and the team server, which produces no hooks. It is not a session
 refusal: `aw` does not renew, and it reports the code and that a local browser
 is needed. Like every start refusal, it is not renewed.
+
+### Starts by the holder's direct child
+
+A `session` start may be signed by the holder H, or by Q, an agent that is a
+current member of the installation's team and whose freshly verified ID
+chain has H as its **direct** parent. Q signs team-auth v2 with its own team
+certificate and sends its chain in `X-AWID-ID-Chain`. The body is a session
+start for H's scope with `return: loopback`. It carries no certificate of H:
+a `holder_certificate` member refuses with `400 handoff_invalid`, and so does
+`return: user_code`. Q prepares this one handoff and gains nothing else: no
+signing authority of H's, no session, holding, membership, grant or approval.
+Every other purpose, `credential` included, keeps the same-signer rule. The
+wire is the handoff wire design's section 1a.
+
+Before creating the handoff the app checks, from current evidence:
+
+1. Q's team-auth, as for any request.
+2. Q's chain for Q's `did:aw` and the key team-auth verified, within the
+   60-second status bound: Q's own certificate is issued by H, H's own kind is
+   `human`, and the edge is current. A deeper descendant, another parent or a
+   revoked or stale edge is `403 scope_not_signer`.
+3. H's membership from the certificate retained with H's holding
+   ([Membership evidence](#membership-evidence)), checked at use as any
+   holding's is. Q can neither supply nor refresh it: no usable retained
+   certificate, including one H's renewed membership has superseded, is
+   `403 principal_not_member`. Unreadable status is
+   `503 principal_status_unavailable`.
+4. The scope resolves to H's current holding, as for any start.
+
+The result, the session and its checks are those of an H-signed `session`
+handoff: H logs in on the app's own relying party, then explicitly allows
+`aw`. The page shows Q, as `requester: {id, address, key_fingerprint}`,
+separately from H before that login. The handoff records Q for display and
+audit only. The session is H's, bound to the ephemeral key, and it retains
+the holding's certificate as its membership evidence. `aw` run in Q's
+identity home takes H from Q's installed chain and shows both identities;
+with no qualifying chain it refuses `requester_missing`.
+
+Q becomes a member through the team's agent admission, never through H.
+Until its own membership is current, team-auth refuses Q's start.
 
 **Purposes:**
 
@@ -212,14 +259,23 @@ must still pass on its own.
   - At a `session` handoff, `aw` signs `POST <app origin>/handoffs` with
     [team-auth v2](../team-auth-envelope-v2.md) as the holder, so the request
     carries the certificate, which team-auth verifies as for any request. An
-    unsigned handoff request is refused.
+    unsigned handoff request is refused. At a `session` handoff that the
+    holder's direct child starts, nothing is presented for the holder: the
+    holding's retained certificate is used.
 
-  A `credential` handoff is also signed this way, which keeps its
-  rate-limit identity, but the app retains no evidence from it: no
-  certificate and no state for a credential that no act has bound yet.
+  A `credential` handoff is also signed as the holder, which keeps its
+  rate-limit identity. Where the holder's key is in protected custody, the
+  protected signer signs that start as the holder after the holder's own
+  login there (the human-assurance contract, aweb-acxy.1). The app keeps no
+  state for a credential that no act has bound yet. The one thing it does
+  retain is a refresh of an existing holding's certificate (**Refresh**
+  below).
 - **Handoff context.** Every handoff, of either purpose, keeps the team and
   principal its signed start authenticated, server-side with the handoff
-  row and only until the handoff ends. Its continuations check that team and
+  row and only until the handoff ends. For a start the holder's direct child
+  signs, that principal is the holder its scope names, verified as in
+  [Starts by the holder's direct child](#starts-by-the-holders-direct-child);
+  the child is recorded for display and audit only. Its continuations check that team and
   the installation, and the app looks the handoff's target up in that team
   only. A console session that a `session` handoff opens keeps that team for
   its lifetime, and each of its requests projects its target in that team.
@@ -231,7 +287,9 @@ must still pass on its own.
   is unchanged and carries no team.
 - **Retained.** The app keeps the exact certificate bytes of a verified
   designation or replacement with the holding. It keeps those of a `session`
-  handoff with the session, for at most the session's lifetime. Retaining
+  handoff with the session, for at most the session's lifetime: the
+  presented certificate for a start the holder signs, the holding's for one
+  the holder's direct child signs. Retaining
   them extends no session, approval or holding, and resets no freshness.
 - **Bound.** The certificate's `team_id` is the installation's team and its
   `member_did_aw` is the holding's principal. A `session` handoff whose login
@@ -250,8 +308,9 @@ must still pass on its own.
 
   Each read keeps its existing freshness bound of at most 60 seconds and
   fails closed. A designate or replace uses the certificate in its body. A
-  `session` handoff uses the certificate it presents. A browser login that
-  `aw` did not start presents none, so it uses the holding's.
+  `session` handoff the holder signs uses the certificate it presents. A
+  `session` handoff the holder's direct child signs, and a browser login that
+  `aw` did not start, present none, so they use the holding's.
 - **Outcomes.** A revoked certificate, a wrong team, principal or key, a
   signature the current team key does not verify, or no usable certificate
   retained gives `403 principal_not_member`. A kind other than `human` gives
@@ -264,14 +323,25 @@ must still pass on its own.
   bytes.
 - **Refresh.** After a team-key rotation, the old signature no longer
   verifies. After a member-key rotation, `member_did_key` is no longer
-  current. Either way, the retained certificate fails at its next use. The
-  holder refreshes it with a `session` handoff that presents the reissued
-  certificate. That certificate, once verified, replaces the holding's
-  retained one only when its team and principal equal the holding's, and only
-  when the handoff's login succeeds; a failed assertion changes nothing. A
-  stale holding certificate therefore never blocks this refresh. Nothing
-  rewrites a certificate, rebinds the passkey, or treats the same
-  certificate id as current.
+  current. A renewed or replaced membership supersedes it the same way.
+  Either way, the retained certificate fails at its next use. The holder
+  refreshes it by a handoff the holder itself signs, presenting the reissued
+  certificate:
+  - a `session` handoff refreshes it only when its login succeeds; a failed
+    assertion changes nothing;
+  - a `credential` handoff refreshes it when the app accepts the start, with
+    no registration, new passkey or owner act needed. The certificate is
+    verified for exactly that holding (the team's current key, the holder's
+    current member key, published and unrevoked, the holder's own kind
+    `human`), and the refresh commits with the accepted start. A mismatch or
+    failed verification changes nothing, and the start grants nothing either
+    way.
+
+  In both, the verified certificate replaces the holding's retained one only
+  when its team and principal equal the holding's. A stale holding
+  certificate therefore never blocks a refresh, and a start the holder's
+  direct child signs never refreshes it. Nothing rewrites a certificate,
+  rebinds the passkey, or treats the same certificate id as current.
 - **Compatibility.** An AWID row with no stored certificate blob is not
   refused for that reason, because the presented bytes are what the
   unchanged verifier and status contract check. The app never fetches member
@@ -547,7 +617,10 @@ route that stages it.
 `aw logs` signs in through a `session` handoff on logs' origin, with the
 reader's holding. Logs issues the short-lived session bound to the ephemeral
 key, as L6 plans. The reader is a human-role holder, `logs.reader`, bound by
-its owner act. There is no second reader CLI.
+its owner act. There is no second reader CLI. The reader's direct child may
+start that handoff for the reader
+([Starts by the holder's direct child](#starts-by-the-holders-direct-child));
+the reader still logs in and allows it, and the session is the reader's.
 
 ## Optional: a security key from the terminal
 
