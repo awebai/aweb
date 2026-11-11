@@ -217,8 +217,8 @@ MANAGED_GATEWAY_PRIVATE_TOKENS = (
 
 HOOK_SOURCES = (
     "server/src/aweb/routes/messages.py",
-    "server/src/aweb/routes/chat.py",
     "server/src/aweb/messaging/mail_send.py",
+    "server/src/aweb/messaging/chat_send.py",
     "server/src/aweb/routes/federation.py",
     "server/src/aweb/routes/reservations.py",
     "server/src/aweb/routes/agent_status.py",
@@ -226,7 +226,6 @@ HOOK_SOURCES = (
     "server/src/aweb/coordination/routes/app_tasks.py",
     "server/src/aweb/coordination/tasks_service.py",
     "server/src/aweb/mcp/tools/mail.py",
-    "server/src/aweb/mcp/tools/chat.py",
 )
 
 FORBIDDEN_PUBLIC_REFERENCES = (
@@ -889,7 +888,7 @@ def self_test(root: Path) -> int:
         message_text += '\n\nasync def negative_new_hook_call_site():\n    await fire_mutation_hook(None, "message.sent", {})\n'
         message_source.write_text(message_text, encoding="utf-8")
 
-        chat_source = tmp / "server/src/aweb/routes/chat.py"
+        chat_source = tmp / "server/src/aweb/messaging/chat_send.py"
         chat_source.write_text(
             chat_source.read_text(encoding="utf-8").replace('"chat.message_sent",', "dynamic_event_name,", 1),
             encoding="utf-8",
