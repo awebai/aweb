@@ -133,6 +133,25 @@ class EndpointTests(unittest.TestCase):
 
 
 class ComposeConfigTests(unittest.TestCase):
+    def test_external_overlay_preserves_service_aliases_and_network_names(self):
+        real = os.environ.get('AWEB_CANDIDATE_REAL_DOCKER') or shutil.which('docker')
+        with tempfile.TemporaryDirectory() as tmp:
+            config_path = Path(tmp) / 'compose.json'
+            config_path.write_text(json.dumps({
+                'services': {'awid': {'image': 'python:3.12-slim',
+                                     'networks': {'data': {'aliases': ['registry.test']}}}},
+                'networks': {'data': {'internal': True}}}))
+            args = [real, 'compose', '-p', 'proof', '-f', str(config_path)]
+            original = json.loads(subprocess.run([*args, 'config', '--format', 'json'],
+                                                check=True, capture_output=True, text=True).stdout)
+            overlay = Path(tmp) / 'network.yml'
+            overlay.write_text(network.override(original))
+            merged = json.loads(subprocess.run([*args, '-f', str(overlay), 'config', '--format', 'json'],
+                                              check=True, capture_output=True, text=True).stdout)
+            self.assertEqual(merged['networks']['data'], {'name': 'proof_data', 'external': True})
+            self.assertEqual(set(merged['services']['awid']['networks']['data']['aliases']),
+                             {'registry.test', 'proof-awid.test'})
+
     def test_compose_failure_preserves_diagnostic_and_cleans_overlays(self):
         # Actual Compose CLI refusal, before any daemon call. Exercise both the
         # network and resource-only wrapper paths, including a quoted temp path.
