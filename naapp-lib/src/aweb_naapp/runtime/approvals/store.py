@@ -109,7 +109,13 @@ class ApprovalStore(Protocol):
 
     async def request_canonical(self, request_ref: str) -> bytes: ...
 
+    async def request_canonical_in(self, request_ref: str, tx: TransactionManager) -> bytes: ...
+
     async def find_link(self, verifier_sha256: str) -> ApprovalLink | None: ...
+
+    async def find_link_in(
+        self, verifier_sha256: str, tx: TransactionManager
+    ) -> ApprovalLink | None: ...
 
     async def set_delivery_status(self, approval_id: str, status: DeliveryStatus) -> None: ...
 
@@ -467,9 +473,28 @@ class PgApprovalStore:
             request_ref,
         )
 
+    async def request_canonical_in(self, request_ref: str, tx: TransactionManager) -> bytes:
+        t = TransactionManager(tx.connection, self.db)
+        return await t.fetch_value(
+            "SELECT canonical FROM {{tables.approval_requests}} WHERE request_ref = $1",
+            request_ref,
+        )
+
     async def find_link(self, verifier_sha256: str) -> ApprovalLink | None:
         return _link(
             await self.db.fetch_one(
+                f"SELECT {_LINK_COLUMNS} FROM {{{{tables.approval_links}}}} "
+                "WHERE verifier_sha256 = $1",
+                verifier_sha256,
+            )
+        )
+
+    async def find_link_in(
+        self, verifier_sha256: str, tx: TransactionManager
+    ) -> ApprovalLink | None:
+        t = TransactionManager(tx.connection, self.db)
+        return _link(
+            await t.fetch_one(
                 f"SELECT {_LINK_COLUMNS} FROM {{{{tables.approval_links}}}} "
                 "WHERE verifier_sha256 = $1",
                 verifier_sha256,

@@ -496,10 +496,12 @@ the final fence. Do not expose prepared handles through model-visible tools.
   second pool connection while the caller retains its installation fence.
   Mint and decision/admission rechecks pass the original effect transaction,
   so its uncommitted role changes are visible and share commit or rollback.
-  `Approvals.get`, `for_request` and `requester_view` also accept `tx` for
-  fenced reads. Fresh authenticator verification remains before effect-fence
-  preparation, with its separately committed assertion; these read adapters
-  neither replace the verifier nor move verification under authority locks.
+  `Approvals.get`, `for_request`, `requester_view` and `open_link` also accept
+  `tx` for fenced reads. Link, approval, policy and revealed-request reads in
+  `open_link` all use that connection. Fresh authenticator verification remains
+  before effect-fence preparation, with its separately committed assertion;
+  these read adapters neither replace the verifier nor move verification under
+  authority locks.
 - **One decision.** Any one candidate decides, and the first approve or reject
   is the only one: it is recorded as `decided_by` (scope, subject, assurance,
   evidence ref) and every other candidate's link is revoked. A failed ceremony

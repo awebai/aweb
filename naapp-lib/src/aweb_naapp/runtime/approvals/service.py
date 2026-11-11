@@ -457,30 +457,46 @@ class Approvals:
 
     # The approver
 
-    async def open_link(self, link_token: str) -> LinkedApproval:
+    async def open_link(
+        self, link_token: str, *, tx: TransactionManager | None = None
+    ) -> LinkedApproval:
         """What the link locates, for the candidate it was sent to. Reading
         consumes nothing. The request itself is included only when the policy
         lets link possession reveal it; otherwise the approver authenticates
-        first with `view`."""
-        link = await self._usable_link(link_token)
-        approval = await self._store.get(link.approval_id)
+        first with `view`. With tx supplied every read uses its connection,
+        including policy and request reads; no second checkout spans F6."""
+        link = await self._usable_link(link_token, tx=tx)
+        approval = await self.get(link.approval_id, tx=tx)
         if approval is None or approval.state_at(self._clock()) is not ApprovalState.PENDING:
             raise ApprovalRefused(Refusal.LINK_UNAVAILABLE)
         candidate = approval.candidate(link.candidate_subject)
         assert candidate is not None
-        policy = await self._policies.current(approval.policy_ref)
+        policy = await self._policies.current(approval.policy_ref, tx=tx)
         revealed = policy is not None and policy.reveals_request_on_link()
         return LinkedApproval(
             approval=_seen_by(approval, candidate),
-            request=await self._request(approval) if revealed else None,
+            request=await self._request(approval, tx=tx) if revealed else None,
         )
 
-    async def _request(self, approval: Approval) -> Mapping[str, Any]:
-        canonical = await self._store.request_canonical(approval.request_ref)
+    async def _request(
+        self, approval: Approval, *, tx: TransactionManager | None = None
+    ) -> Mapping[str, Any]:
+        canonical = (
+            await self._store.request_canonical(approval.request_ref)
+            if tx is None
+            else await self._store.request_canonical_in(approval.request_ref, tx)
+        )
         return json.loads(canonical[len(DOMAIN_PREFIX) :])["request"]
 
-    async def _usable_link(self, link_token: str) -> ApprovalLink:
-        link = await self._store.find_link(link_verifier(link_token))
+    async def _usable_link(
+        self, link_token: str, *, tx: TransactionManager | None = None
+    ) -> ApprovalLink:
+        verifier = link_verifier(link_token)
+        link = (
+            await self._store.find_link(verifier)
+            if tx is None
+            else await self._store.find_link_in(verifier, tx)
+        )
         if link is None or not link.lifetime.usable_at(self._clock()):
             raise ApprovalRefused(Refusal.LINK_UNAVAILABLE)
         return link
