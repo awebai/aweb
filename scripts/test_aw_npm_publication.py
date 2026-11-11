@@ -101,9 +101,11 @@ class PublicationTest(unittest.TestCase):
             shutil.copyfile(ROOT / "scripts/npm-exact-publish.sh", root / "scripts/npm-exact-publish.sh")
             binaries = root / "tools"
             binaries.mkdir()
-            (binaries / "go").write_text('''#!/usr/bin/env python3
+            compiles = root / "compiles"
+            (binaries / "go").write_text(f'''#!/usr/bin/env python3
 import pathlib, sys
 pathlib.Path(sys.argv[sys.argv.index("-o")+1]).write_bytes(b"fixture compiler output")
+with open({str(compiles)!r}, "a") as calls: calls.write("compile\\n")
 ''')
             for path in binaries.iterdir():
                 path.chmod(0o755)
@@ -142,11 +144,27 @@ pathlib.Path(sys.argv[sys.argv.index("-o")+1]).write_bytes(b"fixture compiler ou
             # The pre-publish existence decision is isolated; npm PUTs and
             # every version, tag and tarball read use the actual local server.
             with mock.patch.dict(os.environ, env, clear=True), mock.patch.object(publisher, "request_json", return_value=(404, {})), mock.patch.object(publisher, "run", side_effect=observe_run):
+                # The candidate gate packs the seven archives once; publication
+                # receives them as gated manifest rows and never compiles.
+                gated = root / "gated"
+                gated.mkdir()
+                for package_dir in publisher.build_aw_npm(root, "1.2.3", "a" * 40):
+                    real_run(root / "cli/go/npm" / package_dir, "npm", "pack", "--ignore-scripts",
+                             "--pack-destination", str(gated))
+                archives = {json.load(tarfile.open(path).extractfile("package/package.json"))["name"]: path
+                            for path in gated.glob("*.tgz")}
+                rows = [dict(package=name, version="1.2.3", path=str(archives[name]),
+                             sha256=hashlib.sha256(archives[name].read_bytes()).hexdigest())
+                        for name in publisher.lane_files("aw-v")]
+                compiled = compiles.read_text()
                 if lag:
                     with self.assertRaisesRegex(publisher.PublishRefusal, "uncertain at deadline"):
-                        publisher.publish_aw_npm(root, "1.2.3", "a" * 40, staged_final=True)
+                        publisher.publish_aw_npm(root, "1.2.3", "a" * 40, rows, staged_final=True)
                 else:
-                    publisher.publish_aw_npm(root, "1.2.3", "a" * 40, staged_final=True)
+                    publisher.publish_aw_npm(root, "1.2.3", "a" * 40, rows, staged_final=True)
+            self.assertEqual(compiles.read_text(), compiled, "publication compiled instead of uploading gated bytes")
+            self.assertEqual({name: hashlib.sha256(data).hexdigest() for name, data in registry.packages.items()},
+                             {row["package"]: row["sha256"] for row in rows})
             self.assertEqual([name for name, _, _ in registry.published], ["@awebai/" + p for p in PACKAGES])
             self.assertEqual(registry.git_heads, {"@awebai/" + p: "a" * 40 for p in PACKAGES},
                              "every package records the source commit its binaries are stamped with")

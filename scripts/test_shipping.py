@@ -284,7 +284,21 @@ class PypiLaneContractTest(unittest.TestCase):
                 project = tomllib.loads((ROOT / directory / "pyproject.toml").read_text(encoding="utf-8"))["project"]
                 self.assertEqual(project["name"], package, prefix)
 
-    def test_the_aweb_naapp_lane_waits_for_awid_then_builds_naapp_lib(self):
+    def gated_rows(self, packages: dict[str, str]) -> list[dict]:
+        """Retained wheel and sdist rows, as gated_publish_set selects them."""
+        directory = Path(tempfile.mkdtemp(prefix="gated-artifacts-"))
+        self.addCleanup(shutil.rmtree, directory)
+        rows = []
+        for package, version in packages.items():
+            normalized = package.replace("-", "_")
+            for name in (f"{normalized}-{version}-py3-none-any.whl", f"{normalized}-{version}.tar.gz"):
+                path = directory / name
+                path.write_bytes(f"gated bytes of {name}".encode())
+                rows.append(dict(path=str(path), package=package, version=version,
+                                 sha256=hashlib.sha256(path.read_bytes()).hexdigest()))
+        return rows
+
+    def test_the_aweb_naapp_lane_waits_for_awid_before_uploading_gated_files(self):
         temporary, root = TagContractTest.repository(self)
         self.addCleanup(temporary.cleanup)
         originals = (PUBLISH.run, PUBLISH.request_json, os.environ.get("UV_PUBLISH_TOKEN"))
@@ -313,11 +327,12 @@ class PypiLaneContractTest(unittest.TestCase):
             raise Built
 
         PUBLISH.request_json, PUBLISH.run = request_json, run
+        rows = self.gated_rows({"aweb-naapp": "0.1.0", "aweb-naapp-testing": "0.1.0"})
         with self.assertRaises(Built):
-            PUBLISH.publish_pypi(root, "aweb-naapp-v", "0.1.0")
+            PUBLISH.publish_pypi(root, "aweb-naapp-v", "0.1.0", rows)
         self.assertEqual(asked, ["https://pypi.org/pypi/awid-service/2.3.4/json"])
-        self.assertEqual(built[0][:2], ("uv", "build"))
-        self.assertEqual(built[0][-1], "naapp-lib")
+        self.assertIn("inspect-staged", built[0])
+        self.assertEqual(built[0][built[0].index("--package") + 1], "aweb-naapp")
 
 
     def _recording_publisher(self):
@@ -333,23 +348,42 @@ class PypiLaneContractTest(unittest.TestCase):
         self.addCleanup(restore)
         os.environ["UV_PUBLISH_TOKEN"] = "test-token-not-a-secret"
         commands: list[tuple[str, ...]] = []
+        self.staged: dict[str, dict[str, str]] = {}
 
         def run(_root, *argv, **_kwargs):
             commands.append(argv)
+            if "inspect-staged" in argv:
+                dist = Path(argv[argv.index("--dist") + 1])
+                self.staged[argv[argv.index("--package") + 1]] = {
+                    path.name: hashlib.sha256(path.read_bytes()).hexdigest() for path in dist.iterdir()}
             return ""
 
         PUBLISH.run, PUBLISH.request_json = run, lambda _url: (200, {})
         return commands
 
-    def test_the_aweb_naapp_lane_publishes_naapp_lib_then_its_testing_package(self):
+    def test_the_aweb_naapp_lane_uploads_exactly_its_gated_files_in_order(self):
         temporary, root = TagContractTest.repository(self)
         self.addCleanup(temporary.cleanup)
         commands = self._recording_publisher()
-        PUBLISH.publish_pypi(root, "aweb-naapp-v", "0.1.0")
-        built = [argv[-1] for argv in commands if argv[:2] == ("uv", "build")]
+        rows = self.gated_rows({"aweb-naapp": "0.1.0", "aweb-naapp-testing": "0.1.0"})
+        PUBLISH.publish_pypi(root, "aweb-naapp-v", "0.1.0", rows)
         inspected = [argv[argv.index("--package") + 1] for argv in commands if "inspect-staged" in argv]
-        self.assertEqual(built, ["naapp-lib", "naapp-lib/testing"])
         self.assertEqual(inspected, ["aweb-naapp", "aweb-naapp-testing"])
+        self.assertFalse([argv for argv in commands if argv[:2] == ("uv", "build")], "the publisher rebuilt")
+        for package in inspected:
+            self.assertEqual(self.staged[package], {Path(row["path"]).name: row["sha256"]
+                                                    for row in rows if row["package"] == package})
+
+    def test_a_gated_file_changed_before_upload_refuses_without_publishing(self):
+        temporary, root = TagContractTest.repository(self)
+        self.addCleanup(temporary.cleanup)
+        commands = self._recording_publisher()
+        rows = self.gated_rows({"aweb-naapp": "0.1.0", "aweb-naapp-testing": "0.1.0"})
+        Path(rows[3]["path"]).write_bytes(b"bytes swapped after the verdict")
+        with self.assertRaisesRegex(PUBLISH.PublishRefusal, Path(rows[3]["path"]).name):
+            PUBLISH.publish_pypi(root, "aweb-naapp-v", "0.1.0", rows)
+        self.assertFalse([argv for argv in commands if argv[:2] == ("uv", "publish")])
+        self.assertEqual(self.staged, {}, "a package was staged before every gated file re-hashed")
 
     def test_a_lane_package_at_another_version_refuses_the_tag(self):
         temporary, root = TagContractTest.repository(self)

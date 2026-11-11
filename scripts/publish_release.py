@@ -162,7 +162,7 @@ def sha256(path: Path) -> str:
     return digest.hexdigest()
 
 
-def publish_pypi(root: Path, prefix: str, version: str) -> None:
+def publish_pypi(root: Path, prefix: str, version: str, selected: list[dict]) -> None:
     needs_awid, packages = PYPI_LANES[prefix]
     token = os.environ.get("UV_PUBLISH_TOKEN", "").strip()
     if not token:
@@ -432,7 +432,7 @@ def build_aw_npm(root: Path, version: str, source_sha: str, npm_root: Path | Non
     return [item[0] for item in packages.values()] + ["aw"]
 
 
-def publish_aw_npm(root: Path, version: str, source_sha: str, *, staged_final: bool = False) -> None:
+def publish_aw_npm(root: Path, version: str, source_sha: str, selected: list[dict], *, staged_final: bool = False) -> None:
     package_dirs = build_aw_npm(root, version, source_sha)
     npm_root = root / "cli/go/npm"
     # Hold all seven once-staged archives through one verifier invocation.
