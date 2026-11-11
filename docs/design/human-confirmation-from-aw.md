@@ -221,7 +221,11 @@ must still pass on its own.
   principal its signed start authenticated, server-side with the handoff
   row and only until the handoff ends. Its continuations check that team and
   the installation, and the app looks the handoff's target up in that team
-  only. The context is not evidence and grants nothing: it never satisfies a
+  only. A console session that a `session` handoff opens keeps that team for
+  its lifetime, and each of its requests projects its target in that team.
+  Every projection receives the team its start authenticated or its handoff
+  or session retained; none resolves a team from the installation alone. The
+  context is not evidence and grants nothing: it never satisfies a
   membership check, an owner record or a holding. The start's public scope
   is unchanged and carries no team.
 - **Retained.** The app keeps the exact certificate bytes of a verified
