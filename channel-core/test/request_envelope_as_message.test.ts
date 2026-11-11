@@ -7,6 +7,7 @@ import { describe, expect, test } from "vitest";
 import { readFileSync } from "node:fs";
 import { fetchHistory } from "../src/api/chat.js";
 import { fetchInbox } from "../src/api/mail.js";
+import { signedDisplayMatches, signedMailDisplayMatches } from "../src/identity/signed_display.js";
 
 interface RequestCase {
   name: string;
@@ -43,6 +44,54 @@ describe("a signed request envelope is not a verified message", () => {
           ? await fetchInbox(client as never, true, 50, undefined, () => {}, reader)
           : await fetchHistory(client as never, "conversation");
         expect(messages[0].verification_status).toBe("failed");
+      });
+    }
+  }
+});
+
+const binding = JSON.parse(
+  readFileSync(new URL("../../docs/vectors/message-display-binding-v1.json", import.meta.url), "utf8"),
+) as {
+  required_claims: Record<"mail" | "chat", string[]>;
+  signer_shapes: { name: string; kind: "mail" | "chat"; claims: string[] }[];
+};
+
+// Whether a reader accepts the displayed fields of a message against a signed
+// payload that carries the given claims, each displayed field being the signed one.
+function signerShapeMatchesDisplay(kind: "mail" | "chat", claims: string[], without = ""): boolean {
+  const sender = "did:key:sender";
+  const value: Record<string, string> = {
+    type: kind, from_did: sender, to_did: reader.did,
+    from_stable_id: "did:aw:sender", to_stable_id: "did:aw:reader",
+  };
+  const signed: Record<string, string> = {};
+  for (const name of claims) {
+    if (name !== without) signed[name] = value[name] ?? name;
+  }
+  const payload = JSON.stringify(signed);
+  const displayed = {
+    type: kind, body: "body", message_id: "message_id",
+    conversation_id: signed.conversation_id, from_did: sender, to_did: reader.did,
+  };
+  return kind === "mail"
+    ? signedMailDisplayMatches(payload, { ...displayed, subject: "subject" }, reader)
+    : signedDisplayMatches(payload, displayed);
+}
+
+describe("the claims that make a signed payload a message", () => {
+  test("the vector holds signer shapes and required claims", () => {
+    expect(binding.signer_shapes.length).toBeGreaterThan(0);
+    expect(binding.required_claims.mail.length).toBeGreaterThan(0);
+    expect(binding.required_claims.chat.length).toBeGreaterThan(0);
+  });
+
+  for (const shape of binding.signer_shapes) {
+    test(`a released signer's payload matches its display: ${shape.name}`, () => {
+      expect(signerShapeMatchesDisplay(shape.kind, shape.claims)).toBe(true);
+    });
+    for (const claim of binding.required_claims[shape.kind]) {
+      test(`a payload without ${claim} does not match its display: ${shape.name}`, () => {
+        expect(signerShapeMatchesDisplay(shape.kind, shape.claims, claim)).toBe(false);
       });
     }
   }

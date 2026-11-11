@@ -718,6 +718,22 @@ ROOT_CONSUMERS = {
         "canonical-json-v1.json",
         'new URL("../../docs/vectors/canonical-json-v1.json", import.meta.url)',
     ),
+    PurePosixPath("cli/go/awid/request_envelope_as_message_test.go"): _consumer(
+        {
+            "message-display-binding-v1.json",
+            "team-auth-envelope-v2.json",
+        },
+        'filepath.Join("..", "..", "..", "docs", "vectors", "team-auth-envelope-v2.json")',
+        'filepath.Join("..", "..", "..", "docs", "vectors", "message-display-binding-v1.json")',
+    ),
+    PurePosixPath("channel-core/test/request_envelope_as_message.test.ts"): _consumer(
+        {
+            "message-display-binding-v1.json",
+            "team-auth-envelope-v2.json",
+        },
+        'new URL("../../docs/vectors/team-auth-envelope-v2.json", import.meta.url)',
+        'new URL("../../docs/vectors/message-display-binding-v1.json", import.meta.url)',
+    ),
     PurePosixPath("scripts/check-extension-docs.py"): _consumer(
         {
             "federation-authority-state-v1.json",

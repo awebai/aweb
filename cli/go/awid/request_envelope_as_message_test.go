@@ -83,3 +83,87 @@ func TestSignedRequestEnvelopeIsNotAVerifiedMessage(t *testing.T) {
 		}
 	}
 }
+
+type displayBindingVector struct {
+	RequiredClaims map[string][]string `json:"required_claims"`
+	SignerShapes   []struct {
+		Name   string   `json:"name"`
+		Kind   string   `json:"kind"`
+		Claims []string `json:"claims"`
+	} `json:"signer_shapes"`
+}
+
+func loadDisplayBindingVector(t *testing.T) displayBindingVector {
+	t.Helper()
+	data, err := os.ReadFile(filepath.Join("..", "..", "..", "docs", "vectors", "message-display-binding-v1.json"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	var vector displayBindingVector
+	if err := json.Unmarshal(data, &vector); err != nil {
+		t.Fatal(err)
+	}
+	if len(vector.SignerShapes) == 0 || len(vector.RequiredClaims["mail"]) == 0 || len(vector.RequiredClaims["chat"]) == 0 {
+		t.Fatal("the vector holds no signer shape or no required claim")
+	}
+	return vector
+}
+
+// signerShapeMatchesDisplay reports whether a reader accepts the displayed
+// fields of a message against a signed payload that carries the given claims,
+// each displayed field being the signed one.
+func signerShapeMatchesDisplay(kind string, claims []string, without string) bool {
+	const sender, reader = "did:key:sender", "did:key:reader"
+	value := map[string]string{
+		"type": kind, "from_did": sender, "to_did": reader,
+		"from_stable_id": "did:aw:sender", "to_stable_id": "did:aw:reader",
+	}
+	signed := map[string]string{}
+	for _, name := range claims {
+		if name == without {
+			continue
+		}
+		if v, ok := value[name]; ok {
+			signed[name] = v
+		} else {
+			signed[name] = name
+		}
+	}
+	payload, _ := json.Marshal(signed)
+	displayed := map[string]string{
+		"type": kind, "body": "body", "message_id": "message_id",
+		"conversation_id": signed["conversation_id"], "from_did": sender, "to_did": reader,
+	}
+	if kind == "mail" {
+		displayed["subject"] = "subject"
+		return (&Client{did: reader}).signedMailDisplayMatches(string(payload), displayed, false)
+	}
+	return signedDisplayMatches(string(payload), displayed)
+}
+
+// Every payload shape a released signer produces carries the required claims,
+// so requiring them refuses no genuine message.
+func TestEveryReleasedSignerShapeMatchesItsDisplay(t *testing.T) {
+	for _, shape := range loadDisplayBindingVector(t).SignerShapes {
+		t.Run(shape.Name, func(t *testing.T) {
+			if !signerShapeMatchesDisplay(shape.Kind, shape.Claims, "") {
+				t.Fatal("a released signer's payload was refused")
+			}
+		})
+	}
+}
+
+// A payload that lacks a required claim does not say what the reader is shown,
+// whichever signer shape it otherwise has.
+func TestSignedPayloadWithoutARequiredClaimDoesNotMatchItsDisplay(t *testing.T) {
+	vector := loadDisplayBindingVector(t)
+	for _, shape := range vector.SignerShapes {
+		for _, claim := range vector.RequiredClaims[shape.Kind] {
+			t.Run(shape.Name+"/"+claim, func(t *testing.T) {
+				if signerShapeMatchesDisplay(shape.Kind, shape.Claims, claim) {
+					t.Fatalf("a payload without %s was accepted", claim)
+				}
+			})
+		}
+	}
+}
