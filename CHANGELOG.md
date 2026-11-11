@@ -45,6 +45,25 @@
   broker from an earlier `aw` that is still running does not hold
   `daemon.lock`, so stop it before starting this one.
 
+- Add the operator command `aweb delete-dead-rows [--apply]`, for a cron job
+  or Kubernetes CronJob. It deletes rows that no reader needs again: app events
+  older than 30 days, control signals consumed more than 30 days ago, and
+  federation mutation and lifecycle side-effect outbox rows delivered more than
+  30 days ago. Unconsumed signals and undelivered outbox rows are kept at any
+  age, and no other table is touched. By default it reports the number of dead
+  rows per table as JSON and changes nothing; `--apply` deletes them, at most
+  1000 rows per statement. Migration `049_dead_row_indexes.sql` adds an index
+  on `app_events.created_at`, `control_signals.consumed_at` and
+  `federation_mutation_outbox.delivered_at`, without which the command scans
+  those tables whole; see [Garbage collection](docs/aweb-sot.md#garbage-collection).
+  `aweb.gc.gc_inactive_scopes`, which deleted a team and its tasks when the
+  team had no message in 30 days, `aweb.gc.gc_delivered_lifecycle_side_effects`
+  and `aweb.gc.gc_expired_messages`, which deleted mail and chat messages older
+  than 30 days, are removed. None of them had a caller. The server deletes no
+  team for inactivity and no mail or chat message automatically; the `aw
+  beads-mail` and `aw gc-mail` help and the mail documentation say so where they
+  described a 30-day expiry.
+
 - `aw` writes U+2028 (line separator) and U+2029 (paragraph separator) as UTF-8
   in the canonical JSON it signs, as the Python reference
   (`awid.signing.canonical_json_bytes`) and TypeScript do; Go's JSON encoder

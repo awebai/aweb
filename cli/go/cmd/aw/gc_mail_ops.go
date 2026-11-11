@@ -224,8 +224,7 @@ var gcMailAllCmd = gcMailOp(
 	"List all messages, read and unread, as JSON",
 	`Lists one page of this workspace's mail, read and unread. gc's Provider
 documents this as "all open messages"; aweb has no open/closed state, so
-it is every message the inbox still holds within the server's retention
-window.`,
+it is every message the inbox holds.`,
 	gcMailRecipientArgs,
 	func(cmd *cobra.Command, args []string) error { return gcMailList(cmd, false) },
 )
@@ -358,15 +357,15 @@ message id inside it.`,
 	},
 )
 
-// gcMailCountCmd reports (total, unread). "Total" is what the inbox still
-// holds within the retention window, paged up to a hard cap so a very large
+// gcMailCountCmd reports (total, unread). "Total" is what the inbox holds
+// now, paged up to a hard cap so a very large
 // inbox cannot hang a gc command; the cap is stated in the help rather than
 // silently truncating a number nobody can check.
 var gcMailCountCmd = gcMailOp(
 	"count [recipient]",
 	"Report {\"total\":N,\"unread\":N} for this workspace",
-	`Counts this workspace's mail. "Total" counts what the inbox holds inside
-the server's retention window — aweb mail is delivery, not an archive, so
+	`Counts this workspace's mail. "Total" counts what the inbox holds
+now — aweb mail is delivery, not an archive, so
 it is not a cumulative all-time total. Counting stops after 4000 messages; a larger
 inbox reports that ceiling rather than a wrong number.`,
 	gcMailRecipientArgs,

@@ -250,8 +250,8 @@ error; **n/i** = not implemented in v1, clear message, nonzero exit.
 | `check --identity/--address` | n/i | as inbox |
 | `mark-read [ids...]`, `--all` (alias `ack`) | impl | `POST /v1/messages/{id}/ack` |
 | `mark-unread` | n/i | no server capability (`messages.py:1901-1912`); server-side follow-up task if demanded |
-| `archive`, `--stale`, `--dry-run` | n/i | no server capability; aweb mail expires ~30 days on its own (§11); the beads graph is the archive |
-| `delete` | n/i | no server capability; TTL GC only (`gc.py:29`) |
+| `archive`, `--stale`, `--dry-run` | n/i | no server capability; the server deletes no mail automatically (§11); the beads graph is the archive |
+| `delete` | n/i | no server capability |
 | `clear [target]`, `--all` | n/i | as delete |
 | `help [verb]` | impl | cobra built-in; the reachable per-verb help path (§3) |
 | `search` | n/i | no server endpoint; message points at `bd` search over dual-written beads, or `aw log` |
@@ -416,16 +416,12 @@ priority 0/1.
 
 ## 11. Retention
 
-aweb mail is delivery, not archival storage. The retention contract is a
-~30-day TTL: `gc_expired_messages(ttl_days=30)`
-(`server/src/aweb/gc.py:18`) defines it. Verified 2026-08-31: **no
-deployment currently schedules that GC** — it has zero callers in
-aweb-oss and zero references in the hosted repo — so mail persists
-longer in practice today. Neither fact changes the rule: a deployment
-may wire the GC at any time, so 30 days is the floor a client may rely
-on, and no surface of the delegate may imply the server keeps mail
-forever. The durable record is the beads graph — via dual-write (§12)
-when enabled, or the user's own process.
+aweb mail is delivery, not archival storage. The aweb server deletes no
+mail automatically: nothing in it removes a message because of its age.
+A deployment's operator may set a retention policy of its own, so no
+surface of the delegate may imply the server keeps mail forever. The
+durable record is the beads graph — via dual-write (§12) when enabled,
+or the user's own process.
 
 ## 12. Dual-write: shipped, off by default
 
