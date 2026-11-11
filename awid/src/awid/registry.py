@@ -15,6 +15,7 @@ import time
 from collections.abc import Mapping
 from dataclasses import InitVar, asdict, dataclass, field
 from datetime import datetime, timezone
+from types import MappingProxyType
 from typing import Any, Awaitable, Callable
 from urllib.parse import quote, urlparse
 
@@ -327,7 +328,9 @@ class RegistryClient:
     service_token: str | None = field(default=None, repr=False, compare=False)
     domain_verifier: InitVar[DomainVerifier | None] = field(default=None, kw_only=True)
     _domain_verifier: DomainVerifier | None = field(init=False, repr=False, compare=False)
-    member_signing_keys: Mapping[str, bytes] = field(default_factory=dict, repr=False, compare=False)
+    member_signing_keys: Mapping[str, bytes] = field(
+        default=MappingProxyType({}), repr=False, compare=False
+    )
     _request_auth: RegistryRequestAuth = field(init=False, repr=False, compare=False)
     _http_client: httpx.AsyncClient = field(init=False, repr=False, compare=False)
 
