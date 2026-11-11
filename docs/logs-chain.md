@@ -187,6 +187,16 @@ The stored-report API, `aweb_logs.ledger.verify_epoch`, adds `delivery` and
 `conflicts` to the pure chain report. Its caller authorizes the reader and
 supplies the expected receipt/checkpoint keys. It reads events and refused-byte
 faults consistently under the team head lock, then verifies outside that lock.
+It also checks the chain against what logs itself signed, in the same
+transaction: the epoch's stored receipts and checkpoints, and, for the team's
+current epoch, the locked head. `stored.contradicted` lists each of logs' own
+artefacts the chain contradicts, by `artefact`, `team_seq` and the reasons
+above; `stored.head_matches` is false when the last stored event is not the
+head. Either makes `intact` false, so a writer of logs' tables without its key
+cannot drop the tail, or rewrite and rehash an event, without the report
+saying so. Events appended after the last checkpoint are covered by the head
+alone, which logs does not sign: a reader who needs more keeps receipts or
+checkpoints and gives them as witnesses.
 `intact` describes the chain; a delivery finding does not imply a chain edit.
 Conflicts name the event, its stored chain position, the refused-byte digest
 and the recorded fault time, without returning refused content.

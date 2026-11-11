@@ -12,7 +12,7 @@ import json
 import os
 import uuid
 from collections.abc import Awaitable, Callable, Mapping, Sequence
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from datetime import datetime
 from typing import Any
 
@@ -389,10 +389,27 @@ async def verify_epoch(
     distinct. No refused content is returned. All append/epoch/fault writers use
     the same head lock, held here only for database reads, never network I/O.
     Authorization belongs to the caller; this function is not an HTTP route.
+
+    The chain is also checked against what logs itself signed: the epoch's
+    stored receipts and checkpoints, and, for the current epoch, the locked
+    head. ``stored`` reports each of logs' own artefacts the chain contradicts,
+    by kind and sequence number, and whether the last stored event is the head;
+    either fault makes the report not intact. A writer of the tables without
+    logs' key cannot drop or rewrite what logs has signed unseen.
     """
     async with db.transaction() as tx:
-        await _existing_head(tx, team_id)
+        head = await _existing_head(tx, team_id)
         genesis, events = await load_epoch(tx, team_id, chain_epoch)
+        own_receipts = await tx.fetch_all(
+            "SELECT team_seq, receipt_bytes, receipt_signature FROM {{tables.chain_events}}"
+            " WHERE team_id = $1 AND chain_epoch = $2 ORDER BY team_seq",
+            team_id, chain_epoch,
+        )
+        own_checkpoints = await tx.fetch_all(
+            "SELECT team_seq, signing_bytes, signature FROM {{tables.chain_checkpoints}}"
+            " WHERE team_id = $1 AND chain_epoch = $2 ORDER BY position",
+            team_id, chain_epoch,
+        )
         faults = await tx.fetch_all(
             "SELECT f.fault_id, f.event_id, e.team_seq, f.kind, f.refused_sha256, f.recorded_at"
             " FROM {{tables.chain_faults}} f JOIN {{tables.chain_events}} e"
@@ -400,10 +417,46 @@ async def verify_epoch(
             " WHERE f.team_id = $1 AND e.chain_epoch = $2 ORDER BY f.fault_id",
             team_id, chain_epoch,
         )
-    report = verify_chain(
+    chain = verify_chain(
         genesis, events, receipt_keys=receipt_keys, checkpoint_keys=checkpoint_keys,
-        receipts=receipts, checkpoints=checkpoints,
-    ).to_json()
+        receipts=(
+            *receipts,
+            *((bytes(r["receipt_bytes"]), r["receipt_signature"]) for r in own_receipts),
+        ),
+        checkpoints=(
+            *checkpoints,
+            *((bytes(c["signing_bytes"]), c["signature"]) for c in own_checkpoints),
+        ),
+    )
+    # The caller's artefacts come first, so their positions are the caller's.
+    supplied = {"receipt": len(receipts), "checkpoint": len(checkpoints)}
+    own_seqs = {
+        "receipt": [r["team_seq"] for r in own_receipts],
+        "checkpoint": [c["team_seq"] for c in own_checkpoints],
+    }
+    own = [c for c in chain.contradicted if c.index >= supplied[c.artefact]]
+    chain = replace(
+        chain, contradicted=tuple(c for c in chain.contradicted if c.index < supplied[c.artefact])
+    )
+    last = (events[-1].link.team_seq, events[-1].event_hash) if events else (0, genesis.hash())
+    head_matches = (
+        head is None
+        or head.chain_epoch != chain_epoch
+        or last == (head.team_seq, head.event_hash)
+    )
+    report = chain.to_json()
+    report["intact"] = chain.intact and not own and head_matches
+    report["stored"] = {
+        "contradicted": [
+            {
+                "artefact": c.artefact,
+                "team_seq": own_seqs[c.artefact][c.index - supplied[c.artefact]],
+                "reason": c.reason,
+            }
+            for c in own
+        ],
+        "head_matches": head_matches,
+    }
     report["delivery"] = verify_deliveries(genesis, events).to_json()
     report["conflicts"] = [
         {"fault_id": f["fault_id"], "event_id": str(f["event_id"]), "team_seq": f["team_seq"],
