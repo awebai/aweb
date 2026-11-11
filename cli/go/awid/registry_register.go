@@ -24,11 +24,6 @@ type didRegisterRequest struct {
 	Proof          string  `json:"proof"`
 }
 
-type didKeyResponse struct {
-	DIDAW         string `json:"did_aw"`
-	CurrentDIDKey string `json:"current_did_key"`
-}
-
 func RegisterIdentity(
 	ctx context.Context,
 	registryBaseURL string,

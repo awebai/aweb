@@ -118,8 +118,9 @@ Common environment variables:
 - `AWEB_DATABASE_URL` or `DATABASE_URL`
 - `AWEB_REDIS_URL` or `REDIS_URL`
 - `AWID_REGISTRY_URL`
-- `AWID_SERVICE_TOKEN` required >=32-byte trusted caller secret shared with the
-  configured home AWID registry
+- Either `AWID_SERVICE_TOKEN` (>=32-byte trusted caller secret shared with the
+  configured home AWID registry) or `AWID_MEMBER_KEYS_FILE` (a JSON map of team
+  IDs to ordinary member PEM key files; see the self-hosting guide below)
 - `AWEB_HOST`
 - `AWEB_PORT`
 - `AWEB_DASHBOARD_JWT_SECRET`

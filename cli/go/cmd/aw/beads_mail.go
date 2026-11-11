@@ -2,7 +2,6 @@ package main
 
 import (
 	"fmt"
-	"strings"
 
 	aweb "github.com/awebai/aw"
 	"github.com/spf13/cobra"
@@ -76,26 +75,6 @@ func beadsMailWantsHelp(args []string) bool {
 		}
 	}
 	return false
-}
-
-// beadsMailStub declares a verb the design record marks as implemented, ahead
-// of its implementation subtask. Flag parsing stays disabled so gt-shaped
-// input can never crash the router; the real verb defines its flags when it
-// lands.
-func beadsMailStub(use, short string, aliases ...string) *cobra.Command {
-	verb := strings.Fields(use)[0]
-	return &cobra.Command{
-		Use:                use,
-		Short:              short,
-		Aliases:            aliases,
-		DisableFlagParsing: true,
-		RunE: func(cmd *cobra.Command, args []string) error {
-			if beadsMailWantsHelp(args) {
-				return cmd.Help()
-			}
-			return usageError("beads-mail %s is not implemented yet in this build; the delegate frame landed first. Run 'aw beads-mail help' for the current surface", verb)
-		},
-	}
 }
 
 // beadsMailUnsupported declares a verb the design record decides against for
