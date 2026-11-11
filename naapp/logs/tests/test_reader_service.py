@@ -32,7 +32,7 @@ from aweb_naapp.egress.send import EgressNotSent
 from aweb_naapp.email import EmailSettings
 from aweb_naapp.hooks.owner_act import HumanCredential
 from aweb_naapp.manifest import load_manifest
-from aweb_naapp.roles import holding_scope
+from aweb_naapp.roles import holding_scope, read_holding
 from aweb_naapp.runtime.owner_act_router import OWNER_ACT_PATH
 from aweb_naapp_testing import Member
 from aweb_naapp_testing.human_members import HumanMember, HumanNamespace, human_namespace
@@ -43,7 +43,7 @@ from awid_service.testing import REGISTRY_URL, SERVICE_TOKEN
 
 from aweb_logs.app import create_app
 from aweb_logs.config import LogsSettings
-from aweb_logs.readers import READER_ROLE, ReaderDirectory
+from aweb_logs.readers import READER_ROLE
 
 from .deployment import TEST_APP_ID, template, write_key_file
 from .test_reader_routes import REMOVE_READER_TOOL, blocked_dns
@@ -51,11 +51,6 @@ from .test_reader_routes import REMOVE_READER_TOOL, blocked_dns
 # The deployment answers at the audience the owner's acts name.
 ORIGIN = AUDIENCE
 CONSOLE = "https://console.app.example.com"
-
-
-def no_passkeys():
-    """This directory only lists readers; nothing here reads a holder's credential."""
-    raise AssertionError("this test's directory has no passkeys")
 
 
 class Unresolved:
@@ -102,7 +97,6 @@ class Deployment:
     member: Member
     owner: TeamOwner
     installation_id: str
-    directory: ReaderDirectory
     smtp: SmtpServer
     agent: httpx.AsyncClient
     console: httpx.AsyncClient
@@ -217,7 +211,6 @@ async def deployment(
                         audience=CONSOLE,
                     ),
                     installation_id=installation["installation_id"],
-                    directory=ReaderDirectory(db, app_id=TEST_APP_ID, passkeys=no_passkeys),
                     smtp=smtp,
                     agent=agent,
                     console=human,
@@ -387,13 +380,11 @@ async def test_a_member_removes_a_reader_but_never_the_last(deployment: Deployme
     response = await member_post(deployment, path, {"scope": removed})
     assert response.status_code == 200, response.text
     assert response.json() == {"scope": removed}
-    current = await deployment.directory.current_readers(
-        installation_id=deployment.installation_id, team_id=deployment.member.team_id
-    )
-    assert [reader.scope for reader in current] == [kept]
 
+    # The removed reader no longer counts: the one kept is the last.
     last = await member_post(deployment, path, {"scope": kept})
     assert (last.status_code, last.json()["detail"]) == (409, "last_reader_protected")
+    assert (await log_in(deployment, kept)).status_code == 200
     gone = await member_post(deployment, path, {"scope": removed})
     assert (gone.status_code, gone.json()["detail"]) == (404, "reader_unknown")
     assert deployment.looked_up == []
@@ -463,7 +454,16 @@ async def test_a_reinstalled_logs_ends_the_old_readers_and_the_owner_designates_
     # with it, in the same transaction, before the owner's act takes effect.
     designated = await designate(deployment, reader, installation_id=reinstalled)
     assert designated.status_code == 200, designated.text
-    assert await deployment.directory.reader(old) is None
+    assert (
+        await read_holding(
+            deployment.db,
+            installation_id=deployment.installation_id,
+            team_id=deployment.member.team_id,
+            role=READER_ROLE,
+            principal=reader.principal,
+        )
+        is None
+    )
     assert await live_credentials(deployment, old) == 0
     assert (await deployment.console.get("/v1/events")).status_code == 401
 
