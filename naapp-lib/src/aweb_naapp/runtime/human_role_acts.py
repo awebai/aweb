@@ -144,7 +144,9 @@ class HumanRoleActs:
         """End every holding of the team and destroy its holders' credentials,
         in the installation fence's retirement transaction: the holdings'
         scopes are read first, then the team's roles and holdings are purged,
-        then the scopes' subjects are retired, by installation."""
+        then the scopes' subjects are retired, by installation. Retiring the
+        subjects destroys their console sessions, so the app's database has
+        the console's migrations applied (``apply_console_migrations``)."""
         scopes = await roles.holding_scopes_of_team(tx, team_id)
         await roles.purge_team(tx, team_id)
         return [
