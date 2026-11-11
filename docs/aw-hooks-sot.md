@@ -114,8 +114,7 @@ the combined behavior.
 
 [`vectors/mutation-hook-call-sites-v1.json`](vectors/mutation-hook-call-sites-v1.json)
 is the machine-readable source path + enclosing function + literal event
-inventory of `fire_mutation_hook`, `fire_mutation_callback` and
-`fire_mcp_mutation_hook` calls. Inbound
+inventory of `fire_mutation_hook` and `fire_mutation_callback` calls. Inbound
 federation fires through its outbox instead, so the inventory does not list it. Repeated rows preserve multiplicity when one function has multiple
 calls for the same event. The table below groups those exact call sites by their
 public HTTP behavior. The create, update, delete, dependency and comment rows of
