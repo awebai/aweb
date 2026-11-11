@@ -39,18 +39,18 @@ def test_ingest_is_logs_only_hook_tool(tmp_path: Path) -> None:
     assert manifest.surface_tools == ()
 
 
-def test_members_granted_readers_ask_for_a_reader_slot_and_remove_a_reader(
+def test_members_granted_readers_remove_a_reader_and_ask_for_no_reader_slot(
     tmp_path: Path,
 ) -> None:
+    # A reader is designated only by the owner's human-role act, never through a slot.
     manifest = _filled(tmp_path)
-    assert set(manifest.agent_tools) == {"reader-slot", "remove-reader"}
+    assert set(manifest.agent_tools) == {"remove-reader"}
     routes = {
         (tool["name"], tool["method"], tool["path"], tuple(tool["scopes"]), tool["mutation"])
         for tool in template()["tools"]
         if tool["name"] in manifest.agent_tools
     }
     assert routes == {
-        ("reader-slot", "POST", "/v1/reader-slots", ("logs.readers",), True),
         ("remove-reader", "POST", "/v1/reader-removals", ("logs.readers",), True),
     }
 

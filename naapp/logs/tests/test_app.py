@@ -306,7 +306,7 @@ async def test_each_origin_serves_only_its_own_routes(tmp_path: Path, database) 
             transport=httpx.ASGITransport(app=service), base_url=CONSOLE
         ) as console:
             # The member tools are on the public origin, behind team-auth.
-            for path in ("/v1/reader-slots", "/v1/reader-removals", "/v1/hooks/ingest"):
+            for path in ("/v1/reader-removals", "/v1/hooks/ingest"):
                 assert (await public.post(path, json={})).status_code == 401, path
                 assert (await console.post(path, json={})).status_code == 404, path
             # The reader's console is on the console origin only.
@@ -326,6 +326,6 @@ async def test_a_stopped_logs_starts_again_with_the_same_routes(tmp_path: Path, 
     service = _app(_deployment_on(tmp_path, database))
     for _ in range(2):
         async with running(service) as public:
-            assert (await public.post("/v1/reader-slots", json={})).status_code == 401
+            assert (await public.post("/v1/reader-removals", json={})).status_code == 401
             assert (await public.get("/ready")).status_code == 200
     assert {route.path for route in service.console_app.routes} == set()
