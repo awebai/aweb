@@ -1667,18 +1667,25 @@ same outcome vocabulary.
   re-designating owners after a lockout, therefore take the team owner act
   `aweb.owner-act/1` defined by the hooks design (aweb-acgh.1, audit-substrate
   §A3): a statement signed by the current AWID team key, single-use and
-  short-lived. Bootstrap uses its `app-role.designate` act with the
-  owner-approver role. Recovery after a lockout uses `app-credential.recover`,
-  and `app-role.revoke` removes an owner. The subject commits to the contact by
-  hash, without carrying it.
+  short-lived. secrets declares `secrets.owner` as a human role in its
+  manifest's `owner_acts` ([owner-act delivery](../owner-act-delivery.md)), so
+  its owners are named by the human-role acts, delivered to its human origin:
+  `human-role.designate` designates the first owner and every later one,
+  `human-credential.replace` replaces an owner's credential after a lockout,
+  and `human-role.revoke` removes an owner. The subject names the owner's
+  `did:aw` and commits by hash to the credential and to the notice contact,
+  without carrying either. secrets accepts no contact act
+  (`app-role.designate`, `app-credential.recover`) for that role.
   - For BYOT the owner signs it locally with `aw`.
   - Where a custodial deployment holds the controller key, it signs only after a
     fresh, interactive step-up by the human owner. That requirement on custodial
     deployments is stated in §17.
   - A member or admin signature is refused with `owner_required`.
 
-  This act is the installation's root of trust (boundary T11). Enrolment then
-  follows B3, with trust on first use stated honestly.
+  This act is the installation's root of trust (boundary T11). The act binds
+  the credential itself, so no enrolment link is sent; when the owner who
+  signs is not the holder, trust on first use rests on the fingerprint
+  comparison ([human-role holders](human-role-holders.md#what-the-owners-client-shows-and-signs)).
 - **Owner lockout is protected (mandatory).** Revoking an owner's passkey or
   contact through team-auth alone, the narrowing path in §12, is refused if it
   would leave no owner with an enrolled passkey and a verified contact
