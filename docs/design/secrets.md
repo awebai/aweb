@@ -1682,10 +1682,10 @@ same outcome vocabulary.
   `did:aw` and commits by hash to the credential and to the notice contact,
   without carrying either. secrets accepts no contact act
   (`app-role.designate`, `app-credential.recover`) for that role.
-  - For BYOT the owner signs it locally with `aw`.
-  - Where a custodial deployment holds the controller key, it signs only after a
-    fresh, interactive step-up by the human owner. That requirement on custodial
-    deployments is stated in §17.
+  - Hosted and BYOT operators hold the controller in the
+    [protected signer](../human-assurance-contract.md). `aw` starts the shared
+    ceremony; a live exact-act passkey approval by the current owner authorizes
+    signing. It receives no controller key or reusable governance approval.
   - A member or admin signature is refused with `owner_required`.
 
   This act is the installation's root of trust (boundary T11). The act binds
