@@ -3,11 +3,15 @@
 from __future__ import annotations
 
 import asyncio
+import shutil
 from dataclasses import dataclass
+from pathlib import Path
 from typing import Any, Awaitable, Callable
 
 import pytest
+from pgdbm import AsyncDatabaseManager, AsyncMigrationManager
 
+import aweb
 from aweb.coordination.routes.team_instructions import (
     activate_team_instructions,
     create_team_instructions_version,
@@ -15,6 +19,8 @@ from aweb.coordination.routes.team_instructions import (
 from aweb.coordination.routes.team_roles import activate_team_roles, create_team_roles_version
 
 TEAM_ID = "backend:acme.com"
+MIGRATIONS = Path(aweb.__file__).parent / "migrations" / "aweb"
+ONE_ACTIVE_MIGRATION = "050_one_active_team_document.sql"
 
 
 @dataclass(frozen=True)
@@ -149,3 +155,60 @@ async def test_failed_activation_leaves_previous_version_active(aweb_cloud_db, d
         await document.activate(db, second)
 
     assert await _active_ids(db, document) == [first]
+
+
+async def _insert_active(db, document: TeamDocument, team_id: str, version: int) -> None:
+    await db.execute(
+        f"INSERT INTO {{{{tables.{document.table}}}}} (team_id, version, is_active) VALUES ($1, $2, true)",
+        team_id, version,
+    )
+
+
+@DOCUMENTS
+@pytest.mark.asyncio
+async def test_a_second_active_version_cannot_be_stored_by_any_writer(aweb_cloud_db, document):
+    db = aweb_cloud_db.aweb_db
+    await _insert_active(db, document, TEAM_ID, 1)
+    await _insert_active(db, document, "other:acme.com", 1)
+
+    with pytest.raises(Exception, match=f"{document.table}_one_active"):
+        await _insert_active(db, document, TEAM_ID, 2)
+
+
+@DOCUMENTS
+@pytest.mark.asyncio
+async def test_migration_refuses_teams_with_two_active_versions_and_changes_nothing(
+    shared_test_pool, tmp_path, document,
+):
+    await AsyncDatabaseManager(pool=shared_test_pool, schema=None).execute("CREATE SCHEMA aweb")
+    db = AsyncDatabaseManager(pool=shared_test_pool, schema="aweb")
+    staged = tmp_path / "migrations"
+    staged.mkdir()
+    for migration in sorted(MIGRATIONS.glob("*.sql")):
+        if migration.name < ONE_ACTIVE_MIGRATION:
+            shutil.copy(migration, staged / migration.name)
+    manager = AsyncMigrationManager(
+        db, migrations_path=str(staged), module_name="one-active-upgrade-test", migrations_table="schema_migrations",
+    )
+    await manager.apply_pending_migrations()
+
+    for team_id in ("first:acme.com", "second:acme.com"):
+        await _insert_active(db, document, team_id, 1)
+        await _insert_active(db, document, team_id, 2)
+    await _insert_active(db, document, "sound:acme.com", 1)
+
+    shutil.copy(MIGRATIONS / ONE_ACTIVE_MIGRATION, staged / ONE_ACTIVE_MIGRATION)
+    with pytest.raises(Exception, match=f"2 teams have more than one active row in {document.table}"):
+        await manager.apply_pending_migrations()
+
+    active = await db.fetch_value(
+        f"SELECT COUNT(*) FROM {{{{tables.{document.table}}}}} WHERE is_active"
+    )
+    assert active == 5
+
+    await db.execute(
+        f"UPDATE {{{{tables.{document.table}}}}} SET is_active = false WHERE version = 1 AND team_id <> 'sound:acme.com'"
+    )
+    await manager.apply_pending_migrations()
+    with pytest.raises(Exception, match=f"{document.table}_one_active"):
+        await _insert_active(db, document, "sound:acme.com", 2)
