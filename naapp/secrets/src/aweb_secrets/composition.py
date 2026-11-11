@@ -21,6 +21,7 @@ from aweb_naapp.console import (
     apply_console_migrations,
 )
 from aweb_naapp.console.handoff_authority import HandoffAuthority, PreparedSessionTarget
+from aweb_naapp.console.handoff_requester import requester_parent
 from aweb_naapp.console.handoff_sessions import ConsoleHandoffs
 from aweb_naapp.dispatch import apply_dispatch_migrations
 from aweb_naapp.egress import AddressPolicy, DnsResolver, Egress
@@ -47,6 +48,7 @@ from aweb_naapp.runtime.owner_act_delivery import OwnerActEffectResult
 from aweb_naapp.runtime.owner_act_router import OwnerActLimiter, mount_owner_act_routes
 from aweb_naapp.runtime.passkeys import Passkeys, RelyingParty
 from aweb_naapp.signing_key import read_signing_key_file
+from awid.dns_verify import DomainVerifier
 from fastapi import APIRouter, Request
 from pgdbm.core import TransactionManager
 
@@ -360,6 +362,7 @@ async def _compose(
         principal=runtime.principal,
         human_member=runtime.check_human_member,
         limiter=console.limiter,
+        requester_parent=requester_parent(runtime.registry_client()),
     )
     custody = Custody(provider, db)
     tokens = ProcessTokenCache()
@@ -510,6 +513,7 @@ def create_service(
     settings: ServiceSettings,
     *,
     awid_transport: httpx.AsyncBaseTransport | None = None,
+    awid_domain_verifier: DomainVerifier | None = None,
     team_server_transport: httpx.AsyncBaseTransport | None = None,
     hook_egress: Egress | None = None,
     hook_internal_cidr: IPv4Network | IPv6Network | None = None,
@@ -645,6 +649,7 @@ def create_service(
         kms=kms,
         health_labels={"custody_mode": custody_mode},
         awid_transport=awid_transport,
+        awid_domain_verifier=awid_domain_verifier,
         team_server_transport=team_server_transport,
         hook_egress=hook_egress,
         hook_internal_cidr=hook_internal_cidr,
