@@ -420,10 +420,13 @@ async def test_the_requesting_agent_is_shown_apart_from_the_identity_or_the_page
         page = await context.new_page()
         if requester == "malformed":
 
+            original = []
+
             async def malformed(route):
-                # The service's real state, with a requester the page cannot show.
+                # The service's real, admitted state, with a requester the page cannot show.
                 response = await route.fetch()
                 state = await response.json()
+                original.append((response.status, state.get("requester", {}).get("id")))
                 state["requester"] = {"id": "", "key_fingerprint": 7}
                 await route.fulfill(response=response, json=state)
 
@@ -448,6 +451,8 @@ async def test_the_requesting_agent_is_shown_apart_from_the_identity_or_the_page
             await expect(value).to_be_hidden()
             await expect(action).to_be_enabled()
         else:
+            # Only the requester changed: the service admitted this laptop's start.
+            assert original == [(200, laptop.extra_cert_fields["member_did_aw"])]
             assert await page.evaluate("document.body.dataset.handoffState") == "refused"
             await expect(page.locator("#handoff-scope")).to_be_hidden()
             await expect(action).to_be_disabled()
