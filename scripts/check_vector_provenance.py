@@ -764,6 +764,9 @@ PACKAGE_GUARDS = {
     ),
 }
 NON_CONSUMING_CODE_REFERENCES = {
+    PurePosixPath("scripts/generate_owner_act_delivery_vector.py"): (
+        "docs/vectors/owner-act-delivery-v1.json",
+    ),
     PurePosixPath("scripts/freeze_human_channels_presence.py"): (
         "docs/vectors/human-channels-presence-v1.json",
     ),
