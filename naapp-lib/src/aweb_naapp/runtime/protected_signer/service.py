@@ -25,6 +25,7 @@ from aweb_naapp.runtime.approvals import (
     DispatchOutcome,
     PgApprovalStore,
     PolicySource,
+    Refusal,
 )
 from aweb_naapp.runtime.audit import AuditEvent, AuditKind, AuditSink
 from aweb_naapp.runtime.passkeys import Passkeys, passkey_evidence_commitment
@@ -308,8 +309,17 @@ class ProtectedSigner:
                     ApprovalState.APPROVED,
                     ApprovalState.CONSUMED,
                 ):
-                    await self._refuse_verification(operation_id, claim, "proof_invalid")
-                    raise SignerRefused("proof_invalid") from exc
+                    code = {
+                        Refusal.POLICY_CHANGED: "policy_changed",
+                        Refusal.EXPIRED: "approval_expired",
+                        Refusal.AUTHENTICATION_FAILED: "proof_invalid",
+                        Refusal.APPROVER_RETIRED: "approval_spent",
+                        Refusal.REVOKED: "approval_spent",
+                        Refusal.APPROVER_MISMATCH: "scope_refused",
+                        Refusal.REQUEST_MISMATCH: "operation_mismatch",
+                    }.get(exc.reason, "operation_refused")
+                    await self._refuse_verification(operation_id, claim, code)
+                    raise SignerRefused(code) from exc
         decided = approval.decided_by
         if decided is None or (decided.subject, decided.scope, decided.assurance) != (
             human.subject,
