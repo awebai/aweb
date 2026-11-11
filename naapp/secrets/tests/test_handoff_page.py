@@ -23,6 +23,7 @@ from aweb_naapp.console.handoff_sessions import ConsoleHandoffs
 from aweb_naapp.runtime.origins import split_origins
 from aweb_naapp.runtime.passkeys import RelyingParty
 from aweb_naapp_testing import did_key
+from awid.id_certificates import encode_id_chain_header
 from cryptography.hazmat.primitives.serialization import Encoding, NoEncryption, PrivateFormat
 from fastapi import FastAPI, Request
 from fastapi.responses import HTMLResponse
@@ -30,6 +31,7 @@ from nacl.signing import SigningKey
 from playwright.async_api import expect
 
 from tests.test_console_ui_browser import browser as browser
+from tests.test_handoff_direct_child import REQUESTER, certify_agent
 from tests.test_handoff_sessions import API, signed_request
 from tests.test_handoff_sessions import journey as journey
 from tests.test_handoff_sessions import world as world
@@ -369,3 +371,88 @@ async def browser_flow(journey, browser, service, tmp_path, purpose, width, *, u
     assert response.json()["purpose"] == purpose
     count = await journey.world.db.fetch_value("SELECT count(*) FROM {{tables.console_sessions}}")
     assert count == (1 if purpose == "session" else 0)
+
+
+async def requester_start(journey, member, scope, laptop, chain, redirect_uri):
+    """A session start that ``laptop``, the holder's direct-child agent, signs."""
+    key, verifier = SigningKey.generate(), secrets.token_urlsafe(32)
+    raw = json.dumps(
+        {
+            "v": 1,
+            "purpose": "session",
+            "client_key": did_key(key),
+            "return": "loopback",
+            "redirect_uri": redirect_uri,
+            "verifier_sha256": hashlib.sha256(verifier.encode()).hexdigest(),
+            "scope": asdict(scope),
+        }
+    ).encode()
+    response = await journey.client.post(
+        API + "/handoffs",
+        content=raw,
+        headers={
+            "Content-Type": "application/json",
+            "X-AWID-ID-Chain": encode_id_chain_header(
+                {"v": 1, "type": "aweb.id-chain", "certificates": chain}
+            ),
+            **laptop.headers(aud=API, method="POST", path="/handoffs", body=raw),
+        },
+    )
+    assert response.status_code == 201, response.text
+    return response.json()["handoff_id"]
+
+
+@pytest.mark.parametrize("width", [375, 1440])
+@pytest.mark.parametrize("requester", ["valid", "none", "malformed"])
+@pytest.mark.parametrize("journey", [REQUESTER], indirect=True)
+async def test_the_requesting_agent_is_shown_apart_from_the_identity_or_the_page_fails_closed(
+    journey, browser, page_service, tmp_path, requester, width
+):
+    origin, callback_origin, callback, member, scope, _ = page_service
+    laptop, chain = await certify_agent(journey, member, [member.id_certificate], "laptop")
+    if requester == "none":
+        handoff, _, _ = await start(journey, "session", callback_origin + "/callback", member, scope)
+    else:
+        handoff = await requester_start(
+            journey, member, scope, laptop, chain, callback_origin + "/callback"
+        )
+    async with await browser.new_context(viewport={"width": width, "height": 900}) as context:
+        page = await context.new_page()
+        if requester == "malformed":
+
+            async def malformed(route):
+                # The service's real state, with a requester the page cannot show.
+                response = await route.fetch()
+                state = await response.json()
+                state["requester"] = {"id": "", "key_fingerprint": 7}
+                await route.fulfill(response=response, json=state)
+
+            await page.route(f"**/handoff/{handoff}/session", malformed)
+        response = await page.goto(origin + "/handoff/" + handoff)
+        assert response.status == 200
+        await page.wait_for_function(
+            "['refused', 'ready'].includes(document.body.dataset.handoffState)"
+        )
+        label, value = page.locator("#handoff-requester-label"), page.locator("#handoff-requester")
+        action = page.locator("#handoff-action")
+        if requester == "valid":
+            await expect(label).to_be_visible()
+            await expect(value).to_be_visible()
+            shown = await value.text_content()
+            assert laptop.extra_cert_fields["member_did_aw"] in shown and " · key " in shown
+            # The identity being signed in stays the holder's, not the agent's.
+            assert await page.locator("#handoff-principal").text_content() == scope.principal
+            await expect(action).to_be_enabled()
+        elif requester == "none":
+            await expect(label).to_be_hidden()
+            await expect(value).to_be_hidden()
+            await expect(action).to_be_enabled()
+        else:
+            assert await page.evaluate("document.body.dataset.handoffState") == "refused"
+            await expect(page.locator("#handoff-scope")).to_be_hidden()
+            await expect(action).to_be_disabled()
+        assert await page.evaluate("document.documentElement.scrollWidth <= innerWidth")
+        await page.screenshot(
+            path=tmp_path / f"handoff-requester-{requester}-{width}.png", full_page=True
+        )
+        assert not callback.done()
