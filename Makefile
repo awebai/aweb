@@ -579,9 +579,20 @@ release-candidate: test-candidate-ledger
 	@test -n "$(TAGS)" || (echo "TAGS='server-vX.Y.Z ...' is required" >&2; exit 2)
 	python3 scripts/release_candidate.py $(if $(filter 1,$(STAGE_AW_FINAL)),--stage-aw-final,) $(TAGS)
 
+# Every input is mandatory, with no default: the publisher uploads only the
+# gated manifest's files, and only with AC's passing verdict for that manifest.
 release-publish:
 	@test -n "$(TAG)" || (echo "TAG=<artifact-vX.Y.Z> is required" >&2; exit 2)
-	python3 scripts/publish_release.py "$(TAG)"
+	@missing=; \
+		for input in "CANDIDATE_ARTIFACT_DIR=$(CANDIDATE_ARTIFACT_DIR)" "CLOUD_CHECKOUT=$(CLOUD_CHECKOUT)" \
+			"CLOUD_TREE=$(CLOUD_TREE)" "OSS_MANIFEST_SHA256=$(OSS_MANIFEST_SHA256)" \
+			"EXPECTED_AW_RELEASED=$(EXPECTED_AW_RELEASED)"; do \
+			case "$$input" in *=) missing="$$missing $$input";; esac; \
+		done; \
+		test -z "$$missing" || { echo "release-publish requires:$$missing" >&2; exit 2; }
+	python3 scripts/publish_release.py $(if $(filter 1,$(DRY_RUN)),--dry-run,) \
+		--artifacts "$(CANDIDATE_ARTIFACT_DIR)" --cloud-checkout "$(CLOUD_CHECKOUT)" --cloud-tree "$(CLOUD_TREE)" \
+		--manifest-sha256 "$(OSS_MANIFEST_SHA256)" --expected-aw-released "$(EXPECTED_AW_RELEASED)" "$(TAG)"
 
 deploy-site: verify-site
 	@set -eu; \

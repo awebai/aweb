@@ -59,6 +59,17 @@ NPM_LANES = {
     "skills-v": ("packages/claude-skills", "@awebai/claude-skills", "skills"),
 }
 
+# The aw npm platform packages: Go platform -> (package directory, aw binary,
+# gateway binary). The wrapper package "aw" pins all six.
+AW_NPM_PLATFORMS = {
+    "linux/amd64": ("aw-linux-x64", "aw", "aweb-a2a-gw"),
+    "linux/arm64": ("aw-linux-arm64", "aw", "aweb-a2a-gw"),
+    "darwin/amd64": ("aw-darwin-x64", "aw", "aweb-a2a-gw"),
+    "darwin/arm64": ("aw-darwin-arm64", "aw", "aweb-a2a-gw"),
+    "windows/amd64": ("aw-windows-x64", "aw.exe", "aweb-a2a-gw.exe"),
+    "windows/arm64": ("aw-windows-arm64", "aw.exe", "aweb-a2a-gw.exe"),
+}
+
 
 def run(
     root: Path,
@@ -375,14 +386,7 @@ def aw_ldflags(version: str, source_sha: str) -> str:
 
 def build_aw_npm(root: Path, version: str, source_sha: str, npm_root: Path | None = None) -> list[str]:
     """Shared build operation; callers own retention and publication separately."""
-    packages = {
-        "linux/amd64": ("aw-linux-x64", "aw", "aweb-a2a-gw"),
-        "linux/arm64": ("aw-linux-arm64", "aw", "aweb-a2a-gw"),
-        "darwin/amd64": ("aw-darwin-x64", "aw", "aweb-a2a-gw"),
-        "darwin/arm64": ("aw-darwin-arm64", "aw", "aweb-a2a-gw"),
-        "windows/amd64": ("aw-windows-x64", "aw.exe", "aweb-a2a-gw.exe"),
-        "windows/arm64": ("aw-windows-arm64", "aw.exe", "aweb-a2a-gw.exe"),
-    }
+    packages = AW_NPM_PLATFORMS
     npm_root = npm_root or root / "cli/go/npm"
     ldflags = aw_ldflags(version, source_sha)
     for platform, (package_dir, aw_name, gateway_name) in packages.items():
@@ -551,15 +555,113 @@ def publish_oci(root: Path, prefix: str, version: str, source_sha: str) -> None:
         print(f"release-index={json.dumps({'digest': staged, 'source_sha': source_sha, 'version': version}, sort_keys=True, separators=(',', ':'))}")
 
 
+def lane_files(prefix: str) -> dict[str, tuple[str, ...]]:
+    """The package names a manifest-gated tag publishes, with the file kinds each needs."""
+    if prefix in PYPI_LANES:
+        return {name: (".whl", ".tar.gz") for name, _ in PYPI_LANES[prefix][1]}
+    if prefix in NPM_LANES:
+        return {NPM_LANES[prefix][1]: (".tgz",)}
+    if prefix == "aw-v":
+        return {f"@awebai/{package_dir}": (".tgz",) for package_dir, _, _ in AW_NPM_PLATFORMS.values()} | {
+            "@awebai/aw": (".tgz",)}
+    raise PublishRefusal(f"{prefix} is not a manifest-gated lane")
+
+
+def require_cloud_verdict(cloud_checkout: Path, cloud_tree: str, manifest_sha256: str,
+                          expected_aw_released: str) -> None:
+    """AC's candidate-oss-verdict must pass for this tree, digest and released aw."""
+    # Fetch only Cloud main's remote-tracking ref; the checkout's branches,
+    # index and working tree stay as the operator left them.
+    run(cloud_checkout, "git", "fetch", "--quiet", "origin", "+refs/heads/main:refs/remotes/origin/main", timeout=300)
+    main_tree = run(cloud_checkout, "git", "rev-parse", "refs/remotes/origin/main^{tree}", timeout=60)
+    if main_tree != cloud_tree:
+        raise PublishRefusal(f"Cloud main tree is {main_tree}, not CLOUD_TREE {cloud_tree}; rerun the Cloud gate")
+    completed = subprocess.run(
+        ["make", "--no-print-directory", "-C", str(cloud_checkout), "candidate-oss-verdict",
+         f"CLOUD_TREE={cloud_tree}", f"OSS_MANIFEST_SHA256={manifest_sha256}",
+         f"EXPECTED_AW_RELEASED={expected_aw_released}"],
+        text=True, capture_output=True, timeout=600, check=False)
+    refusal = f"Cloud verdict does not pass for manifest {manifest_sha256}, tree {cloud_tree}, aw {expected_aw_released}"
+    if completed.returncode:
+        raise PublishRefusal(f"{refusal}: exit {completed.returncode}: {(completed.stderr or completed.stdout).strip()}")
+    try:
+        answer = json.loads(completed.stdout)
+    except json.JSONDecodeError as error:
+        raise PublishRefusal(f"{refusal}: output is not JSON: {error}") from error
+    keys = answer.get("keys") if isinstance(answer, dict) else None
+    inputs = answer.get("effective_inputs") if isinstance(answer, dict) else None
+    if not (answer.get("schema") == 1 and answer.get("passed") is True
+            and answer.get("cloud_tree") == cloud_tree and answer.get("oss_manifest_sha256") == manifest_sha256
+            and isinstance(keys, list) and keys and isinstance(inputs, dict)
+            and all(isinstance(inputs.get(key), dict)
+                    and inputs[key].get("oss-manifest-sha256") == manifest_sha256
+                    and inputs[key].get("aw-released") == expected_aw_released for key in keys)):
+        raise PublishRefusal(f"{refusal}: {completed.stdout.strip()}")
+
+
 def gated_publish_set(directory: Path, *, prefix: str, version: str, source_sha: str, cloud_checkout: Path,
                       cloud_tree: str, manifest_sha256: str, expected_aw_released: str,
                       npm_latest_aw: str) -> list[dict]:
-    return [dict(path=str(path), sha256=sha256(path)) for path in sorted(directory.iterdir())
-            if path.name != "manifest.json"]
+    """The tag's rows of the gated manifest, after every byte and the Cloud verdict check out.
+
+    npm_latest_aw is @awebai/aw's npm latest as read once before the release's
+    first upload: the released client Cloud was gated against.
+    """
+    from release_artifacts import manifest_path, verify
+
+    if not re.fullmatch(r"[0-9a-f]{64}", manifest_sha256):
+        raise PublishRefusal(f"OSS_MANIFEST_SHA256 must be 64 lowercase hex characters, not {manifest_sha256!r}")
+    if not re.fullmatch(r"[0-9a-f]{40}", cloud_tree):
+        raise PublishRefusal(f"CLOUD_TREE must be a 40-character Git tree id, not {cloud_tree!r}")
+    if not re.fullmatch(r"[0-9]+\.[0-9]+\.[0-9]+", expected_aw_released):
+        raise PublishRefusal(f"EXPECTED_AW_RELEASED must be a final X.Y.Z version, not {expected_aw_released!r}")
+    observed = sha256(manifest_path(directory))
+    if observed != manifest_sha256:
+        raise PublishRefusal(f"manifest.json sha256 is {observed}, not the requested {manifest_sha256}")
+    manifest = verify(directory)
+    if manifest.get("schema") != 2:
+        raise PublishRefusal(f"artifact manifest schema {manifest.get('schema')!r} is not 2")
+    if manifest.get("source_sha") != source_sha:
+        raise PublishRefusal(f"artifact manifest source commit {manifest.get('source_sha')} is not the tag's {source_sha}")
+    selected = []
+    for package, suffixes in lane_files(prefix).items():
+        for suffix in suffixes:
+            rows = [row for row in manifest["files"] if row["package"] == package and row["path"].endswith(suffix)]
+            if len(rows) != 1 or rows[0]["version"] != version:
+                raise PublishRefusal(f"artifact manifest needs exactly one {package} {version} {suffix}, found "
+                                     f"{[(row['path'], row['version']) for row in rows]}")
+            selected.append(dict(rows[0], path=str(directory / rows[0]["path"])))
+    if npm_latest_aw != expected_aw_released:
+        raise PublishRefusal(f"npm latest @awebai/aw is {npm_latest_aw}, not the expected {expected_aw_released}")
+    require_cloud_verdict(cloud_checkout, cloud_tree, manifest_sha256, expected_aw_released)
+    return selected
 
 
-def publish(root: Path, tag: str) -> None:
+def released_aw() -> str:
+    status, tags = request_json("https://registry.npmjs.org/-/package/%40awebai%2Faw/dist-tags")
+    if status != 200 or not isinstance(tags.get("latest"), str):
+        raise PublishRefusal(f"npm dist-tags for @awebai/aw are unavailable (HTTP {status})")
+    return tags["latest"]
+
+
+def publish(root: Path, tag: str, *, artifacts: Path, cloud_checkout: Path, cloud_tree: str, manifest_sha256: str,
+            expected_aw_released: str, dry_run: bool = False) -> None:
     prefix, version, source_sha = tag_identity(root, tag)
+    if prefix in PYPI_LANES or prefix in NPM_LANES or prefix == "aw-v":
+        selected = gated_publish_set(
+            artifacts, prefix=prefix, version=version, source_sha=source_sha, cloud_checkout=cloud_checkout,
+            cloud_tree=cloud_tree, manifest_sha256=manifest_sha256, expected_aw_released=expected_aw_released,
+            npm_latest_aw=released_aw())
+        for row in selected:
+            print(f"publish set: {row['package']} {row['version']} sha256={row['sha256']} {row['path']}")
+        if dry_run:
+            print(f"dry run: {tag} passed the Cloud verdict for manifest {manifest_sha256}; nothing uploaded")
+            return
+        raise PublishRefusal(f"{tag}: uploading the gated manifest files is not available")
+    print(f"{tag} is not manifest-gated: its image is built from the tag, without a Cloud verdict")
+    if dry_run:
+        print(f"dry run: {tag}; nothing built or uploaded")
+        return
     # The annotated release tag carries the choice across the distribution
     # repository too; an ambient environment override would be lost there.
     staged_final = False
@@ -586,13 +688,27 @@ def publish(root: Path, tag: str) -> None:
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--check-tag", action="store_true", help="validate tag/tree identity without publishing")
+    parser.add_argument("--artifacts", type=Path, help="the gated candidate artifact directory holding manifest.json")
+    parser.add_argument("--cloud-checkout", type=Path, help="Cloud checkout holding candidate-oss-verdict and its ledger")
+    parser.add_argument("--cloud-tree", help="Git tree id of current Cloud main the verdict was gated on")
+    parser.add_argument("--manifest-sha256", help="sha256 of the exact gated manifest.json bytes")
+    parser.add_argument("--expected-aw-released", help="npm latest @awebai/aw Cloud was gated against, X.Y.Z")
+    parser.add_argument("--dry-run", action="store_true", help="run every check and print the publish set; upload nothing")
     parser.add_argument("tag")
     arguments = parser.parse_args(argv)
+    gate = ("artifacts", "cloud_checkout", "cloud_tree", "manifest_sha256", "expected_aw_released")
+    if not arguments.check_tag:
+        missing = [f"--{name.replace('_', '-')}" for name in gate if not getattr(arguments, name)]
+        if missing:
+            parser.error(f"publishing requires {' '.join(missing)}")
     try:
         if arguments.check_tag:
             tag_identity(Path.cwd().resolve(), arguments.tag)
         else:
-            publish(Path.cwd().resolve(), arguments.tag)
+            publish(Path.cwd().resolve(), arguments.tag, artifacts=arguments.artifacts,
+                    cloud_checkout=arguments.cloud_checkout, cloud_tree=arguments.cloud_tree,
+                    manifest_sha256=arguments.manifest_sha256,
+                    expected_aw_released=arguments.expected_aw_released, dry_run=arguments.dry_run)
     except (
         PublishRefusal,
         OSError,
