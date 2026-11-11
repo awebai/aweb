@@ -635,9 +635,9 @@ NEXT_ACTIONS = [
 
 @pytest.mark.parametrize("refusal,known,answer", NEXT_ACTIONS)
 def test_mcp_mail_refusals_name_the_next_action_and_keep_their_code(refusal, known, answer):
-    from aweb.mcp.tools.mail import _send_refusal
+    from aweb.mcp.tools.refusals import send_refusal
 
-    assert json.loads(_send_refusal(refusal(), **known)) == answer
+    assert json.loads(send_refusal(refusal(), **known)) == answer
 
 
 @pytest.mark.parametrize("reason", [
@@ -653,20 +653,20 @@ def test_the_route_answers_a_federation_refusal_with_its_code_alone(reason):
 
 
 def test_mcp_mail_codes_without_a_next_action_are_answered_as_the_code():
-    from aweb.mcp.tools.mail import _send_refusal
+    from aweb.mcp.tools.refusals import send_refusal
 
     # Outside a hosted envelope the custody refusal says nothing about the sender's key.
-    assert json.loads(_send_refusal(_authority_refusal("recipient_custodial_no_e2ee"))) == {
+    assert json.loads(send_refusal(_authority_refusal("recipient_custodial_no_e2ee"))) == {
         "error": "recipient_custodial_no_e2ee",
     }
-    assert json.loads(_send_refusal(_authority_refusal("federation_rate_limited"), address="a.test/b")) == {
+    assert json.loads(send_refusal(_authority_refusal("federation_rate_limited"), address="a.test/b")) == {
         "error": "federation_rate_limited",
     }
     # An address the registry does not bind is refused in the words for a name nobody holds.
     for refusal in (_authority_refusal("recipient_identity_not_found"),
                     _authority_refusal("local_recipient_route_missing"),
                     _binding_refusal(404, "Recipient address not found")):
-        assert json.loads(_send_refusal(refusal, address="a.test/b")) == {
+        assert json.loads(send_refusal(refusal, address="a.test/b")) == {
             "error": unreachable_address_refusal("a.test/b"),
         }
 
@@ -675,7 +675,7 @@ def test_an_envelope_for_a_key_this_server_does_not_record_is_refused_as_a_chang
     from fastapi import HTTPException
 
     from aweb.identity_auth_deps import MessagingAuth
-    from aweb.mcp.tools.mail import _send_refusal
+    from aweb.mcp.tools.refusals import send_refusal
     from aweb.messaging.mail_send import _validate_encrypted_payload
     from aweb.routes.messages import SendMessageRequest
 
@@ -702,17 +702,17 @@ def test_an_envelope_for_a_key_this_server_does_not_record_is_refused_as_a_chang
 
     # The route's answer is unchanged.
     assert (refused.value.status_code, refused.value.detail) == (422, "encrypted envelope recipient did mismatch")
-    assert json.loads(_send_refusal(refused.value, hosted_envelope=True)) == {
+    assert json.loads(send_refusal(refused.value, hosted_envelope=True)) == {
         "error": "this recipient's key changed; resend the message",
     }
 
 
 def test_a_refusal_whose_detail_is_an_object_is_answered_with_that_object():
-    from aweb.mcp.tools.mail import _send_refusal
+    from aweb.mcp.tools.refusals import send_refusal
 
     # A retired participant is refused with a code and a message, as one object.
     retired = {"code": "participant_retired", "message": "human has moved; start a new mail to human in ops:acme.com"}
-    assert json.loads(_send_refusal(_binding_refusal(410, retired))) == {"error": retired}
-    assert json.loads(_send_refusal(_binding_refusal(410, retired), address="a.test/b", hosted_envelope=True)) == {
+    assert json.loads(send_refusal(_binding_refusal(410, retired))) == {"error": retired}
+    assert json.loads(send_refusal(_binding_refusal(410, retired), address="a.test/b", hosted_envelope=True)) == {
         "error": retired,
     }

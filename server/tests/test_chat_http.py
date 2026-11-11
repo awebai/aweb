@@ -26,6 +26,7 @@ from aweb.e2ee_messages import E2EE_SUITE, _envelope_map, _hash_canonical, _key_
 from aweb.federation.envelope import verify_federation_envelope
 from aweb.identity_auth_deps import IDENTITY_DID_AW_HEADER, MessagingAuth, get_messaging_auth
 from aweb.identity_metadata import routable_chat_address
+from aweb.messaging.chat_send import _resolve_remote_chat_route
 from aweb.routes import chat as chat_routes
 from aweb.routes.chat import router as chat_router
 from aweb.routes.federation import router as federation_router
@@ -1086,15 +1087,11 @@ async def test_remote_chat_route_refresh_preserves_stable_authority_error():
             side_effect=FederationAuthorityError("federation_rate_limited")
         )
     )
-    request = SimpleNamespace(
-        app=SimpleNamespace(state=SimpleNamespace(federation_authority=authority)),
-        client=SimpleNamespace(host="127.0.0.1"),
-    )
-
     with pytest.raises(FederationAuthorityError) as error:
-        await chat_routes._resolve_remote_chat_route(
+        await _resolve_remote_chat_route(
             SimpleNamespace(),
-            request=request,
+            runtime=SimpleNamespace(federation_authority=authority),
+            source="127.0.0.1",
             registry_client=SimpleNamespace(),
             recipient={
                 "address": "otherco.com/bob",
