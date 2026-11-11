@@ -15,7 +15,7 @@ from aweb_naapp.hooks.owner_act_nonces import OwnerActVerifier
 from aweb_naapp.hooks.strictjson import canonical
 from aweb_naapp.roles import PrincipalKey
 from aweb_naapp.runtime.human_member import check_human_member
-from aweb_naapp.runtime.passkeys import contact_sha256, prepare_retirement
+from aweb_naapp.runtime.passkeys import RelyingParty, contact_sha256, prepare_retirement
 from aweb_naapp.runtime.team_auth import AWIDTeamCache
 from aweb_naapp_testing import REGISTRY_URL, SERVICE_TOKEN, Member, did_key
 from aweb_naapp_testing.owner_acts import TeamOwner
@@ -42,6 +42,19 @@ def fixture_principal(team_id, alias):
 
 def b64(value):
     return base64.urlsafe_b64encode(value).rstrip(b"=").decode()
+
+
+def holder_credential(origin):
+    """A real authenticator credential to bind, without creating a holding."""
+    device = SoftAuthenticator(origin)
+    soft = SoftCredential(
+        os.urandom(32),
+        ec.generate_private_key(ec.SECP256R1()),
+        RelyingParty(origin=origin, name="secrets").rp_id,
+        os.urandom(16),
+    )
+    device.credentials[soft.credential_id] = soft
+    return device, HumanCredential(soft.credential_id, soft.cose_public_key(), soft.rp_id)
 
 
 @asynccontextmanager
@@ -130,15 +143,7 @@ async def apply_holder(world, act, principal, contact, *, member=None, client=No
     proof = None
     certificate = None
     if act != "human-role.revoke":
-        device = SoftAuthenticator(world.passkeys.rp.origin)
-        soft = SoftCredential(
-            os.urandom(32),
-            ec.generate_private_key(ec.SECP256R1()),
-            world.passkeys.rp.rp_id,
-            os.urandom(16),
-        )
-        device.credentials[soft.credential_id] = soft
-        credential = HumanCredential(soft.credential_id, soft.cose_public_key(), soft.rp_id)
+        device, credential = holder_credential(world.passkeys.rp.origin)
         subject.update(
             credential_sha256=credential.sha256, notice_contact_sha256=contact_sha256(contact)
         )

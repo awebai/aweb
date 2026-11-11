@@ -96,7 +96,7 @@ async def install(db, member, data, scopes):
     origin = manifest.document["app"]["origin"]
     fetched = FetchedManifest(
         origin=origin,
-        url=origin + "/manifests/v2.json",
+        url=origin + f"/manifests/v{manifest.manifest_version}.json",
         digest="sha256:" + hashlib.sha256(data).hexdigest(),
         data=data,
         manifest=manifest,

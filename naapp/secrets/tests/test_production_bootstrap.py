@@ -57,7 +57,7 @@ async def envelopes(db, team_id):
 
 
 @pytest.fixture
-async def root(test_db_factory, registry, tmp_path):
+async def root(test_db_factory, registry, tmp_path, request):
     member = Member(team_id="root:example.com", member_key=member_key("alice"))
     async with authority(test_db_factory, registry, member) as (aweb_db, transport):
         database = await test_db_factory.create_db(suffix="production_bootstrap")
@@ -89,7 +89,8 @@ async def root(test_db_factory, registry, tmp_path):
                 async with service.api_app.router.lifespan_context(service.api_app):
                     async with httpx.AsyncClient(transport=httpx.ASGITransport(service)) as client:
                         client.owner_fixture_registry = registry
-                        manifest = await client.get(AUDIENCE + "/manifests/v2.json")
+                        version = getattr(request, "param", {}).get("manifest_version", 2)
+                        manifest = await client.get(AUDIENCE + f"/manifests/v{version}.json")
                         assert manifest.status_code == 200
                         installed = await install(
                             aweb_db,
