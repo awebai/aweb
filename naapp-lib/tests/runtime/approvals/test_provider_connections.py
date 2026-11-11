@@ -100,11 +100,9 @@ def waits_for(rows, pid, holder):
 async def test_five_fenced_operations_do_not_checkout_a_sixth_connection(
     test_db_factory, registry, database_policy, phase
 ):
-    world = await passkey_world(
-        test_db_factory,
-        registry,
-        database_options={"min_connections": 5, "max_connections": 5},
-    )
+    # pgdbm's fixture already caps the pool at five. Its factory supplies the
+    # pool keywords explicitly, so passing them again is not an override.
+    world = await passkey_world(test_db_factory, registry)
     db = world.passkeys.db
     await apply_installation_migrations(db)
     await db.execute(
