@@ -11,6 +11,7 @@ from datetime import UTC, datetime, timedelta
 from types import SimpleNamespace
 
 import pytest
+from asyncpg import PostgresError
 from aweb_naapp import roles
 from aweb_naapp.hooks.owner_act import HUMAN_ROLE_ACTS
 from aweb_naapp.hooks.owner_act_nonces import OwnerActVerifier
@@ -27,7 +28,7 @@ PATH = "/.well-known/aweb-owner-act"
 CONTACT = "owner@example.com"
 
 
-async def delivery(root, registry, *, act="human-role.designate", alias="alice"):
+async def delivery(root, registry, *, act="human-role.designate", alias="alice", kind="human"):
     service, client, settings, member, installed, *_ = root
     world = getattr(client, "owner_delivery_fixture", None)
     if world is None:
@@ -52,8 +53,10 @@ async def delivery(root, registry, *, act="human-role.designate", alias="alice")
     device = None
     if act != "human-role.revoke":
         device, credential = holder_credential(settings.console_origin)
-        async with human(world, principal) as (holder, _):
-            body["certificate"] = base64.b64encode(json.dumps(holder.certificate()).encode()).decode()
+        async with human(world, principal, kind=kind) as (holder, _):
+            body["certificate"] = base64.b64encode(
+                json.dumps(holder.certificate()).encode()
+            ).decode()
         from aweb_naapp.runtime.passkeys import contact_sha256
 
         subject.update(
@@ -118,7 +121,9 @@ async def test_first_owner_is_designated_by_controller_act_and_can_log_in(root, 
     assert [event["payload"]["act"] for event in await envelopes(db, member.team_id)] == [
         "role.designated"
     ]
-    options = await client.post(settings.console_origin + "/login/options", json={"scope": held.b3_scope})
+    options = await client.post(
+        settings.console_origin + "/login/options", json={"scope": held.b3_scope}
+    )
     assert options.status_code == 200
     logged = await client.post(
         settings.console_origin + "/login",
@@ -127,7 +132,9 @@ async def test_first_owner_is_designated_by_controller_act_and_can_log_in(root, 
     assert logged.status_code == 200
 
 
-@pytest.mark.parametrize("fault", ["member-signature", "missing-certificate", "contact", "api-origin"])
+@pytest.mark.parametrize(
+    "fault", ["member-signature", "missing-certificate", "contact", "api-origin"]
+)
 async def test_refused_delivery_changes_no_owner_revision_nonce_or_audit(root, registry, fault):
     service, client, settings, member, installed, *_ = root
     body, _, _ = await delivery(root, registry)
@@ -135,7 +142,9 @@ async def test_refused_delivery_changes_no_owner_revision_nonce_or_audit(root, r
     origin = settings.console_origin
     if fault == "member-signature":
         signing = base64.b64decode(body["signing"])
-        body["signature"] = base64.b64encode(member.member_key.sign(signing).signature).decode().rstrip("=")
+        body["signature"] = (
+            base64.b64encode(member.member_key.sign(signing).signature).decode().rstrip("=")
+        )
     elif fault == "missing-certificate":
         del body["certificate"]
     elif fault == "contact":
@@ -160,14 +169,55 @@ async def test_replay_does_not_repeat_the_revision_or_governance_effect(root, re
     assert await effects(service, installed["installation_id"]) == before
 
 
+async def test_a_current_agent_member_cannot_become_the_first_owner(root, registry):
+    service, client, settings, _, installed, *_ = root
+    body, _, _ = await delivery(root, registry, kind="agent")
+    before = await effects(service, installed["installation_id"])
+    response = await client.post(settings.console_origin + PATH, json=body)
+    assert response.status_code == 403
+    assert response.json()["detail"] == "principal_not_human"
+    assert await effects(service, installed["installation_id"]) == before
+
+
+async def test_revision_write_failure_rolls_back_owner_nonce_and_governance(root, registry):
+    service, client, settings, _, installed, *_ = root
+    body, _, _ = await delivery(root, registry)
+    db = service.runtime.db()
+    before = await effects(service, installed["installation_id"])
+    # A real database failure at the app's final SQL hook, after the shared
+    # writer/audit. The route must not commit a holder without its revision.
+    await db.execute(
+        "CREATE FUNCTION refuse_owner_revision() RETURNS trigger LANGUAGE plpgsql AS $$"
+        " BEGIN RAISE EXCEPTION 'owner revision control' USING ERRCODE='P7501'; END $$"
+    )
+    await db.execute(
+        "CREATE TRIGGER refuse_owner_revision BEFORE INSERT OR UPDATE"
+        " ON {{tables.config_revisions}} FOR EACH ROW EXECUTE FUNCTION refuse_owner_revision()"
+    )
+    try:
+        with pytest.raises(PostgresError) as failure:
+            await client.post(settings.console_origin + PATH, json=body)
+        assert failure.value.sqlstate == "P7501"
+        assert await effects(service, installed["installation_id"]) == before
+    finally:
+        await db.execute("DROP TRIGGER refuse_owner_revision ON {{tables.config_revisions}}")
+        await db.execute("DROP FUNCTION refuse_owner_revision()")
+    # The exact same nonce remains usable after the failed transaction.
+    response = await client.post(settings.console_origin + PATH, json=body)
+    assert response.status_code == 200, response.text
+    assert await config_revision(db, installed["installation_id"]) == 1
+
+
 async def test_replace_retains_the_holding_and_freezes_its_credential_for_72_hours(root, registry):
     service, client, settings, member, installed, *_ = root
     first, principal, _ = await delivery(root, registry)
     assert (await client.post(settings.console_origin + PATH, json=first)).status_code == 200
     db = service.runtime.db()
     key = dict(
-        installation_id=installed["installation_id"], team_id=member.team_id,
-        role=OWNER_ROLE, principal=principal.principal_did,
+        installation_id=installed["installation_id"],
+        team_id=member.team_id,
+        role=OWNER_ROLE,
+        principal=principal.principal_did,
     )
     before = await roles.read_holding(db, **key)
     replacement, _, _ = await delivery(root, registry, act="human-credential.replace")
@@ -190,11 +240,18 @@ async def test_controller_revoke_ends_the_holding_and_moves_the_revision(root, r
     response = await client.post(settings.console_origin + PATH, json=revoke)
     assert response.status_code == 200, response.text
     db = service.runtime.db()
-    assert await roles.read_holding(
-        db, installation_id=installed["installation_id"], team_id=member.team_id,
-        role=OWNER_ROLE, principal=principal.principal_did,
-    ) is None
+    assert (
+        await roles.read_holding(
+            db,
+            installation_id=installed["installation_id"],
+            team_id=member.team_id,
+            role=OWNER_ROLE,
+            principal=principal.principal_did,
+        )
+        is None
+    )
     assert await config_revision(db, installed["installation_id"]) == 2
     assert [event["payload"]["act"] for event in await envelopes(db, member.team_id)] == [
-        "role.designated", "role.revoked"
+        "role.designated",
+        "role.revoked",
     ]

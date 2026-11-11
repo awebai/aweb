@@ -52,7 +52,9 @@ async def test_both_exact_variants_are_discoverable_only_on_the_api_origin(
         assert role["name"] == "secrets.owner"
         assert role["notice_contact"] is True
         assert role["acts"] == [
-            "human-credential.replace", "human-role.designate", "human-role.revoke"
+            "human-credential.replace",
+            "human-role.designate",
+            "human-role.revoke",
         ]
         # The shared v3 publication must preserve the released agent contract.
         assert {k: v for k, v in v3.items() if k not in {"manifest_version", "owner_acts"}} == {
@@ -73,10 +75,30 @@ async def test_owner_session_actions_are_human_routes_and_protect_the_vault_toke
         response = await client.get(API + "/manifests/v3.json")
         assert response.status_code == 200
         actions = {item["name"]: item for item in response.json()["owner_acts"]["session_actions"]}
-        assert set(actions) == {"change-set", "onepassword-token", "confirm"}
+        assert set(actions) == {
+            "draft-change",
+            "change-set",
+            "onepassword-token",
+            "onepassword-reference",
+            "confirm",
+        }
         assert all(action["role"] == "secrets.owner" for action in actions.values())
         assert not set(actions).intersection(tool["name"] for tool in TOOLS)
         assert all("scopes" not in action for action in actions.values())
+        draft = actions["draft-change"]
+        assert draft["kind"] == "draft" and draft["method"] == "POST"
+        assert draft["path"] == "/installations/{installation_id}/change-sets"
+        assert set(draft["input_schema"]["required"]) == {
+            "installation_id",
+            "changes",
+            "sealed",
+            "reason",
+        }
+        assert {item["name"] for item in draft["params"] if item["in"] == "body"} == {
+            "changes",
+            "sealed",
+            "reason",
+        }
         stage = actions["onepassword-token"]
         assert stage["kind"] == "stage"
         assert {"name": "value", "in": "body", "protected": True} in stage["params"]
@@ -86,8 +108,10 @@ async def test_owner_session_actions_are_human_routes_and_protect_the_vault_toke
         assert confirm["terminal_output"] == ["/runner_registrations/*/registration_code"]
         # Neither declaration invents an agent-callable route or accepts a cookie.
         for action in actions.values():
-            path = action["path"].replace("{installation_id}", "uninstalled").replace(
-                "{change_id}", "unknown"
+            path = (
+                action["path"]
+                .replace("{installation_id}", "uninstalled")
+                .replace("{change_id}", "unknown")
             )
             refused = await client.request(
                 action["method"], API + path, headers={"Cookie": "session=untrusted"}

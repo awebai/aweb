@@ -58,7 +58,7 @@ def holder_credential(origin):
 
 
 @asynccontextmanager
-async def human(world, principal, *, member=None, client=None):
+async def human(world, principal, *, member=None, client=None, kind="human"):
     if member is not None:
         assert client is not None
         assert member.team_id == principal.team_id
@@ -110,7 +110,7 @@ async def human(world, principal, *, member=None, client=None):
                 "id": mapping.did_aw,
                 "domain": "example.com",
                 "parent": {"kind": "namespace", "id": "example.com"},
-                "kind": "human",
+                "kind": kind,
                 "issuer_key": did_key(root),
                 "issued_at": datetime.now(UTC).strftime("%Y-%m-%dT%H:%M:%SZ"),
             }
