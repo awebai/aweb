@@ -15,6 +15,7 @@ from awid.team_certificate import TeamCertificateError, decode_team_certificate
 from fastapi import APIRouter, Depends, HTTPException, Request, Response
 from pgdbm import AsyncDatabaseManager
 
+from aweb_naapp import roles
 from aweb_naapp.console import (
     MAX_SESSION,
     ConsoleRoute,
@@ -318,19 +319,42 @@ class ConsoleHandoffs:
         return created
 
     async def _retained_certificate(self, scope: PublicScope, target) -> str:
-        row = await self.db.fetch_one(
-            "SELECT holding_identity,member_certificate FROM {{tables.console_holding_certificates}} "
-            "WHERE installation_id=$1 AND role=$2 AND principal=$3",
-            scope.installation_id,
-            scope.role,
-            scope.principal,
+        """The certificate retained with the holder's own holding, in the
+        header encoding _proof reads. It is the canonical holding record's,
+        written by designate/replace and refreshed by starts the holder signs."""
+        holding = await roles.read_holding(
+            self.db,
+            installation_id=scope.installation_id,
+            team_id=target.team_id,
+            role=scope.role,
+            principal=scope.principal,
         )
-        if row is None or row["holding_identity"] != self.authority.holding_identity(target):
+        if holding is None or holding.certificate is None:
             raise HTTPException(403, "principal_not_member")
-        return row["member_certificate"]
+        return base64.b64encode(holding.certificate).decode()
 
     async def _retain_certificate(self, tx, target, certificate: str) -> None:
+        """Retain the holder's verified start certificate: in the canonical
+        holding record, for exactly the holding now held, and in the console's
+        browser-admission cache."""
         scope = target.public_scope
+        holding = await roles.read_holding(
+            tx,
+            installation_id=scope.installation_id,
+            team_id=target.team_id,
+            role=scope.role,
+            principal=scope.principal,
+        )
+        if holding is not None:
+            await roles.refresh_holding_certificate(
+                tx,
+                installation_id=scope.installation_id,
+                team_id=target.team_id,
+                role=scope.role,
+                principal=scope.principal,
+                held_since=holding.held_since,
+                certificate=base64.b64decode(certificate, validate=True),
+            )
         await tx.execute(
             "INSERT INTO {{tables.console_holding_certificates}} VALUES($1,$2,$3,$4,$5,$6,$7) "
             "ON CONFLICT(installation_id,role,principal) DO UPDATE SET "
