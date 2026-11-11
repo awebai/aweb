@@ -593,10 +593,6 @@ func isManifestInstallSource(source string) bool {
 	return err == nil && (u.Scheme == "http" || u.Scheme == "https")
 }
 
-func installManifestPlugin(source, dir string) (*pluginInstallOutput, error) {
-	return installOrUpdateManifestPlugin(source, dir, false, "")
-}
-
 // installOrUpdateManifestPlugin installs (or updates) a manifest app. devOrigin,
 // when set, overrides the app's origin to that base URL and skips the
 // origin/fetch-URL self-consistency check, so aw can point at a self-hosted app
@@ -1603,15 +1599,6 @@ func resolveTrustedPluginCommand(name string) (pluginResolution, error) {
 		return pluginResolution{}, nil
 	}
 	return pluginResolution{Kind: pluginResolutionExternal, Path: path}, nil
-}
-
-func resolveTrustedExternalPlugin(name string) (string, bool, error) {
-	dir, err := pluginDir()
-	if err != nil {
-		debugLog("resolve plugin dir: %v", err)
-		return "", false, nil
-	}
-	return resolveTrustedExternalPluginInDir(dir, name)
 }
 
 func resolveTrustedExternalPluginInDir(dir, name string) (string, bool, error) {
