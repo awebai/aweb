@@ -53,9 +53,10 @@ def headers(secret, key, handoff, body):
 def app(db):
     human = FastAPI()
 
-    async def admitted(scope):
+    async def admitted(scope, team_id):
         return (
-            scope["installation_id"] == "00000000-0000-4000-8000-000000000001"
+            team_id == "people:example.com"
+            and scope["installation_id"] == "00000000-0000-4000-8000-000000000001"
             and scope["role"] == "example.owner"
         )
 
@@ -86,7 +87,8 @@ async def test_credential_result_is_verified_one_shot_and_authorizes_nothing(han
                 client_key=key,
                 verifier_sha256=hashlib.sha256(verifier.encode()).hexdigest(),
             )
-        )
+        ),
+        team_id="people:example.com",
     )
     handoff = created["handoff_id"]
     async with httpx.AsyncClient(
@@ -156,7 +158,11 @@ async def test_registration_is_bound_and_a_failed_challenge_cannot_be_reused(han
 
     store = HandoffStore(handoff_db)
     ids = [
-        (await store.create(parse_start(start_body(purpose="credential"))))["handoff_id"]
+        (
+            await store.create(
+                parse_start(start_body(purpose="credential")), team_id="people:example.com"
+            )
+        )["handoff_id"]
         for _ in range(2)
     ]
     async with httpx.AsyncClient(
@@ -198,7 +204,9 @@ async def test_credential_browser_writes_require_the_bound_browser_and_same_orig
     from aweb_naapp.console.handoff_store import parse_start
 
     handoff = (
-        await HandoffStore(handoff_db).create(parse_start(start_body(purpose="credential")))
+        await HandoffStore(handoff_db).create(
+            parse_start(start_body(purpose="credential")), team_id="people:example.com"
+        )
     )["handoff_id"]
     service = app(handoff_db)
     async with httpx.AsyncClient(
@@ -221,3 +229,18 @@ async def test_credential_browser_writes_require_the_bound_browser_and_same_orig
             assert (await stranger.post(path, json={}, headers=csrf)).status_code == 403
             assert (await stranger.get(f"/handoff/{handoff}/credential")).status_code == 403
         assert (await browser.post(path, json={}, headers=csrf)).status_code == 200
+
+
+async def test_credential_continuation_refuses_a_different_or_missing_team(handoff_db):
+    from aweb_naapp.console.handoff_store import parse_start
+
+    for team in ("another:example.com", None):
+        created = await HandoffStore(handoff_db).create(
+            parse_start(start_body(purpose="credential")), team_id=team
+        )
+        async with httpx.AsyncClient(
+            transport=httpx.ASGITransport(app=app(handoff_db)), base_url=ORIGIN
+        ) as browser:
+            response = await browser.get("/handoff/" + created["handoff_id"] + "/credential")
+            assert response.status_code == 403
+    assert await handoff_db.fetch_value("SELECT count(*) FROM {{tables.console_sessions}}") == 0

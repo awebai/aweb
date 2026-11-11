@@ -114,13 +114,17 @@ class HandoffStore:
         )
 
     async def create(
-        self, start: HandoffStart, *, tx: TransactionManager | None = None
+        self,
+        start: HandoffStart,
+        *,
+        tx: TransactionManager | None = None,
+        team_id: str | None = None,
     ) -> dict[str, str]:
         handoff_id = uuid4()
         expiry = await (tx or self.db).fetch_value(
             "INSERT INTO {{tables.console_handoffs}} "
-            "(handoff_id,purpose,client_key,redirect_uri,verifier_sha256,public_scope,client_hostname,expires_at) "
-            "VALUES($1,$2,$3,$4,$5,$6::jsonb,$7,clock_timestamp()+INTERVAL '10 minutes') RETURNING expires_at",
+            "(handoff_id,purpose,client_key,redirect_uri,verifier_sha256,public_scope,client_hostname,team_id,expires_at) "
+            "VALUES($1,$2,$3,$4,$5,$6::jsonb,$7,$8,clock_timestamp()+INTERVAL '10 minutes') RETURNING expires_at",
             handoff_id,
             start.purpose,
             start.client_key,
@@ -128,6 +132,7 @@ class HandoffStore:
             start.verifier_sha256,
             json.dumps(asdict(start.scope)),
             start.client_hostname,
+            team_id,
         )
         if tx is None:
             await self.prune()
@@ -179,6 +184,6 @@ def handoff_start_router(
             if session_start is None:
                 raise HTTPException(403, "role_not_held")
             return await session_start(parsed, signer, request)
-        return await store.create(parsed)
+        return await store.create(parsed, team_id=signer.team_id)
 
     return router

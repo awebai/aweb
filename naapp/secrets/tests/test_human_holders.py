@@ -60,7 +60,7 @@ async def enrolled(world):
 
 async def test_registration_target_grants_no_holding(world):
     service = authority(world)
-    target = await service.credential_target(PublicScope())
+    target = await service.credential_target(PublicScope(), team_id=TEAM)
     assert target.team_id == TEAM
     assert target.b3_scope == owner_scope(INSTALLATION_ID, TEAM, ALICE.principal_did)
     with pytest.raises(HTTPException) as refused:
@@ -412,3 +412,21 @@ async def test_only_the_actual_returned_handle_may_be_checked(enrolled):
         held = await hold(service, tx, target)
         assert not await service.check_session_target(tx, replace(held))
         assert await service.check_session_target(tx, held)
+
+
+async def test_credential_target_cannot_use_another_teams_installation(world):
+    service = authority(world)
+    with pytest.raises(HTTPException) as refused:
+        await service.credential_target(PublicScope(), team_id="another:example.com")
+    assert (refused.value.status_code, refused.value.detail) == (403, "owner_required")
+    target = await service.credential_target(PublicScope(), team_id=TEAM)
+    assert target.admitted == world.admitted
+    assert not await world.directory.owner_of(world.db, target.b3_scope)
+
+
+async def test_session_target_cannot_relabel_an_existing_owners_team(enrolled):
+    with pytest.raises(HTTPException) as refused:
+        await authority(enrolled).session_target(PublicScope(), team_id="another:example.com")
+    assert (refused.value.status_code, refused.value.detail) == (403, "owner_required")
+    target = await authority(enrolled).session_target(PublicScope(), team_id=TEAM)
+    assert target.team_id == TEAM
