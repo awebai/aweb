@@ -11,7 +11,7 @@ services:
     rootDir: ""
     dockerfilePath: ./naapp/folio/Dockerfile
     dockerContext: .
-    healthCheckPath: /health
+    healthCheckPath: /live
     envVars:
       - key: FOLIO_DATABASE_URL
         sync: false

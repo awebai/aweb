@@ -45,7 +45,8 @@ const (
 //	<dir>/registry.d/<key>.json    one registration per instance home
 //	<dir>/instances.d/<key>.json   lifecycle, pause, readiness and delivery status
 //	<dir>/status.json              what `aw wake status` reads when the daemon is down
-//	<dir>/lock/                    the one-daemon-per-host lock
+//	<dir>/daemon.lock              the one-daemon-per-host lock
+//	<dir>/daemon.lock.pid          the pid of the daemon holding it
 //	<dir>/control.sock             the daemon's local control socket
 //
 // <key> is the SHA-256 of the canonical instance home path. Go stores no
@@ -86,8 +87,8 @@ func NewStore(dir string) (*Store, error) {
 	return s, nil
 }
 
-func (s *Store) Dir() string     { return s.dir }
-func (s *Store) LockDir() string { return filepath.Join(s.dir, "lock") }
+func (s *Store) Dir() string      { return s.dir }
+func (s *Store) LockPath() string { return filepath.Join(s.dir, "daemon.lock") }
 func (s *Store) SocketPath() string {
 	return custodypath.Shorten(filepath.Join(s.dir, "control.sock"), maxSocketPath)
 }

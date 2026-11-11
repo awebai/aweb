@@ -149,7 +149,9 @@ def email_settings(smtp: SmtpServer, directory: Path) -> EmailSettings:
 
 
 @pytest.fixture
-async def deployment(coordination, test_db_factory, tmp_path) -> AsyncIterator[Deployment]:
+async def deployment(
+    request: pytest.FixtureRequest, coordination, test_db_factory, tmp_path
+) -> AsyncIterator[Deployment]:
     member = Member(team_id=f"logs-{uuid4().hex[:12]}:readers.example")
     await coordination.add_member(member)
     await coordination.publish_server(member)
@@ -174,6 +176,7 @@ async def deployment(coordination, test_db_factory, tmp_path) -> AsyncIterator[D
         awid_registry_url=REGISTRY_URL,
         awid_service_token=SERVICE_TOKEN,
         app_key_files=key_files,
+        **getattr(request, "param", {}),
     )
     with blocked_dns() as looked_up, SmtpServer(tmp_path / "smtp") as smtp:
         service = create_app(
@@ -360,6 +363,22 @@ async def enrolled_reader(deployment: Deployment, contact: str) -> str:
     )
     assert enrolled.json() == {"scope": scope}
     return scope
+
+
+@pytest.mark.parametrize("deployment", [{"client_address_header": "X-Real-IP"}], indirect=True)
+async def test_the_login_limit_is_kept_per_address_the_proxy_reports(deployment: Deployment):
+    scope = await enrolled_reader(deployment, CONTACT)
+
+    async def login_options(address: str) -> int:
+        response = await deployment.console.post(
+            "/login/options", json={"scope": scope}, headers={"X-Real-IP": address}
+        )
+        return response.status_code
+
+    # Both clients reach the app from the proxy's one peer address.
+    statuses = [await login_options("198.51.100.7") for _ in range(20)]
+    assert statuses[0] == 200 and statuses[-1] == 429
+    assert await login_options("198.51.100.8") == 200
 
 
 async def test_a_member_removes_a_reader_but_never_the_last(deployment: Deployment):

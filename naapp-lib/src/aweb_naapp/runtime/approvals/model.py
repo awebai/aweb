@@ -318,23 +318,35 @@ class Admission:
 
 
 class PolicySource(Protocol):
-    async def current(self, policy_ref: str) -> ActionPolicy | None: ...
+    async def current(
+        self, policy_ref: str, *, tx: TransactionManager | None = None
+    ) -> ActionPolicy | None:
+        """Use the supplied transaction for every SQL read; never acquire another connection."""
+        ...
 
 
 class ApproverDirectory(Protocol):
     """The app's trusted source of approvers. A caller never names one."""
 
     async def candidates(
-        self, policy: ActionPolicy, request: Mapping[str, Any]
+        self,
+        policy: ActionPolicy,
+        request: Mapping[str, Any],
+        *,
+        tx: TransactionManager | None = None,
     ) -> Sequence[Approver]:
         """The individually designated approvers eligible for this request
         under this policy, one per person: never a group, role or shared
-        subject. The app may read the frozen request to find them."""
+        subject. The app may read the frozen request to find them. All SQL
+        reads use tx when supplied, including nested directory/B3 reads."""
         ...
 
-    async def is_current(self, scope: str, subject: str) -> bool:
+    async def is_current(
+        self, scope: str, subject: str, *, tx: TransactionManager | None = None
+    ) -> bool:
         """Whether this approver is still designated in this scope. A decision
-        is only as good as its approver's current designation."""
+        is only as good as its approver's current designation. A supplied tx
+        owns every read; a provider never checks out a second connection."""
         ...
 
 

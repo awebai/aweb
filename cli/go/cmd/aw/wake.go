@@ -85,7 +85,7 @@ var wakeRunCmd = &cobra.Command{
 			return err
 		}
 
-		lock, err := wake.AcquireLock(store.LockDir())
+		lock, err := wake.AcquireLock(store.LockPath())
 		if err != nil {
 			var running *wake.ErrDaemonAlreadyRunning
 			if errors.As(err, &running) {

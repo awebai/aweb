@@ -89,6 +89,7 @@ async def reader_service(
     *,
     signer: LogsSigner,
     console_origin: str,
+    client_address_header: str | None,
     delivery: PasskeyDelivery,
     backlog_age: timedelta,
 ) -> ReaderService:
@@ -157,7 +158,10 @@ async def reader_service(
     )
     sessions = ConsoleSessions(db, passkeys=passkeys, scopes=directory.is_current_reader)
     limiter = LoginLimiter(
-        db, client_identity=ClientIdentity(), limit=12, window=timedelta(minutes=1)
+        db,
+        client_identity=ClientIdentity(trusted_header=client_address_header),
+        limit=12,
+        window=timedelta(minutes=1),
     )
     return ReaderService(
         db=db,

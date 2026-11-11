@@ -146,7 +146,7 @@ class UseStatus:
                 return self._unavailable(receipt)
             try:
                 view = await self._approvals.requester_view(
-                    link["approval_ref"], row["principal_did"]
+                    link["approval_ref"], row["principal_did"], tx=tx
                 )
             except ApprovalRefused:
                 return self._unavailable(receipt)

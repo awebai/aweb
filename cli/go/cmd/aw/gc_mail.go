@@ -418,9 +418,9 @@ func init() {
 		gcMailUnsupported("mark-unread <id>", "Not supported: read state cannot be cleared",
 			"gc mail mark-unread is not supported: the aweb server has no way to clear read state, and read state drives the wake path. Use 'gc mail thread' or 'gc mail peek' for a look that changes nothing"),
 		gcMailUnsupported("archive <id>", "Not supported: aweb mail is delivery, not storage",
-			"gc mail archive is not supported: aweb mail cannot be removed on request; it expires under the server's retention policy. Use 'gc mail mark-read' to clear the unread count. Note that gc's own archive DELETES the message bead, which this provider deliberately will not imitate"),
+			"gc mail archive is not supported: aweb mail cannot be removed on request. Use 'gc mail mark-read' to clear the unread count. Note that gc's own archive DELETES the message bead, which this provider deliberately will not imitate"),
 		gcMailUnsupported("delete <id>", "Not supported: aweb mail is delivery, not storage",
-			"gc mail delete is not supported: aweb mail cannot be removed on request; it expires under the server's retention policy. Use 'gc mail mark-read' to clear the unread count"),
+			"gc mail delete is not supported: aweb mail cannot be removed on request. Use 'gc mail mark-read' to clear the unread count"),
 	)
 
 	rootCmd.AddCommand(gcMailCmd)

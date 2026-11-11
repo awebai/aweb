@@ -280,17 +280,17 @@ class Approvals:
         sent: the caller passes the returned `PendingApproval` to `deliver`
         after the commit, so no link points at an approval that rolled back.
 
-        The directory is read on its own connection, not in `tx`, so it does
-        not see designations or roles the caller wrote earlier in the same
-        transaction: designate and mint in separate transactions."""
-        policy = await self._policies.current(policy_ref)
+        Policy and directory reads use `tx` when supplied, so the caller's
+        uncommitted role/designation changes are visible and share its rollback.
+        No provider acquires another connection while that caller holds F6."""
+        policy = await self._policies.current(policy_ref, tx=tx)
         if policy is None:
             raise ApprovalRefused(Refusal.POLICY_UNKNOWN)
         if (presentation is PresentationKind.TASK) != (presentation_ref is not None):
             raise ApprovalRefused(Refusal.PRESENTATION_MISMATCH)
         if presentation is PresentationKind.TASK and self._task_answers is None:
             raise ApprovalRefused(Refusal.PRESENTATION_UNSUPPORTED)
-        approvers = await self._eligible(policy, request, requested_by, presentation)
+        approvers = await self._eligible(policy, request, requested_by, presentation, tx=tx)
         if not approvers:
             raise ApprovalRefused(Refusal.NO_ELIGIBLE_APPROVER)
 
@@ -386,13 +386,15 @@ class Approvals:
         request: Mapping[str, Any],
         requested_by: str,
         presentation: PresentationKind,
+        *,
+        tx: TransactionManager | None = None,
     ) -> list[Approver]:
         """The directory's approvers in the policy's scopes, one per subject,
         without the requester unless the policy allows it. A link presentation
         needs each candidate's contact, where its link goes; a task
         presentation needs each candidate's principal, to match the answer's."""
         eligible: dict[str, Approver] = {}
-        for approver in await self._approvers.candidates(policy, request):
+        for approver in await self._approvers.candidates(policy, request, tx=tx):
             if approver.scope not in policy.approver_scopes:
                 continue
             if _is_requester(approver, requested_by) and not policy.allow_requester_approval:
@@ -411,10 +413,12 @@ class Approvals:
             logger.exception("approval link delivery failed for approval %s", approval.approval_id)
             return DeliveryStatus.FAILED
 
-    async def requester_view(self, request_id: str, requested_by: str) -> RequesterView:
+    async def requester_view(
+        self, request_id: str, requested_by: str, *, tx: TransactionManager | None = None
+    ) -> RequesterView:
         """The requester's own view. Another caller gets `not_found`, as for an
         unknown request."""
-        approval = await self._store.get_by_request(request_id)
+        approval = await self.for_request(request_id, tx=tx)
         if approval is None or approval.requested_by != requested_by:
             raise ApprovalRefused(Refusal.NOT_FOUND)
         return self._view(approval, self._clock())
@@ -433,38 +437,66 @@ class Approvals:
         """The time on the clock these approvals expire by."""
         return self._clock()
 
-    async def get(self, approval_id: str) -> Approval | None:
-        return await self._store.get(approval_id)
+    async def get(
+        self, approval_id: str, *, tx: TransactionManager | None = None
+    ) -> Approval | None:
+        return (
+            await self._store.get(approval_id)
+            if tx is None
+            else await self._store.get_in(approval_id, tx)
+        )
 
-    async def for_request(self, request_id: str) -> Approval | None:
-        return await self._store.get_by_request(request_id)
+    async def for_request(
+        self, request_id: str, *, tx: TransactionManager | None = None
+    ) -> Approval | None:
+        return (
+            await self._store.get_by_request(request_id)
+            if tx is None
+            else await self._store.get_by_request_in(request_id, tx)
+        )
 
     # The approver
 
-    async def open_link(self, link_token: str) -> LinkedApproval:
+    async def open_link(
+        self, link_token: str, *, tx: TransactionManager | None = None
+    ) -> LinkedApproval:
         """What the link locates, for the candidate it was sent to. Reading
         consumes nothing. The request itself is included only when the policy
         lets link possession reveal it; otherwise the approver authenticates
-        first with `view`."""
-        link = await self._usable_link(link_token)
-        approval = await self._store.get(link.approval_id)
+        first with `view`. With tx supplied every read uses its connection,
+        including policy and request reads; no second checkout spans F6."""
+        link = await self._usable_link(link_token, tx=tx)
+        approval = await self.get(link.approval_id, tx=tx)
         if approval is None or approval.state_at(self._clock()) is not ApprovalState.PENDING:
             raise ApprovalRefused(Refusal.LINK_UNAVAILABLE)
         candidate = approval.candidate(link.candidate_subject)
         assert candidate is not None
-        policy = await self._policies.current(approval.policy_ref)
+        policy = await self._policies.current(approval.policy_ref, tx=tx)
         revealed = policy is not None and policy.reveals_request_on_link()
         return LinkedApproval(
             approval=_seen_by(approval, candidate),
-            request=await self._request(approval) if revealed else None,
+            request=await self._request(approval, tx=tx) if revealed else None,
         )
 
-    async def _request(self, approval: Approval) -> Mapping[str, Any]:
-        canonical = await self._store.request_canonical(approval.request_ref)
+    async def _request(
+        self, approval: Approval, *, tx: TransactionManager | None = None
+    ) -> Mapping[str, Any]:
+        canonical = (
+            await self._store.request_canonical(approval.request_ref)
+            if tx is None
+            else await self._store.request_canonical_in(approval.request_ref, tx)
+        )
         return json.loads(canonical[len(DOMAIN_PREFIX) :])["request"]
 
-    async def _usable_link(self, link_token: str) -> ApprovalLink:
-        link = await self._store.find_link(link_verifier(link_token))
+    async def _usable_link(
+        self, link_token: str, *, tx: TransactionManager | None = None
+    ) -> ApprovalLink:
+        verifier = link_verifier(link_token)
+        link = (
+            await self._store.find_link(verifier)
+            if tx is None
+            else await self._store.find_link_in(verifier, tx)
+        )
         if link is None or not link.lifetime.usable_at(self._clock()):
             raise ApprovalRefused(Refusal.LINK_UNAVAILABLE)
         return link
@@ -520,37 +552,52 @@ class Approvals:
             raise ApprovalRefused(Refusal.NOT_PENDING)
         return approval
 
-    async def _current_policy(self, approval: Approval) -> ActionPolicy:
-        policy = await self._policies.current(approval.policy_ref)
+    async def _current_policy(
+        self, approval: Approval, *, tx: TransactionManager | None = None
+    ) -> ActionPolicy:
+        policy = await self._policies.current(approval.policy_ref, tx=tx)
         if policy is None:
             raise ApprovalRefused(Refusal.POLICY_UNKNOWN)
         if policy.version != approval.policy_version:
             raise ApprovalRefused(Refusal.POLICY_CHANGED)
         return policy
 
-    async def _still_eligible(self, approval: Approval, candidate: Candidate) -> bool:
+    async def _still_eligible(
+        self, approval: Approval, candidate: Candidate, *, tx: TransactionManager | None = None
+    ) -> bool:
         return candidate.retired_at is None and await self._approvers.is_current(
-            candidate.scope, candidate.subject
+            candidate.scope, candidate.subject, tx=tx
         )
 
     async def _check_candidate(
-        self, approval: Approval, candidate: Candidate, policy: ActionPolicy
+        self,
+        approval: Approval,
+        candidate: Candidate,
+        policy: ActionPolicy,
+        *,
+        tx: TransactionManager | None = None,
     ) -> None:
         """The candidate may still decide: still designated, not retired, and
         not the requester unless the policy allows it."""
         if _is_requester(candidate, approval.requested_by) and not policy.allow_requester_approval:
             raise ApprovalRefused(Refusal.NO_ELIGIBLE_APPROVER)
-        if await self._still_eligible(approval, candidate):
+        if await self._still_eligible(approval, candidate, tx=tx):
             return
         for other in approval.candidates:
-            if other.subject != candidate.subject and await self._still_eligible(approval, other):
+            if other.subject != candidate.subject and await self._still_eligible(
+                approval, other, tx=tx
+            ):
                 raise ApprovalRefused(Refusal.APPROVER_RETIRED)
         raise ApprovalRefused(Refusal.NO_ELIGIBLE_APPROVER)
 
-    async def _check_decider(self, approval: Approval) -> None:
+    async def _check_decider(
+        self, approval: Approval, *, tx: TransactionManager | None = None
+    ) -> None:
         """The approver who decided is still designated and not retired."""
         decider = approval.decided_by
-        if decider is None or not await self._approvers.is_current(decider.scope, decider.subject):
+        if decider is None or not await self._approvers.is_current(
+            decider.scope, decider.subject, tx=tx
+        ):
             raise ApprovalRefused(Refusal.APPROVER_RETIRED)
         candidate = approval.candidate(decider.subject)
         if candidate is None or candidate.retired_at is not None:
@@ -751,7 +798,10 @@ class Approvals:
             if locked_candidate is None:
                 raise ApprovalRefused(Refusal.APPROVER_MISMATCH)
             await self._check_candidate(
-                current, locked_candidate, await self._current_policy(current)
+                current,
+                locked_candidate,
+                await self._current_policy(current, tx=locked.transaction),
+                tx=locked.transaction,
             )
             now = self._clock()
             state = (
@@ -931,8 +981,8 @@ class Approvals:
                     raise ApprovalRefused(Refusal.REVOKED)
                 if self._clock() >= approval.expires_at:
                     raise ApprovalRefused(Refusal.EXPIRED)
-                await self._current_policy(approval)
-                await self._check_decider(approval)
+                await self._current_policy(approval, tx=locked.transaction)
+                await self._check_decider(approval, tx=locked.transaction)
                 if await locked.unreconciled_dispatch_exists():
                     raise ApprovalRefused(Refusal.UNRECONCILED_DISPATCH)
                 now = self._clock()
@@ -954,8 +1004,8 @@ class Approvals:
             now = self._clock()
             if approval.state_at(now) is ApprovalState.EXPIRED:
                 raise ApprovalRefused(Refusal.EXPIRED)
-            policy = await self._current_policy(approval)
-            await self._check_decider(approval)
+            policy = await self._current_policy(approval, tx=locked.transaction)
+            await self._check_decider(approval, tx=locked.transaction)
             assert approval.decided_by is not None
             if not approval.decided_by.assurance.satisfies(policy.min_assurance):
                 raise ApprovalRefused(Refusal.ASSURANCE_INSUFFICIENT)

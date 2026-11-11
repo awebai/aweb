@@ -248,7 +248,7 @@ class ReconciliationControls:
         ):
             raise ReconciliationRefused("reconciliation_conflict")
         [delivery] = pending.deliveries
-        linked = await self._approvals.open_link(delivery.link_token)
+        linked = await self._approvals.open_link(delivery.link_token, tx=tx)
         if (
             linked.approval.approval_id != control.approval_id
             or len(linked.approval.candidates) != 1

@@ -2,17 +2,20 @@
 
 from __future__ import annotations
 
-from typing import Any, Literal, Optional
+from typing import Any, Optional
 
 from fastapi import APIRouter, Depends, HTTPException, Query, Request
 from pydantic import BaseModel, ConfigDict, Field
 from fastapi.responses import JSONResponse
 
 from aweb.team_auth_deps import TeamIdentity, get_team_identity, team_identity_with_grant_scope
-from aweb.hooks import fire_mutation_hook
+from aweb.hooks import fire_mutation_hook, mutation_callback
 from aweb.service_errors import NotFoundError, ServiceError
 from aweb.task_contracts import AnswerRequest, parse_contract, strict_json_bytes
 from aweb.coordination.tasks_service import (
+    AddCommentRequest,
+    CreateTaskRequest,
+    UpdateTaskRequest,
     add_comment,
     add_dependency,
     create_task,
@@ -39,43 +42,10 @@ router = APIRouter(prefix="/v1/tasks", tags=["tasks"])
 router.include_router(app_tasks_router)
 
 
-class CreateTaskRequest(BaseModel):
-    model_config = ConfigDict(extra="forbid")
-
-    title: str = Field(..., min_length=1, max_length=4096)
-    description: str = Field("", max_length=65536)
-    notes: str = Field("", max_length=65536)
-    priority: int = Field(2, ge=0, le=4)
-    task_type: Literal["task", "bug", "feature", "epic", "chore"] = "task"
-    labels: list[str] = Field(default_factory=list)
-    parent_task_id: Optional[str] = None
-    assignee_alias: Optional[str] = None
-
-
-class UpdateTaskRequest(BaseModel):
-    model_config = ConfigDict(extra="forbid")
-
-    title: Optional[str] = Field(None, min_length=1, max_length=4096)
-    description: Optional[str] = Field(None, max_length=65536)
-    notes: Optional[str] = Field(None, max_length=65536)
-    status: Optional[Literal["open", "in_progress", "closed"]] = None
-    priority: Optional[int] = Field(None, ge=0, le=4)
-    task_type: Optional[Literal["task", "bug", "feature", "epic", "chore"]] = None
-    labels: Optional[list[str]] = None
-    assignee_alias: Optional[str] = None
-    parent_task_id: Optional[str] = None
-
-
 class AddDependencyRequest(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     depends_on: str = Field(..., min_length=1)
-
-
-class AddCommentRequest(BaseModel):
-    model_config = ConfigDict(extra="forbid")
-
-    body: str = Field(..., min_length=1, max_length=65536)
 
 
 class ActiveWorkTaskSummary(BaseModel):
@@ -111,36 +81,12 @@ async def create_task_route(
     db_infra: DatabaseInfra = Depends(get_db_infra),
     identity: TeamIdentity = Depends(team_identity_with_grant_scope("coord.write")),
 ) -> dict[str, Any]:
-    result = await create_task(
+    return await create_task(
         db_infra,
-        team_id=identity.team_id,
-        created_by_alias=identity.alias,
-        created_by_did=identity.did_aw or identity.did_key,
-        title=payload.title,
-        description=payload.description,
-        notes=payload.notes,
-        priority=payload.priority,
-        task_type=payload.task_type,
-        labels=payload.labels,
-        parent_task_id=payload.parent_task_id,
-        assignee_alias=payload.assignee_alias,
+        actor=identity,
+        on_mutation=mutation_callback(request),
+        **payload.model_dump(),
     )
-    await fire_mutation_hook(
-        request,
-        "task.created",
-        {
-            "task_id": result["task_id"],
-            "team_id": identity.team_id,
-            "task_ref": result["task_ref"],
-            "title": result["title"],
-            "parent_task_id": result["parent_task_id"],
-            "assignee_alias": result["assignee_alias"],
-            "actor_agent_id": identity.agent_id,
-            "actor_alias": identity.alias,
-            "actor_did_aw": identity.did_aw,
-        },
-    )
-    return result
 
 
 @router.get("")
@@ -246,6 +192,7 @@ async def answer_task_route(
                 "old_status": "open", "new_status": "closed",
                 "actor_agent_id": identity.agent_id, "actor_alias": identity.alias,
                 "actor_did_aw": identity.did_aw, "assignee_alias": outcome["assignee_alias"],
+                "released_claim_workspace_ids": outcome["released_claim_workspace_ids"],
             })
             await fire_mutation_hook(request, "task.comment_added", {
                 "task_id": str(task_id), "comment_id": outcome["comment_id"],
@@ -280,83 +227,13 @@ async def update_task_route(
     db_infra: DatabaseInfra = Depends(get_db_infra),
     identity: TeamIdentity = Depends(team_identity_with_grant_scope("coord.write")),
 ) -> dict[str, Any]:
-    kwargs: dict[str, Any] = {}
-    if payload.title is not None:
-        kwargs["title"] = payload.title
-    if payload.description is not None:
-        kwargs["description"] = payload.description
-    if payload.notes is not None:
-        kwargs["notes"] = payload.notes
-    if payload.status is not None:
-        kwargs["status"] = payload.status
-    if payload.priority is not None:
-        kwargs["priority"] = payload.priority
-    if payload.task_type is not None:
-        kwargs["task_type"] = payload.task_type
-    if payload.labels is not None:
-        kwargs["labels"] = payload.labels
-    if "assignee_alias" in payload.model_fields_set:
-        kwargs["assignee_alias"] = payload.assignee_alias
-    if "parent_task_id" in payload.model_fields_set:
-        kwargs["parent_task_id"] = payload.parent_task_id
-
-    assignment_change: dict[str, Any] = {}
-    result = await update_task(
+    return await update_task(
         db_infra,
-        team_id=identity.team_id,
+        actor=identity,
+        on_mutation=mutation_callback(request),
         ref=ref,
-        actor_alias=identity.alias,
-        assignment_change=assignment_change,
-        **kwargs,
+        **payload.changes(),
     )
-
-    old_status = result.pop("old_status", None)
-    if old_status is not None:
-        await fire_mutation_hook(
-            request,
-            "task.status_changed",
-            {
-                "task_id": result["task_id"],
-                "team_id": identity.team_id,
-                "task_ref": result["task_ref"],
-                "title": result["title"],
-                "old_status": old_status,
-                "new_status": result["status"],
-                "assignee_alias": result["assignee_alias"],
-                "parent_task_id": result["parent_task_id"],
-                "actor_agent_id": identity.agent_id,
-                "actor_alias": identity.alias,
-                "actor_did_aw": identity.did_aw,
-                "claim_preacquired": result.pop("claim_preacquired", False),
-            },
-        )
-    else:
-        await fire_mutation_hook(
-            request,
-            "task.updated",
-            {
-                "task_id": result["task_id"],
-                "task_ref": result["task_ref"],
-                "actor_agent_id": identity.agent_id,
-                "actor_did_aw": identity.did_aw,
-            },
-        )
-    if assignment_change:
-        await fire_mutation_hook(
-            request,
-            "task.assignee_changed",
-            {
-                "task_id": result["task_id"],
-                "team_id": identity.team_id,
-                "task_ref": result["task_ref"],
-                "title": result["title"],
-                "actor_agent_id": identity.agent_id,
-                "actor_alias": identity.alias,
-                "actor_did_aw": identity.did_aw,
-                **assignment_change,
-            },
-        )
-    return result
 
 
 @router.delete("/{ref}")
@@ -366,18 +243,7 @@ async def delete_task_route(
     db_infra: DatabaseInfra = Depends(get_db_infra),
     identity: TeamIdentity = Depends(get_team_identity),
 ) -> dict[str, Any]:
-    result = await soft_delete_task(db_infra, team_id=identity.team_id, ref=ref)
-    await fire_mutation_hook(
-        request,
-        "task.deleted",
-        {
-            "task_id": result["task_id"],
-            "task_ref": result["task_ref"],
-            "actor_agent_id": identity.agent_id,
-            "actor_did_aw": identity.did_aw,
-        },
-    )
-    return result
+    return await soft_delete_task(db_infra, actor=identity, on_mutation=mutation_callback(request), ref=ref)
 
 
 @router.post("/{ref}/deps")
@@ -388,20 +254,13 @@ async def add_dependency_route(
     db_infra: DatabaseInfra = Depends(get_db_infra),
     identity: TeamIdentity = Depends(team_identity_with_grant_scope("coord.write")),
 ) -> dict[str, Any]:
-    result = await add_dependency(
-        db_infra, team_id=identity.team_id, task_ref=ref, depends_on_ref=payload.depends_on
+    return await add_dependency(
+        db_infra,
+        actor=identity,
+        on_mutation=mutation_callback(request),
+        task_ref=ref,
+        depends_on_ref=payload.depends_on,
     )
-    await fire_mutation_hook(
-        request,
-        "task.dependency_added",
-        {
-            "task_id": result["task_id"],
-            "depends_on_task_id": result["depends_on_id"],
-            "actor_agent_id": identity.agent_id,
-            "actor_did_aw": identity.did_aw,
-        },
-    )
-    return result
 
 
 @router.delete("/{ref}/deps/{dep_ref}")
@@ -412,18 +271,13 @@ async def remove_dependency_route(
     db_infra: DatabaseInfra = Depends(get_db_infra),
     identity: TeamIdentity = Depends(team_identity_with_grant_scope("coord.write")),
 ) -> dict[str, Any]:
-    result = await remove_dependency(db_infra, team_id=identity.team_id, task_ref=ref, dep_ref=dep_ref)
-    await fire_mutation_hook(
-        request,
-        "task.dependency_removed",
-        {
-            "task_id": result["task_id"],
-            "removed_depends_on_task_id": result["removed_depends_on_id"],
-            "actor_agent_id": identity.agent_id,
-            "actor_did_aw": identity.did_aw,
-        },
+    return await remove_dependency(
+        db_infra,
+        actor=identity,
+        on_mutation=mutation_callback(request),
+        task_ref=ref,
+        dep_ref=dep_ref,
     )
-    return result
 
 
 @router.post("/{ref}/comments")
@@ -434,18 +288,13 @@ async def add_comment_route(
     db_infra: DatabaseInfra = Depends(get_db_infra),
     identity: TeamIdentity = Depends(team_identity_with_grant_scope("coord.write")),
 ) -> dict[str, Any]:
-    result = await add_comment(db_infra, team_id=identity.team_id, ref=ref, author_alias=identity.alias, body=payload.body)
-    await fire_mutation_hook(
-        request,
-        "task.comment_added",
-        {
-            "task_id": result["task_id"],
-            "comment_id": result["comment_id"],
-            "actor_agent_id": identity.agent_id,
-            "actor_did_aw": identity.did_aw,
-        },
+    return await add_comment(
+        db_infra,
+        actor=identity,
+        on_mutation=mutation_callback(request),
+        ref=ref,
+        body=payload.body,
     )
-    return result
 
 
 @router.get("/{ref}/comments")

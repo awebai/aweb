@@ -3,6 +3,7 @@ package wake
 import (
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -327,42 +328,46 @@ func TestStoreLayoutMatchesTheNote(t *testing.T) {
 	if store.SocketPath() != filepath.Join(store.Dir(), "control.sock") {
 		t.Errorf("socket path=%s", store.SocketPath())
 	}
-	if store.LockDir() != filepath.Join(store.Dir(), "lock") {
-		t.Errorf("lock dir=%s", store.LockDir())
+	if store.LockPath() != filepath.Join(store.Dir(), "daemon.lock") {
+		t.Errorf("lock path=%s", store.LockPath())
 	}
 }
 
 func TestLockIsOneDaemonPerHostAndReclaimsAStaleOwner(t *testing.T) {
 	store := tempStore(t)
 
-	lock, err := AcquireLock(store.LockDir())
+	lock, err := AcquireLock(store.LockPath())
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err := AcquireLock(store.LockDir()); err == nil {
+	if _, err := AcquireLock(store.LockPath()); err == nil {
 		t.Fatal("a second daemon took the lock")
 	} else if _, ok := err.(*ErrDaemonAlreadyRunning); !ok {
 		t.Fatalf("err=%v want ErrDaemonAlreadyRunning", err)
 	}
-	if pid, alive := LockOwner(store.LockDir()); pid != os.Getpid() || !alive {
+	if pid, alive := LockOwner(store.LockPath()); pid != os.Getpid() || !alive {
 		t.Fatalf("owner pid=%d alive=%t", pid, alive)
 	}
 	if err := lock.Release(); err != nil {
 		t.Fatal(err)
 	}
 
-	// A lock left by a process that no longer exists must be reclaimable: a
-	// broker crash may not make a restart impossible, because restart is the
-	// documented recovery (§6).
-	if err := os.MkdirAll(store.LockDir(), 0o700); err != nil {
+	// A directory at <dir>/lock holding the pid of a live process is not the
+	// lock and is not consulted: a broker crash may not make a restart
+	// impossible, because restart is the documented recovery (§6).
+	lockDir := filepath.Join(store.Dir(), "lock")
+	if err := os.MkdirAll(lockDir, 0o700); err != nil {
 		t.Fatal(err)
 	}
-	if err := os.WriteFile(filepath.Join(store.LockDir(), "pid"), []byte("4194303\n"), 0o600); err != nil {
+	if err := os.WriteFile(filepath.Join(lockDir, "pid"), []byte(strconv.Itoa(os.Getpid())+"\n"), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	reclaimed, err := AcquireLock(store.LockDir())
+	if _, held := LockOwner(store.LockPath()); held {
+		t.Fatal("a released lock reads as held")
+	}
+	reclaimed, err := AcquireLock(store.LockPath())
 	if err != nil {
-		t.Fatalf("a stale lock blocked restart: %v", err)
+		t.Fatalf("a lock directory blocked restart: %v", err)
 	}
 	_ = reclaimed.Release()
 }

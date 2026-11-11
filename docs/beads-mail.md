@@ -168,9 +168,10 @@ reaches the delegate — bd intercepts `--help` itself).
 ### Not supported, and why
 
 `mark-unread`, `archive`, `delete`, and `clear` don't exist here: aweb
-mail is delivery, not permanent storage — messages cannot be deleted,
-and a deployment may garbage-collect them starting around 30 days, so
-never treat the mail server as an archive. **The durable record is your
+mail is delivery, not permanent storage — messages cannot be deleted
+on request. The server deletes no mail automatically, but a deployment's
+operator may set a retention policy of its own, so never treat the mail
+server as an archive. **The durable record is your
 beads graph.**
 
 To have that record kept automatically, turn on dual-write in

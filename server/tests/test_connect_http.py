@@ -662,3 +662,61 @@ async def test_connect_http_allows_rejoin_after_soft_deleted_agent(connect_app):
     assert rows[0]["deleted_at"] is None
     assert str(rows[1]["agent_id"]) == str(deleted_agent_id)
     assert rows[1]["deleted_at"] is not None
+
+
+@pytest.mark.asyncio
+async def test_connect_http_restores_soft_deleted_repo(connect_app):
+    """Connecting from a checkout of a deleted repo brings the team's repo row back."""
+    team_sk, _, team_did_key = _make_keypair()
+    agent_sk, _, agent_did_key = _make_keypair()
+
+    cert = _make_certificate(
+        team_sk, team_did_key, agent_did_key,
+        team_id="backend:acme.com",
+        alias="alice",
+        identity_scope="global",
+    )
+    body = {
+        "hostname": "Mac.local",
+        "workspace_path": "/Users/alice/project",
+        "repo_origin": "https://github.com/acme/backend.git",
+    }
+    body_bytes = json.dumps(body).encode()
+
+    await _register_controller(connect_app, team_did_key)
+    client = connect_app.client
+
+    async def connect():
+        headers = _signed_request(agent_sk, agent_did_key, "backend:acme.com", body_bytes)
+        headers["X-AWID-Team-Certificate"] = _encode_certificate(cert)
+        return await client.post(
+            "/v1/connect",
+            content=body_bytes,
+            headers={**headers, "Content-Type": "application/json"},
+        )
+
+    first = await connect()
+    assert first.status_code == 200, first.text
+
+    repo = await connect_app.db.fetch_one(
+        "SELECT id FROM {{tables.repos}} WHERE team_id = $1", "backend:acme.com"
+    )
+    await connect_app.db.execute(
+        "UPDATE {{tables.workspaces}} SET deleted_at = NOW() WHERE repo_id = $1", repo["id"]
+    )
+    await connect_app.db.execute(
+        "UPDATE {{tables.repos}} SET deleted_at = NOW() WHERE id = $1", repo["id"]
+    )
+
+    second = await connect()
+    assert second.status_code == 200, second.text
+
+    repos = await connect_app.db.fetch_all(
+        "SELECT id, deleted_at FROM {{tables.repos}} WHERE team_id = $1", "backend:acme.com"
+    )
+    assert [(row["id"], row["deleted_at"]) for row in repos] == [(repo["id"], None)]
+    workspace = await connect_app.db.fetch_one(
+        "SELECT repo_id FROM {{tables.workspaces}} WHERE workspace_id = $1",
+        second.json()["workspace_id"],
+    )
+    assert workspace["repo_id"] == repo["id"]

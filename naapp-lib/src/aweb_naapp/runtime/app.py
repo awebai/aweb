@@ -27,6 +27,7 @@ may also supply its own font directory; its licensing remains with that app.
 from __future__ import annotations
 
 import asyncio
+import base64
 import hashlib
 import json
 import logging
@@ -62,7 +63,7 @@ from aweb_naapp.manifest import (
     fill_manifest,
     load_manifest,
 )
-from aweb_naapp.outbox import outbox_status, run_drain
+from aweb_naapp.outbox import oldest_undelivered_age_seconds, run_drain
 from aweb_naapp.robots import robots_txt
 from aweb_naapp.runtime.app_credentials import APP_GRANT_READ, HOOK_RESOLVE, AppCredentialSigner
 from aweb_naapp.runtime.app_keys import AppKeyError, declared_did_keys, load_app_key
@@ -113,6 +114,7 @@ if TYPE_CHECKING:
     from pgdbm.core import TransactionManager
 
     from aweb_naapp.egress import Egress
+    from aweb_naapp.runtime.owner_act_delivery import CheckedHumanRoleMember
 
 logger = logging.getLogger(__name__)
 
@@ -120,6 +122,9 @@ logger = logging.getLogger(__name__)
 MANIFEST_V2_PATH = "/manifests/v2.json"
 
 NOINDEX_ROBOTS_HEADER = "noindex, nofollow, noarchive"
+# The outbox check abandons its backlog read after this bound, inside the
+# health routes' own bound on a check, and reports no figure.
+OUTBOX_BACKLOG_READ_TIMEOUT_SECONDS = 2.0
 _NOSNIFF = {"X-Content-Type-Options": "nosniff"}
 
 
@@ -305,8 +310,11 @@ class NaappRuntime:
 
     def health_checks(self) -> dict[str, HealthCheck]:
         """The runtime's dependencies for the health routes: the database, and
-        the age of the oldest outbox event not yet delivered (``None`` when
-        every event is delivered). Neither is healthy outside the lifespan."""
+        the outbox, which reports the age of its oldest event not yet delivered
+        (``None`` when every event is delivered). The age is a figure, not a
+        dependency: a backlog of any size leaves the check passing, and the
+        figure is left out when it cannot be read in time. Neither check is
+        healthy outside the lifespan."""
 
         async def database() -> CheckResult:
             db = self.connected_db()
@@ -319,15 +327,14 @@ class NaappRuntime:
             db = self.connected_db()
             if db is None:
                 return CheckResult(ok=False)
-            status = await outbox_status(db)
-            ages = [
-                target.oldest_undelivered_age_seconds
-                for target in status.targets.values()
-                if target.oldest_undelivered_age_seconds is not None
-            ] + [team.oldest_age_seconds for team in status.unmaterialized.values()]
-            return CheckResult(
-                ok=True, detail={"oldest_undelivered_age_seconds": max(ages, default=None)}
-            )
+            try:
+                age = await asyncio.wait_for(
+                    oldest_undelivered_age_seconds(db), OUTBOX_BACKLOG_READ_TIMEOUT_SECONDS
+                )
+            except Exception:
+                logger.exception("Outbox backlog could not be read")
+                return CheckResult(ok=True)
+            return CheckResult(ok=True, detail={"oldest_undelivered_age_seconds": age})
 
         return {"database": database, "outbox": outbox}
 
@@ -417,6 +424,66 @@ class NaappRuntime:
         return await self.team_cache().check_current_member(
             team_id, certificate_id=certificate_id, team_did_key=team_did_key
         )
+
+    async def check_human_role_member(
+        self,
+        team_id: str,
+        *,
+        principal: str,
+        certificate: bytes,
+        identity_client: RegistryClient | None = None,
+    ) -> CheckedHumanRoleMember:
+        """Retain exact signed JSON bytes with the existing exact-subject H2 proof.
+
+        Run before effect locks. Identity mismatch/malformed input is the
+        delivery contract's owner_required; definite loss, non-human kind and
+        unavailability retain their distinct typed outcomes. No HTTP response
+        is built here, and no certificate is fetched or re-encoded for storage.
+        """
+        from awid.team_certificate import (
+            MAX_HEADER_BYTES,
+            TeamCertificateError,
+            decode_team_certificate,
+        )
+
+        from aweb_naapp.runtime.owner_act_delivery import (
+            CheckedHumanRoleMember,
+            OwnerActDeliveryCode,
+            OwnerActDeliveryRefused,
+        )
+
+        try:
+            if not isinstance(certificate, bytes) or len(certificate) > MAX_HEADER_BYTES:
+                raise TeamCertificateError("malformed")
+            # Reuse AWID's one bounded signed-artifact decoder. Retain the
+            # original bytes below, never the reconstructed transport encoding.
+            decoded = decode_team_certificate(base64.b64encode(certificate).decode("ascii"))
+            if decoded.get("team_id") != team_id or decoded.get("member_did_aw") != principal:
+                raise TeamCertificateError("malformed")
+        except TeamCertificateError:
+            raise OwnerActDeliveryRefused("owner_required") from None
+        try:
+            proof = await self.check_human_member(
+                team_id,
+                principal=principal,
+                certificate=decoded,
+                identity_client=identity_client,
+            )
+        except HTTPException as exc:
+            code: OwnerActDeliveryCode
+            if exc.status_code == 403 and exc.detail == "principal_not_member":
+                code = "principal_not_member"
+            elif exc.status_code == 403 and exc.detail == "principal_not_human":
+                code = "principal_not_human"
+            else:
+                code = "principal_status_unavailable"
+            raise OwnerActDeliveryRefused(code) from None
+        except Exception:
+            # The delivery boundary cannot turn an unclassified dependency
+            # failure into a definitive non-member result or expose its detail.
+            # Cancellation inherits BaseException and still propagates.
+            raise OwnerActDeliveryRefused("principal_status_unavailable") from None
+        return CheckedHumanRoleMember(certificate, proof)
 
     async def check_human_member(
         self, team_id: str, *, principal: str, certificate: Mapping[str, Any],

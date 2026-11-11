@@ -682,7 +682,7 @@ def test_health_endpoints_are_public(folio: RunningFolio) -> None:
         assert body["status"] == "ok" and body["service"] == folio.app_id, body
         assert "git_sha" in body["build"], body
     checks = httpx.get(f"{folio.origin}/health", timeout=10.0).json()["checks"]
-    assert checks["database"]["ok"] and checks["outbox"]["ok"], checks
+    assert checks == {"database": "ok", "outbox": "ok"}, checks
 
 
 def test_no_envelope_fails_closed(folio_origin: str) -> None:

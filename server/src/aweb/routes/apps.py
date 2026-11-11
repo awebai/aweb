@@ -44,7 +44,7 @@ from aweb.installation_views import (
     semantic_diff,
 )
 from aweb.installations import _lock_installation_on, install_verified_manifest_on, uninstall_installation_on
-from aweb.internal_auth import parse_internal_auth_context
+from aweb.internal_auth import parse_internal_auth_context, resolve_internal_actor
 from aweb.service_errors import RESOURCE_NOT_FOUND_DETAIL, ServiceError
 from aweb.team_auth_deps import get_team_identity
 
@@ -131,6 +131,9 @@ def _failure(exc: ServiceError) -> HTTPException:
 async def _caller(request: Request, infra: DatabaseInfra, requested: str | None):
     internal = parse_internal_auth_context(request)
     if internal is not None:
+        # A forwarded actor that names an agent must be an active member; one
+        # that names no agent is a team-level principal.
+        await resolve_internal_actor(infra.get_manager("aweb"), internal)
         team_id = internal["team_id"]
         set_verified_audit_actor(request, AuditActor(
             team_id=team_id, principal_type=internal["principal_type"], auth_mode="internal",
