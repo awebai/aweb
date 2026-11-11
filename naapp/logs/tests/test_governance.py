@@ -25,9 +25,8 @@ from .reader_world import (
     LOGS,
     World,
     count,
-    designation,
+    held_reader,
     outbox,
-    slot,
     world_fixture,  # noqa: F401
 )
 from .test_read_store import AGENT, secret_use
@@ -215,12 +214,8 @@ async def test_a_hold_is_recorded_and_owed_with_no_target_while_a_designation_is
     await hold(world, "hold-1")
     assert [entry["act"] for entry in await governance(world)] == ["logs.legal_hold.set"]
     assert len(await outbox(world)) == 1
-    scope = await slot(world)
-    signing, signature = world.owner.sign("app-role.designate", designation(scope))
     with pytest.raises(Refused) as refused:
-        await world.designations.designate(
-            signing=signing, signature=signature, scope=scope, contact="reader@example.com"
-        )
+        await held_reader(world)
     assert refused.value.code == "audit_target_unavailable"
     assert [entry["act"] for entry in await governance(world)] == ["logs.legal_hold.set"]
 
@@ -233,12 +228,8 @@ async def test_a_hold_is_recorded_while_logs_own_delivery_is_stalled(world: Worl
     await hold(world, "hold-2")
     assert [entry["hold_id"] for entry in await governance(world)] == ["hold-1", "hold-2"]
     assert len(await outbox(world)) == 2
-    scope = await slot(world)
-    signing, signature = world.owner.sign("app-role.designate", designation(scope))
     with pytest.raises(Refused) as refused:
-        await world.designations.designate(
-            signing=signing, signature=signature, scope=scope, contact="reader@example.com"
-        )
+        await held_reader(world)
     assert refused.value.code == "audit_delivery_stalled"
 
 
