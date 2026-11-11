@@ -11,7 +11,7 @@ import secrets
 import uuid
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
 
 import httpx
@@ -22,6 +22,7 @@ from aweb_naapp.runtime.app_keys import AppKeyError
 from aweb_naapp.runtime.origins import OriginApps
 from awid.did import did_from_public_key
 from pgdbm import AsyncDatabaseManager
+from pydantic import ValidationError
 
 from aweb_logs.app import chain_signer, create_app, serve
 from aweb_logs.chain import CHECKPOINT_PURPOSE, RECEIPT_PURPOSE, open_checkpoint
@@ -38,6 +39,7 @@ from .deployment import (
     write_key_files,
 )
 from .fixtures import TEAM_ID, signed_event
+from .test_retention import retention_setting
 
 ORIGIN = "https://logs.example.test"
 CONSOLE = "https://console.logs.example.test"
@@ -153,6 +155,43 @@ async def test_a_running_logs_checkpoints_each_team_whose_chain_moved(tmp_path: 
     assert (opened.team_seq, opened.logs_origin, opened.kid) == (1, ORIGIN, _chain_kid())
 
 
+async def test_a_running_logs_purges_what_a_teams_retention_has_expired(
+    tmp_path: Path, database
+) -> None:
+    settings = _deployment_on(tmp_path, database)
+    settings = settings.model_copy(update={"retention_interval_seconds": 0.05})
+    signer = chain_signer(
+        settings, load_manifest(served_manifest(settings.app_key_files, origin=ORIGIN))
+    )
+    async with running(_app(settings)):
+        for seq, age in ((1, timedelta(days=45)), (2, timedelta(days=1))):
+            signing, signature = signed_event("core", event_id=str(uuid.uuid4()), seq=seq)
+            await append(
+                database,
+                signer,
+                event=hook_envelope.verify(signing, signature, team_id=TEAM_ID),
+                signing_bytes=signing,
+                signature=signature,
+                key_evidence={},
+                received_at=datetime.now(UTC) - age,
+            )
+        setting = await retention_setting(database, TEAM_ID, "all", days=30)
+        rows: list = []
+        for _ in range(100):
+            rows = await database.fetch_all(
+                "SELECT team_seq, purge_act FROM {{tables.chain_events}}"
+                " WHERE team_id = $1 ORDER BY team_seq",
+                TEAM_ID,
+            )
+            if rows and rows[0]["purge_act"] is not None:
+                break
+            await asyncio.sleep(0.05)
+    assert [(row["team_seq"], row["purge_act"]) for row in rows] == [
+        (1, f"logs.retention.set:{setting}"),
+        (2, None),
+    ]
+
+
 def test_logs_does_not_start_without_its_chain_key(tmp_path: Path) -> None:
     settings = _deployment(tmp_path, "postgresql://localhost/logs")
     files = dict(settings.app_key_files)
@@ -238,6 +277,26 @@ def test_logs_does_not_start_without_its_mail_settings(
     monkeypatch.delenv("LOGS_EMAIL_SMTP_HOST")
     with pytest.raises(ValueError, match="LOGS_EMAIL_SMTP_HOST"):
         serve()
+
+
+def test_logs_reads_its_configuration_from_the_environment_only(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setenv("LOGS_DATABASE_URL", "postgresql://localhost/logs")
+    monkeypatch.setenv("LOGS_PUBLIC_ORIGIN", ORIGIN)
+    monkeypatch.setenv("LOGS_APP_ID", TEST_APP_ID)
+    key_files = write_key_files(tmp_path)
+    monkeypatch.setenv(
+        "LOGS_APP_KEY_FILES", json.dumps({kid: str(path) for kid, path in key_files.items()})
+    )
+    _mail_environment(tmp_path, monkeypatch)
+    monkeypatch.delenv("LOGS_CONSOLE_ORIGIN", raising=False)
+    # A .env in the working directory is not configuration.
+    (tmp_path / ".env").write_text(f"LOGS_CONSOLE_ORIGIN={CONSOLE}\n")
+    monkeypatch.chdir(tmp_path)
+    with pytest.raises(ValidationError) as refused:
+        serve()
+    assert [error["loc"] for error in refused.value.errors()] == [("console_origin",)]
 
 
 async def test_each_origin_serves_only_its_own_routes(tmp_path: Path, database) -> None:

@@ -2169,14 +2169,14 @@
       }
     },
     {
-      "name": "manifest_version_3_unsupported",
+      "name": "manifest_version_4_unsupported",
       "description": "",
       "base": "v2",
       "mutations": [
         {
           "op": "set",
           "path": "/manifest_version",
-          "value": 3
+          "value": 4
         }
       ],
       "expected": {

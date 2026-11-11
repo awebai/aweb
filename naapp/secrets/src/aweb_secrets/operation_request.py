@@ -37,6 +37,7 @@ from aweb_naapp.egress import (
 from aweb_naapp.egress.send import CONNECT_TIMEOUT_SECONDS, MAX_RESPONSE_BYTES
 
 from aweb_secrets.operation import OperationTemplate
+from aweb_secrets.response_limits import DEFAULT_RESPONSE_BYTES
 
 _AMZ_PREFIX = "x-amz-"
 
@@ -148,7 +149,7 @@ def render_operation(
         internal_destinations=InternalDestinations.DISABLED,
     )
     timeout = float(after["timeout_s"])
-    max_bytes = min(after["response"]["max_bytes"], MAX_RESPONSE_BYTES)
+    max_bytes = min(after["response"].get("max_bytes", DEFAULT_RESPONSE_BYTES), MAX_RESPONSE_BYTES)
     return OperationRequest(
         method=method,
         url=url,

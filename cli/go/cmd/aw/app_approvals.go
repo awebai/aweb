@@ -12,6 +12,7 @@ import (
 	"github.com/awebai/aw/awconfig"
 	"github.com/awebai/aw/awid"
 	"github.com/awebai/aw/internal/appmanifest"
+	"github.com/awebai/aw/internal/atomicfile"
 	"github.com/awebai/aw/internal/pathpreflight"
 )
 
@@ -111,19 +112,7 @@ func changeAppApproval(home, name, origin, teamID, installationID string) error 
 	if err != nil {
 		return err
 	}
-	file, err := os.CreateTemp(home, ".app-approvals-*")
-	if err != nil {
-		return err
-	}
-	defer os.Remove(file.Name())
-	if _, err := file.Write(append(data, '\n')); err != nil {
-		file.Close()
-		return err
-	}
-	if err := file.Close(); err != nil {
-		return err
-	}
-	return os.Rename(file.Name(), appApprovalsPath(home))
+	return atomicfile.Write(appApprovalsPath(home), append(data, '\n'), 0o600)
 }
 
 // No selected-home failure is retried against the instance directory. A plain

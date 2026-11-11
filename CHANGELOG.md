@@ -2,6 +2,348 @@
 
 ## Unreleased
 
+- Human handoffs retain their authenticated team for credential collection and
+  console session requests. Existing key-bound console sessions without retained
+  team context are refused after migration and require signing in again; there
+  is no compatibility fallback or installation-wide team discovery.
+
+- Federated mail and chat delivery connects only to the addresses the
+  recipient's delivery origin resolves to, over one address-checked transport
+  shared by the HTTP routes and the MCP tools. The origin must be `https` and
+  named by host, every resolved address must be public, the connection goes to
+  the address that was checked, and redirects are not followed; `http` and
+  non-public destinations remain available only to isolated development
+  deployments (`APP_ENV=development` with `AWEB_FEDERATION_TEST=1`). **Private
+  delivery origins are refused by default**: a self-hosted server that
+  federates with servers on a private network (for example
+  `https://aweb.acme.internal` resolving to `10.0.0.5`) lists those exact
+  origins in `AWEB_FEDERATION_PRIVATE_DELIVERY_ORIGINS`, comma-separated
+  `https://host[:port]` entries; besides public addresses, a listed origin may
+  resolve only to `10.0.0.0/8`, `172.16.0.0/12`, `192.168.0.0/16`,
+  `100.64.0.0/10` and `fc00::/7` (loopback and link-local stay refused) and
+  keeps every other check. The setting
+  applies to delivery only, not to registry reads, and an invalid entry refuses
+  start-up naming it. A failed delivery returns its status and a fixed reason
+  (`delivery_origin_refused`, `delivery_address_refused`,
+  `delivery_origin_unreachable`, `delivery_timeout`, `delivery_unavailable`
+  when the server has no delivery transport, `HTTP <status>`, or the
+  recipient server's typed federation reason) in place of the remote's response
+  text; a refused private address also logs a warning naming the origin and the
+  setting. `deliver_federated_message` requires its `transport`, and
+  `deliver_federated_mail` is removed in favour of it; hosts that embed the
+  server get the transport from the federation authority
+  (`FederationAuthorityActivation.delivery_transport`).
+
+- `aw` refuses a did:key suffix longer than 47 characters and a did:aw suffix
+  longer than 28 characters before base58-decoding it, as awid's Python parser
+  does.
+
+- The secrets runner refuses a did:key suffix longer than 47 characters before
+  base58-decoding it, the bound awid's Python parser applies.
+
+- `aw wake run` takes its one-daemon-per-host lock as an exclusive OS lock on
+  `daemon.lock` in the wake state directory, which the kernel drops when the
+  broker exits, however it exits. A broker that was killed, or whose container
+  was recreated over the same state volume, never blocks the next start,
+  whatever process has its pid by then. The holder's pid is recorded in
+  `daemon.lock.pid` for `aw wake status` and the second-start message. A
+  `lock/` directory in the state directory is not read and can be deleted; a
+  broker from an earlier `aw` that is still running does not hold
+  `daemon.lock`, so stop it before starting this one.
+
+- Add the operator command `aweb delete-dead-rows [--apply]`, for a cron job
+  or Kubernetes CronJob. It deletes rows that no reader needs again: app events
+  older than 30 days, control signals consumed more than 30 days ago, and
+  federation mutation and lifecycle side-effect outbox rows delivered more than
+  30 days ago. Unconsumed signals and undelivered outbox rows are kept at any
+  age, and no other table is touched. By default it reports the number of dead
+  rows per table as JSON and changes nothing; `--apply` deletes them, at most
+  1000 rows per statement. Migration `049_dead_row_indexes.sql` adds an index
+  on `app_events.created_at`, `control_signals.consumed_at` and
+  `federation_mutation_outbox.delivered_at`, without which the command scans
+  those tables whole; see [Garbage collection](docs/aweb-sot.md#garbage-collection).
+  `aweb.gc.gc_inactive_scopes`, which deleted a team and its tasks when the
+  team had no message in 30 days, `aweb.gc.gc_delivered_lifecycle_side_effects`
+  and `aweb.gc.gc_expired_messages`, which deleted mail and chat messages older
+  than 30 days, are removed. None of them had a caller. The server deletes no
+  team for inactivity and no mail or chat message automatically; the `aw
+  beads-mail` and `aw gc-mail` help and the mail documentation say so where they
+  described a 30-day expiry.
+
+- `aw --json` prints every number with the digits the command produced.
+  Integers above 2^53 were rounded to the nearest value a 64-bit float holds.
+
+- `RegistryClient.list_addresses` and `RegistryClient.list_did_addresses` (and
+  their cached forms) follow the registry's cursor until `has_more` is false
+  and return every address; they returned the first 50. A cursor that does not
+  advance raises `RegistryError` with status 502. `list_team_certificates`
+  reads its pages through the same code and reports that case as `AWID
+  certificates pagination did not advance`.
+
+- `POST /v1/connect` with the `repo_origin` of a repo the team deleted restores
+  the team's repo row and binds the workspace to it, as `PATCH /v1/agents/me`
+  and `POST /v1/repos/ensure` do; it answered 500.
+
+- Activating a team instructions version deactivates the active version and
+  activates the chosen one in one transaction, and activations of one team run
+  one at a time. A failed activation leaves the active version as it was, and
+  concurrent activations leave exactly one version active.
+
+- The naapp runtime (`aweb_naapp.runtime.health`) serves the probe contract of
+  the server and AWID. `/live` answers 200 whenever the process serves requests
+  and checks no dependency. `/ready` and `/health` answer 200 when every
+  dependency check passes and 503 otherwise; `/health` answered 200 in both
+  cases. Their body reports `status` as `ok` or `unhealthy` (it was
+  `unavailable`) and names each check in `checks` as `ok` or `error` (it was an
+  object with an `ok` boolean); `/health` adds `details`, which holds each
+  check's figures under the check's name, such as
+  `details.outbox.oldest_undelivered_age_seconds`. This applies to folio, logs
+  and secrets. The secrets image `HEALTHCHECK` probes `/live` (it probed
+  `/ready`), and the folio, library and logs images gain a `HEALTHCHECK` on
+  `/live`. A platform health check that restarts an instance on failure should
+  use `/live`: on `/health` or `/ready` it restarts every instance during a
+  database outage. Folio's Render health check path is `/live`, in
+  `naapp/folio/render.yaml` and `naapp/folio/ops/render-production.json`; the
+  live service's setting has to be changed to match before this version is
+  deployed. The folio and library end-to-end compose files wait on `/ready`.
+
+- The naapp outbox (`aweb_naapp.outbox`) keeps one team's failures from
+  delaying other teams. An event whose targets cannot be resolved is resolved
+  again after a backoff (5 seconds doubling to 5 minutes by default, the
+  delivery `RetryPolicy`), and each drain pass claims events and deliveries in
+  the order they fell due, so a failed one is tried again only after those that
+  fell due before its retry did. Outbox migration `004_resolution_backoff.sql`
+  adds `outbox_events.resolve_attempts` and `outbox_events.next_resolve_at`;
+  the runtime applies it at start-up.
+
+- The naapp outbox deletes an event, with its delivery rows, 30 days after
+  every target acknowledged it. The drain loop does it, once an hour and up to
+  500 events at a time, so a deployment runs nothing extra; outbox migration
+  `005_drained_retention.sql` adds the index it reads. Kept at any age: an
+  event that is not materialized or has a delivery pending, stalled, or
+  dead-lettered and not acknowledged; an event with a cancelled, rejected or
+  conflicting delivery; a critical event materialized with no target; and the
+  event holding a target's latest receipt. An event's id and payload digest
+  are forgotten with it: enqueueing the same event id more than 30 days after
+  it drained stores and delivers a new event, where before it was a no-op or
+  a conflict.
+
+- The naapp runtime's `outbox` health check reports
+  `oldest_undelivered_age_seconds` from the events not yet drained, without
+  reading delivered history, and no backlog fails it: `/ready` answers 503 for
+  the outbox only while the database is not connected. When the age cannot be
+  read within 2 seconds, `/health` reports the check without the figure.
+
+- The secrets console resolves an installation for the team of the signed-in
+  owner or approver, or of the approval record it acts on, never from the
+  installation id alone. An installation id that another team holds answers as
+  an unknown id does, and a team whose server reports another team's
+  installation id no longer makes that team's console refuse its owners.
+
+- logs reads `LOGS_CLIENT_ADDRESS_HEADER`, the header the deployment's proxy
+  sets to the client address it saw, and keeps the console login limit per that
+  address. Unset, the limit is kept per TCP peer, which behind a proxy is one
+  limit for every reader.
+
+- `aw` writes U+2028 (line separator) and U+2029 (paragraph separator) as UTF-8
+  in the canonical JSON it signs, as the Python reference
+  (`awid.signing.canonical_json_bytes`) and TypeScript do; Go's JSON encoder
+  writes them as six-character escapes. This covers `aw id sign`, `aw id
+  request` signed fields and bodies assembled from an app manifest, v2 request
+  envelopes, controller and onboarding requests, team and identity operations
+  signed for a server or registry, and the inner payload of encrypted messages.
+  The local-identity key replacement request also writes `<`, `>` and `&` as
+  themselves. Payloads without these characters produce the same bytes as
+  before. Custody request digests, A2A card digests, blueprint payload digests
+  and the stored hosted-creation response keep the escaped form, which other
+  `aw` builds and stored records reproduce. `docs/vectors/canonical-json-v1.json`
+  pins the canonical bytes for Go, Python and TypeScript.
+
+- A chat session stream delivers every message and read receipt committed
+  after it opened, in commit order, whatever the senders' clocks say. Each
+  session numbers its messages and read receipts as they are written; `message`
+  and `read_receipt` frames and chat history items carry that number as `seq`,
+  and the stream, the MCP reply wait and `up_to_message_id` read by it.
+  `after_seq=<n>` on the stream resumes after number `n`; `after=<timestamp>`
+  replays the messages after the last one stamped at or before it; the two
+  together are refused with 422.
+  Writers of one session, read receipts included, commit one at a time.
+  Migration `048_chat_session_seq.sql` adds `chat_sessions.last_seq`,
+  `chat_messages.seq` and `chat_read_receipts.seq` and must be applied before
+  this server runs; see [Migrations](docs/aweb-sot.md#migrations).
+
+- A chat session stream opened without `after` delivers every message sent
+  after the client received the 200 response. The stream takes its live cursor
+  before the response starts, so a message sent while the stream was still
+  being set up is delivered.
+
+- The channel (the Claude Code plugin and the Pi extension) follows the
+  reconnect policy for the event stream, `docs/event-stream-client-policy.md`.
+  A failed open, an early end, 408, 409, 425, 429 and 5xx are retried from
+  1 second to 15 seconds with jitter, where the ceiling was 5 seconds without
+  jitter, and `Retry-After` is honoured as a minimum wait up to 5 minutes. A
+  refusal (any other 4xx, or a grant terminal event) is retried from 1 minute to
+  15 minutes, where it was retried every 5 seconds, with the identity home read
+  again before each attempt: a renewed certificate or grant, or the key and
+  certificate left by `aw id rotate` for the same stable identity, is used
+  without a restart. The operator is told once on the way in,
+  `aweb: event stream refused: <status>, next try HH:MM`, and once on the way
+  out. The agent is given one notice from the channel itself when a refusal
+  episode starts (`type="channel"` in the plugin), saying that mail and chat
+  will not arrive until the stream is accepted again and when the next attempt
+  is, and none after that until the server has served it again. Each
+  connection's planned close is between 3 min 30 s and 4 min, where it was
+  4 minutes with a local deadline of 5, and a heartbeat confirms a stream as
+  an event does. `streamAgentEvents` reports the state `refused` and takes
+  `reloadCredentials`; `ChannelAwakening` has the kind `channel`;
+  `EVENT_STREAM_DEADLINE_MS` is removed. The `aw wake` child opens no stream
+  of its own and is unchanged apart from its rebuilt bundle.
+
+- The channel client (the Claude Code plugin, the Pi extension and `aw wake`)
+  sorts the object keys of the canonical JSON it signs and verifies by Unicode
+  code point, as `aw` and the Python reference do. The order differs from
+  JavaScript's default only between a key holding a character outside the
+  Basic Multilingual Plane and a key holding a character in U+E000-U+FFFF;
+  every payload the client builds has ASCII keys and produces the same bytes
+  as before. Signed payloads carry only integers of magnitude at most 2^53-1;
+  `docs/vectors/README.md` states what each implementation does with any other
+  number, and `docs/vectors/canonical-json-v1.json` pins it.
+
+- A request that a trusted proxy forwards for an agent is admitted only while
+  that agent is an active member of the forwarded team: its row has status
+  `active` and is not deleted. The MCP endpoint, `GET /v1/events/subscriptions`,
+  the `/v1/apps` routes and the hook-binding routes answer 403 for an actor
+  that names an agent that is retired, archived, deleted or another team's.
+  The MCP endpoint and the subscription listing, which act as an agent, also
+  refuse an actor that names no agent.
+
+- Task changes made through the MCP task tools (`task_create`, `task_update`,
+  `task_claim`, `task_close`, `task_reopen`, `task_comment_add`) publish the
+  same task events as the HTTP routes, with the same context, so they reach the
+  team and workspace event streams. A task's claims are released in the same
+  transaction as the status change that ends them, whether or not a mutation
+  hook runs, and the `task.status_changed` hook context names the released
+  workspaces in `released_claim_workspace_ids`. The MCP task tools apply the
+  input bounds of the routes and answer a refusal or a conflict as an error. A
+  task response does not carry `claim_preacquired`. The task service functions
+  (`create_task`, `update_task`, `soft_delete_task`, `add_dependency`,
+  `remove_dependency`, `add_comment`) take the acting member and the
+  `on_mutation` callback as required arguments and fire the events themselves;
+  an embedding host that calls them passes both and does not fire task events
+  of its own.
+
+- Add the one-off operator command `aweb release-closed-task-claims [--apply]`
+  for claims that existing data leaves on closed tasks. By default it reports,
+  as JSON, the number of such claims in total and the number of tasks and
+  claims per team id, and changes nothing; `--apply` releases them through the
+  same release as a status change and reports the number released. Run it once
+  after deploying the release of claims with the status change.
+
+- The channel client (the Claude Code plugin, the Pi extension and `aw wake`)
+  signs every certificate and identity request with the
+  [v2 request envelope](docs/team-auth-envelope-v2.md), which binds the
+  audience, method, path with query, body and timestamp, as `aw` does. It does
+  not send the compact v1 form and does not fall back to it; a server that
+  refuses v2 refuses the request.
+
+- `aw` writes signing keys, certificates and its other credential and state
+  files through one atomic write that syncs the file and then its directory, so
+  a key reported as saved survives a host crash. Recovery-only key writes keep
+  refusing an existing key.
+
+- `aw` sends each request once, to the server URL it was signed for, and does
+  not send it again to another mount path. A command that meets a 404 at the
+  stored `aweb_url` gets that 404 with the mount that answers named in the
+  error (`The server answers at <url>. ...`). The event stream of `aw run` and
+  of the `aw wake` broker, when refused, looks for the mount that answers when
+  it reads its configuration again before a retry, signs for that mount, and
+  stores it as `aweb_url` once a stream has opened there; a retry that is
+  refused or fails stores nothing. `wake.Config` takes an optional
+  `ReloadStream`, called in place of `OpenStream` before a refused retry. See
+  [docs/configuration.md](docs/configuration.md#server-url-and-api-mount).
+
+- `aw run` and the `aw wake` broker follow one reconnect policy for the event
+  stream, [docs/event-stream-client-policy.md](docs/event-stream-client-policy.md).
+  Neither stops its stream for good on a refusal or a rate limit: 408, 409, 425,
+  429 and 5xx are retried from 1 second to 15 seconds with jitter, and
+  `Retry-After` is honoured as a minimum wait up to 5 minutes. A refusal (any
+  other 4xx, or a grant terminal event) is retried slowly, from 1 minute to
+  15 minutes, with the identity read again from disk before each attempt, and is
+  reported once on the way in and once on the way out: `aw run` prints
+  `aweb: event stream refused: <status>, next try HH:MM`, and `aw wake status`
+  shows the stream as `refused` with `cause` and `next_attempt_at`, never as
+  admitted. `aw run`'s planned close is between 3 min 30 s and 4 min,
+  where it was a local deadline of 10 minutes; the broker's is the same range,
+  where it was 4 minutes. Both close a connection that has delivered nothing,
+  heartbeat included, for 75 seconds. A repeated `aw wake register` retries a
+  refused stream at once. `wake.Config` takes `StreamPolicy` in place of
+  `StreamTTL`, `BackoffMin` and `BackoffMax`, and its `OpenStream` takes a
+  context.
+
+- AWID bounds its request input. The registry service refuses a request body
+  over `AWID_MAX_REQUEST_BODY_BYTES` with 413 before parsing it (default 4 MiB,
+  following a raised `AWID_ROTATE_MAX_BODY_BYTES`; a value below the rotate
+  limit refuses to start). `did:key` and `did:aw` text longer than its fixed
+  size can encode is refused without being decoded, and the DID fields of
+  address registration and reassignment are limited to 256 characters like
+  every other DID field. The limiter is `awid.request_body_limit`.
+
+- `awid.request_body_limit` logs each refusal with the method and the request
+  path, without its query string or fragment, with what is not printable
+  escaped and at most 256 characters, then the declared or received
+  byte count and the limit, for example `Request body too large: POST /echo
+  declared 65 bytes, limit 64`. A host whose paths carry secrets of its own
+  passes `logged_path`, the rule that writes the path the line shows; a rule
+  that raises gives the default form, and the refusal stays a 413.
+
+- The channel client (the Claude Code plugin, the Pi extension and `aw wake`)
+  reports mail and chat as verified only when the displayed body, subject,
+  message id, conversation id, sender and recipient agree with the claims in
+  the signed payload, by the same rules `aw` applies. A message whose displayed
+  fields differ is presented with trust status `failed` and its fields as
+  received. Room posts use the same comparison.
+
+- `aw` reads its configuration from the process environment, flags and its own
+  config files. It does not read `.env` or `.env.aweb` files from the working
+  directory; export any settings kept in such a file (for example `AWEB_URL` or
+  `AWEB_API_KEY`) in the shell that runs `aw` instead.
+
+- The `aweb` server, `awid` and A2A gateway images declare their user as the
+  numeric `USER 1001:1001`, so Kubernetes admits them under
+  `securityContext.runAsNonRoot: true` without a `runAsUser` override. The
+  ids are those of the images' `aweb` and `awid` accounts, so ownership of
+  existing files and volumes is unaffected. See
+  [container users](docs/self-hosting-guide.md#container-users).
+
+- **Operator-visible:** on both the aweb server and AWID, `GET /health` answers
+  503, with the same JSON body, when the Redis or database check fails, and 200
+  when both pass (AWID's `/ops/health` alias follows it). `GET /ready` is the
+  same response under a readiness name. `GET /live` answers `200 {"status": "ok"}`
+  whenever the process serves requests and checks no dependency. Probe mapping:
+  liveness probes and container healthchecks, which restart the process, use
+  `/live`; readiness probes, load-balancer routing and start-up ordering use
+  `/ready`; monitoring reads `/health`. The `server/Dockerfile`, `awid/Dockerfile`
+  and `awid/Dockerfile.release` `HEALTHCHECK`s probe `/live`, and the compose
+  healthchecks probe `/ready`. **If your probe relied on `/health` answering 200
+  during a dependency outage** (a liveness probe or restart policy), point it at
+  `/live`; leaving it on `/health` restarts every replica into the outage. An
+  aweb server's start-up AWID check reads AWID's `/health` and starts, with a
+  warning, when AWID answers with its health report of a failed dependency of
+  its own. The CLI's
+  request-compression discovery treats a 503 as no advertisement and sends plain
+  bodies. See [health probes](docs/aweb-sot.md#health-probes).
+
+- The A2A gateway serves `GET /live`, which answers `200 {"status":"ok"}`
+  whenever the process serves requests and checks no dependency. The gateway
+  image's `HEALTHCHECK` probes `/live`; `/health` remains the readiness and
+  monitoring route. The gateway's registry check treats AWID's health report
+  with status `unhealthy`, which AWID sends with 503 when its own Redis or
+  database check fails, as a registry it reached, so a registry dependency
+  outage does not make the gateway unhealthy. **Self-hosters:** an aweb server
+  older than this release treats any non-2xx answer from AWID's `/health` as
+  unreachable and refuses to start while its registry reports unhealthy;
+  upgrade the server together with the registry.
+
 - Self-custodial humans can select their OS-keychain identity with `aw --human
   <did:aw> --human-domain <domain>` to fetch a controller-issued team certificate,
   connect, send/read/reply to plaintext mail, and make ordinary team-auth naapp

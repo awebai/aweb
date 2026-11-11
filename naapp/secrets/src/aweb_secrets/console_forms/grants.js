@@ -11,7 +11,7 @@
     operation_id: "Enter an operation name using lowercase letters, numbers, underscores or hyphens.",
     method: "Choose a supported HTTP method.",
     projection: "Enter distinct JSON pointers, one per line, such as /status.",
-    max_bytes: "Enter a response limit from 1 to 16777216 bytes.",
+    max_bytes: "Enter a response limit from 1 to 67108864 bytes.",
     side_effect: "Choose the operation’s side effect.",
     approval: "Choose the approval requirement.",
     capacity: "Enter a positive whole number of uses per agent.",

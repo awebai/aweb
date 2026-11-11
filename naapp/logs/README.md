@@ -19,7 +19,16 @@ logs reads its settings from `LOGS_`-prefixed environment variables:
 - `LOGS_DATABASE_URL` and `LOGS_PUBLIC_ORIGIN`;
 - `LOGS_CONSOLE_ORIGIN`, the plain `https` origin where designated readers enrol,
   sign in and read. It must be on a host of its own, not `LOGS_PUBLIC_ORIGIN`'s:
-  readers' passkeys are bound to its hostname;
+  readers' passkeys are bound to its hostname. A human-role act's audience must
+  be this origin, since its credential is bound to the same hostname; one bound
+  to any other host is refused;
+- `LOGS_CLIENT_ADDRESS_HEADER`, the header the deployment's proxy sets to the
+  client address it saw, such as `X-Real-IP`. The console login limit (12
+  requests a minute) is kept per that address, read from the header's last
+  comma-separated entry. Set it whenever logs runs behind a proxy or load
+  balancer: unset, the limit is kept per TCP peer, so every reader behind the
+  proxy shares one limit. Name only a header the proxy overwrites, because a
+  client can send any other;
 - `LOGS_EMAIL_SMTP_HOST`, `LOGS_EMAIL_SMTP_PORT`, `LOGS_EMAIL_TLS` (`starttls`,
   the default, or `implicit`), `LOGS_EMAIL_USERNAME`, `LOGS_EMAIL_PASSWORD_FILE`
   (the password is read only from this file), `LOGS_EMAIL_FROM` and, for a
@@ -43,7 +52,7 @@ grant and `logs-governance` signs the governance events of logs' readers.
 
 ```bash
 uvicorn aweb_logs.app:serve --factory
-docker build -f naapp/logs/Dockerfile .   # from the repository root
+docker build -f naapp/logs/Dockerfile --build-arg SOURCE_COMMIT="$(git rev-parse HEAD)" .   # from the repository root
 ```
 
 The image takes the same environment; mount the key files and the mail password
@@ -52,6 +61,31 @@ on its own `Host`, so it can listen on one socket or on one per origin.
 
 While logs runs, each team whose chain has new events gets a signed checkpoint
 every `LOGS_CHECKPOINT_INTERVAL_SECONDS` (default 300); an idle team gets none.
+
+## Retention, erasure and legal holds
+
+A team keeps every event until its owner sets a retention. A setting names an
+event class, a hook or `all`, and a number of days (1 to 36500), or keeps that
+class; a hook's own setting comes before the team's `all` setting. Every
+`LOGS_RETENTION_INTERVAL_SECONDS` (default 3600) logs purges the events each
+team's retention has expired, in bounded batches. A purge removes an event's
+content, salt, signature and every projection of it, and keeps its skeleton,
+so the chain still verifies and `verify` reports the purged range with the act
+that purged it.
+
+The owner sets retention, erases and holds by owner acts (`logs.retention.set`,
+`logs.erase`, `logs.legal-hold.set`, `logs.legal-hold.release`), each consumed
+in the transaction that applies it and recorded as a `post-governance-hook`
+event in logs' own chain (`aweb_logs.governance`). A purge's act names that
+record: `logs.retention.set:<event id>` or `logs.erase:<event id>`. An erasure
+covers a range of the chain or every event of one actor, named by exactly its
+did:aw or did:key; logs' own governance entries are never erased. An active
+legal hold, on everything or on one actor, keeps retention and erasure from
+purging what it holds. Shortening a retention, erasing and releasing a hold are
+narrowing; keeping longer and setting a hold are widening, and only a hold is
+recorded when no hook target would admit it ([hook events](../../docs/hook-events.md#the-audit-critical-gate)).
+**Open (aweb-acgh.16.23):** no route delivers these acts yet; owner-act
+delivery covers only the app-role and credential acts.
 
 ## Ingestion
 

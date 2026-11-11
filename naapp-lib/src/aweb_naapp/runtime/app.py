@@ -31,9 +31,10 @@ import hashlib
 import json
 import logging
 from collections.abc import AsyncIterator, Awaitable, Callable, Mapping, Sequence
-from contextlib import asynccontextmanager
+from contextlib import aclosing, asynccontextmanager
 from dataclasses import replace
 from datetime import UTC, datetime
+from enum import StrEnum
 from ipaddress import IPv4Network, IPv6Network
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
@@ -41,6 +42,7 @@ from urllib.parse import urlsplit
 from uuid import UUID
 
 import httpx
+from awid.registry import RegistryClient
 from fastapi import FastAPI, HTTPException, Request
 from fastapi.dependencies.models import Dependant
 from fastapi.responses import HTMLResponse, PlainTextResponse, Response
@@ -61,7 +63,7 @@ from aweb_naapp.manifest import (
     fill_manifest,
     load_manifest,
 )
-from aweb_naapp.outbox import outbox_status, run_drain
+from aweb_naapp.outbox import oldest_undelivered_age_seconds, run_drain
 from aweb_naapp.robots import robots_txt
 from aweb_naapp.runtime.app_credentials import APP_GRANT_READ, HOOK_RESOLVE, AppCredentialSigner
 from aweb_naapp.runtime.app_keys import AppKeyError, declared_did_keys, load_app_key
@@ -88,6 +90,12 @@ from aweb_naapp.runtime.event_emit import AppEvents, is_loopback_host
 from aweb_naapp.runtime.health import CheckResult, HealthCheck, mount_health
 from aweb_naapp.runtime.hook_resolver import HookResolver
 from aweb_naapp.runtime.hooks import RuntimeHooks
+from aweb_naapp.runtime.human_member import (
+    HumanMemberProof,
+)
+from aweb_naapp.runtime.human_member import (
+    check_human_member as observe_human_member,
+)
 from aweb_naapp.runtime.installation import InstallationFence
 from aweb_naapp.runtime.manifest_hooks import ManifestEvidence, bounded_body, prepare
 from aweb_naapp.runtime.settings import NaappSettings
@@ -113,6 +121,9 @@ logger = logging.getLogger(__name__)
 MANIFEST_V2_PATH = "/manifests/v2.json"
 
 NOINDEX_ROBOTS_HEADER = "noindex, nofollow, noarchive"
+# The outbox check abandons its backlog read after this bound, inside the
+# health routes' own bound on a check, and reports no figure.
+OUTBOX_BACKLOG_READ_TIMEOUT_SECONDS = 2.0
 _NOSNIFF = {"X-Content-Type-Options": "nosniff"}
 
 
@@ -298,8 +309,11 @@ class NaappRuntime:
 
     def health_checks(self) -> dict[str, HealthCheck]:
         """The runtime's dependencies for the health routes: the database, and
-        the age of the oldest outbox event not yet delivered (``None`` when
-        every event is delivered). Neither is healthy outside the lifespan."""
+        the outbox, which reports the age of its oldest event not yet delivered
+        (``None`` when every event is delivered). The age is a figure, not a
+        dependency: a backlog of any size leaves the check passing, and the
+        figure is left out when it cannot be read in time. Neither check is
+        healthy outside the lifespan."""
 
         async def database() -> CheckResult:
             db = self.connected_db()
@@ -312,15 +326,14 @@ class NaappRuntime:
             db = self.connected_db()
             if db is None:
                 return CheckResult(ok=False)
-            status = await outbox_status(db)
-            ages = [
-                target.oldest_undelivered_age_seconds
-                for target in status.targets.values()
-                if target.oldest_undelivered_age_seconds is not None
-            ] + [team.oldest_age_seconds for team in status.unmaterialized.values()]
-            return CheckResult(
-                ok=True, detail={"oldest_undelivered_age_seconds": max(ages, default=None)}
-            )
+            try:
+                age = await asyncio.wait_for(
+                    oldest_undelivered_age_seconds(db), OUTBOX_BACKLOG_READ_TIMEOUT_SECONDS
+                )
+            except Exception:
+                logger.exception("Outbox backlog could not be read")
+                return CheckResult(ok=True)
+            return CheckResult(ok=True, detail={"oldest_undelivered_age_seconds": age})
 
         return {"database": database, "outbox": outbox}
 
@@ -410,6 +423,32 @@ class NaappRuntime:
         return await self.team_cache().check_current_member(
             team_id, certificate_id=certificate_id, team_did_key=team_did_key
         )
+
+    async def check_human_member(
+        self, team_id: str, *, principal: str, certificate: Mapping[str, Any],
+        identity_client: RegistryClient | None = None,
+    ) -> HumanMemberProof:
+        """Current certificate/key and the exact subject's own human kind.
+
+        This is an explicit human-role call, never part of ordinary agent
+        authentication. Without an existing caller-owned SDK client it uses a
+        live client for this check and closes it; an injected CachedRegistryClient
+        retains its own bounded cache/lifecycle. No Redis setting is required.
+        App holdings, B3 admission and the caller's effect fence stay separate.
+        """
+        if identity_client is not None:
+            return await observe_human_member(
+                self.team_cache(), identity_client, team_id=team_id,
+                principal=principal, certificate=certificate,
+            )
+        async with aclosing(RegistryClient(
+            self.settings.awid_registry_url, transport=self._awid_transport,
+            service_token=self.settings.awid_service_token,
+        )) as client:
+            return await observe_human_member(
+                self.team_cache(), client, team_id=team_id,
+                principal=principal, certificate=certificate,
+            )
 
     async def principal(self, request: Request) -> Principal:
         """FastAPI dependency: the team member who signed this request.
@@ -693,6 +732,7 @@ def mount_naapp_routes(
     robots_disallow: Sequence[str] = (),
     noindex_paths: Sequence[str] = (),
     health_checks: Mapping[str, HealthCheck] | None = None,
+    health_labels: Mapping[str, StrEnum] | None = None,
 ) -> None:
     """Serve the standard naapp public surface.
 
@@ -776,4 +816,9 @@ def mount_naapp_routes(
         return PlainTextResponse(skill, headers=_NOSNIFF)
 
     mount_manifest_routes(app, runtime=runtime)
-    mount_health(app, settings, checks={**runtime.health_checks(), **(health_checks or {})})
+    mount_health(
+        app,
+        settings,
+        checks={**runtime.health_checks(), **(health_checks or {})},
+        labels=health_labels,
+    )

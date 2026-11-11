@@ -2300,7 +2300,7 @@ async def test_send_message_to_external_address_remote_failure_does_not_create_l
         resp = await client.post("/v1/messages", json=payload)
 
     assert resp.status_code == 502
-    assert "remote unavailable" in resp.json()["detail"]
+    assert resp.json()["detail"] == "Federated mail delivery to https://remote.example failed: HTTP 503"
     count = await aweb_cloud_db.aweb_db.fetch_value(
         "SELECT COUNT(*) FROM {{tables.messages}} WHERE subject = 'remote failure'"
     )

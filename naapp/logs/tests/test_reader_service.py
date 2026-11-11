@@ -26,7 +26,6 @@ import pytest
 from aweb.app_manifests import FetchedManifest
 from aweb.installations import install_verified_manifest_on
 from aweb_naapp.css import CSS_SHA256
-from aweb_naapp.egress import AddressPolicy, Egress
 from aweb_naapp.egress.send import EgressNotSent
 from aweb_naapp.email import EmailSettings
 from aweb_naapp.manifest import load_manifest
@@ -145,7 +144,9 @@ def email_settings(smtp: SmtpServer, directory: Path) -> EmailSettings:
 
 
 @pytest.fixture
-async def deployment(coordination, test_db_factory, tmp_path) -> AsyncIterator[Deployment]:
+async def deployment(
+    request: pytest.FixtureRequest, coordination, test_db_factory, tmp_path
+) -> AsyncIterator[Deployment]:
     member = Member(team_id=f"logs-{uuid4().hex[:12]}:readers.example")
     await coordination.add_member(member)
     await coordination.publish_server(member)
@@ -170,6 +171,7 @@ async def deployment(coordination, test_db_factory, tmp_path) -> AsyncIterator[D
         awid_registry_url=REGISTRY_URL,
         awid_service_token=SERVICE_TOKEN,
         app_key_files=key_files,
+        **getattr(request, "param", {}),
     )
     with blocked_dns() as looked_up, SmtpServer(tmp_path / "smtp") as smtp:
         service = create_app(
@@ -177,7 +179,7 @@ async def deployment(coordination, test_db_factory, tmp_path) -> AsyncIterator[D
             email=email_settings(smtp, tmp_path),
             awid_transport=coordination.registry.transport,
             team_server_transport=coordination.server.transport,
-            hook_egress=Egress(addresses=AddressPolicy(), resolver=Unresolved(), user_agent="logs"),
+            resolver=Unresolved(),
         )
         async with service.api_app.router.lifespan_context(service.api_app):
             async with (
@@ -243,7 +245,9 @@ async def designated_reader(deployment: Deployment, contact: str) -> str:
 def enrolment_token(deployment: Deployment, contact: str = CONTACT) -> str:
     [received] = [mail for mail in deployment.smtp.received if mail.rcpt_tos == [contact]]
     message = email.message_from_bytes(received.content, policy=email.policy.default)
-    [url] = Links(message.get_body(("html",)).get_content()).urls
+    body = message.get_body(("html",))
+    assert body is not None
+    [url] = Links(body.get_content()).urls
     parts = urlsplit(url)
     assert parts._replace(fragment="").geturl() == CONSOLE + "/enrolment"
     [token] = parse_qs(parts.fragment)["token"]
@@ -290,6 +294,10 @@ async def test_a_designated_reader_enrols_from_its_mail_logs_in_and_reads(
     scoped = [attrs for tag, attrs in Elements(home.text).tags if "data-console-scope" in attrs]
     assert [attrs["data-console-scope"] for attrs in scoped] == [scope]
 
+    assert {"/events", "/follow", "/integrity"} <= set(Links(home.text).urls)
+    for page in ("/events", "/follow", "/integrity"):
+        viewed = await deployment.console.get(page)
+        assert viewed.status_code == 200, page
     events = await deployment.console.get("/v1/events")
     verified = await deployment.console.get("/v1/verify")
     assert events.status_code == 200, events.text
@@ -322,13 +330,17 @@ async def test_the_console_origin_serves_logs_pages_and_the_shell_assets_only_th
         assert response.status_code == 200, path
         body = Elements(response.text).first("body")
         assert body["data-console-csrf-key"] == "aweb.logs.console.csrf", path
-    anonymous = await deployment.console.get("/")
-    assert (anonymous.status_code, anonymous.headers["location"]) == (303, "/login")
+    for path in ("/", "/events", "/follow", "/integrity"):
+        anonymous = await deployment.console.get(path)
+        assert (anonymous.status_code, anonymous.headers["location"]) == (303, "/login"), path
+        assert (await deployment.agent.get(path)).status_code == 404, path
     for path in (
         "/console-ui/console.js",
         "/console-ui/style.css",
         "/console-bootstrap/bootstrap.js",
         "/console-bootstrap/style.css",
+        "/logs-viewer/follow.js",
+        "/logs-viewer/filters.js",
         f"/css/aweb.{CSS_SHA256[:12]}.css",
     ):
         assert (await deployment.console.get(path)).status_code == 200, path
@@ -346,6 +358,22 @@ async def enrolled_reader(deployment: Deployment, contact: str) -> str:
     )
     assert enrolled.json() == {"scope": scope}
     return scope
+
+
+@pytest.mark.parametrize("deployment", [{"client_address_header": "X-Real-IP"}], indirect=True)
+async def test_the_login_limit_is_kept_per_address_the_proxy_reports(deployment: Deployment):
+    scope = await enrolled_reader(deployment, CONTACT)
+
+    async def login_options(address: str) -> int:
+        response = await deployment.console.post(
+            "/login/options", json={"scope": scope}, headers={"X-Real-IP": address}
+        )
+        return response.status_code
+
+    # Both clients reach the app from the proxy's one peer address.
+    statuses = [await login_options("198.51.100.7") for _ in range(20)]
+    assert statuses[0] == 200 and statuses[-1] == 429
+    assert await login_options("198.51.100.8") == 200
 
 
 async def test_a_member_removes_a_reader_but_never_the_last(deployment: Deployment):

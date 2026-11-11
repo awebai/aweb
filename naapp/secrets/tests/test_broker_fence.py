@@ -8,7 +8,7 @@ from uuid import uuid4
 
 import pytest
 from aweb_naapp.dispatch import Dispatches, State, apply_dispatch_migrations
-from aweb_naapp.egress import InternalDestinations
+from aweb_naapp.egress import Destination, InternalDestinations
 
 from aweb_secrets import records
 from aweb_secrets.admission import AdmissionRefused, UseRequest
@@ -33,7 +33,7 @@ from tests.test_operation_record import REFUND
 PARAMS = {"charge": "ch_original", "amount_minor_units": 50, "currency": "EUR"}
 
 
-async def setup(db, fence, *, policy_changes=None):
+async def setup(db, fence, *, policy_changes=None, destination_limit=None):
     operation = OperationTemplate.from_after(copy.deepcopy(REFUND))
     pin = {"operation_id": operation.operation_id, "digest": operation.digest}
     await _install(
@@ -56,6 +56,7 @@ async def setup(db, fence, *, policy_changes=None):
             "header_allow": ["idempotency-key", "stripe-version", "x-request-id"],
             "network": "public",
             "cidr": None,
+            **({} if destination_limit is None else {"response_max_bytes": destination_limit}),
         },
         internal_destinations=InternalDestinations.DISABLED,
     )
@@ -120,6 +121,25 @@ async def test_s3_prepares_all_authority_before_its_own_locks(db, fence):
         assert ("Idempotency-Key", f"secrets-{dispatch_id}") in prepared.call.rendered.headers
         assert prepared.call.target_path_template == operation.after["url"]["path"]
         assert "ch_original" not in prepared.call.target_path_template
+
+
+@pytest.mark.parametrize("destination_limit,expected", [(1024, 1024), (8192, 4096)])
+async def test_named_operation_uses_the_smallest_owner_bound(
+    db, fence, destination_limit, expected
+):
+    _, request, admitted = await setup(
+        db,
+        fence,
+        policy_changes={"result": {"max_bytes": 4096}},
+        destination_limit=destination_limit,
+    )
+    dispatch_id = uuid4()
+    state = await machine(db, dispatch_id)
+    async with db.transaction() as tx:
+        prepared = authority(fence, admitted, request, dispatch_id)
+        await state.admit(tx, dispatch_id, fence=prepared)
+        assert prepared.call.rendered.max_bytes == expected
+        assert prepared.call.rendered.bounds.max_response_bytes == expected
 
 
 @pytest.mark.parametrize(
@@ -248,8 +268,35 @@ async def test_policy_window_is_checked_after_a_real_s3_row_lock_wait(db, fence,
         assert current.attempts == (0 if expired else 1)
 
 
-async def test_open_request_is_bounded_and_has_no_token_issuing_authority(db, fence):
-    await _install(db, policy_body={**POLICY_BODY, "result": {"max_bytes": 1024}})
+@pytest.mark.parametrize(
+    "destination_limit,policy_limit,expected,oauth",
+    [
+        (None, 1024, 1024, False),
+        (512, 1024, 512, False),
+        (None, None, 16 * 1024 * 1024, False),
+        (32 * 1024 * 1024, 64 * 1024 * 1024, 32 * 1024 * 1024, False),
+        pytest.param(None, None, 16 * 1024 * 1024, True, id="oauth-token-destination"),
+    ],
+)
+async def test_open_request_is_bounded_and_has_no_token_issuing_authority(
+    db, fence, destination_limit, policy_limit, expected, oauth
+):
+    result = {} if policy_limit is None else {"max_bytes": policy_limit}
+    secret = (
+        None
+        if not oauth
+        else {
+            **SECRET,
+            "kind": "oauth2-client-credentials",
+            "kind_params": {
+                "token_endpoint": "https://api.example/v1/token",
+                "client_auth": "client_secret_basic",
+                "scope": "read",
+            },
+        }
+    )
+    await _install(db, policy_body={**POLICY_BODY, "result": result}, secret=secret)
+    limit = {} if destination_limit is None else {"response_max_bytes": destination_limit}
     destination = DestinationRecord.from_after(
         {
             "v": 1,
@@ -259,11 +306,12 @@ async def test_open_request_is_bounded_and_has_no_token_issuing_authority(db, fe
             "host": "api.example",
             "port": 443,
             "path": "/v1/**",
-            "methods": ["GET"],
+            "methods": ["GET", "POST"],
             "query_rules": {},
             "header_allow": [],
             "network": "public",
             "cidr": None,
+            **limit,
         },
         internal_destinations=InternalDestinations.DISABLED,
     )
@@ -288,6 +336,8 @@ async def test_open_request_is_bounded_and_has_no_token_issuing_authority(db, fe
         assert prepared.call.operation is None
         assert prepared.call.rendered.token_issuing is False
         assert prepared.call.rendered.projection is None
-        assert prepared.call.rendered.bounds.max_response_bytes == 1024
-        assert prepared.call.rendered.max_bytes == 1024
+        assert prepared.call.rendered.bounds.max_response_bytes == expected
+        assert prepared.call.rendered.max_bytes == expected
         assert prepared.call.target_path_template == "/v1/**"
+        if oauth:
+            assert isinstance(prepared.call.token_destination, Destination)

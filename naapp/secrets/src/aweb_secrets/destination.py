@@ -19,6 +19,7 @@ from typing import Any
 
 from aweb_naapp.egress import Destination, EgressRefused, InternalDestinations, parse_destination
 
+from aweb_secrets.response_limits import DEFAULT_RESPONSE_BYTES, MAX_RESPONSE_BYTES
 from aweb_secrets.secret import SECRET_ID
 
 FIELDS = frozenset(
@@ -38,6 +39,7 @@ FIELDS = frozenset(
     }
 )
 SCOPE_FIELDS = FIELDS - {"destination_id", "secret_id"}
+OPTIONAL_FIELDS = frozenset({"response_max_bytes"})
 DESTINATION_ID = re.compile(r"dst_[A-Za-z0-9_-]{4,64}")
 _HEADER_NAME = re.compile(r"[a-z0-9!#$%&'*+.^_`|~-]{1,64}")
 
@@ -69,7 +71,7 @@ def _sorted_distinct(values: Any) -> bool:
 
 def _check(after: Any) -> None:
     _require(
-        isinstance(after, Mapping) and set(after) == FIELDS,
+        isinstance(after, Mapping) and FIELDS <= set(after) <= FIELDS | OPTIONAL_FIELDS,
         f"a destination needs exactly {sorted(FIELDS)}",
     )
     _require(
@@ -84,6 +86,11 @@ def _check(after: Any) -> None:
 
 
 def _check_scope(after: Mapping[str, Any]) -> None:
+    maximum = after.get("response_max_bytes", DEFAULT_RESPONSE_BYTES)
+    _require(
+        type(maximum) is int and 1 <= maximum <= MAX_RESPONSE_BYTES,
+        "response_max_bytes is 1 byte to 64 MiB",
+    )
     _require(type(after["v"]) is int and after["v"] == 1, "this is destination record v1")
     _require(after["scheme"] == "https", "a destination is https")
     _require(type(after["port"]) is int, "the port is an integer")
@@ -121,7 +128,7 @@ def parse_destination_scope(
 ) -> Destination:
     """Validate a fixed destination/1 scope before its child IDs are minted."""
     _require(
-        isinstance(after, Mapping) and set(after) == SCOPE_FIELDS,
+        isinstance(after, Mapping) and SCOPE_FIELDS <= set(after) <= SCOPE_FIELDS | OPTIONAL_FIELDS,
         f"a destination scope needs exactly {sorted(SCOPE_FIELDS)}",
     )
     return _parse_scope(after, internal_destinations=internal_destinations)
@@ -152,3 +159,7 @@ class DestinationRecord:
     @property
     def network(self) -> str:
         return str(self.destination.network)
+
+    @property
+    def max_response_bytes(self) -> int:
+        return self.after.get("response_max_bytes", DEFAULT_RESPONSE_BYTES)

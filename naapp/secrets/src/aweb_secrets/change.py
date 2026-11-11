@@ -267,7 +267,8 @@ AFTER_SHAPES: dict[tuple[str, int], AfterShape] = {
         derived=_record(secret.SecretRecord.from_after),
     ),
     ("destination", 1): AfterShape(
-        fields=_record_fields(destination.FIELDS),
+        fields=_record_fields(destination.FIELDS | destination.OPTIONAL_FIELDS),
+        optional_fields=destination.OPTIONAL_FIELDS,
         ref_field="destination_id",
         identity=("destination_id",),
         derived=_record(_destination),

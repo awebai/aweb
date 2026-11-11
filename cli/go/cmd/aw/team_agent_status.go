@@ -73,8 +73,6 @@ var teamHumanAgentStatusCmd = &cobra.Command{
 }
 
 func runTeamHumanAgentStatus(cmd *cobra.Command, args []string) error {
-	loadDotenvBestEffort()
-
 	teamID := strings.TrimSpace(teamHumanAgentStatusTeamID)
 	if teamID == "" {
 		var err error

@@ -54,6 +54,9 @@ def harness(monkeypatch):
 
     class DB:
         grant_reads = 0
+        # The chat session's counter; a stream delivers the numbers above the
+        # value it read when it opened.
+        last_seq = 0
 
         def get_manager(self, _):
             return self
@@ -72,6 +75,10 @@ def harness(monkeypatch):
             if "SELECT p.did, p.alias, p.address" in sql:
                 return [dict(did=identity.did_key, alias="alice", address=identity.address)]
             return []
+
+        async def fetch_value(self, sql, *args):
+            assert "SELECT last_seq FROM {{tables.chat_sessions}}" in sql
+            return self.last_seq
 
         async def fetch_val(self, sql, *args):
             # No room activity adds authority reads to these existing streams.
@@ -113,7 +120,7 @@ def harness(monkeypatch):
         if kind == "event":
             return await events.event_stream(request, deadline=deadline, db=db, redis=None, identity=auth)
         if kind == "chat":
-            return await chat.stream(request, session_id=str(uuid4()), deadline=deadline, after=None, include=None, db=db, redis=None, auth=auth)
+            return await chat.stream(request, session_id=str(uuid4()), deadline=deadline, after=None, after_seq=None, include=None, db=db, redis=None, auth=auth)
         return await status.status_stream(request, workspace_id=str(uuid4()), repo=None, human_name=None,
                                           limit=200, event_types=None, redis=redis, db_infra=db, identity=auth)
 
@@ -209,7 +216,7 @@ async def test_chat_checks_again_after_slow_message_fetch_before_emitting_body(h
             delivered = True
             harness.clock.seconds = 31
             return [dict(
-                message_id=uuid4(), from_alias="bob", from_address="example.com/bob",
+                message_id=uuid4(), seq=1, from_alias="bob", from_address="example.com/bob",
                 from_did="", body="private content", content_mode="legacy_plaintext_v1",
                 message_version=1, encrypted_envelope=None, created_at=chat.datetime.now(timezone.utc),
                 sender_leaving=False, hang_on=False, reply_to=None, signature=None, signed_payload=None,
@@ -218,6 +225,7 @@ async def test_chat_checks_again_after_slow_message_fetch_before_emitting_body(h
 
     harness.db.fetch_all = fetch_all
     response = await harness.open("chat", duration=40)
+    harness.db.last_seq = 1
     if registry_fails:
         harness.registry.fail_at = 1
     body = await collect(response)

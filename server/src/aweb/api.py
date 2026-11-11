@@ -13,7 +13,7 @@ from redis.asyncio import Redis
 from redis.asyncio import from_url as async_redis_from_url
 from starlette.routing import Mount
 
-from awid.registry import CachedRegistryClient, RegistryClient
+from awid.registry import CachedRegistryClient, RegistryClient, RegistryError
 from awid.federation_errors import FederationAuthorityError
 from .config import get_public_origin, get_settings
 from awid.log import canonical_server_origin
@@ -246,12 +246,28 @@ def _build_awid_registry_client(
 
 
 async def _validate_awid_registry_client(registry_client: RegistryClient) -> None:
+    """Start-up needs the registry to answer. One that answers its health
+    report with a failed dependency of its own is reached; refusing to start
+    against it would spread its outage to this server."""
     try:
         await registry_client.health()
     except Exception as exc:
-        raise RuntimeError(
-            f"Failed to reach AWID registry at {registry_client.registry_url}: {exc}"
-        ) from exc
+        if not _is_unhealthy_report(exc):
+            raise RuntimeError(
+                f"Failed to reach AWID registry at {registry_client.registry_url}: {exc}"
+            ) from exc
+        logger.warning(
+            "AWID registry at %s reports a failed dependency; starting", registry_client.registry_url
+        )
+
+
+def _is_unhealthy_report(exc: Exception) -> bool:
+    return (
+        isinstance(exc, RegistryError)
+        and exc.status_code == 503
+        and isinstance(exc.body, dict)
+        and exc.body.get("status") == "unhealthy"
+    )
 
 
 def _make_standalone_lifespan():
@@ -525,8 +541,15 @@ def create_app(
             content={"detail": exc.detail},
         )
 
+    @app.get("/live", tags=["internal"])
+    async def live() -> dict:
+        # Checks no dependency: a Redis or database outage must not make an
+        # orchestrator restart a process that is serving requests.
+        return {"status": "ok"}
+
     @app.get("/health", tags=["internal"])
-    async def health(request: Request) -> dict:
+    @app.get("/ready", tags=["internal"])
+    async def health(request: Request) -> JSONResponse:
         checks = {}
         healthy = True
 
@@ -551,7 +574,10 @@ def create_app(
             checks["database"] = "error"
             healthy = False
 
-        return {"status": "ok" if healthy else "unhealthy", "checks": checks}
+        return JSONResponse(
+            status_code=200 if healthy else 503,
+            content={"status": "ok" if healthy else "unhealthy", "checks": checks},
+        )
 
     app.include_router(agents_router)
     app.include_router(agent_status_router)

@@ -368,5 +368,41 @@ def run_installation_verifications_command(
         raise typer.Exit(1)
 
 
+@app.command("release-closed-task-claims")
+def release_closed_task_claims_command(
+    apply: bool = typer.Option(False, "--apply", help="Release the claims; default reports counts without database writes"),
+) -> None:
+    """Report claims on closed tasks; release them with --apply. Counts and team ids only."""
+    from .closed_task_claims import release_closed_task_claims
+
+    async def run():
+        infra = DatabaseInfra()
+        await infra.initialize(run_migrations=False)
+        try:
+            return await release_closed_task_claims(infra.get_manager(), apply=apply)
+        finally:
+            await infra.close()
+
+    typer.echo(json.dumps(asyncio.run(run()), sort_keys=True))
+
+
+@app.command("delete-dead-rows")
+def delete_dead_rows_command(
+    apply: bool = typer.Option(False, "--apply", help="Delete the rows; default reports counts without database writes"),
+) -> None:
+    """Report rows no reader needs again, per table; delete them with --apply."""
+    from .gc import delete_dead_rows
+
+    async def run():
+        infra = DatabaseInfra()
+        await infra.initialize(run_migrations=False)
+        try:
+            return await delete_dead_rows(infra.get_manager(), apply=apply)
+        finally:
+            await infra.close()
+
+    typer.echo(json.dumps(asyncio.run(run()), sort_keys=True))
+
+
 def _get_api_base() -> str:
     return os.getenv("AWEB_API_URL", "http://localhost:8000")

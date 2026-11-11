@@ -37,6 +37,15 @@ var rootCmd = &cobra.Command{
 		if humanSelectionRequested() {
 			return prepareHumanParticipation(cmd)
 		}
+		// Offline key preparation validates its explicit destination itself.
+		// Do not renew keys or contact update services before its two-state
+		// check, including on a refusal.
+		if flag := cmd.Annotations[identityKeyPreparationAnnotation]; flag != "" && cmd.Flags().Changed(flag) {
+			enabled, _ := cmd.Flags().GetBool(flag)
+			if enabled {
+				return nil
+			}
+		}
 		// Explicit Claude settings cleanup uses cwd only; no credential selection,
 		// assertion renewal or update checks are needed for this local action.
 		if isIdentityHomeNeutralCommand(cmd) || (cmd == initCmd && initRemoveNotifyHook) {
@@ -59,22 +68,22 @@ var rootCmd = &cobra.Command{
 			// operation which creates identity state. An inherited selector is
 			// always an acting principal, never an implicit creation destination.
 			freshTarget := home.Source == awconfig.IdentityHomeFlag && cmd.Annotations[identityCreationTargetAnnotation] == "true"
-			if !freshTarget {
+			keyOnlyTarget := false
+			if home.Source == awconfig.IdentityHomeFlag && cmd.Annotations[identityKeyOnlyTargetAnnotation] == "true" {
+				path, pathErr := awconfig.IdentityHomePath(home, "signing.key")
+				if pathErr == nil {
+					keyOnlyTarget, _ = teamRequestKeyOnly(home.Root, path)
+				}
+			}
+			if !freshTarget && !keyOnlyTarget {
 				if err := validateSelectedIdentityHome(home); err != nil {
 					return err
 				}
 			}
 		}
-		loadDotenvBestEffort()
-		if home.External() {
-			_ = os.Setenv(awconfig.IdentityHomeEnv, home.Root)
-		} else if hadIdentityHomeEnv {
-			_ = os.Setenv(awconfig.IdentityHomeEnv, identityHomeEnv)
-		} else {
-			_ = os.Unsetenv(awconfig.IdentityHomeEnv)
-		}
 		activeIdentityHome = awconfig.IdentityHome{}
 		if home.External() {
+			_ = os.Setenv(awconfig.IdentityHomeEnv, home.Root)
 			activeIdentityHome = home
 		}
 		restoreIdentityHomeAfterCommand(cmd, identityHomeEnv, hadIdentityHomeEnv, previousActiveIdentityHome)

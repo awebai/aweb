@@ -34,6 +34,7 @@ from aweb_secrets.admission import Admission, AdmissionRefused, UseRequest, _cov
 from aweb_secrets.broker import SecretVersion
 from aweb_secrets.containment_state import ContainmentRefused, require_enabled
 from aweb_secrets.custody import SealContext
+from aweb_secrets.destination import DestinationRecord
 from aweb_secrets.grant import is_secrets_role
 from aweb_secrets.operation import OperationTemplate
 from aweb_secrets.operation_request import OperationRequest, render_operation
@@ -194,7 +195,13 @@ class BrokerFence:
                 headers=self.headers,
                 idempotency_key=f"secrets-{self.dispatch_id}",
             )
-            chosen = self._destination(destinations, rendered.method, rendered.url)
+            matched_destination = self._destination(destinations, rendered.method, rendered.url)
+            chosen = matched_destination.destination
+            maximum = min(
+                rendered.max_bytes,
+                matched_destination.max_response_bytes,
+                policy.max_response_bytes,
+            )
             reserved = operation.after["idempotency"]
             reserved = frozenset() if reserved is None else frozenset({reserved["header"].lower()})
             narrowed = replace(
@@ -206,12 +213,10 @@ class BrokerFence:
             rendered = replace(
                 rendered,
                 destination=narrowed,
-                max_bytes=min(rendered.max_bytes, policy.body["result"]["max_bytes"]),
+                max_bytes=maximum,
                 bounds=replace(
                     rendered.bounds,
-                    max_response_bytes=min(
-                        rendered.bounds.max_response_bytes, policy.body["result"]["max_bytes"]
-                    ),
+                    max_response_bytes=maximum,
                 ),
             )
             target = operation.after["url"]["path"]
@@ -220,8 +225,9 @@ class BrokerFence:
                 raise AdmissionRefused("params_invalid")
             call = self.open_call
             url = str(canonical_url(call.canonical_url))
-            chosen = self._destination(destinations, call.method, url)
-            maximum = policy.body["result"]["max_bytes"]
+            matched_destination = self._destination(destinations, call.method, url)
+            chosen = matched_destination.destination
+            maximum = min(matched_destination.max_response_bytes, policy.max_response_bytes)
             rendered = OperationRequest(
                 call.method,
                 url,
@@ -242,7 +248,7 @@ class BrokerFence:
         if stored.record.kind == "oauth2-client-credentials":
             token_destination = self._destination(
                 destinations, "POST", stored.record.kind_params["token_endpoint"]
-            )
+            ).destination
         self._call = PreparedBrokerCall(
             stored,
             SecretVersion(
@@ -256,7 +262,7 @@ class BrokerFence:
         )
         self._forest, self._tx = forest, tx
 
-    def _destination(self, records_, method, url) -> Destination:
+    def _destination(self, records_, method, url) -> DestinationRecord:
         last = None
         for record in records_:
             try:
@@ -269,7 +275,7 @@ class BrokerFence:
             except EgressRefused as refused:
                 last = refused
                 continue
-            return record.destination
+            return record
         if last is not None:
             raise last
         raise AdmissionRefused("destination_not_in_scope")

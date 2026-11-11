@@ -123,12 +123,43 @@ func ownerPositives() []ownerPositive {
 		{"legal_hold_set", "logs.legal-hold.set", ownerLogsAud, logsVocabulary, app(map[string]any{"hold_id": "hold_1", "hold_scope": "all", "reason_code": "litigation"})},
 		{"legal_hold_release", "logs.legal-hold.release", ownerLogsAud, logsVocabulary, app(map[string]any{"hold_id": "hold_1"})},
 		{"activate_registration_sorted_scopes", "hook-binding.activate", ownerCoreAud, CoreOwnerActs, registrationWith("scopes", []any{"logs:ingest", "logs:read"})},
+		{"designate_human_owner_with_notice_contact", "human-role.designate", ownerAppAud, HumanRoleOwnerActs, humanHolding("secrets", "secrets.owner", true)},
+		{"designate_human_reader", "human-role.designate", ownerLogsAud, HumanRoleOwnerActs, humanHolding("logs", "logs.reader", false)},
+		{"replace_human_owner_credential", "human-credential.replace", ownerAppAud, HumanRoleOwnerActs, humanHolding("secrets", "secrets.owner", true)},
+		{"revoke_human_reader", "human-role.revoke", ownerLogsAud, HumanRoleOwnerActs, humanRevocation("logs", "logs.reader")},
 	}
 	var out []ownerPositive
 	for i, c := range cases {
 		out = append(out, ownerPositive{c.name, c.aud, c.acts, ownerAct(c.act, c.aud, c.subject, nonceFor(i))})
 	}
 	return out
+}
+
+const (
+	ownerHumanPrincipal = "did:aw:2Zf4Lq8m3VYb9nKc5RjTs7Hd"
+	ownerHumanContact   = "owner@example.com"
+)
+
+// ownerCredentialSHA256 stands for a human credential's hash: the verifier
+// checks only its shape, and the delivery vector pins the hash itself.
+var ownerCredentialSHA256 = contactSHA256("a credential the controller binds")
+
+// humanHolding is a human-role.designate or human-credential.replace subject,
+// with a notice contact when the role declares one.
+func humanHolding(app, role string, notice bool) map[string]any {
+	subject := map[string]any{
+		"app_id": app, "installation_id": ownerInstall, "role": role,
+		"principal": ownerHumanPrincipal, "credential_sha256": ownerCredentialSHA256,
+	}
+	if notice {
+		subject["notice_contact_sha256"] = contactSHA256(ownerHumanContact)
+	}
+	return subject
+}
+
+// humanRevocation is a human-role.revoke subject.
+func humanRevocation(app, role string) map[string]any {
+	return map[string]any{"app_id": app, "installation_id": ownerInstall, "role": role, "principal": ownerHumanPrincipal}
 }
 
 // contactSHA256 is the hex SHA-256 of a contact's UTF-8 bytes, as the app
@@ -244,6 +275,21 @@ func buildOwnerActVector(t *testing.T) map[string]any {
 	designate := ownerAct("app-role.designate", ownerAppAud, designation, nonceFor(42))
 	otherContact := map[string]any{"app_id": "secrets", "installation_id": ownerInstall, "role": "secrets.owner", "contact_sha256": contactSHA256("someone-else@example.com")}
 	designationWithRef := map[string]any{"app_id": "secrets", "installation_id": ownerInstall, "role": "secrets.owner", "contact_sha256": contactSHA256("owner@example.com"), "subject_ref": "member:c_41"}
+	holding := humanHolding("secrets", "secrets.owner", true)
+	humanDesignate := ownerAct("human-role.designate", ownerAppAud, holding, nonceFor(45))
+	humanRevoke := ownerAct("human-role.revoke", ownerLogsAud, humanRevocation("logs", "logs.reader"), nonceFor(46))
+	contactDesignate := ownerAct("app-role.designate", ownerAppAud, designation, nonceFor(47))
+	humanWith := func(key string, value any) map[string]any {
+		subject := humanHolding("secrets", "secrets.owner", true)
+		if value == nil {
+			delete(subject, key)
+		} else {
+			subject[key] = value
+		}
+		return subject
+	}
+	revocationWithCredential := humanRevocation("logs", "logs.reader")
+	revocationWithCredential["credential_sha256"] = ownerCredentialSHA256
 	production := productionSubject()
 	production["tool"] = "ingest"
 	productionWith := func(key string, value any) map[string]any {
@@ -297,6 +343,24 @@ func buildOwnerActVector(t *testing.T) map[string]any {
 			act: ownerSet(base, "subject", subjectWith("scopes", []any{"logs:read", "logs:ingest"}))},
 		{name: "production_reads_duplicate", err: "invalid_value", seed: ownerTeamSeed,
 			act: ownerSet(base, "subject", productionWith("reads", []any{"ingest", "ingest"}))},
+		{name: "human_designation_naming_a_did_key", err: "invalid_value", seed: ownerTeamSeed,
+			act:     ownerSet(humanDesignate, "subject", humanWith("principal", ownerDID(ownerAdminSeed))),
+			options: ownerOptions(ownerAppAud, HumanRoleOwnerActs, holding)},
+		{name: "human_designation_without_a_credential", err: "missing_field", seed: ownerTeamSeed,
+			act:     ownerSet(humanDesignate, "subject", humanWith("credential_sha256", nil)),
+			options: ownerOptions(ownerAppAud, HumanRoleOwnerActs, holding)},
+		{name: "human_designation_naming_a_contact", err: "unknown_field", seed: ownerTeamSeed,
+			act:     ownerSet(humanDesignate, "subject", humanWith("contact_sha256", contactSHA256(ownerHumanContact))),
+			options: ownerOptions(ownerAppAud, HumanRoleOwnerActs, holding)},
+		{name: "human_revocation_naming_a_credential", err: "unknown_field", seed: ownerTeamSeed,
+			act:     ownerSet(humanRevoke, "subject", revocationWithCredential),
+			options: ownerOptions(ownerLogsAud, HumanRoleOwnerActs, humanRevocation("logs", "logs.reader"))},
+		{name: "human_designation_for_another_credential", err: "subject_mismatch", seed: ownerTeamSeed, act: humanDesignate,
+			options: ownerOptions(ownerAppAud, HumanRoleOwnerActs, humanWith("credential_sha256", contactSHA256("another credential")))},
+		{name: "human_designation_at_a_contact_vocabulary", err: "act_not_allowed", seed: ownerTeamSeed, act: humanDesignate,
+			options: ownerOptions(ownerAppAud, AppOwnerActs, holding)},
+		{name: "contact_designation_at_a_human_role_vocabulary", err: "act_not_allowed", seed: ownerTeamSeed, act: contactDesignate,
+			options: ownerOptions(ownerAppAud, HumanRoleOwnerActs, designation)},
 	}
 	var out []map[string]any
 	for _, n := range negatives {
@@ -321,14 +385,14 @@ func buildOwnerActVector(t *testing.T) map[string]any {
 
 	return map[string]any{
 		"name":   "owner-act-v1",
-		"status": "proposed (aweb-acgh.16.3); frozen once reviewed",
+		"status": "frozen (aweb-acgh.16.3)",
 		"scheme": map[string]any{
 			"authority":     "docs/owner-act.md",
 			"signing_bytes": "the ASCII prefix 'aweb.owner-act/1' and a newline, then the act's strict canonical JSON (the hook event rules: sorted keys, printable ASCII, no floats, no null)",
 			"signature":     "detached Ed25519 by the team's current controller key: exactly 86 characters of the standard base64 alphabet, no padding, zero trailing bits",
 			"times":         "issued_at and expires_at are UTC to the second in their one canonical spelling; expires_at follows issued_at by at most 600 seconds; issued_at may lead the verifier by at most 60 seconds, inclusive",
 			"nonce":         "16 random bytes as 32 lowercase hex characters, single use per verifier: inserted under a unique constraint in the act's effect transaction, so a second use rolls back with nonce_reused",
-			"vocabularies":  map[string]any{"core": CoreOwnerActs, "app": AppOwnerActs, "logs": LogsOwnerActs},
+			"vocabularies":  map[string]any{"core": CoreOwnerActs, "app": AppOwnerActs, "human_role": HumanRoleOwnerActs, "logs": LogsOwnerActs},
 			"verify":        "each case's verify object is what the verifier knows independently, and every field is required: its team, the team key read fresh from the registry, its own audience and vocabulary, its clock, the stored subject, and whether the nonce was used",
 			"order":         "every verifier option present; prefix; strict parse; canonical bytes; field names; v and type; known act; field formats (aud, expires_at, issued_at, nonce, team_id, team_key_did), real times, expires after issued; subject; team; audience; vocabulary; lifetime; not yet valid; expired; the current team key; the signature's spelling; the signature; the nonce; the expected subject",
 		},

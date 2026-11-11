@@ -17,6 +17,7 @@ interface ProbeRequest {
   authorization: string;
   body: string;
   method: string;
+  signedPayload: string;
   timestamp: string;
   url: string;
 }
@@ -86,10 +87,17 @@ test("packaged Claude MCP child inherits AWEB_IDENTITY_HOME and signs as the ext
     expect(did).toBe(external.did);
     expect(did).not.toBe(shadow.did);
 
-    const bodyHash = createHash("sha256").update(request.body, "utf8").digest("hex");
-    const payload = `{"body_sha256":${JSON.stringify(bodyHash)},"team_id":${JSON.stringify(external.teamID)},"timestamp":${JSON.stringify(request.timestamp)}}`;
+    const message = Buffer.from(request.signedPayload, "base64url");
+    expect(JSON.parse(message.toString("utf8"))).toEqual({
+      aud: externalServer.url,
+      body_sha256: createHash("sha256").update(request.body, "utf8").digest("hex"),
+      method: request.method,
+      path: request.url,
+      team_id: external.teamID,
+      timestamp: request.timestamp,
+      v: 2,
+    });
     const signature = Buffer.from(encodedSignature, "base64url");
-    const message = new TextEncoder().encode(payload);
     expect(ed.verify(signature, message, ed.getPublicKey(external.seed))).toBe(true);
     expect(ed.verify(signature, message, ed.getPublicKey(shadow.seed))).toBe(false);
   }
@@ -105,6 +113,7 @@ async function startProbeServer(): Promise<ProbeServer> {
       authorization: request.headers.authorization || "",
       body: Buffer.concat(chunks).toString("utf8"),
       method: request.method || "",
+      signedPayload: String(request.headers["x-aweb-signed-payload"] || ""),
       timestamp: String(request.headers["x-aweb-timestamp"] || ""),
       url: request.url || "",
     };

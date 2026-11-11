@@ -54,7 +54,7 @@ func decodeSingleJSON(data []byte, v any, disallowUnknown bool) error {
 // interpreter accepts. Version 1 is tools-only; version 2 adds tool
 // invocation contexts, surfaces, usage, lifecycle, the hooks slot and
 // purpose-split app keys.
-var SupportedManifestVersions = []int{1, 2}
+var SupportedManifestVersions = []int{1, 2, 3}
 
 // Manifest is one app manifest of either supported version. The fields after
 // Events exist only in version 2; Validate refuses them in version 1.
@@ -72,6 +72,9 @@ type Manifest struct {
 	// Roles stays raw until validation, so every fault in it is reported
 	// as role_invalid.
 	Roles json.RawMessage `json:"roles,omitempty"`
+	// OwnerActs, a version 3 member, stays raw until validation, so every
+	// fault in it is reported as owner_acts_invalid.
+	OwnerActs json.RawMessage `json:"owner_acts,omitempty"`
 	// members are the top-level member names of decoded bytes, so a
 	// present member is told apart from an absent one.
 	members map[string]bool
@@ -215,17 +218,24 @@ type InterpretedRequest struct {
 // stable code (see ErrorCode); messages are for people.
 func Validate(manifest Manifest, reservedNames map[string]bool) error {
 	switch manifest.ManifestVersion {
-	case 1, 2:
+	case 1, 2, 3:
 	default:
 		return codedError(CodeManifestVersionUnsupported, fmt.Errorf("unsupported manifest_version %d", manifest.ManifestVersion))
 	}
 	if err := validateCommon(manifest, reservedNames); err != nil {
 		return codedError(CodeManifestInvalid, err)
 	}
+	if manifest.ManifestVersion < 3 && manifest.hasMember("owner_acts", manifest.OwnerActs != nil) {
+		return codedf(CodeManifestInvalid, "owner_acts requires manifest_version 3")
+	}
 	if manifest.ManifestVersion == 1 {
 		return validateV1Only(manifest)
 	}
-	return validateV2(manifest)
+	if err := validateV2(manifest); err != nil {
+		return err
+	}
+	_, err := parseOwnerActs(manifest.OwnerActs, manifest.App.Origin)
+	return err
 }
 
 func validateCommon(manifest Manifest, reservedNames map[string]bool) error {

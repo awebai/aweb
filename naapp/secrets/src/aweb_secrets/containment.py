@@ -31,7 +31,7 @@ from aweb_naapp.runtime.team_auth import Principal
 from pgdbm import AsyncDatabaseManager
 from pgdbm.core import TransactionManager
 
-from aweb_secrets import derived_lineage, use_approvals
+from aweb_secrets import derived_lineage, run_pin_store, use_approvals
 from aweb_secrets.containment_state import ContainmentRefused
 from aweb_secrets.containment_state import require_enabled as require_enabled
 from aweb_secrets.custody import Custody, SealContext
@@ -132,6 +132,9 @@ async def disable_secret_tree(
         revoked_by=revoked_by,
         reason="secret_disabled",
     )
+    await run_pin_store.prepare_secrets(
+        tx, installation_id=installation_id, team_id=team_id, secret_ids=ids
+    )
     await _disable(
         tx,
         custody,
@@ -213,6 +216,8 @@ async def disable_installation(
         revoked_by=revoked_by,
         reason="installation_disabled",
     )
+    await run_pin_store.prepare_installation(tx, installation_id=installation_id, team_id=team_id)
+    await run_pin_store.discard_installation(tx, installation_id=installation_id, team_id=team_id)
     await tx.execute(
         "INSERT INTO {{tables.containment_installations}} (installation_id, team_id, disabled_at)"
         " VALUES ($1,$2,NOW()) ON CONFLICT (installation_id, team_id)"
@@ -241,6 +246,7 @@ ACTIONS = {
     "deregister-runner": "runner.deregistered",
 }
 GovernanceEnqueue = Callable[..., Awaitable[UUID]]
+BeforeApprovals = Callable[[TransactionManager], Awaitable[None]]
 
 
 class RunnerDeregistration(Protocol):
@@ -724,6 +730,7 @@ class Containment:
         secret_ids: tuple[str, ...],
         approval_ids: tuple[str, ...] = (),
         job_ids: Sequence[str] = (),
+        before_approvals: BeforeApprovals | None = None,
     ) -> None:
         """Lock the complete replacement/reenable forest before B2 consumption.
 
@@ -795,9 +802,16 @@ class Containment:
             team_id=team_id,
             secret_ids=tuple(affected),
         )
+        if before_approvals is not None:
+            await before_approvals(tx)
         await self.approvals.lock_many(
             tx,
             [*approval_ids, *associated_ids],
+        )
+        # App's trusted B3 callback stays before B2. Prepare the ENTIRE
+        # affected S3/pin union only after B2, before revision or item effects.
+        await run_pin_store.prepare_secrets(
+            tx, installation_id=installation_id, team_id=team_id, secret_ids=affected
         )
 
     async def reenable(

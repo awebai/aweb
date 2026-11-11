@@ -15,6 +15,7 @@ from datetime import datetime, timedelta
 from pathlib import Path
 
 import pytest
+from aweb_naapp.egress import InternalDestinations
 from aweb_naapp.runtime.approvals import (
     ActionPolicy,
     Approvals,
@@ -38,6 +39,7 @@ from aweb_secrets.change import (
     parse_change,
     validate_change,
 )
+from aweb_secrets.destination import DestinationRecord
 from aweb_secrets.grant import GrantTemplate
 from aweb_secrets.operation import OperationInvalid, OperationTemplate, operation_digest
 
@@ -101,6 +103,20 @@ def test_positive_cases_cover_both_drafters_and_every_shape_in_force() -> None:
     assert drafters == {("console", False), ("team_auth", True), ("team_auth", False)}
     kinds = {item["kind"] for c in POSITIVE for item in c["request"]["changes"]}
     assert kinds == {kind for kind, _ in AFTER_SHAPES}
+
+
+@pytest.mark.parametrize(
+    "case",
+    [case for case in POSITIVE if case["name"].startswith("destination-response-limit-")],
+    ids=lambda case: case["name"],
+)
+def test_generated_response_limits_are_read_by_the_destination_consumer(case: dict) -> None:
+    after = case["request"]["changes"][0]["after"]
+    record = DestinationRecord.from_after(
+        after, internal_destinations=InternalDestinations.DISABLED
+    )
+    assert record.max_response_bytes == case["expected_max_response_bytes"]
+    assert record.after == after
 
 
 @pytest.mark.parametrize("case", DERIVED_OPERATIONS, ids=lambda case: case["name"])

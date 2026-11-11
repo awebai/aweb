@@ -48,7 +48,7 @@ async def application(
     await apply_dispatch_migrations(w.db)
     await apply_use_context_migrations(w.db)
 
-    async def installation(installation_id, *, team_id: str | None = None):
+    async def installation(installation_id, *, team_id: str):
         if installation_id != INSTALLATION_ID:
             raise LookupError(installation_id)
         return w.admitted

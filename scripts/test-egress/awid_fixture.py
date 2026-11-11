@@ -26,6 +26,26 @@ def run(*args):
     return subprocess.check_output(args, text=True).strip()
 
 
+def fixture_app():
+    """Real service with an optional exact DNS dependency for CLI journeys."""
+    from awid_service.main import app
+    domain = os.environ.get('AWID_FIXTURE_DNS_DOMAIN')
+    if domain:
+        from awid.dns_verify import DomainAuthority, DnsVerificationError
+        from awid_service.deps import get_domain_verifier
+
+        async def verify_domain(requested):
+            if requested != domain:
+                raise DnsVerificationError('No fixture DNS authority for ' + requested)
+            return DomainAuthority(
+                controller_did=os.environ['AWID_FIXTURE_DNS_CONTROLLER'],
+                registry_url='https://api.awid.ai', dns_name='_awid.' + domain,
+            )
+
+        app.dependency_overrides[get_domain_verifier] = lambda: verify_domain
+    return app
+
+
 def main():
     owned = []
     process = None
@@ -61,8 +81,12 @@ def main():
         if os.environ.get('AWID_FIXTURE_RATE_LIMITS') == 'production':
             env.pop('AWID_RATE_LIMIT_DISABLED')
             env['AWID_RATE_LIMIT_BACKEND'] = 'memory'
+        if env.get('AWID_FIXTURE_DNS_DOMAIN'):
+            env['AWID_PUBLIC_ORIGINS'] = f'http://127.0.0.1:{port}'
         process = subprocess.Popen(['uv', 'run', '--offline', '--frozen', '--project', str(ROOT / 'awid'),
-                                    'uvicorn', 'awid_service.main:app', '--host', '127.0.0.1', '--port', str(port)],
+                                    'python', '-c',
+                                    "import runpy, sys, uvicorn; uvicorn.run(runpy.run_path(sys.argv[1])['fixture_app'](), host='127.0.0.1', port=int(sys.argv[2]))",
+                                    str(Path(__file__).resolve()), str(port)],
                                    env=env, stdout=sys.stderr, stderr=sys.stderr)
         url = f'http://127.0.0.1:{port}'
         for _ in range(120):

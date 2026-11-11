@@ -1263,6 +1263,184 @@
         "now": "2026-10-20T12:01:00Z",
         "team_id": "demo:example.com"
       }
+    },
+    {
+      "error": "invalid_value",
+      "name": "human_designation_naming_a_did_key",
+      "signature_b64": "g5ZSj39MZUzlJGYXjY45ep3a5G1IgQoUBJETjAvvRPBEl7hINdm09xvNh+/C7fQ0a+igc4SL3WRvqhf02WTKDQ",
+      "signing_bytes_b64url": "YXdlYi5vd25lci1hY3QvMQp7ImFjdCI6Imh1bWFuLXJvbGUuZGVzaWduYXRlIiwiYXVkIjoiaHR0cHM6Ly9zZWNyZXRzLmV4YW1wbGUuY29tIiwiZXhwaXJlc19hdCI6IjIwMjYtMTAtMjBUMTI6MDU6MDBaIiwiaXNzdWVkX2F0IjoiMjAyNi0xMC0yMFQxMjowMDowMFoiLCJub25jZSI6IjJlMmUyZTJlMmUyZTJlMmUyZTJlMmUyZTJlMmUyZTJlIiwic3ViamVjdCI6eyJhcHBfaWQiOiJzZWNyZXRzIiwiY3JlZGVudGlhbF9zaGEyNTYiOiI5Y2UwYzAyNjRjOTE0NjAxYTEyOTJkOWM0ODdmMjUwMDE3NTNhYWU1MTNmNTk5ZGIxZmZiOWQzOWQ4OTJjNDM2IiwiaW5zdGFsbGF0aW9uX2lkIjoiMWI0ZTI4YmEtMmZhMS00ZDNiLWEzZjUtZWYxOWI1YTc2MzNiIiwibm90aWNlX2NvbnRhY3Rfc2hhMjU2IjoiYzhjZDNjNjQyNzMwMWVhZjY2NjViY2NhY2Q2NWRkYjYxNDUyN2FjYzg0M2ExNTQ2M2UzZmFiYTU3MTI0YzM1MSIsInByaW5jaXBhbCI6ImRpZDprZXk6ejZNa3VQUlpOUnRVa3JoQloxTDExOWlHVzJybVdOaFBpcW92VUdEZmhTekJEQzFEIiwicm9sZSI6InNlY3JldHMub3duZXIifSwidGVhbV9pZCI6ImRlbW86ZXhhbXBsZS5jb20iLCJ0ZWFtX2tleV9kaWQiOiJkaWQ6a2V5Ono2TWt0Rm92emNhcE5aeVpCV3pGSnBDWGYyNkI4WExLZFh0d2Z3blhYRmViUGd6TSIsInR5cGUiOiJhd2ViLm93bmVyLWFjdCIsInYiOjF9",
+      "verify": {
+        "acts": [
+          "human-credential.replace",
+          "human-role.designate",
+          "human-role.revoke"
+        ],
+        "audience": "https://secrets.example.com",
+        "current_team_key_did": "did:key:z6MktFovzcapNZyZBWzFJpCXf26B8XLKdXtwfwnXXFebPgzM",
+        "expected_subject": {
+          "app_id": "secrets",
+          "credential_sha256": "9ce0c0264c914601a1292d9c487f25001753aae513f599db1ffb9d39d892c436",
+          "installation_id": "1b4e28ba-2fa1-4d3b-a3f5-ef19b5a7633b",
+          "notice_contact_sha256": "c8cd3c6427301eaf6665bccacd65ddb614527acc843a15463e3faba57124c351",
+          "principal": "did:aw:2Zf4Lq8m3VYb9nKc5RjTs7Hd",
+          "role": "secrets.owner"
+        },
+        "nonce_used": false,
+        "now": "2026-10-20T12:01:00Z",
+        "team_id": "demo:example.com"
+      }
+    },
+    {
+      "error": "missing_field",
+      "name": "human_designation_without_a_credential",
+      "signature_b64": "T26HJyMk4PRfinxm4QMsPrd/wY+5eoGr6rRrR71mEXQmeTJ7iqqRgcepwTh8V63pei27vKlcHncV5GXODpy9AA",
+      "signing_bytes_b64url": "YXdlYi5vd25lci1hY3QvMQp7ImFjdCI6Imh1bWFuLXJvbGUuZGVzaWduYXRlIiwiYXVkIjoiaHR0cHM6Ly9zZWNyZXRzLmV4YW1wbGUuY29tIiwiZXhwaXJlc19hdCI6IjIwMjYtMTAtMjBUMTI6MDU6MDBaIiwiaXNzdWVkX2F0IjoiMjAyNi0xMC0yMFQxMjowMDowMFoiLCJub25jZSI6IjJlMmUyZTJlMmUyZTJlMmUyZTJlMmUyZTJlMmUyZTJlIiwic3ViamVjdCI6eyJhcHBfaWQiOiJzZWNyZXRzIiwiaW5zdGFsbGF0aW9uX2lkIjoiMWI0ZTI4YmEtMmZhMS00ZDNiLWEzZjUtZWYxOWI1YTc2MzNiIiwibm90aWNlX2NvbnRhY3Rfc2hhMjU2IjoiYzhjZDNjNjQyNzMwMWVhZjY2NjViY2NhY2Q2NWRkYjYxNDUyN2FjYzg0M2ExNTQ2M2UzZmFiYTU3MTI0YzM1MSIsInByaW5jaXBhbCI6ImRpZDphdzoyWmY0THE4bTNWWWI5bktjNVJqVHM3SGQiLCJyb2xlIjoic2VjcmV0cy5vd25lciJ9LCJ0ZWFtX2lkIjoiZGVtbzpleGFtcGxlLmNvbSIsInRlYW1fa2V5X2RpZCI6ImRpZDprZXk6ejZNa3RGb3Z6Y2FwTlp5WkJXekZKcENYZjI2QjhYTEtkWHR3ZnduWFhGZWJQZ3pNIiwidHlwZSI6ImF3ZWIub3duZXItYWN0IiwidiI6MX0",
+      "verify": {
+        "acts": [
+          "human-credential.replace",
+          "human-role.designate",
+          "human-role.revoke"
+        ],
+        "audience": "https://secrets.example.com",
+        "current_team_key_did": "did:key:z6MktFovzcapNZyZBWzFJpCXf26B8XLKdXtwfwnXXFebPgzM",
+        "expected_subject": {
+          "app_id": "secrets",
+          "credential_sha256": "9ce0c0264c914601a1292d9c487f25001753aae513f599db1ffb9d39d892c436",
+          "installation_id": "1b4e28ba-2fa1-4d3b-a3f5-ef19b5a7633b",
+          "notice_contact_sha256": "c8cd3c6427301eaf6665bccacd65ddb614527acc843a15463e3faba57124c351",
+          "principal": "did:aw:2Zf4Lq8m3VYb9nKc5RjTs7Hd",
+          "role": "secrets.owner"
+        },
+        "nonce_used": false,
+        "now": "2026-10-20T12:01:00Z",
+        "team_id": "demo:example.com"
+      }
+    },
+    {
+      "error": "unknown_field",
+      "name": "human_designation_naming_a_contact",
+      "signature_b64": "873uE6WxWIhE2GIQP8YpKhCCekuIu8v/hP1tXW9hxdkUYo9H3Uzl9Yp9KMdaEx9wuyK+6BGfO+6T3lVDdw3qAg",
+      "signing_bytes_b64url": "YXdlYi5vd25lci1hY3QvMQp7ImFjdCI6Imh1bWFuLXJvbGUuZGVzaWduYXRlIiwiYXVkIjoiaHR0cHM6Ly9zZWNyZXRzLmV4YW1wbGUuY29tIiwiZXhwaXJlc19hdCI6IjIwMjYtMTAtMjBUMTI6MDU6MDBaIiwiaXNzdWVkX2F0IjoiMjAyNi0xMC0yMFQxMjowMDowMFoiLCJub25jZSI6IjJlMmUyZTJlMmUyZTJlMmUyZTJlMmUyZTJlMmUyZTJlIiwic3ViamVjdCI6eyJhcHBfaWQiOiJzZWNyZXRzIiwiY29udGFjdF9zaGEyNTYiOiJjOGNkM2M2NDI3MzAxZWFmNjY2NWJjY2FjZDY1ZGRiNjE0NTI3YWNjODQzYTE1NDYzZTNmYWJhNTcxMjRjMzUxIiwiY3JlZGVudGlhbF9zaGEyNTYiOiI5Y2UwYzAyNjRjOTE0NjAxYTEyOTJkOWM0ODdmMjUwMDE3NTNhYWU1MTNmNTk5ZGIxZmZiOWQzOWQ4OTJjNDM2IiwiaW5zdGFsbGF0aW9uX2lkIjoiMWI0ZTI4YmEtMmZhMS00ZDNiLWEzZjUtZWYxOWI1YTc2MzNiIiwibm90aWNlX2NvbnRhY3Rfc2hhMjU2IjoiYzhjZDNjNjQyNzMwMWVhZjY2NjViY2NhY2Q2NWRkYjYxNDUyN2FjYzg0M2ExNTQ2M2UzZmFiYTU3MTI0YzM1MSIsInByaW5jaXBhbCI6ImRpZDphdzoyWmY0THE4bTNWWWI5bktjNVJqVHM3SGQiLCJyb2xlIjoic2VjcmV0cy5vd25lciJ9LCJ0ZWFtX2lkIjoiZGVtbzpleGFtcGxlLmNvbSIsInRlYW1fa2V5X2RpZCI6ImRpZDprZXk6ejZNa3RGb3Z6Y2FwTlp5WkJXekZKcENYZjI2QjhYTEtkWHR3ZnduWFhGZWJQZ3pNIiwidHlwZSI6ImF3ZWIub3duZXItYWN0IiwidiI6MX0",
+      "verify": {
+        "acts": [
+          "human-credential.replace",
+          "human-role.designate",
+          "human-role.revoke"
+        ],
+        "audience": "https://secrets.example.com",
+        "current_team_key_did": "did:key:z6MktFovzcapNZyZBWzFJpCXf26B8XLKdXtwfwnXXFebPgzM",
+        "expected_subject": {
+          "app_id": "secrets",
+          "credential_sha256": "9ce0c0264c914601a1292d9c487f25001753aae513f599db1ffb9d39d892c436",
+          "installation_id": "1b4e28ba-2fa1-4d3b-a3f5-ef19b5a7633b",
+          "notice_contact_sha256": "c8cd3c6427301eaf6665bccacd65ddb614527acc843a15463e3faba57124c351",
+          "principal": "did:aw:2Zf4Lq8m3VYb9nKc5RjTs7Hd",
+          "role": "secrets.owner"
+        },
+        "nonce_used": false,
+        "now": "2026-10-20T12:01:00Z",
+        "team_id": "demo:example.com"
+      }
+    },
+    {
+      "error": "unknown_field",
+      "name": "human_revocation_naming_a_credential",
+      "signature_b64": "aMTRR5wcbNDdBsYvvVaVfvqLrNtDnpHSDtPIHxz9hzvWMugtbEzxRrF1hIjS59WUMcW5TWhA1hcRZElNfvFxAw",
+      "signing_bytes_b64url": "YXdlYi5vd25lci1hY3QvMQp7ImFjdCI6Imh1bWFuLXJvbGUucmV2b2tlIiwiYXVkIjoiaHR0cHM6Ly9sb2dzLmV4YW1wbGUuY29tIiwiZXhwaXJlc19hdCI6IjIwMjYtMTAtMjBUMTI6MDU6MDBaIiwiaXNzdWVkX2F0IjoiMjAyNi0xMC0yMFQxMjowMDowMFoiLCJub25jZSI6IjJmMmYyZjJmMmYyZjJmMmYyZjJmMmYyZjJmMmYyZjJmIiwic3ViamVjdCI6eyJhcHBfaWQiOiJsb2dzIiwiY3JlZGVudGlhbF9zaGEyNTYiOiI5Y2UwYzAyNjRjOTE0NjAxYTEyOTJkOWM0ODdmMjUwMDE3NTNhYWU1MTNmNTk5ZGIxZmZiOWQzOWQ4OTJjNDM2IiwiaW5zdGFsbGF0aW9uX2lkIjoiMWI0ZTI4YmEtMmZhMS00ZDNiLWEzZjUtZWYxOWI1YTc2MzNiIiwicHJpbmNpcGFsIjoiZGlkOmF3OjJaZjRMcThtM1ZZYjluS2M1UmpUczdIZCIsInJvbGUiOiJsb2dzLnJlYWRlciJ9LCJ0ZWFtX2lkIjoiZGVtbzpleGFtcGxlLmNvbSIsInRlYW1fa2V5X2RpZCI6ImRpZDprZXk6ejZNa3RGb3Z6Y2FwTlp5WkJXekZKcENYZjI2QjhYTEtkWHR3ZnduWFhGZWJQZ3pNIiwidHlwZSI6ImF3ZWIub3duZXItYWN0IiwidiI6MX0",
+      "verify": {
+        "acts": [
+          "human-credential.replace",
+          "human-role.designate",
+          "human-role.revoke"
+        ],
+        "audience": "https://logs.example.com",
+        "current_team_key_did": "did:key:z6MktFovzcapNZyZBWzFJpCXf26B8XLKdXtwfwnXXFebPgzM",
+        "expected_subject": {
+          "app_id": "logs",
+          "installation_id": "1b4e28ba-2fa1-4d3b-a3f5-ef19b5a7633b",
+          "principal": "did:aw:2Zf4Lq8m3VYb9nKc5RjTs7Hd",
+          "role": "logs.reader"
+        },
+        "nonce_used": false,
+        "now": "2026-10-20T12:01:00Z",
+        "team_id": "demo:example.com"
+      }
+    },
+    {
+      "error": "subject_mismatch",
+      "name": "human_designation_for_another_credential",
+      "signature_b64": "yEPfC6WuXn2nUP1URDyYZgPjWjLBqqUWmAhs663if0WlsZdU27vyqwan9mL7lDd6oTFLBOnmUG1AdU2xh6/iBA",
+      "signing_bytes_b64url": "YXdlYi5vd25lci1hY3QvMQp7ImFjdCI6Imh1bWFuLXJvbGUuZGVzaWduYXRlIiwiYXVkIjoiaHR0cHM6Ly9zZWNyZXRzLmV4YW1wbGUuY29tIiwiZXhwaXJlc19hdCI6IjIwMjYtMTAtMjBUMTI6MDU6MDBaIiwiaXNzdWVkX2F0IjoiMjAyNi0xMC0yMFQxMjowMDowMFoiLCJub25jZSI6IjJlMmUyZTJlMmUyZTJlMmUyZTJlMmUyZTJlMmUyZTJlIiwic3ViamVjdCI6eyJhcHBfaWQiOiJzZWNyZXRzIiwiY3JlZGVudGlhbF9zaGEyNTYiOiI5Y2UwYzAyNjRjOTE0NjAxYTEyOTJkOWM0ODdmMjUwMDE3NTNhYWU1MTNmNTk5ZGIxZmZiOWQzOWQ4OTJjNDM2IiwiaW5zdGFsbGF0aW9uX2lkIjoiMWI0ZTI4YmEtMmZhMS00ZDNiLWEzZjUtZWYxOWI1YTc2MzNiIiwibm90aWNlX2NvbnRhY3Rfc2hhMjU2IjoiYzhjZDNjNjQyNzMwMWVhZjY2NjViY2NhY2Q2NWRkYjYxNDUyN2FjYzg0M2ExNTQ2M2UzZmFiYTU3MTI0YzM1MSIsInByaW5jaXBhbCI6ImRpZDphdzoyWmY0THE4bTNWWWI5bktjNVJqVHM3SGQiLCJyb2xlIjoic2VjcmV0cy5vd25lciJ9LCJ0ZWFtX2lkIjoiZGVtbzpleGFtcGxlLmNvbSIsInRlYW1fa2V5X2RpZCI6ImRpZDprZXk6ejZNa3RGb3Z6Y2FwTlp5WkJXekZKcENYZjI2QjhYTEtkWHR3ZnduWFhGZWJQZ3pNIiwidHlwZSI6ImF3ZWIub3duZXItYWN0IiwidiI6MX0",
+      "verify": {
+        "acts": [
+          "human-credential.replace",
+          "human-role.designate",
+          "human-role.revoke"
+        ],
+        "audience": "https://secrets.example.com",
+        "current_team_key_did": "did:key:z6MktFovzcapNZyZBWzFJpCXf26B8XLKdXtwfwnXXFebPgzM",
+        "expected_subject": {
+          "app_id": "secrets",
+          "credential_sha256": "0839e6a616400e74e73f6f563d5beac8e8aebf0b930e527ffa6412c00bfe6cb6",
+          "installation_id": "1b4e28ba-2fa1-4d3b-a3f5-ef19b5a7633b",
+          "notice_contact_sha256": "c8cd3c6427301eaf6665bccacd65ddb614527acc843a15463e3faba57124c351",
+          "principal": "did:aw:2Zf4Lq8m3VYb9nKc5RjTs7Hd",
+          "role": "secrets.owner"
+        },
+        "nonce_used": false,
+        "now": "2026-10-20T12:01:00Z",
+        "team_id": "demo:example.com"
+      }
+    },
+    {
+      "error": "act_not_allowed",
+      "name": "human_designation_at_a_contact_vocabulary",
+      "signature_b64": "yEPfC6WuXn2nUP1URDyYZgPjWjLBqqUWmAhs663if0WlsZdU27vyqwan9mL7lDd6oTFLBOnmUG1AdU2xh6/iBA",
+      "signing_bytes_b64url": "YXdlYi5vd25lci1hY3QvMQp7ImFjdCI6Imh1bWFuLXJvbGUuZGVzaWduYXRlIiwiYXVkIjoiaHR0cHM6Ly9zZWNyZXRzLmV4YW1wbGUuY29tIiwiZXhwaXJlc19hdCI6IjIwMjYtMTAtMjBUMTI6MDU6MDBaIiwiaXNzdWVkX2F0IjoiMjAyNi0xMC0yMFQxMjowMDowMFoiLCJub25jZSI6IjJlMmUyZTJlMmUyZTJlMmUyZTJlMmUyZTJlMmUyZTJlIiwic3ViamVjdCI6eyJhcHBfaWQiOiJzZWNyZXRzIiwiY3JlZGVudGlhbF9zaGEyNTYiOiI5Y2UwYzAyNjRjOTE0NjAxYTEyOTJkOWM0ODdmMjUwMDE3NTNhYWU1MTNmNTk5ZGIxZmZiOWQzOWQ4OTJjNDM2IiwiaW5zdGFsbGF0aW9uX2lkIjoiMWI0ZTI4YmEtMmZhMS00ZDNiLWEzZjUtZWYxOWI1YTc2MzNiIiwibm90aWNlX2NvbnRhY3Rfc2hhMjU2IjoiYzhjZDNjNjQyNzMwMWVhZjY2NjViY2NhY2Q2NWRkYjYxNDUyN2FjYzg0M2ExNTQ2M2UzZmFiYTU3MTI0YzM1MSIsInByaW5jaXBhbCI6ImRpZDphdzoyWmY0THE4bTNWWWI5bktjNVJqVHM3SGQiLCJyb2xlIjoic2VjcmV0cy5vd25lciJ9LCJ0ZWFtX2lkIjoiZGVtbzpleGFtcGxlLmNvbSIsInRlYW1fa2V5X2RpZCI6ImRpZDprZXk6ejZNa3RGb3Z6Y2FwTlp5WkJXekZKcENYZjI2QjhYTEtkWHR3ZnduWFhGZWJQZ3pNIiwidHlwZSI6ImF3ZWIub3duZXItYWN0IiwidiI6MX0",
+      "verify": {
+        "acts": [
+          "app-role.designate",
+          "app-role.revoke",
+          "app-credential.recover"
+        ],
+        "audience": "https://secrets.example.com",
+        "current_team_key_did": "did:key:z6MktFovzcapNZyZBWzFJpCXf26B8XLKdXtwfwnXXFebPgzM",
+        "expected_subject": {
+          "app_id": "secrets",
+          "credential_sha256": "9ce0c0264c914601a1292d9c487f25001753aae513f599db1ffb9d39d892c436",
+          "installation_id": "1b4e28ba-2fa1-4d3b-a3f5-ef19b5a7633b",
+          "notice_contact_sha256": "c8cd3c6427301eaf6665bccacd65ddb614527acc843a15463e3faba57124c351",
+          "principal": "did:aw:2Zf4Lq8m3VYb9nKc5RjTs7Hd",
+          "role": "secrets.owner"
+        },
+        "nonce_used": false,
+        "now": "2026-10-20T12:01:00Z",
+        "team_id": "demo:example.com"
+      }
+    },
+    {
+      "error": "act_not_allowed",
+      "name": "contact_designation_at_a_human_role_vocabulary",
+      "signature_b64": "3tC0NmgHxBSS4OwyTKBaW13X3IO0KyfA1STBK3Oix33owUHMcjmHghiQg4TpIQi228Wtld0uB3jdzvq2C9nUBQ",
+      "signing_bytes_b64url": "YXdlYi5vd25lci1hY3QvMQp7ImFjdCI6ImFwcC1yb2xlLmRlc2lnbmF0ZSIsImF1ZCI6Imh0dHBzOi8vc2VjcmV0cy5leGFtcGxlLmNvbSIsImV4cGlyZXNfYXQiOiIyMDI2LTEwLTIwVDEyOjA1OjAwWiIsImlzc3VlZF9hdCI6IjIwMjYtMTAtMjBUMTI6MDA6MDBaIiwibm9uY2UiOiIzMDMwMzAzMDMwMzAzMDMwMzAzMDMwMzAzMDMwMzAzMCIsInN1YmplY3QiOnsiYXBwX2lkIjoic2VjcmV0cyIsImNvbnRhY3Rfc2hhMjU2IjoiYzhjZDNjNjQyNzMwMWVhZjY2NjViY2NhY2Q2NWRkYjYxNDUyN2FjYzg0M2ExNTQ2M2UzZmFiYTU3MTI0YzM1MSIsImluc3RhbGxhdGlvbl9pZCI6IjFiNGUyOGJhLTJmYTEtNGQzYi1hM2Y1LWVmMTliNWE3NjMzYiIsInJvbGUiOiJzZWNyZXRzLm93bmVyIn0sInRlYW1faWQiOiJkZW1vOmV4YW1wbGUuY29tIiwidGVhbV9rZXlfZGlkIjoiZGlkOmtleTp6Nk1rdEZvdnpjYXBOWnlaQld6RkpwQ1hmMjZCOFhMS2RYdHdmd25YWEZlYlBnek0iLCJ0eXBlIjoiYXdlYi5vd25lci1hY3QiLCJ2IjoxfQ",
+      "verify": {
+        "acts": [
+          "human-credential.replace",
+          "human-role.designate",
+          "human-role.revoke"
+        ],
+        "audience": "https://secrets.example.com",
+        "current_team_key_did": "did:key:z6MktFovzcapNZyZBWzFJpCXf26B8XLKdXtwfwnXXFebPgzM",
+        "expected_subject": {
+          "app_id": "secrets",
+          "contact_sha256": "c8cd3c6427301eaf6665bccacd65ddb614527acc843a15463e3faba57124c351",
+          "installation_id": "1b4e28ba-2fa1-4d3b-a3f5-ef19b5a7633b",
+          "role": "secrets.owner"
+        },
+        "nonce_used": false,
+        "now": "2026-10-20T12:01:00Z",
+        "team_id": "demo:example.com"
+      }
     }
   ],
   "positive_cases": [
@@ -1914,6 +2092,176 @@
     },
     {
       "act": {
+        "act": "human-role.designate",
+        "aud": "https://secrets.example.com",
+        "expires_at": "2026-10-20T12:05:00Z",
+        "issued_at": "2026-10-20T12:00:00Z",
+        "nonce": "0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e",
+        "subject": {
+          "app_id": "secrets",
+          "credential_sha256": "9ce0c0264c914601a1292d9c487f25001753aae513f599db1ffb9d39d892c436",
+          "installation_id": "1b4e28ba-2fa1-4d3b-a3f5-ef19b5a7633b",
+          "notice_contact_sha256": "c8cd3c6427301eaf6665bccacd65ddb614527acc843a15463e3faba57124c351",
+          "principal": "did:aw:2Zf4Lq8m3VYb9nKc5RjTs7Hd",
+          "role": "secrets.owner"
+        },
+        "team_id": "demo:example.com",
+        "team_key_did": "did:key:z6MktFovzcapNZyZBWzFJpCXf26B8XLKdXtwfwnXXFebPgzM",
+        "type": "aweb.owner-act",
+        "v": 1
+      },
+      "name": "designate_human_owner_with_notice_contact",
+      "signature_b64": "LDMzYYdow7wwThrsQUb7ai95i7ywG/DzB6hOtrdO5EbtxbShC7DBUi+5TEG1AWTbcihZ699QercaggsMJfpFDA",
+      "signing_bytes_b64url": "YXdlYi5vd25lci1hY3QvMQp7ImFjdCI6Imh1bWFuLXJvbGUuZGVzaWduYXRlIiwiYXVkIjoiaHR0cHM6Ly9zZWNyZXRzLmV4YW1wbGUuY29tIiwiZXhwaXJlc19hdCI6IjIwMjYtMTAtMjBUMTI6MDU6MDBaIiwiaXNzdWVkX2F0IjoiMjAyNi0xMC0yMFQxMjowMDowMFoiLCJub25jZSI6IjBlMGUwZTBlMGUwZTBlMGUwZTBlMGUwZTBlMGUwZTBlIiwic3ViamVjdCI6eyJhcHBfaWQiOiJzZWNyZXRzIiwiY3JlZGVudGlhbF9zaGEyNTYiOiI5Y2UwYzAyNjRjOTE0NjAxYTEyOTJkOWM0ODdmMjUwMDE3NTNhYWU1MTNmNTk5ZGIxZmZiOWQzOWQ4OTJjNDM2IiwiaW5zdGFsbGF0aW9uX2lkIjoiMWI0ZTI4YmEtMmZhMS00ZDNiLWEzZjUtZWYxOWI1YTc2MzNiIiwibm90aWNlX2NvbnRhY3Rfc2hhMjU2IjoiYzhjZDNjNjQyNzMwMWVhZjY2NjViY2NhY2Q2NWRkYjYxNDUyN2FjYzg0M2ExNTQ2M2UzZmFiYTU3MTI0YzM1MSIsInByaW5jaXBhbCI6ImRpZDphdzoyWmY0THE4bTNWWWI5bktjNVJqVHM3SGQiLCJyb2xlIjoic2VjcmV0cy5vd25lciJ9LCJ0ZWFtX2lkIjoiZGVtbzpleGFtcGxlLmNvbSIsInRlYW1fa2V5X2RpZCI6ImRpZDprZXk6ejZNa3RGb3Z6Y2FwTlp5WkJXekZKcENYZjI2QjhYTEtkWHR3ZnduWFhGZWJQZ3pNIiwidHlwZSI6ImF3ZWIub3duZXItYWN0IiwidiI6MX0",
+      "verify": {
+        "acts": [
+          "human-credential.replace",
+          "human-role.designate",
+          "human-role.revoke"
+        ],
+        "audience": "https://secrets.example.com",
+        "current_team_key_did": "did:key:z6MktFovzcapNZyZBWzFJpCXf26B8XLKdXtwfwnXXFebPgzM",
+        "expected_subject": {
+          "app_id": "secrets",
+          "credential_sha256": "9ce0c0264c914601a1292d9c487f25001753aae513f599db1ffb9d39d892c436",
+          "installation_id": "1b4e28ba-2fa1-4d3b-a3f5-ef19b5a7633b",
+          "notice_contact_sha256": "c8cd3c6427301eaf6665bccacd65ddb614527acc843a15463e3faba57124c351",
+          "principal": "did:aw:2Zf4Lq8m3VYb9nKc5RjTs7Hd",
+          "role": "secrets.owner"
+        },
+        "nonce_used": false,
+        "now": "2026-10-20T12:01:00Z",
+        "team_id": "demo:example.com"
+      }
+    },
+    {
+      "act": {
+        "act": "human-role.designate",
+        "aud": "https://logs.example.com",
+        "expires_at": "2026-10-20T12:05:00Z",
+        "issued_at": "2026-10-20T12:00:00Z",
+        "nonce": "0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f",
+        "subject": {
+          "app_id": "logs",
+          "credential_sha256": "9ce0c0264c914601a1292d9c487f25001753aae513f599db1ffb9d39d892c436",
+          "installation_id": "1b4e28ba-2fa1-4d3b-a3f5-ef19b5a7633b",
+          "principal": "did:aw:2Zf4Lq8m3VYb9nKc5RjTs7Hd",
+          "role": "logs.reader"
+        },
+        "team_id": "demo:example.com",
+        "team_key_did": "did:key:z6MktFovzcapNZyZBWzFJpCXf26B8XLKdXtwfwnXXFebPgzM",
+        "type": "aweb.owner-act",
+        "v": 1
+      },
+      "name": "designate_human_reader",
+      "signature_b64": "O28x5XjCZTCybdQdxEw7ghbT14fj2Ku7wCVAvdxUmrFT74+t1F66NQySQyW1wrqpWNiNn2702Hzw8R95Yh9zCQ",
+      "signing_bytes_b64url": "YXdlYi5vd25lci1hY3QvMQp7ImFjdCI6Imh1bWFuLXJvbGUuZGVzaWduYXRlIiwiYXVkIjoiaHR0cHM6Ly9sb2dzLmV4YW1wbGUuY29tIiwiZXhwaXJlc19hdCI6IjIwMjYtMTAtMjBUMTI6MDU6MDBaIiwiaXNzdWVkX2F0IjoiMjAyNi0xMC0yMFQxMjowMDowMFoiLCJub25jZSI6IjBmMGYwZjBmMGYwZjBmMGYwZjBmMGYwZjBmMGYwZjBmIiwic3ViamVjdCI6eyJhcHBfaWQiOiJsb2dzIiwiY3JlZGVudGlhbF9zaGEyNTYiOiI5Y2UwYzAyNjRjOTE0NjAxYTEyOTJkOWM0ODdmMjUwMDE3NTNhYWU1MTNmNTk5ZGIxZmZiOWQzOWQ4OTJjNDM2IiwiaW5zdGFsbGF0aW9uX2lkIjoiMWI0ZTI4YmEtMmZhMS00ZDNiLWEzZjUtZWYxOWI1YTc2MzNiIiwicHJpbmNpcGFsIjoiZGlkOmF3OjJaZjRMcThtM1ZZYjluS2M1UmpUczdIZCIsInJvbGUiOiJsb2dzLnJlYWRlciJ9LCJ0ZWFtX2lkIjoiZGVtbzpleGFtcGxlLmNvbSIsInRlYW1fa2V5X2RpZCI6ImRpZDprZXk6ejZNa3RGb3Z6Y2FwTlp5WkJXekZKcENYZjI2QjhYTEtkWHR3ZnduWFhGZWJQZ3pNIiwidHlwZSI6ImF3ZWIub3duZXItYWN0IiwidiI6MX0",
+      "verify": {
+        "acts": [
+          "human-credential.replace",
+          "human-role.designate",
+          "human-role.revoke"
+        ],
+        "audience": "https://logs.example.com",
+        "current_team_key_did": "did:key:z6MktFovzcapNZyZBWzFJpCXf26B8XLKdXtwfwnXXFebPgzM",
+        "expected_subject": {
+          "app_id": "logs",
+          "credential_sha256": "9ce0c0264c914601a1292d9c487f25001753aae513f599db1ffb9d39d892c436",
+          "installation_id": "1b4e28ba-2fa1-4d3b-a3f5-ef19b5a7633b",
+          "principal": "did:aw:2Zf4Lq8m3VYb9nKc5RjTs7Hd",
+          "role": "logs.reader"
+        },
+        "nonce_used": false,
+        "now": "2026-10-20T12:01:00Z",
+        "team_id": "demo:example.com"
+      }
+    },
+    {
+      "act": {
+        "act": "human-credential.replace",
+        "aud": "https://secrets.example.com",
+        "expires_at": "2026-10-20T12:05:00Z",
+        "issued_at": "2026-10-20T12:00:00Z",
+        "nonce": "10101010101010101010101010101010",
+        "subject": {
+          "app_id": "secrets",
+          "credential_sha256": "9ce0c0264c914601a1292d9c487f25001753aae513f599db1ffb9d39d892c436",
+          "installation_id": "1b4e28ba-2fa1-4d3b-a3f5-ef19b5a7633b",
+          "notice_contact_sha256": "c8cd3c6427301eaf6665bccacd65ddb614527acc843a15463e3faba57124c351",
+          "principal": "did:aw:2Zf4Lq8m3VYb9nKc5RjTs7Hd",
+          "role": "secrets.owner"
+        },
+        "team_id": "demo:example.com",
+        "team_key_did": "did:key:z6MktFovzcapNZyZBWzFJpCXf26B8XLKdXtwfwnXXFebPgzM",
+        "type": "aweb.owner-act",
+        "v": 1
+      },
+      "name": "replace_human_owner_credential",
+      "signature_b64": "k1kah+MCJOwAJPLlMc6zHtKEdk36u6AcZ572pP/sSreXOFT61yRRb9VWDnSwFhj9fR29mdxpMk/4PrHlQwemAg",
+      "signing_bytes_b64url": "YXdlYi5vd25lci1hY3QvMQp7ImFjdCI6Imh1bWFuLWNyZWRlbnRpYWwucmVwbGFjZSIsImF1ZCI6Imh0dHBzOi8vc2VjcmV0cy5leGFtcGxlLmNvbSIsImV4cGlyZXNfYXQiOiIyMDI2LTEwLTIwVDEyOjA1OjAwWiIsImlzc3VlZF9hdCI6IjIwMjYtMTAtMjBUMTI6MDA6MDBaIiwibm9uY2UiOiIxMDEwMTAxMDEwMTAxMDEwMTAxMDEwMTAxMDEwMTAxMCIsInN1YmplY3QiOnsiYXBwX2lkIjoic2VjcmV0cyIsImNyZWRlbnRpYWxfc2hhMjU2IjoiOWNlMGMwMjY0YzkxNDYwMWExMjkyZDljNDg3ZjI1MDAxNzUzYWFlNTEzZjU5OWRiMWZmYjlkMzlkODkyYzQzNiIsImluc3RhbGxhdGlvbl9pZCI6IjFiNGUyOGJhLTJmYTEtNGQzYi1hM2Y1LWVmMTliNWE3NjMzYiIsIm5vdGljZV9jb250YWN0X3NoYTI1NiI6ImM4Y2QzYzY0MjczMDFlYWY2NjY1YmNjYWNkNjVkZGI2MTQ1MjdhY2M4NDNhMTU0NjNlM2ZhYmE1NzEyNGMzNTEiLCJwcmluY2lwYWwiOiJkaWQ6YXc6MlpmNExxOG0zVlliOW5LYzVSalRzN0hkIiwicm9sZSI6InNlY3JldHMub3duZXIifSwidGVhbV9pZCI6ImRlbW86ZXhhbXBsZS5jb20iLCJ0ZWFtX2tleV9kaWQiOiJkaWQ6a2V5Ono2TWt0Rm92emNhcE5aeVpCV3pGSnBDWGYyNkI4WExLZFh0d2Z3blhYRmViUGd6TSIsInR5cGUiOiJhd2ViLm93bmVyLWFjdCIsInYiOjF9",
+      "verify": {
+        "acts": [
+          "human-credential.replace",
+          "human-role.designate",
+          "human-role.revoke"
+        ],
+        "audience": "https://secrets.example.com",
+        "current_team_key_did": "did:key:z6MktFovzcapNZyZBWzFJpCXf26B8XLKdXtwfwnXXFebPgzM",
+        "expected_subject": {
+          "app_id": "secrets",
+          "credential_sha256": "9ce0c0264c914601a1292d9c487f25001753aae513f599db1ffb9d39d892c436",
+          "installation_id": "1b4e28ba-2fa1-4d3b-a3f5-ef19b5a7633b",
+          "notice_contact_sha256": "c8cd3c6427301eaf6665bccacd65ddb614527acc843a15463e3faba57124c351",
+          "principal": "did:aw:2Zf4Lq8m3VYb9nKc5RjTs7Hd",
+          "role": "secrets.owner"
+        },
+        "nonce_used": false,
+        "now": "2026-10-20T12:01:00Z",
+        "team_id": "demo:example.com"
+      }
+    },
+    {
+      "act": {
+        "act": "human-role.revoke",
+        "aud": "https://logs.example.com",
+        "expires_at": "2026-10-20T12:05:00Z",
+        "issued_at": "2026-10-20T12:00:00Z",
+        "nonce": "11111111111111111111111111111111",
+        "subject": {
+          "app_id": "logs",
+          "installation_id": "1b4e28ba-2fa1-4d3b-a3f5-ef19b5a7633b",
+          "principal": "did:aw:2Zf4Lq8m3VYb9nKc5RjTs7Hd",
+          "role": "logs.reader"
+        },
+        "team_id": "demo:example.com",
+        "team_key_did": "did:key:z6MktFovzcapNZyZBWzFJpCXf26B8XLKdXtwfwnXXFebPgzM",
+        "type": "aweb.owner-act",
+        "v": 1
+      },
+      "name": "revoke_human_reader",
+      "signature_b64": "A5UygdUbZdJkTyULUR+mIHiD6orY+6M32AVmokfyxYBQv1NrAsRAqtJlX4ueIy4i+BPZ66GE0DFoUkErYndPDQ",
+      "signing_bytes_b64url": "YXdlYi5vd25lci1hY3QvMQp7ImFjdCI6Imh1bWFuLXJvbGUucmV2b2tlIiwiYXVkIjoiaHR0cHM6Ly9sb2dzLmV4YW1wbGUuY29tIiwiZXhwaXJlc19hdCI6IjIwMjYtMTAtMjBUMTI6MDU6MDBaIiwiaXNzdWVkX2F0IjoiMjAyNi0xMC0yMFQxMjowMDowMFoiLCJub25jZSI6IjExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExIiwic3ViamVjdCI6eyJhcHBfaWQiOiJsb2dzIiwiaW5zdGFsbGF0aW9uX2lkIjoiMWI0ZTI4YmEtMmZhMS00ZDNiLWEzZjUtZWYxOWI1YTc2MzNiIiwicHJpbmNpcGFsIjoiZGlkOmF3OjJaZjRMcThtM1ZZYjluS2M1UmpUczdIZCIsInJvbGUiOiJsb2dzLnJlYWRlciJ9LCJ0ZWFtX2lkIjoiZGVtbzpleGFtcGxlLmNvbSIsInRlYW1fa2V5X2RpZCI6ImRpZDprZXk6ejZNa3RGb3Z6Y2FwTlp5WkJXekZKcENYZjI2QjhYTEtkWHR3ZnduWFhGZWJQZ3pNIiwidHlwZSI6ImF3ZWIub3duZXItYWN0IiwidiI6MX0",
+      "verify": {
+        "acts": [
+          "human-credential.replace",
+          "human-role.designate",
+          "human-role.revoke"
+        ],
+        "audience": "https://logs.example.com",
+        "current_team_key_did": "did:key:z6MktFovzcapNZyZBWzFJpCXf26B8XLKdXtwfwnXXFebPgzM",
+        "expected_subject": {
+          "app_id": "logs",
+          "installation_id": "1b4e28ba-2fa1-4d3b-a3f5-ef19b5a7633b",
+          "principal": "did:aw:2Zf4Lq8m3VYb9nKc5RjTs7Hd",
+          "role": "logs.reader"
+        },
+        "nonce_used": false,
+        "now": "2026-10-20T12:01:00Z",
+        "team_id": "demo:example.com"
+      }
+    },
+    {
+      "act": {
         "act": "hook-binding.activate",
         "aud": "https://aweb.example.com",
         "expires_at": "2026-10-20T12:05:00Z",
@@ -1994,6 +2342,11 @@
         "hook-binding.activate",
         "hook-binding.revoke"
       ],
+      "human_role": [
+        "human-credential.replace",
+        "human-role.designate",
+        "human-role.revoke"
+      ],
       "logs": [
         "logs.retention.set",
         "logs.erase",
@@ -2002,5 +2355,5 @@
       ]
     }
   },
-  "status": "proposed (aweb-acgh.16.3); frozen once reviewed"
+  "status": "frozen (aweb-acgh.16.3)"
 }

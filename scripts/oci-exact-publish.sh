@@ -243,7 +243,7 @@ print("yes" if sys.argv[1] in tags else "no")
         # The response is written to a FILE and the file is hashed. Capturing
         # it in a variable strips a trailing newline and a here-string appends
         # one, so either hashes bytes skopeo never returned - the hazard
-        # awid-image-release.yml documents, and one this code got wrong once.
+        # service-image-release.yml documents, and one this code got wrong once.
         # TWO bounds, whichever comes first. The deadline is the one that
         # matters in production - it is what makes "bounded" true in wall-clock
         # terms even if every request hangs. The attempt cap keeps the loop and

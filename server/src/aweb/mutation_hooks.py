@@ -266,11 +266,13 @@ async def _cascade_agent_deleted(
 async def _cascade_task_status_changed(
     redis: Redis, db_infra: "DatabaseInfra", context: dict
 ) -> None:
-    """Translate task status changes into task claim lifecycle operations.
+    """Announce the claim changes of a task status change.
 
     When an aweb task moves to in_progress, create a task claim for the
-    acting workspace. When it moves away from in_progress (closed, etc.),
-    release all claims on that task.
+    acting workspace unless the status transaction already holds it, and
+    announce the claim. When it moves to any other status, announce the
+    claims the status transaction released, which the context lists in
+    ``released_claim_workspace_ids``; no claim is changed here.
     """
     actor_workspace_id = context.get("actor_workspace_id", "").strip()
     task_ref = context.get("task_ref", "").strip()
@@ -331,11 +333,7 @@ async def _cascade_task_status_changed(
             ),
         )
     else:
-        claimant_ids = await release_task_claims(
-            db_infra,
-            team_id=team_id,
-            task_ref=task_ref,
-        )
+        claimant_ids = [str(cid) for cid in context.get("released_claim_workspace_ids") or []]
         if claimant_ids:
             claimant_aliases = await fetch_workspace_aliases(db_infra, team_id, claimant_ids)
             for cid in claimant_ids:

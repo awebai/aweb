@@ -8,7 +8,7 @@ from __future__ import annotations
 import os
 import secrets
 import time
-from collections.abc import AsyncIterator
+from collections.abc import AsyncIterator, Awaitable, Callable
 from dataclasses import dataclass, field
 from datetime import UTC, datetime, timedelta
 from types import SimpleNamespace
@@ -17,6 +17,7 @@ from uuid import UUID, uuid4
 import pytest
 from aweb_naapp_testing.owner_acts import (
     APP_ID,
+    AUDIENCE,
     INSTALLATION_ID,
     TEAM_ID,
     TeamOwner,
@@ -29,9 +30,11 @@ from pgdbm import AsyncDatabaseManager
 from pgdbm.core import TransactionManager
 
 from aweb_naapp.hooks.envelope import verify
+from aweb_naapp.hooks.owner_act import APP_ACTS, HUMAN_ROLE_ACTS, LOGS_ACTS, VerifiedOwnerAct
 from aweb_naapp.hooks.owner_act_nonces import apply_owner_act_migrations
 from aweb_naapp.hooks.producer import HookProducer, Registration, RegistrationView, ServerProducer
 from aweb_naapp.outbox import apply_outbox_migrations
+from aweb_naapp.roles import apply_roles_migrations, is_holding_scope
 from aweb_naapp.runtime.approvals import ApprovalRevocation, DeliveryStatus, PgApprovalStore
 from aweb_naapp.runtime.authorization import Grant
 from aweb_naapp.runtime.clock import seconds_to_ns
@@ -49,8 +52,11 @@ from aweb_naapp.runtime.passkeys import (
     installation_context,
 )
 
-ORIGIN = "https://console.example.test"
+# The owner acts' audience, so a human-role credential binds to this relying party.
+ORIGIN = AUDIENCE
 ROLE = "example.reader"
+# The role this app declares with the human-role acts.
+HOLDER_ROLE = "example.holder"
 CONTACT = "reader@example.com"
 
 
@@ -98,7 +104,8 @@ class Inbox:
 
 async def _binding(tx: TransactionManager, scope: str):
     return await tx.fetch_one(
-        "SELECT installation_id,team_id FROM {{tables.example_bindings}} WHERE scope=$1", scope
+        "SELECT installation_id,team_id,role FROM {{tables.example_bindings}} WHERE scope=$1",
+        scope,
     )
 
 
@@ -121,7 +128,7 @@ async def role_of(
         admitted.team_id,
     ):
         return None
-    return ROLE
+    return row["role"]
 
 
 def registration_view() -> RegistrationView:
@@ -141,6 +148,11 @@ def registration_view() -> RegistrationView:
             ),
         ),
     )
+
+
+# The act this app records in its own chain atomically, and so may record
+# with no registered hook target (a logs legal hold).
+SELF_RECORDED_ACTS = frozenset({"logs.legal_hold.set"})
 
 
 @dataclass
@@ -163,12 +175,14 @@ async def world(test_db_factory) -> AsyncIterator[World]:
     registry_db = await test_db_factory.create_db(suffix="credential_audit_owner_act_app_awid")
     await db.execute(
         "CREATE TABLE {{tables.example_bindings}}"
-        " (scope TEXT PRIMARY KEY, installation_id TEXT NOT NULL, team_id TEXT NOT NULL)"
+        " (scope TEXT PRIMARY KEY, installation_id TEXT NOT NULL, team_id TEXT NOT NULL,"
+        " role TEXT NOT NULL)"
     )
     for migrate in (
         apply_owner_act_migrations,
         apply_installation_migrations,
         apply_outbox_migrations,
+        apply_roles_migrations,
     ):
         await migrate(db)
     store = PgApprovalStore(db)
@@ -202,7 +216,9 @@ async def world(test_db_factory) -> AsyncIterator[World]:
         return registration_view() if registered[0] else None
 
     async with running_registry(registry_db.config.get_dsn()) as registry:
-        owner = await team_owner(registry, team_id=TEAM_ID)
+        owner = await team_owner(
+            registry, team_id=TEAM_ID, acts=APP_ACTS + LOGS_ACTS + HUMAN_ROLE_ACTS
+        )
         inbox = Inbox()
         state = World(db, owner, fence, admitted, inbox, handed, fail, registered)
         state.recorder = CredentialAudit(
@@ -218,6 +234,8 @@ async def world(test_db_factory) -> AsyncIterator[World]:
             max_backlog_age=timedelta(minutes=5),
             migration_module="example_credential_audit",
             after_enqueue=after_enqueue,
+            ungated_acts=SELF_RECORDED_ACTS,
+            human_roles=frozenset({HOLDER_ROLE}),
         )
         await state.recorder.migrate()
         state.passkeys = Passkeys(
@@ -229,26 +247,35 @@ async def world(test_db_factory) -> AsyncIterator[World]:
             enrolment_ttl=timedelta(hours=1),
             challenge_ttl=timedelta(minutes=5),
             proof_context=contexts,
+            holding_scopes=is_holding_scope,
         )
         await state.passkeys.migrate()
         yield state
 
 
-async def bind(world: World) -> str:
-    scope = f"{ROLE}.{secrets.token_hex(16)}"
+async def bind(world: World, scope: str | None = None, role: str = ROLE) -> str:
+    """Bind ``scope`` (a fresh one by default) to the installation, for ``role``."""
+    scope = scope or f"{ROLE}.{secrets.token_hex(16)}"
     await world.db.execute(
-        "INSERT INTO {{tables.example_bindings}} (scope,installation_id,team_id) VALUES($1,$2,$3)",
+        "INSERT INTO {{tables.example_bindings}} (scope,installation_id,team_id,role)"
+        " VALUES($1,$2,$3,$4)",
         scope,
         INSTALLATION_ID,
         TEAM_ID,
+        role,
     )
     return scope
 
 
-async def designate(world: World, scope: str) -> int:
-    """The owner designates ``scope``'s reader; returns the effect's transaction ID."""
-    subject = designation_subject(scope, CONTACT)
-    signing, signature = world.owner.sign("app-role.designate", subject)
+async def owner_act[T](
+    world: World,
+    act: str,
+    subject: dict,
+    effect: Callable[[TransactionManager, VerifiedOwnerAct], Awaitable[T]],
+) -> T:
+    """The owner's act, consumed and given to ``effect`` in one fenced effect
+    transaction, under the recorder's prepared act."""
+    signing, signature = world.owner.sign(act, subject)
     prepared = await world.owner.verifier.prepare(signing, signature, team_id=TEAM_ID)
     context = await world.recorder.prepare_owner_act(
         world.admitted, signing=signing, signature=signature
@@ -256,12 +283,22 @@ async def designate(world: World, scope: str) -> int:
     with world.recorder.prepared(context):
         async with world.db.transaction() as tx:
             await world.fence.check(tx, world.admitted)
-            act = await world.owner.consume(tx, prepared, subject)
-            designation = await world.passkeys.designate(
-                tx, scope=scope, contact=CONTACT, evidence=act
-            )
+            verified = await world.owner.consume(tx, prepared, subject)
+            result = await effect(tx, verified)
             await world.fence.check(tx, world.admitted)
-            txid = await tx.fetch_value("SELECT txid_current()")
+    return result
+
+
+async def designate(world: World, scope: str) -> int:
+    """The owner designates ``scope``'s reader; returns the effect's transaction ID."""
+
+    async def effect(tx: TransactionManager, act: VerifiedOwnerAct):
+        designation = await world.passkeys.designate(tx, scope=scope, contact=CONTACT, evidence=act)
+        return designation, await tx.fetch_value("SELECT txid_current()")
+
+    designation, txid = await owner_act(
+        world, "app-role.designate", designation_subject(scope, CONTACT), effect
+    )
     await world.passkeys.deliver(designation)
     return txid
 
@@ -286,3 +323,24 @@ async def enrol(world: World) -> SoftAuthenticator:
             token, device.create(await world.passkeys.enrolment_options(token)), fence=enrolment
         )
     return device
+
+
+def hold_subject(hold_id: str) -> dict[str, str]:
+    return {
+        "app_id": APP_ID,
+        "installation_id": INSTALLATION_ID,
+        "hold_id": hold_id,
+        "hold_scope": "all",
+        "reason_code": "litigation",
+    }
+
+
+async def record_app_act(world: World, act: str, subject: dict, payload: dict) -> UUID:
+    """The owner's act, consumed and recorded with ``payload`` in one effect transaction."""
+
+    async def effect(tx: TransactionManager, verified: VerifiedOwnerAct) -> UUID:
+        return await world.recorder.record_owner_act(
+            tx, verified, payload, occurred_at=datetime.now(UTC)
+        )
+
+    return await owner_act(world, act, subject, effect)

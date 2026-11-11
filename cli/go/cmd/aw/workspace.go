@@ -167,8 +167,6 @@ func init() {
 }
 
 func runWorkspaceStatus(cmd *cobra.Command, args []string) error {
-	loadDotenvBestEffort()
-
 	workingDir, _ := os.Getwd()
 	home, err := identityHomeForDir(workingDir)
 	if err != nil {
@@ -310,8 +308,6 @@ func workspaceDeleteRefusal(selection *awconfig.Selection, reason string) error 
 }
 
 func runWorkspaceDelete(cmd *cobra.Command, args []string) error {
-	loadDotenvBestEffort()
-
 	workingDir, _ := os.Getwd()
 	client, selection, err := resolveClientSelectionForDir(workingDir)
 	if err != nil {
@@ -434,8 +430,6 @@ func runWorkspaceDelete(cmd *cobra.Command, args []string) error {
 }
 
 func runWorkspaceAddWorktree(cmd *cobra.Command, args []string) error {
-	loadDotenvBestEffort()
-
 	workingDir, _ := os.Getwd()
 	root, err := currentGitWorktreeRootFromDir(workingDir)
 	if err != nil {

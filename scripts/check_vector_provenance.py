@@ -49,6 +49,10 @@ def _consumer(names: str | Iterable[str], *root_markers: str) -> ConsumerSpec:
 SERVER_CONSUMER = PurePosixPath("server/tests/test_identity_conformance_vectors.py")
 GO_CONSUMER = PurePosixPath("cli/go/internal/conformance/conformance_test.go")
 ROOT_CONSUMERS = {
+    PurePosixPath("server/tests/test_human_chat_policy.py"): _consumer(
+        "id-certificates-v1.json",
+        "Path(__file__).resolve().parents[2] / 'docs/vectors/id-certificates-v1.json'",
+    ),
     PurePosixPath("server/tests/test_id_chain_request_auth.py"): _consumer(
         "id-certificates-v1.json",
         "Path(__file__).resolve().parents[2] / 'docs/vectors/id-certificates-v1.json'",
@@ -534,6 +538,14 @@ ROOT_CONSUMERS = {
         "owner-act-delivery-v1.json",
         'AWEB_ROOT / "docs" / "vectors" / "owner-act-delivery-v1.json"',
     ),
+    PurePosixPath("naapp-lib/tests/test_manifest_v3.py"): _consumer(
+        "owner-act-delivery-v1.json",
+        'AWEB_ROOT / "docs" / "vectors" / "owner-act-delivery-v1.json"',
+    ),
+    PurePosixPath("cli/go/internal/appmanifest/owner_act_manifest_vectors_test.go"): _consumer(
+        "owner-act-delivery-v1.json",
+        '"docs", "vectors", "owner-act-delivery-v1.json"',
+    ),
     PurePosixPath("cli/go/awid/owneract_test.go"): _consumer(
         "owner-act-v1.json",
         '"../../../docs/vectors/owner-act-v1.json"',
@@ -545,8 +557,9 @@ ROOT_CONSUMERS = {
         '"../../../docs/vectors/hook-catalog-v1.json"',
     ),
     PurePosixPath("cli/go/a2a/card_test.go"): _consumer(
-        "a2a-v1.json",
+        {"a2a-v1.json", "canonical-json-v1.json"},
         'filepath.Join(root, "docs", "vectors", "a2a-v1.json")',
+        'filepath.Join(root, "docs", "vectors", "canonical-json-v1.json")',
     ),
     PurePosixPath("cli/go/a2agw/envelope_vector_test.go"): _consumer(
         "a2a-bridge-envelope-v0.json",
@@ -685,6 +698,10 @@ ROOT_CONSUMERS = {
         "pin-store-raw-wire-v1.json",
         'join(testDir, "..", "..", "docs", "vectors", "pin-store-raw-wire-v1.json")',
     ),
+    PurePosixPath("channel-core/test/request_auth_v2.test.ts"): _consumer(
+        "team-auth-envelope-v2.json",
+        'join(import.meta.dirname, "..", "..", "docs", "vectors", "team-auth-envelope-v2.json")',
+    ),
     PurePosixPath("channel-core/test/registry.test.ts"): _consumer(
         {
             "dns-txt-v1.json",
@@ -696,6 +713,18 @@ ROOT_CONSUMERS = {
         'join(testDir, "..", "..", "docs", "vectors", "identity-log-v1.json")',
         'join(testDir, "..", "..", "docs", "vectors", "identity-log-raw-wire-v1.json")',
         'join(testDir, "..", "..", "docs", "vectors", "identity-log-negative-v1.json")',
+    ),
+    PurePosixPath("awid/tests/test_canonical_json_vectors.py"): _consumer(
+        "canonical-json-v1.json",
+        'Path(__file__).parents[2] / "docs" / "vectors" / "canonical-json-v1.json"',
+    ),
+    PurePosixPath("cli/go/awid/canonical_json_vector_test.go"): _consumer(
+        "canonical-json-v1.json",
+        'filepath.Join("..", "..", "..", "docs", "vectors", "canonical-json-v1.json")',
+    ),
+    PurePosixPath("channel-core/test/canonical_json_vector.test.ts"): _consumer(
+        "canonical-json-v1.json",
+        'new URL("../../docs/vectors/canonical-json-v1.json", import.meta.url)',
     ),
     PurePosixPath("scripts/check-extension-docs.py"): _consumer(
         {

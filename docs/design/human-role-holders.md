@@ -106,7 +106,7 @@ key or a link. Removing prepare also removes:
 - the pending rows and their lifetimes;
 - `secrets:owner-act` and the per-member prepare limit;
 - the client's `prepare_mismatch` checks;
-- the section [Why a member gains nothing from prepare](../owner-act-delivery.md#why-a-member-gains-nothing-from-prepare).
+- the delivery contract's section on why a member gains nothing from prepare.
 
 A member takes no part in designation.
 
@@ -114,15 +114,19 @@ A member takes no part in designation.
 
 The body is `signing`, `signature` and, for designate and replace,
 `credential`: `{"credential_id", "public_key", "rp_id"}` in the same
-encoding, plus `notice_contact` when the role declares one. Both are refused
-for revoke. The app sends no enrolment link.
+encoding, `certificate`, the principal's team certificate
+([membership evidence](human-confirmation-from-aw.md#membership-evidence)),
+plus `notice_contact` when the role declares one. All three are refused for
+revoke. The app sends no enrolment link.
 
 Stages 1 and 2 are unchanged. For an authenticated act, stage 3 checks:
 
 - the installation, admitted, whose team is the act's `team_id`;
 - the nonce, consumed in the effect's transaction;
 - for designate and replace only: `principal` holds a current certificate of
-  that team, and its own registered ID kind is `human` (H2). The kind is the subject's own, never the
+  that team, shown by the team certificate the delivery body carries
+  ([membership evidence](human-confirmation-from-aw.md#membership-evidence)),
+  and its own registered ID kind is `human` (H2). The kind is the subject's own, never the
   kind of its nearest human ancestor or a label. A registry that cannot answer
   refuses with `503 principal_status_unavailable`. Nothing takes effect, and
   the outcome depends only on the act. `aweb_naapp` lacks this wiring:
@@ -165,7 +169,69 @@ checks reuse the 60-second team-facts cache where it applies.
   it gates are frozen.
 - **Revoke** ends the holding.
 
+Only the owner's revoke ends a holding, apart from team retirement, which
+purges every holding with its team. Team authority acting alone, such as a
+member's removal from the team or the containment of a holder, is
+containment: it retires the holder's credential, so the holder can no longer
+log in or approve, and the holding continues until the owner replaces the
+credential or revokes the holding. Ending a holding any other way would
+bypass the owner-act record and last-owner protection. A holder who is no
+longer a member still cannot act, because each use re-checks membership
+([Use](#use)).
+
 Each emits `post-governance-hook` with `authority: owner_act`.
+
+**What the credential audit retains.** Each act is one B3 audit event and one
+receipt, recorded under the consumed owner act, as for the contact acts
+([secrets design, B3 stages](secrets.md)):
+
+- **Pairing.** `APPROVER_DESIGNATED` pairs only with `human-role.designate`,
+  `APPROVER_REDESIGNATED` only with `human-credential.replace`, and an
+  owner-act `APPROVER_RETIRED` only with `human-role.revoke`, for a role the
+  app declares with the human-role acts. A contact act for such a role, or a
+  human-role act for a contact role, is refused (H1). These acts are owner
+  acts only: no passkey-session path designates or replaces a holder.
+- **No enrolment.** The credential arrives in the act, so there is no
+  enrolment link, no `APPROVER_ENROLLED` event and no completion link. The
+  designate or replace receipt records the credential.
+- **The authorization row.** It retains `principal` and `credential_sha256`,
+  which the retained signed act commits to. It retains no enrolment contact:
+  that binding belongs to the contact model and is absent here, never a
+  placeholder. A role that declares a notice contact retains its
+  `notice_contact_sha256` apart from it, so a notice contact never reads as
+  an enrolment or approval channel. The receipt's payload keeps its catalog
+  fields; its commitment already binds the signed act.
+- **Replace.** One `APPROVER_REDESIGNATED`, a `credential.recovered`
+  widening, whatever the holding's approver history. It retains the new
+  subject and the effective time at the end of the cooling-off, and
+  `held_since` is unchanged. It also retains the previous subject when the
+  holding has a latest approver, current or already retired by containment.
+  A holding that never had an approver, such as one made by backfill, has no
+  previous subject, and the event carries none. The event kind follows the
+  act, never the presence of an approver: a replace is never recorded as
+  `APPROVER_DESIGNATED`. Retiring the previous credential is part of that
+  effect, not a separate `role.revoked` receipt, because the holding
+  continues.
+- **Revoke.** One `APPROVER_RETIRED`, a `role.revoked` narrowing, under the
+  owner-act actor, recorded at the revoke's time. It records the end of the
+  holding, so it is recorded even when containment already retired the
+  holder's approver. Its `subject_ref` is the holding's latest approver
+  subject or, for a holding that never had an approver, the holding's
+  `principal`. The recorder accepts it only when the consumed act's `role`
+  and `principal` are the holding record's, and the holding has ended in the
+  same transaction.
+- **Containment** that revokes a holder's credential names it through the
+  authorization row's `credential_sha256`, since no completion link exists
+  for it. It computes that digest from the stored credential of the event's
+  subject and `credential_id`, exactly as [Three acts](#three-acts) defines
+  it: the credential id and COSE public key bytes, each unpadded base64url,
+  and the stored `rp_id`. A digest that differs from the row's names no
+  credential, and the recorder refuses the event. The receipt's
+  `resource_ref` is a random opaque reference that the authorization row
+  retains from the designate or replace, as a completion link's reference is
+  for an enrolled key. It is never the digest: a security key with the `aweb:`
+  `rp_id` has the same digest in every app, and a digest in a receipt would
+  link the holder's receipts across apps.
 
 ### Use
 
@@ -179,6 +245,195 @@ approval re-checks that `principal` is still a current human member. An
 unknown answer refuses, and a revoked membership ends the holder's authority.
 A human role has no enrolment link; the link-based enrolment stays for
 contact roles.
+
+### Reading a holding
+
+Holdings live in one store, `aweb_naapp`'s, with one implementation for
+every app: one table, one owner. Its writers are the human-role acts'
+effects and the certificate refresh below. An app declares its roles and
+calls the store. A consumer, such as a console handoff, maps the read and
+the hold onto its own interface. It never reads, locks or writes the
+holding table itself, and keeps no copy of a holding's fields or
+certificate. The signatures, in `aweb_naapp` terms:
+
+```python
+@dataclass(frozen=True)
+class HumanRoleHolding:
+    installation_id: str
+    team_id: str
+    role: str
+    principal: str
+    b3_scope: str
+    subject: str | None
+    held_since: datetime
+    certificate: bytes | None
+
+
+async def read_holding(
+    tx: TransactionManager,
+    *,
+    installation: AdmittedInstallation,
+    role: str,
+    principal: str,
+) -> HumanRoleHolding | None: ...
+
+
+async def hold_holding(
+    tx: TransactionManager,
+    *,
+    installation: AdmittedInstallation,
+    role: str,
+    principal: str,
+) -> HumanRoleHolding | None: ...
+
+
+async def read_holding_of_scope(
+    tx: TransactionManager,
+    *,
+    installation: AdmittedInstallation,
+    b3_scope: str,
+) -> HumanRoleHolding | None: ...
+
+
+async def refresh_holding_certificate(
+    tx: TransactionManager,
+    *,
+    holding: HumanRoleHolding,
+    certificate: bytes,
+) -> bool: ...
+```
+
+- **Where they run.** In the caller's transaction, by SQL only. None of
+  them does a network or registry read or refreshes anything. `read_holding`
+  and `read_holding_of_scope` take no lock: each projects a target before an
+  effect transaction, and its result protects nothing by itself.
+- **The hold.** `hold_holding` returns the same result as `read_holding`,
+  and locks the holding row `FOR SHARE` until the caller's transaction ends.
+  It locks no B3 row. While the caller holds it, no holding writer can
+  commit, so neither can a replace's change to the holding's credential
+  rows. Before an effect, the caller holds the holding and compares
+  `held_since` and `subject` with the target it projected. A difference, or
+  `None`, refuses the effect. A revoke or replace therefore cannot commit
+  between the comparison and the effect.
+- **Lock order.** The caller takes the installation's dispatch fence first,
+  then `hold_holding` and any other role or holding rows it needs, then
+  one complete B3 preparation, then its own approval, change-set and session
+  rows. That B3 preparation is B3's canonical one
+  (`naapp-lib/src/aweb_naapp/runtime/passkeys/current_approver.py:69`): a
+  single sorted union of every (scope, subject) pair the transaction needs,
+  which includes the held holding's `b3_scope` and `subject`. A consumer
+  that acts for several holders holds every holding first and prepares one
+  union for all of them, never one union per holder. Later checks in the
+  transaction reuse the prepared rows (`check_current_approver`, :103) and
+  acquire nothing further upstream. Every writer of the holding row locks it
+  `FOR UPDATE` in the same order, after the fence and before any B3 row:
+  designate, replace and revoke under the owner act (stage 3), the
+  certificate refresh, and team retirement's purge. The purge runs in the
+  retirement's observation transaction, under the installation fence's row
+  lock (`InstallationFence._slot` then `_retire` in
+  `naapp-lib/src/aweb_naapp/runtime/installation.py`), and `purge_team`
+  (`naapp-lib/src/aweb_naapp/roles/__init__.py`) deletes a team's assignments
+  before its holding records, the order holders take. On the hold
+  side, secrets' owner holding takes this order with `hold_role`
+  (`naapp-lib/src/aweb_naapp/roles/__init__.py:158`) on the role row as its
+  hold.
+- **No holding.** It returns `None` when (installation, role, principal) has
+  no current holding: never designated, or revoked. It also returns `None`
+  for a role the app does not declare with the human-role acts, and for a
+  `principal` that is not a `did:aw`.
+- **Reading by scope.** A consumer that holds only a B3 scope, such as a
+  cookie session, reads its holding with `read_holding_of_scope`. The scope
+  is derived one way from the key below, so the consumer cannot recover the
+  principal from it, and the store reads it instead. The read returns what
+  `read_holding` returns for the same holding. It returns `None` when the
+  scope names no current holding, when the holding's installation or team is
+  not the admitted installation's, and for a role the app does not declare
+  with the human-role acts. There is no hold by scope. Before an effect, the
+  caller takes `principal` from this read, holds with `hold_holding`, and
+  compares `held_since`, `b3_scope` and `subject` with what it read.
+- **The record of a scope.** A consumer that must name whose scope it is
+  after the holding has ended, such as when it attributes a credential event
+  or retires an approver in the transaction that ends the holding, reads the
+  holding's record with `holding_record_of_scope(tx, b3_scope)`. It returns
+  the installation, team, role, principal and scope of the holding that scope
+  belongs to, current or ended, and `None` for a scope never recorded or
+  purged with its team. A team retirement that needs these scopes, such as to
+  destroy holders' credentials, reads them before it purges the team. It
+  takes no lock. It is history, not a holding: it
+  grants nothing and never stands in for `read_holding`,
+  `read_holding_of_scope` or `hold_holding` before a login, an approval or an
+  effect. The caller refuses a record whose installation or team is not the
+  admitted installation's.
+- **The key.** `installation_id` and `team_id` are the admitted
+  installation's. `b3_scope` is derived from the installation, the team, the
+  role and the principal only, as secrets derives an owner's scope
+  (`naapp/secrets/src/aweb_secrets/owners.py:43-45`). A holding is never
+  read from a contact hash. A slot made by `app-role.designate` before the
+  app declared the role with the human-role acts is not a holding, and the
+  read never returns one.
+- **The credential.** `subject` is B3's subject for the credential that can
+  log in. It is `None` while none can: from a replace until the end of its
+  cooling-off. The holding still exists then, so the caller refuses the login
+  without treating the role as unheld.
+- **The holding's version.** `held_since` is the database's
+  `clock_timestamp()` in the designate transaction that creates the holding,
+  never a request's or client's time. Consumers compare it only for
+  equality. A replace keeps it. A revoke followed by a designate gives a new
+  value, so a consumer that bound a session to the earlier holding sees that
+  it changed. Comparing a holding's version uses installation, team, role,
+  principal and `held_since`, none of which is secret. A console session
+  binds to the full holding identity below, which also covers the subject,
+  so a replace ends it.
+- **The holding's identity.** A console session binds to one holding
+  through `human-role-holding/1`, a public digest that grants nothing. It is
+  defined only while `subject` is not `None`: during a replace's cooling-off
+  no session can log in, so there is nothing to bind. Its input is the strict
+  canonical JSON ([canonical-json-v1](../vectors/canonical-json-v1.json)) of
+  nine nonempty strings: `app_id`, `team_id`, `installation_id`, `generation`
+  (the admitted installation's integer generation rendered as ASCII
+  `[1-9][0-9]*`, with no sign and no leading zero),
+  `role`, `principal`, `b3_scope`, `subject`, and `held_since` (UTC to the
+  microsecond, `YYYY-MM-DDTHH:MM:SS.ffffffZ`). `b3_scope` must be the one
+  derived from the key below. The identity is
+  `aweb.human-role-holding/1:` followed by the lowercase hex SHA-256 of
+  `aweb.human-role-holding/1` and a newline, followed by that canonical JSON.
+  It changes when a replace gives the holding a new subject, when a revoke
+  and a designate give it a new `held_since`, and when the installation's
+  generation advances; a session bound to the earlier value then fails its
+  holding comparison. It carries no credential, certificate, key or session
+  material, and a change of any of those is checked elsewhere. The vector is
+  [human-role-holding-v1](../vectors/human-role-holding-v1.json).
+- **The certificate.** `certificate` is the exact bytes of the holder's
+  team certificate, retained with the holding
+  ([Membership evidence](human-confirmation-from-aw.md#membership-evidence)).
+  Designate and replace write the decoded bytes of their body's
+  `certificate`, after stage 3 has verified them. A `session` handoff whose login succeeds replaces them
+  through `refresh_holding_certificate`, once the handoff has verified the
+  new certificate and its team and principal equal the holding's. The
+  refresh writes nothing and returns false when the holding's `held_since`
+  no longer equals the one given. It runs in its own short transaction,
+  after the login's transaction has committed: the installation fence, then
+  the refresh, and no B3 or session row. It never runs in a transaction
+  that holds the holding `FOR SHARE`, because upgrading that lock deadlocks
+  two concurrent logins for one holding. The certificate was verified in
+  the login under its original deadline, so committing it afterwards grants
+  nothing. When the refresh returns false, the session keeps its own
+  certificate and nothing else changes; the next use fails the holding
+  comparison. It is `None` only for a holding that has
+  none retained, such as one made before this contract. Its use then
+  refuses with `403 principal_not_member` until a `session` handoff
+  refreshes it. A session keeps the certificate its own handoff presented,
+  with the session and for at most its lifetime. That is a session record,
+  not a copy of the holding's.
+- **Membership and kind are not read here.** Each use re-checks that
+  `principal` is a current human member ([Use](#use)). That check is the
+  runtime's shared exact-principal check
+  (`aweb_naapp.runtime.human_member.check_human_member`). The caller runs it
+  before its effect transaction and keeps its proof fresh around each read
+  and hold.
+  The read runs no copy of that check. A holding whose principal has left
+  the team still reads as a holding, so revoke can target it (stage 3
+  above), and the shared check refuses its use.
 
 ### What the owner's client shows and signs
 
@@ -198,9 +453,9 @@ It then signs. The holder's `aw` obtains the public credential through a
 browser creates the passkey on the app's human origin and B3 verifies the
 registration. When the owner is the holder, one client runs the handoff and
 signs the act in one sitting. When the holder is someone else, the holder's
-client exports the public credential, and the owner signs only after the two
-clients show the same fingerprint (H4). That comparison helps only
-under two conditions:
+client exports the public credential with its team certificate, and the
+owner signs only after the two clients show the same fingerprint (H4). That
+comparison helps only under two conditions:
 
 - the holder's client read the credential from the intended authenticator;
 - the fingerprint travels over a channel that the holder's custodian does not
@@ -237,4 +492,10 @@ Each is filed as one reviewed change:
   it;
 - C3's `aw app role designate|revoke` and `aw app credential replace`, naming
   `--principal` and, where the role declares one, the notice contact;
-- the `credential` handoff (aweb-acwd.4).
+- the `credential` handoff (aweb-acwd.4);
+- the holding store in `aweb_naapp`, with its writers, read, hold and
+  certificate refresh, to the signatures in
+  [Reading a holding](#reading-a-holding), and logs' adoption of it
+  (aweb-acgh.16.44). The console handoff reads a holding's certificate
+  through it, keeps no copy of a holding, and refreshes the certificate after
+  its login commits, with a test of two concurrent logins for one holding.

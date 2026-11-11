@@ -5,6 +5,15 @@ it brokers requests and runner jobs under owner-defined grants and policy, and
 records every use. The design is `docs/design/secrets.md`; the build plan is
 `docs/design/secrets-build-plan.md`.
 
+The production broker's `SECRETS_BROKER_RESPONSE_BUDGET_BYTES` limits concurrent
+response reservations per process (default 256 MiB, minimum 64 MiB).
+Startup rejects a smaller budget so any single permitted response fits when idle.
+Size it below the container's memory limit with room for parsing and the rest
+of the process. Each dispatch reserves its effective response limit before
+sending and holds it through response processing. Exhaustion returns HTTP 503
+`capacity_unavailable` with `Retry-After: 1`; resubmit the original request.
+Reservations never wait for capacity and are released on failure and cancellation.
+
 The service (`aweb_secrets.app.create_app`) runs on the shared naapp runtime,
 `aweb_naapp`, as one process on two origins:
 
@@ -15,12 +24,16 @@ The service (`aweb_secrets.app.create_app`) runs on the shared naapp runtime,
   covered by the team's installed grant and allowed by secrets' policy. This
   origin never reads or sets a cookie.
 - **The console origin** (`SECRETS_CONSOLE_ORIGIN`) serves people in a browser.
-  It refuses any request carrying team-auth, and serves no tool.
+  It refuses any request carrying team-auth, and serves no tool. Owners'
+  passkeys are bound to its hostname, so a human-role act's audience must be
+  this origin; a credential bound to any other host is refused.
 
 No tool reads, sets or exports a secret value. `/health` and `/ready` report the
 build commit (`SECRETS_GIT_SHA`, or Render's), the database, the KMS canary and
-the age of the oldest undelivered outbox event. `/ready` is 503 while any of
-them fails. The database is the app's own pgdbm schema: the shared runtime's
+the outbox, and `/health` also the age of the oldest undelivered outbox event.
+Both answer 503 while the database or the KMS canary fails; the outbox age
+fails nothing. `/live` checks nothing and is what the image's `HEALTHCHECK`
+probes. The database is the app's own pgdbm schema: the shared runtime's
 migrations first, then `src/aweb_secrets/migrations/` (module `aweb_secrets`).
 
 The manifest's authoring source is `src/aweb_secrets/manifest.py`. The committed

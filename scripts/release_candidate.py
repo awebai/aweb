@@ -15,6 +15,7 @@ from pathlib import Path
 from release_versions import (
     VersionRefusal as CandidateRefusal,
     require_final_promotion,
+    require_runner_values,
     tag_parts,
     valid_version,
 )
@@ -27,9 +28,15 @@ MANIFESTS = {
     "channel-v": "channel/package.json",
     "pi-v": "pi-extension/package.json",
     "skills-v": "packages/claude-skills/package.json",
+    "secrets-v": "naapp/secrets/pyproject.toml",
+    "logs-v": "naapp/logs/pyproject.toml",
+    "aweb-secrets-runner-v": "naapp/secrets/runner/pyproject.toml",
 }
 # Packages a tag lane publishes together with its manifest's, at the same version.
-LOCKSTEP = {"aweb-naapp-v": ["naapp-lib/testing/pyproject.toml"]}
+LOCKSTEP = {
+    "aweb-naapp-v": ["naapp-lib/testing/pyproject.toml"],
+    "aweb-secrets-runner-v": ["naapp/secrets/values/pyproject.toml"],
+}
 
 
 def run(
@@ -86,6 +93,8 @@ def validate_tags(root: Path, tags: list[str]) -> tuple[str, dict[str, str]]:
                 raise CandidateRefusal(
                     f"{tag} does not match {manifest} version {manifest_version(root, manifest)}"
                 )
+        if prefix == "aweb-secrets-runner-v":
+            require_runner_values(root, source_sha)
         if run(root, "git", "tag", "--list", tag):
             raise CandidateRefusal(f"local tag {tag} already exists; tags are never moved")
         require_final_promotion(root, tag, source_sha)

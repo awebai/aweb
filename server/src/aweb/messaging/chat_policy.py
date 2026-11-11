@@ -3,14 +3,9 @@ from __future__ import annotations
 
 from aweb.human_kind import human_predicate_sql
 
-import asyncio
-import logging
 from uuid import uuid4
 
-from awid.id_certificates import verify_id_chain
 from aweb.service_errors import ValidationError
-
-logger = logging.getLogger(__name__)
 
 
 class HumanChatRefused(ValidationError):
@@ -39,11 +34,13 @@ def recipient_label(row: dict) -> str:
 
 
 async def require_agent_chat(db, recipients: list[dict], *, registry_client=None) -> None:
-    """Unknown kind is allowed. Names and missing evidence never imply human.
+    """Refuse verified-human projections; unknown kind remains allowed.
 
-    Team projections can establish a human type, but do not select a thread's
-    identity. Remote/global evidence uses the public current chain verifier;
-    nearest_human on an AGENT certificate does not make the agent a human.
+    This policy preflight deliberately performs no registry I/O. The retained
+    registry_client keyword is source compatibility only. Strict federation
+    resolution remains the sole outbound authority path; receivers apply their
+    own verified-human refusal. Local projections come from verified connect
+    and the required cutover revalidation, never a fresh per-send ancestry claim.
     """
     manager = db.get_manager('aweb')
     humans = []
@@ -61,28 +58,5 @@ async def require_agent_chat(db, recipients: list[dict], *, registry_client=None
         if human:
             humans.append(recipient_label(row))
             continue
-        resolve = getattr(registry_client, 'resolve_key_fresh', None)
-        evidence_for = getattr(registry_client, 'id_chain_evidence', None)
-        if not did.startswith('did:aw:') or not callable(resolve) or not callable(evidence_for):
-            continue
-        try:
-            async with asyncio.timeout(5):
-                resolution = await resolve(did)
-                key = str(row.get('did_key') or row.get('current_did_key') or '')
-                if resolution.did_aw != did or resolution.current_did_key != key:
-                    continue
-                enrollment = resolution.id_tree
-                if enrollment is None or not enrollment.enrolled:
-                    continue
-                subject = dict(id=did, did_key=key)
-                evidence = await evidence_for(None, subject, domain=enrollment.domain)
-                result = verify_id_chain(None, subject=subject, evidence=evidence, domain=enrollment.domain)
-        except Exception:
-            # This optional kind lookup neither grants delivery nor changes its
-            # existing authority checks. Unavailable kind evidence is unknown.
-            logger.warning('Chat recipient kind unavailable for %s', did, exc_info=True)
-            continue
-        if result['identity_valid'] is True and result['kind'] == 'human':
-            humans.append(recipient_label(row))
     if humans:
         raise HumanChatRefused(humans)

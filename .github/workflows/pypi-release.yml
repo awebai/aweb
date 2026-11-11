@@ -6,6 +6,7 @@ on:
       - "server-v*"
       - "awid-service-v*"
       - "aweb-naapp-v*"
+      - "aweb-secrets-runner-v*"
 
 permissions:
   contents: read

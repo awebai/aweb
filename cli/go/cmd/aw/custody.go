@@ -175,7 +175,7 @@ func newCustodyService(home awconfig.IdentityHome) (*custodyService, error) {
 		if err != nil {
 			return nil, nil, err
 		}
-		client, _, err := buildClientForSelectionAtIdentityHome(ctx, wd, externalIdentityHomeRoot(home), sel)
+		client, _, err := buildClientForSelectionAtIdentityHome(ctx, wd, externalIdentityHomeRoot(home), sel, resolveAuthenticatedBaseURLContext)
 		return sel, client, err
 	}
 	// Selection reads local configuration only. Keep it even when it later

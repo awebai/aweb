@@ -9,5 +9,5 @@
   "docker_context": ".",
   "origin_url": "https://folio-tmd1.onrender.com",
   "public_url": "https://folio.aweb.ai",
-  "health_path": "/health"
+  "health_path": "/live"
 }
