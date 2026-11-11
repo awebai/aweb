@@ -193,19 +193,14 @@ class HumanRoleHandoffAuthority:
             raise _not_held()
         return PublicScope(installation_id, role, principal)
 
-    async def _installation(self, installation_id: str) -> AdmittedInstallation:
-        """The admitted installation ``installation_id`` names: the fence's
-        one record of it, refreshed outside any app lock."""
-        rows = await self._fence.db.fetch_all(
-            "SELECT team_id FROM {{tables.installation_fences}}"
-            " WHERE app_id = $1 AND installation_id = $2",
-            self._fence.app_id,
-            installation_id,
-        )
-        if len(rows) != 1:
+    async def _installation(self, installation_id: str, team_id: Any) -> AdmittedInstallation:
+        """The admitted installation of ``team_id``, which must be the one the
+        selector names. The team is the authenticated start's or the retained
+        session's; no team is ever found from the installation alone."""
+        if not isinstance(team_id, str) or not team_id:
             raise _not_held()
         try:
-            admitted = (await self._fence.permit(rows[0]["team_id"])).admitted
+            admitted = (await self._fence.permit(team_id)).admitted
         except InstallationRefused as refused:
             # An inactive installation holds nothing; anything else, such as
             # an installation authority that cannot be reached, keeps its own
@@ -213,13 +208,15 @@ class HumanRoleHandoffAuthority:
             if refused.code == "installation_inactive":
                 raise _not_held() from None
             raise
-        if admitted.installation_id != installation_id:
+        if admitted.team_id != team_id or admitted.installation_id != installation_id:
             raise _not_held()
         return admitted
 
-    async def credential_target(self, public_scope: Any) -> HumanRoleCredentialTarget:
+    async def credential_target(
+        self, public_scope: PublicScope, /, *, team_id: str
+    ) -> HumanRoleCredentialTarget:
         scope = self._scope(public_scope)
-        admitted = await self._installation(scope.installation_id)
+        admitted = await self._installation(scope.installation_id, team_id)
         async with self._fence.db.transaction() as tx:
             await self._fence.check(tx, admitted)
         return HumanRoleCredentialTarget(
@@ -230,8 +227,10 @@ class HumanRoleHandoffAuthority:
             ),
         )
 
-    async def session_target(self, public_scope: Any) -> HumanRoleSessionTarget:
-        destination = await self.credential_target(public_scope)
+    async def session_target(
+        self, public_scope: PublicScope, /, *, team_id: str
+    ) -> HumanRoleSessionTarget:
+        destination = await self.credential_target(public_scope, team_id=team_id)
         async with self._fence.db.transaction() as tx:
             await self._fence.check(tx, destination.admitted)
             held = await self._read(tx, destination)

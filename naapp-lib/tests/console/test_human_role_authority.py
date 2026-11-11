@@ -16,14 +16,19 @@ import asyncio
 import dataclasses
 import time
 from types import SimpleNamespace
+from typing import Any
 
 import pytest
 from asyncpg.exceptions import LockNotAvailableError
 from aweb_naapp_testing.owner_acts import APP_ID, INSTALLATION_ID, TEAM_ID
 from fastapi import HTTPException
 
-from aweb_naapp.console.handoff_authority import PublicScope
-from aweb_naapp.console.human_role_authority import HumanRoleHandoffAuthority
+from aweb_naapp.console.handoff_authority import HandoffAuthority, PublicScope
+from aweb_naapp.console.human_role_authority import (
+    HumanRoleHandoffAuthority,
+    HumanRoleSessionTarget,
+    PreparedHumanRoleHolding,
+)
 from aweb_naapp.runtime.authorization import Grant, GrantUnavailable
 from aweb_naapp.runtime.clock import seconds_to_ns
 from aweb_naapp.runtime.human_roles import HumanRoleHoldings
@@ -137,14 +142,14 @@ def refusal(raised: pytest.ExceptionInfo[HTTPException]) -> tuple[int, str]:
 
 async def test_a_credential_target_names_the_holdings_scope_and_grants_nothing(pw: PasskeyWorld):
     authority = await authority_for(pw)
-    target = await authority.credential_target(PUBLIC)
+    target = await authority.credential_target(PUBLIC, team_id=TEAM_ID)
     assert (target.b3_scope, target.team_id, target.admitted.installation_id) == (
         SCOPE,
         TEAM_ID,
         INSTALLATION_ID,
     )
     with pytest.raises(HTTPException) as refused:
-        await authority.session_target(PUBLIC)
+        await authority.session_target(PUBLIC, team_id=TEAM_ID)
     assert refusal(refused) == (403, "role_not_held")
 
 
@@ -163,14 +168,14 @@ async def test_a_public_scope_selects_nothing_but_its_own_holding(pw: PasskeyWor
     authority = await authority_for(pw)
     await designate(pw, holder())
     with pytest.raises(HTTPException) as refused:
-        await authority.credential_target(scope)
+        await authority.credential_target(scope, team_id=TEAM_ID)
     assert refusal(refused) == (403, "role_not_held")
 
 
 async def test_a_session_target_is_the_current_holder_and_its_credential(pw: PasskeyWorld):
     authority = await authority_for(pw)
     designation = await designate(pw, holder())
-    target = await authority.session_target(PUBLIC)
+    target = await authority.session_target(PUBLIC, team_id=TEAM_ID)
     assert (target.b3_scope, target.subject) == (SCOPE, designation.approver.subject)
     assert target.public_scope.principal == PRINCIPAL
 
@@ -180,7 +185,7 @@ async def test_a_holder_whose_credential_is_being_replaced_must_sign_in_again(pw
     await designate(pw, holder())
     await replace(pw, holder())
     with pytest.raises(HTTPException) as refused:
-        await authority.session_target(PUBLIC)
+        await authority.session_target(PUBLIC, team_id=TEAM_ID)
     assert refusal(refused) == (401, "console_session_required")
 
 
@@ -188,7 +193,9 @@ async def test_another_principal_s_scope_reads_another_holding(pw: PasskeyWorld)
     authority = await authority_for(pw)
     await designate(pw, holder())
     with pytest.raises(HTTPException) as refused:
-        await authority.session_target(PublicScope(INSTALLATION_ID, ROLE, OTHER_PRINCIPAL))
+        await authority.session_target(
+            PublicScope(INSTALLATION_ID, ROLE, OTHER_PRINCIPAL), team_id=TEAM_ID
+        )
     assert refusal(refused) == (403, "role_not_held")
 
 
@@ -198,7 +205,7 @@ async def test_another_principal_s_scope_reads_another_holding(pw: PasskeyWorld)
 async def test_a_hold_returns_the_complete_union_for_downstream_reuse(pw: PasskeyWorld):
     authority = await authority_for(pw)
     designation = await designate(pw, holder())
-    target = await authority.session_target(PUBLIC)
+    target = await authority.session_target(PUBLIC, team_id=TEAM_ID)
     pair = (SCOPE, designation.approver.subject)
     async with pw.passkeys.db.transaction() as tx:
         held = await authority.hold_session_target(tx, target, approver_pairs=[pair, pair])
@@ -212,8 +219,10 @@ async def test_a_hold_returns_the_complete_union_for_downstream_reuse(pw: Passke
 async def test_the_union_must_include_the_targets_own_pair(pw: PasskeyWorld):
     authority = await authority_for(pw)
     await designate(pw, holder())
-    target = await authority.session_target(PUBLIC)
-    for pairs in ([], [("other.scope", "someone")], "not pairs"):
+    target = await authority.session_target(PUBLIC, team_id=TEAM_ID)
+    # The last is no pair list at all, which a caller may still pass.
+    malformed: tuple[Any, ...] = ([], [("other.scope", "someone")], "not pairs")
+    for pairs in malformed:
         async with pw.passkeys.db.transaction() as tx:
             with pytest.raises(HTTPException) as refused:
                 await authority.hold_session_target(tx, target, approver_pairs=pairs)
@@ -223,7 +232,7 @@ async def test_the_union_must_include_the_targets_own_pair(pw: PasskeyWorld):
 async def test_a_revocation_between_projection_and_hold_refuses(pw: PasskeyWorld):
     authority = await authority_for(pw)
     designation = await designate(pw, holder())
-    target = await authority.session_target(PUBLIC)
+    target = await authority.session_target(PUBLIC, team_id=TEAM_ID)
     await revoke(pw)
     async with pw.passkeys.db.transaction() as tx:
         with pytest.raises(HTTPException) as refused:
@@ -237,7 +246,7 @@ async def test_a_holding_held_again_does_not_heal_an_earlier_target(pw: PasskeyW
     authority = await authority_for(pw)
     member = holder()
     first = await designate(pw, member)
-    target = await authority.session_target(PUBLIC)
+    target = await authority.session_target(PUBLIC, team_id=TEAM_ID)
     await revoke(pw)
     await designate(pw, holder())
     async with pw.passkeys.db.transaction() as tx:
@@ -253,7 +262,7 @@ async def test_a_replacement_between_projection_and_hold_requires_signing_in_aga
 ):
     authority = await authority_for(pw)
     designation = await designate(pw, holder())
-    target = await authority.session_target(PUBLIC)
+    target = await authority.session_target(PUBLIC, team_id=TEAM_ID)
     await replace(pw, holder())
     async with pw.passkeys.db.transaction() as tx:
         with pytest.raises(HTTPException) as refused:
@@ -268,7 +277,7 @@ async def test_only_the_returned_handle_checks_and_only_in_its_own_transaction(
 ):
     authority = await authority_for(pw)
     designation = await designate(pw, holder())
-    target = await authority.session_target(PUBLIC)
+    target = await authority.session_target(PUBLIC, team_id=TEAM_ID)
     pair = (SCOPE, designation.approver.subject)
     async with pw.passkeys.db.transaction() as tx:
         held = await authority.hold_session_target(tx, target, approver_pairs=[pair])
@@ -284,7 +293,7 @@ async def test_a_hold_serializes_a_revocation_until_the_holder_s_transaction_end
 ):
     authority = await authority_for(pw)
     designation = await designate(pw, holder())
-    target = await authority.session_target(PUBLIC)
+    target = await authority.session_target(PUBLIC, team_id=TEAM_ID)
     pair = (SCOPE, designation.approver.subject)
     writer: list[int] = []
 
@@ -319,7 +328,7 @@ async def test_a_hold_serializes_a_revocation_until_the_holder_s_transaction_end
             revoking.cancel()
             await asyncio.gather(revoking, return_exceptions=True)
     with pytest.raises(HTTPException) as refused:
-        await authority.session_target(PUBLIC)
+        await authority.session_target(PUBLIC, team_id=TEAM_ID)
     assert refusal(refused) == (403, "role_not_held")
 
 
@@ -331,7 +340,9 @@ async def test_a_target_projected_for_another_role_is_never_held(pw: PasskeyWorl
     auditor = await authority_for(pw, OTHER_ROLE, declared=declared)
     await designate(pw, holder())
     await designate_other_role(pw)
-    theirs = await auditor.session_target(PublicScope(INSTALLATION_ID, OTHER_ROLE, PRINCIPAL))
+    theirs = await auditor.session_target(
+        PublicScope(INSTALLATION_ID, OTHER_ROLE, PRINCIPAL), team_id=TEAM_ID
+    )
     async with pw.passkeys.db.transaction() as tx:
         with pytest.raises(HTTPException) as refused:
             await reader.hold_session_target(
@@ -345,7 +356,7 @@ async def test_a_target_whose_selector_names_another_installation_is_never_held(
 ):
     authority = await authority_for(pw)
     designation = await designate(pw, holder())
-    target = await authority.session_target(PUBLIC)
+    target = await authority.session_target(PUBLIC, team_id=TEAM_ID)
     moved = dataclasses.replace(
         target,
         public_scope=PublicScope("6f9619ff-8b86-4011-b42d-00c04fc964ff", ROLE, PRINCIPAL),
@@ -363,7 +374,7 @@ async def test_a_hold_locks_the_holding_itself_not_only_its_credential(pw: Passk
     record cannot be locked for writing, whatever B3 holds."""
     authority = await authority_for(pw)
     designation = await designate(pw, holder())
-    target = await authority.session_target(PUBLIC)
+    target = await authority.session_target(PUBLIC, team_id=TEAM_ID)
     pair = (SCOPE, designation.approver.subject)
     assignment = (
         "SELECT 1 FROM {{tables.role_assignments}}"
@@ -388,7 +399,7 @@ async def test_an_inactive_installation_holds_nothing(pw: PasskeyWorld):
     await designate(pw, holder())
     installations.state = "inactive"
     with pytest.raises(HTTPException) as refused:
-        await authority.session_target(PUBLIC)
+        await authority.session_target(PUBLIC, team_id=TEAM_ID)
     assert refusal(refused) == (403, "role_not_held")
 
 
@@ -398,5 +409,32 @@ async def test_an_unreachable_installation_authority_is_not_a_lost_holding(pw: P
     await designate(pw, holder())
     installations.unreachable = True
     with pytest.raises(InstallationRefused) as refused:
-        await authority.session_target(PUBLIC)
+        await authority.session_target(PUBLIC, team_id=TEAM_ID)
     assert (refused.value.status, refused.value.code) == (503, "authority_unavailable")
+
+
+@pytest.mark.parametrize("team", ["aweb:other.example.com", ""], ids=["foreign team", "no team"])
+async def test_a_projection_names_only_the_holding_of_its_own_team(pw: PasskeyWorld, team: str):
+    """The team comes from the authenticated start or the retained session, and
+    the installation must be that team's; no team is found from the
+    installation alone."""
+    authority = await authority_for(pw)
+    await designate(pw, holder())
+    for project in (authority.credential_target, authority.session_target):
+        with pytest.raises(HTTPException) as refused:
+            await project(PUBLIC, team_id=team)
+        assert refusal(refused) == (403, "role_not_held"), project
+
+
+async def test_the_authority_binds_to_the_handoff_seam(pw: PasskeyWorld):
+    authority = await authority_for(pw)
+    seam: HandoffAuthority[HumanRoleSessionTarget, PreparedHumanRoleHolding] = HandoffAuthority(
+        credential_target=authority.credential_target,
+        session_target=authority.session_target,
+        hold_session_target=authority.hold_session_target,
+        check_session_target=authority.check_session_target,
+        holding_identity=authority.holding_identity,
+    )
+    await designate(pw, holder())
+    target = await seam.session_target(PUBLIC, team_id=TEAM_ID)
+    assert seam.holding_identity(target).startswith("aweb.human-role-holding/1:")
