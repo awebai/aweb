@@ -367,6 +367,24 @@ class AWIDTeamCache:
                 self._unknown_refresh_at.pop(team_id, None)
             return facts
 
+    async def check_member_credentials(self) -> None:
+        """Read each configured member credential's team with that credential,
+        fresh, and require its certificate to be published, unrevoked and
+        signed by the team's current key: the app's startup check. RuntimeError
+        names the team and the certificate."""
+        for team_id, credential in self._member_credentials.items():
+            certificate_id = credential.certificate_id
+            try:
+                facts = await self._refresh_team_facts(team_id, time.monotonic_ns())
+                _require_active_certificate(facts, certificate_id)
+                verify_team_certificate_signature(dict(credential.certificate), facts.team_did_key)
+            except (HTTPException, TeamCertificateError) as exc:
+                detail = exc.detail if isinstance(exc, HTTPException) else str(exc)
+                raise RuntimeError(
+                    f"awid_member_credentials[{team_id}]: certificate {certificate_id} "
+                    f"cannot read the team's AWID facts ({detail})"
+                ) from None
+
     async def _refresh_team_facts(self, team_id: str, now: int) -> CachedTeamFacts:
         domain, team_name = parse_team_id(team_id)
         try:
