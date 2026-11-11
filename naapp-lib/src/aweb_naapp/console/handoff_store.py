@@ -38,10 +38,14 @@ class HandoffStart:
     verifier_sha256: bytes
     scope: PublicScope
     client_hostname: str
+    # "loopback", or "user_code" for a session start that only the holder may
+    # ask for; the router decides it once the signer is known.
+    return_mode: str = "loopback"
 
 
 def parse_start(body: Any) -> HandoffStart:
-    """The loopback profile; unsupported fallback cannot start a session."""
+    """A start body. A session user_code start parses, and the router refuses it:
+    400 for a start the holder did not sign, 409 fallback_unavailable otherwise."""
     try:
         if (
             not isinstance(body, dict)
@@ -82,9 +86,17 @@ def parse_start(body: Any) -> HandoffStart:
     except (ValueError, TypeError, KeyError) as exc:
         raise HandoffWireRefused("handoff_invalid") from exc
     if body["return"] == "user_code":
-        if body["purpose"] == "session":
-            raise HandoffWireRefused("fallback_unavailable")
-        raise HandoffWireRefused("handoff_invalid")
+        if body["purpose"] != "session":
+            raise HandoffWireRefused("handoff_invalid")
+        return HandoffStart(
+            body["purpose"],
+            key,
+            "",
+            bytes.fromhex(digest),
+            PublicScope(scope["installation_id"], scope["role"], scope["principal"]),
+            hostname,
+            return_mode="user_code",
+        )
     # Preserve the distinct fixed redirect refusal, without reflecting its URI.
     redirect = loopback_redirect(body["redirect_uri"])
     return HandoffStart(
@@ -181,6 +193,12 @@ def handoff_start_router(
             ) from None
         if not signer.did_aw_registry_verified:
             raise HTTPException(403, "scope_not_signer")
+        if parsed.return_mode == "user_code":
+            # A start the holder's child signs is loopback only, whatever the
+            # fallback's availability (contract 584d76c9c :413-415).
+            if parsed.scope.principal != signer.did_aw:
+                raise HTTPException(400, "handoff_invalid")
+            raise HTTPException(409, "fallback_unavailable")
         if parsed.scope.principal != signer.did_aw:
             # Only a session start, and only by an agent whose verified chain
             # has the holder as its direct parent (handoff-wire 1a). It

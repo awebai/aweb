@@ -112,3 +112,27 @@ async def test_a_holder_certificate_in_the_body_is_invalid(requester_app):
     body["holder_certificate"] = "eyJ9"
     response = await post(app, member, body)
     assert response.status_code == 400 and response.json() == {"detail": "handoff_invalid"}
+
+
+def user_code_body(holder: str) -> dict:
+    body = session_body_for(holder)
+    body.update(**{"return": "user_code"}, client_hostname="laptop.local")
+    del body["redirect_uri"]
+    return body
+
+
+async def test_a_direct_child_cannot_use_the_user_code_fallback(requester_app):
+    # Loopback only for a start the holder did not sign, refused before any
+    # handoff exists and independent of the fallback (contract 584d76c9c).
+    app, member, seen = requester_app
+    response = await post(app, member, user_code_body(HOLDER))
+    assert response.status_code == 400 and response.json() == {"detail": "handoff_invalid"}
+    assert seen["starts"] == []
+
+
+async def test_the_holders_own_user_code_start_follows_the_fallback_rule(requester_app):
+    # No fallback is enabled in the shared factory, so the holder gets 409.
+    app, member, seen = requester_app
+    response = await post(app, member, user_code_body(member.extra_cert_fields["member_did_aw"]))
+    assert response.status_code == 409 and response.json() == {"detail": "fallback_unavailable"}
+    assert seen["starts"] == []
