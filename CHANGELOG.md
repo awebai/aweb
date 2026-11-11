@@ -2,6 +2,10 @@
 
 ## Unreleased
 
+- The `aw wake deregister` help says an unknown or already-retired home exits 0
+  because the retire hook may run twice. It does not mention a pending expiry:
+  the wake broker removes no registration on its own.
+
 - Federated mail and chat delivery connects only to the addresses the
   recipient's delivery origin resolves to, over one address-checked transport
   shared by the HTTP routes and the MCP tools. The origin must be `https` and

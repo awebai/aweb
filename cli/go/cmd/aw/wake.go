@@ -248,8 +248,7 @@ var wakeDeregisterCmd = &cobra.Command{
 		"instance and never removes a registration on its own; an instance it observed\n" +
 		"stopped is marked inactive and waits here.\n\n" +
 		"An unknown or already-retired home exits 0 with a note: the hook may run twice,\n" +
-		"or after the pending expiry already dropped the registration, and neither is a\n" +
-		"failed retirement.\n\n" +
+		"and that is not a failed retirement.\n\n" +
 		"For observed managed-worker completion, use --require-managed-stop with\n" +
 		"--expect-registration FILE containing managed_receiver from live wake status.\n" +
 		"This strict mode requires an eligible captured child and a supporting daemon,\n" +

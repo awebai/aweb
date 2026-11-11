@@ -3163,8 +3163,7 @@ instance and never removes a registration on its own; an instance it observed
 stopped is marked inactive and waits here.
 
 An unknown or already-retired home exits 0 with a note: the hook may run twice,
-or after the pending expiry already dropped the registration, and neither is a
-failed retirement.
+and that is not a failed retirement.
 
 For observed managed-worker completion, use --require-managed-stop with
 --expect-registration FILE containing managed_receiver from live wake status.
