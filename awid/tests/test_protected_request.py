@@ -6,10 +6,12 @@ import hashlib
 from datetime import datetime, timedelta, timezone
 
 import pytest
-from fastapi import HTTPException
+from fastapi import FastAPI, HTTPException
 from starlette.requests import Request
 
 from awid.did import did_from_public_key, generate_keypair
+from awid.controller_request import verify_controller_json_request
+from awid import dns_auth
 from awid.protected_request import verify_protected_request
 from awid.signing import canonical_json_bytes, sign_message
 
@@ -183,3 +185,73 @@ async def test_padded_wire_encodings_refuse(field):
     with pytest.raises(HTTPException) as exc:
         await verify(request(headers, body))
     assert exc.value.status_code == 401
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize('registry_origin', [ORIGIN, 'https://registry.customer.example'])
+async def test_protected_proof_cannot_authorize_an_awid_controller_operation(registry_origin):
+    _, headers, body = signed_request()
+    req = request(headers, body)
+    req.scope['app'] = app = FastAPI()
+    app.state.awid_public_origins = (registry_origin,)
+    with pytest.raises(HTTPException) as exc:
+        await verify_controller_json_request(
+            req, payload_dict={'domain': DOMAIN, 'operation': 'create_team', 'name': 'engineering'},
+        )
+    assert exc.value.status_code == 401
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize('registry_origin', [ORIGIN, 'https://registry.customer.example'])
+async def test_awid_controller_proof_cannot_prepare_a_protected_operation(registry_origin):
+    private, public = generate_keypair()
+    did = did_from_public_key(public)
+    timestamp = datetime.now(timezone.utc).isoformat()
+    body = b'{}'
+    raw = canonical_json_bytes({
+        'v': 2, 'type': 'aweb.awid-controller-request', 'aud': registry_origin,
+        'domain': DOMAIN, 'operation': 'create_team', 'name': 'engineering',
+        'timestamp': timestamp, 'method': 'POST',
+        'path': '/protected/protected-operations?team=a%3Ab',
+        'body_sha256': hashlib.sha256(body).hexdigest(),
+    })
+    headers = {
+        'Authorization': f'DIDKey {did} {sign_message(private, raw)}',
+        'X-AWEB-Timestamp': timestamp,
+        'X-AWEB-Signed-Payload': base64.urlsafe_b64encode(raw).rstrip(b'=').decode(),
+    }
+    req = request(headers, body)
+    req.scope['app'] = app = FastAPI()
+    app.state.awid_public_origins = (registry_origin,)
+    # The neighboring operation really is accepted by AWID's verifier with
+    # this exact signature, including the shared-origin embedding.
+    assert await verify_controller_json_request(
+        req, payload_dict={'domain': DOMAIN, 'operation': 'create_team', 'name': 'engineering'},
+    ) == did
+    with pytest.raises(HTTPException) as exc:
+        await verify(req)
+    assert exc.value.status_code == 401
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize('elapsed,allowed', [(299, True), (300, True), (301, False)])
+async def test_body_wait_does_not_extend_the_original_timestamp_window(monkeypatch, elapsed, allowed):
+    started = datetime(2026, 11, 11, tzinfo=timezone.utc)
+    current = started
+    monkeypatch.setattr(dns_auth, '_utc_now', lambda: current)
+    did, headers, body = signed_request(timestamp=started.isoformat())
+    req = request(headers, body)
+
+    async def delayed_receive():
+        nonlocal current
+        current = started + timedelta(seconds=elapsed)
+        return {'type': 'http.request', 'body': body, 'more_body': False}
+
+    delayed = Request(req.scope, delayed_receive)
+    if allowed:
+        assert await verify(delayed) == did
+    else:
+        with pytest.raises(HTTPException) as exc:
+            await verify(delayed)
+        assert exc.value.status_code == 401
+        assert exc.value.detail == 'Timestamp outside allowed skew window'
