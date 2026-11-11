@@ -166,7 +166,7 @@ def create_app(
             console.router.routes[:] = console_routes
 
     api = FastAPI(lifespan=lifespan, docs_url=None, redoc_url=None, openapi_url=None)
-    # The composed runtime, for operators and tests that inspect its state.
+    # The composed runtime, reachable from the ASGI app (tests reach its team cache).
     api.state.runtime = runtime
     mount_manifest_routes(api, runtime=runtime)
     mount_health(api, settings, checks=runtime.health_checks())
