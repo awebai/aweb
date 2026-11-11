@@ -9,9 +9,9 @@ from __future__ import annotations
 
 from datetime import datetime, timedelta, timezone
 import json
-import os
 from uuid import uuid4
 
+from awid.test_services import redis_url
 import pytest
 import pytest_asyncio
 from redis.asyncio import Redis
@@ -128,7 +128,7 @@ def test_events_of_agents_outside_the_session_are_ignored():
 
 @pytest_asyncio.fixture
 async def redis():
-    async with Redis.from_url(os.environ.get("REDIS_URL", "redis://localhost:6379/0"), decode_responses=True) as client:
+    async with Redis.from_url(redis_url(), decode_responses=True) as client:
         yield client
 
 

@@ -8,9 +8,9 @@ from __future__ import annotations
 
 import asyncio
 import logging
-import os
 from uuid import uuid4
 
+from awid.test_services import redis_url
 import pytest
 import pytest_asyncio
 from redis.asyncio import Redis
@@ -28,18 +28,17 @@ from aweb.agent_wake import (
 )
 from tests.redis_fault_proxy import RedisFaultProxy
 
-REDIS_URL = os.environ.get("REDIS_URL", "redis://localhost:6379/0")
 
 
 @pytest_asyncio.fixture
 async def redis():
-    async with Redis.from_url(REDIS_URL, decode_responses=True) as client:
+    async with Redis.from_url(redis_url(), decode_responses=True) as client:
         yield client
 
 
 @pytest_asyncio.fixture
 async def proxy():
-    proxy = RedisFaultProxy(REDIS_URL)
+    proxy = RedisFaultProxy(redis_url())
     await proxy.start()
     yield proxy
     await proxy.stop()

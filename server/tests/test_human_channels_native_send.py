@@ -10,6 +10,7 @@ import pytest_asyncio
 from aweb.human_channels.contract import ContractError, canonical_record, decode_record
 from aweb.human_channels.native import NativeMessagingService
 from aweb.identity_auth_deps import MessagingAuth
+from awid.test_services import redis_url
 from awid.signing import canonical_json_bytes, sign_message
 from test_messages_http import (
     _build_test_app,
@@ -1029,7 +1030,6 @@ async def test_native_facts_project_identity_in_endpoint_team(native_send):
 @pytest.mark.parametrize("kind", ["mail", "chat"])
 async def test_native_http_ingress_wakes_recipient_after_commit(native_send, kind):
     import asyncio
-    import os
     import time
 
     import httpx
@@ -1042,7 +1042,7 @@ async def test_native_http_ingress_wakes_recipient_after_commit(native_send, kin
     recipient = await env["db"].fetch_one(
         "SELECT did_key FROM {{tables.agents}} WHERE agent_id=$1", UUID(env["b"])
     )
-    async with Redis.from_url(os.environ.get("REDIS_URL", "redis://localhost:6379/0"), decode_responses=True) as redis:
+    async with Redis.from_url(redis_url(), decode_responses=True) as redis:
         hub, publisher = AgentWakeHub(redis), AgentWakePublisher(redis)
         await hub.start()
         app.state.agent_wake_publisher = publisher

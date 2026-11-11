@@ -2,6 +2,7 @@
 import json
 from uuid import UUID
 
+from awid.test_services import redis_url
 import pytest
 
 from test_dashboard_privacy import privacy_app  # noqa: F401
@@ -85,7 +86,6 @@ async def test_mcp_human_chat_refusal_precedes_custody_and_send(mail_server, con
 @pytest.mark.parametrize('scope', ['local', 'global'])
 @pytest.mark.parametrize('projection', ['verified-human', 'raw-human', 'wrong-key', 'agent', 'unknown'])
 async def test_chat_preflight_uses_projections_without_any_registry_io(privacy_app, scope, projection):
-    import os
     from awid.registry import CachedRegistryClient
     from awid_service.testing import ServiceTransport
     from redis.asyncio import Redis
@@ -107,7 +107,7 @@ async def test_chat_preflight_uses_projections_without_any_registry_io(privacy_a
     if projection == 'unknown':
         recipient = dict(did_key=env.actors['carol'].did, did_aw=identity, alias='unknown')
     recording = ServiceTransport(env.registry_app)
-    redis = Redis.from_url(os.environ.get('REDIS_URL', 'redis://localhost:6379/0'))
+    redis = Redis.from_url(redis_url())
     client = CachedRegistryClient('http://registry.test', redis, transport=recording)
     try:
         if projection == 'verified-human':
@@ -204,7 +204,6 @@ async def test_native_legacy_label_grants_no_human_chat_treatment(native_send, s
 
 @pytest.mark.asyncio
 async def test_agent_with_verified_human_ancestor_is_allowed_without_registry_io(privacy_app):
-    import os
     from copy import deepcopy
     from pathlib import Path
     from awid.id_certificates import IDChainEvidence, verify_id_chain
@@ -229,7 +228,7 @@ async def test_agent_with_verified_human_ancestor_is_allowed_without_registry_io
         env.actors['bob'].id, subject['did_key'], subject['id'],
     )
     recording = ServiceTransport(env.registry_app)
-    redis = Redis.from_url(os.environ.get('REDIS_URL', 'redis://localhost:6379/0'))
+    redis = Redis.from_url(redis_url())
     client = CachedRegistryClient('http://registry.test', redis, transport=recording)
     try:
         await require_agent_chat(env.infra, [dict(did_aw=subject['id'], did_key=subject['did_key'], alias='bob')], registry_client=client)

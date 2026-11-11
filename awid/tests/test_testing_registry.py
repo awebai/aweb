@@ -6,11 +6,11 @@ from __future__ import annotations
 
 from datetime import UTC, datetime
 
-import os
 
 import httpx
 import pytest
 import pytest_asyncio
+from awid.test_services import redis_url
 from awid.did import did_from_public_key
 from awid.registry import RegistryClient, RegistryError
 from awid.signing import canonical_json_bytes, sign_message
@@ -128,7 +128,7 @@ async def test_the_transport_records_requests_and_carries_faults(database_url) -
 
 @pytest.mark.asyncio
 async def test_the_registry_reports_its_health_with_the_redis_it_is_given(database_url) -> None:
-    async with Redis.from_url(os.environ.get("REDIS_URL", "redis://localhost:6379/0")) as redis:
+    async with Redis.from_url(redis_url()) as redis:
         async with running_registry(database_url, redis=redis) as registry:
             client = RegistryClient(registry_url=REGISTRY_URL, transport=registry.transport)
             health = await client.health()

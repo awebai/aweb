@@ -10,7 +10,7 @@ import pytest_asyncio
 from aweb_naapp_testing.databases import SchemaDatabases
 from awid_service.testing import Registry, running_registry
 
-pytest_plugins = ("pgdbm.fixtures.conftest", "aweb_naapp_testing.server")
+pytest_plugins = ("awid.pytest_services", "pgdbm.fixtures.conftest", "aweb_naapp_testing.server")
 
 
 @pytest.fixture

@@ -9,7 +9,6 @@ import asyncio
 from contextlib import AsyncExitStack, asynccontextmanager
 from datetime import datetime, timezone
 import json
-import os
 import socket
 from types import SimpleNamespace
 from uuid import UUID, uuid4
@@ -23,6 +22,7 @@ import uvicorn
 from aweb.e2ee_messages import encrypt_e2ee_message, generate_x25519_keypair
 from aweb.testing import running_server
 from aweb_naapp_testing.network import DnsServer
+from awid.test_services import redis_url
 from awid.e2ee_keys import build_encryption_key_assertion
 from awid.registry import RegistryClient
 from awid.signing import canonical_json_bytes, sign_message
@@ -86,7 +86,7 @@ async def route_pair(test_db_factory, monkeypatch):
     monkeypatch.setenv("AWID_SERVICE_TOKEN", token)
     async with AsyncExitStack() as stack:
         redis = await stack.enter_async_context(Redis.from_url(
-            os.environ.get("REDIS_URL", "redis://localhost:6379/0"), decode_responses=True,
+            redis_url(), decode_responses=True,
         ))
         await redis.ping()
         dns_server = DnsServer()

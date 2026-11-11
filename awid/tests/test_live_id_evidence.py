@@ -3,7 +3,6 @@
 import asyncio
 import copy
 from contextlib import aclosing
-import os
 
 import httpx
 import pytest
@@ -11,6 +10,7 @@ import pytest_asyncio
 from redis.asyncio import Redis
 
 import awid.registry as registry_module
+from awid.test_services import redis_url
 from awid.id_certificates import verify_id_chain
 from awid.registry import CachedRegistryClient, RegistryClient
 from awid.ratelimit import MemoryFixedWindowRateLimiter
@@ -36,7 +36,7 @@ pytestmark = pytest.mark.asyncio
 
 @pytest_asyncio.fixture
 async def live_registry(awid_db_infra, manual_clock):
-    redis = Redis.from_url(os.environ.get("REDIS_URL", "redis://localhost:6379/0"))
+    redis = Redis.from_url(redis_url())
     app = create_app(
         db_infra=awid_db_infra, redis=redis, rate_limiter=MemoryFixedWindowRateLimiter()
     )

@@ -6,10 +6,10 @@ from __future__ import annotations
 
 import json
 import logging
-import os
 from types import SimpleNamespace
 from uuid import uuid4
 
+from awid.test_services import redis_url
 import pytest
 import pytest_asyncio
 from awid_service.testing import SERVICE_TOKEN, running_registry
@@ -36,7 +36,7 @@ async def stack(test_db_factory, monkeypatch):
     awid_db = await test_db_factory.create_db(suffix="testing_awid")
     server_db = await test_db_factory.create_db(suffix="testing_aweb")
     async with Redis.from_url(
-        os.environ.get("REDIS_URL", "redis://localhost:6379/0"), decode_responses=True
+        redis_url(), decode_responses=True
     ) as redis:
         async with running_registry(awid_db.config.get_dsn(), redis=redis) as registry:
             async with running_server(

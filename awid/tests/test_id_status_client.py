@@ -12,7 +12,6 @@ from __future__ import annotations
 import asyncio
 import copy
 import json
-import os
 import time
 import uuid
 
@@ -22,6 +21,7 @@ import pytest_asyncio
 from redis.asyncio import Redis
 
 import awid.registry as registry_module
+from awid.test_services import redis_url
 from awid.dns_verify import DnsVerificationError, DomainAuthority
 from awid.id_certificates import IDChainEvidence, verify_id_chain
 from awid.registry import CachedRegistryClient, RegistryError
@@ -465,7 +465,7 @@ async def test_real_redis_ages_an_entry_past_its_whole_second_stamp(env):
     domain = f"{uuid.uuid4().hex}.example"
     env.status[domain] = _fixture("normal") | {"domain": domain}
     env.controller[domain] = env.controller[DOMAIN]
-    redis = Redis.from_url(os.environ.get("REDIS_URL", "redis://localhost:6379/0"))
+    redis = Redis.from_url(redis_url())
     client = CachedRegistryClient(
         REGISTRY, redis, transport=httpx.MockTransport(env.handler),
         domain_registry_resolver=env.route, domain_verifier=env.verify_domain,
@@ -638,7 +638,7 @@ async def test_the_cached_client_reads_the_real_status_endpoint(clocked_client, 
     async def service_dns(domain: str) -> DomainAuthority:
         return await clocked_client.app.dependency_overrides[get_domain_verifier]()(domain)
 
-    redis = Redis.from_url(os.environ.get("REDIS_URL", "redis://localhost:6379/0"))
+    redis = Redis.from_url(redis_url())
     client = CachedRegistryClient(
         "http://testserver", redis, transport=httpx.ASGITransport(app=clocked_client.app),
         domain_verifier=service_dns,
@@ -669,7 +669,7 @@ async def test_real_redis_ages_shared_evidence_on_its_own_clock(env, monkeypatch
     domain = f"{uuid.uuid4().hex}.example"
     env.status[domain] = _fixture("normal") | {"domain": domain}
     env.controller[domain] = env.controller[DOMAIN]
-    redis = Redis.from_url(os.environ.get("REDIS_URL", "redis://localhost:6379/0"))
+    redis = Redis.from_url(redis_url())
     clients = [
         CachedRegistryClient(
             REGISTRY, redis, transport=httpx.MockTransport(env.handler),

@@ -12,7 +12,6 @@ import asyncio
 import base64
 import copy
 import json
-import os
 from collections.abc import Awaitable, Callable
 from dataclasses import dataclass
 
@@ -23,6 +22,7 @@ from nacl.signing import SigningKey
 from redis.asyncio import Redis
 
 import awid.registry as registry_module
+from awid.test_services import redis_url
 from awid.dns_verify import DomainAuthority
 from awid.id_certificates import decode_id_chain_header, verify_id_chain
 from awid.id_tree_requests import (
@@ -576,7 +576,7 @@ async def cached(clocked_client, manual_clock):
         return ORIGIN
 
     clocked_client.app.dependency_overrides[get_domain_verifier] = lambda: verify
-    redis = Redis.from_url(os.environ.get("REDIS_URL", "redis://localhost:6379/0"))
+    redis = Redis.from_url(redis_url())
     tree.transport = WriteHook(app=clocked_client.app)
     client = CachedRegistryClient(
         ORIGIN, redis, transport=tree.transport, domain_registry_resolver=route, domain_verifier=verify,

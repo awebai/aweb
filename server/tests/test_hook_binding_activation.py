@@ -9,7 +9,6 @@ from __future__ import annotations
 
 import base64
 import hashlib
-import os
 import secrets
 from datetime import UTC, datetime, timedelta
 from uuid import uuid4
@@ -33,6 +32,7 @@ from aweb.hook_bindings import (
 from aweb.service_errors import ConflictError, ForbiddenError, NotFoundError
 from aweb_naapp.hooks.owner_act import PREFIX
 from aweb_naapp.hooks.strictjson import canonical
+from awid.test_services import redis_url
 from awid.did import did_from_public_key
 from awid.ratelimit import MemoryFixedWindowRateLimiter
 from awid.registry import RegistryClient
@@ -124,7 +124,7 @@ async def env(aweb_cloud_db, shared_test_pool, monkeypatch):
             "INSERT INTO {{tables.teams}} (domain, name, team_did_key, visibility) VALUES ('acme.com', $1, $2, 'private')",
             name, _did(team_key),
         )
-    async with Redis.from_url(os.environ.get("REDIS_URL", "redis://localhost:6379/0"), decode_responses=True) as redis:
+    async with Redis.from_url(redis_url(), decode_responses=True) as redis:
         registry_app = create_registry_app(
             db_infra=registry_db, redis=redis, rate_limiter=MemoryFixedWindowRateLimiter(),
         )

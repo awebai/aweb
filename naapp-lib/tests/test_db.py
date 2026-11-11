@@ -7,9 +7,10 @@ from pathlib import Path
 import asyncpg
 import pytest
 import pytest_asyncio
+from awid.test_services import postgres_config
 from pgdbm import AsyncDatabaseManager, AsyncMigrationManager, DatabaseConfig
 from pgdbm.errors import MigrationError
-from pgdbm.testing import AsyncTestDatabase, DatabaseTestConfig
+from pgdbm.testing import AsyncTestDatabase
 from pydantic_settings import SettingsConfigDict
 
 from aweb_naapp import idempotency, outbox, roles
@@ -18,13 +19,6 @@ from aweb_naapp.roles import apply_roles_migrations
 from aweb_naapp.runtime import db as runtime_db
 from aweb_naapp.runtime.db import NaappDatabase
 from aweb_naapp.runtime.settings import NaappSettings
-
-_TEST_DB_CONFIG = DatabaseTestConfig(
-    host=os.environ.get("TEST_DB_HOST", "localhost"),
-    port=int(os.environ.get("TEST_DB_PORT", "5432")),
-    user=os.environ.get("TEST_DB_USER", "postgres"),
-    password=os.environ.get("TEST_DB_PASSWORD", "postgres"),
-)
 
 
 class ExampleSettings(NaappSettings):
@@ -37,7 +31,7 @@ class ExampleSettings(NaappSettings):
 @pytest_asyncio.fixture
 async def database_url() -> AsyncIterator[str]:
     """A fresh, empty real Postgres database."""
-    test_database = AsyncTestDatabase(_TEST_DB_CONFIG)
+    test_database = AsyncTestDatabase(postgres_config())
     try:
         await test_database.create_test_database()
     except Exception as exc:  # pragma: no cover - environment without Postgres

@@ -10,7 +10,6 @@ import asyncio
 from contextlib import asynccontextmanager
 from datetime import datetime, timedelta, timezone
 import json
-import os
 import socket
 import ssl
 from types import SimpleNamespace
@@ -32,6 +31,7 @@ from aweb.mutation_hooks import create_mutation_handler
 from aweb.internal_auth import build_internal_auth_header_value
 from aweb.routes.status import status_stream
 from aweb.team_auth_deps import TeamIdentity
+from awid.test_services import redis_url
 from awid.ratelimit import MemoryFixedWindowRateLimiter
 from awid.registry import RegistryClient
 from awid_service.db import AwidDatabaseInfra
@@ -70,7 +70,7 @@ async def privacy_stack(shared_test_pool, monkeypatch, tls=None):
     # Candidate runners provide Redis as a service, not a local executable.
     # Never flush this shared database; team/workspace/session keys are unique.
     async with Redis.from_url(
-        os.environ.get("REDIS_URL", "redis://localhost:6379/0"), decode_responses=True,
+        redis_url(), decode_responses=True,
     ) as redis:
         await redis.ping()
         db = DatabaseInfra()

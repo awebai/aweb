@@ -8,13 +8,13 @@ way would fail its startup check.
 
 from __future__ import annotations
 
-import os
 from types import SimpleNamespace
 from uuid import uuid4
 
 import httpx
 import pytest
 import pytest_asyncio
+from awid.test_services import redis_url
 from awid.ratelimit import NoOpRateLimiter
 from awid_service.db import AwidDatabaseInfra
 from awid_service.main import create_app as create_registry_app
@@ -35,7 +35,7 @@ async def awid(shared_test_pool, monkeypatch):
     monkeypatch.setenv("AWEB_DATABASE_URL", "postgresql://unused/test")
     monkeypatch.setenv("AWID_REGISTRY_URL", UNREACHABLE_REGISTRY)
     async with Redis.from_url(
-        os.environ.get("REDIS_URL", "redis://localhost:6379/0"), decode_responses=True
+        redis_url(), decode_responses=True
     ) as redis:
         infra = AwidDatabaseInfra(schema="transport_registry")
         await infra.initialize(shared_pool=shared_test_pool)

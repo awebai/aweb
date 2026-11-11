@@ -20,13 +20,13 @@ is visible to both, and nothing reaches real DNS.
 from __future__ import annotations
 
 import json
-import os
 from collections.abc import AsyncIterator
 from dataclasses import dataclass
 
 import pytest_asyncio
 from aweb.testing import Server, running_server
 from awid.dns_verify import DnsVerificationError, DomainAuthority
+from awid.test_services import redis_url
 from awid_service.deps import get_domain_verifier
 from awid_service.testing import REGISTRY_URL, SERVICE_TOKEN, Registry, running_registry
 from redis.asyncio import Redis
@@ -34,6 +34,8 @@ from redis.asyncio import Redis
 from aweb_naapp.runtime.team_auth import AWIDTeamCache
 from aweb_naapp.runtime.team_server import TeamServerDirectory
 from aweb_naapp_testing import Member
+
+pytest_plugins = ("awid.pytest_services",)
 
 
 @dataclass
@@ -106,13 +108,14 @@ def awid_dns(registry: Registry):
 
 @pytest_asyncio.fixture
 async def coordination(test_db_factory, monkeypatch) -> AsyncIterator[Coordination]:
+    redis_target = redis_url()
     monkeypatch.setenv("AWEB_DATABASE_URL", "postgresql://unused/aweb")
     monkeypatch.setenv("AWID_SERVICE_TOKEN", SERVICE_TOKEN)
     monkeypatch.setenv("AWID_REGISTRY_URL", REGISTRY_URL)
     awid_db = await test_db_factory.create_db(suffix="coordination_awid")
     server_db = await test_db_factory.create_db(suffix="coordination_aweb")
     async with Redis.from_url(
-        os.environ.get("REDIS_URL", "redis://localhost:6379/0"), decode_responses=True
+        redis_target, decode_responses=True
     ) as redis:
         async with running_registry(awid_db.config.get_dsn(), redis=redis) as registry:
             async with running_server(

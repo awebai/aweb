@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from uuid import uuid4
 
+from awid.test_services import redis_url
 import pytest
 
 import aweb.lifecycle as lifecycle
@@ -621,11 +622,10 @@ async def test_a_chat_event_uses_the_aliases_and_preview_its_sender_supplied(awe
         return await execute(connection, query, *args, **kwargs)
 
     monkeypatch.setattr(asyncpg.connection.Connection, "_execute", observed)
-    import os
 
     from redis.asyncio import Redis
 
-    async with Redis.from_url(os.environ.get("REDIS_URL", "redis://localhost:6379/0"), decode_responses=True) as redis:
+    async with Redis.from_url(redis_url(), decode_responses=True) as redis:
         handler = mutation_hooks.create_mutation_handler(redis=redis, db_infra=_DbShim(aweb_cloud_db.aweb_db))
         await _send_supplied_chat_event(handler)
 

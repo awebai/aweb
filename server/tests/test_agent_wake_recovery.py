@@ -8,11 +8,11 @@ write whose wake never arrived.
 from __future__ import annotations
 
 import asyncio
-import os
 import time
 from types import SimpleNamespace
 from uuid import uuid4
 
+from awid.test_services import redis_url
 import pytest
 import pytest_asyncio
 from redis.asyncio import Redis
@@ -33,7 +33,6 @@ from test_agent_wake_latency import _open_chat, _quiet, _send_mail, agent_stream
 from test_dashboard_privacy import TEAM, privacy_app  # noqa: F401
 from test_team_room import metadata as room_metadata, post_payload as room_post_payload
 
-REDIS_URL = os.environ.get("REDIS_URL", "redis://localhost:6379/0")
 
 
 async def _insert_unread_mail(env, recipient="bob"):
@@ -51,7 +50,7 @@ async def _insert_unread_mail(env, recipient="bob"):
 
 @pytest_asyncio.fixture
 async def proxy():
-    proxy = RedisFaultProxy(REDIS_URL)
+    proxy = RedisFaultProxy(redis_url())
     await proxy.start()
     yield proxy
     await proxy.stop()

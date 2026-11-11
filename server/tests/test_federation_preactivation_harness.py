@@ -3,7 +3,6 @@ from __future__ import annotations
 import asyncio
 import hashlib
 import json
-import os
 import ssl
 import tempfile
 from datetime import UTC, datetime, timedelta
@@ -31,6 +30,7 @@ from aweb.mcp.tools import chat as mcp_chat_tools
 from aweb.mcp.tools import contacts as mcp_contacts_tools
 from aweb.mcp.tools import mail as mcp_mail_tools
 from aweb.routes.federation import router as federation_router
+from awid.test_services import redis_url
 from awid.did import did_from_public_key
 from awid.external_authority import DNSLookup, OriginContext, compare_claim_to_evidence
 from awid.external_registry import StrictExternalRegistry
@@ -1024,7 +1024,7 @@ async def test_http_ingress_uses_production_dns_authority_not_receiver_home_regi
         }
         # The recipient's stream is woken through the identity the delivery
         # resolved, published from a reachable Redis after the commit.
-        wake_redis = Redis.from_url(os.environ.get("REDIS_URL", "redis://localhost:6379/0"), decode_responses=True)
+        wake_redis = Redis.from_url(redis_url(), decode_responses=True)
         wake_hub, app.state.agent_wake_publisher = AgentWakeHub(wake_redis), AgentWakePublisher(wake_redis)
         await wake_hub.start()
         woken = None
@@ -1131,7 +1131,7 @@ async def test_mcp_cross_registry_uses_production_strict_authority_not_home_regi
             resolver=resolver,
             txt_resolver=dns,
         )
-        home_cache = Redis.from_url(os.environ.get("REDIS_URL", "redis://localhost:6379/0"))
+        home_cache = Redis.from_url(redis_url())
         if home_client_kind == "cached":
             home_client = CachedRegistryClient(
                 home_registry.origin, home_cache,

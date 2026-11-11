@@ -14,6 +14,7 @@ import pytest
 import pytest_asyncio
 from redis.asyncio import Redis
 
+from awid.test_services import redis_url
 from awid.did import did_from_public_key, generate_keypair
 from awid.signing import canonical_json_bytes, sign_message
 from awid_service.main import create_app
@@ -56,7 +57,7 @@ async def send(env, method, path, claims, body=None, *, signer=None, covering=Tr
 async def controller_app(awid_db_infra):
     # Real limiter and isolated client-IP bucket; remove only this fixture's keys.
     ip = '127.' + '.'.join(str(n) for n in os.urandom(3))
-    async with Redis.from_url(os.environ.get('REDIS_URL', 'redis://localhost:6379/0'), decode_responses=True) as redis:
+    async with Redis.from_url(redis_url(), decode_responses=True) as redis:
         await redis.ping()
         app = create_app(db_infra=awid_db_infra, redis=redis)
         app.state.awid_public_origins = (ORIGIN,)

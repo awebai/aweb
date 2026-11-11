@@ -3,6 +3,7 @@ from __future__ import annotations
 from datetime import datetime, timedelta, timezone
 from uuid import UUID, uuid4
 
+from awid.test_services import redis_url
 import pytest
 
 import aweb.lifecycle as lifecycle
@@ -995,7 +996,6 @@ async def test_lifecycle_archive_global_agent_rejects_non_global_target(
 @pytest.mark.asyncio
 async def test_chat_waiting_cleanup_wakes_the_remaining_participants(aweb_cloud_db):
     import asyncio
-    import os
 
     from redis.asyncio import Redis
 
@@ -1012,7 +1012,7 @@ async def test_chat_waiting_cleanup_wakes_the_remaining_participants(aweb_cloud_
         bob_did,
     )
     async with Redis.from_url(
-        os.environ.get("REDIS_URL", "redis://localhost:6379/0"), decode_responses=True
+        redis_url(), decode_responses=True
     ) as redis:
         await register_waiting(redis, str(session_id), did)
         hub = AgentWakeHub(redis)

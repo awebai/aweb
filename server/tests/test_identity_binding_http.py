@@ -521,8 +521,8 @@ async def test_operator_verification_restores_only_bound_projections(privacy_app
         child_env = dict(os.environ)
         user = quote(os.environ.get("TEST_DB_USER", "postgres"), safe="")
         password = quote(os.environ.get("TEST_DB_PASSWORD", "postgres"), safe="")
-        host = os.environ.get("TEST_DB_HOST", "localhost")
-        port = os.environ.get("TEST_DB_PORT", "5432")
+        host = os.environ["TEST_DB_HOST"]
+        port = os.environ["TEST_DB_PORT"]
         child_env.update(AWEB_DATABASE_URL=f"postgresql://{user}:{password}@{host}:{port}/{db_name}", AWID_REGISTRY_URL=origin)
 
         async def operator(*options):

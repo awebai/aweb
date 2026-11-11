@@ -735,3 +735,16 @@ the approval, decision, policy and the app's own origin.
   retrieval is unavailable.
 - A passkey proves that an app-local human holds the enrolled authenticator. It
   is not AWID membership, team identity or key custody.
+
+## Test service configuration
+
+Database fixtures require explicit `TEST_DB_HOST` and `TEST_DB_PORT`; credentials
+use `TEST_DB_USER` and `TEST_DB_PASSWORD`. Redis fixtures require `REDIS_URL`.
+Set these before starting pytest to the private services allocated to the run.
+Missing configuration raises an error before allocation; there is no localhost
+fallback. Pure tests and collection do not require these services. The candidate
+gate supplies all five variables from its own PostgreSQL and Redis containers.
+
+The shared `awid.pytest_services` plugin guards pgdbm fixtures in the AWID,
+server and naapp suites. Loading `aweb_naapp_testing.server` also loads that
+guard for consumers of its coordination fixture.

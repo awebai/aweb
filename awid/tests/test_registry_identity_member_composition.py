@@ -3,10 +3,10 @@
 from __future__ import annotations
 
 import inspect
-import os
 from uuid import uuid4
 
 import pytest
+from awid.test_services import redis_url
 from awid.did import stable_id_from_did_key
 from awid.registry import CachedRegistryClient, RegistryClient, RegistryError
 from redis.asyncio import Redis
@@ -46,7 +46,7 @@ async def test_identity_evidence_and_private_team_reads_keep_both_inputs(
         "member_signing_keys": {f"{name}:{domain}": member_key},
     }
     redis = (
-        Redis.from_url(os.environ.get("REDIS_URL", "redis://localhost:6379/0"))
+        Redis.from_url(redis_url())
         if cached
         else None
     )
