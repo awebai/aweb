@@ -2,6 +2,12 @@
 
 ## Unreleased
 
+- Naapp runtime publishes compatible v2/v3 manifests from one v2 template and
+  an owner-role declaration with a configured human origin. Its shared anonymous
+  owner-act route authenticates before app reads and commits the single-use act,
+  effect and governance together, rechecking original authority deadlines after
+  effect waits. Existing exact v2 installation pins remain readable.
+
 - Human handoffs retain their authenticated team for credential collection and
   console session requests. Existing key-bound console sessions without retained
   team context are refused after migration and require signing in again; there
