@@ -121,6 +121,10 @@ ROOT_CONSUMERS = {
         "id-certificates-v1.json",
         'filepath.Join("..", "..", "..", "docs", "vectors", "id-certificates-v1.json")',
     ),
+    PurePosixPath("cli/go/awid/team_certificate_check_test.go"): _consumer(
+        "team-certificate-verification-v1.json",
+        'filepath.Join("..", "..", "..", "docs", "vectors", "team-certificate-verification-v1.json")',
+    ),
     PurePosixPath("cli/go/awid/didkey_strict_test.go"): _consumer(
         "id-certificates-v1.json",
         'filepath.Join("..", "..", "..", "docs", "vectors", "id-certificates-v1.json")',
