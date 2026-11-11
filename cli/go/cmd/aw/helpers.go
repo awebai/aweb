@@ -1078,14 +1078,6 @@ func configureAnsweringMountHint(c *aweb.Client, sel *awconfig.Selection, baseUR
 	})
 }
 
-func newConfiguredRegistryResolver(httpClient *http.Client, baseURL, preferredRegistryURL string) (*awid.RegistryResolver, error) {
-	registry := awid.NewRegistryResolver(httpClient, nil)
-	if err := configureEmbeddedRegistryBaseURLWithDefault(baseURL, preferredRegistryURL, registry.SetFallbackRegistryURL); err != nil {
-		return nil, err
-	}
-	return registry, nil
-}
-
 func newSelectionRegistryResolver(httpClient *http.Client, selectionRegistryURL, identityAddress string) (*awid.RegistryResolver, error) {
 	registry := awid.NewRegistryResolver(httpClient, nil)
 	registryURL := strings.TrimSpace(selectionRegistryURL)
@@ -1343,35 +1335,6 @@ func isTTY() bool {
 	return term.IsTerminal(int(os.Stdin.Fd()))
 }
 
-func sanitizeSlug(s string) string {
-	s = strings.TrimSpace(strings.ToLower(s))
-	if s == "" {
-		return ""
-	}
-	var b strings.Builder
-	lastDash := false
-	for _, r := range s {
-		switch {
-		case r >= 'a' && r <= 'z':
-			b.WriteRune(r)
-			lastDash = false
-		case r >= '0' && r <= '9':
-			b.WriteRune(r)
-			lastDash = false
-		default:
-			if !lastDash {
-				b.WriteByte('-')
-				lastDash = true
-			}
-		}
-	}
-	out := strings.Trim(b.String(), "-")
-	if out == "" {
-		return "demo"
-	}
-	return out
-}
-
 func bufferedPromptReader(in io.Reader) *bufio.Reader {
 	if reader, ok := in.(*bufio.Reader); ok {
 		return reader
@@ -1428,10 +1391,6 @@ func promptRequiredStringWithIO(label, suggestedValue string, in io.Reader, out 
 		}
 		fmt.Fprintf(out, "%s is required.\n", label)
 	}
-}
-
-func promptRequiredString(label, suggestedValue string) (string, error) {
-	return promptRequiredStringWithIO(label, suggestedValue, os.Stdin, os.Stderr)
 }
 
 func promptIndexedChoice(label string, options []string, defaultIndex int, in io.Reader, out io.Writer) (string, error) {
@@ -1521,14 +1480,6 @@ func selectionAddress(sel *awconfig.Selection) string {
 
 func handleFromAddress(address string) string {
 	return identityutil.HandleFromAddress(address)
-}
-
-func ensureWorktreeContextAt(workingDir string) error {
-	home, err := identityHomeForDir(workingDir)
-	if err != nil {
-		return err
-	}
-	return ensureWorktreeContextAtIdentityHome(home.Root)
 }
 
 func ensureWorktreeContextAtIdentityHome(identityHome string) error {
