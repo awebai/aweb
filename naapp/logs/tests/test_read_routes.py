@@ -33,7 +33,7 @@ from aweb_logs.ledger import append
 from aweb_logs.read_routes import ReaderReads, reader_read_router
 from aweb_logs.read_store import Cursor
 
-from .fixtures import signed_event
+from .fixtures import admitted_evidence, signed_event
 from .reader_world import (
     CONSOLE,
     LOGS,
@@ -106,13 +106,14 @@ async def team_event(world: World, mutation_type: str, *, team_id: str = TEAM, s
         team_id=team_id,
         payload={"mutation_type": mutation_type, "changes": ["status"]},
     )
+    event = verify(signing, signature, team_id=team_id)
     await append(
         world.db,
         world.signer,
-        event=verify(signing, signature, team_id=team_id),
+        event=event,
         signing_bytes=signing,
         signature=signature,
-        key_evidence={"kid": "core", "did_key": "did:key:z", "admissions": []},
+        key_evidence=admitted_evidence(event),
         received_at=datetime.now(UTC),
     )
     return event_id

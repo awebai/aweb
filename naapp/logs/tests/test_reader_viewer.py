@@ -34,7 +34,7 @@ from fastapi import APIRouter, FastAPI, HTTPException
 from aweb_logs.ledger import append
 from aweb_logs.reader_service import ReaderService, reader_sessions
 
-from .fixtures import signed_event
+from .fixtures import admitted_evidence, signed_event
 from .reader_world import (
     CONSOLE,
     LOGS,
@@ -43,7 +43,7 @@ from .reader_world import (
     held_reader,
     world_fixture,  # noqa: F401
 )
-from .test_read_routes import login, other_team_event
+from .test_read_routes import login, other_team_event, team_chain_ids
 
 VIEWER_PAGES = ("/events", "/follow", "/integrity")
 _VOID = {"area", "base", "br", "col", "embed", "hr", "img", "input", "link", "meta", "source"}
@@ -174,7 +174,7 @@ async def recorded(world: World, kind: str, **fields: Any) -> str:
         event=event,
         signing_bytes=signing,
         signature=signature,
-        key_evidence={"did_key": event.producer_did_key, "kid": event.producer_kid},
+        key_evidence=admitted_evidence(event),
         received_at=datetime.now(UTC),
     )
     return event_id
@@ -221,7 +221,9 @@ async def test_a_reader_sees_its_teams_events_newest_first_each_marked_by_its_me
     page = Html(response.text)
     shown = events_of(page)
     assert [event["data-event-id"] for event in shown[:2]] == [core, client]
-    assert len(shown) == 4  # and the reader's own designation and enrolment
+    # Every event of the team's chain, logs' own records of the reader among
+    # them, and no other team's.
+    assert [event["data-event-id"] for event in shown] == await team_chain_ids(world)
     mediation = {event["data-event-id"]: event["data-mediation"] for event in shown}
     assert mediation[client] == "client"
     assert set(mediation.values()) == {"client", "server"}
