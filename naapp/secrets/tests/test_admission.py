@@ -39,7 +39,7 @@ from aweb_secrets.revisions import apply_revision_migrations
 from aweb_secrets.secret import SecretRecord
 
 TEAM = "backend:acme.com"
-INSTALLATION = "inst_5d2a9c31"
+INSTALLATION = "1b4e28ba-2fa1-4d3b-a3f5-ef19b5a7633b"
 GENERATION = 3
 # Tuesday 2026-10-20, 12:00 UTC.
 NOW = datetime(2026, 10, 20, 12, 0, tzinfo=UTC)
@@ -368,9 +368,11 @@ async def test_a_replay_after_the_grant_is_revoked_is_refused(db, fence) -> None
 async def test_the_first_admitting_grant_is_used_direct_before_role(db, fence) -> None:
     closed = {"time_zone": "UTC", "ranges": [{"days": ["sat"], "from": "00:00", "to": "01:00"}]}
     await _install(db, grant_id="grt_alice001", policy_body={**POLICY_BODY, "windows": closed})
-    open_policy = await _install(db, grant_id="grt_role0001", subject={"role": "secrets.owner"})
+    open_policy = await _install(
+        db, grant_id="grt_role0001", subject={"role": "secrets.role.deployers"}
+    )
     async with db.transaction() as tx:
-        await assign(tx, principal_key(ALICE), "secrets.owner")
+        await assign(tx, principal_key(ALICE), "secrets.role.deployers")
     admitted = await _admit(db, fence)
     assert (admitted.grant_id, admitted.policy_digest) == ("grt_role0001", open_policy.digest)
 
@@ -381,11 +383,11 @@ async def test_when_no_grant_admits_the_first_candidates_refusal_is_returned(db,
     await _install(
         db,
         grant_id="grt_role0001",
-        subject={"role": "secrets.owner"},
+        subject={"role": "secrets.role.deployers"},
         policy_body={**POLICY_BODY, "open_request": False},
     )
     async with db.transaction() as tx:
-        await assign(tx, principal_key(ALICE), "secrets.owner")
+        await assign(tx, principal_key(ALICE), "secrets.role.deployers")
     assert await _refusal(db, fence) == "policy_window_closed"
 
 
@@ -563,10 +565,10 @@ async def test_a_loose_policy_never_refills_a_strict_ones_buckets(db, fence) -> 
     }
     await _install(db, grant_id="grt_alice001", policy_body=strict)
     await _install(
-        db, grant_id="grt_role0001", subject={"role": "secrets.owner"}, policy_body=loose
+        db, grant_id="grt_role0001", subject={"role": "secrets.role.deployers"}, policy_body=loose
     )
     async with db.transaction() as tx:
-        await assign(tx, principal_key(ALICE), "secrets.owner")
+        await assign(tx, principal_key(ALICE), "secrets.role.deployers")
     used = [(await _admit(db, fence, request=_request(f"req_{n}"))).grant_id for n in range(5)]
     assert used == ["grt_alice001", "grt_alice001", "grt_role0001", "grt_role0001", "grt_role0001"]
 
