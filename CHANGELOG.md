@@ -11,8 +11,11 @@
   whose audit row cannot be written is not made. Activating a roles bundle now
   takes the lock and the single transaction that activating instructions
   takes, so two concurrent activations leave one active bundle and a failed
-  one leaves the previous bundle active. Both documents remain editable by any
-  team member.
+  one leaves the previous bundle active. Migration
+  `050_one_active_team_document.sql` adds a unique index that allows one
+  active version of each per team; it stops, naming the count, if any team
+  already has two, and those must be reduced to one before upgrading. Both
+  documents remain editable by any team member.
 - **A customer-run aweb server can read its private team at the public
   registry without the registry-wide `AWID_SERVICE_TOKEN`.** Give the server
   an ordinary member certificate in each team it serves
