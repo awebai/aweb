@@ -58,6 +58,21 @@ class WorkCleanupTests(unittest.TestCase):
 
 
 class EndpointTests(unittest.TestCase):
+    def test_caller_external_network_is_refused_before_docker(self):
+        config = {'name': 'proof', 'services': {'awid': {'image': 'python:3.12-slim'}},
+                  'networks': {'default': {'name': 'operator-network', 'external': True}}}
+        for operation in ('override', 'prepare'):
+            with self.subTest(operation=operation):
+                result = subprocess.run([sys.executable, str(ROOT / 'scripts/candidate-network.py'), operation],
+                                        input=json.dumps(config), capture_output=True, text=True,
+                                        env={**os.environ, 'AWEB_CANDIDATE_REAL_DOCKER': '/no-docker-call-permitted',
+                                             'CANDIDATE_RUNNER_NAME': 'proof',
+                                             'AWEB_CANDIDATE_RESOURCE_LABEL': 'proof'})
+                self.assertNotEqual(result.returncode, 0)
+                self.assertIn('caller-declared external network', result.stderr)
+                self.assertIn('proof/default', result.stderr)
+                self.assertNotIn('Traceback', result.stderr)
+
     def test_network_create_preserves_compose_creation_properties(self):
         args = network.create_args('data', {
             'name': 'proof_data', 'driver': 'bridge', 'internal': True,
@@ -453,6 +468,74 @@ else:
                 self.assertEqual(docker('network', 'ls', '-q', '--filter',
                                         'label=com.docker.compose.project=' + project).stdout.strip(), '')
                 print(f'timeout probe cleanup PASSED: project={project}; containers=0; networks=0')
+
+
+@unittest.skipUnless(os.environ.get('AWEB_TEST_DOCKER_NETWORK') == '1', 'requires an approved Docker slot')
+class ComposeAdoptionTests(unittest.TestCase):
+    def test_compose_adopts_precreated_networks_and_down_removes_them(self):
+        real = os.environ.get('AWEB_CANDIDATE_REAL_DOCKER') or shutil.which('docker')
+        project = 'acwx-adopt-' + uuid.uuid4().hex[:12]
+        runner = project + '-runner'
+
+        def docker(*args, check=True):
+            return subprocess.run([real, *args], check=check, capture_output=True,
+                                  text=True, timeout=60)
+
+        with gate_work() as tmp:
+            config_path = Path(tmp) / 'compose.json'
+            config_path.write_text(json.dumps({
+                'services': {'awid': {'image': 'python:3.12-slim',
+                    'command': ['python', '-m', 'http.server', '8010'],
+                    'cpus': .25, 'mem_limit': '64m', 'pids_limit': 32,
+                    'labels': {'aweb.candidate-gate': project},
+                    'networks': {'default': {'aliases': [project + '-awid.test']}, 'data': {}}}},
+                'networks': {'default': {}, 'data': {'internal': True}}}))
+            args = ['compose', '-p', project, '-f', str(config_path)]
+            config = docker(*args, 'config', '--format', 'json').stdout
+            env = {**os.environ, 'AWEB_CANDIDATE_REAL_DOCKER': real,
+                   'AWEB_CANDIDATE_RESOURCE_LABEL': project, 'CANDIDATE_RUNNER_NAME': runner}
+            before = {}
+            try:
+                print('adoption Compose version: ' + docker('compose', 'version', '--short').stdout.strip(), flush=True)
+                docker('run', '-d', '--name', runner, '--label', 'aweb.candidate-gate=' + project,
+                       '--cpus', '.25', '--memory', '64m', '--pids-limit', '32',
+                       'python:3.12-slim', 'sleep', '600')
+                subprocess.run([sys.executable, str(ROOT / 'scripts/candidate-network.py'), 'prepare'],
+                               input=config, env=env, check=True, capture_output=True, text=True, timeout=60)
+                for key in ('default', 'data'):
+                    info = json.loads(docker('network', 'inspect', project + '_' + key).stdout)[0]
+                    self.assertNotIn('com.docker.compose.config-hash', info['Labels'])
+                    before[key] = info['Id']
+                up = docker(*args, 'up', '-d')
+                for key, network_id in before.items():
+                    info = json.loads(docker('network', 'inspect', project + '_' + key).stdout)[0]
+                    self.assertEqual(info['Id'], network_id, up.stdout + up.stderr)
+                    self.assertEqual(info['Internal'], key == 'data')
+                fetch = ('import urllib.request,time;\n'
+                         'for attempt in range(50):\n'
+                         ' try:\n'
+                         f'  print(urllib.request.urlopen("http://{project}-awid.test:8010",timeout=1).status); break\n'
+                         ' except OSError:\n'
+                         '  if attempt == 49: raise\n'
+                         '  time.sleep(.1)\n')
+                self.assertEqual(docker('exec', runner, 'python', '-c', fetch).stdout.strip(), '200')
+                subprocess.run([sys.executable, str(ROOT / 'scripts/candidate-network.py'), 'disconnect', project],
+                               env=env, check=True, capture_output=True, text=True, timeout=60)
+                docker(*args, 'down', '-v', '--remove-orphans')
+                self.assertEqual(docker('network', 'ls', '-q', '--filter',
+                                        'label=com.docker.compose.project=' + project).stdout.strip(), '')
+                print('adoption PASSED: unchanged network IDs, alias reachable, down removed both networks', flush=True)
+            finally:
+                # Labelled fallback cleanup is independent of the adoption claim.
+                owned = docker('ps', '-aq', '--filter', 'label=aweb.candidate-gate=' + project).stdout.split()
+                if owned:
+                    docker('rm', '-fv', *owned)
+                owned = docker('network', 'ls', '-q', '--filter', 'label=aweb.candidate-gate=' + project).stdout.split()
+                if owned:
+                    docker('network', 'rm', *owned)
+                self.assertEqual(docker('ps', '-aq', '--filter', 'label=aweb.candidate-gate=' + project).stdout.strip(), '')
+                self.assertEqual(docker('network', 'ls', '-q', '--filter', 'label=aweb.candidate-gate=' + project).stdout.strip(), '')
+                print(f'adoption probe cleanup PASSED: project={project}; containers=0; networks=0')
 
 
 @unittest.skipUnless(os.environ.get('AWEB_TEST_DOCKER_NETWORK') == '1', 'requires an approved Docker slot')
