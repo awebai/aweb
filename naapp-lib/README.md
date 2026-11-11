@@ -775,3 +775,54 @@ the approval, decision, policy and the app's own origin.
   retrieval is unavailable.
 - A passkey proves that an app-local human holds the enrolled authenticator. It
   is not AWID membership, team identity or key custody.
+
+### Credential maintenance with a passkey the approver holds
+
+An in-effect approver adds a passkey, or replaces one it selects, at once
+(`human-credential.add` and `human-credential.replace`, variant
+`current_passkey`). Recovery without a working passkey stays the owner's
+controller recovery, with its cooling-off.
+
+1. `Passkeys.credential_registration_options(scope)` returns WebAuthn
+   registration options for the new credential. It refuses before issuing any
+   challenge when no approver is in effect (`not_in_effect`), when its notice
+   contact in effect is missing (`no_notice_contact`; a pending contact does not
+   count, and such a holding rotates only through the owner), or when it has no
+   active credential (`no_active_credential`).
+2. `Passkeys.credential_change_options(scope, registration, replace=None)`
+   verifies the registration with user verification and returns the assertion
+   options a current credential answers. The verified credential stays inert in
+   the change challenge, whose `credential_change` binding names its owner-act
+   digest and, for a replace, the selected credential's.
+3. `Passkeys.change_credential(scope, assertion, fence=..., receipt=...)`
+   verifies the assertion in its own transaction (it stays spent if the effect
+   is refused, so a retry starts again at step 1), then applies the change in one
+   effect transaction and returns a `CredentialChange`.
+
+The caller's `CredentialChangeFence.prepare(tx)` takes, in order: any shared
+operation lock, its lifecycle lock (F6), the retirement gate of its authority
+context, its role holds, then `Passkeys.prepare_credential_change(tx, scope=...)`,
+then its session holds (S4), and returns that `PreparedCredentialChange`; B3
+refuses any other handle. The shared recorder's
+`CredentialAudit.prepare_credential_change(scope, role_holds=...)` is such a
+fence for an installed app. Under those holds B3 rechecks the binding, inserts
+the new credential, and for a replace revokes the selected one and voids every
+live approval the holder decided (pending work must be approved again), audits,
+awaits `receipt(tx, change)` (SQL on the effect transaction only) and
+`fence.check(tx)`, then refuses past the original deadline: the change challenge's
+issuance plus at most five minutes, capped by the registration's own deadline.
+The notice goes after commit, best effort, to the contact in effect at the act,
+naming the credentials; `CredentialChange.delivery` reports how it went. A crash
+between commit and send loses it. A pending contact change is neither told nor
+touched.
+
+A holding has at most `CredentialPolicy.max_active` active credentials (five by
+default, one up to the deployment's `credentials_ceiling`). A full set refuses an
+add (`cap_reached`); a replace never raises the count, so it works at or above the
+cap. Lowering the cap evicts nothing. `Passkeys.credential_change_status(scope,
+challenge)` tells a client whose response was lost whether the change committed,
+is still pending, or can no longer commit; it grants nothing.
+
+A usable stolen passkey with its user-verification factor can add a credential.
+The notice detects that; nothing here prevents it.
+
