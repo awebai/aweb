@@ -9,14 +9,15 @@ ceremony updates B3 credentials in its own transaction.
 from datetime import UTC, datetime
 
 from aweb_naapp.console import ConsoleSession, KeyBoundConsoleSession, session_is_current
-from aweb_naapp.roles import PrincipalKey, has_role, hold_role
+from aweb_naapp.roles import PrincipalKey
 from aweb_naapp.runtime.installation import AdmittedInstallation
 from aweb_naapp.runtime.passkeys import PreparedCurrentApprovers
 from fastapi import HTTPException
 from pgdbm.core import TransactionManager
 
 from aweb_secrets.console import OwnerConsole
-from aweb_secrets.owners import OWNER_ROLE, owner_scope
+from aweb_secrets.owners import has_owner, owner_scope
+from aweb_secrets.owners import hold_owner as hold_owner_holding
 
 
 class ConsoleReconciliationFence:
@@ -62,7 +63,7 @@ class ConsoleReconciliationFence:
             or owner.team_id != self.scope.team_id
             or owner_scope(self.scope.installation_id, owner.team_id, owner.principal_did)
             != self.owner_scope
-            or not await hold_role(tx, owner, OWNER_ROLE)
+            or not await hold_owner_holding(tx, owner, installation_id=self.scope.installation_id)
         ):
             raise HTTPException(403, "owner_required")
         # The exact control owner is the entire authority union. Original send
@@ -95,7 +96,9 @@ class ConsoleReconciliationFence:
             )
         ):
             raise HTTPException(401, "console_session_required")
-        if self._owner is None or not await has_role(tx, self._owner, OWNER_ROLE):
+        if self._owner is None or not await has_owner(
+            tx, self._owner, installation_id=self.scope.installation_id
+        ):
             raise HTTPException(403, "owner_required")
         await self._console.fence.check(tx, self.scope)
         await self._session(tx)

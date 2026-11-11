@@ -34,7 +34,7 @@ from aweb_naapp.console import text_field as _text
 from aweb_naapp.console.handoff_authority import PreparedSessionTarget
 from aweb_naapp.hooks.owner_act_nonces import OwnerActVerifier
 from aweb_naapp.hooks.strictjson import Refused
-from aweb_naapp.roles import PrincipalKey, assign, hold_role
+from aweb_naapp.roles import PrincipalKey
 from aweb_naapp.runtime.credential_audit import GovernanceUnavailable
 from aweb_naapp.runtime.installation import (
     AdmittedInstallation,
@@ -43,18 +43,20 @@ from aweb_naapp.runtime.installation import (
 )
 from aweb_naapp.runtime.passkeys import (
     Designation,
-    DesignationRefused,
     Passkeys,
     PreparedCurrentApprovers,
-    contact_sha256,
 )
 from fastapi import APIRouter, Depends, HTTPException, Request
 from pgdbm import AsyncDatabaseManager
 from pgdbm.core import TransactionManager
 
 from aweb_secrets.change import ChangeRefused
-from aweb_secrets.change_policy import keep_four_eyes_owners
-from aweb_secrets.owners import OWNER_ROLE, OwnerDirectory, OwnerRequired, owner_scope, record_owner
+from aweb_secrets.owners import (
+    OwnerDirectory,
+    OwnerRequired,
+    owner_binding,
+    owner_scope,
+)
 from aweb_secrets.principal import is_principal
 
 if TYPE_CHECKING:
@@ -172,10 +174,13 @@ class OwnerConsole:
         """The installation as the session's own team holds it. The team is the
         one the session's scope was enrolled under, as an owner or an approver;
         an id that team does not hold raises LookupError, as an unknown id does."""
-        team_id = await self.db.fetch_value(
-            "SELECT team_id FROM {{tables.owner_principals}} WHERE scope=$1", current.scope
-        ) or await self.db.fetch_value(
-            "SELECT team_id FROM {{tables.approvers}} WHERE scope=$1", current.scope
+        record = await owner_binding(self.db, current.scope)
+        team_id = (
+            record["team_id"]
+            if record is not None
+            else await self.db.fetch_value(
+                "SELECT team_id FROM {{tables.approvers}} WHERE scope=$1", current.scope
+            )
         )
         if team_id is None:
             raise LookupError("installation not found")
@@ -190,59 +195,8 @@ class OwnerConsole:
         principal: PrincipalKey,
         contact: str,
     ) -> Designation:
-        """Apply bootstrap/recovery through the console's single guarded path.
-
-        The caller obtains admitted from authoritative installation lookup.
-        Order: installation fence, role hold, B3 candidate, four-eyes setting.
-        Deliver the returned designation only after this transaction commits.
-        """
-        if principal.team_id != admitted.team_id:
-            raise OwnerRequired("owner_required")
-        scope = owner_scope(admitted.installation_id, admitted.team_id, principal.principal_did)
-        expected = {
-            "app_id": admitted.app_id,
-            "installation_id": admitted.installation_id,
-            "role": scope,
-            "contact_sha256": contact_sha256(contact),
-        }
-        try:
-            prepared = await self.verifier.prepare(signing, signature, team_id=admitted.team_id)
-        except Refused:
-            raise OwnerRequired("owner_required") from None
-        context = await self.credential_audit.prepare_owner_act(
-            admitted, signing=signing, signature=signature
-        )
-        with self.credential_audit.prepared(context):
-            try:
-                async with self.db.transaction() as tx:
-                    await self.fence.check(tx, admitted)
-                    try:
-                        act = await self.verifier.consume_in(
-                            tx, prepared, expected_subject=expected
-                        )
-                    except Refused:
-                        raise OwnerRequired("owner_required") from None
-                    await assign(tx, principal, OWNER_ROLE)
-                    if not await hold_role(tx, principal, OWNER_ROLE):
-                        raise OwnerRequired("owner_required")
-                    await record_owner(
-                        tx, installation_id=admitted.installation_id, principal=principal
-                    )
-                    designation = await self.passkeys.designate(
-                        tx, scope=scope, contact=contact, evidence=act
-                    )
-                    if prepared.act_name == "app-credential.recover":
-                        await keep_four_eyes_owners(
-                            tx,
-                            installation_id=admitted.installation_id,
-                            team_id=admitted.team_id,
-                            directory=self.directory,
-                            excluding=principal,
-                        )
-                    await self.fence.check(tx, admitted)
-                    return designation
-            except DesignationRefused:
-                raise OwnerRequired("owner_required") from None
+        """Legacy owner bindings and recovery are retired for every scope."""
+        raise OwnerRequired("owner_required")
 
 
 def owner_console_router(services: OwnerConsole, *, prefix: str = "") -> APIRouter:

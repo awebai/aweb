@@ -19,7 +19,7 @@ from pgdbm import AsyncDatabaseManager
 
 from aweb_secrets import jobs, records
 from aweb_secrets.grant import GrantRecord
-from aweb_secrets.owners import OWNER_ROLE
+from aweb_secrets.owners import OWNER_ROLE, has_owner
 from aweb_secrets.policy import Policy
 from aweb_secrets.secret import SecretRecord
 
@@ -52,7 +52,9 @@ class Catalog:
             installation = await self.fence.admit(tx, grant)
             key = principal_key(principal)
             roles = await roles_of(tx, key)
-            owner = OWNER_ROLE in roles
+            owner = await has_owner(tx, key, installation_id=installation.installation_id)
+            if not owner:
+                roles = [r for r in roles if r != OWNER_ROLE]
             rows = await tx.fetch_all(
                 """SELECT record, state FROM {{tables.secrets}}
                    WHERE installation_id = $1 AND team_id = $2

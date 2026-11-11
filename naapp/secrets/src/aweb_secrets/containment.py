@@ -17,7 +17,7 @@ from uuid import UUID
 
 from aweb_naapp.console import ConsoleSession, KeyBoundConsoleSession, session_is_current
 from aweb_naapp.idempotency import IdempotencyConflict, IdempotencyExpired, claim
-from aweb_naapp.roles import PrincipalKey, hold_role, principal_key, unassign
+from aweb_naapp.roles import PrincipalKey, principal_key, unassign
 from aweb_naapp.runtime.approvals import Approvals
 from aweb_naapp.runtime.authorization import Grant
 from aweb_naapp.runtime.installation import AdmittedInstallation, InstallationFence
@@ -38,7 +38,8 @@ from aweb_secrets.containment_state import ContainmentRefused
 from aweb_secrets.containment_state import require_enabled as require_enabled
 from aweb_secrets.custody import Custody, SealContext
 from aweb_secrets.grant import is_secrets_role
-from aweb_secrets.owners import OWNER_ROLE, OwnerDirectory, owner_scope
+from aweb_secrets.owners import OwnerDirectory, owner_binding, owner_scope
+from aweb_secrets.owners import hold_owner as hold_owner_holding
 from aweb_secrets.principal import is_principal
 from aweb_secrets.revisions import bump_config_revision
 from aweb_secrets.tokens import TokenCache
@@ -330,7 +331,7 @@ class Containment:
             installed = await self.fence.admit(tx, grant)
             if action == "revoke-approver":
                 await prepare_retirement(tx, installation=installed)
-            if not await hold_role(tx, key, OWNER_ROLE):
+            if not await hold_owner_holding(tx, key, installation_id=installed.installation_id):
                 if action != "revoke-approvals" or target is None:
                     raise ContainmentRefused("owner_required")
                 await self._authorize_member_approver(
@@ -907,13 +908,7 @@ class Containment:
         credential_id: bytes | None,
         authorized_by: str,
     ) -> None:
-        owner = await tx.fetch_one(
-            "SELECT scope, principal_did FROM {{tables.owner_principals}}"
-            " WHERE installation_id=$1 AND team_id=$2 AND scope=$3",
-            installation_id,
-            team_id,
-            target,
-        )
+        owner = await owner_binding(tx, target, installation_id=installation_id, team_id=team_id)
         approver = await tx.fetch_one(
             "SELECT scope FROM {{tables.approvers}}"
             " WHERE installation_id=$1 AND team_id=$2 AND (approver_ref=$3 OR scope=$3)"
@@ -1084,7 +1079,7 @@ class Containment:
             and owner.team_id == admitted.team_id
             and session.scope
             == owner_scope(admitted.installation_id, owner.team_id, owner.principal_did)
-            and await hold_role(tx, owner, OWNER_ROLE)
+            and await hold_owner_holding(tx, owner, installation_id=admitted.installation_id)
         ):
             # Pre-acquire normal resource authority before B3 login evidence.
             await self._prepare_action(tx, admitted, action, target)

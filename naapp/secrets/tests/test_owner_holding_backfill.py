@@ -14,7 +14,7 @@ from aweb_naapp.runtime.installation import InstallationFence
 from aweb_naapp_testing.owner_acts import APP_ID, INSTALLATION_ID
 from pgdbm.errors import MigrationError
 
-from aweb_secrets.owners import OWNER_ROLE, OwnerRequired, apply_owner_migrations
+from aweb_secrets.owners import OWNER_ROLE, OwnerRequired, apply_owner_migrations, record_owner
 from tests.owner_history import load_owner_history
 from tests.test_change_sets import Installations
 from tests.test_owner_bootstrap import ALICE, BOB, TEAM, _apply
@@ -157,3 +157,32 @@ async def test_legacy_entry_refuses_before_any_binding_nonce_or_delivery(bootstr
         )
     assert await authority_snapshot(w.db) == before
     assert (w.contacts.inbox, w.contacts.notices) == delivered
+
+
+async def test_login_never_recreates_a_removed_holding(bootstrap_world):
+    w = bootstrap_world
+    history = await load_owner_history(w)
+    await apply_owner_migrations(w.db)
+    scope = history["tables"]["owner_principals"][0]["scope"]
+    await w.db.execute("DELETE FROM {{tables.role_holdings}} WHERE b3_scope=$1", scope)
+    before = await authority_snapshot(w.db)
+    await w.passkeys.verify_login(scope, history["login_assertions"][scope])
+    assert await w.directory.owner_of(w.db, scope) is None
+    assert (
+        await w.db.fetch_value("SELECT 1 FROM {{tables.role_holdings}} WHERE b3_scope=$1", scope)
+        is None
+    )
+    assert await w.db.fetch_all("SELECT * FROM {{tables.owner_principals}}")
+    # The B3 assertion spends its own challenge/counter but writes no holding.
+    assert before["role_holdings"] == (await authority_snapshot(w.db))["role_holdings"]
+
+
+async def test_the_legacy_mapping_writer_is_retired_for_every_scope(bootstrap_world):
+    w = bootstrap_world
+    await load_owner_history(w)
+    await apply_owner_migrations(w.db)
+    before = await authority_snapshot(w.db)
+    async with w.db.transaction() as tx:
+        with pytest.raises(OwnerRequired):
+            await record_owner(tx, installation_id=INSTALLATION_ID, principal=ALICE)
+    assert await authority_snapshot(w.db) == before
