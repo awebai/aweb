@@ -292,6 +292,7 @@ async def test_a_replacement_keeps_the_holding_and_notifies_after_commit(fx):
         certificate_id="cert-3",
         extra_cert_fields=dict(fx.human.member.extra_cert_fields),
     )
+    await fx.world.registry.revoke(fx.human.member.certificate_id)
     await fx.world.registry.add_certificate(renewed.certificate())
     certificate = json.dumps(renewed.certificate()).encode()
     result = await deliver(fx, delivery(fx, REPLACE, holder(), certificate=certificate))
