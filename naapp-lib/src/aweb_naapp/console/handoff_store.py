@@ -149,6 +149,7 @@ def handoff_start_router(
     principal: Callable[[Request], Awaitable[Principal]],
     session_start: Callable[[HandoffStart, Principal, Request], Awaitable[dict[str, str]]]
     | None = None,
+    requester_parent: Callable[[Request, Principal], Awaitable[str | None]] | None = None,
 ) -> APIRouter:
     """Mount on the API origin, with the runtime's verified principal dependency.
 
@@ -178,8 +179,17 @@ def handoff_start_router(
             raise HTTPException(
                 status_code=409 if code == "fallback_unavailable" else 400, detail=code
             ) from None
-        if not signer.did_aw_registry_verified or parsed.scope.principal != signer.did_aw:
+        if not signer.did_aw_registry_verified:
             raise HTTPException(403, "scope_not_signer")
+        if parsed.scope.principal != signer.did_aw:
+            # Only a session start, and only by an agent whose verified chain
+            # has the holder as its direct parent (handoff-wire 1a). It
+            # prepares this handoff; the holder's own login decides it.
+            if parsed.purpose != "session" or session_start is None or requester_parent is None:
+                raise HTTPException(403, "scope_not_signer")
+            if await requester_parent(request, signer) != parsed.scope.principal:
+                raise HTTPException(403, "scope_not_signer")
+            return await session_start(parsed, signer, request)
         if parsed.purpose == "session":
             if session_start is None:
                 raise HTTPException(403, "role_not_held")
