@@ -196,7 +196,8 @@ async def consumed(fx: Effects, sent: OwnerActDelivery) -> bool:
 async def live_credentials(fx: Effects, scope: str) -> int:
     return await fx.world.db.fetch_value(
         "SELECT count(*) FROM {{tables.passkey_credentials}} c"
-        " JOIN {{tables.passkey_approvers}} a USING(subject) WHERE a.scope=$1",
+        " JOIN {{tables.passkey_approvers}} a USING(subject)"
+        " WHERE a.scope=$1 AND c.revoked_at IS NULL",
         scope,
     )
 
