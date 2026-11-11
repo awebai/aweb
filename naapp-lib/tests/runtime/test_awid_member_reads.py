@@ -98,6 +98,10 @@ async def test_a_credential_reads_only_its_own_team(registry):
     assert refused.value.status_code == 403
     assert refused.value.detail["code"] == "team_private_unreadable"
     assert OTHER_TEAM_ID in refused.value.detail["message"]
+    other_reads = [r for r in registry.transport.calls if "/teams/frontend" in r.url.path]
+    assert other_reads
+    # One team's credential is never sent with another team's reads.
+    assert all("Authorization" not in r.headers for r in other_reads)
 
 
 async def test_the_token_keeps_precedence_over_a_member_credential(registry):
@@ -135,7 +139,8 @@ async def test_a_private_team_with_no_credential_names_the_missing_one(registry)
 def test_a_credential_that_does_not_belong_together_is_refused(mismatch: str):
     member = Member(team_id=TEAM_ID)
     if mismatch == "certificate of another team":
-        certificate = Member(team_id=OTHER_TEAM_ID).certificate()
+        # The key's own certificate, of another team: only the team check refuses it.
+        certificate = Member(team_id=OTHER_TEAM_ID, member_key=member.member_key).certificate()
         signing_key = bytes(member.member_key)
     else:
         certificate = member.certificate()
