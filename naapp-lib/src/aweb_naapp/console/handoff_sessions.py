@@ -10,12 +10,17 @@ import json
 import secrets
 from collections.abc import Awaitable, Callable, Sequence
 from datetime import UTC, datetime
+from typing import TYPE_CHECKING
 
 from awid.team_certificate import TeamCertificateError, decode_team_certificate
 from fastapi import APIRouter, Depends, HTTPException, Request, Response
 from pgdbm import AsyncDatabaseManager
 
 from aweb_naapp import roles
+
+if TYPE_CHECKING:
+    from aweb_naapp.runtime.protected_signer.http import ProtectedOperationsHTTP
+
 from aweb_naapp.console import (
     MAX_SESSION,
     ConsoleRoute,
@@ -186,6 +191,7 @@ class ConsoleHandoffs:
         human_member: Callable[..., Awaitable[HumanMemberProof]],
         limiter: LoginLimiter,
         requester_parent: RequesterParent | None = None,
+        protected_operations: "ProtectedOperationsHTTP | None" = None,
     ):
         self.db, self.passkeys, self.authority = db, passkeys, authority
         # Admits a session start by the holder's verified direct-child agent
@@ -193,6 +199,12 @@ class ConsoleHandoffs:
         self.requester_parent = requester_parent
         self.principal, self.human_member, self.limiter = principal, human_member, limiter
         self.store = HandoffStore(db)
+        if protected_operations is not None and (
+            protected_operations.signer.db is not db
+            or protected_operations.signer.passkeys is not passkeys
+        ):
+            raise ValueError("protected routes must use the factory's database and B3 engine")
+        self.protected_operations = protected_operations
 
     async def prune(self) -> None:
         """Bounded post-commit cleanup, never part of request authentication."""
@@ -408,7 +420,7 @@ class ConsoleHandoffs:
         return True
 
     def api_router(self):
-        return handoff_start_router(
+        router = handoff_start_router(
             store=self.store,
             limiter=self.limiter,
             principal=self.principal,
@@ -416,6 +428,9 @@ class ConsoleHandoffs:
             requester_parent=self.requester_parent,
             credential_start=self._credential_start,
         )
+        if self.protected_operations is not None:
+            router.include_router(self.protected_operations.api_router())
+        return router
 
     async def prepare(self, tx, session, *, approver_pairs: Sequence[tuple[str, str]]):
         if not isinstance(session, KeyBoundConsoleSession):

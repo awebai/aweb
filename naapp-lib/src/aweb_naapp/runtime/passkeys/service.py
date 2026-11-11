@@ -95,6 +95,7 @@ from aweb_naapp.runtime.passkeys.proof import (
     PasskeyProofUnavailable,
     ProofContextResolver,
     ProofContextUnavailable,
+    ProtectedKeyContext,
     RetainedPasskeyProof,
     is_public_cose_key,
     passkey_evidence_commitment,
@@ -1359,7 +1360,7 @@ class Passkeys:
                 if bound is None:
                     raise ProofContextUnavailable()
                 installation = await self._proof_context(scope, tx=tx)
-                if not isinstance(installation, PasskeyInstallationContext):
+                if not isinstance(installation, (PasskeyInstallationContext, ProtectedKeyContext)):
                     raise ProofContextUnavailable()
                 context = canonical_json_bytes(
                     {
@@ -1694,15 +1695,23 @@ class Passkeys:
             )
             await tx.execute(
                 "INSERT INTO {{tables.passkey_proofs}} "
-                "(evidence_ref,app_id,team_id,installation_id,generation,record,commitment) "
-                "VALUES($1,$2,$3,$4,$5,$6,$7)",
+                "(evidence_ref,app_id,team_id,installation_id,generation,record,commitment,authority_context) "
+                "VALUES($1,$2,$3,$4,$5,$6,$7,$8)",
                 evidence_ref,
-                context["app_id"],
-                context["team_id"],
-                context["installation_id"],
+                context.get("app_id"),
+                context.get("team_id"),
+                context.get("installation_id"),
                 context["generation"],
                 canonical_json_bytes(retained.export()),
                 commitment,
+                canonical_json_bytes(
+                    {
+                        key: context[key]
+                        for key in ("v", "kind", "service_id", "authority", "human", "generation")
+                    }
+                )
+                if context.get("kind") == "protected_key"
+                else None,
             )
             if audit is not None:
                 kind, details = audit
@@ -2256,12 +2265,19 @@ class Passkeys:
             proof = RetainedPasskeyProof.from_export(json.loads(row["record"]))
         except (ValueError, KeyError, TypeError):
             raise PasskeyProofUnavailable() from None
+        if proof.context.get("kind") == "protected_key":
+            stored = row["authority_context"]
+            if stored is None:
+                raise PasskeyProofUnavailable()
+            expected = json.loads(stored)
+        else:
+            expected = {
+                field: row[field]
+                for field in ("app_id", "team_id", "installation_id", "generation")
+            }
         if (
             proof.metadata["evidence_ref"] != evidence_ref
-            or any(
-                proof.context[field] != row[field]
-                for field in ("app_id", "team_id", "installation_id", "generation")
-            )
+            or any(proof.context[field] != value for field, value in expected.items())
             or passkey_evidence_commitment(proof) != row["commitment"]
         ):
             raise PasskeyProofUnavailable()
@@ -2271,7 +2287,7 @@ class Passkeys:
         self,
         evidence_ref: str,
         *,
-        context: PasskeyInstallationContext,
+        context: PasskeyInstallationContext | ProtectedKeyContext,
         scope: str,
         subject: str,
         purpose: str,
@@ -2282,7 +2298,7 @@ class Passkeys:
         Expected context comes from the admitted installation. Liveness,
         session expiry and action authority are separate caller responsibilities.
         """
-        if not isinstance(context, PasskeyInstallationContext):
+        if not isinstance(context, (PasskeyInstallationContext, ProtectedKeyContext)):
             raise PasskeyProofUnavailable()
         proof = await self.retained_proof(evidence_ref, tx=tx)
         if any(proof.context[k] != v for k, v in context.fields().items()) or (

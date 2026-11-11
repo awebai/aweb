@@ -44,6 +44,7 @@ from urllib.parse import urlsplit
 from uuid import UUID
 
 import httpx
+from awid.dns_verify import DomainVerifier
 from awid.registry import RegistryClient
 from fastapi import FastAPI, HTTPException, Request
 from fastapi.dependencies.models import Dependant
@@ -162,6 +163,7 @@ class NaappRuntime:
         owner_acts_origin: str | None = None,
         root_path: str = "",
         awid_transport: httpx.AsyncBaseTransport | None = None,
+        awid_domain_verifier: DomainVerifier | None = None,
         team_server_transport: httpx.AsyncBaseTransport | None = None,
         stores: Sequence[Store] = (),
         hook_egress: Egress | None = None,
@@ -175,6 +177,8 @@ class NaappRuntime:
         self.migrations_path = migrations_path
         self.stores = tuple(stores)
         self._awid_transport = awid_transport
+        self._awid_domain_verifier = awid_domain_verifier
+        self._registry_client: RegistryClient | None = None
         self._database: NaappDatabase | None = None
         self._attestation_records: AWIDAttestationRecords | None = None
         template = json.loads(manifest_path.read_bytes())
@@ -219,11 +223,12 @@ class NaappRuntime:
         self._app_events = AppEvents.from_settings(settings, self._manifest)
         # Configuration only: these objects perform no I/O until a request.
         # Grant sources and guards must be wired before lifespan validation.
+        self._awid_member_credentials = read_member_credentials(settings.awid_member_credentials)
         self._team_cache = AWIDTeamCache(
             registry_url=settings.awid_registry_url,
             ttl_seconds=settings.auth_cache_ttl_seconds,
             service_token=settings.awid_service_token,
-            member_credentials=read_member_credentials(settings.awid_member_credentials),
+            member_credentials=self._awid_member_credentials,
             transport=awid_transport,
         )
         self._team_server_directory = TeamServerDirectory(
@@ -327,18 +332,51 @@ class NaappRuntime:
             asyncio.create_task(run_drain(database.db, stop=stop, **self._hooks.drain_options()))
             if self._hooks.key is not None else None
         )
+        registry_client: RegistryClient | None = None
         try:
+            registry_client = self._new_registry_client()
+            self._registry_client = registry_client
             yield
         finally:
-            stop.set()
-            drains = [task for task in (app_events_drain, hooks_drain) if task is not None]
-            if drains:
-                await asyncio.gather(*drains)
-            await client.aclose()
-            self._installation_fence = None
-            self._database = None
-            self._attestation_records = None
-            await database.disconnect()
+            try:
+                stop.set()
+                drains = [task for task in (app_events_drain, hooks_drain) if task is not None]
+                if drains:
+                    await asyncio.gather(*drains)
+                await client.aclose()
+                self._installation_fence = None
+                self._database = None
+                self._attestation_records = None
+                await database.disconnect()
+            finally:
+                self._registry_client = None
+                if registry_client is not None:
+                    await registry_client.aclose()
+
+    def _new_registry_client(self) -> RegistryClient:
+        return RegistryClient(
+            self.settings.awid_registry_url,
+            transport=self._awid_transport,
+            service_token=self.settings.awid_service_token,
+            member_signing_keys={
+                team_id: credential.signing_key
+                for team_id, credential in self._awid_member_credentials.items()
+            },
+            domain_verifier=self._awid_domain_verifier,
+        )
+
+    def registry_client(self) -> RegistryClient:
+        """The lifespan-owned plain SDK client, ready before the app yields.
+
+        Connection reuse does not cache identity/status observations. Reads
+        use the runtime's configured registry, transport and read credentials.
+        Library hosts may pass awid_domain_verifier beside awid_transport;
+        production defaults to the SDK's normal DNS authority verification.
+        The runtime closes this client on shutdown or a later startup failure.
+        """
+        if self._registry_client is None:
+            raise RuntimeError("naapp registry client is not initialized")
+        return self._registry_client
 
     def connected_db(self) -> AsyncDatabaseManager | None:
         """The database while the app is running, or None, for surfaces that
@@ -536,20 +574,20 @@ class NaappRuntime:
         """Current certificate/key and the exact subject's own human kind.
 
         This is an explicit human-role call, never part of ordinary agent
-        authentication. Without an existing caller-owned SDK client it uses a
-        live client for this check and closes it; an injected CachedRegistryClient
+        authentication. Without an existing caller-owned SDK client it uses
+        the lifespan's plain SDK client, or a short-lived plain client before
+        startup. Neither caches identity observations. An injected CachedRegistryClient
         retains its own bounded cache/lifecycle. No Redis setting is required.
         App holdings, B3 admission and the caller's effect fence stay separate.
         """
+        if identity_client is None:
+            identity_client = self._registry_client
         if identity_client is not None:
             return await observe_human_member(
                 self.team_cache(), identity_client, team_id=team_id,
                 principal=principal, certificate=certificate,
             )
-        async with aclosing(RegistryClient(
-            self.settings.awid_registry_url, transport=self._awid_transport,
-            service_token=self.settings.awid_service_token,
-        )) as client:
+        async with aclosing(self._new_registry_client()) as client:
             return await observe_human_member(
                 self.team_cache(), client, team_id=team_id,
                 principal=principal, certificate=certificate,
