@@ -71,6 +71,11 @@ def is_role_name(role: str) -> bool:
     return len(role) <= MAX_ROLE_NAME_LENGTH and _ROLE_NAME.fullmatch(role) is not None
 
 
+def is_holding_principal(principal: str) -> bool:
+    """Whether a principal can name a human holding; this grants no authority."""
+    return principal.startswith("did:aw:") and principal != "did:aw:"
+
+
 def holding_scope(installation_id: str, team_id: str, role: str, principal: str) -> str:
     """The B3 scope of ``principal``'s holding of ``role`` in the installation.
 
@@ -79,7 +84,7 @@ def holding_scope(installation_id: str, team_id: str, role: str, principal: str)
     always given its owners. A holding is never named from a contact.
     """
     _require_role_name(role)
-    if not principal.startswith("did:aw:") or principal == "did:aw:":
+    if not is_holding_principal(principal):
         raise ValueError("a human role is held by a did:aw principal")
     named = f"{installation_id}\n{team_id}\n{principal}"
     return f"{role}.{hashlib.sha256(named.encode()).hexdigest()[:40]}"

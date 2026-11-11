@@ -301,7 +301,7 @@ def check_owner_boundary_and_grant_sources():
     from tests.test_admission import TEAM, InstalledSecrets
     from tests.test_broker_audit import Installed
     from tests.test_owner_predicates import (
-        test_key_only_owner_lookup_is_a_denial_before_any_database_io,
+        test_nonholding_owner_lookup_is_a_denial_before_any_database_io,
     )
 
     def immediate(coroutine):
@@ -328,12 +328,13 @@ def check_owner_boundary_and_grant_sources():
             assert immediate(source.status_for("another:example.com")) is None
         except (AttributeError, AssertionError) as exc:
             failures.append(f"{type(source).__name__}: {exc}")
-    try:
-        immediate(test_key_only_owner_lookup_is_a_denial_before_any_database_io())
-    except (ValueError, AssertionError) as exc:
-        failures.append(f"key-only owner lookup: {exc}")
+    for principal in (None, "did:aw:"):
+        try:
+            immediate(test_nonholding_owner_lookup_is_a_denial_before_any_database_io(principal))
+        except (ValueError, AssertionError) as exc:
+            failures.append(f"nonholding owner lookup ({principal}): {exc}")
     assert not failures, failures
-    return {"grant_source_protocols": 2, "key_only_owner_lookup": "denied without I/O"}
+    return {"grant_source_protocols": 2, "local_key_and_bare_global_did": "denied without I/O"}
 
 
 def main():
