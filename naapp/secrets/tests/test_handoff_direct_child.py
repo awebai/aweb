@@ -1,0 +1,185 @@
+"""A session start by the holder's direct-child agent, on the real factory.
+
+The shared factory, the real B3/owner-act holding store, the tests' AWID with
+real ID chains, and the requester check bound to that registry
+(handoff-wire 1a; contract 584d76c9c :382 and :459). The holder alice is
+designated through the owner act; laptop is an agent alice certified; desk is
+an agent laptop certified. Nothing is inserted into a certificate cache.
+"""
+
+from __future__ import annotations
+
+import asyncio
+import hashlib
+import json
+import secrets
+import time
+from datetime import UTC, datetime
+
+import pytest
+from aweb_naapp.console.handoff_requester import RequesterEvidence, requester_parent
+from aweb_naapp.roles import read_holding
+from aweb_naapp_testing import Member, did_key
+from awid.id_certificates import encode_id_chain_header, id_certificate_signing_bytes
+from nacl.signing import SigningKey
+
+from aweb_secrets.owners import OWNER_ROLE
+from tests.test_handoff_sessions import API, b64, journey
+from tests.test_owner_bootstrap import TEAM
+
+__all__ = ["journey"]
+
+REQUESTER = {"requester_parent": requester_parent}
+
+
+async def certify_agent(journey, parent: Member, parent_chain: list[dict], alias: str):
+    """An agent that ``parent`` certified, a current member of the team."""
+    agent = Member(
+        team_id=TEAM, team_key=journey.member.team_key, alias=alias, certificate_id="cert-" + alias
+    )
+    principal = (await journey.registry.register_did(agent.did_key, bytes(agent.member_key))).did_aw
+    agent.extra_cert_fields = {"member_did_aw": principal}
+    await journey.world.registry.add_certificate(agent.certificate())
+    fields = {
+        "v": 1, "type": "aweb.id-certificate", "id": principal, "domain": "example.com",
+        "parent": {"kind": "identity", "id": parent.extra_cert_fields["member_did_aw"]},
+        "kind": "agent", "issuer_key": parent.did_key,
+        "issued_at": datetime.now(UTC).strftime("%Y-%m-%dT%H:%M:%SZ"),
+    }
+    signed = {
+        "certificate": fields,
+        "signature": b64(parent.member_key.sign(id_certificate_signing_bytes(fields)).signature),
+    }
+    chain = [*parent_chain, signed]
+    await journey.registry.register_id_certificate(
+        {"v": 1, "type": "aweb.id-chain", "certificates": chain},
+        signer=lambda payload: (agent.did_key, agent.member_key.sign(payload).signature),
+        expected_head=None, invitation_id=None,
+    )
+    return agent, chain
+
+
+def start_body(journey, purpose: str = "session") -> bytes:
+    key = SigningKey.generate()
+    return json.dumps({
+        "v": 1, "purpose": purpose, "client_key": did_key(key), "return": "loopback",
+        "redirect_uri": "http://127.0.0.1:54321/callback",
+        "verifier_sha256": hashlib.sha256(secrets.token_urlsafe(32).encode()).hexdigest(),
+        "scope": {"installation_id": journey.scope.installation_id, "role": journey.scope.role,
+                  "principal": journey.scope.principal},
+    }).encode()
+
+
+async def start(journey, signer: Member, chain: list[dict] | None, purpose: str = "session"):
+    raw = start_body(journey, purpose)
+    headers = {"Content-Type": "application/json",
+               **signer.headers(aud=API, method="POST", path="/handoffs", body=raw)}
+    if chain is not None:
+        headers["X-AWID-ID-Chain"] = encode_id_chain_header(
+            {"v": 1, "type": "aweb.id-chain", "certificates": chain})
+    return await journey.client.post(API + "/handoffs", content=raw, headers=headers)
+
+
+async def handoffs(journey) -> int:
+    return await journey.world.db.fetch_value("SELECT count(*) FROM {{tables.console_handoffs}}")
+
+
+async def retained(journey) -> bytes | None:
+    holding = await read_holding(
+        journey.world.db, installation_id=journey.scope.installation_id, team_id=TEAM,
+        role=OWNER_ROLE, principal=journey.scope.principal)
+    return None if holding is None else holding.certificate
+
+
+@pytest.mark.parametrize("journey", [REQUESTER], indirect=True)
+async def test_the_first_direct_child_start_after_designation_is_admitted(journey):
+    laptop, chain = await certify_agent(journey, journey.member, [journey.member.id_certificate], "laptop")
+    response = await start(journey, laptop, chain)
+    assert response.status_code == 201, response.text
+    state = await journey.client.get(f"/handoff/{response.json()['handoff_id']}/session")
+    assert state.status_code == 200, state.text
+    requester = state.json()["requester"]
+    assert requester["id"] == laptop.extra_cert_fields["member_did_aw"]
+    assert requester["key_fingerprint"]
+
+
+@pytest.mark.parametrize("journey", [REQUESTER], indirect=True)
+async def test_a_grandchild_or_an_unrelated_agent_is_refused_and_creates_nothing(journey):
+    laptop, chain = await certify_agent(journey, journey.member, [journey.member.id_certificate], "laptop")
+    desk, desk_chain = await certify_agent(journey, laptop, chain, "desk")
+    before = await handoffs(journey)
+    for signer, signer_chain in ((desk, desk_chain), (laptop, None)):
+        response = await start(journey, signer, signer_chain)
+        assert response.status_code == 403 and response.json() == {"detail": "scope_not_signer"}
+    assert await handoffs(journey) == before
+
+
+@pytest.mark.parametrize("journey", [REQUESTER], indirect=True)
+async def test_a_renewed_holder_certificate_refuses_until_the_holders_credential_start_refreshes_it(journey):
+    laptop, chain = await certify_agent(journey, journey.member, [journey.member.id_certificate], "laptop")
+    old = await retained(journey)
+    # Renewal: a new certificate under alice's same key; the old one revoked.
+    renewed = Member(team_id=TEAM, team_key=journey.member.team_key, member_key=journey.member.member_key,
+                     alias="alice", certificate_id="cert-1-renewed",
+                     extra_cert_fields=dict(journey.member.extra_cert_fields))
+    await journey.world.registry.add_certificate(renewed.certificate())
+    await journey.world.registry.revoke(journey.member.certificate_id)
+
+    refused = await start(journey, laptop, chain)
+    assert refused.status_code == 403 and refused.json() == {"detail": "principal_not_member"}
+    assert await retained(journey) == old
+
+    # The holder's own credential start refreshes at acceptance: no
+    # registration, no new passkey, no owner act.
+    accepted = await start(journey, renewed, None, purpose="credential")
+    assert accepted.status_code == 201, accepted.text
+    assert await retained(journey) != old
+
+    admitted = await start(journey, laptop, chain)
+    assert admitted.status_code == 201, admitted.text
+
+
+@pytest.mark.parametrize("journey", [REQUESTER], indirect=True)
+async def test_a_failed_credential_start_verification_refreshes_nothing(journey):
+    old = await retained(journey)
+    stranger = Member(team_id=TEAM, team_key=SigningKey.generate(), member_key=journey.member.member_key,
+                      alias="alice", certificate_id="cert-forged",
+                      extra_cert_fields=dict(journey.member.extra_cert_fields))
+    response = await start(journey, stranger, None, purpose="credential")
+    # Team-auth refuses a certificate under another team key before any effect.
+    assert response.status_code in (401, 403)
+    assert await retained(journey) == old
+
+
+@pytest.mark.parametrize("journey", [REQUESTER], indirect=True)
+async def test_concurrent_credential_starts_on_one_holding_both_complete(journey):
+    responses = await asyncio.gather(*(start(journey, journey.member, None, purpose="credential") for _ in range(2)))
+    assert [r.status_code for r in responses] == [201, 201], [r.text for r in responses]
+    assert await retained(journey) is not None
+
+
+def expiring_once(registry):
+    """The real requester check, whose first verdict's original deadline has
+    already passed by the start's final effect, as after a long lock wait."""
+    real = requester_parent(registry)
+    calls = []
+
+    async def parent(request, signer):
+        evidence = await real(request, signer)
+        calls.append(evidence)
+        if evidence is not None and len(calls) == 1:
+            return RequesterEvidence(evidence.parent, time.monotonic_ns() - 1)
+        return evidence
+
+    return parent
+
+
+@pytest.mark.parametrize("journey", [{"requester_parent": expiring_once}], indirect=True)
+async def test_an_expired_requester_window_creates_nothing_and_a_fresh_neighbour_does(journey):
+    laptop, chain = await certify_agent(journey, journey.member, [journey.member.id_certificate], "laptop")
+    before = await handoffs(journey)
+    expired = await start(journey, laptop, chain)
+    assert expired.status_code == 503 and expired.json() == {"detail": "principal_status_unavailable"}
+    assert await handoffs(journey) == before
+    fresh = await start(journey, laptop, chain)
+    assert fresh.status_code == 201, fresh.text
