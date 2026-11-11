@@ -31,7 +31,9 @@ from tests.test_owner_delivery import PATH, delivery, effects
 from tests.test_production_bootstrap import root as root
 from tests.test_production_handoffs import start_request
 
-pytestmark = pytest.mark.parametrize("root", [{"manifest_version": 3}], indirect=True)
+pytestmark = pytest.mark.parametrize(
+    "root", [{"manifest_version": 3, "real_identity_dns": True}], indirect=True
+)
 
 
 async def collect_credential(root, holder, principal):

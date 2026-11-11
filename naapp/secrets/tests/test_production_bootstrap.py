@@ -26,6 +26,8 @@ from aweb_naapp_testing.owner_acts import AUDIENCE, TeamOwner
 from aweb_naapp_testing.smtp import SmtpServer
 from aweb_naapp_testing.webauthn import SoftAuthenticator
 from awid.did import did_from_public_key
+from awid.dns_verify import DnsVerificationError
+from awid_service.deps import get_domain_verifier
 from awid_service.testing import SERVICE_TOKEN
 from cryptography.hazmat.primitives.asymmetric.x25519 import X25519PrivateKey
 from nacl.signing import SigningKey
@@ -63,6 +65,15 @@ async def envelopes(db, team_id):
 async def root(test_db_factory, registry, tmp_path, request, monkeypatch):
     member = Member(team_id="root:example.com", member_key=member_key("alice"))
     options = getattr(request, "param", {})
+
+    async def domain_authority(domain):
+        # Forward the test registry's actual namespace authority, never a
+        # fabricated record or fallback to the public example.com DNS.
+        configured = registry.app.dependency_overrides.get(get_domain_verifier)
+        if configured is None:
+            raise DnsVerificationError("the test registry has no namespace verifier")
+        return await configured()(domain)
+
     private = options.get("private_team", False)
     async with authority(
         test_db_factory, registry, member, visibility="private" if private else "public"
@@ -109,6 +120,7 @@ async def root(test_db_factory, registry, tmp_path, request, monkeypatch):
             service = create_service(
                 configured,
                 awid_transport=registry.transport,
+                awid_domain_verifier=None if options.get("real_identity_dns") else domain_authority,
                 team_server_transport=transport,
             )
             service.runtime.team_server_directory()._registry_override = no_dns_override
