@@ -123,5 +123,6 @@ async def revoke_grant_tree(
             team_id=team_id,
             secret_id=secret_id,
         )
-    await bump_config_revision(tx, installation_id)
+    if ids:
+        await bump_config_revision(tx, installation_id)
     return ids

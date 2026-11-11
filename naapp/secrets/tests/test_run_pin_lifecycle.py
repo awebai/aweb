@@ -247,12 +247,15 @@ async def test_failed_destruction_rolls_back_pin_disposal_with_the_value(uses):
 
 
 async def test_confirmed_uninstall_disposes_assignment_keys_in_its_retirement_transaction(uses):
+    from aweb_naapp.console import apply_console_migrations
+
     from aweb_secrets.app import installation_fence
     from tests.test_reinstall import TeamServer, _grant
 
     context = await setup(uses)
     await context.assigned()
     db, scope = uses.world.db, uses.world.admitted
+    await apply_console_migrations(db)
     authority = TeamServer()
     authority.grant = _grant(scope.installation_id, scope.generation, scope.team_id)
     authority.state = "uninstalled"
@@ -359,12 +362,10 @@ async def test_ordinary_grant_revocation_disposes_only_its_original_assignment(u
     before = await config_revision(db, scope.installation_id)
     await act(await service(uses), uses, "revoke-grant", "grt_durable001", "revoke-root-run")
     assert await config_revision(db, scope.installation_id) == before + 1
-    assert (
-        await db.fetch_value(
-            "SELECT count(*) FROM {{tables.run_redaction_pins}} WHERE dispatch_id=$1", first_id
-        )
-        == 0
+    original_pin_count = await db.fetch_value(
+        "SELECT count(*) FROM {{tables.run_redaction_pins}} WHERE dispatch_id=$1", first_id
     )
+    assert original_pin_count == 0
     assert (
         await db.fetch_value(
             "SELECT count(*) FROM {{tables.run_redaction_pins}} WHERE dispatch_id=$1", other_id
