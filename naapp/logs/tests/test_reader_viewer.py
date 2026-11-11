@@ -17,23 +17,22 @@ from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
 from datetime import UTC, datetime, timedelta
 from html.parser import HTMLParser
-from typing import Any
+from typing import Any, NoReturn
 from urllib.parse import parse_qsl, urlencode, urlsplit
 
 import httpx
 from aweb_naapp.console import (
     ClientIdentity,
-    ConsoleSessions,
     LoginLimiter,
     apply_console_migrations,
 )
 from aweb_naapp.hooks.envelope import verify
 from aweb_naapp.runtime.origins import split_origins
 from aweb_naapp_testing.owner_acts import TEAM_ID
-from fastapi import FastAPI
+from fastapi import FastAPI, HTTPException
 
 from aweb_logs.ledger import append
-from aweb_logs.reader_service import ReaderService
+from aweb_logs.reader_service import ReaderService, reader_sessions
 
 from .fixtures import signed_event
 from .reader_world import (
@@ -111,25 +110,45 @@ def within_event(element: dict[str, Any], event_id: str) -> bool:
     return any(attrs.get("data-event-id") == event_id for attrs in element["within"])
 
 
-@asynccontextmanager
-async def console(world: World) -> AsyncIterator[httpx.AsyncClient]:
-    """logs' console origin as :class:`ReaderService` composes it."""
-    await apply_console_migrations(world.db)
-    service = ReaderService(
+async def no_handoff(*_: object, **__: object) -> NoReturn:
+    """The viewer's tests sign in with a passkey only: no member starts an aw
+    handoff, and one that tried would be refused as unauthenticated."""
+    raise HTTPException(status_code=401, detail="unauthenticated")
+
+
+def viewer_service(world: World, *, login_limit: int = 12) -> ReaderService:
+    """:class:`ReaderService` as logs composes it, with no aw handoffs."""
+    limiter = LoginLimiter(
+        world.db, client_identity=ClientIdentity(), limit=login_limit, window=timedelta(minutes=1)
+    )
+    sessions, handoffs = reader_sessions(
+        db=world.db,
+        directory=world.directory,
+        fence=world.fence,
+        passkeys=world.passkeys,
+        principal=no_handoff,
+        human_member=no_handoff,
+        limiter=limiter,
+    )
+    return ReaderService(
         db=world.db,
         directory=world.directory,
         fence=world.fence,
         governance=world.governance,
         passkeys=world.passkeys,
         recorder=world.recorder,
-        sessions=ConsoleSessions(
-            world.db, passkeys=world.passkeys, scopes=world.directory.is_current_reader
-        ),
-        limiter=LoginLimiter(
-            world.db, client_identity=ClientIdentity(), limit=12, window=timedelta(minutes=1)
-        ),
+        sessions=sessions,
+        handoffs=handoffs,
+        limiter=limiter,
         chain_keys=frozenset({world.signer.did_key}),
     )
+
+
+@asynccontextmanager
+async def console(world: World) -> AsyncIterator[httpx.AsyncClient]:
+    """logs' console origin as :class:`ReaderService` composes it."""
+    await apply_console_migrations(world.db)
+    service = viewer_service(world)
     human = FastAPI()
     human.include_router(service.console_router)
     app = split_origins(FastAPI(), human, agent_origin=LOGS, human_origin=CONSOLE)

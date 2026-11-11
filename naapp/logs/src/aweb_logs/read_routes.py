@@ -1,8 +1,10 @@
 """The reader's API on logs' console origin, and a member's removal of a
 reader on its agent origin (audit-substrate.md §B5).
 
-Every route needs a console session: a passkey login by a current reader
-(:mod:`aweb_logs.readers`). The session's scope names the one team it reads;
+Every route needs a console session of a current reader
+(:mod:`aweb_logs.readers`): its passkey login's cookie session, or the
+key-bound session its aw collected through the shared handoff, each request
+signed with aw's key. The session's scope names the one team it reads;
 no request parameter can name another. The console origin refuses team-auth
 outright (``split_origins``), so a member signature, an MCP identity or a
 hosted session never reaches these routes.

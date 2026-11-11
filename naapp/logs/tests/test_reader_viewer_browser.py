@@ -9,15 +9,11 @@ import asyncio
 import base64
 import socket
 from collections.abc import AsyncIterator
-from datetime import timedelta
 from urllib.parse import urlencode
 
 import pytest
 import uvicorn
 from aweb_naapp.console import (
-    ClientIdentity,
-    ConsoleSessions,
-    LoginLimiter,
     apply_console_migrations,
 )
 from aweb_naapp.runtime.origins import split_origins
@@ -34,10 +30,8 @@ from playwright.async_api import (
 )
 from playwright.async_api import Error as PlaywrightError
 
-from aweb_logs.reader_service import ReaderService
-
 from .reader_world import World, held_reader, world_fixture  # noqa: F401
-from .test_reader_viewer import recorded
+from .test_reader_viewer import recorded, viewer_service
 
 
 @pytest.fixture
@@ -66,21 +60,7 @@ async def service(world: World) -> AsyncIterator[str]:
         # The real verifier, for this ephemeral origin, before anyone enrols.
         world.passkeys.rp = RelyingParty(origin=origin, name="Logs")
         await apply_console_migrations(world.db)
-        reader_service = ReaderService(
-            db=world.db,
-            directory=world.directory,
-            fence=world.fence,
-            governance=world.governance,
-            passkeys=world.passkeys,
-            recorder=world.recorder,
-            sessions=ConsoleSessions(
-                world.db, passkeys=world.passkeys, scopes=world.directory.is_current_reader
-            ),
-            limiter=LoginLimiter(
-                world.db, client_identity=ClientIdentity(), limit=12, window=timedelta(minutes=1)
-            ),
-            chain_keys=frozenset({world.signer.did_key}),
-        )
+        reader_service = viewer_service(world)
         human = FastAPI()
         human.include_router(reader_service.console_router)
         app = split_origins(
