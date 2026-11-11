@@ -24,6 +24,7 @@ from pgdbm import AsyncDatabaseManager
 
 from aweb_naapp import ratelimit
 from aweb_naapp.console import CONSOLE_HEADERS, ClientIdentity
+from aweb_naapp.email import EmailNotSent
 from aweb_naapp.hooks.owner_act import (
     HUMAN_ROLE_ACTS,
     PREFIX,
@@ -37,7 +38,7 @@ from aweb_naapp.hooks.strictjson import parse_canonical_object
 from aweb_naapp.runtime.app import NaappRuntime
 from aweb_naapp.runtime.credential_audit import GovernanceUnavailable
 from aweb_naapp.runtime.installation import InstallationRefused
-from aweb_naapp.runtime.origins import _carries_team_auth
+from aweb_naapp.runtime.origins import _carries_team_auth, _host, _origin_hosts
 from aweb_naapp.runtime.owner_act_delivery import (
     OwnerActDelivery,
     OwnerActDeliveryRefused,
@@ -50,6 +51,16 @@ __all__ = ["OWNER_ACT_PATH", "OwnerActLimiter", "mount_owner_act_routes"]
 OWNER_ACT_PATH = "/.well-known/aweb-owner-act"
 MAX_BODY_BYTES = 1 << 20
 _BODY_FIELDS = frozenset({"signing", "signature", "credential", "notice_contact", "certificate"})
+_EMAIL_FAILURE_CODES = frozenset(
+    {
+        "tls_unavailable",
+        "auth_failed",
+        "recipient_refused",
+        "message_refused",
+        "connection_failed",
+        "timeout",
+    }
+)
 logger = logging.getLogger(__name__)
 
 
@@ -224,12 +235,13 @@ def mount_owner_act_routes(
     ):
         raise ValueError("owner-act delivery requires the declared human-role verifier")
     origin = declaration["origin"]
+    human_hosts = _origin_hosts(origin)
 
     @app.post(OWNER_ACT_PATH)
     async def deliver(request: Request) -> JSONResponse:
         await limiter.admit(request, runtime.db())
         if (
-            f"{request.url.scheme}://{request.url.netloc}" != origin
+            _host(request.scope) not in human_hosts
             or _carries_team_auth(request.scope["headers"])
             or "cookie" in request.headers
             or "x-aw-console-session" in request.headers
@@ -287,7 +299,24 @@ def mount_owner_act_routes(
         try:
             await prepared_effect.after_commit(result)
         except Exception as exc:
-            logger.warning("Owner-act notice delivery failed (%s)", type(exc).__name__)
+            code = (
+                exc.code
+                if isinstance(exc, EmailNotSent) and exc.code in _EMAIL_FAILURE_CODES
+                else "notice_failed"
+            )
+            logger.warning(
+                "Owner-act notice failed: act=%s role=%s installation=%s code=%s",
+                result.act,
+                result.role,
+                permit.admitted.installation_id,
+                code,
+                extra={
+                    "act": result.act,
+                    "role": result.role,
+                    "installation_id": permit.admitted.installation_id,
+                    "failure_code": code,
+                },
+            )
         return JSONResponse(
             {
                 "act": result.act,

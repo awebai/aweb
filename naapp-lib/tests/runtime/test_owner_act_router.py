@@ -61,7 +61,7 @@ class SqlEffect:
     runtime: NaappRuntime
     identity_client: object
     fail_write: bool = False
-    fail_notice: bool = False
+    fail_notice: str | None = None
     fail_governance: bool = False
     prepares: int = 0
     prepared: object = None
@@ -160,6 +160,10 @@ class SqlPreparedEffect:
         )
         self.app.committed += 1
         if self.app.fail_notice:
+            if self.app.fail_notice == "timeout":
+                from aweb_naapp.email import EmailNotSent
+
+                raise EmailNotSent("timeout")
             raise RuntimeError("notice delivery failed")
 
 
@@ -236,7 +240,7 @@ async def world(tmp_path, human, coordination, test_db_factory):
         ExampleSettings(
             _env_file=None,
             database_url=db.config.get_dsn(),
-            db_schema=db.config.schema,
+            db_schema=db.config.schema_name,
             app_key_files={"grant-read": key_path},
             awid_registry_url=REGISTRY_URL,
             awid_service_token=SERVICE_TOKEN,
@@ -325,6 +329,34 @@ async def test_designation_commits_nonce_effect_and_outbox_once(world):
     assert await world.counts() == (1, 1, 1)
 
 
+async def test_tls_termination_preserving_public_host_needs_no_forwarded_headers(world):
+    async with httpx.AsyncClient(
+        transport=httpx.ASGITransport(app=world.app),
+        base_url="http://app.example.com",
+    ) as client:
+        response = await client.post(PATH, json=world.body())
+    assert response.status_code == 200
+    assert await world.counts() == (1, 1, 1)
+
+
+async def test_untrusted_forwarded_host_cannot_select_the_human_origin(world):
+    async with httpx.AsyncClient(
+        transport=httpx.ASGITransport(app=world.app),
+        base_url="http://wrong.example.com",
+    ) as client:
+        response = await client.post(
+            PATH,
+            json=world.body(),
+            headers={
+                "Forwarded": "host=app.example.com;proto=https",
+                "X-Forwarded-Host": "app.example.com",
+                "X-Forwarded-Proto": "https",
+            },
+        )
+    assert response.status_code == 403
+    assert await world.counts() == (0, 0, 0)
+
+
 async def test_parallel_delivery_of_one_act_commits_only_one_effect(world):
     body = world.body()
     replies = await asyncio.gather(world.post(body), world.post(body))
@@ -344,10 +376,18 @@ async def test_failed_effect_rolls_back_nonce_and_governance_then_same_act_can_r
     assert await world.counts() == (1, 1, 1)
 
 
-async def test_notice_failure_does_not_report_a_committed_effect_as_failed(world):
-    world.effect.fail_notice = True
+@pytest.mark.parametrize("failure", ["unexpected", "timeout"])
+async def test_notice_failure_does_not_report_a_committed_effect_as_failed(world, caplog, failure):
+    world.effect.fail_notice = failure
     assert (await world.post(world.body())).status_code == 200
     assert await world.counts() == (1, 1, 1)
+    records = [record for record in caplog.records if record.name.endswith("owner_act_router")]
+    assert len(records) == 1
+    assert records[0].act == "human-role.designate"
+    assert records[0].role == ROLE
+    assert records[0].installation_id == world.installation["installation_id"]
+    assert records[0].failure_code == ("timeout" if failure == "timeout" else "notice_failed")
+    assert NOTICE not in records[0].getMessage()
 
 
 async def test_unavailable_governance_rolls_back_the_nonce_and_effect(world):
