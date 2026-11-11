@@ -782,6 +782,51 @@ registry dependency failure returns
 `federation_authority_coordination_unavailable` (503, retryable) with exception
 logging preserved.
 
+**Outbound delivery transport:** federated mail and chat leave through one
+function, `deliver_federated_message`, and one transport,
+`aweb.federation.transport`. The delivery origin comes from a registry record or
+a stored participant route, so the transport admits it before any connection:
+the origin is `https` and named by host, the host is resolved once, and every
+answer is a public address (loopback, private, link-local, shared CGNAT,
+unique-local, multicast, reserved, unspecified and IPv4-mapped forms of those
+are refused, and one refused answer refuses the name). The connection goes to an
+admitted address, trying the answers in order until one accepts a connection,
+while TLS verification, SNI and `Host` name the origin; proxy
+settings in the environment are not read, redirects are not followed, each
+delivery resolves and checks again, and no connection outlives its response.
+Routes and MCP tools both take the transport from the federation authority, which
+shares its resolver, origin policy and trust anchors with strict registry reads
+(`docs/vectors/federation-origin-ip-v1.json`). `http` origins, address literals
+and non-public answers are admitted only under the isolated-development
+conditions of that vector: `APP_ENV=development`, `AWEB_FEDERATION_TEST=1`, and
+both this server's public origin and the destination host isolated (a
+single-label name, `localhost`, `*.localhost`, `*.test`, `*.test.local`, or a
+loopback literal). Outside those conditions, an operator admits private
+delivery origins only by listing them, comma-separated, in
+`AWEB_FEDERATION_PRIVATE_DELIVERY_ORIGINS`: each entry is one exact origin
+named by host (`https://host[:port]`), canonicalised as every delivery origin
+is and compared for equality, never a CIDR, wildcard or pattern; an invalid
+entry refuses start-up naming the entry, and unset or empty admits none. A
+listed origin's answers may each be public or in `10.0.0.0/8`,
+`172.16.0.0/12`, `192.168.0.0/16`, `100.64.0.0/10` or `fc00::/7`
+(`PRIVATE_DELIVERY_NETWORKS`; an IPv4-mapped answer is judged by its IPv4
+address), and one answer outside those refuses it, so loopback, link-local,
+unspecified and the other special-purpose ranges stay refused; every other
+check above still applies to it. Only the delivery transport receives the list:
+ID-tree registry reads call the same address admission without it, and awid's
+registry client is not given it, so registry reads keep requiring public
+answers. A delivery is bounded to 10 seconds, a 10 MiB success body
+and a 64 KiB error body. A failed delivery reaches the sender as the status and
+one fixed reason: `delivery_origin_refused` (the origin is not `https` named by
+host), `delivery_address_refused` (an answer is not admitted; the server also
+logs a warning naming the origin and the setting),
+`delivery_origin_unreachable`, `delivery_timeout`, `delivery_unavailable` (the
+server has no delivery transport and makes no request), a response-bound reason,
+`HTTP <status>`, or the remote's `reason` when it is a federation reason from
+[`federation-error-reference.md`](federation-error-reference.md). Other text the
+remote answers, on an error status or on a success answer that is not a JSON
+object, is logged at a bounded length and is not returned.
+
 **Receiver-wide replay identity:** every accepted local or federated mail/chat,
 plaintext or encrypted, claims one `message_ingress_receipts` row keyed solely
 by `message_id`. An exact federated canonical-envelope retry returns the stored
