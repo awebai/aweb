@@ -34,6 +34,7 @@ environment variables only; it does not load a checkout's `.env`.
 | `SECRETS_APP_ID` | Stable customer app ID, chosen before installation. |
 | `SECRETS_PUBLIC_ORIGIN` | HTTPS agent API origin. |
 | `SECRETS_CONSOLE_ORIGIN` | Distinct HTTPS console origin. |
+| `SECRETS_CLIENT_ADDRESS_HEADER` | Optional header overwritten by a trusted proxy. The console login limiter uses its last comma-separated entry; a missing header or an unset setting uses the peer address. Leave unset unless the proxy controls this header. |
 | `SECRETS_AWID_REGISTRY_URL` | Customer registry origin, matching the namespace's `_awid` TXT `registry=` selection. |
 | `SECRETS_KMS_KEY_ID`, `SECRETS_KMS_REGION` | Recommended custody: customer AWS KMS key and region. Give the runtime's AWS role the required key operations; no static AWS keys in the image. |
 | `SECRETS_CUSTODY_KEY_FILE` | Mounted local custody key, allowed in production and lab deployments. Configure exactly one of this or KMS. Keep the file private to the Secrets service account. |
@@ -49,6 +50,8 @@ environment variables only; it does not load a checkout's `.env`.
 | `SECRETS_EMAIL_CA_FILE` | Optional mounted SMTP CA. |
 | `SECRETS_EGRESS_DENIED_NETWORKS` | JSON array of deployment egress/metadata IP addresses or strict CIDRs; explicitly use `[]` if there are no additional ranges. Applies to broker **and hook** egress. |
 | `SECRETS_GIT_SHA` | Set in the image from the required full 40-character `SOURCE_COMMIT` build argument; keep it unchanged at runtime. |
+
+Behind a proxy chain (for example, CDN then load balancer), an appending `X-Forwarded-For` ends in the CDN's egress address; use a single-value client-IP header that the edge sets and overwrites, or use `X-Forwarded-For` only when exactly one trusted proxy appends to it.
 
 The app-key mapping uses paths, never key values:
 

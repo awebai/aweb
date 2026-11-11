@@ -288,6 +288,7 @@ async def _compose(
         ),
         installation=InstallationLookup(fence),
         credential_audit=credentials,
+        client_address_header=settings.client_address_header,
         key_bound=key_bound,
         prepare_key_bound=prepare_key_bound,
     )

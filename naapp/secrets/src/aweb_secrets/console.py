@@ -99,6 +99,7 @@ class OwnerConsole:
         verifier: OwnerActVerifier,
         installation: InstallationLookup,
         credential_audit: "CredentialAudit",
+        client_address_header: str | None = None,
         limiter: LoginLimiter | None = None,
         key_bound: Callable[[Request], Awaitable[ConsoleSession]] | None = None,
         prepare_key_bound: KeyBoundPreparation | None = None,
@@ -115,7 +116,10 @@ class OwnerConsole:
             db, passkeys=passkeys, scopes=self.admits_scope, key_bound=key_bound
         )
         self.limiter = limiter or LoginLimiter(
-            db, client_identity=ClientIdentity(), limit=12, window=timedelta(minutes=1)
+            db,
+            client_identity=ClientIdentity(trusted_header=client_address_header),
+            limit=12,
+            window=timedelta(minutes=1),
         )
 
     async def prepare_session(
