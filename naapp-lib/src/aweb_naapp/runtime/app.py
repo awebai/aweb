@@ -28,6 +28,7 @@ from __future__ import annotations
 
 import asyncio
 import base64
+import copy
 import hashlib
 import json
 import logging
@@ -61,6 +62,7 @@ from aweb_naapp.manifest import (
     Manifest,
     ManifestError,
     canonical_bytes,
+    check_v2_variant,
     fill_manifest,
     load_manifest,
 )
@@ -86,6 +88,7 @@ from aweb_naapp.runtime.authorization import (
     authorize_request,
     is_placeholder,
 )
+from aweb_naapp.runtime.awid_member_credentials import read_member_credentials
 from aweb_naapp.runtime.db import NaappDatabase, Store
 from aweb_naapp.runtime.event_emit import AppEvents, is_loopback_host
 from aweb_naapp.runtime.health import CheckResult, HealthCheck, mount_health
@@ -121,6 +124,7 @@ logger = logging.getLogger(__name__)
 
 # Where a version 2 manifest's bytes are served, as its catalog lists them.
 MANIFEST_V2_PATH = "/manifests/v2.json"
+MANIFEST_V3_PATH = "/manifests/v3.json"
 
 NOINDEX_ROBOTS_HEADER = "noindex, nofollow, noarchive"
 # The outbox check abandons its backlog read after this bound, inside the
@@ -154,6 +158,8 @@ class NaappRuntime:
         module_name: str,
         migrations_path: Path,
         manifest_path: Path,
+        owner_acts: Mapping[str, Any] | None = None,
+        owner_acts_origin: str | None = None,
         root_path: str = "",
         awid_transport: httpx.AsyncBaseTransport | None = None,
         team_server_transport: httpx.AsyncBaseTransport | None = None,
@@ -180,9 +186,33 @@ class NaappRuntime:
             did_keys=declared_did_keys(settings, template),
         )
         self._manifest = load_manifest(self._manifest_bytes)
+        self._manifest_variants = {self._manifest.manifest_version: self._manifest_bytes}
+        if owner_acts is not None:
+            if self._manifest.manifest_version != 2 or not owner_acts_origin:
+                raise ValueError("owner acts require a v2 template and a configured human origin")
+            v3 = copy.deepcopy(template)
+            v3["manifest_version"] = 3
+            v3["owner_acts"] = {**copy.deepcopy(dict(owner_acts)), "origin": owner_acts_origin}
+            self._manifest_bytes = fill_manifest(
+                v3, app_id=settings.app_id, origin=settings.public_origin,
+                did_keys=declared_did_keys(settings, v3),
+            )
+            self._manifest = load_manifest(self._manifest_bytes)
+            check_v2_variant(self._manifest_variants[2], self._manifest_bytes)
+            self._manifest_variants[3] = self._manifest_bytes
+        elif owner_acts_origin is not None:
+            raise ValueError("a human origin requires an owner-acts declaration")
+        elif self._manifest.manifest_version == 3:
+            if self._manifest.owner_acts is None:
+                raise ValueError("a v3 publication requires owner-designated roles")
+            v2 = json.loads(self._manifest_bytes)
+            v2.pop("owner_acts", None)
+            v2["manifest_version"] = 2
+            self._manifest_variants[2] = canonical_bytes(v2)
+            check_v2_variant(self._manifest_variants[2], self._manifest_bytes)
         self._catalog_bytes = (
-            _catalog_bytes(self._manifest, self._manifest_bytes)
-            if self._manifest.manifest_version == 2
+            _catalog_bytes(self._manifest, self._manifest_variants)
+            if self._manifest.manifest_version >= 2
             else None
         )
         self._declared_tools = DeclaredTools.from_manifest(self._manifest)
@@ -193,6 +223,7 @@ class NaappRuntime:
             registry_url=settings.awid_registry_url,
             ttl_seconds=settings.auth_cache_ttl_seconds,
             service_token=settings.awid_service_token,
+            member_credentials=read_member_credentials(settings.awid_member_credentials),
             transport=awid_transport,
         )
         self._team_server_directory = TeamServerDirectory(
@@ -205,7 +236,11 @@ class NaappRuntime:
             self._installation_grants = TeamGrantSource(
                 identity=AppIdentity(app_id=self.manifest.app_id,
                     origin=self.manifest.document["app"]["origin"],
-                    digest="sha256:" + hashlib.sha256(self.manifest_bytes).hexdigest()),
+                    digest="sha256:" + hashlib.sha256(self.manifest_bytes).hexdigest(),
+                    manifest_digests=tuple(
+                        (version, "sha256:" + hashlib.sha256(data).hexdigest())
+                        for version, data in sorted(self._manifest_variants.items())
+                    )),
                 signer=AppCredentialSigner(app_id=self.manifest.app_id, key=key, purpose=APP_GRANT_READ),
                 discovery=self.team_server_directory(), transport=team_server_transport,
             )
@@ -238,10 +273,14 @@ class NaappRuntime:
 
     @property
     def catalog_bytes(self) -> bytes | None:
-        """The manifest catalog served for a version 2 manifest, fixed at
+        """The manifest catalog served for v2/v3 variants, fixed at
         construction; ``None`` for a version 1 manifest, which consumers
         discover at the legacy path."""
         return self._catalog_bytes
+
+    def manifest_variant_bytes(self, version: int) -> bytes:
+        """One exact published variant, fixed and validated at construction."""
+        return self._manifest_variants[version]
 
     @property
     def manifest(self) -> Manifest:
@@ -261,6 +300,9 @@ class NaappRuntime:
     @asynccontextmanager
     async def lifespan(self, app: FastAPI) -> AsyncIterator[None]:
         self.check_authorized_routes(app)
+        # A configured member credential AWID does not currently publish is the
+        # operator's misconfiguration: refuse to start, naming it.
+        await self._team_cache.check_member_credentials()
         database = NaappDatabase(
             self.settings,
             module_name=self.module_name,
@@ -726,16 +768,16 @@ def _refuse_the_hosted_app_id_elsewhere(settings: NaappSettings, template: Mappi
         )
 
 
-def _catalog_bytes(manifest: Manifest, variant_bytes: bytes) -> bytes:
-    """The manifest catalog listing ``variant_bytes`` as the app's version 2 variant."""
+def _catalog_bytes(manifest: Manifest, variants: Mapping[int, bytes]) -> bytes:
+    """The catalog pins every exact filled variant published by the runtime."""
     return canonical_bytes({
         "catalog_version": 1,
         "app_id": manifest.app_id,
         "variants": [{
-            "manifest_version": 2,
-            "url": MANIFEST_V2_PATH,
-            "digest": "sha256:" + hashlib.sha256(variant_bytes).hexdigest(),
-        }],
+            "manifest_version": version,
+            "url": f"/manifests/v{version}.json",
+            "digest": "sha256:" + hashlib.sha256(data).hexdigest(),
+        } for version, data in sorted(variants.items())],
     })
 
 
@@ -775,7 +817,12 @@ def mount_manifest_routes(app: FastAPI, *, runtime: NaappRuntime) -> None:
 
         @app.get(MANIFEST_V2_PATH)
         async def manifest_v2_route() -> Response:
-            return await _manifest_response()
+            return Response(content=runtime.manifest_variant_bytes(2), media_type="application/json", headers=_NOSNIFF)
+
+        if runtime.manifest.manifest_version == 3:
+            @app.get(MANIFEST_V3_PATH)
+            async def manifest_v3_route() -> Response:
+                return await _manifest_response()
 
     @app.get("/aweb-app.json")
     async def aweb_app_manifest_route() -> Response:

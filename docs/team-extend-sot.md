@@ -103,7 +103,7 @@ select an anchor wins; lower tiers are not consulted after that:
    team id is compared to the asserted team, and on mismatch that just-created
    member is rolled back — server-side membership revoked and the local home
    removed, via the same rollback machinery the roster path already uses
-   (`rollbackJustCreatedTeamMember` + home rollback) — and `extend` errors
+   (`rollbackJustCreatedTeamMemberWithExplicitHostedAuth` + home rollback) — and `extend` errors
    naming both team ids before any further member is attempted. An implicit
    mismatch says `workspace active team X does not match API key team Y`; it
    never names an unpassed `--team-id` flag. A mismatch never leaves a partial

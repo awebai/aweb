@@ -760,10 +760,6 @@ func saveCLIAuthConfigForScope(scope string, cfg cliAuthConfig) error {
 	return awid.AtomicWriteFile(path, data)
 }
 
-func removeCLIAuthConfig() error {
-	return removeCLIAuthConfigForScope(cliAuthScope)
-}
-
 func removeCLIAuthConfigForScope(scope string) error {
 	path, err := cliAuthConfigPathForScope(scope)
 	if err != nil {

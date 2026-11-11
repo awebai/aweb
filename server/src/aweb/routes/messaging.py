@@ -43,7 +43,7 @@ async def participant(
         team_id=auth.team_id,
         alias=alias,
         selected_team_id=auth.team_id,
-        request=request,
+        registry_client=getattr(request.app.state, "awid_registry_client", None),
     )
     if not row or row.get("status") != "active":
         raise HTTPException(404, detail="Recipient not found")

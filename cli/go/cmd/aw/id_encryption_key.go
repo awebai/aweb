@@ -676,10 +676,6 @@ func encryptionStatePathForIdentity(identity *awconfig.ResolvedIdentity) (string
 	return awconfig.WorktreeEncryptionStatePath(identity.WorkingDir), nil
 }
 
-func validateEncryptionRecordPrivateKey(root string, record *awconfig.EncryptionKeyRecord) (*encryptionRecordKeyMaterial, error) {
-	return validateEncryptionRecordPrivateKeyAt(root, "", record)
-}
-
 func validateEncryptionRecordPrivateKeyAt(workingDir, identityHome string, record *awconfig.EncryptionKeyRecord) (*encryptionRecordKeyMaterial, error) {
 	if record == nil {
 		return nil, usageError("local E2E encryption key state has no active key; run `aw id encryption-key setup`")
@@ -843,14 +839,6 @@ func resolveIdentityStoredPath(workingDir, identityHome, storedPath string) (str
 		return awconfig.IdentityHomeStoredPath(awconfig.IdentityHome{Root: identityHome}, storedPath)
 	}
 	return awconfig.WorktreeStoredIdentityPath(workingDir, storedPath)
-}
-
-func resolveWorktreeRelativePath(root, path string) string {
-	resolved, err := resolveIdentityStoredPath(root, "", path)
-	if err != nil {
-		return ""
-	}
-	return resolved
 }
 
 func encryptionKeyBackupWarning() string {

@@ -110,10 +110,6 @@ func (r *doctorRunner) runRegistryDoctorChecks() {
 	r.addRegistryChecks(state)
 }
 
-func collectDoctorIdentityState(workingDir string) *doctorIdentityState {
-	return collectDoctorIdentityStateAt(workingDir, "")
-}
-
 func collectDoctorIdentityStateAt(workingDir, identityHome string) *doctorIdentityState {
 	state := &doctorIdentityState{
 		workingDir:          strings.TrimSpace(workingDir),

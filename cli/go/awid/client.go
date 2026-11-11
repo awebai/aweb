@@ -83,14 +83,6 @@ func (e *RecipientResolutionError) Unwrap() error {
 	return e.Err
 }
 
-func isRegistryAddressNotFound(err error) bool {
-	if code, ok := HTTPStatusCode(err); ok && code == http.StatusNotFound {
-		body, _ := HTTPErrorBody(err)
-		return strings.Contains(body, "Address not found")
-	}
-	return false
-}
-
 // signEnvelope signs a MessageEnvelope and returns the fields to embed
 // in the request. When the client has no signing key (legacy/custodial),
 // returns a zero signedFields. Callers stamp the returned fields onto

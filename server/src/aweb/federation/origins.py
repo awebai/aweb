@@ -6,7 +6,13 @@ from aweb.config import get_public_origin
 
 
 def public_origins(request=None, *, public_origin: str | None = None) -> set[str]:
-    state = getattr(getattr(request, "app", None), "state", None)
+    return application_public_origins(
+        getattr(getattr(request, "app", None), "state", None), public_origin=public_origin,
+    )
+
+
+def application_public_origins(state, *, public_origin: str | None = None) -> set[str]:
+    """The origins an application state configures as its own, with ``public_origin`` if given."""
     origins = {
         canonical_server_origin(value)
         for value in getattr(state, "federation_public_origins", [])

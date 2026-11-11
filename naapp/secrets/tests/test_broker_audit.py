@@ -253,9 +253,9 @@ async def test_post_dispatch_recording_survives_target_loss_without_authorizing_
     )
     async with db.transaction() as tx:
         if outcome == "reconciled":
-            await recorder.outcome_unknown(tx, dispatch_id, {"state": "unknown"})
+            await recorder.outcome_unknown(tx, dispatch_id, {"state": "outcome_unknown"})
             await recorder.reconcile(
-                tx, dispatch_id, State.RECONCILED_COMPLETED, {"state": "owner_resolved"}
+                tx, dispatch_id, State.RECONCILED_COMPLETED, {"state": "reconciled_completed"}
             )
         else:
             method = recorder.complete if outcome == "completed" else getattr(recorder, outcome)
@@ -309,7 +309,7 @@ async def test_failed_post_dispatch_outbox_insert_preserves_dispatching_for_reco
     )
     with pytest.raises(asyncpg.CheckViolationError):
         async with db.transaction() as tx:
-            await recorder.complete(tx, dispatch_id, {"state": "withheld"})
+            await recorder.complete(tx, dispatch_id, {"state": "result_withheld"})
     async with db.transaction() as tx:
         assert (await recorder.get(tx, dispatch_id)).state is State.DISPATCHING
     assert len(await envelopes(db)) == 2
