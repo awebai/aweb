@@ -44,6 +44,7 @@ from aweb_naapp.runtime.installation import (
 from aweb_naapp.runtime.links import link_verifier
 from aweb_naapp.runtime.passkeys import (
     ContactChangeRefused,
+    CredentialChangeRefused,
     EnrolmentRefused,
     OwnerApproval,
     PasskeyInstallationContext,
@@ -52,7 +53,9 @@ from aweb_naapp.runtime.passkeys import (
     ProofContextResolver,
     ProofContextUnavailable,
     contact_sha256,
+    prepare_retirement,
 )
+from aweb_naapp.runtime.passkeys.credential_change import PreparedCredentialChange
 
 if TYPE_CHECKING:
     from aweb_naapp.console import ConsoleSession
@@ -72,6 +75,8 @@ _CREDENTIAL_KINDS = frozenset(
         AuditKind.APPROVER_ENROLMENT_REISSUED,
         AuditKind.APPROVER_RETIRED,
         AuditKind.APPROVER_PASSKEY_REVOKED,
+        AuditKind.APPROVER_PASSKEY_ADDED,
+        AuditKind.APPROVER_PASSKEY_REPLACED,
         AuditKind.APPROVER_CONTACT_CHANGE_SCHEDULED,
         AuditKind.APPROVER_CONTACT_CHANGE_BY_OWNER_SCHEDULED,
         AuditKind.APPROVER_CONTACT_CHANGE_CANCELLED,
@@ -262,6 +267,55 @@ class PreparedContactProof:
             raise ContactChangeRefused("contact_proof_unavailable") from None
 
 
+@dataclass(repr=False)
+class PreparedCredentialChangeAudit:
+    """The recorder's credential-change fence for one scope, in one original
+    B3 effect transaction.
+
+    `prepare` takes, in order: F6 (the installation fence), the installation's
+    retirement gate, the app's `role_holds` (role and holding locks only,
+    never B3 or session ones), then B3's write preparation, then checks F6;
+    it returns B3's handle. An app that holds sessions takes S4 after prepare
+    returns. Where the change also runs under the shared protected-operation
+    receipt, that operation's lock is taken before this prepare, never after.
+    `check` rechecks F6 after the event was recorded in this transaction."""
+
+    owner: CredentialAudit
+    admitted: AdmittedInstallation
+    view: RegistrationView | None
+    scope: str
+    role_holds: Callable[[TransactionManager], Awaitable[None]] | None = None
+    _fence: InstallationDispatchFence = field(init=False)
+    _tx: TransactionManager | None = field(init=False, default=None)
+    _event: AuditEvent | None = field(init=False, default=None)
+
+    def __post_init__(self) -> None:
+        self._fence = self.owner.fence.for_installation(self.admitted)
+
+    async def prepare(self, tx: TransactionManager) -> PreparedCredentialChange:
+        if self._tx is not None:
+            raise GovernanceUnavailable()
+        try:
+            await self._fence.prepare(tx)
+            await prepare_retirement(tx, installation=self.admitted)
+            if self.role_holds is not None:
+                await self.role_holds(tx)
+            prepared = await self.owner._passkeys().prepare_credential_change(tx, scope=self.scope)
+            await self._fence.check(tx, None)
+        except InstallationRefused:
+            raise CredentialChangeRefused("completion_authority_unavailable") from None
+        self._tx = tx
+        return prepared
+
+    async def check(self, tx: TransactionManager) -> None:
+        if self._tx is not tx or self._event is None:
+            raise GovernanceUnavailable()
+        try:
+            await self._fence.check(tx, None)
+        except InstallationRefused:
+            raise CredentialChangeRefused("completion_authority_unavailable") from None
+
+
 class CredentialAudit:
     def __init__(
         self,
@@ -314,6 +368,7 @@ class CredentialAudit:
             | _ApprovalContext
             | PreparedEnrolment
             | PreparedContactProof
+            | PreparedCredentialChangeAudit
             | PreparedContainment
             | None
         ] = ContextVar("credential_governance", default=None)
@@ -340,6 +395,7 @@ class CredentialAudit:
         | _ApprovalContext
         | PreparedEnrolment
         | PreparedContactProof
+        | PreparedCredentialChangeAudit
         | PreparedContainment
         | None,
     ) -> Iterator[None]:
@@ -482,6 +538,32 @@ class CredentialAudit:
             self, current, await self._view(current.team_id), row["enrolment_id"], row["subject"]
         )
 
+    async def prepare_credential_change(
+        self,
+        scope: str,
+        *,
+        role_holds: Callable[[TransactionManager], Awaitable[None]] | None = None,
+    ) -> PreparedCredentialChangeAudit:
+        """The fence of one scope's credential change, resolved and refreshed
+        before any lock: the scope's installation, admitted now, and its
+        registration view. `role_holds` takes the app's role and holding locks."""
+        try:
+            async with self.db.transaction() as tx:
+                resolved = await self._contexts(scope, tx=tx)
+            current = (await self.fence.permit(resolved.team_id)).admitted
+        except (ProofContextUnavailable, InstallationRefused):
+            raise CredentialChangeRefused("completion_authority_unavailable") from None
+        if resolved.fields() != {
+            "app_id": current.app_id,
+            "team_id": current.team_id,
+            "installation_id": current.installation_id,
+            "generation": current.generation,
+        }:
+            raise CredentialChangeRefused("completion_authority_unavailable")
+        return PreparedCredentialChangeAudit(
+            self, current, await self._view(current.team_id), scope, role_holds
+        )
+
     async def prepare_contact_proof(self, token: str) -> PreparedContactProof:
         row = await self.db.fetch_one(
             "SELECT * FROM {{tables.credential_contact_candidates}} WHERE verifier_sha256=$1",
@@ -531,6 +613,8 @@ class CredentialAudit:
             await self._contact_scheduled(event, tx)
         elif event.kind is AuditKind.APPROVER_CONTACT_PROVEN:
             await self._contact_proven(event, tx)
+        elif event.kind in {AuditKind.APPROVER_PASSKEY_ADDED, AuditKind.APPROVER_PASSKEY_REPLACED}:
+            await self._credential_changed(event, tx)
         elif event.kind in {AuditKind.APPROVER_RETIRED, AuditKind.APPROVER_PASSKEY_REVOKED}:
             from aweb_naapp.runtime.credential_audit.narrowing import record_narrowing
 
@@ -1093,6 +1177,142 @@ class CredentialAudit:
             approval_evidence_sha256=row["commitment"],
         )
         await self._enqueue(tx, context.admitted, payload, _SYSTEM, event.occurred_at, context.view)
+
+    async def _credential_changed(self, event: AuditEvent, tx: TransactionManager) -> None:
+        """A holding's own credential change, recorded under the retained
+        proof of the current credential's assertion that approved it, bound to
+        the exact credential rows this transaction wrote."""
+        context = self._prepared.get()
+        scope = event.details.get("scope")
+        evidence_ref = event.details.get("evidence_ref")
+        if (
+            not isinstance(context, PreparedCredentialChangeAudit)
+            or context._tx is not tx
+            or context._event is not None
+            or scope != context.scope
+            or not isinstance(evidence_ref, str)
+        ):
+            raise GovernanceUnavailable()
+        try:
+            credential_id = base64url_to_bytes(event.details["credential_id"])
+        except (KeyError, TypeError, ValueError):
+            raise GovernanceUnavailable() from None
+        txid = await tx.fetch_value("SELECT txid_current()")
+        added = await tx.fetch_one(
+            "SELECT * FROM {{tables.passkey_credentials}} WHERE credential_id = $1", credential_id
+        )
+        # The credential this very transaction added, by this evidence, once.
+        if (
+            added is None
+            or added["subject"] != event.subject
+            or added["added_by_evidence"] != evidence_ref
+            or added["added_in"] != txid
+            or added["revoked_at"] is not None
+            or (added["replaced_credential_id"] is None)
+            != (event.kind is AuditKind.APPROVER_PASSKEY_ADDED)
+        ):
+            raise GovernanceUnavailable()
+        # The scope's approver is current, and in effect.
+        if not await tx.fetch_value(
+            "SELECT 1 FROM {{tables.passkey_approvers}} WHERE subject = $1 AND scope = $2 "
+            "AND superseded_at IS NULL AND effective_at <= $3",
+            event.subject,
+            scope,
+            event.occurred_at,
+        ):
+            raise GovernanceUnavailable()
+        passkeys = self._passkeys()
+        admitted = context.admitted
+        try:
+            proof = await passkeys.retained_proof(evidence_ref, tx=tx)
+            commitment = await passkeys.evidence_commitment(
+                evidence_ref,
+                context=PasskeyInstallationContext(
+                    admitted.app_id, admitted.team_id, admitted.installation_id, admitted.generation
+                ),
+                scope=scope,
+                subject=event.subject,
+                purpose="credential_change",
+                tx=tx,
+            )
+        except PasskeyProofUnavailable:
+            raise GovernanceUnavailable() from None
+        # The assertion answered the challenge this row records, and spent it.
+        if proof.expected_challenge != bytes(
+            added["added_by_challenge"]
+        ) or not await tx.fetch_value(
+            "SELECT 1 FROM {{tables.passkey_challenges}} WHERE challenge = $1 "
+            "AND purpose = 'credential_change' AND used_at IS NOT NULL",
+            added["added_by_challenge"],
+        ):
+            raise GovernanceUnavailable()
+        # The digests the approval signed are those of the stored credentials,
+        # at their effective relying party.
+        fields = json.loads(proof.challenge_preimage.split(b"\n", 1)[1])
+        rp_id = passkeys.rp.rp_id
+        if HumanCredential(
+            credential_id, bytes(added["public_key"]), added["rp_id"] or rp_id
+        ).sha256 != fields.get("credential_sha256"):
+            raise GovernanceUnavailable()
+        retired_id = added["replaced_credential_id"]
+        if retired_id is not None:
+            retired = await tx.fetch_one(
+                "SELECT * FROM {{tables.passkey_credentials}} WHERE credential_id = $1", retired_id
+            )
+            if (
+                retired is None
+                or retired["subject"] != event.subject
+                or retired["revoked_in"] != txid
+                or HumanCredential(
+                    bytes(retired_id), bytes(retired["public_key"]), retired["rp_id"] or rp_id
+                ).sha256
+                != fields.get("retire_credential_sha256")
+            ):
+                raise GovernanceUnavailable()
+        role = await self._role(tx, scope, admitted)
+        credential_ref = _new_credential_ref()
+        await tx.execute(
+            "INSERT INTO {{tables.credential_added_keys}} (credential_id,subject,scope,app_id,"
+            "team_id,installation_id,generation,credential_ref,evidence_ref,commitment,"
+            "retained_proof,created_at) VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11::jsonb,$12)",
+            credential_id,
+            event.subject,
+            scope,
+            admitted.app_id,
+            admitted.team_id,
+            admitted.installation_id,
+            admitted.generation,
+            credential_ref,
+            evidence_ref,
+            commitment,
+            json.dumps(proof.export()),
+            event.occurred_at,
+        )
+        context._event = event
+        authority = {"authority": "passkey_session", "approval_evidence_sha256": commitment}
+        enrolled = dict(
+            act="credential.enrolled",
+            direction="widening",
+            subject_ref=event.subject,
+            role=role,
+            resource_type="passkey",
+            resource_ref=credential_ref,
+            **authority,
+        )
+        await self._enqueue(tx, admitted, enrolled, _SYSTEM, event.occurred_at, context.view)
+        if retired_id is not None:
+            from aweb_naapp.runtime.credential_audit.narrowing import key_ref
+
+            revoked = dict(
+                act="credential.revoked",
+                direction="narrowing",
+                subject_ref=event.subject,
+                role=role,
+                resource_type="passkey",
+                resource_ref=await key_ref(tx, event.subject, bytes(retired_id)),
+                **authority,
+            )
+            await self._enqueue(tx, admitted, revoked, _SYSTEM, event.occurred_at, None)
 
     async def _enqueue(
         self, tx, admitted, payload, actor, occurred_at, view, *, signed_trace_id=None
