@@ -230,7 +230,7 @@ def _policy(scope: str, *, allow_requester_approval: bool = True) -> ActionPolic
     )
 
 
-async def _enrol(world: World, contact: str) -> None:
+async def _enrol(world: World, contact: str) -> SoftAuthenticator:
     token = world.contacts.inbox[contact][-1]
     device = SoftAuthenticator(ORIGIN)
     prepared = await world.credential_audit.prepare_enrolment(token)
@@ -238,6 +238,7 @@ async def _enrol(world: World, contact: str) -> None:
         await world.passkeys.complete_enrolment(
             token, device.create(await world.passkeys.enrolment_options(token)), fence=prepared
         )
+    return device
 
 
 async def test_the_team_owner_act_makes_the_first_owner(world: World) -> None:
