@@ -101,7 +101,13 @@ http = ProtectedOperationsHTTP(
 `authenticate_prepare(request, operation)` returns an authenticated
 `RestrictedRequester` for the exact proposed context.
 `authenticate_receipt(request, operation_id)` returns a `ReceiptReader` for the
-original authorized scope. The callback resolves trusted current profile/scope,
+original authorized scope. Before authenticating, it may call
+`await signer.lookup_context(operation_id)` to obtain the exact retained
+`ProtectedKeyContext` (or None). This is internal routing metadata only: no
+result/credential/link, no current authority, and no actor-free HTTP endpoint.
+It must never reconstruct scope from an account default. After authentication,
+`receipt()` reads again and authorizes under operation/authority locks.
+The callback resolves trusted current profile/scope,
 uses `.4`'s `awid.protected_request.verify_protected_request` for possession
 proofs (or the explicitly supported team-auth/hosted restricted lane), and
 checks current key/association. It never derives authority merely from the
@@ -109,6 +115,11 @@ operation ID, a cookie or JSON scope. The service independently enforces
 current authority and original requester binding after authentication.
 Do not mount it on an unconfigured origin; forwarded headers do not select it.
 The factory rejects a protected mount with a different database or B3 instance.
+A standalone composition applies `apply_console_migrations(db)` before serving
+the existing LoginLimiter; no installation or app holding is fabricated.
+Protected requests always use bucket `protected.operations.client`, independent
+of `console.login.client` even when they share a limiter and client identity.
+Polling cannot spend the human login budget.
 
 POST `/protected-operations` takes the operation's `intent()` fields and an
 optional `redirect_uri`. The callback is validated by the existing literal

@@ -36,6 +36,7 @@ from .types import (
     ControllerCustody,
     OperationReceipt,
     PreparedOperation,
+    ProtectedKeyContext,
     ReceiptReader,
     RestrictedRequester,
     RevokeHumanRole,
@@ -105,12 +106,32 @@ class ProtectedSigner:
             module_name="aweb_naapp_protected_signer",
         ).apply_pending_migrations()
 
-    async def _lock(self, tx, operation_id):
+    @staticmethod
+    def _operation_id(operation_id):
         try:
             if str(uuid.UUID(operation_id)) != operation_id:
                 raise ValueError()
         except (ValueError, TypeError, AttributeError):
             raise SignerRefused("request_invalid") from None
+        return operation_id
+
+    async def lookup_context(self, operation_id: str) -> ProtectedKeyContext | None:
+        """Internal authentication routing metadata; never a receipt or authority.
+
+        No result, credential or candidate link is returned. Adapters use the
+        exact retained context to authenticate their actual caller, then call
+        receipt(), which reauthorizes under operation/authority locks. Do not
+        expose this actor-free metadata helper as an HTTP endpoint. None is
+        absence in this read, never proof that a request did not commit.
+        """
+        row = await self.db.fetch_one(
+            "SELECT request FROM {{tables.protected_signer_operations}} WHERE operation_id=$1",
+            self._operation_id(operation_id),
+        )
+        return self._operation(_json(row["request"])).context if row is not None else None
+
+    async def _lock(self, tx, operation_id):
+        operation_id = self._operation_id(operation_id)
         key = int.from_bytes(
             hashlib.sha256(b"aweb.protected-operation-lock/1\n" + operation_id.encode()).digest()[
                 :8

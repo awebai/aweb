@@ -108,12 +108,26 @@ def _http(error: Exception) -> HTTPException:
         code = {401: "requester_invalid", 403: "scope_refused", 503: "receipt_unavailable"}.get(
             error.status_code
         )
-        return HTTPException(error.status_code if code else 503, code or "receipt_unavailable")
+        if code:
+            return HTTPException(error.status_code, code)
+        if 400 <= error.status_code < 500:
+            return HTTPException(401, "requester_invalid")
+        return HTTPException(503, "receipt_unavailable")
     if isinstance(error, SignerRefused):
-        status = {"scope_refused": 403, "operation_not_found": 404, "operation_conflict": 409}.get(
-            error.code, 400
-        )
-        return HTTPException(status, error.code)
+        status, code = {
+            "request_invalid": (400, "request_invalid"),
+            "redirect_uri_refused": (400, "redirect_uri_refused"),
+            "operation_refused": (400, "operation_refused"),
+            "requester_invalid": (401, "requester_invalid"),
+            "scope_refused": (403, "scope_refused"),
+            "authority_changed": (403, "authority_changed"),
+            "policy_changed": (403, "policy_changed"),
+            "operation_not_found": (404, "operation_not_found"),
+            "operation_conflict": (409, "operation_conflict"),
+            "evidence_unavailable": (503, "receipt_unavailable"),
+            "receipt_unavailable": (503, "receipt_unavailable"),
+        }.get(error.code, (403, "operation_refused"))
+        return HTTPException(status, code)
     if isinstance(error, (Refused, RequestNotCanonical)):
         return HTTPException(400, "request_invalid")
     if isinstance(error, ApprovalRefused):
@@ -145,7 +159,9 @@ class ProtectedOperationsHTTP:
         self.hosts = _origin_hosts(request_origin)
 
     async def _guard(self, request: Request) -> None:
-        await self.limiter.admit(request, "protected-operations")
+        await self.limiter.admit(
+            request, "protected-operations", bucket="protected.operations.client"
+        )
         if _host(request.scope) not in self.hosts:
             raise HTTPException(403, "scope_refused")
         if request.headers.get("cookie") or any(
@@ -164,10 +180,10 @@ class ProtectedOperationsHTTP:
                 raw = bytearray()
                 async for chunk in request.stream():
                     raw.extend(chunk)
-                    if len(raw) > 1024 * 1024:
+                    if len(raw) > 64 * 1024:
                         raise SignerRefused("request_invalid")
-                # Keep Starlette's exact cached bytes for the existing covering
-                # parser; do not reserialize the authenticated HTTP body.
+                # Starlette Request.body() uses _body as its cache. The real
+                # covering-verifier route test pins these exact cached bytes.
                 request._body = bytes(raw)
                 operation = parse_operation(parse_request_json(bytes(raw)))
                 requester = await self.requester(request, operation)
