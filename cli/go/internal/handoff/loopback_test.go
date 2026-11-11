@@ -121,3 +121,28 @@ func TestACallbackBeforeTheHandoffIsKnownYieldsNothing(t *testing.T) {
 		}
 	}
 }
+
+func TestAWakeCallbackCarriesOnlyTheHandoffID(t *testing.T) {
+	l, err := ListenWake()
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer l.Close()
+	l.Expect("h1")
+	for name, query := range map[string]string{
+		"a code":             "handoff_id=h1&code=" + testCode,
+		"another handoff":    "handoff_id=h2",
+		"an extra param":     "handoff_id=h1&state=x",
+		"a repeated handoff": "handoff_id=h1&handoff_id=h1",
+	} {
+		if status := get(t, callback(l, query)); status != http.StatusNotFound {
+			t.Errorf("%s: status %d", name, status)
+		}
+	}
+	if status := get(t, callback(l, "handoff_id=h1")); status != http.StatusOK {
+		t.Fatalf("wake: status %d", status)
+	}
+	if _, err := l.Wait(context.Background(), time.Now().Add(time.Minute)); err != nil {
+		t.Fatal(err)
+	}
+}
