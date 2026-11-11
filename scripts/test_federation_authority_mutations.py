@@ -459,25 +459,25 @@ def main() -> None:
         )
         federation_route.write_text(original_federation_route, encoding="utf-8")
 
-        mcp_mail = checkout / "server" / "src" / "aweb" / "mcp" / "tools" / "mail.py"
-        original_mcp_mail = mcp_mail.read_text(encoding="utf-8")
+        mail_send = checkout / "server" / "src" / "aweb" / "messaging" / "mail_send.py"
+        original_mail_send = mail_send.read_text(encoding="utf-8")
         replace_exact(
-            mcp_mail,
-            """                    resolved = await federation_authority.resolve_contact(
-                        recipient_ref,
-                        source_ip="mcp:" + str(auth.did_key or auth.did_aw or "unknown"),
-                    )
+            mail_send,
+            """                resolved = await strict_authority.resolve_contact(
+                    address,
+                    source_ip=source,
+                )
 """,
-            """                    resolved = await registry_client.resolve_address(
-                        domain, name, did_key=auth.did_key
-                    )
+            """                resolved = await registry_client.resolve_address(
+                    domain, name, did_key=auth.did_key
+                )
 """,
         )
         require_killed(
             run_server_tests(checkout, activation_nodes[7]),
             "test_mcp_cross_registry_uses_production_strict_authority_not_home_registry",
         )
-        mcp_mail.write_text(original_mcp_mail, encoding="utf-8")
+        mail_send.write_text(original_mail_send, encoding="utf-8")
 
         mcp_chat = checkout / "server" / "src" / "aweb" / "mcp" / "tools" / "chat.py"
         original_mcp_chat = mcp_chat.read_text(encoding="utf-8")
@@ -565,7 +565,6 @@ def main() -> None:
             "test_contact_reassignment_requires_signed_explicit_acceptance",
         )
 
-        mail_send = checkout / "server" / "src" / "aweb" / "messaging" / "mail_send.py"
         replace_exact(
             mail_send,
             '                    "current_did_key": sender_current_did,\n',
