@@ -19,7 +19,6 @@ from fastapi import HTTPException
 from awid.federation_errors import FederationAuthorityError
 from aweb.messaging.chat import (
     HANG_ON_EXTENSION_SECONDS,
-    find_session_between,
     get_message_history,
     get_pending_conversations,
     mark_messages_read,
@@ -52,11 +51,11 @@ from aweb.mcp.tools.federation import (
     mcp_messaging_auth,
     mcp_messaging_runtime,
 )
-from aweb.mcp.tools.refusals import send_refusal
+from aweb.mcp.tools.refusals import CONVERSATION_CHANGED_DURING_SEND, send_refusal
 from aweb.messaging.chat_send import (
     SENDER_NOT_IN_SESSION,
+    ChatSessionChanged,
     _resolve_actor_agent,
-    _target_did,
     resolve_chat_targets,
     send_chat,
 )
@@ -67,6 +66,8 @@ from aweb.routes.chat import (
 from aweb.service_errors import ServiceError
 
 MAX_TOTAL_WAIT_SECONDS = 600
+# How many times a send signs for the pair's session before it gives up.
+SESSION_ATTEMPTS = 3
 
 
 def _actor_dids() -> list[str]:
@@ -411,115 +412,122 @@ async def chat_send(
     source = "mcp:" + str(auth.did_key or auth.did_aw or "unknown")
     address_ref = to_address.strip()
     named_alias = ""
-    shared_session_id = None
-    try:
-        if not session_id:
-            # The tool's arguments are not an HTTP request body: they select the
-            # recipient as given, without the request model's field validators.
-            if to_alias:
-                if auth.team_id is None:
-                    return json.dumps({"error": "to_alias requires team context"})
-                named_alias = to_alias.strip()
-                selector = CreateSessionRequest.model_construct(to_aliases=[named_alias])
-            elif to_did:
-                selector = CreateSessionRequest.model_construct(to_dids=[to_did.strip()])
+    selector = None
+    if not session_id:
+        # The tool's arguments are not an HTTP request body: they select the
+        # recipient as given, without the request model's field validators.
+        if to_alias:
+            if auth.team_id is None:
+                return json.dumps({"error": "to_alias requires team context"})
+            named_alias = to_alias.strip()
+            selector = CreateSessionRequest.model_construct(to_aliases=[named_alias])
+        elif to_did:
+            selector = CreateSessionRequest.model_construct(to_dids=[to_did.strip()])
+        else:
+            if "/" not in address_ref:
+                return json.dumps({"error": "to_address must be domain/name"})
+            selector = CreateSessionRequest.model_construct(to_addresses=[address_ref])
+    else:
+        try:
+            UUID(session_id.strip())
+        except Exception:
+            return json.dumps({"error": "Invalid session_id format"})
+
+    # A send that names its recipient goes to the session the two share, or
+    # creates one. The send chooses under the pair's lock; when the session
+    # the fields were signed for is not the one it finds, nothing is stored
+    # and the fields are resolved and signed again.
+    for _ in range(SESSION_ATTEMPTS):
+        try:
+            if selector is not None:
+                target = await resolve_chat_targets(
+                    db_infra, sender, selector, runtime, source, reuse_or_create=True,
+                )
             else:
-                if "/" not in address_ref:
-                    return json.dumps({"error": "to_address must be domain/name"})
-                selector = CreateSessionRequest.model_construct(to_addresses=[address_ref])
-            target = await resolve_chat_targets(db_infra, sender, selector, runtime, source)
-            shared_session_id = await find_session_between(
-                db_infra, did_a=actor_did, did_b=_target_did(target.recipients[0]),
-            )
-            if hang_on and shared_session_id is not None:
-                # A message asking its recipients to hang on is a message in
-                # the session they are waiting in.
-                target = await resolve_chat_targets(db_infra, sender, str(shared_session_id), runtime, source)
+                target = await resolve_chat_targets(db_infra, sender, session_id, runtime, source)
+        except (HTTPException, FederationAuthorityError, ServiceError) as exc:
+            return _send_refusal(exc, address=address_ref)
+
+        recipient_rows = target.recipients
+        continues_session = target.session_id is not None
+        federated = any(row.get("external") or row.get("delivery_origin") for row in recipient_rows)
+        sid = target.session_id or target.shared_session_id or uuid_mod.uuid4()
+        # sender_attested_at is signed sender intent; send_in_session assigns
+        # independent server receipt time for ordering, so they may disagree.
+        sender_attested_at = datetime.now(timezone.utc).replace(microsecond=0)
+        pre_message_id = uuid_mod.uuid4()
+        signed_fields = _signed_chat_fields(
+            auth,
+            signed_from=sender_address if federated and sender_address else _signed_from(auth),
+            recipient_rows=recipient_rows,
+            named_alias=named_alias,
+            message=message,
+            message_id=str(pre_message_id),
+            conversation_id=str(sid),
+            timestamp=_signed_timestamp(sender_attested_at),
+            wait_seconds=wait_seconds if wait else None,
+            hang_on=hang_on,
+            leaving=leaving,
+        )
+        signed = None
+        encrypted = None
+        if auth.trusted_proxy and not plaintext:
+            try:
+                encrypted = await encrypt_hosted_message(
+                    auth=auth,
+                    encryptor=hosted_encryptor,
+                    message_type="chat",
+                    payload=signed_fields,
+                    recipients=[_chat_recipient_for_encryptor(row) for row in recipient_rows],
+                )
+            except HostedMessageEncryptionError as exc:
+                return json.dumps({"error": str(exc)})
         else:
             try:
-                UUID(session_id.strip())
-            except Exception:
-                return json.dumps({"error": "Invalid session_id format"})
-            target = await resolve_chat_targets(db_infra, sender, session_id, runtime, source)
-    except (HTTPException, FederationAuthorityError, ServiceError) as exc:
-        return _send_refusal(exc, address=address_ref)
+                signed = await sign_hosted_message(
+                    auth=auth,
+                    signer=hosted_signer,
+                    message_type="chat",
+                    payload=signed_fields,
+                )
+            except HostedMessageSigningError as exc:
+                return json.dumps({"error": str(exc)})
 
-    recipient_rows = target.recipients
-    continues_session = target.session_id is not None
-    federated = any(row.get("external") or row.get("delivery_origin") for row in recipient_rows)
-    sid = target.session_id or shared_session_id or uuid_mod.uuid4()
-    # sender_attested_at is signed sender intent; send_in_session assigns
-    # independent server receipt time for ordering, so they may disagree.
-    sender_attested_at = datetime.now(timezone.utc).replace(microsecond=0)
-    pre_message_id = uuid_mod.uuid4()
-    signed_fields = _signed_chat_fields(
-        auth,
-        signed_from=sender_address if federated and sender_address else _signed_from(auth),
-        recipient_rows=recipient_rows,
-        named_alias="" if continues_session else named_alias,
-        message=message,
-        message_id=str(pre_message_id),
-        conversation_id=str(sid),
-        timestamp=_signed_timestamp(sender_attested_at),
-        # A message in a session can ask its recipients to hang on; the wait
-        # its sender starts is recorded when a send names its recipients.
-        wait_seconds=wait_seconds if wait and not continues_session else None,
-        hang_on=hang_on and continues_session,
-        leaving=leaving,
-    )
-    signed = None
-    encrypted = None
-    if auth.trusted_proxy and not plaintext:
-        try:
-            encrypted = await encrypt_hosted_message(
-                auth=auth,
-                encryptor=hosted_encryptor,
-                message_type="chat",
-                payload=signed_fields,
-                recipients=[_chat_recipient_for_encryptor(row) for row in recipient_rows],
-            )
-        except HostedMessageEncryptionError as exc:
-            return json.dumps({"error": str(exc)})
-    else:
-        try:
-            signed = await sign_hosted_message(
-                auth=auth,
-                signer=hosted_signer,
-                message_type="chat",
-                payload=signed_fields,
-            )
-        except HostedMessageSigningError as exc:
-            return json.dumps({"error": str(exc)})
-
-    sent_fields = dict(
-        content_mode=encrypted.content_mode if encrypted is not None else "legacy_plaintext_v1",
-        message_version=encrypted.message_version if encrypted is not None else 1,
-        encrypted_envelope=encrypted.encrypted_envelope if encrypted is not None else None,
-        leaving=leaving,
-        message_id=str(pre_message_id),
-        timestamp=_signed_timestamp(sender_attested_at),
-        from_did=signed.from_did if signed else (auth.did_key or "").strip() or None,
-        signature=signed.signature if signed else None,
-        signed_payload=signed.signed_payload if signed else None,
-    )
-    if continues_session:
-        payload = ChatSendMessageRequest.model_construct(
-            body="" if encrypted is not None else message, hang_on=hang_on, **sent_fields,
-        )
-    else:
-        payload = selector.model_copy(update=dict(
-            session_id=str(sid),
-            message="" if encrypted is not None else message,
+        sent_fields = dict(
+            hang_on=hang_on,
             wait_seconds=wait_seconds if wait else None,
-            **sent_fields,
-        ))
-    try:
-        sent = await send_chat(db_infra, sender, target, payload, runtime)
-    except Exception as exc:
-        if continues_session and getattr(exc, "detail", None) == SENDER_NOT_IN_SESSION:
-            # A caller who is not in the session is answered as for a session that does not exist.
-            return json.dumps({"error": "Session not found"})
-        return _send_refusal(exc, address=address_ref, hosted_envelope=encrypted is not None)
+            content_mode=encrypted.content_mode if encrypted is not None else "legacy_plaintext_v1",
+            message_version=encrypted.message_version if encrypted is not None else 1,
+            encrypted_envelope=encrypted.encrypted_envelope if encrypted is not None else None,
+            leaving=leaving,
+            message_id=str(pre_message_id),
+            timestamp=_signed_timestamp(sender_attested_at),
+            from_did=signed.from_did if signed else (auth.did_key or "").strip() or None,
+            signature=signed.signature if signed else None,
+            signed_payload=signed.signed_payload if signed else None,
+        )
+        if continues_session:
+            payload = ChatSendMessageRequest.model_construct(
+                body="" if encrypted is not None else message, **sent_fields,
+            )
+        else:
+            payload = selector.model_copy(update=dict(
+                session_id=str(sid),
+                message="" if encrypted is not None else message,
+                **sent_fields,
+            ))
+        try:
+            sent = await send_chat(db_infra, sender, target, payload, runtime)
+        except ChatSessionChanged:
+            continue
+        except Exception as exc:
+            if continues_session and getattr(exc, "detail", None) == SENDER_NOT_IN_SESSION:
+                # A caller who is not in the session is answered as for a session that does not exist.
+                return json.dumps({"error": "Session not found"})
+            return _send_refusal(exc, address=address_ref, hosted_envelope=encrypted is not None)
+        break
+    else:
+        return json.dumps({"error": CONVERSATION_CHANGED_DURING_SEND})
     msg = sent.message
 
     result: dict = {

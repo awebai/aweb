@@ -35,6 +35,9 @@ RECIPIENT_UNREACHABLE_IN_CONVERSATION = (
     "this recipient can no longer be reached in this conversation; "
     "start a new conversation with them by alias or address"
 )
+CONVERSATION_CHANGED_DURING_SEND = (
+    "this conversation changed while the message was being sent; send it again"
+)
 
 # What a hosted sender does next when the custody check refuses its envelope.
 # The sender of a hosted envelope holds a hosted key, so the check refused

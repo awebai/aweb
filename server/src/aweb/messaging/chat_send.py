@@ -17,6 +17,7 @@ from fastapi import HTTPException
 from awid.federation_errors import FederationAuthorityError
 from aweb.agent_wake import agent_wake_scope
 from aweb.attachment_service import attachment_retry, refuse_remote_attachments
+from aweb.db import TransactionInfra
 from aweb.awid_error_handling import (
     AWID_DEPENDENCY_ERRORS,
     awid_dependency_http_exception,
@@ -85,6 +86,13 @@ if TYPE_CHECKING:
     from aweb.routes.chat import CreateSessionRequest, SendMessageRequest
 
 logger = logging.getLogger(__name__)
+
+class ChatSessionChanged(Exception):
+    """The session two identities share is not the one a reuse-or-create target was resolved with.
+
+    Nothing was stored or closed: the caller resolves again and sends again.
+    """
+
 
 # What a send answers when the sender is not a participant of the session it wrote to.
 SENDER_NOT_IN_SESSION = "Failed to send message"
@@ -239,8 +247,7 @@ def _chat_payload_leaving(payload: CreateSessionRequest | SendMessageRequest) ->
 
 
 def _chat_payload_hang_on(payload: CreateSessionRequest | SendMessageRequest) -> bool:
-    # Only a message in a session can ask its recipients to hang on.
-    return getattr(payload, "hang_on", False)
+    return payload.hang_on
 
 
 async def deliver_federated_chat(
@@ -587,6 +594,7 @@ async def _chat_create_retry(db, payload: CreateSessionRequest, *, actor_dids: l
         and row["content_mode"] == payload.content_mode
         and row["message_version"] == payload.message_version
         and bool(row["sender_leaving"]) == payload.leaving
+        and bool(row["hang_on"]) == payload.hang_on
         and (str(row["reply_to"]) if row.get("reply_to") else None) == payload.reply_to
     )
     signed = envelope if envelope is not None else json.loads(row.get("signed_payload") or "{}")
@@ -1149,12 +1157,19 @@ class ChatTarget:
     ``session_id`` and ``actor_did``, the sender's participant DID in that
     session, are set for a continuation. ``source`` keys the federation
     authority's rate bucket for the route lookups the send makes.
+
+    ``reuse_or_create`` marks a send to one recipient that goes to the session
+    the two share, or to one the send creates when they share none;
+    ``shared_session_id`` is the session they shared when the target was
+    resolved. Such a send never closes a session.
     """
 
     recipients: list[dict[str, Any]]
     source: str
     session_id: UUID | None = None
     actor_did: str = ""
+    reuse_or_create: bool = False
+    shared_session_id: UUID | None = None
 
 
 @dataclass(frozen=True)
@@ -1173,6 +1188,7 @@ class SentChat:
 
 async def resolve_chat_targets(
     db, auth: MessagingAuth, selector: CreateSessionRequest | str, runtime: MessagingRuntime, source: str,
+    *, reuse_or_create: bool = False,
 ) -> ChatTarget:
     """Resolve whom a send reaches, before any of it is stored.
 
@@ -1180,6 +1196,10 @@ async def resolve_chat_targets(
     proposes and any signature the sender made over the recipient binding. A
     session id selects the other participants of that session. ``source`` keys
     the federation authority's rate bucket for this caller.
+
+    With ``reuse_or_create`` the request names one recipient and no session:
+    the target carries the session the two share, which the sender signs, or
+    none, for which the sender proposes an id.
     """
     actor_dids = participant_dids(auth)
     actor_did = actor_dids[0] if actor_dids else ""
@@ -1206,7 +1226,17 @@ async def resolve_chat_targets(
         signed_payload=selector.signed_payload,
         signature=selector.signature,
     )
-    return ChatTarget(recipients=target_rows, source=source)
+    if not reuse_or_create:
+        return ChatTarget(recipients=target_rows, source=source)
+    if len(target_rows) != 1:
+        raise HTTPException(status_code=422, detail="A send that reuses the pair's session names one recipient")
+    try:
+        shared_session_id = await find_session_between(db, did_a=actor_did, did_b=_target_did(target_rows[0]))
+    except ConflictError as exc:
+        raise HTTPException(status_code=exc.status_code, detail=exc.detail) from exc
+    return ChatTarget(
+        recipients=target_rows, source=source, reuse_or_create=True, shared_session_id=shared_session_id,
+    )
 
 
 async def _resolve_session_target(
@@ -1364,7 +1394,17 @@ async def _send_to_named_recipients(
         return SentChat(session_id=existing_message["session_id"], message=dict(existing_message))
     validation_conversation_id = str(requested_session_id) if requested_session_id is not None else None
     signed_requested_session_id = _sender_bound_fresh_session(payload, auth, requested_session_id)
-    if len(participant_rows) == 2:
+    if target.reuse_or_create:
+        requested_session_id = await _reuse_or_create_session(
+            db,
+            team_id=auth.team_id,
+            participant_rows=participant_rows,
+            created_by=actor_alias,
+            shared_session_id=target.shared_session_id,
+            proposed_session_id=requested_session_id,
+        )
+        validation_conversation_id = str(requested_session_id)
+    elif len(participant_rows) == 2:
         try:
             existing_session_id = await find_session_between(
                 db,
@@ -1439,6 +1479,7 @@ async def _send_to_named_recipients(
                 reply_to=payload.reply_to,
                 conversation_id=str(requested_session_id),
                 sender_leaving=payload.leaving,
+                hang_on=payload.hang_on,
             )
         # payload.timestamp is sender attestation retained in signed_payload or
         # encrypted_envelope; send_in_session assigns independent server receipt
@@ -1489,6 +1530,7 @@ async def _send_to_named_recipients(
                 body=payload.message,
                 reply_to=uuid_mod.UUID(payload.reply_to) if payload.reply_to is not None else None,
                 leaving=payload.leaving,
+                hang_on=payload.hang_on,
                 signature=payload.signature,
                 signed_payload=payload.signed_payload,
                 content_mode=payload.content_mode,
@@ -1579,6 +1621,7 @@ async def _send_to_named_recipients(
             reply_to=payload.reply_to,
             conversation_id=validation_conversation_id,
             sender_leaving=payload.leaving,
+            hang_on=payload.hang_on,
         )
         # payload.timestamp is sender attestation retained in signed_payload;
         # send_in_session assigns independent server receipt time for ordering,
@@ -1610,6 +1653,7 @@ async def _send_to_named_recipients(
                 body=payload.message,
                 reply_to=uuid_mod.UUID(payload.reply_to) if payload.reply_to is not None else None,
                 leaving=payload.leaving,
+                hang_on=payload.hang_on,
                 signature=payload.signature,
                 signed_payload=payload.signed_payload,
                 content_mode=payload.content_mode,
@@ -1633,20 +1677,9 @@ async def _send_to_named_recipients(
         registry_client=registry_client,
     )
 
-    if payload.wait_seconds is not None:
-        await aweb_db.execute(
-            """
-            UPDATE {{tables.chat_sessions}}
-            SET wait_seconds = $2,
-                wait_started_at = $3,
-                wait_started_by = $4
-            WHERE session_id = $1
-            """,
-            session_id,
-            int(payload.wait_seconds),
-            msg_row["created_at"],
-            UUID(actor_agent_id) if actor_agent_id else None,
-        )
+    await _record_wait(
+        db, payload, session_id=session_id, message=msg_row, actor_agent_id=actor_agent_id,
+    )
 
     other_participants = await aweb_db.fetch_all(
         """
@@ -1724,6 +1757,7 @@ async def _send_in_continued_session(
             from_did=from_did,
             message_id=payload.message_id,
             timestamp=payload.timestamp,
+            wait_seconds=payload.wait_seconds,
             reply_to=payload.reply_to,
             conversation_id=str(session_uuid),
             sender_leaving=payload.leaving,
@@ -1821,6 +1855,10 @@ async def _send_in_continued_session(
             recipients=remote_recipients,
             registry_client=registry_client,
         )
+    else:
+        await _record_wait(
+            db, payload, session_id=session_uuid, message=msg_row, actor_agent_id=actor_agent_id,
+        )
     await _fire_chat_message_sent(
         runtime,
         auth,
@@ -1835,6 +1873,75 @@ async def _send_in_continued_session(
     )
 
     return SentChat(session_id=session_uuid, message=msg_row)
+
+
+async def _reuse_or_create_session(
+    db,
+    *,
+    team_id: str | None,
+    participant_rows: list[dict[str, Any]],
+    created_by: str,
+    shared_session_id: UUID | None,
+    proposed_session_id: UUID | None,
+) -> UUID:
+    """The session a reuse-or-create send goes to, chosen under the pair's lock.
+
+    The pair's session is looked up again under a lock that every such send
+    for the pair takes, and a session is created only inside it: two sends
+    that both found none create one session between them. The send that finds
+    the pair's session to be another than the one its target was resolved
+    with, or than the one its message names, raises ``ChatSessionChanged``.
+    """
+    did_a, did_b = participant_rows[0]["did"], participant_rows[1]["did"]
+    async with db.get_manager("aweb").transaction() as tx:
+        await tx.execute(
+            "SELECT pg_advisory_xact_lock(hashtextextended($1, 0))",
+            "chat-pair:" + "\n".join(sorted((did_a, did_b))),
+        )
+        locked_db = TransactionInfra(db, tx)
+        try:
+            current = await find_session_between(locked_db, did_a=did_a, did_b=did_b)
+        except ConflictError as exc:
+            raise HTTPException(status_code=exc.status_code, detail=exc.detail) from exc
+        if current != shared_session_id or proposed_session_id is None or (
+            current is not None and current != proposed_session_id
+        ):
+            raise ChatSessionChanged()
+        if current is not None:
+            return current
+        return await ensure_session(
+            locked_db,
+            team_id=team_id,
+            participant_rows=participant_rows,
+            created_by=created_by,
+            session_id=proposed_session_id,
+        )
+
+
+async def _record_wait(
+    db,
+    payload: CreateSessionRequest | SendMessageRequest,
+    *,
+    session_id: UUID,
+    message: dict[str, Any],
+    actor_agent_id: str | None,
+) -> None:
+    """Record on the session the wait its sender starts with this message."""
+    if payload.wait_seconds is None:
+        return
+    await db.get_manager("aweb").execute(
+        """
+        UPDATE {{tables.chat_sessions}}
+        SET wait_seconds = $2,
+            wait_started_at = $3,
+            wait_started_by = $4
+        WHERE session_id = $1
+        """,
+        session_id,
+        int(payload.wait_seconds),
+        message["created_at"],
+        UUID(actor_agent_id) if actor_agent_id else None,
+    )
 
 
 async def _fire_chat_message_sent(

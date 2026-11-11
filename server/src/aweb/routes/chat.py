@@ -174,6 +174,7 @@ class CreateSessionRequest(BaseModel):
     message_version: int = 1
     encrypted_envelope: dict[str, Any] | None = None
     leaving: bool = False
+    hang_on: bool = False
     wait_seconds: int | None = None
     message_id: str | None = None
     reply_to: str | None = None
