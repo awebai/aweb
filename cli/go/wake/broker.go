@@ -30,9 +30,10 @@ const (
 	// DefaultPollInterval controls broker status persistence.
 	DefaultPollInterval = 2 * time.Second
 
-	// DefaultIdleProbe is how often an instance with nothing pending is still
-	// inspected, so `stopped` is noticed without polling every instance every
-	// two seconds.
+	// Deprecated compatibility default. The broker runs no periodic inspect of
+	// an idle instance: the instance's channel-core child reports `stopped`,
+	// and its runner then marks the instance inactive. Config still accepts
+	// the field.
 	DefaultIdleProbe = 30 * time.Second
 
 	// Deprecated compatibility default. The broker does not expire
@@ -73,7 +74,7 @@ type Config struct {
 	Coalesce      time.Duration // Deprecated: ignored.
 	RateLimit     time.Duration // Deprecated: ignored.
 	PollInterval  time.Duration
-	IdleProbe     time.Duration
+	IdleProbe     time.Duration // Deprecated: ignored.
 	PendingExpiry time.Duration // Deprecated: ignored.
 	Reconcile     time.Duration
 	// StreamPolicy supplies the timer and random source of the streams'
