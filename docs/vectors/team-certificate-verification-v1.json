@@ -1,6 +1,6 @@
 {
   "version": 1,
-  "description": "Verification of one team certificate, apart from the request that carries it: the header's shape, the certificate's fields, its binding to the request's signer, its signature under the team key the registry holds, and its standing at the registry. `expected` is the verdict every verifier is to give: null for acceptance, or one of `reasons`. `today` records what each verifier named there answers now, where that differs or has not been unified: accepted, refused, or the reason it gives.",
+  "description": "Verification of one team certificate, apart from the request that carries it: the header's shape, the certificate's fields, its binding to the request's signer, its signature under the team key the registry holds, and its standing at the registry. `expected` is the verdict every verifier is to give: null for acceptance, or a `reason` from `reasons`, with the `field` a `missing_field` names. A field that is present with a value that cannot be one (an empty or numeric alias) is missing. `today` records what each verifier named there answers now, where that differs or has not been unified: accepted, refused, or the reason it gives.",
   "team_id": "backend:acme.com",
   "keys": {
     "team": {
@@ -25,7 +25,6 @@
     "unsupported_version",
     "missing_field",
     "member_key_mismatch",
-    "missing_signature",
     "bad_signature",
     "revoked",
     "unregistered"
@@ -77,7 +76,9 @@
       "registered_certificate_ids": [
         "cert-001"
       ],
-      "expected": "malformed",
+      "expected": {
+        "reason": "malformed"
+      },
       "today": {
         "awid": "malformed",
         "server": "refused"
@@ -93,7 +94,9 @@
       "registered_certificate_ids": [
         "cert-001"
       ],
-      "expected": "malformed",
+      "expected": {
+        "reason": "malformed"
+      },
       "today": {
         "awid": "malformed",
         "server": "refused"
@@ -109,7 +112,9 @@
       "registered_certificate_ids": [
         "cert-001"
       ],
-      "expected": "malformed",
+      "expected": {
+        "reason": "malformed"
+      },
       "today": {
         "awid": "malformed",
         "server": "refused"
@@ -125,7 +130,9 @@
       "registered_certificate_ids": [
         "cert-001"
       ],
-      "expected": "malformed",
+      "expected": {
+        "reason": "malformed"
+      },
       "today": {
         "awid": "malformed",
         "server": "refused"
@@ -141,7 +148,9 @@
       "registered_certificate_ids": [
         "cert-001"
       ],
-      "expected": "unsupported_version",
+      "expected": {
+        "reason": "unsupported_version"
+      },
       "today": {
         "awid": "accepted",
         "server": "refused"
@@ -157,7 +166,9 @@
       "registered_certificate_ids": [
         "cert-001"
       ],
-      "expected": "unsupported_version",
+      "expected": {
+        "reason": "unsupported_version"
+      },
       "today": {
         "awid": "accepted",
         "server": "refused"
@@ -173,7 +184,9 @@
       "registered_certificate_ids": [
         "cert-001"
       ],
-      "expected": "unsupported_version",
+      "expected": {
+        "reason": "unsupported_version"
+      },
       "today": {
         "awid": "accepted",
         "server": "accepted"
@@ -189,7 +202,10 @@
       "registered_certificate_ids": [
         "cert-001"
       ],
-      "expected": "unsupported_version",
+      "expected": {
+        "reason": "missing_field",
+        "field": "version"
+      },
       "today": {
         "awid": "accepted",
         "server": "refused"
@@ -205,7 +221,10 @@
       "registered_certificate_ids": [
         "cert-001"
       ],
-      "expected": "missing_field",
+      "expected": {
+        "reason": "missing_field",
+        "field": "alias"
+      },
       "today": {
         "awid": "accepted",
         "server": "accepted"
@@ -221,7 +240,10 @@
       "registered_certificate_ids": [
         "cert-001"
       ],
-      "expected": "missing_field",
+      "expected": {
+        "reason": "missing_field",
+        "field": "alias"
+      },
       "today": {
         "awid": "accepted",
         "server": "accepted"
@@ -237,7 +259,10 @@
       "registered_certificate_ids": [
         "cert-001"
       ],
-      "expected": "missing_field",
+      "expected": {
+        "reason": "missing_field",
+        "field": "alias"
+      },
       "today": {
         "awid": "accepted",
         "server": "accepted"
@@ -253,7 +278,10 @@
       "registered_certificate_ids": [
         "cert-001"
       ],
-      "expected": "missing_field",
+      "expected": {
+        "reason": "missing_field",
+        "field": "certificate_id"
+      },
       "today": {
         "awid": "accepted",
         "server": "refused"
@@ -269,7 +297,10 @@
       "registered_certificate_ids": [
         "cert-001"
       ],
-      "expected": "missing_field",
+      "expected": {
+        "reason": "missing_field",
+        "field": "team_id"
+      },
       "today": {
         "awid": "accepted",
         "server": "refused"
@@ -285,7 +316,10 @@
       "registered_certificate_ids": [
         "cert-001"
       ],
-      "expected": "missing_field",
+      "expected": {
+        "reason": "missing_field",
+        "field": "member_did_key"
+      },
       "today": {
         "awid": "accepted",
         "server": "refused"
@@ -301,7 +335,9 @@
       "registered_certificate_ids": [
         "cert-001"
       ],
-      "expected": "member_key_mismatch",
+      "expected": {
+        "reason": "member_key_mismatch"
+      },
       "today": {
         "awid": "accepted",
         "server": "refused"
@@ -317,7 +353,10 @@
       "registered_certificate_ids": [
         "cert-001"
       ],
-      "expected": "missing_signature",
+      "expected": {
+        "reason": "missing_field",
+        "field": "signature"
+      },
       "today": {
         "awid": "missing_signature",
         "server": "refused"
@@ -333,7 +372,9 @@
       "registered_certificate_ids": [
         "cert-001"
       ],
-      "expected": "bad_signature",
+      "expected": {
+        "reason": "bad_signature"
+      },
       "today": {
         "awid": "bad_signature",
         "server": "refused"
@@ -349,7 +390,9 @@
       "registered_certificate_ids": [
         "cert-001"
       ],
-      "expected": "bad_signature",
+      "expected": {
+        "reason": "bad_signature"
+      },
       "today": {
         "awid": "bad_signature",
         "server": "refused"
@@ -367,7 +410,9 @@
       "registered_certificate_ids": [
         "cert-001"
       ],
-      "expected": "revoked",
+      "expected": {
+        "reason": "revoked"
+      },
       "today": {
         "awid": "accepted",
         "server": "refused"
@@ -383,7 +428,9 @@
       "registered_certificate_ids": [
         "cert-other"
       ],
-      "expected": "unregistered",
+      "expected": {
+        "reason": "unregistered"
+      },
       "today": {
         "awid": "accepted",
         "server": "accepted"

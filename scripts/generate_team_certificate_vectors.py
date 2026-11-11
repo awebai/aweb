@@ -22,12 +22,14 @@ VECTOR = Path(__file__).resolve().parents[1] / "docs/vectors/team-certificate-ve
 TEAM_ID = "backend:acme.com"
 
 # What a verifier answers for a certificate it refuses. `None` is acceptance.
+# `missing_field` names the field, from the certificate's own schema and never
+# from what was presented. `bad_signature` is a signature that is present and
+# does not verify under the team key the registry holds.
 REASONS = [
     "malformed",
     "unsupported_version",
     "missing_field",
     "member_key_mismatch",
-    "missing_signature",
     "bad_signature",
     "revoked",
     "unregistered",
@@ -80,7 +82,10 @@ def _unsigned() -> dict:
 
 
 def _case(name: str, about: str, header: str, expected: str | None, today: dict[str, str], **context) -> dict:
-    assert expected is None or expected in REASONS, expected
+    reason, _, field = (expected or "").partition(":")
+    assert expected is None or reason in REASONS, expected
+    assert bool(field) == (reason == "missing_field"), expected
+    verdict = None if expected is None else {"reason": reason, **({"field": field} if field else {})}
     return {
         "name": name,
         "about": about,
@@ -89,7 +94,7 @@ def _case(name: str, about: str, header: str, expected: str | None, today: dict[
         "team_did_key": context.get("team_did_key", KEYS["team"]["did_key"]),
         "revoked_certificate_ids": context.get("revoked", []),
         "registered_certificate_ids": context.get("registered", ["cert-001"]),
-        "expected": expected,
+        "expected": verdict,
         "today": today,
     }
 
@@ -122,13 +127,13 @@ def cases() -> list[dict]:
         _case("version_2", "A version this verifier does not know.", _header(_certificate(version=2)), "unsupported_version", refused("accepted", "refused")),
         _case("version_string", 'version is the string "1".', _header(_certificate(version="1")), "unsupported_version", refused("accepted", "refused")),
         _case("version_true", "version is true, which equals 1 in some languages.", _header(_certificate(version=True)), "unsupported_version", refused("accepted", "accepted")),
-        _case("version_absent", "No version.", _header(_certificate(drop=("version",))), "unsupported_version", refused("accepted", "refused")),
-        _case("alias_absent", "No alias.", _header(_certificate(drop=("alias",))), "missing_field", refused("accepted", "accepted")),
-        _case("alias_empty", "An empty alias.", _header(_certificate(alias="")), "missing_field", refused("accepted", "accepted")),
-        _case("alias_not_a_string", "alias is a number.", _header(_certificate(alias=7)), "missing_field", refused("accepted", "accepted")),
-        _case("certificate_id_absent", "No certificate_id.", _header(_certificate(drop=("certificate_id",))), "missing_field", refused("accepted", "refused")),
-        _case("team_id_absent", "No team_id.", _header(_certificate(drop=("team_id",))), "missing_field", refused("accepted", "refused")),
-        _case("member_did_key_absent", "No member_did_key.", _header(_certificate(drop=("member_did_key",))), "missing_field", refused("accepted", "refused")),
+        _case("version_absent", "No version.", _header(_certificate(drop=("version",))), "missing_field:version", refused("accepted", "refused")),
+        _case("alias_absent", "No alias.", _header(_certificate(drop=("alias",))), "missing_field:alias", refused("accepted", "accepted")),
+        _case("alias_empty", "An empty alias.", _header(_certificate(alias="")), "missing_field:alias", refused("accepted", "accepted")),
+        _case("alias_not_a_string", "alias is a number.", _header(_certificate(alias=7)), "missing_field:alias", refused("accepted", "accepted")),
+        _case("certificate_id_absent", "No certificate_id.", _header(_certificate(drop=("certificate_id",))), "missing_field:certificate_id", refused("accepted", "refused")),
+        _case("team_id_absent", "No team_id.", _header(_certificate(drop=("team_id",))), "missing_field:team_id", refused("accepted", "refused")),
+        _case("member_did_key_absent", "No member_did_key.", _header(_certificate(drop=("member_did_key",))), "missing_field:member_did_key", refused("accepted", "refused")),
         _case(
             "member_key_mismatch",
             "The request is signed by a key the certificate does not name.",
@@ -137,7 +142,7 @@ def cases() -> list[dict]:
             refused("accepted", "refused"),
             request_did_key=KEYS["another-member"]["did_key"],
         ),
-        _case("signature_absent", "No signature.", _header(_unsigned()), "missing_signature", refused("missing_signature", "refused")),
+        _case("signature_absent", "No signature.", _header(_unsigned()), "missing_field:signature", refused("missing_signature", "refused")),
         _case("signature_tampered", "A field was changed after signing.", _header(_tampered()), "bad_signature", refused("bad_signature", "refused")),
         _case(
             "signed_by_another_key",
@@ -165,7 +170,9 @@ def document() -> str:
             "Verification of one team certificate, apart from the request that carries it: the header's shape, "
             "the certificate's fields, its binding to the request's signer, its signature under the team key the "
             "registry holds, and its standing at the registry. `expected` is the verdict every verifier is to "
-            "give: null for acceptance, or one of `reasons`. `today` records what each verifier named there "
+            "give: null for acceptance, or a `reason` from `reasons`, with the `field` a `missing_field` names. "
+            "A field that is present with a value that cannot be one (an empty or numeric alias) is missing. "
+            "`today` records what each verifier named there "
             "answers now, where that differs or has not been unified: accepted, refused, or the reason it gives."
         ),
         "team_id": TEAM_ID,

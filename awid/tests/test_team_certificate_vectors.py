@@ -37,5 +37,7 @@ def test_every_case_names_a_known_verdict() -> None:
     names = [case["name"] for case in VECTORS["cases"]]
     assert len(names) == len(set(names))
     for case in VECTORS["cases"]:
-        assert case["expected"] is None or case["expected"] in VECTORS["reasons"], case["name"]
+        expected = case["expected"]
+        assert expected is None or expected["reason"] in VECTORS["reasons"], case["name"]
+        assert expected is None or ("field" in expected) == (expected["reason"] == "missing_field"), case["name"]
         assert set(case["today"]) == set(VECTORS["today_verifiers"]), case["name"]
