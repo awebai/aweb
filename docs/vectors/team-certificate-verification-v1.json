@@ -1,6 +1,6 @@
 {
   "version": 1,
-  "description": "Verification of one team certificate, apart from the request that carries it: the header's shape, the certificate's fields, its binding to the request's signer, its signature under the team key the registry holds, and its standing at the registry. `expected` is the verdict every verifier is to give: null for acceptance, or a `reason` from `reasons`, with the `field` a `missing_field` names. A field that is present with a value that cannot be one (an empty or numeric alias) is missing. `today` records what each verifier named there answers now, where that differs or has not been unified: accepted, refused, or the reason it gives.",
+  "description": "Verification of one team certificate, apart from the request that carries it: the header's shape, the certificate's fields, its binding to the request's signer, its signature under the team key the registry holds, and its standing at the registry. `expected` is the verdict every verifier is to give: null for acceptance, or a `reason` from `reasons`, with the `field` an `invalid_field` names: a required field that is absent, empty or of the wrong type. The required fields are version, certificate_id, team_id, member_did_key, alias and signature; any other member is signed with the rest and is not the verifier's to judge. `today` records what each verifier named there answers now, where that differs or has not been unified: accepted, refused, or the reason it gives.",
   "team_id": "backend:acme.com",
   "keys": {
     "team": {
@@ -23,7 +23,7 @@
   "reasons": [
     "malformed",
     "unsupported_version",
-    "missing_field",
+    "invalid_field",
     "member_key_mismatch",
     "bad_signature",
     "revoked",
@@ -60,6 +60,120 @@
       "name": "valid_issued_long_ago",
       "about": "Revocation is the only end of a certificate: none expires, and issued_at bounds nothing (docs/trust-model.md, owner decision 2026-08-17).",
       "certificate_header": "eyJ2ZXJzaW9uIjogMSwgImNlcnRpZmljYXRlX2lkIjogImNlcnQtMDAxIiwgInRlYW1faWQiOiAiYmFja2VuZDphY21lLmNvbSIsICJ0ZWFtX2RpZF9rZXkiOiAiZGlkOmtleTp6Nk1rcnNxb3BFMTV0RXhYQzE2YnpaRVc3a0o5M1p1TW16Z0FBcEhOYVFWdW1zbjYiLCAibWVtYmVyX2RpZF9rZXkiOiAiZGlkOmtleTp6Nk1ra05RcXNtODlCRm04ZE5MdWJtNjU4S2locFZ1NnhuZzZhWHhCa0ZENDZ2bWIiLCAibWVtYmVyX2RpZF9hdyI6ICIiLCAibWVtYmVyX2FkZHJlc3MiOiAiIiwgImFsaWFzIjogImFsaWNlIiwgImlkZW50aXR5X3Njb3BlIjogImdsb2JhbCIsICJpc3N1ZWRfYXQiOiAiMjAyMC0wMS0wMVQwMDowMDowMCswMDowMCIsICJzaWduYXR1cmUiOiAiTUdDOGcwR2lkRldxcjIrNUlFNnI0cktNaG9BUFN0U0NFNWk4My9LcS92UmpLZDBNenhYOUlkaTlQL3RrNjgyNzhtSStRRTZvUk1jMjJxR1FkQjJQQUEifQ==",
+      "request_did_key": "did:key:z6MkkNQqsm89BFm8dNLubm658KihpVu6xng6aXxBkFD46vmb",
+      "team_did_key": "did:key:z6MkrsqopE15tExXC16bzZEW7kJ93ZuMmzgAApHNaQVumsn6",
+      "revoked_certificate_ids": [],
+      "registered_certificate_ids": [
+        "cert-001"
+      ],
+      "expected": null,
+      "today": {
+        "awid": "accepted",
+        "server": "accepted",
+        "naapp_runtime": "accepted",
+        "library": "accepted",
+        "hooks": "accepted"
+      }
+    },
+    {
+      "name": "team_did_key_absent",
+      "about": "team_did_key is not a required field: a certificate without it is accepted.",
+      "certificate_header": "eyJ2ZXJzaW9uIjogMSwgImNlcnRpZmljYXRlX2lkIjogImNlcnQtMDAxIiwgInRlYW1faWQiOiAiYmFja2VuZDphY21lLmNvbSIsICJtZW1iZXJfZGlkX2tleSI6ICJkaWQ6a2V5Ono2TWtrTlFxc204OUJGbThkTkx1Ym02NThLaWhwVnU2eG5nNmFYeEJrRkQ0NnZtYiIsICJtZW1iZXJfZGlkX2F3IjogIiIsICJtZW1iZXJfYWRkcmVzcyI6ICIiLCAiYWxpYXMiOiAiYWxpY2UiLCAiaWRlbnRpdHlfc2NvcGUiOiAiZ2xvYmFsIiwgImlzc3VlZF9hdCI6ICIyMDI2LTExLTAxVDAwOjAwOjAwKzAwOjAwIiwgInNpZ25hdHVyZSI6ICJtT3N3WWp3cUc2THd4ZFBPL3ZQd0t5djF3K3kwckl4ZWxhQVFJcXVSZStxbWc1NSsyRnFOMXU3VVcvSFVIcHhYaUw0WlUyR0s0RnNtN3hHaHZmZUdEUSJ9",
+      "request_did_key": "did:key:z6MkkNQqsm89BFm8dNLubm658KihpVu6xng6aXxBkFD46vmb",
+      "team_did_key": "did:key:z6MkrsqopE15tExXC16bzZEW7kJ93ZuMmzgAApHNaQVumsn6",
+      "revoked_certificate_ids": [],
+      "registered_certificate_ids": [
+        "cert-001"
+      ],
+      "expected": null,
+      "today": {
+        "awid": "accepted",
+        "server": "accepted",
+        "naapp_runtime": "accepted",
+        "library": "accepted",
+        "hooks": "certificate_invalid"
+      }
+    },
+    {
+      "name": "identity_scope_absent",
+      "about": "identity_scope is not a required field: a certificate without it is accepted.",
+      "certificate_header": "eyJ2ZXJzaW9uIjogMSwgImNlcnRpZmljYXRlX2lkIjogImNlcnQtMDAxIiwgInRlYW1faWQiOiAiYmFja2VuZDphY21lLmNvbSIsICJ0ZWFtX2RpZF9rZXkiOiAiZGlkOmtleTp6Nk1rcnNxb3BFMTV0RXhYQzE2YnpaRVc3a0o5M1p1TW16Z0FBcEhOYVFWdW1zbjYiLCAibWVtYmVyX2RpZF9rZXkiOiAiZGlkOmtleTp6Nk1ra05RcXNtODlCRm04ZE5MdWJtNjU4S2locFZ1NnhuZzZhWHhCa0ZENDZ2bWIiLCAibWVtYmVyX2RpZF9hdyI6ICIiLCAibWVtYmVyX2FkZHJlc3MiOiAiIiwgImFsaWFzIjogImFsaWNlIiwgImlzc3VlZF9hdCI6ICIyMDI2LTExLTAxVDAwOjAwOjAwKzAwOjAwIiwgInNpZ25hdHVyZSI6ICJVUmwrN2tvVmNRcHgyTlhWNnNxZnBsdUpFMWxYLzFQUGFKV0NBODNQSEZNTTlxbzFzVGttaWRqRXJNUkdvNHk1WDFCSG9IWWQrS25QcDhlajhSQmhBUSJ9",
+      "request_did_key": "did:key:z6MkkNQqsm89BFm8dNLubm658KihpVu6xng6aXxBkFD46vmb",
+      "team_did_key": "did:key:z6MkrsqopE15tExXC16bzZEW7kJ93ZuMmzgAApHNaQVumsn6",
+      "revoked_certificate_ids": [],
+      "registered_certificate_ids": [
+        "cert-001"
+      ],
+      "expected": null,
+      "today": {
+        "awid": "accepted",
+        "server": "accepted",
+        "naapp_runtime": "accepted",
+        "library": "accepted",
+        "hooks": "accepted"
+      }
+    },
+    {
+      "name": "issued_at_absent",
+      "about": "issued_at is not a required field: a certificate without it is accepted.",
+      "certificate_header": "eyJ2ZXJzaW9uIjogMSwgImNlcnRpZmljYXRlX2lkIjogImNlcnQtMDAxIiwgInRlYW1faWQiOiAiYmFja2VuZDphY21lLmNvbSIsICJ0ZWFtX2RpZF9rZXkiOiAiZGlkOmtleTp6Nk1rcnNxb3BFMTV0RXhYQzE2YnpaRVc3a0o5M1p1TW16Z0FBcEhOYVFWdW1zbjYiLCAibWVtYmVyX2RpZF9rZXkiOiAiZGlkOmtleTp6Nk1ra05RcXNtODlCRm04ZE5MdWJtNjU4S2locFZ1NnhuZzZhWHhCa0ZENDZ2bWIiLCAibWVtYmVyX2RpZF9hdyI6ICIiLCAibWVtYmVyX2FkZHJlc3MiOiAiIiwgImFsaWFzIjogImFsaWNlIiwgImlkZW50aXR5X3Njb3BlIjogImdsb2JhbCIsICJzaWduYXR1cmUiOiAidTRKUzhwbkRUVER1QjhEZFM5SG9lcWN3YkZlVy8raEVaZklNQzVxMFhPeTNRVmQxeXRZVEhLekNWZG5abWxmQ2FIU0UxRmJnd3ByZ1JidzhURWswQ0EifQ==",
+      "request_did_key": "did:key:z6MkkNQqsm89BFm8dNLubm658KihpVu6xng6aXxBkFD46vmb",
+      "team_did_key": "did:key:z6MkrsqopE15tExXC16bzZEW7kJ93ZuMmzgAApHNaQVumsn6",
+      "revoked_certificate_ids": [],
+      "registered_certificate_ids": [
+        "cert-001"
+      ],
+      "expected": null,
+      "today": {
+        "awid": "accepted",
+        "server": "accepted",
+        "naapp_runtime": "accepted",
+        "library": "accepted",
+        "hooks": "accepted"
+      }
+    },
+    {
+      "name": "member_did_aw_absent",
+      "about": "member_did_aw is not a required field: a certificate without it is accepted.",
+      "certificate_header": "eyJ2ZXJzaW9uIjogMSwgImNlcnRpZmljYXRlX2lkIjogImNlcnQtMDAxIiwgInRlYW1faWQiOiAiYmFja2VuZDphY21lLmNvbSIsICJ0ZWFtX2RpZF9rZXkiOiAiZGlkOmtleTp6Nk1rcnNxb3BFMTV0RXhYQzE2YnpaRVc3a0o5M1p1TW16Z0FBcEhOYVFWdW1zbjYiLCAibWVtYmVyX2RpZF9rZXkiOiAiZGlkOmtleTp6Nk1ra05RcXNtODlCRm04ZE5MdWJtNjU4S2locFZ1NnhuZzZhWHhCa0ZENDZ2bWIiLCAibWVtYmVyX2FkZHJlc3MiOiAiIiwgImFsaWFzIjogImFsaWNlIiwgImlkZW50aXR5X3Njb3BlIjogImdsb2JhbCIsICJpc3N1ZWRfYXQiOiAiMjAyNi0xMS0wMVQwMDowMDowMCswMDowMCIsICJzaWduYXR1cmUiOiAiYmJZbUZOYjNjMFZYL2lQdE52MStSTzRURlZ6RFpoRVVFdlJFSkE3RDg3T3VKb292WjJ6RjBQZWhnbnhSWThQd1lGUFQzV1NiRDBkYlo5YmI0YjhpRGcifQ==",
+      "request_did_key": "did:key:z6MkkNQqsm89BFm8dNLubm658KihpVu6xng6aXxBkFD46vmb",
+      "team_did_key": "did:key:z6MkrsqopE15tExXC16bzZEW7kJ93ZuMmzgAApHNaQVumsn6",
+      "revoked_certificate_ids": [],
+      "registered_certificate_ids": [
+        "cert-001"
+      ],
+      "expected": null,
+      "today": {
+        "awid": "accepted",
+        "server": "accepted",
+        "naapp_runtime": "accepted",
+        "library": "accepted",
+        "hooks": "accepted"
+      }
+    },
+    {
+      "name": "member_address_absent",
+      "about": "member_address is not a required field: a certificate without it is accepted.",
+      "certificate_header": "eyJ2ZXJzaW9uIjogMSwgImNlcnRpZmljYXRlX2lkIjogImNlcnQtMDAxIiwgInRlYW1faWQiOiAiYmFja2VuZDphY21lLmNvbSIsICJ0ZWFtX2RpZF9rZXkiOiAiZGlkOmtleTp6Nk1rcnNxb3BFMTV0RXhYQzE2YnpaRVc3a0o5M1p1TW16Z0FBcEhOYVFWdW1zbjYiLCAibWVtYmVyX2RpZF9rZXkiOiAiZGlkOmtleTp6Nk1ra05RcXNtODlCRm04ZE5MdWJtNjU4S2locFZ1NnhuZzZhWHhCa0ZENDZ2bWIiLCAibWVtYmVyX2RpZF9hdyI6ICIiLCAiYWxpYXMiOiAiYWxpY2UiLCAiaWRlbnRpdHlfc2NvcGUiOiAiZ2xvYmFsIiwgImlzc3VlZF9hdCI6ICIyMDI2LTExLTAxVDAwOjAwOjAwKzAwOjAwIiwgInNpZ25hdHVyZSI6ICJraEs0QlBsN2ZXNFJmazQ1UUdzdjdIT3ArUDZTM0QvQWtvTnljOTJxdXk5ZlFqOWhEY0dGQ1NVK1ZRVENYbUhzUU00NENiSXlFN2xjMVJ0TDJ2citDQSJ9",
+      "request_did_key": "did:key:z6MkkNQqsm89BFm8dNLubm658KihpVu6xng6aXxBkFD46vmb",
+      "team_did_key": "did:key:z6MkrsqopE15tExXC16bzZEW7kJ93ZuMmzgAApHNaQVumsn6",
+      "revoked_certificate_ids": [],
+      "registered_certificate_ids": [
+        "cert-001"
+      ],
+      "expected": null,
+      "today": {
+        "awid": "accepted",
+        "server": "accepted",
+        "naapp_runtime": "accepted",
+        "library": "accepted",
+        "hooks": "accepted"
+      }
+    },
+    {
+      "name": "extra_signed_field",
+      "about": "A member the verifier does not know is signed with the rest, not injected: the certificate is accepted.",
+      "certificate_header": "eyJ2ZXJzaW9uIjogMSwgImNlcnRpZmljYXRlX2lkIjogImNlcnQtMDAxIiwgInRlYW1faWQiOiAiYmFja2VuZDphY21lLmNvbSIsICJ0ZWFtX2RpZF9rZXkiOiAiZGlkOmtleTp6Nk1rcnNxb3BFMTV0RXhYQzE2YnpaRVc3a0o5M1p1TW16Z0FBcEhOYVFWdW1zbjYiLCAibWVtYmVyX2RpZF9rZXkiOiAiZGlkOmtleTp6Nk1ra05RcXNtODlCRm04ZE5MdWJtNjU4S2locFZ1NnhuZzZhWHhCa0ZENDZ2bWIiLCAibWVtYmVyX2RpZF9hdyI6ICIiLCAibWVtYmVyX2FkZHJlc3MiOiAiIiwgImFsaWFzIjogImFsaWNlIiwgImlkZW50aXR5X3Njb3BlIjogImdsb2JhbCIsICJpc3N1ZWRfYXQiOiAiMjAyNi0xMS0wMVQwMDowMDowMCswMDowMCIsICJsaWZldGltZSI6ICJwZXJzaXN0ZW50IiwgIm5vdGUiOiAiZnJvbSBhIGxhdGVyIGlzc3VlciIsICJzaWduYXR1cmUiOiAiYVZrVGRUeHJVL2FzM0VoWklWR0JpVzhYRjBqRFArVFdNbnlWN0pKTy9Rc1ZQQS8vbW9Rb0s5MFc4alY4RGxLNmNwQjZjNllZbmU2NWpMSkF2c0JLQWcifQ==",
       "request_did_key": "did:key:z6MkkNQqsm89BFm8dNLubm658KihpVu6xng6aXxBkFD46vmb",
       "team_did_key": "did:key:z6MkrsqopE15tExXC16bzZEW7kJ93ZuMmzgAApHNaQVumsn6",
       "revoked_certificate_ids": [],
@@ -233,7 +347,7 @@
         "cert-001"
       ],
       "expected": {
-        "reason": "missing_field",
+        "reason": "invalid_field",
         "field": "version"
       },
       "today": {
@@ -255,7 +369,7 @@
         "cert-001"
       ],
       "expected": {
-        "reason": "missing_field",
+        "reason": "invalid_field",
         "field": "alias"
       },
       "today": {
@@ -277,7 +391,7 @@
         "cert-001"
       ],
       "expected": {
-        "reason": "missing_field",
+        "reason": "invalid_field",
         "field": "alias"
       },
       "today": {
@@ -299,7 +413,7 @@
         "cert-001"
       ],
       "expected": {
-        "reason": "missing_field",
+        "reason": "invalid_field",
         "field": "alias"
       },
       "today": {
@@ -321,7 +435,7 @@
         "cert-001"
       ],
       "expected": {
-        "reason": "missing_field",
+        "reason": "invalid_field",
         "field": "certificate_id"
       },
       "today": {
@@ -343,7 +457,7 @@
         "cert-001"
       ],
       "expected": {
-        "reason": "missing_field",
+        "reason": "invalid_field",
         "field": "team_id"
       },
       "today": {
@@ -365,7 +479,7 @@
         "cert-001"
       ],
       "expected": {
-        "reason": "missing_field",
+        "reason": "invalid_field",
         "field": "member_did_key"
       },
       "today": {
@@ -408,7 +522,7 @@
         "cert-001"
       ],
       "expected": {
-        "reason": "missing_field",
+        "reason": "invalid_field",
         "field": "signature"
       },
       "today": {

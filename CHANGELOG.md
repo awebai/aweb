@@ -2,6 +2,16 @@
 
 ## Unreleased
 
+- **awid-service has one check for a team certificate,
+  `awid.team_certificate.check_team_certificate`.** It takes the header, the
+  key the certificate must name, the team's current key, and the team's
+  revoked and registered certificate ids, all required, and refuses with one
+  of seven reasons: `malformed`, `unsupported_version`, `invalid_field` (with
+  the field), `member_key_mismatch`, `bad_signature`, `revoked`,
+  `unregistered`. `docs/vectors/team-certificate-verification-v1.json` holds
+  the cases it answers. No verifier calls it yet; the server, the naapp
+  runtime, the hook receiver and the library each still run their own check,
+  and the vector file records what each answers today.
 - **A customer-run aweb server can read its private team at the public
   registry without the registry-wide `AWID_SERVICE_TOKEN`.** Give the server
   an ordinary member certificate in each team it serves
