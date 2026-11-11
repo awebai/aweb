@@ -124,6 +124,74 @@ code.
 A `credential` handoff grants nothing, so for it an unknown installation or
 role is refused only later, by the page's ceremony.
 
+### 1a. A session start by the holder's direct child (proposed; acxy.1/.2/.5)
+
+Status: accepted direction (aweb 20173df8, Athena, servers, console,
+human-kind), folded into the next acxy.1 delta for one review; not frozen.
+
+A `session` start may be signed by H, as above, or by a requester Q: an agent
+whose freshly verified ID chain has H as its **direct** parent. This admits Q
+only to prepare this one session handoff. Q gets no H signing authority,
+session, holding, membership, grant or approval. Every other purpose,
+including `credential`, keeps the same-signer rule.
+
+**What Q sends:**
+
+- team-auth v2 as Q, with Q's OWN current team certificate in
+  `X-AWID-Team-Certificate`, as for any request. Q is therefore a current
+  member of the installation's team. A registered non-member laptop is refused
+  by team-auth's own admission until a separately classified possession-proof
+  surface is specified. This change adds none.
+- Q's ID chain in `X-AWID-ID-Chain`, with the existing encoding
+  (`awid.EncodeIDChainHeader`).
+- The start body as in section 1, with `scope.principal` = H and one added
+  member, `holder_certificate`: H's team certificate in the
+  `X-AWID-Team-Certificate` encoding. It is required exactly when the signer is
+  not `scope.principal`, and refused when the signer is H.
+
+**What the app checks,** before creating anything, all from current evidence:
+
+1. Q's team-auth, as today.
+2. Q's chain verifies for subject (Q's `did:aw`, the `did:key` team-auth
+   verified), with status evidence no older than the existing 60-second
+   freshness bound. The issuer of Q's own certificate (its direct parent) is
+   a human whose stable ID equals `scope.principal`, and that edge is current
+   (not revoked, current head). A deeper descendant, or a chain naming another
+   parent, does not qualify.
+3. `holder_certificate` is checked exactly as a holder's certificate is
+   today: it decodes, verifies under the team's current key, names the
+   installation's team and `member_did_aw` = H, has a published and
+   unrevoked status, and H's own kind is `human`. It is retained with the
+   session as H's membership evidence.
+4. The scope resolves to H's current holding, as today.
+
+**Refusals:**
+
+- `400 handoff_invalid`: `holder_certificate` is malformed, is absent when
+  the signer is not H, or is present when the signer is H.
+- `403 scope_not_signer`: the signer is neither H nor a verified direct child
+  of H. That covers a missing chain, another parent, a deeper descendant, and
+  a revoked or stale edge.
+- `403 principal_not_member` / `403 principal_not_human`: H's certificate
+  checks, as today.
+- `503 principal_status_unavailable`: chain or certificate status evidence
+  cannot be read. This fails closed and is retryable.
+- `403 role_not_held`, `401 console_session_required` and the rest of
+  section 1's refusals apply unchanged.
+
+**The result is unchanged.** It is released once, only to a caller holding
+the single-use code (from the loopback on the browser's own machine), the
+verifier preimage and a signature by the ephemeral key the start registered
+(section 3). The session is H's, bound to that key, and it retains
+`holder_certificate`. The handoff records Q, but only for display and audit.
+The page's state route (`GET /handoff/{id}/session`) adds
+`requester: {id, address, key_fingerprint}`, and the page shows Q separately
+from H before H's app-RP LOGIN and the explicit Allow.
+
+**aw:** a holder command run in Q's identity home takes H from Q's installed
+chain (its direct parent), shows both, and signs as Q. With no qualifying
+requester, aw refuses `requester_missing` and names the onboarding command.
+
 ## 2. The ceremony and the loopback redirect
 
 The page runs the purpose's ceremony with B3's routes, then redirects the
