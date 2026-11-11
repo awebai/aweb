@@ -312,7 +312,9 @@ async def journey(world, request, human_member_cache_seconds) -> AsyncIterator[J
 
 async def test_two_fresh_bound_sessions_share_the_same_real_b3_pair(journey):
     first_key, first = await journey.open()
-    retained = await journey.factory.check_holding_member(journey.scope)
+    retained = await journey.factory.check_holding_member(
+        journey.scope, team_id=journey.member.team_id
+    )
     assert retained.principal == journey.scope.principal
     retained.require_fresh()
     second_key, second = await journey.open()
@@ -348,7 +350,9 @@ async def test_real_role_revocation_is_final(journey):
 
 async def test_real_recovery_retires_login_before_changed_holding_digest(journey, monkeypatch):
     key, issued = await journey.open()
-    old_target = await authority(journey.world).session_target(journey.scope)
+    old_target = await authority(journey.world).session_target(
+        journey.scope, team_id=journey.member.team_id
+    )
     await _apply(
         journey.world,
         "app-credential.recover",
@@ -372,7 +376,9 @@ async def test_real_recovery_retires_login_before_changed_holding_digest(journey
     monkeypatch.setattr(
         journey.world.passkeys, "_clock", lambda: after_cooling + timedelta(seconds=1)
     )
-    fresh = await authority(journey.world).session_target(journey.scope)
+    fresh = await authority(journey.world).session_target(
+        journey.scope, team_id=journey.member.team_id
+    )
     assert owner_holding_identity(fresh) != owner_holding_identity(old_target)
     refused = await journey.request(key, issued)
     assert (refused.status_code, refused.json()["detail"]) == (401, "console_session_required")
@@ -498,3 +504,24 @@ async def test_authenticated_team_routes_ownerless_credential_collection(journey
         assert await j.world.db.fetch_value("SELECT count(*) FROM {{tables." + table + "}}") == 0
     body["purpose"] = "session"
     assert (await start()).status_code == 403
+
+
+@pytest.mark.parametrize("retained_team", [None, "other:example.com"])
+async def test_session_retains_the_start_team_and_refuses_missing_or_foreign_team(
+    journey, retained_team
+):
+    key, issued = await journey.open()
+    digest = hashlib.sha256(issued["session_id"].encode()).digest()
+    assert (
+        await journey.world.db.fetch_value(
+            "SELECT team_id FROM {{tables.console_sessions}} WHERE token_sha256=$1", digest
+        )
+        == journey.member.team_id
+    )
+    assert (await journey.request(key, issued)).status_code == 200
+    await journey.world.db.execute(
+        "UPDATE {{tables.console_sessions}} SET team_id=$2 WHERE token_sha256=$1",
+        digest,
+        retained_team,
+    )
+    assert (await journey.request(key, issued)).status_code in (401, 403)

@@ -2,6 +2,11 @@
 
 ## Unreleased
 
+- Human handoffs retain their authenticated team for credential collection and
+  console session requests. Existing key-bound console sessions without retained
+  team context are refused after migration and require signing in again; there
+  is no compatibility fallback or installation-wide team discovery.
+
 - Federated mail and chat delivery connects only to the addresses the
   recipient's delivery origin resolves to, over one address-checked transport
   shared by the HTTP routes and the MCP tools. The origin must be `https` and

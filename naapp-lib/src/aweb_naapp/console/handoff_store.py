@@ -118,7 +118,7 @@ class HandoffStore:
         start: HandoffStart,
         *,
         tx: TransactionManager | None = None,
-        team_id: str | None = None,
+        team_id: str,
     ) -> dict[str, str]:
         handoff_id = uuid4()
         expiry = await (tx or self.db).fetch_value(

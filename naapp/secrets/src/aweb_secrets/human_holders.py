@@ -148,22 +148,10 @@ class OwnerHoldingAuthority:
         )
 
     async def session_target(
-        self, public_scope: PublicScope, *, team_id: str | None = None
+        self, public_scope: PublicScope, *, team_id: str
     ) -> OwnerSessionTarget:
         scope = self._scope(public_scope)
-        # A standalone session projection has an existing owner to resolve.
-        # Starts and handoff continuations additionally bind its authenticated team.
-        rows = await self._console.db.fetch_all(
-            "SELECT team_id FROM {{tables.owner_principals}}"
-            " WHERE installation_id=$1 AND principal_did=$2"
-            " AND ($3::text IS NULL OR team_id=$3)",
-            scope.installation_id,
-            scope.principal,
-            team_id,
-        )
-        if len(rows) != 1:
-            raise _refused()
-        destination = await self.credential_target(scope, team_id=rows[0]["team_id"])
+        destination = await self.credential_target(scope, team_id=team_id)
         async with self._console.db.transaction() as tx:
             await self._console.fence.check(tx, destination.admitted)
             assigned_at = await self._role_stamp(tx, destination)

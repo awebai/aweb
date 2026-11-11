@@ -188,12 +188,13 @@ class ConsoleHandoffs:
         await _prune_sessions(self.db)
         await self.store.prune()
 
-    async def _target(self, scope, *, team_id=None):
+    async def _target(self, scope, *, team_id: str):
+        if not isinstance(team_id, str) or not team_id:
+            raise HTTPException(403, "role_not_held")
         try:
             target = await self.authority.session_target(scope, team_id=team_id)
             if target.admitted.installation_id != scope.installation_id or (
-                team_id is not None
-                and (target.team_id != team_id or target.admitted.team_id != team_id)
+                target.team_id != team_id or target.admitted.team_id != team_id
             ):
                 raise HTTPException(403, "role_not_held")
             return target
@@ -213,7 +214,7 @@ class ConsoleHandoffs:
             certificate=decoded,
         )
 
-    async def check_holding_member(self, scope: PublicScope) -> HumanMemberProof:
+    async def check_holding_member(self, scope: PublicScope, *, team_id: str) -> HumanMemberProof:
         """Refresh shared retained evidence for the app's browser admission.
 
         Scope selects no authority. The app supplies its actual holding and
@@ -221,7 +222,7 @@ class ConsoleHandoffs:
         deadline through those waits and recheck it at the final effect fence.
         Legacy holdings with no artifact require a fresh certificate handoff.
         """
-        target = await self._target(scope)
+        target = await self._target(scope, team_id=team_id)
         row = await self.db.fetch_one(
             "SELECT holding_identity,member_certificate FROM {{tables.console_holding_certificates}} "
             "WHERE installation_id=$1 AND role=$2 AND principal=$3",
@@ -327,7 +328,7 @@ class ConsoleHandoffs:
                 "AND client_key IS NOT NULL AND closed_at IS NULL AND expires_at>clock_timestamp()",
                 digest,
             )
-            if row is None:
+            if row is None or not isinstance(row["team_id"], str) or not row["team_id"]:
                 raise _required()
             try:
                 nonce = await verify_console_request(
@@ -356,7 +357,7 @@ class ConsoleHandoffs:
                 raise _required()
         # No network occurs inside the nonce/effect transactions.
         scope = _scope_for(row)
-        target = await self._target(scope)
+        target = await self._target(scope, team_id=row["team_id"])
         if not await self.passkeys.login_evidence_is_current(
             row["scope"],
             row["subject"],
@@ -459,6 +460,8 @@ class ConsoleHandoffs:
             )
             if (
                 row["released_at"] is not None
+                or row["team_id"] != candidate["team_id"]
+                or _scope(row) != _scope(candidate)
                 or row["completed_at"] is None
                 or row["expires_at"] <= datetime.now(UTC)
                 or not hmac.compare_digest(_hash(code), bytes(row["code_sha256"] or b""))
@@ -468,8 +471,8 @@ class ConsoleHandoffs:
             expires = await tx.fetch_value(
                 "INSERT INTO {{tables.console_sessions}} "
                 "(token_sha256,csrf_sha256,subject,scope,evidence_ref,expires_at,client_key,"
-                "public_scope,holding_identity,member_certificate) VALUES "
-                "($1,$2,$3,$4,$5,clock_timestamp()+$6,$7,$8::jsonb,$9,$10) RETURNING expires_at",
+                "public_scope,holding_identity,member_certificate,team_id) VALUES "
+                "($1,$2,$3,$4,$5,clock_timestamp()+$6,$7,$8::jsonb,$9,$10,$11) RETURNING expires_at",
                 _hash(token),
                 _hash(csrf),
                 row["subject"],
@@ -480,6 +483,7 @@ class ConsoleHandoffs:
                 json.dumps(_scope(row)),
                 row["holding_identity"],
                 row["member_certificate"],
+                row["team_id"],
             )
             await tx.execute(
                 "UPDATE {{tables.console_handoffs}} SET released_at=clock_timestamp(),"
