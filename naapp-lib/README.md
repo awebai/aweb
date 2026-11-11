@@ -301,6 +301,13 @@ immediately before commit. Failure rolls back the nonce and all effects. Only
 `after_commit(result)` sends notices; a notice failure cannot undo the commit.
 The app's existing complete installation-retirement callback stays its owner.
 
+The human router uses the same public Host allowlist as `split_origins`.
+Behind TLS termination, preserve that public Host when forwarding to the app;
+the signed audience stays the configured HTTPS origin. Neither `Forwarded` nor
+`X-Forwarded-*` selects an origin. `ClientIdentity.trusted_header` controls only
+rate-limit client attribution: configure it only for a header the trusted proxy
+overwrites, and prevent direct access that could supply it.
+
 ### Health
 
 The three routes follow the probe contract of the aweb server and AWID
