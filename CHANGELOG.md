@@ -2,6 +2,12 @@
 
 ## Unreleased
 
+- **`aw wake register` says when no wake broker is running.** The registration
+  is still stored and the command still exits 0, so a hook does not fail while
+  a broker restarts. But with no broker answering it now prints on stderr that
+  the instance is registered and will not be woken until one starts, and its
+  help says that exit 0 means the registration was stored, not that a broker
+  runs. `aw wake status --json` reports `daemon_running`.
 - **A customer-run aweb server can read its private team at the public
   registry without the registry-wide `AWID_SERVICE_TOKEN`.** Give the server
   an ordinary member certificate in each team it serves
