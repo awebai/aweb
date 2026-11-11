@@ -73,6 +73,13 @@ def _raise_if_private_team_unreadable(response: httpx.Response) -> None:
         )
 
 
+# The verifier's own limits: a deployment cannot configure past them. A revoked
+# certificate is accepted for as long as its team's facts stay cached, and a
+# captured request for as long as the clock skew allows.
+MAX_TIMESTAMP_SKEW_SECONDS = 300
+MAX_TEAM_FACTS_TTL_SECONDS = 60
+
+
 class AWIDTeamCache:
     """Small in-memory cache of AWID team authentication facts."""
 
@@ -80,7 +87,7 @@ class AWIDTeamCache:
         self, *, registry_url: str, ttl_seconds: int, service_token: str | None = None
     ) -> None:
         self.registry_url = registry_url.rstrip("/")
-        self.ttl_seconds = ttl_seconds
+        self.ttl_seconds = min(ttl_seconds, MAX_TEAM_FACTS_TTL_SECONDS)
         self._headers = (
             {"X-AWID-Service-Token": service_token.strip()}
             if service_token and service_token.strip()
@@ -224,7 +231,7 @@ class AWIDTeamCache:
         facts = CachedTeamFacts(
             team_did_key=payload["team_did_key"],
             revoked_certificate_ids=revoked,
-            expires_at=now + min(self.ttl_seconds, 60),
+            expires_at=now + self.ttl_seconds,
         )
         self._certificate_cache[cache_key] = facts
         return facts
@@ -380,7 +387,7 @@ async def authenticate_request(
         raise HTTPException(status_code=401, detail="Missing X-AWEB-Timestamp")
     parsed_timestamp = _parse_rfc3339_utc(timestamp)
     skew = abs((datetime.now(UTC) - parsed_timestamp).total_seconds())
-    if skew > settings.timestamp_skew_seconds:
+    if skew > min(settings.timestamp_skew_seconds, MAX_TIMESTAMP_SKEW_SECONDS):
         raise HTTPException(status_code=401, detail="X-AWEB-Timestamp outside allowed clock skew")
 
     cert_header = request.headers.get("X-AWID-Team-Certificate") or request.headers.get("x-awid-team-certificate") or ""

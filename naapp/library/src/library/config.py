@@ -15,7 +15,8 @@ class Settings(BaseSettings):
     awid_registry_url: str = Field(default="https://api.awid.ai")
     awid_service_token: str | None = Field(default=None, repr=False)
     public_origin: str = Field(default="https://library.aweb.ai")
-    auth_cache_ttl_seconds: int = Field(default=600, ge=1)
+    # Capped by the verifier (library.auth): a larger value is read as the cap.
+    auth_cache_ttl_seconds: int = Field(default=60, ge=1)
     timestamp_skew_seconds: int = Field(default=300, ge=1)
     db_pool_min_connections: int = Field(default=1, ge=1)
     db_pool_max_connections: int = Field(default=5, ge=1)
