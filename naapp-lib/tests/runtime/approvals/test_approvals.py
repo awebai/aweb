@@ -732,6 +732,41 @@ async def test_a_decision_that_passed_its_link_before_the_winner_committed_is_li
     assert (await world.audit.kinds()).count("approval_decided") == 1
 
 
+async def test_a_second_decision_in_the_winners_own_transaction_sees_the_used_link(
+    world: World,
+):
+    """Both decisions run in one caller transaction, the second after the
+    first used the link but before anything commits. The link is read through
+    that transaction, never a separate pooled connection, so the second sees
+    the use and answers as a used link."""
+    _, approval = await mint(world)
+    link = link_of(world, approval)
+    approve = await challenge(world, approval, Decision.APPROVE)
+    reject = await challenge(world, approval, Decision.REJECT)
+    async with world.store.db.transaction() as caller:
+        await world.approvals.decide(
+            approval.approval_id,
+            Decision.APPROVE,
+            Assurance.PASSKEY,
+            sign(world.approver_key, APPROVER.subject, approve),
+            link_token=link,
+            tx=caller,
+        )
+        assert (
+            await refusal(
+                world.approvals.decide(
+                    approval.approval_id,
+                    Decision.REJECT,
+                    Assurance.PASSKEY,
+                    sign(world.approver_key, APPROVER.subject, reject),
+                    link_token=link,
+                    tx=caller,
+                )
+            )
+            is Refusal.LINK_UNAVAILABLE
+        )
+
+
 @pytest.mark.parametrize("loser_waits", [True, False])
 async def test_a_second_task_decision_is_not_pending_in_either_order(
     world: World, loser_waits: bool
