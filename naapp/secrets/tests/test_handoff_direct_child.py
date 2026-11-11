@@ -156,13 +156,14 @@ async def test_a_failed_credential_start_verification_refreshes_nothing(journey)
 
 @pytest.mark.parametrize("journey", [REQUESTER], indirect=True)
 async def test_concurrent_credential_starts_on_one_holding_both_complete(journey):
-    # Both starts queue on the holding while it is locked, so their refresh
-    # transactions overlap when it is released; a deadlock fails the bound.
-    async with holding_locked(journey):
-        tasks = [asyncio.create_task(start(journey, journey.member, None, purpose="credential")) for _ in range(2)]
-        await asyncio.sleep(0.5)
-        assert not any(task.done() for task in tasks)
-    responses = await asyncio.wait_for(asyncio.gather(*tasks), timeout=30)
+    # Both starts' refreshes are seen waiting on the held holding row, so
+    # their transactions overlap when it is released; a deadlock fails the bound.
+    async with joined() as tasks:
+        async with holding_locked(journey) as blocker:
+            for _ in range(2):
+                tasks.append(asyncio.create_task(start(journey, journey.member, None, purpose="credential")))
+            await blocked_on(journey, blocker, count=2)
+        responses = await asyncio.wait_for(asyncio.gather(*tasks), timeout=BOUND)
     assert [r.status_code for r in responses] == [201, 201], [r.text for r in responses]
     assert await retained(journey) is not None
 
@@ -182,43 +183,87 @@ async def test_a_credential_start_whose_holding_proof_fails_refreshes_nothing(jo
     assert await retained(journey) == old
 
 
-def short_window_once(registry):
-    """The real requester check, whose first verdict keeps only a short
-    original window, so a lock wait at the start's effect crosses it."""
-    real = requester_parent(registry)
-    calls = []
+BOUND = 30  # seconds: any wait in these tests fails past it rather than hanging
 
-    async def parent(request, signer):
-        evidence = await real(request, signer)
-        calls.append(evidence)
-        if evidence is not None and len(calls) == 1:
-            return RequesterEvidence(evidence.parent, time.monotonic_ns() + 500_000_000)
+
+class ShortWindowOnce:
+    """The real requester check, whose first verdict keeps only a short
+    original window (recorded in ``deadline``), so the test can cross it while
+    the start is blocked on the holding."""
+
+    def __init__(self, registry):
+        self.real = requester_parent(registry)
+        self.deadline: int | None = None
+
+    async def __call__(self, request, signer):
+        evidence = await self.real(request, signer)
+        if evidence is not None and self.deadline is None:
+            self.deadline = time.monotonic_ns() + 100_000_000
+            return RequesterEvidence(evidence.parent, self.deadline)
         return evidence
 
-    return parent
+
+short_windows: list[ShortWindowOnce] = []
+
+
+def short_window_once(registry):
+    check = ShortWindowOnce(registry)
+    short_windows.append(check)
+    return check
 
 
 @contextlib.asynccontextmanager
 async def holding_locked(journey):
-    """Hold alice's holding row FOR UPDATE, as a concurrent owner act would."""
+    """Hold alice's holding row FOR UPDATE, as a concurrent owner act would;
+    yields the holding backend's pid."""
     async with journey.world.db.transaction() as tx:
         held = await lock_holding(
             tx, installation_id=journey.scope.installation_id, team_id=TEAM,
             role=OWNER_ROLE, principal=journey.scope.principal)
         assert held is not None
-        yield
+        yield await tx.fetch_value("SELECT pg_backend_pid()")
+
+
+async def blocked_on(journey, blocker: int, *, count: int) -> None:
+    """Wait, bounded, until ``count`` backends are blocked by ``blocker``."""
+
+    async def waiting() -> None:
+        while await journey.world.db.fetch_value(
+            "SELECT count(*) FROM pg_stat_activity WHERE $1 = ANY(pg_blocking_pids(pid))", blocker
+        ) < count:
+            await asyncio.sleep(0.01)
+
+    await asyncio.wait_for(waiting(), timeout=BOUND)
+
+
+@contextlib.asynccontextmanager
+async def joined():
+    """Tasks the body starts; on any failure they are cancelled and joined."""
+    tasks: list[asyncio.Task] = []
+    try:
+        yield tasks
+    finally:
+        pending = [task for task in tasks if not task.done()]
+        for task in pending:
+            task.cancel()
+        await asyncio.gather(*tasks, return_exceptions=True)
 
 
 @pytest.mark.parametrize("journey", [{"requester_parent": short_window_once}], indirect=True)
 async def test_a_requester_window_crossed_during_a_lock_wait_creates_nothing(journey):
+    check = short_windows[-1]
     laptop, chain = await certify_agent(journey, journey.member, [journey.member.id_certificate], "laptop")
     before = await handoffs(journey)
-    async with holding_locked(journey):
-        waiting = asyncio.create_task(start(journey, laptop, chain))
-        await asyncio.sleep(1.0)
-        # Blocked on the holding lock, past its original requester deadline.
-        assert not waiting.done()
-    expired = await asyncio.wait_for(waiting, timeout=30)
+    async with joined() as tasks:
+        async with holding_locked(journey) as blocker:
+            waiting = asyncio.create_task(start(journey, laptop, chain))
+            tasks.append(waiting)
+            await blocked_on(journey, blocker, count=1)
+            # Cross the recorded deadline while the start is blocked on the holding.
+            assert check.deadline is not None
+            await asyncio.sleep(max(0, check.deadline - time.monotonic_ns()) / 1e9 + 0.05)
+            assert time.monotonic_ns() > check.deadline and not waiting.done()
+        expired = await asyncio.wait_for(waiting, timeout=BOUND)
     assert expired.status_code == 503 and expired.json() == {"detail": "principal_status_unavailable"}
     assert await handoffs(journey) == before
     fresh = await start(journey, laptop, chain)
@@ -231,13 +276,13 @@ async def test_a_credential_replace_racing_a_credential_start_both_complete(jour
     # holding for writing; queued behind the lock they overlap on release.
     # Neither deadlocks, and the holding keeps a retained certificate.
     who = PrincipalKey(TEAM, journey.scope.principal)
-    async with holding_locked(journey):
-        replace = asyncio.create_task(apply_holder(
-            journey.world, "human-credential.replace", who, "holder@example.com",
-            member=journey.member, client=journey.registry))
-        credential = asyncio.create_task(start(journey, journey.member, None, purpose="credential"))
-        await asyncio.sleep(0.5)
-        assert not credential.done()
-    _, response = await asyncio.wait_for(asyncio.gather(replace, credential), timeout=30)
+    async with joined() as tasks:
+        async with holding_locked(journey) as blocker:
+            tasks.append(asyncio.create_task(apply_holder(
+                journey.world, "human-credential.replace", who, "holder@example.com",
+                member=journey.member, client=journey.registry)))
+            tasks.append(asyncio.create_task(start(journey, journey.member, None, purpose="credential")))
+            await blocked_on(journey, blocker, count=2)
+        _, response = await asyncio.wait_for(asyncio.gather(*tasks), timeout=BOUND)
     assert response.status_code == 201, response.text
     assert await retained(journey) is not None
