@@ -32,6 +32,7 @@ from aweb_naapp.console.handoff_credential import (
     _token,
     credential_handoff_router,
 )
+from aweb_naapp.console.handoff_page import handoff_page_router
 from aweb_naapp.console.handoff_store import HandoffStart, HandoffStore, handoff_start_router
 from aweb_naapp.console.handoff_wire import (
     HandoffWireRefused,
@@ -504,6 +505,7 @@ class ConsoleHandoffs:
 
     def human_router(self):
         router = APIRouter(route_class=ConsoleRoute)
+        router.include_router(handoff_page_router(store=self.store, limiter=self.limiter))
         router.include_router(
             credential_handoff_router(
                 store=self.store,
