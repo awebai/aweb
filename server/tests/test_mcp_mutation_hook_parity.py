@@ -55,6 +55,10 @@ class _RecordingRedis:
         self.published.append((channel, json.loads(message)))
         return 0
 
+    async def hgetall(self, key):
+        # No member has recorded presence.
+        return {}
+
 
 @pytest_asyncio.fixture
 async def server(aweb_cloud_db, monkeypatch):
@@ -163,9 +167,10 @@ async def server(aweb_cloud_db, monkeypatch):
                 assert response.status_code == 200, response.text
                 return response.json()
 
-            async def rest_mail(alias, *, to_alias, body):
+            async def rest_mail(alias, *, body, to_alias=None, conversation_id=None):
                 sk, did_key = keys[alias]
-                data = json.dumps({"to_alias": to_alias, "subject": "status", "body": body}).encode()
+                target = {"to_alias": to_alias} if to_alias else {"conversation_id": conversation_id}
+                data = json.dumps({**target, "subject": "status", "body": body}).encode()
                 response = await client.post(
                     "/v1/messages", content=data,
                     headers={
@@ -197,19 +202,25 @@ async def test_mcp_send_mail_fires_message_sent_like_rest(server):
     # The caller explicitly selects the conversation-continuation path.
     continued = await server.mcp_call("pilot", "send_mail", conversation_id=fresh["conversation_id"], subject="re", body="reply", plaintext=True)
     assert continued["conversation_id"] == fresh["conversation_id"]
+    rest_continued = await server.rest_mail("bob", conversation_id=fresh["conversation_id"], body="rest reply")
+    assert rest_continued["conversation_id"] == fresh["conversation_id"]
 
     events = _events(server, "message.sent")
     assert [event["message_id"] for event in events] == [
-        fresh["message_id"], rest["message_id"], continued["message_id"],
+        fresh["message_id"], rest["message_id"], continued["message_id"], rest_continued["message_id"],
     ]
     mcp_events, rest_event = [events[0], events[2]], events[1]
     assert set(rest_event) == MESSAGE_SENT_KEYS
+    # A continuation names the recipient's member recorded on the conversation,
+    # the one whose event stream the delivery is published to.
+    assert set(events[3]) == MESSAGE_SENT_KEYS
+    assert events[3]["to_agent_id"] == server.agents["pilot"]
+    assert events[3]["to_alias"] == "pilot"
     for event, sent in zip(mcp_events, (fresh, continued)):
         assert set(event) == set(rest_event)
         assert event["team_id"] == TEAM
         assert event["from_agent_id"] == server.agents["pilot"]
-        # A continuation retains canonical identity without inventing membership.
-        assert event["to_agent_id"] == (server.agents["bob"] if event is events[0] else None)
+        assert event["to_agent_id"] == server.agents["bob"]
         assert event["to_alias"] == "bob"
         assert event["from_alias"] == "pilot"
         assert event["from_did_aw"] == "did:aw:pilot"
@@ -217,6 +228,22 @@ async def test_mcp_send_mail_fires_message_sent_like_rest(server):
         assert event["content_mode"] == "legacy_plaintext_v1"
         assert event["priority"] == "normal"
     assert [event["subject"] for event in mcp_events] == ["new", "re"]
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("via", ["mcp", "rest"])
+async def test_a_mail_reply_reaches_the_recipients_event_stream(server, via):
+    opened = await server.mcp_call("bob", "send_mail", to="pilot", subject="new", body="open", plaintext=True)
+    server.app.state.on_mutation = create_mutation_handler(server.redis, server.app.state.db)
+
+    if via == "mcp":
+        await server.mcp_call(
+            "pilot", "send_mail", conversation_id=opened["conversation_id"], body="reply", plaintext=True,
+        )
+    else:
+        await server.rest_mail("pilot", conversation_id=opened["conversation_id"], body="reply")
+
+    assert _published(server, f"events:{server.agents['bob']}") == ["message.delivered"]
 
 
 @pytest.mark.asyncio

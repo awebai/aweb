@@ -211,7 +211,7 @@ def _exact(result, message_id, conversation_id, kind, envelope_hash):
 async def _target(request, payload, auth, db, kind, session_id):
     from aweb.messaging.messages import get_agent_by_id, resolve_agent_by_did
     from aweb.messaging.address_auth import identity_recipient
-    from aweb.routes.messages import _resolve_message_alias
+    from aweb.messaging.mail_send import _resolve_message_alias
 
     aliases = (
         [getattr(payload, "to_alias", None)]
@@ -230,7 +230,9 @@ async def _target(request, payload, auth, db, kind, session_id):
         raise ContractError("unsupported", "native pair ingress")
     recipient = None
     if aliases:
-        recipient = await _resolve_message_alias(db, auth, aliases[0], request=request)
+        recipient = await _resolve_message_alias(
+            db, auth, aliases[0], getattr(request.app.state, "awid_registry_client", None),
+        )
     elif dids:
         recipient = await resolve_agent_by_did(db, dids[0])
     elif kind == "mail" and getattr(payload, "to_agent_id", None):
