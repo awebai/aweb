@@ -8,9 +8,12 @@ import json
 import os
 from pathlib import Path
 import shutil
+import signal
 import socket
 import subprocess
+import sys
 import tempfile
+import time
 import unittest
 import uuid
 
@@ -272,6 +275,93 @@ class ComposeExitStatusTests(unittest.TestCase):
                                             'label=com.docker.compose.project=' + project).stdout.strip(), '')
                 self.assertEqual(cleanup_errors, [])
                 print(f'status probe cleanup PASSED: label={label}; containers=0; project networks=0')
+
+
+@unittest.skipUnless(os.environ.get('AWEB_TEST_DOCKER_NETWORK') == '1', 'requires an approved Docker slot')
+class ComposeTimeoutTests(unittest.TestCase):
+    def test_real_captured_exec_timeout_leaves_no_client_or_overlay(self):
+        real = os.environ.get('AWEB_CANDIDATE_REAL_DOCKER') or shutil.which('docker')
+        project = 'acwx-timeout-' + uuid.uuid4().hex[:12]
+
+        def docker(*args, check=True):
+            return subprocess.run([real, *args], check=check, capture_output=True,
+                                  text=True, timeout=45)
+
+        # Isolate the probe's process group so even a broken timeout cannot hang
+        # this test or leave its client processes behind. Never kill by pattern.
+        probe = '''
+import json, subprocess, sys, time
+started = time.monotonic()
+try:
+    subprocess.run(sys.argv[1:], capture_output=True, timeout=3)
+except subprocess.TimeoutExpired as error:
+    print(json.dumps({'timed_out': True, 'elapsed': time.monotonic() - started,
+                      'output': (error.stdout or b'').decode()}), flush=True)
+else:
+    print(json.dumps({'timed_out': False, 'elapsed': time.monotonic() - started}), flush=True)
+'''
+
+        def group_members(pgid):
+            result = subprocess.run(['ps', '-eo', 'pid=,pgid=,comm='], check=True,
+                                    capture_output=True, text=True, timeout=5)
+            return [line.strip() for line in result.stdout.splitlines()
+                    if len(line.split(None, 2)) == 3 and int(line.split(None, 2)[1]) == pgid]
+
+        with tempfile.TemporaryDirectory() as tmp:
+            compose = Path(tmp) / 'compose.json'
+            compose.write_text(json.dumps({'services': {'worker': {
+                'image': 'python:3.12-slim', 'command': ['sleep', '600'],
+                'labels': {'aweb.candidate-gate': project},
+                'cpus': .25, 'mem_limit': '64m', 'pids_limit': 32}}}))
+            args = ['compose', '-p', project, '-f', str(compose)]
+            try:
+                docker(*args, 'up', '-d')
+                # Direct Docker is the control for the exec-based main path.
+                for mode in ('direct', 'resource-only', 'network'):
+                    with self.subTest(mode=mode), tempfile.TemporaryDirectory(dir=tmp) as overlays:
+                        command = ([real] if mode == 'direct' else
+                                   ['bash', str(ROOT / 'candidate-gate/bin/docker')])
+                        command += [*args, 'exec', '-T', 'worker', 'python', '-u', '-c',
+                                    'import time; print("timeout-probe-ready"); time.sleep(30)']
+                        env = {**os.environ, 'AWEB_CANDIDATE_REAL_DOCKER': real,
+                               'AWEB_CANDIDATE_RESOURCE_LABEL': project,
+                               'CANDIDATE_RESOURCE_MANIFEST': '', 'TMPDIR': overlays,
+                               'CANDIDATE_RUNNER_NAME': project + '-runner' if mode == 'network' else ''}
+                        child = subprocess.Popen([sys.executable, '-c', probe, *command],
+                                                 env=env, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
+                                                 text=True, start_new_session=True)
+                        try:
+                            try:
+                                stdout, stderr = child.communicate(timeout=8)
+                            except subprocess.TimeoutExpired:
+                                self.fail('subprocess.run timeout exceeded the outer 8s bound')
+                            self.assertEqual(child.returncode, 0, stderr)
+                            result = json.loads(stdout)
+                            with self.subTest(property='timeout'):
+                                self.assertTrue(result['timed_out'], result)
+                                self.assertLess(result['elapsed'], 5, result)
+                                self.assertIn('timeout-probe-ready', result['output'])
+                            with self.subTest(property='client-processes'):
+                                self.assertEqual(group_members(child.pid), [])
+                            with self.subTest(property='overlays'):
+                                self.assertEqual(list(Path(overlays).glob('aweb-candidate-compose-*')), [])
+                        finally:
+                            try:
+                                os.killpg(child.pid, signal.SIGKILL)
+                            except ProcessLookupError:
+                                pass
+                            child.communicate(timeout=5)
+                            deadline = time.monotonic() + 2
+                            while group_members(child.pid) and time.monotonic() < deadline:
+                                time.sleep(.05)
+                            self.assertEqual(group_members(child.pid), [], 'probe process cleanup failed')
+            finally:
+                docker(*args, 'down', '-v', '--remove-orphans')
+                self.assertEqual(docker('ps', '-aq', '--filter',
+                                        'label=aweb.candidate-gate=' + project).stdout.strip(), '')
+                self.assertEqual(docker('network', 'ls', '-q', '--filter',
+                                        'label=com.docker.compose.project=' + project).stdout.strip(), '')
+                print(f'timeout probe cleanup PASSED: project={project}; containers=0; networks=0')
 
 
 @unittest.skipUnless(os.environ.get('AWEB_TEST_DOCKER_NETWORK') == '1', 'requires an approved Docker slot')
