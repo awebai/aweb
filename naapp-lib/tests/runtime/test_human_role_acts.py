@@ -374,8 +374,10 @@ async def test_an_act_past_its_validity_is_refused_before_commit(fx):
 
 
 async def test_a_membership_proof_past_its_deadline_is_refused_before_commit(fx, tmp_path):
+    short_lived = tmp_path / "short-lived"
+    short_lived.mkdir()
     runtime = _runtime(
-        tmp_path,
+        short_lived,
         registry=fx.world.registry,
         database_url=fx.world.db.config.get_dsn(),
         auth_cache_ttl_seconds=1,
