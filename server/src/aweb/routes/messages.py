@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from aweb.agent_wake import agent_wake_publisher
 from aweb.messaging.mail_attribution import incoming_mail_sql, readable_mail_sql
 
 from aweb.identity_auth_deps import participant_dids
@@ -16,6 +17,7 @@ from pydantic import BaseModel, ConfigDict, Field, field_validator, model_serial
 
 from awid.pagination import decode_cursor, encode_cursor, validate_pagination_params
 from aweb.deps import get_db
+from aweb.hooks import mutation_callback
 from aweb.id_chain_auth import stored_id_chain
 from aweb.identity_metadata import lookup_identity_metadata_by_did
 from aweb.identity_auth_deps import MessagingAuth, get_messaging_auth
@@ -658,7 +660,9 @@ async def ack_message(
         raise HTTPException(status_code=401, detail="Authenticated identity is missing a routing DID")
 
     acknowledged = await acknowledge_mail(
-        db, auth, [msg_uuid], messaging_runtime(request.app.state), read_at=now,
+        db, auth, [msg_uuid], read_at=now,
+        agent_wake_publisher=agent_wake_publisher(request.app.state),
+        on_mutation=mutation_callback(request),
     )
 
     if not acknowledged:

@@ -15,7 +15,8 @@ from typing import cast
 from fastapi import HTTPException
 
 from awid.federation_errors import FederationAuthorityError
-from aweb.mcp.auth import get_auth
+from aweb.mcp.auth import current_agent_wake_publisher, get_auth
+from aweb.mcp.mutations import current_mutation_callback
 from aweb.mcp.signing import (
     HostedMessageDecryptor,
     HostedMessageDecryptionError,
@@ -426,8 +427,10 @@ async def check_inbox(
     unread_message_ids = [r["message_id"] for r in rows if r["read_at"] is None]
     if unread_message_ids:
         await acknowledge_mail(
-            db_infra, mcp_messaging_auth(auth), unread_message_ids, mcp_messaging_runtime(auth),
+            db_infra, mcp_messaging_auth(auth), unread_message_ids,
             read_at=datetime.now(timezone.utc),
+            agent_wake_publisher=current_agent_wake_publisher(),
+            on_mutation=current_mutation_callback(),
         )
 
     messages = []
