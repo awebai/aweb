@@ -128,8 +128,17 @@ def owner_body(configured, member, installation_id):
     }
 
 
-async def signed_in_owner(root):
-    """The first owner, enrolled from the delivered email, signed in to the console."""
+@dataclass(frozen=True, repr=False)
+class EnrolledOwner:
+    scope: str
+    body: dict
+    token: str
+    device: SoftAuthenticator
+    csrf_token: str
+
+
+async def enrolled_owner(root):
+    """The genuine owner ceremony, retaining its device for a fresh decision."""
     service, client, configured, member, installed, smtp, transport, dns = root
     installation_id = installed["installation_id"]
     scope, body = owner_body(configured, member, installation_id)
@@ -153,7 +162,13 @@ async def signed_in_owner(root):
         human + "/login", json={"scope": scope, "assertion": device.get(options.json())}
     )
     assert logged.status_code == 200, logged.text
-    return scope, body, token
+    return EnrolledOwner(scope, body, token, device, logged.json()["csrf_token"])
+
+
+async def signed_in_owner(root):
+    """The existing three-field owner helper for consumers that need no decision."""
+    owner = await enrolled_owner(root)
+    return owner.scope, owner.body, owner.token
 
 
 async def test_first_owner_enrols_from_actual_smtp_and_logs_into_production_console(root):

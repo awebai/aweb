@@ -35,6 +35,7 @@ from collections.abc import AsyncIterator, Awaitable, Callable, Mapping, Sequenc
 from contextlib import aclosing, asynccontextmanager
 from dataclasses import replace
 from datetime import UTC, datetime
+from enum import StrEnum
 from ipaddress import IPv4Network, IPv6Network
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
@@ -435,9 +436,10 @@ class NaappRuntime:
     ) -> CheckedHumanRoleMember:
         """Retain exact signed JSON bytes with the existing exact-subject H2 proof.
 
-        Run before effect locks. Identity mismatch/malformed input is the
-        delivery contract's owner_required; definite loss, non-human kind and
-        unavailability retain their distinct typed outcomes. No HTTP response
+        Run before effect locks. A malformed certificate, or one naming another
+        team or principal, is no membership evidence: principal_not_member, as
+        is definite loss; non-human kind and unavailability retain their
+        distinct typed outcomes. No HTTP response
         is built here, and no certificate is fetched or re-encoded for storage.
         """
         from awid.team_certificate import (
@@ -461,7 +463,7 @@ class NaappRuntime:
             if decoded.get("team_id") != team_id or decoded.get("member_did_aw") != principal:
                 raise TeamCertificateError("malformed")
         except TeamCertificateError:
-            raise OwnerActDeliveryRefused("owner_required") from None
+            raise OwnerActDeliveryRefused("principal_not_member") from None
         try:
             proof = await self.check_human_member(
                 team_id,
@@ -793,6 +795,7 @@ def mount_naapp_routes(
     robots_disallow: Sequence[str] = (),
     noindex_paths: Sequence[str] = (),
     health_checks: Mapping[str, HealthCheck] | None = None,
+    health_labels: Mapping[str, StrEnum] | None = None,
 ) -> None:
     """Serve the standard naapp public surface.
 
@@ -876,4 +879,9 @@ def mount_naapp_routes(
         return PlainTextResponse(skill, headers=_NOSNIFF)
 
     mount_manifest_routes(app, runtime=runtime)
-    mount_health(app, settings, checks={**runtime.health_checks(), **(health_checks or {})})
+    mount_health(
+        app,
+        settings,
+        checks={**runtime.health_checks(), **(health_checks or {})},
+        labels=health_labels,
+    )

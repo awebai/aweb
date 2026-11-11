@@ -9,7 +9,7 @@ import base64
 import hashlib
 import json
 import secrets
-from collections.abc import AsyncIterator
+from collections.abc import AsyncIterator, Awaitable, Callable
 from contextlib import aclosing
 from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
@@ -88,6 +88,7 @@ class Journey:
     device: SoftAuthenticator
     factory: object
     world: object
+    enrol_owner: Callable[[str], Awaitable[tuple[Member, PublicScope, SoftAuthenticator]]]
 
     async def open(self):
         key = SigningKey.generate()
@@ -174,7 +175,7 @@ class Journey:
 
 
 @pytest.fixture
-async def journey(world, request) -> AsyncIterator[Journey]:
+async def journey(world, request, human_member_cache_seconds) -> AsyncIterator[Journey]:
     # Imported at runtime so collection remains possible while the factory is
     # test-first work. It will fail at this exact supported API until implemented.
     from aweb_naapp.console.handoff_sessions import ConsoleHandoffs
@@ -183,11 +184,9 @@ async def journey(world, request) -> AsyncIterator[Journey]:
     root = SigningKey.generate()
     options = getattr(request, "param", {})
     team = options.get("team_id", TEAM)
-    member = Member(
-        team_id=team, team_key=world.owner.team_key if team == TEAM else SigningKey.generate()
-    )
+    team_key = world.owner.team_key if team == TEAM else SigningKey.generate()
     if team != TEAM:
-        await world.registry.add_team(team, member.team_did_key)
+        await world.registry.add_team(team, did_key(team_key))
 
     async def dns(domain):
         assert domain == "example.com"
@@ -204,44 +203,60 @@ async def journey(world, request) -> AsyncIterator[Journey]:
         )
     ) as registry:
         await registry.register_namespace("example.com", did_key(root), bytes(root))
-        principal = (await registry.register_did(member.did_key, bytes(member.member_key))).did_aw
-        member.extra_cert_fields = {"member_did_aw": principal}
-        await world.registry.add_certificate(member.certificate())
-        fields = {
-            "v": 1,
-            "type": "aweb.id-certificate",
-            "id": principal,
-            "domain": "example.com",
-            "parent": {"kind": "namespace", "id": "example.com"},
-            "kind": "human",
-            "issuer_key": did_key(root),
-            "issued_at": datetime.now(UTC).strftime("%Y-%m-%dT%H:%M:%SZ"),
-        }
-        signed = {
-            "certificate": fields,
-            "signature": b64(root.sign(id_certificate_signing_bytes(fields)).signature),
-        }
-        await registry.register_id_certificate(
-            {"v": 1, "type": "aweb.id-chain", "certificates": [signed]},
-            signer=lambda payload: (member.did_key, member.member_key.sign(payload).signature),
-            expected_head=None,
-            invitation_id=None,
-        )
-        device = SoftAuthenticator(world.passkeys.rp.origin)
-        if options.get("designated", True):
-            who = PrincipalKey(team, principal)
-            await _apply(world, "app-role.designate", who, "holder@example.com")
-            token = world.contacts.inbox["holder@example.com"][-1]
-            prepared = await world.credential_audit.prepare_enrolment(token)
-            with world.credential_audit.prepared(prepared):
-                await world.passkeys.complete_enrolment(
-                    token,
-                    device.create(await world.passkeys.enrolment_options(token)),
-                    fence=prepared,
-                )
+
+        async def enrol_owner(alias: str):
+            # Every extra holder follows the same registered-human, signed owner
+            # act and real B3 enrolment as the first. No session is fabricated.
+            member = Member(
+                team_id=team,
+                team_key=team_key,
+                alias=alias,
+                certificate_id="cert-1" if alias == "alice" else "handoff-" + alias,
+            )
+            contact = "holder@example.com" if alias == "alice" else alias + "@example.com"
+            principal = (
+                await registry.register_did(member.did_key, bytes(member.member_key))
+            ).did_aw
+            member.extra_cert_fields = {"member_did_aw": principal}
+            await world.registry.add_certificate(member.certificate())
+            fields = {
+                "v": 1,
+                "type": "aweb.id-certificate",
+                "id": principal,
+                "domain": "example.com",
+                "parent": {"kind": "namespace", "id": "example.com"},
+                "kind": "human",
+                "issuer_key": did_key(root),
+                "issued_at": datetime.now(UTC).strftime("%Y-%m-%dT%H:%M:%SZ"),
+            }
+            signed = {
+                "certificate": fields,
+                "signature": b64(root.sign(id_certificate_signing_bytes(fields)).signature),
+            }
+            await registry.register_id_certificate(
+                {"v": 1, "type": "aweb.id-chain", "certificates": [signed]},
+                signer=lambda payload: (member.did_key, member.member_key.sign(payload).signature),
+                expected_head=None,
+                invitation_id=None,
+            )
+            device = SoftAuthenticator(world.passkeys.rp.origin)
+            if options.get("designated", True):
+                who = PrincipalKey(team, principal)
+                await _apply(world, "app-role.designate", who, contact)
+                token = world.contacts.inbox[contact][-1]
+                prepared = await world.credential_audit.prepare_enrolment(token)
+                with world.credential_audit.prepared(prepared):
+                    await world.passkeys.complete_enrolment(
+                        token,
+                        device.create(await world.passkeys.enrolment_options(token)),
+                        fence=prepared,
+                    )
+            return member, PublicScope(INSTALLATION_ID, OWNER_ROLE, principal), device
+
+        member, public_scope, device = await enrol_owner("alice")
         cache = AWIDTeamCache(
             registry_url=REGISTRY_URL,
-            ttl_seconds=60,
+            ttl_seconds=human_member_cache_seconds,
             service_token=SERVICE_TOKEN,
             transport=world.registry.transport,
         )
@@ -303,10 +318,11 @@ async def journey(world, request) -> AsyncIterator[Journey]:
             yield Journey(
                 client,
                 member,
-                PublicScope(INSTALLATION_ID, OWNER_ROLE, principal),
+                public_scope,
                 device,
                 factory,
                 world,
+                enrol_owner,
             )
 
 

@@ -8,8 +8,8 @@ from datetime import UTC, datetime
 from time import monotonic_ns, perf_counter_ns
 
 import pytest
-from aweb_naapp_testing import Member, did_key
-from awid.dns_verify import DomainAuthority
+from aweb_naapp_testing import Member
+from aweb_naapp_testing.human_members import registered_human
 from awid.id_certificates import id_certificate_signing_bytes
 from awid.identity_observation import (
     IdentityKindObservation,
@@ -17,10 +17,8 @@ from awid.identity_observation import (
     observe_identity_kind,
 )
 from awid.registry import CachedRegistryClient, RegistryClient
-from awid_service.deps import get_domain_verifier
 from awid_service.testing import REGISTRY_URL, SERVICE_TOKEN
 from fastapi import HTTPException
-from nacl.signing import SigningKey
 from redis.asyncio import Redis
 from redis.asyncio.client import Pipeline
 
@@ -35,63 +33,16 @@ DOMAIN = "example.com"
 
 @pytest.fixture
 async def human(registry):
-    controller = SigningKey.generate()
-
-    async def authority(domain):
-        assert domain == DOMAIN
-        return DomainAuthority(
-            controller_did=did_key(controller),
-            registry_url=REGISTRY_URL,
-            dns_name=f"_awid.{domain}",
-        )
-
-    registry.app.dependency_overrides[get_domain_verifier] = lambda: authority
-    registry.app.state.awid_public_origins = (REGISTRY_URL,)
     member = Member(team_id=TEAM)
-    async with aclosing(
-        RegistryClient(
-            REGISTRY_URL,
-            transport=registry.transport,
-            service_token=SERVICE_TOKEN,
-            domain_verifier=authority,
-        )
-    ) as client:
-        await client.register_namespace(DOMAIN, did_key(controller), bytes(controller))
-        identity = (await client.register_did(member.did_key, bytes(member.member_key))).did_aw
-        member.extra_cert_fields = {"member_did_aw": identity}
-        await registry.add_team(TEAM, member.team_did_key)
-        await registry.add_certificate(member.certificate())
-        fields = {
-            "v": 1,
-            "type": "aweb.id-certificate",
-            "id": identity,
-            "domain": DOMAIN,
-            "parent": {"kind": "namespace", "id": DOMAIN},
-            "kind": "human",
-            "issuer_key": did_key(controller),
-            "issued_at": datetime.now(UTC).replace(microsecond=0).strftime("%Y-%m-%dT%H:%M:%SZ"),
-        }
-        signature = (
-            base64.urlsafe_b64encode(
-                controller.sign(id_certificate_signing_bytes(fields)).signature
-            )
-            .rstrip(b"=")
-            .decode()
-        )
-        signed = {"certificate": fields, "signature": signature}
-        await client.register_id_certificate(
-            {"v": 1, "type": "aweb.id-chain", "certificates": [signed]},
-            signer=lambda payload: (member.did_key, member.member_key.sign(payload).signature),
-            expected_head=None,
-            invitation_id=None,
-        )
+    await registry.add_team(TEAM, member.team_did_key)
+    async with registered_human(registry, member) as human:
         cache = AWIDTeamCache(
             registry_url=REGISTRY_URL,
             ttl_seconds=60,
             service_token=SERVICE_TOKEN,
             transport=registry.transport,
         )
-        yield member, identity, client, cache, signed
+        yield member, human.principal, human.client, cache, human.identity
 
 
 async def test_current_human_member_is_the_exact_certified_subject(human):
