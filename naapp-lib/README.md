@@ -823,6 +823,21 @@ cap. Lowering the cap evicts nothing. `Passkeys.credential_change_status(scope,
 challenge)` tells a client whose response was lost whether the change committed,
 is still pending, or can no longer commit; it grants nothing.
 
+The cap can be stored per policy key, with `aweb_naapp.runtime.credential_caps`.
+An app role's key is `(app_id, installation_id, role)`; every holding of the
+role reads the same cap and counts its own credentials. The team owner sets it
+with `human-credential.cap-set` (subject exactly `app_id`, `installation_id`,
+`role`, `cap`): `CredentialCaps.set_cap(tx, evidence=act)` in the transaction
+that consumed the act, under the recorder's prepared owner act, writes the cap
+and records `policy.changed` (widening, whichever way the cap moves) or rolls
+back. Lowering evicts nothing. The app passes `Passkeys(credential_cap=...)` a
+resolver mapping a scope to its key and calling `CredentialCaps.resolve`; B3
+reads it under its write preparation, uses the configured cap when it returns
+None, refuses `cap_unavailable` for a value outside one to the ceiling, and
+lets a failing lookup refuse. A protected authority's cap needs the shared
+signer's protected effect and refuses until it exists. The act serves no route
+until an app mounts it.
+
 A usable stolen passkey with its user-verification factor can add a credential.
 The notice detects that; nothing here prevents it.
 

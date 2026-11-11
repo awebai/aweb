@@ -60,6 +60,7 @@ from aweb_naapp.runtime.passkeys.credential_change import PreparedCredentialChan
 if TYPE_CHECKING:
     from aweb_naapp.console import ConsoleSession
     from aweb_naapp.runtime.credential_audit.narrowing import PreparedContainment
+    from aweb_naapp.runtime.credential_caps import CapKey
     from aweb_naapp.runtime.team_auth import Principal
 
 
@@ -803,6 +804,62 @@ class CredentialAudit:
             return None
         record = await holding_record_of_scope(tx, scope)
         return record if record is not None and record.role in self._human_roles else None
+
+    async def record_credential_cap(
+        self,
+        tx: TransactionManager,
+        act: VerifiedOwnerAct,
+        key: CapKey,
+        *,
+        occurred_at: datetime,
+    ) -> UUID:
+        """Record an app role's cap change as policy.changed, a widening act
+        whichever way the cap moved, under the owner act prepared by
+        :meth:`prepare_owner_act` and consumed in ``tx``. It binds the cap row
+        this transaction wrote for exactly that act and cap; any mismatch
+        refuses and the change rolls back."""
+        context = self._prepared.get()
+        if (
+            not isinstance(context, _OwnerActContext)
+            or context.owner is not self
+            or (context.admitted.app_id, context.admitted.installation_id)
+            != (key.app_id, key.installation_id)
+            or self.signed_document(context).get("act") != "human-credential.cap-set"
+        ):
+            raise GovernanceUnavailable()
+        txid = await tx.fetch_value("SELECT txid_current()")
+        digest = hashlib.sha256(context.signing).hexdigest()
+        consumed = await tx.fetch_one(
+            "SELECT nonce FROM {{tables.owner_act_nonces}} WHERE scope=$1 AND team_id=$2 AND act_sha256=$3",
+            self._owner_act_scope,
+            context.admitted.team_id,
+            digest,
+        )
+        row = await tx.fetch_one(
+            "SELECT cap, act_ref, set_in FROM {{tables.credential_caps}} WHERE policy_key = $1",
+            key.policy_key,
+        )
+        if (
+            consumed is None
+            or consumed["nonce"] != act.nonce
+            or act.team_id != context.admitted.team_id
+            or act.transaction_id != txid
+            or row is None
+            or row["set_in"] != txid
+            or row["act_ref"] != digest
+            or row["cap"] != act.subject.get("cap")
+        ):
+            raise GovernanceUnavailable()
+        payload = {
+            "act": "policy.changed",
+            "direction": "widening",
+            "role": key.role,
+            "authority": "owner_act",
+            "owner_act_sha256": digest,
+        }
+        return await self._enqueue(
+            tx, context.admitted, payload, _SYSTEM, occurred_at, context.view
+        )
 
     async def _consumed_act(self, tx, context: _OwnerActContext, event, expected_act) -> str:
         """The SHA-256 of the prepared act, which this event names and which

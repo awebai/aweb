@@ -117,6 +117,7 @@ def test_only_the_verified_type_the_signing_bytes_and_constants_are_public() -> 
     assert set(owner_act.__all__) == {
         "APP_ACTS",
         "CORE_ACTS",
+        "CREDENTIAL_CAP_ACT",
         "HUMAN_ROLE_ACTS",
         "HumanCredential",
         "LOGS_ACTS",

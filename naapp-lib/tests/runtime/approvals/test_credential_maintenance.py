@@ -895,6 +895,78 @@ async def test_the_cap_counts_the_holdings_credentials_at_every_relying_party(pw
     assert refused.value.reason == "cap_reached"
 
 
+async def test_the_cap_resolver_sets_the_holdings_cap(pw):
+    async def one(tx, scope):
+        return 1
+
+    single = world_with(pw, credential_cap=one)
+    approver, device = await enrol(pw, CONTACT)
+    with pytest.raises(CredentialChangeRefused) as refused:
+        await prepare(single)
+    assert refused.value.reason == "cap_reached"
+    replaced = await prepare(single, replace=credential_of(device))
+    await single.change_credential(SCOPE, device.get(replaced.options), fence=Fence(single))
+    assert await active_credentials(pw, approver.subject) == {credential_of(replaced.new_device)}
+
+
+async def test_no_resolved_cap_means_the_configured_one(pw):
+    async def unset(tx, scope):
+        return None
+
+    defaulted = world_with(pw, credential_cap=unset, credentials=CredentialPolicy(max_active=1))
+    await enrol(pw, CONTACT)
+    with pytest.raises(CredentialChangeRefused) as refused:
+        await prepare(defaulted)
+    assert refused.value.reason == "cap_reached"
+
+
+@pytest.mark.parametrize("value", [0, -1, 6, "2", True, 2.0])
+async def test_a_cap_outside_one_to_the_ceiling_is_unavailable_never_clamped(pw, value):
+    async def resolved(tx, scope):
+        return value
+
+    passkeys = world_with(pw, credential_cap=resolved)
+    await enrol(pw, CONTACT)
+    with pytest.raises(CredentialChangeRefused) as refused:
+        await prepare(passkeys)
+    assert refused.value.reason == "cap_unavailable"
+
+
+async def test_a_failing_cap_lookup_refuses_and_changes_nothing(pw):
+    calls = []
+
+    async def failing(tx, scope):
+        calls.append(scope)
+        if len(calls) > 1:
+            raise RuntimeError("the cap store is unavailable")
+        return None
+
+    passkeys = world_with(pw, credential_cap=failing)
+    approver, device = await enrol(pw, CONTACT)
+    prepared = await prepare(passkeys)
+    before = await active_credentials(pw, approver.subject)
+    with pytest.raises(RuntimeError):
+        await passkeys.change_credential(SCOPE, device.get(prepared.options), fence=Fence(passkeys))
+    assert await active_credentials(pw, approver.subject) == before
+
+
+async def test_the_effect_reads_the_cap_under_its_locks(pw):
+    """The cap is read again in the effect transaction, so a cap lowered after
+    the options refuses the add."""
+    cap = [5]
+
+    async def current(tx, scope):
+        return cap[0]
+
+    passkeys = world_with(pw, credential_cap=current)
+    _, device = await enrol(pw, CONTACT)
+    prepared = await prepare(passkeys)
+    cap[0] = 1
+    with pytest.raises(CredentialChangeRefused) as refused:
+        await passkeys.change_credential(SCOPE, device.get(prepared.options), fence=Fence(passkeys))
+    assert refused.value.reason == "cap_reached"
+
+
 @pytest.mark.parametrize("max_active", [0, -1])
 def test_a_cap_is_at_least_one(max_active):
     with pytest.raises(ValueError):

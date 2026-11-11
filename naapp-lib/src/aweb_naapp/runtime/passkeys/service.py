@@ -455,6 +455,7 @@ class Passkeys:
         holding_scopes: Callable[[TransactionManager, str], Awaitable[bool]] | None = None,
         credentials: CredentialPolicy | None = None,
         credentials_ceiling: CredentialPolicy | None = None,
+        credential_cap: Callable[[TransactionManager, str], Awaitable[int | None]] | None = None,
     ) -> None:
         """`lockout` is the app's or owner's policy; `lockout_floor` is the
         deployment's, at or above the module floors. The policy must meet the
@@ -466,7 +467,9 @@ class Passkeys:
         that keeps role holdings); such a scope leaves the contact paths.
         `credentials` caps each holding's active credentials (five by
         default); `credentials_ceiling` is the deployment's finite maximum,
-        five unless deploy configuration raises it."""
+        five unless deploy configuration raises it. `credential_cap` resolves,
+        in the effect transaction, the stored cap a scope's policy key has
+        (None: the configured one); a failing lookup refuses."""
         self.db = db
         self.rp = rp
         self._delivery = delivery
@@ -486,6 +489,8 @@ class Passkeys:
         self._credentials = credentials or CredentialPolicy(min(5, ceiling.max_active))
         if self._credentials.max_active > ceiling.max_active:
             raise ValueError("the credential cap is above the deployment ceiling")
+        self._ceiling = ceiling
+        self._credential_cap = credential_cap
         self._change_ttl = min(challenge_ttl, CHANGE_DEADLINE)
         self._clock = clock
 
@@ -2364,8 +2369,10 @@ class Passkeys:
             retire = next((c for c in active if c["credential_id"] == replace), None)
             if retire is None:
                 raise CredentialChangeRefused("not_active_credential")
-        elif await self._holding_count(self.db, subject) >= self._credentials.max_active:
-            raise CredentialChangeRefused("cap_reached")
+        else:
+            async with self.db.transaction() as tx:
+                if await self._holding_count(tx, subject) >= await self._cap(tx, scope):
+                    raise CredentialChangeRefused("cap_reached")
         nonce = secrets.token_bytes(32)
         preimage = change_preimage(
             scope=scope,
@@ -2494,9 +2501,8 @@ class Passkeys:
             ids = {c["credential_id"] for c in active}
             if asserting not in ids or (retire_id is not None and retire_id not in ids):
                 raise CredentialChangeRefused("stale_binding")
-            if (
-                retire_id is None
-                and await self._holding_count(tx, subject) >= self._credentials.max_active
+            if retire_id is None and await self._holding_count(tx, subject) >= await self._cap(
+                tx, scope
             ):
                 raise CredentialChangeRefused("cap_reached")
             if await tx.fetch_value(
@@ -2575,6 +2581,18 @@ class Passkeys:
             subject,
             self.rp.rp_id,
         )
+
+    async def _cap(self, tx: TransactionManager, scope: str) -> int:
+        """The scope's cap: its policy key's stored cap, or the configured one.
+        A stored value outside one to the ceiling is unavailable, never clamped."""
+        if self._credential_cap is None:
+            return self._credentials.max_active
+        cap = await self._credential_cap(tx, scope)
+        if cap is None:
+            return self._credentials.max_active
+        if type(cap) is not int or not 1 <= cap <= self._ceiling.max_active:
+            raise CredentialChangeRefused("cap_unavailable")
+        return cap
 
     async def _holding_count(self, db: Any, subject: str) -> int:
         """How many active credentials the holding has, at every relying

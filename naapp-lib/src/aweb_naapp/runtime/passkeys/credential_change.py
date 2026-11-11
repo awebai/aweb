@@ -46,7 +46,7 @@ class CredentialChangeRefused(Exception):
     """A credential change is not allowed now. `reason` is one of
     `not_in_effect`, `no_notice_contact`, `no_active_credential`,
     `registration_unavailable`, `registration_did_not_verify`,
-    `credential_registered`, `not_active_credential`, `cap_reached`,
+    `credential_registered`, `not_active_credential`, `cap_reached`, `cap_unavailable`,
     `stale_binding` or `expired`; a caller's fence may raise it with its own."""
 
     def __init__(self, reason: str) -> None:
