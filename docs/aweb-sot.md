@@ -1023,6 +1023,7 @@ the repair is observable. Repo association remains workspace state.
 `POST /v1/connect` also retains a `repo_origin` compatibility field. When it is
 non-empty, the server canonicalizes it, ensures the team-scoped repo row, and
 binds that repo to the workspace; a newly created workspace is typed `agent`.
+On both paths, ensuring the row of a repo the team deleted restores that row.
 An invalid origin returns HTTP 422. Omitting the field leaves an existing repo
 binding unchanged and creates a new workspace as `manual`. The current `aw
 init` client intentionally omits `repo_origin`; heartbeat's
