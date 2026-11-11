@@ -34,6 +34,7 @@ canonicalize_dir() {
 }
 
 REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd -P)"
+source "$REPO_ROOT/scripts/journey-network.sh"
 SERVER_DIR="$REPO_ROOT/server"
 
 AWID_PORT="${AWID_FED_E2E_PORT:-8310}"
@@ -47,9 +48,10 @@ case "$DOCKER_PUBLISHED_HOST" in
   127.0.0.1|aweb-docker.test) ;;
   *) echo "unsupported AWEB_DOCKER_PUBLISHED_HOST: $DOCKER_PUBLISHED_HOST" >&2; exit 2 ;;
 esac
-AWID_PUBLISHED_URL="http://$DOCKER_PUBLISHED_HOST:$AWID_PORT"
-ALPHA_PUBLISHED_URL="http://$DOCKER_PUBLISHED_HOST:$ALPHA_PORT"
-BETA_PUBLISHED_URL="http://$DOCKER_PUBLISHED_HOST:$BETA_PORT"
+PROJECT="${AWEB_FED_E2E_PROJECT:-aweb-fed-e2e-$RANDOM}"
+AWID_PUBLISHED_URL="$(journey_url "$PROJECT" awid 8010 "http://$DOCKER_PUBLISHED_HOST:$AWID_PORT")"
+ALPHA_PUBLISHED_URL="$(journey_url "$PROJECT" aweb-alpha 8000 "http://$DOCKER_PUBLISHED_HOST:$ALPHA_PORT")"
+BETA_PUBLISHED_URL="$(journey_url "$PROJECT" aweb-beta 8000 "http://$DOCKER_PUBLISHED_HOST:$BETA_PORT")"
 # Clients and federation peers use the same advertised origin. Published ports
 # are host-side observation endpoints, not additional authentication audiences.
 AWID_URL="http://awid:8010"
@@ -57,7 +59,6 @@ ALPHA_ORIGIN="http://aweb-alpha:8000"
 BETA_ORIGIN="http://aweb-beta:8000"
 ALPHA_URL="$ALPHA_ORIGIN"
 BETA_URL="$BETA_ORIGIN"
-PROJECT="${AWEB_FED_E2E_PROJECT:-aweb-fed-e2e-$RANDOM}"
 SERVER_MODE="${AWEB_FED_E2E_SERVER_MODE:-source}"
 CELL_DIRECTION="${AWEB_FED_E2E_DIRECTION:-a-to-b}"
 CELL_ID="${AWEB_FED_E2E_CELL_ID:-source-journey}"

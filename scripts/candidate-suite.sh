@@ -10,6 +10,7 @@ stages="${1:-checks user-paths unit artifacts integration}"
 checks() {
   run check-private-boundary
   run _candidate-gate-docker-boundaries
+  run _candidate-gate-compose-adoption
   run test-shipping
   run check-page-renderer-bundle
   run check-aw-commit-repo-stamp

@@ -34,9 +34,12 @@ def e2e_stack(env: Mapping[str, str]) -> E2EStack:
     project = env.get("NAAPP_E2E_PROJECT", "library-e2e")
     awid_port = env.get("NAAPP_E2E_AWID_PORT", "18010")
     postgres_port = env.get("NAAPP_E2E_POSTGRES_PORT", "55432")
+    container_network = env.get("NAAPP_E2E_CONTAINER_NETWORK") == "1"
     return E2EStack(
-        awid_url=f"http://{host}:{awid_port}",
-        postgres_url=f"postgresql://library:library@{host}:{postgres_port}/library",
+        awid_url=(f"http://{project}-awid.test:8010" if container_network
+                  else f"http://{host}:{awid_port}"),
+        postgres_url=(f"postgresql://library:library@{project}-postgres.test:5432/library" if container_network
+                      else f"postgresql://library:library@{host}:{postgres_port}/library"),
         compose=["docker", "compose", "-p", project, "-f", "docker-compose.e2e.yml"],
     )
 

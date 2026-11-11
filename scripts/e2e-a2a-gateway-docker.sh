@@ -34,6 +34,7 @@ PY
 }
 
 REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd -P)"
+source "$REPO_ROOT/scripts/journey-network.sh"
 CLI_DIR="$REPO_ROOT/cli/go"
 COMPOSE_FILE="$REPO_ROOT/server/docker-compose.yml"
 DOCKER_BIND_ROOT="${AWEB_DOCKER_BIND_ROOT:-${TMPDIR:-/tmp}}"
@@ -46,7 +47,7 @@ case "$DOCKER_PUBLISHED_HOST" in
   *) echo "unsupported AWEB_DOCKER_PUBLISHED_HOST: $DOCKER_PUBLISHED_HOST" >&2; exit 2 ;;
 esac
 
-PROJECT="a2agw-e2e-$$"
+PROJECT="${AWEB_CANDIDATE_RESOURCE_LABEL:-a2agw-e2e-$$}-a2a"
 TMP_ROOT="$(make_temp_dir a2a-gw-e2e)"
 E2E_HOME="$TMP_ROOT/home"
 E2E_CWD="$TMP_ROOT/cwd"
@@ -54,22 +55,29 @@ GATEWAY_DIR="$E2E_CWD/gateway"
 PERSONAL_DIR="$E2E_CWD/personal"
 CONFIG_PATH="$TMP_ROOT/gateway.yaml"
 ENV_FILE="$TMP_ROOT/compose.env"
-GATEWAY_CONTAINER="a2a-gw-e2e-$$"
-GATEWAY_IMAGE="a2a-gateway:e2e-$$"
+GATEWAY_CONTAINER="$PROJECT-gateway"
+GATEWAY_IMAGE="a2a-gateway:$PROJECT"
 
 mkdir -p "$E2E_HOME/.config/aw" "$GATEWAY_DIR" "$PERSONAL_DIR" "$TMP_ROOT/audit"
 
-AWEB_PORT="${AWEB_A2A_E2E_PORT:-$(free_port)}"
-AWID_PORT="${AWID_A2A_E2E_PORT:-$(free_port)}"
-REDIS_PORT="${AWEB_A2A_E2E_REDIS:-$(free_port)}"
-PG_PORT="${AWEB_A2A_E2E_PG:-$(free_port)}"
-GATEWAY_PORT="${A2A_GW_E2E_PORT:-$(free_port)}"
-
-AWEB_URL="http://$DOCKER_PUBLISHED_HOST:$AWEB_PORT"
-AWID_URL="http://$DOCKER_PUBLISHED_HOST:$AWID_PORT"
-AWEB_DOCKER_URL="http://host.docker.internal:$AWEB_PORT"
-AWID_DOCKER_URL="http://host.docker.internal:$AWID_PORT"
-GATEWAY_URL="http://$DOCKER_PUBLISHED_HOST:$GATEWAY_PORT"
+CLIENT_NETWORK_ARGS=(--add-host=host.docker.internal:host-gateway)
+if [[ -n "${CANDIDATE_RUNNER_NAME:-}" ]]; then
+  AWEB_PORT=8000 AWID_PORT=8010 REDIS_PORT=6379 PG_PORT=5432 GATEWAY_PORT=8080
+  CLIENT_NETWORK_ARGS=(--network "${PROJECT}_default")
+  GATEWAY_PUBLISH_ARGS=(--network-alias "$PROJECT-gateway.test")
+else
+  AWEB_PORT="${AWEB_A2A_E2E_PORT:-$(free_port)}"
+  AWID_PORT="${AWID_A2A_E2E_PORT:-$(free_port)}"
+  REDIS_PORT="${AWEB_A2A_E2E_REDIS:-$(free_port)}"
+  PG_PORT="${AWEB_A2A_E2E_PG:-$(free_port)}"
+  GATEWAY_PORT="${A2A_GW_E2E_PORT:-$(free_port)}"
+  GATEWAY_PUBLISH_ARGS=(-p "$DOCKER_PUBLISH_BIND:$GATEWAY_PORT:8080")
+fi
+AWEB_URL="$(journey_url "$PROJECT" aweb 8000 "http://$DOCKER_PUBLISHED_HOST:$AWEB_PORT")"
+AWID_URL="$(journey_url "$PROJECT" awid 8010 "http://$DOCKER_PUBLISHED_HOST:$AWID_PORT")"
+AWEB_DOCKER_URL="$(journey_url "$PROJECT" aweb 8000 "http://host.docker.internal:$AWEB_PORT")"
+AWID_DOCKER_URL="$(journey_url "$PROJECT" awid 8010 "http://host.docker.internal:$AWID_PORT")"
+GATEWAY_URL="$(journey_url "$PROJECT" gateway 8080 "http://$DOCKER_PUBLISHED_HOST:$GATEWAY_PORT")"
 
 pass=0
 fail=0
@@ -163,7 +171,7 @@ run_aw_in() {
   shift
   docker run --rm \
     --user "$(id -u):$(id -g)" \
-    --add-host=host.docker.internal:host-gateway \
+    "${CLIENT_NETWORK_ARGS[@]}" \
     -e HOME="$E2E_HOME" \
     -e AW_CONFIG_PATH="$E2E_HOME/.config/aw/config.yaml" \
     -e AWID_REGISTRY_URL="$AWID_DOCKER_URL" \
@@ -401,7 +409,7 @@ EOF
 
 capture_success gateway_check "gateway config/workspace check" docker run --rm \
   --user "$(id -u):$(id -g)" \
-  --add-host=host.docker.internal:host-gateway \
+  "${CLIENT_NETWORK_ARGS[@]}" \
   -v "$GATEWAY_DIR:/workspace:ro" \
   -v "$CONFIG_PATH:/config/gateway.yaml:ro" \
   -v "$TMP_ROOT/audit:/audit" \
@@ -410,8 +418,8 @@ capture_success gateway_check "gateway config/workspace check" docker run --rm \
 docker run -d \
   --name "$GATEWAY_CONTAINER" \
   --user "$(id -u):$(id -g)" \
-  --add-host=host.docker.internal:host-gateway \
-  -p "$DOCKER_PUBLISH_BIND:$GATEWAY_PORT:8080" \
+  "${CLIENT_NETWORK_ARGS[@]}" \
+  "${GATEWAY_PUBLISH_ARGS[@]}" \
   -v "$GATEWAY_DIR:/workspace:ro" \
   -v "$CONFIG_PATH:/config/gateway.yaml:ro" \
   -v "$TMP_ROOT/audit:/audit" \
