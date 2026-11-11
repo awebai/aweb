@@ -367,6 +367,30 @@ class AWIDTeamCache:
                 self._unknown_refresh_at.pop(team_id, None)
             return facts
 
+    async def current_team_did_key(self, team_id: str) -> str | None:
+        """The team's current controller key, read fresh (never cached), with
+        the team's read authentication; None for a team AWID does not know.
+        403 team_private_unreadable or 503 when AWID cannot answer."""
+        domain, team_name = parse_team_id(team_id)
+        team_url = f"{self.registry_url}/v1/namespaces/{domain}/teams/{team_name}"
+        try:
+            async with self._client() as client:
+                response = await client.get(team_url, headers=self._team_read_headers(team_id, team_url))
+        except httpx.HTTPError as exc:
+            raise HTTPException(status_code=503, detail="AWID registry unavailable") from exc
+        _raise_if_private_team_unreadable(response, team_id)
+        if response.status_code == 404:
+            return None
+        if response.status_code >= 400:
+            raise HTTPException(status_code=503, detail="AWID registry unavailable")
+        try:
+            team_did_key = str(response.json().get("team_did_key") or "").strip()
+        except (ValueError, AttributeError) as exc:
+            raise HTTPException(status_code=503, detail="AWID registry unavailable") from exc
+        if not team_did_key:
+            raise HTTPException(status_code=503, detail="AWID team response missing team_did_key")
+        return team_did_key
+
     async def check_member_credentials(self) -> None:
         """Read each configured member credential's team with that credential,
         fresh, and require its certificate to be published, unrevoked and

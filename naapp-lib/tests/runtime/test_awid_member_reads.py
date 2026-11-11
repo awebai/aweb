@@ -145,3 +145,28 @@ def test_a_credential_that_does_not_belong_together_is_refused(mismatch: str):
                 TEAM_ID: AWIDMemberCredential(signing_key=signing_key, certificate=certificate)
             },
         )
+
+
+async def test_a_fresh_team_key_read_is_signed_and_never_cached(registry):
+    """Logs' ingest reads the controller key fresh for each client delivery."""
+    caller, service = await private_team(registry)
+    cache = member_cache(registry, service)
+    assert await cache.current_team_did_key(TEAM_ID) == caller.team_did_key
+    assert await cache.current_team_did_key(TEAM_ID) == caller.team_did_key
+    team_reads = [r for r in registry.transport.calls if r.url.path.endswith("/teams/backend")]
+    assert len(team_reads) == 2
+    assert all(r.headers["Authorization"].startswith(f"DIDKey {service.did_key} ") for r in team_reads)
+
+
+async def test_a_fresh_team_key_read_of_an_unknown_team_is_none(registry):
+    await private_team(registry)
+    assert await member_cache(registry).current_team_did_key("nobody:example.com") is None
+
+
+async def test_a_fresh_team_key_read_stops_when_the_certificate_is_revoked(registry):
+    _, service = await private_team(registry)
+    await registry.revoke("service")
+    with pytest.raises(HTTPException) as refused:
+        await member_cache(registry, service).current_team_did_key(TEAM_ID)
+    assert refused.value.status_code == 403
+    assert refused.value.detail["code"] == "team_private_unreadable"
