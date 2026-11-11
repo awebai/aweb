@@ -249,7 +249,7 @@ def _send_refusal(exc: Exception, *, address: str = "", hosted_envelope: bool = 
         return json.dumps({"error": unreachable_address_refusal(address)})
     if isinstance(exc.__cause__, E2EERecipientKeyMismatch):
         return json.dumps({"error": RECIPIENT_KEY_CHANGED})
-    if isinstance(exc, HTTPException) and detail in _IDENTITY_BINDING_NEXT_ACTIONS:
+    if isinstance(exc, HTTPException) and isinstance(detail, str) and detail in _IDENTITY_BINDING_NEXT_ACTIONS:
         return json.dumps({"error": _IDENTITY_BINDING_NEXT_ACTIONS[detail], "reason": detail})
     return json.dumps({"error": detail or str(exc)})
 
