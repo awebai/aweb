@@ -19,13 +19,14 @@ from datetime import UTC, datetime
 
 import pytest
 from aweb_naapp.console.handoff_requester import RequesterEvidence, requester_parent
-from aweb_naapp.roles import lock_holding, read_holding
+from aweb_naapp.roles import PrincipalKey, lock_holding, read_holding
 from aweb_naapp_testing import Member, did_key
 from awid.id_certificates import encode_id_chain_header, id_certificate_signing_bytes
 from fastapi import HTTPException
 from nacl.signing import SigningKey
 
 from aweb_secrets.owners import OWNER_ROLE
+from tests.human_owner import apply_holder
 from tests.test_handoff_sessions import API, b64, journey
 from tests.test_owner_bootstrap import TEAM
 
@@ -222,3 +223,21 @@ async def test_a_requester_window_crossed_during_a_lock_wait_creates_nothing(jou
     assert await handoffs(journey) == before
     fresh = await start(journey, laptop, chain)
     assert fresh.status_code == 201, fresh.text
+
+
+@pytest.mark.parametrize("journey", [REQUESTER], indirect=True)
+async def test_a_credential_replace_racing_a_credential_start_both_complete(journey):
+    # The owner's replace and the holder's credential start both take the
+    # holding for writing; queued behind the lock they overlap on release.
+    # Neither deadlocks, and the holding keeps a retained certificate.
+    who = PrincipalKey(TEAM, journey.scope.principal)
+    async with holding_locked(journey):
+        replace = asyncio.create_task(apply_holder(
+            journey.world, "human-credential.replace", who, "holder@example.com",
+            member=journey.member, client=journey.registry))
+        credential = asyncio.create_task(start(journey, journey.member, None, purpose="credential"))
+        await asyncio.sleep(0.5)
+        assert not credential.done()
+    _, response = await asyncio.wait_for(asyncio.gather(replace, credential), timeout=30)
+    assert response.status_code == 201, response.text
+    assert await retained(journey) is not None
