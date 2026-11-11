@@ -100,6 +100,9 @@ class Deployment:
     smtp: SmtpServer
     agent: httpx.AsyncClient
     console: httpx.AsyncClient
+    # The owner's own client on the console origin: it delivers owner acts and
+    # never carries a reader's session cookie, which the delivery refuses.
+    owner_console: httpx.AsyncClient
     looked_up: list[str]
     # The installed manifest: logs' version 3, which declares its reader role.
     manifest: bytes
@@ -212,6 +215,9 @@ async def deployment(
                     httpx.AsyncClient(
                         transport=httpx.ASGITransport(app=service), base_url=CONSOLE
                     ) as human,
+                    httpx.AsyncClient(
+                        transport=httpx.ASGITransport(app=service), base_url=CONSOLE
+                    ) as owner_console,
                 ):
                     yield Deployment(
                         member=member,
@@ -226,6 +232,7 @@ async def deployment(
                         smtp=smtp,
                         agent=agent,
                         console=human,
+                        owner_console=owner_console,
                         looked_up=looked_up,
                         manifest=manifest,
                         server_db=server_db,
@@ -273,7 +280,7 @@ async def designate(
         },
     )
     certificate = json.dumps(reader.member.certificate()).encode()
-    response = await deployment.console.post(
+    response = await deployment.owner_console.post(
         OWNER_ACT_PATH,
         json={
             "signing": base64.b64encode(signing).decode(),
