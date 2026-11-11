@@ -19,7 +19,7 @@ to refresh it.
 | Identity | `auth`, `custody`, `id`, `mcp-config`, `org`, `team`, `whoami` |
 | Messaging & Network | `a2a`, `beads-mail`, `chat`, `contacts`, `control`, `directory`, `events`, `gc-mail`, `heartbeat`, `inbound-mode`, `log`, `mail`, `room`, `wake` |
 | Coordination & Runtime | `activity`, `agent`, `instructions`, `lock`, `notify`, `role-name`, `roles`, `run`, `status`, `status-host`, `task`, `work` |
-| Utility | `completion`, `doctor`, `help`, `hooks`, `plugin`, `upgrade`, `version` |
+| Utility | `app`, `completion`, `doctor`, `help`, `hooks`, `logs`, `plugin`, `upgrade`, `version` |
 | Additional Commands | `blueprint`, `session`, `who` |
 
 ## Global Flags
@@ -4013,6 +4013,103 @@ List ready tasks that are not already claimed by other workspaces
 Flags:
 - `-h, --help help for ready`
 
+## `app`
+
+### `app`
+
+Roles that an app's manifest declares under owner_acts are held by human members of the team.
+The team owner binds and unbinds holders with signed acts; a holder registers a passkey
+at the app's human origin in a browser that aw opens.
+
+Subcommands:
+- `credential` Register or replace a holder's passkey for an app role
+- `role` Designate or revoke a holder of an app role, as the team owner
+
+Flags:
+- `-h, --help help for app`
+
+## `app credential`
+
+### `app credential`
+
+Register or replace a holder's passkey for an app role
+
+Subcommands:
+- `register` Register a passkey for an app role, as the holder, and export it for the team owner
+- `replace` Replace a holder's passkey, as the team owner
+
+Flags:
+- `-h, --help help for credential`
+
+## `app credential register`
+
+### `app credential register`
+
+Opens the app's human origin in a browser, where you create a passkey, and writes the public
+credential with your team certificate to --out (or stdout). Read its fingerprint to the team
+owner over a channel your custodian does not control, such as in person or a call.
+
+Flags:
+- `-h, --help help for register`
+- `--out string Write the export to this file instead of stdout`
+- `--role string The app role, as its manifest names it`
+
+## `app credential replace`
+
+### `app credential replace`
+
+Signs human-credential.replace with the team's controller key. The current passkey is retired
+at once and the replacement takes effect after the app's cooling-off period.
+
+Flags:
+- `--credential string The holder's export from aw app credential register`
+- `-h, --help help for replace`
+- `--notice-contact string The notice contact, for a role that declares one`
+- `--principal string The holder's did:aw`
+- `--role string The app role, as its manifest names it`
+- `--yes Sign what is shown without asking`
+
+## `app role`
+
+### `app role`
+
+Designate or revoke a holder of an app role, as the team owner
+
+Subcommands:
+- `designate` Designate a human member as a holder of an app role
+- `revoke` End a holder's holding of an app role
+
+Flags:
+- `-h, --help help for role`
+
+## `app role designate`
+
+### `app role designate`
+
+Signs human-role.designate with the team's controller key. Pass the holder's export with
+--credential and sign only after both clients show the same fingerprint. Without --credential,
+you are the holder: aw registers your passkey first, then signs.
+
+Flags:
+- `--credential string The holder's export from aw app credential register`
+- `-h, --help help for designate`
+- `--notice-contact string The notice contact, for a role that declares one`
+- `--principal string The holder's did:aw`
+- `--role string The app role, as its manifest names it`
+- `--yes Sign what is shown without asking`
+
+## `app role revoke`
+
+### `app role revoke`
+
+End a holder's holding of an app role
+
+Flags:
+- `-h, --help help for revoke`
+- `--principal string The holder's did:aw`
+- `--role string The app role, as its manifest names it`
+- `--yes Sign what is shown without asking`
+
 ## `completion`
 
 ### `completion`
@@ -4272,6 +4369,40 @@ What will be signed is shown before the team's controller key signs it.
 Flags:
 - `-h, --help help for revoke`
 - `--yes Sign without asking for confirmation (what is signed is still shown)`
+
+## `logs`
+
+### `logs`
+
+A team's audit log
+
+Subcommands:
+- `verify` Verify an exported team log offline
+
+Flags:
+- `-h, --help help for logs`
+
+## `logs verify`
+
+### `logs verify`
+
+Verify an exported team log (aweb.logs-export/1) offline, against the receipt and
+checkpoint keys you accept and the receipts and checkpoints you hold yourself.
+
+It reads only the files it is given: no workspace, identity or server.
+Give each key you accept, for receipts and for checkpoints; a key that signs
+both is given to both. Each --witness file holds one receipt or checkpoint per
+line, in an export's own line shape. --bundle - reads the export from stdin.
+
+Exits 0 when the bundle is intact, 1 when it is verified and not intact, and 2
+when it could not be verified.
+
+Flags:
+- `--bundle string The export to verify, or - for stdin`
+- `--checkpoint-key stringArray A did:key you accept for checkpoints (repeatable)`
+- `-h, --help help for verify`
+- `--receipt-key stringArray A did:key you accept for receipts (repeatable)`
+- `--witness stringArray A file of receipts and checkpoints you hold (repeatable)`
 
 ## `plugin`
 
