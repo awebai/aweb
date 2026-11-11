@@ -215,8 +215,15 @@ must still pass on its own.
     unsigned handoff request is refused.
 
   A `credential` handoff is also signed this way, which keeps its
-  rate-limit identity, but the app retains nothing from it: no state is kept
-  for a credential that no act has bound yet.
+  rate-limit identity, but the app retains no evidence from it: no
+  certificate and no state for a credential that no act has bound yet.
+- **Handoff context.** Every handoff, of either purpose, keeps the team and
+  principal its signed start authenticated, server-side with the handoff
+  row and only until the handoff ends. Its continuations check that team and
+  the installation, and the app looks the handoff's target up in that team
+  only. The context is not evidence and grants nothing: it never satisfies a
+  membership check, an owner record or a holding. The start's public scope
+  is unchanged and carries no team.
 - **Retained.** The app keeps the exact certificate bytes of a verified
   designation or replacement with the holding. It keeps those of a `session`
   handoff with the session, for at most the session's lifetime. Retaining
