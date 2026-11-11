@@ -683,10 +683,10 @@ async def mark_read(
         db,
         redis,
         auth,
-        messaging_runtime(request.app.state),
         session_id=session_uuid,
         message_ids=payload.message_ids,
         up_to_message_id=payload.up_to_message_id,
+        agent_wake_publisher=agent_wake_publisher(request.app.state),
     )
     if result is None:
         raise HTTPException(status_code=404, detail=RESOURCE_NOT_FOUND_DETAIL)

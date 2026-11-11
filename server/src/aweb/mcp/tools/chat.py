@@ -717,10 +717,10 @@ async def chat_read(
             db_infra,
             redis,
             mcp_messaging_auth(auth),
-            mcp_messaging_runtime(auth),
             session_id=session_uuid,
             message_ids=normalized_message_ids,
             up_to_message_id=normalized_watermark,
+            agent_wake_publisher=current_agent_wake_publisher(),
         )
     except ServiceError as exc:
         return json.dumps({"error": exc.detail})

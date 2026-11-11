@@ -5,23 +5,22 @@ from __future__ import annotations
 from typing import Any
 from uuid import UUID
 
-from aweb.agent_wake import agent_wake_scope
+from aweb.agent_wake import AgentWakePublisher, agent_wake_scope
 from aweb.events import publish_chat_session_signal
 from aweb.identity_auth_deps import MessagingAuth, participant_dids
 from aweb.messaging.chat import mark_messages_read, mark_messages_read_up_to, resolve_session_actor_did
 from aweb.messaging.chat_send import _resolve_actor_agent
-from aweb.messaging.runtime import MessagingRuntime
 
 
 async def mark_chat_read(
     db,
     redis,
     auth: MessagingAuth,
-    runtime: MessagingRuntime,
     *,
     session_id: UUID,
     message_ids: list[str] | None,
     up_to_message_id: str | None,
+    agent_wake_publisher: AgentWakePublisher | None,
 ) -> dict[str, Any] | None:
     """Mark messages of a session read for ``auth``, or return None when it is not a participant.
 
@@ -37,7 +36,7 @@ async def mark_chat_read(
     if not actor_did:
         return None
 
-    with agent_wake_scope(runtime.agent_wake_publisher):
+    with agent_wake_scope(agent_wake_publisher):
         if message_ids is not None:
             result = await mark_messages_read(
                 db,

@@ -5,15 +5,20 @@ from __future__ import annotations
 from datetime import datetime
 from uuid import UUID
 
-from aweb.agent_wake import agent_wake_scope, record_did_wakes
-from aweb.hooks import fire_mutation_callback
+from aweb.agent_wake import AgentWakePublisher, agent_wake_scope, record_did_wakes
+from aweb.hooks import MutationCallback, fire_mutation_callback
 from aweb.identity_auth_deps import MessagingAuth, participant_dids
 from aweb.messaging.mail_attribution import incoming_mail_sql
-from aweb.messaging.runtime import MessagingRuntime
 
 
 async def acknowledge_mail(
-    db, auth: MessagingAuth, message_ids: list[UUID], runtime: MessagingRuntime, *, read_at: datetime,
+    db,
+    auth: MessagingAuth,
+    message_ids: list[UUID],
+    *,
+    read_at: datetime,
+    agent_wake_publisher: AgentWakePublisher | None,
+    on_mutation: MutationCallback | None,
 ) -> list[UUID]:
     """Mark read the unread mail among ``message_ids`` that ``auth`` received.
 
@@ -22,7 +27,7 @@ async def acknowledge_mail(
     read, or that ``auth`` did not receive, is left as it is.
     """
     inbox_dids = participant_dids(auth)
-    with agent_wake_scope(runtime.agent_wake_publisher):
+    with agent_wake_scope(agent_wake_publisher):
         acknowledged = await db.get_manager("aweb").fetch_all(
             f"""
             UPDATE {{{{tables.messages}}}} m
@@ -40,7 +45,7 @@ async def acknowledge_mail(
             record_did_wakes(inbox_dids, "mail")
     for row in acknowledged:
         await fire_mutation_callback(
-            runtime.on_mutation,
+            on_mutation,
             "message.acknowledged",
             {
                 "team_id": auth.team_id,
