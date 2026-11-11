@@ -565,9 +565,9 @@ def main() -> None:
             "test_contact_reassignment_requires_signed_explicit_acceptance",
         )
 
-        messages_route = checkout / "server" / "src" / "aweb" / "routes" / "messages.py"
+        mail_send = checkout / "server" / "src" / "aweb" / "messaging" / "mail_send.py"
         replace_exact(
-            messages_route,
+            mail_send,
             '                    "current_did_key": sender_current_did,\n',
             "",
         )
