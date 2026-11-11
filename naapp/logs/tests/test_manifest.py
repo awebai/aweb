@@ -11,16 +11,20 @@ from pathlib import Path
 from typing import Any
 
 from aweb_naapp.hooks.catalog import load_catalog
+from aweb_naapp.hooks.owner_act import HUMAN_ROLE_ACTS
 from aweb_naapp.manifest import load_manifest
 from aweb_naapp.runtime.app_keys import load_app_key
+from aweb_naapp.runtime.hook_egress import HookEgress
 
+from aweb_logs.app import create_runtime
 from aweb_logs.chain import CHECKPOINT_PURPOSE, RECEIPT_PURPOSE
 from aweb_logs.config import LogsSettings
 
-from .deployment import did_key_of, served_manifest, template, write_key_files
+from .deployment import TEST_APP_ID, did_key_of, served_manifest, template, write_key_files
 
 AWEB_ROOT = Path(__file__).resolve().parents[3]
 ORIGIN = "https://logs.example.test"
+CONSOLE = "https://console.logs.example.test"
 CATALOG = load_catalog((AWEB_ROOT / "docs" / "vectors" / "hook-catalog-v1.json").read_bytes())
 
 
@@ -53,6 +57,26 @@ def test_members_granted_readers_remove_a_reader_and_ask_for_no_reader_slot(
     assert routes == {
         ("remove-reader", "POST", "/v1/reader-removals", ("logs.readers",), True),
     }
+
+
+def test_owners_designate_log_readers_on_the_console_origin(tmp_path: Path) -> None:
+    # The owner designates a reader, replaces their credential and revokes them
+    # by a human-role act addressed to the console origin, where the reader's
+    # passkey lives. A reader takes no notice contact.
+    settings = LogsSettings(
+        _env_file=None,
+        database_url="postgresql://localhost/logs",
+        public_origin=ORIGIN,
+        console_origin=CONSOLE,
+        app_id=TEST_APP_ID,
+        app_key_files=write_key_files(tmp_path),
+    )
+    owner_acts = create_runtime(settings, HookEgress.from_settings(settings)).manifest.owner_acts
+    assert owner_acts is not None
+    assert owner_acts["origin"] == CONSOLE
+    assert [
+        (role["name"], role["acts"], role["notice_contact"]) for role in owner_acts["roles"]
+    ] == [("logs.reader", sorted(HUMAN_ROLE_ACTS), False)]
 
 
 def test_ingest_is_registered_on_every_hook_of_the_catalog(tmp_path: Path) -> None:

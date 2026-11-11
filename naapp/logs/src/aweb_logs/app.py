@@ -40,6 +40,7 @@ from aweb_logs.chain import CHECKPOINT_PURPOSE, RECEIPT_PURPOSE
 from aweb_logs.config import LogsSettings
 from aweb_logs.ingest import Ingestor, IngestRefused
 from aweb_logs.ledger import LogsSigner, checkpoint_moved_heads
+from aweb_logs.reader_acts import OWNER_ACTS
 from aweb_logs.reader_service import reader_service
 from aweb_logs.retention import run_retention
 
@@ -92,12 +93,15 @@ def create_runtime(
     awid_transport: httpx.AsyncBaseTransport | None = None,
     team_server_transport: httpx.AsyncBaseTransport | None = None,
 ) -> NaappRuntime:
-    """logs' runtime: its schema, its manifest and its hook events leaving through ``hooks``."""
+    """logs' runtime: its schema, its manifest, with the reader role its owner
+    designates on the console origin, and its hook events leaving through ``hooks``."""
     return NaappRuntime(
         settings,
         module_name=MIGRATIONS_MODULE,
         migrations_path=MIGRATIONS_PATH,
         manifest_path=MANIFEST_PATH,
+        owner_acts=OWNER_ACTS,
+        owner_acts_origin=settings.console_origin,
         awid_transport=awid_transport,
         team_server_transport=team_server_transport,
         hook_egress=hooks.egress,
