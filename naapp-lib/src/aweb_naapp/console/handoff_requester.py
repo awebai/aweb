@@ -9,6 +9,8 @@ holder's own app-RP login and explicit Allow still decide the session.
 from __future__ import annotations
 
 import hashlib
+import math
+import time
 from collections.abc import Awaitable, Callable
 from dataclasses import dataclass
 from typing import Any
@@ -33,7 +35,23 @@ class Requester:
         return {"id": self.id, "address": self.address, "key_fingerprint": self.key_fingerprint}
 
 
-RequesterParent = Callable[[Request, Principal], Awaitable[str | None]]
+@dataclass(frozen=True)
+class RequesterEvidence:
+    """The verified direct parent of a start's signer, valid until the original
+    evidence's 60-second freshness bound (monotonic ns). It is rechecked at the
+    start's final effect, never renewed by a lock wait."""
+
+    parent: str
+    fresh_until: int
+
+    def require_fresh(self) -> None:
+        if time.monotonic_ns() > self.fresh_until:
+            raise HTTPException(503, "principal_status_unavailable")
+
+
+RequesterParent = Callable[[Request, Principal], Awaitable[RequesterEvidence | None]]
+
+FRESHNESS_SECONDS = 60
 
 
 def key_fingerprint(did_key: str) -> str:
@@ -43,7 +61,8 @@ def key_fingerprint(did_key: str) -> str:
 
 
 def requester_parent(registry: Any) -> RequesterParent:
-    """Verify the signer's chain from current evidence and return its direct human parent.
+    """Verify the signer's chain from current evidence and return its direct human
+    parent, with the original evidence deadline.
 
     ``registry`` is the runtime's registry client; its ``id_chain_evidence``
     serves status evidence no older than 60 seconds or refreshes it. Returns
@@ -52,7 +71,7 @@ def requester_parent(registry: Any) -> RequesterParent:
     refuses ``503 principal_status_unavailable``; nothing falls back.
     """
 
-    async def parent(request: Request, signer: Principal) -> str | None:
+    async def parent(request: Request, signer: Principal) -> RequesterEvidence | None:
         values = request.headers.getlist(CHAIN_HEADER)
         if len(values) != 1 or not signer.did_aw:
             return None
@@ -67,6 +86,7 @@ def requester_parent(registry: Any) -> RequesterParent:
         domain = leaf.get("domain")
         if not isinstance(domain, str):
             return None
+        started = time.monotonic_ns()
         evidence = await registry.id_chain_evidence(bundle, subject, domain=domain)
         result = verify_id_chain(bundle, subject=subject, evidence=evidence, domain=domain)
         if result.get("outcome") == "unavailable":
@@ -78,6 +98,8 @@ def requester_parent(registry: Any) -> RequesterParent:
             return None
         if issuer.get("id") != edge.get("id"):
             return None
-        return edge["id"]
+        age = evidence.age_seconds if evidence.age_seconds is not None else FRESHNESS_SECONDS
+        fresh_until = started + math.floor((FRESHNESS_SECONDS - age) * 1_000_000_000)
+        return RequesterEvidence(edge["id"], fresh_until)
 
     return parent

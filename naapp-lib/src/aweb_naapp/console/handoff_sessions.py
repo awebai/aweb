@@ -33,7 +33,12 @@ from aweb_naapp.console.handoff_credential import (
     _token,
     credential_handoff_router,
 )
-from aweb_naapp.console.handoff_requester import Requester, RequesterParent, key_fingerprint
+from aweb_naapp.console.handoff_requester import (
+    Requester,
+    RequesterEvidence,
+    RequesterParent,
+    key_fingerprint,
+)
 from aweb_naapp.console.handoff_store import HandoffStart, HandoffStore, handoff_start_router
 from aweb_naapp.console.handoff_wire import (
     HandoffWireRefused,
@@ -282,15 +287,22 @@ class ConsoleHandoffs:
         proof.require_fresh()
         return held
 
-    async def _start(self, start: HandoffStart, signer: Principal, request: Request):
+    async def _start(
+        self,
+        start: HandoffStart,
+        signer: Principal,
+        request: Request,
+        *,
+        requester: RequesterEvidence | None = None,
+    ):
         target = await self._target(start.scope, team_id=signer.team_id)
         if target.team_id != signer.team_id:
             raise HTTPException(403, "principal_not_member")
-        requester = None
-        if signer.did_aw != start.scope.principal:
+        shown = None
+        if requester is not None:
             # The holder's evidence comes only from its own holding, verified
             # now; nothing about the holder comes from the requester.
-            requester = Requester(signer.did_aw or "", signer.address, key_fingerprint(signer.did_key))
+            shown = Requester(signer.did_aw or "", signer.address, key_fingerprint(signer.did_key))
             certificate = await self._retained_certificate(start.scope, target)
         else:
             certificate = request.headers.get("X-AWID-Team-Certificate", "")
@@ -307,14 +319,45 @@ class ConsoleHandoffs:
                 target.subject,
                 self.authority.holding_identity(target),
                 certificate,
-                json.dumps(requester.public()) if requester else None,
+                json.dumps(shown.public()) if shown else None,
             )
-            if requester is None:
-                # The holder's own verified start refreshes the holding's
-                # retained certificate when it is accepted (contract :459).
-                await self._retain_certificate(tx, target, certificate)
             proof.require_fresh()
+            if requester is not None:
+                # The requester's original evidence window is not renewed by
+                # any wait above.
+                requester.require_fresh()
         await self.prune()
+        return created
+
+    async def _credential_start(self, start: HandoffStart, signer: Principal, request: Request):
+        """A credential start the holder signed. When the holder already holds
+        the role, its verified start certificate refreshes that holding's
+        retained certificate, committed with the accepted start. A failed or
+        mismatched verification changes nothing; the start itself grants
+        nothing either way (contract 584d76c9c :459)."""
+        certificate = request.headers.get("X-AWID-Team-Certificate", "")
+        refresh = None
+        holding = await roles.read_holding(
+            self.db,
+            installation_id=start.scope.installation_id,
+            team_id=signer.team_id,
+            role=start.scope.role,
+            principal=start.scope.principal,
+        )
+        if holding is not None:
+            try:
+                target = await self._target(start.scope, team_id=signer.team_id)
+                if target.team_id == signer.team_id:
+                    refresh = (target, await self._proof(target, certificate), holding.held_since)
+            except HTTPException:
+                refresh = None
+        async with self.db.transaction() as tx:
+            created = await self.store.create(start, tx=tx, team_id=signer.team_id)
+            if refresh is not None:
+                target, proof, held_since = refresh
+                await self._retain_certificate(tx, target, certificate, held_since=held_since)
+                proof.require_fresh()
+        await self.store.prune()
         return created
 
     async def _retained_certificate(self, scope: PublicScope, target) -> str:
@@ -332,28 +375,24 @@ class ConsoleHandoffs:
             raise HTTPException(403, "principal_not_member")
         return base64.b64encode(holding.certificate).decode()
 
-    async def _retain_certificate(self, tx, target, certificate: str) -> None:
-        """Retain the holder's verified start certificate: in the canonical
-        holding record, for exactly the holding now held, and in the console's
-        browser-admission cache."""
+    async def _retain_certificate(self, tx, target, certificate: str, *, held_since) -> bool:
+        """Retain the holder's verified certificate for exactly the holding
+        held since ``held_since``: in the canonical holding record, which
+        rechecks that holding under its lock, then in the console's
+        browser-admission cache. False, writing nothing, when that holding
+        has ended."""
         scope = target.public_scope
-        holding = await roles.read_holding(
+        refreshed = await roles.refresh_holding_certificate(
             tx,
             installation_id=scope.installation_id,
             team_id=target.team_id,
             role=scope.role,
             principal=scope.principal,
+            held_since=held_since,
+            certificate=base64.b64decode(certificate, validate=True),
         )
-        if holding is not None:
-            await roles.refresh_holding_certificate(
-                tx,
-                installation_id=scope.installation_id,
-                team_id=target.team_id,
-                role=scope.role,
-                principal=scope.principal,
-                held_since=holding.held_since,
-                certificate=base64.b64decode(certificate, validate=True),
-            )
+        if not refreshed:
+            return False
         await tx.execute(
             "INSERT INTO {{tables.console_holding_certificates}} VALUES($1,$2,$3,$4,$5,$6,$7) "
             "ON CONFLICT(installation_id,role,principal) DO UPDATE SET "
@@ -366,6 +405,7 @@ class ConsoleHandoffs:
             target.subject,
             certificate,
         )
+        return True
 
     def api_router(self):
         return handoff_start_router(
@@ -374,6 +414,7 @@ class ConsoleHandoffs:
             principal=self.principal,
             session_start=self._start,
             requester_parent=self.requester_parent,
+            credential_start=self._credential_start,
         )
 
     async def prepare(self, tx, session, *, approver_pairs: Sequence[tuple[str, str]]):
