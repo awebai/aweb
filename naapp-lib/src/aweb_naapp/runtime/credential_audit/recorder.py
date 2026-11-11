@@ -825,6 +825,13 @@ class CredentialAudit:
             or (context.admitted.app_id, context.admitted.installation_id)
             != (key.app_id, key.installation_id)
             or self.signed_document(context).get("act") != "human-credential.cap-set"
+            # The key is the signed subject's, whatever the caller passed.
+            or (key.app_id, key.installation_id, key.role)
+            != (
+                act.subject.get("app_id"),
+                act.subject.get("installation_id"),
+                act.subject.get("role"),
+            )
         ):
             raise GovernanceUnavailable()
         txid = await tx.fetch_value("SELECT txid_current()")

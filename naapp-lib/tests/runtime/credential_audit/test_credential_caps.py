@@ -216,6 +216,36 @@ async def test_a_cap_row_with_another_value_is_refused(world: World):
     await refused(world, write)
 
 
+async def test_a_key_for_another_role_than_the_signed_one_is_refused(world: World):
+    """The row is this act's, but written and recorded under another role's
+    key: the recorder binds the key to the signed subject, not its caller."""
+    other = CapKey(APP_ID, INSTALLATION_ID, "example.other")
+    await caps_of(world)
+    owner = world.owner.for_acts((CREDENTIAL_CAP_ACT,))
+    subject = cap_subject(3)
+    signing, signature = owner.sign(CREDENTIAL_CAP_ACT, subject)
+    prepared = await owner.verifier.prepare(signing, signature, team_id=TEAM_ID)
+    context = await world.recorder.prepare_owner_act(
+        world.admitted, signing=signing, signature=signature
+    )
+    before = len(await events(world))
+    with pytest.raises(GovernanceUnavailable), world.recorder.prepared(context):
+        async with world.db.transaction() as tx:
+            act = await owner.consume(tx, prepared, subject)
+            await tx.execute(
+                "INSERT INTO {{tables.credential_caps}} "
+                "(policy_key, cap, policy_version, act_ref, set_in, set_at) "
+                "VALUES ($1, 3, 1, $2, txid_current(), now())",
+                other.policy_key,
+                hashlib.sha256(signing).hexdigest(),
+            )
+            await world.recorder.record_credential_cap(
+                tx, act, other, occurred_at=datetime.now(UTC)
+            )
+    assert len(await events(world)) == before
+    assert not await world.db.fetch_value("SELECT count(*) FROM {{tables.credential_caps}}")
+
+
 async def test_a_cap_set_outside_the_recorders_act_is_refused(world: World):
     caps = await caps_of(world)
     owner = world.owner.for_acts((CREDENTIAL_CAP_ACT,))
