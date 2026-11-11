@@ -790,6 +790,11 @@ class Approvals:
             # Keep the store's decision savepoint open through the final fence,
             # so catching a refusal in a caller-owned tx cannot commit B2 writes.
             locked = await stack.enter_async_context(self._store.locked(approval_id, effect_tx))
+            if link_token is not None:
+                # A link used or revoked while this decision waited for the
+                # row answers as it would at presentation: link_unavailable,
+                # whatever the approval's state, never revealing the decision.
+                await self._usable_link(link_token)
             current = self._check_pending(locked.approval)
             # Eligibility again under the lock: a retirement serialises with
             # this decision on the approval row, so one committed during the
