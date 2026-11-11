@@ -240,10 +240,21 @@ async def test_a_certificate_of_another_principal_is_refused(fx):
     other = Member(team_id=TEAM_ID, team_key=fx.world.owner.team_key, certificate_id="cert-2")
     other.extra_cert_fields = {"member_did_aw": "did:aw:3Xr8nYo5mQ1sU2wZ6aB9cD4eF7"}
     certificate = json.dumps(other.certificate()).encode()
-    assert await refused(fx, delivery(fx, DESIGNATE, holder(), certificate=certificate)) == (
-        "owner_required"
-    )
+    sent = delivery(fx, DESIGNATE, holder(), certificate=certificate)
+    assert await refused(fx, sent) == "principal_not_member"
     assert await read(fx) is None
+    assert not await consumed(fx, sent)
+
+
+@pytest.mark.parametrize("act", [DESIGNATE, REPLACE])
+async def test_an_act_that_holds_a_role_without_a_certificate_is_refused_as_no_member(fx, act):
+    if act == REPLACE:
+        await deliver(fx, delivery(fx, DESIGNATE, holder()))
+    before = await read(fx)
+    sent = replace(delivery(fx, act, holder()), certificate=None)
+    assert await refused(fx, sent) == "principal_not_member"
+    assert await read(fx) == before
+    assert not await consumed(fx, sent)
 
 
 async def test_a_principal_who_left_the_team_is_not_designated(fx):
