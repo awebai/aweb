@@ -401,13 +401,6 @@ func (b *Broker) admitRunnerStreams(runner *instanceRunner) {
 	}
 }
 
-func admittedLabel(admitted bool) string {
-	if admitted {
-		return "admitted"
-	}
-	return "over-bound"
-}
-
 func orDash(s string) string {
 	if strings.TrimSpace(s) == "" {
 		return "-"
