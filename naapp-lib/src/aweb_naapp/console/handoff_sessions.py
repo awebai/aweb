@@ -188,9 +188,15 @@ class ConsoleHandoffs:
         await _prune_sessions(self.db)
         await self.store.prune()
 
-    async def _target(self, scope):
+    async def _target(self, scope, *, team_id=None):
         try:
-            return await self.authority.session_target(scope)
+            target = await self.authority.session_target(scope, team_id=team_id)
+            if target.admitted.installation_id != scope.installation_id or (
+                team_id is not None
+                and (target.team_id != team_id or target.admitted.team_id != team_id)
+            ):
+                raise HTTPException(403, "role_not_held")
+            return target
         except HTTPException as exc:
             if exc.status_code == 403 and exc.detail == "owner_required":
                 raise HTTPException(403, "role_not_held") from None
@@ -230,7 +236,9 @@ class ConsoleHandoffs:
         return proof
 
     async def _context(self, row):
-        target = await self._target(_scope_for(row))
+        if not isinstance(row["team_id"], str) or not row["team_id"]:
+            raise _refused()
+        target = await self._target(_scope_for(row), team_id=row["team_id"])
         if row["login_evidence_ref"] and not await self.passkeys.login_evidence_is_current(
             row["b3_scope"],
             row["subject"],
@@ -268,14 +276,14 @@ class ConsoleHandoffs:
         return held
 
     async def _start(self, start: HandoffStart, signer: Principal, request: Request):
-        target = await self._target(start.scope)
+        target = await self._target(start.scope, team_id=signer.team_id)
         if target.team_id != signer.team_id:
             raise HTTPException(403, "principal_not_member")
         certificate = request.headers.get("X-AWID-Team-Certificate", "")
         proof = await self._proof(target, certificate)
         async with self.db.transaction() as tx:
             await self._hold(tx, {"login_evidence_ref": None}, target, proof)
-            created = await self.store.create(start, tx=tx)
+            created = await self.store.create(start, tx=tx, team_id=signer.team_id)
             await tx.execute(
                 "UPDATE {{tables.console_handoffs}} SET team_id=$2,b3_scope=$3,subject=$4,"
                 "holding_identity=$5,member_certificate=$6 WHERE handoff_id=$1",
@@ -649,9 +657,12 @@ class ConsoleHandoffs:
 
         return router
 
-    async def _credential_admits(self, scope):
+    async def _credential_admits(self, scope, team_id):
         try:
-            await self.authority.credential_target(PublicScope(**scope))
+            target = await self.authority.credential_target(PublicScope(**scope), team_id=team_id)
         except (HTTPException, LookupError):
             return False
-        return True
+        return (
+            target.team_id == target.admitted.team_id == team_id
+            and target.admitted.installation_id == scope["installation_id"]
+        )

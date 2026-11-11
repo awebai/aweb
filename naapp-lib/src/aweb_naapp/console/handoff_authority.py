@@ -70,6 +70,7 @@ class PreparedSessionTarget(Protocol):
 
 
 _Held = TypeVar("_Held", bound=PreparedSessionTarget)
+_TargetOut = TypeVar("_TargetOut", bound=SessionTarget, covariant=True)
 _TargetIn = TypeVar("_TargetIn", bound=SessionTarget, contravariant=True)
 
 
@@ -83,10 +84,24 @@ class HoldSessionTarget(Protocol[_TargetIn, _Held]):
     ) -> _Held: ...
 
 
+class CredentialTargetResolver(Protocol):
+    async def __call__(self, scope: PublicScope, /, *, team_id: str) -> CredentialTarget: ...
+
+
+class SessionTargetResolver(Protocol[_TargetOut]):
+    async def __call__(
+        self, scope: PublicScope, /, *, team_id: str | None = None
+    ) -> _TargetOut: ...
+
+
 @dataclass(frozen=True)
 class HandoffAuthority[Target: SessionTarget, Held: PreparedSessionTarget]:
     """Factory-owned dependencies with the app's exact target/handle types.
 
+    Credential projection receives the authenticated start's team explicitly;
+    it requires no holding. Session starts/continuations pass the same retained
+    team; standalone session projection may resolve one existing holding's team.
+    No callback may discover a team by an installation-wide authority scan.
     Projection and remote evidence acquisition precede effect transactions.
     Hold takes F6 and all app/role locks before preparing one complete B3 pair
     union. Check uses the issued handle in that same transaction, without any
@@ -96,8 +111,8 @@ class HandoffAuthority[Target: SessionTarget, Held: PreparedSessionTarget]:
     of holding_ref, a certificate, or permission to issue a session.
     """
 
-    credential_target: Callable[[PublicScope], Awaitable[CredentialTarget]]
-    session_target: Callable[[PublicScope], Awaitable[Target]]
+    credential_target: CredentialTargetResolver
+    session_target: SessionTargetResolver[Target]
     hold_session_target: HoldSessionTarget[Target, Held]
     check_session_target: Callable[[TransactionManager, Held], Awaitable[bool]]
     holding_identity: Callable[[Target], str]
