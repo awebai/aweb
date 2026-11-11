@@ -70,9 +70,6 @@ def _headers(case: dict) -> dict[str, str]:
 @pytest.mark.parametrize("case", VECTORS["cases"], ids=lambda case: case["name"])
 async def test_the_library_answers_each_case_as_recorded(monkeypatch, case: dict) -> None:
     registry_client = httpx.AsyncClient
-    monkeypatch.setattr(
-        auth.httpx, "AsyncClient", lambda **kwargs: registry_client(transport=_registry(case), **kwargs)
-    )
 
     # What an accepted request writes about its principal is not the verdict.
     async def record_nothing(_db, _principal) -> None:
@@ -81,7 +78,9 @@ async def test_the_library_answers_each_case_as_recorded(monkeypatch, case: dict
     monkeypatch.setattr(auth, "record_observed_principal", record_nothing)
 
     settings = Settings(public_origin=ORIGIN)
-    cache = AWIDTeamCache(registry_url=REGISTRY, ttl_seconds=60, service_token="s" * 40)
+    cache = AWIDTeamCache(
+        registry_url=REGISTRY, ttl_seconds=60, service_token="s" * 40, transport=_registry(case)
+    )
     app = FastAPI()
 
     @app.get("/")

@@ -16,7 +16,8 @@ classifiers = [
   "Programming Language :: Python :: 3.13",
 ]
 dependencies = [
-  "aweb-naapp",
+  # The runtime extra: the team-facts cache the verifier reads the registry through.
+  "aweb-naapp[runtime]",
   "awid-service>=0.5.22",
   "bleach>=6.4.0",
   "fastapi>=0.116.1",

@@ -5,14 +5,12 @@ import hashlib
 import json
 import logging
 import re
-import time
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from typing import Any
 from urllib.parse import quote
 
-import httpx
-from awid.did import public_key_from_did
+from aweb_naapp.runtime.team_auth import AWIDTeamCache
 from awid.log import canonical_server_origin
 from awid.signing import canonical_json_bytes, verify_did_key_signature
 from awid.team_certificate import (
@@ -21,17 +19,12 @@ from awid.team_certificate import (
     decode_team_certificate,
     refusal_answer,
 )
-from awid.team_ids import parse_team_id
 from fastapi import HTTPException, Request
 from pgdbm import AsyncDatabaseManager
 
 from library.config import Settings
 
 logger = logging.getLogger(__name__)
-
-# At most 20,000 certificate records per refresh; incomplete history is never cached.
-MAX_CERTIFICATE_PAGES = 100
-CERTIFICATE_PAGE_SIZE = 200
 
 TEAM_AUTH_ENVELOPE_V2 = 2
 _B64URL_NO_PADDING = re.compile(r"^[A-Za-z0-9_-]+$")
@@ -47,196 +40,6 @@ class Principal:
     alias: str
     certificate_id: str
     team_did_key: str
-
-
-@dataclass(frozen=True)
-class CachedTeamFacts:
-    team_did_key: str
-    revoked_certificate_ids: frozenset[str]
-    # Every certificate the registry published for the team, revoked or not.
-    published_certificate_ids: frozenset[str]
-    expires_at: float
-
-
-def _raise_if_private_team_unreadable(response: httpx.Response) -> None:
-    if response.status_code != 403:
-        return
-    try:
-        payload = response.json()
-    except ValueError:
-        return
-    detail = payload.get("detail") if isinstance(payload, dict) else None
-    if isinstance(detail, dict) and detail.get("code") == "team_private":
-        raise HTTPException(
-            status_code=403,
-            detail={
-                "code": "team_private_unreadable",
-                "message": "App cannot read private AWID team facts; configure its AWID service token",
-            },
-        )
-
-
-class AWIDTeamCache:
-    """Small in-memory cache of AWID team authentication facts."""
-
-    def __init__(
-        self, *, registry_url: str, ttl_seconds: int, service_token: str | None = None
-    ) -> None:
-        self.registry_url = registry_url.rstrip("/")
-        self.ttl_seconds = ttl_seconds
-        self._headers = (
-            {"X-AWID-Service-Token": service_token.strip()}
-            if service_token and service_token.strip()
-            else {}
-        )
-        self._cache: dict[str, CachedTeamFacts] = {}
-        self._certificate_cache: dict[tuple[str, str], CachedTeamFacts] = {}
-
-    async def get(self, team_id: str, certificate_id: str | None = None) -> CachedTeamFacts:
-        if not self._headers:
-            if not certificate_id:
-                raise HTTPException(status_code=401, detail="Missing AWID certificate id")
-            return await self._get_certificate_status(team_id, certificate_id)
-        now = time.monotonic()
-        cached = self._cache.get(team_id)
-        if cached and cached.expires_at > now:
-            return cached
-
-        domain, team_name = parse_team_id(team_id)
-        try:
-            async with httpx.AsyncClient(timeout=10.0) as client:
-                team_resp = await client.get(
-                    f"{self.registry_url}/v1/namespaces/{domain}/teams/{team_name}",
-                    headers=self._headers,
-                )
-                _raise_if_private_team_unreadable(team_resp)
-                if team_resp.status_code == 404:
-                    raise HTTPException(status_code=401, detail="Unknown AWID team")
-                if team_resp.status_code >= 400:
-                    raise HTTPException(status_code=503, detail="AWID registry unavailable")
-                team_payload = team_resp.json()
-
-                team_did_key = str(team_payload.get("team_did_key") or "").strip()
-                if not team_did_key:
-                    raise HTTPException(status_code=503, detail="AWID team response missing team_did_key")
-
-                published: set[str] = set()
-                revoked: set[str] = set()
-                cursor: str | None = None
-                seen_cursors: set[str] = set()
-                for _ in range(MAX_CERTIFICATE_PAGES):
-                    params: dict[str, str | int] = {
-                        "active_only": "false", "limit": CERTIFICATE_PAGE_SIZE,
-                    }
-                    if cursor is not None:
-                        params["cursor"] = cursor
-                    cert_resp = await client.get(
-                        f"{self.registry_url}/v1/namespaces/{domain}/teams/{team_name}/certificates",
-                        params=params, headers=self._headers,
-                    )
-                    _raise_if_private_team_unreadable(cert_resp)
-                    if cert_resp.status_code >= 400:
-                        raise HTTPException(status_code=503, detail="AWID certificate revocation lookup unavailable")
-                    cert_payload = cert_resp.json()
-                    page = cert_payload.get("certificates")
-                    has_more = cert_payload.get("has_more")
-                    if (
-                        not isinstance(page, list)
-                        or len(page) > CERTIFICATE_PAGE_SIZE
-                        or not isinstance(has_more, bool)
-                        or not all(
-                            isinstance(item, dict)
-                            and isinstance(item.get("certificate_id"), str)
-                            and bool(item["certificate_id"])
-                            and "revoked_at" in item
-                            for item in page
-                        )
-                    ):
-                        raise HTTPException(status_code=503, detail="AWID certificate revocation response is incomplete")
-                    published.update(item["certificate_id"] for item in page)
-                    revoked.update(item["certificate_id"] for item in page if item["revoked_at"] is not None)
-                    if not has_more:
-                        break
-                    next_cursor = cert_payload.get("next_cursor")
-                    if not isinstance(next_cursor, str) or not next_cursor.strip() or next_cursor in seen_cursors:
-                        raise HTTPException(status_code=503, detail="AWID certificate pagination did not advance")
-                    seen_cursors.add(next_cursor)
-                    cursor = next_cursor
-                else:
-                    raise HTTPException(status_code=503, detail="AWID certificate pagination limit exceeded")
-        except HTTPException as exc:
-            logger.warning("AWID team facts refresh failed: %s", exc.detail)
-            raise
-        except Exception as exc:
-            logger.exception("AWID team facts refresh failed")
-            raise HTTPException(status_code=503, detail="AWID registry unavailable") from exc
-
-        facts = CachedTeamFacts(
-            team_did_key=team_did_key,
-            revoked_certificate_ids=frozenset(revoked),
-            published_certificate_ids=frozenset(published),
-            expires_at=now + self.ttl_seconds,
-        )
-        self._cache[team_id] = facts
-        return facts
-
-    async def _get_certificate_status(
-        self, team_id: str, certificate_id: str
-    ) -> CachedTeamFacts:
-        now = time.monotonic()
-        cache_key = (team_id, certificate_id)
-        cached = self._certificate_cache.get(cache_key)
-        if cached and cached.expires_at > now:
-            return cached
-        domain, team_name = parse_team_id(team_id)
-        try:
-            async with httpx.AsyncClient(timeout=10.0) as client:
-                response = await client.get(
-                    f"{self.registry_url}/v1/namespaces/{quote(domain, safe='')}/teams/"
-                    f"{quote(team_name, safe='')}/certificates/{quote(certificate_id, safe='')}/status"
-                )
-                if response.status_code == 404:
-                    # The registry answers one 404 for an unknown team and for a
-                    # certificate it never published.
-                    raise HTTPException(status_code=401, detail="unregistered")
-                response.raise_for_status()
-                payload = response.json()
-            if (
-                not isinstance(payload, dict)
-                or set(payload) != {"team_id", "team_did_key", "status", "revoked_at"}
-                or payload["team_id"] != team_id
-                or payload["status"] not in ("active", "revoked")
-                or not isinstance(payload["team_did_key"], str)
-            ):
-                raise ValueError("Malformed AWID certificate status")
-            public_key_from_did(payload["team_did_key"])
-            revoked_at = payload["revoked_at"]
-            if payload["status"] == "active":
-                if revoked_at is not None:
-                    raise ValueError("Active certificate has revocation timestamp")
-                revoked: frozenset[str] = frozenset()
-            else:
-                if not isinstance(revoked_at, str):
-                    raise ValueError("Revoked certificate missing timestamp")
-                timestamp = datetime.fromisoformat(revoked_at.replace("Z", "+00:00"))
-                if timestamp.tzinfo is None:
-                    raise ValueError("Revocation timestamp missing timezone")
-                revoked = frozenset({certificate_id})
-        except HTTPException:
-            raise
-        except Exception as exc:
-            _logger.warning("AWID certificate status lookup failed", exc_info=True)
-            raise HTTPException(
-                status_code=503, detail="AWID certificate status unavailable"
-            ) from exc
-        facts = CachedTeamFacts(
-            team_did_key=payload["team_did_key"],
-            revoked_certificate_ids=revoked,
-            published_certificate_ids=frozenset({certificate_id}),
-            expires_at=now + min(self.ttl_seconds, 60),
-        )
-        self._certificate_cache[cache_key] = facts
-        return facts
 
 
 def _parse_didkey_auth(header: str) -> tuple[str, str]:

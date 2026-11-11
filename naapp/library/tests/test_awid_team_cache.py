@@ -46,7 +46,7 @@ async def test_private_team_reads_send_configured_service_token_and_page_history
                 )
             return _Response({"certificates": [], "has_more": True, "next_cursor": "page-2"})
 
-    monkeypatch.setattr("library.auth.httpx.AsyncClient", lambda **_kwargs: _Client())
+    monkeypatch.setattr("httpx.AsyncClient", lambda **_kwargs: _Client())
 
     cache = AWIDTeamCache(registry_url="https://awid.test", ttl_seconds=60, service_token=token)
     facts = await cache.get("team:example.test")
