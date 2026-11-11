@@ -675,8 +675,106 @@ async def test_parallel_decisions_record_exactly_one(world: World):
     )
     decided = [r for r in results if not isinstance(r, Exception)]
     refused = [r for r in results if isinstance(r, ApprovalRefused)]
-    assert len(decided) == 1 and [r.reason for r in refused] == [Refusal.NOT_PENDING]
+    # Both came through one link, which the winner used: a link no longer
+    # usable answers link_unavailable whatever the approval's state.
+    assert len(decided) == 1 and [r.reason for r in refused] == [Refusal.LINK_UNAVAILABLE]
     assert (await world.audit.kinds()).count("approval_decided") == 1
+
+
+async def until_waiting_on_a_lock(w: World) -> None:
+    async def observe() -> None:
+        while not await w.store.db.fetch_value(
+            "SELECT count(*) FROM pg_stat_activity "
+            "WHERE datname = current_database() AND wait_event_type = 'Lock'"
+        ):
+            await asyncio.sleep(0.02)
+
+    await asyncio.wait_for(observe(), 10)
+
+
+async def test_a_decision_that_passed_its_link_before_the_winner_committed_is_link_unavailable(
+    world: World,
+):
+    """The losing interleaving, forced: the loser presents the link while the
+    winner's decision is still uncommitted, then waits for the winner on the
+    approval row. It must refuse as a used link, not reveal the decision."""
+    _, approval = await mint(world)
+    link = link_of(world, approval)
+    approve = await challenge(world, approval, Decision.APPROVE)
+    reject = await challenge(world, approval, Decision.REJECT)
+    loser = None
+    try:
+        async with world.store.db.transaction() as winner:
+            await world.approvals.decide(
+                approval.approval_id,
+                Decision.APPROVE,
+                Assurance.PASSKEY,
+                sign(world.approver_key, APPROVER.subject, approve),
+                link_token=link,
+                tx=winner,
+            )
+            loser = asyncio.create_task(
+                world.approvals.decide(
+                    approval.approval_id,
+                    Decision.REJECT,
+                    Assurance.PASSKEY,
+                    sign(world.approver_key, APPROVER.subject, reject),
+                    link_token=link,
+                )
+            )
+            await until_waiting_on_a_lock(world)
+            assert not loser.done()
+        assert await refusal(asyncio.wait_for(loser, 10)) is Refusal.LINK_UNAVAILABLE
+    finally:
+        if loser is not None and not loser.done():
+            loser.cancel()
+    assert (await world.approvals.get(approval.approval_id)).state is ApprovalState.APPROVED
+    assert (await world.audit.kinds()).count("approval_decided") == 1
+
+
+@pytest.mark.parametrize("loser_waits", [True, False])
+async def test_a_second_task_decision_is_not_pending_in_either_order(
+    world: World, loser_waits: bool
+):
+    """A task presentation has no link: the loser learns the approval is
+    decided, whether it waited for the winner or came after it."""
+    _, approval = await mint(world, presentation=PresentationKind.TASK, presentation_ref="task-1")
+    world.task_answers.record("answer-1", approval, Decision.APPROVE)
+    world.task_answers.record("answer-2", approval, Decision.REJECT)
+    approve = await challenge(world, approval, Decision.APPROVE, task_answer_ref="answer-1")
+    reject = await challenge(world, approval, Decision.REJECT, task_answer_ref="answer-2")
+
+    def second():
+        return world.approvals.decide(
+            approval.approval_id,
+            Decision.REJECT,
+            Assurance.PASSKEY,
+            sign(world.approver_key, APPROVER.subject, reject),
+            task_answer_ref="answer-2",
+            subject=APPROVER.subject,
+        )
+
+    loser = None
+    try:
+        async with world.store.db.transaction() as winner:
+            await world.approvals.decide(
+                approval.approval_id,
+                Decision.APPROVE,
+                Assurance.PASSKEY,
+                sign(world.approver_key, APPROVER.subject, approve),
+                task_answer_ref="answer-1",
+                subject=APPROVER.subject,
+                tx=winner,
+            )
+            if loser_waits:
+                loser = asyncio.create_task(second())
+                await until_waiting_on_a_lock(world)
+        if loser is None:
+            loser = asyncio.create_task(second())
+        assert await refusal(asyncio.wait_for(loser, 10)) is Refusal.NOT_PENDING
+    finally:
+        if loser is not None and not loser.done():
+            loser.cancel()
 
 
 async def test_an_admission_held_open_blocks_a_second_approval_of_the_same_request(world: World):
