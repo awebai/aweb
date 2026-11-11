@@ -11,6 +11,9 @@ from __future__ import annotations
 from typing import Any
 
 from aweb_naapp.hooks.owner_act import HUMAN_ROLE_ACTS
+from aweb_naapp.runtime.credential_audit import CredentialAudit
+from aweb_naapp.runtime.human_role_acts import CheckMember, HumanRoleActs
+from aweb_naapp.runtime.passkeys import Passkeys
 
 from aweb_logs.readers import READER_ROLE
 
@@ -26,3 +29,19 @@ OWNER_ACTS: dict[str, Any] = {
         }
     ]
 }
+
+
+def reader_acts(
+    *, passkeys: Passkeys, recorder: CredentialAudit, check_member: CheckMember
+) -> HumanRoleActs:
+    """logs' effect behind the shared owner-act delivery route, for the roles
+    ``OWNER_ACTS`` declares. ``check_member`` is the runtime's
+    ``check_human_role_member``."""
+    roles = OWNER_ACTS["roles"]
+    return HumanRoleActs(
+        roles=frozenset(role["name"] for role in roles),
+        notice_roles=frozenset(role["name"] for role in roles if role["notice_contact"]),
+        passkeys=passkeys,
+        recorder=recorder,
+        check_member=check_member,
+    )

@@ -26,7 +26,7 @@ from aweb_naapp.console import (
 from aweb_naapp.console.handoff_authority import HandoffAuthority
 from aweb_naapp.console.handoff_sessions import ConsoleHandoffs
 from aweb_naapp.console.human_role_authority import HumanRoleHandoffAuthority
-from aweb_naapp.hooks.owner_act import APP_ACTS, LOGS_ACTS
+from aweb_naapp.hooks.owner_act import APP_ACTS, HUMAN_ROLE_ACTS, LOGS_ACTS
 from aweb_naapp.hooks.owner_act_nonces import OwnerActVerifier, apply_owner_act_migrations
 from aweb_naapp.hooks.producer import RegistrationView
 from aweb_naapp.roles import apply_roles_migrations, is_holding_scope
@@ -36,15 +36,18 @@ from aweb_naapp.runtime.credential_audit import CredentialAudit
 from aweb_naapp.runtime.human_member import HumanMemberProof
 from aweb_naapp.runtime.human_roles import HumanRoleHoldings
 from aweb_naapp.runtime.installation import InstallationFence, apply_installation_migrations
+from aweb_naapp.runtime.owner_act_router import OwnerActLimiter, mount_owner_act_routes
 from aweb_naapp.runtime.passkeys import PasskeyDelivery, Passkeys, RelyingParty
 from aweb_naapp.runtime.team_auth import Principal
 from fastapi import APIRouter, Request
 from pgdbm import AsyncDatabaseManager
+from pgdbm.core import TransactionManager
 
 from aweb_logs.console_ui import console_pages_router
 from aweb_logs.governance import SELF_RECORDED_ACTS, LogsGovernance
 from aweb_logs.ledger import LogsSigner
 from aweb_logs.read_routes import ReaderReads, reader_read_router, reader_removal_router
+from aweb_logs.reader_acts import reader_acts
 from aweb_logs.readers import READER_ROLE, ReaderDirectory, ReaderRemovals
 
 GOVERNANCE_HOOK = "post-governance-hook"
@@ -115,6 +118,7 @@ class ReaderService:
         limiter: LoginLimiter,
         chain_keys: frozenset[str],
         governance: LogsGovernance,
+        owner_acts: APIRouter,
     ) -> None:
         self.directory = directory
         # The owner's retention, erasure and hold acts. No route delivers them
@@ -131,6 +135,7 @@ class ReaderService:
         router.include_router(credential_router(passkeys=passkeys, recorder=recorder))
         router.include_router(console_pages_router(reads))
         router.include_router(reader_read_router(reads))
+        router.include_router(owner_acts)
         self.console_router = router
 
     def agent_router(self, authorized: Callable[..., Awaitable[Authorization]]) -> APIRouter:
@@ -212,11 +217,31 @@ async def reader_service(
         acts=APP_ACTS + LOGS_ACTS,
         team_key_for=team_key,
     )
+    client_identity = ClientIdentity(trusted_header=client_address_header)
     limiter = LoginLimiter(
-        db,
-        client_identity=ClientIdentity(trusted_header=client_address_header),
-        limit=12,
-        window=timedelta(minutes=1),
+        db, client_identity=client_identity, limit=12, window=timedelta(minutes=1)
+    )
+    acts = reader_acts(
+        passkeys=passkeys, recorder=recorder, check_member=runtime.check_human_role_member
+    )
+
+    async def retire_readers(tx: TransactionManager, team_id: str) -> None:
+        # A retired installation's readers end, and their credentials and
+        # sessions go, in the fence's retirement transaction.
+        await acts.retire(tx, app_id=app_id, team_id=team_id)
+
+    fence.on_retire = retire_readers
+    owner_acts = APIRouter()
+    mount_owner_act_routes(
+        owner_acts,
+        runtime=runtime,
+        effect=acts,
+        verifier=OwnerActVerifier(
+            scope=app_id, audience=console_origin, acts=HUMAN_ROLE_ACTS, team_key_for=team_key
+        ),
+        limiter=OwnerActLimiter(
+            client_identity=client_identity, limit=12, window=timedelta(minutes=1)
+        ),
     )
     sessions, handoffs = reader_sessions(
         db=db,
@@ -244,4 +269,5 @@ async def reader_service(
             recorder=recorder,
             logs_origin=runtime.settings.public_origin,
         ),
+        owner_acts=owner_acts,
     )
