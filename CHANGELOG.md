@@ -2,6 +2,10 @@
 
 ## Unreleased
 
+- When `aw` times out waiting for Claude Code to load the aweb channel in a
+  tmux window, the error names the prompt matchers that are in use
+  (`claudeChannelPromptComplete` and `claudeBlockingPromptKind`).
+
 - The `aw wake deregister` help says an unknown or already-retired home exits 0
   because the retire hook may run twice. It does not mention a pending expiry:
   the wake broker removes no registration on its own.
