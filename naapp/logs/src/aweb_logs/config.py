@@ -20,6 +20,10 @@ class LogsSettings(NaappSettings, HookEgressSettings):
     # The origin a designated reader's browser uses (design §B5): passkeys are
     # bound to its hostname and its session cookie never reaches the agent origin.
     console_origin: str
+    # The header the deployment's proxy sets to the client address it saw. The
+    # console login limit is kept per that address; unset, per TCP peer, which
+    # behind a proxy is the proxy itself for every client.
+    client_address_header: str | None = None
     # How often each team whose chain moved gets a checkpoint (design §B3).
     checkpoint_interval_seconds: float = Field(default=300, gt=0)
     # How often the teams' owner-set retention is applied (design §B6).

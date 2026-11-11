@@ -26,6 +26,18 @@ def test_logs_needs_its_database_and_both_origins(monkeypatch: pytest.MonkeyPatc
     assert missing == {"database_url", "public_origin", "console_origin"}
 
 
+def test_the_client_address_header_is_unset_unless_the_deployment_names_one(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setenv("LOGS_DATABASE_URL", "postgresql://localhost/logs")
+    monkeypatch.setenv("LOGS_PUBLIC_ORIGIN", "https://logs.example.test")
+    monkeypatch.setenv("LOGS_CONSOLE_ORIGIN", "https://console.logs.example.test")
+    monkeypatch.delenv("LOGS_CLIENT_ADDRESS_HEADER", raising=False)
+    assert LogsSettings(_env_file=None).client_address_header is None
+    monkeypatch.setenv("LOGS_CLIENT_ADDRESS_HEADER", "X-Real-IP")
+    assert LogsSettings(_env_file=None).client_address_header == "X-Real-IP"
+
+
 def test_the_console_origin_is_read_from_its_setting(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setenv("LOGS_DATABASE_URL", "postgresql://localhost/logs")
     monkeypatch.setenv("LOGS_PUBLIC_ORIGIN", "https://logs.example.test")

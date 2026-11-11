@@ -1881,6 +1881,10 @@ Point a restarting probe at `/live` only. A probe that restarts the process on
 into the same outage. The `server/Dockerfile` `HEALTHCHECK` probes `/live`; the
 compose files' healthchecks, which order start-up, probe `/ready`.
 
+The naapp runtime serves the same three routes with the same status codes and
+the same `status` and `checks` fields, for the dependencies each app checks;
+see [Health](../naapp-lib/README.md#health).
+
 A host that mounts the app under a prefix serves the three routes under that
 prefix. The CLI's request-compression discovery reads `GET /health` and treats
 a non-2xx answer as no advertisement, so writes to a server that is not ready

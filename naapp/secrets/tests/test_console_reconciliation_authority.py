@@ -20,7 +20,7 @@ async def caller(w):
     scope = await enrol_owner(w, ALICE, "alice@acme.com")
     await apply_console_migrations(w.db)
 
-    async def installation(installation_id, *, team_id=None):
+    async def installation(installation_id, *, team_id: str):
         if installation_id != w.admitted.installation_id:
             raise LookupError(installation_id)
         return w.admitted
