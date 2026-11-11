@@ -180,7 +180,7 @@ class _Policies:
     def __init__(self, policy: ActionPolicy) -> None:
         self._policy = policy
 
-    async def current(self, policy_ref: str) -> ActionPolicy | None:
+    async def current(self, policy_ref: str, *, tx=None) -> ActionPolicy | None:
         return self._policy if policy_ref == self._policy.policy_ref else None
 
 
@@ -192,10 +192,10 @@ class _Directory:
         contact="owner@example.com",
     )
 
-    async def candidates(self, policy: ActionPolicy, request) -> list[Approver]:
+    async def candidates(self, policy: ActionPolicy, request, *, tx=None) -> list[Approver]:
         return [self.approver]
 
-    async def is_current(self, scope: str, subject: str) -> bool:
+    async def is_current(self, scope: str, subject: str, *, tx=None) -> bool:
         return (scope, subject) == (self.approver.scope, self.approver.subject)
 
 

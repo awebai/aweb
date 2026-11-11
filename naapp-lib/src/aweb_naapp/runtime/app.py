@@ -27,13 +27,15 @@ may also supply its own font directory; its licensing remains with that app.
 from __future__ import annotations
 
 import asyncio
+import base64
 import hashlib
 import json
 import logging
 from collections.abc import AsyncIterator, Awaitable, Callable, Mapping, Sequence
-from contextlib import asynccontextmanager
+from contextlib import aclosing, asynccontextmanager
 from dataclasses import replace
 from datetime import UTC, datetime
+from enum import StrEnum
 from ipaddress import IPv4Network, IPv6Network
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
@@ -41,6 +43,7 @@ from urllib.parse import urlsplit
 from uuid import UUID
 
 import httpx
+from awid.registry import RegistryClient
 from fastapi import FastAPI, HTTPException, Request
 from fastapi.dependencies.models import Dependant
 from fastapi.responses import HTMLResponse, PlainTextResponse, Response
@@ -83,11 +86,18 @@ from aweb_naapp.runtime.authorization import (
     authorize_request,
     is_placeholder,
 )
+from aweb_naapp.runtime.awid_member_credentials import read_member_credentials
 from aweb_naapp.runtime.db import NaappDatabase, Store
 from aweb_naapp.runtime.event_emit import AppEvents, is_loopback_host
 from aweb_naapp.runtime.health import CheckResult, HealthCheck, mount_health
 from aweb_naapp.runtime.hook_resolver import HookResolver
 from aweb_naapp.runtime.hooks import RuntimeHooks
+from aweb_naapp.runtime.human_member import (
+    HumanMemberProof,
+)
+from aweb_naapp.runtime.human_member import (
+    check_human_member as observe_human_member,
+)
 from aweb_naapp.runtime.installation import InstallationFence
 from aweb_naapp.runtime.manifest_hooks import ManifestEvidence, bounded_body, prepare
 from aweb_naapp.runtime.settings import NaappSettings
@@ -106,6 +116,7 @@ if TYPE_CHECKING:
     from pgdbm.core import TransactionManager
 
     from aweb_naapp.egress import Egress
+    from aweb_naapp.runtime.owner_act_delivery import CheckedHumanRoleMember
 
 logger = logging.getLogger(__name__)
 
@@ -183,6 +194,7 @@ class NaappRuntime:
             registry_url=settings.awid_registry_url,
             ttl_seconds=settings.auth_cache_ttl_seconds,
             service_token=settings.awid_service_token,
+            member_credentials=read_member_credentials(settings.awid_member_credentials),
             transport=awid_transport,
         )
         self._team_server_directory = TeamServerDirectory(
@@ -251,6 +263,9 @@ class NaappRuntime:
     @asynccontextmanager
     async def lifespan(self, app: FastAPI) -> AsyncIterator[None]:
         self.check_authorized_routes(app)
+        # A configured member credential AWID does not currently publish is the
+        # operator's misconfiguration: refuse to start, naming it.
+        await self._team_cache.check_member_credentials()
         database = NaappDatabase(
             self.settings,
             module_name=self.module_name,
@@ -415,6 +430,92 @@ class NaappRuntime:
         return await self.team_cache().check_current_member(
             team_id, certificate_id=certificate_id, team_did_key=team_did_key
         )
+
+    async def check_human_role_member(
+        self,
+        team_id: str,
+        *,
+        principal: str,
+        certificate: bytes,
+        identity_client: RegistryClient | None = None,
+    ) -> CheckedHumanRoleMember:
+        """Retain exact signed JSON bytes with the existing exact-subject H2 proof.
+
+        Run before effect locks. Identity mismatch/malformed input is the
+        delivery contract's owner_required; definite loss, non-human kind and
+        unavailability retain their distinct typed outcomes. No HTTP response
+        is built here, and no certificate is fetched or re-encoded for storage.
+        """
+        from awid.team_certificate import (
+            MAX_HEADER_BYTES,
+            TeamCertificateError,
+            decode_team_certificate,
+        )
+
+        from aweb_naapp.runtime.owner_act_delivery import (
+            CheckedHumanRoleMember,
+            OwnerActDeliveryCode,
+            OwnerActDeliveryRefused,
+        )
+
+        try:
+            if not isinstance(certificate, bytes) or len(certificate) > MAX_HEADER_BYTES:
+                raise TeamCertificateError("malformed")
+            # Reuse AWID's one bounded signed-artifact decoder. Retain the
+            # original bytes below, never the reconstructed transport encoding.
+            decoded = decode_team_certificate(base64.b64encode(certificate).decode("ascii"))
+            if decoded.get("team_id") != team_id or decoded.get("member_did_aw") != principal:
+                raise TeamCertificateError("malformed")
+        except TeamCertificateError:
+            raise OwnerActDeliveryRefused("owner_required") from None
+        try:
+            proof = await self.check_human_member(
+                team_id,
+                principal=principal,
+                certificate=decoded,
+                identity_client=identity_client,
+            )
+        except HTTPException as exc:
+            code: OwnerActDeliveryCode
+            if exc.status_code == 403 and exc.detail == "principal_not_member":
+                code = "principal_not_member"
+            elif exc.status_code == 403 and exc.detail == "principal_not_human":
+                code = "principal_not_human"
+            else:
+                code = "principal_status_unavailable"
+            raise OwnerActDeliveryRefused(code) from None
+        except Exception:
+            # The delivery boundary cannot turn an unclassified dependency
+            # failure into a definitive non-member result or expose its detail.
+            # Cancellation inherits BaseException and still propagates.
+            raise OwnerActDeliveryRefused("principal_status_unavailable") from None
+        return CheckedHumanRoleMember(certificate, proof)
+
+    async def check_human_member(
+        self, team_id: str, *, principal: str, certificate: Mapping[str, Any],
+        identity_client: RegistryClient | None = None,
+    ) -> HumanMemberProof:
+        """Current certificate/key and the exact subject's own human kind.
+
+        This is an explicit human-role call, never part of ordinary agent
+        authentication. Without an existing caller-owned SDK client it uses a
+        live client for this check and closes it; an injected CachedRegistryClient
+        retains its own bounded cache/lifecycle. No Redis setting is required.
+        App holdings, B3 admission and the caller's effect fence stay separate.
+        """
+        if identity_client is not None:
+            return await observe_human_member(
+                self.team_cache(), identity_client, team_id=team_id,
+                principal=principal, certificate=certificate,
+            )
+        async with aclosing(RegistryClient(
+            self.settings.awid_registry_url, transport=self._awid_transport,
+            service_token=self.settings.awid_service_token,
+        )) as client:
+            return await observe_human_member(
+                self.team_cache(), client, team_id=team_id,
+                principal=principal, certificate=certificate,
+            )
 
     async def principal(self, request: Request) -> Principal:
         """FastAPI dependency: the team member who signed this request.
@@ -698,6 +799,7 @@ def mount_naapp_routes(
     robots_disallow: Sequence[str] = (),
     noindex_paths: Sequence[str] = (),
     health_checks: Mapping[str, HealthCheck] | None = None,
+    health_labels: Mapping[str, StrEnum] | None = None,
 ) -> None:
     """Serve the standard naapp public surface.
 
@@ -781,4 +883,9 @@ def mount_naapp_routes(
         return PlainTextResponse(skill, headers=_NOSNIFF)
 
     mount_manifest_routes(app, runtime=runtime)
-    mount_health(app, settings, checks={**runtime.health_checks(), **(health_checks or {})})
+    mount_health(
+        app,
+        settings,
+        checks={**runtime.health_checks(), **(health_checks or {})},
+        labels=health_labels,
+    )

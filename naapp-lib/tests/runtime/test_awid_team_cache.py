@@ -435,11 +435,18 @@ async def test_status_cache_is_per_certificate(registry, team):
     assert len(registry.transport.calls) == 2
 
 
-async def test_status_path_requires_a_certificate_id(registry, team):
+async def test_without_a_certificate_id_the_team_key_is_a_plain_read(registry, team):
+    """A team-key read without a caller certificate (an owner act's verifier)
+    is a plain read: a public team answers it, a private one is refused,
+    naming the credential that would read it."""
+    visibility = (await registry.db.fetch_one("SELECT visibility FROM {{tables.teams}}"))["visibility"]
+    if visibility == "public":
+        assert (await status_cache(registry).get(TEAM_ID)).team_did_key == team.team_did_key
+        return
     with pytest.raises(HTTPException) as caught:
         await status_cache(registry).get(TEAM_ID)
-    assert caught.value.status_code == 401
-    assert registry.transport.calls == []
+    assert caught.value.status_code == 403
+    assert caught.value.detail["code"] == "team_private_unreadable"
 
 
 @pytest.mark.parametrize("kind", [404, 429, 503, "timeout", "json"])

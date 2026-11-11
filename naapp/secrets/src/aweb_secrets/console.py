@@ -12,6 +12,7 @@ the fenced transaction; registration and login use B3's distinct ceremonies.
 """
 
 import base64
+from collections.abc import Awaitable, Callable, Sequence
 from datetime import timedelta
 from typing import TYPE_CHECKING, Annotated, Any, Protocol
 
@@ -20,14 +21,17 @@ from aweb_naapp.console import (
     ConsoleRoute,
     ConsoleSession,
     ConsoleSessions,
+    KeyBoundConsoleSession,
     LoginLimiter,
     console_assets_router,
     console_login_router,
     credential_router,
+    session_is_current,
 )
 from aweb_naapp.console import exact_body as _body
 from aweb_naapp.console import require_json as _require_json
 from aweb_naapp.console import text_field as _text
+from aweb_naapp.console.handoff_authority import PreparedSessionTarget
 from aweb_naapp.hooks.owner_act_nonces import OwnerActVerifier
 from aweb_naapp.hooks.strictjson import Refused
 from aweb_naapp.roles import PrincipalKey, assign, hold_role
@@ -41,10 +45,12 @@ from aweb_naapp.runtime.passkeys import (
     Designation,
     DesignationRefused,
     Passkeys,
+    PreparedCurrentApprovers,
     contact_sha256,
 )
 from fastapi import APIRouter, Depends, HTTPException, Request
 from pgdbm import AsyncDatabaseManager
+from pgdbm.core import TransactionManager
 
 from aweb_secrets.change import ChangeRefused
 from aweb_secrets.change_policy import keep_four_eyes_owners
@@ -61,6 +67,16 @@ class InstallationLookup(Protocol):
         scope was enrolled under, or an untrusted hint before any session exists.
         An id that team does not hold raises LookupError."""
         ...
+
+
+class KeyBoundPreparation(Protocol):
+    async def __call__(
+        self,
+        tx: TransactionManager,
+        current: KeyBoundConsoleSession,
+        *,
+        approver_pairs: Sequence[tuple[str, str]],
+    ) -> PreparedSessionTarget: ...
 
 
 class OwnerConsole:
@@ -84,7 +100,10 @@ class OwnerConsole:
         verifier: OwnerActVerifier,
         installation: InstallationLookup,
         credential_audit: "CredentialAudit",
+        client_address_header: str | None = None,
         limiter: LoginLimiter | None = None,
+        key_bound: Callable[[Request], Awaitable[ConsoleSession]] | None = None,
+        prepare_key_bound: KeyBoundPreparation | None = None,
     ) -> None:
         self.db = db
         self.passkeys = passkeys
@@ -93,10 +112,44 @@ class OwnerConsole:
         self.verifier = verifier
         self.installation = installation
         self.credential_audit = credential_audit
-        self.sessions = ConsoleSessions(db, passkeys=passkeys, scopes=self.admits_scope)
-        self.limiter = limiter or LoginLimiter(
-            db, client_identity=ClientIdentity(), limit=12, window=timedelta(minutes=1)
+        self._prepare_key_bound = prepare_key_bound
+        self.sessions = ConsoleSessions(
+            db, passkeys=passkeys, scopes=self.admits_scope, key_bound=key_bound
         )
+        self.limiter = limiter or LoginLimiter(
+            db,
+            client_identity=ClientIdentity(trusted_header=client_address_header),
+            limit=12,
+            window=timedelta(minutes=1),
+        )
+
+    async def prepare_session(
+        self,
+        tx: TransactionManager,
+        current: ConsoleSession,
+        *,
+        approver_pairs: Sequence[tuple[str, str]],
+    ) -> PreparedCurrentApprovers | None:
+        """Prepare the complete signed authority after app locks, before B2/S3.
+
+        Cookie callers keep their existing B3 preparation. The trusted callback
+        is the same factory that verified this request; it retains the original
+        app handle and deadline. Return its canonical B3 union for caller reuse.
+        """
+        if not isinstance(current, KeyBoundConsoleSession):
+            return None
+        if self._prepare_key_bound is None:
+            raise HTTPException(401, "console_session_required")
+        held = await self._prepare_key_bound(tx, current, approver_pairs=approver_pairs)
+        return held.approvers
+
+    @staticmethod
+    async def check_key_bound(tx: TransactionManager, current: ConsoleSession) -> None:
+        """Final local check after the last protected read; never prepare again."""
+        if isinstance(current, KeyBoundConsoleSession) and not await session_is_current(
+            tx, current, hold=False
+        ):
+            raise HTTPException(401, "console_session_required")
 
     async def admits_scope(self, scope: str) -> bool:
         # B3's login alone does not check application roles. The same predicate
