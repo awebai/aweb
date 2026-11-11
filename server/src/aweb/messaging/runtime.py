@@ -9,6 +9,7 @@ from typing import Any
 from aweb.agent_wake import AgentWakePublisher, agent_wake_publisher
 from aweb.config import get_public_origin
 from aweb.federation.origins import application_public_origins
+from aweb.federation.transport import delivery_transport
 from aweb.hooks import MutationCallback
 from aweb.identity_binding import identity_binding_cache
 
@@ -33,13 +34,18 @@ class MessagingRuntime:
 
 def messaging_runtime(app_state) -> MessagingRuntime:
     """The messaging runtime of the application that owns ``app_state``."""
+    federation_authority = getattr(app_state, "federation_authority", None)
     return MessagingRuntime(
         registry_client=getattr(app_state, "awid_registry_client", None),
-        mail_transport=getattr(app_state, "federation_mail_transport", None),
-        chat_transport=(
-            getattr(app_state, "federation_chat_transport", None)
-            or getattr(app_state, "federation_message_transport", None)
-            or getattr(app_state, "federation_mail_transport", None)
+        mail_transport=delivery_transport(
+            federation_authority,
+            getattr(app_state, "federation_mail_transport", None),
+        ),
+        chat_transport=delivery_transport(
+            federation_authority,
+            getattr(app_state, "federation_chat_transport", None),
+            getattr(app_state, "federation_message_transport", None),
+            getattr(app_state, "federation_mail_transport", None),
         ),
         public_origin=application_public_origin(app_state),
         public_origins=frozenset(application_public_origins(app_state)),

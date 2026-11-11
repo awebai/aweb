@@ -5,9 +5,15 @@ it reports, so the two commit together or not at all. A drain then
 materializes the event's deliveries, one per target its resolver names, and
 delivers each through a pluggable transport, at least once, with bounded
 exponential backoff per delivery. Nothing is dropped: an event whose targets
-cannot be resolved yet stays pending, and a failing delivery is retried until
-the transport reports a final outcome. :func:`outbox_status` exposes the
+cannot be resolved yet stays pending and is resolved again with the same
+backoff, and a failing delivery is retried until the transport reports a final
+outcome. :func:`outbox_status` exposes the
 backlog, dead letters and faults.
+
+An event every target acknowledged is deleted, with its deliveries,
+``DRAINED_RETENTION`` after it drained (:func:`prune_drained`, which the drain
+loop runs). Its id and digest go with it, so enqueueing the same event id after
+that stores and delivers a new event.
 
 Imports only the standard library and pgdbm, so the core server can use it
 without the naapp runtime's dependencies.
@@ -19,6 +25,7 @@ import asyncio
 import hashlib
 import json
 import logging
+import time
 import uuid
 from collections.abc import Awaitable, Callable, Mapping, Sequence
 from dataclasses import dataclass, field
@@ -35,6 +42,11 @@ logger = logging.getLogger(__name__)
 MIGRATIONS_PATH = Path(__file__).resolve().parent / "migrations"
 MIGRATIONS_MODULE = "aweb_naapp_outbox"
 MAX_CALL_TIMEOUT_SECONDS = 30.0
+# How long an event every target acknowledged is kept after it drained.
+DRAINED_RETENTION = timedelta(days=30)
+# How often a drain loop prunes, and how many events one prune deletes at most.
+DRAINED_PRUNE_INTERVAL_SECONDS = 3600.0
+DRAINED_PRUNE_BATCH = 500
 
 
 class OutboxConflict(Exception):
@@ -144,7 +156,8 @@ class RetryPolicy:
     """How failed deliveries are retried.
 
     Retries back off exponentially from ``base_seconds``, capped at
-    ``max_seconds``. A delivery still failing ``stalled_after`` its event was
+    ``max_seconds``; an event whose targets cannot be resolved is resolved
+    again on the same schedule. A delivery still failing ``stalled_after`` its event was
     enqueued becomes ``stalled`` and keeps being retried. A ``Permanent``
     failure becomes ``rejected`` on its ``rejected_after_attempts``-th attempt.
     A resolver or transport call still running after ``call_timeout_seconds``
@@ -160,6 +173,10 @@ class RetryPolicy:
     def __post_init__(self) -> None:
         if not 0 < self.call_timeout_seconds <= MAX_CALL_TIMEOUT_SECONDS:
             raise ValueError(f"call_timeout_seconds must be in (0, {MAX_CALL_TIMEOUT_SECONDS}]")
+
+    def backoff_seconds(self, attempts: int) -> int:
+        """The wait after the ``attempts``-th failed attempt."""
+        return min(self.max_seconds, self.base_seconds * 2 ** min(attempts - 1, 20))
 
 
 @dataclass(frozen=True)
@@ -236,7 +253,9 @@ async def enqueue(tx: TransactionManager, event: OutboxEvent) -> None:
     """Store the event in the caller's transaction.
 
     Enqueueing an event id again is a no-op when its contents are identical
-    and raises :class:`OutboxConflict` otherwise.
+    and raises :class:`OutboxConflict` otherwise, for as long as the event is
+    stored: once :func:`prune_drained` has deleted it, the same id is a new
+    event.
     """
     payload_sha256 = hashlib.sha256(event.payload).hexdigest()
     inserted = await tx.fetch_value(
@@ -345,10 +364,10 @@ async def _materialize(
         rows = await tx.fetch_all(
             """
             SELECT event_id, team_id, kind, occurred_at, payload, signature, critical, producer,
-                   channel
+                   channel, resolve_attempts
             FROM {{tables.outbox_events}}
-            WHERE materialized_at IS NULL AND channel = $2
-            ORDER BY position
+            WHERE materialized_at IS NULL AND channel = $2 AND next_resolve_at <= NOW()
+            ORDER BY next_resolve_at, position
             LIMIT $1
             FOR UPDATE SKIP LOCKED
             """,
@@ -361,8 +380,10 @@ async def _materialize(
                 targets = await asyncio.wait_for(resolver(event), policy.call_timeout_seconds)
             except Exception:
                 logger.exception("Outbox resolver failed for event %s", event.event_id)
+                await _defer_resolution(tx, row, policy)
                 continue
             if targets is None:
+                await _defer_resolution(tx, row, policy)
                 continue
             try:
                 async with tx.transaction() as event_tx:
@@ -386,9 +407,30 @@ async def _materialize(
                     )
             except TargetChannelConflict:
                 logger.exception("Outbox event %s names another channel's target", event.event_id)
+                await _defer_resolution(tx, row, policy)
                 continue
             materialized += 1
     return materialized
+
+
+async def _defer_resolution(
+    tx: TransactionManager, row: Mapping[str, Any], policy: RetryPolicy
+) -> None:
+    """Back the unresolved event off, so the events behind it are claimed first.
+    The wait runs from the wall clock: the pass's transaction started before
+    every resolver call it made."""
+    attempts = row["resolve_attempts"] + 1
+    await tx.execute(
+        """
+        UPDATE {{tables.outbox_events}}
+        SET resolve_attempts = $2,
+            next_resolve_at = clock_timestamp() + $3 * INTERVAL '1 second'
+        WHERE event_id = $1
+        """,
+        row["event_id"],
+        attempts,
+        policy.backoff_seconds(attempts),
+    )
 
 
 async def _deliver_one(
@@ -404,7 +446,7 @@ async def _deliver_one(
             JOIN {{tables.outbox_events}} e ON e.event_id = d.event_id
             WHERE d.state IN ('pending', 'stalled') AND d.next_attempt_at <= NOW()
               AND e.channel = $2
-            ORDER BY e.position, d.target_id
+            ORDER BY d.next_attempt_at, e.position, d.target_id
             LIMIT 1
             FOR UPDATE OF d SKIP LOCKED
             """,
@@ -484,16 +526,14 @@ async def _record(
             """
             UPDATE {{tables.outbox_deliveries}}
             SET state = $3, attempts = $4, last_error_class = $5, updated_at = NOW(),
-                next_attempt_at = NOW() + LEAST($6, $7 * POWER(2, LEAST($4 - 1, 20)))
-                                  * INTERVAL '1 second'
+                next_attempt_at = NOW() + $6 * INTERVAL '1 second'
             WHERE event_id = $1 AND target_id = $2
             """,
             *key,
             state,
             attempts,
             outcome.error_class,
-            policy.max_seconds,
-            policy.base_seconds,
+            policy.backoff_seconds(attempts),
         )
 
 
@@ -517,6 +557,70 @@ async def _finish_drained(db: AsyncDatabaseManager) -> int:
     return len(rows)
 
 
+async def prune_drained(db: AsyncDatabaseManager, *, limit: int = DRAINED_PRUNE_BATCH) -> int:
+    """Delete up to ``limit`` events that drained more than
+    ``DRAINED_RETENTION`` ago, oldest first, each with its deliveries, and
+    return how many events went.
+
+    Only an event every target acknowledged goes. One that is not drained
+    stays at any age: not materialized, or with a delivery pending, stalled or
+    dead-lettered and not acknowledged as lost. A drained event also stays
+    while a reader needs its rows: one with a delivery that was cancelled,
+    rejected or in conflict, which the fault report and a producer's backlog
+    read; a critical event materialized with no target, which is a fault; and
+    the one holding a target's latest receipt (:func:`latest_receipt`).
+    """
+    async with db.transaction() as tx:
+        rows = await tx.fetch_all(
+            """
+            SELECT e.event_id
+            FROM {{tables.outbox_events}} e
+            WHERE e.drained_at < NOW() - $1::interval
+              AND (
+                NOT e.critical
+                OR EXISTS (
+                  SELECT 1 FROM {{tables.outbox_deliveries}} d WHERE d.event_id = e.event_id
+                )
+              )
+              AND NOT EXISTS (
+                SELECT 1 FROM {{tables.outbox_deliveries}} d
+                WHERE d.event_id = e.event_id
+                  AND (
+                    d.state NOT IN ('delivered', 'duplicate')
+                    OR (
+                      d.receipt IS NOT NULL
+                      AND NOT EXISTS (
+                        SELECT 1 FROM {{tables.outbox_deliveries}} later
+                        WHERE later.target_id = d.target_id
+                          AND later.state IN ('delivered', 'duplicate')
+                          AND later.receipt IS NOT NULL
+                          AND ((later.state = 'delivered'), later.acked_at)
+                              > ((d.state = 'delivered'), d.acked_at)
+                      )
+                    )
+                  )
+              )
+            ORDER BY e.drained_at
+            LIMIT $2
+            FOR UPDATE OF e SKIP LOCKED
+            """,
+            DRAINED_RETENTION,
+            limit,
+        )
+        event_ids = [row["event_id"] for row in rows]
+        if event_ids:
+            # Deliveries reference their event, so they go first.
+            await tx.execute(
+                "DELETE FROM {{tables.outbox_deliveries}} WHERE event_id = ANY($1::uuid[])",
+                event_ids,
+            )
+            await tx.execute(
+                "DELETE FROM {{tables.outbox_events}} WHERE event_id = ANY($1::uuid[])",
+                event_ids,
+            )
+    return len(event_ids)
+
+
 async def drain(
     db: AsyncDatabaseManager,
     *,
@@ -528,6 +632,9 @@ async def drain(
 ) -> DrainResult:
     """Materialize the channel's pending events, then deliver each of its due
     deliveries once. Other channels' events are left to their own drains.
+    At most ``limit`` events are resolved and ``limit`` deliveries sent, each
+    taken in the order it fell due, so one that failed is tried again only
+    after those that fell due before its retry did.
 
     Materialization commits before any send, so a crash never re-resolves an
     event. Each delivery is sent and recorded in its own transaction, holding
@@ -558,9 +665,16 @@ async def run_drain(
     policy: RetryPolicy,
     stop: asyncio.Event,
     interval_seconds: float = 1.0,
+    prune_interval_seconds: float = DRAINED_PRUNE_INTERVAL_SECONDS,
 ) -> None:
     """Drain until ``stop`` is set, waiting ``interval_seconds`` whenever a pass
-    found nothing to do. A failing pass is logged and retried."""
+    found nothing to do. A failing pass is logged and retried.
+
+    After a pass, once per ``prune_interval_seconds``, the loop prunes one batch
+    of drained events past their retention (:func:`prune_drained`), and again
+    after the next pass while a batch comes back full. A failing prune is
+    logged and tried again an interval later; it never fails the pass."""
+    next_prune = time.monotonic()
     while not stop.is_set():
         try:
             result = await drain(
@@ -570,6 +684,14 @@ async def run_drain(
         except Exception:
             logger.exception("Outbox drain pass failed")
             busy = False
+        if time.monotonic() >= next_prune:
+            try:
+                pruned = await prune_drained(db)
+            except Exception:
+                logger.exception("Outbox prune failed")
+                pruned = 0
+            if pruned < DRAINED_PRUNE_BATCH:
+                next_prune = time.monotonic() + prune_interval_seconds
         if not busy:
             try:
                 await asyncio.wait_for(stop.wait(), timeout=interval_seconds)
@@ -654,7 +776,8 @@ async def latest_receipt(db: AsyncDatabaseManager, target_id: str) -> bytes | No
     its newest receipt commits to its longest prefix. Receipts of first
     appends (``delivered``) are preferred; a ``duplicate`` ack's receipt is
     returned only when the target appended nothing. Delivery rows, with their
-    receipts, are kept after their event drains.
+    receipts, are kept after their event drains; :func:`prune_drained` deletes
+    them with their event, never the row this returns.
     """
     value = await db.fetch_value(
         """
@@ -736,6 +859,34 @@ async def undelivered_critical_events(
         for row in reversed(rows)
     ]
     return UndeliveredFaults(tuple(events), rows[0]["total"] if rows else 0)
+
+
+async def oldest_undelivered_age_seconds(db: AsyncDatabaseManager) -> float | None:
+    """The age of the oldest event not yet delivered: one not materialized, or
+    one with a delivery pending or stalled. None when there is none.
+
+    It reads events that are not drained, oldest first through their partial
+    indexes, and stops at the first match, so delivered history is never read.
+    """
+    value = await db.fetch_value(
+        """
+        SELECT EXTRACT(EPOCH FROM NOW() - min(created_at))
+        FROM (
+            (SELECT created_at FROM {{tables.outbox_events}}
+             WHERE materialized_at IS NULL
+             ORDER BY position LIMIT 1)
+            UNION ALL
+            (SELECT e.created_at FROM {{tables.outbox_events}} e
+             WHERE e.materialized_at IS NOT NULL AND e.drained_at IS NULL
+               AND EXISTS (
+                 SELECT 1 FROM {{tables.outbox_deliveries}} d
+                 WHERE d.event_id = e.event_id AND d.state IN ('pending', 'stalled')
+               )
+             ORDER BY e.position LIMIT 1)
+        ) AS oldest
+        """
+    )
+    return float(value) if value is not None else None
 
 
 async def outbox_status(db: AsyncDatabaseManager, channel: str | None = None) -> OutboxStatus:

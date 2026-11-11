@@ -85,7 +85,7 @@ def console_jobs_router(*, changes: ConsoleChanges) -> APIRouter:
                 return RedirectResponse(
                     f"/installations/{installation_id}/{kind}s/new", status_code=303
                 )
-            admitted = await changes._installation(installation_id)
+            admitted = await changes._installation(current, installation_id)
             async with changes.console.db.transaction() as tx:
                 await changes._owner(tx, current, admitted)
         title = "Create a job" if kind == "job" else "Register a runner"
