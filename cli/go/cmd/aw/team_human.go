@@ -2112,10 +2112,6 @@ type justCreatedTeamMemberRollbackTarget struct {
 	MemberAddress string
 }
 
-func rollbackJustCreatedTeamMember(anchorDir string, accepted *acceptedTeamInvite) error {
-	return rollbackJustCreatedTeamMemberWithExplicitHostedAuth(anchorDir, accepted, "")
-}
-
 func rollbackJustCreatedTeamMemberWithExplicitHostedAuth(anchorDir string, accepted *acceptedTeamInvite, explicitAPIKey string) error {
 	target, err := justCreatedTeamMemberRollbackTargetFromAccepted(accepted)
 	if err != nil {
