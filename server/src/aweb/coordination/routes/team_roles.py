@@ -226,7 +226,11 @@ async def activate_team_roles(
 ) -> bool:
     """Set the active team roles bundle for a team."""
     await activate_team_document(
-        db, table="{{tables.team_roles}}", team_id=team_id, document_id=roles_id,
+        db,
+        table="{{tables.team_roles}}",
+        lock_name="team-roles-activation",
+        team_id=team_id,
+        document_id=roles_id,
     )
 
     logger.info("Activated team roles %s for team %s", roles_id, team_id)

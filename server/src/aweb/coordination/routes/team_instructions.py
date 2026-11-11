@@ -218,7 +218,13 @@ async def activate_team_instructions(
     instructions_id: str,
 ) -> bool:
     await activate_team_document(
-        db, table="{{tables.team_instructions}}", team_id=team_id, document_id=instructions_id,
+        db,
+        table="{{tables.team_instructions}}",
+        # Replicas exclude each other by this name alone, so it stays what
+        # every replica already running takes.
+        lock_name="team-instructions-activation",
+        team_id=team_id,
+        document_id=instructions_id,
     )
     return True
 
