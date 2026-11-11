@@ -143,14 +143,14 @@ def test_external_coordination_plugin_also_guards_postgres(tmp_path):
 
 @pytest.mark.parametrize("value", ["", "   "])
 def test_blank_redis_configuration_refuses(monkeypatch, value):
-    
+
     monkeypatch.setenv("REDIS_URL", value)
     with pytest.raises(RuntimeError, match="Set REDIS_URL"):
         redis_url()
 
 
 def test_explicit_redis_target_is_preserved(monkeypatch):
-    
+
     target = "redis://127.0.0.1:65432/7"
     monkeypatch.setenv("REDIS_URL", target)
     assert redis_url() == target
