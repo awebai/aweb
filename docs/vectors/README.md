@@ -159,7 +159,8 @@ signer, its signature under the team key the registry holds, and its standing
 at the registry (revoked, registered). Each case carries the header, the
 request's `did:key`, the registry's team key, and the revoked and registered
 certificate ids. `expected` is the verdict every verifier is to give: `null`
-for acceptance, or one of the file's `reasons`. `today` records what each
+for acceptance, or a `reason` from the file's `reasons`, with the `field` a
+`missing_field` names. `today` records what each
 verifier named in `today_verifiers` answers now; where it differs from
 `expected`, that verifier has not yet been brought to the shared rule. A
 certificate has no expiry: revocation is its only end, and one case says so.
