@@ -9,11 +9,15 @@ import sys
 
 
 def networks(config: dict) -> dict:
+    for key, spec in config.get('networks', {}).items():
+        if spec.get('external'):
+            raise ValueError(f'{config["name"]}/{key}: caller-declared external network is not supported by the candidate gate')
     return {key: {**spec, 'name': spec.get('name', f'{config["name"]}_{key}')}
             for key, spec in config.get('networks', {}).items()}
 
 
 def override(config: dict) -> str:
+    network_specs = networks(config)
     project = config['name']
     lines = ['services:']
     for service, spec in config['services'].items():
@@ -31,11 +35,11 @@ def override(config: dict) -> str:
             # Append to existing aliases, including federation's TLS/DNS names.
             lines += [f'      {json.dumps(network)}:',
                       f'        aliases: [{json.dumps(f"{project}-{service}.test")}]']
-    if networks(config):
+    if network_specs:
         # Replace creation options (internal, IPAM, driver) too: Compose rejects
         # them on an external network. prepare() applies them to the real network.
         lines.append('networks: !override')
-        for key, spec in networks(config).items():
+        for key, spec in network_specs.items():
             lines += [f'  {json.dumps(key)}:', f'    name: {json.dumps(spec["name"])}',
                       '    external: true']
     return '\n'.join(lines) + '\n'
@@ -73,6 +77,7 @@ def create_args(key: str, spec: dict, project: str, label: str) -> list[str]:
 
 
 def prepare(config: dict) -> None:
+    network_specs = networks(config)
     docker = os.environ.get('AWEB_CANDIDATE_REAL_DOCKER', '/usr/bin/docker')
     runner = os.environ['CANDIDATE_RUNNER_NAME']
     label = os.environ['AWEB_CANDIDATE_RESOURCE_LABEL']
@@ -85,7 +90,7 @@ def prepare(config: dict) -> None:
     info = json.loads(run('inspect', runner))[0]
     if info['Config']['Labels'].get('aweb.candidate-gate') != label:
         raise ValueError(f'candidate runner ownership mismatch: {runner}')
-    for key, spec in networks(config).items():
+    for key, spec in network_specs.items():
         name = spec['name']
         # List succeeds even when the exact name is absent; daemon errors must
         # not be interpreted as permission to create a replacement network.
