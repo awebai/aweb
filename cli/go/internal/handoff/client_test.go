@@ -8,6 +8,7 @@ import (
 	"encoding/base64"
 	"encoding/hex"
 	"encoding/json"
+	"errors"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -241,4 +242,75 @@ func TestSessionRequestsFollowNoRedirect(t *testing.T) {
 		return
 	}
 	t.Fatalf("resp %+v err %v", resp, err)
+}
+
+// errWriter fails every write.
+type errWriter struct{}
+
+func (errWriter) Write([]byte) (int, error) { return 0, errors.New("disk full") }
+
+func openedSession(t *testing.T, serve http.HandlerFunc) *Session {
+	t.Helper()
+	server := httptest.NewServer(serve)
+	t.Cleanup(server.Close)
+	_, key, _ := ed25519.GenerateKey(nil)
+	return &Session{ID: "s1", CSRF: "c1", key: key, origin: server.URL, http: noRedirects(http.DefaultClient)}
+}
+
+func TestDoToStreamsASuccessfulBodyUncapped(t *testing.T) {
+	large := bytes.Repeat([]byte("x"), maxReplyBytes+10)
+	session := openedSession(t, func(w http.ResponseWriter, r *http.Request) {
+		if r.Header.Get("X-Console-Signed-Payload") == "" {
+			w.WriteHeader(http.StatusUnauthorized)
+			return
+		}
+		w.Header().Set("Content-Disposition", "attachment; filename=logs-t.jsonl")
+		_, _ = w.Write(large)
+	})
+	var out bytes.Buffer
+	resp, err := session.DoTo(context.Background(), http.MethodGet, "/v1/export", nil, &out)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if resp.Status != http.StatusOK || len(resp.Body) != 0 || !bytes.Equal(out.Bytes(), large) || resp.Header.Get("Content-Disposition") == "" {
+		t.Fatalf("status %d body %d out %d", resp.Status, len(resp.Body), out.Len())
+	}
+}
+
+func TestDoToWritesNothingForARefusal(t *testing.T) {
+	session := openedSession(t, func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusUnauthorized)
+		_, _ = w.Write([]byte(`{"detail":"console_session_required"}`))
+	})
+	var out bytes.Buffer
+	resp, err := session.DoTo(context.Background(), http.MethodGet, "/v1/export", nil, &out)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if out.Len() != 0 || RefusalCode(resp.Body) != "console_session_required" {
+		t.Fatalf("out %q body %s", out.String(), resp.Body)
+	}
+}
+
+func TestDoToReturnsACopyFailureAsAnError(t *testing.T) {
+	session := openedSession(t, func(w http.ResponseWriter, r *http.Request) { _, _ = w.Write([]byte("data")) })
+	if _, err := session.DoTo(context.Background(), http.MethodGet, "/v1/export", nil, errWriter{}); err == nil {
+		t.Fatal("a failed copy reported success")
+	}
+}
+
+func TestDoToFollowsNoRedirect(t *testing.T) {
+	session := openedSession(t, func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == "/elsewhere" {
+			_, _ = w.Write([]byte("followed"))
+			return
+		}
+		http.Redirect(w, r, "/elsewhere", http.StatusFound)
+	})
+	var out bytes.Buffer
+	resp, err := session.DoTo(context.Background(), http.MethodGet, "/v1/export", nil, &out)
+	if err != nil || resp.Status != http.StatusFound || out.Len() != 0 {
+		t.Fatalf("resp %+v out %q err %v", resp, out.String(), err)
+	}
 }

@@ -135,6 +135,40 @@ func RegisterCredential(ctx context.Context, opts Options) (*Credential, error) 
 // request target relative to that origin. A state-changing request carries
 // the CSRF token. Every answer is returned as given, refusals included.
 func (s *Session) Do(ctx context.Context, method, path string, body []byte) (*Response, error) {
+	req, err := s.request(ctx, method, path, body)
+	if err != nil {
+		return nil, err
+	}
+	return receive(s.http, req)
+}
+
+// DoTo is Do for a response too large to hold: a 2xx body is copied to w
+// uncapped and Response.Body is empty. Any other answer writes nothing to w
+// and returns its body, capped, in Response.Body. A failed copy is an error.
+func (s *Session) DoTo(ctx context.Context, method, path string, body []byte, w io.Writer) (*Response, error) {
+	req, err := s.request(ctx, method, path, body)
+	if err != nil {
+		return nil, err
+	}
+	resp, err := s.http.Do(req)
+	if err != nil {
+		return nil, err
+	}
+	if resp.StatusCode < 200 || resp.StatusCode > 299 {
+		reply, err := readReply(resp)
+		if err != nil {
+			return nil, err
+		}
+		return &Response{Status: resp.StatusCode, Header: resp.Header, Body: reply}, nil
+	}
+	defer resp.Body.Close()
+	if _, err := io.Copy(w, resp.Body); err != nil {
+		return nil, fmt.Errorf("copy the response: %w", err)
+	}
+	return &Response{Status: resp.StatusCode, Header: resp.Header}, nil
+}
+
+func (s *Session) request(ctx context.Context, method, path string, body []byte) (*http.Request, error) {
 	target, err := url.Parse(s.origin + path)
 	if err != nil {
 		return nil, err
@@ -149,7 +183,7 @@ func (s *Session) Do(ctx context.Context, method, path string, body []byte) (*Re
 	if method != http.MethodGet {
 		headers.Set("X-CSRF-Token", s.CSRF)
 	}
-	return send(ctx, s.http, method, target, headers, body)
+	return newRequest(ctx, method, target, headers, body)
 }
 
 func run(ctx context.Context, opts Options, purpose string) (ed25519.PrivateKey, []byte, error) {
@@ -249,6 +283,14 @@ func collect(ctx context.Context, opts Options, key ed25519.PrivateKey, handoffI
 }
 
 func send(ctx context.Context, client *http.Client, method string, target *url.URL, headers http.Header, body []byte) (*Response, error) {
+	req, err := newRequest(ctx, method, target, headers, body)
+	if err != nil {
+		return nil, err
+	}
+	return receive(client, req)
+}
+
+func newRequest(ctx context.Context, method string, target *url.URL, headers http.Header, body []byte) (*http.Request, error) {
 	req, err := http.NewRequestWithContext(ctx, method, target.String(), bytes.NewReader(body))
 	if err != nil {
 		return nil, err
@@ -257,6 +299,10 @@ func send(ctx context.Context, client *http.Client, method string, target *url.U
 	if body != nil {
 		req.Header.Set("Content-Type", "application/json")
 	}
+	return req, nil
+}
+
+func receive(client *http.Client, req *http.Request) (*Response, error) {
 	resp, err := client.Do(req)
 	if err != nil {
 		return nil, err
