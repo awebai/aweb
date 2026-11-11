@@ -84,6 +84,18 @@ class PreparedOwnerAct:
     def __repr__(self) -> str:
         return f"PreparedOwnerAct({self._checked.act!r})"
 
+    def require_fresh(self) -> None:
+        """Original key/act deadlines, synchronously after the final effect await.
+
+        This does not authenticate again, renew evidence, or consume a nonce.
+        The caller must still use consume_in in the effect's transaction.
+        """
+        now = _utc_now(self._verifier._clock)
+        if now - self._prepared_at > KEY_FRESHNESS:
+            raise Refused("owner_required", "prepared too long ago for its team key to be current")
+        if now >= self._checked.expires_at:
+            raise Refused("expired", "the owner act expired")
+
 
 class OwnerActVerifier:
     """One verifier's owner-act check: its scope, audience and vocabulary, and
@@ -151,16 +163,12 @@ class OwnerActVerifier:
         if expected_subject is None:
             raise Refused("verifier_misconfigured", "every verifier option is required")
         act = prepared._checked
-        now = _utc_now(self._clock)
         # The team key read in prepare is trusted for the same bound as the
         # registry cache: a prepared act older than that may predate a key
         # rotation, so it no longer proves the current controller key.
-        if now - prepared._prepared_at > KEY_FRESHNESS:
-            raise Refused("owner_required", "prepared too long ago for its team key to be current")
+        prepared.require_fresh()
         # Expiry again: a prepared act held past its expiry could otherwise be
         # consumed after its earlier nonce row was pruned.
-        if now >= act.expires_at:
-            raise Refused("expired", f"expired at {act.fields['expires_at']}")
         used = await tx.fetch_value(
             "SELECT 1 FROM {{tables.owner_act_nonces}} WHERE scope = $1 AND team_id = $2 AND nonce = $3",
             self.scope,

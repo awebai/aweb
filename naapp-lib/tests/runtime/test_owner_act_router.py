@@ -62,11 +62,14 @@ class SqlEffect:
     identity_client: object
     fail_write: bool = False
     fail_notice: bool = False
+    fail_governance: bool = False
+    prepares: int = 0
     prepared: object = None
     applied: asyncio.Event = None
     committed: int = 0
 
     async def prepare(self, *, installation, delivery):
+        self.prepares += 1
         db = self.runtime.db()
         current = await db.fetch_value(
             "SELECT credential FROM {{tables.delivery_holders}} WHERE principal=$1",
@@ -141,6 +144,10 @@ class SqlPreparedEffect:
         self.app.applied.set()
         if self.app.fail_write:
             raise OwnerActDeliveryRefused("owner_required")
+        if self.app.fail_governance:
+            from aweb_naapp.runtime.credential_audit import GovernanceUnavailable
+
+            raise GovernanceUnavailable()
         return OwnerActEffectResult(act.act, ROLE, act.subject["principal"], occurred)
 
     def require_fresh(self):
@@ -292,7 +299,7 @@ async def world(tmp_path, human, coordination, test_db_factory):
         effect=effect,
         verifier=verifier,
         limiter=OwnerActLimiter(
-            client_identity=ClientIdentity(), limit=30, window=timedelta(minutes=1)
+            client_identity=ClientIdentity(), limit=30, window=timedelta(hours=1)
         ),
     )
     app.include_router(router)
@@ -318,6 +325,13 @@ async def test_designation_commits_nonce_effect_and_outbox_once(world):
     assert await world.counts() == (1, 1, 1)
 
 
+async def test_parallel_delivery_of_one_act_commits_only_one_effect(world):
+    body = world.body()
+    replies = await asyncio.gather(world.post(body), world.post(body))
+    assert sorted(reply.status_code for reply in replies) == [200, 403]
+    assert await world.counts() == (1, 1, 1)
+
+
 async def test_failed_effect_rolls_back_nonce_and_governance_then_same_act_can_retry(world):
     body = world.body()
     world.effect.fail_write = True
@@ -336,6 +350,87 @@ async def test_notice_failure_does_not_report_a_committed_effect_as_failed(world
     assert await world.counts() == (1, 1, 1)
 
 
+async def test_unavailable_governance_rolls_back_the_nonce_and_effect(world):
+    world.effect.fail_governance = True
+    response = await world.post(world.body())
+    assert (response.status_code, response.json()["detail"]) == (503, "release_context_unavailable")
+    assert await world.counts() == (0, 0, 0)
+
+
+async def test_a_v2_pin_remains_readable_but_cannot_admit_v3_owner_acts(world):
+    runtime = world.runtime
+    data = runtime.manifest_variant_bytes(2)
+    fetched = FetchedManifest(
+        origin=runtime.settings.public_origin,
+        url=runtime.settings.public_origin + "/manifests/v2.json",
+        digest="sha256:" + hashlib.sha256(data).hexdigest(),
+        data=data,
+        manifest=load_manifest(data),
+    )
+    async with world.coordination.server.db.get_manager().transaction() as tx:
+        await install_verified_manifest_on(
+            tx,
+            team_id=TEAM,
+            fetched=fetched,
+            granted_scopes=list(runtime.manifest.install_scopes),
+            expected_generation=world.installation["generation"],
+        )
+    status = await runtime.installation_grants().status_for(TEAM)
+    assert status.manifest_version == 2
+    assert status.digest == fetched.digest
+    assert (await world.post(world.body())).status_code == 403
+    assert await world.counts() == (0, 0, 0)
+
+
+@pytest.mark.parametrize(
+    "fault",
+    [
+        "unknown_field",
+        "missing_credential",
+        "credential_encoding",
+        "audience",
+        "role",
+        "credential_hash",
+        "expired",
+    ],
+)
+async def test_stateless_and_subject_binding_refusals_never_write_effects(world, fault):
+    from aweb_naapp.hooks.owner_act import owner_act_signing_bytes
+
+    body = world.body()
+    signing = base64.b64decode(body["signing"])
+    fields = json.loads(signing.split(b"\n", 1)[1])
+    expected = (403, "owner_required")
+    if fault == "unknown_field":
+        body["installation_id"] = fields["subject"]["installation_id"]
+        expected = (400, "request_invalid")
+    elif fault == "missing_credential":
+        del body["credential"]
+        expected = (400, "request_invalid")
+    elif fault == "credential_encoding":
+        body["credential"]["credential_id"] += "="
+        expected = (400, "request_invalid")
+    elif fault == "credential_hash":
+        body["credential"] = holder(rp_id="app.example.com").body
+    else:
+        if fault == "audience":
+            fields["aud"] = world.runtime.settings.public_origin
+        elif fault == "role":
+            fields["subject"]["role"] = "example.other"
+        else:
+            issued = datetime.now(UTC) - timedelta(minutes=2)
+            fields["issued_at"] = issued.strftime("%Y-%m-%dT%H:%M:%SZ")
+            fields["expires_at"] = (issued + timedelta(minutes=1)).strftime("%Y-%m-%dT%H:%M:%SZ")
+        signing = owner_act_signing_bytes(fields)
+        body["signing"] = base64.b64encode(signing).decode()
+        body["signature"] = (
+            base64.b64encode(world.member.team_key.sign(signing).signature).decode().rstrip("=")
+        )
+    response = await world.post(body)
+    assert (response.status_code, response.json()["detail"]) == expected
+    assert await world.counts() == (0, 0, 0)
+
+
 @pytest.mark.parametrize("holding", [False, True])
 @pytest.mark.parametrize("unknown_team", [False, True])
 async def test_forged_signature_cannot_observe_holding_or_installation(
@@ -344,6 +439,8 @@ async def test_forged_signature_cannot_observe_holding_or_installation(
     if holding:
         assert (await world.post(world.body())).status_code == 200
     before = await world.counts()
+    before_reads = len(world.coordination.server.transport.calls)
+    before_prepares = world.effect.prepares
     world.effect.prepared = None
     body = world.body()
     signing = base64.b64decode(body["signing"])
@@ -362,6 +459,8 @@ async def test_forged_signature_cannot_observe_holding_or_installation(
         (503, "team_key_unavailable") if unknown_team else (403, "owner_required")
     )
     assert world.effect.prepared is None
+    assert len(world.coordination.server.transport.calls) == before_reads
+    assert world.effect.prepares == before_prepares
     assert await world.counts() == before
 
 
@@ -450,6 +549,6 @@ async def test_client_budget_is_spent_on_refusals_and_cannot_be_reset_with_a_spo
     ],
 )
 async def test_team_or_console_credentials_cannot_replace_the_owner_act(world, header):
-    response = await world.post({}, headers=header)
-    assert response.status_code in (400, 403)
+    response = await world.post(world.body(), headers=header)
+    assert response.status_code == 403
     assert await world.counts() == (0, 0, 0)
