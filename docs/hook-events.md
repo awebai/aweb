@@ -612,19 +612,20 @@ and metadata, and compare the wrapper's policy pin. For secrets, also compare
 Q's team/installation/generation to `C` using the frozen secrets request
 contract. This neither changes B2 hashing nor serializes a live `ActionPolicy`.
 B2's rules allow null in its existing covered bytes; `C`/`M`'s no-null rule
-does not rewrite them.
+does not rewrite them. The approval sidecar itself may contain agent-entered
+credentials: it stays restricted and is **not appended directly** to the
+public-hash input. Its existing B2 hash in the verified challenge binds it
+transitively.
 
 The credential sidecar is exactly `aweb.passkey-credential-change-request/1`
 plus LF and canonical `{"credential": K}`, with `"retire_credential": K'`
 added for a replace, where each is
 `{"credential_id", "public_key", "rp_id"}` in the credential encoding, each
 `rp_id` equal to `C`'s `rp_id`. A missing or extra field, a mismatched digest
-or a noncanonical encoding refuses. It is
-restricted like the approval sidecar and is not framed into the commitment:
-recomputing `credential_sha256` and `retire_credential_sha256` from it and
-comparing them with the challenge preimage binds it. The sidecar itself may contain agent-entered credentials:
-it stays restricted and is **not appended directly** to the public-hash input.
-Its existing B2 hash in the verified challenge binds it transitively.
+or a noncanonical encoding refuses. It holds only public credential data. It
+is restricted like the approval sidecar and is not framed into the
+commitment: recomputing `credential_sha256` and `retire_credential_sha256`
+from it and comparing them with the challenge preimage binds it.
 
 **Commitment bytes.** Let `frame(B) = u64be(len(B)) || B`, using byte lengths.
 The fixed order is:
