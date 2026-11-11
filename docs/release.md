@@ -331,9 +331,9 @@ monitors, or cross-repository release transactions.
 Candidate Compose services do not publish host ports. The candidate Docker
 wrapper adds project-scoped service aliases (`<project>-<service>.test`), creates
 run-labelled networks and attaches the runner before `compose up`, `create` or
-`run`. Compose treats these networks as external; their creation options and
-existing service aliases are preserved. The wrapper detaches the runner before
-`compose down`. Service
+`run`. Compose adopts these networks using their project/network labels and
+unchanged nonexternal definitions; creation options and existing service aliases
+are preserved. The wrapper detaches the runner before `compose down`. Service
 clients use those names and the service's container port. Temporary A2A clients
 also join their journey network. Existing federation DNS/TLS aliases remain.
 Services using `network_mode: service:aweb` retain that shared namespace and
@@ -344,12 +344,19 @@ Standalone host journeys retain their existing host endpoint configuration.
 
 Every wrapped Compose command ends with `exec`, so exit statuses and the
 caller's timeout/kill target remain the Docker CLI. A failed startup can leave
-the runner attached to its network without a running service. Network lifetime
-belongs to the gate: Compose leaves external networks, and the gate removes
-them by its run label. Compose overlays likewise live under the run-owned bind
-root and are removed by gate cleanup, including after a CLI timeout. Cleanup
+the runner attached to its network without a running service. Compose removes
+the networks on `down` after runner detachment, so sequential journeys release
+address pools. Gate cleanup removes any remaining run-labelled networks and
+checks for leaks. Compose overlays likewise live under the run-owned bind root and are removed by gate cleanup, including after a CLI timeout. Cleanup
 fails if that root survives; the focused tests exercise this check with an
 overlay-retention mutation.
+
+The runner pins `docker-compose-plugin` to `5.7.1-1~debian.12~bookworm` and
+verifies the installed package against that pin during the image build. The
+checks stage runs `ComposeAdoptionTests`: pre-created default/internal network
+IDs must stay unchanged, the runner must reach a service alias, and `down` must
+remove both networks before fallback cleanup. Keep this guard when upgrading
+Compose. Caller-declared external networks are refused before Docker access.
 
 The only candidate publication controls are
 `DockerBoundaryTests.test_docker_assigned_published_port_is_reserved_by_its_service`
@@ -361,7 +368,7 @@ sibling client, and checks that one journey cannot resolve the other's service.
 Run its focused proof in an approved Docker slot:
 
 ```sh
-AWEB_TEST_DOCKER_NETWORK=1 python3 scripts/test_candidate_network.py ComposeNetworkTests ComposeExitStatusTests ComposeTimeoutTests -v
+AWEB_TEST_DOCKER_NETWORK=1 python3 scripts/test_candidate_network.py ComposeAdoptionTests ComposeNetworkTests ComposeExitStatusTests ComposeTimeoutTests -v
 ```
 
 The diagnostic commits preceding this change demonstrated a possible socket and

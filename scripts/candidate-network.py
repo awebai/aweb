@@ -17,7 +17,7 @@ def networks(config: dict) -> dict:
 
 
 def override(config: dict) -> str:
-    network_specs = networks(config)
+    networks(config)  # Refuse caller-owned external networks before rendering.
     project = config['name']
     lines = ['services:']
     for service, spec in config['services'].items():
@@ -35,13 +35,8 @@ def override(config: dict) -> str:
             # Append to existing aliases, including federation's TLS/DNS names.
             lines += [f'      {json.dumps(network)}:',
                       f'        aliases: [{json.dumps(f"{project}-{service}.test")}]']
-    if network_specs:
-        # Replace creation options (internal, IPAM, driver) too: Compose rejects
-        # them on an external network. prepare() applies them to the real network.
-        lines.append('networks: !override')
-        for key, spec in network_specs.items():
-            lines += [f'  {json.dumps(key)}:', f'    name: {json.dumps(spec["name"])}',
-                      '    external: true']
+    # Preserve the caller's nonexternal network definitions. The pinned Compose
+    # adopts prepare()'s project/network-labelled networks and removes them on down.
     return '\n'.join(lines) + '\n'
 
 

@@ -13,7 +13,7 @@ TEST_EGRESS_RUNNER ?= python3 $(abspath scripts/test-egress/native.py) --
 	test-channel-integration \
 	sync-doc-copies sync-skill-copies list-awid-site-docs sync-awid-site-docs check-awid-site-docs verify-site deploy-site \
 	test-npm-exact-publish test-pypi-exact-publish test-oci-exact-publish \
-	cli-e2e _candidate-gate-docker-boundaries _candidate-channel-version _candidate-node-deps \
+	cli-e2e _candidate-gate-docker-boundaries _candidate-gate-compose-adoption _candidate-channel-version _candidate-node-deps \
 	_candidate-unit-channel _candidate-unit-channel-core _candidate-unit-pi _candidate-oats _candidate-oats-proof-helpers \
 	_candidate-artifact-server _candidate-artifact-awid-package _candidate-artifact-awid-image \
 	_candidate-artifact-naapp-package check-naapp-lib-package \
@@ -609,6 +609,9 @@ test-release-cli-version:
 # ── Unified release ──────────────────────────────────────────────────
 
 # Internal steps consumed only by the complete local candidate map.
+_candidate-gate-compose-adoption:
+	AWEB_TEST_DOCKER_NETWORK=1 python3 scripts/test_candidate_network.py ComposeAdoptionTests -v
+
 _candidate-gate-docker-boundaries:
 	@test -n "$(CANDIDATE_GATE_IMAGE)" || (echo "CANDIDATE_GATE_IMAGE is required"; exit 2)
 	python3 scripts/e2e/test_candidate_gate_docker_boundaries.py --image "$(CANDIDATE_GATE_IMAGE)"
