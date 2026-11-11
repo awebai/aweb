@@ -2,6 +2,7 @@
 
 import json
 import secrets
+from uuid import uuid4
 
 import asyncpg
 import pytest
@@ -106,7 +107,7 @@ async def another_installation(world):
     source = copy(world)
     source.owner = await team_owner(world.registry, team_id=other.team_id, acts=HUMAN_ROLE_ACTS)
     authority = TeamServer()
-    authority.grant = _grant("other-installation", 1, other.team_id)
+    authority.grant = _grant(str(uuid4()), 1, other.team_id)
     source.fence = installation_fence(world.db, app_id=world.admitted.app_id, grants=authority)
     await source.fence.refresh(other.team_id)
     async with world.db.transaction() as tx:
