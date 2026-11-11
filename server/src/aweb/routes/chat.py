@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from aweb.agent_wake import agent_wake_publisher, agent_wake_scope
+from aweb.agent_wake import agent_wake_publisher
 
 from aweb.attachment_service import prepare_attachment_send, attachment_retry, attachment_references_by_message
 
@@ -26,7 +26,7 @@ from redis.exceptions import ConnectionError as RedisConnectionError
 from redis.exceptions import RedisError
 
 from aweb.deps import get_db, get_redis
-from aweb.events import chat_session_channel_name, publish_chat_session_signal
+from aweb.events import chat_session_channel_name
 from aweb.redis_subscriptions import open_subscription, release_subscription
 from aweb.identity_metadata import lookup_identity_metadata_by_did, routable_chat_address
 from aweb.id_chain_auth import stored_id_chain
@@ -34,8 +34,8 @@ from aweb.messaging.chat_send import (
     _address_from_alias,
     _left_dids_by_session,
     _parse_timestamp,
-    _resolve_actor_agent,
     _target_did,
+    resolve_actor_agent,
     resolve_chat_targets,
     send_chat,
 )
@@ -50,11 +50,10 @@ from aweb.messaging.chat import (
     MAX_CHAT_MARK_READ_IDS,
     get_message_history,
     get_pending_conversations,
-    mark_messages_read,
-    mark_messages_read_up_to,
     resolve_session_actor_did,
     wake_chat_session_participants,
 )
+from aweb.messaging.chat_read import mark_chat_read
 from aweb.messaging.activity_stream import SessionActivity
 from aweb.messaging.contacts import (
     get_contact_addresses,
@@ -289,18 +288,26 @@ class CreateSessionResponse(BaseModel):
     targets_left: list[str]
 
 
-async def _create_session_response(db, redis, *, session_id: UUID, message_id: str, target_dids: list[str]) -> CreateSessionResponse:
-    """Project the sent message and current session without repeating effects."""
-    aweb_db = db.get_manager("aweb")
-    participants_rows = await aweb_db.fetch_all(
-        """
-        SELECT did, alias, address
-        FROM {{tables.chat_participants}}
-        WHERE session_id = $1
-        ORDER BY alias ASC
-        """,
-        session_id,
-    )
+async def _create_session_response(
+    db, redis, *, session_id: UUID, message_id: str, target_dids: list[str],
+    participants_rows: list[dict[str, Any]] | None = None,
+) -> CreateSessionResponse:
+    """Project the sent message and current session without repeating effects.
+
+    ``participants_rows`` are the session's participants when the send already
+    read them; without them they are read here.
+    """
+    if participants_rows is None:
+        aweb_db = db.get_manager("aweb")
+        participants_rows = await aweb_db.fetch_all(
+            """
+            SELECT did, alias, address
+            FROM {{tables.chat_participants}}
+            WHERE session_id = $1
+            ORDER BY alias ASC
+            """,
+            session_id,
+        )
     participant_address_map = await _lookup_addresses_by_did(
         db,
         [(row.get("did") or "").strip() for row in participants_rows],
@@ -358,7 +365,9 @@ async def create_or_send(
             message_id=accepted["message_id"],
             target_dids=[],
         )
-    attachment_context = prepare_attachment_send(request, payload, auth)
+    attachment_context = prepare_attachment_send(
+        getattr(request.app.state, "attachment_backend", None), payload, auth,
+    )
     if attachment_context is not None:
         with attachment_context:
             return await create_or_send(request, payload, db=db, redis=redis, auth=auth)
@@ -370,7 +379,7 @@ async def create_or_send(
     )
     target_dids = sorted({_target_did(row) for row in target.recipients if _target_did(row)})
     sent = await send_chat(db, sender, target, payload, runtime)
-    if sent.participants is not None:
+    if sent.federated:
         return CreateSessionResponse(
             session_id=str(sent.session_id),
             conversation_id=str(sent.session_id),
@@ -390,6 +399,7 @@ async def create_or_send(
         )
     return await _create_session_response(
         db, redis, session_id=sent.session_id, message_id=str(sent.message["message_id"]), target_dids=target_dids,
+        participants_rows=sent.participants,
     )
 
 
@@ -410,7 +420,7 @@ async def pending(
     actor_did = actor_dids[0] if actor_dids else ""
     if not actor_did:
         raise HTTPException(status_code=401, detail="Authenticated identity is missing a routing DID")
-    actor_agent = await _resolve_actor_agent(db, actor_dids)
+    actor_agent = await resolve_actor_agent(db, actor_dids)
     actor_agent_id = auth.agent_id or (str(actor_agent["agent_id"]) if actor_agent else None)
 
     conversations_by_session: dict[str, dict[str, Any]] = {}
@@ -671,8 +681,6 @@ async def mark_read(
     actor_dids = _actor_dids(auth)
     if not actor_dids:
         raise HTTPException(status_code=401, detail="Authenticated identity is missing a routing DID")
-    actor_agent = await _resolve_actor_agent(db, actor_dids)
-    actor_agent_id = auth.agent_id or (str(actor_agent["agent_id"]) if actor_agent else None)
     session_uuid = UUID(session_id.strip())
 
     aweb_db = db.get_manager("aweb")
@@ -680,40 +688,17 @@ async def mark_read(
     if not sess:
         raise HTTPException(status_code=404, detail=RESOURCE_NOT_FOUND_DETAIL)
 
-    actor_did = await resolve_session_actor_did(db, session_id=session_uuid, actor_dids=actor_dids)
-    if not actor_did:
+    result = await mark_chat_read(
+        db,
+        redis,
+        auth,
+        session_id=session_uuid,
+        message_ids=payload.message_ids,
+        up_to_message_id=payload.up_to_message_id,
+        agent_wake_publisher=agent_wake_publisher(request.app.state),
+    )
+    if result is None:
         raise HTTPException(status_code=404, detail=RESOURCE_NOT_FOUND_DETAIL)
-
-    if payload.message_ids is not None:
-        with agent_wake_scope(agent_wake_publisher(request.app.state)):
-            result = await mark_messages_read(
-                db,
-                session_id=session_uuid,
-                participant_did=actor_did,
-                participant_agent_id=actor_agent_id,
-                message_ids=payload.message_ids,
-            )
-        read_receipt_message_id = payload.message_ids[-1]
-    else:
-        assert payload.up_to_message_id is not None
-        with agent_wake_scope(agent_wake_publisher(request.app.state)):
-            result = await mark_messages_read_up_to(
-                db,
-                session_id=session_uuid,
-                participant_did=actor_did,
-                participant_agent_id=actor_agent_id,
-                up_to_message_id=payload.up_to_message_id,
-            )
-        read_receipt_message_id = payload.up_to_message_id
-
-    if int(result["messages_marked"] or 0) > 0:
-        await publish_chat_session_signal(
-            redis,
-            session_id=str(session_uuid),
-            signal_type="read_receipt",
-            agent_id=actor_did,
-            message_id=read_receipt_message_id,
-        )
 
     return {"success": True, "messages_marked": result["messages_marked"]}
 
@@ -1237,7 +1222,9 @@ async def send_message(
             request, payload, auth=auth, db=db, kind="chat", session_id=session_id
         )
         return SendMessageResponse(message_id=accepted['message_id'],conversation_id=accepted['conversation_id'],delivered=True)
-    attachment_context = prepare_attachment_send(request, payload, auth)
+    attachment_context = prepare_attachment_send(
+        getattr(request.app.state, "attachment_backend", None), payload, auth,
+    )
     if attachment_context is not None:
         with attachment_context:
             existing = await attachment_retry(db, payload, "chat")
