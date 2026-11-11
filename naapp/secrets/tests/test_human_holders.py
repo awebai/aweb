@@ -64,14 +64,14 @@ async def test_registration_target_grants_no_holding(world):
     assert target.team_id == TEAM
     assert target.b3_scope == owner_scope(INSTALLATION_ID, TEAM, ALICE.principal_did)
     with pytest.raises(HTTPException) as refused:
-        await service.session_target(PublicScope())
+        await service.session_target(PublicScope(), team_id=TEAM)
     assert (refused.value.status_code, refused.value.detail) == (403, "owner_required")
     assert not await world.directory.owner_of(world.db, target.b3_scope)
 
 
 async def test_projection_uses_the_exact_existing_owner_and_b3_subject(enrolled):
     service = authority(enrolled)
-    target = await service.session_target(PublicScope())
+    target = await service.session_target(PublicScope(), team_id=TEAM)
     scope = owner_scope(INSTALLATION_ID, TEAM, ALICE.principal_did)
     approver = await enrolled.passkeys.designated_approver(scope)
     assert approver is not None
@@ -93,20 +93,20 @@ async def test_projection_uses_the_exact_existing_owner_and_b3_subject(enrolled)
 )
 async def test_public_scope_cannot_select_another_holding(enrolled, public_scope):
     with pytest.raises(HTTPException) as refused:
-        await authority(enrolled).session_target(public_scope)
+        await authority(enrolled).session_target(public_scope, team_id=TEAM)
     assert (refused.value.status_code, refused.value.detail) == (403, "owner_required")
 
 
 async def test_held_unenrolled_designation_requires_a_new_console_session(world):
     await _apply(world, "app-role.designate", ALICE, "alice@example.com")
     with pytest.raises(HTTPException) as refused:
-        await authority(world).session_target(PublicScope())
+        await authority(world).session_target(PublicScope(), team_id=TEAM)
     assert (refused.value.status_code, refused.value.detail) == (401, "console_session_required")
 
 
 async def test_withdrawal_between_projection_and_hold_refuses(enrolled):
     service = authority(enrolled)
-    target = await service.session_target(PublicScope())
+    target = await service.session_target(PublicScope(), team_id=TEAM)
     async with enrolled.db.transaction() as tx:
         await unassign(tx, ALICE, OWNER_ROLE)
     async with enrolled.db.transaction() as tx:
@@ -117,14 +117,14 @@ async def test_withdrawal_between_projection_and_hold_refuses(enrolled):
 
 async def test_role_reassignment_does_not_heal_an_outstanding_target(enrolled):
     service = authority(enrolled)
-    target = await service.session_target(PublicScope())
+    target = await service.session_target(PublicScope(), team_id=TEAM)
     async with enrolled.db.transaction() as tx:
         await unassign(tx, ALICE, OWNER_ROLE)
         await assign(tx, ALICE, OWNER_ROLE)
     async with enrolled.db.transaction() as tx:
         with pytest.raises(HTTPException):
             await hold(service, tx, target)
-    fresh = await service.session_target(PublicScope())
+    fresh = await service.session_target(PublicScope(), team_id=TEAM)
     async with enrolled.db.transaction() as tx:
         held = await hold(service, tx, fresh)
         assert await service.check_session_target(tx, held)
@@ -132,7 +132,7 @@ async def test_role_reassignment_does_not_heal_an_outstanding_target(enrolled):
 
 async def test_generation_change_refuses_the_original_target(enrolled):
     service = authority(enrolled)
-    target = await service.session_target(PublicScope())
+    target = await service.session_target(PublicScope(), team_id=TEAM)
     await enrolled.db.execute("UPDATE {{tables.installation_fences}} SET generation=generation+1")
     async with enrolled.db.transaction() as tx:
         with pytest.raises(InstallationRefused):
@@ -141,13 +141,13 @@ async def test_generation_change_refuses_the_original_target(enrolled):
 
 async def test_recovery_does_not_retarget_the_original_subject(enrolled):
     service = authority(enrolled)
-    target = await service.session_target(PublicScope())
+    target = await service.session_target(PublicScope(), team_id=TEAM)
     await _apply(enrolled, "app-credential.recover", ALICE, "alice-new@example.com")
     assert await enrolled.passkeys.recovery_pending_until(target.b3_scope) is not None
     assert await enrolled.directory.owner_of(enrolled.db, target.b3_scope) == ALICE
     assert await enrolled.passkeys.designated_approver(target.b3_scope) is None
     with pytest.raises(HTTPException) as refused:
-        await service.session_target(PublicScope())
+        await service.session_target(PublicScope(), team_id=TEAM)
     assert (refused.value.status_code, refused.value.detail) == (401, "console_session_required")
     async with enrolled.db.transaction() as tx:
         with pytest.raises(HTTPException):
@@ -156,7 +156,7 @@ async def test_recovery_does_not_retarget_the_original_subject(enrolled):
 
 async def test_recovery_between_projection_and_hold_requires_a_new_console_session(enrolled):
     service = authority(enrolled)
-    target = await service.session_target(PublicScope())
+    target = await service.session_target(PublicScope(), team_id=TEAM)
     await _apply(enrolled, "app-credential.recover", ALICE, "alice-new@example.com")
     assert await enrolled.directory.owner_of(enrolled.db, target.b3_scope) == ALICE
     assert await enrolled.passkeys.recovery_pending_until(target.b3_scope) is not None
@@ -169,7 +169,7 @@ async def test_recovery_between_projection_and_hold_requires_a_new_console_sessi
 @pytest.mark.parametrize("regrant", [False, True], ids=["revoked", "re-granted"])
 async def test_lost_holding_before_b3_preparation_is_final_even_during_recovery(enrolled, regrant):
     service = authority(enrolled)
-    target = await service.session_target(PublicScope())
+    target = await service.session_target(PublicScope(), team_id=TEAM)
     await _apply(enrolled, "app-credential.recover", ALICE, "alice-new@example.com")
     assert await enrolled.passkeys.recovery_pending_until(target.b3_scope) is not None
     async with enrolled.db.transaction() as tx:
@@ -195,13 +195,13 @@ async def test_revoked_holding_is_final_even_when_b3_requires_renewal(enrolled, 
         await unassign(tx, ALICE, OWNER_ROLE)
     assert await enrolled.directory.owner_of(enrolled.db, scope) is None
     with pytest.raises(HTTPException) as refused:
-        await authority(enrolled).session_target(PublicScope())
+        await authority(enrolled).session_target(PublicScope(), team_id=TEAM)
     assert (refused.value.status_code, refused.value.detail) == (403, "owner_required")
 
 
 async def test_a_supplied_subject_cannot_rebind_the_projection(enrolled):
     service = authority(enrolled)
-    target = await service.session_target(PublicScope())
+    target = await service.session_target(PublicScope(), team_id=TEAM)
     async with enrolled.db.transaction() as tx:
         with pytest.raises(HTTPException):
             await hold(service, tx, replace(target, subject="another-subject"))
@@ -213,8 +213,8 @@ async def test_preparation_returns_the_complete_union_for_downstream_reuse(enrol
     await _apply(enrolled, "app-role.designate", BOB, "bob@example.com")
     await _enrol(enrolled, "bob@example.com")
     service = authority(enrolled)
-    target = await service.session_target(PublicScope())
-    bob = await service.session_target(PublicScope(principal=BOB.principal_did))
+    target = await service.session_target(PublicScope(), team_id=TEAM)
+    bob = await service.session_target(PublicScope(principal=BOB.principal_did), team_id=TEAM)
     pairs = [(bob.b3_scope, bob.subject), (target.b3_scope, target.subject)]
     async with enrolled.db.transaction() as tx:
         # Complete caller prelocks follow F6 and precede the single B3 union.
@@ -234,7 +234,7 @@ async def test_preparation_returns_the_complete_union_for_downstream_reuse(enrol
 
 async def test_complete_union_must_include_the_target_pair(enrolled):
     service = authority(enrolled)
-    target = await service.session_target(PublicScope())
+    target = await service.session_target(PublicScope(), team_id=TEAM)
     async with enrolled.db.transaction() as tx:
         with pytest.raises(HTTPException):
             await service.hold_session_target(
@@ -244,7 +244,7 @@ async def test_complete_union_must_include_the_target_pair(enrolled):
 
 async def test_a_prebuilt_b3_handle_is_not_a_trusted_pair_list(enrolled):
     service = authority(enrolled)
-    target = await service.session_target(PublicScope())
+    target = await service.session_target(PublicScope(), team_id=TEAM)
     async with enrolled.db.transaction() as tx:
         old = await enrolled.passkeys.prepare_current_approvers(
             tx, [(target.b3_scope, target.subject)]
@@ -255,7 +255,7 @@ async def test_a_prebuilt_b3_handle_is_not_a_trusted_pair_list(enrolled):
 
 async def test_late_check_observes_local_withdrawal_without_rearming(enrolled):
     service = authority(enrolled)
-    target = await service.session_target(PublicScope())
+    target = await service.session_target(PublicScope(), team_id=TEAM)
     async with enrolled.db.transaction() as tx:
         held = await hold(service, tx, target)
         assert await service.check_session_target(tx, held)
@@ -265,7 +265,7 @@ async def test_late_check_observes_local_withdrawal_without_rearming(enrolled):
 
 async def test_late_check_samples_the_fence_deadline_after_a_wait(enrolled):
     service = authority(enrolled)
-    target = await service.session_target(PublicScope())
+    target = await service.session_target(PublicScope(), team_id=TEAM)
     async with enrolled.db.transaction() as tx:
         held = await hold(service, tx, target)
         await tx.execute(
@@ -296,7 +296,7 @@ async def test_projection_and_holds_write_no_authority_or_login_records(enrolled
 
     before = await fingerprints()
     service = authority(enrolled)
-    target = await service.session_target(PublicScope())
+    target = await service.session_target(PublicScope(), team_id=TEAM)
     async with enrolled.db.transaction() as tx:
         held = await hold(service, tx, target)
         assert await service.check_session_target(tx, held)
@@ -305,7 +305,7 @@ async def test_projection_and_holds_write_no_authority_or_login_records(enrolled
 
 async def test_prepared_authority_does_not_survive_savepoint_rollback(enrolled):
     service = authority(enrolled)
-    target = await service.session_target(PublicScope())
+    target = await service.session_target(PublicScope(), team_id=TEAM)
     async with enrolled.db.transaction() as tx:
         await tx.execute("SAVEPOINT holding")
         held = await hold(service, tx, target)
@@ -327,7 +327,7 @@ async def test_prepared_authority_does_not_survive_savepoint_rollback(enrolled):
 
 async def test_prepared_authority_cannot_be_borrowed_by_another_tx_wrapper(enrolled):
     service = authority(enrolled)
-    target = await service.session_target(PublicScope())
+    target = await service.session_target(PublicScope(), team_id=TEAM)
     async with enrolled.db.transaction() as tx:
         held = await hold(service, tx, target)
         borrowed = TransactionManager(tx.connection, enrolled.db)
@@ -339,7 +339,7 @@ async def test_hold_serializes_withdrawal_without_locking_another_owner(enrolled
     await _apply(enrolled, "app-role.designate", BOB, "bob@example.com")
     await _enrol(enrolled, "bob@example.com")
     service = authority(enrolled)
-    target = await service.session_target(PublicScope())
+    target = await service.session_target(PublicScope(), team_id=TEAM)
     writer_pid = asyncio.get_running_loop().create_future()
 
     async def withdraw(principal, *, report_pid=False):
@@ -367,7 +367,7 @@ async def test_hold_serializes_withdrawal_without_locking_another_owner(enrolled
         async with asyncio.timeout(1):
             await writer
         with pytest.raises(HTTPException):
-            await service.session_target(PublicScope())
+            await service.session_target(PublicScope(), team_id=TEAM)
     finally:
         if writer is not None:
             writer.cancel()
@@ -376,7 +376,7 @@ async def test_hold_serializes_withdrawal_without_locking_another_owner(enrolled
 
 async def test_a_preexisting_b3_guard_cannot_cover_rolled_back_local_holds(enrolled):
     service = authority(enrolled)
-    target = await service.session_target(PublicScope())
+    target = await service.session_target(PublicScope(), team_id=TEAM)
     async with enrolled.db.transaction() as tx:
         union = await enrolled.passkeys.prepare_current_approvers(
             tx, [(target.b3_scope, target.subject)]
@@ -407,7 +407,7 @@ async def test_a_preexisting_b3_guard_cannot_cover_rolled_back_local_holds(enrol
 
 async def test_only_the_actual_returned_handle_may_be_checked(enrolled):
     service = authority(enrolled)
-    target = await service.session_target(PublicScope())
+    target = await service.session_target(PublicScope(), team_id=TEAM)
     async with enrolled.db.transaction() as tx:
         held = await hold(service, tx, target)
         assert not await service.check_session_target(tx, replace(held))

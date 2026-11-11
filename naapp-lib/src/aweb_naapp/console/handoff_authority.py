@@ -89,18 +89,16 @@ class CredentialTargetResolver(Protocol):
 
 
 class SessionTargetResolver(Protocol[_TargetOut]):
-    async def __call__(
-        self, scope: PublicScope, /, *, team_id: str | None = None
-    ) -> _TargetOut: ...
+    async def __call__(self, scope: PublicScope, /, *, team_id: str) -> _TargetOut: ...
 
 
 @dataclass(frozen=True)
 class HandoffAuthority[Target: SessionTarget, Held: PreparedSessionTarget]:
     """Factory-owned dependencies with the app's exact target/handle types.
 
-    Credential projection receives the authenticated start's team explicitly;
-    it requires no holding. Session starts/continuations pass the same retained
-    team; standalone session projection may resolve one existing holding's team.
+    Every projection receives the authenticated start's or retained session's
+    team explicitly. Credential projection requires no holding. Browser admission
+    supplies the team from the app's existing owner or holding record.
     No callback may discover a team by an installation-wide authority scan.
     Projection and remote evidence acquisition precede effect transactions.
     Hold takes F6 and all app/role locks before preparing one complete B3 pair
