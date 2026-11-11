@@ -35,10 +35,8 @@ const (
 	// two seconds.
 	DefaultIdleProbe = 30 * time.Second
 
-	// DefaultPendingExpiry drops a registration that never reached a confirmed
-	// live inspect. The bound is operational visibility, not data safety: it
-	// deletes no server messages, and a home that comes up later is re-raised
-	// by the reconnect snapshot (§4).
+	// Deprecated compatibility default. The broker does not expire
+	// registrations; Config still accepts the field.
 	DefaultPendingExpiry = 30 * time.Minute
 
 	// DefaultReconcile is how often the daemon re-reads registry.d, so a
@@ -76,7 +74,7 @@ type Config struct {
 	RateLimit     time.Duration // Deprecated: ignored.
 	PollInterval  time.Duration
 	IdleProbe     time.Duration
-	PendingExpiry time.Duration
+	PendingExpiry time.Duration // Deprecated: ignored.
 	Reconcile     time.Duration
 	// StreamPolicy supplies the timer and random source of the streams'
 	// reconnect policy (docs/event-stream-client-policy.md); its clock
@@ -641,8 +639,8 @@ func (b *Broker) Register(reg Registration) error {
 	hadExistingRegistration := false
 	bindingsChanged := false
 	if existing, ok, _ := b.cfg.Store.LoadRegistration(canonical); ok {
-		// Re-registration keeps the original clock so the pending expiry is
-		// not restarted by a retrying hook.
+		// Re-registration keeps the original registration time, so a retrying
+		// hook does not change it.
 		reg.RegisteredAt = existing.RegisteredAt
 		hadExistingRegistration = true
 		bindingsChanged = !sameReceiveBindings(existing.ReceiveBindings(), reg.ReceiveBindings())
@@ -868,25 +866,6 @@ func (b *Broker) writeStatus() {
 	if err := b.cfg.Store.SaveStatus(b.Status()); err != nil {
 		b.cfg.Log("status write failed err=%v", err)
 	}
-}
-
-// dropExpired removes a registration that never reached a confirmed live
-// inspect within the pending expiry, with one log line naming the home and the
-// elapsed time (§4).
-func (b *Broker) dropExpired(runner *instanceRunner, elapsed time.Duration) {
-	home := runner.home()
-	b.cfg.Log("expired home=%s pending_for=%s (never reached a confirmed live inspect; server hints are untouched and a later launch is re-raised by the reconnect snapshot)",
-		home, elapsed.Round(time.Second))
-	if _, err := b.cfg.Store.DeleteRegistration(home); err != nil {
-		b.cfg.Log("expired home=%s cleanup failed err=%v", home, err)
-	}
-	b.mu.Lock()
-	delete(b.instances, HomeKey(home))
-	b.mu.Unlock()
-	go func() {
-		runner.stop()
-		b.pruneStreams()
-	}()
 }
 
 // MaxStreams reports the configured stream bound.
