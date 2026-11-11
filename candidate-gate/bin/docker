@@ -125,8 +125,12 @@ compose_with_limits() {
   if [[ "${#services[@]}" -eq 0 ]]; then
     exec "$real" compose "${prefix[@]}" "${rest[@]}"
   fi
-  local override network_override="" network_helper status=0 cleanup_status=0
-  override="$(mktemp "${TMPDIR:-/tmp}/aweb-candidate-compose-limits.XXXXXX")"
+  # Exec must preserve the caller's timeout/kill target. These files therefore
+  # belong to the run, whose cleanup removes the complete docker-bind root.
+  local override network_override network_helper overlay_root
+  overlay_root="${AWEB_DOCKER_BIND_ROOT:?candidate compose requires a run-owned bind root}/compose"
+  mkdir -p "$overlay_root"
+  override="$(mktemp "$overlay_root/aweb-candidate-compose-limits.XXXXXX")"
   {
     printf 'services:\n'
     local service
@@ -142,31 +146,18 @@ compose_with_limits() {
       printf '    pids_limit: %s\n' "$sibling_pids"
     done
   } > "$override"
+  compose_prefix+=(-f "$override")
   if [[ -n "${CANDIDATE_RUNNER_NAME:-}" ]]; then
     network_helper="$(cd "$(dirname "${BASH_SOURCE[0]}")/../../scripts" && pwd)/candidate-network.py"
-    network_override="$(mktemp "${TMPDIR:-/tmp}/aweb-candidate-compose-network.XXXXXX")" || status=$?
-    if [[ "$status" -eq 0 ]]; then
-      printf '%s' "$config_json" | python3 "$network_helper" override > "$network_override" || status=$?
-    fi
-    compose_prefix+=(-f "$override" -f "$network_override")
-    if [[ "$status" -eq 0 && "${rest[0]}" == down ]]; then
-      python3 "$network_helper" disconnect "$project" || status=$?
-    fi
-    if [[ "$status" -eq 0 ]]; then
-      "$real" compose "${compose_prefix[@]}" "${rest[@]}" || status=$?
-    fi
-    if [[ "$status" -eq 0 && "${rest[0]}" == up ]]; then
-      python3 "$network_helper" connect "$project" || status=$?
-    fi
-  else
-    "$real" compose "${compose_prefix[@]}" -f "$override" "${rest[@]}" || status=$?
+    network_override="$(mktemp "$overlay_root/aweb-candidate-compose-network.XXXXXX")"
+    printf '%s' "$config_json" | python3 "$network_helper" override > "$network_override"
+    compose_prefix+=(-f "$network_override")
+    case "${rest[0]}" in
+      up|create|run) printf '%s' "$config_json" | python3 "$network_helper" prepare ;;
+      down) python3 "$network_helper" disconnect "$project" ;;
+    esac
   fi
-  # Clean up before function locals leave scope, preserving the first failure.
-  rm -f "$override" ${network_override:+"$network_override"} || cleanup_status=$?
-  if [[ "$status" -eq 0 ]]; then
-    status="$cleanup_status"
-  fi
-  exit "$status"
+  exec "$real" compose "${compose_prefix[@]}" "${rest[@]}"
 }
 
 case "$cmd" in

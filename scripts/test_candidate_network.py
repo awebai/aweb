@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import ast
+from contextlib import contextmanager
 import importlib.util
 import json
 import os
@@ -28,7 +29,48 @@ def bash(source, **env):
                           env={**os.environ, **env}, text=True, capture_output=True)
 
 
+@contextmanager
+def gate_work():
+    with tempfile.TemporaryDirectory(prefix='aweb-candidate-work.') as tmp:
+        try:
+            yield tmp
+        finally:
+            result = bash('source scripts/candidate-cleanup.sh; cleanup_work', work=tmp, ROOT=str(ROOT))
+            if result.returncode or Path(tmp).exists():
+                raise AssertionError('gate work cleanup failed: ' + result.stdout + result.stderr)
+
+
+class WorkCleanupTests(unittest.TestCase):
+    def test_real_gate_cleanup_removes_overlays_and_detects_retention(self):
+        for retain in (False, True):
+            with self.subTest(retain=retain), tempfile.TemporaryDirectory(prefix='aweb-candidate-work.') as tmp:
+                overlay = Path(tmp) / 'docker-bind/compose/limits.yml'
+                overlay.parent.mkdir(parents=True)
+                overlay.write_text('services: {}\n')
+                command = 'source scripts/candidate-cleanup.sh; '
+                if retain:
+                    command += 'rm() { :; }; '  # mutation: skip the actual run-directory removal
+                result = bash(command + 'cleanup_work', work=tmp, ROOT=str(ROOT))
+                self.assertEqual(result.returncode, 1 if retain else 0, result.stderr)
+                self.assertEqual(overlay.exists(), retain)
+        self.assertIn('cleanup_work || cleanup_status=1',
+                      (ROOT / 'scripts/candidate-cleanup.sh').read_text())
+
+
 class EndpointTests(unittest.TestCase):
+    def test_network_create_preserves_compose_creation_properties(self):
+        args = network.create_args('data', {
+            'name': 'proof_data', 'driver': 'bridge', 'internal': True,
+            'attachable': True, 'driver_opts': {'com.docker.network.driver.mtu': '1400'},
+            'ipam': {'config': [{'subnet': '172.30.0.0/24', 'gateway': '172.30.0.1'}]},
+        }, 'proof', 'run-label')
+        self.assertEqual(args, ['network', 'create', '--driver', 'bridge', '--internal',
+                               '--attachable', '--opt', 'com.docker.network.driver.mtu=1400',
+                               '--subnet', '172.30.0.0/24', '--gateway', '172.30.0.1',
+                               '--label', 'aweb.candidate-gate=run-label',
+                               '--label', 'com.docker.compose.project=proof',
+                               '--label', 'com.docker.compose.network=data', 'proof_data'])
+
     def test_every_shell_journey_selects_scoped_container_endpoints(self):
         # Evaluate the actual endpoint assignments, not duplicate mappings.
         paths = ['scripts/e2e-oss-user-journey.sh', 'scripts/e2e-a2a-gateway-docker.sh',
@@ -148,16 +190,19 @@ class ComposeConfigTests(unittest.TestCase):
             overlay.write_text(network.override(original))
             merged = json.loads(subprocess.run([*args, '-f', str(overlay), 'config', '--format', 'json'],
                                               check=True, capture_output=True, text=True).stdout)
-            self.assertEqual(merged['networks']['data'], {'name': 'proof_data', 'external': True})
+            self.assertEqual(merged['networks']['data']['name'], 'proof_data')
+            self.assertTrue(merged['networks']['data']['external'])
+            self.assertNotIn('internal', merged['networks']['data'])
+            self.assertFalse(merged['networks']['data'].get('ipam'))
             self.assertEqual(set(merged['services']['awid']['networks']['data']['aliases']),
                              {'registry.test', 'proof-awid.test'})
 
-    def test_compose_failure_preserves_diagnostic_and_cleans_overlays(self):
+    def test_compose_failure_preserves_diagnostic_and_run_cleans_overlays(self):
         # Actual Compose CLI refusal, before any daemon call. Exercise both the
         # network and resource-only wrapper paths, including a quoted temp path.
         real = os.environ.get('AWEB_CANDIDATE_REAL_DOCKER') or shutil.which('docker')
         self.assertIsNotNone(real)
-        with tempfile.TemporaryDirectory(prefix="compose error's ") as tmp:
+        with gate_work() as tmp:
             root = Path(tmp)
             compose_file = root / 'compose.json'
             compose_file.write_text(json.dumps({'services': {'awid': {'image': 'busybox'}}}))
@@ -169,6 +214,7 @@ class ComposeConfigTests(unittest.TestCase):
                 with self.subTest(runner=runner):
                     env = {**os.environ, 'AWEB_CANDIDATE_REAL_DOCKER': real,
                            'AWEB_CANDIDATE_RESOURCE_LABEL': 'proof',
+                           'AWEB_DOCKER_BIND_ROOT': str(root / 'docker-bind'),
                            'CANDIDATE_RUNNER_NAME': runner, 'CANDIDATE_RESOURCE_MANIFEST': '',
                            'TMPDIR': tmp}
                     wrapped = subprocess.run(['bash', str(ROOT / 'candidate-gate/bin/docker'), *args],
@@ -176,6 +222,7 @@ class ComposeConfigTests(unittest.TestCase):
                     self.assertEqual(wrapped.returncode, direct.returncode, wrapped.stderr)
                     self.assertEqual(wrapped.stderr, direct.stderr)
                     self.assertEqual(list(root.glob('aweb-candidate-compose-*')), [])
+                    self.assertTrue(list((root / 'docker-bind/compose').glob('aweb-candidate-compose-*')))
 
     def test_existing_shared_namespace_fixtures_survive_the_network_overlay(self):
         # Real Compose config merges only: no daemon, builds or containers.
@@ -228,13 +275,14 @@ class ComposeExitStatusTests(unittest.TestCase):
             return subprocess.run([real, *args], check=check, capture_output=True,
                                   text=True, timeout=90)
 
-        with tempfile.TemporaryDirectory() as tmp:
+        with gate_work() as tmp:
             compose = Path(tmp) / 'compose.json'
             compose.write_text(json.dumps({'services': {'worker': {
                 'image': 'python:3.12-slim', 'command': ['sleep', '600'],
                 'labels': {'aweb.candidate-gate': label},
                 'cpus': .25, 'mem_limit': '64m', 'pids_limit': 32}}}))
             env = {**os.environ, 'AWEB_CANDIDATE_REAL_DOCKER': real,
+                   'AWEB_DOCKER_BIND_ROOT': str(Path(tmp) / 'docker-bind'),
                    'AWEB_CANDIDATE_RESOURCE_LABEL': label,
                    'CANDIDATE_RESOURCE_MANIFEST': '',
                    'AWEB_CANDIDATE_SIBLING_CPUS': '.25',
@@ -277,17 +325,27 @@ class ComposeExitStatusTests(unittest.TestCase):
                         self.assertEqual(result.returncode, 17, result.stdout + result.stderr)
                         self.assertEqual(leftovers, [])
                         attached = json.loads(docker('inspect', runner).stdout)[0]['NetworkSettings']['Networks']
-                        self.assertNotIn(project + '_default', attached, 'failed up attached the runner')
+                        if runner_name:
+                            # Pre-attachment lets Compose remain the exec/kill
+                            # target. Failed up may leave a network attached,
+                            # but must expose no running service on that network.
+                            self.assertIn(project + '_default', attached)
+                            info = json.loads(docker('network', 'inspect', project + '_default').stdout)[0]
+                            self.assertEqual({v['Name'] for v in info['Containers'].values()}, {runner})
             finally:
                 cleanup_errors = []
                 for project in projects:
-                    result = docker('compose', '-p', project, '-f', str(compose),
-                                    'down', '-v', '--remove-orphans', check=False)
+                    result, _ = wrapped(project, runner if project == projects[1] else '',
+                                        'down', '-v', '--remove-orphans')
                     if result.returncode:
                         cleanup_errors.append(result.stderr)
                 owned = docker('ps', '-aq', '--filter', 'label=aweb.candidate-gate=' + label).stdout.split()
                 if owned:
                     docker('rm', '-fv', *owned)
+                networks = docker('network', 'ls', '-q', '--filter',
+                                  'label=aweb.candidate-gate=' + label).stdout.split()
+                if networks:
+                    docker('network', 'rm', *networks)
                 self.assertEqual(docker('ps', '-aq', '--filter', 'label=aweb.candidate-gate=' + label).stdout.strip(), '')
                 for project in projects:
                     self.assertEqual(docker('network', 'ls', '-q', '--filter',
@@ -326,7 +384,7 @@ else:
             return [line.strip() for line in result.stdout.splitlines()
                     if len(line.split(None, 2)) == 3 and int(line.split(None, 2)[1]) == pgid]
 
-        with tempfile.TemporaryDirectory() as tmp:
+        with gate_work() as tmp:
             compose = Path(tmp) / 'compose.json'
             compose.write_text(json.dumps({'services': {'worker': {
                 'image': 'python:3.12-slim', 'command': ['sleep', '600'],
@@ -343,6 +401,7 @@ else:
                         command += [*args, 'exec', '-T', 'worker', 'python', '-u', '-c',
                                     'import time; print("timeout-probe-ready"); time.sleep(30)']
                         env = {**os.environ, 'AWEB_CANDIDATE_REAL_DOCKER': real,
+                               'AWEB_DOCKER_BIND_ROOT': str(Path(tmp) / 'docker-bind'),
                                'AWEB_CANDIDATE_RESOURCE_LABEL': project,
                                'CANDIDATE_RESOURCE_MANIFEST': '', 'TMPDIR': overlays,
                                'CANDIDATE_RUNNER_NAME': project + '-runner' if mode == 'network' else ''}
@@ -364,7 +423,8 @@ else:
                             leftovers = list(Path(overlays).glob('aweb-candidate-compose-*'))
                             print(json.dumps({'mode': mode, **result,
                                               'ready': 'timeout-probe-ready' in result.get('output', ''),
-                                              'members': members, 'overlays': [p.name for p in leftovers]}),
+                                              'members': members, 'overlays': [p.name for p in leftovers],
+                                              'run_owned_overlays': len(list((Path(tmp) / 'docker-bind/compose').glob('*')))}),
                                   flush=True)
                             with self.subTest(property='timeout'):
                                 self.assertTrue(result['timed_out'], result)
@@ -374,6 +434,8 @@ else:
                                 self.assertEqual(members, [])
                             with self.subTest(property='overlays'):
                                 self.assertEqual(leftovers, [])
+                                if mode != 'direct':
+                                    self.assertTrue(list((Path(tmp) / 'docker-bind/compose').glob('aweb-candidate-compose-*')))
                         finally:
                             try:
                                 os.killpg(child.pid, signal.SIGKILL)
@@ -405,8 +467,9 @@ class ComposeNetworkTests(unittest.TestCase):
         def docker(*args, check=True):
             return subprocess.run([real, *args], check=check, capture_output=True, text=True, timeout=90)
 
-        with tempfile.TemporaryDirectory() as tmp:
+        with gate_work() as tmp:
             env = {**os.environ, 'AWEB_CANDIDATE_REAL_DOCKER': real,
+                   'AWEB_DOCKER_BIND_ROOT': str(Path(tmp) / 'docker-bind'),
                    'AWEB_CANDIDATE_RESOURCE_LABEL': label, 'CANDIDATE_RUNNER_NAME': runner,
                    'CANDIDATE_RESOURCE_MANIFEST': str(Path(tmp) / 'resources.tsv'),
                    'AWEB_CANDIDATE_SIBLING_CPUS': '.25',
@@ -431,7 +494,8 @@ class ComposeNetworkTests(unittest.TestCase):
                     'image': image, 'command': ['python', '-c', server],
                     'environment': {'MARKER': '${COMPOSE_PROJECT_NAME}'},
                     'ports': [f'127.0.0.1:{port}:8010'],
-                    'networks': {'default': {'aliases': ['registry.test']}}}}}))
+                    'networks': {'default': {'aliases': ['registry.test']}, 'data': {}}}},
+                    'networks': {'default': {}, 'data': {'internal': True}}}))
                 fetch = ('import urllib.request,time,sys; '
                          'opener=urllib.request.build_opener(urllib.request.ProxyHandler({}));\n'
                          'for attempt in range(50):\n'
@@ -444,8 +508,15 @@ class ComposeNetworkTests(unittest.TestCase):
                     cmd = ['bash', str(ROOT / 'candidate-gate/bin/docker'), 'compose',
                            '-p', project, '-f', str(compose_file)]
                     commands.append(cmd)
+                    # Folio's real setup creates containers before its first up.
+                    # Both operations must find the pre-owned external network.
+                    result = subprocess.run([*cmd, 'create'], env=env, capture_output=True, text=True, timeout=90)
+                    self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
                     result = subprocess.run([*cmd, 'up', '-d'], env=env, capture_output=True, text=True, timeout=90)
                     self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+                    data = json.loads(docker('network', 'inspect', project + '_data').stdout)[0]
+                    self.assertTrue(data['Internal'])
+                    self.assertEqual(data['Labels']['aweb.candidate-gate'], label)
                     container = docker('ps', '-q', '--filter', 'label=com.docker.compose.project=' + project,
                                        '--filter', 'label=com.docker.compose.service=awid').stdout.strip()
                     info = json.loads(docker('inspect', container).stdout)[0]

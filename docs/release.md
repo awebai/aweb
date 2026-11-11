@@ -329,8 +329,11 @@ monitors, or cross-repository release transactions.
 ### Candidate journey networks
 
 Candidate Compose services do not publish host ports. The candidate Docker
-wrapper adds project-scoped service aliases (`<project>-<service>.test`), attaches
-the runner after `compose up`, and detaches it before `compose down`. Service
+wrapper adds project-scoped service aliases (`<project>-<service>.test`), creates
+run-labelled networks and attaches the runner before `compose up`, `create` or
+`run`. Compose treats these networks as external; their creation options and
+existing service aliases are preserved. The wrapper detaches the runner before
+`compose down`. Service
 clients use those names and the service's container port. Temporary A2A clients
 also join their journey network. Existing federation DNS/TLS aliases remain.
 Services using `network_mode: service:aweb` retain that shared namespace and
@@ -338,6 +341,15 @@ its signed loopback audience; the overlay adds no separate networks to them.
 The local quickstart test's loopback bridge stays inside the runner and forwards
 to the direct service endpoints; it does not use a host-published port.
 Standalone host journeys retain their existing host endpoint configuration.
+
+Every wrapped Compose command ends with `exec`, so exit statuses and the
+caller's timeout/kill target remain the Docker CLI. A failed startup can leave
+the runner attached to its network without a running service. Network lifetime
+belongs to the gate: Compose leaves external networks, and the gate removes
+them by its run label. Compose overlays likewise live under the run-owned bind
+root and are removed by gate cleanup, including after a CLI timeout. Cleanup
+fails if that root survives; the focused tests exercise this check with an
+overlay-retention mutation.
 
 The only candidate publication controls are
 `DockerBoundaryTests.test_docker_assigned_published_port_is_reserved_by_its_service`
@@ -349,7 +361,7 @@ sibling client, and checks that one journey cannot resolve the other's service.
 Run its focused proof in an approved Docker slot:
 
 ```sh
-AWEB_TEST_DOCKER_NETWORK=1 python3 scripts/test_candidate_network.py ComposeNetworkTests -v
+AWEB_TEST_DOCKER_NETWORK=1 python3 scripts/test_candidate_network.py ComposeNetworkTests ComposeExitStatusTests ComposeTimeoutTests -v
 ```
 
 The diagnostic commits preceding this change demonstrated a possible socket and
