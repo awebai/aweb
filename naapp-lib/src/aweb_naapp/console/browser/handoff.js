@@ -56,6 +56,21 @@
         if (typeof state.scope?.[field] !== "string") throw new Error("handoff_refused");
         document.getElementById(id).textContent = state.scope[field];
       }
+      // An agent may prepare a session start for its own human parent. Show
+      // which agent asked, apart from the identity being signed in.
+      if (state.requester !== null && state.requester !== undefined) {
+        const { id, address, key_fingerprint: fingerprint } = state.requester;
+        if (typeof id !== "string" || !id || typeof fingerprint !== "string" || !fingerprint) {
+          throw new Error("handoff_refused");
+        }
+        if (address !== null && address !== undefined && typeof address !== "string") {
+          throw new Error("handoff_refused");
+        }
+        document.getElementById("handoff-requester").textContent =
+          (address ? `${address} (${id})` : id) + ` · key ${fingerprint}`;
+        document.getElementById("handoff-requester-label").hidden = false;
+        document.getElementById("handoff-requester").hidden = false;
+      }
       csrf = state.csrf_token;
       document.getElementById("handoff-scope").hidden = false;
       status.textContent = "Check the identity and role before continuing.";
