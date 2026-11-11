@@ -108,7 +108,7 @@ audience or vocabulary is refused.
 | --- | --- |
 | The coordination server | `hook-binding.activate`, `hook-binding.revoke` |
 | Every naapp | `app-role.designate`, `app-role.revoke`, `app-credential.recover` |
-| A naapp that declares human roles ([owner-act delivery](owner-act-delivery.md)), on its delivery route | `human-role.designate`, `human-role.revoke`, `human-credential.replace` |
+| A naapp that declares human roles ([owner-act delivery](owner-act-delivery.md)), on its delivery route | `human-role.designate`, `human-role.revoke`, `human-credential.replace`, `human-credential.cap-set` |
 | logs, in addition | `logs.retention.set`, `logs.erase`, `logs.legal-hold.set`, `logs.legal-hold.release` |
 
 Subjects are flat objects. A field marked "when" is required in that case and
@@ -160,6 +160,10 @@ the token.
     ([The credential](owner-act-delivery.md#the-credential)).
 - **`human-role.revoke`**: `app_id`, `installation_id`, `role` and
   `principal`, the current holder.
+- **`human-credential.cap-set`**: `app_id`, `installation_id`, `role` and
+  `cap`, the most active credentials one holding of `role` may have: a
+  positive JSON integer in the safe range above. It names a role, not a
+  holder, so it carries no `principal`.
 
 The human-role acts name a team member who already exists, so the app needs
 no pending row: the verifier's stored row is the subject the app builds from

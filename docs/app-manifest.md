@@ -570,8 +570,9 @@ unchanged. Its semantics and the delivery call are in
   designatable role grammar, begins with a letter and is at most 64 bytes, so
   that it fits owner-act/1's `role`; `label` and the optional
   `description` follow the `roles` rules above. `acts` is a nonempty set of
-  `human-credential.replace`, `human-role.designate` and `human-role.revoke`,
-  ascending by code point with no repeat. `notice_contact` is a boolean,
+  `human-credential.cap-set`, `human-credential.replace`,
+  `human-role.designate` and `human-role.revoke`, ascending by code point
+  with no repeat. `notice_contact` is a boolean,
   `true` when designate and replace name a notice contact.
 
 Every fault in `owner_acts` is `owner_acts_invalid`, except `owner_acts: null`,
