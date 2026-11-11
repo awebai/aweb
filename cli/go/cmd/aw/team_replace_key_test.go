@@ -145,6 +145,20 @@ func TestLocalIdentityKeyReplacementAuthPayloadMatchesServerCanonicalOrder(t *te
 	}
 }
 
+// The server rebuilds this payload with Python's canonical_json_bytes, which
+// writes '<', '>', '&', U+2028 and U+2029 as themselves.
+func TestLocalIdentityKeyReplacementAuthPayloadWritesTextAsTheServerDoes(t *testing.T) {
+	text := "t<&>" + string(rune(0x2028)) + string(rune(0x2029))
+	got, err := localIdentityKeyReplacementAuthPayload("alice", localIdentityKeyReplacementRequest{TeamID: text}, "2026-07-23T00:00:00Z")
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := `{"agent_alias":"alice","new_certificate_id":"","new_did_key":"","old_certificate_id":"","old_did_key":"","operation":"replace_local_identity_key","team_id":"` + text + `","timestamp":"2026-07-23T00:00:00Z"}`
+	if string(got) != want {
+		t.Fatalf("canonical payload=%q\nwant=%q", got, want)
+	}
+}
+
 func TestTeamReplaceKeyGenerateFlagRequiresHomeAndRejectsExplicitNewDID(t *testing.T) {
 	resetTeamHumanCreateGlobals(t)
 	oldPub, _, _ := awid.GenerateKeypair()

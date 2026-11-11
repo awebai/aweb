@@ -19,6 +19,7 @@ import (
 	"time"
 
 	awid "github.com/awebai/aw/awid"
+	"github.com/awebai/aw/internal/manualclock"
 )
 
 type fakeInputController struct {
@@ -942,9 +943,11 @@ func TestFollowUpRunsDoNotEmitSeparatorLine(t *testing.T) {
 	}
 }
 
-func TestEventBusDisconnectsWhenServerReturns404(t *testing.T) {
+func TestEventBusKeepsRetryingWhenServerReturns404(t *testing.T) {
+	var requests atomic.Int32
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if strings.HasPrefix(r.URL.Path, "/v1/events/stream") {
+			requests.Add(1)
 			http.Error(w, `{"detail":"Not Found"}`, http.StatusNotFound)
 			return
 		}
@@ -957,25 +960,25 @@ func TestEventBusDisconnectsWhenServerReturns404(t *testing.T) {
 		t.Fatalf("new client: %v", err)
 	}
 
-	bus := NewEventBus(EventBusConfig{
-		Stream: NewEventStreamOpener(client),
-	})
-	ctx, cancel := context.WithCancel(context.Background())
-	defer cancel()
-	bus.Start(ctx)
+	clock := manualclock.New(policyStart)
+	bus, _ := startManualBus(t, clock, NewEventStreamOpener(client), nil)
 
-	// Wait for the bus goroutine to exit on 404.
-	select {
-	case <-bus.done:
-	case <-time.After(2 * time.Second):
-		t.Fatal("timed out waiting for bus to disconnect on 404")
+	// A 404 quarantines the stream; the bus goroutine keeps a retry scheduled.
+	awaitRetryWait(t, clock, 2)
+	if busStopped(bus) {
+		t.Fatal("the bus stopped on 404")
 	}
-
-	if bus.State() != ConnDisconnected {
-		t.Fatalf("expected disconnected, got %s", bus.State())
+	if bus.State() != ConnRefused {
+		t.Fatalf("expected refused, got %s", bus.State())
 	}
-	cancel()
-	bus.Stop()
+	if wait := advanceToNextAttempt(t, clock, 2); wait != 30*time.Second {
+		t.Fatalf("waited %s after a 404, want half of the 1-minute delay", wait)
+	}
+	eventually(t, "the retry", func() bool { return requests.Load() == 2 })
+	awaitRetryWait(t, clock, 4)
+	if busStopped(bus) || bus.State() != ConnRefused {
+		t.Fatalf("after a second 404: stopped=%t state=%s", busStopped(bus), bus.State())
+	}
 }
 
 func TestLoopContinuesViaTimeoutWhenBusDisconnected(t *testing.T) {

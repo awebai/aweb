@@ -70,10 +70,10 @@ async def test_failed_kms_health_keeps_the_selected_custody_mode(
                     for origin in (API, CONSOLE):
                         for path in ("/health", "/ready", "/live"):
                             response = await client.get(origin + path)
-                            assert response.status_code == (503 if path == "/ready" else 200)
+                            assert response.status_code == (200 if path == "/live" else 503)
                             assert response.json()["labels"]["custody_mode"] == "kms"
                             if path != "/live":
-                                assert response.json()["checks"]["kms"]["ok"] is False
+                                assert response.json()["checks"]["kms"] == "error"
                     assert attempts > 0
     finally:
         server.close()
@@ -149,7 +149,7 @@ async def test_production_startup_prepares_every_store_before_serving_and_cleans
                             assert response.status_code == 200
                             assert response.json()["labels"]["custody_mode"] == "local_key_file"
                             if path != "/live":
-                                assert response.json()["checks"]["kms"]["ok"]
+                                assert response.json()["checks"]["kms"] == "ok"
             assert service.runtime.connected_db() is None
             async with httpx.AsyncClient(transport=httpx.ASGITransport(service)) as client:
                 assert (await client.get(CONSOLE + "/enrolment")).status_code == 404

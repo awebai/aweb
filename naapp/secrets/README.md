@@ -28,8 +28,10 @@ The service (`aweb_secrets.app.create_app`) runs on the shared naapp runtime,
 
 No tool reads, sets or exports a secret value. `/health` and `/ready` report the
 build commit (`SECRETS_GIT_SHA`, or Render's), the database, the KMS canary and
-the age of the oldest undelivered outbox event. `/ready` is 503 while any of
-them fails. The database is the app's own pgdbm schema: the shared runtime's
+the outbox, and `/health` also the age of the oldest undelivered outbox event.
+Both answer 503 while the database or the KMS canary fails; the outbox age
+fails nothing. `/live` checks nothing and is what the image's `HEALTHCHECK`
+probes. The database is the app's own pgdbm schema: the shared runtime's
 migrations first, then `src/aweb_secrets/migrations/` (module `aweb_secrets`).
 
 The manifest's authoring source is `src/aweb_secrets/manifest.py`. The committed

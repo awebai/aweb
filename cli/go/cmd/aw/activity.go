@@ -5,6 +5,7 @@ import (
 	"os"
 	"path/filepath"
 
+	"github.com/awebai/aw/internal/atomicfile"
 	"github.com/spf13/cobra"
 	"gopkg.in/yaml.v3"
 )
@@ -75,28 +76,7 @@ func readActivitySetting(root string) string {
 }
 
 func writeActivitySetting(root, value string) error {
-	return writeFileAtomic(root, activitySettingFile, []byte("activity: "+value+"\n"), 0o644)
-}
-
-// writeFileAtomic replaces dir/name atomically with the given mode.
-func writeFileAtomic(dir, name string, data []byte, mode os.FileMode) error {
-	tmp, err := os.CreateTemp(dir, ".activity-*.tmp")
-	if err != nil {
-		return err
-	}
-	defer os.Remove(tmp.Name())
-	if _, err = tmp.Write(data); err != nil {
-		tmp.Close()
-		return err
-	}
-	if err = tmp.Chmod(mode); err != nil {
-		tmp.Close()
-		return err
-	}
-	if err = tmp.Close(); err != nil {
-		return err
-	}
-	return os.Rename(tmp.Name(), filepath.Join(dir, name))
+	return atomicfile.Write(filepath.Join(root, activitySettingFile), []byte("activity: "+value+"\n"), 0o644)
 }
 
 type activitySettingOutput struct {

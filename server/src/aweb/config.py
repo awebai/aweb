@@ -1,7 +1,8 @@
 import json
 import os
 import re
-from dataclasses import dataclass
+from dataclasses import dataclass, field
+from pathlib import Path
 from datetime import datetime
 from typing import Optional
 
@@ -10,6 +11,8 @@ from awid.dns_verify import DEFAULT_AWID_REGISTRY_URL
 from awid.log import canonical_server_origin
 from awid.ratelimit import normalize_service_token
 from awid.utc_timestamps import parse_utc_seconds
+from awid.team_ids import build_team_id, parse_team_id
+from awid.signing import load_signing_key_pem
 
 
 def _env_bool(*names: str, default: bool = False) -> bool:
@@ -42,12 +45,13 @@ class Settings:
     database_statement_cache_size: Optional[int]
     presence_ttl_seconds: int
     awid_registry_url: str
-    awid_service_token: str
+    awid_service_token: str | None
     public_origin: str
     dashboard_jwt_secret: str
     require_registered_certificates: bool
     app_grant_max_age_seconds: int
     hook_producer_keys: tuple["HookProducerKey", ...]
+    awid_member_signing_keys: dict[str, bytes] = field(default_factory=dict, repr=False)
 
 
 def get_awid_registry_url() -> str:
@@ -61,15 +65,39 @@ def get_awid_registry_url() -> str:
     return value
 
 
-def get_awid_service_token() -> str:
-    token = normalize_service_token(os.getenv("AWID_SERVICE_TOKEN"))
-    if token is None:
-        raise ValueError(
-            "AWID_SERVICE_TOKEN is required so aweb can verify private-team "
-            "certificates through AWID. Generate one with `openssl rand -hex 32`, "
-            "configure the same value on aweb and AWID, and restart both services."
-        )
-    return token
+def get_awid_service_token() -> str | None:
+    return normalize_service_token(os.getenv("AWID_SERVICE_TOKEN"))
+
+
+def get_awid_member_signing_keys() -> dict[str, bytes]:
+    """Load existing aw Ed25519 seed PEM keys, indexed by canonical team ID.
+
+    The JSON manifest contains paths, never key material. Relative paths are
+    relative to that manifest. Only ordinary member keys belong here, not the
+    customer's team controller key. Certificates are registered at AWID.
+    """
+    filename = os.getenv("AWID_MEMBER_KEYS_FILE", "").strip()
+    if not filename:
+        return {}
+    try:
+        manifest = Path(filename).expanduser()
+        entries = json.loads(manifest.read_text())
+        if not isinstance(entries, dict) or not entries:
+            raise ValueError("expected a nonempty team-to-key-file object")
+        keys = {}
+        for team_id, filename in entries.items():
+            if build_team_id(*parse_team_id(team_id)) != team_id:
+                raise ValueError("team IDs must be canonical name:domain values")
+            if not isinstance(filename, str) or not filename.strip():
+                raise ValueError("each team must name a PEM key file")
+            path = Path(filename).expanduser()
+            if not path.is_absolute():
+                path = manifest.parent / path
+            keys[team_id] = load_signing_key_pem(path.read_bytes())
+        return keys
+    except (OSError, ValueError, TypeError):
+        # Do not echo file contents or key-parser details into startup logs.
+        raise ValueError("AWID_MEMBER_KEYS_FILE must name a nonempty JSON map of canonical team IDs to readable Ed25519 PEM key files") from None
 
 
 def require_registered_certificates() -> bool:
@@ -243,6 +271,15 @@ def get_settings() -> Settings:
             )
         raise
 
+    service_token = get_awid_service_token()
+    member_keys = get_awid_member_signing_keys()
+    if service_token is None and not member_keys:
+        raise ValueError(
+            "AWID_SERVICE_TOKEN or AWID_MEMBER_KEYS_FILE is required for private-team reads. "
+            "Customer servers configure ordinary member key files. Registry operators can "
+            "generate a token with `openssl rand -hex 32` and configure the same value on aweb and AWID."
+        )
+
     return Settings(
         host=os.getenv("AWEB_HOST", "0.0.0.0"),
         port=port,
@@ -260,7 +297,8 @@ def get_settings() -> Settings:
         ),
         presence_ttl_seconds=presence_ttl,
         awid_registry_url=get_awid_registry_url(),
-        awid_service_token=get_awid_service_token(),
+        awid_service_token=service_token,
+        awid_member_signing_keys=member_keys,
         public_origin=get_public_origin(),
         dashboard_jwt_secret=os.getenv("AWEB_DASHBOARD_JWT_SECRET", ""),
         require_registered_certificates=require_registered_certificates(),

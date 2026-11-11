@@ -424,10 +424,6 @@ func categoryPlaceholderCheck(category string) doctorCheck {
 	}
 }
 
-func collectDoctorSubject(workingDir string) doctorSubject {
-	return collectDoctorSubjectAt(workingDir, "")
-}
-
 func collectDoctorSubjectAt(workingDir, identityHome string) doctorSubject {
 	subject := doctorSubject{WorkingDir: strings.TrimSpace(workingDir)}
 	if subject.WorkingDir == "" {

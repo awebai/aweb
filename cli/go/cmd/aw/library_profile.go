@@ -166,11 +166,6 @@ func normalizeTeamAgentScope(raw string) (string, error) {
 	}
 }
 
-func resolveLibraryProfileScope(selector libraryProfileSelector) (string, error) {
-	_, scope, err := resolveLibraryProfileScopeAndCache(selector)
-	return scope, err
-}
-
 func resolveLibraryProfileScopeAndCache(selector libraryProfileSelector) (libraryProfileSelector, string, error) {
 	if scope := strings.TrimSpace(selector.IdentityScope); scope != "" {
 		normalized, err := normalizeTeamAgentScope(scope)

@@ -7,6 +7,7 @@ import {
   endActivity,
   type ActivityEmitter,
   type AgentConfig,
+  type APIClient,
 } from "@awebai/channel-core";
 import {
   activitySocketDir,
@@ -31,12 +32,18 @@ export interface ClaudeActivity {
 export async function startClaudeActivity(
   config: AgentConfig,
   workdir: string,
-  options: { claudePid?: number; dir?: string; log?: (line: string) => void } = {},
+  options: {
+    claudePid?: number;
+    dir?: string;
+    log?: (line: string) => void;
+    /** The client activity is published through; one built from config when absent. */
+    client?: APIClient;
+  } = {},
 ): Promise<ClaudeActivity | undefined> {
   const log = options.log ?? ((line: string) => console.error(line));
   try {
     if (typeof process.getuid !== "function") throw new Error("this platform has no per-user socket directory");
-    const emitter = createActivityEmitter(config, createChannelClient(config), { workRoot: workdir, log });
+    const emitter = createActivityEmitter(config, options.client ?? createChannelClient(config), { workRoot: workdir, log });
     const dir = options.dir ?? activitySocketDir(process.getuid());
     ensureOwnerOnlyDir(dir);
     removeDeadSockets(dir);

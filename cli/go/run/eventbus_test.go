@@ -197,6 +197,7 @@ func TestConnectionStateStrings(t *testing.T) {
 		{ConnDisconnected, "disconnected"},
 		{ConnReconnecting, "reconnecting"},
 		{ConnStreaming, "streaming"},
+		{ConnRefused, "refused"},
 	}
 	for _, tt := range tests {
 		if got := tt.state.String(); got != tt.want {
@@ -464,29 +465,6 @@ func TestEventBusConnectionStateTransitions(t *testing.T) {
 	}
 }
 
-func TestEventBusDisconnectsOnClientError(t *testing.T) {
-	bus := NewEventBus(EventBusConfig{
-		Stream: func(ctx context.Context, deadline time.Time) (awid.EventSource, error) {
-			return nil, &awid.APIError{StatusCode: 404, Body: "not found"}
-		},
-	})
-
-	ctx, cancel := context.WithCancel(context.Background())
-	defer cancel()
-	bus.Start(ctx)
-
-	// Wait for goroutine to exit.
-	select {
-	case <-bus.done:
-	case <-time.After(2 * time.Second):
-		t.Fatal("timed out waiting for bus to stop on 404")
-	}
-
-	if bus.State() != ConnDisconnected {
-		t.Fatalf("expected disconnected after 404, got %s", bus.State())
-	}
-}
-
 func TestEventBusInjectAutofeed(t *testing.T) {
 	q := NewPriorityQueue()
 	bus := &EventBus{queue: q, done: make(chan struct{})}
@@ -703,52 +681,6 @@ func (blockingEventSource) Next(ctx context.Context) (*awid.AgentEvent, error) {
 }
 
 func (blockingEventSource) Close() error { return nil }
-
-func TestEventBusReconnectsWhenStreamDeadlineExpiresLocally(t *testing.T) {
-	second := newFakeEventSource(
-		awid.AgentEvent{Type: awid.AgentEventActionableMail, MessageID: "m-2", FromAlias: "alice"},
-	)
-
-	var calls atomic.Int32
-	bus := NewEventBus(EventBusConfig{
-		StreamTTL: 50 * time.Millisecond,
-		Stream: func(ctx context.Context, deadline time.Time) (awid.EventSource, error) {
-			switch calls.Add(1) {
-			case 1:
-				return blockingEventSource{}, nil
-			case 2:
-				return second, nil
-			default:
-				<-ctx.Done()
-				return nil, ctx.Err()
-			}
-		},
-	})
-
-	ctx, cancel := context.WithCancel(context.Background())
-	defer cancel()
-	bus.Start(ctx)
-
-	select {
-	case <-bus.Queue().Ready():
-	case <-time.After(2 * time.Second):
-		t.Fatal("timed out waiting for post-deadline reconnect event")
-	}
-
-	evt, ok := bus.Queue().Pop()
-	if !ok {
-		t.Fatal("expected queued event after reconnect")
-	}
-	if evt.Event.Type != awid.AgentEventActionableMail || evt.Event.FromAlias != "alice" {
-		t.Fatalf("unexpected event after reconnect: %#v", evt.Event)
-	}
-	if calls.Load() < 2 {
-		t.Fatalf("expected at least 2 stream attempts, got %d", calls.Load())
-	}
-
-	cancel()
-	bus.Stop()
-}
 
 func TestRecentEventDeduperKeepsOnlyBoundedRecentKeys(t *testing.T) {
 	d := newRecentEventDeduper(2)

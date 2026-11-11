@@ -99,7 +99,7 @@ func SaveHumanRecord(rec *HumanRecord) error {
 	if err != nil {
 		return err
 	}
-	return durableWriteFile(filepath.Join(dir, "identity.yaml"), data)
+	return atomicWriteFile(filepath.Join(dir, "identity.yaml"), data)
 }
 
 // LoadHumanRecord returns the record of stableID in domain, or nil when there

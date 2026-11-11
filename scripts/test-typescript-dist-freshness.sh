@@ -120,9 +120,9 @@ text = path.read_text(encoding="utf-8")
 current = '''    const deadlineTimer = setTimeout(() => {
       deadlineReached = true;
       attemptAbort.abort(new Error("event stream local deadline reached"));
-    }, EVENT_STREAM_DEADLINE_MS);
+    }, connection.plannedCloseAt - openedAt);
 '''
-stale = '''    const deadlineTimer = setTimeout(() => {}, EVENT_STREAM_DEADLINE_MS);
+stale = '''    const deadlineTimer = setTimeout(() => {}, connection.plannedCloseAt - openedAt);
 '''
 if text.count(current) != 1:
     raise SystemExit(f"expected one local deadline guard, found {text.count(current)}")

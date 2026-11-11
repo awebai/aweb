@@ -264,6 +264,7 @@ def verify_identity_bindings_command(
             registry = RegistryClient(
                 registry_url=settings.awid_registry_url,
                 service_token=settings.awid_service_token,
+                member_signing_keys=settings.awid_member_signing_keys,
             )
             try:
                 return await verify_pending_identity_bindings(
@@ -307,7 +308,8 @@ def revalidate_human_kind_command(
         ))
         redis = Redis.from_url(settings.redis_url)
         registry = CachedRegistryClient(registry_url=settings.awid_registry_url,
-            redis_client=redis, service_token=settings.awid_service_token)
+            redis_client=redis, service_token=settings.awid_service_token,
+            member_signing_keys=settings.awid_member_signing_keys)
         try:
             return await revalidate_human_kind(DatabaseManager(pool=pool, schema=schema), registry, apply=apply)
         finally:
@@ -366,6 +368,42 @@ def run_installation_verifications_command(
     typer.echo(json.dumps({"jobs": reports}, indent=2))
     if any(report["outcome"] == "pending" for report in reports):
         raise typer.Exit(1)
+
+
+@app.command("release-closed-task-claims")
+def release_closed_task_claims_command(
+    apply: bool = typer.Option(False, "--apply", help="Release the claims; default reports counts without database writes"),
+) -> None:
+    """Report claims on closed tasks; release them with --apply. Counts and team ids only."""
+    from .closed_task_claims import release_closed_task_claims
+
+    async def run():
+        infra = DatabaseInfra()
+        await infra.initialize(run_migrations=False)
+        try:
+            return await release_closed_task_claims(infra.get_manager(), apply=apply)
+        finally:
+            await infra.close()
+
+    typer.echo(json.dumps(asyncio.run(run()), sort_keys=True))
+
+
+@app.command("delete-dead-rows")
+def delete_dead_rows_command(
+    apply: bool = typer.Option(False, "--apply", help="Delete the rows; default reports counts without database writes"),
+) -> None:
+    """Report rows no reader needs again, per table; delete them with --apply."""
+    from .gc import delete_dead_rows
+
+    async def run():
+        infra = DatabaseInfra()
+        await infra.initialize(run_migrations=False)
+        try:
+            return await delete_dead_rows(infra.get_manager(), apply=apply)
+        finally:
+            await infra.close()
+
+    typer.echo(json.dumps(asyncio.run(run()), sort_keys=True))
 
 
 def _get_api_base() -> str:

@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import base64
+import binascii
 import enum
 import json
 
@@ -50,6 +51,26 @@ def canonical_json_bytes(fields: dict) -> bytes:
 def canonical_payload(fields: dict) -> bytes:
     filtered = {k: v for k, v in fields.items() if k in SIGNED_FIELDS}
     return canonical_json_bytes(filtered)
+
+
+def load_signing_key_pem(pem: bytes) -> bytes:
+    """Read the Ed25519 seed PEM written by the aw CLI's SaveSigningKey.
+
+    The CLI stores a raw 32-byte seed in an ED25519 PRIVATE KEY block, not
+    PKCS8. Return the seed accepted by sign_message and RegistryClient; key
+    material never appears in an error message.
+    """
+    lines = pem.strip().splitlines()
+    if (len(lines) < 3 or lines[0] != b"-----BEGIN ED25519 PRIVATE KEY-----"
+            or lines[-1] != b"-----END ED25519 PRIVATE KEY-----"):
+        raise ValueError("expected an ED25519 PRIVATE KEY PEM block")
+    try:
+        seed = base64.b64decode(b"".join(lines[1:-1]), validate=True)
+    except binascii.Error:
+        raise ValueError("invalid Ed25519 seed PEM encoding") from None
+    if len(seed) != 32:
+        raise ValueError("Ed25519 seed must contain 32 bytes")
+    return seed
 
 
 def sign_message(private_key: bytes, payload: bytes) -> str:

@@ -158,8 +158,9 @@ times, since a mapped name hides its destination.
 
 `mark-unread`, `archive` and `delete` don't exist here. aweb mail is
 **delivery, not permanent storage**: messages cannot be removed on
-request, and a deployment may garbage-collect them starting around 30
-days. Never treat the mail server as an archive.
+request. The server deletes no mail automatically, but a deployment's
+operator may set a retention policy of its own. Never treat the mail
+server as an archive.
 
 Each of these tells you so when you run it, rather than reporting
 success and doing nothing.

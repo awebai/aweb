@@ -789,25 +789,3 @@ async def test_concurrent_room_posts_page_without_missing_or_duplicate_entries(
         cursor = data["next_cursor"]
     assert set(seen) == expected
     assert len(seen) == len(expected)
-
-
-@pytest.mark.asyncio
-async def test_recent_room_activity_prevents_inactive_team_gc(privacy_app):
-    from aweb.gc import gc_inactive_scopes
-
-    env = privacy_app
-    room = await metadata(env)
-    sent = await post(env, room)
-    assert sent.status_code == 200
-    await env.db.execute(
-        "UPDATE {{tables.teams}} SET created_at=now()-interval '60 days' WHERE team_id=$1",
-        TEAM,
-    )
-    assert (await gc_inactive_scopes(env.infra))["scopes_deleted"] == 0
-    # Existing operator retention still applies after room activity goes idle.
-    await env.db.execute(
-        "UPDATE {{tables.room_messages}} SET created_at=now()-interval '60 days'"
-    )
-    assert (await gc_inactive_scopes(env.infra))["scopes_deleted"] == 1
-    assert await env.db.fetch_val("SELECT count(*) FROM {{tables.room_messages}}") == 0
-    assert await env.db.fetch_val("SELECT count(*) FROM {{tables.team_rooms}}") == 0

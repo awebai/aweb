@@ -68,10 +68,6 @@ func addWorktreeViaPrimaryInvite(
 	return connectResult, nil
 }
 
-func createWorkspaceTeamInviteFromDir(workingDir string) (workspaceTeamInvite, error) {
-	return createWorkspaceTeamInviteAt(workingDir, "")
-}
-
 func createWorkspaceTeamInviteAt(workingDir, identityHome string) (workspaceTeamInvite, error) {
 	return createWorkspaceTeamInviteForTeamAt(workingDir, identityHome, "")
 }

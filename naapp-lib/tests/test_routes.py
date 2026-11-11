@@ -259,11 +259,13 @@ def test_without_noindex_paths_nothing_is_tagged(tmp_path: Path) -> None:
 
 def test_health_is_mounted_with_the_runtime_checks(tmp_path: Path) -> None:
     response = _client(tmp_path).get("/health")
+    assert response.status_code == 503
     assert response.json() == {
-        "status": "unavailable",
+        "status": "unhealthy",
         "service": "example",
         "build": {"git_sha": None},
-        "checks": {"database": {"ok": False}, "outbox": {"ok": False}},
+        "checks": {"database": "error", "outbox": "error"},
+        "details": {},
     }
 
 
@@ -272,7 +274,8 @@ def test_health_checks_the_apps_own_dependencies(tmp_path: Path) -> None:
         return CheckResult(ok=True, detail={"canary_age_seconds": 4})
 
     response = _client(tmp_path, health_checks={"kms": kms}).get("/health")
-    assert response.json()["checks"]["kms"] == {"ok": True, "canary_age_seconds": 4}
+    assert response.json()["checks"]["kms"] == "ok"
+    assert response.json()["details"]["kms"] == {"canary_age_seconds": 4}
 
 
 def test_an_app_without_the_docs_surface_serves_its_manifest_alone(tmp_path: Path) -> None:
