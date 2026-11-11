@@ -2,6 +2,13 @@
 
 ## Unreleased
 
+- **awid-service no longer ships `awid.http_didkey`.** The module verified a
+  request envelope of body hash, method, path and timestamp, and no route of
+  the registry called it; the registry's routes verify the envelopes in
+  `awid.dns_auth`, `awid.controller_request` and `awid.id_tree_requests`.
+  Nothing in aweb or aweb Cloud imported it. Code outside this repository
+  that imported `build_http_didkey_payload` or `verify_http_didkey_request`
+  from awid-service must carry its own copy.
 - **A customer-run aweb server can read its private team at the public
   registry without the registry-wide `AWID_SERVICE_TOKEN`.** Give the server
   an ordinary member certificate in each team it serves
