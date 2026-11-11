@@ -182,8 +182,9 @@ a live approval for new issuance; no token exception, manufactured H or agent
 parent is allowed. It cannot satisfy the endorsed-root acceptance journey.
 
 Protected provisioning authorizes **one exact default admission policy** under
-operator authority. It lists the teams and fixes the root selector to "the root
-endorsed under this service_id by a current authorizer", agent kind only,
+operator authority. It lists the teams and fixes the root selector to "the
+requesting root, verified as endorsed under this service_id by a current
+authorizer", agent kind only,
 member role only, and an immutable policy version and digest. Endorsing that
 root is **one live approval of one act**: its screen discloses the resulting
 bounded admission. Endorsement satisfies the existing policy; it neither
@@ -219,9 +220,10 @@ contract does not claim to prevent that use of the root's actual authority.
 
 Local `did:key` and registered agent subjects are both allowed when the policy
 permits them. Local membership certificates retain local subject fields and
-no invented `did:aw`. The requester is the explicitly authorized root, not any
-agent whose chain happens to contain it. Grandchild issuance stays with its
-actual eligible parent; root-side admission supplies membership separately.
+no invented `did:aw`. For bounded unattended admission the requester is the
+explicitly authorized root, not any agent whose chain happens to contain it. The owner-approved
+variant uses its separate live controller-human authority under the same
+protected policy. Grandchild issuance stays with its actual eligible parent; root-side admission supplies membership separately.
 Hosted and independent profiles use this same boundary and command semantics.
 Every agent admission **and renewal** on a protected team passes the bounded
 policy, including cache/reconciliation and hosted routes. Ordinary member
@@ -381,7 +383,7 @@ authority is not an arbitrary path/body signing escape.
 
 For app `session` purpose, use the app's own B3 LOGIN and explicit Allow; there
 is no protected-service LOGIN or H-signed intermediary start. The paired wire
-delta is [handoff-wire section 1a at 7e54956e3](https://github.com/awebai/aweb/blob/7e54956e3ccefe93d268b97509940f34fe3e1846/docs/design/handoff-wire.md).
+delta is [handoff-wire section 1a at 90d41719f](https://github.com/awebai/aweb/blob/90d41719f47d933e8c4457e4f1debdb862d26c05/docs/design/handoff-wire.md).
 This changes only session-start admission, not human signing or governance.
 
 A current agent member Q whose freshly verified chain has H as its **direct**
@@ -416,7 +418,10 @@ UV LOGIN and the separate explicit Allow. Only aw's in-memory ephemeral key,
 verifier preimage and single-use loopback code can collect the existing result.
 The resulting session is H's, with its exact holding and current membership
 checks unchanged. No other purpose, including `credential`, gains this
-same-signer exception.
+same-signer exception. A Q-not-H session is **loopback only**:
+`holder_certificate` with `return: user_code` refuses with HTTP 400
+`handoff_invalid` before any handoff is created. H's own same-signer fallback
+is unchanged.
 
 aw derives H from Q's installed direct-parent chain and shows both identities.
 No qualifying requester means `requester_missing`. Onboarding is explicit:
@@ -424,10 +429,16 @@ No qualifying requester means `requester_missing`. Onboarding is explicit:
 not `identity.root.endorse`. The new subject key may prove and prepare only
 its exact issuance; H supplies one live exact-act approval. The receipt grants
 no default deployment-root admission, and no agent is created automatically.
-ID registration and team membership remain separate; a non-member must acquire
-its own membership through an existing authorized agent-admission path before
-using this app-session start. Package .8 inventories existing requester reuse
-versus deliberate new issuance for the operator's laptop.
+ID registration and team membership remain separate. The configured root
+requests `team.agent.admit` for the laptop agent within the protected policy's
+subject kinds and bounds. Alternatively the current controller-authorized human
+approves `team.agent.admit/owner_approved` as its own live exact act, still
+through that protected policy and its explicit root accounting bucket; it may
+not bypass bounds or change policy. No raw controller-key path is implied.
+Without applicable policy, provision it through the authorized bootstrap or
+policy-change route first. Until its OWN membership is issued and current,
+the laptop's team-auth session start refuses. Package .8 inventories existing
+requester reuse versus deliberate new issuance for the operator's laptop.
 
 ### Credential starts retain protected H authentication
 
@@ -579,6 +590,20 @@ policy, setup reports `admission_policy_missing` and directs the operator to
 provision or approve the policy rather than creating it itself.
 
 ### Frozen operation, display and receipt
+
+For root endorsement, the client prepare input names the exact root/key,
+selected H, service and intended teams. The server supplies the existing
+default policy's immutable digest/version, complete team list and bounds in
+the frozen payload it returns; the client need not discover those before its
+first prepare. Missing applicable policy or a legacy target team refuses
+`admission_policy_missing` before a pending record or link exists. Prepare never
+provisions a policy. The newly authorized pending preparation permits the
+scope-limited policy read. Before displaying the link, setup compares that
+read's policy digest/version with the frozen payload and checks every intended
+team is listed. A failed check stops locally without showing the link; the
+unapproved operation expires. Exact prepare retries return the original frozen
+policy, never today's replacement. A policy change before execution refuses
+explicitly with `policy_changed`; it cannot bind the old approval.
 
 The client chooses and persists an operation UUID before prepare; retries use
 the same UUID and exact body. Prepare returns `operation_id`, `handoff_id`,
