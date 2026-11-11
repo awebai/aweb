@@ -312,3 +312,35 @@ async def test_under_four_eyes_an_approver_scope_drafter_is_left_out(world: Worl
     console_draft = {"type": "aweb.secrets.change", "drafter": {"via": "console", "scope": finance}}
     found = await world.directory.candidates(policy, console_draft)
     assert [a.scope for a in found] == [owner]
+
+
+@pytest.mark.parametrize("withdrawal", ["assignment", "record"])
+async def test_transaction_aware_providers_observe_shared_holding_withdrawal_and_rollback(
+    world: World, withdrawal
+):
+    from aweb_secrets.change_sets import ChangeSetPolicies, change_policy_ref
+
+    scope = await designate_owner(world, ALICE, "alice@acme.com")
+    policy_ref = change_policy_ref(world.admitted.installation_id, TEAM)
+    policies = ChangeSetPolicies(world.db, world.directory)
+    policy = await policies.current(policy_ref)
+    assert policy is not None
+    approver = await world.passkeys.designated_approver(scope)
+    assert approver is not None
+
+    class RollBack(Exception):
+        pass
+
+    with pytest.raises(RollBack):
+        async with world.db.transaction() as tx:
+            await world.fence.check(tx, world.admitted)
+            if withdrawal == "assignment":
+                await unassign(tx, ALICE, OWNER_ROLE)
+            else:
+                await tx.execute("DELETE FROM {{tables.role_holdings}} WHERE b3_scope=$1", scope)
+            assert await policies.current(policy_ref, tx=tx) is None
+            assert await world.directory.candidates(policy, {}, tx=tx) == []
+            assert not await world.directory.is_current(scope, approver.subject, tx=tx)
+            raise RollBack()
+    assert await policies.current(policy_ref) == policy
+    assert await world.directory.is_current(scope, approver.subject)
