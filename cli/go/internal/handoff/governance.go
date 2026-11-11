@@ -102,7 +102,7 @@ func Approve(ctx context.Context, opts GovernanceOptions, operationID string, in
 		}
 	}
 	fmt.Fprintf(opts.Notify, "Preparing operation %s\n", operationID)
-	return approve(ctx, opts, operationID, body, wake)
+	return approve(ctx, opts, operationID, body, raw, wake)
 }
 
 // Resume sends a saved prepare body again, byte for byte: the protected
@@ -116,11 +116,11 @@ func Resume(ctx context.Context, opts GovernanceOptions, saved []byte) (*Receipt
 		return nil, coded("intent_invalid", errors.New("the saved body is not a prepared operation's"))
 	}
 	fmt.Fprintf(opts.Notify, "Resuming operation %s\n", operationID)
-	return approve(ctx, opts, operationID, body, nil)
+	return approve(ctx, opts, operationID, body, saved, nil)
 }
 
-func approve(ctx context.Context, opts GovernanceOptions, operationID string, body map[string]any, wake *Loopback) (*Receipt, error) {
-	prepared, err := Prepare(ctx, opts, body)
+func approve(ctx context.Context, opts GovernanceOptions, operationID string, body map[string]any, raw []byte, wake *Loopback) (*Receipt, error) {
+	prepared, err := prepare(ctx, opts, body, raw)
 	if ErrorCode(err) == "prepare_answer_lost" {
 		return reconcileLostPrepare(ctx, opts, operationID, err)
 	}
@@ -219,6 +219,12 @@ func Prepare(ctx context.Context, opts GovernanceOptions, body map[string]any) (
 	if err != nil {
 		return nil, err
 	}
+	return prepare(ctx, opts, body, data)
+}
+
+// prepare sends data, the exact bytes of body, and verifies the answer
+// against body.
+func prepare(ctx context.Context, opts GovernanceOptions, body map[string]any, data []byte) (*Prepared, error) {
 	target, err := url.Parse(opts.Request + "/protected-operations")
 	if err != nil {
 		return nil, err
@@ -337,8 +343,9 @@ func sameJSON(a, b any) bool {
 }
 
 // ReadReceipt reads the operation's receipt as its requester. A receipt that
-// cannot be read is receipt_unavailable; one that is not exactly a receipt of
-// its state is receipt_invalid.
+// cannot be read now (transport, 429, 5xx) is receipt_unavailable; any other
+// refusal keeps its own code; one that is not exactly a receipt of its state
+// is receipt_invalid.
 func ReadReceipt(ctx context.Context, opts GovernanceOptions, operationID string) (*Receipt, error) {
 	target, err := url.Parse(opts.Request + "/protected-operations/" + url.PathEscape(operationID))
 	if err != nil {
@@ -355,8 +362,12 @@ func ReadReceipt(ctx context.Context, opts GovernanceOptions, operationID string
 	if err != nil {
 		return nil, unavailable(err)
 	}
-	if resp.StatusCode != http.StatusOK {
+	switch {
+	case resp.StatusCode == http.StatusTooManyRequests || resp.StatusCode >= 500:
 		return nil, unavailable(refusal(resp.StatusCode, reply))
+	case resp.StatusCode != http.StatusOK:
+		// A refusal of the requester, its scope or the id does not pass.
+		return nil, refusal(resp.StatusCode, reply)
 	}
 	receipt, ok := decodeReceipt(reply)
 	if !ok {

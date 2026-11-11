@@ -2,6 +2,7 @@ package handoff
 
 import (
 	"bytes"
+	"cmp"
 	"context"
 	"encoding/json"
 	"errors"
@@ -9,6 +10,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"net/url"
+	"strconv"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -72,9 +74,12 @@ func newSignerStub(t *testing.T, receipts ...string) *signerStub {
 		case r.Method == http.MethodGet && strings.HasPrefix(r.URL.Path, "/request/protected-operations/"):
 			reply := s.receipts[min(s.reads, len(s.receipts)-1)]
 			s.reads++
-			if reply == "!503" {
-				w.WriteHeader(http.StatusServiceUnavailable)
-				_, _ = w.Write([]byte(`{"detail":"busy"}`))
+			// "!<status>:<code>" answers that refusal; "!503" is busy.
+			if strings.HasPrefix(reply, "!") {
+				status, code, _ := strings.Cut(reply[1:], ":")
+				n, _ := strconv.Atoi(status)
+				w.WriteHeader(n)
+				_, _ = w.Write([]byte(`{"detail":"` + cmp.Or(code, "busy") + `"}`))
 				return
 			}
 			_, _ = w.Write([]byte(reply))
@@ -329,6 +334,48 @@ func TestALostPrepareIsResumedWithItsSavedBodyAndTheServiceAnswersTheOriginal(t 
 	_, err = Approve(context.Background(), opts, id, revokeIntent())
 	if ErrorCode(err) != "operation_conflict" {
 		t.Fatalf("a second approval under the same id: %v", err)
+	}
+}
+
+func TestResumeSendsTheSavedBytesUnchanged(t *testing.T) {
+	stub := newSignerStub(t, committedReceipt)
+	var opened string
+	intent := revokeIntent()
+	intent["operation_id"] = "14141414-1414-4414-8414-141414141414"
+	intent["redirect_uri"] = "http://127.0.0.1:1/callback"
+	// Key order and spacing no Go encoder writes: only the saved bytes match.
+	saved := []byte(" {\"subject\": " + mustJSON(intent["subject"]) + ",\"operation\":\"human-role.revoke\",\"variant\":\"default\"," +
+		"\"scope\":" + mustJSON(intent["scope"]) + ",\"audience\":\"https://console.example\"," +
+		"\"operation_id\":\"14141414-1414-4414-8414-141414141414\",\"redirect_uri\":\"http://127.0.0.1:1/callback\"}")
+	if _, err := Resume(context.Background(), stub.options(&opened), saved); err != nil {
+		t.Fatal(err)
+	}
+	if !bytes.Equal(stub.firstBody, saved) {
+		t.Fatalf("sent %s, not the saved bytes", stub.firstBody)
+	}
+}
+
+func mustJSON(v any) string {
+	b, _ := json.Marshal(v)
+	return string(b)
+}
+
+func TestAPermanentReceiptRefusalEndsTheWaitWithItsCode(t *testing.T) {
+	for reply, code := range map[string]string{
+		"!401:requester_invalid": "requester_invalid", "!403:scope_refused": "scope_refused",
+		"!404:operation_not_found": "operation_not_found",
+	} {
+		stub := newSignerStub(t, reply)
+		var opened string
+		receipt, err := Approve(context.Background(), stub.options(&opened), "15151515-1515-4515-8515-151515151515", revokeIntent())
+		if ErrorCode(err) != code || receipt == nil || receipt.State != "unknown" || receipt.Code != code || stub.reads != 1 {
+			t.Errorf("%s: receipt %+v err %v reads %d", reply, receipt, err, stub.reads)
+		}
+	}
+	stub := newSignerStub(t, "!429:rate_limited", committedReceipt)
+	var opened string
+	if receipt, err := Approve(context.Background(), stub.options(&opened), "16161616-1616-4616-8616-161616161616", revokeIntent()); err != nil || receipt.State != "committed" {
+		t.Fatalf("a rate-limited read is read again: %+v %v", receipt, err)
 	}
 }
 
