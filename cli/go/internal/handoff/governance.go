@@ -2,6 +2,8 @@ package handoff
 
 import (
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -9,6 +11,8 @@ import (
 	"net/http"
 	"net/url"
 	"time"
+
+	"github.com/awebai/aw/awid"
 )
 
 // GovernanceOptions configure one protected operation: the protected
@@ -176,4 +180,20 @@ func ReadReceipt(ctx context.Context, opts GovernanceOptions, operationID string
 	}
 	receipt.OperationID = operationID
 	return &receipt, nil
+}
+
+const approvalRequestDomain = "aweb.approval-request/1\n"
+
+// CoveredRequestDigest is B2's covered-request digest of a frozen approval
+// request: lowercase hex SHA-256 of "aweb.approval-request/1" + LF + the
+// canonical JSON of covered, the {"policy": {"ref", "version"}, "request"}
+// object (human-assurance-contract.md section 5). aw recomputes it, so the
+// fingerprint it shows is its own, not the server's.
+func CoveredRequestDigest(covered map[string]any) (string, error) {
+	canonical, err := awid.CanonicalJSONValue(covered)
+	if err != nil {
+		return "", err
+	}
+	sum := sha256.Sum256([]byte(approvalRequestDomain + canonical))
+	return hex.EncodeToString(sum[:]), nil
 }
