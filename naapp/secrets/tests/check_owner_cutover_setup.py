@@ -158,6 +158,70 @@ def check_production_fixture_inputs(credential, origin):
     return {"production_registration_arguments": registrations, "uninstall_subject": "verified"}
 
 
+def check_legacy_owner_setups(root):
+    """Keep intentional raw-role negatives, reject positive owner shortcuts."""
+    import ast
+
+    intentional = {
+        ("test_human_holders.py", "test_role_reassignment_does_not_heal_an_outstanding_target"),
+        (
+            "test_human_holders.py",
+            "test_lost_holding_before_b3_preparation_is_final_even_during_recovery",
+        ),
+        ("test_owner_directory.py", "test_the_role_on_another_team_does_not_count"),
+        ("test_reinstall.py", "fence"),  # Generic purge data, never owner authority.
+    }
+    violations = []
+
+    def visit(node, path, function="<module>"):
+        if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
+            function = node.name
+        if isinstance(node, ast.Call):
+            name = (
+                node.func.id if isinstance(node.func, ast.Name) else getattr(node.func, "attr", "")
+            )
+            roles = node.args[2:3] + [k.value for k in node.keywords if k.arg == "role"]
+            if name == "assign" and any(
+                isinstance(role, ast.Constant)
+                and role.value == "secrets.owner"
+                or isinstance(role, ast.Name)
+                and role.id in {"OWNER", "OWNER_ROLE"}
+                for role in roles
+            ):
+                if (path.name, function) not in intentional:
+                    violations.append(f"{path.name}:{function}: owner role flag used as setup")
+            if path.name == "test_production_bootstrap.py" and function == (
+                "test_a_canonical_component_holder_logs_into_the_production_console"
+            ):
+                if any(
+                    isinstance(n, ast.Dict)
+                    and any(
+                        isinstance(key, ast.Constant)
+                        and key.value == "link_token"
+                        and isinstance(value, ast.Name)
+                        and value.id == "token"
+                        for key, value in zip(n.keys, n.values, strict=True)
+                    )
+                    for n in ast.walk(node)
+                ):
+                    violations.append(
+                        f"{path.name}:{function}: canonical holder has no legacy token"
+                    )
+        if path.name == "test_owner_bootstrap.py" and function == "_enrol":
+            if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
+                violations.append(
+                    "test_owner_bootstrap.py:_enrol: obsolete unused owner enrolment helper"
+                )
+        for child in ast.iter_child_nodes(node):
+            visit(child, path, function)
+
+    paths = sorted((root / "naapp/secrets/tests").rglob("*.py"))
+    for path in paths:
+        visit(ast.parse(path.read_text()), path)
+    assert not violations, sorted(set(violations))
+    return {"test_files": len(paths), "intentional_raw_role_contexts": len(intentional)}
+
+
 def main():
     import ast
     import importlib
@@ -438,6 +502,7 @@ def main():
     result["production_fixture_inputs"] = check_production_fixture_inputs(
         credential, passkeys.rp.origin
     )
+    result["legacy_owner_fixture_sweep"] = check_legacy_owner_setups(root)
     owner = TeamOwner(member.team_key, verifier, member.team_id, current_team_key)
     signing, signature = owner.sign("app-role.designate", {"role": "fixture"})
     assert signing and signature
