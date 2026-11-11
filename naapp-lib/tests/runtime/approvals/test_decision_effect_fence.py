@@ -17,13 +17,14 @@ class DecisionFenceRefused(Exception):
 class DecisionFence:
     """Use actual B3 authority; the refusal case exercises callback rollback."""
 
-    def __init__(self, world, approval, *, expected_tx=None, refuse=False):
+    def __init__(self, world, approval, *, expected_tx=None, refuse=False, prepare_resume=None):
         self.world, self.approval = world, approval
         self.expected_tx, self.refuse = expected_tx, refuse
         self.tx = None
         self.prepared = None
         self.calls = []
         self.started = asyncio.get_running_loop().create_future()
+        self.prepare_resume = prepare_resume
 
     async def prepare(self, tx):
         assert self.expected_tx is None or tx is self.expected_tx
@@ -37,6 +38,8 @@ class DecisionFence:
             == 1
         )
         self.started.set_result(await tx.fetch_value("SELECT pg_backend_pid()"))
+        if self.prepare_resume is not None:
+            await self.prepare_resume.wait()
         [candidate] = self.approval.candidates
         self.prepared = await self.world.passkeys.prepare_current_approvers(
             tx, [(candidate.scope, candidate.subject)]
@@ -137,19 +140,24 @@ async def test_b3_wait_after_verification_leaves_the_first_b2_decision_lock_free
     proof = await ceremony(pw, approval, device)
     [candidate] = approval.candidates
     db = pw.passkeys.db
-    fence = DecisionFence(pw, approval)
+    prepare_resume = asyncio.Event()
+    fence = DecisionFence(pw, approval, prepare_resume=prepare_resume)
     task = None
     try:
         async with db.transaction() as blocker:
             holder = await blocker.fetch_value("SELECT pg_backend_pid()")
+            task = asyncio.create_task(decision(pw, approval, proof, fence=fence))
+            waiter = await asyncio.wait_for(fence.started, 5)
+            # The verifier now shares this parent before advancing its counter.
+            # Block only after that separate assertion transaction committed,
+            # then resume the real effect fence into canonical B3 preparation.
             await blocker.fetch_value(
                 "SELECT subject FROM {{tables.passkey_approvers}} WHERE scope=$1 AND subject=$2 "
                 "FOR NO KEY UPDATE",
                 SCOPE,
                 candidate.subject,
             )
-            task = asyncio.create_task(decision(pw, approval, proof, fence=fence))
-            waiter = await asyncio.wait_for(fence.started, 5)
+            prepare_resume.set()
             async with asyncio.timeout(5):
                 while holder not in await db.fetch_value("SELECT pg_blocking_pids($1)", waiter):
                     if task.done():

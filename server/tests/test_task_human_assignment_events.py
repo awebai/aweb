@@ -12,7 +12,9 @@ from httpx import ASGITransport, AsyncClient
 from aweb.coordination.tasks_service import create_task, update_task
 from aweb.mutation_hooks import create_mutation_handler
 from aweb.service_errors import ValidationError
-from test_tasks_http import TEAM_ID, _build_tasks_app, _seed_team
+from test_tasks_http import TEAM_ID, _build_tasks_app, _seed_team, member_identity
+
+ALICE = member_identity()
 
 
 class RecordingRedis:
@@ -78,10 +80,10 @@ async def test_human_assignment_still_requires_a_live_member_of_this_team(aweb_c
                                   deleted=invalid == "deleted")
     target = str(member_id) if by_id else "unavailable"
     with pytest.raises(ValidationError, match="Assignee agent not found in this team"):
-        await create_task(app.state.db, team_id=TEAM_ID, created_by_alias="alice", title="Refuse", assignee_alias=target)
-    made = await create_task(app.state.db, team_id=TEAM_ID, created_by_alias="alice", title="Unassigned")
+        await create_task(app.state.db, actor=ALICE, on_mutation=None, title="Refuse", assignee_alias=target)
+    made = await create_task(app.state.db, actor=ALICE, on_mutation=None, title="Unassigned")
     with pytest.raises(ValidationError, match="Assignee agent not found in this team"):
-        await update_task(app.state.db, team_id=TEAM_ID, ref=made["task_ref"], actor_alias="alice", assignee_alias=target)
+        await update_task(app.state.db, actor=ALICE, on_mutation=None, ref=made["task_ref"], assignee_alias=target)
     assert await db.fetch_value("SELECT assignee_alias FROM {{tables.tasks}} WHERE task_id = $1", UUID(made["task_id"])) is None
 
 

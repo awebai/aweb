@@ -65,6 +65,22 @@ class HumanRoleHoldings:
         app does not declare with the human-role acts, or a non-did:aw principal."""
         return await self._holding(tx, roles.read_holding, installation, role, principal)
 
+    async def read_holding_of_scope(
+        self, tx: TransactionManager, *, installation: AdmittedInstallation, b3_scope: str
+    ) -> HumanRoleHolding | None:
+        """The current holding whose B3 scope is ``b3_scope``, the same as
+        read_holding gives for it, for a caller that holds only the scope. None
+        when the scope names no current holding, another installation's or
+        team's, or a role the app does not declare. There is no hold by scope:
+        before an effect, hold_holding its principal and compare."""
+        held = await roles.read_holding_of_scope(tx, b3_scope)
+        if held is None or (held.installation_id, held.team_id) != (
+            installation.installation_id,
+            installation.team_id,
+        ):
+            return None
+        return await self._human_holding(tx, held)
+
     async def hold_holding(
         self,
         tx: TransactionManager,
@@ -116,6 +132,13 @@ class HumanRoleHoldings:
         except ValueError:
             return None
         if held is None:
+            return None
+        return await self._human_holding(tx, held)
+
+    async def _human_holding(
+        self, tx: TransactionManager, held: roles.Holding
+    ) -> HumanRoleHolding | None:
+        if held.role not in self._roles:
             return None
         return HumanRoleHolding(
             installation_id=held.installation_id,

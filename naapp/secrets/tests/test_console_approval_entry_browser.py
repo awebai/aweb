@@ -77,7 +77,7 @@ async def entry_service(world, tmp_path, request, script_delivery):
     origin = f"http://localhost:{port}"
     w.passkeys.rp = RelyingParty(origin=origin, name="Secrets")
 
-    async def installation(installation_id, *, team_id=None):
+    async def installation(installation_id, *, team_id: str):
         assert installation_id == w.admitted.installation_id
         assert team_id in (None, w.admitted.team_id)
         return w.admitted

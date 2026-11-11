@@ -9,7 +9,7 @@ import base64
 import hashlib
 import json
 import secrets
-from collections.abc import AsyncIterator
+from collections.abc import AsyncIterator, Awaitable, Callable
 from contextlib import aclosing
 from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
@@ -88,6 +88,7 @@ class Journey:
     device: SoftAuthenticator
     factory: object
     world: object
+    enrol_owner: Callable[[str], Awaitable[tuple[Member, PublicScope, SoftAuthenticator]]]
 
     async def open(self):
         key = SigningKey.generate()
@@ -174,14 +175,18 @@ class Journey:
 
 
 @pytest.fixture
-async def journey(world) -> AsyncIterator[Journey]:
+async def journey(world, request, human_member_cache_seconds) -> AsyncIterator[Journey]:
     # Imported at runtime so collection remains possible while the factory is
     # test-first work. It will fail at this exact supported API until implemented.
     from aweb_naapp.console.handoff_sessions import ConsoleHandoffs
 
     await apply_console_migrations(world.db)
     root = SigningKey.generate()
-    member = Member(team_id=TEAM, team_key=world.owner.team_key)
+    options = getattr(request, "param", {})
+    team = options.get("team_id", TEAM)
+    team_key = world.owner.team_key if team == TEAM else SigningKey.generate()
+    if team != TEAM:
+        await world.registry.add_team(team, did_key(team_key))
 
     async def dns(domain):
         assert domain == "example.com"
@@ -198,43 +203,60 @@ async def journey(world) -> AsyncIterator[Journey]:
         )
     ) as registry:
         await registry.register_namespace("example.com", did_key(root), bytes(root))
-        principal = (await registry.register_did(member.did_key, bytes(member.member_key))).did_aw
-        member.extra_cert_fields = {"member_did_aw": principal}
-        await world.registry.add_certificate(member.certificate())
-        fields = {
-            "v": 1,
-            "type": "aweb.id-certificate",
-            "id": principal,
-            "domain": "example.com",
-            "parent": {"kind": "namespace", "id": "example.com"},
-            "kind": "human",
-            "issuer_key": did_key(root),
-            "issued_at": datetime.now(UTC).strftime("%Y-%m-%dT%H:%M:%SZ"),
-        }
-        signed = {
-            "certificate": fields,
-            "signature": b64(root.sign(id_certificate_signing_bytes(fields)).signature),
-        }
-        await registry.register_id_certificate(
-            {"v": 1, "type": "aweb.id-chain", "certificates": [signed]},
-            signer=lambda payload: (member.did_key, member.member_key.sign(payload).signature),
-            expected_head=None,
-            invitation_id=None,
-        )
-        who = PrincipalKey(TEAM, principal)
-        await _apply(world, "app-role.designate", who, "holder@example.com")
-        token = world.contacts.inbox["holder@example.com"][-1]
-        device = SoftAuthenticator(world.passkeys.rp.origin)
-        prepared = await world.credential_audit.prepare_enrolment(token)
-        with world.credential_audit.prepared(prepared):
-            await world.passkeys.complete_enrolment(
-                token,
-                device.create(await world.passkeys.enrolment_options(token)),
-                fence=prepared,
+
+        async def enrol_owner(alias: str):
+            # Every extra holder follows the same registered-human, signed owner
+            # act and real B3 enrolment as the first. No session is fabricated.
+            member = Member(
+                team_id=team,
+                team_key=team_key,
+                alias=alias,
+                certificate_id="cert-1" if alias == "alice" else "handoff-" + alias,
             )
+            contact = "holder@example.com" if alias == "alice" else alias + "@example.com"
+            principal = (
+                await registry.register_did(member.did_key, bytes(member.member_key))
+            ).did_aw
+            member.extra_cert_fields = {"member_did_aw": principal}
+            await world.registry.add_certificate(member.certificate())
+            fields = {
+                "v": 1,
+                "type": "aweb.id-certificate",
+                "id": principal,
+                "domain": "example.com",
+                "parent": {"kind": "namespace", "id": "example.com"},
+                "kind": "human",
+                "issuer_key": did_key(root),
+                "issued_at": datetime.now(UTC).strftime("%Y-%m-%dT%H:%M:%SZ"),
+            }
+            signed = {
+                "certificate": fields,
+                "signature": b64(root.sign(id_certificate_signing_bytes(fields)).signature),
+            }
+            await registry.register_id_certificate(
+                {"v": 1, "type": "aweb.id-chain", "certificates": [signed]},
+                signer=lambda payload: (member.did_key, member.member_key.sign(payload).signature),
+                expected_head=None,
+                invitation_id=None,
+            )
+            device = SoftAuthenticator(world.passkeys.rp.origin)
+            if options.get("designated", True):
+                who = PrincipalKey(team, principal)
+                await _apply(world, "app-role.designate", who, contact)
+                token = world.contacts.inbox[contact][-1]
+                prepared = await world.credential_audit.prepare_enrolment(token)
+                with world.credential_audit.prepared(prepared):
+                    await world.passkeys.complete_enrolment(
+                        token,
+                        device.create(await world.passkeys.enrolment_options(token)),
+                        fence=prepared,
+                    )
+            return member, PublicScope(INSTALLATION_ID, OWNER_ROLE, principal), device
+
+        member, public_scope, device = await enrol_owner("alice")
         cache = AWIDTeamCache(
             registry_url=REGISTRY_URL,
-            ttl_seconds=60,
+            ttl_seconds=human_member_cache_seconds,
             service_token=SERVICE_TOKEN,
             transport=world.registry.transport,
         )
@@ -296,16 +318,19 @@ async def journey(world) -> AsyncIterator[Journey]:
             yield Journey(
                 client,
                 member,
-                PublicScope(INSTALLATION_ID, OWNER_ROLE, principal),
+                public_scope,
                 device,
                 factory,
                 world,
+                enrol_owner,
             )
 
 
 async def test_two_fresh_bound_sessions_share_the_same_real_b3_pair(journey):
     first_key, first = await journey.open()
-    retained = await journey.factory.check_holding_member(journey.scope)
+    retained = await journey.factory.check_holding_member(
+        journey.scope, team_id=journey.member.team_id
+    )
     assert retained.principal == journey.scope.principal
     retained.require_fresh()
     second_key, second = await journey.open()
@@ -341,7 +366,9 @@ async def test_real_role_revocation_is_final(journey):
 
 async def test_real_recovery_retires_login_before_changed_holding_digest(journey, monkeypatch):
     key, issued = await journey.open()
-    old_target = await authority(journey.world).session_target(journey.scope)
+    old_target = await authority(journey.world).session_target(
+        journey.scope, team_id=journey.member.team_id
+    )
     await _apply(
         journey.world,
         "app-credential.recover",
@@ -365,7 +392,9 @@ async def test_real_recovery_retires_login_before_changed_holding_digest(journey
     monkeypatch.setattr(
         journey.world.passkeys, "_clock", lambda: after_cooling + timedelta(seconds=1)
     )
-    fresh = await authority(journey.world).session_target(journey.scope)
+    fresh = await authority(journey.world).session_target(
+        journey.scope, team_id=journey.member.team_id
+    )
     assert owner_holding_identity(fresh) != owner_holding_identity(old_target)
     refused = await journey.request(key, issued)
     assert (refused.status_code, refused.json()["detail"]) == (401, "console_session_required")
@@ -407,3 +436,108 @@ async def test_collection_deletes_ended_sessions_nonces_and_handoffs(journey):
         )
         == 0
     )
+
+
+@pytest.mark.parametrize(
+    "journey",
+    [{"designated": False}, {"designated": False, "team_id": "other:example.com"}],
+    indirect=True,
+)
+async def test_authenticated_team_routes_ownerless_credential_collection(journey):
+    j = journey
+    key = SigningKey.generate()
+    verifier = secrets.token_urlsafe(32)
+    body = {
+        "v": 1,
+        "purpose": "credential",
+        "client_key": did_key(key),
+        "return": "loopback",
+        "redirect_uri": "http://127.0.0.1:54321/callback",
+        "verifier_sha256": hashlib.sha256(verifier.encode()).hexdigest(),
+        "scope": {
+            "installation_id": j.scope.installation_id,
+            "role": j.scope.role,
+            "principal": j.scope.principal,
+        },
+    }
+
+    async def start():
+        raw = json.dumps(body).encode()
+        return await j.client.post(
+            API + "/handoffs",
+            content=raw,
+            headers={
+                "Content-Type": "application/json",
+                **j.member.headers(
+                    aud=API,
+                    method="POST",
+                    path="/handoffs",
+                    body=raw,
+                ),
+            },
+        )
+
+    created = await start()
+    assert created.status_code == 201
+    handoff = created.json()["handoff_id"]
+    assert (
+        await j.world.db.fetch_value(
+            "SELECT team_id FROM {{tables.console_handoffs}} WHERE handoff_id=$1::uuid", handoff
+        )
+        == j.member.team_id
+    )
+    prefix = "/handoff/" + handoff + "/credential"
+    state = await j.client.get(prefix)
+    if j.member.team_id != TEAM:
+        assert state.status_code == 403
+    else:
+        assert state.status_code == 200
+        browser = {"Origin": j.device.origin, "X-CSRF-Token": state.json()["csrf_token"]}
+        options = await j.client.post(prefix + "/options", json={}, headers=browser)
+        assert options.status_code == 200
+        completed = await j.client.post(
+            prefix + "/complete",
+            json={"credential": j.device.create(options.json())},
+            headers=browser,
+        )
+        assert completed.status_code == 200
+        code = parse_qs(urlsplit(completed.json()["redirect_uri"]).query)["code"][0]
+        path = "/handoffs/" + handoff + "/result"
+        raw = json.dumps({"v": 1, "code": code, "verifier": verifier}).encode()
+        result = await j.client.post(
+            path,
+            content=raw,
+            headers=signed_request(key, j.device.origin, "POST", path, raw, session_id=handoff),
+        )
+        assert result.status_code == 200
+        assert result.json()["purpose"] == "credential"
+    for table in (
+        "owner_principals",
+        "role_assignments",
+        "passkey_credentials",
+        "console_sessions",
+    ):
+        assert await j.world.db.fetch_value("SELECT count(*) FROM {{tables." + table + "}}") == 0
+    body["purpose"] = "session"
+    assert (await start()).status_code == 403
+
+
+@pytest.mark.parametrize("retained_team", [None, "other:example.com"])
+async def test_session_retains_the_start_team_and_refuses_missing_or_foreign_team(
+    journey, retained_team
+):
+    key, issued = await journey.open()
+    digest = hashlib.sha256(issued["session_id"].encode()).digest()
+    assert (
+        await journey.world.db.fetch_value(
+            "SELECT team_id FROM {{tables.console_sessions}} WHERE token_sha256=$1", digest
+        )
+        == journey.member.team_id
+    )
+    assert (await journey.request(key, issued)).status_code == 200
+    await journey.world.db.execute(
+        "UPDATE {{tables.console_sessions}} SET team_id=$2 WHERE token_sha256=$1",
+        digest,
+        retained_team,
+    )
+    assert (await journey.request(key, issued)).status_code in (401, 403)

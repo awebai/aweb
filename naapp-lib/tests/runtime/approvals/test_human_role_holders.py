@@ -42,6 +42,7 @@ from aweb_naapp.runtime.passkeys import (
     DesignationRefused,
     EnrolmentRefused,
     NoticeKind,
+    OwnerApproval,
     contact_sha256,
 )
 from tests.runtime.approvals.support import SCOPE as CONTACT_SCOPE
@@ -381,6 +382,30 @@ async def test_a_holder_scope_takes_no_contact_designation_or_enrolment_link(pw:
     async with pw.passkeys.db.transaction() as tx:
         with pytest.raises(EnrolmentRefused):
             await pw.passkeys.reissue_enrolment(tx, scope=SCOPE)
+
+
+async def test_an_owner_approval_designates_no_holder(test_db_factory, registry):
+    # No passkey-session path designates a holder: even where approvals may
+    # designate (no scope is an owner scope here), a holding that has no
+    # approver yet takes none from an owner approval.
+    world = await passkey_world(
+        test_db_factory, registry, holding_scopes=is_holding_scope, owner_scopes=lambda _: False
+    )
+    await apply_roles_migrations(world.passkeys.db)
+    async with world.passkeys.db.transaction() as tx:
+        await begin_holding(tx, **KEY, certificate=CERTIFICATE)
+    async with world.passkeys.db.transaction() as tx:
+        approval = OwnerApproval(
+            approval_id="approval-1",
+            approver_subject="approver-1",
+            approver_scope=CONTACT_SCOPE,
+            transaction_id=await tx.fetch_value("SELECT txid_current()"),
+        )
+        with pytest.raises(DesignationRefused):
+            await world.passkeys.designate(tx, scope=SCOPE, contact=NOTICE, evidence=approval)
+    assert not await world.passkeys.db.fetch_value(
+        "SELECT count(*) FROM {{tables.passkey_approvers}} WHERE scope=$1", SCOPE
+    )
 
 
 async def test_a_holder_without_a_notice_contact_cannot_gain_one(pw: PasskeyWorld):

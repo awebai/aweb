@@ -72,7 +72,8 @@ fixes its validation codes. An app with no owner-designated role omits it.
   host, an optional port, and no path, trailing slash, query, fragment or
   userinfo. Its hostname differs from `app.origin`'s. It is the `aud` of every
   act for this app, compared byte for byte, so a declaration that no signer
-  could put in `aud` is refused.
+  could put in `aud` is refused. A port or a trailing dot does not make two
+  hostnames differ.
 - `roles` has 1 to 16 entries, unique by `name`.
   - `name` follows the designatable role grammar (dot-separated lowercase
     segments, at least two, `[a-z0-9][a-z0-9_-]*` each), begins with a letter,
@@ -85,6 +86,8 @@ fixes its validation codes. An app with no owner-designated role omits it.
     point with no repeat.
   - `notice_contact` is `true` when designate and replace name a notice
     contact for the holder, and `false` when they name none.
+- `session_actions`, optional, declares the human-origin actions `aw` drives
+  in a holder's session ([Session actions](design/human-confirmation-from-aw.md#session-actions-what-aw-drives)).
 - `owner_acts` and the version 2 `roles` field are separate. The version 2
   field declares roles a team admin designates; `owner_acts` declares roles
   only an owner act designates.
@@ -159,7 +162,12 @@ Body, a JSON object with exactly these fields:
 - `credential`: the credential object above, with exactly its three fields,
   required for designate and replace and refused otherwise;
 - `notice_contact`: the notice contact, a nonempty string, required for
-  designate and replace of a role that declares one and refused otherwise.
+  designate and replace of a role that declares one and refused otherwise;
+- `certificate`: the principal's team certificate, a nonempty string in the
+  encoding team-auth's `X-AWID-Team-Certificate` uses, for designate and
+  replace, and refused for revoke. A designate or replace without one is
+  refused in stage 3 with `principal_not_member`
+  ([membership evidence](design/human-confirmation-from-aw.md#membership-evidence)).
 
 The route authenticates the act before any check that depends on the app's
 state, so no refusal before authentication can tell an anonymous caller
@@ -169,7 +177,8 @@ whether a holding or installation exists. It checks in three stages:
    parse, fields and subject shape; its audience against `owner_acts.origin`;
    its role, declared in `owner_acts`, and its act, in that role's `acts`;
    then whether the body carries `credential` and `notice_contact` exactly as
-   the act and the role's `notice_contact` require; then its lifetime and
+   the act and the role's `notice_contact` require, and no `certificate` for
+   revoke; then its lifetime and
    expiry. These need no read.
 2. **Authentication:** the current controller key of the act's `team_id`,
    read from the registry (cached at most 60 seconds), and the signature under
@@ -188,13 +197,21 @@ whether a holding or installation exists. It checks in three stages:
    4. for designate and replace, the principal: it holds a current certificate
       of that team, and its own registered ID kind is `human`. The kind is the
       subject's own, never the kind of its nearest human ancestor or a label.
-      These reads reuse the 60-second team-facts cache where it applies;
+      These reads reuse the 60-second team-facts cache where it applies. The
+      certificate is the body's: it verifies under the team's current key,
+      names the act's `team_id` and `principal` and the principal's current
+      member key, and its status is published and not revoked
+      ([membership evidence](design/human-confirmation-from-aw.md#membership-evidence)).
+      An absent or failing certificate is `principal_not_member`. The app
+      retains a verified certificate with the holding;
    5. in the transaction that applies the effect, the act against the expected
       subject, and its nonce, consumed. The expected subject is the app's own
       `app_id`, the installation, the act's `role` and `principal` and, for
       designate and replace, the SHA-256 of the body's `credential` and of its
       `notice_contact` when the role declares one. The holding is re-read under
-      the transaction's lock.
+      the transaction's lock, and the act's `expires_at` is checked again
+      against the clock read after that lock: an act that expired while
+      stage 3 waited is refused and the transaction rolls back.
 
 Revoke checks no membership or kind. It targets the stored holding, so a
 controller act can retire a holder whose membership has already ended, and a
@@ -220,7 +237,7 @@ cooling-off period.
 | Status | `detail` | When |
 | --- | --- | --- |
 | 415 | `json_required` | The content type is not `application/json`. |
-| 400 | `request_invalid` | The body has a field outside the four above, `signing` is not base64, a credential field is not in its encoding, the bytes yield no act, installation id and role to look up, or, for a declared role and act, the body does not carry `credential` and `notice_contact` exactly as they require. |
+| 400 | `request_invalid` | The body has a field outside the five above, a `certificate` for revoke, `signing` is not base64, a credential field is not in its encoding, the bytes yield no act, installation id and role to look up, or, for a declared role and act, the body does not carry `credential` and `notice_contact` exactly as they require. |
 | 403 | `owner_required` | Every other fault of the act, its credential or its holding: any owner-act verification code, an undeclared role or act, a credential refused in stage 3, a holding in the wrong state, a credential or notice contact that does not match the act, a reused nonce. |
 | 503 | `team_key_unavailable` | Stage 2 cannot read the team's current key. Nothing took effect. |
 | as given | the installation's code | An authenticated act names an installation that is not admitted. |

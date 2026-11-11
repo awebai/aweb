@@ -8,7 +8,7 @@ ceremony updates B3 credentials in its own transaction.
 
 from datetime import UTC, datetime
 
-from aweb_naapp.console import ConsoleSession, session_is_current
+from aweb_naapp.console import ConsoleSession, KeyBoundConsoleSession, session_is_current
 from aweb_naapp.roles import PrincipalKey, has_role, hold_role
 from aweb_naapp.runtime.installation import AdmittedInstallation
 from aweb_naapp.runtime.passkeys import PreparedCurrentApprovers
@@ -67,14 +67,20 @@ class ConsoleReconciliationFence:
             raise HTTPException(403, "owner_required")
         # The exact control owner is the entire authority union. Original send
         # approvers confer no authority to record an uncertain consequence.
-        handle = await self._console.passkeys.prepare_current_approvers(
-            tx, [(self.owner_scope, self.owner_subject)]
-        )
+        pairs = [(self.owner_scope, self.owner_subject)]
+        handle = await self._console.prepare_session(tx, self._current, approver_pairs=pairs)
+        if handle is None:
+            handle = await self._console.passkeys.prepare_current_approvers(tx, pairs)
+        signed = isinstance(self._current, KeyBoundConsoleSession)
         if not await self._console.passkeys.login_evidence_is_current(
-            self.owner_scope, self.owner_subject, self._current.evidence_ref, tx=tx
+            self.owner_scope,
+            self.owner_subject,
+            self._current.evidence_ref,
+            tx=tx,
+            hold=not signed,
         ):
             raise HTTPException(401, "console_session_required")
-        await self._session(tx, lock=True)
+        await self._session(tx, lock=not signed)
         self._owner, self._handle, self._tx = owner, handle, tx
         # Also warm all final plain reads before any downstream B2/S3 locks.
         await self.check(tx)
@@ -91,8 +97,8 @@ class ConsoleReconciliationFence:
             raise HTTPException(401, "console_session_required")
         if self._owner is None or not await has_role(tx, self._owner, OWNER_ROLE):
             raise HTTPException(403, "owner_required")
-        await self._session(tx)
         await self._console.fence.check(tx, self.scope)
+        await self._session(tx)
         # No awaited work follows the final live F6 and S4 deadline samples.
         if self.expires_at <= datetime.now(UTC):
             raise HTTPException(401, "console_session_required")

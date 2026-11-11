@@ -5,6 +5,7 @@ from __future__ import annotations
 from datetime import UTC, datetime
 from pathlib import Path
 
+import httpx
 import pytest
 from fastapi import FastAPI
 from pydantic_settings import SettingsConfigDict
@@ -86,6 +87,48 @@ async def test_the_outbox_reports_the_age_of_its_oldest_undelivered_event(
         ok, detail = (await _results(runtime))["outbox"]
         assert ok
         assert 90 <= detail["oldest_undelivered_age_seconds"] < 120
+
+
+async def test_a_backlog_read_that_does_not_answer_in_time_leaves_the_outbox_check_passing(
+    tmp_path: Path, database_url: str, monkeypatch: pytest.MonkeyPatch, caplog
+) -> None:
+    import aweb_naapp.runtime.app as app_module
+
+    monkeypatch.setattr(app_module, "OUTBOX_BACKLOG_READ_TIMEOUT_SECONDS", 0, raising=False)
+    runtime = _runtime(tmp_path, database_url)
+    app = FastAPI(lifespan=runtime.lifespan)
+    async with app.router.lifespan_context(app):
+        assert await _results(runtime) == {"database": (True, {}), "outbox": (True, {})}
+    assert [record.getMessage() for record in caplog.records if record.levelname == "ERROR"] == [
+        "Outbox backlog could not be read"
+    ]
+
+
+async def test_the_probes_follow_the_database(
+    tmp_path: Path, database_url: str, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    import aweb_naapp.runtime.health as health
+
+    monkeypatch.setattr(health, "HEALTH_CHECK_CACHE_SECONDS", 0)
+    runtime = _runtime(tmp_path, database_url)
+    app = FastAPI(lifespan=runtime.lifespan)
+    health.mount_health(app, runtime.settings, checks=runtime.health_checks())
+    async with httpx.AsyncClient(
+        transport=httpx.ASGITransport(app=app), base_url=ORIGIN
+    ) as client:
+        async with app.router.lifespan_context(app):
+            for path in ("/live", "/ready", "/health"):
+                assert (await client.get(path)).status_code == 200, path
+            report = (await client.get("/health")).json()
+            assert report["checks"] == {"database": "ok", "outbox": "ok"}
+            assert report["details"] == {"outbox": {"oldest_undelivered_age_seconds": None}}
+        # The lifespan has ended: the app no longer holds a database connection.
+        assert (await client.get("/live")).status_code == 200
+        for path in ("/ready", "/health"):
+            response = await client.get(path)
+            assert response.status_code == 503, path
+            assert response.json()["status"] == "unhealthy"
+            assert response.json()["checks"] == {"database": "error", "outbox": "error"}
 
 
 async def test_nothing_is_healthy_outside_the_lifespan(tmp_path: Path) -> None:

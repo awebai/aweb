@@ -42,7 +42,7 @@ async def handoff_db(test_db_factory):
 async def test_create_returns_only_a_bounded_handoff_reference(handoff_db):
     before = datetime.now(UTC)
     body = start_body()
-    result = await HandoffStore(handoff_db).create(parse_start(body))
+    result = await HandoffStore(handoff_db).create(parse_start(body), team_id="people:example.com")
     assert set(result) == {"handoff_id", "expires_at"}
     expires = datetime.fromisoformat(result["expires_at"].replace("Z", "+00:00"))
     assert before < expires <= datetime.now(UTC) + timedelta(minutes=10)

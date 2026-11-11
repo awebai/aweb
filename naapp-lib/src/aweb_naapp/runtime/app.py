@@ -63,7 +63,7 @@ from aweb_naapp.manifest import (
     fill_manifest,
     load_manifest,
 )
-from aweb_naapp.outbox import outbox_status, run_drain
+from aweb_naapp.outbox import oldest_undelivered_age_seconds, run_drain
 from aweb_naapp.robots import robots_txt
 from aweb_naapp.runtime.app_credentials import APP_GRANT_READ, HOOK_RESOLVE, AppCredentialSigner
 from aweb_naapp.runtime.app_keys import AppKeyError, declared_did_keys, load_app_key
@@ -121,6 +121,9 @@ logger = logging.getLogger(__name__)
 MANIFEST_V2_PATH = "/manifests/v2.json"
 
 NOINDEX_ROBOTS_HEADER = "noindex, nofollow, noarchive"
+# The outbox check abandons its backlog read after this bound, inside the
+# health routes' own bound on a check, and reports no figure.
+OUTBOX_BACKLOG_READ_TIMEOUT_SECONDS = 2.0
 _NOSNIFF = {"X-Content-Type-Options": "nosniff"}
 
 
@@ -306,8 +309,11 @@ class NaappRuntime:
 
     def health_checks(self) -> dict[str, HealthCheck]:
         """The runtime's dependencies for the health routes: the database, and
-        the age of the oldest outbox event not yet delivered (``None`` when
-        every event is delivered). Neither is healthy outside the lifespan."""
+        the outbox, which reports the age of its oldest event not yet delivered
+        (``None`` when every event is delivered). The age is a figure, not a
+        dependency: a backlog of any size leaves the check passing, and the
+        figure is left out when it cannot be read in time. Neither check is
+        healthy outside the lifespan."""
 
         async def database() -> CheckResult:
             db = self.connected_db()
@@ -320,15 +326,14 @@ class NaappRuntime:
             db = self.connected_db()
             if db is None:
                 return CheckResult(ok=False)
-            status = await outbox_status(db)
-            ages = [
-                target.oldest_undelivered_age_seconds
-                for target in status.targets.values()
-                if target.oldest_undelivered_age_seconds is not None
-            ] + [team.oldest_age_seconds for team in status.unmaterialized.values()]
-            return CheckResult(
-                ok=True, detail={"oldest_undelivered_age_seconds": max(ages, default=None)}
-            )
+            try:
+                age = await asyncio.wait_for(
+                    oldest_undelivered_age_seconds(db), OUTBOX_BACKLOG_READ_TIMEOUT_SECONDS
+                )
+            except Exception:
+                logger.exception("Outbox backlog could not be read")
+                return CheckResult(ok=True)
+            return CheckResult(ok=True, detail={"oldest_undelivered_age_seconds": age})
 
         return {"database": database, "outbox": outbox}
 

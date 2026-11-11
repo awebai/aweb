@@ -15,6 +15,7 @@ from __future__ import annotations
 from collections.abc import Awaitable, Callable, Mapping, Sequence
 from contextlib import AbstractAsyncContextManager, AsyncExitStack, asynccontextmanager
 from enum import StrEnum
+from functools import partial
 from ipaddress import IPv4Network, IPv6Network
 from pathlib import Path
 
@@ -22,7 +23,7 @@ import httpx
 from aweb_naapp.egress import Egress
 from aweb_naapp.idempotency import apply_idempotency_migrations
 from aweb_naapp.ratelimit import apply_ratelimit_migrations
-from aweb_naapp.roles import apply_roles_migrations, purge_team
+from aweb_naapp.roles import apply_roles_migrations
 from aweb_naapp.runtime.app import NaappRuntime
 from aweb_naapp.runtime.authorization import ActionPolicy, Authorization, GrantSource
 from aweb_naapp.runtime.health import HealthCheck, mount_health
@@ -38,6 +39,7 @@ from pgdbm import AsyncDatabaseManager
 
 from aweb_secrets.config import SecretsSettings
 from aweb_secrets.manifest import MANIFEST_PATH
+from aweb_secrets.retirement import retire_team
 from aweb_secrets.revisions import apply_revision_migrations
 from aweb_secrets.surfaces import mount_public_surfaces
 
@@ -90,10 +92,12 @@ def installation_fence(
     """The service's installation fence.
 
     Retiring an installation, on a confirmed uninstall or when a new
-    installation id is admitted, purges the team's role assignments in the
-    same transaction, so a reinstall starts with no roles (decision 48b).
+    installation id is admitted, purges roles and live credential material with
+    a value-free destruction receipt in the same transaction (decision 48b).
     """
-    return InstallationFence(db, app_id=app_id, grants=grants, on_retire=purge_team)
+    return InstallationFence(
+        db, app_id=app_id, grants=grants, on_retire=partial(retire_team, app_id=app_id)
+    )
 
 
 def create_app(
@@ -112,6 +116,7 @@ def create_app(
     prepare: Prepare | None = None,
     console_routers: Sequence[ConsoleRouter] = (),
     runner_routers: Sequence[RunnerRouter] = (),
+    handoff_router: ConsoleRouter | None = None,
 ) -> SecretsService:
     """The secrets service. ``grants`` is the team-server grant authority,
     ``policy`` secrets' admission policy and ``kms`` its KMS canary.
@@ -123,6 +128,9 @@ def create_app(
     adapters under /runner/v1/ on the API origin outside B1; their existing
     protocol validates runner authority. Prepared services close before the
     database disconnects; composed routes are removed on failure and shutdown.
+    The shared handoff start mounts POST /handoffs on the API origin outside
+    B1; it authenticates the exact member signature itself, before any holding
+    or session admission. Its human routes are separate console factories.
     """
     runtime = NaappRuntime(
         settings,
@@ -197,6 +205,16 @@ def create_app(
                             if runner_path in runner_paths:
                                 raise ValueError("a runner route is composed more than once")
                             runner_paths.add(runner_path)
+                        api.include_router(router)
+                    if handoff_router is not None:
+                        router = handoff_router(runtime)
+                        if len(router.routes) != 1 or any(
+                            not isinstance(route, APIRoute)
+                            or route.methods != {"POST"}
+                            or route.path != "/handoffs"
+                            for route in router.routes
+                        ):
+                            raise ValueError("handoff router contains only POST /handoffs")
                         api.include_router(router)
                     for console_factory in console_routers:
                         console.include_router(console_factory(runtime))

@@ -565,7 +565,8 @@ unchanged. Its semantics and the delivery call are in
 
 - `origin` is in owner-act/1's audience grammar (`https://`, a lowercase
   host, an optional port, nothing after it), and its hostname differs from
-  `app.origin`'s; a port does not separate them, because cookies ignore ports.
+  `app.origin`'s; a port does not separate them, because cookies ignore ports,
+  and neither does a trailing dot on either hostname.
 - `roles` has 1 to 16 entries, unique by `name`. `name` follows the
   designatable role grammar, begins with a letter and is at most 64 bytes, so
   that it fits owner-act/1's `role`; `label` and the optional
@@ -573,6 +574,45 @@ unchanged. Its semantics and the delivery call are in
   `human-credential.replace`, `human-role.designate` and `human-role.revoke`,
   ascending by code point with no repeat. `notice_contact` is a boolean,
   `true` when designate and replace name a notice contact.
+- `session_actions`, optional, declares the human-origin actions `aw` drives
+  in a role holder's session; their semantics are in
+  [Session actions](design/human-confirmation-from-aw.md#session-actions-what-aw-drives).
+  Absent declares none; an empty array is refused. It has at most 64
+  entries, unique by `name` under the tool `name` rules. Each entry is a
+  version 2 tool object without `scopes`, `mutation`,
+  `invocation_contexts` or `auth`, whose `path` is relative to `owner_acts.origin`,
+  plus:
+  - `role`, a declared `owner_acts.roles` name;
+  - `kind`: `read` with method `GET`, only `in: path` and `in: query`
+    params and no `body` member; or `stage`, `draft` or `confirm` with
+    method `POST` and `body.mode` `json`. These rules apply to the values
+    after version 2's tool validation normalizes them: `method` trimmed and
+    uppercased, `in` and `body.mode` trimmed, and an absent `body` read as
+    `json`. Action names compare trimmed, as version 2 compares tool names,
+    both for uniqueness and where `completion.read` names an action. The
+    fields inherited from the tool object are decoded exactly as version 2
+    decodes them, null included (a null `description` or `body.mode` is
+    accepted where version 2 accepts it); the session-action members `role`,
+    `kind`, `protected`, `terminal_output` and `completion` never take null;
+  - `protected: true` on a param, allowed only on an `in: body` param of a
+    `stage` action; `true` is its only value, and an unprotected param omits
+    it;
+  - `terminal_output`, allowed only on a `confirm` action: 1 to 16 JSON
+    pointers of 1 to 8 segments, each `/` followed by a member name in the
+    manifest field-name grammar (`[a-z][a-z0-9_]{0,63}`) or by `*`, which
+    matches every index of an array. The last segment is a member name. No
+    segment is empty, numeric or escaped (`~` is refused), and no pointer
+    repeats;
+  - `completion`, required on a `confirm` action and refused elsewhere:
+    `read`, naming a `read` action of the same role each of whose params
+    names an input the confirm declares, so the read is built from the
+    confirm's invocation; `ready` and `done`, one predicate each;
+    and `stop`, 1 to 8 predicates. A predicate is
+    `{"member": <name>, "in": [<1 to 16 values>]}`, where `member` is a
+    top-level member name in the field-name grammar and each value is a JSON
+    string, a boolean or an integer in the safe range (±(2^53−1)), with no
+    repeat. Values compare by JSON type and value, so `true` and `1` are
+    distinct, and a float, `1.0` included, is refused.
 
 Every fault in `owner_acts` is `owner_acts_invalid`, except `owner_acts: null`,
 which is `manifest_invalid` like any null member. An absent `owner_acts`

@@ -55,7 +55,7 @@ services:
       default:
         aliases: [library-grant.test]
     healthcheck:
-      test: ["CMD", "python3", "-c", "import ssl,urllib.request; urllib.request.urlopen('https://library-grant.test:8765/health', context=ssl.create_default_context(cafile='/fixture/tls/ca.pem'))"]
+      test: ["CMD", "python3", "-c", "import ssl,urllib.request; urllib.request.urlopen('https://library-grant.test:8765/ready', context=ssl.create_default_context(cafile='/fixture/tls/ca.pem'))"]
 
   client:
     cpus: "2"

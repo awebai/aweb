@@ -690,6 +690,7 @@ class Passkeys:
             now,
             now,
             act=(act_id, HOLDER_DESIGNATE_ACT, actor),
+            event=AuditKind.APPROVER_DESIGNATED,
         )
 
     async def replace_holder_credential(
@@ -714,12 +715,15 @@ class Passkeys:
         held = await lock_holding(tx, **key)
         if held is None:
             raise DesignationRefused("the role is not held")
-        previous = await self._current_subject_for_update(tx, held.b3_scope)
+        current = await self._current_subject_for_update(tx, held.b3_scope)
         now = self._clock()
         effective_at = now + self._lockout.recovery_cooling_off
         notified = await self._recorded_contacts(tx, held.b3_scope)
-        if previous is not None:
-            await self._retire(tx, previous, actor, now)
+        if current is not None:
+            await self._retire(tx, current, actor, now)
+        # The predecessor is the holding's latest approver, current or already
+        # retired by containment; a holding that never had one has none.
+        previous = current or await self._latest_subject(tx, held.b3_scope)
         await refresh_holding_certificate(
             tx, **key, held_since=held.held_since, certificate=certificate
         )
@@ -732,6 +736,7 @@ class Passkeys:
             now,
             effective_at,
             act=(act_id, HOLDER_REPLACE_ACT, actor),
+            event=AuditKind.APPROVER_REDESIGNATED,
             previous=previous,
         )
         notice = Notice(NoticeKind.RECOVERY_STARTED, held.b3_scope, effective_at)
@@ -752,11 +757,7 @@ class Passkeys:
         now = self._clock()
         if current is not None:
             await self._retire(tx, current, actor, now)
-        retired = current or await tx.fetch_value(
-            "SELECT subject FROM {{tables.passkey_approvers}} "
-            "WHERE scope = $1 ORDER BY designated_at DESC LIMIT 1",
-            scope,
-        )
+        retired = current or await self._latest_subject(tx, scope)
         if retired is not None:
             await self._record_act(tx, act_id, HOLDER_REVOKE_ACT, actor, scope, retired, now)
         # Ending a holding is audited even when it never had an approver.
@@ -794,6 +795,14 @@ class Passkeys:
         if not is_public_cose_key(credential.public_key):
             raise DesignationRefused("the credential's key is not a public key")
 
+    async def _latest_subject(self, tx: TransactionManager, scope: str) -> str | None:
+        """The scope's latest approver, current or retired; None if it never had one."""
+        return await tx.fetch_value(
+            "SELECT subject FROM {{tables.passkey_approvers}} "
+            "WHERE scope = $1 ORDER BY designated_at DESC LIMIT 1",
+            scope,
+        )
+
     async def _current_subject_for_update(self, tx: TransactionManager, scope: str) -> str | None:
         return await tx.fetch_value(
             "SELECT subject FROM {{tables.passkey_approvers}} "
@@ -812,6 +821,7 @@ class Passkeys:
         effective_at: datetime,
         *,
         act: tuple[str, str, str],
+        event: AuditKind,
         previous: str | None = None,
     ) -> Designation:
         act_id, kind, actor = act
@@ -860,9 +870,7 @@ class Passkeys:
             details["previous_subject"] = previous
         await self._audit.emit(
             AuditEvent(
-                kind=AuditKind.APPROVER_REDESIGNATED
-                if previous is not None
-                else AuditKind.APPROVER_DESIGNATED,
+                kind=event,
                 actor=actor,
                 subject=approver.subject,
                 occurred_at=now,
@@ -1232,7 +1240,9 @@ class Passkeys:
         """
         if tx is None:
             async with self.db.transaction() as own:
-                return await self.login_evidence_is_current(scope, subject, evidence_ref, tx=own, hold=hold)
+                return await self.login_evidence_is_current(
+                    scope, subject, evidence_ref, tx=own, hold=hold
+                )
         current = await tx.fetch_value(
             "SELECT subject FROM {{tables.passkey_approvers}} "
             f"WHERE scope=$1 AND {_CURRENT} AND subject=$3" + (" FOR SHARE" if hold else ""),
@@ -1247,7 +1257,8 @@ class Passkeys:
                 "SELECT 1 FROM {{tables.passkey_assertions}} e "
                 "JOIN {{tables.passkey_credentials}} c ON c.credential_id=e.credential_id "
                 "AND c.subject=e.subject WHERE e.evidence_ref=$1 AND e.subject=$2 "
-                "AND e.purpose='login' AND c.revoked_at IS NULL" + (" FOR SHARE OF c" if hold else ""),
+                "AND e.purpose='login' AND c.revoked_at IS NULL"
+                + (" FOR SHARE OF c" if hold else ""),
                 evidence_ref,
                 subject,
             )
@@ -1351,6 +1362,23 @@ class Passkeys:
                 )
                 if hashlib.sha256(preimage).digest() != challenge:
                     raise PasskeyProofUnavailable()
+            # Context acquisition may take upstream app/F6 locks. Only then
+            # share the parent through insertion, so retirement either drains
+            # this issuer or makes it refuse after its parent wait. Enrolment
+            # remains allowed during a pending recovery's cooling-off period.
+            parent = await tx.fetch_one(
+                "SELECT scope,effective_at FROM {{tables.passkey_approvers}}"
+                " WHERE subject=$1 AND superseded_at IS NULL FOR SHARE",
+                subject,
+            )
+            if parent is None:
+                if purpose == "enrolment":
+                    raise EnrolmentRefused("enrolment subject is retired")
+                raise ProofContextUnavailable()
+            if purpose != "enrolment" and (
+                parent["scope"] != scope or parent["effective_at"] > self._clock()
+            ):
+                raise ProofContextUnavailable()
             now = self._clock()
             await tx.execute(
                 "DELETE FROM {{tables.passkey_challenges}} WHERE expires_at <= $1", now
@@ -1577,13 +1605,28 @@ class Passkeys:
             raise PasskeyProofUnavailable()
         evidence_ref = str(uuid.uuid4())
         async with self.db.transaction() as tx:
+            # The spent challenge stays spent even when this live-parent check
+            # refuses. Parent first matches canonical B3/retirement order and
+            # drains this entire counter/evidence transaction before deletion.
+            current = await tx.fetch_value(
+                "SELECT subject FROM {{tables.passkey_approvers}}"
+                " WHERE subject=$1 AND scope=$2 AND superseded_at IS NULL"
+                " AND effective_at<=$3 FOR SHARE",
+                subject,
+                context["scope"],
+                self._clock(),
+            )
+            if current is None:
+                raise AuthenticationFailed("assertion subject is retired")
             advanced = await tx.fetch_value(
-                "UPDATE {{tables.passkey_credentials}} SET sign_count = $2 "
+                "UPDATE {{tables.passkey_credentials}} AS c SET sign_count = $2 "
                 "WHERE credential_id = $1 AND revoked_at IS NULL "
-                "AND sign_count=$3 AND (sign_count < $2 OR (sign_count = 0 AND $2 = 0)) RETURNING credential_id",
+                "AND sign_count=$3 AND (sign_count < $2 OR (sign_count = 0 AND $2 = 0)) "
+                f"AND {_bound_to_rp('$4')} RETURNING credential_id",
                 credential_id,
                 verified.new_sign_count,
                 credential["sign_count"],
+                self.rp.rp_id,
             )
             if advanced is None:
                 raise AuthenticationFailed("authenticator counter did not advance")

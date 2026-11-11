@@ -86,7 +86,7 @@ class World:
         self.admitted = admitted
         self.credential_audit = credential_audit
 
-        async def installation(installation_id, *, team_id: str | None = None):
+        async def installation(installation_id, *, team_id: str):
             assert installation_id == admitted.installation_id
             return admitted
 

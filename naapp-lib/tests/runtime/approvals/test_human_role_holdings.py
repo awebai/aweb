@@ -8,6 +8,8 @@ human-role writers bind it the same way, to the same scope.
 
 from __future__ import annotations
 
+from dataclasses import replace
+
 from aweb_naapp_testing.owner_acts import INSTALLATION_ID, TEAM_ID
 from aweb_naapp_testing.webauthn import SoftAuthenticator
 
@@ -142,3 +144,57 @@ async def test_a_refresh_retains_a_new_certificate_for_the_same_holding(pw: Pass
             tx, holding=holding, certificate=b'{"certificate_id":"cert-2"}'
         )
     assert (await read(store, pw)).certificate == b'{"certificate_id":"cert-2"}'
+
+
+async def read_scope(
+    store: HumanRoleHoldings, pw: PasskeyWorld, scope=SCOPE, installation=INSTALLATION
+):
+    async with pw.passkeys.db.transaction() as tx:
+        return await store.read_holding_of_scope(tx, installation=installation, b3_scope=scope)
+
+
+async def test_a_holding_reads_the_same_by_its_scope(pw: PasskeyWorld):
+    store = await holdings(pw)
+    await held(pw)
+    await enrolled(pw)
+    holding = await read_scope(store, pw)
+    assert holding is not None and holding.subject is not None
+    assert holding == await read(store, pw)
+
+
+async def test_an_ended_holding_reads_as_none_by_its_scope(pw: PasskeyWorld):
+    store = await holdings(pw)
+    await held(pw)
+    await enrolled(pw)
+    async with pw.passkeys.db.transaction() as tx:
+        await end_holding(
+            tx, installation_id=INSTALLATION_ID, team_id=TEAM_ID, role=ROLE, principal=PRINCIPAL
+        )
+    assert await read_scope(store, pw) is None
+
+
+async def test_a_scope_reads_nothing_for_another_installation_or_team(pw: PasskeyWorld):
+    store = await holdings(pw)
+    await held(pw)
+    await enrolled(pw)
+    for other in (
+        replace(INSTALLATION, installation_id="6f9619ff-8b86-4011-b42d-00c04fc964ff"),
+        replace(INSTALLATION, team_id="aweb:other.example.com"),
+    ):
+        assert await read_scope(store, pw, installation=other) is None
+
+
+async def test_a_scope_of_an_undeclared_role_holds_nothing(pw: PasskeyWorld):
+    other_role = "example.other"
+    store = await holdings(pw)
+    async with pw.passkeys.db.transaction() as tx:
+        begun = await begin_holding(
+            tx,
+            installation_id=INSTALLATION_ID,
+            team_id=TEAM_ID,
+            role=other_role,
+            principal=PRINCIPAL,
+            certificate=CERTIFICATE,
+        )
+    assert begun is not None
+    assert await read_scope(store, pw, scope=begun.b3_scope) is None

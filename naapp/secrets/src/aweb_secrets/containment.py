@@ -15,7 +15,7 @@ from datetime import UTC, datetime, timedelta
 from typing import TYPE_CHECKING, Any, Protocol
 from uuid import UUID
 
-from aweb_naapp.console import ConsoleSession, session_is_current
+from aweb_naapp.console import ConsoleSession, KeyBoundConsoleSession, session_is_current
 from aweb_naapp.idempotency import IdempotencyConflict, IdempotencyExpired, claim
 from aweb_naapp.roles import PrincipalKey, hold_role, principal_key, unassign
 from aweb_naapp.runtime.approvals import Approvals
@@ -26,12 +26,14 @@ from aweb_naapp.runtime.passkeys import (
     PasskeyProofUnavailable,
     Passkeys,
     RetirementRefused,
+    prepare_retirement,
 )
 from aweb_naapp.runtime.team_auth import Principal
 from pgdbm import AsyncDatabaseManager
 from pgdbm.core import TransactionManager
 
-from aweb_secrets import derived_lineage, use_approvals
+from aweb_secrets import derived_lineage, run_pin_store, use_approvals
+from aweb_secrets.console import KeyBoundPreparation
 from aweb_secrets.containment_state import ContainmentRefused
 from aweb_secrets.containment_state import require_enabled as require_enabled
 from aweb_secrets.custody import Custody, SealContext
@@ -132,6 +134,9 @@ async def disable_secret_tree(
         revoked_by=revoked_by,
         reason="secret_disabled",
     )
+    await run_pin_store.prepare_secrets(
+        tx, installation_id=installation_id, team_id=team_id, secret_ids=ids
+    )
     await _disable(
         tx,
         custody,
@@ -213,6 +218,8 @@ async def disable_installation(
         revoked_by=revoked_by,
         reason="installation_disabled",
     )
+    await run_pin_store.prepare_installation(tx, installation_id=installation_id, team_id=team_id)
+    await run_pin_store.discard_installation(tx, installation_id=installation_id, team_id=team_id)
     await tx.execute(
         "INSERT INTO {{tables.containment_installations}} (installation_id, team_id, disabled_at)"
         " VALUES ($1,$2,NOW()) ON CONFLICT (installation_id, team_id)"
@@ -241,6 +248,7 @@ ACTIONS = {
     "deregister-runner": "runner.deregistered",
 }
 GovernanceEnqueue = Callable[..., Awaitable[UUID]]
+BeforeApprovals = Callable[[TransactionManager], Awaitable[None]]
 
 
 class RunnerDeregistration(Protocol):
@@ -271,6 +279,7 @@ class Containment:
         governance: GovernanceEnqueue,
         credential_audit: "CredentialAudit",
         deregister_runner: RunnerDeregistration | None = None,
+        prepare_key_bound: KeyBoundPreparation | None = None,
     ) -> None:
         self.db = db
         self.fence = fence
@@ -282,6 +291,7 @@ class Containment:
         self.governance = governance
         self.credential_audit = credential_audit
         self.deregister_runner = deregister_runner
+        self._prepare_key_bound = prepare_key_bound
 
     async def evict(self, installation_id: str, team_id: str, ids: tuple[str, ...]) -> None:
         for secret_id in ids:
@@ -318,6 +328,8 @@ class Containment:
             actor["did_aw"] = principal.did_aw
         async with self.db.transaction() as tx:
             installed = await self.fence.admit(tx, grant)
+            if action == "revoke-approver":
+                await prepare_retirement(tx, installation=installed)
             if not await hold_role(tx, key, OWNER_ROLE):
                 if action != "revoke-approvals" or target is None:
                     raise ContainmentRefused("owner_required")
@@ -419,8 +431,8 @@ class Containment:
                     actor={"authority_mode": "system", "attestations": []},
                     evidence_sha256=commitment,
                 )
-            await self._session_current(tx, session)
             await self.fence.check(tx, admitted)
+            await self._session_current(tx, session)
             self._session_unexpired(session)
         try:
             await self.evict(admitted.installation_id, admitted.team_id, result.affected_secret_ids)
@@ -440,7 +452,9 @@ class Containment:
         # F6, application authority and exact LOGIN credential precede this
         # session lock. Logout only updates the session row. Holding it makes
         # logout serialize with the effect, while a completed logout is seen.
-        if not await session_is_current(tx, session, hold=True):
+        if not await session_is_current(
+            tx, session, hold=not isinstance(session, KeyBoundConsoleSession)
+        ):
             raise ContainmentRefused("console_session_required", 401)
 
     @staticmethod
@@ -724,6 +738,7 @@ class Containment:
         secret_ids: tuple[str, ...],
         approval_ids: tuple[str, ...] = (),
         job_ids: Sequence[str] = (),
+        before_approvals: BeforeApprovals | None = None,
     ) -> None:
         """Lock the complete replacement/reenable forest before B2 consumption.
 
@@ -795,9 +810,16 @@ class Containment:
             team_id=team_id,
             secret_ids=tuple(affected),
         )
+        if before_approvals is not None:
+            await before_approvals(tx)
         await self.approvals.lock_many(
             tx,
             [*approval_ids, *associated_ids],
+        )
+        # App's trusted B3 callback stays before B2. Prepare the ENTIRE
+        # affected S3/pin union only after B2, before revision or item effects.
+        await run_pin_store.prepare_secrets(
+            tx, installation_id=installation_id, team_id=team_id, secret_ids=affected
         )
 
     async def reenable(
@@ -973,6 +995,10 @@ class Containment:
 
         The caller admits the installation first and uses S4 for session expiry
         and CSRF. Application authority locks precede B3's scope/credential locks.
+        For retirement, enter with F6 already held and before any actor/target
+        role, B3 or S4 holds: this call takes the shared retirement entry gate.
+        Do not refresh or upgrade F6 afterward; recheck the original evidence
+        deadline after waits and at the final effect fence.
         Return whether the authorized caller is an owner.
         """
         owner, _ = await self._authorize_console(
@@ -995,6 +1021,8 @@ class Containment:
         target: str | None,
         member_principal: str | None,
     ) -> tuple[bool, bool]:
+        if action == "revoke-approver":
+            await prepare_retirement(tx, installation=admitted)
         owner = await self._console_authority(
             tx,
             admitted=admitted,
@@ -1007,11 +1035,19 @@ class Containment:
         role_present = action == "remove-role-member" and await self._lock_role_member(
             tx, admitted, target, member_principal
         )
+        signed = isinstance(session, KeyBoundConsoleSession)
+        if signed:
+            if self._prepare_key_bound is None:
+                raise ContainmentRefused("console_session_required", 401)
+            await self._prepare_key_bound(
+                tx, session, approver_pairs=[(session.scope, session.subject)]
+            )
         if not await self.passkeys.login_evidence_is_current(
             session.scope,
             session.subject,
             session.evidence_ref,
             tx=tx,
+            hold=not signed,
         ):
             raise ContainmentRefused("login_evidence_unavailable", 401)
         return owner, role_present
