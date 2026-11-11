@@ -29,6 +29,7 @@ __all__ = [
     "TeamCertificateError",
     "check_team_certificate",
     "decode_team_certificate",
+    "refusal_answer",
     "verify_team_certificate_signature",
 ]
 
@@ -162,3 +163,17 @@ def check_team_certificate(
     if registered_certificate_ids is not None and certificate["certificate_id"] not in registered_certificate_ids:
         raise TeamCertificateError("unregistered")
     return certificate
+
+
+def refusal_answer(error: TeamCertificateError) -> tuple[int, str]:
+    """The HTTP status and detail every verifier answers for a refused certificate.
+
+    A fault of the certificate is an invalid credential: 401, with the reason
+    and, for ``invalid_field``, the field's name. A team key from the registry
+    that does not decode is the registry's fault: 503 ``authority_unavailable``.
+    403 is never a certificate's answer: it is for a valid member who is not
+    allowed the action, which is the caller's to decide.
+    """
+    if error.reason == "invalid_team_key":
+        return 503, "authority_unavailable"
+    return 401, str(error)

@@ -32,7 +32,7 @@ def history_cache(registry, token=SERVICE_TOKEN) -> AWIDTeamCache:
 
 
 def status_cache(registry) -> AWIDTeamCache:
-    return AWIDTeamCache(registry_url=REGISTRY_URL, ttl_seconds=600, transport=registry.transport)
+    return AWIDTeamCache(registry_url=REGISTRY_URL, ttl_seconds=60, transport=registry.transport)
 
 
 def certificate_pages(registry) -> list[httpx.Request]:
@@ -90,7 +90,7 @@ async def test_history_refuses_a_certificate_awid_never_published(registry, team
 
 
 async def test_history_facts_are_reused_for_at_most_a_minute(registry, team):
-    cache = AWIDTeamCache(registry_url=REGISTRY_URL, ttl_seconds=600, service_token=SERVICE_TOKEN,
+    cache = AWIDTeamCache(registry_url=REGISTRY_URL, ttl_seconds=60, service_token=SERVICE_TOKEN,
                           transport=registry.transport)
     await cache.get(TEAM_ID, "target")
     assert 0 < cache._cache[TEAM_ID].expires_at - time.monotonic_ns() <= seconds_to_ns(60)

@@ -10,11 +10,13 @@ import json
 from pathlib import Path
 
 import pytest
+
 from awid.team_certificate import (
     REASONS,
     TeamCertificateError,
     check_team_certificate,
     decode_team_certificate,
+    refusal_answer,
     verify_team_certificate_signature,
 )
 
@@ -121,3 +123,11 @@ def test_a_team_key_that_does_not_decode_is_the_callers_fault_not_the_certificat
             registered_certificate_ids=["cert-001"],
         )
     assert refused.value.reason == "invalid_team_key"
+
+
+def test_every_reason_is_an_invalid_credential_and_only_the_registrys_key_is_a_503() -> None:
+    for reason in REASONS:
+        field = "alias" if reason == "invalid_field" else None
+        detail = reason if field is None else f"{reason}: {field}"
+        assert refusal_answer(TeamCertificateError(reason, field)) == (401, detail)
+    assert refusal_answer(TeamCertificateError("invalid_team_key")) == (503, "authority_unavailable")

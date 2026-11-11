@@ -38,7 +38,7 @@ async def test_a_lone_surrogate_in_the_certificate_is_a_401(registry, member) ->
     async with relying_app(registry, public_origin=ORIGIN) as (client, _):
         response = await client.get("/v1/items", headers=headers)
     assert response.status_code == 401, response.text
-    assert response.json()["detail"] == "Team certificate signature verification failed"
+    assert response.json()["detail"] == "bad_signature"
 
 
 async def test_a_lone_surrogate_in_the_signed_payload_is_a_401(registry, member) -> None:
@@ -63,7 +63,7 @@ async def test_deeply_nested_certificate_is_a_401(registry, member, depth) -> No
     async with relying_app(registry, public_origin=ORIGIN) as (client, _):
         response = await client.get("/v1/items", headers=headers)
     assert response.status_code == 401, response.text
-    assert response.json()["detail"] == "Malformed team certificate"
+    assert response.json()["detail"] == "malformed"
 
 
 async def test_a_deeply_nested_signed_payload_is_a_401(registry, member) -> None:
