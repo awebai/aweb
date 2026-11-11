@@ -8,9 +8,12 @@ from __future__ import annotations
 
 import pytest
 from aweb_naapp_testing import Member
+from aweb_naapp_testing.owner_acts import APP_ID, AUDIENCE, TeamOwner, designation_subject
 from awid_service.testing import REGISTRY_URL, SERVICE_TOKEN
 from fastapi import HTTPException
 
+from aweb_naapp.hooks.owner_act import APP_ACTS
+from aweb_naapp.hooks.owner_act_nonces import OwnerActVerifier
 from aweb_naapp.runtime.team_auth import AWIDMemberCredential, AWIDTeamCache
 
 TEAM_ID = "backend:example.com"
@@ -155,7 +158,9 @@ async def test_a_fresh_team_key_read_is_signed_and_never_cached(registry):
     assert await cache.current_team_did_key(TEAM_ID) == caller.team_did_key
     team_reads = [r for r in registry.transport.calls if r.url.path.endswith("/teams/backend")]
     assert len(team_reads) == 2
-    assert all(r.headers["Authorization"].startswith(f"DIDKey {service.did_key} ") for r in team_reads)
+    assert all(
+        r.headers["Authorization"].startswith(f"DIDKey {service.did_key} ") for r in team_reads
+    )
 
 
 async def test_a_fresh_team_key_read_of_an_unknown_team_is_none(registry):
@@ -170,3 +175,25 @@ async def test_a_fresh_team_key_read_stops_when_the_certificate_is_revoked(regis
         await member_cache(registry, service).current_team_did_key(TEAM_ID)
     assert refused.value.status_code == 403
     assert refused.value.detail["code"] == "team_private_unreadable"
+
+
+async def test_an_owner_act_of_a_private_team_verifies_with_the_apps_own_certificate(registry):
+    """An owner act's verifier reads the team's current key through the cache:
+    with no token, the app's member certificate reads it."""
+    caller, service = await private_team(registry)
+    cache = member_cache(registry, service)
+
+    async def current_team_key(team_id: str) -> str:
+        return (await cache.get(team_id)).team_did_key
+
+    owner = TeamOwner(
+        team_key=caller.team_key,
+        verifier=OwnerActVerifier(
+            scope=APP_ID, audience=AUDIENCE, acts=APP_ACTS, team_key_for=current_team_key
+        ),
+        team_id=TEAM_ID,
+    )
+    prepared = await owner.prepare(
+        "app-role.designate", designation_subject("example.reader.x", "r@example.com")
+    )
+    assert prepared is not None

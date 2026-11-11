@@ -39,7 +39,9 @@ async def app_database_url(test_db_factory) -> str:
 
 async def private_team(registry) -> tuple[Member, Member]:
     caller = Member(team_id=TEAM_ID, certificate_id="caller", alias="caller")
-    service = Member(team_id=TEAM_ID, team_key=caller.team_key, certificate_id="service", alias="logs")
+    service = Member(
+        team_id=TEAM_ID, team_key=caller.team_key, certificate_id="service", alias="logs"
+    )
     await registry.add_team(TEAM_ID, caller.team_did_key, visibility="private")
     await registry.add_certificate(caller.certificate())
     await registry.add_certificate(service.certificate())
@@ -83,7 +85,9 @@ def runtime_for(registry, settings: ExampleSettings, tmp_path: Path) -> NaappRun
 async def running(runtime: NaappRuntime) -> AsyncIterator[httpx.AsyncClient]:
     app = _app(runtime, InstalledTeams({TEAM_ID: frozenset({"example:write"})}))
     async with app.router.lifespan_context(app):
-        async with httpx.AsyncClient(transport=httpx.ASGITransport(app=app), base_url=ORIGIN) as client:
+        async with httpx.AsyncClient(
+            transport=httpx.ASGITransport(app=app), base_url=ORIGIN
+        ) as client:
             yield client
 
 
@@ -95,7 +99,11 @@ async def test_a_private_teams_member_is_authenticated_with_the_apps_own_certifi
     async for client in running(runtime_for(registry, settings, tmp_path / "app")):
         response = await client.post("/v1/things", **_signed(caller, "/v1/things"))
     assert response.status_code == 200, response.text
-    gated = [r for r in registry.transport.calls if r.url.path.endswith(("/teams/backend", "/certificates"))]
+    gated = [
+        r
+        for r in registry.transport.calls
+        if r.url.path.endswith(("/teams/backend", "/certificates"))
+    ]
     assert gated
     assert all(r.headers["Authorization"].startswith(f"DIDKey {service.did_key} ") for r in gated)
 
@@ -117,7 +125,9 @@ async def test_a_credential_whose_files_do_not_belong_together_is_refused(
 ):
     service = Member(team_id=TEAM_ID)
     if mismatch == "certificate of another team":
-        certificate = Member(team_id="frontend:example.com", member_key=service.member_key).certificate()
+        certificate = Member(
+            team_id="frontend:example.com", member_key=service.member_key
+        ).certificate()
     else:
         certificate = Member(team_id=TEAM_ID).certificate()
     settings = settings_for(
@@ -143,3 +153,18 @@ async def test_the_app_does_not_start_on_a_credential_awid_does_not_publish(
             pass
     assert TEAM_ID in str(refused.value)
     assert service.certificate_id in str(refused.value)
+
+
+async def test_the_app_does_not_start_on_a_certificate_the_current_team_key_did_not_sign(
+    registry, app_database_url, tmp_path
+):
+    """After the team key rotates, a certificate signed by the old key is not
+    the team's current word for this app."""
+    _, service = await private_team(registry)
+    await registry.rotate_team_key(TEAM_ID, Member(team_id=TEAM_ID).team_did_key)
+    settings = settings_for(app_database_url, {TEAM_ID: aw_files(tmp_path / "aw", service)})
+    with pytest.raises(RuntimeError) as refused:
+        async for _ in running(runtime_for(registry, settings, tmp_path / "app")):
+            pass
+    assert TEAM_ID in str(refused.value)
+    assert "service" in str(refused.value)
