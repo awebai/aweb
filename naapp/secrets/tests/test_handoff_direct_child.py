@@ -10,6 +10,7 @@ an agent laptop certified. Nothing is inserted into a certificate cache.
 from __future__ import annotations
 
 import asyncio
+import contextlib
 import hashlib
 import json
 import secrets
@@ -18,9 +19,10 @@ from datetime import UTC, datetime
 
 import pytest
 from aweb_naapp.console.handoff_requester import RequesterEvidence, requester_parent
-from aweb_naapp.roles import read_holding
+from aweb_naapp.roles import lock_holding, read_holding
 from aweb_naapp_testing import Member, did_key
 from awid.id_certificates import encode_id_chain_header, id_certificate_signing_bytes
+from fastapi import HTTPException
 from nacl.signing import SigningKey
 
 from aweb_secrets.owners import OWNER_ROLE
@@ -153,14 +155,35 @@ async def test_a_failed_credential_start_verification_refreshes_nothing(journey)
 
 @pytest.mark.parametrize("journey", [REQUESTER], indirect=True)
 async def test_concurrent_credential_starts_on_one_holding_both_complete(journey):
-    responses = await asyncio.gather(*(start(journey, journey.member, None, purpose="credential") for _ in range(2)))
+    # Both starts queue on the holding while it is locked, so their refresh
+    # transactions overlap when it is released; a deadlock fails the bound.
+    async with holding_locked(journey):
+        tasks = [asyncio.create_task(start(journey, journey.member, None, purpose="credential")) for _ in range(2)]
+        await asyncio.sleep(0.5)
+        assert not any(task.done() for task in tasks)
+    responses = await asyncio.wait_for(asyncio.gather(*tasks), timeout=30)
     assert [r.status_code for r in responses] == [201, 201], [r.text for r in responses]
     assert await retained(journey) is not None
 
 
-def expiring_once(registry):
-    """The real requester check, whose first verdict's original deadline has
-    already passed by the start's final effect, as after a long lock wait."""
+@pytest.mark.parametrize("journey", [REQUESTER], indirect=True)
+async def test_a_credential_start_whose_holding_proof_fails_refreshes_nothing(journey):
+    # Properly authenticated as alice, but the holding-specific membership
+    # check cannot confirm her: the start proceeds and nothing is refreshed.
+    old = await retained(journey)
+
+    async def unavailable(team_id, *, principal, certificate):
+        raise HTTPException(503, "principal_status_unavailable")
+
+    journey.factory.human_member = unavailable
+    response = await start(journey, journey.member, None, purpose="credential")
+    assert response.status_code == 201, response.text
+    assert await retained(journey) == old
+
+
+def short_window_once(registry):
+    """The real requester check, whose first verdict keeps only a short
+    original window, so a lock wait at the start's effect crosses it."""
     real = requester_parent(registry)
     calls = []
 
@@ -168,17 +191,33 @@ def expiring_once(registry):
         evidence = await real(request, signer)
         calls.append(evidence)
         if evidence is not None and len(calls) == 1:
-            return RequesterEvidence(evidence.parent, time.monotonic_ns() - 1)
+            return RequesterEvidence(evidence.parent, time.monotonic_ns() + 500_000_000)
         return evidence
 
     return parent
 
 
-@pytest.mark.parametrize("journey", [{"requester_parent": expiring_once}], indirect=True)
-async def test_an_expired_requester_window_creates_nothing_and_a_fresh_neighbour_does(journey):
+@contextlib.asynccontextmanager
+async def holding_locked(journey):
+    """Hold alice's holding row FOR UPDATE, as a concurrent owner act would."""
+    async with journey.world.db.transaction() as tx:
+        held = await lock_holding(
+            tx, installation_id=journey.scope.installation_id, team_id=TEAM,
+            role=OWNER_ROLE, principal=journey.scope.principal)
+        assert held is not None
+        yield
+
+
+@pytest.mark.parametrize("journey", [{"requester_parent": short_window_once}], indirect=True)
+async def test_a_requester_window_crossed_during_a_lock_wait_creates_nothing(journey):
     laptop, chain = await certify_agent(journey, journey.member, [journey.member.id_certificate], "laptop")
     before = await handoffs(journey)
-    expired = await start(journey, laptop, chain)
+    async with holding_locked(journey):
+        waiting = asyncio.create_task(start(journey, laptop, chain))
+        await asyncio.sleep(1.0)
+        # Blocked on the holding lock, past its original requester deadline.
+        assert not waiting.done()
+    expired = await asyncio.wait_for(waiting, timeout=30)
     assert expired.status_code == 503 and expired.json() == {"detail": "principal_status_unavailable"}
     assert await handoffs(journey) == before
     fresh = await start(journey, laptop, chain)
