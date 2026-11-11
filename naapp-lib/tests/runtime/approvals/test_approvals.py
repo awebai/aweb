@@ -799,6 +799,30 @@ async def test_a_link_decision_completes_on_a_one_connection_pool(test_db_factor
         await single.disconnect()
 
 
+async def test_a_caller_transaction_in_another_schema_still_reads_the_stores_link(
+    world: World,
+):
+    """The caller's transaction is on the same database but its manager is
+    bound to another schema: the store still reads its own approval_links."""
+    await world.store.db.execute("CREATE SCHEMA IF NOT EXISTS elsewhere")
+    elsewhere = AsyncDatabaseManager(
+        DatabaseConfig(
+            connection_string=world.store.db.config.get_dsn(),
+            schema="elsewhere",
+            min_connections=1,
+            max_connections=2,
+        )
+    )
+    await elsewhere.connect()
+    try:
+        _, approval = await mint(world)
+        async with elsewhere.transaction() as caller:
+            decided = await decide(world, approval, tx=caller)
+        assert decided.state is ApprovalState.APPROVED
+    finally:
+        await elsewhere.disconnect()
+
+
 @pytest.mark.parametrize("loser_waits", [True, False])
 async def test_a_second_task_decision_is_not_pending_in_either_order(
     world: World, loser_waits: bool
