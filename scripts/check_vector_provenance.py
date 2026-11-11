@@ -559,6 +559,22 @@ ROOT_CONSUMERS = {
         "owner-act-delivery-v1.json",
         '"../../../docs/vectors/owner-act-delivery-v1.json"',
     ),
+    PurePosixPath("cli/go/cmd/aw/app_holder_test.go"): _consumer(
+        "owner-act-delivery-v1.json",
+        '"../../../../docs/vectors/owner-act-delivery-v1.json"',
+    ),
+    PurePosixPath("cli/go/cmd/aw/app_human_test.go"): _consumer(
+        "owner-act-delivery-v1.json",
+        '"../../../../docs/vectors/owner-act-delivery-v1.json"',
+    ),
+    PurePosixPath("cli/go/cmd/aw/app_role_test.go"): _consumer(
+        "owner-act-delivery-v1.json",
+        '"../../../../docs/vectors/owner-act-delivery-v1.json"',
+    ),
+    PurePosixPath("naapp-lib/tests/console/test_human_role_holding_identity.py"): _consumer(
+        "human-role-holding-v1.json",
+        'Path(__file__).resolve().parents[3] / "docs/vectors/human-role-holding-v1.json"',
+    ),
     PurePosixPath("cli/go/hookevent/vectors_test.go"): _consumer(
         {"hook-catalog-v1.json", "hook-delivery-credential-v1.json", "hook-event-envelope-v1.json"},
         '"../../../docs/vectors/hook-event-envelope-v1.json"',
