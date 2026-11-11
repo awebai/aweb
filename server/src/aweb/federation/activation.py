@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import os
 from dataclasses import dataclass
+from functools import cached_property
 from uuid import uuid4
 
 from awid.external_authority import (
@@ -21,6 +22,7 @@ from awid.federation_errors import FederationAuthorityError
 from .authority import AuthorityClaim, FederationAuthorityCore
 from .authority_state import AuthorityRepository, AuthoritySecurityToken
 from .authority_work import AuthorityLease, AuthorityWorkRepository, AuthorityWorkResult
+from .transport import PRIVATE_DELIVERY_ORIGINS_SETTING, AddressCheckedTransport, private_delivery_origins
 
 
 @dataclass(frozen=True)
@@ -47,6 +49,19 @@ class FederationAuthorityActivation:
     resolver: StrictExternalRegistry
     txt_resolver: TXTOutcomeResolver
     test_default_registry_authority: RegistryAuthority | None = None
+    private_delivery_origins: frozenset[str] = frozenset()
+
+    @cached_property
+    def delivery_transport(self) -> AddressCheckedTransport:
+        """The transport federated delivery sends through: the resolver, origin
+        policy and trust anchors are the ones registry reads use. Only this
+        transport receives the operator's private delivery origins."""
+        return AddressCheckedTransport(
+            host_resolver=self.resolver.host_resolver,
+            origin_context=self.resolver.origin_context,
+            ssl_context=self.resolver.ssl_context,
+            private_delivery_origins=self.private_delivery_origins,
+        )
 
     async def _discover_registry_authority(self, domain: str) -> RegistryAuthority:
         if self.test_default_registry_authority is not None:
@@ -569,6 +584,9 @@ def build_federation_authority_activation(db, *, public_origin: str) -> Federati
                 registry_origin, context=origin_context
             ),
         )
+    private_origins = private_delivery_origins(
+        os.getenv(PRIVATE_DELIVERY_ORIGINS_SETTING, ""), origin_context=origin_context,
+    )
     reuse_seconds = int(os.getenv("AWEB_FEDERATION_AUTHORITY_REUSE_SECONDS", "60"))
     return FederationAuthorityActivation(
         core=FederationAuthorityCore(repository, reuse_seconds=reuse_seconds),
@@ -576,4 +594,5 @@ def build_federation_authority_activation(db, *, public_origin: str) -> Federati
         resolver=resolver,
         txt_resolver=txt_resolver,
         test_default_registry_authority=test_default_registry_authority,
+        private_delivery_origins=private_origins,
     )

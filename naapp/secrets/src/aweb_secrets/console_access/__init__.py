@@ -196,12 +196,15 @@ async def owner_installation(
     console: OwnerConsole, current: ConsoleSession
 ) -> tuple[str, AdmittedInstallation]:
     """The installation this console session's owner scope belongs to, admitted."""
-    installation_id = await console.db.fetch_value(
-        "SELECT installation_id FROM {{tables.owner_principals}} WHERE scope=$1", current.scope
+    row = await console.db.fetch_one(
+        "SELECT installation_id,team_id FROM {{tables.owner_principals}} WHERE scope=$1",
+        current.scope,
     )
-    if installation_id is None:
+    if row is None:
         raise HTTPException(403, "owner_required")
-    return installation_id, await console.installation(installation_id)
+    return row["installation_id"], await console.installation(
+        row["installation_id"], team_id=row["team_id"]
+    )
 
 
 async def hold_owner(

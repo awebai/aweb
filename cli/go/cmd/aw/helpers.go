@@ -2,6 +2,7 @@ package main
 
 import (
 	"bufio"
+	"bytes"
 	"context"
 	"crypto/ed25519"
 	"encoding/json"
@@ -1546,7 +1547,11 @@ func ensureWorktreeContextAtIdentityHome(identityHome string) error {
 func formatJSONOutput(v any) string {
 	data, _ := json.Marshal(v)
 	var compat any
-	if err := json.Unmarshal(data, &compat); err == nil {
+	// json.Number carries each number's digits as written; float64 would
+	// round integers above 2^53.
+	decoder := json.NewDecoder(bytes.NewReader(data))
+	decoder.UseNumber()
+	if err := decoder.Decode(&compat); err == nil {
 		compat = addJSONNameCompat(compat)
 		data, _ = json.MarshalIndent(compat, "", "  ")
 	} else {

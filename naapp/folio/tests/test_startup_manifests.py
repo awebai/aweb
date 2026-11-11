@@ -45,7 +45,7 @@ async def test_folio_starts_with_separate_grant_key_and_existing_emit_seed_or_fi
             ]
             assert app.state.folio_runtime.installation_grants() is app.state.folio_runtime.installation_grants()
             assert served["events"][0]["type"] == "doc.changed"
-            assert (await client.get("/health")).json()["checks"]["database"]["ok"]
+            assert (await client.get("/health")).json()["checks"]["database"] == "ok"
 
 
 def test_missing_grant_read_key_refuses_startup(tmp_path):

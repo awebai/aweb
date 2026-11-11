@@ -439,6 +439,45 @@ class RegistryClient:
             return default_registry_url
         return canonical_server_origin(registry_override)
 
+    async def _request_all_pages(
+        self,
+        path: str,
+        items_key: str,
+        *,
+        headers: dict[str, str] | None = None,
+        registry_url: str | None = None,
+    ) -> list[dict[str, Any]]:
+        """Read every page of a cursor-paginated list route.
+
+        Follows next_cursor until has_more is false, so the result is the
+        complete list or a RegistryError, never one page of it.
+        """
+        separator = "&" if "?" in path else "?"
+        items: list[dict[str, Any]] = []
+        cursor: str | None = None
+        seen_cursors: set[str] = set()
+        while True:
+            query = "limit=200"
+            if cursor is not None:
+                query += f"&cursor={quote(cursor, safe='')}"
+            data = await self._request_json(
+                "GET",
+                f"{path}{separator}{query}",
+                headers=headers,
+                registry_url=registry_url,
+            )
+            items.extend(data.get(items_key, []))
+            if not data.get("has_more"):
+                return items
+            next_cursor = str(data.get("next_cursor") or "").strip()
+            if not next_cursor or next_cursor in seen_cursors:
+                raise RegistryError(
+                    f"AWID {items_key} pagination did not advance",
+                    status_code=502,
+                )
+            seen_cursors.add(next_cursor)
+            cursor = next_cursor
+
     async def _request_json(
         self,
         method: str,
@@ -1082,12 +1121,12 @@ class RegistryClient:
         signing_key: bytes | None = None,
         did_key: str | None = None,
     ) -> list[Address]:
-        data = await self._request_json(
-            "GET",
+        items = await self._request_all_pages(
             f"/v1/namespaces/{domain}/addresses",
+            "addresses",
             registry_url=await self._registry_url_for_domain(domain),
         )
-        return [_address_from_json(item) for item in data.get("addresses", [])]
+        return [_address_from_json(item) for item in items]
 
     async def get_team_public_key(self, domain: str, name: str) -> str | None:
         """Fetch the team's public did:key from awid.
@@ -1240,33 +1279,13 @@ class RegistryClient:
             if signing_key is not None
             else None
         )
-        certificates: list[TeamCertificate] = []
-        cursor: str | None = None
-        seen_cursors: set[str] = set()
-        while True:
-            query = f"active_only={active_only_value}&limit=200"
-            if cursor is not None:
-                query += f"&cursor={quote(cursor, safe='')}"
-            data = await self._request_json(
-                "GET",
-                f"{base_path}?{query}",
-                headers=headers,
-                registry_url=registry_url,
-            )
-            certificates.extend(
-                _team_certificate_from_json(item)
-                for item in data.get("certificates", [])
-            )
-            if not data.get("has_more"):
-                return certificates
-            next_cursor = str(data.get("next_cursor") or "").strip()
-            if not next_cursor or next_cursor in seen_cursors:
-                raise RegistryError(
-                    "AWID certificate pagination did not advance",
-                    status_code=502,
-                )
-            seen_cursors.add(next_cursor)
-            cursor = next_cursor
+        items = await self._request_all_pages(
+            f"{base_path}?active_only={active_only_value}",
+            "certificates",
+            headers=headers,
+            registry_url=registry_url,
+        )
+        return [_team_certificate_from_json(item) for item in items]
 
     async def list_team_certificates_fresh(
         self,
@@ -1396,8 +1415,8 @@ class RegistryClient:
         )
 
     async def list_did_addresses(self, did_aw: str) -> list[Address]:
-        data = await self._request_json("GET", f"/v1/did/{did_aw}/addresses")
-        return [_address_from_json(item) for item in data.get("addresses", [])]
+        items = await self._request_all_pages(f"/v1/did/{did_aw}/addresses", "addresses")
+        return [_address_from_json(item) for item in items]
 
     async def reassign_address(
         self,

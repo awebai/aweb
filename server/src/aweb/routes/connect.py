@@ -16,7 +16,7 @@ from pgdbm.errors import QueryError
 from pydantic import BaseModel, Field
 
 from awid.team_ids import parse_team_id
-from aweb.coordination.routes.repos import canonicalize_git_url
+from aweb.coordination.workspace_registry import ensure_repo
 from aweb.deps import get_db
 from aweb.human_kind import IdentityKindObservation
 from aweb.inbound_modes import effective_inbound_mode
@@ -349,33 +349,9 @@ async def _ensure_repo(
 ) -> uuid.UUID:
     """Find or create a repo row. Returns repo id."""
     try:
-        canonical = canonicalize_git_url(repo_origin)
+        return await ensure_repo(db, team_id, repo_origin)
     except ValueError as exc:
         raise HTTPException(status_code=422, detail=f"invalid repo_origin: {exc}") from exc
-    name = canonical.rsplit("/", 1)[-1] if "/" in canonical else canonical
-
-    repo_id = uuid.uuid4()
-    await db.execute(
-        """
-        INSERT INTO {{tables.repos}} (id, team_id, origin_url, canonical_origin, name)
-        VALUES ($1, $2, $3, $4, $5)
-        ON CONFLICT (team_id, canonical_origin) DO NOTHING
-        """,
-        repo_id,
-        team_id,
-        repo_origin,
-        canonical,
-        name,
-    )
-    row = await db.fetch_one(
-        """
-        SELECT id FROM {{tables.repos}}
-        WHERE team_id = $1 AND canonical_origin = $2 AND deleted_at IS NULL
-        """,
-        team_id,
-        canonical,
-    )
-    return row["id"]
 
 
 # ---------------------------------------------------------------------------

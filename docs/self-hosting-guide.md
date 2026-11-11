@@ -236,6 +236,49 @@ example, use `https://aweb.acme.internal`, not
 by addresses in that namespace; it is not a canonical route for bare `did:aw`
 first contact. Hosted aweb.ai namespaces are configured by the hosted service.
 
+Other servers deliver to this origin only when it is an `https` origin named by
+host (not an address literal) and every address the host resolves to is public.
+By default a sending aweb server refuses an origin that is `http`, reporting
+`delivery_origin_refused` to the sender, and an origin that resolves to a
+loopback, private, link-local, CGNAT or otherwise non-public address, reporting
+`delivery_address_refused` and logging a warning that names the origin and the
+setting below.
+
+When the servers that federate are on one private network, as
+`https://aweb.acme.internal` resolving to `10.0.0.5` is, list the private
+delivery origins on each sending server:
+
+```bash
+AWEB_FEDERATION_PRIVATE_DELIVERY_ORIGINS=https://aweb.acme.internal,https://aweb.partner.internal:8443
+```
+
+Each entry is one exact origin, `https://host[:port]`, compared after the
+canonicalisation every delivery origin gets (lowercase host, no trailing dot,
+the default port dropped). It is not a pattern: a different port, a subdomain
+or `http` is not covered, and address literals, CIDR ranges, wildcards, paths,
+queries and user information are not accepted. The server refuses to start
+when an entry is not such an origin, naming the entry. Besides public
+addresses, a listed origin may resolve only to `10.0.0.0/8`, `172.16.0.0/12`,
+`192.168.0.0/16`, `100.64.0.0/10` (CGNAT) and `fc00::/7` (an IPv4-mapped IPv6
+answer is judged by its IPv4 address). Loopback, link-local (including
+`169.254.169.254`), `0.0.0.0`, documentation, benchmarking, reserved and
+multicast addresses stay refused, and one such answer refuses the origin; for
+servers on one host, use the isolated development settings below. Delivery to
+it is otherwise
+unchanged: the host is resolved once, the connection goes to the checked
+address, TLS is verified against the host name, and redirects are not
+followed. The setting applies to federated mail and chat delivery only;
+registry reads keep requiring public addresses. Unset or empty, no private
+delivery origin is admitted.
+
+For federation between servers on one development machine or compose network,
+set `APP_ENV=development` and `AWEB_FEDERATION_TEST=1` on each aweb server. With
+both set, a server whose own `AWEB_PUBLIC_ORIGIN` host is isolated (a
+single-label name such as `aweb-a`, `localhost`, `*.localhost`, `*.test`,
+`*.test.local`, or a loopback literal) delivers over `http` and to non-public
+addresses when the destination host is isolated too. Do not set
+`AWEB_FEDERATION_TEST` in production.
+
 ### Create a Team
 
 ```bash

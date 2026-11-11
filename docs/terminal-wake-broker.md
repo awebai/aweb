@@ -131,7 +131,12 @@ both the bound and jitter.
 - `registry.d/<sha256-home>.json` — durable registrations;
 - `instances.d/<sha256-home>.json` — pause/inactive lifecycle, first live
   observation, readiness/error/status metadata and child admission evictions;
-- `status.json` and `lock/`;
+- `status.json`;
+- `daemon.lock` and `daemon.lock.pid` — the one-daemon-per-host lock, an
+  exclusive OS lock on the file that the kernel drops when the broker exits,
+  however it exits, and the holder's pid, which is recorded for display and
+  never decides whether the lock is held. A `lock/` directory in the state
+  directory is not read and can be deleted;
 - `control.sock` when the socket path fits the 100-byte portable limit.
 
 Periodic `status.json` snapshots continue to advance `updated_at`, including
