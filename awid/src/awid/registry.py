@@ -12,6 +12,7 @@ import json
 import logging
 from json import loads as json_loads
 import time
+from collections.abc import Mapping
 from dataclasses import InitVar, asdict, dataclass, field
 from datetime import datetime, timezone
 from typing import Any, Awaitable, Callable
@@ -326,7 +327,7 @@ class RegistryClient:
     service_token: str | None = field(default=None, repr=False, compare=False)
     domain_verifier: InitVar[DomainVerifier | None] = field(default=None, kw_only=True)
     _domain_verifier: DomainVerifier | None = field(init=False, repr=False, compare=False)
-    member_signing_keys: dict[str, bytes] = field(default_factory=dict, repr=False, compare=False)
+    member_signing_keys: Mapping[str, bytes] = field(default_factory=dict, repr=False, compare=False)
     _request_auth: RegistryRequestAuth = field(init=False, repr=False, compare=False)
     _http_client: httpx.AsyncClient = field(init=False, repr=False, compare=False)
 
@@ -340,6 +341,9 @@ class RegistryClient:
                 service_token=self.service_token, member_signing_keys=self.member_signing_keys
             ),
         )
+        # One immutable key map: the keys that sign are the keys the cache
+        # namespaces reads under.
+        object.__setattr__(self, "member_signing_keys", self._request_auth.member_signing_keys)
         object.__setattr__(
             self,
             "_http_client",
