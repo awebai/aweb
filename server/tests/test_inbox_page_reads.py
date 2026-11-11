@@ -154,3 +154,23 @@ async def test_a_chat_history_page_reads_its_attachment_references_once(privacy_
     assert refs[str(with_one)] == [only]
     assert refs[str(opening)] == []
     assert len([q for q in statements if "message_attachments" in q]) == 1
+
+
+@pytest.mark.asyncio
+async def test_a_chat_opened_with_named_recipients_reads_its_participants_once(privacy_app, monkeypatch):
+    env = privacy_app
+    statements = _observe_statements(monkeypatch)
+    opened = await _request(env, "bob", "POST", "/v1/chat/sessions", {
+        "to_dids": [env.actors["carol"].did, env.actors["alice"].did], "message": "hello",
+    })
+
+    assert opened.status_code == 200, opened.text
+    answer = opened.json()
+    assert [(p["alias"], p["did"]) for p in answer["participants"]] == [
+        (alias, env.actors[alias].did) for alias in ("alice", "bob", "carol")
+    ]
+    assert answer["targets_connected"] == []
+    assert answer["targets_left"] == []
+    sent = [context for kind, context in env.dispatched if kind == "chat.message_sent"]
+    assert [context["to_aliases"] for context in sent] == [["alice", "carol"]]
+    assert len([q for q in statements if "chat_participants" in q and "ORDER BY alias ASC" in q]) == 1

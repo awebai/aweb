@@ -21,8 +21,6 @@ from aweb.messaging.chat import (
     HANG_ON_EXTENSION_SECONDS,
     get_message_history,
     get_pending_conversations,
-    mark_messages_read,
-    mark_messages_read_up_to,
     resolve_session_actor_did,
     wake_chat_session_participants,
 )
@@ -33,9 +31,8 @@ from aweb.messaging.verification import (
     verified_signed_recipient_fields,
 )
 from aweb.messaging.waiting import register_waiting, unregister_waiting
-from aweb.agent_wake import agent_wake_scope
+from aweb.messaging.chat_read import mark_chat_read
 from aweb.mcp.auth import current_agent_wake_publisher, get_auth
-from aweb.events import publish_chat_session_signal
 from aweb.mcp.signing import (
     HostedMessageDecryptor,
     HostedMessageDecryptionError,
@@ -55,7 +52,7 @@ from aweb.mcp.tools.refusals import CONVERSATION_CHANGED_DURING_SEND, send_refus
 from aweb.messaging.chat_send import (
     SENDER_NOT_IN_SESSION,
     ChatSessionChanged,
-    _resolve_actor_agent,
+    resolve_actor_agent,
     resolve_chat_targets,
     send_chat,
 )
@@ -560,7 +557,7 @@ async def chat_pending(
 ) -> str:
     auth = get_auth()
     actor_dids = _actor_dids()
-    actor_agent = await _resolve_actor_agent(db_infra, actor_dids)
+    actor_agent = await resolve_actor_agent(db_infra, actor_dids)
     actor_agent_id = auth.agent_id or (str(actor_agent["agent_id"]) if actor_agent else None)
 
     conversations_by_session: dict[str, dict] = {}
@@ -692,9 +689,6 @@ async def chat_read(
     redis=None,
 ) -> str:
     auth = get_auth()
-    actor_dids = _actor_dids()
-    actor_agent = await _resolve_actor_agent(db_infra, actor_dids)
-    actor_agent_id = auth.agent_id or (str(actor_agent["agent_id"]) if actor_agent else None)
 
     try:
         session_uuid = UUID(session_id.strip())
@@ -718,45 +712,20 @@ async def chat_read(
     elif normalized_watermark is None:
         return json.dumps({"error": "up_to_message_id or message_ids is required"})
 
-    actor_did = await resolve_session_actor_did(
-        db_infra,
-        session_id=session_uuid,
-        actor_dids=actor_dids,
-    )
-    if not actor_did:
-        return json.dumps({"error": "Session not found"})
-
     try:
-        if normalized_message_ids is not None:
-            with agent_wake_scope(current_agent_wake_publisher()):
-                result = await mark_messages_read(
-                    db_infra,
-                    session_id=session_uuid,
-                    participant_did=actor_did,
-                    participant_agent_id=actor_agent_id,
-                    message_ids=normalized_message_ids,
-                )
-        else:
-            assert normalized_watermark is not None
-            with agent_wake_scope(current_agent_wake_publisher()):
-                result = await mark_messages_read_up_to(
-                    db_infra,
-                    session_id=session_uuid,
-                    participant_did=actor_did,
-                    participant_agent_id=actor_agent_id,
-                    up_to_message_id=normalized_watermark,
-                )
+        result = await mark_chat_read(
+            db_infra,
+            redis,
+            mcp_messaging_auth(auth),
+            session_id=session_uuid,
+            message_ids=normalized_message_ids,
+            up_to_message_id=normalized_watermark,
+            agent_wake_publisher=current_agent_wake_publisher(),
+        )
     except ServiceError as exc:
         return json.dumps({"error": exc.detail})
-
-    if redis is not None and int(result["messages_marked"] or 0) > 0:
-        await publish_chat_session_signal(
-            redis,
-            session_id=str(session_uuid),
-            signal_type="read_receipt",
-            agent_id=actor_did,
-            message_id=normalized_message_ids[-1] if normalized_message_ids is not None else normalized_watermark,
-        )
+    if result is None:
+        return json.dumps({"error": "Session not found"})
 
     return json.dumps(
         {

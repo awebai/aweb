@@ -131,9 +131,9 @@ PUBLIC_EXTENSION_DOCS = (
 HOOK_INVENTORY = "vectors/mutation-hook-call-sites-v1.json"
 # Functions that fire app.state.on_mutation, mapped to the position of their
 # event_type argument: HTTP routes pass the request first, services pass the
-# callback first, MCP tools pass neither. A call inside one of these functions
-# forwards its caller's event and is not a call site.
-HOOK_FIRING_FUNCTIONS = {"fire_mutation_hook": 1, "fire_mutation_callback": 1, "fire_mcp_mutation_hook": 0}
+# callback first. A call inside one of these functions forwards its caller's
+# event and is not a call site.
+HOOK_FIRING_FUNCTIONS = {"fire_mutation_hook": 1, "fire_mutation_callback": 1}
 # Functions that deliver events recorded by a call site, by file and name: they
 # forward events whose names a call site gave, and are not call sites themselves.
 HOOK_FORWARDING_FUNCTIONS = {("server/src/aweb/hooks.py", "fire")}

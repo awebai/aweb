@@ -861,14 +861,9 @@ class NativeMessagingUnitOfWork:
             "id_chain": self.auth.id_chain,
             "message_id": UUID(value["message_id"]),
         }
-        request = SimpleNamespace(
-            app=SimpleNamespace(
-                state=SimpleNamespace(
-                    attachment_backend=self.service.attachment_backend
-                )
-            )
+        attachment_context = prepare_attachment_send(
+            self.service.attachment_backend, payload, self.auth
         )
-        attachment_context = prepare_attachment_send(request, payload, self.auth)
 
         async def persist():
             if value["kind"] == "mail":
