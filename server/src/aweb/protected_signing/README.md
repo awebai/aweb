@@ -72,6 +72,10 @@ an unknown domain, changed pin, unavailable evidence or mismatched controller
 refuses. There is no Cloud token, public-registry or controller-as-member
 fallback. Private team reads use the configured ordinary member key. Updating
 namespace pins is a separately authorized controller/operator transition.
+After a legitimate namespace-controller rotation, update the protected host's
+pin through that authorized transition before resuming protected operations.
+Until then, verification fails closed against the old pin; it never learns
+the replacement key from a worker request or an unverified status response.
 
 The operation lock precedes binding locks and B3/B2 locks. Binding checks use
 the original effect transaction and keep the rows held through commit. This
