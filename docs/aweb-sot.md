@@ -558,6 +558,14 @@ the migration first and replaces processes afterwards. The migration holds
 writes wait for it. A hosted deployment that keeps its own copy of the aweb
 migrations needs the same file in that copy.
 
+**Migration 049 (`049_dead_row_indexes.sql`).** It adds an index on
+`app_events.created_at`, `control_signals.consumed_at` and
+`federation_mutation_outbox.delivered_at` for
+[`aweb delete-dead-rows`](#garbage-collection). Each index build blocks writes
+to its table, and not reads, until the migration's transaction commits. No
+server code depends on the indexes. A hosted deployment that keeps its own copy
+of the aweb migrations needs the same file in that copy.
+
 ### Current table inventory
 
 The following list is exhaustive for current **aweb application tables declared
@@ -1790,27 +1798,36 @@ callers planning around it.
 
 ### Garbage collection
 
-aweb provides three GC functions in `aweb.gc` that operators run on a
-schedule (cron, Kubernetes Job, or equivalent). All default to a
-30-day TTL and are configurable per-call:
+`aweb delete-dead-rows` (module function
+`aweb.gc.delete_dead_rows(db, apply=False)`) deletes rows that no reader of
+their table needs again. By default it is a dry run that changes nothing and
+prints, as JSON, per table: the rule's age in days (`older_than_days`), the
+number of dead rows (`dead_rows`) and `deleted_rows: 0`. With `--apply` it
+deletes them and prints the same counts with the number deleted.
 
-| Function | Default TTL | What it deletes |
+| Table | A row is dead when | Why no reader needs it |
 |---|---|---|
-| `gc_expired_messages(db_infra, ttl_days=30)` | 30 days | Mail messages and chat messages older than `ttl_days` (raw `created_at < now - ttl_days`). |
-| `gc_delivered_lifecycle_side_effects(db_infra, ttl_days=30)` | 30 days | Delivered lifecycle outbox rows older than `ttl_days`; pending rows are never removed. |
-| `gc_inactive_scopes(db_infra, ttl_days=30)` | 30 days | Teams with no message activity (mail or chat) for `ttl_days`, hard-deleted with all dependent rows (chat sessions, agents, workspaces, tasks, locks, etc.). |
+| `app_events` | `created_at` is more than 30 days ago | The event stream reads app events from a five-minute lookback window; nothing reads older ones. |
+| `control_signals` | `consumed_at` is set and more than 30 days ago | A stream consumes a signal once, by setting `consumed_at`; only unconsumed signals are read. A signal its target has not consumed is kept at any age. |
+| `federation_mutation_outbox` | `delivered_at` is set and more than 30 days ago | Delivery and recovery read only undelivered rows. An undelivered row is kept at any age. |
+| `lifecycle_side_effect_outbox` | `delivered_at` is set and more than 30 days ago | Replay and recovery read only undelivered rows. An undelivered row is kept at any age. |
 
-The GC functions are deletion-only — they do NOT cascade up to awid.
-Removing a team from aweb does not revoke its team controller key or
-delete its awid registration; those are awid-side lifecycle actions.
-Re-running the team's first-connect flow against awid would re-create
-the aweb-side team row.
+The command deletes from no other table. It never deletes a team, an agent, a
+task, a message, an `audit_log` row or an identity session grant, whatever
+their age or activity: aweb defines no retention period for `audit_log`, and
+expired and revoked grants are read by the grant list and by agent health.
+The server deletes no mail or chat message automatically.
 
-GC is not run automatically by the aweb server process. Operators
-choose how often to call these functions (typically nightly). Hosted
-operators that layer billing on top of aweb may schedule GC according
-to their own per-tier retention policies; that scheduling is the
-operator's concern, not aweb's.
+Each `DELETE` statement removes at most 1000 rows and commits on its own, so a
+run holds no long lock and may be stopped and run again. Each rule selects its
+rows through an index on the dated column; migration `049_dead_row_indexes.sql`
+adds the three that `app_events`, `control_signals` and
+`federation_mutation_outbox` need; without it the command scans those tables
+whole.
+
+The aweb server process does not run the command. Operators run it on a
+schedule (cron, a Kubernetes CronJob, or equivalent; typically nightly) with
+`AWEB_DATABASE_URL` set as for the server.
 
 ### Releasing claims on closed tasks
 
