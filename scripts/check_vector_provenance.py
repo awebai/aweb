@@ -518,10 +518,6 @@ ROOT_CONSUMERS = {
         "logs-export-v1.json",
         '"../../../docs/vectors/logs-export-v1.json"',
     ),
-    PurePosixPath("cli/go/cmd/aw/logs_verify_binary_test.go"): _consumer(
-        "logs-export-v1.json",
-        '"../../../../docs/vectors/logs-export-v1.json"',
-    ),
     PurePosixPath("naapp/logs/tests/export_vector.py"): _consumer(
         "logs-export-v1.json",
         'AWEB_ROOT / "docs" / "vectors" / "logs-export-v1.json"',
