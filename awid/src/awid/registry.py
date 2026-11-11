@@ -24,7 +24,7 @@ from redis.asyncio import Redis
 from redis.exceptions import RedisError
 
 from awid.contract import normalize_identity_scope
-from awid.did import did_from_public_key, stable_id_from_did_key
+from awid.did import did_key_from_signing_key, stable_id_from_did_key
 from awid.dns_verify import DomainVerifier
 from awid.id_certificates import (
     IDCertificateError,
@@ -747,7 +747,7 @@ class RegistryClient:
         did_key: str,
         signing_key: bytes,
     ) -> DIDMapping:
-        signer_did = _did_key_from_signing_key(signing_key)
+        signer_did = did_key_from_signing_key(signing_key)
         if signer_did != did_key:
             raise ValueError("signing_key must match did_key for DID registration")
 
@@ -835,8 +835,8 @@ class RegistryClient:
         old_signing_key: bytes,
         new_signing_key: bytes,
     ) -> DIDMapping:
-        old_did_key = _did_key_from_signing_key(old_signing_key)
-        if _did_key_from_signing_key(new_signing_key) != new_did_key:
+        old_did_key = did_key_from_signing_key(old_signing_key)
+        if did_key_from_signing_key(new_signing_key) != new_did_key:
             raise ValueError("new_signing_key must match new_did_key")
 
         current_mapping = await self.get_mapping(did_aw, old_signing_key)
@@ -1484,7 +1484,7 @@ class RegistryClient:
             payload_dict.update(extra_payload)
         payload = canonical_json_bytes(payload_dict)
         return {
-            "Authorization": f"DIDKey {_did_key_from_signing_key(signing_key)} {sign_message(signing_key, payload)}",
+            "Authorization": f"DIDKey {did_key_from_signing_key(signing_key)} {sign_message(signing_key, payload)}",
             "X-AWEB-Timestamp": timestamp,
         }
 
@@ -1506,7 +1506,7 @@ class RegistryClient:
             }
         )
         return {
-            "Authorization": f"DIDKey {_did_key_from_signing_key(signing_key)} {sign_message(signing_key, payload)}",
+            "Authorization": f"DIDKey {did_key_from_signing_key(signing_key)} {sign_message(signing_key, payload)}",
             "X-AWEB-Timestamp": timestamp,
         }
 
@@ -1528,7 +1528,7 @@ class RegistryClient:
             }
         )
         return {
-            "Authorization": f"DIDKey {_did_key_from_signing_key(signing_key)} {sign_message(signing_key, payload)}",
+            "Authorization": f"DIDKey {did_key_from_signing_key(signing_key)} {sign_message(signing_key, payload)}",
             "X-AWEB-Timestamp": timestamp,
         }
 
@@ -1551,7 +1551,7 @@ class RegistryClient:
         )
         return {
             "X-AWEB-Parent-Authorization": (
-                f"DIDKey {_did_key_from_signing_key(parent_signing_key)} "
+                f"DIDKey {did_key_from_signing_key(parent_signing_key)} "
                 f"{sign_message(parent_signing_key, payload)}"
             ),
             "X-AWEB-Parent-Timestamp": timestamp,
@@ -1576,7 +1576,7 @@ class RegistryClient:
         )
         return {
             "X-AWEB-Parent-Authorization": (
-                f"DIDKey {_did_key_from_signing_key(parent_signing_key)} "
+                f"DIDKey {did_key_from_signing_key(parent_signing_key)} "
                 f"{sign_message(parent_signing_key, payload)}"
             ),
             "X-AWEB-Parent-Timestamp": timestamp,
@@ -2707,7 +2707,7 @@ class CachedRegistryClient(RegistryClient):
         if not self.member_signing_keys or self.service_token:
             return ""
         key = self.member_signing_keys.get(build_team_id(domain, name))
-        return ":member-reader:" + (_did_key_from_signing_key(key) if key is not None else "anon")
+        return ":member-reader:" + (did_key_from_signing_key(key) if key is not None else "anon")
 
     def _team_metadata_cache_key(self, domain: str, name: str) -> str:
         return f"awid:registry_cache:v2:team:{self.registry_url}:{domain}/{name}{self._team_reader_cache_suffix(domain, name)}"
@@ -2737,7 +2737,7 @@ class CachedRegistryClient(RegistryClient):
 
     def _team_certificates_cache_scope(self, signing_key: bytes | None) -> str:
         if signing_key is not None:
-            return _did_key_from_signing_key(signing_key)
+            return did_key_from_signing_key(signing_key)
         if self.service_token is not None:
             token_digest = hashlib.sha256(self.service_token.encode("utf-8")).hexdigest()
             return f"service-sha256:{token_digest}"
@@ -2813,13 +2813,8 @@ def _cache_entry_fetched_at(entry: dict[str, Any], ttl_seconds: int) -> int:
     return fetched_at
 
 
-def _did_key_from_signing_key(signing_key: bytes) -> str:
-    key = SigningKey(signing_key)
-    return did_from_public_key(bytes(key.verify_key))
-
-
 def _assert_signing_key_matches(expected_did: str, signing_key: bytes) -> None:
-    actual_did = _did_key_from_signing_key(signing_key)
+    actual_did = did_key_from_signing_key(signing_key)
     if actual_did != expected_did:
         raise ValueError("signing_key does not match the supplied controller_did")
 
