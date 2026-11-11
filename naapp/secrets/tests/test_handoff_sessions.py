@@ -43,8 +43,9 @@ from nacl.signing import SigningKey
 
 from aweb_secrets.human_holding_identity import owner_holding_identity
 from aweb_secrets.owners import OWNER_ROLE
+from tests.human_owner import apply_holder
 from tests.test_human_holders import authority
-from tests.test_owner_bootstrap import TEAM, _apply
+from tests.test_owner_bootstrap import TEAM
 from tests.test_owner_bootstrap import world as world
 
 API = "https://api.example"
@@ -89,6 +90,7 @@ class Journey:
     factory: object
     world: object
     enrol_owner: Callable[[str], Awaitable[tuple[Member, PublicScope, SoftAuthenticator]]]
+    registry: RegistryClient
 
     async def open(self):
         key = SigningKey.generate()
@@ -242,15 +244,10 @@ async def journey(world, request, human_member_cache_seconds) -> AsyncIterator[J
             device = SoftAuthenticator(world.passkeys.rp.origin)
             if options.get("designated", True):
                 who = PrincipalKey(team, principal)
-                await _apply(world, "app-role.designate", who, contact)
-                token = world.contacts.inbox[contact][-1]
-                prepared = await world.credential_audit.prepare_enrolment(token)
-                with world.credential_audit.prepared(prepared):
-                    await world.passkeys.complete_enrolment(
-                        token,
-                        device.create(await world.passkeys.enrolment_options(token)),
-                        fence=prepared,
-                    )
+                await apply_holder(
+                    world, "human-role.designate", who, contact, member=member, client=registry
+                )
+                device = world.devices[contact]
             return member, PublicScope(INSTALLATION_ID, OWNER_ROLE, principal), device
 
         member, public_scope, device = await enrol_owner("alice")
@@ -323,6 +320,7 @@ async def journey(world, request, human_member_cache_seconds) -> AsyncIterator[J
                 factory,
                 world,
                 enrol_owner,
+                registry,
             )
 
 
@@ -369,24 +367,17 @@ async def test_real_recovery_retires_login_before_changed_holding_digest(journey
     old_target = await authority(journey.world).session_target(
         journey.scope, team_id=journey.member.team_id
     )
-    await _apply(
+    await apply_holder(
         journey.world,
-        "app-credential.recover",
+        "human-credential.replace",
         PrincipalKey(TEAM, journey.scope.principal),
         "recovered@example.com",
+        member=journey.member,
+        client=journey.registry,
     )
-    # Complete the genuine replacement enrollment; production cooling-off is
-    # retained. The initial old LOGIN already fails during cooling-off.
-    token = journey.world.contacts.inbox["recovered@example.com"][-1]
-    replacement = SoftAuthenticator(journey.device.origin)
-    prepared = await journey.world.credential_audit.prepare_enrolment(token)
-    with journey.world.credential_audit.prepared(prepared):
-        new = await journey.world.passkeys.complete_enrolment(
-            token,
-            replacement.create(await journey.world.passkeys.enrolment_options(token)),
-            fence=prepared,
-        )
-    assert new.subject != old_target.subject
+    # Replacement binds its new key atomically; no email enrollment exists.
+    new = await journey.world.passkeys.designated_approver(old_target.b3_scope)
+    assert new is None  # The canonical cooling-off remains in force.
     after_cooling = await journey.world.passkeys.recovery_pending_until(old_target.b3_scope)
     assert after_cooling is not None
     monkeypatch.setattr(

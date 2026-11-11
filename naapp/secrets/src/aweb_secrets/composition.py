@@ -28,6 +28,7 @@ from aweb_naapp.hooks.owner_act import APP_ACTS
 from aweb_naapp.hooks.owner_act_nonces import OwnerActVerifier, apply_owner_act_migrations
 from aweb_naapp.key_file import read_key_file
 from aweb_naapp.nonces import apply_nonce_migrations
+from aweb_naapp.roles import is_holding_scope
 from aweb_naapp.runtime.app import NaappRuntime
 from aweb_naapp.runtime.approvals import (
     ActionPolicy,
@@ -100,7 +101,7 @@ from aweb_secrets.human_holding_identity import owner_holding_identity
 from aweb_secrets.installation_lookup import InstallationLookup
 from aweb_secrets.jobs import apply_job_migrations
 from aweb_secrets.metadata_routes import MetadataServices, metadata_router
-from aweb_secrets.owners import OwnerDirectory, apply_owner_migrations, is_owner_scope
+from aweb_secrets.owners import OWNER_ROLE, OwnerDirectory, apply_owner_migrations, is_owner_scope
 from aweb_secrets.passkey_context import PasskeyContexts
 from aweb_secrets.passkey_email import PasskeyEmailDelivery
 from aweb_secrets.response_audit import ResponseKey
@@ -217,6 +218,7 @@ async def _compose(
         producer=runtime.hook_producer,
         passkeys=shared_passkeys,
         role_of=credential_role,
+        human_roles=frozenset({OWNER_ROLE}),
         approvals=ChangeApprovals(approval),
         registration_view=governance_view,
         max_backlog_age=timedelta(seconds=settings.hook_events_stalled_after_seconds),
@@ -240,6 +242,7 @@ async def _compose(
         enrolment_ttl=timedelta(hours=1),
         challenge_ttl=timedelta(minutes=5),
         owner_scopes=is_owner_scope,
+        holding_scopes=is_holding_scope,
         proof_context=contexts,
     )
     await passkeys.migrate()

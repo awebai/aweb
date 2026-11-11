@@ -2,7 +2,6 @@
 
 import asyncio
 import base64
-import socket
 from urllib.parse import urlencode
 
 import pytest
@@ -15,6 +14,7 @@ from cryptography.hazmat.primitives.serialization import Encoding, NoEncryption,
 from playwright.async_api import Error as BrowserError
 from playwright.async_api import expect
 
+from tests.console_network import passkey_origin as passkey_origin
 from tests.test_console_reconciliation import application, repeated_broker
 from tests.test_console_ui_browser import browser as browser
 from tests.test_reconciliation_service import snapshot
@@ -23,19 +23,25 @@ from tests.test_use_approvals import world as world
 
 
 @pytest.fixture
-async def service(uses):
-    sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-    sock.bind(("127.0.0.1", 0))
-    port = sock.getsockname()[1]
-    origin = f"http://localhost:{port}"
+async def service(uses, console_tls, console_listener):
+    sock = console_listener.socket
+    port, origin = console_listener.port, console_listener.origin
     # The service fixture first enrols an actual B3 owner and produces a real
     # uncertain run. Import that generated authenticator key into Chromium;
     # all subsequent LOGIN/VIEW/APPROVE assertions use the shipped browser UI.
     app, run, original, current = await application(
-        uses, origin=origin, agent_origin=f"http://127.0.0.1:{port}"
+        uses, origin=origin, agent_origin=f"https://127.0.0.1:{port}"
     )
     uses.world.passkeys.rp = RelyingParty(origin=origin, name="Secrets")
-    server = uvicorn.Server(uvicorn.Config(app, log_level="warning", lifespan="off"))
+    server = uvicorn.Server(
+        uvicorn.Config(
+            app,
+            log_level="warning",
+            lifespan="off",
+            ssl_certfile=str(console_tls.cert_file),
+            ssl_keyfile=str(console_tls.key_file),
+        )
+    )
     task = asyncio.create_task(server.serve(sockets=[sock]))
     try:
         async with asyncio.timeout(10):
@@ -76,7 +82,7 @@ async def signed_in_page(uses, context, origin, current):
                 "credential": {
                     "credentialId": base64.b64encode(credential.credential_id).decode(),
                     "isResidentCredential": True,
-                    "rpId": "localhost",
+                    "rpId": credential.rp_id,
                     "privateKey": base64.b64encode(
                         credential.key.private_bytes(
                             Encoding.DER, PrivateFormat.PKCS8, NoEncryption()

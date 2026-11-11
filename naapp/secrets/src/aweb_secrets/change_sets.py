@@ -875,7 +875,9 @@ class ChangeSets:
         if decided_by is None:
             raise ChangeRefused("no owner has decided the change set", code="change_not_approved")
         confirmer = await self._directory.owner_of(tx, decided_by.scope)
-        if confirmer is None or not await hold_owner_holding(tx, confirmer, installation_id=admitted.installation_id):
+        if confirmer is None or not await hold_owner_holding(
+            tx, confirmer, installation_id=admitted.installation_id
+        ):
             raise ChangeRefused("the deciding owner is no longer an owner", code="owner_required")
         row = await tx.fetch_one(
             "SELECT * FROM {{tables.change_sets}} WHERE change_id = $1", change_id

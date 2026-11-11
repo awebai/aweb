@@ -7,6 +7,7 @@ No test inserts a new generic holding or treats a login as a holding writer.
 
 from copy import deepcopy
 
+import asyncpg
 import pytest
 from aweb_naapp.roles import PrincipalKey
 from aweb_naapp.runtime.human_roles import HumanRoleHoldings
@@ -14,12 +15,21 @@ from aweb_naapp.runtime.installation import InstallationFence
 from aweb_naapp_testing.owner_acts import APP_ID, INSTALLATION_ID
 from pgdbm.errors import MigrationError
 
-from aweb_secrets.owners import OWNER_ROLE, OwnerRequired, apply_owner_migrations, record_owner
+from aweb_secrets.owners import (
+    OWNER_ROLE,
+    OwnerRequired,
+    apply_owner_migrations,
+    hold_owner,
+    record_owner,
+)
 from tests.owner_history import load_owner_history
 from tests.test_change_sets import Installations
-from tests.test_owner_bootstrap import ALICE, BOB, TEAM, _apply
+from tests.test_owner_bootstrap import TEAM, _subject
 from tests.test_owner_bootstrap import world as bootstrap_world  # noqa: F401
 from tests.test_owner_directory import _policy
+
+ALICE = PrincipalKey(TEAM, "did:aw:jPUMBAvNeJo8USHNtJ81Wm7cqnk")
+BOB = PrincipalKey(TEAM, "did:aw:2Uq51iFVLnqmgbVY3vLZtMD5PR87")
 
 pytestmark = pytest.mark.parametrize("bootstrap_world", [{"owner_history": True}], indirect=True)
 
@@ -105,6 +115,20 @@ async def test_one_did_key_owner_refuses_the_whole_upgrade_atomically(bootstrap_
     assert await authority_snapshot(w.db) == before
 
 
+async def test_one_inconsistent_scope_refuses_the_whole_upgrade_atomically(bootstrap_world):
+    w = bootstrap_world
+    await load_owner_history(w)
+    await w.db.execute(
+        "UPDATE {{tables.owner_principals}} SET scope=$1 WHERE principal_did=$2",
+        "secrets.owner." + "0" * 40,
+        ALICE.principal_did,
+    )
+    before = await authority_snapshot(w.db)
+    with pytest.raises(MigrationError):
+        await apply_owner_migrations(w.db)
+    assert await authority_snapshot(w.db) == before
+
+
 async def test_directory_uses_the_generic_holding_for_exclusion_and_withdrawal(bootstrap_world):
     w = bootstrap_world
     history = await load_owner_history(w)
@@ -148,12 +172,18 @@ async def test_legacy_entry_refuses_before_any_binding_nonce_or_delivery(bootstr
     await apply_owner_migrations(w.db)
     before = await authority_snapshot(w.db)
     delivered = deepcopy((w.contacts.inbox, w.contacts.notices))
+    contact = "new-contact@example.com"
+    signing, signature = w.owner.sign(
+        "app-credential.recover" if existing else "app-role.designate",
+        _subject(principal, contact),
+    )
     with pytest.raises(OwnerRequired):
-        await _apply(
-            w,
-            "app-credential.recover" if existing else "app-role.designate",
-            principal,
-            "new-contact@example.com",
+        await w.console.apply_owner_act(
+            signing=signing,
+            signature=signature,
+            admitted=w.admitted,
+            principal=principal,
+            contact=contact,
         )
     assert await authority_snapshot(w.db) == before
     assert (w.contacts.inbox, w.contacts.notices) == delivered
@@ -186,3 +216,30 @@ async def test_the_legacy_mapping_writer_is_retired_for_every_scope(bootstrap_wo
         with pytest.raises(OwnerRequired):
             await record_owner(tx, installation_id=INSTALLATION_ID, principal=ALICE)
     assert await authority_snapshot(w.db) == before
+
+
+async def test_owner_hold_retains_both_shared_rows(bootstrap_world):
+    w = bootstrap_world
+    history = await load_owner_history(w)
+    await apply_owner_migrations(w.db)
+    scope = history["tables"]["owner_principals"][0]["scope"]
+    probes = (
+        (
+            "SELECT principal_did FROM {{tables.role_assignments}} WHERE team_id=$1 AND role=$2 AND principal_did=$3 FOR UPDATE NOWAIT",
+            (TEAM, OWNER_ROLE, ALICE.principal_did),
+        ),
+        (
+            "SELECT b3_scope FROM {{tables.role_holdings}} WHERE b3_scope=$1 FOR UPDATE NOWAIT",
+            (scope,),
+        ),
+    )
+    async with w.db.transaction() as tx:
+        await w.console.fence.check(tx, w.admitted)
+        assert await hold_owner(tx, ALICE, installation_id=INSTALLATION_ID)
+        for sql, args in probes:
+            with pytest.raises(asyncpg.LockNotAvailableError):
+                async with w.db.transaction() as observer:
+                    await observer.fetch_value(sql, *args)
+    for sql, args in probes:
+        async with w.db.transaction() as observer:
+            assert await observer.fetch_value(sql, *args) is not None

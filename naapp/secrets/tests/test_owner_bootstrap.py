@@ -1,8 +1,8 @@
-"""Owner bootstrap and recovery through the team owner act (design §10.2, decision 33).
+"""Canonical owner components and globally refused legacy owner acts.
 
-The team key, through aw, signs an aweb.owner-act/1 that names one
-principal's owner scope and commits to its contact. Applying it gives the
-principal secrets.owner and designates its B3 scope, in one transaction.
+Migration capture is checked-in historical data. Ordinary setup registers a
+real human and uses the canonical shared holder writer; it never reopens the
+old contact-model owner binding path.
 """
 
 from __future__ import annotations
@@ -17,7 +17,7 @@ import pytest
 from aweb_naapp.hooks.owner_act import PREFIX
 from aweb_naapp.hooks.owner_act_nonces import apply_owner_act_migrations
 from aweb_naapp.hooks.strictjson import canonical
-from aweb_naapp.roles import PrincipalKey, apply_roles_migrations, has_role
+from aweb_naapp.roles import PrincipalKey, apply_roles_migrations, has_role, is_holding_scope
 from aweb_naapp.runtime.approvals import (
     ActionPolicy,
     ApprovalRevocation,
@@ -43,7 +43,6 @@ from awid_service.testing import running_registry
 from nacl.signing import SigningKey
 from pgdbm import AsyncMigrationManager
 
-from aweb_secrets.change import ChangeRefused
 from aweb_secrets.change_policy import apply_change_policy_migrations, require_four_eyes
 from aweb_secrets.change_sets import apply_change_set_migrations
 from aweb_secrets.console import OwnerConsole
@@ -57,12 +56,13 @@ from aweb_secrets.owners import (
 )
 from aweb_secrets.passkey_context import PasskeyContexts
 from aweb_secrets.revisions import apply_revision_migrations
+from tests.human_owner import apply_holder, fixture_principal
 from tests.test_change_sets import Installations
 from tests.test_owner_directory import ORIGIN, Audit, Contacts
 
 TEAM = "demo:example.com"
-ALICE = PrincipalKey(team_id=TEAM, principal_did="did:aw:jPUMBAvNeJo8USHNtJ81Wm7cqnk")
-BOB = PrincipalKey(team_id=TEAM, principal_did="did:aw:2Uq51iFVLnqmgbVY3vLZtMD5PR87")
+ALICE = fixture_principal(TEAM, "alice")
+BOB = fixture_principal(TEAM, "bob")
 
 
 class World:
@@ -121,6 +121,7 @@ async def world(test_db_factory, request) -> AsyncIterator[World]:
         enrolment_ttl=timedelta(hours=1),
         challenge_ttl=timedelta(minutes=5),
         owner_scopes=is_owner_scope,
+        holding_scopes=is_holding_scope,
         proof_context=PasskeyContexts(app_id=APP_ID),
     )
     await passkeys.migrate()
@@ -257,10 +258,9 @@ async def _enrol(world: World, contact: str) -> SoftAuthenticator:
     return device
 
 
-async def test_the_team_owner_act_makes_the_first_owner(world: World) -> None:
-    await _apply(world, "app-role.designate", ALICE, "alice@example.com")
+async def test_the_canonical_component_writer_binds_a_human_owner(world: World) -> None:
+    await apply_holder(world, "human-role.designate", ALICE, "alice@example.com")
     assert await has_role(world.db, ALICE, OWNER_ROLE)
-    await _enrol(world, "alice@example.com")
     scope = owner_scope(INSTALLATION_ID, TEAM, ALICE.principal_did)
     approver = await _approver(world, scope)
     assert approver is not None and approver.contact == "alice@example.com"
@@ -349,8 +349,7 @@ async def test_another_teams_controller_cannot_designate_this_teams_member(world
 
 
 async def test_a_recovery_from_another_team_cannot_touch_an_owner(world: World) -> None:
-    await _apply(world, "app-role.designate", ALICE, "alice@example.com")
-    await _enrol(world, "alice@example.com")
+    await apply_holder(world, "human-role.designate", ALICE, "alice@example.com")
     # The other team's controller signs, as its own team, a recovery of the
     # owner scope it names for its own principal with the victim's did:aw.
     impostor = PrincipalKey(team_id=OTHER_TEAM, principal_did=ALICE.principal_did)
@@ -372,63 +371,48 @@ async def test_a_recovery_from_another_team_cannot_touch_an_owner(world: World) 
     assert not await has_role(world.db, impostor, OWNER_ROLE)
 
 
-async def test_a_scope_recorded_for_another_owner_is_refused(world: World) -> None:
-    scope = owner_scope(INSTALLATION_ID, TEAM, ALICE.principal_did)
-    await world.db.execute(
-        "INSERT INTO {{tables.owner_principals}} (scope, installation_id, team_id, principal_did)"
-        " VALUES ($1, $2, $3, $4)",
-        scope,
-        INSTALLATION_ID,
-        TEAM,
-        BOB.principal_did,
-    )
+async def test_a_legacy_binding_never_creates_or_changes_history(world: World) -> None:
+    await apply_holder(world, "human-role.designate", BOB, "bob@example.com")
+    before = await world.db.fetch_all("SELECT * FROM {{tables.role_holdings}}")
     with pytest.raises(OwnerRequired):
         await _apply(world, "app-role.designate", ALICE, "alice@example.com")
-    assert not await has_role(world.db, ALICE, OWNER_ROLE)
-    assert world.contacts.inbox == {}
+    assert await world.db.fetch_all("SELECT * FROM {{tables.role_holdings}}") == before
+    assert await world.db.fetch_value("SELECT count(*) FROM {{tables.owner_principals}}") == 0
 
 
-async def test_an_owner_is_designated_once_and_recovered_after_the_cooling_off(
-    world: World,
-) -> None:
-    await _apply(world, "app-role.designate", ALICE, "alice@example.com")
-    await _enrol(world, "alice@example.com")
-    with pytest.raises(OwnerRequired):
-        await _apply(world, "app-role.designate", ALICE, "alice-new@example.com")
-    designation = await _apply(world, "app-credential.recover", ALICE, "alice-new@example.com")
-    assert [n.kind.value for n in world.contacts.notices["alice@example.com"]] == [
-        "recovery_started"
-    ]
+async def test_legacy_designation_and_recovery_cannot_replace_a_holder(world: World) -> None:
+    await apply_holder(world, "human-role.designate", ALICE, "alice@example.com")
     scope = owner_scope(INSTALLATION_ID, TEAM, ALICE.principal_did)
-    assert await world.passkeys.recovery_pending_until(scope) == designation.effective_at
-    assert await _approver(world, scope) is None
+    original = await world.passkeys.designated_approver(scope)
+    for act in ("app-role.designate", "app-credential.recover"):
+        with pytest.raises(OwnerRequired):
+            await _apply(world, act, ALICE, "alice-new@example.com")
+    assert await world.passkeys.designated_approver(scope) == original
+    assert await world.passkeys.recovery_pending_until(scope) is None
 
 
-async def test_the_shared_owner_act_path_refuses_a_stale_installation(world: World) -> None:
+async def test_the_canonical_component_writer_refuses_a_stale_installation(world: World) -> None:
     await world.db.execute(
         "UPDATE {{tables.installation_fences}}"
         " SET fresh_until = clock_timestamp() - interval '1 second'"
     )
     with pytest.raises(InstallationRefused) as refused:
-        await _apply(world, "app-role.designate", ALICE, "alice@example.com")
+        await apply_holder(world, "human-role.designate", ALICE, "alice@example.com")
     assert refused.value.code == "authority_unavailable"
     assert not await has_role(world.db, ALICE, OWNER_ROLE)
     assert not await world.db.fetch_value("SELECT count(*) FROM {{tables.owner_act_nonces}}")
     assert world.contacts.inbox == {}
 
 
-async def test_the_shared_owner_act_path_preserves_four_eyes(world: World) -> None:
-    await _apply(world, "app-role.designate", ALICE, "alice@example.com")
-    await _enrol(world, "alice@example.com")
-    await _apply(world, "app-role.designate", BOB, "bob@example.com")
-    await _enrol(world, "bob@example.com")
+async def test_legacy_recovery_cannot_bypass_four_eyes(world: World) -> None:
+    await apply_holder(world, "human-role.designate", ALICE, "alice@example.com")
+    await apply_holder(world, "human-role.designate", BOB, "bob@example.com")
     async with world.db.transaction() as tx:
         await require_four_eyes(
             tx, installation_id=INSTALLATION_ID, team_id=TEAM, directory=world.directory
         )
-    with pytest.raises(ChangeRefused) as refused:
+    with pytest.raises(OwnerRequired):
         await _apply(world, "app-credential.recover", ALICE, "alice-new@example.com")
-    assert refused.value.code == "four_eyes_needs_two_owners"
     scope = owner_scope(INSTALLATION_ID, TEAM, ALICE.principal_did)
     assert await world.passkeys.recovery_pending_until(scope) is None
     assert world.contacts.notices == {}

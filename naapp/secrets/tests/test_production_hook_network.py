@@ -22,10 +22,11 @@ from awid_service.testing import REGISTRY_URL, SERVICE_TOKEN
 
 from aweb_secrets.composition import create_service
 from aweb_secrets.deployment import DeploymentSettings, create_deployment
+from tests.human_owner import member_key
 from tests.production_authority import authority, install, install_audit_receiver, no_dns_override
 from tests.production_logs import logs_receiver
 from tests.test_composition import settings
-from tests.test_production_bootstrap import owner_body
+from tests.test_production_bootstrap import enrolled_owner
 
 
 @pytest.mark.parametrize(
@@ -51,7 +52,7 @@ async def test_production_hook_delivery_uses_explicit_dns_ca_and_internal_networ
     deployment,
 ):
     deliverable = internal and listed and not denied and not guard_denied
-    member = Member(team_id="root:example.com")
+    member = Member(member_key=member_key("alice"), team_id="root:example.com")
     host, name = local_address(), "logs.root-hooks.test"
     certificates = make_certificates(tmp_path, [name], [host])
     dns = DnsServer(records={(name, "A"): [host]})
@@ -175,13 +176,19 @@ async def test_production_hook_delivery_uses_explicit_dns_ca_and_internal_networ
                             )
                             assert view is not None and len(view.registrations) == 1
                             binding_id = view.registrations[0].binding_id
-                            _, body = owner_body(configured, member, installed["installation_id"])
-                            response = await client.post(
-                                configured.console_origin
-                                + f"/installations/{installed['installation_id']}/owner-acts",
-                                json=body,
+                            client.owner_fixture_registry = registry
+                            await enrolled_owner(
+                                (
+                                    service,
+                                    client,
+                                    configured,
+                                    member,
+                                    installed,
+                                    smtp,
+                                    transport,
+                                    dns,
+                                )
                             )
-                            assert response.status_code == 200
                             db = service.runtime.db()
                             async with asyncio.timeout(10):
                                 while True:

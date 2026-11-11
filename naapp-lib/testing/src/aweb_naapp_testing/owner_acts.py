@@ -55,7 +55,7 @@ class TeamOwner:
             "type": "aweb.owner-act",
             "act": act,
             "team_id": self.team_id,
-            "aud": AUDIENCE,
+            "aud": self.verifier.audience if self.verifier is not None else AUDIENCE,
             "team_key_did": did_key(self.team_key),
             "subject": subject,
             "issued_at": issued.strftime("%Y-%m-%dT%H:%M:%SZ"),

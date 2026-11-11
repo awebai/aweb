@@ -10,7 +10,7 @@ BEGIN
                installation_id || chr(10) || team_id || chr(10) || principal_did,
                'UTF8')), 'hex'), 40)
     ) THEN
-        RAISE EXCEPTION 'legacy owner identity cannot be converted to a human holding';
+        RAISE EXCEPTION 'owner cutover requires an explicit human-role act for legacy or inconsistent identity bindings';
     END IF;
 END;
 $$;

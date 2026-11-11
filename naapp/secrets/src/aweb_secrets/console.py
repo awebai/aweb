@@ -87,9 +87,9 @@ class OwnerConsole:
     Mount with owner_console_router. Apply S4 console migrations before serving.
     The installation lookup refreshes F6 outside any write transaction and must
     return its authoritative installation identity, or refuse an unavailable one.
-    For first-owner bootstrap it receives an untrusted team lookup hint before
-    any local F6 row exists. Every other call names the team of the session or
-    record it acts for, so another team's installation id is never resolved.
+    The retired owner binding route receives only an untrusted lookup hint and
+    refuses its effect. Other calls name the team of the session or record they
+    act for, so another team's installation id is never resolved.
     """
 
     def __init__(
