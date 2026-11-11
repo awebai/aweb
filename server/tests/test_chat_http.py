@@ -6160,7 +6160,7 @@ async def test_chat_history_and_dual_read_contract_for_global_participant(aweb_c
     )
 
     app = _build_test_app(aweb_cloud_db.aweb_db, AsyncMock())
-    monkeypatch.setattr(chat_routes, "publish_chat_session_signal", AsyncMock(return_value=1))
+    monkeypatch.setattr("aweb.messaging.chat_read.publish_chat_session_signal", AsyncMock(return_value=1))
 
     async def _auth_override():
         return MessagingAuth(

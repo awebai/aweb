@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from aweb.agent_wake import agent_wake_publisher, agent_wake_scope
+from aweb.agent_wake import agent_wake_publisher
 
 from aweb.attachment_service import prepare_attachment_send, attachment_retry, attachment_references_by_message
 
@@ -26,7 +26,7 @@ from redis.exceptions import ConnectionError as RedisConnectionError
 from redis.exceptions import RedisError
 
 from aweb.deps import get_db, get_redis
-from aweb.events import chat_session_channel_name, publish_chat_session_signal
+from aweb.events import chat_session_channel_name
 from aweb.redis_subscriptions import open_subscription, release_subscription
 from aweb.identity_metadata import lookup_identity_metadata_by_did, routable_chat_address
 from aweb.id_chain_auth import stored_id_chain
@@ -50,11 +50,10 @@ from aweb.messaging.chat import (
     MAX_CHAT_MARK_READ_IDS,
     get_message_history,
     get_pending_conversations,
-    mark_messages_read,
-    mark_messages_read_up_to,
     resolve_session_actor_did,
     wake_chat_session_participants,
 )
+from aweb.messaging.chat_read import mark_chat_read
 from aweb.messaging.activity_stream import SessionActivity
 from aweb.messaging.contacts import (
     get_contact_addresses,
@@ -671,8 +670,6 @@ async def mark_read(
     actor_dids = _actor_dids(auth)
     if not actor_dids:
         raise HTTPException(status_code=401, detail="Authenticated identity is missing a routing DID")
-    actor_agent = await _resolve_actor_agent(db, actor_dids)
-    actor_agent_id = auth.agent_id or (str(actor_agent["agent_id"]) if actor_agent else None)
     session_uuid = UUID(session_id.strip())
 
     aweb_db = db.get_manager("aweb")
@@ -680,40 +677,17 @@ async def mark_read(
     if not sess:
         raise HTTPException(status_code=404, detail=RESOURCE_NOT_FOUND_DETAIL)
 
-    actor_did = await resolve_session_actor_did(db, session_id=session_uuid, actor_dids=actor_dids)
-    if not actor_did:
+    result = await mark_chat_read(
+        db,
+        redis,
+        auth,
+        messaging_runtime(request.app.state),
+        session_id=session_uuid,
+        message_ids=payload.message_ids,
+        up_to_message_id=payload.up_to_message_id,
+    )
+    if result is None:
         raise HTTPException(status_code=404, detail=RESOURCE_NOT_FOUND_DETAIL)
-
-    if payload.message_ids is not None:
-        with agent_wake_scope(agent_wake_publisher(request.app.state)):
-            result = await mark_messages_read(
-                db,
-                session_id=session_uuid,
-                participant_did=actor_did,
-                participant_agent_id=actor_agent_id,
-                message_ids=payload.message_ids,
-            )
-        read_receipt_message_id = payload.message_ids[-1]
-    else:
-        assert payload.up_to_message_id is not None
-        with agent_wake_scope(agent_wake_publisher(request.app.state)):
-            result = await mark_messages_read_up_to(
-                db,
-                session_id=session_uuid,
-                participant_did=actor_did,
-                participant_agent_id=actor_agent_id,
-                up_to_message_id=payload.up_to_message_id,
-            )
-        read_receipt_message_id = payload.up_to_message_id
-
-    if int(result["messages_marked"] or 0) > 0:
-        await publish_chat_session_signal(
-            redis,
-            session_id=str(session_uuid),
-            signal_type="read_receipt",
-            agent_id=actor_did,
-            message_id=read_receipt_message_id,
-        )
 
     return {"success": True, "messages_marked": result["messages_marked"]}
 
