@@ -436,9 +436,10 @@ class NaappRuntime:
     ) -> CheckedHumanRoleMember:
         """Retain exact signed JSON bytes with the existing exact-subject H2 proof.
 
-        Run before effect locks. Identity mismatch/malformed input is the
-        delivery contract's owner_required; definite loss, non-human kind and
-        unavailability retain their distinct typed outcomes. No HTTP response
+        Run before effect locks. A malformed certificate, or one naming another
+        team or principal, is no membership evidence: principal_not_member, as
+        is definite loss; non-human kind and unavailability retain their
+        distinct typed outcomes. No HTTP response
         is built here, and no certificate is fetched or re-encoded for storage.
         """
         from awid.team_certificate import (
@@ -462,7 +463,7 @@ class NaappRuntime:
             if decoded.get("team_id") != team_id or decoded.get("member_did_aw") != principal:
                 raise TeamCertificateError("malformed")
         except TeamCertificateError:
-            raise OwnerActDeliveryRefused("owner_required") from None
+            raise OwnerActDeliveryRefused("principal_not_member") from None
         try:
             proof = await self.check_human_member(
                 team_id,

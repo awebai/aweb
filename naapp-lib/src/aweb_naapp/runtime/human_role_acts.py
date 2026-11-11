@@ -108,12 +108,12 @@ class HumanRoleActs:
             raise OwnerActDeliveryRefused("owner_required")
         member = None
         if act in _HOLDING_ACTS:
-            if (
-                delivery.credential is None
-                or delivery.certificate is None
-                or (role in self._notice_roles and delivery.notice_contact is None)
+            if delivery.credential is None or (
+                role in self._notice_roles and delivery.notice_contact is None
             ):
                 raise OwnerActDeliveryRefused("owner_required")
+            if delivery.certificate is None:
+                raise OwnerActDeliveryRefused("principal_not_member")
             member = await self._check_member(
                 installation.team_id, principal=principal, certificate=delivery.certificate
             )
