@@ -1,4 +1,4 @@
-"""Mutation hooks for MCP tools, fired through the embedding application's callback.
+"""The embedding application's mutation callback, as MCP tools reach it.
 
 The MCP app is mounted inside an application whose ``app.state.on_mutation``
 is the same callback the REST routes fire. ``MCPAuthMiddleware`` records that
@@ -11,7 +11,7 @@ from __future__ import annotations
 import contextvars
 from typing import Any
 
-from aweb.hooks import MutationCallback, fire_mutation_callback
+from aweb.hooks import MutationCallback
 
 _mutation_callback: contextvars.ContextVar[MutationCallback | None] = contextvars.ContextVar(
     "aweb_mcp_mutation_callback", default=None
@@ -34,8 +34,3 @@ def reset_mutation_callback(token: contextvars.Token) -> None:
 
 def current_mutation_callback() -> MutationCallback | None:
     return _mutation_callback.get()
-
-
-async def fire_mcp_mutation_hook(event_type: str, context: dict) -> None:
-    """Fire a mutation hook for the current MCP request. Never raises."""
-    await fire_mutation_callback(current_mutation_callback(), event_type, context)

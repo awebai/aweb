@@ -15,7 +15,7 @@ from pgdbm.core import TransactionManager
 
 from aweb.app_registry import validate_team_id
 from aweb.install_admins import standalone_install_admin_policy
-from aweb.internal_auth import parse_internal_auth_context
+from aweb.internal_auth import parse_internal_auth_context, resolve_internal_actor
 from aweb.service_errors import RESOURCE_NOT_FOUND_DETAIL, ServiceError
 from aweb.team_auth_deps import TeamIdentity
 
@@ -101,7 +101,7 @@ async def require_install_admin(
     the only authority source; otherwise standalone operator grants apply.
     Exceptions and non-True policy results never authorize a mutation.
     """
-    subject = _install_subject(request, identity, team_id)
+    subject = await _install_subject(tx, request, identity, team_id)
     policy: InstallAdminPolicy | None = getattr(request.app.state, "install_admin_policy", None)
     if policy is None:
         policy = standalone_install_admin_policy
@@ -124,7 +124,7 @@ async def require_install_admission(
     if policy is None:
         await require_install_admin(tx, request, identity, team_id, action=action, app_id=app_id)
         return
-    subject = _install_subject(request, identity, team_id)
+    subject = await _install_subject(tx, request, identity, team_id)
     await _check_policy(policy, tx, subject, action=action, app_id=app_id, unverified_origin=unverified_origin)
 
 
@@ -142,7 +142,9 @@ async def _check_policy(policy, tx, subject, **context) -> None:
         raise _admin_required()
 
 
-def _install_subject(request: Request, identity: TeamIdentity | None, team_id: str) -> InstallAdminSubject:
+async def _install_subject(
+    tx: TransactionManager, request: Request, identity: TeamIdentity | None, team_id: str
+) -> InstallAdminSubject:
     team_id = validate_team_id(team_id)
     if identity is not None:
         if identity.team_id != team_id:
@@ -155,6 +157,10 @@ def _install_subject(request: Request, identity: TeamIdentity | None, team_id: s
     if internal is not None:
         if internal["team_id"] != team_id:
             raise HTTPException(status_code=404, detail=RESOURCE_NOT_FOUND_DETAIL)
+        # A forwarded actor that names an agent must be an active member, read
+        # in the mutation's transaction; one that names no agent is the
+        # proxy's team-level principal, whose authority the policy decides.
+        await resolve_internal_actor(tx, internal)
         subject = InternalInstallAdminSubject(
             team_id=team_id, principal_type=internal["principal_type"],
             principal_id=internal["principal_id"], actor_id=internal["actor_id"],

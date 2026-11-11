@@ -57,4 +57,8 @@ COPY scripts/release-wheel-entrypoint.sh /usr/local/bin/release-wheel-entrypoint
 ENV RELEASE_WHEEL_DIR=/candidate-artifacts RELEASE_WHEEL_PYTHON=/app/.venv/bin/python \
     RELEASE_WHEEL_PACKAGES="awid-service aweb-naapp"
 ENTRYPOINT ["sh", "/usr/local/bin/release-wheel-entrypoint.sh"]
+# Probes /live, which checks no dependency: a database outage must not make an
+# orchestrator restart a process that is serving requests.
+HEALTHCHECK --interval=30s --timeout=5s --start-period=30s \
+    CMD ["/app/.venv/bin/python", "-c", "import os,urllib.request; urllib.request.urlopen('http://127.0.0.1:'+os.environ.get('PORT','8765')+'/live',timeout=4).close()"]
 CMD ["sh", "-c", "/app/.venv/bin/uvicorn folio.api:app --host 0.0.0.0 --port ${PORT:-8765}"]

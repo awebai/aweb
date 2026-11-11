@@ -68,7 +68,7 @@ services:
       redis:
         condition: service_healthy
     healthcheck:
-      test: ["CMD", "curl", "-f", "http://localhost:8010/health"]
+      test: ["CMD", "curl", "-f", "http://localhost:8010/ready"]
       interval: 2s
       timeout: 5s
       start_period: 5s
@@ -104,7 +104,7 @@ services:
       awid:
         condition: service_healthy
     healthcheck:
-      test: ["CMD", "curl", "-f", "http://localhost:8000/health"]
+      test: ["CMD", "curl", "-f", "http://localhost:8000/ready"]
       interval: 2s
       timeout: 5s
       start_period: 5s
@@ -141,7 +141,7 @@ services:
         - "CMD"
         - "python3"
         - "-c"
-        - "import urllib.request,sys; sys.exit(0 if urllib.request.urlopen('http://localhost:8765/health').status==200 else 1)"
+        - "import urllib.request,sys; sys.exit(0 if urllib.request.urlopen('http://localhost:8765/ready').status==200 else 1)"
       interval: 2s
       timeout: 5s
       start_period: 5s

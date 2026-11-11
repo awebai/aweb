@@ -236,6 +236,49 @@ example, use `https://aweb.acme.internal`, not
 by addresses in that namespace; it is not a canonical route for bare `did:aw`
 first contact. Hosted aweb.ai namespaces are configured by the hosted service.
 
+Other servers deliver to this origin only when it is an `https` origin named by
+host (not an address literal) and every address the host resolves to is public.
+By default a sending aweb server refuses an origin that is `http`, reporting
+`delivery_origin_refused` to the sender, and an origin that resolves to a
+loopback, private, link-local, CGNAT or otherwise non-public address, reporting
+`delivery_address_refused` and logging a warning that names the origin and the
+setting below.
+
+When the servers that federate are on one private network, as
+`https://aweb.acme.internal` resolving to `10.0.0.5` is, list the private
+delivery origins on each sending server:
+
+```bash
+AWEB_FEDERATION_PRIVATE_DELIVERY_ORIGINS=https://aweb.acme.internal,https://aweb.partner.internal:8443
+```
+
+Each entry is one exact origin, `https://host[:port]`, compared after the
+canonicalisation every delivery origin gets (lowercase host, no trailing dot,
+the default port dropped). It is not a pattern: a different port, a subdomain
+or `http` is not covered, and address literals, CIDR ranges, wildcards, paths,
+queries and user information are not accepted. The server refuses to start
+when an entry is not such an origin, naming the entry. Besides public
+addresses, a listed origin may resolve only to `10.0.0.0/8`, `172.16.0.0/12`,
+`192.168.0.0/16`, `100.64.0.0/10` (CGNAT) and `fc00::/7` (an IPv4-mapped IPv6
+answer is judged by its IPv4 address). Loopback, link-local (including
+`169.254.169.254`), `0.0.0.0`, documentation, benchmarking, reserved and
+multicast addresses stay refused, and one such answer refuses the origin; for
+servers on one host, use the isolated development settings below. Delivery to
+it is otherwise
+unchanged: the host is resolved once, the connection goes to the checked
+address, TLS is verified against the host name, and redirects are not
+followed. The setting applies to federated mail and chat delivery only;
+registry reads keep requiring public addresses. Unset or empty, no private
+delivery origin is admitted.
+
+For federation between servers on one development machine or compose network,
+set `APP_ENV=development` and `AWEB_FEDERATION_TEST=1` on each aweb server. With
+both set, a server whose own `AWEB_PUBLIC_ORIGIN` host is isolated (a
+single-label name such as `aweb-a`, `localhost`, `*.localhost`, `*.test`,
+`*.test.local`, or a loopback literal) delivers over `http` and to non-public
+addresses when the destination host is isolated too. Do not set
+`AWEB_FEDERATION_TEST` in production.
+
 ### Create a Team
 
 ```bash
@@ -301,6 +344,15 @@ The OSS compose stack runs four components:
 - `awid`
 - PostgreSQL
 - Redis
+
+### Container Users
+
+The `aweb`, `awid` and A2A gateway images run as the non-root user
+`1001:1001`. Their `USER` is numeric, so a Kubernetes pod with
+`securityContext.runAsNonRoot: true` admits them without setting `runAsUser`.
+A file or volume mounted into any of them, such as the gateway's
+configuration, workspace or audit directory, must be readable (and, for the
+audit directory, writable) by uid `1001`.
 
 ### Important Server Settings
 
@@ -401,5 +453,100 @@ curl http://localhost:8010/health
 ./scripts/e2e-oss-user-journey.sh
 ```
 
+Both services serve the same three unauthenticated probe routes:
+
+| Route | Answers | Point at it |
+|---|---|---|
+| `/live` | 200 whenever the process serves requests; checks no dependency | Liveness probes and container healthchecks, which restart the process |
+| `/ready` | 200 when Redis and the database answer, 503 when either check fails | Readiness probes, load-balancer routing, start-up ordering |
+| `/health` | The same response as `/ready` | Monitoring and manual checks |
+
+A probe that restarts the container must use `/live`: on `/ready` or `/health`
+it restarts every replica during a Redis or database outage, into the same
+outage. The shipped images' `HEALTHCHECK`s probe `/live`, and the compose
+healthchecks, which only order start-up, probe `/ready`.
+
 The end-to-end script is the strongest local smoke test. It boots the stack,
 creates identities and teams, and exercises the real OSS workflow.
+
+
+## Customer server using the public AWID registry
+
+A standalone aweb server can verify a private team at the public registry
+without an operator-wide `AWID_SERVICE_TOKEN`. Give it one **ordinary member
+key per team**. The team owner keeps the team controller key; the server only
+needs the member key. This member has ordinary membership authority, including
+acting as that member on aweb. It is not a new server identity kind or a
+read-only credential.
+
+In a dedicated server identity directory, generate a local key and request
+membership with the existing CLI:
+
+```bash
+aw id team request --create-local-key --team engineering:example.com --name server
+```
+
+The **team owner**, in the CLI home that holds the team controller key, runs
+the command printed by that request:
+
+```bash
+aw id team add-member --namespace example.com --team engineering \
+  --did <server-did-key> --name server --local
+```
+
+Back in the server identity directory, fetch the issued certificate:
+
+```bash
+aw id team fetch-cert --namespace example.com --team engineering --cert-id <certificate-id>
+```
+
+Create `/etc/aweb/member-keys.json` mapping each canonical `team:namespace`
+to the existing Ed25519 seed PEM private key generated by `aw`
+(`ED25519 PRIVATE KEY`, a 32-byte seed):
+
+```json
+{
+  "engineering:example.com": "/var/lib/aweb/server-identity/.aw/signing.key"
+}
+```
+
+Use the actual key path in your identity directory. Relative key paths resolve
+relative to the JSON file. Keep the private files readable only by the server
+operator and service account; mount them read-only into a container. Do not
+put private keys into the JSON, environment variables or repository. Then run
+aweb with:
+
+```bash
+export AWID_REGISTRY_URL=https://api.awid.ai
+export AWID_MEMBER_KEYS_FILE=/etc/aweb/member-keys.json
+unset AWID_SERVICE_TOKEN
+aweb serve
+```
+
+This configures standalone aweb; the bundled Compose stack still operates its
+own AWID service and uses its shared token. Startup refuses missing credentials,
+an empty key map, unreadable keys or non-Ed25519 PEM keys. Restart after changing
+the key map. If a service token is also configured, it takes precedence.
+
+The client signs GETs for team metadata, the certificate list, member lookup
+and revocations with the configured team's key, using the existing DIDKey path
+signature. That includes pagination and the fresh app-task and hook-binding
+authority reads. No key is borrowed from another team, and neither this key nor
+the service token authenticates reads routed to a different registry. Public
+identity reads stay unchanged. Individual certificate-blob fetches remain
+holder-only; a server member cannot fetch another member's blob.
+
+To revoke the server's access, the owner runs the existing command:
+
+```bash
+aw id team remove-member --namespace example.com --team engineering --cert-id <server-certificate-id>
+```
+
+Fresh reads fail immediately after revocation. Normal member verification
+refreshes its controller-key authority after 60 seconds; an AWID authentication
+refusal is not an outage and cannot use the outage-grace cache. Previously
+cached metadata and certificate lists use their existing TTLs, with a denied
+refresh removing that entry. To recover, issue a replacement ordinary member
+certificate (and configure its key if it changed), then restart the server.
+The public registry's existing read rate limits still apply; member signing
+does not grant the service-token rate-limit exemption.

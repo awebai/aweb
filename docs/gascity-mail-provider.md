@@ -285,14 +285,14 @@ exit 1; **n/a** = the protocol has no such operation.
 | `reply <id>` | impl | Continuation of the source message's conversation, then ack the source. Empty subject → `Re: <original>`. **No recipient is named**: the server requires a continuation's signed recipient to match the conversation's (beads-mail §8), so the conversation id alone routes it and there is nothing to get wrong — the shared client resolves the conversation's live participants at send time and signs that target. The returned `to` is the conversation's counterparty, because gc prints `reply.To`; note it is **display, inferred from the source message**, not a read-back of the routed target, since the send response carries no recipient field. 1:1 conversations make the two agree, and the routed target is the truthful one if they ever could not. |
 | `inbox [recipient]` | impl | `GET /v1/messages/inbox?unread_only=true`, **read-only**. Recipient ignored (§5). |
 | `check [recipient]` | impl | Identical to `inbox`. gc keeps the two apart because a backend's inbox may mark read; ours never does. |
-| `all [recipient]` | impl | One page, read and unread. aweb has no open/closed state, so "all open messages" is everything the inbox holds inside the retention window. |
+| `all [recipient]` | impl | One page, read and unread. aweb has no open/closed state, so "all open messages" is everything the inbox holds. |
 | `get <id>` | impl | Exact read, no read-state change. Uses the sender-OR-recipient scoped endpoint, so mail this workspace *sent* is visible too (beads-mail §8). |
 | `read <id>` | impl | Exact read, then ack. Reading is what marks read, because read state drives the unread count and the wake path. A failed ack exits non-zero rather than claiming the message is read. |
 | `mark-read <id>` | impl | `POST /v1/messages/{id}/ack`. No output, as the protocol expects. |
 | `thread <id>` | impl | Conversation view, oldest first, 500-message ceiling. gc documents the argument as a thread id **or any message id in the thread**, so both work: the conversation endpoint is tried first, and a miss is looked up as a message and answered with its conversation. Thread ids **are** aweb `conversation_id`s. |
-| `count [recipient]` | impl | `{"total":N,"unread":N}`. "Total" is what the inbox holds inside the retention window, not a lifetime total; counting stops at 4000 (20 pages of 200) and reports that ceiling rather than a wrong number. |
+| `count [recipient]` | impl | `{"total":N,"unread":N}`. "Total" is what the inbox holds now, not a lifetime total; counting stops at 4000 (20 pages of 200) and reports that ceiling rather than a wrong number. |
 | `mark-unread <id>` | rej | No server capability (`messages.py:1901-1912`). Same decision as beads-mail. |
-| `archive <id>` | rej | aweb mail cannot be removed on request; it expires under the retention policy (§9). Note that **gc's own `archive` deletes the message bead outright** — its bundled skill says "IRRECOVERABLE: deletes the underlying bead, despite the name" — which this provider deliberately does not imitate even where it could. |
+| `archive <id>` | rej | aweb mail cannot be removed on request (§9). Note that **gc's own `archive` deletes the message bead outright** — its bundled skill says "IRRECOVERABLE: deletes the underlying bead, despite the name" — which this provider deliberately does not imitate even where it could. |
 | `delete <id>` | rej | As `archive`; gc's `Delete` is an alias for it. |
 | `ArchiveMany` / `DeleteMany` | n/a | Not protocol operations: gc's exec provider loops over single-id `archive`/`delete` (`exec.go:117-143`). Both refused, so both loops refuse per id. |
 | `--priority`, `--type`, `--cc`, `--pinned` | n/a | **The exec protocol carries no metadata.** `sendInput` is exactly `{from, subject, body}` (`exec/json.go:9-22`). Nothing to map, so §9's fenced envelope from the beads record is not emitted here and would carry nothing if it were. `mail.Message.priority` is likewise not emitted inbound: aweb's four-value priority does not obviously mean gc's integer, and guessing a scale is worse than omitting a field gc's decoder already treats as optional. |
@@ -345,8 +345,9 @@ contain `already archived`, which would trip gc's other success path (§1).
 
 ## 9. Retention
 
-Unchanged from beads-mail §11: aweb mail is delivery, not archival storage, and
-30 days is the floor a client may rely on (`server/src/aweb/gc.py:18`). No
+Unchanged from beads-mail §11: aweb mail is delivery, not archival storage. The
+server deletes no mail automatically, and a deployment's operator may set a
+retention policy of its own. No
 surface here may imply the server keeps mail forever, and `count`'s help says
 so where a user would otherwise read "total" as a lifetime figure.
 

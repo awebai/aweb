@@ -490,7 +490,7 @@ async def send_in_session(
             VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10,
                     $11, $12, $13, $14, $15, $16, $17, $18, $19, $20,
                     $21, $22, $23, $24, $25, $26::jsonb)
-            RETURNING message_id, created_at
+            RETURNING message_id, created_at, seq
         ), receipt AS (
             INSERT INTO {{tables.chat_read_receipts}}
                 (session_id, did, agent_id, last_read_message_id, last_read_at)
@@ -502,7 +502,7 @@ async def send_in_session(
             WHERE {{tables.chat_read_receipts}}.last_read_at IS NULL
                OR EXCLUDED.last_read_at > {{tables.chat_read_receipts}}.last_read_at
         )
-        SELECT message.message_id, message.created_at,
+        SELECT message.message_id, message.created_at, message.seq,
                ARRAY(
                    SELECT p.did FROM {{tables.chat_participants}} p
                    WHERE p.session_id = $2 AND p.did <> $4
@@ -536,7 +536,7 @@ async def send_in_session(
         effective_created_at,
         json.dumps(id_chain) if id_chain is not None else None,
     )
-    msg_row = {"message_id": inserted["message_id"], "created_at": inserted["created_at"]}
+    msg_row = {"message_id": inserted["message_id"], "created_at": inserted["created_at"], "seq": inserted["seq"]}
 
     # Departed participants are woken too: leaving does not end their pending state.
     record_did_wakes(inserted["wake_dids"] or (), "chat")
@@ -706,7 +706,7 @@ async def get_message_history(
     if message_uuid is not None:
         rows = await aweb_db.fetch_all(
             """
-            SELECT message_id, from_alias, from_address,
+            SELECT message_id, seq, from_alias, from_address,
                    CASE WHEN content_mode = 'encrypted_v2' THEN '' ELSE body END AS body,
                    created_at, sender_leaving, from_agent_id, reply_to, from_did,
                    signature, signed_payload, id_chain, content_mode, message_version,
@@ -723,7 +723,7 @@ async def get_message_history(
     else:
         rows = await aweb_db.fetch_all(
             """
-            SELECT message_id, from_alias, from_address,
+            SELECT message_id, seq, from_alias, from_address,
                    CASE WHEN content_mode = 'encrypted_v2' THEN '' ELSE body END AS body,
                    created_at, sender_leaving, from_agent_id, reply_to, from_did,
                    signature, signed_payload, id_chain, content_mode, message_version,
@@ -760,6 +760,7 @@ async def get_message_history(
     return [
         {
             "message_id": str(row["message_id"]),
+            "seq": row["seq"],
             "from_agent_id": (
                 str(row["from_agent_id"]) if row.get("from_agent_id") is not None else None
             ),
@@ -896,7 +897,7 @@ async def mark_messages_read_up_to(
 
     watermark = await aweb_db.fetch_one(
         """
-        SELECT created_at
+        SELECT seq
         FROM {{tables.chat_messages}}
         WHERE session_id = $1 AND message_id = $2
         """,
@@ -920,7 +921,7 @@ async def mark_messages_read_up_to(
                         WHERE own.session_id = m.session_id AND own.did = $2
                           AND (m.from_did = own.did OR m.from_did = NULLIF(own.current_did_key, ''))
                     )
-              AND m.created_at <= $5
+              AND m.seq <= $5
             ON CONFLICT (session_id, did, message_id) DO NOTHING
             RETURNING message_id
             """,
@@ -928,7 +929,7 @@ async def mark_messages_read_up_to(
             participant_did,
             participant_agent_uuid,
             read_time,
-            watermark["created_at"],
+            watermark["seq"],
         )
         await tx.execute(
             """
@@ -940,10 +941,10 @@ async def mark_messages_read_up_to(
                 agent_id = EXCLUDED.agent_id,
                 last_read_at = EXCLUDED.last_read_at
             WHERE $6 > COALESCE(
-                (SELECT created_at FROM {{tables.chat_messages}}
+                (SELECT seq FROM {{tables.chat_messages}}
                  WHERE session_id = $1
                    AND message_id = {{tables.chat_read_receipts}}.last_read_message_id),
-                'epoch'::timestamptz
+                0
             )
             """,
             session_id,
@@ -951,7 +952,7 @@ async def mark_messages_read_up_to(
             participant_agent_uuid,
             up_to_uuid,
             read_time,
-            watermark["created_at"],
+            watermark["seq"],
         )
 
     record_did_wakes([participant_did], "chat")

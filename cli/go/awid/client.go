@@ -83,14 +83,6 @@ func (e *RecipientResolutionError) Unwrap() error {
 	return e.Err
 }
 
-func isRegistryAddressNotFound(err error) bool {
-	if code, ok := HTTPStatusCode(err); ok && code == http.StatusNotFound {
-		body, _ := HTTPErrorBody(err)
-		return strings.Contains(body, "Address not found")
-	}
-	return false
-}
-
 // signEnvelope signs a MessageEnvelope and returns the fields to embed
 // in the request. When the client has no signing key (legacy/custodial),
 // returns a zero signedFields. Callers stamp the returned fields onto
@@ -1290,15 +1282,30 @@ func (c *Client) checkRecipientBinding(status VerificationStatus, toDID string, 
 
 // APIError represents an HTTP error from the aweb API.
 type APIError struct {
-	StatusCode      int
-	Body            string
-	RequestID       string
-	CfRay           string
-	CfMitigated     string
+	StatusCode  int
+	Body        string
+	RequestID   string
+	CfRay       string
+	CfMitigated string
+	// RetryAfter is the answer's Retry-After header as the server sent it:
+	// delta-seconds or an HTTP-date. It is empty when the header is absent.
+	RetryAfter      string
 	responseSummary string
+	// answeringMount is the API base on the request's origin that the client
+	// found answering when the configured one answered 404. It is empty
+	// otherwise.
+	answeringMount string
 }
 
 func (e *APIError) Error() string {
+	text := e.responseText()
+	if e.answeringMount != "" {
+		text += "\n" + answeringMountAdvice(e.answeringMount)
+	}
+	return text
+}
+
+func (e *APIError) responseText() string {
 	var metadata []string
 	for _, header := range []struct{ name, value string }{
 		{"x-request-id", e.RequestID}, {"cf-ray", e.CfRay}, {"cf-mitigated", e.CfMitigated},
@@ -1334,6 +1341,16 @@ func HTTPStatusCode(err error) (int, bool) {
 		return registryErr.StatusCode, true
 	}
 	return 0, false
+}
+
+// HTTPRetryAfter returns the Retry-After header of an API error, unparsed, and
+// whether the answer carried one.
+func HTTPRetryAfter(err error) (string, bool) {
+	var e *APIError
+	if errors.As(err, &e) && e.RetryAfter != "" {
+		return e.RetryAfter, true
+	}
+	return "", false
 }
 
 // HTTPErrorBody returns the response body for API errors.

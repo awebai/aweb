@@ -33,7 +33,7 @@ class Restamp(unittest.TestCase):
                 folder = project / 'cmd' / command
                 folder.mkdir(parents=True)
                 (folder / 'main.go').write_text('package main\nimport "fmt"\nvar version,commit,commitRepo,date string\nfunc main(){fmt.Println(version,commit,commitRepo,date)}\n')
-            (project / 'go.mod').write_text('module example.test/stamp\n\ngo 1.26.10\n')
+            (project / 'go.mod').write_text('module example.test/stamp\n\ngo 1.26.11\n')
             shutil.copytree(ROOT / 'cli/go/npm', project / 'npm',
                             ignore=shutil.ignore_patterns('node_modules', '*.tgz'))
             init_fixture_repo(root)
@@ -44,7 +44,7 @@ class Restamp(unittest.TestCase):
                 env=dict(os.environ, GIT_AUTHOR_DATE='2026-01-01T00:00:00Z', GIT_COMMITTER_DATE='2026-01-01T00:00:00Z'))
             first = git('rev-parse', 'HEAD')
             environments = dict(CLI_VERSION='9.0.0', CANDIDATE_GATE_KEY='same-tree-key',
-                                GOTOOLCHAIN='go1.26.10', CGO_ENABLED='0')
+                                GOTOOLCHAIN='go1.26.11', CGO_ENABLED='0')
             with patch.dict(os.environ, environments):
                 def produce(label):
                     sha = git('rev-parse', 'HEAD')

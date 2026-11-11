@@ -51,7 +51,7 @@ services:
       redis:
         condition: service_healthy
     healthcheck:
-      test: ["CMD", "curl", "-f", "http://localhost:8010/health"]
+      test: ["CMD", "curl", "-f", "http://localhost:8010/ready"]
       interval: 2s
       timeout: 5s
       start_period: 5s
@@ -84,6 +84,7 @@ services:
       awid:
         condition: service_healthy
     healthcheck:
+      # The pinned pre-status registry serves /health only.
       test: ["CMD", "curl", "-f", "http://localhost:8010/health"]
       interval: 2s
       timeout: 5s

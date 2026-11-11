@@ -139,5 +139,8 @@ contract, the timestamp window above is the replay limit.
 contains deterministic Ed25519 cases for both a neutral OSS task request and a
 hosted-route interoperability example, including a positive request without
 `operation`, plus cross-endpoint, cross-origin,
-tampered-body, and missing-version negatives. Consumers must verify every
+tampered-body, and missing-version negatives. Its `identity_cases` array holds
+[identity-only requests](#identity-only-requests) in the same shape, signing
+`did_aw` in place of `team_id`: one for a stable identity and one for a local
+identity, whose `did_aw` is the empty string. Consumers must verify every
 current positive case rather than treating the first array entry as the corpus.

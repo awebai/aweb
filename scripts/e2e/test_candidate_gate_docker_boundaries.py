@@ -32,9 +32,9 @@ def _bind_tmp() -> tempfile.TemporaryDirectory:
 PROBE_SERVICE_IMAGE = (
     "nginx:alpine@sha256:1d40e3eb3bf4f138de1d67193f2aa5309fcaf343eb5ffadbf5e9439de1eb1ebb"
 )
-# buildx prints some fields as elapsed-time presentation. Those are not cache
-# identity or content and can change while no cache entry changed.
-BUILDX_DU_VOLATILE_FIELDS = {"LastUsedAt"}
+# Buildx timestamp presentation can drift without a cache mutation, including
+# CreatedAt fractional seconds. Neither timestamp defines cache identity/content.
+BUILDX_DU_VOLATILE_FIELDS = {"CreatedAt", "LastUsedAt"}
 
 
 def run(
@@ -80,9 +80,9 @@ def stable_buildx_du_records(output: str) -> list[dict[str, object]]:
     """Return deterministic buildx du records excluding volatile presentation.
 
     The boundary being proved is scoped cache mutation: unrelated cache records
-    must retain their identity/content/size fields. Relative elapsed-time fields
-    such as LastUsedAt may tick while the cache remains intact, so comparing raw
-    JSON lines is too strict. Removing IDs/count/size would be too weak.
+    must retain their identity/content/size fields. LastUsedAt elapsed time and
+    CreatedAt fractional seconds can change while the cache remains intact.
+    Exclude both timestamps, but keep IDs/count/size and all other fields.
     """
 
     records: list[dict[str, object]] = []
@@ -114,16 +114,31 @@ class StableBuildxDuRecordsTests(unittest.TestCase):
         )
         self.assertEqual(stable_buildx_du_records(before), stable_buildx_du_records(after))
 
+    def test_ignores_created_at_fractional_presentation(self) -> None:
+        record = {"ID": "abc", "Size": "12B", "Mutable": False}
+        before = json.dumps({**record, "CreatedAt": "2026-11-11 01:00:22.947531551 +0000 UTC"})
+        for fraction in ("942606676", "947531552", "947532", "948", "999999999"):
+            with self.subTest(fraction=fraction):
+                after = json.dumps({**record, "CreatedAt": f"2026-11-11 01:00:22.{fraction} +0000 UTC"})
+                self.assertEqual(stable_buildx_du_records(before), stable_buildx_du_records(after))
+
     def test_preserves_removed_or_changed_record_detection(self) -> None:
-        before = '{"ID":"abc","Size":"12B","LastUsedAt":"Less than a second ago"}\n'
-        removed = ""
-        changed = '{"ID":"abc","Size":"13B","LastUsedAt":"1 second ago"}\n'
-        self.assertNotEqual(
-            stable_buildx_du_records(before), stable_buildx_du_records(removed)
-        )
-        self.assertNotEqual(
-            stable_buildx_du_records(before), stable_buildx_du_records(changed)
-        )
+        record = {
+            "ID": "abc", "Size": "12B", "Description": "local source",
+            "Mutable": False, "Shared": False, "UsageCount": 1,
+            "CreatedAt": "2026-11-11 01:00:22.947531551 +0000 UTC",
+        }
+        before = json.dumps(record)
+        expected = stable_buildx_du_records(before)
+        self.assertNotEqual(expected, stable_buildx_du_records(""))
+        self.assertNotEqual(expected, stable_buildx_du_records(before + "\n" + before))
+        for field, value in (
+            ("ID", "replacement"), ("Size", "13B"), ("Description", "other source"),
+            ("Mutable", True), ("Shared", True), ("UsageCount", 2),
+        ):
+            with self.subTest(field=field):
+                changed = json.dumps({**record, field: value})
+                self.assertNotEqual(expected, stable_buildx_du_records(changed))
 
 
 class PublishedPortWaitTests(unittest.TestCase):

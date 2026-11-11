@@ -164,10 +164,6 @@ func runTeamRequest(cmd *cobra.Command, args []string) error {
 	return nil
 }
 
-func loadOptionalTeamRequestIdentity(workingDir string) (*awconfig.ResolvedIdentity, error) {
-	return loadOptionalTeamRequestIdentityAt(workingDir, "")
-}
-
 func loadOptionalTeamRequestIdentityAt(workingDir, identityHome string) (*awconfig.ResolvedIdentity, error) {
 	var identity *awconfig.ResolvedIdentity
 	var err error

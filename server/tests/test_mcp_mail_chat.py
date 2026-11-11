@@ -16,8 +16,10 @@ from fastapi import HTTPException
 from starlette.requests import Request
 
 from awid.did import did_from_public_key, generate_keypair
+from awid.e2ee_keys import build_encryption_key_assertion
 from awid.registry import Address, AddressDelivery, Namespace
 from awid.signing import sign_message
+from aweb.e2ee_messages import encrypt_e2ee_chat, generate_x25519_keypair
 from aweb.internal_auth import build_internal_auth_header_value
 from aweb.identity_auth_deps import IdentityAuth
 from aweb.mcp import auth as mcp_auth
@@ -30,7 +32,8 @@ from aweb.mcp.signing import (
 from aweb.mcp.tools import contacts as contacts_tools
 from aweb.mcp.tools import chat as chat_tools
 from aweb.mcp.tools import mail as mail_tools
-from did_key_fixtures import named_did_key
+from did_key_fixtures import named_did_key, named_signing_key
+from test_messages_http import _encrypted_mail_envelope
 
 
 class DBInfra:
@@ -43,76 +46,24 @@ class DBInfra:
         return self._aweb_db
 
 
-def _fake_encrypted_mail_envelope(payload: dict, *, sender_did: str, recipient_did: str) -> dict:
-    hash32 = "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA"
-    now = str(payload["timestamp"])
+def _custodial_identity(signing_key: bytes, did: str, stable_id: str, address: str) -> dict:
+    """An identity as hosted custody holds it: its signing key and an encryption key it asserts."""
     return {
-        "message_version": 2,
-        "envelope_type": "aweb-e2ee-message-v2",
-        "kind": "mail",
-        "message_id": str(payload["message_id"]),
-        "conversation_id": str(payload["conversation_id"]),
-        "created_at": now,
-        "expires_at": now,
-        "from": {
-            "did": sender_did,
-            "stable_id": payload.get("from_stable_id"),
-            "address": payload.get("from") or "",
-            "encryption_key_id": "sha256:sender",
-        },
-        "recipients": [
-            {
-                "did": recipient_did,
-                "stable_id": payload.get("to_stable_id"),
-                "address": payload.get("to") or "",
-                "encryption_key_id": "sha256:recipient",
-            }
-        ],
-        "routing": {"delivery_origin": "", "sender_observed_inbound_mode": ""},
-        "policy": {"requires_e2ee": True, "legacy_plaintext_allowed": False},
-        "crypto": {
-            "suite": "aweb-e2ee-v2/x25519-hpke-aes256gcm",
-            "content_nonce": "AAAAAAAAAAAAAAAA",
-            "ciphertext_hash": f"sha256:{hash32}",
-            "ciphertext_size": 12,
-            "key_wraps_hash": f"sha256:{hash32}",
-            "inner_header_hash": f"sha256:{hash32}",
-        },
-        "ciphertext": "Y2lwaGVydGV4dA",
-        "key_wraps": [
-            {
-                "wrap_id": f"sha256:{hash32}",
-                "recipient_encryption_key_id": "sha256:recipient",
-                "sender_encryption_key_id": "sha256:sender",
-                "sender_did": sender_did,
-                "wrap_purpose": "delivery",
-                "algorithm": "HPKE-Base-X25519-HKDF-SHA256-AES-256-GCM",
-                "encapsulated_key": hash32,
-                "wrapped_cek": hash32 + "AAAAA",
-            }
-        ],
-        "signing_key_id": sender_did,
-        "signature": "sig",
+        "signing_key": signing_key, "did": did, "stable_id": stable_id, "address": address,
+        "encryption_key": build_encryption_key_assertion(
+            signing_key=signing_key, identity_did=did, identity_stable_id=stable_id,
+            encryption_public_key=generate_x25519_keypair()[1], custody="hosted_custodial",
+        ),
     }
 
 
-def _fake_encrypted_chat_envelope(payload: dict, *, sender_did: str, recipient_dids: list[str]) -> dict:
-    envelope = _fake_encrypted_mail_envelope(
-        payload,
-        sender_did=sender_did,
-        recipient_did=recipient_dids[0],
+def _hosted_chat_envelope(payload: dict, *, sender: dict, recipients: list[dict]) -> dict:
+    """The encrypted envelope hosted custody returns for the fields the tool hands it."""
+    return encrypt_e2ee_chat(
+        sender=sender, recipients=recipients, body=payload["body"],
+        message_id=payload["message_id"], conversation_id=payload["conversation_id"],
+        created_at=datetime.fromisoformat(payload["timestamp"].replace("Z", "+00:00")),
     )
-    envelope["kind"] = "chat"
-    envelope["routing"]["to_did"] = ",".join(recipient_dids)
-    envelope["recipients"] = [
-        {
-            "did": recipient_did,
-            "encryption_key_id": f"sha256:recipient-{index}",
-            "wrap_id": f"sha256:{'A' * 43}",
-        }
-        for index, recipient_did in enumerate(recipient_dids)
-    ]
-    return envelope
 
 
 async def _insert_mcp_chat_agents(aweb_db, *, team_id: str, alice_agent_id, bob_agent_id, alice_did: str) -> None:
@@ -416,6 +367,73 @@ async def test_mcp_auth_accepts_trusted_proxy_headers(aweb_cloud_db, monkeypatch
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize("status", ["retired", "archived", "deleted"])
+async def test_mcp_auth_refuses_a_forwarded_actor_that_is_not_an_active_member(aweb_cloud_db, monkeypatch, status):
+    """A proxy forwards a request for an agent row that is still there (deleted_at is NULL) but is
+    not an active member: the request is refused, with the proxy's signature valid."""
+    team_id = "ops:acme.com"
+    agent_id = uuid4()
+    secret = "proxy-secret"
+
+    await aweb_cloud_db.aweb_db.execute(
+        """
+        INSERT INTO {{tables.teams}} (team_id, namespace, team_name, team_did_key)
+        VALUES ($1, 'acme.com', 'ops', 'did:key:z6MkkopcdRMf2qPVBdcugyhrVQorfEfz2uUigTwZDvZ15poA' /* z6MkTeam */)
+        """,
+        team_id,
+    )
+    await aweb_cloud_db.aweb_db.execute(
+        """
+        INSERT INTO {{tables.agents}}
+            (agent_id, team_id, did_key, did_aw, address, alias, identity_scope, status, did_aw_verified_key)
+        VALUES ($1, $2, 'did:key:z6MkggGwZHMkBygNAy7tZGtCZxrkWBHQ5fpEm6fSAxfkuvqE' /* z6MkAlice */, 'did:aw:alice', 'acme.com/alice', 'alice', 'global', $3, 'did:key:z6MkggGwZHMkBygNAy7tZGtCZxrkWBHQ5fpEm6fSAxfkuvqE' /* z6MkAlice */)
+        """,
+        agent_id,
+        team_id,
+        status,
+    )
+    await aweb_cloud_db.aweb_db.execute(
+        """
+        INSERT INTO {{tables.workspaces}}
+            (workspace_id, team_id, agent_id, alias, workspace_type)
+        VALUES ($1, $2, $3, 'alice', 'hosted_mcp')
+        """,
+        uuid4(),
+        team_id,
+        agent_id,
+    )
+    row = await aweb_cloud_db.aweb_db.fetch_one(
+        "SELECT status, deleted_at FROM {{tables.agents}} WHERE agent_id = $1", agent_id
+    )
+    assert (row["status"], row["deleted_at"]) == (status, None)
+
+    monkeypatch.setenv("AWEB_TRUST_PROXY_HEADERS", "1")
+    monkeypatch.setenv("AWEB_INTERNAL_AUTH_SECRET", secret)
+
+    user_id = str(uuid4())
+    middleware = mcp_auth.MCPAuthMiddleware(app=lambda *_args, **_kwargs: None, db_infra=DBInfra(aweb_cloud_db.aweb_db))
+    with pytest.raises(HTTPException) as refused:
+        await middleware._resolve_auth(
+            _request_with_headers(
+                {
+                    "X-Team-ID": team_id,
+                    "X-User-ID": user_id,
+                    "X-AWEB-Actor-ID": str(agent_id),
+                    "X-AWEB-Auth": build_internal_auth_header_value(
+                        secret=secret,
+                        team_id=team_id,
+                        principal_type="u",
+                        principal_id=user_id,
+                        actor_id=str(agent_id),
+                    ),
+                },
+                verified_bindings=[("did:aw:alice", named_did_key("z6MkAlice"), "acme.com/alice")],
+            )
+        )
+    assert refused.value.status_code == 403
+
+
+@pytest.mark.asyncio
 async def test_mcp_auth_rejects_bad_trusted_proxy_signature(aweb_cloud_db, monkeypatch):
     secret = "proxy-secret"
     team_id = "ops:acme.com"
@@ -649,7 +667,7 @@ async def test_mcp_send_mail_uses_hosted_encryptor_by_default_for_trusted_proxy(
     alice_agent_id = uuid4()
     workspace_id = uuid4()
     bob_agent_id = uuid4()
-    _, alice_pub = generate_keypair()
+    alice_sk, alice_pub = generate_keypair()
     alice_did = did_from_public_key(alice_pub)
 
     await aweb_cloud_db.aweb_db.execute(
@@ -696,10 +714,15 @@ async def test_mcp_send_mail_uses_hosted_encryptor_by_default_for_trusted_proxy(
         return {
             "content_mode": "encrypted_v2",
             "message_version": 2,
-            "encrypted_envelope": _fake_encrypted_mail_envelope(
-                payload,
+            # The send validates the envelope as it does one a client supplies.
+            "encrypted_envelope": _encrypted_mail_envelope(
+                sender_sk=alice_sk,
                 sender_did=alice_did,
+                sender_stable_id="did:aw:alice",
                 recipient_did=named_did_key("z6MkBob"),
+                recipient_stable_id="did:aw:bob",
+                message_id=payload["message_id"],
+                conversation_id=payload["conversation_id"],
             ),
         }
 
@@ -1368,6 +1391,14 @@ async def test_mcp_send_mail_requires_current_local_address_authority(
     )
 
     class _Registry:
+        registry_url = "https://registry.test"
+
+        async def registry_audience(self, domain: str):
+            return "https://registry.test"
+
+        async def resolve_address(self, domain: str, name: str, *, did_key: str | None = None):
+            return await self.resolve_address_fresh(domain, name)
+
         async def resolve_address_fresh(
             self, domain: str, name: str, *, did_key: str | None = None
         ):
@@ -1730,10 +1761,12 @@ async def test_mcp_chat_send_uses_hosted_encryptor_by_default_for_trusted_proxy(
         return {
             "content_mode": "encrypted_v2",
             "message_version": 2,
-            "encrypted_envelope": _fake_encrypted_chat_envelope(
+            "encrypted_envelope": _hosted_chat_envelope(
                 kwargs["payload"],
-                sender_did=alice_did,
-                recipient_dids=[named_did_key("z6MkBob")],
+                sender=_custodial_identity(alice_sk, alice_did, "did:aw:alice", "acme.com/alice"),
+                recipients=[_custodial_identity(
+                    named_signing_key("z6MkBob"), named_did_key("z6MkBob"), "did:aw:bob", "acme.com/bob",
+                )],
             ),
         }
 
@@ -1835,10 +1868,12 @@ async def test_mcp_chat_continuation_encryptor_gets_active_recipient_identities(
         return {
             "content_mode": "encrypted_v2",
             "message_version": 2,
-            "encrypted_envelope": _fake_encrypted_chat_envelope(
+            "encrypted_envelope": _hosted_chat_envelope(
                 kwargs["payload"],
-                sender_did=alice_did,
-                recipient_dids=[named_did_key("z6MkBob")],
+                sender=_custodial_identity(alice_sk, alice_did, "did:aw:alice", "acme.com/alice"),
+                recipients=[_custodial_identity(
+                    named_signing_key("z6MkBob"), named_did_key("z6MkBob"), "did:aw:bob", "acme.com/bob",
+                )],
             ),
         }
 
@@ -2080,6 +2115,14 @@ async def test_mcp_chat_send_requires_current_local_address_authority(
     )
 
     class _Registry:
+        registry_url = "https://registry.test"
+
+        async def registry_audience(self, domain: str):
+            return "https://registry.test"
+
+        async def resolve_address(self, domain: str, name: str, *, did_key: str | None = None):
+            return await self.resolve_address_fresh(domain, name)
+
         async def resolve_address_fresh(
             self, domain: str, name: str, *, did_key: str | None = None
         ):
@@ -3228,6 +3271,14 @@ async def test_mcp_full_address_to_another_teams_local_identity_is_refused_witho
     )
 
     class _Registry:
+        registry_url = "https://registry.test"
+
+        async def registry_audience(self, domain: str):
+            return "https://registry.test"
+
+        async def resolve_address(self, domain: str, name: str, *, did_key: str | None = None):
+            return await self.resolve_address_fresh(domain, name)
+
         async def resolve_address_fresh(self, domain: str, name: str, *, did_key: str | None = None):
             assert (domain, name) == ("otherco.com", "bob")
             return None

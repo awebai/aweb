@@ -2,8 +2,8 @@ package awid
 
 import (
 	"os"
-	"path/filepath"
 
+	"github.com/awebai/aw/internal/atomicfile"
 	"github.com/awebai/aw/internal/crashtest"
 )
 
@@ -19,48 +19,16 @@ func AtomicWriteFile(path string, data []byte) error {
 	return atomicWriteFile(path, data)
 }
 
-// atomicWriteFileMode writes data to path using temp-file-and-rename.
+// atomicWriteFileMode writes data to path using temp-file-and-rename,
+// creating a missing directory with 0700 permissions.
 // The temp file is chmod'd to mode before any data is written.
 func atomicWriteFileMode(path string, data []byte, mode os.FileMode) error {
-	return atomicWriteFileModeAtCheckpoint(path, data, mode, "")
+	return atomicfile.Options{Mode: mode, ParentMode: 0o700}.Write(path, data)
 }
 
 func atomicWritePrivateKeyFile(path string, data []byte) error {
-	return atomicWriteFileModeAtCheckpoint(path, data, 0o600, "after-private-key-temp-sync")
-}
-
-func atomicWriteFileModeAtCheckpoint(path string, data []byte, mode os.FileMode, checkpoint string) error {
-	dir := filepath.Dir(path)
-	if err := os.MkdirAll(dir, 0o700); err != nil {
-		return err
-	}
-
-	tmp, err := os.CreateTemp(dir, ".tmp.*")
-	if err != nil {
-		return err
-	}
-	tmpName := tmp.Name()
-	defer func() { _ = os.Remove(tmpName) }()
-
-	if err := tmp.Chmod(mode); err != nil {
-		_ = tmp.Close()
-		return err
-	}
-	if _, err := tmp.Write(data); err != nil {
-		_ = tmp.Close()
-		return err
-	}
-	if err := tmp.Sync(); err != nil {
-		_ = tmp.Close()
-		return err
-	}
-	if err := tmp.Close(); err != nil {
-		return err
-	}
-	if checkpoint != "" {
+	return atomicfile.Options{Mode: 0o600, ParentMode: 0o700, BeforeCommit: func() {
 		// Crash-test observation only; the synced secret temp is not yet renamed.
-		crashtest.Checkpoint(checkpoint, path)
-	}
-
-	return os.Rename(tmpName, path)
+		crashtest.Checkpoint("after-private-key-temp-sync", path)
+	}}.Write(path, data)
 }

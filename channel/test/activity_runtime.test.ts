@@ -8,7 +8,7 @@ import type { AddressInfo } from "node:net";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, test } from "vitest";
-import { resolveConfig } from "@awebai/channel-core";
+import { createChannelClient, createChannelCredentialReload, resolveConfig, SenderTrustManager } from "@awebai/channel-core";
 import { writeTestPrincipal } from "../../channel-core/test/helpers/config_fixture.js";
 import { startClaudeActivity } from "../src/activity.js";
 import { activitySocketPath, ensureOwnerOnlyDir, forwardHookEvent } from "../src/activity_socket.js";
@@ -16,10 +16,13 @@ import { activitySocketPath, ensureOwnerOnlyDir, forwardHookEvent } from "../src
 let root: string;
 let server: Server;
 let published: { phase: string; tool?: string; summary?: string; from_did: string }[];
+/** The did:key that signed each activity request, from its Authorization header. */
+let requestSigners: string[];
 
 beforeEach(async () => {
   root = realpathSync(mkdtempSync(join(tmpdir(), "cact-")));
   published = [];
+  requestSigners = [];
   server = createServer((request, response) => {
     let body = "";
     request.on("data", chunk => (body += chunk));
@@ -27,6 +30,7 @@ beforeEach(async () => {
       if (request.url === "/v1/agents/me/activity") {
         const signed = JSON.parse(body).signed_payload as string;
         published.push(JSON.parse(Buffer.from(signed, "base64url").toString("utf8")));
+        requestSigners.push(String(request.headers.authorization).split(" ")[1]);
       }
       response.writeHead(202);
       response.end();
@@ -77,6 +81,53 @@ describe("startClaudeActivity", () => {
     expect(published[1]).toMatchObject({ tool: "Bash", summary: "Running pytest" });
     expect(new Set(published.map(event => event.from_did))).toEqual(new Set([principal.did]));
     expect(existsSync(activitySocketPath(process.pid, dir))).toBe(false);
+  });
+
+  test("after a key rotation read from the identity home, activity is signed with the rotated key", async () => {
+    const home = join(root, ".aw");
+    const pointAtServer = () => {
+      const workspace = join(home, "workspace.yaml");
+      const { port } = server.address() as AddressInfo;
+      writeFileSync(workspace, readFileSync(workspace, "utf8").replace("https://app.aweb.ai", `http://127.0.0.1:${port}`));
+    };
+    const principal = await writeTestPrincipal(home, { alias: "agent", seedByte: 9, teamID: "default:acme.aweb.ai" });
+    pointAtServer();
+    writeFileSync(join(home, "activity.yaml"), "activity: status\n");
+    const config = await resolveConfig(root, { identityHome: home });
+    const client = createChannelClient(config);
+    const dir = join(root, "s");
+    ensureOwnerOnlyDir(dir);
+    const activity = await startClaudeActivity(config, root, { claudePid: process.pid, dir, client });
+    const self = { alias: config.alias, address: config.address, did: config.did, stableID: config.stableID };
+    const reload = createChannelCredentialReload({
+      client,
+      config,
+      load: () => resolveConfig(root, { identityHome: home }),
+      self,
+      trust: new SenderTrustManager(client, {} as never, config.teamID, config.did, config.stableID),
+      activity: () => activity?.emitter,
+    });
+
+    await hook(dir, { hook_event_name: "UserPromptSubmit" });
+    await settled();
+    await hook(dir, { hook_event_name: "Stop" });
+    await settled();
+
+    const rotated = await writeTestPrincipal(home, { alias: "agent", seedByte: 10, teamID: "default:acme.aweb.ai" });
+    pointAtServer();
+    await reload(new AbortController().signal);
+
+    await hook(dir, { hook_event_name: "UserPromptSubmit" });
+    await settled();
+    await activity!.stop();
+
+    expect(rotated.did).not.toBe(principal.did);
+    expect(published.map(event => [event.phase, event.from_did])).toEqual([
+      ["turn_started", principal.did], ["turn_ended", principal.did],
+      ["turn_started", rotated.did], ["turn_ended", rotated.did],
+    ]);
+    expect(requestSigners).toEqual([principal.did, principal.did, rotated.did, rotated.did]);
+    expect(self.did).toBe(rotated.did);
   });
 
   test("stopping an idle session publishes nothing", async () => {

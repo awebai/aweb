@@ -66,10 +66,6 @@ func (r *doctorRunner) runMessagingDoctorChecks() {
 	r.addMessagingOnlineChecks(client)
 }
 
-func collectDoctorMessagingState(workingDir string) *doctorMessagingState {
-	return collectDoctorMessagingStateAt(workingDir, "")
-}
-
 func collectDoctorMessagingStateAt(workingDir, identityHome string) *doctorMessagingState {
 	awebState := collectDoctorAwebStateAt(workingDir, identityHome)
 	state := &doctorMessagingState{

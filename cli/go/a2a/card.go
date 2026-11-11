@@ -251,7 +251,7 @@ func CardDigest(card Card) (Digest, error) {
 		return Digest{}, err
 	}
 	delete(value, "signatures")
-	canonical, err := awid.CanonicalJSONValue(value)
+	canonical, err := awid.CanonicalJSONValueEscapingLineSeparators(value)
 	if err != nil {
 		return Digest{}, err
 	}
