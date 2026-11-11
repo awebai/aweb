@@ -1,1 +1,1 @@
-"""Independent protected-signer adapters; install the protected-signing extra."""
+"""Independent protected-signer adapters; require aweb-naapp[runtime]."""

@@ -2,14 +2,17 @@
 
 from __future__ import annotations
 
+import asyncio
 import base64
 import hashlib
 import uuid
+from dataclasses import replace
 from datetime import UTC, datetime
 from types import SimpleNamespace
 
 import pytest
 import pytest_asyncio
+from aweb.protected_signing.authority import IndependentAuthority
 from aweb.protected_signing.composition import (
     MAX_PREPARE_BYTES,
     IndependentProtectedSigner,
@@ -58,7 +61,15 @@ class Delivery:
         return DeliveryStatus.DELIVERED
 
 
-def proof_request(world, *, key=None, authorization=None, body=b"{}"):
+def proof_request(
+    world,
+    *,
+    key=None,
+    authorization=None,
+    body=b"{}",
+    operation="protected_operation_prepare",
+    method="POST",
+):
     key = key or world.root
     timestamp = datetime.now(UTC).isoformat()
     raw = canonical_json_bytes(
@@ -67,8 +78,8 @@ def proof_request(world, *, key=None, authorization=None, body=b"{}"):
             "type": "aweb.awid-controller-request",
             "aud": ORIGIN,
             "domain": DOMAIN,
-            "operation": "protected_operation_prepare",
-            "method": "POST",
+            "operation": operation,
+            "method": method,
             "path": "/protected-operations",
             "body_sha256": hashlib.sha256(body).hexdigest(),
             "timestamp": timestamp,
@@ -91,7 +102,7 @@ def proof_request(world, *, key=None, authorization=None, body=b"{}"):
     return Request(
         {
             "type": "http",
-            "method": "POST",
+            "method": method,
             "path": "/protected-operations",
             "raw_path": b"/protected-operations",
             "query_string": b"",
@@ -141,7 +152,7 @@ async def world(test_db_factory, tmp_path):
                     "parent": {"kind": "namespace", "id": DOMAIN},
                     "kind": "human",
                     "issuer_key": did(ns),
-                    "issued_at": datetime.now(UTC).strftime("%Y-%m-%dT%H:%M:%S.%fZ"),
+                    "issued_at": datetime.now(UTC).strftime("%Y-%m-%dT%H:%M:%SZ"),
                 },
                 signer=lambda raw: (did(ns), ns.sign(raw).signature),
             )
@@ -267,6 +278,8 @@ async def world(test_db_factory, tmp_path):
                 registry=registry,
                 controller=controller,
                 human=human,
+                human_key=human_key,
+                human_certificate=certificate,
                 context=context,
                 operation=operation,
                 root=root,
@@ -304,7 +317,14 @@ async def test_one_shared_effect_with_customer_registry_private_reads_and_actual
         base64.b64decode(receipt.result["signing"]),
         base64.b64decode(receipt.result["signature"]),
     )
-    reader = ReceiptReader(world.root_id, world.context)
+    reader = await world.app.requester(
+        proof_request(
+            world, body=b"", operation="protected_operation_receipt", method="GET"
+        ),
+        principal=world.root_id,
+        operation="protected_operation_receipt",
+    )
+    assert type(reader) is ReceiptReader
     assert (
         await world.app.signer.receipt(prepared.operation_id, reader=reader) == receipt
     )
@@ -410,3 +430,174 @@ async def test_oversized_body_refuses_before_proof_or_registry_work(world):
             operation="protected_operation_prepare",
         )
     assert len(world.host.transport.calls) == before
+
+
+@pytest.mark.asyncio
+async def test_root_old_key_stops_authenticating_after_continuity_rotation(world):
+    next_key = SigningKey.generate()
+    await world.registry.rotate_key(
+        world.root_id, did(next_key), bytes(world.root), bytes(next_key)
+    )
+    with pytest.raises(SignerRefused, match="requester_invalid"):
+        await world.app.requester(
+            proof_request(world),
+            principal=world.root_id,
+            operation="protected_operation_prepare",
+        )
+    requester = await world.app.requester(
+        proof_request(world, key=next_key),
+        principal=world.root_id,
+        operation="protected_operation_prepare",
+    )
+    assert requester.principal == world.root_id
+
+
+@pytest.mark.asyncio
+async def test_policy_changed_after_options_cannot_commit_the_old_approval(world):
+    prepared = await prepare(world)
+    options = await world.app.signer.approval_options(
+        prepared.operation_id, human=world.human
+    )
+    proof = world.device.get(dict(options))
+    await world.db.execute(
+        "UPDATE {{tables.protected_authorizer_bindings}} SET policy_version=2"
+    )
+    with pytest.raises(SignerRefused, match="policy_changed"):
+        await world.app.signer.execute(prepared.operation_id, proof, human=world.human)
+    assert (
+        await world.db.fetch_value(
+            "SELECT count(*) FROM {{tables.protected_local_audit}} "
+            "WHERE kind='protected_operation_signed'"
+        )
+        == 0
+    )
+
+
+@pytest.mark.asyncio
+async def test_changed_registry_controller_cannot_use_the_old_custody_key(world):
+    await world.host.rotate_team_key(TEAM, did(SigningKey.generate()))
+    with pytest.raises(SignerRefused, match="authority_changed"):
+        await prepare(world)
+
+
+@pytest.mark.asyncio
+async def test_agent_with_verified_human_ancestor_cannot_be_an_authorizing_human(world):
+    leaf = await sign_id_certificate(
+        {
+            "v": 1,
+            "type": "aweb.id-certificate",
+            "id": world.root_id,
+            "domain": DOMAIN,
+            "parent": {"kind": "identity", "id": world.context.human_id},
+            "kind": "agent",
+            "issuer_key": did(world.human_key),
+            "issued_at": datetime.now(UTC).strftime("%Y-%m-%dT%H:%M:%SZ"),
+        },
+        signer=lambda raw: (did(world.human_key), world.human_key.sign(raw).signature),
+    )
+    await world.registry.register_id_certificate(
+        {
+            "v": 1,
+            "type": "aweb.id-chain",
+            "certificates": [world.human_certificate, leaf],
+        },
+        signer=lambda raw: (did(world.root), world.root.sign(raw).signature),
+        expected_head=None,
+        invitation_id=None,
+    )
+    context = replace(world.context, human_id=world.root_id)
+    authority = IndependentAuthority(
+        world.db,
+        context=context,
+        registry=world.registry,
+        custody=world.app.authority.custody,
+    )
+    with pytest.raises(SignerRefused, match="issuer_kind_forbidden"):
+        await authority.observe(context, purpose="prepare")
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("elapsed,allowed", [(59, True), (61, False)])
+async def test_registry_evidence_deadline_survives_an_actual_authority_lock_wait(
+    world, elapsed, allowed
+):
+    now = 0
+    world.app.authority.timer = lambda: now
+    task = None
+    try:
+        async with world.db.transaction() as blocker:
+            await blocker.fetch_one(
+                "SELECT * FROM {{tables.protected_authorizer_bindings}} FOR UPDATE"
+            )
+            task = asyncio.create_task(prepare(world))
+            # Observe PostgreSQL's lock wait, rather than assuming a sleep
+            # allowed the executor to reach its authority fence.
+            for _ in range(200):
+                await blocker.execute("SELECT pg_stat_clear_snapshot()")
+                waiting = await blocker.fetch_value(
+                    "SELECT count(*) FROM pg_stat_activity WHERE datname=current_database() "
+                    "AND wait_event_type='Lock' AND query LIKE '%protected_authorizer_bindings%' "
+                    "AND pid <> pg_backend_pid()"
+                )
+                if waiting:
+                    break
+                if task.done():
+                    await task
+                    pytest.fail("executor did not wait for authority")
+                await asyncio.sleep(0.01)
+            assert waiting, "authority lock wait was not established"
+            now = elapsed
+        if allowed:
+            assert (await task).operation_id == world.operation.operation_id
+        else:
+            with pytest.raises(SignerRefused, match="evidence_unavailable"):
+                await task
+            assert (
+                await world.db.fetch_value(
+                    "SELECT count(*) FROM {{tables.protected_signer_operations}}"
+                )
+                == 0
+            )
+    finally:
+        if task is not None and not task.done():
+            task.cancel()
+            await asyncio.gather(task, return_exceptions=True)
+
+
+@pytest.mark.asyncio
+async def test_no_uv_cannot_authorize_the_controller_effect(world):
+    prepared = await prepare(world)
+    options = await world.app.signer.approval_options(
+        prepared.operation_id, human=world.human
+    )
+    with pytest.raises(SignerRefused, match="proof_invalid"):
+        await world.app.signer.execute(
+            prepared.operation_id,
+            world.device.get(dict(options), user_verified=False),
+            human=world.human,
+        )
+    assert (
+        await world.db.fetch_value(
+            "SELECT count(*) FROM {{tables.protected_local_audit}} "
+            "WHERE kind='protected_operation_signed'"
+        )
+        == 0
+    )
+
+
+@pytest.mark.asyncio
+async def test_agent_requester_cannot_execute_a_live_floor_operation(world):
+    requester = await world.app.requester(
+        proof_request(world),
+        principal=world.root_id,
+        operation="protected_operation_prepare",
+    )
+    prepared = await world.app.signer.prepare(world.operation, requester=requester)
+    with pytest.raises(SignerRefused, match="scope_refused"):
+        await world.app.signer.execute(prepared.operation_id, {}, human=requester)
+    with pytest.raises(SignerRefused, match="scope_refused"):
+        await world.app.requester(
+            proof_request(world),
+            principal=world.root_id,
+            operation="protected_operation_execute",
+        )
