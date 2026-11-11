@@ -279,8 +279,8 @@ To create a **new** self-custodial global member in an explicitly chosen hosted
 team, select a fresh credential root and a Cloud service UUID or canonical team ID:
 
 ```bash
-aw --identity-home /path/to/steward id create --org alice-laptop \
-  --team-id SERVICE_TEAM_UUID --name steward \
+aw --identity-home /path/to/worker id create --org alice-laptop \
+  --team-id SERVICE_TEAM_UUID --name worker \
   --inbound-mode team-and-contacts --json
 ```
 
@@ -315,9 +315,9 @@ the new member's fresh credential directory:
 
 ```bash
 aw --identity-home /team-root/.aw inbound-mode --json
-aw --identity-home /steward-root/.aw id create \
+aw --identity-home /worker-root/.aw id create \
   --owner-identity-home /team-root/.aw --org alice \
-  --team-id TEAM_ID_FROM_INBOUND_MODE --name steward \
+  --team-id TEAM_ID_FROM_INBOUND_MODE --name worker \
   --inbound-mode contacts-only --json
 ```
 
