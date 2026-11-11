@@ -14,11 +14,12 @@ from urllib.parse import quote
 import httpx
 from awid.did import public_key_from_did
 from awid.log import canonical_server_origin
-from awid.signing import (
-    VerifyResult,
-    canonical_json_bytes,
-    verify_did_key_signature,
-    verify_signature_with_public_key,
+from awid.signing import canonical_json_bytes, verify_did_key_signature
+from awid.team_certificate import (
+    TeamCertificateError,
+    check_team_certificate,
+    decode_team_certificate,
+    refusal_answer,
 )
 from awid.team_ids import parse_team_id
 from fastapi import HTTPException, Request
@@ -52,6 +53,8 @@ class Principal:
 class CachedTeamFacts:
     team_did_key: str
     revoked_certificate_ids: frozenset[str]
+    # Every certificate the registry published for the team, revoked or not.
+    published_certificate_ids: frozenset[str]
     expires_at: float
 
 
@@ -117,6 +120,7 @@ class AWIDTeamCache:
                 if not team_did_key:
                     raise HTTPException(status_code=503, detail="AWID team response missing team_did_key")
 
+                published: set[str] = set()
                 revoked: set[str] = set()
                 cursor: str | None = None
                 seen_cursors: set[str] = set()
@@ -149,6 +153,7 @@ class AWIDTeamCache:
                         )
                     ):
                         raise HTTPException(status_code=503, detail="AWID certificate revocation response is incomplete")
+                    published.update(item["certificate_id"] for item in page)
                     revoked.update(item["certificate_id"] for item in page if item["revoked_at"] is not None)
                     if not has_more:
                         break
@@ -169,6 +174,7 @@ class AWIDTeamCache:
         facts = CachedTeamFacts(
             team_did_key=team_did_key,
             revoked_certificate_ids=frozenset(revoked),
+            published_certificate_ids=frozenset(published),
             expires_at=now + self.ttl_seconds,
         )
         self._cache[team_id] = facts
@@ -190,7 +196,9 @@ class AWIDTeamCache:
                     f"{quote(team_name, safe='')}/certificates/{quote(certificate_id, safe='')}/status"
                 )
                 if response.status_code == 404:
-                    raise HTTPException(status_code=401, detail="Unknown AWID certificate")
+                    # The registry answers one 404 for an unknown team and for a
+                    # certificate it never published.
+                    raise HTTPException(status_code=401, detail="unregistered")
                 response.raise_for_status()
                 payload = response.json()
             if (
@@ -224,6 +232,7 @@ class AWIDTeamCache:
         facts = CachedTeamFacts(
             team_did_key=payload["team_did_key"],
             revoked_certificate_ids=revoked,
+            published_certificate_ids=frozenset({certificate_id}),
             expires_at=now + min(self.ttl_seconds, 60),
         )
         self._certificate_cache[cache_key] = facts
@@ -253,15 +262,24 @@ def _parse_rfc3339_utc(value: str) -> datetime:
     return parsed.astimezone(UTC)
 
 
-def _decode_certificate(header: str) -> dict[str, Any]:
+def _certificate_refusal(error: TeamCertificateError) -> HTTPException:
+    """The answer for a certificate the shared check refuses (awid's one table)."""
+    status_code, detail = refusal_answer(error)
+    return HTTPException(status_code=status_code, detail=detail)
+
+
+def _certificate_locator(header: str) -> tuple[str, str]:
+    """The team and certificate ids a certificate names, to read that team's
+    facts at the registry before the certificate is checked against them."""
     try:
-        decoded = base64.b64decode(header, validate=True)
-        cert = json.loads(decoded.decode("utf-8"))
-    except Exception as exc:
-        raise HTTPException(status_code=401, detail="Malformed team certificate") from exc
-    if not isinstance(cert, dict):
-        raise HTTPException(status_code=401, detail="Malformed team certificate")
-    return cert
+        certificate = decode_team_certificate(header)
+        for name in ("team_id", "certificate_id"):
+            value = certificate.get(name)
+            if not isinstance(value, str) or not value.strip():
+                raise TeamCertificateError("invalid_field", name)
+    except TeamCertificateError as exc:
+        raise _certificate_refusal(exc) from exc
+    return certificate["team_id"], certificate["certificate_id"]
 
 
 def _decode_signed_payload_header(value: str) -> bytes:
@@ -352,19 +370,6 @@ def _verified_signed_payload(
     return payload
 
 
-def _verify_certificate_signature(cert: dict[str, Any], team_did_key: str) -> None:
-    signature = str(cert.get("signature") or "")
-    if not signature:
-        raise HTTPException(status_code=401, detail="Team certificate missing signature")
-    payload = {k: v for k, v in cert.items() if k != "signature"}
-    try:
-        public_key = public_key_from_did(team_did_key)
-    except Exception as exc:
-        raise HTTPException(status_code=503, detail="Invalid AWID team public key") from exc
-    if verify_signature_with_public_key(public_key, canonical_json_bytes(payload), signature) != VerifyResult.VERIFIED:
-        raise HTTPException(status_code=401, detail="Team certificate signature verification failed")
-
-
 async def authenticate_request(
     request: Request,
     *,
@@ -386,16 +391,7 @@ async def authenticate_request(
     cert_header = request.headers.get("X-AWID-Team-Certificate") or request.headers.get("x-awid-team-certificate") or ""
     if not cert_header:
         raise HTTPException(status_code=401, detail="Missing X-AWID-Team-Certificate")
-    cert = _decode_certificate(cert_header)
-
-    team_id = str(cert.get("team_id") or "").strip()
-    certificate_id = str(cert.get("certificate_id") or "").strip()
-    member_did_key = str(cert.get("member_did_key") or "").strip()
-    alias = str(cert.get("alias") or "").strip()
-    if not team_id or not certificate_id or not member_did_key or not alias:
-        raise HTTPException(status_code=401, detail="Team certificate missing required fields")
-    if member_did_key != did_key:
-        raise HTTPException(status_code=401, detail="Team certificate member_did_key mismatch")
+    team_id, certificate_id = _certificate_locator(cert_header)
 
     body = await request.body()
     request.state.cached_body = body
@@ -413,10 +409,19 @@ async def authenticate_request(
     try:
         facts = await team_cache.get(team_id, certificate_id)
     except ValueError as exc:
-        raise HTTPException(status_code=401, detail="Invalid AWID team id") from exc
-    if certificate_id in facts.revoked_certificate_ids:
-        raise HTTPException(status_code=401, detail="Team certificate has been revoked")
-    _verify_certificate_signature(cert, facts.team_did_key)
+        raise _certificate_refusal(TeamCertificateError("invalid_field", "team_id")) from exc
+    try:
+        # The team's key and certificates were read for the certificate's own team_id.
+        cert = check_team_certificate(
+            cert_header,
+            subject_did_key=did_key,
+            team_did_key=facts.team_did_key,
+            revoked_certificate_ids=facts.revoked_certificate_ids,
+            registered_certificate_ids=facts.published_certificate_ids,
+        )
+    except TeamCertificateError as exc:
+        raise _certificate_refusal(exc) from exc
+    alias = cert["alias"]
 
     principal = Principal(
         team_id=team_id,

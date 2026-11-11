@@ -269,7 +269,7 @@
         "awid": "malformed",
         "server": "refused",
         "naapp_runtime": "refused",
-        "library": "accepted",
+        "library": "refused",
         "hooks": "certificate_invalid"
       }
     },
@@ -290,7 +290,7 @@
         "awid": "accepted",
         "server": "refused",
         "naapp_runtime": "refused",
-        "library": "accepted",
+        "library": "refused",
         "hooks": "accepted"
       }
     },
@@ -311,7 +311,7 @@
         "awid": "accepted",
         "server": "refused",
         "naapp_runtime": "refused",
-        "library": "accepted",
+        "library": "refused",
         "hooks": "accepted"
       }
     },
@@ -332,7 +332,7 @@
         "awid": "accepted",
         "server": "refused",
         "naapp_runtime": "refused",
-        "library": "accepted",
+        "library": "refused",
         "hooks": "accepted"
       }
     },
@@ -354,7 +354,7 @@
         "awid": "accepted",
         "server": "refused",
         "naapp_runtime": "refused",
-        "library": "accepted",
+        "library": "refused",
         "hooks": "accepted"
       }
     },
@@ -420,7 +420,7 @@
         "awid": "accepted",
         "server": "refused",
         "naapp_runtime": "refused",
-        "library": "accepted",
+        "library": "refused",
         "hooks": "accepted"
       }
     },
@@ -615,7 +615,7 @@
         "awid": "accepted",
         "server": "accepted",
         "naapp_runtime": "refused",
-        "library": "accepted",
+        "library": "refused",
         "hooks": "accepted"
       }
     }

@@ -178,7 +178,7 @@ async def test_certificate_beyond_first_page(real_registry, revoked):
     response = await client.get("/protected", headers=headers)
     assert response.status_code == (401 if revoked else 200), response.text
     if revoked:
-        assert response.json()["detail"] == "Team certificate has been revoked"
+        assert response.json()["detail"] == "revoked"
     pages = [r for r in calls if r.url.path.endswith("/certificates")]
     assert len(pages) == 2
     assert pages[1].url.params["cursor"]

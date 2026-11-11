@@ -2,6 +2,14 @@
 
 ## Unreleased
 
+- **Changed: the library service checks a team certificate with awid's one
+  check; its own decoder and signature check are gone.** It now refuses what
+  it accepted: a header longer than 8192 bytes; a `version` that is not the
+  integer 1; an `alias` that is not a string; and, with a service token
+  configured, **a certificate the registry never published** (401
+  `unregistered`). A member whose certificate is not registered at the
+  registry can no longer use the library. Refusals are 401 with the check's
+  reason as the detail, through awid's table, where they were sentences.
 - **Changed: the naapp runtime verifier (`aweb_naapp.runtime.team_auth`)
   checks a team certificate with awid's one check.** Apps built on naapp-lib
   now refuse a certificate whose `version` is not the integer 1 and one whose

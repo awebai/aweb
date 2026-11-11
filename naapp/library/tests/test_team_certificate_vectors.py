@@ -93,3 +93,9 @@ async def test_the_library_answers_each_case_as_recorded(monkeypatch, case: dict
         response = await client.get("/", headers=_headers(case))
     answered = {200: "accepted", 401: "refused"}.get(response.status_code, f"status {response.status_code}")
     assert answered == case["today"]["library"], response.text
+    expected = case["expected"]
+    if expected is None:
+        assert response.status_code == 200, response.text
+    else:
+        detail = expected["reason"] if "field" not in expected else f"{expected['reason']}: {expected['field']}"
+        assert (response.status_code, response.json()["detail"]) == (401, detail)

@@ -213,17 +213,8 @@ NAAPP_RUNTIME_TODAY = {
 }
 
 
-# What the library's own verifier answers today for each case.
-LIBRARY_TODAY = {
-    **NAAPP_RUNTIME_TODAY,
-    "oversized_header": "accepted",
-    "version_2": "accepted",
-    "version_string": "accepted",
-    "version_true": "accepted",
-    "version_absent": "accepted",
-    "alias_not_a_string": "accepted",
-    "unregistered": "accepted",
-}
+# What the library's verifier answers today for each case.
+LIBRARY_TODAY = dict(NAAPP_RUNTIME_TODAY)
 
 # What the hook delivery receiver answers today: acceptance, or its refusal code.
 # It leaves revocation to its caller and compares the certificate with the

@@ -47,7 +47,7 @@ def test_private_certificate_refused_by_real_pre_status_registry(aw_workspace):
     with _running_library(awid_service_token=None, registry_url=old_registry) as app:
         result = _aw_request(team, "GET", f"{app.origin}/v1/proposals")
         _assert_aw_status(result, 401, context="private certificate on registry without status")
-        assert "Unknown AWID certificate" in result.stdout
+        assert "unregistered" in result.stdout
     with _running_library(awid_service_token=None) as app:
         result = _aw_request(team, "GET", f"{app.origin}/v1/proposals")
         assert _assert_aw_success(result, context="same certificate on current registry").strip() == "[]"

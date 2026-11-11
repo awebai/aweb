@@ -135,7 +135,7 @@ async def test_status_verifies_published_certificate_and_rejects_revoked(real_re
     cache._certificate_cache[(TEAM_ID, "target")] = replace(old, expires_at=-1)
     response = await client.get("/protected", headers=headers)
     assert response.status_code == 401
-    assert response.json()["detail"] == "Team certificate has been revoked"
+    assert response.json()["detail"] == "revoked"
 
 
 async def test_unknown_certificate_does_not_reuse_other_certificate_cache(real_registry):
@@ -154,7 +154,7 @@ async def test_rotation_active_is_not_authentication(real_registry):
     await db.execute("UPDATE {{tables.teams}} SET team_did_key = $1", new_did)
     response = await client.get("/protected", headers=headers)
     assert response.status_code == 401
-    assert response.json()["detail"] == "Team certificate signature verification failed"
+    assert response.json()["detail"] == "bad_signature"
 
 
 @pytest.mark.parametrize("fault", [404, 429, 503, "timeout", "json"])
@@ -207,5 +207,5 @@ async def test_valid_but_unpublished_certificate_is_refused(real_registry):
     await db.execute("DELETE FROM {{tables.team_certificates}}")
     response = await client.get("/protected", headers=headers)
     assert response.status_code == 401
-    assert response.json()["detail"] == "Unknown AWID certificate"
+    assert response.json()["detail"] == "unregistered"
     assert not cache._certificate_cache

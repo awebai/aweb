@@ -96,9 +96,10 @@ async def test_team_request_authenticates(monkeypatch, private, configured, faul
         return httpx.Response(
             200,
             json={
-                "certificates": [{"certificate_id": "synthetic-cert", "revoked_at": now}]
-                if fault == "revoked"
-                else [],
+                # The registry published the certificate; the library refuses one it did not.
+                "certificates": [
+                    {"certificate_id": "synthetic-cert", "revoked_at": now if fault == "revoked" else None}
+                ],
                 "has_more": False,
             }
             if req.url.path.endswith("/certificates")
