@@ -239,7 +239,12 @@ def _build_awid_registry_client(
     registry_url = settings.awid_registry_url
     service_token = settings.awid_service_token
     client_class = CachedRegistryClient if redis is not None else RegistryClient
-    client_kwargs = {"registry_url": registry_url, "service_token": service_token, "transport": transport}
+    client_kwargs = {
+        "registry_url": registry_url,
+        "service_token": service_token,
+        "member_signing_keys": settings.awid_member_signing_keys,
+        "transport": transport,
+    }
     if redis is not None:
         return client_class(redis_client=redis, **client_kwargs)
     return client_class(**client_kwargs)

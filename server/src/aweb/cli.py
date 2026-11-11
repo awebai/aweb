@@ -264,6 +264,7 @@ def verify_identity_bindings_command(
             registry = RegistryClient(
                 registry_url=settings.awid_registry_url,
                 service_token=settings.awid_service_token,
+                member_signing_keys=settings.awid_member_signing_keys,
             )
             try:
                 return await verify_pending_identity_bindings(
@@ -307,7 +308,8 @@ def revalidate_human_kind_command(
         ))
         redis = Redis.from_url(settings.redis_url)
         registry = CachedRegistryClient(registry_url=settings.awid_registry_url,
-            redis_client=redis, service_token=settings.awid_service_token)
+            redis_client=redis, service_token=settings.awid_service_token,
+            member_signing_keys=settings.awid_member_signing_keys)
         try:
             return await revalidate_human_kind(DatabaseManager(pool=pool, schema=schema), registry, apply=apply)
         finally:

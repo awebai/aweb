@@ -154,7 +154,7 @@ class _Policies:
     def __init__(self, policies: list[ActionPolicy]) -> None:
         self._by_ref = {p.policy_ref: p for p in policies}
 
-    async def current(self, policy_ref: str) -> ActionPolicy | None:
+    async def current(self, policy_ref: str, *, tx=None) -> ActionPolicy | None:
         return self._by_ref.get(policy_ref)
 
 
@@ -166,10 +166,10 @@ class _Directory:
         contact="owner@example.com",
     )
 
-    async def candidates(self, policy: ActionPolicy, request) -> list[Approver]:
+    async def candidates(self, policy: ActionPolicy, request, *, tx=None) -> list[Approver]:
         return [self.approver]
 
-    async def is_current(self, scope: str, subject: str) -> bool:
+    async def is_current(self, scope: str, subject: str, *, tx=None) -> bool:
         return (scope, subject) == (self.approver.scope, self.approver.subject)
 
 

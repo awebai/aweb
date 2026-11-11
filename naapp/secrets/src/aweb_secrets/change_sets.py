@@ -205,12 +205,15 @@ class ChangeSetPolicies:
         self._db = db
         self._directory = directory
 
-    async def current(self, policy_ref: str) -> ActionPolicy | None:
+    async def current(
+        self, policy_ref: str, *, tx: TransactionManager | None = None
+    ) -> ActionPolicy | None:
         parts = policy_ref.split("|")
         if parts[0] != POLICY_PREFIX or len(parts) not in (3, 4):
             return None
         installation_id, team_id = parts[1], parts[2]
-        allow_requester = await four_eyes(self._db, installation_id) == "not_required"
+        reader = tx or self._db
+        allow_requester = await four_eyes(reader, installation_id) == "not_required"
         if len(parts) == 4 and allow_requester:
             scopes: tuple[str, ...] = (parts[3],)
         else:
@@ -218,7 +221,7 @@ class ChangeSetPolicies:
             # instead needs another owner; OwnerDirectory excludes the drafter
             # from these current enrolled owners, as for a member draft.
             owners = await self._directory.enrolled_owners(
-                self._db, installation_id=installation_id, team_id=team_id
+                reader, installation_id=installation_id, team_id=team_id
             )
             scopes = tuple(owner_scope(installation_id, team_id, o.principal_did) for o in owners)
         if not scopes:
@@ -870,7 +873,7 @@ class ChangeSets:
         )
         if drafted is None:
             raise ChangeRefused("the change set is not pending", code="change_not_pending")
-        decided = await self._approvals.get(drafted)
+        decided = await self._approvals.get(drafted, tx=tx)
         decided_by = decided.decided_by if decided is not None else None
         if decided_by is None:
             raise ChangeRefused("no owner has decided the change set", code="change_not_approved")

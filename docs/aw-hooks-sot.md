@@ -119,8 +119,11 @@ inventory of `fire_mutation_hook`, `fire_mutation_callback` and
 federation fires through its outbox instead, so the inventory does not list it. Repeated rows preserve multiplicity when one function has multiple
 calls for the same event. The table below groups those exact call sites by their
 public HTTP behavior. The create, update, delete, dependency and comment rows of
-`/v1/tasks` fire from the task service the route calls; every other row fires
-from its route.
+`/v1/tasks` fire from the task service the route calls, a `POST /v1/messages`
+send fires from `server/src/aweb/messaging/mail_send.py`, which the route and
+the MCP `send_mail` tool both call, and a chat send fires from
+`server/src/aweb/messaging/chat_send.py`, which both chat send routes and the
+MCP `send_chat` tool call; every other row fires from its route.
 
 | HTTP route | Event | When called |
 |---|---|---|
@@ -161,8 +164,11 @@ table fires the hook.
 
 The task tools and the task routes call one service function for each change,
 and that function fires the events: for the same change by the same member the
-event names, their order and the whole context are equal. The mail and chat
-tools build their context in the tool, with the same keys as their routes. MCP
+event names, their order and the whole context are equal. `send_mail` and
+`POST /v1/messages` likewise call one mail send, which fires `message.sent`
+with one context for both, and `send_chat` and the chat send routes call one
+chat send, which fires `chat.message_sent` with one context for both.
+`check_mail` builds its context in the tool, with the same keys as its route. MCP
 has no tool that deletes a task, changes its dependencies or answers it, and
 none for reservations or agent status; those events come from the routes only.
 
@@ -200,7 +206,7 @@ priority, content_mode, federated
 team_id, agent_id, alias, message_id, from_alias, subject, content_mode
 ```
 
-`chat.message_sent` from chat routes uses:
+`chat.message_sent` from a chat send uses:
 
 ```text
 team_id, session_id, conversation_id, message_id, from_agent_id,

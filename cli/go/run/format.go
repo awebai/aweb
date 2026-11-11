@@ -153,10 +153,6 @@ func SplitDisplayText(kind DisplayKind, text string) []DisplayLine {
 	return lines
 }
 
-func isIncomingCommDisplay(display string) bool {
-	return strings.HasPrefix(strings.TrimSpace(display), primaryBulletPrefix+"from ")
-}
-
 func findFlagValue(fields []string, flag string) string {
 	for i := 0; i < len(fields)-1; i++ {
 		if fields[i] == flag {
@@ -293,27 +289,4 @@ func truncateText(s string, max int) string {
 		return s[:max]
 	}
 	return s[:max-3] + "..."
-}
-
-func truncateLine(s string, max int) string {
-	runes := []rune(strings.TrimRight(s, " "))
-	if len(runes) <= max {
-		return string(runes)
-	}
-	if max <= 3 {
-		return string(runes[:max])
-	}
-	return string(runes[:max-3]) + "..."
-}
-
-func trimOuterBlankLines(lines []string) []string {
-	start := 0
-	for start < len(lines) && strings.TrimSpace(lines[start]) == "" {
-		start++
-	}
-	end := len(lines)
-	for end > start && strings.TrimSpace(lines[end-1]) == "" {
-		end--
-	}
-	return lines[start:end]
 }

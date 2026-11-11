@@ -2112,10 +2112,6 @@ type justCreatedTeamMemberRollbackTarget struct {
 	MemberAddress string
 }
 
-func rollbackJustCreatedTeamMember(anchorDir string, accepted *acceptedTeamInvite) error {
-	return rollbackJustCreatedTeamMemberWithExplicitHostedAuth(anchorDir, accepted, "")
-}
-
 func rollbackJustCreatedTeamMemberWithExplicitHostedAuth(anchorDir string, accepted *acceptedTeamInvite, explicitAPIKey string) error {
 	target, err := justCreatedTeamMemberRollbackTargetFromAccepted(accepted)
 	if err != nil {
@@ -2231,24 +2227,6 @@ func addPostJoinRollbackError(cause error, accepted *acceptedTeamInvite, memberR
 		fmt.Fprintf(&b, "local home rollback failed: %v", homeRollbackErr)
 	}
 	return fmt.Errorf("%w; %s", cause, b.String())
-}
-
-func parseTeamHumanAddSpec(raw string) (name, profileRef string, err error) {
-	name = strings.TrimSpace(raw)
-	if before, after, ok := strings.Cut(name, "@"); ok {
-		name = strings.TrimSpace(before)
-		profileRef = strings.TrimSpace(after)
-		if profileRef == "" {
-			return "", "", usageError("profile ref is required after @")
-		}
-	}
-	if name == "" {
-		return "", "", usageError("agent name is required")
-	}
-	if !isValidWorkspaceAlias(name) {
-		return "", "", usageError("invalid agent name %q: must start with an alphanumeric and contain only alphanumerics, dashes, or underscores (max 64 chars)", name)
-	}
-	return name, profileRef, nil
 }
 
 type agentHomeRollback struct {

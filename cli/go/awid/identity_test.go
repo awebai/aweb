@@ -1162,12 +1162,3 @@ func TestLegacyLifetimeConversionIsSeparateFromCanonicalScopeNormalization(t *te
 		t.Fatalf("legacy ephemeral scope=%q", got)
 	}
 }
-
-func mustClient(t *testing.T, baseURL string) *Client {
-	t.Helper()
-	c, err := New(baseURL)
-	if err != nil {
-		t.Fatal(err)
-	}
-	return c
-}

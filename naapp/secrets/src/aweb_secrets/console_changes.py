@@ -437,7 +437,7 @@ class ConsoleChanges:
             row = await self._row(tx, admitted, change_id)
             if row["confirm_in_aw"] and not isinstance(current, KeyBoundConsoleSession):
                 raise HTTPException(409, "confirm_in_aw")
-            approval = await self.approvals.get(row["approval_id"])
+            approval = await self.approvals.get(row["approval_id"], tx=tx)
             if approval is None or approval.decided_by is None:
                 raise HTTPException(409, "change_not_approved")
             if (approval.decided_by.scope, approval.decided_by.subject) != (

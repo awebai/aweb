@@ -27,6 +27,7 @@ may also supply its own font directory; its licensing remains with that app.
 from __future__ import annotations
 
 import asyncio
+import base64
 import hashlib
 import json
 import logging
@@ -85,6 +86,7 @@ from aweb_naapp.runtime.authorization import (
     authorize_request,
     is_placeholder,
 )
+from aweb_naapp.runtime.awid_member_credentials import read_member_credentials
 from aweb_naapp.runtime.db import NaappDatabase, Store
 from aweb_naapp.runtime.event_emit import AppEvents, is_loopback_host
 from aweb_naapp.runtime.health import CheckResult, HealthCheck, mount_health
@@ -114,6 +116,7 @@ if TYPE_CHECKING:
     from pgdbm.core import TransactionManager
 
     from aweb_naapp.egress import Egress
+    from aweb_naapp.runtime.owner_act_delivery import CheckedHumanRoleMember
 
 logger = logging.getLogger(__name__)
 
@@ -191,6 +194,7 @@ class NaappRuntime:
             registry_url=settings.awid_registry_url,
             ttl_seconds=settings.auth_cache_ttl_seconds,
             service_token=settings.awid_service_token,
+            member_credentials=read_member_credentials(settings.awid_member_credentials),
             transport=awid_transport,
         )
         self._team_server_directory = TeamServerDirectory(
@@ -259,6 +263,9 @@ class NaappRuntime:
     @asynccontextmanager
     async def lifespan(self, app: FastAPI) -> AsyncIterator[None]:
         self.check_authorized_routes(app)
+        # A configured member credential AWID does not currently publish is the
+        # operator's misconfiguration: refuse to start, naming it.
+        await self._team_cache.check_member_credentials()
         database = NaappDatabase(
             self.settings,
             module_name=self.module_name,
@@ -423,6 +430,66 @@ class NaappRuntime:
         return await self.team_cache().check_current_member(
             team_id, certificate_id=certificate_id, team_did_key=team_did_key
         )
+
+    async def check_human_role_member(
+        self,
+        team_id: str,
+        *,
+        principal: str,
+        certificate: bytes,
+        identity_client: RegistryClient | None = None,
+    ) -> CheckedHumanRoleMember:
+        """Retain exact signed JSON bytes with the existing exact-subject H2 proof.
+
+        Run before effect locks. Identity mismatch/malformed input is the
+        delivery contract's owner_required; definite loss, non-human kind and
+        unavailability retain their distinct typed outcomes. No HTTP response
+        is built here, and no certificate is fetched or re-encoded for storage.
+        """
+        from awid.team_certificate import (
+            MAX_HEADER_BYTES,
+            TeamCertificateError,
+            decode_team_certificate,
+        )
+
+        from aweb_naapp.runtime.owner_act_delivery import (
+            CheckedHumanRoleMember,
+            OwnerActDeliveryCode,
+            OwnerActDeliveryRefused,
+        )
+
+        try:
+            if not isinstance(certificate, bytes) or len(certificate) > MAX_HEADER_BYTES:
+                raise TeamCertificateError("malformed")
+            # Reuse AWID's one bounded signed-artifact decoder. Retain the
+            # original bytes below, never the reconstructed transport encoding.
+            decoded = decode_team_certificate(base64.b64encode(certificate).decode("ascii"))
+            if decoded.get("team_id") != team_id or decoded.get("member_did_aw") != principal:
+                raise TeamCertificateError("malformed")
+        except TeamCertificateError:
+            raise OwnerActDeliveryRefused("owner_required") from None
+        try:
+            proof = await self.check_human_member(
+                team_id,
+                principal=principal,
+                certificate=decoded,
+                identity_client=identity_client,
+            )
+        except HTTPException as exc:
+            code: OwnerActDeliveryCode
+            if exc.status_code == 403 and exc.detail == "principal_not_member":
+                code = "principal_not_member"
+            elif exc.status_code == 403 and exc.detail == "principal_not_human":
+                code = "principal_not_human"
+            else:
+                code = "principal_status_unavailable"
+            raise OwnerActDeliveryRefused(code) from None
+        except Exception:
+            # The delivery boundary cannot turn an unclassified dependency
+            # failure into a definitive non-member result or expose its detail.
+            # Cancellation inherits BaseException and still propagates.
+            raise OwnerActDeliveryRefused("principal_status_unavailable") from None
+        return CheckedHumanRoleMember(certificate, proof)
 
     async def check_human_member(
         self, team_id: str, *, principal: str, certificate: Mapping[str, Any],

@@ -1004,7 +1004,7 @@ class Passkeys:
         admission = await approvals.admit(approval_id, request, operation_id, tx=tx)
         if not admission.first:
             raise DesignationRefused("the owner approval has already been used")
-        approval = await approvals.get(approval_id)
+        approval = await approvals.get(approval_id, tx=tx)
         assert approval is not None and approval.decided_by is not None
         decider = approval.decided_by
         if not self._owner_scopes(decider.scope):
@@ -1166,9 +1166,12 @@ class Passkeys:
 
     # The directory
 
-    async def designated_approver(self, scope: str) -> Approver | None:
+    async def designated_approver(
+        self, scope: str, *, tx: TransactionManager | None = None
+    ) -> Approver | None:
         """The scope's current approver, once in effect and enrolled."""
-        row = await self.db.fetch_one(_USABLE_APPROVER, scope, self._clock(), self.rp.rp_id)
+        reader = self.db if tx is None else TransactionManager(tx.connection, self.db)
+        row = await reader.fetch_one(_USABLE_APPROVER, scope, self._clock(), self.rp.rp_id)
         if row is None:
             return None
         return Approver(
@@ -1186,14 +1189,23 @@ class Passkeys:
         row = await tx.fetch_one(_USABLE_APPROVER, scope, self._clock(), self.rp.rp_id)
         return None if row is None else str(row["subject"])
 
-    async def candidates(self, policy: ActionPolicy, request: Mapping[str, Any]) -> list[Approver]:
+    async def candidates(
+        self,
+        policy: ActionPolicy,
+        request: Mapping[str, Any],
+        *,
+        tx: TransactionManager | None = None,
+    ) -> list[Approver]:
         """The current approver of each of the policy's scopes that has one."""
-        found = [await self.designated_approver(scope) for scope in policy.approver_scopes]
+        found = [await self.designated_approver(scope, tx=tx) for scope in policy.approver_scopes]
         return [approver for approver in found if approver is not None]
 
-    async def is_current(self, scope: str, subject: str) -> bool:
+    async def is_current(
+        self, scope: str, subject: str, *, tx: TransactionManager | None = None
+    ) -> bool:
+        reader = self.db if tx is None else TransactionManager(tx.connection, self.db)
         return bool(
-            await self.db.fetch_value(
+            await reader.fetch_value(
                 "SELECT EXISTS (SELECT 1 FROM {{tables.passkey_approvers}} "
                 f"WHERE subject = $1 AND {_CURRENT} AND scope = $3)",
                 subject,

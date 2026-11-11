@@ -8,7 +8,7 @@ import pytest
 from httpx import ASGITransport, AsyncClient
 
 from awid.signing import canonical_json_bytes, sign_message
-import aweb.routes.messages as message_routes
+import aweb.messaging.mail_send as mail_send
 from aweb.identity_auth_deps import MessagingAuth, get_messaging_auth
 from test_messages_http import _build_test_app, _insert_agent, _insert_team, _make_keypair
 
@@ -88,7 +88,7 @@ async def test_new_mail_conversation(aweb_cloud_db, target, new_flag, monkeypatc
 
         if target == "alias":
             # Force both requests past the absence precheck before either INSERT.
-            original_create = message_routes.create_conversation
+            original_create = mail_send.create_conversation
             ready = asyncio.Event()
             arrivals = 0
 
@@ -100,7 +100,7 @@ async def test_new_mail_conversation(aweb_cloud_db, target, new_flag, monkeypatc
                 await asyncio.wait_for(ready.wait(), timeout=5)
                 return await original_create(*args, **kwargs)
 
-            monkeypatch.setattr(message_routes, "create_conversation", concurrent_create)
+            monkeypatch.setattr(mail_send, "create_conversation", concurrent_create)
             racing_id = str(uuid4())
             responses = await asyncio.gather(*[
                 client.post("/v1/messages", json={**recipient, "new_conversation": True,

@@ -178,16 +178,24 @@ class OwnerDirectory:
         self._passkeys = passkeys
         self._db = db
 
-    async def candidates(self, policy: ActionPolicy, request: Mapping[str, Any]) -> list[Approver]:
-        drafter = Drafter() if policy.allow_requester_approval else await self._drafter(request)
+    async def candidates(
+        self,
+        policy: ActionPolicy,
+        request: Mapping[str, Any],
+        *,
+        tx: TransactionManager | None = None,
+    ) -> list[Approver]:
+        drafter = (
+            Drafter() if policy.allow_requester_approval else await self._drafter(request, tx=tx)
+        )
         found: list[Approver] = []
         for scope in policy.approver_scopes:
             if scope == drafter.scope:
                 continue
-            principal = await self._owner(scope)
+            principal = await self._owner(scope, tx=tx)
             if is_owner_scope(scope) and principal is None:
                 continue
-            approver = await self._passkeys.designated_approver(scope)
+            approver = await self._passkeys.designated_approver(scope, tx=tx)
             if approver is None:
                 continue
             if principal is not None:
@@ -197,10 +205,12 @@ class OwnerDirectory:
             found.append(approver)
         return found
 
-    async def is_current(self, scope: str, subject: str) -> bool:
-        if is_owner_scope(scope) and await self._owner(scope) is None:
+    async def is_current(
+        self, scope: str, subject: str, *, tx: TransactionManager | None = None
+    ) -> bool:
+        if is_owner_scope(scope) and await self._owner(scope, tx=tx) is None:
             return False
-        return await self._passkeys.is_current(scope, subject)
+        return await self._passkeys.is_current(scope, subject, tx=tx)
 
     async def enrolled_owners(
         self, db: AsyncDatabaseManager | TransactionManager, *, installation_id: str, team_id: str
@@ -237,10 +247,16 @@ class OwnerDirectory:
         held = await owner_holding(db, scope)
         return None if held is None else PrincipalKey(held.team_id, held.principal)
 
-    async def _owner(self, scope: str) -> PrincipalKey | None:
-        return await self.owner_of(self._db, scope)
+    async def _owner(
+        self, scope: str, *, tx: TransactionManager | None = None
+    ) -> PrincipalKey | None:
+        """The owner a scope stands for, while it holds secrets.owner; None
+        for a scope that is not an owner scope or whose owner lost the role."""
+        return await self.owner_of(tx or self._db, scope)
 
-    async def _drafter(self, request: Mapping[str, Any]) -> Drafter:
+    async def _drafter(
+        self, request: Mapping[str, Any], *, tx: TransactionManager | None = None
+    ) -> Drafter:
         """Who drafted a change set: a member's principal, or the console scope
         that drafted it with the owner it stands for, if it is an owner scope."""
         if request.get("type") != CHANGE_TYPE:
@@ -250,6 +266,8 @@ class OwnerDirectory:
             return Drafter(principal_did=drafter.get("principal"))
         if drafter.get("via") == "console":
             scope = drafter.get("scope")
-            record = None if not isinstance(scope, str) else await owner_record(self._db, scope)
+            record = (
+                None if not isinstance(scope, str) else await owner_record(tx or self._db, scope)
+            )
             return Drafter(principal_did=None if record is None else record.principal, scope=scope)
         return Drafter()

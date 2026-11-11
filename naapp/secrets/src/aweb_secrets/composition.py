@@ -130,21 +130,31 @@ class _Policies:
     def __init__(self, changes: ChangeSetPolicies, uses: UsePolicies) -> None:
         self._changes, self._uses = changes, uses
 
-    async def current(self, ref: str) -> ActionPolicy | None:
-        change = await self._changes.current(ref)
-        return change if change is not None else await self._uses.current(ref)
+    async def current(
+        self, ref: str, *, tx: TransactionManager | None = None
+    ) -> ActionPolicy | None:
+        change = await self._changes.current(ref, tx=tx)
+        return change if change is not None else await self._uses.current(ref, tx=tx)
 
 
 class _Approvers:
     def __init__(self, owners: OwnerDirectory, uses: UseApprovers) -> None:
         self._owners, self._uses = owners, uses
 
-    async def candidates(self, policy: ActionPolicy, request: Mapping[str, Any]) -> list[Approver]:
+    async def candidates(
+        self,
+        policy: ActionPolicy,
+        request: Mapping[str, Any],
+        *,
+        tx: TransactionManager | None = None,
+    ) -> list[Approver]:
         provider = self._owners if request.get("type") == CHANGE_TYPE else self._uses
-        return await provider.candidates(policy, request)
+        return await provider.candidates(policy, request, tx=tx)
 
-    async def is_current(self, scope: str, subject: str) -> bool:
-        return await self._uses.is_current(scope, subject)
+    async def is_current(
+        self, scope: str, subject: str, *, tx: TransactionManager | None = None
+    ) -> bool:
+        return await self._uses.is_current(scope, subject, tx=tx)
 
 
 @dataclass

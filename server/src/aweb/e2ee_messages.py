@@ -32,6 +32,10 @@ class E2EEEnvelopeError(ValueError):
     pass
 
 
+class E2EERecipientKeyMismatch(E2EEEnvelopeError):
+    """The envelope is addressed to keys other than the ones its delivery expects."""
+
+
 def _b64_raw_decode(value: str, *, field: str) -> bytes:
     value = str(value or "").strip()
     try:
@@ -920,7 +924,7 @@ def validate_e2ee_message_envelope(
             raise E2EEEnvelopeError("encrypted envelope duplicate recipient did")
         envelope_recipients_by_did[recipient_did] = recipient
     if set(envelope_recipients_by_did) != set(expected_by_did):
-        raise E2EEEnvelopeError("encrypted envelope recipient did mismatch")
+        raise E2EERecipientKeyMismatch("encrypted envelope recipient did mismatch")
     for recipient_did, expected in expected_by_did.items():
         recipient = envelope_recipients_by_did[recipient_did]
         expected_stable_id = _non_empty(expected.get("stable_id"))
