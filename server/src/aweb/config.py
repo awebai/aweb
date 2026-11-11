@@ -12,8 +12,7 @@ from awid.log import canonical_server_origin
 from awid.ratelimit import normalize_service_token
 from awid.utc_timestamps import parse_utc_seconds
 from awid.team_ids import build_team_id, parse_team_id
-from cryptography.hazmat.primitives import serialization
-from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey
+from awid.signing import load_signing_key_pem
 
 
 def _env_bool(*names: str, default: bool = False) -> bool:
@@ -71,7 +70,7 @@ def get_awid_service_token() -> str | None:
 
 
 def get_awid_member_signing_keys() -> dict[str, bytes]:
-    """Load existing aw PKCS8 Ed25519 keys, indexed by canonical team ID.
+    """Load existing aw Ed25519 seed PEM keys, indexed by canonical team ID.
 
     The JSON manifest contains paths, never key material. Relative paths are
     relative to that manifest. Only ordinary member keys belong here, not the
@@ -94,10 +93,7 @@ def get_awid_member_signing_keys() -> dict[str, bytes]:
             path = Path(filename).expanduser()
             if not path.is_absolute():
                 path = manifest.parent / path
-            key = serialization.load_pem_private_key(path.read_bytes(), password=None)
-            if not isinstance(key, Ed25519PrivateKey):
-                raise ValueError("expected an Ed25519 private key")
-            keys[team_id] = key.private_bytes_raw()
+            keys[team_id] = load_signing_key_pem(path.read_bytes())
         return keys
     except (OSError, ValueError, TypeError):
         # Do not echo file contents or key-parser details into startup logs.
