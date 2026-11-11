@@ -144,12 +144,11 @@ including `credential`, keeps the same-signer rule.
   surface is specified. This change adds none.
 - Q's ID chain in `X-AWID-ID-Chain`, with the existing encoding
   (`awid.EncodeIDChainHeader`).
-- The start body as in section 1, with `scope.principal` = H and one added
-  member, `holder_certificate`: H's team certificate in the
-  `X-AWID-Team-Certificate` encoding. It is required exactly when the signer is
-  not `scope.principal`, and refused when the signer is H.
-- `return` is `loopback`. The `user_code` fallback is not available when Q
-  signs, so the code always goes to the loopback on the browser's own machine.
+- The start body exactly as in section 1, with `scope.principal` = H and
+  `return` = `loopback`. It carries no certificate of H, and a
+  `holder_certificate` member is refused. The `user_code` fallback is not
+  available when Q signs, so the code always goes to the loopback on the
+  browser's own machine.
 
 **What the app checks,** before creating anything, all from current evidence:
 
@@ -160,24 +159,28 @@ including `credential`, keeps the same-signer rule.
    a human whose stable ID equals `scope.principal`, and that issuer's own
    verified kind is `human`. The edge is current (not revoked, current head). A deeper descendant, or a chain naming another
    parent, does not qualify.
-3. `holder_certificate` is checked exactly as a holder's certificate is
-   today: it decodes, verifies under the team's current key, names the
-   installation's team and `member_did_aw` = H, has a published and
-   unrevoked status, and H's own kind is `human`. It is retained with the
-   session as H's membership evidence.
+3. H's membership evidence is the certificate the app already retains with
+   H's holding (stored by the designate or replace that bound it, refreshed by
+   H-signed paths; aweb decision (A), b2eae523). It is verified at use exactly
+   as a holder's certificate is: under the team's current key, naming the
+   installation's team and `member_did_aw` = H, with a published and unrevoked
+   status, and H's own kind `human`. No usable retained certificate is
+   `principal_not_member`; H refreshes it through an H-signed path. Q can't
+   supply or replace it. That includes a retained certificate that is no
+   longer current because H's membership certificate was renewed or replaced
+   afterwards: the start refuses `principal_not_member` and never falls back to
+   anything in Q's request.
 4. The scope resolves to H's current holding, as today.
 
 **Refusals:**
 
-- `400 handoff_invalid`: `holder_certificate` is malformed, is absent when
-  the signer is not H, is present when the signer is H, or is present on any
-  purpose other than `session`. It is also refused for `return: user_code` together with
-  `holder_certificate`.
+- `400 handoff_invalid`: the body carries `holder_certificate`, or uses
+  `return: user_code` when the signer is not H.
 - `403 scope_not_signer`: the signer is neither H nor a verified direct child
   of H. That covers a missing chain, another parent, a deeper descendant, and
   a revoked or stale edge.
-- `403 principal_not_member` / `403 principal_not_human`: H's certificate
-  checks, as today.
+- `403 principal_not_member` / `403 principal_not_human`: the retained
+  certificate's checks, as today, including no usable retained certificate.
 - `503 principal_status_unavailable`: chain or certificate status evidence
   cannot be read. This fails closed and is retryable.
 - `403 role_not_held`, `401 console_session_required` and the rest of
@@ -186,15 +189,20 @@ including `credential`, keeps the same-signer rule.
 **The result is unchanged.** It is released once, only to a caller holding
 the single-use code (from the loopback on the browser's own machine), the
 verifier preimage and a signature by the ephemeral key the start registered
-(section 3). The session is H's, bound to that key, and it retains
-`holder_certificate`. The handoff records Q, but only for display and audit.
+(section 3). The session is H's, bound to that key, and it retains the
+verified certificate of H's holding as its membership evidence. The handoff records Q, but only for display and audit.
 The page's state route (`GET /handoff/{id}/session`) adds
 `requester: {id, address, key_fingerprint}`, and the page shows Q separately
 from H before H's app-RP LOGIN and the explicit Allow.
 
 **aw:** a holder command run in Q's identity home takes H from Q's installed
 chain (its direct parent), shows both, and signs as Q. With no qualifying
-requester, aw refuses `requester_missing` and names the onboarding command.
+requester, aw refuses `requester_missing` and names the onboarding command. On
+`principal_not_member` from a start Q signed, aw says that the app's retained
+record of H's team membership is not current (for example after H's
+certificate was renewed), and that it is refreshed only by a path H signs, never
+by Q. Today that path is the owner's `human-credential.replace`, whose delivery
+body carries H's current certificate.
 
 Onboarding (`aw id create --human-parent H`) issues the laptop agent under H
 with H's one live approval. It does not make the agent a team member. Q gets
