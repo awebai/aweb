@@ -63,6 +63,7 @@ Every naapp's vocabulary adds them:
   `app-credential.recover` does.
 - **`human-role.revoke`**: `app_id`, `installation_id`, `role` and
   `principal`.
+
 The fields:
 
 - `role` is the declared role name (`secrets.owner`, `logs.reader`), not a

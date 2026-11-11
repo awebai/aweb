@@ -165,8 +165,8 @@ the token.
   positive JSON integer in the safe range above. It names a role, not a
   holder, so it carries no `principal`.
 
-The human-role acts name a team member who already exists, so the app needs
-no pending row: the verifier's stored row is the subject the app builds from
+Designate, replace and revoke name a team member who already exists, so the app
+needs no pending row: the verifier's stored row is the subject the app builds from
 its own installation, the declared role, the principal and the hashes of the
 credential and notice contact it was given
 ([Delivery](owner-act-delivery.md#delivery)). An app that declares a role with
