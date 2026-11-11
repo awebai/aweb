@@ -472,8 +472,12 @@ sequence/hash so rollback detection survives process restarts.
 
 A sender already pinned stays verified by its pin while the registry cannot be
 reached. A later registry answer that names another key for a pinned address is
-an `identity_mismatch`, and the pin is kept. A bare alias with no address is a
-display name, not an address claim, and is outside this rule.
+an `identity_mismatch`, and the pin is kept.
+
+For a sender shown only by a display alias, with no address, `verified` means
+the message was signed by the key shown; there is no identity claim behind the
+alias, so this rule has nothing to confirm. A local team sender is still
+checked against the reader's own team roster.
 
 The cases are shared by both clients in
 [`test-vectors/trust/first-contact-v1.json`](https://github.com/awebai/aweb/blob/main/test-vectors/trust/first-contact-v1.json).
