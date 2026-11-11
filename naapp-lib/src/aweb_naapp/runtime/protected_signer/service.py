@@ -265,6 +265,8 @@ class ProtectedSigner:
         self, operation_id: str, *, human: AdmittedHuman
     ) -> Mapping[str, Any]:
         row = await self._authorized(operation_id, human, "approval")
+        if row["refusal_code"] is not None:
+            raise SignerRefused(row["refusal_code"])
         link = self._link(row, human)
         if row["result"] is not None or self.clock() >= row["expires_at"]:
             raise SignerRefused("operation_expired")
@@ -281,13 +283,16 @@ class ProtectedSigner:
         if type(human) is not AdmittedHuman:
             raise SignerRefused("scope_refused")
         row = await self._authorized(operation_id, human, "execute")
-        if row["result"] is not None:
+        if row["result"] is not None or row["refusal_code"] is not None:
             return self._receipt(row)
         link = self._link(row, human)
         approval = await self.store.get(row["approval_id"])
         if approval is None:
             raise SignerRefused("approval_spent")
         if approval.state is ApprovalState.PENDING:
+            claim, phase = await self._claim_verification(operation_id, human)
+            if claim is None:
+                return self._receipt(phase)
             try:
                 approval = await self.approvals.decide(
                     approval.approval_id,
@@ -303,6 +308,7 @@ class ProtectedSigner:
                     ApprovalState.APPROVED,
                     ApprovalState.CONSUMED,
                 ):
+                    await self._refuse_verification(operation_id, claim, "proof_invalid")
                     raise SignerRefused("proof_invalid") from exc
         decided = approval.decided_by
         if decided is None or (decided.subject, decided.scope, decided.assurance) != (
@@ -400,6 +406,48 @@ class ProtectedSigner:
                 raise SignerRefused("gesture_expired")
         return OperationReceipt(operation_id, "committed", result=result)
 
+    async def _claim_verification(self, operation_id, human):
+        # A durable phase claim serializes the decision, not its authority. B3
+        # verification commits separately, with no caller locks or connection
+        # held. A crash remains pending until the original deadline; if B2's
+        # decision committed, a retry can proceed directly to the effect.
+        fence = await self.authority.observe(human.context, purpose="execute")
+        async with self.db.transaction() as tx:
+            row = await self._lock(tx, operation_id)
+            await fence.prepare(tx, human)
+            if (
+                row["verification_claim"] is not None
+                or row["result"] is not None
+                or row["refusal_code"] is not None
+            ):
+                await fence.check(tx, human)
+                fence.require_fresh()
+                return None, row
+            if self.clock() >= row["expires_at"]:
+                raise SignerRefused("operation_expired")
+            claim = str(uuid.uuid4())
+            await tx.execute(
+                "UPDATE {{tables.protected_signer_operations}} SET verification_claim=$2 WHERE operation_id=$1",
+                operation_id,
+                claim,
+            )
+            await fence.check(tx, human)
+            fence.require_fresh()
+            return claim, row
+
+    async def _refuse_verification(self, operation_id, claim, code):
+        # Narrow only this worker's phase. No effect can be concurrent while
+        # its B2 approval is still pending and this claim owns verification.
+        async with self.db.transaction() as tx:
+            row = await self._lock(tx, operation_id)
+            if row["result"] is None and row["verification_claim"] == claim:
+                await tx.execute(
+                    "UPDATE {{tables.protected_signer_operations}} SET refusal_code=$2,"
+                    "candidate_links='{}'::jsonb WHERE operation_id=$1",
+                    operation_id,
+                    code,
+                )
+
     async def _credential_current(self, tx, human, credential_id):
         return bool(
             await tx.fetch_value(
@@ -431,12 +479,16 @@ class ProtectedSigner:
     def _receipt(self, row):
         if row["result"] is not None:
             return OperationReceipt(row["operation_id"], "committed", result=_json(row["result"]))
+        if row["refusal_code"] is not None:
+            return OperationReceipt(row["operation_id"], "refused", code=row["refusal_code"])
         if self.clock() >= row["expires_at"]:
             return OperationReceipt(row["operation_id"], "refused", code="operation_expired")
         return OperationReceipt(
             row["operation_id"],
             "pending",
-            code="awaiting_human",
+            code="effect_in_progress"
+            if row["verification_claim"] is not None
+            else "awaiting_human",
             expires_at=_stamp(row["expires_at"]),
         )
 

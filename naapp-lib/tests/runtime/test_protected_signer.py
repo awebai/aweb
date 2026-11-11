@@ -189,7 +189,7 @@ async def world(test_db_factory):
         str(uuid.uuid4()),
         context,
         "https://console.example.com",
-        "example.app",
+        "example",
         str(uuid.uuid4()),
         "example.owner",
         human_id,
@@ -280,7 +280,9 @@ async def test_concurrent_execute_and_receipt_have_one_committed_effect(world):
         world.signer.receipt(prepared.operation_id, reader=world.reader),
         return_exceptions=True,
     )
-    committed = [r for r in results if not isinstance(r, Exception) and r.state == "committed"]
+    assert all(not isinstance(r, Exception) for r in results), results
+    assert all(r.state in ("pending", "committed") for r in results)
+    committed = [r for r in results if r.state == "committed"]
     assert committed
     final = await world.signer.receipt(prepared.operation_id, reader=world.reader)
     assert all(r.result == final.result for r in committed)
@@ -370,3 +372,46 @@ async def test_last_audit_wait_crossing_original_uv_deadline_rolls_back_everythi
         if task is not None and not task.done():
             task.cancel()
             await asyncio.gather(task, return_exceptions=True)
+
+
+async def test_execute_during_spent_assertion_uncommitted_decision_is_pending(world):
+    prepared, proof = await approve(world)
+    db = world.passkeys.db
+    await db.execute(
+        "CREATE FUNCTION {{tables.wait_signer_decision}}() RETURNS trigger LANGUAGE plpgsql AS $$ "
+        "BEGIN IF NEW.kind='approval_decided' THEN PERFORM pg_advisory_xact_lock(28766195); "
+        "END IF; RETURN NEW; END; $$"
+    )
+    await db.execute(
+        "CREATE TRIGGER signer_decision_wait BEFORE INSERT ON {{tables.audit_outbox}} "
+        "FOR EACH ROW EXECUTE FUNCTION {{tables.wait_signer_decision}}()"
+    )
+    first = None
+    try:
+        async with db.transaction() as blocker:
+            await blocker.execute("SELECT pg_advisory_xact_lock(28766195::bigint)")
+            pid = await blocker.fetch_value("SELECT pg_backend_pid()")
+            first = asyncio.create_task(
+                world.signer.execute(prepared.operation_id, proof, human=world.human)
+            )
+            async with asyncio.timeout(10):
+                while not await db.fetch_value(
+                    "SELECT EXISTS(SELECT 1 FROM pg_stat_activity WHERE $1=ANY(pg_blocking_pids(pid)))",
+                    pid,
+                ):
+                    await asyncio.sleep(0.01)
+            async with asyncio.timeout(5):
+                concurrent = await world.signer.execute(
+                    prepared.operation_id, proof, human=world.human
+                )
+                observed = await world.signer.receipt(prepared.operation_id, reader=world.reader)
+            assert concurrent.state == observed.state == "pending"
+            assert concurrent.code == observed.code == "effect_in_progress"
+        completed = await first
+        assert completed.state == "committed"
+        assert await world.signer.receipt(prepared.operation_id, reader=world.reader) == completed
+        assert (await world.audit.kinds()).count("protected_operation_signed") == 1
+    finally:
+        if first is not None and not first.done():
+            first.cancel()
+            await asyncio.gather(first, return_exceptions=True)

@@ -104,6 +104,8 @@ class ControllerCustody(Protocol):
     """Existing local protected key adapter: closed operation, no export/sign(bytes).
 
     Synchronous/local only. No artifact escapes before the caller's SQL commit.
+    The adapter must independently match act/team/audience/complete subject to
+    the typed operation and provisioned key before signing.
     Network custody needs a separately specified idempotent protocol.
     """
 
