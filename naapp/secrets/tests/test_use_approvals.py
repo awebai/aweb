@@ -56,7 +56,6 @@ from aweb_secrets.use_approvals import (
 from tests.governance import view
 from tests.test_change_sets import (
     ALICE,
-    ORIGIN,
     TEAM,
     Installations,
     World,
@@ -139,7 +138,7 @@ async def designate(uses: Uses, ref: str, contact: str, *, principal: str | None
         )
     await w.change_sets.deliver(confirmation)
     token = w.inbox.enrolments[contact][-1]
-    device = SoftAuthenticator(ORIGIN)
+    device = SoftAuthenticator(w.passkeys.rp.origin)
     prepared = await w.credential_audit.prepare_enrolment(token)
     with w.credential_audit.prepared(prepared):
         await w.passkeys.complete_enrolment(

@@ -12,6 +12,7 @@ from playwright.async_api import expect
 from aweb_secrets import records
 from aweb_secrets.owners import OWNER_ROLE
 from aweb_secrets.policy import Policy
+from tests.console_network import passkey_origin as passkey_origin
 from tests.test_admission import POLICY_BODY
 from tests.test_change_sets import ALICE, TEAM
 from tests.test_console_access import (

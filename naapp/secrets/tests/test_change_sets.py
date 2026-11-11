@@ -13,6 +13,7 @@ import os
 import time
 import uuid
 from collections.abc import AsyncIterator
+from contextlib import asynccontextmanager
 from dataclasses import dataclass, field
 from datetime import UTC, datetime, timedelta
 from functools import partial
@@ -21,11 +22,18 @@ from types import SimpleNamespace
 from typing import Any
 
 import pytest
+from aweb_naapp.console import apply_console_migrations
 from aweb_naapp.egress import InternalDestinations
 from aweb_naapp.hooks.owner_act_nonces import apply_owner_act_migrations
 from aweb_naapp.hooks.producer import HookProducer, ServerProducer
 from aweb_naapp.outbox import apply_outbox_migrations
-from aweb_naapp.roles import PrincipalKey, apply_roles_migrations, assign, has_role, unassign
+from aweb_naapp.roles import (
+    PrincipalKey,
+    apply_roles_migrations,
+    has_role,
+    is_holding_scope,
+    unassign,
+)
 from aweb_naapp.runtime.approvals import (
     Approval,
     ApprovalRefused,
@@ -82,20 +90,19 @@ from aweb_secrets.owners import (
     apply_owner_migrations,
     approver_scope,
     is_owner_scope,
-    owner_scope,
-    record_owner,
 )
 from aweb_secrets.passkey_context import PasskeyContexts
 from aweb_secrets.revisions import apply_revision_migrations, bump_config_revision, config_revision
 from aweb_secrets.tokens import ProcessTokenCache
 from aweb_secrets.use_approvals import apply_use_approval_migrations
 from tests.governance import view
+from tests.human_owner import fixture_principal
 from tests.test_owner_directory import Audit
 
 ORIGIN = "https://secrets.example.com"
 TEAM = "backend:acme.com"
-ALICE = PrincipalKey(team_id=TEAM, principal_did="did:aw:jPUMBAvNeJo8USHNtJ81Wm7cqnk")
-BOB = PrincipalKey(team_id=TEAM, principal_did="did:aw:2Uq51iFVLnqmgbVY3vLZtMD5PR87")
+ALICE = fixture_principal(TEAM, "alice")
+BOB = fixture_principal(TEAM, "bob")
 CAROL = PrincipalKey(
     team_id=TEAM, principal_did="did:key:z6Mko9hTggMwjSTEaJaPUfE6tqcy2xvU6BnNq3e3o8qVBiyH"
 )
@@ -179,12 +186,23 @@ class World:
     containment: Containment
     credential_audit: CredentialAudit
     devices: dict[str, SoftAuthenticator] = field(default_factory=dict)
+    registry: Any = None
 
 
 @pytest.fixture
-async def world(test_db_factory, tmp_path: Path, request) -> AsyncIterator[World]:
+async def world(test_db_factory, tmp_path: Path, request, passkey_origin) -> AsyncIterator[World]:
+    async with build_world(
+        test_db_factory, tmp_path, origin=passkey_origin, options=getattr(request, "param", {})
+    ) as built:
+        yield built
+
+
+@asynccontextmanager
+async def build_world(
+    test_db_factory, tmp_path: Path, *, origin: str = ORIGIN, options: dict[str, Any] | None = None
+) -> AsyncIterator[World]:
     db = await test_db_factory.create_db(suffix="secrets_change_sets")
-    if options := getattr(request, "param", {}):
+    if options:
         # Keep the factory-owned manager and its cleanup registration. The
         # upstream factory already passes min/max when constructing config.
         await db.disconnect()
@@ -201,13 +219,14 @@ async def world(test_db_factory, tmp_path: Path, request) -> AsyncIterator[World
     inbox = Inbox()
     passkeys = Passkeys(
         db,
-        rp=RelyingParty(origin=ORIGIN, name="secrets"),
+        rp=RelyingParty(origin=origin, name="secrets"),
         delivery=inbox,
         audit=audit,
         retirement=ApprovalRevocation(store, audit),
         enrolment_ttl=timedelta(hours=1),
         challenge_ttl=timedelta(minutes=5),
         owner_scopes=is_owner_scope,
+        holding_scopes=is_holding_scope,
         proof_context=PasskeyContexts(app_id=APP_ID),
     )
     await passkeys.migrate()
@@ -218,6 +237,7 @@ async def world(test_db_factory, tmp_path: Path, request) -> AsyncIterator[World
         apply_roles_migrations,
         apply_owner_act_migrations,
         apply_owner_migrations,
+        apply_console_migrations,
         apply_revision_migrations,
         apply_change_policy_migrations,
         apply_custody_migrations,
@@ -304,38 +324,16 @@ async def world(test_db_factory, tmp_path: Path, request) -> AsyncIterator[World
             admitted,
             containment,
             credential_audit,
+            registry=registry,
         )
 
 
 async def enrol_owner(world: World, principal: PrincipalKey, contact: str) -> str:
-    """The team owner designates ``principal`` an owner, who enrols a passkey."""
-    scope = owner_scope(INSTALLATION_ID, principal.team_id, principal.principal_did)
-    subject = designation_subject(scope, contact)
-    signing, signature = world.owner.sign("app-role.designate", subject)
-    prepared = await world.owner.verifier.prepare(signing, signature, team_id=principal.team_id)
-    context = await world.credential_audit.prepare_owner_act(
-        world.admitted, signing=signing, signature=signature
-    )
-    with world.credential_audit.prepared(context):
-        async with world.db.transaction() as tx:
-            await world.fence.check(tx, world.admitted)
-            act = await world.owner.consume(tx, prepared, subject)
-            await record_owner(tx, installation_id=INSTALLATION_ID, principal=principal)
-            await assign(tx, principal, OWNER_ROLE)
-            designation = await world.passkeys.designate(
-                tx, scope=scope, contact=contact, evidence=act
-            )
-            await world.fence.check(tx, world.admitted)
-    await world.passkeys.deliver(designation)
-    token = world.inbox.enrolments[contact][-1]
-    device = SoftAuthenticator(ORIGIN)
-    context = await world.credential_audit.prepare_enrolment(token)
-    with world.credential_audit.prepared(context):
-        await world.passkeys.complete_enrolment(
-            token, device.create(await world.passkeys.enrolment_options(token)), fence=context
-        )
-    world.devices[contact] = device
-    return scope
+    """A real human-role act binds the fixture's genuine human and passkey."""
+    from tests.human_owner import apply_holder
+
+    designation = await apply_holder(world, "human-role.designate", principal, contact)
+    return designation.approver.scope
 
 
 def change_set(
