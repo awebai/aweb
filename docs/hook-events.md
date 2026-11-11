@@ -594,7 +594,9 @@ retained challenge lifetime. No extra fields enter either object.
   registration's id and public key and the holding's RP ID;
   `retire_credential_sha256` is the selected credential's digest by the same
   construction over its stored id and public key. `scope` and `subject` are the
-  verified B3 scope and approver subject. Purpose is `credential_change`. The
+  verified B3 scope and approver subject, equal to `C`'s `scope` and `M`'s
+  `subject`. The nonce and both digests are 64 lowercase hex characters.
+  Purpose is `credential_change`. The
   assertion is made by a current credential of that holding, never by the new
   one.
 
@@ -615,7 +617,9 @@ does not rewrite them.
 The credential sidecar is exactly `aweb.passkey-credential-change-request/1`
 plus LF and canonical `{"credential": K}`, with `"retire_credential": K'`
 added for a replace, where each is
-`{"credential_id", "public_key", "rp_id"}` in the credential encoding. It is
+`{"credential_id", "public_key", "rp_id"}` in the credential encoding, each
+`rp_id` equal to `C`'s `rp_id`. A missing or extra field, a mismatched digest
+or a noncanonical encoding refuses. It is
 restricted like the approval sidecar and is not framed into the commitment:
 recomputing `credential_sha256` and `retire_credential_sha256` from it and
 comparing them with the challenge preimage binds it. The sidecar itself may contain agent-entered credentials:
