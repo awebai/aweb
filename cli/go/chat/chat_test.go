@@ -131,6 +131,21 @@ func (r stubIdentityResolver) Resolve(ctx context.Context, identifier string) (*
 	return r.resolve(ctx, identifier)
 }
 
+// registryNamingSender is a registry in which the address belongs to the key,
+// and no other address resolves.
+func registryNamingSender(address, did string) stubIdentityResolver {
+	return stubIdentityResolver{
+		resolve: func(_ context.Context, identifier string) (*awid.ResolvedIdentity, error) {
+			if identifier != address {
+				return nil, errors.New("not the sender's address")
+			}
+			return &awid.ResolvedIdentity{
+				DID: did, Address: address, IdentityScope: awid.IdentityModeGlobal, ResolvedVia: "registry",
+			}, nil
+		},
+	}
+}
+
 func (r stubIdentityResolver) VerifyStableIdentity(ctx context.Context, address, stableID string) *awid.StableIdentityVerification {
 	if r.verify == nil {
 		return nil
@@ -4264,6 +4279,7 @@ func TestSendUsesSignedPayloadRecipientBindingForSSEIdentityMismatch(t *testing.
 
 	client := mustIdentityClient(t, server.URL)
 	client.SetAddress("myteam/implementer")
+	client.SetResolver(registryNamingSender("myteam/architect", senderDID))
 
 	result, err := Send(context.Background(), client, "implementer", []string{"architect"}, "hello", SendOptions{Wait: 5}, nil)
 	if err != nil {
@@ -4381,6 +4397,7 @@ func TestSendUsesStableRecipientBindingForSSEAfterLocalKeyRotation(t *testing.T)
 	}
 	client.SetAddress("myteam/implementer")
 	client.SetStableID(receiverStableID)
+	client.SetResolver(registryNamingSender("myteam/architect", senderDID))
 
 	result, err := Send(context.Background(), client, "implementer", []string{"architect"}, "hello", SendOptions{Wait: 5}, nil)
 	if err != nil {
