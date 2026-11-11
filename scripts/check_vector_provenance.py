@@ -566,6 +566,10 @@ ROOT_CONSUMERS = {
         "owner-act-delivery-v1.json",
         '"../../../../docs/vectors/owner-act-delivery-v1.json"',
     ),
+    PurePosixPath("cli/go/cmd/aw/app_requester_test.go"): _consumer(
+        "id-certificates-v1.json",
+        '"../../../../docs/vectors/id-certificates-v1.json"',
+    ),
     PurePosixPath("cli/go/cmd/aw/app_role_test.go"): _consumer(
         "owner-act-delivery-v1.json",
         '"../../../../docs/vectors/owner-act-delivery-v1.json"',
