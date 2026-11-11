@@ -1,6 +1,7 @@
 package handoff
 
 import (
+	"bytes"
 	"context"
 	"crypto/sha256"
 	"encoding/hex"
@@ -154,7 +155,67 @@ func Prepare(ctx context.Context, opts GovernanceOptions, body map[string]any) (
 	if prepared.OperationID != body["operation_id"] {
 		return nil, invalidResult(errors.New("the prepare answer is for another operation"))
 	}
+	if err := verifyPrepared(body, &prepared); err != nil {
+		return nil, err
+	}
 	return &prepared, nil
+}
+
+// serverAddedMembers are the only members the protected service adds to the
+// frozen request beside what aw sent (human-assurance-contract.md section 5).
+var serverAddedMembers = map[string]bool{"requester": true, "policy_ref": true, "policy_version": true, "artifact": true}
+
+// verifyPrepared recomputes the digest from the frozen payload and requires
+// that the payload carries exactly what aw sent, so the digest and
+// fingerprint aw shows are its own and the page must match them.
+func verifyPrepared(sent map[string]any, prepared *Prepared) error {
+	mismatch := func(reason string) error {
+		return coded("operation_mismatch", fmt.Errorf("the prepared operation is not what aw sent: %s", reason))
+	}
+	decoder := json.NewDecoder(bytes.NewReader(prepared.Payload))
+	decoder.UseNumber()
+	var payload map[string]any
+	if err := decoder.Decode(&payload); err != nil || len(payload) != 2 {
+		return mismatch("the payload is not a covered request")
+	}
+	policy, _ := payload["policy"].(map[string]any)
+	request, _ := payload["request"].(map[string]any)
+	if policy == nil || request == nil {
+		return mismatch("the payload is not a covered request")
+	}
+	digest, err := CoveredRequestDigest(payload)
+	if err != nil || digest != prepared.Digest {
+		return mismatch("its digest does not match its payload")
+	}
+	for name, value := range sent {
+		if !sameJSON(request[name], value) {
+			return mismatch("its " + name + " differs")
+		}
+	}
+	for name := range request {
+		if _, ok := sent[name]; !ok && !serverAddedMembers[name] {
+			return mismatch("it adds " + name)
+		}
+	}
+	if !sameJSON(request["policy_ref"], policy["ref"]) || !sameJSON(request["policy_version"], policy["version"]) {
+		return mismatch("its policy differs from its request")
+	}
+	if artifact, ok := request["artifact"].(map[string]any); ok {
+		if !sameJSON(artifact["subject"], sent["subject"]) || !sameJSON(artifact["aud"], sent["audience"]) {
+			return mismatch("its artifact names another subject or audience")
+		}
+	}
+	return nil
+}
+
+// sameJSON compares two JSON values by their canonical encoding.
+func sameJSON(a, b any) bool {
+	left, err := awid.CanonicalJSONValue(a)
+	if err != nil {
+		return false
+	}
+	right, err := awid.CanonicalJSONValue(b)
+	return err == nil && left == right
 }
 
 // ReadReceipt reads the operation's receipt as its requester.
