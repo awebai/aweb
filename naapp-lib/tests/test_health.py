@@ -173,11 +173,9 @@ def test_health_and_ready_report_each_check_and_ready_is_200_when_all_pass() -> 
     ready = client.get("/ready")
     assert (health.status_code, ready.status_code) == (200, 200)
     assert health.json()["status"] == ready.json()["status"] == "ok"
-    assert health.json()["checks"] == {
-        "database": {"ok": True},
-        "queue": {"ok": True, "oldest_age_seconds": None},
-    }
-    assert ready.json()["checks"] == {"database": {"ok": True}, "queue": {"ok": True}}
+    assert health.json()["checks"] == ready.json()["checks"] == {"database": "ok", "queue": "ok"}
+    assert health.json()["details"] == {"queue": {"oldest_age_seconds": None}}
+    assert "details" not in ready.json()
 
 
 @pytest.mark.parametrize("value", ["provider error text", b"bytes", ["a"], {"k": 1}])
@@ -186,16 +184,35 @@ def test_a_check_detail_cannot_carry_text(value) -> None:
         CheckResult(ok=False, detail={"reason": value})
 
 
-def test_ready_is_503_and_health_reports_unavailable_when_a_check_fails() -> None:
-    client = _checked({"database": _check(True), "kms": _check(False)})
+def test_ready_and_health_are_503_and_unhealthy_when_a_check_fails() -> None:
+    client = _checked({"database": _check(True), "kms": _check(False, canary_age_seconds=900)})
     ready = client.get("/ready")
     health = client.get("/health")
-    assert ready.status_code == 503
-    assert health.status_code == 200
+    assert (ready.status_code, health.status_code) == (503, 503)
     for response in (ready, health):
-        assert response.json()["status"] == "unavailable"
-        assert response.json()["checks"]["kms"] == {"ok": False}
+        assert response.json()["status"] == "unhealthy"
+        assert response.json()["checks"] == {"database": "ok", "kms": "error"}
         assert response.json()["build"] == {"git_sha": None}
+    assert health.json()["details"] == {"kms": {"canary_age_seconds": 900}}
+    assert client.get("/live").status_code == 200
+
+
+def test_the_probes_answer_with_the_servers_fields_and_status_codes() -> None:
+    """The contract `docs/aweb-sot.md` states for the server (its `/live`,
+    `/ready` and `/health` in `server/src/aweb/api.py`): `/live` answers 200
+    with `status` `ok`; `/ready` and `/health` answer 200 with `status` `ok`,
+    or 503 with `status` `unhealthy`, and name each dependency in `checks` as
+    `ok` or `error`."""
+    for database_ok, code, status, state in ((True, 200, "ok", "ok"), (False, 503, "unhealthy", "error")):
+        client = _checked({"database": _check(database_ok)})
+        live = client.get("/live")
+        assert (live.status_code, live.json()["status"]) == (200, "ok")
+        assert "checks" not in live.json()
+        for path in ("/ready", "/health"):
+            response = client.get(path)
+            assert response.status_code == code
+            assert response.json()["status"] == status
+            assert response.json()["checks"] == {"database": state}
 
 
 def test_live_runs_no_check() -> None:
@@ -217,7 +234,7 @@ def test_a_check_that_raises_fails_without_reporting_the_error(caplog) -> None:
 
     response = _checked({"kms": broken}).get("/ready")
     assert response.status_code == 503
-    assert response.json()["checks"]["kms"] == {"ok": False}
+    assert response.json()["checks"]["kms"] == "error"
     assert "detail-that-must-not-be-served" not in response.text
     assert any(record.levelname == "ERROR" for record in caplog.records)
 
@@ -233,7 +250,7 @@ def test_a_check_that_does_not_answer_in_time_fails(monkeypatch) -> None:
 
     response = _checked({"database": hangs}).get("/ready")
     assert response.status_code == 503
-    assert response.json()["checks"]["database"] == {"ok": False}
+    assert response.json()["checks"]["database"] == "error"
 
 
 async def test_concurrent_requests_share_one_run_of_each_check() -> None:
@@ -252,7 +269,7 @@ async def test_concurrent_requests_share_one_run_of_each_check() -> None:
         responses = await asyncio.gather(
             *(client.get(path) for path in ("/health", "/ready") * 10)
         )
-        assert all(response.json()["checks"]["kms"] == {"ok": True} for response in responses)
+        assert all(response.json()["checks"]["kms"] == "ok" for response in responses)
         assert calls == ["run"]
         await client.get("/ready")
         assert calls == ["run"]

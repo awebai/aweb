@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from typing import Optional
 
+from pgdbm import AsyncDatabaseManager
 from redis.asyncio import Redis
 
 from ..db import DatabaseInfra
@@ -10,15 +11,18 @@ from .routes.repos import canonicalize_git_url, extract_repo_name
 
 
 async def ensure_repo(
-    db: DatabaseInfra,
+    aweb_db: AsyncDatabaseManager,
     team_id: str,
     origin_url: str,
 ) -> str:
-    """Ensure a repo exists for the given team and origin."""
+    """Ensure a repo exists for the given team and origin.
+
+    A soft-deleted repo row of the team is restored. `aweb_db` is the aweb
+    manager or a transaction on it.
+    """
     canonical_origin = canonicalize_git_url(origin_url)
     repo_name = extract_repo_name(canonical_origin)
 
-    aweb_db = db.get_manager("aweb")
     result = await aweb_db.fetch_one(
         """
         INSERT INTO {{tables.repos}} (team_id, origin_url, canonical_origin, name)

@@ -53,9 +53,10 @@ def headers(secret, key, handoff, body):
 def app(db):
     human = FastAPI()
 
-    async def admitted(scope):
+    async def admitted(scope, team_id):
         return (
-            scope["installation_id"] == "00000000-0000-4000-8000-000000000001"
+            team_id == "people:example.com"
+            and scope["installation_id"] == "00000000-0000-4000-8000-000000000001"
             and scope["role"] == "example.owner"
         )
 
@@ -86,7 +87,8 @@ async def test_credential_result_is_verified_one_shot_and_authorizes_nothing(han
                 client_key=key,
                 verifier_sha256=hashlib.sha256(verifier.encode()).hexdigest(),
             )
-        )
+        ),
+        team_id="people:example.com",
     )
     handoff = created["handoff_id"]
     async with httpx.AsyncClient(
@@ -156,7 +158,11 @@ async def test_registration_is_bound_and_a_failed_challenge_cannot_be_reused(han
 
     store = HandoffStore(handoff_db)
     ids = [
-        (await store.create(parse_start(start_body(purpose="credential"))))["handoff_id"]
+        (
+            await store.create(
+                parse_start(start_body(purpose="credential")), team_id="people:example.com"
+            )
+        )["handoff_id"]
         for _ in range(2)
     ]
     async with httpx.AsyncClient(
@@ -198,7 +204,9 @@ async def test_credential_browser_writes_require_the_bound_browser_and_same_orig
     from aweb_naapp.console.handoff_store import parse_start
 
     handoff = (
-        await HandoffStore(handoff_db).create(parse_start(start_body(purpose="credential")))
+        await HandoffStore(handoff_db).create(
+            parse_start(start_body(purpose="credential")), team_id="people:example.com"
+        )
     )["handoff_id"]
     service = app(handoff_db)
     async with httpx.AsyncClient(
@@ -221,3 +229,85 @@ async def test_credential_browser_writes_require_the_bound_browser_and_same_orig
             assert (await stranger.post(path, json={}, headers=csrf)).status_code == 403
             assert (await stranger.get(f"/handoff/{handoff}/credential")).status_code == 403
         assert (await browser.post(path, json={}, headers=csrf)).status_code == 200
+
+
+async def test_credential_continuation_refuses_a_different_or_missing_team(handoff_db):
+    from aweb_naapp.console.handoff_store import parse_start
+
+    for team in ("another:example.com", None):
+        created = await HandoffStore(handoff_db).create(
+            parse_start(start_body(purpose="credential")), team_id="people:example.com"
+        )
+        await handoff_db.execute(
+            "UPDATE {{tables.console_handoffs}} SET team_id=$2 WHERE handoff_id=$1::uuid",
+            created["handoff_id"],
+            team,
+        )
+        async with httpx.AsyncClient(
+            transport=httpx.ASGITransport(app=app(handoff_db)), base_url=ORIGIN
+        ) as browser:
+            response = await browser.get("/handoff/" + created["handoff_id"] + "/credential")
+            assert response.status_code == 403
+    assert await handoff_db.fetch_value("SELECT count(*) FROM {{tables.console_sessions}}") == 0
+
+
+@pytest.mark.parametrize("fault", ["missing-team", "foreign-team", "foreign-installation"])
+async def test_completed_credential_refuses_changed_context_without_releasing(handoff_db, fault):
+    from aweb_naapp.console.handoff_store import parse_start
+
+    secret, public = generate_keypair()
+    key = did_from_public_key(public)
+    verifier = b64(hashlib.sha256(b"one completed credential invocation").digest())
+    created = await HandoffStore(handoff_db).create(
+        parse_start(
+            start_body(
+                purpose="credential",
+                client_key=key,
+                verifier_sha256=hashlib.sha256(verifier.encode()).hexdigest(),
+            )
+        ),
+        team_id="people:example.com",
+    )
+    handoff = created["handoff_id"]
+    prefix = "/handoff/" + handoff + "/credential"
+    async with httpx.AsyncClient(
+        transport=httpx.ASGITransport(app=app(handoff_db)),
+        base_url=ORIGIN,
+    ) as browser:
+        state = await browser.get(prefix)
+        assert state.status_code == 200
+        csrf = {"X-CSRF-Token": state.json()["csrf_token"], "Origin": ORIGIN}
+        options = await browser.post(prefix + "/options", json={}, headers=csrf)
+        assert options.status_code == 200
+        completed = await browser.post(
+            prefix + "/complete",
+            json={"credential": SoftAuthenticator(ORIGIN).create(options.json())},
+            headers=csrf,
+        )
+        assert completed.status_code == 200
+        code = parse_qs(urlsplit(completed.json()["redirect_uri"]).query)["code"][0]
+        if fault == "foreign-installation":
+            await handoff_db.execute(
+                "UPDATE {{tables.console_handoffs}} SET public_scope=jsonb_set("
+                "public_scope,'{installation_id}',to_jsonb($2::text)) WHERE handoff_id=$1::uuid",
+                handoff,
+                "00000000-0000-4000-8000-000000000002",
+            )
+        else:
+            await handoff_db.execute(
+                "UPDATE {{tables.console_handoffs}} SET team_id=$2 WHERE handoff_id=$1::uuid",
+                handoff,
+                None if fault == "missing-team" else "other:example.com",
+            )
+        raw = json.dumps({"v": 1, "code": code, "verifier": verifier}).encode()
+        result = await browser.post(
+            "/handoffs/" + handoff + "/result",
+            content=raw,
+            headers=headers(secret, key, handoff, raw),
+        )
+        assert result.status_code == 403
+        row = await handoff_db.fetch_one(
+            "SELECT completed_at,released_at FROM {{tables.console_handoffs}} WHERE handoff_id=$1::uuid",
+            handoff,
+        )
+        assert row["completed_at"] is not None and row["released_at"] is None

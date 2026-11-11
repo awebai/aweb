@@ -5,6 +5,7 @@ from __future__ import annotations
 
 import base64
 import binascii
+import dataclasses
 import hashlib
 import json
 import os
@@ -14,8 +15,18 @@ from typing import Any
 
 import cbor2
 import pytest
+from awid.team_certificate import (
+    TeamCertificateError,
+    decode_team_certificate,
+    verify_team_certificate_signature,
+)
 
-from aweb_naapp.hooks.owner_act import HUMAN_ROLE_ACTS, Refused, owner_act_signing_bytes
+from aweb_naapp.hooks.owner_act import (
+    HUMAN_ROLE_ACTS,
+    HumanCredential,
+    Refused,
+    owner_act_signing_bytes,
+)
 from aweb_naapp.hooks.owner_act import _verify_owner_act as verify_owner_act
 from tests.hooks.owner_act_delivery_vector import build_vector, render
 
@@ -112,6 +123,69 @@ def test_the_credential_hash_and_fingerprint(case) -> None:
     assert groups == [digest[0:4], digest[4:8], digest[8:12], digest[12:16]]
 
 
+@pytest.mark.parametrize("case", VECTOR["credential_cases"], ids=lambda c: c["name"])
+def test_the_runtime_names_a_credential_by_the_vector_hash(case) -> None:
+    credential = HumanCredential.parse(case["credential"])
+    assert credential.sha256 == case["credential_sha256"]
+    assert credential.credential_id == _unpadded_b64url(case["credential"]["credential_id"])
+    assert credential.public_key == _unpadded_b64url(case["credential"]["public_key"])
+    assert credential.rp_id == case["credential"]["rp_id"]
+
+
+def test_a_credential_is_named_by_its_own_fields() -> None:
+    credential = HumanCredential.parse(_vector_credential())
+    for field, value in (("credential_id", b"other"), ("public_key", b"other"), ("rp_id", "x.y")):
+        changed = dataclasses.replace(credential, **{field: value})
+        assert changed.sha256 != credential.sha256
+
+
+def _vector_credential() -> dict[str, str]:
+    return dict(VECTOR["credential_cases"][0]["credential"])
+
+
+@pytest.mark.parametrize(
+    "change",
+    [
+        {"notice_contact": "owner@example.com"},
+        {"credential_id": None},
+        {"public_key": None},
+        {"rp_id": None},
+        {"rp_id": ""},
+        {"rp_id": 7},
+        {"credential_id": b"raw"},
+        {"credential_id": "padded=="},
+        {"public_key": "not+base64/url"},
+        {"credential_id": ""},
+    ],
+    ids=[
+        "extra-field",
+        "no-credential-id",
+        "no-public-key",
+        "no-rp-id",
+        "empty-rp-id",
+        "rp-id-not-text",
+        "credential-id-not-text",
+        "padded",
+        "not-base64url",
+        "empty-credential-id",
+    ],
+)
+def test_a_credential_without_exactly_its_three_encoded_fields_is_refused(change) -> None:
+    credential = _vector_credential()
+    for name, value in change.items():
+        if value is None:
+            del credential[name]
+        else:
+            credential[name] = value
+    with pytest.raises(ValueError):
+        HumanCredential.parse(credential)
+
+
+def test_only_a_mapping_is_a_credential() -> None:
+    with pytest.raises(ValueError):
+        HumanCredential.parse([("rp_id", "x")])
+
+
 @pytest.mark.parametrize("case", ACCEPTED, ids=lambda c: c["name"])
 def test_an_accepted_delivery_binds_what_the_body_carries(case) -> None:
     subject = case["act"]["subject"]
@@ -130,6 +204,11 @@ def test_an_accepted_delivery_binds_what_the_body_carries(case) -> None:
         return
     assert case["state"]["principal_status"] == "member_human"
     assert subject["credential_sha256"] == _credential_sha256(body["credential"])
+    certificate = decode_team_certificate(body["certificate"])
+    verify_team_certificate_signature(certificate, case["verifier"]["current_team_key_did"])
+    assert certificate["team_id"] == case["act"]["team_id"]
+    assert certificate["member_did_aw"] == subject["principal"]
+    assert certificate["member_did_key"] == case["state"]["principal_key"]
     if case["app"]["role"]["notice_contact"]:
         notice = hashlib.sha256(body["notice_contact"].encode("utf-8")).hexdigest()
         assert subject["notice_contact_sha256"] == notice
@@ -183,3 +262,47 @@ def test_url_safe_unpadded_signing_is_not_standard_base64() -> None:
     )
     with pytest.raises(binascii.Error):
         base64.b64decode(case["body"]["signing"], validate=True)
+
+
+def _case(name: str) -> dict[str, Any]:
+    return next(c for c in VECTOR["delivery_cases"] if c["name"] == name)
+
+
+def test_a_designation_without_a_certificate_is_not_a_member() -> None:
+    case = _case("designate_without_a_certificate")
+    assert "certificate" not in case["body"] and "credential" in case["body"]
+    assert case["result"] == {"status": 403, "detail": "principal_not_member", "response": None}
+
+
+def test_a_revoke_carrying_a_certificate_is_an_invalid_request() -> None:
+    case = _case("revoke_carrying_a_certificate")
+    assert case["act"]["act"] == "human-role.revoke" and "certificate" in case["body"]
+    assert case["result"]["status"] == 400 and case["result"]["detail"] == "request_invalid"
+
+
+@pytest.mark.parametrize(
+    "name",
+    [
+        "certificate_of_another_principal",
+        "certificate_of_another_team",
+        "certificate_signed_by_a_rotated_team_key",
+        "certificate_for_a_rotated_member_key",
+    ],
+)
+def test_a_certificate_that_fails_its_check_is_not_a_member(name) -> None:
+    case = _case(name)
+    assert case["result"] == {"status": 403, "detail": "principal_not_member", "response": None}
+    certificate = decode_team_certificate(case["body"]["certificate"])
+    principal = case["act"]["subject"]["principal"]
+    try:
+        verify_team_certificate_signature(certificate, case["verifier"]["current_team_key_did"])
+        verified = True
+    except TeamCertificateError:
+        verified = False
+    passes = (
+        verified
+        and certificate["team_id"] == case["act"]["team_id"]
+        and certificate["member_did_aw"] == principal
+        and certificate["member_did_key"] == case["state"]["principal_key"]
+    )
+    assert not passes

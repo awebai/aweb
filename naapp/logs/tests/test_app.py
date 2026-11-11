@@ -22,6 +22,7 @@ from aweb_naapp.runtime.app_keys import AppKeyError
 from aweb_naapp.runtime.origins import OriginApps
 from awid.did import did_from_public_key
 from pgdbm import AsyncDatabaseManager
+from pydantic import ValidationError
 
 from aweb_logs.app import chain_signer, create_app, serve
 from aweb_logs.chain import CHECKPOINT_PURPOSE, RECEIPT_PURPOSE, open_checkpoint
@@ -276,6 +277,26 @@ def test_logs_does_not_start_without_its_mail_settings(
     monkeypatch.delenv("LOGS_EMAIL_SMTP_HOST")
     with pytest.raises(ValueError, match="LOGS_EMAIL_SMTP_HOST"):
         serve()
+
+
+def test_logs_reads_its_configuration_from_the_environment_only(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setenv("LOGS_DATABASE_URL", "postgresql://localhost/logs")
+    monkeypatch.setenv("LOGS_PUBLIC_ORIGIN", ORIGIN)
+    monkeypatch.setenv("LOGS_APP_ID", TEST_APP_ID)
+    key_files = write_key_files(tmp_path)
+    monkeypatch.setenv(
+        "LOGS_APP_KEY_FILES", json.dumps({kid: str(path) for kid, path in key_files.items()})
+    )
+    _mail_environment(tmp_path, monkeypatch)
+    monkeypatch.delenv("LOGS_CONSOLE_ORIGIN", raising=False)
+    # A .env in the working directory is not configuration.
+    (tmp_path / ".env").write_text(f"LOGS_CONSOLE_ORIGIN={CONSOLE}\n")
+    monkeypatch.chdir(tmp_path)
+    with pytest.raises(ValidationError) as refused:
+        serve()
+    assert [error["loc"] for error in refused.value.errors()] == [("console_origin",)]
 
 
 async def test_each_origin_serves_only_its_own_routes(tmp_path: Path, database) -> None:

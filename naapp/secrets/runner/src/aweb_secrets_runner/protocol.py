@@ -23,6 +23,11 @@ MAX_BODY = 1024 * 1024
 SAFE_INT = 2**53 - 1
 ID = r"[A-Za-z0-9_-]{22,}"
 HASH = r"[0-9a-f]{64}"
+# The most base58 characters the 34 bytes of an Ed25519 did:key (multicodec
+# 0xed01 and the 32-byte key) encode to, the value awid's did.py derives.
+# Longer text is refused before the base58 decode, whose cost grows with the
+# square of the input length.
+DID_KEY_ENCODED_MAX = 47
 ASSIGNMENT_FIELDS = {
     "v",
     "type",
@@ -101,6 +106,8 @@ def public_did(key: Ed25519PublicKey) -> str:
 def public_key(did: str) -> Ed25519PublicKey:
     if not did.startswith("did:key:z"):
         raise ValueError("key type")
+    if len(did) - 9 > DID_KEY_ENCODED_MAX:
+        raise ValueError("key encoding")
     raw = base58.b58decode(did[9:])
     if len(raw) != 34 or raw[:2] != b"\xed\x01":
         raise ValueError("key type")

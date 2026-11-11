@@ -5,6 +5,7 @@ import json
 from datetime import timedelta
 from functools import cached_property
 
+import asyncpg
 import pytest
 from aweb_naapp.crypto import open_sealed
 from aweb_naapp.hooks.strictjson import decode_base64url, encode_base64url
@@ -39,9 +40,24 @@ class Context(RunWorld):
         return admitted, claim, json.loads(claim.body)
 
 
-async def setup(uses, *, approval_required=False, producer_clock=None):
+async def setup(
+    uses,
+    *,
+    approval_required=False,
+    producer_clock=None,
+    job_timeout_s=None,
+    variant="",
+    reuse_source=None,
+    paired=False,
+):
     original = await setup_world(
-        uses, approval_required=approval_required, producer_clock=producer_clock
+        uses,
+        approval_required=approval_required,
+        producer_clock=producer_clock,
+        job_timeout_s=job_timeout_s,
+        variant=variant,
+        reuse_source=reuse_source,
+        paired=paired,
     )
     return Context(**vars(original))
 
@@ -195,22 +211,91 @@ async def test_result_preflight_releases_locks_and_final_check_rejects_key_rotat
     )
 
 
-async def test_new_worker_without_original_redaction_context_withholds_report_output(uses):
+async def test_new_worker_recovers_original_redaction_context_for_report_output(uses):
     context = await setup(uses)
     _, _, wire = await context.assigned()
     dispatch_ref = wire["assignment"]["dispatch_id"]
+    snapshot = await uses.world.db.fetch_one("SELECT * FROM {{tables.run_redaction_pins}}")
+    assert snapshot is not None
+    assert snapshot["deadline"] == await uses.world.db.fetch_value(
+        "SELECT sweep_after FROM {{tables.dispatches}}"
+    )
+    if context.credential.encode() in bytes(snapshot["ciphertext"]):
+        raise AssertionError("original redaction inputs were not sealed")
     from aweb_secrets.run_service import RunDispatch
 
     replacement = RunDispatch(uses.world.db, **context.arguments)
     accepted = await replacement.result(
-        dispatch_ref, context.signed(f"/runner/v1/dispatches/{dispatch_ref}/result", report())
+        dispatch_ref,
+        context.signed(f"/runner/v1/dispatches/{dispatch_ref}/result", report(context.credential)),
     )
     assert accepted.status == 204
     receipt = await replacement.submit(job=context.job.job_id, submission=context.submission)
-    assert receipt.status == 200 and receipt.body["state"] == "result_withheld"
-    assert receipt.body["code"] == "release_context_unavailable"
+    assert receipt.status == 200 and receipt.body["state"] == "completed"
     assert receipt.body["result"]["exit_code"] == 0
+    assert receipt.body["result"]["body"] is not None
+    assert receipt.body["result"]["redaction_count"] >= 1
+    if context.credential in json.dumps(receipt.body):
+        raise AssertionError("original credential was not redacted by the replacement worker")
+    assert (
+        await uses.world.db.fetch_value("SELECT count(*) FROM {{tables.run_redaction_pins}}") == 0
+    )
+
+
+@pytest.mark.parametrize("unavailable", ["missing", "expired", "corrupt", "digest_mismatch"])
+async def test_unusable_original_pin_withholds_output(uses, unavailable):
+    context = await setup(uses)
+    _, _, wire = await context.assigned()
+    dispatch_ref = wire["assignment"]["dispatch_id"]
+    snapshot = await uses.world.db.fetch_one("SELECT * FROM {{tables.run_redaction_pins}}")
+    if unavailable == "expired":
+        uses.clock.now = snapshot["deadline"] + timedelta(seconds=1)
+    else:
+        await uses.world.db.execute("DELETE FROM {{tables.run_redaction_pins}}")
+        if unavailable in {"corrupt", "digest_mismatch"}:
+            import secrets
+
+            changed = dict(snapshot)
+            if unavailable == "corrupt":
+                changed["ciphertext"] = secrets.token_bytes(len(changed["ciphertext"]))
+            else:
+                changed["digest"] = secrets.token_bytes(32)
+            columns = ",".join(changed)
+            parameters = ",".join(f"${i}" for i in range(1, len(changed) + 1))
+            await uses.world.db.execute(
+                "INSERT INTO {{tables.run_redaction_pins}} ("
+                + columns
+                + ") VALUES ("
+                + parameters
+                + ")",
+                *changed.values(),
+            )
+    replacement = RunDispatch(uses.world.db, **context.arguments)
+    await replacement.result(
+        dispatch_ref,
+        context.signed(f"/runner/v1/dispatches/{dispatch_ref}/result", report(context.credential)),
+    )
+    receipt = await replacement.submit(job=context.job.job_id, submission=context.submission)
+    assert receipt.body["state"] == "result_withheld"
     assert receipt.body["result"]["body"] is None
+
+
+async def test_pin_storage_failure_rolls_back_assignment_publication(uses):
+    context = await setup(uses)
+    await context.service.submit(job=context.job.job_id, submission=context.submission)
+    await uses.world.db.execute(
+        "ALTER TABLE {{tables.run_redaction_pins}} ADD CONSTRAINT refuse_pin CHECK (false) NOT VALID"
+    )
+    with pytest.raises(asyncpg.CheckViolationError) as failed:
+        await context.service.claim(context.signed("/runner/v1/claim"))
+    assert failed.value.constraint_name == "refuse_pin"
+    assert await uses.world.db.fetch_value("SELECT state FROM {{tables.dispatches}}") == "admitted"
+    assert (
+        await uses.world.db.fetch_value("SELECT assignment FROM {{tables.run_deliveries}}") is None
+    )
+    assert (
+        await uses.world.db.fetch_value("SELECT count(*) FROM {{tables.run_redaction_pins}}") == 0
+    )
 
 
 async def test_concurrent_claims_publish_one_assignment_and_two_authenticated_receipts(uses):

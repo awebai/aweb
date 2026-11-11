@@ -40,6 +40,45 @@ full decryption outside application policy. KMS adds provider policy and an
 independent audit trail; it does not make service operators unable to read
 values. State those boundaries plainly when offering support.
 
+## Execution, key and signing arrangements
+
+A deployment groups operations; it is not automatically a security boundary.
+It can contain several isolated execution environments. Agents that can
+impersonate one another occupy **one trust boundary** for security claims.
+Their effective authority includes all credentials, signing operations and
+privileged interfaces they can reach, regardless of the principal or role
+presented by a client. Those labels still organize work, prevent mistakes
+and attribute requests; they do not contain a compromised agent that can use
+another principal's authority. A fixed identity-home environment variable is
+client behavior, not isolation.
+
+The following arrangements describe the existing controls to qualify, not new
+isolation products. None is qualified by this draft. Record the actual OS
+users, execution access, credential storage, signing access and privileged
+invocation policy for the installation before assigning sensitive permissions.
+
+| Arrangement | Effective authority and existing controls | Limits and qualification required |
+| --- | --- | --- |
+| Member agents share a deployment UID with reachable member keys | One trust boundary includes every reachable member credential and signing interface. Requests still authenticate and apply the presented principal's role. | A using only A's key does not prove A cannot use B's reachable key. Per-agent compromise containment is unproved. The host/identity operator owns any missing execution and key/signing isolation; do not claim it from distinct identity homes or roles. |
+| Secrets service account and mounted service keys | The [host recipe](README.md) separates the service from agents and mounts its keys read-only. Anything able to execute as that account or obtain equivalent container/host control can use its service-signing and decryption authority. | UID 10001, a read-only mount or a container label alone does not establish isolation. The host operator must demonstrate agent refusal to read keys, execute as the service, or invoke its signing authority through another reachable interface. Agents with Docker/host administration remain inside that authority boundary. |
+| Secrets local-key-file custody | Key plus ciphertext permits full decryption outside application policy. Private directory/file permissions and service-account separation are the deployment controls; the loader does not prove agent read isolation. | Qualify actual access, including groups, ACLs, mounts and backups. The host/custody operator owns missing isolation. Successful API refusal cannot compensate for a readable key. |
+| Secrets KMS custody | KMS policy and audit supplement the service account boundary. Effective authority includes reachable AWS credentials and any callable decrypt interface; a compromised service can still see plaintext. | Qualify the actual provider policy and agent/service access separately. KMS mode or a successful canary does not establish per-agent isolation, or qualify the local-key arrangement. The customer KMS/host operator owns those access controls. |
+| Logs service account and mounted app-signing keys | Logs has no Secrets custody backend; its app keys are mounted through `LOGS_APP_KEY_FILES`. Reachable `logs-chain` signing (receipts and checkpoints), `logs-governance` signing (Logs' own hook events), the resolve and grant-read keys, service execution, or database access place that authority in the caller's trust boundary. Database access reads every team's retained content and can purge or alter rows outside owner acts. Designated-reader sessions govern normal HTTP reads. | Reader-route refusal does not prove the same agent cannot reach service keys, database access or another reader's session. A boundary holding both the `logs-chain` key and database write can rewrite a team's history so that it verifies; tamper-evidence against it rests only on witnesses held outside it (producer receipts, exported checkpoints or bundles). Database write without the `logs-chain` key cannot sign new receipts or checkpoints. Detecting a rewritten or removed suffix requires an externally retained receipt or checkpoint that commits to an affected position. A witness preceding that suffix does not cover it; without covering evidence, a truncated log may still verify as an intact shorter chain, and rewritten events may remain unanchored. The Logs/host operator must qualify those boundaries; the Logs recipe and packaged proof remain with `aweb-acwd.8`. |
+| HO6 separate runner UID and fixed supervisor invocation | The [supervisor contract](../e2e/SUPERVISOR.md) protects the complete executable/import chain, fixed configuration and state, and restricts the sudo command and its input/output. Runner checks exclude the runner UID and root from the configured agent UIDs and enforce job pins. | Qualify the real installed sudo/PTY line, worker UID, whole-chain ownership, state/key access, allowed commands, suppressed output and lifecycle. This separates the driver from the runner only to the extent demonstrated; it does not isolate agents sharing the driver UID or their reachable member keys. Runner/host owners retain any missing installed-boundary proof. |
+
+Claim narrower per-worker containment only after execution, credential/signing
+and privileged-invocation boundaries are both enforced and demonstrated.
+Include attempts to use B's reachable authority from A's execution context,
+and check B's restricted invocation and output policy. A successful authorized
+job or principal-specific refusal alone is insufficient. Exercise only lab
+identities and synthetic data, and retain outcomes rather than keys or raw I/O.
+
+Allocate sensitive permissions against these actual boundaries. An approved
+worker definition is distinct from enforceable runtime role assignment.
+There is no additional deployment-ceiling permission object. A concrete
+missing boundary remains a gap for its existing host, identity, custody or
+runner owner; this runbook does not select a new isolation mechanism.
+
 ## Health and delivery diagnosis
 
 After configuring the actual service origins, use the release's supported
@@ -49,11 +88,11 @@ or bypass Host routing to make a check pass.
 | Observation | Interpretation and next action | Qualification |
 | --- | --- | --- |
 | Secrets `/live` | Process liveness; it runs no dependency checks. A 200 does not establish readiness. | Pending |
-| Secrets `/health` and `/ready` | Inspect selected-provider, database and delivery checks. Both origins and all three health routes carry `labels.custody_mode`. The legacy `checks.kms` slot checks the selected provider, including local-key mode. A failed check and its mode are separate facts. | Source landed; packaged lab pending |
+| Secrets `/health` and `/ready` | Inspect selected-provider, database and delivery checks; both answer 503 while one fails, and name each check as `ok` or `error`. Both origins and all three health routes carry `labels.custody_mode`. The legacy `checks.kms` slot checks the selected provider, including local-key mode. A failed check and its mode are separate facts. | Source landed; packaged lab pending |
 | Secrets outbox age or stalled delivery | Use the owner audit-delivery view and the configured `hook_events_stalled_after_seconds` admission bound. Correlate target and event IDs with the receiver; do not delete outbox rows or treat retry as a new event. | Pending |
 | Logs `/live` | Liveness only. | Pending |
-| Logs `/ready` | Database and outbox query must answer. An old outbox does not itself make the current Logs readiness check fail. Inspect its age separately. | Pending |
-| Logs `/health` | Always HTTP 200 with check detail; results are cached. A 200 alone is not a healthy dependency verdict. | Pending |
+| Logs `/ready` | The database must answer. Neither an old outbox nor a backlog read that does not answer in time makes the readiness check fail. Inspect the age on `/health`. | Pending |
+| Logs `/health` | The same status code and checks as `/ready`, plus check detail under `details`; results are cached. | Pending |
 | Logs checkpoint failure | The periodic checkpoint loop logs its failure; it is not currently a readiness check. Escalate a sanitized failure/status and last successful checkpoint metadata. Chain verification is available today only through a designated reader's console-session `/v1/verify`; there is no operator-side verification tool. | Operational gap: no dedicated checkpoint diagnostic or operator verification surface |
 
 Native backend evidence is always split into `local_key_file` and `kms`.
@@ -79,6 +118,61 @@ manifest or manufacture a receipt to clear a backlog.
 All dispositions above are pending lab exercises. Do not infer the incident's
 cause from an HTTP status alone; use its fixed code and correlated source and
 receiver metadata.
+
+
+## 1Password runner quota
+
+The runner sequence costs five SDK item reads per 1Password slot per completed
+run: two at release and three at result. The [binding contract](../../../docs/secrets-onepassword-binding.md#runner-read-costs-and-quota)
+describes the separate custody operations and failure rules.
+
+The following budgets are 1Password's figures, as published on its
+[service-account rate limits page](https://www.1password.dev/service-accounts/rate-limits),
+read 2026-11-10. Hourly read limits apply per token; daily request limits count
+reads and writes across all service accounts in the 1Password account.
+Additional tokens do not increase the shared daily budget. Check the linked
+vendor page when sizing a deployment.
+
+| Plan | Item reads per hour per token | Requests per day per account |
+| --- | ---: | ---: |
+| Business | 10,000 | 50,000 |
+| Teams | 1,000 | 5,000 |
+| Individual / Families | 1,000 | 1,000 |
+
+For `k` 1Password slots, result reopens alone have the logical hourly ceiling
+`floor(H/(3k))`; completed runs including release have `floor(H/(5k))` per busy
+hour and `floor(D/(5k))` per day. The examples allocate the entire hourly token
+budget and daily account budget to this one service account, with no other
+traffic, retries, writes or SDK overhead. Actual headroom can be lower. Both
+hourly and daily limits apply; the daily-budget hourly mean is truncated to
+three decimal places and does not assume any result concurrency.
+
+| Plan | Slots | Result reopens/hour alone | Completed runs/busy hour | Completed runs/day | Daily-budget mean runs/hour |
+| --- | ---: | ---: | ---: | ---: | ---: |
+| Business | 1 | 3,333 | 2,000 | 10,000 | 416.666 |
+| Business | 3 | 1,111 | 666 | 3,333 | 138.888 |
+| Business | 5 | 666 | 400 | 2,000 | 83.333 |
+| Teams | 1 | 333 | 200 | 1,000 | 41.666 |
+| Teams | 3 | 111 | 66 | 333 | 13.888 |
+| Teams | 5 | 66 | 40 | 200 | 8.333 |
+| Individual / Families | 1 | 333 | 200 | 200 | 8.333 |
+| Individual / Families | 3 | 111 | 66 | 66 | 2.777 |
+| Individual / Families | 5 | 66 | 40 | 40 | 1.666 |
+
+Result-time re-derivation accounts for three of the five reads, so a
+completed run reads 2.5 times what release alone needs. For example,
+Teams at three slots has a daily-budget mean below 14 runs/hour, and
+Individual/Families at five slots has a ceiling of 40 runs/day.
+
+| Exhaustion symptom | Meaning and action | Qualification |
+| --- | --- | --- |
+| New assignment preparation refuses a still-admitted run | Release and result share quota; result reopens can consume the allowance new releases need. Inspect the service-account/account budgets and other traffic. Do not bypass preparation or manufacture an assignment. | Source constraint; real SDK accounting/latency pending HO6 step 4 |
+| Runner result is accepted with streams withheld and `release_context_unavailable` | A result reopen could not establish its original-value context. Quota exhaustion is one possible cause, not a diagnosis established by this code alone. Preserve exit/status metadata and the original receipt; do not authorize a replacement run merely to recover output. | Source constraint; real SDK accounting/latency pending HO6 step 4 |
+
+Measure actual SDK request accounting, quota headroom and latency on the
+dedicated `aweb-secrets-e2e` read-only service account after the HO6 step-4
+operator prerequisite. Published arithmetic does not qualify that measurement
+or the full real-vault setup journey.
 
 ## Backup and restore
 
@@ -186,13 +280,19 @@ is required before sending an export to support or any outside recipient.
 This matrix records requirements, not passes. Every pending row needs an exact
 landed SHA, packaged artifact digest/checksum and platform, selected backend,
 actual procedure/command, expected and observed outcomes, refusal/fault control,
-and cleanup result. Keep separate KMS and local-key records for Secrets rows.
+and cleanup result. Each record also names the arrangement above, its actual
+execution/key/signing and privileged-invocation boundary, the cross-principal
+access or invocation attempts exercised, and the limits left unproved. Reuse
+one arrangement's evidence only where those controls are unchanged; a
+procedure's success does not independently prove containment. Keep separate
+KMS and local-key records for Secrets rows.
 A missing Secrets backend run stays unqualified. Logs-only rows have no custody
 backend: their receipt/checkpoint and other app keys are mounted through
 `LOGS_APP_KEY_FILES`. Their single qualification state is stated in the path.
 
 | Path | Local key-file | KMS | Required positive and failure evidence |
 | --- | --- | --- | --- |
+| Execution, credential/signing and privileged-invocation boundary | Pending | Pending | Name the actual arrangement; authorized path works; cross-boundary key, signing and privileged invocation attempts refuse; shared-UID reachable authority remains one trust boundary |
 | Packaged startup, health and delivery | Pending | Pending | Correct build/mode/readiness; actual Logs delivery; selected-provider failure and stalled target |
 | Backup/restore | Gap | Gap | Supported backup set, pre-serve tombstones, expiry bound, old data readable where authorized, destroyed data refused, Logs witnesses intact |
 | Native custody rotation | Gap | Gap | Prior data and fresh writes after rotation/restart; wrong/unavailable key refuses; backup policy retained |

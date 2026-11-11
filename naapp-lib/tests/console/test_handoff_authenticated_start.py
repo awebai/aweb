@@ -77,6 +77,10 @@ async def test_registered_signer_starts_only_its_own_scope(signed_start, handoff
     assert response.status_code == 201
     assert set(response.json()) == {"handoff_id", "expires_at"}
     assert await handoff_db.fetch_value("SELECT count(*) FROM {{tables.console_handoffs}}") == 1
+    assert (
+        await handoff_db.fetch_value("SELECT team_id FROM {{tables.console_handoffs}}")
+        == member.team_id
+    )
     assert await handoff_db.fetch_value("SELECT count(*) FROM {{tables.console_sessions}}") == 0
 
 

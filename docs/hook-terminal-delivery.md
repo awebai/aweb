@@ -428,6 +428,43 @@ installation is deployed, and no other act may carry the new fields, so no
 previously accepted payload is refused
 ([hook events](hook-events.md#post-governance-hook)).
 
+A fourth adds `session.handoff_completed` and its `session_ref` field, the
+event the fallback `session` handoff of
+[human confirmation from `aw`](design/human-confirmation-from-aw.md#the-handoff)
+requires. It meets each condition:
+
+- No deployed v1 consumer or producer: coordinator ruling
+  `72a6722f-a63c-4ee2-8bdf-68d798355e7d` (2026-11-09), on these receipts,
+  each with its own reach:
+  - hosted: a read-only inventory of the Cloud database replica and the
+    hosting account finds no secrets or logs installation, registration, hook
+    binding, hook event or service as of 2026-11-09 16:51Z
+    (`b8e5deb1`); the AWID database and the lab host are not covered, and the
+    lab holds no registration;
+  - OATS customer deployments: the records show no known secrets or logs
+    installation and no v1 hook emission or ingest (`2a5a9bbc`); this is not
+    an independently verified empty host;
+  - releases: no secrets, logs or secrets-runner artifact has been published
+    (no tags; `aweb-secrets`, `aweb-logs` and `aweb-secrets-runner` are absent
+    from PyPI; `807662e5`); the published `aweb-naapp` parsers (0.1.0 to
+    0.5.1) are not a secrets or logs deployment;
+  - Folio and Library have no hook emitter or consumer.
+
+  As with the first re-freeze, a third party could self-host unreleased
+  public source; this is not a proven fleet-wide "none". If a deployed v1
+  consumer is found, this stops and the act goes to the next catalog version
+  with Juan's decision.
+- No previously accepted payload is refused: the act is new, and
+  `session_ref` is forbidden on every other act, which no producer emits.
+- No accepted payload, enum value, envelope or signature format, or existing
+  signed vector changes: the act enum, `act_directions` and the field set
+  only gain entries, and every existing positive and negative case is
+  unchanged.
+- The public catalog and its byte-identical packaged copy change together,
+  with positive and refusal cases for the act and for `session_ref` on
+  other acts; activation still needs the producer and receiver packages that
+  carry this catalog.
+
 This delta updates the public catalog and its byte-identical packaged copy,
 adds positive and single-fault payload cases for the new act and exact core
 range lists, and preserves

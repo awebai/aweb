@@ -110,7 +110,10 @@ class MappedApprovers:
 
     async def candidates(self, policy, request) -> list[Approver]:
         return [
-            replace(approver, principal_did=self.principals.get(approver.subject))
+            replace(
+                approver,
+                principal_did=self.principals.get(approver.subject, approver.principal_did),
+            )
             for approver in await self.passkeys.candidates(policy, request)
         ]
 
@@ -136,6 +139,11 @@ class PasskeyWorld:
 
 @pytest_asyncio.fixture
 async def pw(test_db_factory, registry) -> PasskeyWorld:
+    return await passkey_world(test_db_factory, registry)
+
+
+async def passkey_world(test_db_factory, registry, **passkeys_options) -> PasskeyWorld:
+    """The composed passkey world; `passkeys_options` are further `Passkeys` options."""
     db = await test_db_factory.create_db(suffix="passkeys", schema="app")
     audit = AuditOutbox(db)
     await audit.create()
@@ -152,6 +160,7 @@ async def pw(test_db_factory, registry) -> PasskeyWorld:
             raise ProofContextUnavailable()
         return PasskeyInstallationContext("fixture", "team", "installation", generation)
 
+    passkeys_options.setdefault("owner_scopes", is_owner_scope)
     passkeys = Passkeys(
         db,
         rp=RelyingParty(origin=ORIGIN, name="Example app"),
@@ -161,8 +170,8 @@ async def pw(test_db_factory, registry) -> PasskeyWorld:
         enrolment_ttl=timedelta(hours=1),
         challenge_ttl=timedelta(minutes=5),
         clock=clock,
-        owner_scopes=is_owner_scope,
         proof_context=resolve_context,
+        **passkeys_options,
     )
     await passkeys.migrate()
     approvers = MappedApprovers(passkeys)

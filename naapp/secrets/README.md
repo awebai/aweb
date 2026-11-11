@@ -24,12 +24,16 @@ The service (`aweb_secrets.app.create_app`) runs on the shared naapp runtime,
   covered by the team's installed grant and allowed by secrets' policy. This
   origin never reads or sets a cookie.
 - **The console origin** (`SECRETS_CONSOLE_ORIGIN`) serves people in a browser.
-  It refuses any request carrying team-auth, and serves no tool.
+  It refuses any request carrying team-auth, and serves no tool. Owners'
+  passkeys are bound to its hostname, so a human-role act's audience must be
+  this origin; a credential bound to any other host is refused.
 
 No tool reads, sets or exports a secret value. `/health` and `/ready` report the
 build commit (`SECRETS_GIT_SHA`, or Render's), the database, the KMS canary and
-the age of the oldest undelivered outbox event. `/ready` is 503 while any of
-them fails. The database is the app's own pgdbm schema: the shared runtime's
+the outbox, and `/health` also the age of the oldest undelivered outbox event.
+Both answer 503 while the database or the KMS canary fails; the outbox age
+fails nothing. `/live` checks nothing and is what the image's `HEALTHCHECK`
+probes. The database is the app's own pgdbm schema: the shared runtime's
 migrations first, then `src/aweb_secrets/migrations/` (module `aweb_secrets`).
 
 The manifest's authoring source is `src/aweb_secrets/manifest.py`. The committed
