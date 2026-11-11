@@ -79,6 +79,27 @@ def test_the_reasons_are_the_vector_files_and_a_refusal_echoes_nothing_presented
         assert said in {refused.value.reason, f"{refused.value.reason}: {refused.value.field}"}, case["name"]
 
 
+def test_a_caller_without_a_registered_set_says_so_and_only_registration_goes_unchecked() -> None:
+    by_name = {case["name"]: case for case in VECTORS["cases"]}
+
+    def check(case: dict) -> None:
+        check_team_certificate(
+            case["certificate_header"],
+            subject_did_key=case["request_did_key"],
+            team_did_key=case["team_did_key"],
+            revoked_certificate_ids=case["revoked_certificate_ids"],
+            registered_certificate_ids=None,
+        )
+
+    check(by_name["unregistered"])
+    for case in VECTORS["cases"]:
+        if case["expected"] is None or case["expected"]["reason"] == "unregistered":
+            continue
+        with pytest.raises(TeamCertificateError) as refused:
+            check(case)
+        assert refused.value.reason == case["expected"]["reason"], case["name"]
+
+
 def test_the_registered_and_revoked_sets_are_not_optional() -> None:
     valid = next(case for case in VECTORS["cases"] if case["name"] == "valid")
     with pytest.raises(TypeError):

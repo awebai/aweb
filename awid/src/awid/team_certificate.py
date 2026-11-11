@@ -117,7 +117,7 @@ def check_team_certificate(
     subject_did_key: str,
     team_did_key: str,
     revoked_certificate_ids: Collection[str],
-    registered_certificate_ids: Collection[str],
+    registered_certificate_ids: Collection[str] | None,
 ) -> dict[str, Any]:
     """Check one team certificate and return it.
 
@@ -128,6 +128,17 @@ def check_team_certificate(
     from the certificate. A certificate has no expiry: revocation is its only
     end. The request that carries the certificate, the registry lookups and
     what the certificate's other fields mean are the caller's.
+
+    ``team_did_key`` must be the registry's key for the team this certificate
+    names. A caller resolves it from the certificate's ``team_id``, or compares
+    that ``team_id`` with the team it resolved the key for, before it uses the
+    ``team_id`` for anything: otherwise one team's controller could sign a
+    certificate that names another team.
+
+    ``registered_certificate_ids`` has no default. ``None`` says the caller has
+    no registered set yet and leaves registration unchecked; it is legal only
+    on a surface whose registered-certificate requirement is still switched
+    off, and that surface passes the set as soon as the requirement is on.
 
     Raises TeamCertificateError with a reason from REASONS, in this order:
     the header's shape, the version, the required fields, the subject, the
@@ -148,6 +159,6 @@ def check_team_certificate(
     verify_team_certificate_signature(certificate, team_did_key)
     if certificate["certificate_id"] in revoked_certificate_ids:
         raise TeamCertificateError("revoked")
-    if certificate["certificate_id"] not in registered_certificate_ids:
+    if registered_certificate_ids is not None and certificate["certificate_id"] not in registered_certificate_ids:
         raise TeamCertificateError("unregistered")
     return certificate
