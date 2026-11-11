@@ -169,6 +169,21 @@ class GatedPublishSet(unittest.TestCase):
         self.answer(verdict(self.digest, self.tree))
         self.refuses('@awebai/claude-channel', prefix='channel-v')
 
+    def test_only_cloud_main_code_can_answer_the_verdict(self):
+        always_pass = ('candidate-oss-verdict:\n'
+                       f'\t@printf \'%s\\n\' \'{json.dumps(verdict(self.digest, self.tree))}\'\n')
+        self.answer(verdict(self.digest, self.tree, passed=False), status=1)
+        (self.cloud / 'Makefile').write_text(always_pass)
+        self.refuses('Cloud verdict')
+        git('checkout', '-q', 'Makefile', cwd=self.cloud)
+        git('checkout', '-qb', 'operator-branch', cwd=self.cloud)
+        (self.cloud / 'Makefile').write_text(always_pass)
+        git('-c', 'user.name=fixture', '-c', 'user.email=fixture@example.invalid', 'commit', '-qam', 'local verdict',
+            cwd=self.cloud)
+        self.refuses('Cloud verdict')
+        self.assertEqual(git('worktree', 'list', '--porcelain', cwd=self.cloud).count('worktree '), 1,
+                         'the verdict worktree was left behind')
+
     def test_valid_verdict_publishes_exactly_the_lane_manifest_rows(self):
         self.answer(verdict(self.digest, self.tree))
         selected = self.publish_set()
