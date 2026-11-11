@@ -15,12 +15,12 @@ from pgdbm.errors import QueryError
 from pydantic import BaseModel, Field, model_validator
 
 from aweb.audit import OperatorAuditRoute, audit_success
-from aweb.service_errors import RESOURCE_NOT_FOUND_DETAIL
 from aweb.team_auth_deps import TeamIdentity, get_team_identity, team_identity_with_grant_scope
 
 from ...db import DatabaseInfra, get_db_infra
 from ...role_name_compat import normalize_optional_role_name, resolve_role_name_aliases
 from ..defaults import get_default_bundle
+from ..team_document_activation import activate_team_document
 
 logger = logging.getLogger(__name__)
 
@@ -224,38 +224,8 @@ async def activate_team_roles(
     roles_id: str,
 ) -> bool:
     """Set the active team roles bundle for a team."""
-    target = await db.fetch_one(
-        """
-        SELECT id, team_id
-        FROM {{tables.team_roles}}
-        WHERE id = $1
-        """,
-        roles_id,
-    )
-    if not target:
-        raise HTTPException(status_code=404, detail=RESOURCE_NOT_FOUND_DETAIL)
-
-    if target["team_id"] != team_id:
-        raise HTTPException(status_code=404, detail=RESOURCE_NOT_FOUND_DETAIL)
-
-    # Deactivate the currently active version (if any)
-    await db.execute(
-        """
-        UPDATE {{tables.team_roles}}
-        SET is_active = false
-        WHERE team_id = $1 AND is_active = true
-        """,
-        team_id,
-    )
-
-    # Activate the target version
-    await db.execute(
-        """
-        UPDATE {{tables.team_roles}}
-        SET is_active = true
-        WHERE id = $1
-        """,
-        roles_id,
+    await activate_team_document(
+        db, table="{{tables.team_roles}}", team_id=team_id, document_id=roles_id,
     )
 
     logger.info("Activated team roles %s for team %s", roles_id, team_id)

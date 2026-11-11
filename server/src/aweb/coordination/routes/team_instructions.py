@@ -14,11 +14,11 @@ from pgdbm import AsyncDatabaseManager
 from pgdbm.errors import QueryError
 from pydantic import BaseModel, Field, field_validator
 
-from aweb.service_errors import RESOURCE_NOT_FOUND_DETAIL
 from aweb.team_auth_deps import TeamIdentity, get_team_identity, team_identity_with_grant_scope
 
 from ...db import DatabaseInfra, get_db_infra
 from ..defaults import get_default_team_instructions
+from ..team_document_activation import activate_team_document
 
 logger = logging.getLogger(__name__)
 
@@ -213,48 +213,9 @@ async def activate_team_instructions(
     team_id: str,
     instructions_id: str,
 ) -> bool:
-    target = await db.fetch_one(
-        """
-        SELECT id, team_id
-        FROM {{tables.team_instructions}}
-        WHERE id = $1
-        """,
-        instructions_id,
+    await activate_team_document(
+        db, table="{{tables.team_instructions}}", team_id=team_id, document_id=instructions_id,
     )
-    if not target:
-        raise HTTPException(status_code=404, detail=RESOURCE_NOT_FOUND_DETAIL)
-
-    if target["team_id"] != team_id:
-        raise HTTPException(status_code=404, detail=RESOURCE_NOT_FOUND_DETAIL)
-
-    async with db.transaction() as tx:
-        # Activations of one team run one at a time, so each deactivates the
-        # version the one before it activated.
-        await tx.fetch_value(
-            "SELECT pg_advisory_xact_lock(hashtextextended($1, 0))",
-            f"team-instructions-activation:{team_id}",
-        )
-
-        # Deactivate the currently active version (if any)
-        await tx.execute(
-            """
-            UPDATE {{tables.team_instructions}}
-            SET is_active = false
-            WHERE team_id = $1 AND is_active = true
-            """,
-            team_id,
-        )
-
-        # Activate the target version
-        await tx.execute(
-            """
-            UPDATE {{tables.team_instructions}}
-            SET is_active = true
-            WHERE id = $1
-            """,
-            instructions_id,
-        )
-
     return True
 
 
