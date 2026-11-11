@@ -547,16 +547,6 @@ func (r Registration) hasBinding(want ReceiveIdentity) bool {
 	return false
 }
 
-func (b ReceiveIdentity) label() string {
-	if strings.TrimSpace(b.Label) != "" {
-		return strings.TrimSpace(b.Label)
-	}
-	if strings.TrimSpace(b.TeamID) != "" {
-		return strings.TrimSpace(b.TeamID)
-	}
-	return strings.TrimSpace(b.IdentityHome)
-}
-
 func (b ReceiveIdentity) allowsEventClass(class string) bool {
 	if class == "" {
 		return false

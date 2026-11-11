@@ -2098,17 +2098,6 @@ func TestDefaultAwebURL(t *testing.T) {
 	}
 }
 
-func TestInitBaseURLSelectionFallsBackToDefaultWithoutIO(t *testing.T) {
-	t.Setenv("AWEB_URL", "")
-	baseURL, serverName, err := selectInitBaseURL("", "")
-	if err != nil {
-		t.Fatal(err)
-	}
-	if baseURL != DefaultAwebURL || serverName != "app.aweb.ai" {
-		t.Fatalf("default selection: base=%q server=%q", baseURL, serverName)
-	}
-}
-
 func TestMCPConfigRequiresChannelForCertificateAuth(t *testing.T) {
 	t.Parallel()
 

@@ -3,7 +3,6 @@ package main
 import (
 	"context"
 	"crypto/ed25519"
-	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
@@ -562,27 +561,6 @@ func persistLocalSigningKeyAndCertificateAt(workingDir, identityHome string, sig
 	return nil
 }
 
-func ensureHostedOnboardingAvailable(awebURL string) error {
-	ctx, cancel := commandAPIContext(nil)
-	defer cancel()
-
-	resp, err := guidedOnboardingCheckUsername(ctx, awebURL, "Invalid_Probe")
-	if err == nil && resp != nil {
-		return nil
-	}
-
-	var regErr *awid.RegistryError
-	if errors.As(err, &regErr) {
-		if regErr.StatusCode == http.StatusNotFound {
-			return usageError("hosted onboarding is not available on this server; rerun `aw init --byod` with a domain you control")
-		}
-		if hostedCheckUsernameReason(regErr.Detail) == "invalid_format" {
-			return nil
-		}
-	}
-	return err
-}
-
 func resolveGuidedHostedAlias(req guidedOnboardingRequest) (string, error) {
 	alias := strings.TrimSpace(req.Alias)
 	if alias != "" {
@@ -934,21 +912,6 @@ func hostedUsernameTakenOnSignup(err error) bool {
 		return false
 	}
 	return true
-}
-
-func hostedCheckUsernameReason(detail string) string {
-	body := strings.TrimSpace(detail)
-	if body == "" {
-		return ""
-	}
-
-	var envelope map[string]any
-	if err := json.Unmarshal([]byte(body), &envelope); err == nil {
-		if reason, ok := envelope["reason"].(string); ok {
-			return strings.TrimSpace(reason)
-		}
-	}
-	return ""
 }
 
 func guidedPromptIn(in io.Reader) io.Reader {
