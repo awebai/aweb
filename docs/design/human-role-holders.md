@@ -114,9 +114,10 @@ A member takes no part in designation.
 
 The body is `signing`, `signature` and, for designate and replace,
 `credential`: `{"credential_id", "public_key", "rp_id"}` in the same
-encoding, `member_certificate`, the principal's team certificate
-([Delivery](../owner-act-delivery.md#delivery)), plus `notice_contact` when
-the role declares one. All three are refused for revoke. The app sends no enrolment link.
+encoding, `certificate`, the principal's team certificate
+([membership evidence](human-confirmation-from-aw.md#membership-evidence)),
+plus `notice_contact` when the role declares one. All three are refused for
+revoke. The app sends no enrolment link.
 
 Stages 1 and 2 are unchanged. For an authenticated act, stage 3 checks:
 
@@ -404,7 +405,7 @@ async def refresh_holding_certificate(
   team certificate, retained with the holding
   ([Membership evidence](human-confirmation-from-aw.md#membership-evidence)).
   Designate and replace write the decoded bytes of their body's
-  `member_certificate`, after stage 3 has verified them. A `session` handoff whose login succeeds replaces them
+  `certificate`, after stage 3 has verified them. A `session` handoff whose login succeeds replaces them
   through `refresh_holding_certificate`, once the handoff has verified the
   new certificate and its team and principal equal the holding's. The
   refresh writes nothing and returns false when the holding's `held_since`
