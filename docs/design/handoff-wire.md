@@ -236,6 +236,11 @@ Its field set is exactly `v: 2`, `auth: "handoff-session"`, `aud`, `method`,
 A result payload's field set is exactly the one in section 3. Neither carries
 `team_id`, and a field outside its set is refused.
 
+A session action builds its request by the version 2 tool rules, with one
+difference: a `json`-mode `POST` with no body member sends exactly `{}`, not an
+empty body, because the console's JSON routes read an object. A `GET` sends no
+body.
+
 The session id travels only inside the signed object. No cookie or bearer
 header stands in for it. The app uses that untrusted id only to look the
 session up. Only after it has checked the stored ephemeral key, the signature
