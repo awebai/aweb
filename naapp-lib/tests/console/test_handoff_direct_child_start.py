@@ -7,6 +7,7 @@ itself is tested against real AWID chains in test_handoff_requester.py.
 """
 
 import json
+import time
 from datetime import timedelta
 
 import httpx
@@ -15,6 +16,7 @@ from aweb_naapp_testing import REGISTRY_URL, SERVICE_TOKEN, Member
 from fastapi import FastAPI, Request
 
 from aweb_naapp.console import ClientIdentity, LoginLimiter
+from aweb_naapp.console.handoff_requester import RequesterEvidence
 from aweb_naapp.console.handoff_store import HandoffStore, handoff_start_router
 from aweb_naapp.runtime.origins import split_origins
 from aweb_naapp.runtime.team_auth import AWIDTeamCache, authenticate_request
@@ -42,10 +44,13 @@ async def requester_app(handoff_db, registry):
         return await authenticate_request(request, public_origin=API, team_cache=cache)
 
     async def parent(request, signer):
-        return seen["parent"]
+        if seen["parent"] is None:
+            return None
+        return RequesterEvidence(seen["parent"], time.monotonic_ns() + 60_000_000_000)
 
-    async def session_start(start, signer, request):
+    async def session_start(start, signer, request, *, requester=None):
         seen["starts"].append((start, signer))
+        seen["requester"] = requester
         return {"handoff_id": "h1", "expires_at": "2026-11-11T12:10:00Z"}
 
     api = FastAPI()
@@ -80,6 +85,8 @@ async def test_the_holders_direct_child_starts_a_session_for_it(requester_app):
     assert response.status_code == 201, response.text
     (start, signer), = seen["starts"]
     assert start.scope.principal == HOLDER and signer.did_aw == member.extra_cert_fields["member_did_aw"]
+    # The requester's original evidence deadline travels to the start's effect.
+    assert seen["requester"].parent == HOLDER
 
 
 async def test_a_signer_whose_parent_is_another_human_is_refused(requester_app):

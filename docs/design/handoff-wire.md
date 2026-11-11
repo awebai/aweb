@@ -159,9 +159,9 @@ including `credential`, keeps the same-signer rule.
    a human whose stable ID equals `scope.principal`, and that issuer's own
    verified kind is `human`. The edge is current (not revoked, current head). A deeper descendant, or a chain naming another
    parent, does not qualify.
-3. H's membership evidence is the certificate the app already retains with
-   H's holding (stored by the designate or replace that bound it, refreshed by
-   H-signed paths; aweb decision (A), b2eae523). It is verified at use exactly
+3. H's membership evidence is the certificate retained with H's holding in
+   the canonical holding record (stored by the designate or replace that bound
+   it; aweb decision (A), b2eae523). It is verified at use exactly
    as a holder's certificate is: under the team's current key, naming the
    installation's team and `member_did_aw` = H, with a published and unrevoked
    status, and H's own kind `human`. No usable retained certificate is
@@ -200,9 +200,19 @@ chain (its direct parent), shows both, and signs as Q. With no qualifying
 requester, aw refuses `requester_missing` and names the onboarding command. On
 `principal_not_member` from a start Q signed, aw says that the app's retained
 record of H's team membership is not current (for example after H's
-certificate was renewed), and that it is refreshed only by a path H signs, never
-by Q. Today that path is the owner's `human-credential.replace`, whose delivery
-body carries H's current certificate.
+certificate was renewed), and that only H refreshes it, never Q: by starting a
+credential handoff H signs (`aw app credential register`), or through the
+owner's `human-credential.replace`.
+
+**Refresh (contract 584d76c9c :459).** A `credential` start H signs refreshes
+the existing holding's retained certificate when the app accepts it: H's
+team-auth certificate is verified (current team key, H's current member key,
+published and unrevoked, H's own kind human) for exactly that holding, and the
+refresh commits with the accepted start, bound to the holding held since its
+current `held_since`. A mismatch or failed verification changes nothing, and
+the start still proceeds, granting nothing. It needs no completed registration,
+new passkey or owner act. A `session` start never refreshes at acceptance;
+same-signer session refresh keeps its successful-login condition.
 
 Onboarding (`aw id create --human-parent H`) issues the laptop agent under H
 with H's one live approval. It does not make the agent a team member. Q gets

@@ -159,9 +159,10 @@ def handoff_start_router(
     store: HandoffStore,
     limiter: LoginLimiter,
     principal: Callable[[Request], Awaitable[Principal]],
-    session_start: Callable[[HandoffStart, Principal, Request], Awaitable[dict[str, str]]]
+    session_start: Callable[..., Awaitable[dict[str, str]]] | None = None,
+    requester_parent: Callable[[Request, Principal], Awaitable[Any]] | None = None,
+    credential_start: Callable[[HandoffStart, Principal, Request], Awaitable[dict[str, str]]]
     | None = None,
-    requester_parent: Callable[[Request, Principal], Awaitable[str | None]] | None = None,
 ) -> APIRouter:
     """Mount on the API origin, with the runtime's verified principal dependency.
 
@@ -205,13 +206,18 @@ def handoff_start_router(
             # prepares this handoff; the holder's own login decides it.
             if parsed.purpose != "session" or session_start is None or requester_parent is None:
                 raise HTTPException(403, "scope_not_signer")
-            if await requester_parent(request, signer) != parsed.scope.principal:
+            evidence = await requester_parent(request, signer)
+            if evidence is None or evidence.parent != parsed.scope.principal:
                 raise HTTPException(403, "scope_not_signer")
-            return await session_start(parsed, signer, request)
+            return await session_start(parsed, signer, request, requester=evidence)
         if parsed.purpose == "session":
             if session_start is None:
                 raise HTTPException(403, "role_not_held")
             return await session_start(parsed, signer, request)
+        if credential_start is not None:
+            # The holder's own credential start refreshes its holding's
+            # retained certificate at acceptance (contract 584d76c9c :459).
+            return await credential_start(parsed, signer, request)
         return await store.create(parsed, team_id=signer.team_id)
 
     return router

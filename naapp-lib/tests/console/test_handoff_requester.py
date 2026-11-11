@@ -63,8 +63,9 @@ async def test_a_direct_child_names_its_human_parent(registry):
     await registry.add_team(member.team_id, member.team_did_key)
     async with registered_human(registry, member) as human:
         q_id, q_key, q_chain = await issued_agent(human, [human.identity], member.member_key, human.principal)
-        parent = await requester_parent(human.client)(request_with(q_chain), signer_for(q_id, q_key))
-        assert parent == human.principal
+        evidence = await requester_parent(human.client)(request_with(q_chain), signer_for(q_id, q_key))
+        assert evidence is not None and evidence.parent == human.principal
+        evidence.require_fresh()
 
 
 async def test_a_grandchild_is_not_a_requester(registry):
