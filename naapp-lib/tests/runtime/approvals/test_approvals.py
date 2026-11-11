@@ -9,6 +9,7 @@ from datetime import timedelta
 
 import asyncpg
 import pytest
+from pgdbm import AsyncDatabaseManager, DatabaseConfig
 from pgdbm.errors import QueryError
 
 from aweb_naapp.runtime.approvals import (
@@ -26,7 +27,15 @@ from aweb_naapp.runtime.approvals import (
     Refusal,
 )
 from aweb_naapp.runtime.links import link_verifier
-from tests.runtime.approvals.support import APPROVER, SCOPE, SUCCESSOR, World, policy, sign
+from tests.runtime.approvals.support import (
+    APPROVER,
+    SCOPE,
+    SUCCESSOR,
+    World,
+    build_world,
+    policy,
+    sign,
+)
 
 REQUEST = {
     "operation": "charge",
@@ -765,6 +774,29 @@ async def test_a_second_decision_in_the_winners_own_transaction_sees_the_used_li
             )
             is Refusal.LINK_UNAVAILABLE
         )
+
+
+async def test_a_link_decision_completes_on_a_one_connection_pool(test_db_factory):
+    """A decision holding the approval row reads its link on that same
+    connection: with a pool of one it still completes, rather than waiting for
+    a second connection it holds itself."""
+    created = await test_db_factory.create_db(suffix="approvals_single", schema="app")
+    single = AsyncDatabaseManager(
+        DatabaseConfig(
+            connection_string=created.config.get_dsn(),
+            schema="app",
+            min_connections=1,
+            max_connections=1,
+        )
+    )
+    await single.connect()
+    try:
+        w = await build_world(single)
+        _, approval = await mint(w)
+        decided = await asyncio.wait_for(decide(w, approval), 10)
+        assert decided.state is ApprovalState.APPROVED
+    finally:
+        await single.disconnect()
 
 
 @pytest.mark.parametrize("loser_waits", [True, False])
