@@ -1,5 +1,9 @@
 # Knowledge log
 
+## 2026-11-11
+* **Harvest**: OKF proposal from aweb-expert/aweb-expert-owner-acts with backing notes in-process-server-needs-awid-dns.md, shared-redis-team-key-cache-needs-unique-teams.md and focused-pg-runs-need-a-slot.md; fix commits checked on aweb-expert branches (not on main at 7f4be32fa), reviews and the coordinator's rule source-reported.
+* **Creation**: lessons [in-process stacks share their AWID's DNS, and network guards cover DNS](/aweb-expert/lessons/in-process-stacks-share-their-awids-dns.md), [tests on a shared Redis need a unique team per test](/aweb-expert/lessons/shared-redis-tests-need-a-unique-team.md), [database tests run only in a placed slot](/aweb-expert/lessons/database-tests-run-only-in-a-placed-slot.md).
+
 ## 2026-11-04
 * **Harvest**: OKF proposal from aweb-expert/aweb-expert-fresh-eyes (tasks aweb-acst and aweb-actf).
 * **Update**: [identity and routing review needs the real client](/aweb-expert/lessons/identity-and-routing-review-needs-the-real-client.md) gains that the real client includes the last released binary and that a skipped released-client case is not evidence.
