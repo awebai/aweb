@@ -586,18 +586,38 @@ def lane_files(prefix: str) -> dict[str, tuple[str, ...]]:
 
 def require_cloud_verdict(cloud_checkout: Path, cloud_tree: str, manifest_sha256: str,
                           expected_aw_released: str) -> None:
-    """AC's candidate-oss-verdict must pass for this tree, digest and released aw."""
+    """AC's candidate-oss-verdict, as Cloud main's code, must pass for this tree, digest and released aw.
+
+    The query runs in a detached worktree of the fetched Cloud main commit, so
+    the code that answers is the tree that was checked, whatever branch or
+    local edits the operator's checkout carries. It reads AC's host-local
+    ledger from outside the tree; AWEB_GATE_LEDGER passes through when set.
+    """
+    # The query runs from a temporary worktree, where a relative ledger path
+    # would name a file inside it and "~" is not expanded.
+    if "AWEB_GATE_LEDGER" in os.environ and not Path(os.environ["AWEB_GATE_LEDGER"]).is_absolute():
+        raise PublishRefusal(f"AWEB_GATE_LEDGER must be an absolute path, not {os.environ['AWEB_GATE_LEDGER']!r}")
     # Fetch only Cloud main's remote-tracking ref; the checkout's branches,
     # index and working tree stay as the operator left them.
     run(cloud_checkout, "git", "fetch", "--quiet", "origin", "+refs/heads/main:refs/remotes/origin/main", timeout=300)
-    main_tree = run(cloud_checkout, "git", "rev-parse", "refs/remotes/origin/main^{tree}", timeout=60)
-    if main_tree != cloud_tree:
-        raise PublishRefusal(f"Cloud main tree is {main_tree}, not CLOUD_TREE {cloud_tree}; rerun the Cloud gate")
-    completed = subprocess.run(
-        ["make", "--no-print-directory", "-C", str(cloud_checkout), "candidate-oss-verdict",
-         f"CLOUD_TREE={cloud_tree}", f"OSS_MANIFEST_SHA256={manifest_sha256}",
-         f"EXPECTED_AW_RELEASED={expected_aw_released}"],
-        text=True, capture_output=True, timeout=600, check=False)
+    main_commit = run(cloud_checkout, "git", "rev-parse", "refs/remotes/origin/main^{commit}", timeout=60)
+    with tempfile.TemporaryDirectory(prefix="aweb-cloud-verdict-") as temporary:
+        verdict_tree = Path(temporary) / "cloud"
+        run(cloud_checkout, "git", "worktree", "add", "--detach", str(verdict_tree), main_commit, timeout=300)
+        try:
+            main_tree = run(verdict_tree, "git", "rev-parse", "HEAD^{tree}", timeout=60)
+            if main_tree != cloud_tree:
+                raise PublishRefusal(
+                    f"Cloud main tree is {main_tree}, not CLOUD_TREE {cloud_tree}; rerun the Cloud gate")
+            completed = subprocess.run(
+                # ENV_FILE=/dev/null keeps an inherited ENV_FILE from feeding
+                # an external file into AC's Makefile.
+                ["make", "--no-print-directory", "-C", str(verdict_tree), "candidate-oss-verdict",
+                 "ENV_FILE=/dev/null", f"CLOUD_TREE={cloud_tree}",f"OSS_MANIFEST_SHA256={manifest_sha256}",
+                 f"EXPECTED_AW_RELEASED={expected_aw_released}"],
+                text=True, capture_output=True, timeout=600, check=False)
+        finally:
+            run(cloud_checkout, "git", "worktree", "remove", "--force", str(verdict_tree), timeout=120)
     refusal = f"Cloud verdict does not pass for manifest {manifest_sha256}, tree {cloud_tree}, aw {expected_aw_released}"
     if completed.returncode:
         raise PublishRefusal(f"{refusal}: exit {completed.returncode}: {(completed.stderr or completed.stdout).strip()}")

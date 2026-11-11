@@ -23,7 +23,7 @@ ROOT = Path(__file__).resolve().parents[1]
 SOURCE_SHA = 'a' * 40
 RELEASED = '1.36.58'
 FIXTURE_TARGET = '''candidate-oss-verdict:
-\t@printf '%s\\n' "$(CLOUD_TREE) $(OSS_MANIFEST_SHA256) $(EXPECTED_AW_RELEASED)" > "$$VERDICT_FIXTURE/asked"
+\t@printf '%s\\n' "$(CLOUD_TREE) $(OSS_MANIFEST_SHA256) $(EXPECTED_AW_RELEASED) $(ENV_FILE)" > "$$VERDICT_FIXTURE/asked"
 \t@cat "$$VERDICT_FIXTURE/answer.json"
 \t@exit $$(cat "$$VERDICT_FIXTURE/status")
 '''
@@ -184,6 +184,13 @@ class GatedPublishSet(unittest.TestCase):
         self.assertEqual(git('worktree', 'list', '--porcelain', cwd=self.cloud).count('worktree '), 1,
                          'the verdict worktree was left behind')
 
+    def test_relative_gate_ledger_refuses_before_asking_cloud(self):
+        self.answer(verdict(self.digest, self.tree))
+        for ledger in ('ledger.tsv', '~/.cache/aweb-cloud/candidate-gate-ledger.tsv'):
+            with self.subTest(ledger=ledger), patch.dict(os.environ, AWEB_GATE_LEDGER=ledger):
+                self.refuses('AWEB_GATE_LEDGER')
+                self.assertFalse((self.fixture / 'asked').exists(), 'Cloud was asked with an ambiguous ledger')
+
     def test_valid_verdict_publishes_exactly_the_lane_manifest_rows(self):
         self.answer(verdict(self.digest, self.tree))
         selected = self.publish_set()
@@ -192,7 +199,7 @@ class GatedPublishSet(unittest.TestCase):
             sorted((name, hashlib.sha256((self.artifacts / name).read_bytes()).hexdigest())
                    for name in ('aweb-1.0.0-py3-none-any.whl', 'aweb-1.0.0.tar.gz')))
         self.assertTrue(all(Path(row['path']).parent == self.artifacts for row in selected))
-        self.assertEqual((self.fixture / 'asked').read_text().split(), [self.tree, self.digest, RELEASED])
+        self.assertEqual((self.fixture / 'asked').read_text().split(), [self.tree, self.digest, RELEASED, '/dev/null'])
         self.assertEqual(git('status', '--porcelain', cwd=self.cloud), '')
 
 

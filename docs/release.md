@@ -325,16 +325,24 @@ unless all of the following hold, in this order:
 4. npm `latest` for `@awebai/aw` equals `EXPECTED_AW_RELEASED`. This is read
    once, before any upload, so it names the released client Cloud was gated
    against, even when this release moves `latest`.
-5. After fetching only Cloud's `origin/main` remote-tracking ref, its tree
-   equals `CLOUD_TREE`. The checkout's branches, index and working tree are not
-   touched. If Cloud main moved after the gate, publication refuses and the
-   Cloud gate must run again.
-6. `make -C "$CLOUD_CHECKOUT" candidate-oss-verdict CLOUD_TREE=...
-   OSS_MANIFEST_SHA256=... EXPECTED_AW_RELEASED=...` exits 0 and prints JSON
-   with `schema` 1, `passed` true, the requested tree and digest, and at least
-   one qualifying key, every one of them bound to this digest and this
-   `aw-released`. Anything else refuses, including `gate-in-progress` and
-   output that does not parse. `AWEB_GATE_LEDGER` passes through when set.
+5. The publisher fetches only Cloud's `origin/main` remote-tracking ref and adds a
+   temporary detached worktree of that commit. The worktree's tree must equal
+   `CLOUD_TREE`. If Cloud main moved after the gate, publication refuses and
+   the Cloud gate must run again. The checkout's branches, index and working
+   tree are not touched, and the worktree is removed afterwards.
+6. `make candidate-oss-verdict CLOUD_TREE=... OSS_MANIFEST_SHA256=...
+   EXPECTED_AW_RELEASED=...` runs in that worktree, so Cloud main's checked
+   code answers, never the checkout's branch or local edits. It must exit 0
+   and print JSON with `schema` 1, `passed` true, the requested tree and
+   digest, and at least one qualifying key, every one of them bound to this
+   digest and this `aw-released`. Anything else refuses, including
+   `gate-in-progress` and output that does not parse. The verdict reads AC's
+   live host-local gate ledger and its adjacent writer lock, both outside the
+   tree. By default these live under the operator's home. Set
+   `AWEB_GATE_LEDGER` to use a different ledger; it passes through and must be
+   an absolute path, because the query runs from the temporary worktree. Make
+   receives `ENV_FILE=/dev/null`, so an inherited `ENV_FILE` cannot feed an
+   outside file into AC's Makefile.
 
 Each file is copied for upload and re-hashed again. The publisher then
 publishes or adopts it and reads it back, as before.
