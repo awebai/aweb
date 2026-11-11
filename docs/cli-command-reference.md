@@ -4023,6 +4023,7 @@ at the app's human origin in a browser that aw opens.
 
 Subcommands:
 - `credential` Register or replace a holder's passkey for an app role
+- `human` Run an action an app declares for its role holders, in a passkey session
 - `role` Designate or revoke a holder of an app role, as the team owner
 
 Flags:
@@ -4068,6 +4069,18 @@ Flags:
 - `--principal string The holder's did:aw`
 - `--role string The app role, as its manifest names it`
 - `--yes Sign what is shown without asking`
+
+## `app human`
+
+### `app human`
+
+Runs one of the session actions an app's manifest declares under owner_acts.session_actions,
+in a console session that a browser passkey login opens for your holding of the action's role.
+`aw app human <app> --help` lists the declared actions. A protected field is typed at the
+terminal with echo off and has no flag; a one-time output is written only to the terminal.
+
+Flags:
+- `-h, --help help for human`
 
 ## `app role`
 
