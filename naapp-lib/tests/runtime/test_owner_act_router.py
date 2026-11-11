@@ -562,10 +562,10 @@ async def test_withdrawal_and_expired_original_h2_after_observed_gate_wait_roll_
             raise
     response = await asyncio.wait_for(pending, 8)
     assert world.effect.applied.is_set()  # tentative writes really preceded the final check
-    assert (response.status_code, response.json()["detail"]) == (
-        503,
-        "principal_status_unavailable",
+    assert response.status_code == 503, (
+        "original H2 expiry after the observed gate wait must roll back the act"
     )
+    assert response.json()["detail"] == "principal_status_unavailable"
     assert await world.counts() == (0, 0, 0)
     assert world.effect.committed == 0
 

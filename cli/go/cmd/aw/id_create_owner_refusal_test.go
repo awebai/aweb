@@ -73,7 +73,7 @@ func TestOwnerPrincipalHostedIdentityRejectsUnavailableAuthorityBeforeNetwork(t 
 			if kind == "relative-root" {
 				selected = ".aw"
 			}
-			args := []string{"--identity-home", target, "id", "create", "--owner-identity-home", selected, "--team-id", "786a02e4-6a72-44f1-a722-bef232c49a97", "--name", "steward", "--inbound-mode", "contacts-only", "--json"}
+			args := []string{"--identity-home", target, "id", "create", "--owner-identity-home", selected, "--team-id", "786a02e4-6a72-44f1-a722-bef232c49a97", "--name", "worker", "--inbound-mode", "contacts-only", "--json"}
 			if kind != "without-org" {
 				args = append(args, "--org", "chosen")
 			}
@@ -119,7 +119,7 @@ func TestOwnerPrincipalErrorsPreserveHTTPStatus(t *testing.T) {
 			}))
 			defer server.Close()
 			owner := &hostedOwnerAuthority{issuer: server.URL, key: key}
-			err := postHostedOwnerIdentity(t.Context(), owner, map[string]string{"name": "steward"}, nil)
+			err := postHostedOwnerIdentity(t.Context(), owner, map[string]string{"name": "worker"}, nil)
 			var result *cliAuthHTTPStatusError
 			if !errors.As(err, &result) || result.StatusCode != status || result.ErrorCode != "owner_request_refused" {
 				t.Errorf("owner error lost HTTP status/code: %v", err)
