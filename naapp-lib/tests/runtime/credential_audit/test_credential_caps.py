@@ -291,3 +291,67 @@ async def test_a_resolver_read_waits_for_a_cap_change_in_flight(world: World):
     finally:
         if reading is not None and not reading.done():
             reading.cancel()
+
+
+async def lock_waiters(world: World) -> int:
+    return await world.db.fetch_value(
+        "SELECT count(*) FROM pg_stat_activity "
+        "WHERE datname = current_database() AND wait_event_type = 'Lock'"
+    )
+
+
+async def until_waiting(world: World) -> None:
+    async def observe() -> None:
+        while not await lock_waiters(world):
+            await asyncio.sleep(0.02)
+
+    await asyncio.wait_for(observe(), 10)
+
+
+async def test_a_default_read_waits_for_a_first_cap_set_in_flight(world: World):
+    """No row exists yet: the first set still holds the key, and a reader
+    waits for it instead of reading the configured default past it."""
+    caps = await caps_of(world)
+    owner = world.owner.for_acts((CREDENTIAL_CAP_ACT,))
+    subject = cap_subject(2)
+    signing, signature = owner.sign(CREDENTIAL_CAP_ACT, subject)
+    prepared = await owner.verifier.prepare(signing, signature, team_id=TEAM_ID)
+    context = await world.recorder.prepare_owner_act(
+        world.admitted, signing=signing, signature=signature
+    )
+    reading = None
+    try:
+        with world.recorder.prepared(context):
+            async with world.db.transaction() as tx:
+                act = await owner.consume(tx, prepared, subject)
+                await caps.set_cap(tx, evidence=act)
+                reading = asyncio.create_task(resolved(world, caps))
+                await until_waiting(world)
+                assert not reading.done()
+        assert await asyncio.wait_for(reading, 10) == 2
+    finally:
+        if reading is not None and not reading.done():
+            reading.cancel()
+
+
+async def test_a_first_cap_set_waits_for_an_open_default_read(world: World):
+    """A credential change that read the configured default still holds the
+    key: the first set waits for it to finish."""
+    caps = await caps_of(world)
+    setting = None
+    try:
+        async with world.db.transaction() as reader:
+            assert await caps.resolve(reader, ROLE_KEY) is None
+            setting = asyncio.create_task(set_cap(world, caps, 2))
+            await until_waiting(world)
+            assert not setting.done()
+        assert await asyncio.wait_for(setting, 10) == 2
+    finally:
+        if setting is not None and not setting.done():
+            setting.cancel()
+
+
+async def test_a_cap_above_32_bits_is_stored_when_the_ceiling_allows_it(world: World):
+    caps = await caps_of(world, ceiling=2**53 - 1)
+    await set_cap(world, caps, 2**31)
+    assert await resolved(world, caps) == 2**31

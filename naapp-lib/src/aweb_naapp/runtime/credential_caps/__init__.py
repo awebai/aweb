@@ -7,8 +7,9 @@ authority's key is (service_id, authority, human), set through the shared
 signer's protected effect, which does not exist yet: such evidence refuses.
 A key with no stored cap uses the deployment's configured one.
 
-A cap change and a credential change serialize on the cap row: `set_cap`
-holds it for update, `resolve` reads it for share. An effect that mounts
+A cap change and a credential change serialize on the policy key, whether
+or not a cap is stored for it yet: `set_cap` holds the key's transaction lock
+exclusively before its row, `resolve` holds it shared. An effect that mounts
 cap-set takes its installation fence and any role holds before `set_cap`,
 and never a fence or passkey lock after the cap row. B3 reads the cap under its
 own write preparation, through the app's resolver, which maps a scope to its
@@ -42,6 +43,7 @@ __all__ = ["CapKey", "CredentialCapRefused", "CredentialCaps"]
 
 MIGRATIONS = Path(__file__).parent / "migrations"
 MIGRATION_MODULE = "aweb_naapp_credential_caps"
+_KEY_PREFIX = b"aweb.naapp.credential-caps/1\n"
 
 
 class CredentialCapRefused(Exception):
@@ -64,6 +66,12 @@ class CapKey:
     @property
     def policy_key(self) -> str:
         return canonical_json_bytes(["app", self.app_id, self.installation_id, self.role]).decode()
+
+    @property
+    def lock_id(self) -> int:
+        """The key's transaction-lock ID, held even when no cap is stored."""
+        digest = hashlib.sha256(_KEY_PREFIX + self.policy_key.encode()).digest()
+        return int.from_bytes(digest[:8], "big", signed=True)
 
 
 def _utcnow() -> datetime:
@@ -93,7 +101,9 @@ class CredentialCaps:
 
     async def resolve(self, tx: TransactionManager, key: CapKey) -> int | None:
         """The key's stored cap, held for share in `tx`; None when it has
-        none, which means the configured cap."""
+        none, which means the configured cap. Holding the key shared, it waits
+        for a cap change in flight, a first one included."""
+        await tx.execute("SELECT pg_advisory_xact_lock_shared($1::bigint)", key.lock_id)
         return await tx.fetch_value(
             "SELECT cap FROM {{tables.credential_caps}} WHERE policy_key = $1 FOR SHARE",
             key.policy_key,
@@ -119,6 +129,7 @@ class CredentialCaps:
             evidence.subject["installation_id"],
             evidence.subject["role"],
         )
+        await tx.execute("SELECT pg_advisory_xact_lock($1::bigint)", key.lock_id)
         await tx.fetch_value(
             "SELECT 1 FROM {{tables.credential_caps}} WHERE policy_key = $1 FOR UPDATE",
             key.policy_key,
