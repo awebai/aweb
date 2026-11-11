@@ -1,0 +1,393 @@
+{
+  "version": 1,
+  "description": "Verification of one team certificate, apart from the request that carries it: the header's shape, the certificate's fields, its binding to the request's signer, its signature under the team key the registry holds, and its standing at the registry. `expected` is the verdict every verifier is to give: null for acceptance, or one of `reasons`. `today` records what each verifier named there answers now, where that differs or has not been unified: accepted, refused, or the reason it gives.",
+  "team_id": "backend:acme.com",
+  "keys": {
+    "team": {
+      "seed_hex": "7465616d7465616d7465616d7465616d7465616d7465616d7465616d7465616d",
+      "did_key": "did:key:z6MkrsqopE15tExXC16bzZEW7kJ93ZuMmzgAApHNaQVumsn6"
+    },
+    "member": {
+      "seed_hex": "6d656d6265726d656d6265726d656d6265726d656d6265726d656d6265726d65",
+      "did_key": "did:key:z6MkkNQqsm89BFm8dNLubm658KihpVu6xng6aXxBkFD46vmb"
+    },
+    "another-team": {
+      "seed_hex": "616e6f746865722d7465616d616e6f746865722d7465616d616e6f746865722d",
+      "did_key": "did:key:z6Mkv9qX8rk7xfHV1VVDAAEsEpF6eNX1kt6bBuNXSHpfnMMe"
+    },
+    "another-member": {
+      "seed_hex": "616e6f746865722d6d656d626572616e6f746865722d6d656d626572616e6f74",
+      "did_key": "did:key:z6Mknuo5KfDhbDyvPX4GkP35gnDQBMZXgLefaL41fpekq7Lk"
+    }
+  },
+  "reasons": [
+    "malformed",
+    "unsupported_version",
+    "missing_field",
+    "member_key_mismatch",
+    "missing_signature",
+    "bad_signature",
+    "revoked",
+    "unregistered"
+  ],
+  "today_verifiers": {
+    "awid": "awid.team_certificate: decode_team_certificate, then verify_team_certificate_signature",
+    "server": "aweb.team_auth.parse_and_verify_certificate"
+  },
+  "cases": [
+    {
+      "name": "valid",
+      "about": "A current member certificate.",
+      "certificate_header": "eyJ2ZXJzaW9uIjogMSwgImNlcnRpZmljYXRlX2lkIjogImNlcnQtMDAxIiwgInRlYW1faWQiOiAiYmFja2VuZDphY21lLmNvbSIsICJ0ZWFtX2RpZF9rZXkiOiAiZGlkOmtleTp6Nk1rcnNxb3BFMTV0RXhYQzE2YnpaRVc3a0o5M1p1TW16Z0FBcEhOYVFWdW1zbjYiLCAibWVtYmVyX2RpZF9rZXkiOiAiZGlkOmtleTp6Nk1ra05RcXNtODlCRm04ZE5MdWJtNjU4S2locFZ1NnhuZzZhWHhCa0ZENDZ2bWIiLCAibWVtYmVyX2RpZF9hdyI6ICIiLCAibWVtYmVyX2FkZHJlc3MiOiAiIiwgImFsaWFzIjogImFsaWNlIiwgImlkZW50aXR5X3Njb3BlIjogImdsb2JhbCIsICJpc3N1ZWRfYXQiOiAiMjAyNi0xMS0wMVQwMDowMDowMCswMDowMCIsICJzaWduYXR1cmUiOiAiYUxCc1dNaEZTU3pZWVRFazBTbXZBemJMZElrY0J6RTdwcVpmTWxJRUVhWjZTNVlHR0ZOamF3bkkvbmh1WDRXNWZQL3hCZWVnWEJ5ck13RTlPSU5rQ3cifQ==",
+      "request_did_key": "did:key:z6MkkNQqsm89BFm8dNLubm658KihpVu6xng6aXxBkFD46vmb",
+      "team_did_key": "did:key:z6MkrsqopE15tExXC16bzZEW7kJ93ZuMmzgAApHNaQVumsn6",
+      "revoked_certificate_ids": [],
+      "registered_certificate_ids": [
+        "cert-001"
+      ],
+      "expected": null,
+      "today": {
+        "awid": "accepted",
+        "server": "accepted"
+      }
+    },
+    {
+      "name": "valid_issued_long_ago",
+      "about": "Revocation is the only end of a certificate: none expires, and issued_at bounds nothing (docs/trust-model.md, owner decision 2026-08-17).",
+      "certificate_header": "eyJ2ZXJzaW9uIjogMSwgImNlcnRpZmljYXRlX2lkIjogImNlcnQtMDAxIiwgInRlYW1faWQiOiAiYmFja2VuZDphY21lLmNvbSIsICJ0ZWFtX2RpZF9rZXkiOiAiZGlkOmtleTp6Nk1rcnNxb3BFMTV0RXhYQzE2YnpaRVc3a0o5M1p1TW16Z0FBcEhOYVFWdW1zbjYiLCAibWVtYmVyX2RpZF9rZXkiOiAiZGlkOmtleTp6Nk1ra05RcXNtODlCRm04ZE5MdWJtNjU4S2locFZ1NnhuZzZhWHhCa0ZENDZ2bWIiLCAibWVtYmVyX2RpZF9hdyI6ICIiLCAibWVtYmVyX2FkZHJlc3MiOiAiIiwgImFsaWFzIjogImFsaWNlIiwgImlkZW50aXR5X3Njb3BlIjogImdsb2JhbCIsICJpc3N1ZWRfYXQiOiAiMjAyMC0wMS0wMVQwMDowMDowMCswMDowMCIsICJzaWduYXR1cmUiOiAiTUdDOGcwR2lkRldxcjIrNUlFNnI0cktNaG9BUFN0U0NFNWk4My9LcS92UmpLZDBNenhYOUlkaTlQL3RrNjgyNzhtSStRRTZvUk1jMjJxR1FkQjJQQUEifQ==",
+      "request_did_key": "did:key:z6MkkNQqsm89BFm8dNLubm658KihpVu6xng6aXxBkFD46vmb",
+      "team_did_key": "did:key:z6MkrsqopE15tExXC16bzZEW7kJ93ZuMmzgAApHNaQVumsn6",
+      "revoked_certificate_ids": [],
+      "registered_certificate_ids": [
+        "cert-001"
+      ],
+      "expected": null,
+      "today": {
+        "awid": "accepted",
+        "server": "accepted"
+      }
+    },
+    {
+      "name": "not_base64",
+      "about": "The header is not base64.",
+      "certificate_header": "%%%not-base64%%%",
+      "request_did_key": "did:key:z6MkkNQqsm89BFm8dNLubm658KihpVu6xng6aXxBkFD46vmb",
+      "team_did_key": "did:key:z6MkrsqopE15tExXC16bzZEW7kJ93ZuMmzgAApHNaQVumsn6",
+      "revoked_certificate_ids": [],
+      "registered_certificate_ids": [
+        "cert-001"
+      ],
+      "expected": "malformed",
+      "today": {
+        "awid": "malformed",
+        "server": "refused"
+      }
+    },
+    {
+      "name": "not_json",
+      "about": "The header decodes to text that is not JSON.",
+      "certificate_header": "bm90IGpzb24=",
+      "request_did_key": "did:key:z6MkkNQqsm89BFm8dNLubm658KihpVu6xng6aXxBkFD46vmb",
+      "team_did_key": "did:key:z6MkrsqopE15tExXC16bzZEW7kJ93ZuMmzgAApHNaQVumsn6",
+      "revoked_certificate_ids": [],
+      "registered_certificate_ids": [
+        "cert-001"
+      ],
+      "expected": "malformed",
+      "today": {
+        "awid": "malformed",
+        "server": "refused"
+      }
+    },
+    {
+      "name": "not_an_object",
+      "about": "The header decodes to a JSON list.",
+      "certificate_header": "WzEsIDJd",
+      "request_did_key": "did:key:z6MkkNQqsm89BFm8dNLubm658KihpVu6xng6aXxBkFD46vmb",
+      "team_did_key": "did:key:z6MkrsqopE15tExXC16bzZEW7kJ93ZuMmzgAApHNaQVumsn6",
+      "revoked_certificate_ids": [],
+      "registered_certificate_ids": [
+        "cert-001"
+      ],
+      "expected": "malformed",
+      "today": {
+        "awid": "malformed",
+        "server": "refused"
+      }
+    },
+    {
+      "name": "oversized_header",
+      "about": "A correctly signed certificate whose header is longer than 8192 bytes.",
+      "certificate_header": "eyJ2ZXJzaW9uIjogMSwgImNlcnRpZmljYXRlX2lkIjogImNlcnQtMDAxIiwgInRlYW1faWQiOiAiYmFja2VuZDphY21lLmNvbSIsICJ0ZWFtX2RpZF9rZXkiOiAiZGlkOmtleTp6Nk1rcnNxb3BFMTV0RXhYQzE2YnpaRVc3a0o5M1p1TW16Z0FBcEhOYVFWdW1zbjYiLCAibWVtYmVyX2RpZF9rZXkiOiAiZGlkOmtleTp6Nk1ra05RcXNtODlCRm04ZE5MdWJtNjU4S2locFZ1NnhuZzZhWHhCa0ZENDZ2bWIiLCAibWVtYmVyX2RpZF9hdyI6ICIiLCAibWVtYmVyX2FkZHJlc3MiOiAiIiwgImFsaWFzIjogImFsaWNlIiwgImlkZW50aXR5X3Njb3BlIjogImdsb2JhbCIsICJpc3N1ZWRfYXQiOiAiMjAyNi0xMS0wMVQwMDowMDowMCswMDowMCIsICJub3RlIjogInh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eCIsICJzaWduYXR1cmUiOiAid1BNU2ZWeVdOL1RPWXZnd2dHZXNTOUFYMjZjbGNyb2NVM3JHWWdTVWloZ0ZJNERRV2NzUEVPT05RSTZkYnJhNGR1NEpNbEhiancwaDZJUlJnUDRMREEifQ==",
+      "request_did_key": "did:key:z6MkkNQqsm89BFm8dNLubm658KihpVu6xng6aXxBkFD46vmb",
+      "team_did_key": "did:key:z6MkrsqopE15tExXC16bzZEW7kJ93ZuMmzgAApHNaQVumsn6",
+      "revoked_certificate_ids": [],
+      "registered_certificate_ids": [
+        "cert-001"
+      ],
+      "expected": "malformed",
+      "today": {
+        "awid": "malformed",
+        "server": "refused"
+      }
+    },
+    {
+      "name": "version_2",
+      "about": "A version this verifier does not know.",
+      "certificate_header": "eyJ2ZXJzaW9uIjogMiwgImNlcnRpZmljYXRlX2lkIjogImNlcnQtMDAxIiwgInRlYW1faWQiOiAiYmFja2VuZDphY21lLmNvbSIsICJ0ZWFtX2RpZF9rZXkiOiAiZGlkOmtleTp6Nk1rcnNxb3BFMTV0RXhYQzE2YnpaRVc3a0o5M1p1TW16Z0FBcEhOYVFWdW1zbjYiLCAibWVtYmVyX2RpZF9rZXkiOiAiZGlkOmtleTp6Nk1ra05RcXNtODlCRm04ZE5MdWJtNjU4S2locFZ1NnhuZzZhWHhCa0ZENDZ2bWIiLCAibWVtYmVyX2RpZF9hdyI6ICIiLCAibWVtYmVyX2FkZHJlc3MiOiAiIiwgImFsaWFzIjogImFsaWNlIiwgImlkZW50aXR5X3Njb3BlIjogImdsb2JhbCIsICJpc3N1ZWRfYXQiOiAiMjAyNi0xMS0wMVQwMDowMDowMCswMDowMCIsICJzaWduYXR1cmUiOiAibldtNnlmNGF3SmV2ZEt6MzRKNmY3STdLQXd6U0Fjd3hqN1Q1T2JoRVEzNEVTV1VXRWZlL0JKbXdvUzhGd3R1UWUvSVlpeW1LaVVCQ0psK2wwUFhLQWcifQ==",
+      "request_did_key": "did:key:z6MkkNQqsm89BFm8dNLubm658KihpVu6xng6aXxBkFD46vmb",
+      "team_did_key": "did:key:z6MkrsqopE15tExXC16bzZEW7kJ93ZuMmzgAApHNaQVumsn6",
+      "revoked_certificate_ids": [],
+      "registered_certificate_ids": [
+        "cert-001"
+      ],
+      "expected": "unsupported_version",
+      "today": {
+        "awid": "accepted",
+        "server": "refused"
+      }
+    },
+    {
+      "name": "version_string",
+      "about": "version is the string \"1\".",
+      "certificate_header": "eyJ2ZXJzaW9uIjogIjEiLCAiY2VydGlmaWNhdGVfaWQiOiAiY2VydC0wMDEiLCAidGVhbV9pZCI6ICJiYWNrZW5kOmFjbWUuY29tIiwgInRlYW1fZGlkX2tleSI6ICJkaWQ6a2V5Ono2TWtyc3FvcEUxNXRFeFhDMTZielpFVzdrSjkzWnVNbXpnQUFwSE5hUVZ1bXNuNiIsICJtZW1iZXJfZGlkX2tleSI6ICJkaWQ6a2V5Ono2TWtrTlFxc204OUJGbThkTkx1Ym02NThLaWhwVnU2eG5nNmFYeEJrRkQ0NnZtYiIsICJtZW1iZXJfZGlkX2F3IjogIiIsICJtZW1iZXJfYWRkcmVzcyI6ICIiLCAiYWxpYXMiOiAiYWxpY2UiLCAiaWRlbnRpdHlfc2NvcGUiOiAiZ2xvYmFsIiwgImlzc3VlZF9hdCI6ICIyMDI2LTExLTAxVDAwOjAwOjAwKzAwOjAwIiwgInNpZ25hdHVyZSI6ICJiMDBydHc4TTViSGhNY2hHUW5xUmR1aG9oZXE2bWMyTmprZ1U2TTF6b3hWcDVEY2M1WW1JRFVkTjNVLzJhYXk1RStEaktnZnAwN3QzdnlicGFmZmRDQSJ9",
+      "request_did_key": "did:key:z6MkkNQqsm89BFm8dNLubm658KihpVu6xng6aXxBkFD46vmb",
+      "team_did_key": "did:key:z6MkrsqopE15tExXC16bzZEW7kJ93ZuMmzgAApHNaQVumsn6",
+      "revoked_certificate_ids": [],
+      "registered_certificate_ids": [
+        "cert-001"
+      ],
+      "expected": "unsupported_version",
+      "today": {
+        "awid": "accepted",
+        "server": "refused"
+      }
+    },
+    {
+      "name": "version_true",
+      "about": "version is true, which equals 1 in some languages.",
+      "certificate_header": "eyJ2ZXJzaW9uIjogdHJ1ZSwgImNlcnRpZmljYXRlX2lkIjogImNlcnQtMDAxIiwgInRlYW1faWQiOiAiYmFja2VuZDphY21lLmNvbSIsICJ0ZWFtX2RpZF9rZXkiOiAiZGlkOmtleTp6Nk1rcnNxb3BFMTV0RXhYQzE2YnpaRVc3a0o5M1p1TW16Z0FBcEhOYVFWdW1zbjYiLCAibWVtYmVyX2RpZF9rZXkiOiAiZGlkOmtleTp6Nk1ra05RcXNtODlCRm04ZE5MdWJtNjU4S2locFZ1NnhuZzZhWHhCa0ZENDZ2bWIiLCAibWVtYmVyX2RpZF9hdyI6ICIiLCAibWVtYmVyX2FkZHJlc3MiOiAiIiwgImFsaWFzIjogImFsaWNlIiwgImlkZW50aXR5X3Njb3BlIjogImdsb2JhbCIsICJpc3N1ZWRfYXQiOiAiMjAyNi0xMS0wMVQwMDowMDowMCswMDowMCIsICJzaWduYXR1cmUiOiAiUlZVZHRobmJzYm0vb3hJUWJtWklESEEyOTUvVFAyVFQ5cHFYbDk3Mk5zU2MxczZzbHJGL0tYa3hFenRyUk4zOEhucUJQWTRhRHVNRTVKQlhOMndVRHcifQ==",
+      "request_did_key": "did:key:z6MkkNQqsm89BFm8dNLubm658KihpVu6xng6aXxBkFD46vmb",
+      "team_did_key": "did:key:z6MkrsqopE15tExXC16bzZEW7kJ93ZuMmzgAApHNaQVumsn6",
+      "revoked_certificate_ids": [],
+      "registered_certificate_ids": [
+        "cert-001"
+      ],
+      "expected": "unsupported_version",
+      "today": {
+        "awid": "accepted",
+        "server": "accepted"
+      }
+    },
+    {
+      "name": "version_absent",
+      "about": "No version.",
+      "certificate_header": "eyJjZXJ0aWZpY2F0ZV9pZCI6ICJjZXJ0LTAwMSIsICJ0ZWFtX2lkIjogImJhY2tlbmQ6YWNtZS5jb20iLCAidGVhbV9kaWRfa2V5IjogImRpZDprZXk6ejZNa3JzcW9wRTE1dEV4WEMxNmJ6WkVXN2tKOTNadU1temdBQXBITmFRVnVtc242IiwgIm1lbWJlcl9kaWRfa2V5IjogImRpZDprZXk6ejZNa2tOUXFzbTg5QkZtOGROTHVibTY1OEtpaHBWdTZ4bmc2YVh4QmtGRDQ2dm1iIiwgIm1lbWJlcl9kaWRfYXciOiAiIiwgIm1lbWJlcl9hZGRyZXNzIjogIiIsICJhbGlhcyI6ICJhbGljZSIsICJpZGVudGl0eV9zY29wZSI6ICJnbG9iYWwiLCAiaXNzdWVkX2F0IjogIjIwMjYtMTEtMDFUMDA6MDA6MDArMDA6MDAiLCAic2lnbmF0dXJlIjogIlJyOXpkM3JRN0pyZ0F1Ylo1TG1RcERlZ0ZwTjRPVFdUczJrQytSbldZeFRnVXYrTWJ0M05xa0FleEJmaStKVzU0eG9LMktGRmtFY1JTcXp2c1JGa0FnIn0=",
+      "request_did_key": "did:key:z6MkkNQqsm89BFm8dNLubm658KihpVu6xng6aXxBkFD46vmb",
+      "team_did_key": "did:key:z6MkrsqopE15tExXC16bzZEW7kJ93ZuMmzgAApHNaQVumsn6",
+      "revoked_certificate_ids": [],
+      "registered_certificate_ids": [
+        "cert-001"
+      ],
+      "expected": "unsupported_version",
+      "today": {
+        "awid": "accepted",
+        "server": "refused"
+      }
+    },
+    {
+      "name": "alias_absent",
+      "about": "No alias.",
+      "certificate_header": "eyJ2ZXJzaW9uIjogMSwgImNlcnRpZmljYXRlX2lkIjogImNlcnQtMDAxIiwgInRlYW1faWQiOiAiYmFja2VuZDphY21lLmNvbSIsICJ0ZWFtX2RpZF9rZXkiOiAiZGlkOmtleTp6Nk1rcnNxb3BFMTV0RXhYQzE2YnpaRVc3a0o5M1p1TW16Z0FBcEhOYVFWdW1zbjYiLCAibWVtYmVyX2RpZF9rZXkiOiAiZGlkOmtleTp6Nk1ra05RcXNtODlCRm04ZE5MdWJtNjU4S2locFZ1NnhuZzZhWHhCa0ZENDZ2bWIiLCAibWVtYmVyX2RpZF9hdyI6ICIiLCAibWVtYmVyX2FkZHJlc3MiOiAiIiwgImlkZW50aXR5X3Njb3BlIjogImdsb2JhbCIsICJpc3N1ZWRfYXQiOiAiMjAyNi0xMS0wMVQwMDowMDowMCswMDowMCIsICJzaWduYXR1cmUiOiAienNoYUNzSEFIUFdmMHdTRG8vV1NLRDZtTFN3K1A0YjdMci9GeWV3aDFpTFcwVURaeE5hTXFRWUI4ODhLQ2dHUzB0VE1TeVE5OEl5aktKUVRjbzYzQ1EifQ==",
+      "request_did_key": "did:key:z6MkkNQqsm89BFm8dNLubm658KihpVu6xng6aXxBkFD46vmb",
+      "team_did_key": "did:key:z6MkrsqopE15tExXC16bzZEW7kJ93ZuMmzgAApHNaQVumsn6",
+      "revoked_certificate_ids": [],
+      "registered_certificate_ids": [
+        "cert-001"
+      ],
+      "expected": "missing_field",
+      "today": {
+        "awid": "accepted",
+        "server": "accepted"
+      }
+    },
+    {
+      "name": "alias_empty",
+      "about": "An empty alias.",
+      "certificate_header": "eyJ2ZXJzaW9uIjogMSwgImNlcnRpZmljYXRlX2lkIjogImNlcnQtMDAxIiwgInRlYW1faWQiOiAiYmFja2VuZDphY21lLmNvbSIsICJ0ZWFtX2RpZF9rZXkiOiAiZGlkOmtleTp6Nk1rcnNxb3BFMTV0RXhYQzE2YnpaRVc3a0o5M1p1TW16Z0FBcEhOYVFWdW1zbjYiLCAibWVtYmVyX2RpZF9rZXkiOiAiZGlkOmtleTp6Nk1ra05RcXNtODlCRm04ZE5MdWJtNjU4S2locFZ1NnhuZzZhWHhCa0ZENDZ2bWIiLCAibWVtYmVyX2RpZF9hdyI6ICIiLCAibWVtYmVyX2FkZHJlc3MiOiAiIiwgImFsaWFzIjogIiIsICJpZGVudGl0eV9zY29wZSI6ICJnbG9iYWwiLCAiaXNzdWVkX2F0IjogIjIwMjYtMTEtMDFUMDA6MDA6MDArMDA6MDAiLCAic2lnbmF0dXJlIjogImZoVDFFcktxYzJ5eE1pODVBbUhVeVRiUHErOG5sYXBLOXNrb2VqTFhkbHBhdXVwRUJPZFNxRGFGaTZJSXNMOU83MXI1eEx2a0U1RE1Ja283YkFON0J3In0=",
+      "request_did_key": "did:key:z6MkkNQqsm89BFm8dNLubm658KihpVu6xng6aXxBkFD46vmb",
+      "team_did_key": "did:key:z6MkrsqopE15tExXC16bzZEW7kJ93ZuMmzgAApHNaQVumsn6",
+      "revoked_certificate_ids": [],
+      "registered_certificate_ids": [
+        "cert-001"
+      ],
+      "expected": "missing_field",
+      "today": {
+        "awid": "accepted",
+        "server": "accepted"
+      }
+    },
+    {
+      "name": "alias_not_a_string",
+      "about": "alias is a number.",
+      "certificate_header": "eyJ2ZXJzaW9uIjogMSwgImNlcnRpZmljYXRlX2lkIjogImNlcnQtMDAxIiwgInRlYW1faWQiOiAiYmFja2VuZDphY21lLmNvbSIsICJ0ZWFtX2RpZF9rZXkiOiAiZGlkOmtleTp6Nk1rcnNxb3BFMTV0RXhYQzE2YnpaRVc3a0o5M1p1TW16Z0FBcEhOYVFWdW1zbjYiLCAibWVtYmVyX2RpZF9rZXkiOiAiZGlkOmtleTp6Nk1ra05RcXNtODlCRm04ZE5MdWJtNjU4S2locFZ1NnhuZzZhWHhCa0ZENDZ2bWIiLCAibWVtYmVyX2RpZF9hdyI6ICIiLCAibWVtYmVyX2FkZHJlc3MiOiAiIiwgImFsaWFzIjogNywgImlkZW50aXR5X3Njb3BlIjogImdsb2JhbCIsICJpc3N1ZWRfYXQiOiAiMjAyNi0xMS0wMVQwMDowMDowMCswMDowMCIsICJzaWduYXR1cmUiOiAiQ0tTdnFPcU9MMlFFK0dJZVBMMUNySG1oQzZqQ0I3c3c5K081azlTejZ2U1E2RHJmdElWYjUxd3FENnVPakROZzg0UXk5QUVmVmJLQldYOXlMdVR1REEifQ==",
+      "request_did_key": "did:key:z6MkkNQqsm89BFm8dNLubm658KihpVu6xng6aXxBkFD46vmb",
+      "team_did_key": "did:key:z6MkrsqopE15tExXC16bzZEW7kJ93ZuMmzgAApHNaQVumsn6",
+      "revoked_certificate_ids": [],
+      "registered_certificate_ids": [
+        "cert-001"
+      ],
+      "expected": "missing_field",
+      "today": {
+        "awid": "accepted",
+        "server": "accepted"
+      }
+    },
+    {
+      "name": "certificate_id_absent",
+      "about": "No certificate_id.",
+      "certificate_header": "eyJ2ZXJzaW9uIjogMSwgInRlYW1faWQiOiAiYmFja2VuZDphY21lLmNvbSIsICJ0ZWFtX2RpZF9rZXkiOiAiZGlkOmtleTp6Nk1rcnNxb3BFMTV0RXhYQzE2YnpaRVc3a0o5M1p1TW16Z0FBcEhOYVFWdW1zbjYiLCAibWVtYmVyX2RpZF9rZXkiOiAiZGlkOmtleTp6Nk1ra05RcXNtODlCRm04ZE5MdWJtNjU4S2locFZ1NnhuZzZhWHhCa0ZENDZ2bWIiLCAibWVtYmVyX2RpZF9hdyI6ICIiLCAibWVtYmVyX2FkZHJlc3MiOiAiIiwgImFsaWFzIjogImFsaWNlIiwgImlkZW50aXR5X3Njb3BlIjogImdsb2JhbCIsICJpc3N1ZWRfYXQiOiAiMjAyNi0xMS0wMVQwMDowMDowMCswMDowMCIsICJzaWduYXR1cmUiOiAiUHl1T2FHVjVsSXcydThhdU5ZZWlyRWozYVdzS1kzU1owMVV1dUM5eE82NGJLWEcyWmdxcVowQ3VaM0ZhNVRXV0RPbHoweHE0K215dngwYXNHb3pDREEifQ==",
+      "request_did_key": "did:key:z6MkkNQqsm89BFm8dNLubm658KihpVu6xng6aXxBkFD46vmb",
+      "team_did_key": "did:key:z6MkrsqopE15tExXC16bzZEW7kJ93ZuMmzgAApHNaQVumsn6",
+      "revoked_certificate_ids": [],
+      "registered_certificate_ids": [
+        "cert-001"
+      ],
+      "expected": "missing_field",
+      "today": {
+        "awid": "accepted",
+        "server": "refused"
+      }
+    },
+    {
+      "name": "team_id_absent",
+      "about": "No team_id.",
+      "certificate_header": "eyJ2ZXJzaW9uIjogMSwgImNlcnRpZmljYXRlX2lkIjogImNlcnQtMDAxIiwgInRlYW1fZGlkX2tleSI6ICJkaWQ6a2V5Ono2TWtyc3FvcEUxNXRFeFhDMTZielpFVzdrSjkzWnVNbXpnQUFwSE5hUVZ1bXNuNiIsICJtZW1iZXJfZGlkX2tleSI6ICJkaWQ6a2V5Ono2TWtrTlFxc204OUJGbThkTkx1Ym02NThLaWhwVnU2eG5nNmFYeEJrRkQ0NnZtYiIsICJtZW1iZXJfZGlkX2F3IjogIiIsICJtZW1iZXJfYWRkcmVzcyI6ICIiLCAiYWxpYXMiOiAiYWxpY2UiLCAiaWRlbnRpdHlfc2NvcGUiOiAiZ2xvYmFsIiwgImlzc3VlZF9hdCI6ICIyMDI2LTExLTAxVDAwOjAwOjAwKzAwOjAwIiwgInNpZ25hdHVyZSI6ICJjcHk0YTVKNTRxOG1BbVM1TVAvY0V3WmNqTnpKL2hmR0s2di80RklXcmlvcGtGV2FmaFlOeFF4RlVBdHdKVUZqejJKRlM0cGs2QzhYYll5SHJaVjFEdyJ9",
+      "request_did_key": "did:key:z6MkkNQqsm89BFm8dNLubm658KihpVu6xng6aXxBkFD46vmb",
+      "team_did_key": "did:key:z6MkrsqopE15tExXC16bzZEW7kJ93ZuMmzgAApHNaQVumsn6",
+      "revoked_certificate_ids": [],
+      "registered_certificate_ids": [
+        "cert-001"
+      ],
+      "expected": "missing_field",
+      "today": {
+        "awid": "accepted",
+        "server": "refused"
+      }
+    },
+    {
+      "name": "member_did_key_absent",
+      "about": "No member_did_key.",
+      "certificate_header": "eyJ2ZXJzaW9uIjogMSwgImNlcnRpZmljYXRlX2lkIjogImNlcnQtMDAxIiwgInRlYW1faWQiOiAiYmFja2VuZDphY21lLmNvbSIsICJ0ZWFtX2RpZF9rZXkiOiAiZGlkOmtleTp6Nk1rcnNxb3BFMTV0RXhYQzE2YnpaRVc3a0o5M1p1TW16Z0FBcEhOYVFWdW1zbjYiLCAibWVtYmVyX2RpZF9hdyI6ICIiLCAibWVtYmVyX2FkZHJlc3MiOiAiIiwgImFsaWFzIjogImFsaWNlIiwgImlkZW50aXR5X3Njb3BlIjogImdsb2JhbCIsICJpc3N1ZWRfYXQiOiAiMjAyNi0xMS0wMVQwMDowMDowMCswMDowMCIsICJzaWduYXR1cmUiOiAiVmVrQUJqdlFJK1RLM2hEUUg1aVJRdEljRzZ4a0RIdDVIZmtpczk1bmR1T1JrMU9FYmpIdHUySUhNcWRmV3BlQ0M4V09OVytZQ0dJQ3ZjUXJJU3dEQ0EifQ==",
+      "request_did_key": "did:key:z6MkkNQqsm89BFm8dNLubm658KihpVu6xng6aXxBkFD46vmb",
+      "team_did_key": "did:key:z6MkrsqopE15tExXC16bzZEW7kJ93ZuMmzgAApHNaQVumsn6",
+      "revoked_certificate_ids": [],
+      "registered_certificate_ids": [
+        "cert-001"
+      ],
+      "expected": "missing_field",
+      "today": {
+        "awid": "accepted",
+        "server": "refused"
+      }
+    },
+    {
+      "name": "member_key_mismatch",
+      "about": "The request is signed by a key the certificate does not name.",
+      "certificate_header": "eyJ2ZXJzaW9uIjogMSwgImNlcnRpZmljYXRlX2lkIjogImNlcnQtMDAxIiwgInRlYW1faWQiOiAiYmFja2VuZDphY21lLmNvbSIsICJ0ZWFtX2RpZF9rZXkiOiAiZGlkOmtleTp6Nk1rcnNxb3BFMTV0RXhYQzE2YnpaRVc3a0o5M1p1TW16Z0FBcEhOYVFWdW1zbjYiLCAibWVtYmVyX2RpZF9rZXkiOiAiZGlkOmtleTp6Nk1ra05RcXNtODlCRm04ZE5MdWJtNjU4S2locFZ1NnhuZzZhWHhCa0ZENDZ2bWIiLCAibWVtYmVyX2RpZF9hdyI6ICIiLCAibWVtYmVyX2FkZHJlc3MiOiAiIiwgImFsaWFzIjogImFsaWNlIiwgImlkZW50aXR5X3Njb3BlIjogImdsb2JhbCIsICJpc3N1ZWRfYXQiOiAiMjAyNi0xMS0wMVQwMDowMDowMCswMDowMCIsICJzaWduYXR1cmUiOiAiYUxCc1dNaEZTU3pZWVRFazBTbXZBemJMZElrY0J6RTdwcVpmTWxJRUVhWjZTNVlHR0ZOamF3bkkvbmh1WDRXNWZQL3hCZWVnWEJ5ck13RTlPSU5rQ3cifQ==",
+      "request_did_key": "did:key:z6Mknuo5KfDhbDyvPX4GkP35gnDQBMZXgLefaL41fpekq7Lk",
+      "team_did_key": "did:key:z6MkrsqopE15tExXC16bzZEW7kJ93ZuMmzgAApHNaQVumsn6",
+      "revoked_certificate_ids": [],
+      "registered_certificate_ids": [
+        "cert-001"
+      ],
+      "expected": "member_key_mismatch",
+      "today": {
+        "awid": "accepted",
+        "server": "refused"
+      }
+    },
+    {
+      "name": "signature_absent",
+      "about": "No signature.",
+      "certificate_header": "eyJ2ZXJzaW9uIjogMSwgImNlcnRpZmljYXRlX2lkIjogImNlcnQtMDAxIiwgInRlYW1faWQiOiAiYmFja2VuZDphY21lLmNvbSIsICJ0ZWFtX2RpZF9rZXkiOiAiZGlkOmtleTp6Nk1rcnNxb3BFMTV0RXhYQzE2YnpaRVc3a0o5M1p1TW16Z0FBcEhOYVFWdW1zbjYiLCAibWVtYmVyX2RpZF9rZXkiOiAiZGlkOmtleTp6Nk1ra05RcXNtODlCRm04ZE5MdWJtNjU4S2locFZ1NnhuZzZhWHhCa0ZENDZ2bWIiLCAibWVtYmVyX2RpZF9hdyI6ICIiLCAibWVtYmVyX2FkZHJlc3MiOiAiIiwgImFsaWFzIjogImFsaWNlIiwgImlkZW50aXR5X3Njb3BlIjogImdsb2JhbCIsICJpc3N1ZWRfYXQiOiAiMjAyNi0xMS0wMVQwMDowMDowMCswMDowMCJ9",
+      "request_did_key": "did:key:z6MkkNQqsm89BFm8dNLubm658KihpVu6xng6aXxBkFD46vmb",
+      "team_did_key": "did:key:z6MkrsqopE15tExXC16bzZEW7kJ93ZuMmzgAApHNaQVumsn6",
+      "revoked_certificate_ids": [],
+      "registered_certificate_ids": [
+        "cert-001"
+      ],
+      "expected": "missing_signature",
+      "today": {
+        "awid": "missing_signature",
+        "server": "refused"
+      }
+    },
+    {
+      "name": "signature_tampered",
+      "about": "A field was changed after signing.",
+      "certificate_header": "eyJ2ZXJzaW9uIjogMSwgImNlcnRpZmljYXRlX2lkIjogImNlcnQtMDAxIiwgInRlYW1faWQiOiAiYmFja2VuZDphY21lLmNvbSIsICJ0ZWFtX2RpZF9rZXkiOiAiZGlkOmtleTp6Nk1rcnNxb3BFMTV0RXhYQzE2YnpaRVc3a0o5M1p1TW16Z0FBcEhOYVFWdW1zbjYiLCAibWVtYmVyX2RpZF9rZXkiOiAiZGlkOmtleTp6Nk1ra05RcXNtODlCRm04ZE5MdWJtNjU4S2locFZ1NnhuZzZhWHhCa0ZENDZ2bWIiLCAibWVtYmVyX2RpZF9hdyI6ICIiLCAibWVtYmVyX2FkZHJlc3MiOiAiIiwgImFsaWFzIjogIm1hbGxvcnkiLCAiaWRlbnRpdHlfc2NvcGUiOiAiZ2xvYmFsIiwgImlzc3VlZF9hdCI6ICIyMDI2LTExLTAxVDAwOjAwOjAwKzAwOjAwIiwgInNpZ25hdHVyZSI6ICJhTEJzV01oRlNTellZVEVrMFNtdkF6YkxkSWtjQnpFN3BxWmZNbElFRWFaNlM1WUdHRk5qYXduSS9uaHVYNFc1ZlAveEJlZWdYQnlyTXdFOU9JTmtDdyJ9",
+      "request_did_key": "did:key:z6MkkNQqsm89BFm8dNLubm658KihpVu6xng6aXxBkFD46vmb",
+      "team_did_key": "did:key:z6MkrsqopE15tExXC16bzZEW7kJ93ZuMmzgAApHNaQVumsn6",
+      "revoked_certificate_ids": [],
+      "registered_certificate_ids": [
+        "cert-001"
+      ],
+      "expected": "bad_signature",
+      "today": {
+        "awid": "bad_signature",
+        "server": "refused"
+      }
+    },
+    {
+      "name": "signed_by_another_key",
+      "about": "Signed by a key that is not the team's current key at the registry.",
+      "certificate_header": "eyJ2ZXJzaW9uIjogMSwgImNlcnRpZmljYXRlX2lkIjogImNlcnQtMDAxIiwgInRlYW1faWQiOiAiYmFja2VuZDphY21lLmNvbSIsICJ0ZWFtX2RpZF9rZXkiOiAiZGlkOmtleTp6Nk1rcnNxb3BFMTV0RXhYQzE2YnpaRVc3a0o5M1p1TW16Z0FBcEhOYVFWdW1zbjYiLCAibWVtYmVyX2RpZF9rZXkiOiAiZGlkOmtleTp6Nk1ra05RcXNtODlCRm04ZE5MdWJtNjU4S2locFZ1NnhuZzZhWHhCa0ZENDZ2bWIiLCAibWVtYmVyX2RpZF9hdyI6ICIiLCAibWVtYmVyX2FkZHJlc3MiOiAiIiwgImFsaWFzIjogImFsaWNlIiwgImlkZW50aXR5X3Njb3BlIjogImdsb2JhbCIsICJpc3N1ZWRfYXQiOiAiMjAyNi0xMS0wMVQwMDowMDowMCswMDowMCIsICJzaWduYXR1cmUiOiAiSkxUalFXeVRLeVZwMFhubkhnVUhHcTBGT0h1QTdmb25HUzhlYXZmRVNScmxLM2R5Tk9JQ2lxNnB1WWgyV0pBMzIrZkNKdHpUeXA1MjVlSThLNmJhRHcifQ==",
+      "request_did_key": "did:key:z6MkkNQqsm89BFm8dNLubm658KihpVu6xng6aXxBkFD46vmb",
+      "team_did_key": "did:key:z6MkrsqopE15tExXC16bzZEW7kJ93ZuMmzgAApHNaQVumsn6",
+      "revoked_certificate_ids": [],
+      "registered_certificate_ids": [
+        "cert-001"
+      ],
+      "expected": "bad_signature",
+      "today": {
+        "awid": "bad_signature",
+        "server": "refused"
+      }
+    },
+    {
+      "name": "revoked",
+      "about": "The registry lists the certificate as revoked.",
+      "certificate_header": "eyJ2ZXJzaW9uIjogMSwgImNlcnRpZmljYXRlX2lkIjogImNlcnQtMDAxIiwgInRlYW1faWQiOiAiYmFja2VuZDphY21lLmNvbSIsICJ0ZWFtX2RpZF9rZXkiOiAiZGlkOmtleTp6Nk1rcnNxb3BFMTV0RXhYQzE2YnpaRVc3a0o5M1p1TW16Z0FBcEhOYVFWdW1zbjYiLCAibWVtYmVyX2RpZF9rZXkiOiAiZGlkOmtleTp6Nk1ra05RcXNtODlCRm04ZE5MdWJtNjU4S2locFZ1NnhuZzZhWHhCa0ZENDZ2bWIiLCAibWVtYmVyX2RpZF9hdyI6ICIiLCAibWVtYmVyX2FkZHJlc3MiOiAiIiwgImFsaWFzIjogImFsaWNlIiwgImlkZW50aXR5X3Njb3BlIjogImdsb2JhbCIsICJpc3N1ZWRfYXQiOiAiMjAyNi0xMS0wMVQwMDowMDowMCswMDowMCIsICJzaWduYXR1cmUiOiAiYUxCc1dNaEZTU3pZWVRFazBTbXZBemJMZElrY0J6RTdwcVpmTWxJRUVhWjZTNVlHR0ZOamF3bkkvbmh1WDRXNWZQL3hCZWVnWEJ5ck13RTlPSU5rQ3cifQ==",
+      "request_did_key": "did:key:z6MkkNQqsm89BFm8dNLubm658KihpVu6xng6aXxBkFD46vmb",
+      "team_did_key": "did:key:z6MkrsqopE15tExXC16bzZEW7kJ93ZuMmzgAApHNaQVumsn6",
+      "revoked_certificate_ids": [
+        "cert-001"
+      ],
+      "registered_certificate_ids": [
+        "cert-001"
+      ],
+      "expected": "revoked",
+      "today": {
+        "awid": "accepted",
+        "server": "refused"
+      }
+    },
+    {
+      "name": "unregistered",
+      "about": "A correctly signed certificate the registry never published.",
+      "certificate_header": "eyJ2ZXJzaW9uIjogMSwgImNlcnRpZmljYXRlX2lkIjogImNlcnQtMDAxIiwgInRlYW1faWQiOiAiYmFja2VuZDphY21lLmNvbSIsICJ0ZWFtX2RpZF9rZXkiOiAiZGlkOmtleTp6Nk1rcnNxb3BFMTV0RXhYQzE2YnpaRVc3a0o5M1p1TW16Z0FBcEhOYVFWdW1zbjYiLCAibWVtYmVyX2RpZF9rZXkiOiAiZGlkOmtleTp6Nk1ra05RcXNtODlCRm04ZE5MdWJtNjU4S2locFZ1NnhuZzZhWHhCa0ZENDZ2bWIiLCAibWVtYmVyX2RpZF9hdyI6ICIiLCAibWVtYmVyX2FkZHJlc3MiOiAiIiwgImFsaWFzIjogImFsaWNlIiwgImlkZW50aXR5X3Njb3BlIjogImdsb2JhbCIsICJpc3N1ZWRfYXQiOiAiMjAyNi0xMS0wMVQwMDowMDowMCswMDowMCIsICJzaWduYXR1cmUiOiAiYUxCc1dNaEZTU3pZWVRFazBTbXZBemJMZElrY0J6RTdwcVpmTWxJRUVhWjZTNVlHR0ZOamF3bkkvbmh1WDRXNWZQL3hCZWVnWEJ5ck13RTlPSU5rQ3cifQ==",
+      "request_did_key": "did:key:z6MkkNQqsm89BFm8dNLubm658KihpVu6xng6aXxBkFD46vmb",
+      "team_did_key": "did:key:z6MkrsqopE15tExXC16bzZEW7kJ93ZuMmzgAApHNaQVumsn6",
+      "revoked_certificate_ids": [],
+      "registered_certificate_ids": [
+        "cert-other"
+      ],
+      "expected": "unregistered",
+      "today": {
+        "awid": "accepted",
+        "server": "accepted"
+      }
+    }
+  ]
+}

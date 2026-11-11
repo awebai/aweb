@@ -247,6 +247,14 @@ ROOT_CONSUMERS = {
         "team-certificate-status-v1.json",
         'Path(__file__).parents[2] / "docs" / "vectors" / "team-certificate-status-v1.json"',
     ),
+    PurePosixPath("awid/tests/test_team_certificate_vectors.py"): _consumer(
+        "team-certificate-verification-v1.json",
+        '(Path(__file__).resolve().parents[2] / "docs/vectors/team-certificate-verification-v1.json")',
+    ),
+    PurePosixPath("server/tests/test_team_certificate_vectors.py"): _consumer(
+        "team-certificate-verification-v1.json",
+        '(Path(__file__).resolve().parents[2] / "docs/vectors/team-certificate-verification-v1.json")',
+    ),
     PurePosixPath("awid/tests/test_principal_attestation_vectors.py"): _consumer(
         "principal-attestation-v1.json",
         'Path(__file__).parents[2] / "docs" / "vectors" / "principal-attestation-v1.json"',
@@ -765,6 +773,9 @@ NON_CONSUMING_CODE_REFERENCES = {
     PurePosixPath("scripts/freeze_human_channels_profile.py"): (
         "docs/vectors/human-channels-profile-v1.json",
         "docs/vectors/human-channels-v1.json",
+    ),
+    PurePosixPath("scripts/generate_team_certificate_vectors.py"): (
+        "docs/vectors/team-certificate-verification-v1.json",
     ),
     PurePosixPath("cli/go/awid/human_channels_contract.go"): (
         "docs/vectors/human-channels-profile-v1.json",
