@@ -1291,34 +1291,6 @@ func resolveReloadBaseURLContext(ctx context.Context, stored string) (string, er
 	return working, nil
 }
 
-// Select the requested/default URL without contacting it. Reachability and
-// API-mount discovery belong to resolveWorkingBaseURLContext, the network step.
-func selectInitBaseURL(urlVal, serverVal string) (baseURL string, serverName string, err error) {
-	baseURL = strings.TrimSpace(urlVal)
-	serverName = strings.TrimSpace(serverVal)
-
-	if baseURL == "" {
-		baseURL = strings.TrimSpace(os.Getenv("AWEB_URL"))
-	}
-	if baseURL == "" && serverName != "" {
-		baseURL, err = awconfig.DeriveBaseURLFromServerName(serverName)
-		if err != nil {
-			return "", "", err
-		}
-	}
-	baseURL = awebURLOrDefault(baseURL)
-	if serverName == "" {
-		derived, derr := awconfig.DeriveServerNameFromURL(baseURL)
-		if derr == nil {
-			serverName = derived
-		}
-	}
-	if err := awconfig.ValidateBaseURL(baseURL); err != nil {
-		return "", "", err
-	}
-	return baseURL, serverName, nil
-}
-
 func isTTY() bool {
 	return term.IsTerminal(int(os.Stdin.Fd()))
 }
