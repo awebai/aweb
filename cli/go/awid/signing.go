@@ -7,6 +7,7 @@ import (
 	"encoding/base64"
 	"encoding/json"
 	"fmt"
+	"io"
 	"net/http"
 	"net/url"
 	"sort"
@@ -123,22 +124,45 @@ func SignMessage(key ed25519.PrivateKey, env *MessageEnvelope) (string, error) {
 }
 
 // CanonicalJSONValue builds canonical JSON for an arbitrary JSON-compatible
-// value. It is used for generic DIDKey-authenticated payload signing on
-// the aw id sign / aw id request code path.
+// value. It is the general serializer for bytes that are signed or hashed and
+// then verified by another implementation: map keys sorted by code point, no
+// insignificant whitespace, and strings escaped exactly as Python's
+// canonical_json_bytes does on the awid / verifier sides, which call
+// json.dumps(..., sort_keys=True, ensure_ascii=False, separators=(",", ":")).
+// The shared canonical JSON vector under docs/vectors pins the bytes for all
+// implementations. Among its callers is generic DIDKey-authenticated payload
+// signing on the aw id sign / aw id request code path.
 //
-// HTML escaping is explicitly disabled via json.Encoder.SetEscapeHTML(false)
-// so the output bytes match Python's canonical_json_bytes on the awid /
-// verifier sides, which call json.dumps(..., ensure_ascii=False,
-// separators=(",", ":")). Go's default json.Marshal would escape <, >, and
-// & to \u003c, \u003e, \u0026; any signed payload containing those chars
-// (common in free-form user notes and URLs) would silently fail signature
-// verification across languages. Go's encoder does NOT escape non-ASCII
-// by default, so it already matches Python's ensure_ascii=False for
-// unicode — tested by TestCanonicalJSONValuePreservesUnicode.
+// HTML escaping is explicitly disabled via json.Encoder.SetEscapeHTML(false).
+// Go's default json.Marshal would escape <, >, and & to \u003c, \u003e,
+// \u0026; any signed payload containing those chars (common in free-form user
+// notes and URLs) would silently fail signature verification across
+// languages. Go's encoder does NOT escape non-ASCII by default, with two
+// exceptions: it writes U+2028 and U+2029 as six-character escapes even with
+// HTML escaping disabled. Python writes them as UTF-8, so this function does
+// too (rawLineSeparators). Other unicode is tested by
+// TestCanonicalJSONValuePreservesUnicode.
 //
 // This matches the shared onboardingDIDKeySignPayload helper used by the
 // onboarding signing family (cli-signup, claim-human, bootstrap-redeem).
+//
+// Struct fields are written in declaration order, so callers pass maps.
 func CanonicalJSONValue(v any) (string, error) {
+	escaped, err := CanonicalJSONValueEscapingLineSeparators(v)
+	if err != nil {
+		return "", err
+	}
+	return rawLineSeparators(escaped), nil
+}
+
+// CanonicalJSONValueEscapingLineSeparators is CanonicalJSONValue except that
+// U+2028 and U+2029 are written as the six-character escapes encoding/json
+// produces. It serves digests that only aw computes and that an aw of another
+// build, or a record it stored, must reproduce: custody request digests and
+// proofs, A2A card digests, blueprint payload digests and the stored hosted
+// creation response. Bytes that a Python or TypeScript verifier rebuilds use
+// CanonicalJSONValue.
+func CanonicalJSONValueEscapingLineSeparators(v any) (string, error) {
 	var buf bytes.Buffer
 	enc := json.NewEncoder(&buf)
 	enc.SetEscapeHTML(false)
@@ -152,6 +176,39 @@ func CanonicalJSONValue(v any) (string, error) {
 		out = out[:n-1]
 	}
 	return string(out), nil
+}
+
+const (
+	escapedLineSeparator      = "\\u2028"
+	escapedParagraphSeparator = "\\u2029"
+)
+
+// rawLineSeparators replaces the escapes encoding/json writes for U+2028 and
+// U+2029 with the characters' UTF-8 bytes. It walks complete escape tokens,
+// so an escaped reverse solidus followed by the text u2028 stays unchanged.
+func rawLineSeparators(encoded string) string {
+	if !strings.Contains(encoded, escapedLineSeparator) && !strings.Contains(encoded, escapedParagraphSeparator) {
+		return encoded
+	}
+	var out strings.Builder
+	out.Grow(len(encoded))
+	for i := 0; i < len(encoded); {
+		switch {
+		case encoded[i] != '\\' || i+1 >= len(encoded):
+			out.WriteByte(encoded[i])
+			i++
+		case strings.HasPrefix(encoded[i:], escapedLineSeparator):
+			out.WriteRune(0x2028)
+			i += len(escapedLineSeparator)
+		case strings.HasPrefix(encoded[i:], escapedParagraphSeparator):
+			out.WriteRune(0x2029)
+			i += len(escapedParagraphSeparator)
+		default:
+			out.WriteString(encoded[i : i+2])
+			i += 2
+		}
+	}
+	return out.String()
 }
 
 type AppEmitCredential struct {
@@ -521,8 +578,18 @@ func jsonStringValue(s string) string {
 	return b.String()
 }
 
+// jsonStringWriter is the part of strings.Builder and bytes.Buffer that
+// writeEscapedString uses.
+type jsonStringWriter interface {
+	io.Writer
+	io.StringWriter
+	WriteRune(r rune) (int, error)
+}
+
 // writeEscapedString writes a JSON-escaped string value (without surrounding quotes).
-func writeEscapedString(b *strings.Builder, s string) {
+// It escapes the quotation mark, the reverse solidus and U+0000-U+001F, and
+// writes every other code point as UTF-8, as CanonicalJSONValue does.
+func writeEscapedString(b jsonStringWriter, s string) {
 	for _, r := range s {
 		switch r {
 		case '"':

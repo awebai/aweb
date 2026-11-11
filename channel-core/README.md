@@ -5,7 +5,7 @@ Shared aweb channel runtime for host adapters.
 This package contains the host-agnostic parts of the aweb channel:
 
 - signed aweb API client
-- SSE event stream parsing/reconnect
+- SSE event stream parsing/reconnect, under the event stream client policy (`docs/event-stream-client-policy.md` in the aweb repository)
 - mail/chat fetch and read/ack helpers
 - sender signature verification and trust normalization
 - channel event dispatch into semantic awakenings

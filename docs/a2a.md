@@ -252,9 +252,25 @@ The fixture source was cross-checked against the upstream A2A repository's `scri
 `card_digest` is computed as:
 
 1. Remove the top-level `signatures` field from the Agent Card if present.
-2. Canonicalize the remaining materialized Agent Card object with the same bytes used by the A2A v1.0 card-signature profile: A2A field/default processing, `signatures` absent, then JCS/`awid.CanonicalJSONValue`-compatible canonical JSON. Fixture cards materialize all fields required by this contract before hashing.
-3. Compute SHA-256 over the UTF-8 canonical JSON bytes.
-4. Encode as `sha256:<lowercase-hex>`.
+2. Materialize the remaining Agent Card object: A2A field/default processing, `signatures` absent. `aw` decodes the card into its Agent Card model (`cli/go/a2a/card.go`) and encodes that model, so a member the model does not define is not hashed and an optional member that is empty is omitted. Fixture cards materialize all fields required by this contract before hashing.
+3. Encode the object as the escaped form of aweb canonical JSON, the bytes `awid.CanonicalJSONValueEscapingLineSeparators` writes:
+   - UTF-8, no insignificant whitespace, no trailing newline; arrays keep their order.
+   - Object keys are sorted by Unicode code point, comparing the keys themselves and not their escaped text.
+   - In strings and keys, the quotation mark and the reverse solidus are preceded by a reverse solidus; U+0008, U+0009, U+000A, U+000C and U+000D are written `\b`, `\t`, `\n`, `\f` and `\r`; every other character below U+0020 is written `\u00XX` with lowercase hex digits.
+   - U+2028 is written as the six ASCII characters `\u2028` and U+2029 as the six ASCII characters `\u2029`.
+   - Every other character, including `<`, `>`, `&`, U+007F and characters outside the Basic Multilingual Plane, is written as its UTF-8 bytes.
+   - `true`, `false` and `null` are written as those literals. The Agent Card model defines no numeric member; a number can occur only inside a free-form member (`capabilities.extensions[].params`, `securitySchemes`). It is read as an IEEE 754 double and written as Go's `encoding/json` writes a double: `1.0` as `1`, `1e2` as `100`, `1e21` as `1e+21`, `9007199254740993` as `9007199254740992`, negative zero as `-0`.
+4. Compute SHA-256 over those bytes.
+5. Encode as `sha256:<lowercase-hex>`.
+
+These bytes are not RFC 8785 (JCS) bytes for every card. Checked against an RFC 8785 implementation, they are the same for the fixture cards and differ in these cases:
+
+- **U+2028 and U+2029.** RFC 8785 writes them as their UTF-8 bytes (`e2 80 a8`, `e2 80 a9`); the digest bytes hold the six-character escapes. Published digests cover the escaped form.
+- **Key order.** RFC 8785 sorts keys by UTF-16 code unit; the digest bytes sort them by code point. The two orders differ only where a key holding a character outside the Basic Multilingual Plane is compared with a key holding a character in U+E000-U+FFFF at the first position where the keys differ: by code point the U+E000-U+FFFF key comes first, by UTF-16 code unit it comes second.
+- **Negative zero.** RFC 8785 writes `0`; the digest bytes hold `-0`. The other number forms listed in step 3 are the ones RFC 8785 writes.
+- **Unpaired surrogates.** RFC 8785 refuses them; `aw` reads an escaped unpaired surrogate as U+FFFD and hashes that.
+
+`escaped_line_separator_cases` in `docs/vectors/canonical-json-v1.json` pins the escaped form, including a card with both separators and its `card_digest`; `cases` and `code_point_key_order_cases` in the same file pin the rules the two forms share. `cli/go/awid/canonical_json_vector_test.go` and `cli/go/a2a/card_test.go` consume them. The signed publication and delegation payloads of [A2A AWID publication](a2a-awid-publication-contract.md) use the canonical form (`awid.CanonicalJSONValue`), which writes U+2028 and U+2029 as UTF-8.
 
 Hex is intentional for A2A card digests because the digest is a public content-addressing value for a served document. This differs deliberately from some AWID signed-proof hashes that use raw-standard-base64-no-padding for compact signed payload fields. Do not unify these encodings without a contract amendment and fixture update.
 
@@ -370,7 +386,8 @@ that JWS verification ships today:
 
 A signed card MUST follow A2A v1.0 semantics:
 
-- The card is canonicalized according to the A2A/JCS signing rules with the `signatures` field absent.
+- The card is canonicalized according to the A2A signing rules, RFC 8785 (JCS), with the `signatures` field absent: the signed bytes are JCS bytes, which any A2A validator computes.
+- A producer MUST refuse to sign a card whose JCS bytes differ from the bytes its `card_digest` covers (section 5.2), and the refusal MUST name which of the four cases of section 5.2 applies: a U+2028 or U+2029 character; object keys whose order differs between code points and UTF-16 code units; a negative zero; an unpaired surrogate. Every signed card's bytes are then both its JCS bytes and its digest bytes.
 - The JWS signing input is the protected header plus `.` plus base64url payload, as defined by JWS.
 - The protected header MUST include `alg`, `typ`, and `kid`.
 - `typ` SHOULD remain the A2A/JWS-compatible value expected by validators, such as `JOSE`; do not use a custom MIME marker unless validator compatibility is proven.
@@ -513,6 +530,17 @@ and returns the standard aweb send response. Polling gets
 `{bridge_url}/{gateway_id}/conversations/{conversation_id}` with optional
 `route_id`, `to_address`, and `limit`, returning the standard inbox response.
 Route/address and conversation bindings are checked; they are not caller hints.
+
+The gateway serves two probe routes. `/live` answers `200 {"status":"ok"}`
+whenever the process serves requests and checks no dependency; point a probe
+that restarts the gateway, such as the image's `HEALTHCHECK` or a liveness
+probe, at it. `/health` answers 200 when the gateway can serve its routes and
+503 otherwise; use it for readiness and monitoring. `/health` reads the
+registry's `/health` on each request: a registry that answers is reached, and
+that includes a registry answering 503 with its own health report of a failed
+dependency, which `awid_registry.status` then shows as `unhealthy`. A registry
+that does not answer, or answers without that report, is unreachable and makes
+the gateway's `/health` answer 503.
 
 `/health` reports `managed_config` with `enabled`, `gateway_id`,
 `config_revision`, `expires_at`, `expired`, `routes`, `status`, and `error`.

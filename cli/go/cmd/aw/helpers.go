@@ -25,19 +25,12 @@ import (
 	"github.com/awebai/aw/awid"
 	"github.com/awebai/aw/internal/identityutil"
 	"github.com/awebai/aw/internal/termtext"
-	"github.com/joho/godotenv"
 	"golang.org/x/term"
 )
 
 // DefaultAwebURL is the public aweb instance used when no aweb URL is
 // configured via flags, environment, or local config.
 const DefaultAwebURL = "https://app.aweb.ai"
-
-func loadDotenvBestEffort() {
-	// Best effort: load from current working directory.
-	_ = godotenv.Load()
-	_ = godotenv.Overload(".env.aweb")
-}
 
 // lastClient holds the most recently created client, used to check
 // the X-Latest-Client-Version header after command execution.
@@ -338,18 +331,36 @@ func resolveClientSelectionForDir(workingDir string) (*aweb.Client, *awconfig.Se
 }
 
 func resolveClientSelectionForDirWithTeamOverride(workingDir, teamIDOverride string) (*aweb.Client, *awconfig.Selection, error) {
+	c, sel, err := buildClientSelectionForDir(context.Background(), workingDir, teamIDOverride, resolveAuthenticatedBaseURLContext)
+	if err != nil {
+		return nil, nil, err
+	}
+	lastClient = c
+	return c, sel, nil
+}
+
+// buildClientSelectionForDir resolves the identity home for workingDir and
+// builds its client, grant-authenticated or certificate-authenticated. It
+// does not record the client as the command's last client, so it is safe off
+// the command's goroutine. baseURL chooses the API base from the stored server
+// URL; probes it makes run within ctx.
+func buildClientSelectionForDir(ctx context.Context, workingDir, teamIDOverride string, baseURL baseURLResolver) (*aweb.Client, *awconfig.Selection, error) {
 	identityHome, err := identityHomeForDir(workingDir)
 	if err != nil {
 		return nil, nil, err
 	}
 	if awconfig.IsGrantHome(identityHome.Root) {
-		return resolveGrantClientSelection(workingDir, identityHome)
+		return buildGrantClientSelectionForTeam(ctx, workingDir, identityHome, teamFlag, baseURL)
 	}
 	sel, err := resolveSelectionAtIdentityHome(workingDir, teamIDOverride, identityHome)
 	if err != nil {
 		return nil, nil, err
 	}
-	return resolveClientForSelection(workingDir, sel)
+	selectedHome := ""
+	if sel != nil {
+		selectedHome = strings.TrimSpace(sel.IdentityHome)
+	}
+	return buildClientForSelectionAtIdentityHome(ctx, workingDir, selectedHome, sel, baseURL)
 }
 
 func resolveClientSelectionAtIdentityHome(workingDir string, identityHome awconfig.IdentityHome) (*aweb.Client, *awconfig.Selection, error) {
@@ -376,7 +387,7 @@ func resolveClientForSelection(workingDir string, sel *awconfig.Selection) (*awe
 }
 
 func resolveClientForSelectionAtIdentityHome(workingDir, identityHome string, sel *awconfig.Selection) (*aweb.Client, *awconfig.Selection, error) {
-	c, sel, err := buildClientForSelectionAtIdentityHome(context.Background(), workingDir, identityHome, sel)
+	c, sel, err := buildClientForSelectionAtIdentityHome(context.Background(), workingDir, identityHome, sel, resolveAuthenticatedBaseURLContext)
 	if err != nil {
 		return nil, nil, err
 	}
@@ -385,9 +396,9 @@ func resolveClientForSelectionAtIdentityHome(workingDir, identityHome string, se
 }
 
 // buildClientForSelectionAtIdentityHome builds the selection's
-// certificate-authenticated client. With AWEB_URL set, resolving the API base
-// probes the server within ctx.
-func buildClientForSelectionAtIdentityHome(ctx context.Context, workingDir, identityHome string, sel *awconfig.Selection) (*aweb.Client, *awconfig.Selection, error) {
+// certificate-authenticated client for the API base resolveBaseURL chooses
+// from the stored server URL. A probe it makes runs within ctx.
+func buildClientForSelectionAtIdentityHome(ctx context.Context, workingDir, identityHome string, sel *awconfig.Selection, resolveBaseURL baseURLResolver) (*aweb.Client, *awconfig.Selection, error) {
 	if sel != nil && strings.TrimSpace(sel.WorkspacePath) == "" {
 		if recovery, ok := workspaceConnectRecoveryCommand(workingDir, identityHome); ok {
 			return nil, nil, usageError("current identity is not connected to an aweb workspace; run `%s`", recovery)
@@ -397,7 +408,7 @@ func buildClientForSelectionAtIdentityHome(ctx context.Context, workingDir, iden
 		return nil, nil, err
 	}
 
-	baseURL, err := resolveAuthenticatedBaseURLContext(ctx, sel.BaseURL)
+	baseURL, err := resolveBaseURL(ctx, sel.BaseURL)
 	if err != nil {
 		return nil, nil, err
 	}
@@ -839,7 +850,7 @@ func configureResolvedClientWithRoster(c, rosterClient *aweb.Client, sel *awconf
 		Team:                 &awid.TeamRosterResolver{Client: rosterClient.Client, TeamID: sel.TeamID},
 	})
 
-	configureBaseURLFallback(c, sel, baseURL)
+	configureAnsweringMountHint(c, sel, baseURL)
 	return nil
 }
 
@@ -1038,25 +1049,20 @@ func resolveAuthenticatedBaseURLContext(ctx context.Context, raw string) (string
 	return cleanBaseURL(raw)
 }
 
-func configureBaseURLFallback(c *aweb.Client, sel *awconfig.Selection, baseURL string) {
+// configureAnsweringMountHint makes a 404 from the configured server URL name
+// the mount of that server which answers as the API, when there is one. With
+// AWEB_URL set the base was probed when the client was built.
+func configureAnsweringMountHint(c *aweb.Client, sel *awconfig.Selection, baseURL string) {
 	if c == nil || sel == nil || strings.TrimSpace(sel.ServerName) == "" {
 		return
 	}
 	if strings.TrimSpace(os.Getenv("AWEB_URL")) != "" {
 		return
 	}
-	state := &baseURLFallbackState{
-		configuredBaseURL: strings.TrimSuffix(baseURL, "/"),
-		currentBaseURL:    strings.TrimSuffix(baseURL, "/"),
-		persist: func(resolved string) {
-			if err := persistResolvedAwebURL(sel.WorkspacePath, resolved); err != nil {
-				debugLog("persist resolved base URL for %s: %v", sel.WorkspacePath, err)
-			}
-		},
-	}
+	state := &answeringMountState{configuredBaseURL: strings.TrimSuffix(baseURL, "/")}
 	c.SetHTTPClient(&http.Client{
 		Timeout: awid.APITimeout(),
-		Transport: &baseURLFallbackTransport{
+		Transport: &answeringMountTransport{
 			base:  awid.NewAPITransport(),
 			state: state,
 		},
@@ -1064,7 +1070,7 @@ func configureBaseURLFallback(c *aweb.Client, sel *awconfig.Selection, baseURL s
 	// No Timeout: SSE streams are long-lived. The SSE transport still
 	// bounds dial/TLS/header waits.
 	c.SetSSEClient(&http.Client{
-		Transport: &baseURLFallbackTransport{
+		Transport: &answeringMountTransport{
 			base:  awid.NewSSETransport(),
 			state: state,
 		},
@@ -1184,25 +1190,35 @@ func persistResolvedAwebURL(workspacePath, baseURL string) error {
 	return awconfig.SaveWorktreeWorkspaceTo(workspacePath, workspace)
 }
 
-type baseURLFallbackState struct {
+// answeringMountState is what one client's transports know about its
+// configured server URL: whether it was probed, and the other mount on its
+// origin that answered as the API when it did not.
+type answeringMountState struct {
 	configuredBaseURL string
-	currentBaseURL    string
-	mu                sync.RWMutex
-	persist           func(string)
+	mu                sync.Mutex
+	probed            bool
+	mount             string
 }
 
-type baseURLFallbackTransport struct {
+// answeringMountTransport sends every request exactly as it was built, to the
+// URL it was built for: requests are signed for their path, so none is sent
+// anywhere else. When the configured server URL answers 404, it looks for the
+// mount of that server which answers as the API and notes it on the request
+// with awid.NoteAnsweringMount, for the error display. The response is
+// returned as the server sent it.
+type answeringMountTransport struct {
 	base  http.RoundTripper
-	state *baseURLFallbackState
+	state *answeringMountState
 }
 
-// Compression is negotiated after requestForBase selects the actual mount.
-func (t *baseURLFallbackTransport) HandlesServerRequestCompression() bool { return true }
+// Compression is negotiated here with the underlying transport, so its
+// discovery request is not one this transport looks for a mount after.
+func (t *answeringMountTransport) HandlesServerRequestCompression() bool { return true }
 
-func (t *baseURLFallbackTransport) RoundTrip(req *http.Request) (*http.Response, error) {
+func (t *answeringMountTransport) RoundTrip(req *http.Request) (*http.Response, error) {
 	base := t.base
 	if base == nil {
-		// Defensive only: configureBaseURLFallback always sets base to a
+		// Defensive only: configureAnsweringMountHint always sets base to a
 		// tuned transport. Reaching this means a hand-constructed value.
 		base = http.DefaultTransport
 	}
@@ -1210,146 +1226,76 @@ func (t *baseURLFallbackTransport) RoundTrip(req *http.Request) (*http.Response,
 		return base.RoundTrip(req)
 	}
 
-	current := t.state.current()
-	prepared, err := t.requestForBase(req, current)
-	if err != nil {
-		return nil, err
-	}
-	resp, err := awid.RoundTripServerRequest(base, prepared, current)
-	if !shouldRetryBaseURLRequest(req.Method, resp, err) {
+	resp, err := awid.RoundTripServerRequest(base, req, t.state.configuredBaseURL)
+	if resp == nil || err != nil || resp.StatusCode != http.StatusNotFound {
 		return resp, err
 	}
-
-	debugLog("baseurl fallback: triggering for %s %s", req.Method, req.URL.String())
-	fresh, changed := t.state.refresh(req.Context(), current)
-	if !changed {
-		debugLog("baseurl fallback: no recovered base URL for %s", current)
-		return resp, err
+	if mount := t.state.answeringMount(req.Context()); mount != "" {
+		debugLog("server answers at %s, not at the configured %s", mount, t.state.configuredBaseURL)
+		awid.NoteAnsweringMount(req, mount)
 	}
-	if resp != nil && resp.Body != nil {
-		_ = resp.Body.Close()
-	}
-
-	retried, err := t.requestForBase(req, fresh)
-	if err != nil {
-		return nil, err
-	}
-	resp, err = awid.RoundTripServerRequest(base, retried, fresh)
-	if err == nil && t.state.persist != nil {
-		t.state.persist(fresh)
-	}
-	debugLog("baseurl fallback: retried via %s", fresh)
-	return resp, err
+	return resp, nil
 }
 
-func (s *baseURLFallbackState) current() string {
-	s.mu.RLock()
-	defer s.mu.RUnlock()
-	return s.currentBaseURL
-}
-
-func (s *baseURLFallbackState) refresh(ctx context.Context, stale string) (string, bool) {
+// answeringMount is the other mount on the configured server URL's origin
+// that answers as the API, or "" when the configured one answers itself or
+// none was found. A probe that found the API keeps its answer for the
+// client's life, so an API's own 404s cost one probe; a probe that failed or
+// found no API is made again on the next 404.
+func (s *answeringMountState) answeringMount(ctx context.Context) string {
 	s.mu.Lock()
-	defer s.mu.Unlock()
-
-	if s.currentBaseURL != stale {
-		return s.currentBaseURL, s.currentBaseURL != stale
+	probed, mount := s.probed, s.mount
+	s.mu.Unlock()
+	if probed {
+		return mount
 	}
-	fresh, err := resolveWorkingBaseURLContext(ctx, stale)
-	if err != nil || fresh == "" || fresh == stale {
-		return stale, false
+	working, err := resolveWorkingBaseURLContext(ctx, s.configuredBaseURL)
+	if err != nil {
+		return ""
 	}
-	s.currentBaseURL = fresh
-	return fresh, true
+	mount = ""
+	if working != s.configuredBaseURL && sameOriginBaseURLs(s.configuredBaseURL, working) {
+		mount = working
+	}
+	s.mu.Lock()
+	s.probed, s.mount = true, mount
+	s.mu.Unlock()
+	return mount
 }
 
-func (t *baseURLFallbackTransport) requestForBase(req *http.Request, baseURL string) (*http.Request, error) {
-	if t.state == nil || strings.TrimSuffix(baseURL, "/") == t.state.configuredBaseURL {
-		return req, nil
-	}
-
-	clone := req.Clone(req.Context())
-	if req.Body != nil {
-		if req.GetBody == nil {
-			return nil, fmt.Errorf("request body cannot be retried for base URL fallback")
-		}
-		body, err := req.GetBody()
-		if err != nil {
-			return nil, err
-		}
-		clone.Body = body
-	}
-	rebased, err := rebaseRequestURL(req.URL, t.state.configuredBaseURL, baseURL)
-	if err != nil {
-		return nil, err
-	}
-	clone.URL = rebased
-	clone.Host = rebased.Host
-	return clone, nil
+// sameOriginBaseURLs reports whether two base URLs have the same scheme, host
+// and port.
+func sameOriginBaseURLs(a, b string) bool {
+	parsedA, errA := url.Parse(a)
+	parsedB, errB := url.Parse(b)
+	return errA == nil && errB == nil && awid.SameOrigin(parsedA, parsedB)
 }
 
-// shouldRetryBaseURLRequest decides whether the base-URL fallback transport
-// should retry against the alternative URL. The 404 check handles misconfigured
-// base URLs (e.g. user stored /api in the URL and the path doubled). This does
-// mean legitimate API 404s (agent not found, task not found) also trigger a
-// retry, adding one extra round-trip before the real 404 propagates.
-func shouldRetryBaseURLRequest(method string, resp *http.Response, err error) bool {
+// baseURLResolver returns the API base a client is built for, given the
+// server URL its identity home stores.
+type baseURLResolver func(ctx context.Context, stored string) (string, error)
+
+// resolveReloadBaseURLContext returns the API base a stream's reload builds
+// its client for: the mount on the stored server URL's origin that answers as
+// the API, so the client signs for the path its requests are sent to. When
+// the probe fails or finds no such mount, it is the stored server URL. The
+// probe runs within ctx, and a ctx that ended is an error.
+func resolveReloadBaseURLContext(ctx context.Context, stored string) (string, error) {
+	if strings.TrimSpace(os.Getenv("AWEB_URL")) != "" {
+		return resolveAuthenticatedBaseURLContext(ctx, stored)
+	}
+	base, err := cleanBaseURL(stored)
 	if err != nil {
-		// A transport error on a write is ambiguous: the request may have
-		// reached the server before the response was lost, so replaying it
-		// risks duplicate application. Only safe reads are retried; the
-		// caller surfaces the may-have-applied warning for writes.
-		switch strings.ToUpper(strings.TrimSpace(method)) {
-		case http.MethodGet, http.MethodHead, http.MethodOptions:
-			return true
-		}
-		return false
+		return "", err
 	}
-	// A concrete 404 response means the server answered and nothing was
-	// applied, so replaying any method against the corrected base is safe.
-	return resp != nil && resp.StatusCode == http.StatusNotFound
-}
-
-func rebaseRequestURL(reqURL *url.URL, fromBaseURL, toBaseURL string) (*url.URL, error) {
-	from, err := url.Parse(fromBaseURL)
-	if err != nil {
-		return nil, err
+	working, err := resolveWorkingBaseURLContext(ctx, base)
+	if ctxErr := ctx.Err(); ctxErr != nil {
+		return "", ctxErr
 	}
-	to, err := url.Parse(toBaseURL)
-	if err != nil {
-		return nil, err
+	if err != nil || !sameOriginBaseURLs(base, working) {
+		return base, nil
 	}
-
-	fromPath := strings.TrimSuffix(from.Path, "/")
-	toPath := strings.TrimSuffix(to.Path, "/")
-	relPath := reqURL.Path
-	if fromPath != "" && strings.HasPrefix(relPath, fromPath) {
-		relPath = strings.TrimPrefix(relPath, fromPath)
-		if relPath == "" {
-			relPath = "/"
-		}
-	}
-
-	rebased := *reqURL
-	rebased.Scheme = to.Scheme
-	rebased.Host = to.Host
-	rebased.Path = joinURLPath(toPath, relPath)
-	rebased.RawPath = ""
-	return &rebased, nil
-}
-
-func joinURLPath(basePath, relPath string) string {
-	basePath = strings.TrimSuffix(basePath, "/")
-	if relPath == "" {
-		relPath = "/"
-	}
-	if !strings.HasPrefix(relPath, "/") {
-		relPath = "/" + relPath
-	}
-	if basePath == "" {
-		return relPath
-	}
-	return basePath + relPath
+	return working, nil
 }
 
 func resolveBaseURLForInit(urlVal, serverVal string) (baseURL string, serverName string, err error) {

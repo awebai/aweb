@@ -1,3 +1,4 @@
+import asyncio
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 import shutil
@@ -122,23 +123,29 @@ async def test_message_inserted_during_presented_snapshot_remains_unread(
         )
         assert invisible == [], "uncommitted message entered the recipient snapshot"
 
-        await mark_messages_read(
+        # The read receipt takes its number from the session the open writer
+        # holds, so the acknowledgement completes once that writer commits.
+        acknowledgement = asyncio.create_task(mark_messages_read(
             db,
             session_id=session_id,
             participant_did=bob["did_aw"],
             participant_agent_id=str(bob["agent_id"]),
             message_ids=presented_ids,
-        )
-        receipt = await aweb_cloud_db.aweb_db.fetch_one(
-            """
-            SELECT last_read_message_id
-            FROM {{tables.chat_read_receipts}}
-            WHERE session_id = $1 AND did = $2
-            """,
-            session_id,
-            bob["did_aw"],
-        )
-        assert str(receipt["last_read_message_id"]) == presented_ids[-1]
+        ))
+        done, _ = await asyncio.wait({acknowledgement}, timeout=0.5)
+        assert not done
+
+    await acknowledgement
+    receipt = await aweb_cloud_db.aweb_db.fetch_one(
+        """
+        SELECT last_read_message_id
+        FROM {{tables.chat_read_receipts}}
+        WHERE session_id = $1 AND did = $2
+        """,
+        session_id,
+        bob["did_aw"],
+    )
+    assert str(receipt["last_read_message_id"]) == presented_ids[-1]
 
     retrievable = await get_message_history(
         db,

@@ -3,8 +3,6 @@ package main
 
 import (
 	"context"
-	"crypto/ed25519"
-	"crypto/rand"
 	"fmt"
 	"os"
 
@@ -15,9 +13,9 @@ func main() {
 	if len(os.Args) != 4 {
 		panic("usage: mail-continuation-trace URL ALIAS CONVERSATION_ID")
 	}
-	pub, key, err := ed25519.GenerateKey(rand.Reader)
+	pub, key, err := awid.GenerateKeypair()
 	must(err)
-	_, controller, err := ed25519.GenerateKey(rand.Reader)
+	_, controller, err := awid.GenerateKeypair()
 	must(err)
 	id, err := awid.GenerateUUID4()
 	must(err)
