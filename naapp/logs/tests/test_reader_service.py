@@ -134,10 +134,11 @@ async def install(
     await server_db.execute(
         "UPDATE {{tables.app_hook_bindings}} SET state='active',"
         " activated_at=$2::timestamptz - INTERVAL '60 seconds', active_from=$2,"
-        " activation_act_sha256=$3 WHERE team_id=$1",
+        " activation_act_sha256=$3 WHERE team_id=$1 AND installation_id=$4 AND ended_by IS NULL",
         team_id,
         now - timedelta(minutes=1),
         "ab" * 32,
+        installation["installation_id"],
     )
     return installation
 
