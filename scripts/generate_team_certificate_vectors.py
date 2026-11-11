@@ -1,4 +1,3 @@
-#!/usr/bin/env python3
 """Write docs/vectors/team-certificate-verification-v1.json.
 
 The cases are built from fixed seeds, so the file is the same on every run.
