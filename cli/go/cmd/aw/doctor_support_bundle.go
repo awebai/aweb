@@ -126,10 +126,6 @@ func omitDoctorSupportBundleDynamicDetails(out doctorOutput) doctorOutput {
 	return out
 }
 
-func collectDoctorSupportBundleLocalMetadata(workingDir string) doctorSupportBundleLocalMetadata {
-	return collectDoctorSupportBundleLocalMetadataAt(workingDir, "")
-}
-
 func collectDoctorSupportBundleLocalMetadataAt(workingDir, identityHome string) doctorSupportBundleLocalMetadata {
 	meta := doctorSupportBundleLocalMetadata{}
 	workspace, _, err := loadDoctorWorkspaceAt(workingDir, identityHome)
@@ -185,10 +181,6 @@ func collectDoctorSupportBundleLocalMetadataAt(workingDir, identityHome string) 
 		meta.SigningKeyPresent = true
 	}
 	return meta
-}
-
-func collectDoctorKnownSecrets(workingDir string) []doctorKnownSecret {
-	return collectDoctorKnownSecretsAt(workingDir, "")
 }
 
 func collectDoctorKnownSecretsAt(workingDir, identityHome string) []doctorKnownSecret {

@@ -767,10 +767,6 @@ func (r *doctorRunner) runIdentityRegistryChecks(state *doctorLocalState) {
 	))
 }
 
-func loadDoctorWorkspaceFromDir(startDir string) (*awconfig.WorktreeWorkspace, string, error) {
-	return loadDoctorWorkspaceAt(startDir, "")
-}
-
 func loadDoctorWorkspaceAt(startDir, identityHome string) (*awconfig.WorktreeWorkspace, string, error) {
 	path := ""
 	var err error
@@ -787,10 +783,6 @@ func loadDoctorWorkspaceAt(startDir, identityHome string) (*awconfig.WorktreeWor
 		return nil, "", err
 	}
 	return workspace, path, nil
-}
-
-func loadDoctorTeamStateFromDir(workingDir string) (*awconfig.TeamState, error) {
-	return loadDoctorTeamStateAt(workingDir, "")
 }
 
 func loadDoctorTeamStateAt(workingDir, identityHome string) (*awconfig.TeamState, error) {
@@ -951,14 +943,6 @@ func localPathTarget(path string) *doctorTarget {
 		return nil
 	}
 	return &doctorTarget{Type: "local_path", ID: path, Display: abbreviateUserHome(path)}
-}
-
-func resolveWorkspaceCertificatePath(workingDir, certPath string) string {
-	path, err := awconfig.WorktreeStoredIdentityPath(workingDir, certPath)
-	if err != nil {
-		return ""
-	}
-	return path
 }
 
 func sanitizeLocalURLForOutput(raw string) (string, error) {
