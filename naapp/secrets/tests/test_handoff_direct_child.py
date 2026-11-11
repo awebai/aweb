@@ -224,13 +224,23 @@ async def holding_locked(journey):
         yield await tx.fetch_value("SELECT pg_backend_pid()")
 
 
+# Backends waiting on ``$1`` directly or through another waiter: a row's
+# second waiter queues on the first waiter's tuple lock, not on the holder.
+WAIT_CHAIN = """
+WITH RECURSIVE waiters(pid) AS (
+    SELECT pid FROM pg_stat_activity WHERE $1 = ANY(pg_blocking_pids(pid))
+    UNION
+    SELECT a.pid FROM pg_stat_activity a JOIN waiters w ON w.pid = ANY(pg_blocking_pids(a.pid))
+)
+SELECT count(*) FROM waiters
+"""
+
+
 async def blocked_on(journey, blocker: int, *, count: int) -> None:
-    """Wait, bounded, until ``count`` backends are blocked by ``blocker``."""
+    """Wait, bounded, until ``count`` backends wait on ``blocker``'s locks."""
 
     async def waiting() -> None:
-        while await journey.world.db.fetch_value(
-            "SELECT count(*) FROM pg_stat_activity WHERE $1 = ANY(pg_blocking_pids(pid))", blocker
-        ) < count:
+        while await journey.world.db.fetch_value(WAIT_CHAIN, blocker) < count:
             await asyncio.sleep(0.01)
 
     await asyncio.wait_for(waiting(), timeout=BOUND)
