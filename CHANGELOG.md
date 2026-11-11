@@ -2,6 +2,17 @@
 
 ## Unreleased
 
+- **`aw` and the channel client (the Claude Code plugin, the Pi extension and
+  `aw wake`) no longer report a plaintext mail or chat message as verified
+  unless its signed payload is a message.** The payload must carry `type`,
+  `body` and `from_did`, and `subject` for mail. Until now a displayed field
+  the payload did not carry was not compared, so a document the sender's key
+  had signed for another purpose, such as the request envelope a server
+  receives with every request, could be presented as the signed payload of a
+  message with any body and be reported verified. Such a message is now
+  presented with trust status `failed`. Every released message signer signs
+  these fields, so no genuine message changes status. Encrypted messages and
+  room posts were not affected.
 - **A customer-run aweb server can read its private team at the public
   registry without the registry-wide `AWID_SERVICE_TOKEN`.** Give the server
   an ordinary member certificate in each team it serves

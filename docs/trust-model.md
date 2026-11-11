@@ -585,10 +585,16 @@ the stream. The wire protocol does not require a particular cache implementation
 
 ## Plaintext signed display binding
 
-For plaintext mail and chat reads, the Go CLI checks the returned `body`,
-`message_id`, `conversation_id`, `from_did`, `to_did`, and message `type`
-(and mail `subject`) against each field present in `signed_payload`, before
-applying signed metadata. Missing legacy fields are not compared; explicit
+For plaintext mail and chat reads, the Go CLI and the channel client check the
+returned `body`, `message_id`, `conversation_id`, `from_did`, `to_did`, and
+message `type` (and mail `subject`) against `signed_payload`, before applying
+signed metadata. The payload must carry `type`, `body` and `from_did` (and
+`subject` for mail): these are the claims that make it a message, every
+message signer signs them, and a payload without one of them fails. The same
+key signs other documents, such as request envelopes, and without this rule
+such a document could be presented as the signed payload of a message with any
+text. The other fields are compared when the payload carries them; a missing
+`message_id`, `conversation_id` or recipient field is not compared. Explicit
 empty strings are compared exactly, and null or non-string values fail.
 A missing signed conversation ID retains the existing `verified_legacy`
 classification when the response has a conversation ID.
@@ -619,7 +625,8 @@ not the unsigned recipient projection; nonempty signed recipient claims and
 all content, ID, signature, and trust checks remain enforced.
 On a mismatch the CLI reports `failed` and preserves the original response
 fields, rather than hiding the discrepancy by replacing them with signed
-values. It does not claim that absent legacy fields were signed.
+values. It does not claim that absent message id, conversation id or
+recipient fields were signed.
 
 For encrypted-v2 mail and chat, decryption and envelope authentication happen
 first. The outer `message_id` and `conversation_id` must then exactly match
