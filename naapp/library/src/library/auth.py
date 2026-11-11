@@ -3,7 +3,6 @@ from __future__ import annotations
 import base64
 import hashlib
 import json
-import logging
 import re
 from dataclasses import dataclass
 from datetime import UTC, datetime
@@ -24,11 +23,8 @@ from pgdbm import AsyncDatabaseManager
 
 from library.config import Settings
 
-logger = logging.getLogger(__name__)
-
 TEAM_AUTH_ENVELOPE_V2 = 2
 _B64URL_NO_PADDING = re.compile(r"^[A-Za-z0-9_-]+$")
-_logger = logging.getLogger(__name__)
 
 
 @dataclass(frozen=True)

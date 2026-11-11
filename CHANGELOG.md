@@ -9,7 +9,11 @@
   configured, **a certificate the registry never published** (401
   `unregistered`). A member whose certificate is not registered at the
   registry can no longer use the library. Refusals are 401 with the check's
-  reason as the detail, through awid's table, where they were sentences.
+  reason as the detail, through awid's table, where they were sentences. The
+  library's own cache of team facts is gone too: it reads the registry
+  through naapp-lib's, which looks again, once and bounded, for a certificate
+  it does not know, so a certificate issued a moment ago is accepted on its
+  first request.
 - **Changed: the naapp runtime verifier (`aweb_naapp.runtime.team_auth`)
   checks a team certificate with awid's one check.** Apps built on naapp-lib
   now refuse a certificate whose `version` is not the integer 1 and one whose
@@ -54,6 +58,17 @@
   the cases it answers. No verifier calls it yet; the server, the naapp
   runtime, the hook receiver and the library each still run their own check,
   and the vector file records what each answers today.
+- **Security: the library service sees a revoked certificate within a minute.**
+  It cached a team's key and revocations for `LIBRARY_AUTH_CACHE_TTL_SECONDS`,
+  10 minutes by default and with no upper limit, so a revoked member
+  certificate kept working there for that long; the server and the other
+  apps cap the same cache at 60 seconds. The library now has the same
+  limits: 60 seconds for that cache, its new default, and 300 for the
+  accepted clock skew (`LIBRARY_TIMESTAMP_SKEW_SECONDS`). **Self-hosters: a
+  library configured past either limit no longer starts.** The error names
+  the setting and the limit. The shipped `.env.example` set
+  `LIBRARY_AUTH_CACHE_TTL_SECONDS=600`; a deployment made from it must lower
+  it to 60 or remove the line before upgrading.
 - **A customer-run aweb server can read its private team at the public
   registry without the registry-wide `AWID_SERVICE_TOKEN`.** Give the server
   an ordinary member certificate in each team it serves
