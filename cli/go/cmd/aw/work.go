@@ -6,7 +6,6 @@ import (
 	"strings"
 	"time"
 
-	"github.com/awebai/aw/awconfig"
 	"github.com/spf13/cobra"
 )
 
@@ -281,22 +280,6 @@ func valueOrEmpty(v *string) string {
 		return ""
 	}
 	return *v
-}
-
-func currentWorkspaceID(workingDir string, sel *awconfig.Selection) string {
-	home, homeErr := identityHomeForDir(workingDir)
-	if homeErr != nil {
-		return ""
-	}
-	if state, _, _, err := loadCurrentWorkspaceAndTeamState(workingDir, externalIdentityHomeRoot(home)); err == nil {
-		if membership, err := workspaceMembershipForSelection(state, sel); err == nil && membership != nil && strings.TrimSpace(membership.WorkspaceID) != "" {
-			return strings.TrimSpace(membership.WorkspaceID)
-		}
-	}
-	if sel == nil {
-		return ""
-	}
-	return strings.TrimSpace(sel.WorkspaceID)
 }
 
 func coordinationAgeBand(timestamp string) string {

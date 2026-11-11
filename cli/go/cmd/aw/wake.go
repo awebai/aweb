@@ -525,13 +525,6 @@ func wakeLogger() func(string, ...any) {
 	}
 }
 
-func millis(v int) time.Duration {
-	if v <= 0 {
-		return 0
-	}
-	return time.Duration(v) * time.Millisecond
-}
-
 func formatWakeStatus(v any) string {
 	status, ok := v.(wake.Status)
 	if !ok {

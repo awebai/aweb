@@ -808,14 +808,6 @@ func migrateLegacyWorkspaceToMultiTeamAt(workingDir, workspacePath string, home 
 	}, nil
 }
 
-func currentGitWorktreeRoot() (string, error) {
-	wd, err := os.Getwd()
-	if err != nil {
-		return "", err
-	}
-	return currentGitWorktreeRootFromDir(wd)
-}
-
 func currentGitWorktreeRootFromDir(workingDir string) (string, error) {
 	cmd := exec.Command("git", "-C", workingDir, "rev-parse", "--show-toplevel")
 	out, err := cmd.Output()
@@ -827,22 +819,6 @@ func currentGitWorktreeRootFromDir(workingDir string) (string, error) {
 		return "", fmt.Errorf("git returned empty worktree root")
 	}
 	return root, nil
-}
-
-func resolveWorkspaceRepoOrigin(root, explicit string) (string, error) {
-	if strings.TrimSpace(explicit) != "" {
-		return strings.TrimSpace(explicit), nil
-	}
-	cmd := exec.Command("git", "-C", root, "remote", "get-url", "origin")
-	out, err := cmd.Output()
-	if err != nil {
-		return "", usageError("missing git remote origin; use --repo-origin to register this workspace")
-	}
-	origin := strings.TrimSpace(string(out))
-	if origin == "" {
-		return "", usageError("missing git remote origin; use --repo-origin to register this workspace")
-	}
-	return origin, nil
 }
 
 func fallbackWorkspaceInfo(sel *awconfig.Selection, state *awconfig.WorktreeWorkspace) aweb.WorkspaceInfo {
