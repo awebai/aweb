@@ -109,7 +109,11 @@ class Deployment:
     devices: dict[str, SoftAuthenticator] = field(default_factory=dict)
 
 
-async def install(server_db, team_id: str, data: bytes) -> dict:
+async def install(
+    server_db, team_id: str, data: bytes, *, expected_generation: int | None = None
+) -> dict:
+    """Install ``data`` for the team; over a retained installation row, the
+    caller names that row's current generation, as the server requires."""
     manifest = load_manifest(data)
     fetched = FetchedManifest(
         origin=ORIGIN,
@@ -120,7 +124,11 @@ async def install(server_db, team_id: str, data: bytes) -> dict:
     )
     async with server_db.transaction() as tx:
         installation = await install_verified_manifest_on(
-            tx, team_id=team_id, fetched=fetched, granted_scopes=["logs.readers"]
+            tx,
+            team_id=team_id,
+            fetched=fetched,
+            granted_scopes=["logs.readers"],
+            expected_generation=expected_generation,
         )
     now = datetime.now(UTC)
     await server_db.execute(
@@ -423,10 +431,16 @@ async def reinstall(deployment: Deployment) -> str:
             team_id,
             TEST_APP_ID,
         )
-        await uninstall_installation_on(
+        retired = await uninstall_installation_on(
             tx, team_id=team_id, app_id=TEST_APP_ID, expected_generation=current["generation"]
         )
-    return (await install(deployment.server_db, team_id, deployment.manifest))["installation_id"]
+    installed = await install(
+        deployment.server_db,
+        team_id,
+        deployment.manifest,
+        expected_generation=retired["generation"],
+    )
+    return installed["installation_id"]
 
 
 async def live_credentials(deployment: Deployment, scope: str) -> int:
