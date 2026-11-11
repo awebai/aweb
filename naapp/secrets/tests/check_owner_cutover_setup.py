@@ -296,6 +296,46 @@ def check_metadata_owner_constructors(db):
     return {"local_constructors": 3, "canonical_actor": "matches actual registered member fields"}
 
 
+def check_owner_boundary_and_grant_sources():
+    """Run pure fixture observations and the real key-only denial under the socket guard."""
+    from tests.test_admission import TEAM, InstalledSecrets
+    from tests.test_broker_audit import Installed
+    from tests.test_owner_predicates import (
+        test_key_only_owner_lookup_is_a_denial_before_any_database_io,
+    )
+
+    def immediate(coroutine):
+        try:
+            coroutine.send(None)
+        except StopIteration as result:
+            return result.value
+        finally:
+            coroutine.close()
+        raise AssertionError("local owner preflight attempted asynchronous I/O")
+
+    failures = []
+    for source in (InstalledSecrets(), Installed()):
+        try:
+            grant = immediate(source.grant_for(TEAM))
+            status = immediate(source.status_for(TEAM))
+            assert status.state == "active" and status.app_id == "secrets"
+            assert status.team_id == grant.team_id == TEAM
+            assert status.installation_id == grant.installation_id
+            assert status.generation == grant.generation
+            assert status.granted_scopes == grant.scopes
+            # Separate observations have independently sampled freshness.
+            assert status.fresh_until >= grant.fresh_until
+            assert immediate(source.status_for("another:example.com")) is None
+        except (AttributeError, AssertionError) as exc:
+            failures.append(f"{type(source).__name__}: {exc}")
+    try:
+        immediate(test_key_only_owner_lookup_is_a_denial_before_any_database_io())
+    except (ValueError, AssertionError) as exc:
+        failures.append(f"key-only owner lookup: {exc}")
+    assert not failures, failures
+    return {"grant_source_protocols": 2, "key_only_owner_lookup": "denied without I/O"}
+
+
 def main():
     import ast
     import importlib
@@ -578,6 +618,7 @@ def main():
     )
     result["legacy_owner_fixture_sweep"] = check_legacy_owner_setups(root)
     result["metadata_owner_setup"] = check_metadata_owner_constructors(db)
+    result["owner_boundary_and_grant_sources"] = check_owner_boundary_and_grant_sources()
     owner = TeamOwner(member.team_key, verifier, member.team_id, current_team_key)
     signing, signature = owner.sign("app-role.designate", {"role": "fixture"})
     assert signing and signature
