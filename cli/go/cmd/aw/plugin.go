@@ -593,20 +593,16 @@ func isManifestInstallSource(source string) bool {
 	return err == nil && (u.Scheme == "http" || u.Scheme == "https")
 }
 
-// installOrUpdateManifestPlugin installs (or updates) a manifest app. devOrigin,
-// when set, overrides the app's origin to that base URL and skips the
-// origin/fetch-URL self-consistency check, so aw can point at a self-hosted app
-// whose served manifest still advertises a different (e.g. production) origin.
 type manifestManagementPolicy struct {
 	residentHome, expectedName string
 	registerEvents             bool
 	grantedScopes              []string
 }
 
-func installOrUpdateManifestPlugin(source, dir string, update bool, devOrigin string) (*pluginInstallOutput, error) {
-	return installManagedManifestPlugin(source, dir, update, devOrigin, manifestManagementPolicy{})
-}
-
+// installManagedManifestPlugin installs (or updates) a manifest app. devOrigin,
+// when set, overrides the app's origin to that base URL and skips the
+// origin/fetch-URL self-consistency check, so aw can point at a self-hosted app
+// whose served manifest still advertises a different (e.g. production) origin.
 func installManagedManifestPlugin(source, dir string, update bool, devOrigin string, policy manifestManagementPolicy) (*pluginInstallOutput, error) {
 	var catalog *appApprovalCatalog
 	var approval appInstallationApproval

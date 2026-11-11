@@ -1732,14 +1732,11 @@ func mailShowConversationError(err error, conversationID string) error {
 	return fmt.Errorf("mail conversation not found: %s", conversationID)
 }
 
-// checkIdentityMismatch verifies that the resolved account matches
-// the local workspace identity. Prevents silently running as the
-// wrong agent when .aw/context resolves to a different account than
-// .aw/workspace.yaml expects.
-func checkIdentityMismatch(workingDir string, sel *awconfig.Selection) error {
-	return checkIdentityMismatchAtIdentityHome(workingDir, "", sel)
-}
-
+// checkIdentityMismatchAtIdentityHome verifies that the resolved account
+// matches the workspace identity, read from identityHome when it is set and
+// from workingDir otherwise. Prevents silently running as the wrong agent
+// when the context resolves to a different account than workspace.yaml
+// expects.
 func checkIdentityMismatchAtIdentityHome(workingDir, identityHome string, sel *awconfig.Selection) error {
 	if sel == nil || strings.TrimSpace(sel.Alias) == "" {
 		return nil
