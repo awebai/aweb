@@ -3,7 +3,7 @@
 import asyncio
 import base64
 import os
-from contextlib import aclosing
+from contextlib import aclosing, asynccontextmanager
 from datetime import UTC, datetime
 from time import monotonic_ns, perf_counter_ns
 
@@ -33,8 +33,16 @@ DOMAIN = "example.com"
 
 @pytest.fixture
 async def human(registry):
-    member = Member(team_id=TEAM)
-    await registry.add_team(TEAM, member.team_did_key)
+    async with human_of(registry, TEAM) as registered:
+        yield registered
+
+
+@asynccontextmanager
+async def human_of(registry, team_id: str):
+    """A registered human member of ``team_id``: the member, its principal, its
+    registry client, a team cache and its signed identity."""
+    member = Member(team_id=team_id)
+    await registry.add_team(team_id, member.team_did_key)
     async with registered_human(registry, member) as human:
         cache = AWIDTeamCache(
             registry_url=REGISTRY_URL,

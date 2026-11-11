@@ -15,6 +15,7 @@ import secrets
 from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
 from time import monotonic_ns
+from uuid import uuid4
 
 import httpx
 import pytest
@@ -39,7 +40,7 @@ from aweb_naapp.runtime.owner_act_delivery import (
 )
 from aweb_naapp.runtime.passkeys import contact_sha256
 from tests.runtime.approvals.test_human_role_holders import holder
-from tests.runtime.test_human_member import TEAM
+from tests.runtime.test_human_member import human_of
 from tests.runtime.test_served_manifest import ExampleSettings, _key_file, _v2_template
 
 pytest_plugins = ("tests.runtime.test_human_member",)
@@ -52,6 +53,15 @@ NOTICE = "owner@example.test"
 @pytest.fixture
 def registry(coordination):
     return coordination.registry
+
+
+@pytest.fixture
+async def human(registry):
+    # A team of its own: the coordination server caches each team's key for
+    # 60 seconds in the Redis every test shares, so a fixed team id would
+    # meet the key of an earlier test (or the other worker) there.
+    async with human_of(registry, f"people-{uuid4().hex[:12]}:example.com") as registered:
+        yield registered
 
 
 @dataclass
@@ -284,7 +294,7 @@ async def world(tmp_path, human, coordination, test_db_factory):
     )
     async with coordination.server.db.get_manager().transaction() as tx:
         installation = await install_verified_manifest_on(
-            tx, team_id=TEAM, fetched=fetched, granted_scopes=list(runtime.manifest.install_scopes)
+            tx, team_id=member.team_id, fetched=fetched, granted_scopes=list(runtime.manifest.install_scopes)
         )
 
     async def current_key(team):
@@ -293,7 +303,7 @@ async def world(tmp_path, human, coordination, test_db_factory):
     verifier = OwnerActVerifier(
         scope="example", audience=ORIGIN, acts=HUMAN_ROLE_ACTS, team_key_for=current_key
     )
-    owner = TeamOwner(member.team_key, verifier, TEAM, current_key)
+    owner = TeamOwner(member.team_key, verifier, member.team_id, current_key)
     effect = SqlEffect(runtime, human[2], applied=asyncio.Event())
     app = FastAPI(lifespan=runtime.lifespan)
     router = APIRouter()
@@ -410,12 +420,12 @@ async def test_a_v2_pin_remains_readable_but_cannot_admit_v3_owner_acts(world):
     async with world.coordination.server.db.get_manager().transaction() as tx:
         await install_verified_manifest_on(
             tx,
-            team_id=TEAM,
+            team_id=world.member.team_id,
             fetched=fetched,
             granted_scopes=list(runtime.manifest.install_scopes),
             expected_generation=world.installation["generation"],
         )
-    status = await runtime.installation_grants().status_for(TEAM)
+    status = await runtime.installation_grants().status_for(world.member.team_id)
     assert status.manifest_version == 2
     assert status.digest == fetched.digest
     assert (await world.post(world.body())).status_code == 403

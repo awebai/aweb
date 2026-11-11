@@ -74,6 +74,7 @@ async def human(world, principal, *, member=None, client=None, kind="human"):
     if root is None:
         root = world.human_root = SigningKey.generate()
         world.human_members = {}
+        world.human_identities = {}
 
     async def dns(domain):
         assert domain == "example.com"
@@ -98,7 +99,7 @@ async def human(world, principal, *, member=None, client=None, kind="human"):
                 team_key=world.owner.team_key,
                 member_key=member_key(alias),
                 certificate_id="owner-" + alias,
-                alias=alias,
+                alias="owner-" + alias,
             )
             mapping = await registry.register_did(member.did_key, bytes(member.member_key))
             assert mapping.did_aw == principal.principal_did
@@ -125,6 +126,7 @@ async def human(world, principal, *, member=None, client=None, kind="human"):
                 invitation_id=None,
             )
             world.human_members[principal] = member
+            world.human_identities[principal] = signed
         yield member, registry
 
 
