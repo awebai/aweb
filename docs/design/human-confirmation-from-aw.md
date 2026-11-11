@@ -313,8 +313,10 @@ must still pass on its own.
   Each read keeps its existing freshness bound of at most 60 seconds and
   fails closed. A designate or replace uses the certificate in its body. A
   `session` handoff the holder signs uses the certificate it presents. A
-  `session` handoff the holder's direct child signs, and a browser login that
-  `aw` did not start, present none, so they use the holding's.
+  `session` handoff the holder's direct child signs presents none, so it uses
+  the holding's canonical retained certificate. A browser login that `aw` did
+  not start presents none either, so it uses the console's browser-admission
+  evidence for that holding.
 - **Outcomes.** A revoked certificate, a wrong team, principal or key, a
   signature the current team key does not verify, or no usable certificate
   retained gives `403 principal_not_member`. A kind other than `human` gives
@@ -328,23 +330,30 @@ must still pass on its own.
 - **Refresh.** After a team-key rotation, the old signature no longer
   verifies. After a member-key rotation, `member_did_key` is no longer
   current. A renewed or replaced membership supersedes it the same way.
-  Either way, the retained certificate fails at its next use. The holder
-  refreshes it by a handoff the holder itself signs, presenting the reissued
-  certificate:
-  - a `session` handoff refreshes it only when its login succeeds; a failed
-    assertion changes nothing;
-  - a `credential` handoff refreshes it when the app accepts the start, with
-    no registration, new passkey or owner act needed. The certificate is
-    verified for exactly that holding (the team's current key, the holder's
-    current member key, published and unrevoked, the holder's own kind
-    `human`), and the refresh commits with the accepted start. A mismatch or
-    failed verification changes nothing, and the start grants nothing either
-    way.
+  Either way, the retained certificate fails at its next use. A holding's
+  evidence is kept in two places, refreshed separately, each only by a
+  handoff or act of the holder's own presenting the reissued certificate:
+  - **The canonical retained certificate**, which designate and replace
+    store with the holding and which a direct-child start reads. Besides
+    designate and replace, a `credential` handoff the holder signs refreshes
+    it when the app accepts the start, with no registration, new passkey or
+    owner act needed. The certificate is verified for exactly that holding
+    (the team's current key, the holder's current member key, published and
+    unrevoked, the holder's own kind `human`), and the refresh commits with
+    the accepted start. A mismatch or failed verification changes nothing,
+    and the start grants nothing either way.
+  - **The console's browser-admission evidence**, which a browser login reads.
+    A `session` handoff the holder signs refreshes it only when its login
+    succeeds; a failed assertion changes nothing. That login does not
+    rewrite the canonical retained certificate, because its transaction
+    holds the holding only for reading.
 
-  In both, the verified certificate replaces the holding's retained one only
-  when its team and principal equal the holding's. A stale holding
-  certificate therefore never blocks a refresh, and a start the holder's
-  direct child signs never refreshes it. Nothing rewrites a certificate,
+  In each, the verified certificate replaces the retained one only when its
+  team and principal equal the holding's. A stale certificate therefore never
+  blocks a refresh, and a start the holder's direct child signs refreshes
+  neither. A holder whose direct-child starts refuse `principal_not_member`
+  after a renewed membership refreshes the canonical certificate with a
+  `credential` start. Nothing rewrites a certificate,
   rebinds the passkey, or treats the same certificate id as current.
 - **Compatibility.** An AWID row with no stored certificate blob is not
   refused for that reason, because the presented bytes are what the
