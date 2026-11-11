@@ -21,6 +21,7 @@ import cbor2
 from awid.signing import canonical_json_bytes
 from pgdbm.core import TransactionManager
 
+from aweb_naapp.hooks.owner_act import HumanCredential
 from aweb_naapp.runtime.approvals.model import AuthenticationFailed
 from aweb_naapp.runtime.approvals.request import parse_request_json
 from aweb_naapp.runtime.passkeys.rp import RelyingParty
@@ -324,6 +325,7 @@ def _checked(proof: RetainedPasskeyProof) -> tuple[dict[str, Any], dict[str, Any
         "login": b"aweb.passkey-login/1\n",
         "contact_change": b"aweb.passkey-contact-change/1\n",
         "contact_cancel": b"aweb.passkey-contact-cancel/1\n",
+        "credential_change": b"aweb.passkey-credential-change/1\n",
     }
     prefix = prefixes[context["binding_kind"]]
     _require(proof.challenge_preimage.startswith(prefix))
@@ -392,6 +394,8 @@ def _checked(proof: RetainedPasskeyProof) -> tuple[dict[str, Any], dict[str, Any
             ):
                 if key in request:
                     _require(type(request[key]) is type(value) and request[key] == value)
+    elif context["binding_kind"] == "credential_change":
+        _credential_change(fields, context, metadata, proof)
     else:
         _require(not (set(metadata) & APPROVAL_FIELDS) and proof.covered_request is None)
         _require(fields["subject"] == metadata["subject"])
@@ -438,6 +442,48 @@ def _checked(proof: RetainedPasskeyProof) -> tuple[dict[str, Any], dict[str, Any
     )
     _require(verified.new_sign_count == metadata["sign_count_after"])
     return context, metadata
+
+
+def _credential_change(
+    fields: Mapping[str, Any],
+    context: Mapping[str, Any],
+    metadata: Mapping[str, Any],
+    proof: RetainedPasskeyProof,
+) -> None:
+    """A credential change binds exactly its operation's fields; its sidecar
+    names the credentials whose digests the challenge carries, at the proof's
+    relying party. The asserting credential is a current one of the holding,
+    never the new one."""
+    _require(not (set(metadata) & APPROVAL_FIELDS) and metadata["purpose"] == "credential_change")
+    replacing = fields.get("operation") == "replace"
+    _require(fields.get("operation") in {"add", "replace"})
+    expected = {"credential_sha256", "nonce", "operation", "scope", "subject"}
+    _require(set(fields) == (expected | {"retire_credential_sha256"} if replacing else expected))
+    _require(fields["subject"] == metadata["subject"] and fields["scope"] == context["scope"])
+    _require(
+        all(
+            isinstance(fields[key], str) and bool(re.fullmatch(r"[0-9a-f]{64}", fields[key]))
+            for key in set(fields) - {"operation", "scope", "subject"}
+        )
+    )
+    sidecar = proof.covered_request
+    prefix = b"aweb.passkey-credential-change-request/1\n"
+    _require(isinstance(sidecar, bytes) and sidecar.startswith(prefix))
+    assert sidecar is not None
+    body = parse_request_json(sidecar[len(prefix) :])
+    _require(prefix + canonical_json_bytes(body) == sidecar)
+    _require(set(body) == ({"credential", "retire_credential"} if replacing else {"credential"}))
+    pairs = [("credential", "credential_sha256")]
+    if replacing:
+        pairs.append(("retire_credential", "retire_credential_sha256"))
+    for name, digest in pairs:
+        credential = HumanCredential.parse(body[name])
+        _require(credential.rp_id == context["rp_id"] and credential.sha256 == fields[digest])
+    new = HumanCredential.parse(body["credential"])
+    _require(
+        proof.credential_id != new.credential_id
+        and proof.credential_public_key_cose != new.public_key
+    )
 
 
 def passkey_evidence_commitment(proof: RetainedPasskeyProof) -> str:

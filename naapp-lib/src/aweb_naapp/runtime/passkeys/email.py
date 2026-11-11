@@ -87,10 +87,22 @@ class PasskeyEmailDelivery:
                 f"{self._product} contact change cancelled",
                 f"The pending change to your {self._product} contact has been cancelled.",
             ),
+            NoticeKind.CREDENTIAL_ADDED: (
+                f"{self._product} passkey added",
+                f"A passkey was added to your {self._product} approver, approved by one "
+                "you already hold.",
+            ),
+            NoticeKind.CREDENTIAL_REPLACED: (
+                f"{self._product} passkey replaced",
+                f"One of your {self._product} passkeys was replaced, approved by one you "
+                "already hold.",
+            ),
         }[notice.kind]
         text = f"{explanation}\n"
         if notice.kind is not NoticeKind.CONTACT_CHANGE_CANCELLED:
             text += f"Effective time: {notice.effective_at.isoformat()}\n"
+        for credential_id in notice.credential_ids:
+            text += f"Passkey: {credential_id}\n"
         return await self._send(
             Message(to=contact, subject=subject, text=text, html=f"<p>{escape(text)}</p>")
         )

@@ -570,16 +570,15 @@ async def test_a_deadline_passed_while_waiting_at_the_fence_refuses_the_effect(p
 
 
 async def test_a_deadline_passed_while_waiting_for_a_lock_refuses_the_effect(pw):
+    """The caller's own lock, which only the effect's fence takes, is held
+    elsewhere while the deadline passes; the effect then refuses."""
     approver, device = await enrol(pw, CONTACT)
     prepared = await prepare(pw.passkeys)
     count = await credential_count(pw)
     change = None
     try:
         async with pw.passkeys.db.transaction() as blocker:
-            await blocker.execute(
-                "SELECT 1 FROM {{tables.passkey_approvers}} WHERE subject = $1 FOR UPDATE",
-                approver.subject,
-            )
+            await blocker.execute("SELECT pg_advisory_xact_lock($1::bigint)", CALLER_LOCK)
             change = asyncio.create_task(
                 pw.passkeys.change_credential(
                     SCOPE, device.get(prepared.options), fence=Fence(pw.passkeys)

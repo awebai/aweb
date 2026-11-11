@@ -1,5 +1,15 @@
 """App-local WebAuthn passkey approvers for the approval primitive."""
 
+from aweb_naapp.runtime.passkeys.credential_change import (
+    CredentialChange,
+    CredentialChangeFence,
+    CredentialChangeRefused,
+    CredentialChangeState,
+    CredentialChangeStatus,
+    CredentialPolicy,
+    CredentialReceipt,
+    PreparedCredentialChange,
+)
 from aweb_naapp.runtime.passkeys.current_approver import PreparedCurrentApprovers
 from aweb_naapp.runtime.passkeys.lifecycle import (
     RetiredSubjects,
@@ -49,6 +59,14 @@ from aweb_naapp.runtime.passkeys.webauthn import (
 )
 
 __all__ = [
+    "CredentialChange",
+    "CredentialChangeFence",
+    "CredentialChangeRefused",
+    "CredentialChangeState",
+    "CredentialChangeStatus",
+    "CredentialPolicy",
+    "CredentialReceipt",
+    "PreparedCredentialChange",
     "RetiredSubjects",
     "RetiringInstallation",
     "retire_subjects",

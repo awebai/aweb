@@ -85,6 +85,26 @@ from aweb_naapp.runtime.approvals import (
 from aweb_naapp.runtime.approvals.challenge import challenge_preimage
 from aweb_naapp.runtime.audit import AuditEvent, AuditKind, AuditSink
 from aweb_naapp.runtime.links import LinkLifetime, link_verifier, new_link_token
+from aweb_naapp.runtime.passkeys.credential_change import (
+    ADD,
+    CHANGE_DEADLINE,
+    REPLACE,
+    CredentialChange,
+    CredentialChangeFence,
+    CredentialChangeRefused,
+    CredentialChangeState,
+    CredentialChangeStatus,
+    CredentialPolicy,
+    CredentialReceipt,
+    PreparedCredentialChange,
+    challenge_of,
+    change_preimage,
+    change_request,
+    credential_sha256,
+    prepare_credential_change,
+    registration_preimage,
+    require_prepared,
+)
 from aweb_naapp.runtime.passkeys.current_approver import (
     PreparedCurrentApprovers,
     check_current_approver,
@@ -238,13 +258,19 @@ class NoticeKind(StrEnum):
     RECOVERY_STARTED = "recovery_started"
     CONTACT_CHANGE_SCHEDULED = "contact_change_scheduled"
     CONTACT_CHANGE_CANCELLED = "contact_change_cancelled"
+    CREDENTIAL_ADDED = "credential_added"
+    CREDENTIAL_REPLACED = "credential_replaced"
 
 
 @dataclass(frozen=True)
 class Notice:
+    """A security notice. `credential_ids` names, base64url, the credential a
+    credential change added and, for a replace, the one it retired."""
+
     kind: NoticeKind
     scope: str
     effective_at: datetime
+    credential_ids: tuple[str, ...] = ()
 
 
 class PasskeyDelivery(Protocol):
@@ -427,6 +453,8 @@ class Passkeys:
         owner_scopes: Callable[[str], bool] = lambda scope: True,
         proof_context: ProofContextResolver | None = None,
         holding_scopes: Callable[[TransactionManager, str], Awaitable[bool]] | None = None,
+        credentials: CredentialPolicy | None = None,
+        credentials_ceiling: CredentialPolicy | None = None,
     ) -> None:
         """`lockout` is the app's or owner's policy; `lockout_floor` is the
         deployment's, at or above the module floors. The policy must meet the
@@ -435,7 +463,10 @@ class Passkeys:
         approvers' decisions are owner approvals. By default every scope is.
         `holding_scopes` says, in a transaction, whether a scope was ever a
         human-role holding (`aweb_naapp.roles.is_holding_scope`, for an app
-        that keeps role holdings); such a scope leaves the contact paths."""
+        that keeps role holdings); such a scope leaves the contact paths.
+        `credentials` caps each holding's active credentials (five by
+        default); `credentials_ceiling` is the deployment's finite maximum,
+        five unless deploy configuration raises it."""
         self.db = db
         self.rp = rp
         self._delivery = delivery
@@ -451,6 +482,11 @@ class Passkeys:
         self._lockout.require_at_least(
             floor.recovery_cooling_off, floor.contact_change_delay, "the deployment floor"
         )
+        ceiling = credentials_ceiling or CredentialPolicy()
+        self._credentials = credentials or CredentialPolicy(min(5, ceiling.max_active))
+        if self._credentials.max_active > ceiling.max_active:
+            raise ValueError("the credential cap is above the deployment ceiling")
+        self._change_ttl = min(challenge_ttl, CHANGE_DEADLINE)
         self._clock = clock
 
     async def migrate(self) -> None:
@@ -1339,6 +1375,8 @@ class Passkeys:
         binding_kind: str | None = None,
         preimage: bytes | None = None,
         covered_request: bytes | None = None,
+        expires_at: datetime | None = None,
+        registered_sign_count: int | None = None,
     ) -> None:
         async with self.db.transaction() as tx:
             context = None
@@ -1398,8 +1436,9 @@ class Passkeys:
             await tx.execute(
                 "INSERT INTO {{tables.passkey_challenges}} (challenge, purpose, subject, "
                 "enrolment_id, approval_id, task_answer_ref, contact_sha256, nonce, created_at, "
-                "expires_at,proof_context,challenge_preimage,covered_request) "
-                "VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10,$11,$12,$13)",
+                "expires_at,proof_context,challenge_preimage,covered_request,"
+                "registered_sign_count) "
+                "VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10,$11,$12,$13,$14)",
                 challenge,
                 purpose,
                 subject,
@@ -1409,10 +1448,11 @@ class Passkeys:
                 new_contact_sha256,
                 nonce,
                 now,
-                now + self._challenge_ttl,
+                expires_at or now + self._challenge_ttl,
                 context,
                 preimage,
                 covered_request,
+                registered_sign_count,
             )
             await tx.execute(
                 "DELETE FROM {{tables.passkey_challenges}} WHERE challenge IN ("
@@ -2231,6 +2271,353 @@ class Passkeys:
         notice = Notice(NoticeKind.CONTACT_CHANGE_CANCELLED, scope, pending["pending_contact_at"])
         for contact in sorted({pending["contact"], pending["pending_contact"]}):
             await self._send(self._delivery.deliver_notice(contact, notice))
+
+    # Credential maintenance (Q1): an in-effect approver's own passkeys
+
+    async def credential_registration_options(self, scope: str) -> Mapping[str, Any]:
+        """Registration options for a credential the scope's in-effect
+        approver will add, or put in place of one it selects. Refused before
+        any challenge is issued when no approver is in effect, when it has no
+        notice contact in effect (a pending one does not count; such a holding
+        rotates only through the owner's controller recovery), or when it has
+        no active credential to approve the change with."""
+        now = self._clock()
+        approver = await self.db.fetch_one(
+            f"SELECT subject, {_EFFECTIVE_CONTACT} AS contact, effective_at "
+            "FROM {{tables.passkey_approvers}} WHERE scope = $1 AND superseded_at IS NULL",
+            scope,
+            now,
+        )
+        if approver is None or approver["effective_at"] > now:
+            raise CredentialChangeRefused("not_in_effect")
+        if approver["contact"] is None:
+            raise CredentialChangeRefused("no_notice_contact")
+        if not await self._active_credentials(approver["subject"]):
+            raise CredentialChangeRefused("no_active_credential")
+        nonce = secrets.token_bytes(32)
+        preimage = registration_preimage(scope, approver["subject"], nonce)
+        challenge = challenge_of(preimage)
+        await self._issue_challenge(
+            challenge,
+            "credential_registration",
+            approver["subject"],
+            nonce,
+            scope=scope,
+            binding_kind="credential_registration",
+            preimage=preimage,
+            expires_at=now + self._change_ttl,
+        )
+        return registration_options(
+            rp=self.rp,
+            subject=approver["subject"],
+            display_name=approver["contact"],
+            challenge=challenge,
+            timeout=int(self._change_ttl.total_seconds() * 1000),
+        )
+
+    async def credential_change_options(
+        self, scope: str, registration: Mapping[str, Any], *, replace: bytes | None = None
+    ) -> Mapping[str, Any]:
+        """Verify the new credential's registration, with user verification,
+        and return the assertion options a current credential answers to
+        approve exactly that credential: added, or put in place of `replace`.
+        The registration's challenge is spent either way; the verified
+        credential stays inert, carried by the change challenge, until a
+        current credential approves it. Its deadline is the registration's."""
+        try:
+            registered_challenge = _client_challenge(registration)
+        except (KeyError, TypeError, ValueError, WebAuthnException) as exc:
+            raise CredentialChangeRefused("registration_unavailable") from exc
+        issued = await self._take_challenge(registered_challenge, "credential_registration")
+        if issued is None or (
+            challenge_of(registration_preimage(scope, issued["subject"], issued["nonce"]))
+            != registered_challenge
+        ):
+            raise CredentialChangeRefused("registration_unavailable")
+        subject = issued["subject"]
+        try:
+            verified = verify_registration(registration, challenge=registered_challenge, rp=self.rp)
+        except WebAuthnRefused as exc:
+            raise CredentialChangeRefused("registration_did_not_verify") from exc
+        now = self._clock()
+        approver = await self.db.fetch_one(
+            f"SELECT subject, {_EFFECTIVE_CONTACT} AS contact FROM {{{{tables.passkey_approvers}}}} "
+            f"WHERE scope = $1 AND {_CURRENT}",
+            scope,
+            now,
+        )
+        if approver is None or approver["subject"] != subject:
+            raise CredentialChangeRefused("stale_binding")
+        if approver["contact"] is None:
+            raise CredentialChangeRefused("no_notice_contact")
+        if await self.db.fetch_value(
+            "SELECT 1 FROM {{tables.passkey_credentials}} WHERE credential_id = $1",
+            verified.credential_id,
+        ):
+            raise CredentialChangeRefused("credential_registered")
+        active = await self._change_credentials(self.db, subject)
+        operation = ADD if replace is None else REPLACE
+        retire = None
+        if replace is not None:
+            retire = next((c for c in active if c["credential_id"] == replace), None)
+            if retire is None:
+                raise CredentialChangeRefused("not_active_credential")
+        elif len(active) >= self._credentials.max_active:
+            raise CredentialChangeRefused("cap_reached")
+        nonce = secrets.token_bytes(32)
+        preimage = change_preimage(
+            scope=scope,
+            subject=subject,
+            operation=operation,
+            new_sha256=credential_sha256(
+                verified.credential_id, verified.public_key, self.rp.rp_id
+            ),
+            retire_sha256=None
+            if retire is None
+            else credential_sha256(retire["credential_id"], retire["public_key"], self.rp.rp_id),
+            nonce=nonce,
+        )
+        challenge = challenge_of(preimage)
+        await self._issue_challenge(
+            challenge,
+            "credential_change",
+            subject,
+            nonce,
+            scope=scope,
+            binding_kind="credential_change",
+            preimage=preimage,
+            covered_request=change_request(
+                (verified.credential_id, verified.public_key),
+                None if retire is None else (retire["credential_id"], retire["public_key"]),
+                self.rp.rp_id,
+            ),
+            expires_at=min(now + self._change_ttl, issued["expires_at"]),
+            registered_sign_count=verified.sign_count,
+        )
+        return await self._assertion_options(subject, challenge)
+
+    async def prepare_credential_change(
+        self, tx: TransactionManager, *, scope: str
+    ) -> PreparedCredentialChange:
+        """Hold `scope`'s approver row and its active credentials for update
+        in the caller's original transaction, after its lifecycle, retirement
+        and role holds and before its session holds. Return the handle its
+        credential-change fence hands back. It grants no authority."""
+        return await prepare_credential_change(self, tx, scope)
+
+    async def change_credential(
+        self,
+        scope: str,
+        assertion: Mapping[str, Any],
+        *,
+        fence: CredentialChangeFence | None = None,
+        receipt: CredentialReceipt | None = None,
+    ) -> CredentialChange:
+        """Apply the credential change a current credential's assertion
+        approves. The assertion is verified, and its challenge spent, in its
+        own transaction, as for a contact change; a refused effect leaves them
+        spent, so a retry starts again from the registration options.
+
+        One effect transaction then takes `fence.prepare` (or B3's own
+        preparation without a fence), rechecks the binding under those holds,
+        inserts the new credential and, for a replace, revokes the selected
+        one and voids every live approval the holder decided (pending work
+        needs approving again), audits, writes `receipt`, runs `fence.check`
+        and, after that last wait, refuses past the original deadline. The
+        notice goes after the commit, best effort, to the contact in effect at
+        the act; a pending contact change is neither told nor touched."""
+        try:
+            challenge = _client_challenge(assertion)
+        except (KeyError, TypeError, ValueError, WebAuthnException) as exc:
+            raise AuthenticationFailed("malformed assertion") from exc
+        issued = await self.db.fetch_one(
+            "UPDATE {{tables.passkey_challenges}} SET used_at = $3 "
+            "WHERE challenge = $1 AND purpose = $2 AND used_at IS NULL "
+            "RETURNING subject, nonce, created_at, expires_at, proof_context, "
+            "challenge_preimage, covered_request, registered_sign_count",
+            challenge,
+            "credential_change",
+            self._clock(),
+        )
+        if issued is None:
+            raise AuthenticationFailed("no credential change awaits this assertion")
+        deadline = issued["expires_at"]
+        if self._clock() >= deadline:
+            raise CredentialChangeRefused("expired")
+        if json.loads(issued["proof_context"])["scope"] != scope:
+            raise AuthenticationFailed("the credential change is for another scope")
+        subject = issued["subject"]
+        binding = json.loads(issued["challenge_preimage"].split(b"\n", 1)[1])
+        sidecar = json.loads(issued["covered_request"].split(b"\n", 1)[1])
+        new_id = base64url_to_bytes(sidecar["credential"]["credential_id"])
+        new_key = base64url_to_bytes(sidecar["credential"]["public_key"])
+        retire_id = (
+            base64url_to_bytes(sidecar["retire_credential"]["credential_id"])
+            if "retire_credential" in sidecar
+            else None
+        )
+        evidence_ref = await self._verify_assertion(
+            subject, challenge, assertion, "credential_change", issued=issued
+        )
+        asserting = base64url_to_bytes(assertion["rawId"])
+        operation = binding["operation"]
+        change = CredentialChange(
+            operation=operation,
+            scope=scope,
+            subject=subject,
+            credential_id=new_id,
+            retired_credential_id=retire_id,
+            evidence_ref=evidence_ref,
+            challenge=bytes_to_base64url(challenge),
+        )
+        async with self.db.transaction() as tx:
+            prepared = (
+                await fence.prepare(tx)
+                if fence is not None
+                else await self.prepare_credential_change(tx, scope=scope)
+            )
+            prepared = await require_prepared(self, tx, prepared, scope)
+            now = self._clock()
+            approver = await tx.fetch_one(
+                f"SELECT subject, {_EFFECTIVE_CONTACT} AS contact, effective_at "
+                "FROM {{tables.passkey_approvers}} WHERE subject = $1 AND superseded_at IS NULL",
+                subject,
+                now,
+            )
+            if prepared._subject != subject or approver is None or approver["effective_at"] > now:
+                raise CredentialChangeRefused("stale_binding")
+            if approver["contact"] is None:
+                raise CredentialChangeRefused("no_notice_contact")
+            active = await self._change_credentials(tx, subject)
+            ids = {c["credential_id"] for c in active}
+            if asserting not in ids or (retire_id is not None and retire_id not in ids):
+                raise CredentialChangeRefused("stale_binding")
+            if retire_id is None and len(active) >= self._credentials.max_active:
+                raise CredentialChangeRefused("cap_reached")
+            if await tx.fetch_value(
+                "SELECT 1 FROM {{tables.passkey_credentials}} WHERE credential_id = $1", new_id
+            ):
+                raise CredentialChangeRefused("credential_registered")
+            bound_rp = next(c["rp_id"] for c in active if c["credential_id"] == asserting)
+            await tx.execute(
+                "INSERT INTO {{tables.passkey_credentials}} (credential_id, subject, public_key, "
+                "sign_count, created_at, rp_id, added_by_evidence, added_by_challenge, "
+                "replaced_credential_id) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)",
+                new_id,
+                subject,
+                new_key,
+                issued["registered_sign_count"],
+                now,
+                bound_rp,
+                evidence_ref,
+                challenge,
+                retire_id,
+            )
+            if retire_id is not None:
+                await tx.execute(
+                    "UPDATE {{tables.passkey_credentials}} SET revoked_at = $2, "
+                    "revoked_in = txid_current() WHERE credential_id = $1",
+                    retire_id,
+                    now,
+                )
+                await self._retirement.approver_retired(subject, retired_by=subject, tx=tx)
+            details = {
+                "scope": scope,
+                "operation": operation,
+                "evidence_ref": evidence_ref,
+                "credential_id": bytes_to_base64url(new_id),
+                "notice_contact_sha256": contact_sha256(approver["contact"]),
+            }
+            if retire_id is not None:
+                details["retired_credential_id"] = bytes_to_base64url(retire_id)
+            await self._audit.emit(
+                AuditEvent(
+                    kind=AuditKind.APPROVER_PASSKEY_ADDED
+                    if retire_id is None
+                    else AuditKind.APPROVER_PASSKEY_REPLACED,
+                    actor=subject,
+                    subject=subject,
+                    occurred_at=now,
+                    details=details,
+                ),
+                tx,
+            )
+            if receipt is not None:
+                await receipt(tx, change)
+            if fence is not None:
+                await fence.check(tx)
+            # No await follows this sample: the original deadline holds at commit.
+            if self._clock() >= deadline:
+                raise CredentialChangeRefused("expired")
+        credential_ids: tuple[str, ...] = (bytes_to_base64url(new_id),)
+        if retire_id is not None:
+            credential_ids += (bytes_to_base64url(retire_id),)
+        notice = Notice(
+            NoticeKind.CREDENTIAL_ADDED if retire_id is None else NoticeKind.CREDENTIAL_REPLACED,
+            scope,
+            now,
+            credential_ids,
+        )
+        delivery = await self._send(self._delivery.deliver_notice(approver["contact"], notice))
+        return replace(change, delivery=delivery)
+
+    async def _change_credentials(self, db: Any, subject: str) -> list[dict[str, Any]]:
+        """The subject's active credentials at this app's relying party."""
+        return await db.fetch_all(
+            "SELECT c.credential_id, c.public_key, c.rp_id FROM {{tables.passkey_credentials}} c "
+            f"WHERE c.subject = $1 AND c.revoked_at IS NULL AND {_bound_to_rp('$2')} "
+            "ORDER BY c.credential_id",
+            subject,
+            self.rp.rp_id,
+        )
+
+    async def credential_change_status(self, scope: str, challenge: str) -> CredentialChangeStatus:
+        """What became of the credential change the base64url `challenge`
+        approves, for a client whose response was lost. It waits for a change
+        in flight on the scope's approver, then reports it committed, pending
+        while it could still commit, or spent and uncommitted once its deadline
+        has passed. A challenge it no longer holds, or never issued, is not
+        found. It grants nothing; the caller authorizes who may ask."""
+        try:
+            raw = base64url_to_bytes(challenge)
+        except (TypeError, ValueError):
+            return CredentialChangeStatus(CredentialChangeState.NOT_FOUND)
+        async with self.db.transaction() as tx:
+            await tx.fetch_value(
+                "SELECT subject FROM {{tables.passkey_approvers}} "
+                "WHERE scope = $1 AND superseded_at IS NULL FOR SHARE",
+                scope,
+            )
+            committed = await tx.fetch_one(
+                "SELECT c.credential_id, c.subject, c.added_by_evidence, c.replaced_credential_id "
+                "FROM {{tables.passkey_credentials}} c JOIN {{tables.passkey_approvers}} a "
+                "ON a.subject = c.subject WHERE c.added_by_challenge = $1 AND a.scope = $2",
+                raw,
+                scope,
+            )
+            if committed is not None:
+                return CredentialChangeStatus(
+                    CredentialChangeState.COMMITTED,
+                    CredentialChange(
+                        operation=ADD if committed["replaced_credential_id"] is None else REPLACE,
+                        scope=scope,
+                        subject=committed["subject"],
+                        credential_id=committed["credential_id"],
+                        retired_credential_id=committed["replaced_credential_id"],
+                        evidence_ref=committed["added_by_evidence"],
+                        challenge=challenge,
+                    ),
+                )
+            issued = await tx.fetch_one(
+                "SELECT expires_at, proof_context FROM {{tables.passkey_challenges}} "
+                "WHERE challenge = $1 AND purpose = 'credential_change'",
+                raw,
+            )
+            if issued is None or json.loads(issued["proof_context"])["scope"] != scope:
+                return CredentialChangeStatus(CredentialChangeState.NOT_FOUND)
+            if self._clock() < issued["expires_at"]:
+                return CredentialChangeStatus(CredentialChangeState.PENDING)
+            return CredentialChangeStatus(CredentialChangeState.SPENT_UNCOMMITTED)
 
     async def evidence(self, evidence_ref: str) -> PasskeyEvidence | None:
         row = await self.db.fetch_one(
