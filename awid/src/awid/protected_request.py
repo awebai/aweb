@@ -54,6 +54,9 @@ async def verify_protected_request(
     if request.method != _METHODS[operation]:
         raise HTTPException(status_code=401, detail='Protected request method does not match operation')
     body = await request.body()
+    # Body acquisition can wait. Check the original timestamp again after the
+    # final await, so a slow sender cannot extend its authentication window.
+    enforce_timestamp_skew(timestamp)
     if request.method == 'GET' and body:
         raise HTTPException(status_code=401, detail='Protected GET requests require an empty body')
 

@@ -11,6 +11,7 @@ from starlette.requests import Request
 
 from awid.did import did_from_public_key, generate_keypair
 from awid.controller_request import verify_controller_json_request
+from awid import dns_auth
 from awid.protected_request import verify_protected_request
 from awid.signing import canonical_json_bytes, sign_message
 
@@ -230,3 +231,27 @@ async def test_awid_controller_proof_cannot_prepare_a_protected_operation(regist
     with pytest.raises(HTTPException) as exc:
         await verify(req)
     assert exc.value.status_code == 401
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize('elapsed,allowed', [(299, True), (300, True), (301, False)])
+async def test_body_wait_does_not_extend_the_original_timestamp_window(monkeypatch, elapsed, allowed):
+    started = datetime(2026, 11, 11, tzinfo=timezone.utc)
+    current = started
+    monkeypatch.setattr(dns_auth, '_utc_now', lambda: current)
+    did, headers, body = signed_request(timestamp=started.isoformat())
+    req = request(headers, body)
+
+    async def delayed_receive():
+        nonlocal current
+        current = started + timedelta(seconds=elapsed)
+        return {'type': 'http.request', 'body': body, 'more_body': False}
+
+    delayed = Request(req.scope, delayed_receive)
+    if allowed:
+        assert await verify(delayed) == did
+    else:
+        with pytest.raises(HTTPException) as exc:
+            await verify(delayed)
+        assert exc.value.status_code == 401
+        assert exc.value.detail == 'Timestamp outside allowed skew window'
