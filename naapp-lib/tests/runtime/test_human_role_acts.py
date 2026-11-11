@@ -25,7 +25,7 @@ from pgdbm.core import TransactionManager
 from aweb_naapp.console import apply_console_migrations
 from aweb_naapp.hooks.owner_act_nonces import Refused
 from aweb_naapp.roles import holding_scope
-from aweb_naapp.runtime.human_role_acts import HumanRoleActs
+from aweb_naapp.runtime.human_role_acts import HumanRoleActs, PreparedHumanRoleAct
 from aweb_naapp.runtime.human_roles import HumanRoleHoldings
 from aweb_naapp.runtime.owner_act_delivery import (
     OwnerActDelivery,
@@ -115,9 +115,19 @@ def delivery(
 
 async def deliver(fx: Effects, sent: OwnerActDelivery) -> OwnerActEffectResult:
     """Run one delivery as the route does."""
+    return await complete(fx, *await prepare(fx, sent))
+
+
+async def prepare(fx: Effects, sent: OwnerActDelivery) -> tuple[Any, PreparedHumanRoleAct]:
+    """The route's preparation of one delivery, before its transaction."""
     world = fx.world
     act = await world.owner.verifier.prepare(sent.signing, sent.signature, team_id=sent.team_id)
-    prepared = await fx.acts.prepare(installation=world.admitted, delivery=sent)
+    return act, await fx.acts.prepare(installation=world.admitted, delivery=sent)
+
+
+async def complete(fx: Effects, act: Any, prepared: PreparedHumanRoleAct) -> OwnerActEffectResult:
+    """The route's effect transaction for a prepared delivery, and its commit."""
+    world = fx.world
     async with world.db.transaction() as tx:
         await world.fence.check(tx, world.admitted)
         verified = await world.owner.verifier.consume_in(
@@ -293,6 +303,29 @@ async def test_a_designation_of_a_held_role_rolls_back_with_its_nonce(fx):
     assert not await consumed(fx, again)
     assert await read(fx) == first
     assert len(fx.applied) == 1
+
+
+async def test_a_designation_prepared_before_another_lands_is_refused_under_its_lock(fx):
+    first, second = delivery(fx, DESIGNATE, holder()), delivery(fx, DESIGNATE, holder())
+    late = await prepare(fx, second)
+    await deliver(fx, first)
+    held = await read(fx)
+    with pytest.raises(OwnerActDeliveryRefused) as refusal:
+        await complete(fx, *late)
+    assert refusal.value.code == "owner_required"
+    assert not await consumed(fx, second)
+    assert await read(fx) == held
+
+
+async def test_a_holding_fault_is_refused_before_a_certificate_fault(fx):
+    unheld = replace(delivery(fx, REPLACE, holder()), certificate=None)
+    assert await refused(fx, unheld) == "owner_required"
+    await deliver(fx, delivery(fx, DESIGNATE, holder()))
+    other = Member(team_id=TEAM_ID, team_key=fx.world.owner.team_key, certificate_id="cert-2")
+    other.extra_cert_fields = {"member_did_aw": "did:aw:3Xr8nYo5mQ1sU2wZ6aB9cD4eF7"}
+    held = delivery(fx, DESIGNATE, holder(), certificate=json.dumps(other.certificate()).encode())
+    assert await refused(fx, held) == "owner_required"
+    assert not await consumed(fx, unheld) and not await consumed(fx, held)
 
 
 async def test_a_replacement_keeps_the_holding_and_notifies_after_commit(fx):
