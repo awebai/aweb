@@ -49,7 +49,7 @@ def _send_context(context):
         _current.reset(token)
 
 
-def prepare_attachment_send(request, payload, auth):
+def prepare_attachment_send(attachment_backend, payload, auth):
     """Enter once per new request. Only encrypted-v2 attachments are supported."""
     if _current.get() is not None:
         return None
@@ -65,10 +65,9 @@ def prepare_attachment_send(request, payload, auth):
         references = refs(raw)
     except AttachmentError as exc:
         raise exc.http() from None
-    backend = getattr(request.app.state, "attachment_backend", None)
-    if backend is None:
+    if attachment_backend is None:
         raise AttachmentError("attachment_unavailable").http()
-    return _send_context(_Send(backend, references, payload.model_dump(), auth))
+    return _send_context(_Send(attachment_backend, references, payload.model_dump(), auth))
 
 
 def refuse_remote_attachments():

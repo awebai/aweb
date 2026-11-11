@@ -357,7 +357,9 @@ async def create_or_send(
             message_id=accepted["message_id"],
             target_dids=[],
         )
-    attachment_context = prepare_attachment_send(request, payload, auth)
+    attachment_context = prepare_attachment_send(
+        getattr(request.app.state, "attachment_backend", None), payload, auth,
+    )
     if attachment_context is not None:
         with attachment_context:
             return await create_or_send(request, payload, db=db, redis=redis, auth=auth)
@@ -1211,7 +1213,9 @@ async def send_message(
             request, payload, auth=auth, db=db, kind="chat", session_id=session_id
         )
         return SendMessageResponse(message_id=accepted['message_id'],conversation_id=accepted['conversation_id'],delivered=True)
-    attachment_context = prepare_attachment_send(request, payload, auth)
+    attachment_context = prepare_attachment_send(
+        getattr(request.app.state, "attachment_backend", None), payload, auth,
+    )
     if attachment_context is not None:
         with attachment_context:
             existing = await attachment_retry(db, payload, "chat")

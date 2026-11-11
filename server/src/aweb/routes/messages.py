@@ -450,7 +450,9 @@ async def send_message(
             status="delivered",
             delivered_at=row["created_at"].isoformat(),
         )
-    attachment_context = prepare_attachment_send(request, payload, auth)
+    attachment_context = prepare_attachment_send(
+        getattr(request.app.state, "attachment_backend", None), payload, auth,
+    )
     if attachment_context is not None:
         with attachment_context:
             existing = await attachment_retry(db, payload, "mail")
