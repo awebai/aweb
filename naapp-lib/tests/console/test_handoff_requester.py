@@ -25,7 +25,7 @@ pytest_plugins = ("tests.runtime.test_human_member",)
 def h(human):
     """The registered human H: its client, signed identity, principal and key."""
     member, principal, client, _, identity = human
-    return SimpleNamespace(client=client, identity=identity, principal=principal, key=h.key)
+    return SimpleNamespace(client=client, identity=identity, principal=principal, key=member.member_key)
 
 
 def signed(fields, key: SigningKey) -> dict:
