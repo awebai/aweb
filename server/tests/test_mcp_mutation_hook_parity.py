@@ -1,13 +1,15 @@
 """MCP mail, chat and task tools fire the same mutation hooks as their REST routes.
 
 Exercised through the real mounted MCP app and the REST app over ASGI, with
-real PostgreSQL. The embedding application's ``on_mutation`` callback and the
-Redis chat-session publish are recorded at their boundaries.
+real PostgreSQL. The embedding application's ``on_mutation`` callback, the
+Redis chat-session publish and the agent wake publisher are recorded at their
+boundaries.
 """
 
 from identity_binding_support import seed_verified_bindings
 
 import json
+from datetime import datetime
 from types import SimpleNamespace
 from uuid import UUID, uuid4
 
@@ -23,6 +25,7 @@ from aweb.internal_auth import build_internal_auth_header_value
 from aweb.mcp.server import create_mcp_app
 from aweb.mcp.signing import HostedMessageSigningResult, canonical_signed_payload
 from aweb.mutation_hooks import create_mutation_handler
+from aweb.routes.chat import router as chat_router
 from aweb.service_errors import ValidationError
 from aweb.team_auth_deps import TeamIdentity, get_team_identity
 from test_messages_http import (
@@ -58,6 +61,14 @@ class _RecordingRedis:
     async def hgetall(self, key):
         # No member has recorded presence.
         return {}
+
+
+class _RecordingWakes:
+    def __init__(self):
+        self.submitted = []
+
+    def submit(self, wakes):
+        self.submitted.append({key: set(kinds) for key, kinds in wakes.items()})
 
 
 @pytest_asyncio.fixture
@@ -123,6 +134,7 @@ async def server(aweb_cloud_db, monkeypatch):
         )
 
     app.include_router(tasks_router)
+    app.include_router(chat_router)
     app.dependency_overrides[get_team_identity] = task_identity
     for route in app.routes:
         for dependency in getattr(getattr(route, "dependant", None), "dependencies", []):
@@ -167,12 +179,11 @@ async def server(aweb_cloud_db, monkeypatch):
                 assert response.status_code == 200, response.text
                 return response.json()
 
-            async def rest_mail(alias, *, body, to_alias=None, conversation_id=None):
+            async def rest_post(alias, path, body=None):
                 sk, did_key = keys[alias]
-                target = {"to_alias": to_alias} if to_alias else {"conversation_id": conversation_id}
-                data = json.dumps({**target, "subject": "status", "body": body}).encode()
+                data = json.dumps(body).encode() if body is not None else b""
                 response = await client.post(
-                    "/v1/messages", content=data,
+                    path, content=data,
                     headers={
                         "Content-Type": "application/json",
                         **_signed_identity_headers(sk, did_key, "", data),
@@ -181,9 +192,13 @@ async def server(aweb_cloud_db, monkeypatch):
                 assert response.status_code == 200, response.text
                 return response.json()
 
+            async def rest_mail(alias, *, body, to_alias=None, conversation_id=None):
+                target = {"to_alias": to_alias} if to_alias else {"conversation_id": conversation_id}
+                return await rest_post(alias, "/v1/messages", {**target, "subject": "status", "body": body})
+
             yield SimpleNamespace(
                 db=db, app=app, agents=agents, workspaces=workspaces, mutations=mutations, redis=redis,
-                mcp_call=mcp_call, mcp_result=mcp_result, rest_mail=rest_mail, rest_task=rest_task,
+                mcp_call=mcp_call, mcp_result=mcp_result, rest_post=rest_post, rest_mail=rest_mail, rest_task=rest_task,
                 rest_task_response=rest_task_response,
             )
     finally:
@@ -271,6 +286,44 @@ async def test_mcp_check_mail_fires_message_acknowledged_once_per_message(server
 
 
 @pytest.mark.asyncio
+async def test_check_mail_acknowledges_like_the_ack_route(server):
+    by_route = await server.rest_mail("bob", to_alias="pilot", body="one")
+    by_tool = await server.rest_mail("bob", to_alias="pilot", body="two")
+    wakes = server.app.state.agent_wake_publisher = _RecordingWakes()
+
+    async def stored_read_at():
+        rows = await server.db.fetch_all(
+            "SELECT message_id, read_at FROM {{tables.messages}} WHERE message_id = ANY($1::uuid[])",
+            [UUID(by_route["message_id"]), UUID(by_tool["message_id"])],
+        )
+        return {str(row["message_id"]): row["read_at"] for row in rows}
+
+    acknowledged = await server.rest_post("pilot", f"/v1/messages/{by_route['message_id']}/ack")
+    # The tool acknowledges the unread mail it returns: the one the route left.
+    await server.mcp_call("pilot", "check_mail")
+
+    events = _events(server, "message.acknowledged")
+    assert [event["message_id"] for event in events] == [by_route["message_id"], by_tool["message_id"]]
+    route_event, tool_event = ({**event, "message_id": "<this message>"} for event in events)
+    assert tool_event == route_event
+    assert route_event == {
+        "team_id": TEAM, "agent_id": server.agents["pilot"], "alias": "pilot", "message_id": "<this message>",
+        "from_alias": "bob", "subject": "status", "content_mode": "legacy_plaintext_v1",
+    }
+    assert wakes.submitted == [{"did:did:aw:pilot": {"mail"}}] * 2
+    read_at = await stored_read_at()
+    assert read_at[by_route["message_id"]] == datetime.fromisoformat(acknowledged["acknowledged_at"])
+    assert read_at[by_tool["message_id"]] is not None
+
+    # Mail that is already read is acknowledged again by neither.
+    await server.rest_post("pilot", f"/v1/messages/{by_tool['message_id']}/ack")
+    await server.mcp_call("pilot", "check_mail", unread_only=False)
+    assert len(_events(server, "message.acknowledged")) == 2
+    assert len(wakes.submitted) == 2
+    assert await stored_read_at() == read_at
+
+
+@pytest.mark.asyncio
 async def test_mcp_send_chat_fires_chat_message_sent_like_rest(server):
     opened = await server.mcp_call("pilot", "send_chat", to="bob", message="hello bob", plaintext=True)
     continued = await server.mcp_call(
@@ -318,6 +371,66 @@ async def test_mcp_mark_chat_read_publishes_read_receipt_like_rest(server):
         payload for channel, payload in server.redis.published[before:]
         if payload.get("signal_type") == "read_receipt"
     ] == receipts
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("shape", ["message_ids", "up_to_message_id"])
+async def test_mark_chat_read_marks_like_the_read_route(server, shape):
+    server.app.state.redis = server.redis
+    wakes = server.app.state.agent_wake_publisher = _RecordingWakes()
+
+    opened = await server.mcp_call("bob", "send_chat", to="pilot", message="ping", plaintext=True)
+    session_id = opened["conversation_id"]
+    continued = await server.mcp_call(
+        "bob", "send_chat", conversation_id=session_id, message="ping again", plaintext=True,
+    )
+
+    observed = {}
+    for via, message_id in (("mcp", opened["message_id"]), ("rest", continued["message_id"])):
+        arguments = {"message_ids": [message_id]} if shape == "message_ids" else {"up_to_message_id": message_id}
+        published, woken = len(server.redis.published), len(wakes.submitted)
+
+        marked = []
+        # The second call finds nothing left to mark.
+        for _ in range(2):
+            if via == "mcp":
+                result = await server.mcp_call("pilot", "mark_chat_read", conversation_id=session_id, **arguments)
+            else:
+                result = await server.rest_post("pilot", f"/v1/chat/sessions/{session_id}/read", arguments)
+            marked.append(result["messages_marked"])
+
+        read_by = await server.db.fetch_all(
+            """SELECT agent_id FROM {{tables.chat_message_reads}}
+               WHERE session_id = $1 AND did = 'did:aw:pilot' AND message_id = $2""",
+            UUID(session_id), UUID(message_id),
+        )
+        receipt = await server.db.fetch_one(
+            """SELECT agent_id, last_read_message_id FROM {{tables.chat_read_receipts}}
+               WHERE session_id = $1 AND did = 'did:aw:pilot'""",
+            UUID(session_id),
+        )
+        observed[via] = {
+            "marked": marked,
+            "read_by": [str(row["agent_id"]) for row in read_by],
+            "receipt_by": str(receipt["agent_id"]),
+            "receipt_names_the_message": receipt["last_read_message_id"] == UUID(message_id),
+            "signals": [
+                (payload["agent_id"], payload["session_id"] == session_id, payload["message_id"] == message_id)
+                for _, payload in server.redis.published[published:]
+                if payload.get("signal_type") == "read_receipt"
+            ],
+            "wakes": wakes.submitted[woken:],
+        }
+
+    assert observed["mcp"] == observed["rest"]
+    assert observed["rest"] == {
+        "marked": [1, 0],
+        "read_by": [server.agents["pilot"]],
+        "receipt_by": server.agents["pilot"],
+        "receipt_names_the_message": True,
+        "signals": [("did:aw:pilot", True, True)],
+        "wakes": [{"did:did:aw:pilot": {"chat"}}] * 2,
+    }
 
 
 # Identifiers that necessarily differ between two separate tasks.

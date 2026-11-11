@@ -35,8 +35,8 @@ non-writable-by-others directory `/root/lab/runner-stage/`:
 | --- | --- |
 | `runner-linux-amd64-dfa093a39.tar.gz` | `bb4d2b384d3f0096ee96daa0fa94f5c2c376bc8dea6deac4ca25a6077fc8ea0a` |
 | `staged-manifest.json` | `2c5ef2b1dd7742bc57730b9cf94d67e3cdf6fd93e8d0d358f606378c260481b7` |
-| `closure-probe.py` | `08ba6bb5779d9e36e847d81d9f14d6a79c6af97b23cbed613b1ea4351d6f681f` |
-| `verify-installed.py` | `4f048947725d621bf2ab046651e39b86890f0222d6ef989efe56d6e06ccfc8e7` |
+| `closure-probe.py` | `44f356a003ee1c38900979c3def53f5e9b11ef5e44140cf39002a63c1949724d` |
+| `verify-installed.py` | `b60a509014a7f92d1eb59b5e260b9ccd5d82c074667fc74d993eecfcd7b68191` |
 
 The archive payload source is **dfa093a396409e4132cf96127a3c30a48e71f7f8**, tree
 **dafd78d3d05aeb66f21df47ed8ba35598bd5cdd5**: reviewed, ungated, unmerged at the
@@ -57,6 +57,27 @@ not the registry or console origin. This contains public configuration only.
 No token, registration code, password or identity is an input to this phase.
 If a private service CA is required, STOP for its explicit reviewed mapping;
 this phase assumes the already verified service certificate uses system trust.
+
+### Script revision and earlier receipts
+
+This script-only lint revision replaces the probe/verifier byte pins above. The
+runner archive and staged manifest are unchanged. Earlier review and execution
+receipts bind the previous script bytes, not these reformatted scripts; they
+remain verifiable from Git history and are not rewritten. An operator using an
+earlier pinned handoff keeps its original inputs until a reviewed superseding
+head is delivered through Secrets -> aweb -> Hestia. Do not replace inputs of an
+in-flight run.
+
+| Script | Previous SHA256 | Previous script commit |
+| --- | --- | --- |
+| `assemble-linux.py` | `9d00122cb0d83fa9d4d5d8aa3b4573b1e87ab8c3054e8494941b35ec7dfb0487` | `60f428ebd36ce74dd3e9acf5d73b1c8bdb60cf94` |
+| `closure-probe.py` | `08ba6bb5779d9e36e847d81d9f14d6a79c6af97b23cbed613b1ea4351d6f681f` | `60f428ebd36ce74dd3e9acf5d73b1c8bdb60cf94` |
+| `verify-installed.py` | `4f048947725d621bf2ab046651e39b86890f0222d6ef989efe56d6e06ccfc8e7` | `19087b978d53c5351fc752673acd2cffcb232b04` |
+
+These previous bindings are present together in handoff commit
+`6ea7975244068bf90f87162e5109a1fc9619f211`; the new active pins are the input table
+and executable preflight below. The historical assembly recipe is linted too;
+its source/payload target remains the exact dfa commit.
 
 ## 2. Administrator preflight and input verification
 
@@ -111,8 +132,8 @@ stage = pathlib.Path('/root/lab/runner-stage')
 pins = {
     'runner-linux-amd64-dfa093a39.tar.gz': 'bb4d2b384d3f0096ee96daa0fa94f5c2c376bc8dea6deac4ca25a6077fc8ea0a',
     'staged-manifest.json': '2c5ef2b1dd7742bc57730b9cf94d67e3cdf6fd93e8d0d358f606378c260481b7',
-    'closure-probe.py': '08ba6bb5779d9e36e847d81d9f14d6a79c6af97b23cbed613b1ea4351d6f681f',
-    'verify-installed.py': '4f048947725d621bf2ab046651e39b86890f0222d6ef989efe56d6e06ccfc8e7',
+    'closure-probe.py': '44f356a003ee1c38900979c3def53f5e9b11ef5e44140cf39002a63c1949724d',
+    'verify-installed.py': 'b60a509014a7f92d1eb59b5e260b9ccd5d82c074667fc74d993eecfcd7b68191',
 }
 for path in [pathlib.Path('/'), pathlib.Path('/opt'), *reversed(stage.parents), stage]:
     info = path.lstat()

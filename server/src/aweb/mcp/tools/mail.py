@@ -15,9 +15,8 @@ from typing import cast
 from fastapi import HTTPException
 
 from awid.federation_errors import FederationAuthorityError
-from aweb.agent_wake import agent_wake_scope, record_did_wakes
 from aweb.mcp.auth import current_agent_wake_publisher, get_auth
-from aweb.mcp.mutations import fire_mcp_mutation_hook
+from aweb.mcp.mutations import current_mutation_callback
 from aweb.mcp.signing import (
     HostedMessageDecryptor,
     HostedMessageDecryptionError,
@@ -36,6 +35,7 @@ from aweb.mcp.tools.federation import (
 )
 from aweb.mcp.tools.refusals import send_refusal
 from aweb.messaging import mail_send
+from aweb.messaging.mail_ack import acknowledge_mail
 from aweb.messaging.sender_address import sender_address as _sender_address
 from aweb.messaging.address_auth import local_recipient_for_own_route
 from aweb.messaging.handle_addresses import normalize_hosted_handle_reference
@@ -426,34 +426,12 @@ async def check_inbox(
     # Auto-acknowledge unread messages
     unread_message_ids = [r["message_id"] for r in rows if r["read_at"] is None]
     if unread_message_ids:
-        with agent_wake_scope(current_agent_wake_publisher()):
-            acknowledged = await aweb_db.fetch_all(
-                f"""
-                UPDATE {{{{tables.messages}}}} m
-                SET read_at = NOW()
-                WHERE {incoming_mail_sql('$1')}
-                  AND message_id = ANY($2::uuid[])
-                  AND read_at IS NULL
-                RETURNING message_id, from_alias, subject, content_mode
-                """,
-                inbox_dids,
-                unread_message_ids,
-            )
-            if acknowledged:
-                record_did_wakes(inbox_dids, "mail")
-        for row in acknowledged:
-            await fire_mcp_mutation_hook(
-                "message.acknowledged",
-                {
-                    "team_id": auth.team_id,
-                    "agent_id": auth.agent_id,
-                    "alias": auth.alias,
-                    "message_id": str(row["message_id"]),
-                    "from_alias": row["from_alias"],
-                    "subject": row["subject"] or "",
-                    "content_mode": row["content_mode"] or "legacy_plaintext_v1",
-                },
-            )
+        await acknowledge_mail(
+            db_infra, mcp_messaging_auth(auth), unread_message_ids,
+            read_at=datetime.now(timezone.utc),
+            agent_wake_publisher=current_agent_wake_publisher(),
+            on_mutation=current_mutation_callback(),
+        )
 
     messages = []
     for r in rows:

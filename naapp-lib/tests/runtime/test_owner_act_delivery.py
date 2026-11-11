@@ -21,7 +21,7 @@ async def test_malformed_certificate_is_a_typed_owner_refusal(tmp_path, certific
         await runtime.check_human_role_member(
             TEAM, principal="did:aw:untrusted-input", certificate=certificate
         )
-    assert refused.value.code == "owner_required"
+    assert refused.value.code == "principal_not_member"
 
 
 async def test_delivery_retains_exact_signed_bytes_and_exposes_proved_identity(
@@ -55,7 +55,7 @@ async def test_delivery_cannot_substitute_a_different_certificate_identity(
             certificate=json.dumps(member.certificate()).encode(),
             identity_client=client,
         )
-    assert refused.value.code == "owner_required"
+    assert refused.value.code == "principal_not_member"
 
 
 async def test_delivery_maps_definite_membership_loss_to_its_typed_refusal(

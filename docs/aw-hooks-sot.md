@@ -114,16 +114,17 @@ the combined behavior.
 
 [`vectors/mutation-hook-call-sites-v1.json`](vectors/mutation-hook-call-sites-v1.json)
 is the machine-readable source path + enclosing function + literal event
-inventory of `fire_mutation_hook`, `fire_mutation_callback` and
-`fire_mcp_mutation_hook` calls. Inbound
+inventory of `fire_mutation_hook` and `fire_mutation_callback` calls. Inbound
 federation fires through its outbox instead, so the inventory does not list it. Repeated rows preserve multiplicity when one function has multiple
 calls for the same event. The table below groups those exact call sites by their
 public HTTP behavior. The create, update, delete, dependency and comment rows of
 `/v1/tasks` fire from the task service the route calls, a `POST /v1/messages`
 send fires from `server/src/aweb/messaging/mail_send.py`, which the route and
-the MCP `send_mail` tool both call, and a chat send fires from
+the MCP `send_mail` tool both call, a chat send fires from
 `server/src/aweb/messaging/chat_send.py`, which both chat send routes and the
-MCP `send_chat` tool call; every other row fires from its route.
+MCP `send_chat` tool call, and an acknowledgement fires from
+`server/src/aweb/messaging/mail_ack.py`, which the ack route and the MCP
+`check_mail` tool both call; every other row fires from its route.
 
 | HTTP route | Event | When called |
 |---|---|---|
@@ -168,7 +169,8 @@ event names, their order and the whole context are equal. `send_mail` and
 `POST /v1/messages` likewise call one mail send, which fires `message.sent`
 with one context for both, and `send_chat` and the chat send routes call one
 chat send, which fires `chat.message_sent` with one context for both.
-`check_mail` builds its context in the tool, with the same keys as its route. MCP
+`check_mail` and `POST /v1/messages/{message_id}/ack` call one acknowledgement,
+which fires `message.acknowledged` with one context for both. MCP
 has no tool that deletes a task, changes its dependencies or answers it, and
 none for reservations or agent status; those events come from the routes only.
 
