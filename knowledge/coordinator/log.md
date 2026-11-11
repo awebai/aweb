@@ -1,5 +1,9 @@
 # Knowledge log
 
+## 2026-11-11
+* **Harvest**: one proposal from the `servers` coordinator seat.
+* **Creation**: decision [human governance requires protected signing](human-governance-requires-protected-signing.md): approved by the operator (source-reported relay). A pointer to the canonical customer-agent-servers concept in Bookshelf.
+
 ## 2026-11-10
 * **Update**: [operating-continuity](operating-continuity.md) and index — the historical coordinator record (decisions, docs and memory) is named at its location in the private ac repository, under `aweb-team-records/agents/coordinator/`, moved from this repository at `07b554c1f`.
 
