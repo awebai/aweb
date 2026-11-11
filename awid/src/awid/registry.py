@@ -10,7 +10,6 @@ import inspect
 import ipaddress
 import json
 import logging
-import re
 from json import loads as json_loads
 import time
 from dataclasses import InitVar, asdict, dataclass, field
@@ -53,7 +52,8 @@ from awid.log import (
     initial_registration_entry,
     log_entry_payload,
 )
-from awid.ratelimit import AWID_SERVICE_TOKEN_HEADER, normalize_service_token
+from awid.ratelimit import normalize_service_token
+from awid.registry_auth import RegistryRequestAuth, path_signature_headers
 from awid.registry_types import (
     RegistryError as RegistryError,
     DIDKeyNotFoundError as DIDKeyNotFoundError,
@@ -327,11 +327,19 @@ class RegistryClient:
     domain_verifier: InitVar[DomainVerifier | None] = field(default=None, kw_only=True)
     _domain_verifier: DomainVerifier | None = field(init=False, repr=False, compare=False)
     member_signing_keys: dict[str, bytes] = field(default_factory=dict, repr=False, compare=False)
+    _request_auth: RegistryRequestAuth = field(init=False, repr=False, compare=False)
     _http_client: httpx.AsyncClient = field(init=False, repr=False, compare=False)
 
     def __post_init__(self, domain_verifier: DomainVerifier | None = None) -> None:
         object.__setattr__(self, "_domain_verifier", domain_verifier)
         object.__setattr__(self, "service_token", normalize_service_token(self.service_token))
+        object.__setattr__(
+            self,
+            "_request_auth",
+            RegistryRequestAuth(
+                service_token=self.service_token, member_signing_keys=self.member_signing_keys
+            ),
+        )
         object.__setattr__(
             self,
             "_http_client",
@@ -501,23 +509,14 @@ class RegistryClient:
             registry_url is None
             or canonical_server_origin(registry_url) == canonical_server_origin(self.registry_url)
         )
-        if self.service_token and home_registry:
-            request_headers[AWID_SERVICE_TOKEN_HEADER] = self.service_token
-        elif home_registry and method == "GET" and not any(
-            name.lower() == "authorization" for name in request_headers
-        ):
-            # Sign the path, without its pagination query, using only this
-            # team's member key. No writes, identity reads, or holder-only
-            # certificate blobs inherit the server's member authority.
-            read_path = path.partition("?")[0]
-            match = re.fullmatch(
-                r"/v1/namespaces/([^/]+)/teams/([^/]+)(?:/(?:revocations|certificates|members/[^/]+))?",
-                read_path,
+        if home_registry:
+            request_headers.update(
+                self._request_auth.headers(
+                    method,
+                    path,
+                    signed_by_caller=any(name.lower() == "authorization" for name in request_headers),
+                )
             )
-            if match:
-                key = self.member_signing_keys.get(build_team_id(*match.groups()))
-                if key is not None:
-                    request_headers.update(self._signed_path_headers(method, read_path, key))
         try:
             async with asyncio.timeout(self.timeout_seconds):
                 async with self._http_client.stream(
@@ -735,7 +734,7 @@ class RegistryClient:
             await self._request_json(
                 "GET",
                 path,
-                headers=self._signed_path_headers("GET", path, signing_key),
+                headers=path_signature_headers("GET", path, signing_key),
             )
         )
 
@@ -1293,7 +1292,7 @@ class RegistryClient:
         base_path = f"/v1/namespaces/{domain}/teams/{name}/certificates"
         registry_url = await self._registry_url_for_domain(domain)
         headers = (
-            self._signed_path_headers("GET", base_path, signing_key)
+            path_signature_headers("GET", base_path, signing_key)
             if signing_key is not None
             else None
         )
@@ -1462,14 +1461,6 @@ class RegistryClient:
                 registry_url=registry_url,
             )
         )
-
-    def _signed_path_headers(self, method: str, path: str, signing_key: bytes) -> dict[str, str]:
-        timestamp = _utc_timestamp()
-        payload = f"{timestamp}\n{method}\n{path}".encode("utf-8")
-        return {
-            "Authorization": f"DIDKey {_did_key_from_signing_key(signing_key)} {sign_message(signing_key, payload)}",
-            "X-AWEB-Timestamp": timestamp,
-        }
 
     def _signed_namespace_headers(
         self,
