@@ -2,6 +2,22 @@
 
 ## Unreleased
 
+- **A customer-run aweb server can read its private team at the public
+  registry without the registry-wide `AWID_SERVICE_TOKEN`.** Give the server
+  an ordinary member certificate in each team it serves
+  (`aw id team request --create-local-key`, then the owner's
+  `aw id team add-member`, then `aw id team fetch-cert`) and point
+  `AWID_MEMBER_KEYS_FILE` at a JSON map from canonical team ID to that
+  member's PEM key file. The server signs that team's private reads with the
+  member key. Startup requires `AWID_SERVICE_TOKEN` or
+  `AWID_MEMBER_KEYS_FILE`. See the self-hosting guide.
+- AWID SDK: `CachedRegistryClient` refuses a registry 401 or 403 instead of
+  serving the cached record as during an outage, so a reader whose token or
+  membership was withdrawn fails on its next refresh. Upgrade `awid-service`
+  together with the server.
+- Build the CLI and the gateway with Go 1.26.11, which fixes GO-2026-6859
+  (an HTTP/1 server crash in `net/http`).
+
 - The MCP `send_chat` tool (with its `chat_send` alias, and
   `send_message_to_contact` for chat) and the chat send routes,
   `POST /v1/chat/sessions` and `POST /v1/chat/sessions/{session_id}/messages`,
