@@ -72,11 +72,18 @@ class SoftAuthenticator:
         return key.sign(auth_data + hashlib.sha256(client_data).digest(), ec.ECDSA(hashes.SHA256()))
 
     def create(
-        self, options: dict, *, origin: str | None = None, user_verified: bool = True
+        self,
+        options: dict,
+        *,
+        origin: str | None = None,
+        user_verified: bool = True,
+        credential: SoftCredential | None = None,
     ) -> dict:
-        """navigator.credentials.create() for the server's registration options."""
+        """navigator.credentials.create() for the server's registration options.
+        With `credential`, it registers that existing credential again, as an
+        authenticator that does not honour excludeCredentials would."""
         rp_id = options["rp"]["id"]
-        credential = SoftCredential(
+        credential = credential or SoftCredential(
             credential_id=os.urandom(32),
             key=ec.generate_private_key(ec.SECP256R1()),
             rp_id=rp_id,
