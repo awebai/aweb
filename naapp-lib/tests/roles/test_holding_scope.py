@@ -9,7 +9,7 @@ from __future__ import annotations
 
 import pytest
 
-from aweb_naapp.roles import holding_scope
+from aweb_naapp.roles import holding_scope, is_holding_principal
 
 INSTALLATION = "9d7f1c2e-4b1a-4c55-8f0e-2a6b3c4d5e6f"
 TEAM = "aweb:example.com"
@@ -17,6 +17,7 @@ PRINCIPAL = "did:aw:2Wq7mXn4kP9rT1vY5zA8bC3dE6"
 
 
 def test_a_holding_scope_matches_its_vector() -> None:
+    assert is_holding_principal(PRINCIPAL)
     assert (
         holding_scope(INSTALLATION, TEAM, "logs.reader", PRINCIPAL)
         == "logs.reader.b6fb3a967c72ce75acb186ac9a82bd5a18bc40a0"
@@ -42,6 +43,8 @@ def test_a_scope_needs_an_app_named_role(role: str) -> None:
         holding_scope(INSTALLATION, TEAM, role, PRINCIPAL)
 
 
-def test_a_scope_needs_a_did_aw_principal() -> None:
+@pytest.mark.parametrize("principal", ["did:key:z6MkfirstKey", "did:aw:", ""])
+def test_a_scope_needs_a_did_aw_principal(principal: str) -> None:
+    assert not is_holding_principal(principal)
     with pytest.raises(ValueError):
-        holding_scope(INSTALLATION, TEAM, "logs.reader", "did:key:z6MkfirstKey")
+        holding_scope(INSTALLATION, TEAM, "logs.reader", principal)
