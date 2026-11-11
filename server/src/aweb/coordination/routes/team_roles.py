@@ -20,7 +20,7 @@ from aweb.team_auth_deps import TeamIdentity, get_team_identity, team_identity_w
 from ...db import DatabaseInfra, get_db_infra
 from ...role_name_compat import normalize_optional_role_name, resolve_role_name_aliases
 from ..defaults import get_default_bundle
-from ..team_document_activation import activate_team_document
+from ..team_documents import activate_team_document, serialized_team_document
 
 logger = logging.getLogger(__name__)
 
@@ -142,6 +142,7 @@ async def create_team_roles_version(
     created_by_alias: Optional[str],
 ) -> TeamRolesVersion:
     """Create a versioned team roles record for a team."""
+    serialized = serialized_team_document(bundle)
     result = await db.fetch_one(
         """
         WITH active_check AS (
@@ -171,7 +172,7 @@ async def create_team_roles_version(
                   created_by_alias, created_at, updated_at
         """,
         team_id,
-        json.dumps(bundle),
+        serialized,
         created_by_alias,
         base_roles_id,
     )

@@ -1,10 +1,30 @@
-"""Making one version of a team's instructions or roles the active one."""
+"""What a team's instructions and its roles share: a size limit and activation."""
 
 from __future__ import annotations
+
+import json
+from typing import Any
 
 from fastapi import HTTPException
 
 from aweb.service_errors import RESOURCE_NOT_FOUND_DETAIL
+
+
+# Every member's agent reads the team's instructions and its role into its
+# context, and any member may write them.
+MAX_TEAM_DOCUMENT_BYTES = 256 * 1024
+
+
+def serialized_team_document(document: dict[str, Any]) -> str:
+    """The JSON a version stores, refused when it is over the limit."""
+    serialized = json.dumps(document)
+    size = len(serialized.encode("utf-8"))
+    if size > MAX_TEAM_DOCUMENT_BYTES:
+        raise HTTPException(
+            status_code=413,
+            detail=f"Team document is {size} bytes; the limit is {MAX_TEAM_DOCUMENT_BYTES}.",
+        )
+    return serialized
 
 
 async def activate_team_document(db, *, table: str, team_id: str, document_id: str) -> None:
