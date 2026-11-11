@@ -40,7 +40,7 @@ are still 20 paths, four converted and 16 legacy. This is a source/journey
 inspection, not a new execution or published-release qualification.
 
 An intentionally bare DID/key operation and a constructor awaiting qualification
-are different reasons for remaining legacy. A journey that proves honest
+are different reasons for remaining legacy. A journey that proves a correct
 `unknown` is valuable compatibility evidence, but is not a parent chain or an
 ancestry refusal. Likewise, the landed shared gate does not by itself prove
 that every entry point enforces it. In particular, `SERVER.CONNECT` now calls

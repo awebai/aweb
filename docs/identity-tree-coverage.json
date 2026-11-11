@@ -15,7 +15,7 @@
         "awid/src/awid_service/routes/did.py"
       ],
       "status": "legacy",
-      "reason": "Bare DID genesis validates the new key proof (awid/src/awid_service/routes/did.py:249), independently of ID-certificate enrollment. The real constructor journey proves a registered, unenrolled did:aw remains unknown/unregistered_identity (scripts/cross-registry-human-journey.py:269,283). This is an intentional bare-ID path, not chain issuance or a required ancestry refusal; enrollment must occur through a separate parent constructor."
+      "reason": "Bare DID genesis validates the new key proof (awid/src/awid_service/routes/did.py:302), independently of ID-certificate enrollment. The real constructor journey proves a registered, unenrolled did:aw remains unknown/unregistered_identity (scripts/cross-registry-human-journey.py:269,283). This is an intentional bare-ID path, not chain issuance or a required ancestry refusal; enrollment must occur through a separate parent constructor."
     },
     {
       "id": "CLI.KEYS.AGENT",
@@ -95,7 +95,7 @@
         "cli/go/cmd/aw/id_create.go"
       ],
       "status": "legacy",
-      "reason": "Without parent flags, id create registers the bare DID/address and writes the key; ID-chain installation runs only when a parent was explicitly selected (cli/go/cmd/aw/id_create.go:177,238,303). The real-DNS journey now asserts this path has no chain and reports unknown/unregistered_identity (scripts/cross-registry-human-journey.py:269,279). Honest unenrolled creation is covered; it is not an ancestry conversion. Explicit enrolled creation is CLI.CREATE.PARENT."
+      "reason": "Without parent flags, id create registers the bare DID/address and writes the key; ID-chain installation runs only when a parent was explicitly selected (cli/go/cmd/aw/id_create.go:177,238,303). The real-DNS journey now asserts this path has no chain and reports unknown/unregistered_identity (scripts/cross-registry-human-journey.py:269,279). Unenrolled creation is covered; it is not an ancestry conversion. Explicit enrolled creation is CLI.CREATE.PARENT."
     },
     {
       "id": "CLI.CREATE.PARENT",
