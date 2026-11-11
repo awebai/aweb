@@ -31,7 +31,7 @@
   ],
   "today_verifiers": {
     "awid": "awid.team_certificate: decode_team_certificate, then verify_team_certificate_signature",
-    "server": "aweb.team_auth.parse_and_verify_certificate",
+    "server": "aweb.team_auth.parse_and_verify_certificate, as the server calls it while require_registered_certificates is off: with no registered set",
     "naapp_runtime": "aweb_naapp.runtime.team_auth.authenticate_request, behind a correctly signed request",
     "library": "library.auth.authenticate_request, behind a correctly signed request",
     "hooks": "aweb_naapp.hooks.delivery: the client certificate of a delivery from the case's signer"
@@ -330,7 +330,7 @@
       },
       "today": {
         "awid": "accepted",
-        "server": "accepted",
+        "server": "refused",
         "naapp_runtime": "accepted",
         "library": "accepted",
         "hooks": "accepted"
@@ -374,7 +374,7 @@
       },
       "today": {
         "awid": "accepted",
-        "server": "accepted",
+        "server": "refused",
         "naapp_runtime": "refused",
         "library": "refused",
         "hooks": "accepted"
@@ -396,7 +396,7 @@
       },
       "today": {
         "awid": "accepted",
-        "server": "accepted",
+        "server": "refused",
         "naapp_runtime": "refused",
         "library": "refused",
         "hooks": "accepted"
@@ -418,7 +418,7 @@
       },
       "today": {
         "awid": "accepted",
-        "server": "accepted",
+        "server": "refused",
         "naapp_runtime": "accepted",
         "library": "accepted",
         "hooks": "accepted"

@@ -143,11 +143,11 @@ def cases() -> list[dict]:
         ),
         _case("version_2", "A version this verifier does not know.", _header(_certificate(version=2)), "unsupported_version", refused("accepted", "refused")),
         _case("version_string", 'version is the string "1".', _header(_certificate(version="1")), "unsupported_version", refused("accepted", "refused")),
-        _case("version_true", "version is true, which equals 1 in some languages.", _header(_certificate(version=True)), "unsupported_version", refused("accepted", "accepted")),
+        _case("version_true", "version is true, which equals 1 in some languages.", _header(_certificate(version=True)), "unsupported_version", refused("accepted", "refused")),
         _case("version_absent", "No version.", _header(_certificate(drop=("version",))), "invalid_field:version", refused("accepted", "refused")),
-        _case("alias_absent", "No alias.", _header(_certificate(drop=("alias",))), "invalid_field:alias", refused("accepted", "accepted")),
-        _case("alias_empty", "An empty alias.", _header(_certificate(alias="")), "invalid_field:alias", refused("accepted", "accepted")),
-        _case("alias_not_a_string", "alias is a number.", _header(_certificate(alias=7)), "invalid_field:alias", refused("accepted", "accepted")),
+        _case("alias_absent", "No alias.", _header(_certificate(drop=("alias",))), "invalid_field:alias", refused("accepted", "refused")),
+        _case("alias_empty", "An empty alias.", _header(_certificate(alias="")), "invalid_field:alias", refused("accepted", "refused")),
+        _case("alias_not_a_string", "alias is a number.", _header(_certificate(alias=7)), "invalid_field:alias", refused("accepted", "refused")),
         _case("certificate_id_absent", "No certificate_id.", _header(_certificate(drop=("certificate_id",))), "invalid_field:certificate_id", refused("accepted", "refused")),
         _case("team_id_absent", "No team_id.", _header(_certificate(drop=("team_id",))), "invalid_field:team_id", refused("accepted", "refused")),
         _case("member_did_key_absent", "No member_did_key.", _header(_certificate(drop=("member_did_key",))), "invalid_field:member_did_key", refused("accepted", "refused")),
@@ -274,7 +274,10 @@ def document() -> str:
         "reasons": REASONS,
         "today_verifiers": {
             "awid": "awid.team_certificate: decode_team_certificate, then verify_team_certificate_signature",
-            "server": "aweb.team_auth.parse_and_verify_certificate",
+            "server": (
+                "aweb.team_auth.parse_and_verify_certificate, as the server calls it while "
+                "require_registered_certificates is off: with no registered set"
+            ),
             "naapp_runtime": "aweb_naapp.runtime.team_auth.authenticate_request, behind a correctly signed request",
             "library": "library.auth.authenticate_request, behind a correctly signed request",
             "hooks": "aweb_naapp.hooks.delivery: the client certificate of a delivery from the case's signer",
