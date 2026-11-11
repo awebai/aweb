@@ -7,7 +7,7 @@ of B3; B3's helper then checks that each positive case commits to the same
 digest and that each negative case is refused. Private keys exist only in this
 process's memory and are never written.
 
-    uv run python scripts/gen_passkey_credential_change_vector.py
+    cd naapp-lib && uv run python ../scripts/generate_passkey_credential_change_vector.py
 """
 
 from __future__ import annotations
@@ -29,7 +29,8 @@ from aweb_naapp.runtime.passkeys.proof import (
     passkey_evidence_commitment,
 )
 
-OUT = Path(__file__).resolve().parents[2] / "docs" / "vectors" / "passkey-credential-change-v1.json"
+ROOT = Path(__file__).resolve().parents[1]
+OUT = ROOT / "docs/vectors/passkey-credential-change-v1.json"
 ORIGIN = "https://app.example.com"
 RP_ID = "app.example.com"
 PREFIX = b"aweb.passkey-credential-change/1\n"
