@@ -34,8 +34,8 @@ from aweb.messaging.chat_send import (
     _address_from_alias,
     _left_dids_by_session,
     _parse_timestamp,
-    _resolve_actor_agent,
     _target_did,
+    resolve_actor_agent,
     resolve_chat_targets,
     send_chat,
 )
@@ -420,7 +420,7 @@ async def pending(
     actor_did = actor_dids[0] if actor_dids else ""
     if not actor_did:
         raise HTTPException(status_code=401, detail="Authenticated identity is missing a routing DID")
-    actor_agent = await _resolve_actor_agent(db, actor_dids)
+    actor_agent = await resolve_actor_agent(db, actor_dids)
     actor_agent_id = auth.agent_id or (str(actor_agent["agent_id"]) if actor_agent else None)
 
     conversations_by_session: dict[str, dict[str, Any]] = {}

@@ -9,7 +9,7 @@ from aweb.agent_wake import AgentWakePublisher, agent_wake_scope
 from aweb.events import publish_chat_session_signal
 from aweb.identity_auth_deps import MessagingAuth, participant_dids
 from aweb.messaging.chat import mark_messages_read, mark_messages_read_up_to, resolve_session_actor_did
-from aweb.messaging.chat_send import _resolve_actor_agent
+from aweb.messaging.chat_send import resolve_actor_agent
 
 
 async def mark_chat_read(
@@ -30,7 +30,7 @@ async def mark_chat_read(
     session's streams with a ``read_receipt``.
     """
     actor_dids = participant_dids(auth)
-    actor_agent = await _resolve_actor_agent(db, actor_dids)
+    actor_agent = await resolve_actor_agent(db, actor_dids)
     actor_agent_id = auth.agent_id or (str(actor_agent["agent_id"]) if actor_agent else None)
     actor_did = await resolve_session_actor_did(db, session_id=session_id, actor_dids=actor_dids)
     if not actor_did:

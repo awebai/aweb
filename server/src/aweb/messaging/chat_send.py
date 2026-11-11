@@ -853,7 +853,7 @@ def _row_matches_signed_address_binding(row: dict[str, Any], binding: dict[str, 
     return bool(bound_stable_id or bound_current_did)
 
 
-async def _resolve_actor_agent(db, actor_dids: list[str]) -> dict[str, Any] | None:
+async def resolve_actor_agent(db, actor_dids: list[str]) -> dict[str, Any] | None:
     for did in actor_dids:
         if not did:
             continue
@@ -1347,7 +1347,7 @@ async def _send_to_named_recipients(
     id_chain = auth.id_chain
     actor_dids = participant_dids(auth)
     actor_did = actor_dids[0]
-    actor_agent = await _resolve_actor_agent(db, actor_dids)
+    actor_agent = await resolve_actor_agent(db, actor_dids)
     actor_agent_id = auth.agent_id or (str(actor_agent["agent_id"]) if actor_agent else None)
     actor_alias = _actor_alias(auth, actor_agent)
     sender_address = _sender_address(auth)
@@ -1715,7 +1715,7 @@ async def _send_in_continued_session(
     registry_client = runtime.registry_client
     id_chain = auth.id_chain
     actor_dids = participant_dids(auth)
-    actor_agent = await _resolve_actor_agent(db, actor_dids)
+    actor_agent = await resolve_actor_agent(db, actor_dids)
     actor_agent_id = auth.agent_id or (str(actor_agent["agent_id"]) if actor_agent else None)
     sender_address = _sender_address(auth)
     session_uuid = target.session_id

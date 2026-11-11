@@ -52,7 +52,7 @@ from aweb.mcp.tools.refusals import CONVERSATION_CHANGED_DURING_SEND, send_refus
 from aweb.messaging.chat_send import (
     SENDER_NOT_IN_SESSION,
     ChatSessionChanged,
-    _resolve_actor_agent,
+    resolve_actor_agent,
     resolve_chat_targets,
     send_chat,
 )
@@ -557,7 +557,7 @@ async def chat_pending(
 ) -> str:
     auth = get_auth()
     actor_dids = _actor_dids()
-    actor_agent = await _resolve_actor_agent(db_infra, actor_dids)
+    actor_agent = await resolve_actor_agent(db_infra, actor_dids)
     actor_agent_id = auth.agent_id or (str(actor_agent["agent_id"]) if actor_agent else None)
 
     conversations_by_session: dict[str, dict] = {}
