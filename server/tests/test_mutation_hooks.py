@@ -518,6 +518,90 @@ async def test_task_status_changed_claims_with_workspace_id_not_agent_id(aweb_cl
 
 
 @pytest.mark.asyncio
+async def test_status_change_cascade_announces_released_claims_and_changes_no_claim(
+    aweb_cloud_db, monkeypatch, caplog,
+):
+    actor_agent_id = uuid4()
+    actor_workspace_id = uuid4()
+    other_workspace_id = uuid4()
+    published_workspace: list[object] = []
+    published_team: list[object] = []
+    db = aweb_cloud_db.aweb_db
+
+    for workspace_id, agent_id, alias in (
+        (actor_workspace_id, actor_agent_id, "alice"),
+        (other_workspace_id, uuid4(), "bob"),
+    ):
+        await db.execute(
+            """
+            INSERT INTO {{tables.workspaces}} (
+                workspace_id, team_id, agent_id, alias, human_name, role, workspace_type
+            )
+            VALUES ($1, 'backend:acme.com', $2, $3, '', 'developer', 'manual')
+            """,
+            workspace_id,
+            agent_id,
+            alias,
+        )
+    # A claim made after the status change committed, before its event is handled.
+    await db.execute(
+        """
+        INSERT INTO {{tables.task_claims}} (team_id, workspace_id, alias, task_ref)
+        VALUES ('backend:acme.com', $1, 'bob', 'backend-1234')
+        """,
+        other_workspace_id,
+    )
+
+    async def _capture_workspace_event(_redis, event):
+        published_workspace.append(event)
+        return 1
+
+    async def _capture_team_event(_redis, event):
+        published_team.append(event)
+        return 1
+
+    monkeypatch.setattr(mutation_hooks, "publish_event", _capture_workspace_event)
+    monkeypatch.setattr(mutation_hooks, "publish_team_event", _capture_team_event)
+    handler = mutation_hooks.create_mutation_handler(redis=None, db_infra=_DbShim(db))
+    closed = {
+        "team_id": "backend:acme.com",
+        "actor_agent_id": str(actor_agent_id),
+        "actor_alias": "alice",
+        "task_ref": "backend-1234",
+        "title": "Release in the transaction",
+        "old_status": "in_progress",
+        "new_status": "closed",
+    }
+
+    with caplog.at_level("WARNING"):
+        await handler("task.status_changed", {**closed, "released_claim_workspace_ids": [str(actor_workspace_id)]})
+        announced_workspace, announced_team = list(published_workspace), list(published_team)
+        published_workspace.clear()
+        published_team.clear()
+        # The same change with no claim to release, and one that names none.
+        await handler("task.status_changed", {**closed, "released_claim_workspace_ids": []})
+        await handler("task.status_changed", closed)
+
+    assert caplog.records == []
+    unclaimed = [event for event in announced_workspace if isinstance(event, TaskUnclaimedEvent)]
+    assert [(event.workspace_id, event.task_ref, event.alias) for event in unclaimed] == [
+        (str(actor_workspace_id), "backend-1234", "alice"),
+    ]
+    team_unclaimed = [event for event in announced_team if isinstance(event, TeamTaskUnclaimedEvent)]
+    assert [(event.task_ref, event.alias) for event in team_unclaimed] == [("backend-1234", "alice")]
+    assert len([event for event in announced_team if isinstance(event, TeamTaskStatusChangedEvent)]) == 1
+
+    assert not any(isinstance(event, TaskUnclaimedEvent) for event in published_workspace)
+    assert not any(isinstance(event, TeamTaskUnclaimedEvent) for event in published_team)
+    assert len([event for event in published_team if isinstance(event, TeamTaskStatusChangedEvent)]) == 2
+
+    remaining = await db.fetch_all(
+        "SELECT workspace_id FROM {{tables.task_claims}} WHERE team_id = 'backend:acme.com' AND task_ref = 'backend-1234'"
+    )
+    assert [row["workspace_id"] for row in remaining] == [other_workspace_id]
+
+
+@pytest.mark.asyncio
 async def test_a_chat_event_uses_the_aliases_and_preview_its_sender_supplied(aweb_cloud_db, monkeypatch):
     import asyncpg.connection
 

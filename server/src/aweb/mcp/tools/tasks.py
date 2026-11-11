@@ -4,7 +4,12 @@ from __future__ import annotations
 
 import json
 
+from pydantic import ValidationError as InvalidRequest
+
 from aweb.coordination.tasks_service import (
+    AddCommentRequest,
+    CreateTaskRequest,
+    UpdateTaskRequest,
     add_comment,
     create_task,
     get_task,
@@ -13,8 +18,21 @@ from aweb.coordination.tasks_service import (
     list_tasks,
     update_task,
 )
-from aweb.mcp.tools._common import require_team_context
-from aweb.service_errors import ConflictError, NotFoundError, ValidationError
+from aweb.mcp.mutations import current_mutation_callback
+from aweb.mcp.tools._common import require_team_context, team_identity
+from aweb.service_errors import ConflictError, ForbiddenError, NotFoundError, ValidationError
+
+# What the REST routes answer with 403, 404, 409 and 422.
+_REFUSALS = (ConflictError, ForbiddenError, NotFoundError, ValidationError)
+
+
+def _invalid(exc: InvalidRequest) -> str:
+    """The tool's answer to input the request model refuses, as the routes' 422."""
+    return json.dumps({
+        "error": "; ".join(
+            f"{'.'.join(str(part) for part in error['loc'])}: {error['msg']}" for error in exc.errors()
+        )
+    })
 
 
 async def task_create(
@@ -34,10 +52,7 @@ async def task_create(
     if auth is None:
         return error or json.dumps({"error": "This tool requires team context. Use a team certificate."})
     try:
-        result = await create_task(
-            db_infra,
-            team_id=auth.team_id,
-            created_by_alias=auth.alias,
+        payload = CreateTaskRequest(
             title=title,
             description=description,
             notes=notes,
@@ -47,7 +62,15 @@ async def task_create(
             parent_task_id=parent_task_id or None,
             assignee_alias=assignee or None,
         )
-    except ValidationError as exc:
+        result = await create_task(
+            db_infra,
+            actor=team_identity(auth),
+            on_mutation=current_mutation_callback(),
+            **payload.model_dump(),
+        )
+    except InvalidRequest as exc:
+        return _invalid(exc)
+    except _REFUSALS as exc:
         return json.dumps({"error": exc.detail})
     return json.dumps(result)
 
@@ -113,15 +136,13 @@ async def task_close(db_infra, *, ref: str) -> str:
     try:
         task = await update_task(
             db_infra,
-            team_id=auth.team_id,
+            actor=team_identity(auth),
+            on_mutation=current_mutation_callback(),
             ref=ref,
-            actor_alias=auth.alias,
             status="closed",
         )
-    except (NotFoundError, ValidationError) as exc:
+    except _REFUSALS as exc:
         return json.dumps({"error": exc.detail})
-    task.pop("old_status", None)
-    task.pop("claim_preacquired", None)
     return json.dumps(task)
 
 
@@ -171,15 +192,15 @@ async def task_update(
     try:
         task = await update_task(
             db_infra,
-            team_id=auth.team_id,
+            actor=team_identity(auth),
+            on_mutation=current_mutation_callback(),
             ref=ref,
-            actor_alias=auth.alias,
-            **kwargs,
+            **UpdateTaskRequest(**kwargs).changes(),
         )
-    except (ConflictError, NotFoundError, ValidationError) as exc:
+    except InvalidRequest as exc:
+        return _invalid(exc)
+    except _REFUSALS as exc:
         return json.dumps({"error": exc.detail})
-
-    task.pop("old_status", None)
     return json.dumps(task)
 
 
@@ -201,12 +222,14 @@ async def task_comment_add(db_infra, *, ref: str, body: str) -> str:
     try:
         comment = await add_comment(
             db_infra,
-            team_id=auth.team_id,
+            actor=team_identity(auth),
+            on_mutation=current_mutation_callback(),
             ref=ref,
-            author_alias=auth.alias,
-            body=body,
+            body=AddCommentRequest(body=body).body,
         )
-    except (NotFoundError, ValidationError) as exc:
+    except InvalidRequest as exc:
+        return _invalid(exc)
+    except _REFUSALS as exc:
         return json.dumps({"error": exc.detail})
     return json.dumps(comment)
 

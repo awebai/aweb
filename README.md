@@ -293,7 +293,7 @@ or manufacture team authority. The full boundary is documented in the
 | **Protocol and conformance material** (`docs/`, `test-vectors/`) | Defines the trust, messaging, federation, and extension contracts and their portable fixtures. |
 | **Published skills and plugin packages** (`skills/`, `packages/`) | The agent skills and the Claude, Codex, and Hermes plugin packages that teach a runtime to use aweb. |
 | **Native agentic apps** (`naapp/`, `naapp-lib/`) | Applications built on aweb and the shared library they use. |
-| **Maintainer operating material** (`agents/`, `oats/`, `resource-packs/`, `artifacts/`, `candidate-gate/`, `AGENTS.md`, `CLAUDE.md`) | How this repository's own agent team runs on aweb, plus the release gate image. Not part of the shipped product. |
+| **Maintainer operating material** (`agents/`, `oats/`, `resource-packs/`, `candidate-gate/`, `AGENTS.md`, `CLAUDE.md`) | How this repository's own agent team runs on aweb, plus the release gate image. Not part of the shipped product. |
 
 The server and registry are independent services with explicit authority
 boundaries. AWID defines and verifies identity and membership facts. aweb owns

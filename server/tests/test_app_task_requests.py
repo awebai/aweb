@@ -234,6 +234,39 @@ async def test_app_decision_answer_checks_proposal_and_choice_then_cancellation(
 
 
 @pytest.mark.asyncio
+async def test_app_cancellation_releases_the_claim_and_fires_its_events_as_the_app(app_request_context):
+    env, _, _, _ = app_request_context
+    made = await _app_http(app_request_context, "POST", "/v1/tasks/app-requests", _body(env))
+    assert made.status_code == 201, made.text
+    receipt = made.json()
+    claimed = await _v2_request(env, "bob", "PATCH", f'/v1/tasks/{receipt["task_ref"]}', {"status": "in_progress"})
+    assert claimed.status_code == 200, claimed.text
+    assert await env.db.fetch_value("SELECT count(*) FROM {{tables.task_claims}} WHERE task_ref=$1", receipt["task_ref"]) == 1
+    env.dispatched.clear()
+
+    path = f"/v1/tasks/app-requests/action-1/cancel?originator={env.actors['alice'].did}"
+    cancelled = await _app_http(app_request_context, "POST", path)
+    assert cancelled.status_code == 200, cancelled.text
+
+    assert await env.db.fetch_value("SELECT count(*) FROM {{tables.task_claims}} WHERE task_ref=$1", receipt["task_ref"]) == 0
+    comment_id = await env.db.fetch_value(
+        "SELECT comment_id FROM {{tables.task_comments}} WHERE task_id=$1 AND author_alias='app'", UUID(receipt["task_id"]),
+    )
+    # The app is the actor: no member identity is attached to its events.
+    assert env.dispatched == [
+        ("task.status_changed", {
+            "task_id": receipt["task_id"], "team_id": TEAM, "task_ref": receipt["task_ref"],
+            "actor_alias": "fixture", "old_status": "in_progress", "new_status": "closed",
+        }),
+        ("task.comment_added", {"task_id": receipt["task_id"], "comment_id": str(comment_id)}),
+    ]
+    # A repeated cancellation changes nothing and fires nothing.
+    again = await _app_http(app_request_context, "POST", path)
+    assert again.status_code == 200, again.text
+    assert len(env.dispatched) == 2
+
+
+@pytest.mark.asyncio
 async def test_uninstall_cancellation_and_claim_release_roll_back_together(app_request_context):
     from aweb.installations import uninstall_installation_on
 
