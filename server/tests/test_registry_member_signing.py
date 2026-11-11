@@ -172,3 +172,142 @@ def test_invalid_member_configuration_refused_at_startup(monkeypatch, tmp_path, 
     config.write_text(contents)
     with pytest.raises(ValueError, match="AWID_MEMBER_KEYS_FILE"):
         _build_awid_registry_client(create_app(), redis=None)
+
+
+@pytest.mark.asyncio
+async def test_real_private_team_verification_revocation_and_recovery(real_stack, monkeypatch, tmp_path):
+    """Real AWID gates + aweb's member, app-task and hook authority consumers."""
+    import hashlib
+    from datetime import datetime, timedelta, timezone
+    from types import SimpleNamespace
+    from uuid import uuid4
+
+    from fastapi import HTTPException
+    from starlette.requests import Request
+    from awid.signing import sign_message
+    from aweb.team_auth_envelope import compact_team_auth_payload
+    from aweb.team_auth_deps import verify_request_certificate
+    from aweb.coordination.app_tasks import verify_authorization_certificate
+    from aweb.hook_bindings import core_owner_act_verifier, OwnerActTeamKeyUnavailable
+    from aweb_naapp.hooks.owner_act import owner_act_signing_bytes, hook_binding_subject
+    from tests.test_team_auth import _make_certificate, _encode_certificate
+    from tests.real_stack import REGISTRY_URL
+
+    team_key = await real_stack.add_team(TEAM_ID)
+    team_did = did_from_public_key(bytes(team_key.verify_key))
+    await real_stack.awid_db.execute("UPDATE {{tables.teams}} SET visibility = 'private' WHERE domain = $1 AND name = $2", DOMAIN, TEAM)
+    _, server_did, _ = configure_member(monkeypatch, tmp_path)
+    monkeypatch.setenv("AWID_REGISTRY_URL", REGISTRY_URL)
+    monkeypatch.setenv("AWEB_REQUIRE_REGISTERED_CERTIFICATES", "true")
+    owner = RegistryClient(REGISTRY_URL, transport=real_stack.awid)
+    member_key, member_public = generate_keypair()
+    member_did = did_from_public_key(member_public)
+
+    async def issue(key_did, alias):
+        cert = _make_certificate(bytes(team_key), team_did, key_did, team_id=TEAM_ID,
+            alias=alias, identity_scope="local", certificate_id=str(uuid4()))
+        await owner.register_team_certificate(DOMAIN, TEAM,
+            team_controller_signing_key=bytes(team_key), certificate_id=cert["certificate_id"],
+            member_did_key=key_did, member_did_aw=None, member_address=None,
+            alias=alias, identity_scope="local", certificate=_encode_certificate(cert))
+        return cert
+
+    server_cert = await issue(server_did, "server")
+    member_cert = await issue(member_did, "alice")
+    now = [1000]
+    monkeypatch.setattr(registry_module, "_cache_now", lambda: now[0])
+    client = _build_awid_registry_client(create_app(), redis=_FakeRedis(), transport=real_stack.awid)
+    hosted = RegistryClient(REGISTRY_URL, service_token=real_stack.service_token, transport=real_stack.awid)
+    unsigned = RegistryClient(REGISTRY_URL, transport=real_stack.awid)
+    timestamp = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+    envelope = compact_team_auth_payload(team_id=TEAM_ID, timestamp=timestamp, body_sha256=hashlib.sha256(b"").hexdigest())
+    headers = {
+        "Authorization": f"DIDKey {member_did} {sign_message(member_key, envelope)}",
+        "X-AWEB-Timestamp": timestamp,
+        "X-AWID-Team-Certificate": _encode_certificate(member_cert),
+    }
+    request = Request({"type": "http", "method": "GET", "path": "/v1/tasks", "query_string": b"",
+        "headers": [(k.lower().encode(), v.encode()) for k, v in headers.items()],
+        "app": SimpleNamespace(state=SimpleNamespace(awid_registry_client=client, public_origin=""))})
+    authorization = {"payload": {"team_id": TEAM_ID, "certificate_id": member_cert["certificate_id"], "actor_did_key": member_did},
+        "certificate": _encode_certificate(member_cert)}
+    moment = datetime.now(timezone.utc)
+    act = {
+        "v": 1, "type": "aweb.owner-act", "team_id": TEAM_ID, "team_key_did": team_did,
+        "aud": "https://aweb.example", "act": "hook-binding.activate",
+        "issued_at": moment.strftime("%Y-%m-%dT%H:%M:%SZ"),
+        "expires_at": (moment + timedelta(minutes=5)).strftime("%Y-%m-%dT%H:%M:%SZ"),
+        "nonce": uuid4().hex,
+        "subject": hook_binding_subject(binding_id=str(uuid4()), installation_id=str(uuid4()), generation=1,
+            app_id="logs", origin="https://logs.example", digest="sha256:" + "a"*64,
+            kind="registration", catalog_id="aweb.hooks", catalog_version=1,
+            hook="post-command-hook", tool="audit", method="POST", path="/hooks/audit", scopes=[]),
+    }
+    signing = owner_act_signing_bytes(act)
+    verifier = core_owner_act_verifier(audience="https://aweb.example", registry_client=client)
+    try:
+        with pytest.raises(RegistryError) as denied:
+            await unsigned.get_team(DOMAIN, TEAM)
+        assert denied.value.status_code == 403
+        assert (await verify_request_certificate(request, real_stack.aweb_db))["alias"] == "alice"
+        assert (await verify_authorization_certificate(request, authorization))[0]["alias"] == "alice"
+        await verifier.prepare(signing, sign_message(bytes(team_key), signing), team_id=TEAM_ID)
+        assert (await client._request_json("GET", BASE + "/members/alice"))["alias"] == "alice"
+        assert (await hosted.get_team(DOMAIN, TEAM)).team_did_key == team_did
+        await owner.revoke_team_certificate(DOMAIN, TEAM, team_controller_signing_key=bytes(team_key), certificate_id=server_cert["certificate_id"])
+        # Fresh app and hook reads refuse immediately, even with warm caches.
+        with pytest.raises(HTTPException) as app_denied:
+            await verify_authorization_certificate(request, authorization)
+        assert app_denied.value.status_code == 503
+        with pytest.raises(OwnerActTeamKeyUnavailable):
+            await verifier.prepare(signing, sign_message(bytes(team_key), signing), team_id=TEAM_ID)
+        now[0] += 61
+        with pytest.raises(HTTPException) as auth_denied:
+            await verify_request_certificate(request, real_stack.aweb_db)
+        assert auth_denied.value.status_code == 503
+        assert (await hosted.get_team(DOMAIN, TEAM)).team_did_key == team_did
+        # Existing controller issuance restores access; no new recovery protocol.
+        await issue(server_did, "server")
+        assert (await verify_request_certificate(request, real_stack.aweb_db))["alias"] == "alice"
+    finally:
+        for registry in (client, hosted, owner, unsigned):
+            await registry.aclose()
+
+
+@pytest.mark.asyncio
+async def test_hosted_token_takes_precedence_and_stays_home_scoped(monkeypatch, tmp_path):
+    configure_member(monkeypatch, tmp_path)
+    token = "hosted-registry-service-token-at-least-32-bytes"
+    monkeypatch.setenv("AWID_SERVICE_TOKEN", token)
+    requests = []
+
+    async def handle(request):
+        requests.append(request)
+        return httpx.Response(200, json={})
+
+    client = _build_awid_registry_client(create_app(), redis=None, transport=httpx.MockTransport(handle))
+    try:
+        await client._request_json("GET", BASE)
+        assert requests[-1].headers["x-awid-service-token"] == token
+        assert "authorization" not in requests[-1].headers
+        await client._request_json("GET", BASE, registry_url="https://elsewhere.example")
+        assert "authorization" not in requests[-1].headers
+        assert "x-awid-service-token" not in requests[-1].headers
+    finally:
+        await client.aclose()
+
+
+def test_relative_member_key_paths_and_non_ed25519_refusal(monkeypatch, tmp_path):
+    from cryptography.hazmat.primitives.asymmetric.ec import generate_private_key, SECP256R1
+    from aweb.config import get_settings
+
+    key, _, config = configure_member(monkeypatch, tmp_path)
+    config.write_text(json.dumps({TEAM_ID: "server.pem"}))
+    settings = get_settings()
+    assert settings.awid_member_signing_keys == {TEAM_ID: key}
+    assert repr(key) not in repr(settings)
+    wrong_key = generate_private_key(SECP256R1()).private_bytes(
+        serialization.Encoding.PEM, serialization.PrivateFormat.PKCS8, serialization.NoEncryption())
+    (tmp_path / "server.pem").write_bytes(wrong_key)
+    with pytest.raises(ValueError, match="AWID_MEMBER_KEYS_FILE"):
+        get_settings()
