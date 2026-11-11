@@ -133,8 +133,13 @@ private environment file as evidence.
 After building the image, from `naapp/logs`, under the team's suite lock:
 
 ```sh
-uv run --frozen --no-sync python e2e/package_lab.py --image customer-logs:reviewed
+uv run --frozen --no-sync python e2e/package_lab.py --image customer-logs:reviewed --source-commit "$(git rev-parse HEAD)"
 ```
+
+Pass the commit used to build the image; the command assumes this checkout
+still matches it. The lab checks the image's default UID/GID without a user
+override, then requires its revision label and served build SHA to match that
+commit. The mounted-fixture service processes continue to use the host UID.
 
 This runs the shared lab (`aweb_naapp_testing.package_lab`): an internal Docker
 network, real PostgreSQL, Redis and AWID, an answering TXT DNS server and a TLS
