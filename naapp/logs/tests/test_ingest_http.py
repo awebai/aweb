@@ -77,6 +77,7 @@ class World:
     bindings: dict[str, str]
     now: datetime
     client: httpx.AsyncClient
+    runtime: object = None
 
     def event(self, kind, *, event_id=None, payload=None, producer=None, occurred_at=None, hook=None):
         signing, _ = signed_event(kind, team_id=self.member.team_id, event_id=event_id or str(uuid4()))
@@ -204,7 +205,10 @@ async def world(coordination, test_db_factory, tmp_path, monkeypatch, request):
     )
     async with service.api_app.router.lifespan_context(service.api_app):
         async with httpx.AsyncClient(transport=httpx.ASGITransport(app=service), base_url=ORIGIN) as client:
-            yield World(coordination, db, server_db, member, settings, installation, bindings, now, client)
+            yield World(
+                coordination, db, server_db, member, settings, installation, bindings, now, client,
+                service.api_app.state.runtime,
+            )
 
 
 def _code(response):
@@ -403,6 +407,31 @@ async def test_revoking_logs_own_certificate_stops_its_reads_of_the_private_team
     await world.coordination.registry.revoke(SERVICE_CERTIFICATE_ID)
     response = await world.send(world.delivery("client"))
     assert (response.status_code, _code(response)) == (403, "team_private_unreadable")
+
+
+@pytest.mark.parametrize("world", [{"customer_hosted": True}], indirect=True)
+async def test_a_private_team_unreadable_at_provenance_is_refused_like_at_the_key_read(world):
+    """The same condition gets the same code at either read: with the cache's
+    facts expiring between them, binding resolution reads the certificate
+    history, and the provenance read that follows finds the team unreadable."""
+    world.runtime.team_cache().ttl_seconds = 0
+    reads = []
+
+    def private_after_the_first(request: httpx.Request, response: httpx.Response):
+        signed_by_logs = request.headers.get("Authorization", "").startswith("DIDKey ")
+        if not (signed_by_logs and request.url.path.endswith("/certificates")):
+            return None
+        reads.append(request)
+        if len(reads) == 1:
+            return None
+        return httpx.Response(
+            403, json={"detail": {"code": "team_private", "message": "private"}}, request=request
+        )
+
+    world.coordination.registry.transport.fault = private_after_the_first
+    response = await world.send(world.delivery("client"))
+    assert (response.status_code, _code(response)) == (403, "team_private_unreadable")
+    assert len(reads) == 2
 
 
 async def test_identical_redelivery_returns_the_original_receipt_without_spending_quota(world):
