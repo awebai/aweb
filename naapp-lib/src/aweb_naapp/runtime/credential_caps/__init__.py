@@ -8,7 +8,9 @@ signer's protected effect, which does not exist yet: such evidence refuses.
 A key with no stored cap uses the deployment's configured one.
 
 A cap change and a credential change serialize on the cap row: `set_cap`
-holds it for update, `resolve` reads it for share. B3 reads the cap under its
+holds it for update, `resolve` reads it for share. An effect that mounts
+cap-set takes its installation fence and any role holds before `set_cap`,
+and never a fence or passkey lock after the cap row. B3 reads the cap under its
 own write preparation, through the app's resolver, which maps a scope to its
 key and calls `resolve`.
 """
