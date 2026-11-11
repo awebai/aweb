@@ -394,8 +394,11 @@ async def verify_epoch(
     stored receipts and checkpoints, and, for the current epoch, the locked
     head. ``stored`` reports each of logs' own artefacts the chain contradicts,
     by kind and sequence number, and whether the last stored event is the head;
-    either fault makes the report not intact. A writer of the tables without
-    logs' key cannot drop or rewrite what logs has signed unseen.
+    either fault makes the report not intact. Without logs' key, a writer of the
+    tables cannot rewrite a retained event unseen, nor drop a tail that a
+    surviving stored checkpoint covers. A tail removed together with the
+    checkpoints that cover it is seen only through witnesses held outside logs'
+    database, which the caller passes.
     """
     async with db.transaction() as tx:
         head = await _existing_head(tx, team_id)

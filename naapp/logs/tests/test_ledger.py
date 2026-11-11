@@ -520,3 +520,29 @@ async def test_verify_sees_a_middle_event_rewritten_with_its_hashes_recomputed(d
         ("receipt", 2),
         ("receipt", 3),
     }
+
+
+async def test_a_tail_dropped_with_its_checkpoints_is_seen_only_through_a_witness_held_outside_logs(
+    db,
+):
+    for seq in (1, 2, 3):
+        await _append(db, seq=seq, at=START + timedelta(seconds=seq))
+    await checkpoint_moved_heads(db, SIGNER, issued_at=START + timedelta(minutes=5))
+    kept = await db.fetch_one(
+        "SELECT signing_bytes, signature FROM {{tables.chain_checkpoints}} WHERE team_id = $1",
+        TEAM_ID,
+    )
+    assert kept is not None
+    witness = (bytes(kept["signing_bytes"]), kept["signature"])
+
+    # The writer removes the tail together with the checkpoint that covers it.
+    await _drop_last_event(db, move_head=True)
+    await db.execute("DELETE FROM {{tables.chain_checkpoints}} WHERE team_id = $1", TEAM_ID)
+    assert (await _report(db))["intact"] is True
+    report = await verify_epoch(
+        db, TEAM_ID, 1, receipt_keys=LOGS_KEYS, checkpoint_keys=LOGS_KEYS, checkpoints=[witness]
+    )
+    assert report["intact"] is False
+    assert [(c["artefact"], c["reason"]) for c in report["contradicted"]] == [
+        ("checkpoint", "not_in_chain")
+    ]
