@@ -60,13 +60,15 @@ def credential_handoff_router(
     *,
     store: HandoffStore,
     rp: RelyingParty,
-    admits: Callable[[dict[str, str]], Awaitable[bool]],
+    admits: Callable[[dict[str, str], str], Awaitable[bool]],
     limiter: LoginLimiter,
     session_result: Callable[[str, Request], Awaitable[dict | None]] | None = None,
 ) -> APIRouter:
     """The registration half of the handoff; `admits` checks the app namespace.
 
-    This callback admits a public registration target, never a role or session.
+    The callback receives the team authenticated at the signed start, retained
+    only in server-side handoff context. It admits a public registration target,
+    never a role or session. The public selector contains no team.
     The public credential must subsequently be bound by a verified owner act.
     """
 
@@ -87,7 +89,12 @@ def credential_handoff_router(
             "AND completed_at IS NULL AND released_at IS NULL",
             _id(handoff_id),
         )
-        if row is None or not await admits(_scope(row)):
+        if (
+            row is None
+            or not isinstance(row["team_id"], str)
+            or not row["team_id"]
+            or not await admits(_scope(row), row["team_id"])
+        ):
             raise HTTPException(403, "handoff_refused")
         return row
 
@@ -216,6 +223,25 @@ def credential_handoff_router(
         if type(value["v"]) is not int or value["v"] != 1:
             raise HTTPException(403, "handoff_refused")
         code, verifier = _token(value["code"]), _token(value["verifier"])
+        # Namespace projection can refresh authority: finish it before taking
+        # the handoff row lock, then recheck the retained identity under that lock.
+        candidate = await store.db.fetch_one(
+            "SELECT * FROM {{tables.console_handoffs}} WHERE handoff_id=$1",
+            _id(handoff_id),
+        )
+        if (
+            candidate is None
+            or candidate["purpose"] != "credential"
+            or not isinstance(candidate["team_id"], str)
+            or not candidate["team_id"]
+            or candidate["completed_at"] is None
+            or candidate["released_at"] is not None
+            or candidate["expires_at"] <= datetime.now(UTC)
+        ):
+            raise HTTPException(403, "handoff_refused")
+        scope, team_id = _scope(candidate), candidate["team_id"]
+        if not await admits(scope, team_id):
+            raise HTTPException(403, "handoff_refused")
         async with store.db.transaction() as tx:
             row = await tx.fetch_one(
                 "SELECT * FROM {{tables.console_handoffs}} WHERE handoff_id=$1 FOR UPDATE",
@@ -224,6 +250,8 @@ def credential_handoff_router(
             if (
                 row is None
                 or row["purpose"] != "credential"
+                or row["team_id"] != team_id
+                or _scope(row) != scope
                 or row["completed_at"] is None
                 or row["released_at"] is not None
                 or row["expires_at"] <= datetime.now(UTC)

@@ -121,14 +121,23 @@ class OwnerHoldingAuthority:
             raise _refused()
         return OwnerPublicScope(installation_id, role, principal)
 
-    async def credential_target(self, public_scope: PublicScope) -> OwnerCredentialTarget:
+    async def credential_target(
+        self, public_scope: PublicScope, *, team_id: str
+    ) -> OwnerCredentialTarget:
         scope = self._scope(public_scope)
-        # The root's sole lookup may refresh remote authority. No app lock yet.
+        # The signed start retained this team; no owner is required to collect
+        # an unbound credential. Refresh remote authority before any app lock.
+        if not isinstance(team_id, str) or not team_id:
+            raise _refused()
         try:
-            admitted = await self._console.installation(scope.installation_id)
+            admitted = await self._console.installation(scope.installation_id, team_id=team_id)
+        except InstallationRefused as exc:
+            if exc.code == "installation_inactive":
+                raise _refused() from None
+            raise
         except LookupError:
             raise _refused() from None
-        if admitted.installation_id != scope.installation_id:
+        if admitted.installation_id != scope.installation_id or admitted.team_id != team_id:
             raise _refused()
         async with self._console.db.transaction() as tx:
             await self._console.fence.check(tx, admitted)
@@ -138,8 +147,11 @@ class OwnerHoldingAuthority:
             owner_scope(admitted.installation_id, admitted.team_id, scope.principal),
         )
 
-    async def session_target(self, public_scope: PublicScope) -> OwnerSessionTarget:
-        destination = await self.credential_target(public_scope)
+    async def session_target(
+        self, public_scope: PublicScope, *, team_id: str
+    ) -> OwnerSessionTarget:
+        scope = self._scope(public_scope)
+        destination = await self.credential_target(scope, team_id=team_id)
         async with self._console.db.transaction() as tx:
             await self._console.fence.check(tx, destination.admitted)
             assigned_at = await self._role_stamp(tx, destination)
