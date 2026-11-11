@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -28,8 +29,10 @@ type signerStub struct {
 	wake     bool
 	// tamper changes the prepare answer (see the cases below).
 	tamper string
-	// dropPrepare records the prepare, then drops the connection unanswered.
+	// dropPrepare records the first prepare, then drops the connection
+	// unanswered. A repeated operation id must carry the identical body.
 	dropPrepare bool
+	firstBody   []byte
 	posts       atomic.Int32
 	expiresIn   time.Duration
 }
@@ -44,8 +47,15 @@ func newSignerStub(t *testing.T, receipts ...string) *signerStub {
 		case r.Method == http.MethodPost && r.URL.Path == "/request/protected-operations":
 			s.posts.Add(1)
 			body, _ := io.ReadAll(r.Body)
+			if s.firstBody != nil && !bytes.Equal(body, s.firstBody) {
+				w.WriteHeader(http.StatusConflict)
+				_, _ = w.Write([]byte(`{"detail":"operation_conflict"}`))
+				return
+			}
+			first := s.firstBody == nil
+			s.firstBody = body
 			_ = json.Unmarshal(body, &s.prepared)
-			if s.dropPrepare {
+			if s.dropPrepare && first {
 				conn, _, _ := w.(http.Hijacker).Hijack()
 				conn.Close()
 				return
@@ -241,6 +251,8 @@ func TestAMalformedReceiptIsNeverTakenAsAnOutcome(t *testing.T) {
 		`{"state":"committed","result":null}`,
 		`{"state":"committed"}`,
 		`{"state":"committed","result":"c2ln"}`,
+		`{"state":"committed","result":{"n":1.5}}`,
+		`{"state":"committed","result":{"n":9007199254740992}}`,
 		`{"state":"pending","state":"committed","result":{"signing":"c2lnbmluZw==","signature":"c2ln"}}`,
 		`{"state":"committed","result":{"signing":"c2lnbmluZw==","signature":"c2ln"},"code":"x"}`,
 		`{"state":"refused"}`,
@@ -283,6 +295,50 @@ func TestALostPrepareAnswerIsReconciledByItsReceiptWithoutPreparingAgain(t *test
 		if !strings.Contains(notes.String(), id) {
 			t.Errorf("the operation id was not reported: %q", notes.String())
 		}
+	}
+}
+
+func TestALostPrepareIsResumedWithItsSavedBodyAndTheServiceAnswersTheOriginal(t *testing.T) {
+	const id = "12121212-1212-4212-8212-121212121212"
+	stub := newSignerStub(t, pendingReceipt, committedReceipt)
+	stub.dropPrepare = true
+	var opened string
+	var saved []byte
+	opts := stub.options(&opened)
+	opts.Save = func(operationID string, body []byte) error {
+		if operationID != id || stub.posts.Load() != 0 {
+			t.Errorf("saved %s after %d posts", operationID, stub.posts.Load())
+		}
+		saved = append([]byte{}, body...)
+		return nil
+	}
+	receipt, err := Approve(context.Background(), opts, id, revokeIntent())
+	if ErrorCode(err) != "prepare_unconfirmed" || receipt.OperationID != id || saved == nil || opened != "" {
+		t.Fatalf("receipt %+v err %v", receipt, err)
+	}
+	opts.Save = nil
+	receipt, err = Resume(context.Background(), opts, saved)
+	if err != nil || receipt.State != "committed" || receipt.OperationID != id {
+		t.Fatalf("resumed %+v err %v", receipt, err)
+	}
+	if stub.posts.Load() != 2 || opened != stub.server.URL+"/human/handoff/h1" {
+		t.Fatalf("posts %d opened %q", stub.posts.Load(), opened)
+	}
+
+	// A fresh approval under the same id is a new body: the service refuses it.
+	_, err = Approve(context.Background(), opts, id, revokeIntent())
+	if ErrorCode(err) != "operation_conflict" {
+		t.Fatalf("a second approval under the same id: %v", err)
+	}
+}
+
+func TestAnApprovalWhoseBodyCannotBeSavedSendsNothing(t *testing.T) {
+	stub := newSignerStub(t, committedReceipt)
+	var opened string
+	opts := stub.options(&opened)
+	opts.Save = func(string, []byte) error { return errors.New("disk full") }
+	if _, err := Approve(context.Background(), opts, "13131313-1313-4313-8313-131313131313", revokeIntent()); err == nil || stub.posts.Load() != 0 {
+		t.Fatalf("err %v posts %d", err, stub.posts.Load())
 	}
 }
 

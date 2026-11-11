@@ -28,6 +28,9 @@ type GovernanceOptions struct {
 	Notify io.Writer
 	// PollInterval bounds how often the receipt is read without a wake.
 	PollInterval time.Duration
+	// Save persists an operation's exact prepare body before it is sent, so a
+	// lost answer can be resumed with Resume under the same id and binding.
+	Save func(operationID string, body []byte) error
 }
 
 // Prepared is a prepared protected operation: the frozen request the human
@@ -65,7 +68,8 @@ func Fingerprint(digest string) string {
 // the receipt until it is final. A browser return only wakes aw sooner.
 // committed returns the receipt; refused and unknown return it with an error
 // carrying their code. aw never prepares a new operation on its own: when the
-// prepare answer is lost it reconciles through the receipt of the same id.
+// prepare answer is lost it reconciles through the receipt of the same id,
+// and the saved body resumes it (Resume).
 func Approve(ctx context.Context, opts GovernanceOptions, operationID string, intent map[string]any) (*Receipt, error) {
 	for _, reserved := range []string{"operation_id", "redirect_uri"} {
 		if _, ok := intent[reserved]; ok {
@@ -77,13 +81,45 @@ func Approve(ctx context.Context, opts GovernanceOptions, operationID string, in
 		return nil, err
 	}
 	defer wake.Close()
-	body := map[string]any{}
+	members := map[string]any{}
 	for k, v := range intent {
-		body[k] = v
+		members[k] = v
 	}
-	body["operation_id"] = operationID
-	body["redirect_uri"] = wake.RedirectURI()
+	members["operation_id"] = operationID
+	members["redirect_uri"] = wake.RedirectURI()
+	raw, err := json.Marshal(members)
+	if err != nil {
+		return nil, coded("intent_invalid", err)
+	}
+	// The body as it decodes from its bytes, the same on a resume.
+	body, ok := decodeObject(raw)
+	if !ok {
+		return nil, coded("intent_invalid", errors.New("the intent is not a JSON object"))
+	}
+	if opts.Save != nil {
+		if err := opts.Save(operationID, raw); err != nil {
+			return nil, err
+		}
+	}
 	fmt.Fprintf(opts.Notify, "Preparing operation %s\n", operationID)
+	return approve(ctx, opts, operationID, body, wake)
+}
+
+// Resume sends a saved prepare body again, byte for byte: the protected
+// service answers a repeat of the same id and body with the original
+// operation, which is verified and approved as Approve does. The saved
+// redirect_uri's loopback is gone, so only the receipt is read.
+func Resume(ctx context.Context, opts GovernanceOptions, saved []byte) (*Receipt, error) {
+	body, ok := decodeObject(saved)
+	operationID, _ := body["operation_id"].(string)
+	if !ok || operationID == "" {
+		return nil, coded("intent_invalid", errors.New("the saved body is not a prepared operation's"))
+	}
+	fmt.Fprintf(opts.Notify, "Resuming operation %s\n", operationID)
+	return approve(ctx, opts, operationID, body, nil)
+}
+
+func approve(ctx context.Context, opts GovernanceOptions, operationID string, body map[string]any, wake *Loopback) (*Receipt, error) {
 	prepared, err := Prepare(ctx, opts, body)
 	if ErrorCode(err) == "prepare_answer_lost" {
 		return reconcileLostPrepare(ctx, opts, operationID, err)
@@ -91,7 +127,6 @@ func Approve(ctx context.Context, opts GovernanceOptions, operationID string, in
 	if err != nil {
 		return nil, err
 	}
-	wake.Expect(prepared.HandoffID)
 	page := opts.Human + "/handoff/" + url.PathEscape(prepared.HandoffID)
 	fmt.Fprintf(opts.Notify, "Operation %s\n  digest:      %s\n  fingerprint: %s\nApprove it on this page: %s\n",
 		prepared.OperationID, prepared.Digest, Fingerprint(prepared.Digest), page)
@@ -103,11 +138,14 @@ func Approve(ctx context.Context, opts GovernanceOptions, operationID string, in
 	woken := make(chan struct{}, 1)
 	waitCtx, stop := context.WithCancel(ctx)
 	defer stop()
-	go func() {
-		if _, err := wake.Wait(waitCtx, prepared.ExpiresAt); err == nil {
-			woken <- struct{}{}
-		}
-	}()
+	if wake != nil {
+		wake.Expect(prepared.HandoffID)
+		go func() {
+			if _, err := wake.Wait(waitCtx, prepared.ExpiresAt); err == nil {
+				woken <- struct{}{}
+			}
+		}()
+	}
 	interval := opts.PollInterval
 	if interval <= 0 {
 		interval = 2 * time.Second
@@ -138,8 +176,7 @@ func Approve(ctx context.Context, opts GovernanceOptions, operationID string, in
 
 // reconcileLostPrepare reads the receipt of an operation whose prepare answer
 // never arrived. A pending operation cannot be shown without its frozen
-// request, so aw reports it under its id for the human to run again; the
-// service answers a repeat of the same id and body with the original.
+// request, so aw reports it under its id, to be resumed from its saved body.
 func reconcileLostPrepare(ctx context.Context, opts GovernanceOptions, operationID string, lost error) (*Receipt, error) {
 	receipt, err := ReadReceipt(ctx, opts, operationID)
 	if err != nil {
@@ -147,7 +184,7 @@ func reconcileLostPrepare(ctx context.Context, opts GovernanceOptions, operation
 			coded("receipt_unavailable", fmt.Errorf("operation %s: %v, and its receipt could not be read: %w", operationID, lost, err))
 	}
 	if receipt.State == "pending" {
-		return receipt, coded("prepare_unconfirmed", fmt.Errorf("operation %s is pending but its prepare answer was lost; run it again with the same operation id", operationID))
+		return receipt, coded("prepare_unconfirmed", fmt.Errorf("operation %s is pending but its prepare answer was lost; resume it from its saved request", operationID))
 	}
 	return receipt, finalError(receipt)
 }
@@ -351,7 +388,11 @@ func decodeReceipt(reply []byte) (*Receipt, bool) {
 		if !exactMembers(object, []string{"state", "result"}) || !isObject {
 			return nil, false
 		}
-		receipt.Result, _ = awid.StrictCanonicalJSON(result)
+		canonical, err := awid.StrictCanonicalJSON(result)
+		if err != nil {
+			return nil, false
+		}
+		receipt.Result = canonical
 	case "refused", "unknown":
 		receipt.Code, _ = object["code"].(string)
 		if !exactMembers(object, []string{"state", "code"}) || receipt.Code == "" {
