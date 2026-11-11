@@ -2,6 +2,58 @@
 
 ## Unreleased
 
+- The MCP `send_chat` tool (with its `chat_send` alias, and
+  `send_message_to_contact` for chat) and the chat send routes,
+  `POST /v1/chat/sessions` and `POST /v1/chat/sessions/{session_id}/messages`,
+  resolve the recipients and store the message through one chat send, so a
+  send through the tool behaves as the same send through the routes:
+  - A chat that names its recipient by address records the recipient as the
+    sender's contact under the conditions the routes apply.
+  - `wait=true` on a send that names its recipient records the wait on the
+    session (`chat_sessions.wait_seconds`, `wait_started_at`,
+    `wait_started_by`). While the wait lasts the conversation stays pending
+    for the other party after they read the message, until they answer. A wait
+    on a `conversation_id` send is not recorded, as on
+    `POST /v1/chat/sessions/{session_id}/messages`.
+  - A hosted identity's signed payload and encrypted envelope are validated
+    before they are stored. A message sent by `conversation_id` signs no
+    `wait_seconds`, and a message to more than one recipient signs an empty
+    `to_did` and no `to_stable_id`. Encrypted chat to a recipient whose
+    published encryption key is in hosted custody is delivered when the
+    sender's own hosted key is published to this server, and is otherwise
+    refused with `recipient_custodial_no_e2ee`; `plaintext` sends are
+    unaffected.
+  - `hang_on` with a named recipient is sent as a message in the conversation
+    the two already share. With no such conversation the message is sent
+    without `hang_on`.
+  - A full address or `@handle` outside the sender's team reaches a recipient
+    on this server when the registry binds that address to it; `@handle`
+    references follow the same rule as full addresses. An address that reaches
+    no one is refused in the same words whether or not a local identity holds
+    the name.
+  - `to` accepts `team~alias` for another team of the sender's organization.
+  - An unknown alias is refused with `Unknown aliases: <alias>`, an unknown
+    `did:key` with `Recipient agent not found: <did>`, an unknown bare
+    `did:aw` with the routes' first-contact text, and a chat to oneself with
+    `Self-chat is not supported`.
+  - A message to a participant on another server whose stored delivery origin
+    answers 404, 410 or 421 is delivered once more to the origin the registry
+    names, when that origin differs.
+  - `chat.message_sent` is fired by the chat send with one context for the
+    tool and the routes.
+  - A refusal the caller can act on is returned as a sentence naming the next
+    action, with the code as `reason` where the refusal has one; the routes
+    answer the same refusals as before. The sentences are those of
+    `send_mail` for `sender_registry_unavailable`,
+    `recipient_custodial_no_e2ee`, `federation_envelope_invalid`,
+    `recipient_encryption_assertion_invalid_or_stale`,
+    `identity_binding_mismatch`, `identity_binding_unavailable` and an
+    encrypted envelope addressed to a key other than the one this server
+    records for the recipient, and for chat alone:
+    - A participant with no stable identity who is neither on this server nor
+      reachable on another: "this recipient can no longer be reached in this
+      conversation; start a new conversation with them by alias or address".
+
 - The MCP `send_mail` tool and `POST /v1/messages` resolve the recipient and
   store the message through one mail send, so a send through the tool behaves
   as the same send through the route:
