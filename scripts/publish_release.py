@@ -567,6 +567,11 @@ def publish_oci(root: Path, prefix: str, version: str, source_sha: str) -> None:
         print(f"release-index={json.dumps({'digest': staged, 'source_sha': source_sha, 'version': version}, sort_keys=True, separators=(',', ':'))}")
 
 
+def manifest_gated(prefix: str) -> bool:
+    """Whether the tag's lane publishes candidate-manifest bytes; images do not."""
+    return prefix in PYPI_LANES or prefix in NPM_LANES or prefix == "aw-v"
+
+
 def lane_files(prefix: str) -> dict[str, tuple[str, ...]]:
     """The package names a manifest-gated tag publishes, with the file kinds each needs."""
     if prefix in PYPI_LANES:
@@ -656,11 +661,14 @@ def released_aw() -> str:
     return tags["latest"]
 
 
-def publish(root: Path, tag: str, *, artifacts: Path, cloud_checkout: Path, cloud_tree: str, manifest_sha256: str,
-            expected_aw_released: str, dry_run: bool = False) -> None:
+def publish(root: Path, tag: str, *, artifacts: Path | None, cloud_checkout: Path | None, cloud_tree: str | None,
+            manifest_sha256: str | None, expected_aw_released: str | None, dry_run: bool = False) -> None:
+    """Gate inputs are absent only for image tags; main refuses a gated tag without them."""
     prefix, version, source_sha = tag_identity(root, tag)
     selected: list[dict] = []
-    if prefix in PYPI_LANES or prefix in NPM_LANES or prefix == "aw-v":
+    if manifest_gated(prefix):
+        if not (artifacts and cloud_checkout and cloud_tree and manifest_sha256 and expected_aw_released):
+            raise PublishRefusal(f"{tag} is manifest-gated and needs every gate input")
         selected = gated_publish_set(
             artifacts, prefix=prefix, version=version, source_sha=source_sha, cloud_checkout=cloud_checkout,
             cloud_tree=cloud_tree, manifest_sha256=manifest_sha256, expected_aw_released=expected_aw_released,
@@ -701,25 +709,32 @@ def publish(root: Path, tag: str, *, artifacts: Path, cloud_checkout: Path, clou
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--check-tag", action="store_true", help="validate tag/tree identity without publishing")
-    parser.add_argument("--artifacts", type=Path, help="the gated candidate artifact directory holding manifest.json")
-    parser.add_argument("--cloud-checkout", type=Path, help="Cloud checkout holding candidate-oss-verdict and its ledger")
+    parser.add_argument("--artifacts", help="the gated candidate artifact directory holding manifest.json")
+    parser.add_argument("--cloud-checkout", help="Cloud checkout holding candidate-oss-verdict and its ledger")
     parser.add_argument("--cloud-tree", help="Git tree id of current Cloud main the verdict was gated on")
     parser.add_argument("--manifest-sha256", help="sha256 of the exact gated manifest.json bytes")
     parser.add_argument("--expected-aw-released", help="npm latest @awebai/aw Cloud was gated against, X.Y.Z")
     parser.add_argument("--dry-run", action="store_true", help="run every check and print the publish set; upload nothing")
     parser.add_argument("tag")
     arguments = parser.parse_args(argv)
-    gate = ("artifacts", "cloud_checkout", "cloud_tree", "manifest_sha256", "expected_aw_released")
+    gate = {"artifacts": "CANDIDATE_ARTIFACT_DIR", "cloud_checkout": "CLOUD_CHECKOUT", "cloud_tree": "CLOUD_TREE",
+            "manifest_sha256": "OSS_MANIFEST_SHA256", "expected_aw_released": "EXPECTED_AW_RELEASED"}
     if not arguments.check_tag:
-        missing = [f"--{name.replace('_', '-')}" for name in gate if not getattr(arguments, name)]
+        try:
+            gated = manifest_gated(tag_parts(arguments.tag)[0])
+        except PublishRefusal as error:
+            parser.error(str(error))
+        missing = [f"{variable}= (--{name.replace('_', '-')})" for name, variable in gate.items()
+                   if gated and not getattr(arguments, name)]
         if missing:
-            parser.error(f"publishing requires {' '.join(missing)}")
+            parser.error(f"publishing {arguments.tag} requires {' '.join(missing)}")
     try:
         if arguments.check_tag:
             tag_identity(Path.cwd().resolve(), arguments.tag)
         else:
-            publish(Path.cwd().resolve(), arguments.tag, artifacts=arguments.artifacts,
-                    cloud_checkout=arguments.cloud_checkout, cloud_tree=arguments.cloud_tree,
+            publish(Path.cwd().resolve(), arguments.tag, artifacts=Path(arguments.artifacts) if arguments.artifacts else None,
+                    cloud_checkout=Path(arguments.cloud_checkout) if arguments.cloud_checkout else None,
+                    cloud_tree=arguments.cloud_tree,
                     manifest_sha256=arguments.manifest_sha256,
                     expected_aw_released=arguments.expected_aw_released, dry_run=arguments.dry_run)
     except (

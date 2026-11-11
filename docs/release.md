@@ -297,8 +297,8 @@ before publishing their package, and `make check-naapp-lib-package` refuses an
 ## Runnerless publication
 
 Every registry-backed tag can publish from the operator machine using the same
-tag dispatcher. OSS publishes only bytes that Cloud has passed. Every input is
-mandatory and has no default:
+tag dispatcher. OSS publishes only bytes that Cloud has passed. For a
+manifest-gated tag every input is mandatory and has no default:
 
 ```sh
 make release-publish TAG=server-v1.35.0 \
@@ -310,7 +310,7 @@ make release-publish TAG=server-v1.35.0 \
 ```
 
 `DRY_RUN=1` runs every check and prints the publish set without uploading.
-A missing input exits 2 before anything runs.
+For a manifest-gated tag, a missing input exits 2 before anything runs.
 
 For the PyPI, npm and `aw-v` lanes, the publisher uploads exactly the tag's
 rows of the candidate gate's `manifest.json`, and nothing it builds. It refuses
@@ -337,9 +337,16 @@ unless all of the following hold, in this order:
    output that does not parse. `AWEB_GATE_LEDGER` passes through when set.
 
 Each file is copied for upload and re-hashed again. The publisher then
-publishes or adopts it and reads it back, as before. Image tags (`awid-v`,
-`a2a-gw-v`, `secrets-v`, `logs-v`) are not in the manifest. The publisher says
-so and builds them from the tag, as before.
+publishes or adopts it and reads it back, as before.
+
+These are not manifest-gated: they are not in the candidate manifest and get no
+Cloud verdict.
+
+- Image tags (`awid-v`, `a2a-gw-v`, `secrets-v`, `logs-v`). They need none of
+  the gate inputs (`make release-publish TAG=awid-v0.5.19`). The publisher prints
+  that the tag is not manifest-gated and builds the image from the tag, as before.
+- Skills hosted ZIP assets. They are not part of this publication.
+- The aw GitHub release binaries that `awebai/aw` builds.
 
 Provide the credential required by the destination:
 
@@ -349,8 +356,7 @@ Provide the credential required by the destination:
 
 Publication refuses a same-version byte conflict. `aw-v` publishes all npm
 platform packages directly; hosted binary assets remain resumable when GitHub
-returns. Skills ZIPs are not in the manifest and are not part of this
-publication.
+returns.
 
 ## Repository boundary
 

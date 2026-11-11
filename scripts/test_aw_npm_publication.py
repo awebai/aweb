@@ -27,6 +27,44 @@ PACKAGES = ["aw-linux-x64", "aw-linux-arm64", "aw-darwin-x64", "aw-darwin-arm64"
             "aw-windows-x64", "aw-windows-arm64", "aw"]
 
 
+def publishing_env(root, registry, binaries=None):
+    """Publish to the owned fixture registry with a disposable token."""
+    config = root / "npmrc"
+    config.write_text(f"registry={registry.url}\n//{registry.url.split('//')[1]}/:_authToken=disposable-fixture\n")
+    path = os.environ["PATH"] if binaries is None else str(binaries) + os.pathsep + os.environ["PATH"]
+    return {**fixture_env(), "PATH": path,
+            "NPM_CONFIG_REGISTRY": registry.url, "NPM_CONFIG_USERCONFIG": str(config),
+            # Force the notifier path even on CI or a warm developer host.
+            # Its last-check marker lives in the cache's parent directory.
+            "NPM_CONFIG_CACHE": str(root / "cache"), "npm_config_cache": str(root / "cache"),
+            "NPM_CONFIG_UPDATE_NOTIFIER": "true", "npm_config_update_notifier": "true", "CI": "false",
+            "NODE_AUTH_TOKEN": "disposable-fixture"}
+
+
+def gated_channel_tarball(directory, version):
+    """A channel tarball meeting the shipped-package contract the e2e lane fixture states."""
+    import re
+    lane = (ROOT / "scripts/e2e/test_npm_exact_publish.sh").read_text()
+    markers = re.search(r"^CHANNEL_MARKERS='(.*?)'$", lane, re.S | re.M).group(1)
+    sentinel = re.search(r"^SENTINEL='(.*?)'$", lane, re.M).group(1)
+    files = {
+        "package/package.json": json.dumps({"name": "@awebai/claude-channel", "version": version,
+                                            "main": "./dist/index.js",
+                                            "files": ["dist", ".mcp.json", ".claude-plugin"]}),
+        "package/dist/index.js": markers + "\n" + sentinel + "\n",
+        "package/.mcp.json": json.dumps({"mcpServers": {"aweb-channel": {"command": "node"}}}),
+        "package/.claude-plugin/plugin.json": json.dumps({"name": "aweb-channel", "version": version}),
+    }
+    path = directory / f"awebai-claude-channel-{version}.tgz"
+    with tarfile.open(path, "w:gz") as archive:
+        for name, text in files.items():
+            raw = text.encode()
+            entry = tarfile.TarInfo(name)
+            entry.size = len(raw)
+            archive.addfile(entry, io.BytesIO(raw))
+    return path
+
+
 class PublicationTest(unittest.TestCase):
     def invoke(self, *args, **kwargs):
         return run_fixture([sys.executable, str(HELPER), *args], text=True,
@@ -63,6 +101,41 @@ class PublicationTest(unittest.TestCase):
         result = self.invoke("channel", "--version", "1.2.3-rc.1", "--staged-final")
         self.assertNotEqual(result.returncode, 0)
         self.assertIn("final version", result.stderr)
+
+    def test_channel_lane_uploads_its_gated_tarball_without_building(self):
+        sys.path.insert(0, str(ROOT / "scripts"))
+        import publish_release as publisher
+        from test_npm_readback import Registry
+        with tempfile.TemporaryDirectory() as directory, Registry().serve() as registry:
+            root = Path(directory)
+            (root / "scripts").mkdir()
+            shutil.copyfile(ROOT / "scripts/npm-exact-publish.sh", root / "scripts/npm-exact-publish.sh")
+            (root / "cli/go/npm").mkdir(parents=True)
+            shutil.copyfile(ROOT / "cli/go/npm/readback.py", root / "cli/go/npm/readback.py")
+            (root / "channel/scripts").mkdir(parents=True)
+            shutil.copyfile(ROOT / "channel/scripts/check-package-dist.mjs", root / "channel/scripts/check-package-dist.mjs")
+            (root / "channel/.claude-plugin").mkdir()
+            (root / "channel/package.json").write_text(json.dumps({"version": "3.4.5"}))
+            (root / "channel/.claude-plugin/plugin.json").write_text(json.dumps({"version": "3.4.5"}))
+            gated = root / "gated"
+            gated.mkdir()
+            archive = gated_channel_tarball(gated, "3.4.5")
+            row = dict(package="@awebai/claude-channel", version="3.4.5", path=str(archive),
+                       sha256=hashlib.sha256(archive.read_bytes()).hexdigest())
+            commands = []
+            real_run = publisher.run
+            def observe_run(root, *args, **kwargs):
+                commands.append(args)
+                return real_run(root, *args, **kwargs)
+            with mock.patch.dict(os.environ, publishing_env(root, registry), clear=True), \
+                    mock.patch.object(publisher, "request_json", return_value=(404, {})), \
+                    mock.patch.object(publisher, "run", side_effect=observe_run):
+                publisher.publish_npm(root, "channel-v", "3.4.5", [row])
+            self.assertEqual({name: hashlib.sha256(data).hexdigest() for name, data in registry.packages.items()},
+                             {"@awebai/claude-channel": row["sha256"]})
+            self.assertEqual([tags for _, _, tags in registry.published], [{"latest": "3.4.5"}])
+            self.assertFalse([argv for argv in commands if argv[:1] == ("npm",) or "pack-inspect" in argv],
+                             "the channel lane built or packed instead of uploading its gated tarball")
 
     def test_runnerless_publishes_and_checks_seven_exact_staged_tarballs(self):
         self.exercise_runnerless()
@@ -109,15 +182,7 @@ with open({str(compiles)!r}, "a") as calls: calls.write("compile\\n")
 ''')
             for path in binaries.iterdir():
                 path.chmod(0o755)
-            config = root / "npmrc"
-            config.write_text(f"registry={registry.url}\n//{registry.url.split('//')[1]}/:_authToken=disposable-fixture\n")
-            env = {**fixture_env(), "PATH": str(binaries) + os.pathsep + os.environ["PATH"],
-                   "NPM_CONFIG_REGISTRY": registry.url, "NPM_CONFIG_USERCONFIG": str(config),
-                   # Force the notifier path even on CI or a warm developer host.
-                   # Its last-check marker lives in the cache's parent directory.
-                   "NPM_CONFIG_CACHE": str(root / "cache"), "npm_config_cache": str(root / "cache"),
-                   "NPM_CONFIG_UPDATE_NOTIFIER": "true", "npm_config_update_notifier": "true", "CI": "false",
-                   "NODE_AUTH_TOKEN": "disposable-fixture"}
+            env = publishing_env(root, registry, binaries)
             readbacks = []
             first_read = None
             if lag:

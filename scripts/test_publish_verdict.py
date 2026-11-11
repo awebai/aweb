@@ -183,26 +183,45 @@ class GatedPublishSet(unittest.TestCase):
 
 class MandatoryInputs(unittest.TestCase):
     REQUIRED = ('CANDIDATE_ARTIFACT_DIR', 'CLOUD_CHECKOUT', 'CLOUD_TREE', 'OSS_MANIFEST_SHA256', 'EXPECTED_AW_RELEASED')
+    COMPLETE = dict(CANDIDATE_ARTIFACT_DIR='/nonexistent/artifacts', CLOUD_CHECKOUT='/nonexistent/cloud',
+                    CLOUD_TREE='c' * 40, OSS_MANIFEST_SHA256='0' * 64, EXPECTED_AW_RELEASED=RELEASED)
 
-    def test_each_missing_input_exits_2_before_publishing(self):
-        complete = dict(TAG='server-v1.0.0', CANDIDATE_ARTIFACT_DIR='/nonexistent/artifacts',
-                        CLOUD_CHECKOUT='/nonexistent/cloud', CLOUD_TREE='c' * 40,
-                        OSS_MANIFEST_SHA256='0' * 64, EXPECTED_AW_RELEASED=RELEASED)
-        with tempfile.TemporaryDirectory() as temporary:
-            shim = Path(temporary) / 'python3'
-            shim.write_text('#!/bin/sh\ntouch "$PUBLISH_CALLED"\nexit 0\n')
-            shim.chmod(0o755)
-            called = Path(temporary) / 'called'
-            environment = {name: value for name, value in os.environ.items() if name not in complete}
-            environment.update(PATH=f'{temporary}{os.pathsep}{os.environ["PATH"]}', PUBLISH_CALLED=str(called))
+    def release_publish(self, tag: str, **inputs: str) -> subprocess.CompletedProcess:
+        environment = {name: value for name, value in os.environ.items() if name not in (*self.COMPLETE, 'TAG')}
+        return subprocess.run(['make', '--no-print-directory', '-C', str(ROOT), 'release-publish', f'TAG={tag}',
+                               *(f'{name}={value}' for name, value in inputs.items())],
+                              env=environment, capture_output=True, text=True)
+
+    def test_each_missing_input_of_a_manifest_lane_exits_2_before_publishing(self):
+        for tag in ('server-v1.0.0', 'channel-v1.0.0', 'aw-v1.0.0'):
             for missing in self.REQUIRED:
-                with self.subTest(missing=missing):
-                    assignments = [f'{name}={value}' for name, value in complete.items() if name != missing]
-                    result = subprocess.run(['make', '--no-print-directory', '-C', str(ROOT), 'release-publish',
-                                             *assignments], env=environment, capture_output=True, text=True)
+                with self.subTest(tag=tag, missing=missing):
+                    result = self.release_publish(tag, **{name: value for name, value in self.COMPLETE.items()
+                                                          if name != missing})
                     self.assertEqual(result.returncode, 2, result.stderr)
                     self.assertIn(f'{missing}=', result.stderr)
-                    self.assertFalse(called.exists(), f'publisher ran without {missing}')
+                    self.assertNotIn('publish set', result.stdout)
+
+    def test_an_image_tag_without_gate_inputs_reaches_its_publisher(self):
+        result = self.release_publish('awid-v0.0.0')
+        self.assertEqual(result.returncode, 2, result.stderr)  # make's own status for the refused recipe
+        self.assertIn('local candidate tag awid-v0.0.0 is absent', result.stderr)
+        self.assertNotIn('requires', result.stderr)
+
+    def test_an_image_tag_without_gate_inputs_keeps_its_path_and_says_so(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            git('init', '-q', '-b', 'main', cwd=root)
+            (root / 'awid').mkdir()
+            (root / 'awid/pyproject.toml').write_text('[project]\nname = "awid-service"\nversion = "0.5.19"\n')
+            git('add', '.', cwd=root)
+            git('-c', 'user.name=fixture', '-c', 'user.email=fixture@example.invalid', 'commit', '-qm', 'image source',
+                cwd=root)
+            git('tag', 'awid-v0.5.19', cwd=root)
+            result = subprocess.run(['python3', str(ROOT / 'scripts/publish_release.py'), '--dry-run', 'awid-v0.5.19'],
+                                    cwd=root, capture_output=True, text=True)
+            self.assertEqual(result.returncode, 0, result.stderr)
+            self.assertIn('awid-v0.5.19 is not manifest-gated', result.stdout)
 
 
 if __name__ == '__main__':
