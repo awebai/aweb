@@ -456,6 +456,13 @@ async def test_replace_names_one_of_the_approvers_active_passkeys(pw):
     assert refused.value.reason == "not_active_credential"
 
 
+async def test_registration_options_exclude_the_holdings_active_passkeys(pw):
+    _, device, second = await two_credentials(pw)
+    options = await pw.passkeys.credential_registration_options(SCOPE)
+    excluded = {item["id"] for item in options["excludeCredentials"]}
+    assert excluded == {b64url(credential_of(device)), b64url(credential_of(second))}
+
+
 async def test_nobody_maintains_credentials_during_a_recovery_cooling_off(pw):
     await enrol(pw, CONTACT)
     await designate(pw, "new@example.com")
@@ -870,6 +877,22 @@ async def test_a_lowered_cap_keeps_every_credential_and_refuses_adds(pw):
     replaced = await prepare(lowered, replace=credential_of(third))
     await lowered.change_credential(SCOPE, device.get(replaced.options), fence=Fence(lowered))
     assert len(await active_credentials(pw, approver.subject)) == 3
+
+
+async def test_the_cap_counts_the_holdings_credentials_at_every_relying_party(pw):
+    """A credential bound to another relying party is still one of the
+    holding's active credentials, and counts toward its cap."""
+    passkeys = world_with(pw, credentials=CredentialPolicy(max_active=2))
+    approver, device = await enrol(pw, CONTACT)
+    _, elsewhere = await rotate(pw, device)
+    await pw.passkeys.db.execute(
+        "UPDATE {{tables.passkey_credentials}} SET rp_id = 'elsewhere.example.com' "
+        "WHERE credential_id = $1",
+        credential_of(elsewhere),
+    )
+    with pytest.raises(CredentialChangeRefused) as refused:
+        await prepare(passkeys)
+    assert refused.value.reason == "cap_reached"
 
 
 @pytest.mark.parametrize("max_active", [0, -1])

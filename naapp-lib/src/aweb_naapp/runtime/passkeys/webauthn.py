@@ -8,7 +8,7 @@ required. Every failure, malformed input included, is a `WebAuthnRefused`.
 
 from __future__ import annotations
 
-from collections.abc import Mapping
+from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
 from typing import Any
 
@@ -21,6 +21,7 @@ from webauthn.helpers import options_to_json_dict
 from webauthn.helpers.exceptions import WebAuthnException
 from webauthn.helpers.structs import (
     AuthenticatorSelectionCriteria,
+    PublicKeyCredentialDescriptor,
     ResidentKeyRequirement,
     UserVerificationRequirement,
 )
@@ -45,9 +46,17 @@ class VerifiedAssertion:
 
 
 def registration_options(
-    *, rp: RelyingParty, subject: str, display_name: str, challenge: bytes, timeout: int
+    *,
+    rp: RelyingParty,
+    subject: str,
+    display_name: str,
+    challenge: bytes,
+    timeout: int,
+    exclude: Sequence[bytes] = (),
 ) -> dict[str, Any]:
-    """B3 registration options; the caller owns the single-use challenge."""
+    """B3 registration options; the caller owns the single-use challenge.
+    `exclude` names credentials the authenticator should not register again,
+    a hint the caller still enforces itself."""
     options = generate_registration_options(
         rp_id=rp.rp_id,
         rp_name=rp.name,
@@ -56,6 +65,7 @@ def registration_options(
         user_display_name=display_name,
         challenge=challenge,
         timeout=timeout,
+        exclude_credentials=[PublicKeyCredentialDescriptor(id=c) for c in exclude],
         authenticator_selection=AuthenticatorSelectionCriteria(
             resident_key=ResidentKeyRequirement.PREFERRED,
             user_verification=UserVerificationRequirement.REQUIRED,

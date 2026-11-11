@@ -2292,7 +2292,8 @@ class Passkeys:
             raise CredentialChangeRefused("not_in_effect")
         if approver["contact"] is None:
             raise CredentialChangeRefused("no_notice_contact")
-        if not await self._active_credentials(approver["subject"]):
+        active = await self._active_credentials(approver["subject"])
+        if not active:
             raise CredentialChangeRefused("no_active_credential")
         nonce = secrets.token_bytes(32)
         preimage = registration_preimage(scope, approver["subject"], nonce)
@@ -2313,6 +2314,7 @@ class Passkeys:
             display_name=approver["contact"],
             challenge=challenge,
             timeout=int(self._change_ttl.total_seconds() * 1000),
+            exclude=[c["credential_id"] for c in active],
         )
 
     async def credential_change_options(
@@ -2362,7 +2364,7 @@ class Passkeys:
             retire = next((c for c in active if c["credential_id"] == replace), None)
             if retire is None:
                 raise CredentialChangeRefused("not_active_credential")
-        elif len(active) >= self._credentials.max_active:
+        elif await self._holding_count(self.db, subject) >= self._credentials.max_active:
             raise CredentialChangeRefused("cap_reached")
         nonce = secrets.token_bytes(32)
         preimage = change_preimage(
@@ -2492,7 +2494,10 @@ class Passkeys:
             ids = {c["credential_id"] for c in active}
             if asserting not in ids or (retire_id is not None and retire_id not in ids):
                 raise CredentialChangeRefused("stale_binding")
-            if retire_id is None and len(active) >= self._credentials.max_active:
+            if (
+                retire_id is None
+                and await self._holding_count(tx, subject) >= self._credentials.max_active
+            ):
                 raise CredentialChangeRefused("cap_reached")
             if await tx.fetch_value(
                 "SELECT 1 FROM {{tables.passkey_credentials}} WHERE credential_id = $1", new_id
@@ -2569,6 +2574,15 @@ class Passkeys:
             "ORDER BY c.credential_id",
             subject,
             self.rp.rp_id,
+        )
+
+    async def _holding_count(self, db: Any, subject: str) -> int:
+        """How many active credentials the holding has, at every relying
+        party: its cap counts them all."""
+        return await db.fetch_value(
+            "SELECT count(*) FROM {{tables.passkey_credentials}} "
+            "WHERE subject = $1 AND revoked_at IS NULL",
+            subject,
         )
 
     async def credential_change_status(self, scope: str, challenge: str) -> CredentialChangeStatus:
