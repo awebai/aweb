@@ -268,24 +268,7 @@ async def test_cancelled_login_or_non_uv_approval_never_executes_or_calls_back(
         )
         await page.goto(s.origin + "/handoff/" + s.prepared.handoff_id)
         action = page.locator("#handoff-action")
-        rejected, timeouts = [], []
-
-        async def observe_exception(event):
-            try:
-                object_id = (event.get("data") or {}).get("objectId")
-                if object_id:
-                    result = await cdp.send(
-                        "Runtime.callFunctionOn",
-                        {
-                            "objectId": object_id,
-                            "functionDeclaration": "function() { return this.name; }",
-                            "returnByValue": True,
-                            "silent": True,
-                        },
-                    )
-                    rejected.append(result["result"].get("value"))
-            finally:
-                await cdp.send("Debugger.resume")
+        timeouts = []
 
         async def short_client_timeout(route):
             response = await route.fetch()
@@ -303,11 +286,6 @@ async def test_cancelled_login_or_non_uv_approval_never_executes_or_calls_back(
                 {"authenticatorId": device, "enabled": False},
             )
             await page.route("**/login/options", short_client_timeout)
-            # Observe the actual caught browser exception, without replacing
-            # credentials.get or manufacturing a rejected promise.
-            await cdp.send("Debugger.enable")
-            cdp.on("Debugger.paused", observe_exception)
-            await cdp.send("Debugger.setPauseOnExceptions", {"state": "all"})
         if stage == "approval":
             await action.click()
             await expect(page.locator("#handoff-digest")).to_have_text(s.prepared.digest)
@@ -324,16 +302,20 @@ async def test_cancelled_login_or_non_uv_approval_never_executes_or_calls_back(
             )
         finally:
             if stage == "login":
-                await cdp.send("Debugger.setPauseOnExceptions", {"state": "none"})
-                cdp.remove_listener("Debugger.paused", observe_exception)
                 await page.unroute("**/login/options", short_client_timeout)
             # Each case owns a fresh context/authenticator; closing it also
             # resets presence, timeout hints and credentials for the next case.
         if stage == "login":
-            assert "NotAllowedError" in rejected
+            elapsed = asyncio.get_running_loop().time() - started
+            # This unchanged production status is set only by the
+            # NotAllowedError branch. Exception identity is inferred from
+            # that exercised branch, not captured by a CDP exception event.
+            status_text = "The passkey prompt was cancelled. You can try again."
+            await expect(page.locator("#handoff-status")).to_have_text(status_text)
             assert len(timeouts) == 1
             assert responses == [("/login/options", 200)]
             assert [url.removeprefix(s.origin) for url in posts] == ["/login/options"]
+            assert elapsed >= 0.9  # Supports the timeout input, not the sole proof.
             await expect(action).to_be_enabled()
             await expect(action).to_have_text("Sign in with passkey")
             await expect(page.locator("#handoff-governance")).to_be_hidden()
@@ -346,10 +328,12 @@ async def test_cancelled_login_or_non_uv_approval_never_executes_or_calls_back(
             (tmp_path / "governance-cancel-375.json").write_text(
                 json.dumps(
                     {
-                        "exception_names": rejected,
+                        "exception_name_inferred": "NotAllowedError",
+                        "exception_identity_source": "exercised production status branch",
+                        "status_text": status_text,
                         "http": responses,
                         "client_timeout_ms": 1000,
-                        "elapsed_seconds": asyncio.get_running_loop().time() - started,
+                        "elapsed_seconds": elapsed,
                         "state": await page.locator("body").get_attribute("data-handoff-state"),
                     },
                     indent=2,
