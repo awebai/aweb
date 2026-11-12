@@ -17,9 +17,7 @@ from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from types import MappingProxyType
 
-from nacl.signing import SigningKey
-
-from awid.did import did_from_public_key
+from awid.did import did_key_from_signing_key
 from awid.ratelimit import AWID_SERVICE_TOKEN_HEADER
 from awid.signing import sign_message
 from awid.team_ids import build_team_id
@@ -63,7 +61,7 @@ def path_signature_headers(method: str, path: str, signing_key: bytes) -> dict[s
     """``signing_key``'s signature of one request for exactly ``path``."""
     timestamp = datetime.now(timezone.utc).replace(microsecond=0).isoformat().replace("+00:00", "Z")
     payload = f"{timestamp}\n{method}\n{path}".encode("utf-8")
-    did_key = did_from_public_key(bytes(SigningKey(signing_key).verify_key))
+    did_key = did_key_from_signing_key(signing_key)
     return {
         "Authorization": f"DIDKey {did_key} {sign_message(signing_key, payload)}",
         "X-AWEB-Timestamp": timestamp,

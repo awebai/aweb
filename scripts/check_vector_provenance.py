@@ -293,6 +293,10 @@ ROOT_CONSUMERS = {
         "identity-log-v1.json",
         '_IDENTITY_VECTOR = _ROOT / "docs" / "vectors" / "identity-log-v1.json"',
     ),
+    PurePosixPath("awid/tests/test_did_key_from_signing_key.py"): _consumer(
+        "identity-log-v1.json",
+        'Path(__file__).resolve().parents[2] / "docs" / "vectors" / "identity-log-v1.json"',
+    ),
     PurePosixPath("awid/tests/test_federation_authority_vectors.py"): _consumer(
         {
             "federation-authority-state-v1.json",
@@ -513,10 +517,6 @@ ROOT_CONSUMERS = {
     PurePosixPath("cli/go/logschain/bundle_vectors_test.go"): _consumer(
         "logs-export-v1.json",
         '"../../../docs/vectors/logs-export-v1.json"',
-    ),
-    PurePosixPath("cli/go/cmd/aw/logs_verify_binary_test.go"): _consumer(
-        "logs-export-v1.json",
-        '"../../../../docs/vectors/logs-export-v1.json"',
     ),
     PurePosixPath("naapp/logs/tests/export_vector.py"): _consumer(
         "logs-export-v1.json",
@@ -757,6 +757,22 @@ ROOT_CONSUMERS = {
     PurePosixPath("channel-core/test/canonical_json_vector.test.ts"): _consumer(
         "canonical-json-v1.json",
         'new URL("../../docs/vectors/canonical-json-v1.json", import.meta.url)',
+    ),
+    PurePosixPath("cli/go/awid/request_envelope_as_message_test.go"): _consumer(
+        {
+            "message-display-binding-v1.json",
+            "team-auth-envelope-v2.json",
+        },
+        'filepath.Join("..", "..", "..", "docs", "vectors", "team-auth-envelope-v2.json")',
+        'filepath.Join("..", "..", "..", "docs", "vectors", "message-display-binding-v1.json")',
+    ),
+    PurePosixPath("channel-core/test/request_envelope_as_message.test.ts"): _consumer(
+        {
+            "message-display-binding-v1.json",
+            "team-auth-envelope-v2.json",
+        },
+        'new URL("../../docs/vectors/team-auth-envelope-v2.json", import.meta.url)',
+        'new URL("../../docs/vectors/message-display-binding-v1.json", import.meta.url)',
     ),
     PurePosixPath("scripts/check-extension-docs.py"): _consumer(
         {
