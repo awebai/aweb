@@ -1,14 +1,20 @@
 """Settled, keyboard-focused captures for callers already running Playwright."""
 
+from __future__ import annotations
+
 import asyncio
 import json
 from pathlib import Path
+from typing import TYPE_CHECKING
 
-from playwright.async_api import Locator, Page, expect
+if TYPE_CHECKING:
+    from playwright.async_api import Locator, Page
 
 
 async def capture_enabled_control(page: Page, control: Locator, path: Path) -> None:
     """Capture the actual enabled styles without disabling animations or changing CSS."""
+    from playwright.async_api import expect
+
     await expect(control).to_be_enabled()
     await control.focus()
     # Reach it with the keyboard, so :focus-visible is real rather than forced.
