@@ -13,6 +13,7 @@ from aweb_naapp.runtime.protected_signer import (
     SignerRefused,
 )
 from awid.identity_observation import observe_identity_binding, observe_identity_kind
+from awid.registry_types import RegistryThrottled
 
 logger = logging.getLogger(__name__)
 
@@ -93,11 +94,18 @@ class IndependentAuthority:
             team_key = await self.registry.get_team_public_key_fresh(domain, name)
         except SignerRefused:
             raise
-        except Exception:
+        except Exception as exc:
             logger.warning(
                 "Protected signer registry evidence unavailable", exc_info=True
             )
-            raise SignerRefused("evidence_unavailable") from None
+            raise SignerRefused(
+                "evidence_unavailable",
+                retry_after_seconds=(
+                    exc.retry_after_seconds
+                    if isinstance(exc, RegistryThrottled)
+                    else None
+                ),
+            ) from None
         if team_key != self.custody.team_key_did:
             raise SignerRefused("authority_changed")
         return _Current(self, context, purpose, started + 60)
