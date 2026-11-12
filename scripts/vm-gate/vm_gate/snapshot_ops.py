@@ -11,6 +11,7 @@ import time
 from .errors import Infrastructure, Refused
 from .executor import Executor, REMOTE
 from .host_contract import verify_receipt
+from .host_keys import forget
 from .lifecycle import write_summary
 from .reaping import reap_and_settle
 from .toolplan import resolve
@@ -125,6 +126,7 @@ class SnapshotOperations:
         self.provider = self.r.provider()
         self.remote.provider = self.provider
         self.reaped = reap_and_settle(self.provider, self.r.store)
+        self.r._forget_reaped_keys()
         self.quote = self.provider.read("pricing", self.server_type)
         image = self.provider.read("image_info", self.old_id)
         if (
@@ -321,6 +323,7 @@ sync
         for name in [
             "ssh-key",
             "ssh-key.pub",
+            "ssh-host-key.pub",
             "source.json",
             "source.bundle",
             "ledger-before.tsv",
@@ -389,6 +392,7 @@ sync
         ]
         if remaining:
             raise Infrastructure("recorded snapshot transient resources remain")
+        forget(self.directory)
         self.finished = time.time()
         for row in self.servers.values():
             row.setdefault("deleted", self.finished)
@@ -422,9 +426,6 @@ sync
             "basis": "compute billed hours plus conservative fourteen-day snapshot storage",
         }
         self.save(cost=self.cost, new_snapshot_id=self.new_id)
-        for directory in [self.directory, self.directory / "restore"]:
-            for name in ["ssh-key", "ssh-key.pub"]:
-                (directory / name).unlink(missing_ok=True)
 
     def result(self, error=None):
         known = isinstance(error, (Infrastructure, Refused))

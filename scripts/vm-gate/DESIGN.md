@@ -14,7 +14,12 @@ A repository adapter derives host requirements from the selected bytes, checks i
 
 ## Lifecycle, concurrency and spend
 
-Each run has a UUID, private directory, immutable input manifest and atomic state/summary files protected by its run lock. Provider resources use the distinct `aweb-vm-gate.*` label namespace, carrying run, owner, SHA and expiry. This lets the B1 diagnostic helpers retain their original namespace without either reaper touching the other’s VMs; SSH trust uses the provider server ID. Paginated inventory precedes allocation. Reads have bounded transient retries; mutations are single attempts, uncertain creates reconcile by label, and capacity refusals name the requested type/code without fallback.
+Each run has a UUID, private directory, immutable input manifest and atomic state/summary files protected by its run lock. Provider resources use the distinct `aweb-vm-gate.*` label namespace, carrying run, owner, SHA and expiry. This lets the B1 diagnostic helpers retain their original namespace without either reaper touching the other’s VMs; SSH trust uses the provider server ID. A per-run Ed25519 host key is generated
+locally, injected through cloud-init ssh_keys, and pinned before contact with
+StrictHostKeyChecking=yes. A wrong-key negative control follows positive pinned
+readiness and must produce the host-verification refusal. The host private key
+in disposable provider user-data is an accepted trade-off; local key files are
+deleted only after exact-ID/label cleanup, including reaping a killed run. Paginated inventory precedes allocation. Reads have bounded transient retries; mutations are single attempts, uncertain creates reconcile by label, and capacity refusals name the requested type/code without fallback.
 
 A transaction-backed local spend ledger reserves a conservative maximum before create, counts outstanding reservations across processes, then settles observed lifetime rounded by provider billing. Both server and Primary IP rates are read live in EUR; uncertain accepted resources are included in settlement after label reconciliation. The initial cumulative cap is EUR 150 for the first two weeks, seeded with existing lab spend; daily EUR 20 produces a warning. Independent runs use independent VMs. Shared registry/spend operations use database transactions; authoritative gate-ledger operations use locks. Same-tree stage invocations retain the source gate's exclusion semantics, while unrelated trees and focused commands can run concurrently.
 

@@ -70,7 +70,8 @@ umask 022
 id gateuser >/dev/null 2>&1 || useradd --uid 1000 --create-home --shell /bin/bash --groups docker gateuser
 usermod -aG docker gateuser
 test "$(id -u gateuser)" = 1000
-install -d -m 0750 -o gateuser -g gateuser {REMOTE} {LOGS}
+install -d -m 0755 -o root -g root {REMOTE}
+install -d -m 0750 -o gateuser -g gateuser {LOGS}
 install -d -m 0755 -o root -g root {REMOTE}/operator
 """
 
@@ -144,6 +145,9 @@ exit "$status"
                 except Infrastructure:
                     pass  # Bounded, idempotent readiness probe; never a create retry.
             time.sleep(min(2, self.remaining()))
+        negative = self.transport.prove_mismatch(timeout=min(10, self.remaining()))
+        (self.directory / "ssh-host-key-negative.stderr").write_text(negative.stderr)
+        (self.directory / "ssh-host-key-negative.stdout").write_text(negative.stdout)
         self.run("bash -c " + Q(self.directories_program()), "directories")
         expected = self.directory / "expected-host.json"
         expected.write_text(json.dumps(self.config["manifest"], indent=2) + "\n")

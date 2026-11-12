@@ -16,6 +16,7 @@ from .config_lease import ConfigLease
 from .errors import Infrastructure, Refused
 from .executor import Executor
 from .expiry import CompletionBudget
+from .host_keys import forget, public_key
 from .ledger import LedgerLease
 from .lifecycle import run_session, write_summary
 from .preflight import read_hcloud_token
@@ -94,6 +95,7 @@ class Runtime:
 
     def reap(self):
         receipt = reap_and_settle(self.provider(), self.store)
+        self._forget_reaped_keys()
         return {
             "exit": 0,
             "infrastructure": None,
@@ -105,24 +107,36 @@ class Runtime:
         for name in ["ssh", "scp", "ssh-keygen", "bash"]:
             if not shutil.which(name):
                 raise Refused("local command missing: " + name)
-        result = subprocess.run(
-            [
-                shutil.which("ssh-keygen"),
-                "-q",
-                "-t",
-                "ed25519",
-                "-N",
-                "",
-                "-f",
-                str(self.directory / "ssh-key"),
-            ],
-            capture_output=True,
-            timeout=30,
-            env=child_environment(),
-        )
-        if result.returncode:
-            raise Infrastructure("session SSH key generation failed")
+        for name in ["ssh-key", "ssh-host-key"]:
+            result = subprocess.run(
+                [
+                    shutil.which("ssh-keygen"),
+                    "-q",
+                    "-t",
+                    "ed25519",
+                    "-N",
+                    "",
+                    "-f",
+                    str(self.directory / name),
+                ],
+                capture_output=True,
+                timeout=30,
+                env=child_environment(),
+            )
+            if result.returncode:
+                raise Infrastructure("session SSH key generation failed")
         self.config["public_key"] = (self.directory / "ssh-key.pub").read_text()
+        self.config["ssh_host_private"] = (self.directory / "ssh-host-key").read_text()
+        self.config["ssh_host_public"] = public_key(self.directory / "ssh-host-key.pub")
+
+    def _forget_reaped_keys(self):
+        for row in self.store.runs():
+            if row.get("reaped") and row.get("settled") is not None:
+                root = (Path(self.config["state_root"]) / "runs").resolve()
+                directory = (root / row["run_id"]).resolve()
+                if not directory.is_relative_to(root):
+                    raise Infrastructure("invalid reaped run state path")
+                forget(directory)
 
     def _ledger_logs(self):
         logs = Path(self.config["ledger"]).parent / "gate-logs"
@@ -150,7 +164,14 @@ class Runtime:
 
     def run(self):
         with ConfigLease(self.config):
-            return self._run()
+            try:
+                return self._run()
+            finally:
+                row = self.store.get(self.run_id)
+                if row is None or row.get("settled") is not None:
+                    # No reservation means this run never attempted a create;
+                    # settlement requires proven resource absence.
+                    forget(self.directory)
 
     def _run(self):
         source = self.source
@@ -166,6 +187,7 @@ class Runtime:
             remote.provider = provider
             # No pricing or image read precedes expiry cleanup.
             reaped = reap_and_settle(provider, self.store)
+            self._forget_reaped_keys()
             quote = provider.read("pricing", self.args.type)
             image = provider.read("image_info", self.config["snapshot_id"])
             if (
@@ -224,11 +246,7 @@ class Runtime:
                     error=str(exc),
                 )
             if result.get("cleanup", {}).get("exact_ids_absent"):
-                for path in [
-                    self.directory / "ssh-key",
-                    self.directory / "ssh-key.pub",
-                ]:
-                    path.unlink(missing_ok=True)
+                forget(self.directory)
             if self.store.get(self.run_id) is not None:
                 self.store.update(
                     self.run_id,
@@ -248,7 +266,12 @@ class Runtime:
         with ConfigLease(self.config, exclusive=True):
             operations = SnapshotOperations(self)
             try:
-                rebuild(operations)
-            except BaseException as exc:
-                return operations.result(exc)
-            return operations.result()
+                try:
+                    rebuild(operations)
+                except BaseException as exc:
+                    return operations.result(exc)
+                return operations.result()
+            finally:
+                row = self.store.get(self.run_id)
+                if row is None or row.get("settled") is not None:
+                    forget(self.directory)

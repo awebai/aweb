@@ -6,7 +6,8 @@ source permissions nor the SSH daemon's umask determine admission.
 
 | Path | Owner | Mode / rule | Consumer |
 |---|---|---|---|
-| `/opt/vm-gate`, `/var/log/vm-gate` | gateuser:gateuser | 0750 | Root setup; UID1000 traversal and log writes |
+| `/opt/vm-gate` | root:root | 0755 | Root code cannot be replaced by renaming its parent; UID1000 traversal |
+| `/var/log/vm-gate` | gateuser:gateuser | 0750 | UID1000 log writes; root collection |
 | `operator/` and module files | root:root | directories0755, files0644 after extraction | UID1000 Python imports; root sampler |
 | `source.json`, `expected-host.json` | gateuser:gateuser | 0600 | UID0 negative control and UID1000 host verification |
 | `launch.sh` | gateuser:gateuser | 0700 | UID1000 bash; uploaded through the same function before verification |
@@ -23,7 +24,7 @@ source permissions nor the SSH daemon's umask determine admission.
 | Gate-owned `/tmp` fixtures and runner volumes | source gate's users | determined by the tested source; not repaired by dispatcher | Source cleanup and root evidence collector |
 
 Local keys, summaries, transferred archives and state remain in the private
-operator directory under umask077. No local SSH private key is uploaded.
+operator directory under umask077. No client SSH private key is uploaded. The separate per-run host private key is injected through provider user-data into sshd; local host/client keys are removed after proven cleanup, including expiry recovery.
 Snapshot restored-host preparation uses the same transfer/ownership path.
 
 `acceptance/linux_launch.py` runs the actual prepare → root refusal → UID1000

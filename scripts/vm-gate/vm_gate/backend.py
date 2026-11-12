@@ -1,6 +1,7 @@
 """Hetzner SDK boundary. Mutations have no SDK retries; labels own every ID."""
 
 import time
+import json
 from .errors import Infrastructure, Refused
 from .provider import Provider
 
@@ -151,6 +152,17 @@ class Backend:
         return self.resource("ip", result["primary_ip"])
 
     def create_server(self, *, server_type, labels, key, ip):
+        private = self.config.get("ssh_host_private")
+        public = self.config.get("ssh_host_public")
+        if not private or not public:
+            raise Infrastructure("per-run SSH host key missing; refusing server create")
+        user_data = "#cloud-config\n" + json.dumps(
+            {
+                "ssh_deletekeys": True,
+                "ssh_genkeytypes": [],
+                "ssh_keys": {"ed25519_private": private, "ed25519_public": public},
+            }
+        )
         result = self.request(
             "POST",
             "/servers",
@@ -159,6 +171,7 @@ class Backend:
                 "server_type": server_type,
                 "image": self.config["snapshot_id"],
                 "ssh_keys": [key["id"]],
+                "user_data": user_data,
                 "location": self.config["location"],
                 "public_net": {
                     "enable_ipv4": True,

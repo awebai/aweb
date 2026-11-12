@@ -146,6 +146,39 @@ class BackendTests(unittest.TestCase):
         )
         self.assertEqual(calls[-1][2]["json"], expected)
 
+    def test_host_key_is_injected_as_private_cloud_init_not_resource_metadata(self):
+        client = RealClient(token="offline-fixture-token")
+        calls = []
+
+        def capture(method, url, **kwargs):
+            calls.append((method, url, kwargs))
+            return {"server": {"id": 3, "labels": kwargs["json"]["labels"]}}
+
+        client._client.request = capture
+        config = {
+            "snapshot_id": 1,
+            "location": "location",
+            "ssh_host_private": "PRIVATE FIXTURE",
+            "ssh_host_public": "ssh-ed25519 PUBLIC-FIXTURE",
+        }
+        backend = Backend(client, config)
+        resource = backend.create_server(
+            server_type="ccx33",
+            labels={"run_id": "r", "owner": "seat", "sha": "a" * 40, "expires": 999},
+            key={"id": 2},
+            ip={"id": 4},
+        )
+        import json
+
+        payload = calls[-1][2]["json"]
+        self.assertTrue(payload["user_data"].startswith("#cloud-config\n"))
+        cloud = json.loads(payload["user_data"].split("\n", 1)[1])
+        self.assertEqual(cloud["ssh_keys"]["ed25519_private"], "PRIVATE FIXTURE")
+        self.assertEqual(
+            cloud["ssh_keys"]["ed25519_public"], "ssh-ed25519 PUBLIC-FIXTURE"
+        )
+        self.assertNotIn("PRIVATE FIXTURE", str(resource))
+
     def test_snapshot_is_protected_from_transient_cleanup_at_creation(self):
         client = RealClient(token="offline-fixture-token")
         calls = []

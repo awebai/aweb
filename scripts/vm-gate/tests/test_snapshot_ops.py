@@ -139,7 +139,7 @@ class SnapshotOperationsTests(GitFixture, unittest.TestCase):
         )
 
         def key():
-            for name in ["ssh-key", "ssh-key.pub"]:
+            for name in ["ssh-key", "ssh-key.pub", "ssh-host-key.pub"]:
                 (self.directory / name).write_text("fixture")
 
         self.key = patch.object(self.runtime, "_key", side_effect=key)

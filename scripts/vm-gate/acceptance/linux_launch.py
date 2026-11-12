@@ -46,6 +46,12 @@ class DockerTransport:
             raise RuntimeError(result.stderr)
         return result
 
+    def prove_mismatch(self, **kwargs):
+        # This fixture transport tests permissions, not the SSH connection.
+        return types.SimpleNamespace(
+            stdout="", stderr="fixture SSH boundary (not a host-key proof)"
+        )
+
     def copy(self, source, target, *, timeout, download=False):
         pair = (
             [self.container + ":" + str(source), str(target)]

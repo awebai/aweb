@@ -91,8 +91,16 @@ Each admitted run reaps expired dispatcher resources before creating anything.
 A capacity refusal names the server type and provider code, with no retry or
 fallback. Other failed/uncertain creates reconcile labels and stop. SDK mutation
 retries are disabled and read back using hcloud 2.27.0's real client layout.
-Reads may retry transient failures three times. SSH trust has a separate alias
-for every server ID. The gate user belongs to the Docker group; UID admission
+Reads may retry transient failures three times. A per-run Ed25519 host key is
+generated locally and injected with cloud-init's ssh_keys; its public key is
+pinned under a separate alias for every server ID before SSH begins.
+StrictHostKeyChecking=yes and a private known_hosts file prevent first-contact
+key acceptance. After positive pinned readiness, a valid mismatched-key control
+must fail specifically at host verification before setup continues. The host
+private key exists in provider user-data and local private state for that
+disposable run; cleanup and reaping remove the local keys after proven absence.
+This is the accepted single-tenant VM trade-off. See the
+[cloud-init SSH schema](https://docs.cloud-init.io/en/latest/reference/modules.html#ssh). The gate user belongs to the Docker group; UID admission
 is not a privilege-separation claim.
 
 Expiry includes setup, full command timeout, TERM/KILL grace, evidence pull,
