@@ -132,6 +132,8 @@ class World:
             "TEST_AWID_IMAGE": images["awid"],
             "TEST_CLI_IMAGE": images["cli"],
             "TEST_REGISTRY_ORIGIN": origin("registry"),
+            # The front's certificates come from this world's own authority.
+            "TEAM_DEPLOYMENT_INGRESS_CA": str(self.world / "tls" / "ca.pem"),
         }
 
     # --- files ---------------------------------------------------------
@@ -552,7 +554,8 @@ def journey(world: World) -> int:
     world.configure_agents()
     status = world.up()
     if status == 3:
-        print("AGENTS HELD: egress is healthy and the agents network isolated; the ingress refusal probe has not run")
+        print("AGENTS HELD: egress is healthy, the agents network isolated and the ingress refusal probe passed;"
+              " the boundary probes from the agents network have not run")
         return 0
     print("BOUNDARY: the agents stage did not come up; see the adapter's output")
     return 1

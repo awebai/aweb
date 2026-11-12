@@ -218,6 +218,51 @@ start_egress() {
   fi
 }
 
+# The signer's two surfaces each have one existing GET route that answers 200:
+# its request origin's readiness and its human origin's page stylesheet.
+SIGNER_REQUEST_PATH=/readyz
+SIGNER_HUMAN_PATH=/handoff-assets/handoff.css
+
+# The OATS ingress refusal probe (egress image, probe-ingress.mjs), from the
+# services side against the actual TLS ingress: the signer's request SNI must
+# never carry a request for its human Host or :authority to the backend, and
+# matched requests must reach it. It reads the signer's own access log,
+# followed from before the first probe request. TEAM_DEPLOYMENT_INGRESS_CA
+# names the ingress's trust anchors when a private authority signed it.
+ingress_probe() {
+  local origins log follower ca_mount=() ca_flag=() out status
+  read -r -a origins < <(python_in_server - "$deployment" "$run_dir/egress-policy.json" <<'PY'
+import json
+import sys
+
+import yaml
+
+config = yaml.safe_load(open(sys.argv[1], encoding="utf-8"))
+policy = json.load(open(sys.argv[2], encoding="utf-8"))
+print(policy["targets"]["signer"]["addresses"][0], config["signer"]["requestOrigin"], config["signer"]["humanOrigin"])
+PY
+)
+  log="$run_dir/signer-backend.log"
+  : >"$log"
+  dc logs --follow --no-color --no-log-prefix signer >>"$log" 2>&1 &
+  follower=$!
+  # The follower is attached once it has written the log so far.
+  for _ in $(seq 1 50); do [[ -s "$log" ]] && break; sleep 0.2; done
+  if [[ -n "${TEAM_DEPLOYMENT_INGRESS_CA:-}" ]]; then
+    ca_mount=(-v "$TEAM_DEPLOYMENT_INGRESS_CA:/probe/ca.pem:ro")
+    ca_flag=(--ca-file /probe/ca.pem)
+  fi
+  out="$(docker run --rm --network "${project}_services" -v "$log:/probe/signer.log:ro" ${ca_mount[@]+"${ca_mount[@]}"} \
+    --entrypoint node "$(env_value EGRESS_IMAGE)" /opt/egress/probe-ingress.mjs \
+    --address "${origins[0]}" --request-origin "${origins[1]}" --human-origin "${origins[2]}" \
+    --request-log /probe/signer.log --human-log /probe/signer.log ${ca_flag[@]+"${ca_flag[@]}"} \
+    --request-path "$SIGNER_REQUEST_PATH" --human-path "$SIGNER_HUMAN_PATH" </dev/null)" && status=0 || status=$?
+  kill "$follower" 2>/dev/null || true
+  wait "$follower" 2>/dev/null || true
+  echo "ingress refusal probe: exit $status, $out"
+  [[ "$status" -eq 0 && "$out" == OATS_EGRESS_INGRESS_PASS ]]
+}
+
 up() {
   mkdir -p "$run_dir"
   python_in_server "$TEAM_DIR/render_env.py" "$deployment" >"$env_file.tmp"
@@ -295,8 +340,12 @@ sys.exit(status != 200)
     dc ps --format '{{.Service}} {{.Status}}'
     # The signer's request origin is one of egress's five routes. Until the
     # ingress is shown to refuse that origin's SNI carrying the human origin's
-    # Host or :authority (OATS probe-ingress.mjs), no agent is admitted.
-    echo "e2e-team-deployment: agents held: the ingress refusal probe has not run" >&2
+    # Host or :authority, no agent is admitted.
+    if ! ingress_probe; then
+      echo "e2e-team-deployment: agents held: the ingress refusal probe did not pass" >&2
+      exit 1
+    fi
+    echo "e2e-team-deployment: agents held: the boundary probes from the agents network have not run" >&2
     exit 3
   fi
   dc ps --format '{{.Service}} {{.Status}}'
