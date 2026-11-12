@@ -313,6 +313,23 @@ forest/B2 locks. Within a valid session, possession of that session and its CSRF
 token can apply the exact change its real owner has already approved; it cannot
 supply the fresh passkey proof needed to approve another change.
 
+Native values enter through the human-origin-only
+`POST /installations/{installation_id}/native/versions`. The strict JSON body
+contains `secret` (the secret record v1) and `value` (the existing structured
+value object for its authentication kind). It requires the current owner
+session and tab CSRF token. The existing sealer validates the locked record,
+seals the value and returns only `{secret_id, version}`; no value or fingerprint
+is returned. Installation authority and the session are checked again after
+allocation, and a failed check rolls the staged write back.
+
+The staged version is inert. For a new secret, draft `secret/create` and
+`secret_value/create` through the existing change-set route, bringing the
+returned pair in `sealed`. A replacement brings just `secret_value/create`
+with the new version. Both require the existing fresh APPROVE and confirmation
+writer; a key-bound session retains its confirmation-in-aw ceremony. Only that
+writer activates the version and destroys a replaced live version. The ingress
+route creates no active secret or grant.
+
 Mount the browser forms with the same services, only on the human application:
 
 ```python

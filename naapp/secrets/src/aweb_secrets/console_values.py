@@ -2,10 +2,10 @@
 
 Composition shares OwnerConsole's sessions, authoritative installation lookup,
 F6 and role directory with the broker. Only the human app mounts this router.
-The entered token uses native custody's inert allocator. Reference validation
+Entered native values and backend tokens use custody's inert allocator. Reference validation
 opens that scoped token and calls the SDK outside authority transactions; only
 metadata enters the final, reauthorized staging transaction. The later console
-draft/approve/confirm flow owns activation of both candidates.
+draft/approve/confirm flow owns activation of every staged candidate.
 """
 
 from datetime import UTC, datetime
@@ -75,6 +75,36 @@ class ConsoleValues:
         ):
             raise HTTPException(status_code=401, detail="console_session_required")
         await self._session_open(tx, current)
+
+    async def stage_native_value(
+        self,
+        current: ConsoleSession,
+        *,
+        installation_id: str,
+        initial: SecretRecord,
+        value: bytes,
+    ) -> SealContext:
+        """Seal an inert version; only the change-set writer can activate it."""
+        if initial.backend != "native":
+            raise HTTPException(status_code=400, detail="request_invalid")
+        admitted = await self.console.session_installation(current, installation_id)
+        if admitted.installation_id != installation_id:
+            raise HTTPException(status_code=403, detail="owner_required")
+        async with self.console.db.transaction() as tx:
+            await self._authorize(tx, current, admitted)
+            version = await self._custody.sealer.ingest(
+                tx,
+                installation_id=admitted.installation_id,
+                team_id=admitted.team_id,
+                secret_id=initial.secret_id,
+                value=value,
+                initial=initial,
+            )
+            # Allocation or the key provider can wait past F6 or logout.
+            # Refuse inside this transaction so the new version rolls back.
+            await self.console.fence.check(tx, admitted)
+            await self._session_open(tx, current)
+        return SealContext(admitted.installation_id, admitted.team_id, initial.secret_id, version)
 
     async def stage_onepassword_reference(
         self,
@@ -169,6 +199,45 @@ class ConsoleValues:
 def console_values_router(services: ConsoleValues, *, prefix: str = "") -> APIRouter:
     """Mount alongside owner_console_router only on the human-origin app."""
     router = APIRouter(prefix=prefix, route_class=ConsoleRoute)
+
+    @router.post(
+        "/installations/{installation_id}/native/versions",
+        status_code=201,
+        dependencies=[Depends(_require_json)],
+    )
+    async def native_value(installation_id: str, request: Request) -> dict[str, str | int]:
+        current = await services.console.sessions.current(request)
+        body = await _body(request, {"secret", "value"})
+        try:
+            initial = SecretRecord.from_after(body["secret"])
+            value = encode_value(initial.kind, body["value"])
+            context = await services.stage_native_value(
+                current,
+                installation_id=installation_id,
+                initial=initial,
+                value=value,
+            )
+        except HTTPException as refused:
+            if refused.status_code == 401:
+                # Preserve S4's close/clearing-cookie behavior after rollback.
+                await services.console.sessions.close(current)
+                response = Response()
+                services.console.sessions.clear_cookie(response)
+                raise HTTPException(
+                    status_code=401,
+                    detail="console_session_required",
+                    headers={"Set-Cookie": response.headers["set-cookie"]},
+                ) from None
+            raise
+        except (SecretInvalid, ValueInvalid):
+            raise HTTPException(status_code=400, detail="request_invalid") from None
+        except InstallationRefused as refused:
+            raise HTTPException(status_code=refused.status, detail=refused.code) from None
+        except LookupError:
+            raise HTTPException(status_code=403, detail="owner_required") from None
+        except CustodyUnavailable:
+            raise HTTPException(status_code=503, detail="custody_unavailable") from None
+        return {"secret_id": context.secret_id, "version": context.version}
 
     @router.post(
         "/installations/{installation_id}/onepassword/references",
