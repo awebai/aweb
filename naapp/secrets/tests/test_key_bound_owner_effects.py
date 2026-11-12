@@ -18,17 +18,19 @@ from aweb_secrets.custody import (
     apply_custody_migrations,
     encode_value,
 )
+from aweb_secrets.secret import SecretRecord
 from aweb_secrets.tokens import ProcessTokenCache
-from tests.test_change_sets import Inbox
+from tests.test_change_sets import SECRET, Inbox
 from tests.test_handoff_sessions import journey as journey
 from tests.test_handoff_sessions import world as world
 from tests.test_owner_directory import Audit
 from tests.test_production_handoffs import bound_console, current_session
 
 
+@pytest.mark.parametrize("backend", ["native", "onepassword"])
 @pytest.mark.parametrize("prepared", [True, False], ids=["same-factory", "missing-factory"])
 async def test_signed_value_ingress_requires_its_factory_before_staging(
-    journey, tmp_path, prepared
+    journey, tmp_path, prepared, backend
 ):
     w = journey.world
     await apply_custody_migrations(w.db)
@@ -40,17 +42,28 @@ async def test_signed_value_ingress_requires_its_factory_before_staging(
     current = await current_session(journey, key, issued)
     service = ConsoleValues(console=bound_console(journey, prepared=prepared), custody=custody)
     value = encode_value("bearer", {"value": secrets.token_hex(24)})
-    if prepared:
-        staged = await service.stage_backend_credential(
-            current, installation_id=w.admitted.installation_id, value=value
+
+    async def stage_value():
+        if backend == "native":
+            return await service.stage_native_value(
+                current,
+                installation_id=w.admitted.installation_id,
+                initial=SecretRecord.from_after(SECRET),
+                value=value,
+            )
+        return await service.stage_backend_credential(
+            current,
+            installation_id=w.admitted.installation_id,
+            value=value,
         )
+
+    if prepared:
+        staged = await stage_value()
         assert staged.version == 1
         assert await w.db.fetch_value("SELECT count(*) FROM {{tables.sealed_versions}}") == 1
     else:
         with pytest.raises(HTTPException) as refused:
-            await service.stage_backend_credential(
-                current, installation_id=w.admitted.installation_id, value=value
-            )
+            await stage_value()
         assert (refused.value.status_code, refused.value.detail) == (
             401,
             "console_session_required",
