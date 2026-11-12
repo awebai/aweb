@@ -3,6 +3,7 @@
 
 Build scripts/federation-cli.Dockerfile at this checkout first, then set
 AWEB_TEST_FEDERATION_CLI_IMAGE and AWEB_TEST_DOCKER_BIND_OWNERSHIP=1.
+Build with --build-arg FIXTURE_UID=$(id -u) --build-arg FIXTURE_GID=$(id -g).
 No registry/service stack is needed: controller preparation and human preparation
 are local operations. Never print generated keys or human records.
 """
@@ -11,6 +12,7 @@ import json
 import os
 from pathlib import Path
 import platform
+import runpy
 import shutil
 import subprocess
 import tempfile
@@ -45,6 +47,40 @@ class ImageInspectTests(unittest.TestCase):
                 result = image_identity(json.dumps([{'Id': 'sha256:probe', 'Config': config}]))
                 self.assertEqual(result['effective_user'], expected)
                 self.assertEqual(result['image_id'], 'sha256:probe')
+
+
+class FixtureUserTests(unittest.TestCase):
+    def setUp(self):
+        self.temp = tempfile.TemporaryDirectory()
+        self.addCleanup(self.temp.cleanup)
+        self.etc = Path(self.temp.name)
+        (self.etc / 'passwd').write_text('root:x:0:0:root:/root:/bin/sh\n')
+        (self.etc / 'group').write_text('root:x:0:\nstaff:x:20:\n')
+        self.install = runpy.run_path(str(ROOT / 'scripts/federation-cli-user.py'))['install_user']
+
+    def test_linux_and_mac_ids_resolve_with_requested_primary_group(self):
+        for uid, gid in (('1000', '1000'), ('501', '20'), ('12345', '23456')):
+            with self.subTest(uid=uid, gid=gid):
+                self.install(uid, gid, self.etc)
+                rows = [line.split(':') for line in (self.etc / 'passwd').read_text().splitlines()]
+                user, = [row for row in rows if row[2] == uid]
+                self.assertEqual(user[3], gid)
+                self.assertEqual(user[5], '/work/home')
+                groups = [line.split(':') for line in (self.etc / 'group').read_text().splitlines()]
+                group, = [row for row in groups if row[2] == gid]
+                if gid == '20':
+                    self.assertEqual(group[0], 'staff')
+        before = [(self.etc / name).read_bytes() for name in ('passwd', 'group')]
+        self.install('501', '20', self.etc)
+        self.install('0', '0', self.etc)
+        self.assertEqual(before, [(self.etc / name).read_bytes() for name in ('passwd', 'group')])
+
+    def test_invalid_or_conflicting_ids_refuse_without_changing_accounts(self):
+        before = [(self.etc / name).read_bytes() for name in ('passwd', 'group')]
+        for uid, gid in (('-1', '20'), ('501:0', '20'), ('501', 'x'), ('0', '20')):
+            with self.subTest(uid=uid, gid=gid), self.assertRaises(ValueError):
+                self.install(uid, gid, self.etc)
+            self.assertEqual(before, [(self.etc / name).read_bytes() for name in ('passwd', 'group')])
 
 
 @contextmanager
@@ -150,26 +186,6 @@ class BindOwnershipTests(unittest.TestCase):
         self.probe(True)
 
 
-KEYRING_PROBE = r'''
-import ast,json,os,resource,runpy
-from pathlib import Path
-path='/usr/local/bin/cross-registry-human-journey.py'
-Path.home().mkdir(parents=True,exist_ok=True)
-print(json.dumps({'uid':os.getuid(),'gid':os.getgid(),'home_mode':oct(Path.home().stat().st_mode & 0o777),'memlock':resource.getrlimit(resource.RLIMIT_MEMLOCK),'cap_eff':next(x for x in Path('/proc/self/status').read_text().splitlines() if x.startswith('CapEff:'))}),flush=True)
-scope=runpy.run_path(path)
-def first_local_step():
-    human,prompts=scope['command'](['id','human','init','--domain','alpha.example.com','--json'])
-    assert human['status']=='prepared' and prompts==2
-    print('actual journey local human preparation PASS',flush=True)
-scope['main']=first_local_step
-# Execute the fixture's exact unlock/start sequence and its main() call; replace
-# only later registry-dependent journey steps with the first failing local step.
-startup=ast.parse(Path(path).read_text()).body[-1]
-assert isinstance(startup,ast.If) and '__name__' in ast.unparse(startup.test)
-exec(compile(ast.Module(body=startup.body,type_ignores=[]),path,'exec'),scope)
-'''
-
-
 @unittest.skipUnless(os.environ.get('AWEB_TEST_DOCKER_BIND_OWNERSHIP') == '1', 'requires an approved Linux VM')
 class SecretServiceStartupTests(unittest.TestCase):
     def test_actual_local_journey_step_in_isolated_sessions(self):
@@ -182,13 +198,28 @@ class SecretServiceStartupTests(unittest.TestCase):
                     cli['user'] = f'{os.getuid()}:{os.getgid()}'
                 if not bound_home:
                     cli['environment']['HOME'] = '/tmp/probe-home'
-                cli['entrypoint'] = ['dbus-run-session', '--', 'python3', '-c', KEYRING_PROBE]
+                cli['entrypoint'] = ['dbus-run-session', '--', 'python3',
+                                     '/usr/local/bin/cross-registry-human-journey.py', '--prepare-local-human']
                 write_config(config, cli)
                 result = run(*args, 'run', '--rm', '--no-deps', 'cli')
                 print(json.dumps({'same_user': same_user, 'bound_home': bound_home,
                                   'exit': result.returncode, 'stdout': result.stdout,
                                   'stderr': result.stderr}), flush=True)
                 self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+                self.assertIn('actual journey local human preparation PASS', result.stdout)
+                observation = json.loads(result.stdout.splitlines()[0])
+                self.assertEqual(observation['uid'], os.getuid())
+                self.assertEqual(observation['gid'], os.getgid())
+                self.assertEqual(observation['home_uid'], os.getuid())
+                down = run(*args, 'down', '-v', '--remove-orphans')
+                self.assertEqual(down.returncode, 0, down.stderr)
+                removed = run('rm', '-rf', str(work.parent))
+                gate = run('bash', '-c', 'source scripts/candidate-cleanup.sh; cleanup_work',
+                           cwd=ROOT, env={**os.environ, 'work': str(root), 'ROOT': str(ROOT)})
+                print(json.dumps({'same_user': same_user, 'bound_home': bound_home,
+                                  'fixture_rm': removed.returncode, 'gate_cleanup': gate.returncode}), flush=True)
+                self.assertEqual(removed.returncode, 0, removed.stderr)
+                self.assertEqual(gate.returncode, 0, gate.stderr)
 
 
 if __name__ == '__main__':

@@ -280,7 +280,14 @@ services:
       awid-b: {condition: service_started}
       federation-dns: {condition: service_started}
   cli:
-    build: {context: "$ROOT", dockerfile: scripts/federation-cli.Dockerfile}
+    build:
+      context: "$ROOT"
+      dockerfile: scripts/federation-cli.Dockerfile
+      args:
+        FIXTURE_UID: "$(id -u)"
+        FIXTURE_GID: "$(id -g)"
+    # HOME persists across CLI invocations; its writer must also be its remover.
+    user: "$(id -u):$(id -g)"
     # GNOME Keyring locks its memory and drops this capability after startup.
     cap_add: [IPC_LOCK]
     environment:

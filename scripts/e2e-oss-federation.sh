@@ -690,6 +690,9 @@ $BETA_SERVER_BUILD
     build:
       context: $REPO_ROOT
       dockerfile: scripts/federation-cli.Dockerfile
+      args:
+        FIXTURE_UID: "$(id -u)"
+        FIXTURE_GID: "$(id -g)"
     # Host Python reads the private replay key; both sides must own the files.
     user: "$(id -u):$(id -g)"
     environment:
