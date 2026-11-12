@@ -56,6 +56,7 @@ from awid.log import (
 )
 from awid.ratelimit import normalize_service_token
 from awid.registry_auth import RegistryRequestAuth, path_signature_headers
+from awid.registry_transport import RegistryOverrideTransport
 from awid.registry_types import (
     RegistryError as RegistryError,
     DIDKeyNotFoundError as DIDKeyNotFoundError,
@@ -334,6 +335,7 @@ class RegistryClient:
     )
     _request_auth: RegistryRequestAuth = field(init=False, repr=False, compare=False)
     _http_client: httpx.AsyncClient = field(init=False, repr=False, compare=False)
+    _override_http_client: httpx.AsyncClient = field(init=False, repr=False, compare=False)
 
     def __post_init__(self, domain_verifier: DomainVerifier | None = None) -> None:
         object.__setattr__(self, "_domain_verifier", domain_verifier)
@@ -364,6 +366,17 @@ class RegistryClient:
                 ),
                 transport=self.transport,
                 follow_redirects=False,
+            ),
+        )
+
+        object.__setattr__(
+            self,
+            "_override_http_client",
+            httpx.AsyncClient(
+                timeout=self.timeout_seconds,
+                transport=self.transport if self.transport is not None else RegistryOverrideTransport(),
+                follow_redirects=False,
+                trust_env=False,
             ),
         )
 
@@ -527,7 +540,7 @@ class RegistryClient:
             )
         try:
             async with asyncio.timeout(self.timeout_seconds):
-                async with self._http_client.stream(
+                async with (self._http_client if home_registry else self._override_http_client).stream(
                     method,
                     f"{self._resolved_base_url(registry_url=registry_url)}{path}",
                     headers=request_headers,
@@ -589,6 +602,7 @@ class RegistryClient:
 
     async def aclose(self) -> None:
         await self._http_client.aclose()
+        await self._override_http_client.aclose()
 
     async def health(self) -> dict[str, Any]:
         return await self._request_json("GET", "/health")
