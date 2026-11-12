@@ -575,6 +575,10 @@ ROOT_CONSUMERS = {
         "approval-request-v1.json",
         '"../../../../docs/vectors/approval-request-v1.json"',
     ),
+    PurePosixPath("cli/go/cmd/aw/app_role_protected_test.go"): _consumer(
+        "protected-service-profile-v1.json",
+        '"../../../../docs/vectors/protected-service-profile-v1.json"',
+    ),
     PurePosixPath("cli/go/internal/handoff/protected_request_test.go"): _consumer(
         ("protected-service-profile-v1.json", "protected-service-request-v1.json"),
         '"../../../../docs/vectors/protected-service-profile-v1.json"',
