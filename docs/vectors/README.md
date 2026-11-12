@@ -745,14 +745,20 @@ checks and is refused by the catalog reader. A digest construction case shows
 `request_sha256` taken before credential injection. The Go authority in
 `cli/go/hookevent` regenerates every case byte for byte.
 
-### `hook-delivery-credential-v1.json`
+### `hook-delivery-credential-v2.json`
 
 The `AWEB-Hook DIDKey` request credential that carries an event to one binding
-(aweb-acgh.16.2; contract in [`hook-events.md`](../hook-events.md)). Positive
-cases pin the headers, the canonical signed payload and the body for a core
-producer and for a client producer carrying its team certificate. Negatives
-refuse a client delivery without its certificate or with one for another key,
-team or certificate id, or not signed by the team's current key; three
+(aweb-acgh.16.2, and aweb-acya.10 for version 2; contract in
+[`hook-events.md`](../hook-events.md)). Version 2 gives the receiver the
+team's revoked and registered certificate ids beside its current key, and a
+client's certificate passes the one check of
+`team-certificate-verification-v1.json`. Positive cases pin the headers, the
+canonical signed payload and the body for a core producer, for a client
+producer carrying its team certificate, and for a client whose certificate
+carries another `team_did_key` and is signed by the team's current key: the
+field is not authority. Negatives refuse a client delivery without its
+certificate or with one for another key, team or certificate id, signed by
+another key, revoked, or not registered; three
 respellings of the credential signature; a padded signed payload; an empty
 team id; a timestamp with a fraction; an app-event or `hook-resolve` credential at
 a hook target, either purpose's payload under the hook scheme, a payload altered

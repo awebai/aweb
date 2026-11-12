@@ -100,7 +100,7 @@ func CheckTeamCertificate(header string, facts TeamCertificateFacts) (map[string
 	if !facts.Registered.stated {
 		return nil, errors.New("awid: the registered certificates were not stated")
 	}
-	certificate, err := decodeTeamCertificateObject(header)
+	certificate, err := DecodeTeamCertificate(header)
 	if err != nil {
 		return nil, err
 	}
@@ -136,9 +136,12 @@ func CheckTeamCertificate(header string, facts TeamCertificateFacts) (map[string
 	return certificate, nil
 }
 
-// decodeTeamCertificateObject decodes the header: padded base64 of one JSON
-// object, at most MaxTeamCertificateHeaderBytes long.
-func decodeTeamCertificateObject(header string) (map[string]any, error) {
+// DecodeTeamCertificate decodes the header: padded base64 of one JSON
+// object, at most MaxTeamCertificateHeaderBytes long, holding only values
+// that every verifier re-serialises alike. It checks nothing else: a caller
+// reads from it only what it needs to find the registry's facts, and then
+// calls CheckTeamCertificate.
+func DecodeTeamCertificate(header string) (map[string]any, error) {
 	malformed := &TeamCertificateError{Reason: "malformed"}
 	if len(header) > MaxTeamCertificateHeaderBytes || strings.ContainsAny(header, "\r\n") {
 		return nil, malformed

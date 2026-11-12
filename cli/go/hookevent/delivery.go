@@ -5,6 +5,7 @@ import (
 	"crypto/sha256"
 	"encoding/base64"
 	"encoding/hex"
+	"errors"
 	"net/url"
 	"strings"
 	"time"
@@ -70,7 +71,7 @@ func SignDelivery(key ed25519.PrivateKey, method string, target *url.URL, bindin
 		if certificate == nil {
 			return nil, strictjson.Refuse("certificate_missing", "a client delivery carries its team certificate")
 		}
-		if err := certificateNamesProducer(certificate, env); err != nil {
+		if err := certificateNamesProducer(certificate.Team, certificate.MemberDIDKey, certificate.CertificateID, env); err != nil {
 			return nil, err
 		}
 		certificateHeader, err = awid.EncodeTeamCertificateHeader(certificate)
@@ -133,14 +134,18 @@ func SignDelivery(key ed25519.PrivateKey, method string, target *url.URL, bindin
 
 // ReceiveOptions are what the receiving target knows independently of the
 // request: its own public origin, the binding the delivery must name, the
-// team's current controller key (read fresh from the team's registry, and
-// needed for a client delivery's certificate), and the current time.
-// Audience and BindingID are required.
+// current time and, for a client delivery's certificate, what the team's
+// registry says: the team's current controller key, its revoked certificates
+// and its registered ones, read fresh. Audience and BindingID are required.
+// A target that takes client deliveries states RegisteredCertificates; left
+// unstated, a client delivery is refused as verifier_misconfigured.
 type ReceiveOptions struct {
-	Audience   string
-	BindingID  string
-	TeamKeyDID string
-	Now        time.Time
+	Audience               string
+	BindingID              string
+	TeamKeyDID             string
+	RevokedCertificateIDs  []string
+	RegisteredCertificates awid.RegisteredCertificates
+	Now                    time.Time
 }
 
 // Received is a delivery that passed every check, with its verified event.
@@ -251,47 +256,60 @@ func VerifyDelivery(method, path string, headers map[string]string, body []byte,
 		return nil, strictjson.Refuse("producer_mismatch", "the credential's signer is not the event's producer")
 	}
 	if env.ProducerKind == "client" {
-		if err := verifyClientCertificate(header(headers, CertificateHeader), env, opts.TeamKeyDID); err != nil {
+		if err := verifyClientCertificate(header(headers, CertificateHeader), env, opts); err != nil {
 			return nil, err
 		}
 	}
 	return &Received{Payload: payload, Envelope: env}, nil
 }
 
-func verifyClientCertificate(encoded string, env *Envelope, teamKeyDID string) error {
+// verifyClientCertificate checks a client delivery's certificate: that it
+// names the event's producer, and then awid's one check of a team
+// certificate, with the producer's key as the subject and the team's key,
+// revoked and registered certificates as the target read them.
+func verifyClientCertificate(encoded string, env *Envelope, opts ReceiveOptions) error {
 	if encoded == "" {
 		return strictjson.Refuse("certificate_missing", "a client delivery carries its team certificate")
 	}
-	if teamKeyDID == "" {
+	if opts.TeamKeyDID == "" {
 		return strictjson.Refuse("verifier_misconfigured", "a client delivery needs the team's current key")
 	}
-	certificate, err := awid.DecodeTeamCertificateHeader(encoded)
+	certificate, err := awid.DecodeTeamCertificate(encoded)
 	if err != nil {
 		return strictjson.Refuse("certificate_invalid", "%v", err)
 	}
-	if err := certificateNamesProducer(certificate, env); err != nil {
+	team, _ := certificate["team_id"].(string)
+	member, _ := certificate["member_did_key"].(string)
+	certificateID, _ := certificate["certificate_id"].(string)
+	if err := certificateNamesProducer(team, member, certificateID, env); err != nil {
 		return err
 	}
-	if certificate.TeamDIDKey != teamKeyDID {
-		return strictjson.Refuse("certificate_invalid", "not issued under the team's current key")
-	}
-	teamKey, err := awid.ExtractPublicKey(teamKeyDID)
-	if err != nil {
+	_, err = awid.CheckTeamCertificate(encoded, awid.TeamCertificateFacts{
+		SubjectDIDKey:         env.ProducerDIDKey,
+		TeamDIDKey:            opts.TeamKeyDID,
+		RevokedCertificateIDs: opts.RevokedCertificateIDs,
+		Registered:            opts.RegisteredCertificates,
+	})
+	var refused *awid.TeamCertificateError
+	switch {
+	case err == nil:
+		return nil
+	case !errors.As(err, &refused):
+		return strictjson.Refuse("verifier_misconfigured", "%v", err)
+	case refused.Reason == "invalid_team_key":
 		return strictjson.Refuse("verifier_misconfigured", "the team key does not decode")
+	case refused.Reason == "member_key_mismatch":
+		return strictjson.Refuse("certificate_mismatch", "the certificate does not name this producer")
+	default:
+		return strictjson.Refuse("certificate_invalid", "%v", refused)
 	}
-	if err := awid.VerifyTeamCertificate(certificate, teamKey); err != nil {
-		return strictjson.Refuse("certificate_invalid", "%v", err)
-	}
-	return nil
 }
 
 // certificateNamesProducer requires a client's certificate to be for the
 // event's team, its producer key and its certificate id.
-func certificateNamesProducer(certificate *awid.TeamCertificate, env *Envelope) error {
+func certificateNamesProducer(team, memberDIDKey, certificateID string, env *Envelope) error {
 	producer := env.Fields["producer"].(map[string]any)
-	if certificate.Team != env.TeamID ||
-		certificate.MemberDIDKey != env.ProducerDIDKey ||
-		certificate.CertificateID != producer["certificate_id"] {
+	if team != env.TeamID || memberDIDKey != env.ProducerDIDKey || certificateID != producer["certificate_id"] {
 		return strictjson.Refuse("certificate_mismatch", "the certificate does not name this producer")
 	}
 	return nil

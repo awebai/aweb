@@ -83,6 +83,18 @@
   the setting and the limit. The shipped `.env.example` set
   `LIBRARY_AUTH_CACHE_TTL_SECONDS=600`; a deployment made from it must lower
   it to 60 or remove the line before upgrading.
+- **A hook delivery from a client is checked with the one team-certificate
+  check, in Python and in Go.** The receiver (`aweb_naapp.hooks.delivery`,
+  `cli/go/hookevent`) takes the team's revoked and registered certificate ids
+  beside its current key, and refuses a revoked or unregistered certificate
+  itself as `certificate_invalid`. The `team_did_key` a certificate carries is
+  no longer compared with the registry's key: the signature under the
+  registry's key is the check. The delivery vectors are
+  `hook-delivery-credential-v2.json`; version 1 is removed. Logs' ingest
+  answers a revoked or unregistered client certificate with 401
+  `transport_certificate_invalid`, where it answered
+  `provenance_client_certificate`. A team id that is not one is 401
+  `invalid_field: team_id` in the naapp runtime.
 - **The team-certificate check refuses what two encoders could write
   differently, in Python and in Go.** `check_team_certificate` and the new
   Go `awid.CheckTeamCertificate` give every case of

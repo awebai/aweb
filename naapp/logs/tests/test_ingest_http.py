@@ -370,10 +370,10 @@ async def test_schema_refusal_follows_valid_authority(world):
     assert _code(response).startswith("schema_")
 
 
-async def test_a_revoked_client_certificate_is_refused_by_shared_publication_policy(world):
+async def test_a_revoked_client_certificate_is_refused_by_the_certificate_check(world):
     await world.coordination.registry.revoke(world.member.certificate_id)
     response = await world.send(world.delivery("client"))
-    assert (response.status_code, _code(response)) == (401, "provenance_client_certificate")
+    assert (response.status_code, _code(response)) == (401, "transport_certificate_invalid")
 
 
 async def test_client_certificate_verification_reads_the_controller_key_fresh(world):

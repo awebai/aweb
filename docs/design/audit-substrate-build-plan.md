@@ -20,7 +20,7 @@ graph).
 | --- | --- | --- | --- | --- |
 | — | aweb-acgh.1 | Design | Built | `docs/design/audit-substrate.md` (e78d12ac3) |
 | H1 | aweb-acgh.16.1 | Catalog, binding and delivery contract | Built; activation refusal of unknown catalogs Open (aweb-acgh.16.35) | `docs/hook-events.md`, `docs/vectors/hook-catalog-v1.json`, `docs/vectors/hook-binding-cases-v1.json`, pointer in `docs/aw-hooks-sot.md` (f064438b4) |
-| H2 | aweb-acgh.16.2 | Envelope and delivery credential, Go authority | Built | `cli/go/hookevent/envelope.go`, `delivery.go`; `docs/vectors/hook-event-envelope-v1.json`, `hook-delivery-credential-v1.json`; case `oss_task_create_with_trace_id` in `team-auth-envelope-v2.json` (3c3195e74) |
+| H2 | aweb-acgh.16.2 | Envelope and delivery credential, Go authority | Built | `cli/go/hookevent/envelope.go`, `delivery.go`; `docs/vectors/hook-event-envelope-v1.json`, `hook-delivery-credential-v2.json`; case `oss_task_create_with_trace_id` in `team-auth-envelope-v2.json` (3c3195e74) |
 | H3 | aweb-acgh.16.3 | Owner act `aweb.owner-act/1` | Built | `docs/owner-act.md`, `cli/go/awid/owneract.go`, `docs/vectors/owner-act-v1.json` (7426a016e; subject canonicalization d76a7d253) |
 | — | aweb-acgh.16.34 | Owner act `logs.verify.delegate` | Open | — |
 | K0 | aweb-acgh.6 | Core-importable signing-key loader | Built | `naapp-lib/src/aweb_naapp/signing_key.py`, `signing-key` extra (fd806b7db) |

@@ -270,15 +270,17 @@ LIBRARY_TODAY = {
 }
 
 # What the hook delivery receiver answers today: acceptance, or its refusal code.
-# It leaves revocation to its caller and compares the certificate with the
-# delivery's producer where the others compare it with the request's signer.
+# It first compares the certificate's team, member key and certificate id with
+# the delivery's producer (certificate_mismatch), where the others compare the
+# member key with the request's signer; every other refusal of the one check
+# is its certificate_invalid.
 HOOKS_TODAY = {
     "valid": "accepted",
-    "signature_url_safe_alphabet": "accepted",
+    "signature_url_safe_alphabet": "certificate_invalid",
     "control_character_in_a_string": "certificate_invalid",
     "number_not_an_integer": "certificate_invalid",
     "not_a_number_constant": "certificate_invalid",
-    "team_did_key_absent": "certificate_invalid",
+    "team_did_key_absent": "accepted",
     "identity_scope_absent": "accepted",
     "issued_at_absent": "accepted",
     "member_did_aw_absent": "accepted",
@@ -289,13 +291,13 @@ HOOKS_TODAY = {
     "not_json": "certificate_invalid",
     "not_an_object": "certificate_invalid",
     "oversized_header": "certificate_invalid",
-    "version_2": "accepted",
-    "version_string": "accepted",
-    "version_true": "accepted",
-    "version_absent": "accepted",
-    "alias_absent": "accepted",
-    "alias_empty": "accepted",
-    "alias_not_a_string": "accepted",
+    "version_2": "certificate_invalid",
+    "version_string": "certificate_invalid",
+    "version_true": "certificate_invalid",
+    "version_absent": "certificate_invalid",
+    "alias_absent": "certificate_invalid",
+    "alias_empty": "certificate_invalid",
+    "alias_not_a_string": "certificate_invalid",
     "certificate_id_absent": "certificate_mismatch",
     "team_id_absent": "certificate_mismatch",
     "member_did_key_absent": "certificate_mismatch",
@@ -303,8 +305,8 @@ HOOKS_TODAY = {
     "signature_absent": "certificate_invalid",
     "signature_tampered": "certificate_invalid",
     "signed_by_another_key": "certificate_invalid",
-    "revoked": "accepted",
-    "unregistered": "accepted",
+    "revoked": "certificate_invalid",
+    "unregistered": "certificate_invalid",
 }
 
 
@@ -333,7 +335,10 @@ def document() -> str:
             ),
             "naapp_runtime": "aweb_naapp.runtime.team_auth.authenticate_request, behind a correctly signed request",
             "library": "library.auth.authenticate_request, behind a correctly signed request",
-            "hooks": "aweb_naapp.hooks.delivery: the client certificate of a delivery from the case's signer",
+            "hooks": (
+                "aweb_naapp.hooks.delivery: the client certificate of a delivery from the case's signer, "
+                "with the case's revoked and registered ids as the receiver's options"
+            ),
         },
         "cases": [
             {

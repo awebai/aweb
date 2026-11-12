@@ -772,7 +772,7 @@ async def require_active_certificate(
     try:
         facts = await team_cache.get(team_id, certificate_id)
     except ValueError as exc:
-        raise HTTPException(status_code=401, detail="Invalid AWID team id") from exc
+        raise _certificate_refusal(TeamCertificateError("invalid_field", "team_id")) from exc
     _require_active_certificate(facts, certificate_id)
     return facts
 
@@ -818,7 +818,7 @@ async def authenticate_request(
     try:
         facts = await team_cache.get(team_id, certificate_id)
     except ValueError as exc:
-        raise HTTPException(status_code=401, detail="Invalid AWID team id") from exc
+        raise _certificate_refusal(TeamCertificateError("invalid_field", "team_id")) from exc
     try:
         # The team's key and certificates were read for the certificate's own team_id.
         cert = check_team_certificate(

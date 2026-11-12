@@ -1,17 +1,18 @@
 """What the delivery receiver answers for each shared certificate case.
 
-The receiver checks that a client delivery's certificate names its producer and
-is signed under the team's current key. Revocation is its caller's to check.
+The receiver checks that a client delivery's certificate names its producer,
+and then calls the one check with what the registry says about the team.
 """
 
 from __future__ import annotations
 
 import json
+from datetime import UTC, datetime
 from pathlib import Path
 
 import pytest
 
-from aweb_naapp.hooks.delivery import _verify_client_certificate
+from aweb_naapp.hooks.delivery import ReceiveOptions, _verify_client_certificate
 from aweb_naapp.hooks.envelope import Envelope, Refused
 
 VECTORS = json.loads(
@@ -32,7 +33,18 @@ def test_the_receiver_answers_each_case_as_recorded(case: dict) -> None:
         producer="client:cert-001",
     )
     try:
-        _verify_client_certificate(case["certificate_header"], delivery, case["team_did_key"])
+        _verify_client_certificate(
+            case["certificate_header"],
+            delivery,
+            ReceiveOptions(
+                audience="https://logs.example.com",
+                binding_id="binding",
+                now=datetime(2026, 11, 2, tzinfo=UTC),
+                team_key_did=case["team_did_key"],
+                revoked_certificate_ids=case["revoked_certificate_ids"],
+                registered_certificate_ids=case["registered_certificate_ids"],
+            ),
+        )
         answered = "accepted"
     except Refused as refused:
         answered = refused.code

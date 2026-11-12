@@ -34,7 +34,7 @@
     "server": "aweb.team_auth.parse_and_verify_certificate, as the server calls it while require_registered_certificates is off: with no registered set",
     "naapp_runtime": "aweb_naapp.runtime.team_auth.authenticate_request, behind a correctly signed request",
     "library": "library.auth.authenticate_request, behind a correctly signed request",
-    "hooks": "aweb_naapp.hooks.delivery: the client certificate of a delivery from the case's signer"
+    "hooks": "aweb_naapp.hooks.delivery: the client certificate of a delivery from the case's signer, with the case's revoked and registered ids as the receiver's options"
   },
   "cases": [
     {
@@ -91,7 +91,7 @@
         "server": "accepted",
         "naapp_runtime": "accepted",
         "library": "accepted",
-        "hooks": "certificate_invalid"
+        "hooks": "accepted"
       }
     },
     {
@@ -291,7 +291,7 @@
         "server": "refused",
         "naapp_runtime": "refused",
         "library": "refused",
-        "hooks": "accepted"
+        "hooks": "certificate_invalid"
       }
     },
     {
@@ -375,7 +375,7 @@
         "server": "refused",
         "naapp_runtime": "refused",
         "library": "accepted",
-        "hooks": "accepted"
+        "hooks": "certificate_invalid"
       }
     },
     {
@@ -396,7 +396,7 @@
         "server": "refused",
         "naapp_runtime": "refused",
         "library": "accepted",
-        "hooks": "accepted"
+        "hooks": "certificate_invalid"
       }
     },
     {
@@ -417,7 +417,7 @@
         "server": "refused",
         "naapp_runtime": "refused",
         "library": "accepted",
-        "hooks": "accepted"
+        "hooks": "certificate_invalid"
       }
     },
     {
@@ -439,7 +439,7 @@
         "server": "refused",
         "naapp_runtime": "refused",
         "library": "accepted",
-        "hooks": "accepted"
+        "hooks": "certificate_invalid"
       }
     },
     {
@@ -461,7 +461,7 @@
         "server": "refused",
         "naapp_runtime": "refused",
         "library": "refused",
-        "hooks": "accepted"
+        "hooks": "certificate_invalid"
       }
     },
     {
@@ -483,7 +483,7 @@
         "server": "refused",
         "naapp_runtime": "refused",
         "library": "refused",
-        "hooks": "accepted"
+        "hooks": "certificate_invalid"
       }
     },
     {
@@ -505,7 +505,7 @@
         "server": "refused",
         "naapp_runtime": "refused",
         "library": "accepted",
-        "hooks": "accepted"
+        "hooks": "certificate_invalid"
       }
     },
     {
@@ -679,7 +679,7 @@
         "server": "refused",
         "naapp_runtime": "refused",
         "library": "refused",
-        "hooks": "accepted"
+        "hooks": "certificate_invalid"
       }
     },
     {
@@ -700,7 +700,7 @@
         "server": "accepted",
         "naapp_runtime": "refused",
         "library": "accepted",
-        "hooks": "accepted"
+        "hooks": "certificate_invalid"
       }
     }
   ]
