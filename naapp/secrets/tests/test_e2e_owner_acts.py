@@ -130,16 +130,21 @@ class Holder:
         self.lane, self.container = lane, container
         # A disposable passphrase, generated now and never printed or stored.
         self.passphrase = secrets.token_urlsafe(24)
-        # The session bus and the keyring's files live on the container's own
-        # filesystem: on the runtime bind mount gnome-keyring leaves the login
-        # collection locked. aw reaches the keyring only over this bus.
+        # The session bus and the keyring's files and sockets live on the
+        # container's own filesystem: on the runtime bind mount gnome-keyring
+        # leaves the login collection locked, and once it drops its
+        # capabilities it cannot write a home the host user owns.
+        # aw reaches the keyring only over this bus.
         self.bus = "unix:path=/tmp/holder-session.bus"
-        keyring = "XDG_DATA_HOME=/tmp/holder-keyring DBUS_SESSION_BUS_ADDRESS=" + self.bus
+        keyring = (
+            "XDG_RUNTIME_DIR=/tmp/holder-runtime XDG_DATA_HOME=/tmp/holder-keyring "
+            "DBUS_SESSION_BUS_ADDRESS=" + self.bus
+        )
         # -i: without it docker exec attaches no stdin and the unlock reads no
         # password. The other daemons get /dev/null, so only the unlock reads it.
         started = _docker(
             "exec", "-i", container, "sh", "-c",
-            "umask 077 && mkdir -p /tmp/holder-keyring "
+            "umask 077 && mkdir -p /tmp/holder-keyring /tmp/holder-runtime "
             "&& dbus-daemon --session --fork --address=" + self.bus + " </dev/null "
             "&& " + keyring + " gnome-keyring-daemon --unlock --components=secrets "
             "&& " + keyring + " gnome-keyring-daemon --start --components=secrets </dev/null",
