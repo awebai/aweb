@@ -2,7 +2,6 @@ package awid
 
 import (
 	"bytes"
-	"crypto/ed25519"
 	"encoding/base64"
 	"encoding/json"
 	"errors"
@@ -199,8 +198,7 @@ func hasOnlyPortableValues(value any) bool {
 // verifyTeamCertificateObjectSignature verifies the signature over the
 // certificate's canonical JSON without the signature, under the team key.
 func verifyTeamCertificateObjectSignature(certificate map[string]any, teamDIDKey string) error {
-	teamKey, err := ExtractPublicKey(teamDIDKey)
-	if err != nil {
+	if _, err := ExtractPublicKey(teamDIDKey); err != nil {
 		return &TeamCertificateError{Reason: "invalid_team_key"}
 	}
 	unsigned := make(map[string]any, len(certificate))
@@ -214,7 +212,7 @@ func verifyTeamCertificateObjectSignature(certificate map[string]any, teamDIDKey
 		return &TeamCertificateError{Reason: "bad_signature"}
 	}
 	signature, err := base64.RawStdEncoding.DecodeString(certificate["signature"].(string))
-	if err != nil || !ed25519.Verify(teamKey, []byte(payload), signature) {
+	if err != nil || idStrictVerify(teamDIDKey, signature, func() ([]byte, error) { return []byte(payload), nil }) != nil {
 		return &TeamCertificateError{Reason: "bad_signature"}
 	}
 	return nil
