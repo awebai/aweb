@@ -325,6 +325,7 @@ def main() -> int:
     parser.add_argument("--project", required=True)
     parser.add_argument("--images", type=Path, required=True)
     parser.add_argument("--services-cidr", default="172.31.0.0/24")
+    parser.add_argument("--keep", action="store_true", help="leave the deployment running for inspection")
     args = parser.parse_args()
     run_dir = args.run_dir.resolve()
     if run_dir.exists():
@@ -358,9 +359,14 @@ def main() -> int:
     print(connect)
     if up.returncode != 0:
         print("BOUNDARY: the deployment did not come up; see compose.log in the run directory")
-        return 1
-    print("UP: aweb, secrets and logs are healthy; signer and agents are not in this run")
-    return 0
+    else:
+        print("UP: aweb, secrets and logs are healthy; signer and agents are not in this run")
+    if args.keep:
+        return up.returncode
+    print("=== Teardown")
+    down = subprocess.run([str(ADAPTER), "compose", "down", str(deployment)], env=world.env, text=True, check=False)
+    print("DOWN: nothing of the project is left" if down.returncode == 0 else "DOWN FAILED: see above")
+    return up.returncode or down.returncode
 
 
 if __name__ == "__main__":
