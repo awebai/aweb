@@ -7,6 +7,7 @@ from contextlib import contextmanager
 import importlib.util
 import json
 import os
+import re
 from pathlib import Path
 import shutil
 import signal
@@ -38,6 +39,84 @@ def gate_work():
             result = bash('source scripts/candidate-cleanup.sh; cleanup_work', work=tmp, ROOT=str(ROOT))
             if result.returncode or Path(tmp).exists():
                 raise AssertionError('gate work cleanup failed: ' + result.stdout + result.stderr)
+
+
+def compose_service_inventory():
+    """Read literal YAML/heredoc service maps and Python-generated service maps."""
+    files = subprocess.check_output(['git', 'ls-files'], cwd=ROOT, text=True).splitlines()
+    inventory = {}
+    for name in files:
+        path = ROOT / name
+        if path.suffix in ('.yml', '.yaml', '.sh'):
+            active = False
+            services = set()
+            for line in path.read_text().splitlines():
+                if line == 'services:':
+                    active = True
+                    continue
+                if active and line and not line[0].isspace() and not line.startswith('#'):
+                    active = False
+                if active:
+                    match = re.match(r'^  ([a-zA-Z0-9_.-]+):(?:\s|$)', line)
+                    if match:
+                        services.add(match[1])
+            if services:
+                inventory[name] = services
+        elif name in ('scripts/e2e/user_paths_stack.py', 'scripts/e2e/custody_bulk.py'):
+            services = set()
+            for node in ast.walk(ast.parse(path.read_text())):
+                if (isinstance(node, ast.Assign) and any(isinstance(t, ast.Name) and t.id == 'services'
+                                                        for t in node.targets)):
+                    assert isinstance(node.value, ast.Dict), name
+                    services.update(ast.literal_eval(key) for key in node.value.keys)
+            assert services, name
+            inventory[name] = services
+    return inventory
+
+
+class HostnameTests(unittest.TestCase):
+    def generated_alias(self, project, service):
+        rendered = network.override({'name': project, 'services': {service: {}}})
+        return json.loads(next(line.split('aliases: ', 1)[1] for line in rendered.splitlines()
+                               if 'aliases: ' in line))[0]
+
+    def assert_dns_name(self, name):
+        self.assertLessEqual(len(name.encode('ascii')), 253, name)
+        for label in name.split('.'):
+            self.assertRegex(label, r'^[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?$', name)
+        # This is the standard-library encoder used by the failing HTTP path.
+        self.assertEqual(name.encode('idna').decode('ascii'), name)
+
+    def test_actual_failed_library_project_and_service(self):
+        project = 'aweb-candidate-08f4f622d1ec-780cad-naapp-library'
+        self.assert_dns_name(self.generated_alias(project, 'awid-pre-status'))
+
+    def test_all_compose_services_with_longest_gate_project(self):
+        inventory = compose_service_inventory()
+        self.assertIn('scripts/e2e-cross-registry-messaging.sh', inventory)
+        self.assertIn('awid-pre-status', inventory['naapp/library/docker-compose.e2e.yml'])
+        packages = subprocess.check_output(['make', '-s', '--no-print-directory', 'naapp-e2e-packages'],
+                                          cwd=ROOT, text=True).split()
+        project = 'aweb-candidate-' + 'f' * 12 + '-' + 'f' * 6 + '-naapp-' + max(
+            (Path(package).name for package in packages), key=len)
+        names = set()
+        for source, services in inventory.items():
+            for service in services:
+                with self.subTest(source=source, service=service):
+                    name = self.generated_alias(project, service)
+                    self.assert_dns_name(name)
+                    names.add((service, name))
+        self.assertEqual(len({service for service, _ in names}), len({name for _, name in names}))
+
+    def test_long_and_non_dns_names_remain_distinct(self):
+        pairs = [('x' * 300, 'service-a'), ('x' * 300, 'service-b'),
+                 ('a_b', 'c'), ('a-b', 'c'), ('a', 'b-c'), ('a-b', 'c-d'),
+                 ('project', 'service_' + 'z' * 300)]
+        names = [self.generated_alias(*pair) for pair in pairs]
+        self.assertEqual(len(set(names)), len(pairs))
+        for pair, name in zip(pairs, names):
+            self.assert_dns_name(name)
+            self.assertEqual(name, self.generated_alias(*pair))
 
 
 class ComposeVersionTests(unittest.TestCase):
