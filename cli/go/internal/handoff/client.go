@@ -187,7 +187,7 @@ func (s *Session) request(ctx context.Context, method, path string, body []byte)
 }
 
 func run(ctx context.Context, opts Options, purpose string) (ed25519.PrivateKey, []byte, error) {
-	_, key, err := ed25519.GenerateKey(rand.Reader)
+	_, key, err := awid.GenerateKeypair()
 	if err != nil {
 		return nil, nil, err
 	}
