@@ -166,7 +166,7 @@ async def test_unrefreshable_proof_or_nonempty_get_is_not_replayed(clock, kwargs
             await client._request_json("GET", "/key", **kwargs)
     finally:
         await client.aclose()
-    assert caught.value.code == "rate_limited"
+    assert caught.value.code == ("rate_limited" if "headers" in kwargs else None)
     assert len(attempts) == 1 and clock.delays == []
 
 

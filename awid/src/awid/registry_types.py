@@ -43,7 +43,7 @@ class RegistryError(Exception):
 
 
 class RegistryThrottled(RegistryError):
-    """A bounded read could not proceed, or a write must not be replayed.
+    """A bounded read could not proceed, or its proof cannot be refreshed.
 
     Fixed text and machine fields only: upstream bodies/identities never enter
     this refusal. A caller may expose an appropriate transient response without

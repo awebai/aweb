@@ -556,7 +556,8 @@ class RegistryClient:
         caller_proof = any(name.lower() in {
             "authorization", "x-aweb-signed-payload", "x-aweb-timestamp"
         } for name in supplied_headers)
-        replayable = method in {"GET", "HEAD"} and not caller_proof and json is None and not content
+        read_request = method in {"GET", "HEAD"} and json is None and not content
+        replayable = read_request and not caller_proof
         home_registry = (
             registry_url is None
             or canonical_server_origin(registry_url) == canonical_server_origin(self.registry_url)
@@ -584,7 +585,7 @@ class RegistryClient:
                         json=json,
                         content=content,
                     ) as response:
-                        if response.status_code == 429:
+                        if response.status_code == 429 and read_request:
                             # Only the sanitized header is useful. Never read,
                             # retain or expose an upstream throttling body.
                             response_content = b""
@@ -600,7 +601,7 @@ class RegistryClient:
                                     f"unreadable HTTP {response.status_code} response",
                                     status_code=response.status_code,
                                 ) from exc
-                    if response.status_code != 429:
+                    if response.status_code != 429 or not read_request:
                         break
                     hint = _retry_after_seconds(response.headers.get("Retry-After"))
                     reason = "attempt_budget" if replayable else "not_replayable"
