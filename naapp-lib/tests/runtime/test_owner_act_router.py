@@ -294,7 +294,10 @@ async def world(tmp_path, human, coordination, test_db_factory):
     )
     async with coordination.server.db.get_manager().transaction() as tx:
         installation = await install_verified_manifest_on(
-            tx, team_id=member.team_id, fetched=fetched, granted_scopes=list(runtime.manifest.install_scopes)
+            tx,
+            team_id=member.team_id,
+            fetched=fetched,
+            granted_scopes=list(runtime.manifest.install_scopes),
         )
 
     async def current_key(team):
@@ -335,7 +338,9 @@ async def test_designation_commits_nonce_effect_and_outbox_once(world):
     assert await world.counts() == (1, 1, 1)
     assert world.effect.committed == 1
     replay = await world.post(body)
-    assert (replay.status_code, replay.json()["detail"]) == (403, "owner_required")
+    assert (replay.status_code, replay.json()) == (409, {"detail": "applied_earlier"})
+    assert replay.headers["cache-control"] == "no-store"
+    assert world.effect.prepares == world.effect.committed == 1
     assert await world.counts() == (1, 1, 1)
 
 
@@ -370,8 +375,17 @@ async def test_untrusted_forwarded_host_cannot_select_the_human_origin(world):
 async def test_parallel_delivery_of_one_act_commits_only_one_effect(world):
     body = world.body()
     replies = await asyncio.gather(world.post(body), world.post(body))
-    assert sorted(reply.status_code for reply in replies) == [200, 403]
+    assert sum(reply.status_code == 200 for reply in replies) == 1
+    other = next(reply for reply in replies if reply.status_code != 200)
+    # A request that observes the committed nonce may acknowledge it; an
+    # overlapping fresh request still refuses the losing consume/effect.
+    assert (other.status_code, other.json()["detail"]) in {
+        (403, "owner_required"),
+        (409, "applied_earlier"),
+    }
     assert await world.counts() == (1, 1, 1)
+    replay = await world.post(body)
+    assert (replay.status_code, replay.json()) == (409, {"detail": "applied_earlier"})
 
 
 async def test_failed_effect_rolls_back_nonce_and_governance_then_same_act_can_retry(world):
@@ -602,3 +616,132 @@ async def test_team_or_console_credentials_cannot_replace_the_owner_act(world, h
     response = await world.post(world.body(), headers=header)
     assert response.status_code == 403
     assert await world.counts() == (0, 0, 0)
+
+
+async def test_lost_revoke_response_replays_after_holding_is_gone_without_another_effect(world):
+    assert (await world.post(world.body())).status_code == 200
+    revoke = world.body(act="human-role.revoke")
+
+    class DropCommittedResponse(httpx.AsyncBaseTransport):
+        async def handle_async_request(self, request):
+            transport = httpx.ASGITransport(app=world.app)
+            response = await transport.handle_async_request(request)
+            await response.aread()
+            assert response.status_code == 200
+            await transport.aclose()
+            raise httpx.ReadError("test dropped the committed response", request=request)
+
+    async with httpx.AsyncClient(transport=DropCommittedResponse(), base_url=ORIGIN) as client:
+        with pytest.raises(httpx.ReadError, match="test dropped"):
+            await client.post(PATH, json=revoke)
+    assert await world.counts() == (2, 0, 2)
+    prepares, committed = world.effect.prepares, world.effect.committed
+    response = await world.post(revoke)
+    assert (response.status_code, response.json()) == (409, {"detail": "applied_earlier"})
+    assert world.effect.prepares == prepares
+    assert world.effect.committed == committed
+    assert await world.counts() == (2, 0, 2)
+
+    # A later distinct act is not a receipt for the earlier revoke.
+    distinct = world.body(act="human-role.revoke")
+    assert distinct["signing"] != revoke["signing"]
+    response = await world.post(distinct)
+    assert (response.status_code, response.json()["detail"]) == (403, "owner_required")
+    assert await world.counts() == (2, 0, 2)
+
+
+async def test_correctly_signed_different_act_with_same_nonce_is_not_applied_earlier(world):
+    from aweb_naapp.hooks.owner_act import owner_act_signing_bytes
+
+    first = world.body()
+    assert (await world.post(first)).status_code == 200
+    first_fields = json.loads(base64.b64decode(first["signing"]).split(b"\n", 1)[1])
+    different = world.body(act="human-role.revoke")
+    fields = json.loads(base64.b64decode(different["signing"]).split(b"\n", 1)[1])
+    fields["nonce"] = first_fields["nonce"]
+    signing = owner_act_signing_bytes(fields)
+    signature = base64.b64encode(world.member.team_key.sign(signing).signature).decode().rstrip("=")
+    # Prove the control reaches past signature verification with the current key.
+    await world.owner.verifier.prepare(signing, signature, team_id=world.member.team_id)
+    different.update(signing=base64.b64encode(signing).decode(), signature=signature)
+    before = world.effect.prepares
+    response = await world.post(different)
+    assert (response.status_code, response.json()["detail"]) == (403, "owner_required")
+    assert world.effect.prepares == before
+    assert await world.counts() == (1, 1, 1)
+
+
+@pytest.mark.parametrize("lost", ["installation", "controller", "expiry"])
+async def test_applied_earlier_requires_current_authority_installation_and_valid_act(world, lost):
+    assert (await world.post(world.body())).status_code == 200
+    revoke = world.body(act="human-role.revoke")
+    assert (await world.post(revoke)).status_code == 200
+    before = world.effect.prepares
+    expected = (403, "owner_required")
+    if lost == "installation":
+        from aweb.installations import uninstall_installation_on
+
+        async with world.coordination.server.db.get_manager().transaction() as tx:
+            await uninstall_installation_on(
+                tx,
+                team_id=world.member.team_id,
+                app_id="example",
+                expected_generation=world.installation["generation"],
+            )
+        expected = (403, "installation_inactive")
+    elif lost == "controller":
+        from aweb_naapp_testing import did_key
+
+        await world.coordination.registry.rotate_team_key(
+            world.member.team_id, did_key(SigningKey.generate())
+        )
+        deadline = world.runtime.team_cache()._cache[world.member.team_id].expires_at
+        await asyncio.sleep(max(0, (deadline - monotonic_ns()) / 1e9) + 0.02)
+    else:
+        future = datetime.now(UTC) + timedelta(minutes=11)
+        world.owner.verifier._clock = lambda: future
+    response = await world.post(revoke)
+    assert (response.status_code, response.json()["detail"]) == expected
+    assert world.effect.prepares == before
+    assert await world.counts() == (2, 0, 2)
+
+
+@pytest.mark.parametrize("stale", [False, True])
+async def test_replay_rechecks_original_key_deadline_after_observed_nonce_lock_wait(world, stale):
+    body = world.body()
+    assert (await world.post(body)).status_code == 200
+    db = world.runtime.db()
+    original = datetime.now(UTC)
+    now = [original]
+    world.owner.verifier._clock = lambda: now[0]
+    async with db.transaction() as blocker:
+        await blocker.fetch_value("SELECT nonce FROM {{tables.owner_act_nonces}} FOR UPDATE")
+        blocker_pid = await blocker.fetch_value("SELECT pg_backend_pid()")
+        pending = asyncio.create_task(world.post(body))
+        try:
+
+            async def observed_wait():
+                for _ in range(500):
+                    if await db.fetch_value(
+                        "SELECT EXISTS(SELECT 1 FROM pg_stat_activity WHERE $1=ANY(pg_blocking_pids(pid)))",
+                        blocker_pid,
+                    ):
+                        return
+                    await asyncio.sleep(0.01)
+                raise AssertionError("replay did not reach the observed nonce-row wait")
+
+            await asyncio.wait_for(observed_wait(), 8)
+            if stale:
+                now[0] = original + timedelta(seconds=61)
+            assert not pending.done()
+        except BaseException:
+            pending.cancel()
+            await asyncio.gather(pending, return_exceptions=True)
+            raise
+    response = await asyncio.wait_for(pending, 8)
+    expected = (
+        (403, {"detail": "owner_required"}) if stale else (409, {"detail": "applied_earlier"})
+    )
+    assert (response.status_code, response.json()) == expected
+    assert world.effect.prepares == world.effect.committed == 1
+    assert await world.counts() == (1, 1, 1)
