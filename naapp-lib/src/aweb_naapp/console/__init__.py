@@ -340,10 +340,12 @@ class LoginLimiter:
         self._volume_retention = volume_retention
         self._clock = clock
 
-    async def admit(self, request: Request, scope: str) -> None:
+    async def admit(self, request: Request, scope: str, *, bucket: str = LOGIN_BUCKET) -> None:
+        if not isinstance(bucket, str) or not bucket or len(bucket) > 128:
+            raise ValueError("a limiter bucket needs a bounded name")
         now = self._clock()
         charge = ratelimit.Charge(
-            bucket=LOGIN_BUCKET,
+            bucket=bucket,
             # The client's identity, hashed: bounded whatever a proxy header holds.
             key=_sha256(self._identity.of(request)).hex(),
             capacity=self._limit,

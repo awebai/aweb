@@ -255,7 +255,7 @@ def test_no_tool_handles_a_secret_value() -> None:
 
 async def test_the_manifest_is_served_on_the_api_origin_only(registry, database_url) -> None:
     async with running(registry, database_url, grants=InstalledTeams({})) as app:
-        for path in ("/manifests/v2.json", "/aweb-app.json"):
+        for path in ("/manifests/v2.json", "/manifests/v3.json", "/aweb-app.json"):
             response = await app.api.get(path)
             assert response.status_code == 200
             assert response.json()["tools"] == TOOLS
@@ -264,16 +264,17 @@ async def test_the_manifest_is_served_on_the_api_origin_only(registry, database_
         assert (await app.api.get("/.well-known/aweb-app.json")).status_code == 404
         catalog = await app.api.get("/.well-known/aweb-app-versions.json")
         assert catalog.status_code == 200
-        manifest = await app.api.get("/aweb-app.json")
+        variants = {version: await app.api.get(f"/manifests/v{version}.json") for version in (2, 3)}
         assert catalog.json() == {
             "catalog_version": 1,
             "app_id": "secrets-test",
             "variants": [
                 {
-                    "manifest_version": 2,
-                    "url": "/manifests/v2.json",
-                    "digest": "sha256:" + hashlib.sha256(manifest.content).hexdigest(),
+                    "manifest_version": version,
+                    "url": f"/manifests/v{version}.json",
+                    "digest": "sha256:" + hashlib.sha256(variants[version].content).hexdigest(),
                 }
+                for version in (2, 3)
             ],
         }
         assert (await app.console.get("/.well-known/aweb-app-versions.json")).status_code == 404
@@ -422,8 +423,8 @@ async def test_the_served_v2_bytes_come_from_the_template_and_configured_keys(
             for kid, path in runtime.settings.app_key_files.items()
         }
         expected = fill_manifest(MANIFEST, app_id="secrets-test", origin=API, did_keys=keys)
-        response = await app.api.get("/aweb-app.json")
-        assert response.content == expected == runtime.manifest_bytes
+        response = await app.api.get("/manifests/v2.json")
+        assert response.content == expected
         resolved = load_manifest(response.content)
         assert resolved.manifest_version == 2
         assert {kid: list(purposes) for kid, _, purposes in resolved.app_keys} == KEY_PURPOSES

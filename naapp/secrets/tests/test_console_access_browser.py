@@ -1,7 +1,6 @@
 """The DB-write agent is obvious at mobile and desktop sizes, and revoking it needs no passkey."""
 
 import asyncio
-import socket
 from contextlib import asynccontextmanager
 
 import pytest
@@ -14,6 +13,7 @@ from playwright.async_api import expect
 
 from aweb_secrets.use_approvals import UseApprovers, UsePolicies
 from tests.console_home import no_banner
+from tests.console_network import passkey_origin as passkey_origin
 from tests.test_change_sets import Installations
 from tests.test_change_sets import world as _world
 from tests.test_console_access import (
@@ -49,7 +49,14 @@ def apart(a, b, gap=4):
 
 
 @asynccontextmanager
-async def serving(world, *, pages=lambda console: (), banner=lambda console: no_banner):
+async def serving(
+    world,
+    *,
+    console_tls,
+    pages=lambda console: (),
+    banner=lambda console: no_banner,
+    console_listener,
+):
     """The seeded owner console on a real local port, with any extra ``pages`` and
     the home's ``banner``."""
     await apply_idempotency_migrations(world.db)
@@ -66,19 +73,25 @@ async def serving(world, *, pages=lambda console: (), banner=lambda console: no_
     )
     context = Uses(world, approvals, clock, Installations().grant)
     await seed(world)
-    sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-    sock.bind(("127.0.0.1", 0))
-    port = sock.getsockname()[1]
-    origin = f"http://localhost:{port}"
+    sock = console_listener.socket
+    port, origin = console_listener.port, console_listener.origin
     world.passkeys.rp = RelyingParty(origin=origin, name="Secrets")
     app = await application(
         context,
         origin=origin,
-        agent_origin=f"http://127.0.0.1:{port}",
+        agent_origin=f"https://127.0.0.1:{port}",
         pages=pages,
         banner=banner,
     )
-    server = uvicorn.Server(uvicorn.Config(app, log_level="warning", lifespan="off"))
+    server = uvicorn.Server(
+        uvicorn.Config(
+            app,
+            log_level="warning",
+            lifespan="off",
+            ssl_certfile=str(console_tls.cert_file),
+            ssl_keyfile=str(console_tls.key_file),
+        )
+    )
     task = asyncio.create_task(server.serve(sockets=[sock]))
     try:
         async with asyncio.timeout(10):
@@ -94,8 +107,8 @@ async def serving(world, *, pages=lambda console: (), banner=lambda console: no_
 
 
 @pytest.fixture
-async def service(world):
-    async with serving(world) as served:
+async def service(world, console_tls, console_listener):
+    async with serving(world, console_tls=console_tls, console_listener=console_listener) as served:
         yield served
 
 

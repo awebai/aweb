@@ -23,7 +23,8 @@ from aweb_secrets.change_policy import (
 )
 from aweb_secrets.owners import OWNER_ROLE
 from aweb_secrets.revisions import apply_revision_migrations, config_revision
-from tests.test_owner_directory import ALICE, BOB, TEAM, World, designate_owner, world  # noqa: F401
+from tests.test_change_sets import World
+from tests.test_owner_directory import ALICE, BOB, TEAM, designate_owner, world  # noqa: F401
 
 
 @pytest.fixture
