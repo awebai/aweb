@@ -15,6 +15,7 @@ import time
 from collections.abc import Mapping
 from dataclasses import InitVar, asdict, dataclass, field
 from datetime import datetime, timezone
+from email.utils import parsedate_to_datetime
 from types import MappingProxyType
 from typing import Any, Awaitable, Callable
 from urllib.parse import quote, urlparse
@@ -58,6 +59,7 @@ from awid.ratelimit import normalize_service_token
 from awid.registry_auth import RegistryRequestAuth, path_signature_headers
 from awid.registry_types import (
     RegistryError as RegistryError,
+    RegistryThrottled as RegistryThrottled,
     DIDKeyNotFoundError as DIDKeyNotFoundError,
     IDTreeEnrollment as IDTreeEnrollment,
 )
@@ -75,6 +77,34 @@ logger = logging.getLogger(__name__)
 
 MAX_REGISTRY_RESPONSE_BYTES = 10 * 1024 * 1024
 MAX_REGISTRY_ERROR_BYTES = 64 * 1024
+
+
+# One original timeout covers network reads and waits. Keep these aliases
+# independently controllable in no-I/O tests; production uses the real clocks
+# and cancellable asyncio sleep, never a blocking retry loop.
+_read_retry_now = time.monotonic
+_read_retry_sleep = asyncio.sleep
+_READ_ATTEMPTS = 3
+
+
+def _retry_after_seconds(value: str | None, *, now: datetime | None = None) -> float | None:
+    """HTTP Retry-After seconds/date, finite and nonnegative, or no hint."""
+    if value is None:
+        return None
+    value = value.strip()
+    if value.isascii() and value.isdecimal():
+        # Arbitrarily large valid delta-seconds must exhaust a finite budget,
+        # not be misread as an absent hint and retried early.
+        return min(float(value), 1e300)
+    if len(value) > 128:
+        return None
+    try:
+        stamp = parsedate_to_datetime(value)
+        if stamp.tzinfo is None:
+            return None
+        return max(0.0, (stamp - (now or datetime.now(timezone.utc))).total_seconds())
+    except (TypeError, ValueError, OverflowError):
+        return None
 
 
 def _safe_error_text(content: bytes) -> str:
@@ -321,6 +351,13 @@ class AddressAlreadyBoundError(RegistryError):
 
 @dataclass(frozen=True)
 class RegistryClient:
+    """One registry client with a bounded original budget for each request.
+
+    Bodyless GET/HEAD reads may retry a 429 up to three total attempts within
+    timeout_seconds, honoring Retry-After. SDK-owned read signatures refresh;
+    caller-supplied proofs and all mutations are never automatically replayed.
+    """
+
     registry_url: str
     timeout_seconds: float = 5.0
     transport: httpx.AsyncBaseTransport | None = None
@@ -507,48 +544,83 @@ class RegistryClient:
         content: bytes | None = None,
         registry_url: str | None = None,
     ) -> dict[str, Any]:
-        request_headers = {
+        method = method.upper()
+        supplied_headers = {
             key: value
             for key, value in (headers or {}).items()
             if key.strip().lower() != "accept-encoding"
         }
-        request_headers["Accept-Encoding"] = "identity"
+        # The SDK can refresh its own member path signatures. A signature
+        # supplied by a caller has no signing capability here: do not replay
+        # such a request with an aging proof. All mutations are one attempt.
+        caller_proof = any(name.lower() in {
+            "authorization", "x-aweb-signed-payload", "x-aweb-timestamp"
+        } for name in supplied_headers)
+        replayable = method in {"GET", "HEAD"} and not caller_proof and json is None and not content
         home_registry = (
             registry_url is None
             or canonical_server_origin(registry_url) == canonical_server_origin(self.registry_url)
         )
-        if home_registry:
-            request_headers.update(
-                self._request_auth.headers(
-                    method,
-                    path,
-                    signed_by_caller=any(name.lower() == "authorization" for name in request_headers),
-                )
-            )
+        deadline = _read_retry_now() + self.timeout_seconds
+        throttled = None
+        response_content = b""
         try:
             async with asyncio.timeout(self.timeout_seconds):
-                async with self._http_client.stream(
-                    method,
-                    f"{self._resolved_base_url(registry_url=registry_url)}{path}",
-                    headers=request_headers,
-                    json=json,
-                    content=content,
-                ) as response:
-                    succeeded = 200 <= response.status_code < 300
-                    max_bytes = MAX_REGISTRY_RESPONSE_BYTES if succeeded else MAX_REGISTRY_ERROR_BYTES
-                    try:
-                        content = await _read_bounded_response(response, max_bytes)
-                    except ValueError as exc:
-                        if succeeded:
-                            raise
-                        # An unreadable error page is still this refusal.
-                        raise RegistryError(
-                            f"unreadable HTTP {response.status_code} response",
-                            status_code=response.status_code,
-                        ) from exc
+                for attempt in range(1, _READ_ATTEMPTS + 1):
+                    if throttled is not None and _read_retry_now() >= deadline:
+                        raise RegistryThrottled(retry_after_seconds=throttled.retry_after_seconds,
+                            attempts=throttled.attempts, reason="elapsed_budget")
+                    request_headers = {**supplied_headers, "Accept-Encoding": "identity"}
+                    if home_registry:
+                        # Build inside the loop: no previous attempt's timestamp
+                        # or signature is carried over a backoff wait.
+                        request_headers.update(self._request_auth.headers(
+                            method, path, signed_by_caller=caller_proof,
+                        ))
+                    async with self._http_client.stream(
+                        method,
+                        f"{self._resolved_base_url(registry_url=registry_url)}{path}",
+                        headers=request_headers,
+                        json=json,
+                        content=content,
+                    ) as response:
+                        if response.status_code == 429:
+                            # Only the sanitized header is useful. Never read,
+                            # retain or expose an upstream throttling body.
+                            response_content = b""
+                        else:
+                            succeeded = 200 <= response.status_code < 300
+                            max_bytes = MAX_REGISTRY_RESPONSE_BYTES if succeeded else MAX_REGISTRY_ERROR_BYTES
+                            try:
+                                response_content = await _read_bounded_response(response, max_bytes)
+                            except ValueError as exc:
+                                if succeeded:
+                                    raise
+                                raise RegistryError(
+                                    f"unreadable HTTP {response.status_code} response",
+                                    status_code=response.status_code,
+                                ) from exc
+                    if response.status_code != 429:
+                        break
+                    hint = _retry_after_seconds(response.headers.get("Retry-After"))
+                    reason = "attempt_budget" if replayable else "not_replayable"
+                    throttled = RegistryThrottled(retry_after_seconds=hint, attempts=attempt, reason=reason)
+                    if not replayable or attempt == _READ_ATTEMPTS:
+                        raise throttled
+                    # Invalid/absent hints get finite exponential backoff. Zero
+                    # and past-date hints still yield, instead of busy looping.
+                    delay = max(0.05, hint) if hint is not None else min(0.25 * 2 ** (attempt - 1), 2.0)
+                    if delay >= deadline - _read_retry_now():
+                        raise RegistryThrottled(retry_after_seconds=hint,
+                            attempts=attempt, reason="elapsed_budget")
+                    # Response context is closed before sleeping: no connection
+                    # or response-body stream is held over the wait.
+                    await _read_retry_sleep(delay)
         except (httpx.TransportError, TimeoutError) as exc:
-            # No answer, or none in time: a write may or may not have been
-            # applied. The original error stays the cause.
+            if isinstance(exc, TimeoutError) and throttled is not None:
+                raise RegistryThrottled(retry_after_seconds=throttled.retry_after_seconds,
+                    attempts=throttled.attempts, reason="elapsed_budget") from exc
+            # Transport errors are not replayed: a write may already have run.
             unavailable = f"AWID registry unavailable ({type(exc).__name__})"
             raise RegistryError(unavailable, status_code=503, code="unavailable") from exc
         if not 200 <= response.status_code < 300:
@@ -557,7 +629,7 @@ class RegistryClient:
             parsed_error = None
             body_is_json = False
             try:
-                parsed_error = json_loads(content)
+                parsed_error = json_loads(response_content)
                 body_is_json = True
                 if isinstance(parsed_error, dict):
                     raw_detail = parsed_error.get("detail")
@@ -567,7 +639,7 @@ class RegistryClient:
                         code = _safe_error_text(raw_detail["code"].encode("utf-8"))
             except Exception:
                 detail = None
-            response_text = _safe_error_text(content)
+            response_text = _safe_error_text(response_content)
             if response.status_code == 409:
                 if detail == "did_aw must be registered before address assignment":
                     raise DIDRegistrationRequiredError()
@@ -583,9 +655,16 @@ class RegistryClient:
                 body=parsed_error,
                 body_is_json=body_is_json,
             )
-        if not content:
-            return {}
-        return json_loads(content)
+        parsed = json_loads(response_content) if response_content else {}
+        # Cancellation is delivered at awaits. Also enforce the same original
+        # budget after synchronous JSON decoding, before returning authority.
+        if _read_retry_now() >= deadline:
+            if throttled is not None:
+                raise RegistryThrottled(retry_after_seconds=throttled.retry_after_seconds,
+                    attempts=throttled.attempts, reason="elapsed_budget")
+            raise RegistryError("AWID registry unavailable (TimeoutError)",
+                status_code=503, code="unavailable")
+        return parsed
 
     async def aclose(self) -> None:
         await self._http_client.aclose()
