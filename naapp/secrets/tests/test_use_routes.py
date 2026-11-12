@@ -10,13 +10,14 @@ from aweb_naapp_testing import Member
 from awid_service.testing import REGISTRY_URL
 
 from aweb_secrets.app import create_app
+from aweb_secrets.member_types import ToolReply
 from aweb_secrets.status_service import UseStatus
 from aweb_secrets.use_routes import UseServices, use_router
 from tests.harness import running_upstream
 from tests.test_admission import TEAM, _grant_source_grant, _install
 from tests.test_app import _settings, allow_all, kms_check
 from tests.test_broker_audit import INSTALLATION
-from tests.test_broker_service import SECRET, setup
+from tests.test_broker_service import SECRET, completed_receipt, setup
 
 API = "https://api.localhost"
 
@@ -112,7 +113,8 @@ async def test_actual_guard_binds_submission_and_status_never_sends(
                 assert await db.fetch_value("SELECT count(*) FROM {{tables.intents}}") == 0
                 response = await client.post(target, content=body, headers=headers)
                 assert response.status_code == 200 and response.json()["state"] == "completed"
-                receipt = response.json()
+                live = response.json()
+                receipt = (await completed_receipt(db, ToolReply(response.status_code, live))).body
                 again = await client.post(
                     target,
                     content=body,

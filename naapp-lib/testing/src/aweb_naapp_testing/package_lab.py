@@ -6,7 +6,7 @@ PostgreSQL, Redis and AWID. There are no customer inputs, DNS override hooks,
 insecure TLS or production access. A service describes itself with
 :class:`PackagedService`: the key files it reads, its environment and the probe
 that runs inside its image. The probe builds on
-:mod:`aweb_naapp_testing.packaged_probe`, which the lab copies next to it.
+:mod:`aweb_naapp_testing.packaged_probe`, copied as a minimal package next to it.
 """
 
 from __future__ import annotations
@@ -164,10 +164,13 @@ def run_package_lab(image: str, service: PackagedService, *, expected_commit: st
         for filename in ("service.env", "postgres.env", "registry.env"):
             (lab / filename).chmod(0o600)
         (lab / "probe.py").write_bytes(service.probe.read_bytes())
-        shared_probe = Path(__file__).with_name("packaged_probe.py")
-        (lab / shared_probe.name).write_bytes(shared_probe.read_bytes())
-        shared_identity = Path(__file__).with_name("packaged_identity.py")
-        (lab / shared_identity.name).write_bytes(shared_identity.read_bytes())
+        # Only the two probe modules are needed in the image. The full testing
+        # package initializer imports test-only dependencies absent there.
+        probe_package = lab / "aweb_naapp_testing"
+        probe_package.mkdir()
+        (probe_package / "__init__.py").write_text("")
+        for name in ("packaged_probe.py", "packaged_identity.py"):
+            (probe_package / name).write_bytes(Path(__file__).with_name(name).read_bytes())
         docker(
             "network",
             "create",

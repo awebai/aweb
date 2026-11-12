@@ -24,7 +24,7 @@ from awid.team_ids import parse_team_id
 from fastapi import HTTPException, Request
 from pgdbm import AsyncDatabaseManager
 
-from library.config import Settings
+from library.config import MAX_TEAM_FACTS_TTL_SECONDS, Settings
 
 logger = logging.getLogger(__name__)
 
@@ -80,6 +80,11 @@ class AWIDTeamCache:
         self, *, registry_url: str, ttl_seconds: int, service_token: str | None = None
     ) -> None:
         self.registry_url = registry_url.rstrip("/")
+        if ttl_seconds > MAX_TEAM_FACTS_TTL_SECONDS:
+            raise ValueError(
+                f"ttl_seconds is {ttl_seconds}: AWID team facts are cached for at most "
+                f"{MAX_TEAM_FACTS_TTL_SECONDS} seconds"
+            )
         self.ttl_seconds = ttl_seconds
         self._headers = (
             {"X-AWID-Service-Token": service_token.strip()}
@@ -224,7 +229,7 @@ class AWIDTeamCache:
         facts = CachedTeamFacts(
             team_did_key=payload["team_did_key"],
             revoked_certificate_ids=revoked,
-            expires_at=now + min(self.ttl_seconds, 60),
+            expires_at=now + self.ttl_seconds,
         )
         self._certificate_cache[cache_key] = facts
         return facts

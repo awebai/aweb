@@ -33,14 +33,16 @@ with the ruling below on who may sign one.
 An owner act is valid only from the team's **controller authority**, exercised
 by the organization owner:
 
-- For a team whose controller key the owner holds (BYOT), the owner signs
-  locally with that key.
-- For a team whose controller key a custodial deployment holds, the deployment
-  signs only for the **organization owner** (never an organization admin or any
-  other role), and only after the owner's **fresh interactive step-up**, such
-  as a passkey or re-authentication. It never signs with a stored credential, an
-  API key or an MCP token. Its signer is a narrow provisioning signer, not
-  controller-key material loaded into every request process.
+- Hosted and independent/BYOT deployments use the same
+  [protected signer boundary](human-assurance-contract.md). The operator keeps
+  the controller key outside worker access. A local plaintext key or a
+  passphrase prompt is not an alternate supported governance lane.
+- The signer acts only for the **current authorized organization/team owner**
+  (never an admin or a role label alone), after a live passkey UV approval bound
+  to exactly this act and consumed once. Account login, a stored credential,
+  API key, MCP token or ordinary session cannot substitute. The shared signer
+  and migration need their own implementation/release acceptance; this change
+  does not alter the owner-act wire or make a verifier prove custody.
 
 **Disclosure.** A custodian of the controller key can mint any owner act:
 activate or revoke hook targets, designate itself a reader, set retention or
@@ -106,7 +108,7 @@ audience or vocabulary is refused.
 | --- | --- |
 | The coordination server | `hook-binding.activate`, `hook-binding.revoke` |
 | Every naapp | `app-role.designate`, `app-role.revoke`, `app-credential.recover` |
-| A naapp that declares human roles ([owner-act delivery](owner-act-delivery.md)), on its delivery route | `human-role.designate`, `human-role.revoke`, `human-credential.replace` |
+| A naapp that declares human roles ([owner-act delivery](owner-act-delivery.md)), on its delivery route | `human-role.designate`, `human-role.revoke`, `human-credential.replace`, `human-credential.cap-set` |
 | logs, in addition | `logs.retention.set`, `logs.erase`, `logs.legal-hold.set`, `logs.legal-hold.release` |
 
 Subjects are flat objects. A field marked "when" is required in that case and
@@ -158,9 +160,13 @@ the token.
     ([The credential](owner-act-delivery.md#the-credential)).
 - **`human-role.revoke`**: `app_id`, `installation_id`, `role` and
   `principal`, the current holder.
+- **`human-credential.cap-set`**: `app_id`, `installation_id`, `role` and
+  `cap`, the most active credentials one holding of `role` may have: a
+  positive JSON integer in the safe range above. It names a role, not a
+  holder, so it carries no `principal`.
 
-The human-role acts name a team member who already exists, so the app needs
-no pending row: the verifier's stored row is the subject the app builds from
+Designate, replace and revoke name a team member who already exists, so the app
+needs no pending row: the verifier's stored row is the subject the app builds from
 its own installation, the declared role, the principal and the hashes of the
 credential and notice contact it was given
 ([Delivery](owner-act-delivery.md#delivery)). An app that declares a role with
