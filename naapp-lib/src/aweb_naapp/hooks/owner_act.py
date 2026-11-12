@@ -41,6 +41,7 @@ from aweb_naapp.hooks.strictjson import (
 __all__ = [
     "APP_ACTS",
     "CORE_ACTS",
+    "CREDENTIAL_CAP_ACT",
     "HUMAN_ROLE_ACTS",
     "HumanCredential",
     "LOGS_ACTS",
@@ -63,6 +64,9 @@ APP_ACTS = ("app-role.designate", "app-role.revoke", "app-credential.recover")
 # owner-act delivery route.
 HUMAN_ROLE_ACTS = ("human-credential.replace", "human-role.designate", "human-role.revoke")
 LOGS_ACTS = ("logs.retention.set", "logs.erase", "logs.legal-hold.set", "logs.legal-hold.release")
+# How many active credentials each holding of an app role may hold. It names
+# no holder; it serves no route until an app mounts it.
+CREDENTIAL_CAP_ACT = "human-credential.cap-set"
 CREDENTIAL_PREFIX = b"aweb.human-credential/1\n"
 
 
@@ -278,6 +282,10 @@ _SUBJECTS: dict[str, _Subject] = {
     "human-role.designate": _HUMAN_HOLDING,
     "human-credential.replace": _HUMAN_HOLDING,
     "human-role.revoke": _HUMAN_REVOCATION,
+    CREDENTIAL_CAP_ACT: _Subject(
+        fields=_app_fields(role=_string(_TOKEN), cap=_integer(1, MAX_SAFE_INTEGER)),
+        required=("app_id", "installation_id", "role", "cap"),
+    ),
     "logs.retention.set": _Subject(
         fields=_app_fields(
             event_class=_string(_EVENT_CLASS),

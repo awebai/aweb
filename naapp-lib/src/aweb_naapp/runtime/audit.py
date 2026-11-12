@@ -27,6 +27,8 @@ class AuditKind(StrEnum):
     APPROVER_ENROLMENT_REISSUED = "approver_enrolment_reissued"
     APPROVER_RETIRED = "approver_retired"
     APPROVER_PASSKEY_REVOKED = "approver_passkey_revoked"
+    APPROVER_PASSKEY_ADDED = "approver_passkey_added"
+    APPROVER_PASSKEY_REPLACED = "approver_passkey_replaced"
     APPROVER_CONTACT_CHANGE_SCHEDULED = "approver_contact_change_scheduled"
     APPROVER_CONTACT_CHANGE_BY_OWNER_SCHEDULED = "approver_contact_change_by_owner_scheduled"
     APPROVER_CONTACT_CHANGE_CANCELLED = "approver_contact_change_cancelled"

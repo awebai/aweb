@@ -147,8 +147,9 @@ ROOT_CONSUMERS = {
         'AWEB_ROOT / "docs" / "vectors" / "app-request-credential-v1.json"',
     ),
     PurePosixPath("naapp-lib/tests/runtime/approvals/test_passkey_proof.py"): _consumer(
-        "passkey-evidence-v1.json",
+        {"passkey-evidence-v1.json", "passkey-credential-change-v1.json"},
         'Path(__file__).resolve().parents[4] / "docs/vectors/passkey-evidence-v1.json"',
+        'Path(__file__).resolve().parents[4] / "docs/vectors/passkey-credential-change-v1.json"',
     ),
     PurePosixPath("server/tests/test_human_channels_participants.py"): _consumer(
         "human-channels-participants-v1.json", "ROOT / 'docs/vectors/human-channels-participants-v1.json'",
@@ -179,7 +180,7 @@ ROOT_CONSUMERS = {
         '"../../../docs/vectors/human-channels-profile-v1.json"',
     ),
     PurePosixPath("naapp-lib/tests/hooks/test_passkey_evidence_vector.py"): _consumer(
-        {"passkey-evidence-v1.json", "hook-catalog-v1.json"},
+        {"passkey-evidence-v1.json", "passkey-credential-change-v1.json", "hook-catalog-v1.json"},
         'Path(__file__).resolve().parents[3] / "docs" / "vectors" / "passkey-evidence-v1.json"',
         'Path(__file__).resolve().parents[3] / "docs" / "vectors" / "hook-catalog-v1.json"',
     ),
@@ -847,6 +848,9 @@ PACKAGE_GUARDS = {
 NON_CONSUMING_CODE_REFERENCES = {
     PurePosixPath("scripts/generate_owner_act_delivery_vector.py"): (
         "docs/vectors/owner-act-delivery-v1.json",
+    ),
+    PurePosixPath("scripts/generate_passkey_credential_change_vector.py"): (
+        "docs/vectors/passkey-credential-change-v1.json",
     ),
     PurePosixPath("scripts/freeze_human_channels_presence.py"): (
         "docs/vectors/human-channels-presence-v1.json",

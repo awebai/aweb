@@ -375,34 +375,56 @@ async def _require_narrowed_subject(
 
 async def _revoked_key_ref(tx: TransactionManager, event: AuditEvent) -> str:
     """The opaque reference of the key a PASSKEY_REVOKED event revoked at its
-    own time: an enrolled key's from its completion link, a human-role
-    holder's from its authorization, matched by the credential digest."""
+    own time."""
     try:
         credential_id = base64url_to_bytes(event.details["credential_id"])
     except (KeyError, TypeError, ValueError):
         raise GovernanceUnavailable() from None
-    key = await tx.fetch_one(
-        "SELECT c.credential_ref,k.revoked_at FROM {{tables.credential_completion_links}} c "
-        "JOIN {{tables.passkey_credentials}} k ON k.credential_id=c.credential_id "
-        "AND k.subject=c.subject WHERE c.subject=$1 AND c.credential_id=$2",
+    revoked_at = await tx.fetch_value(
+        "SELECT revoked_at FROM {{tables.passkey_credentials}} WHERE credential_id=$1 "
+        "AND subject=$2",
+        credential_id,
         event.subject,
+    )
+    if revoked_at != event.occurred_at:
+        raise GovernanceUnavailable()
+    return await key_ref(tx, event.subject, credential_id)
+
+
+async def key_ref(tx: TransactionManager, subject: str, credential_id: bytes) -> str:
+    """The opaque reference of one of `subject`'s keys, by its credential ID:
+    an enrolled key's from its completion link, a key the holding added itself
+    from its record, and a human-role holder's bound key from its
+    authorization, matched by the credential digest. Refused when no source
+    names the credential."""
+    ref = await tx.fetch_value(
+        "SELECT c.credential_ref FROM {{tables.credential_completion_links}} c "
+        "WHERE c.subject=$1 AND c.credential_id=$2 AND c.credential_ref IS NOT NULL",
+        subject,
         credential_id,
     )
-    if key is None:
-        key = await tx.fetch_one(
-            "SELECT a.credential_ref,a.credential_sha256,k.revoked_at,k.public_key,k.rp_id "
+    if ref is None:
+        ref = await tx.fetch_value(
+            "SELECT credential_ref FROM {{tables.credential_added_keys}} "
+            "WHERE subject=$1 AND credential_id=$2",
+            subject,
+            credential_id,
+        )
+    if ref is None:
+        bound = await tx.fetch_one(
+            "SELECT a.credential_ref,a.credential_sha256,k.public_key,k.rp_id "
             "FROM {{tables.credential_authorizations}} a "
             "JOIN {{tables.passkey_credentials}} k ON k.subject=a.subject "
             "WHERE a.subject=$1 AND k.credential_id=$2 AND a.credential_ref IS NOT NULL",
-            event.subject,
+            subject,
             credential_id,
         )
         if (
-            key is not None
-            and HumanCredential(credential_id, bytes(key["public_key"]), key["rp_id"]).sha256
-            != key["credential_sha256"]
+            bound is not None
+            and HumanCredential(credential_id, bytes(bound["public_key"]), bound["rp_id"]).sha256
+            == bound["credential_sha256"]
         ):
-            raise GovernanceUnavailable()
-    if key is None or key["revoked_at"] != event.occurred_at or key["credential_ref"] is None:
+            ref = bound["credential_ref"]
+    if ref is None:
         raise GovernanceUnavailable()
-    return key["credential_ref"]
+    return ref
