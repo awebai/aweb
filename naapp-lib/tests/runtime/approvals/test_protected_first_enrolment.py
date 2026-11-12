@@ -5,7 +5,9 @@ and ceremony. Real WebAuthn on real PostgreSQL."""
 
 from __future__ import annotations
 
+import asyncio
 import json
+import uuid
 
 import pytest
 import pytest_asyncio
@@ -39,10 +41,19 @@ async def bootstrap_in(tx, bootstrap_id: str = "bootstrap-1") -> ProtectedBootst
     )
 
 
-async def first(pw: PasskeyWorld, scope: str = SCOPE, bootstrap_id: str = "bootstrap-1"):
+async def first(
+    pw: PasskeyWorld,
+    scope: str = SCOPE,
+    bootstrap_id: str = "bootstrap-1",
+    subject: str | None = None,
+):
     async with pw.passkeys.db.transaction() as tx:
         designation = await pw.passkeys.designate_first(
-            tx, scope=scope, contact=CONTACT, evidence=await bootstrap_in(tx, bootstrap_id)
+            tx,
+            scope=scope,
+            subject=subject or str(uuid.uuid4()),
+            contact=CONTACT,
+            evidence=await bootstrap_in(tx, bootstrap_id),
         )
     return designation
 
@@ -54,7 +65,8 @@ async def approvers(pw: PasskeyWorld, scope: str = SCOPE) -> int:
 
 
 async def test_a_bootstrap_designates_the_first_approver_who_enrols_and_logs_in(pw):
-    designation = await first(pw)
+    designation = await first(pw, subject="pending-human-1")
+    assert designation.approver.subject == "pending-human-1"
     assert designation.effective_at == pw.clock()
     assert pw.contacts.inbox.get(CONTACT) is None
     await pw.passkeys.deliver(designation)
@@ -79,7 +91,9 @@ async def test_a_bootstrap_admitted_in_another_transaction_is_refused(pw):
         stale = await bootstrap_in(elsewhere)
     with pytest.raises(DesignationRefused):
         async with pw.passkeys.db.transaction() as tx:
-            await pw.passkeys.designate_first(tx, scope=SCOPE, contact=CONTACT, evidence=stale)
+            await pw.passkeys.designate_first(
+                tx, scope=SCOPE, subject="pending-human-1", contact=CONTACT, evidence=stale
+            )
     assert await approvers(pw) == 0
 
 
@@ -108,7 +122,9 @@ async def test_a_scope_that_ever_had_an_approver_is_not_bootstrapped_again(pw):
 async def test_only_a_protected_bootstrap_designates_first(pw):
     with pytest.raises(TypeError):
         async with pw.passkeys.db.transaction() as tx:
-            await pw.passkeys.designate_first(tx, scope=SCOPE, contact=CONTACT, evidence=object())
+            await pw.passkeys.designate_first(
+                tx, scope=SCOPE, subject="pending-human-1", contact=CONTACT, evidence=object()
+            )
     assert await approvers(pw) == 0
 
 
@@ -116,9 +132,87 @@ async def test_a_rolled_back_bootstrap_leaves_nothing_and_can_run_again(pw):
     with pytest.raises(RuntimeError):
         async with pw.passkeys.db.transaction() as tx:
             await pw.passkeys.designate_first(
-                tx, scope=SCOPE, contact=CONTACT, evidence=await bootstrap_in(tx)
+                tx,
+                scope=SCOPE,
+                subject="pending-human-1",
+                contact=CONTACT,
+                evidence=await bootstrap_in(tx),
             )
             raise RuntimeError("the bootstrap's own effect failed")
     assert await approvers(pw) == 0
-    await first(pw)
+    await first(pw, subject="pending-human-1")
     assert await approvers(pw) == 1
+
+
+async def test_a_subject_that_already_exists_is_refused(pw):
+    designation = await designate(pw, CONTACT, scope="app.installation-1")
+    with pytest.raises(DesignationRefused):
+        await first(pw, subject=designation.approver.subject)
+    assert await approvers(pw) == 0
+    await first(pw, subject="pending-human-1")
+    with pytest.raises(DesignationRefused):
+        await first(
+            pw,
+            scope="protected.signer.authority-2",
+            bootstrap_id="bootstrap-2",
+            subject="pending-human-1",
+        )
+    assert await approvers(pw, "protected.signer.authority-2") == 0
+
+
+async def concurrently(pw: PasskeyWorld, *calls: dict) -> list:
+    """Run each bootstrap in its own transaction, all at once."""
+
+    async def one(call: dict):
+        async with pw.passkeys.db.transaction() as tx:
+            return await pw.passkeys.designate_first(
+                tx,
+                scope=call["scope"],
+                subject=call["subject"],
+                contact=CONTACT,
+                evidence=await bootstrap_in(tx, call["bootstrap_id"]),
+            )
+
+    return await asyncio.gather(*(one(call) for call in calls), return_exceptions=True)
+
+
+def outcomes(results: list) -> tuple[int, list[type]]:
+    refused = [type(r) for r in results if isinstance(r, BaseException)]
+    return len(results) - len(refused), refused
+
+
+async def test_concurrent_bootstraps_of_one_scope_designate_one_approver(pw):
+    results = await concurrently(
+        pw,
+        {"scope": SCOPE, "subject": "pending-human-1", "bootstrap_id": "bootstrap-1"},
+        {"scope": SCOPE, "subject": "pending-human-2", "bootstrap_id": "bootstrap-2"},
+    )
+    assert outcomes(results) == (1, [DesignationRefused])
+    assert await approvers(pw) == 1
+
+
+async def test_concurrent_uses_of_one_bootstrap_take_effect_once(pw):
+    results = await concurrently(
+        pw,
+        {"scope": SCOPE, "subject": "pending-human-1", "bootstrap_id": "bootstrap-1"},
+        {
+            "scope": "protected.signer.authority-2",
+            "subject": "pending-human-2",
+            "bootstrap_id": "bootstrap-1",
+        },
+    )
+    assert outcomes(results) == (1, [DesignationRefused])
+    assert await approvers(pw) + await approvers(pw, "protected.signer.authority-2") == 1
+
+
+async def test_concurrent_bootstraps_of_one_subject_designate_it_once(pw):
+    results = await concurrently(
+        pw,
+        {"scope": SCOPE, "subject": "pending-human-1", "bootstrap_id": "bootstrap-1"},
+        {
+            "scope": "protected.signer.authority-2",
+            "subject": "pending-human-1",
+            "bootstrap_id": "bootstrap-2",
+        },
+    )
+    assert outcomes(results) == (1, [DesignationRefused])
