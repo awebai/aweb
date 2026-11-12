@@ -23,6 +23,7 @@ from dataclasses import dataclass
 
 import httpx
 from awid.db_config import build_database_config
+from awid.dns_verify import DomainVerifier
 from awid_service.testing import ServiceTransport
 from fastapi import FastAPI
 from pgdbm import AsyncDatabaseManager
@@ -53,9 +54,12 @@ async def running_server(
     redis: Redis,
     *,
     awid_transport: httpx.AsyncBaseTransport,
+    domain_verifier: DomainVerifier | None = None,
     public_origin: str = SERVER_URL,
 ) -> AsyncIterator[Server]:
-    """This server, with its migrations applied, on the empty database at ``database_url``."""
+    """This server, with its migrations applied, on the empty database at ``database_url``.
+    Its AWID client reaches AWID through ``awid_transport`` and looks up `_awid`
+    namespace authority through ``domain_verifier`` (real DNS when None)."""
     pool = await AsyncDatabaseManager.create_shared_pool(
         build_database_config(connection_string=database_url)
     )
@@ -63,7 +67,11 @@ async def running_server(
     try:
         await infra.initialize(shared_pool=pool)
         app = create_app(
-            db_infra=infra, redis=redis, awid_transport=awid_transport, public_origin=public_origin
+            db_infra=infra,
+            redis=redis,
+            awid_transport=awid_transport,
+            domain_verifier=domain_verifier,
+            public_origin=public_origin,
         )
         async with app.router.lifespan_context(app):
             yield Server(app=app, db=infra, transport=ServiceTransport(app), url=public_origin)
