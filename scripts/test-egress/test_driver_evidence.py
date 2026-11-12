@@ -105,6 +105,27 @@ class Evidence(unittest.TestCase):
                 self.run_complete_driver(root, copy_status=1)
             self.assertEqual((root / 'report-copy.status').read_text(), '1\n')
 
+    def test_unwritable_log_does_not_lose_inspect_or_error_receipt(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            original_open = Path.open
+
+            def open_file(path, *args, **kwargs):
+                if path.name == 'dns.log':
+                    raise PermissionError('forced log permission failure')
+                return original_open(path, *args, **kwargs)
+
+            def inspect(args, **kwargs):
+                kwargs['stdout'].write('[{"State":{"Error":"startup failure"}}]')
+                return subprocess.CompletedProcess(args, 0)
+
+            with patch.object(Path, 'open', open_file), patch.object(driver.subprocess, 'run', inspect):
+                self.assertFalse(driver.capture_container(root, 'dns', 'owned-dns'))
+            self.assertTrue((root / 'containers/dns.inspect.json').exists())
+            receipt = json.loads((root / 'containers/dns.capture.json').read_text())
+            self.assertIn('forced log permission failure', receipt['logs']['error'])
+            self.assertEqual(receipt['inspect']['exit_code'], 0)
+
     def test_each_service_start_failure_is_retained_before_removal(self):
         for failing in ('dns', 'postgres', 'redis'):
             with self.subTest(failing=failing), tempfile.TemporaryDirectory() as tmp:

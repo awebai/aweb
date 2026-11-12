@@ -43,14 +43,14 @@ def capture_container(evidence, role, container):
     for operation, suffix in [('logs', '.log'), ('inspect', '.inspect.json')]:
         # Keep stderr too: a failed read is missing evidence, never an empty
         # successful report. A read failure must not prevent the other read.
-        with (root / (role + suffix)).open('w') as output, \
-             (root / (role + suffix + '.stderr')).open('w') as error:
-            try:
+        try:
+            with (root / (role + suffix)).open('w') as output, \
+                 (root / (role + suffix + '.stderr')).open('w') as error:
                 result = subprocess.run(['docker', operation, container], stdout=output,
                                         stderr=subprocess.STDOUT if operation == 'logs' else error)
                 receipt[operation] = {'exit_code': result.returncode}
-            except OSError as exc:
-                receipt[operation] = {'error': str(exc)}
+        except OSError as exc:
+            receipt[operation] = {'error': str(exc)}
     (root / (role + '.capture.json')).write_text(json.dumps(receipt, indent=2) + '\n')
     return all(receipt[op].get('exit_code') == 0 for op in ('logs', 'inspect'))
 
