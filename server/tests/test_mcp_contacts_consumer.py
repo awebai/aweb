@@ -980,6 +980,94 @@ async def test_consumer_mcp_read_messages_from_contact_filters_on_server_side(aw
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize("channel", ["mail", "chat"])
+async def test_read_messages_from_contact_does_not_read_an_earlier_holder_of_the_address(
+    aweb_cloud_db, monkeypatch, channel,
+):
+    """An address can pass to another identity. Reading is by the reader's
+    identity: whoever holds the address now is no party to what its earlier
+    holder exchanged."""
+    alice_agent_id, bob_agent_id = await _seed_team(aweb_cloud_db.aweb_db)
+    _patch_auth(monkeypatch, _auth(agent_id=alice_agent_id))
+    contact = await aweb_cloud_db.aweb_db.fetch_one(
+        """
+        INSERT INTO {{tables.contacts}} (owner_did, contact_address, label)
+        VALUES ('did:aw:alice', 'acme.com/bob', 'Bob')
+        RETURNING contact_id
+        """
+    )
+    earlier_id = str(uuid4())
+    if channel == "mail":
+        await aweb_cloud_db.aweb_db.execute(
+            """
+            INSERT INTO {{tables.conversations}} (
+                conversation_id, conversation_type, team_id, created_by_did, created_at, updated_at
+            )
+            VALUES ($1, 'mail', 'ops:acme.com', 'did:aw:earlier-alice', NOW(), NOW())
+            """,
+            earlier_id,
+        )
+        await aweb_cloud_db.aweb_db.execute(
+            """
+            INSERT INTO {{tables.conversation_participants}} (
+                conversation_id, did, agent_id, alias, address, transport_hint, role
+            )
+            VALUES
+                ($1, 'did:aw:earlier-alice', NULL, 'alice', 'acme.com/alice', 'sender', 'initiator'),
+                ($1, 'did:aw:bob', $2, 'bob', 'acme.com/bob', 'to_address', 'participant')
+            """,
+            earlier_id,
+            bob_agent_id,
+        )
+        await aweb_cloud_db.aweb_db.execute(
+            """
+            INSERT INTO {{tables.messages}} (
+                conversation_id, from_did, to_did, from_alias, from_address, to_alias, subject, body
+            )
+            VALUES ($1, 'did:aw:bob', 'did:aw:earlier-alice', 'bob', 'acme.com/bob', 'alice', 'private', 'to the earlier holder')
+            """,
+            earlier_id,
+        )
+    else:
+        await aweb_cloud_db.aweb_db.execute(
+            """
+            INSERT INTO {{tables.chat_sessions}} (session_id, team_id, created_by)
+            VALUES ($1, 'ops:acme.com', 'alice')
+            """,
+            earlier_id,
+        )
+        await aweb_cloud_db.aweb_db.execute(
+            """
+            INSERT INTO {{tables.chat_participants}} (session_id, did, agent_id, alias, address)
+            VALUES
+                ($1, 'did:aw:earlier-alice', NULL, 'alice', 'acme.com/alice'),
+                ($1, 'did:aw:bob', $2, 'bob', 'acme.com/bob')
+            """,
+            earlier_id,
+            bob_agent_id,
+        )
+        await aweb_cloud_db.aweb_db.execute(
+            """
+            INSERT INTO {{tables.chat_messages}} (message_id, session_id, from_did, from_alias, body)
+            VALUES ($2, $1, 'did:aw:bob', 'bob', 'to the earlier holder')
+            """,
+            earlier_id,
+            str(uuid4()),
+        )
+
+    result = json.loads(
+        await contacts_tools.read_messages_from_contact(
+            DBInfra(aweb_cloud_db.aweb_db),
+            registry_client=None,
+            contact_id=str(contact["contact_id"]),
+            channel=channel,
+        )
+    )
+
+    assert result["messages"] == []
+
+
+@pytest.mark.asyncio
 async def test_consumer_mcp_read_messages_from_contact_returns_encrypted_mail_metadata_only(
     aweb_cloud_db,
     monkeypatch,
