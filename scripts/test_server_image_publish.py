@@ -141,6 +141,72 @@ class ServerOciTests(unittest.TestCase):
             self.exercise(fail_readback=True)
 
 
+class NativeArchiveHandoffTests(unittest.TestCase):
+    """Control the host/transfer edges; real builds remain the opt-in qualification."""
+    def exercise(self, machine, environment):
+        calls = []
+        copied = []
+        sha = "a" * 40
+        version = tomllib.loads((ROOT / "server/pyproject.toml").read_text())["project"]["version"]
+
+        def build(root, prefix, version, source, archive):
+            calls.append(("build",))
+            archive.write_bytes(b"unchanged archive bytes")
+
+        def run(root, *args, **kwargs):
+            calls.append(args)
+            if args[:2] == ("docker", "info"):
+                return json.dumps({"Architecture": machine, "OSType": "linux"})
+            if "inspect-staged" in args:
+                Path(args[args.index("--out") + 1]).write_text(json.dumps({
+                    "index": "sha256:" + "b" * 64,
+                    "platforms": {"linux/amd64": {}, "linux/arm64": {}}}))
+            if "--override-arch" in args:
+                copied.append(args[args.index("--override-arch") + 1])
+            if args[:3] == ("docker", "image", "inspect"):
+                return json.dumps([{"Architecture": copied[-1], "Config": {"Labels": {
+                    "org.opencontainers.image.revision": sha}}}])
+            if args[:2] == ("docker", "run"):
+                self.assertEqual(kwargs["timeout"], 120)
+                if args[-1] == "--help":
+                    return "Usage: aweb serve"
+                return json.dumps({"version": version, "machine": "x86_64" if copied[-1] == "amd64" else "aarch64", "uid": 1001})
+            return ""
+
+        probe = ServerPlatformBuildTests()
+        method = unittest.defaultTestLoader.getTestCaseNames(ServerPlatformBuildTests)[0]
+        with patch.dict(os.environ, environment), patch.object(PUBLISH, "build_oci_archive", build), patch.object(PUBLISH, "run", run), patch.object(PUBLISH.subprocess, "run"), patch(__name__ + ".command", return_value=sha), redirect_stdout(io.StringIO()) as output:
+            getattr(probe, method)()
+        return calls, copied, output.getvalue()
+
+    def test_one_archive_transfers_from_native_amd64_to_native_arm64_without_rebuild(self):
+        with tempfile.TemporaryDirectory() as directory:
+            archive = Path(directory) / "release.tar"
+            calls, copied, output = self.exercise("x86_64", {
+                "AWEB_SERVER_IMAGE_ARCHIVE_OUT": str(archive), "AWEB_SERVER_IMAGE_ARCHIVE_IN": ""})
+            self.assertEqual(copied, ["amd64"])
+            self.assertTrue(archive.is_file(), "exported archive must outlive the x86 probe")
+            original = archive.read_bytes()
+            self.assertIn(hashlib.sha256(original).hexdigest(), output)
+            calls, copied, output = self.exercise("aarch64", {
+                "AWEB_SERVER_IMAGE_ARCHIVE_IN": str(archive), "AWEB_SERVER_IMAGE_ARCHIVE_OUT": ""})
+            self.assertEqual(copied, ["arm64"])
+            self.assertNotIn(("build",), calls)
+            self.assertEqual(archive.read_bytes(), original)
+            self.assertIn(hashlib.sha256(original).hexdigest(), output)
+            self.assertTrue(any("inspect-staged" in call for call in calls))
+
+    def test_missing_transferred_archive_refuses_instead_of_rebuilding(self):
+        with tempfile.TemporaryDirectory() as directory:
+            with self.assertRaisesRegex(AssertionError, "input archive"):
+                self.exercise("aarch64", {"AWEB_SERVER_IMAGE_ARCHIVE_IN": str(Path(directory) / "missing.tar"),
+                                          "AWEB_SERVER_IMAGE_ARCHIVE_OUT": ""})
+
+    def test_unknown_native_architecture_refuses(self):
+        with self.assertRaisesRegex(AssertionError, "native architecture"):
+            self.exercise("ppc64le", {"AWEB_SERVER_IMAGE_ARCHIVE_IN": "", "AWEB_SERVER_IMAGE_ARCHIVE_OUT": ""})
+
+
 @unittest.skipUnless(os.environ.get("AWEB_TEST_SERVER_IMAGE_BUILD") == "1", "requires Docker buildx, skopeo and both platform runtimes")
 class ServerPlatformBuildTests(unittest.TestCase):
     def test_both_release_platforms_build_and_run_the_server_cli(self):
