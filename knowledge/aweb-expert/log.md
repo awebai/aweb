@@ -1,5 +1,11 @@
 # Knowledge log
 
+## 2026-11-12
+* **Harvest**: OKF proposal from aweb-expert/aweb-expert-owner-acts (composing the protected owner-act flow end to end).
+* **Creation**: decision [compose one working flow before polishing parts](/aweb-expert/decisions/compose-the-flow-before-polishing-parts.md), the operator's direction of 2026-11-12 (source-reported relay).
+* **Creation**: decisions [the protected-service client waits out throttling only within bounds it can justify](/aweb-expert/decisions/protected-client-retries-only-within-its-bounds.md), [aw delivers a protected act only after verifying it](/aweb-expert/decisions/deliver-a-protected-act-only-after-verifying-it.md) and [internal app origins are an exact allowlist](/aweb-expert/decisions/internal-app-origins-are-an-exact-allowlist.md).
+* **Creation**: lesson [a headless gnome-keyring in a lane container keeps its files and sockets off host bind mounts](/aweb-expert/lessons/headless-keyring-in-lane-containers.md).
+
 ## 2026-11-04
 * **Harvest**: OKF proposal from aweb-expert/aweb-expert-fresh-eyes (tasks aweb-acst and aweb-actf).
 * **Update**: [identity and routing review needs the real client](/aweb-expert/lessons/identity-and-routing-review-needs-the-real-client.md) gains that the real client includes the last released binary and that a skipped released-client case is not evidence.
