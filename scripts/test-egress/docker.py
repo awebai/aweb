@@ -26,6 +26,35 @@ def docker(*args):
     return subprocess.check_output(['docker', *args], text=True).strip()
 
 
+def start_container(containers, *run_args):
+    # Register ownership before start: a failed `run -d` can leave a container
+    # without returning its ID. Retain that container's failure before cleanup.
+    assert run_args[:2] == ('run', '-d')
+    container = docker('create', *run_args[2:])
+    containers.append(container)
+    docker('start', container)
+    return container
+
+
+def capture_container(evidence, role, container):
+    root = evidence / 'containers'
+    root.mkdir(exist_ok=True)
+    receipt = {'container': container}
+    for operation, suffix in [('logs', '.log'), ('inspect', '.inspect.json')]:
+        # Keep stderr too: a failed read is missing evidence, never an empty
+        # successful report. A read failure must not prevent the other read.
+        with (root / (role + suffix)).open('w') as output, \
+             (root / (role + suffix + '.stderr')).open('w') as error:
+            try:
+                result = subprocess.run(['docker', operation, container], stdout=output,
+                                        stderr=subprocess.STDOUT if operation == 'logs' else error)
+                receipt[operation] = {'exit_code': result.returncode}
+            except OSError as exc:
+                receipt[operation] = {'error': str(exc)}
+    (root / (role + '.capture.json')).write_text(json.dumps(receipt, indent=2) + '\n')
+    return all(receipt[op].get('exit_code') == 0 for op in ('logs', 'inspect'))
+
+
 def postgres_args(runner, limits=None):
     limits = limits or allocation(load_settings(), "lane", "server-1")["postgres"]
     # Disposable databases must not wait on the host disk's WAL fsync. Bound
@@ -94,6 +123,7 @@ def main():
     image = args.image or args.build_image or token
     containers = []
     network = None
+    reports_started = False
     try:
         if not args.image:
             # Copy only source files and a self-contained Git bundle. A worktree's
@@ -127,28 +157,27 @@ def main():
         if args.build_image:
             return 0
         network = docker('network', 'create', '--internal', token)
-        dns = docker('run', '-d', '--network', token, '--name', token + '-dns',
+        dns = start_container(containers, 'run', '-d', '--network', token, '--name', token + '-dns',
                      *resource_args(limits['dns']),
                      '-v', f'{evidence}:/evidence', image, 'python3',
                      'scripts/test-egress/dns.py', '--log', '/evidence/dns-denied.log')
-        containers.append(dns)
         info = json.loads(docker('inspect', dns))[0]
         dns_ip = info['NetworkSettings']['Networks'][token]['IPAddress']
         runner_started = time.monotonic()
-        runner = docker('run', '-d', '--init', '--user', '1000:1000', '--network', token, '--dns', dns_ip,
+        runner = start_container(containers, 'run', '-d', '--init', '--user', '1000:1000', '--network', token, '--dns', dns_ip,
                         '--dns-search', '.',  # Do not expand reserved fixtures using the host's search suffix.
                         '--add-host', '127.0.0.1.nip.io:127.0.0.1',
                         '--name', token + '-runner', *resource_args(limits['runner']),
                         '-e', f'GOMAXPROCS={gomaxprocs}',
                         '-e', f'AWEB_GATE_PROFILE={args.profile}',
                         '-e', f'AWEB_GATE_HOST_CPUS={os.environ.get("AWEB_GATE_HOST_CPUS", "")}',
+                        '-e', 'AWEB_UNIT_REPORT_DIR=/tmp/aweb-unit-reports',
                         '-e', 'PGHOST=127.0.0.1', '-e', 'PGUSER=postgres', '-e', 'PGPASSWORD=postgres',
                         '-e', 'REDIS_URL=redis://127.0.0.1:6379/0',
                         image, 'sleep', 'infinity')
-        containers.append(runner)
-        containers.append(docker(*postgres_args(runner, limits['postgres'])))
-        containers.append(docker('run', '-d', '--network', 'container:' + runner,
-                                 *resource_args(limits['redis']), 'redis:7'))
+        start_container(containers, *postgres_args(runner, limits['postgres']))
+        start_container(containers, 'run', '-d', '--network', 'container:' + runner,
+                        *resource_args(limits['redis']), 'redis:7')
         wait_for_postgres(containers[-2])
         storage = require_memory_postgres(containers[-2])
         storage['max_connections'] = int(docker('exec', containers[-2], 'psql', '-At', '-U', 'postgres',
@@ -177,6 +206,8 @@ def main():
                     raise RuntimeError(f'{role} effective allocation differs from settings')
                 receipt.write(f'{args.group or "focused"}/{role}\tcpus={actual["NanoCpus"]/1e9:g}\tmemory={actual["Memory"]}\tpids={actual["PidsLimit"]}\tGOMAXPROCS={gomaxprocs}\n')
         command = args.command or ['make', 'TEST_EGRESS_RUNNER=', *([f'test-unit-{args.group}'] if args.group else args.targets)]
+        docker('exec', runner, 'mkdir', '-p', '/tmp/aweb-unit-reports')
+        reports_started = True
         with (evidence / 'suite.log').open('w') as log:
             result = subprocess.run(['docker', 'exec', runner, *command], stdout=log, stderr=subprocess.STDOUT)
         duration = time.monotonic() - runner_started
@@ -198,15 +229,36 @@ def main():
         (evidence / 'summary.tsv').write_text(f'{args.group or "focused"}\t{"FAILED" if status else "PASSED"}\tsuite.log\t{duration:.3f}s\t{settings["budgets"]["unit"]}s\n')
         return status
     finally:
+        original_error = sys.exc_info()[0] is not None
         cleanup_failed = False
-        for container in reversed(containers):
+        evidence_failed = False
+        if reports_started:
+            try:
+                with (evidence / 'report-copy.log').open('w') as log:
+                    result = subprocess.run(['docker', 'cp', runner + ':/tmp/aweb-unit-reports',
+                                             str(evidence / 'reports')], stdout=log, stderr=subprocess.STDOUT)
+                (evidence / 'report-copy.status').write_text(str(result.returncode) + '\n')
+                evidence_failed |= result.returncode != 0
+            except OSError as exc:
+                evidence_failed = True
+                print(f'Cannot retain unit reports: {exc}', file=sys.stderr)
+        for role, container in reversed(list(zip(('dns', 'runner', 'postgres', 'redis'), containers))):
+            try:
+                evidence_failed |= not capture_container(evidence, role, container)
+            except OSError as exc:
+                evidence_failed = True
+                print(f'Cannot retain {role} evidence: {exc}', file=sys.stderr)
             cleanup_failed |= subprocess.run(['docker', 'rm', '-f', '-v', container], stdout=subprocess.DEVNULL).returncode != 0
         if network:
             cleanup_failed |= subprocess.run(['docker', 'network', 'rm', network], stdout=subprocess.DEVNULL).returncode != 0
         if not args.image and not args.build_image:
             subprocess.run(['docker', 'image', 'rm', image], stdout=subprocess.DEVNULL, check=False)
-        if cleanup_failed:
-            raise RuntimeError('isolated suite cleanup failed; all owned containers were attempted')
+        if cleanup_failed or evidence_failed:
+            message = f'isolated suite finalization failed: cleanup={cleanup_failed}, evidence={evidence_failed}; all owned containers were attempted'
+            if original_error:
+                print(message, file=sys.stderr)
+            else:
+                raise RuntimeError(message)
 
 
 if __name__ == '__main__':

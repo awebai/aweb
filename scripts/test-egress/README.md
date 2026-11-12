@@ -22,6 +22,39 @@ runner wall time. The parent `summary.tsv` includes group setup and cleanup;
 the stage summary adds a budget next to duration. A stage overrun prints
 `BUDGET EXCEEDED` in the wrapper verdict but does not yet change the test result.
 
+Each isolated group sets `AWEB_UNIT_REPORT_DIR` to a fresh runner-local directory
+and copies it to `<group>/reports` before container removal, even after test
+failure. pytest reports contain setup + call + teardown time (`junit_duration_report=total`):
+`server.xml`, `awid.xml`, `cli-auth.xml`, and one named XML per Naapp package
+(`naapp-lib.xml`, `naapp-folio.xml`, `naapp-library.xml`, `naapp-secrets.xml`,
+`naapp-logs.xml`). Server groups have separate directories. Vitest retains its
+default console output alongside `channel.xml` and `channel-core.xml`.
+`cli-go.jsonl` retains native Go test events with case outcomes and elapsed time;
+`pi-extension.tap` retains Node's native case durations. No test selection,
+ordering, timeout or retry is changed. Lightweight auxiliary Python controls
+remain in `suite.log`. If a command stops before a framework emits a report,
+that report is absent: absence is not zero tests or a pass. `report-copy.status`
+and `report-copy.log` distinguish a copy failure from missing framework output.
+
+Before cleanup, `containers/<role>.log` and `<role>.inspect.json` retain each
+owned DNS/runner/PostgreSQL/Redis container, including failed starts. Containers
+are created and registered before starting, so a start error cannot lose their
+IDs. `<role>.capture.json` records read exit codes/errors; failed diagnostic reads
+still permit all cleanup attempts and preserve the original startup exception.
+Successful runs also retain these diagnostics. Inspect output stays with the
+operator's full gate evidence, not public test reports.
+
+Container-free orchestration and reporter controls run in `make test-shipping`.
+With the locked Python/Node dependencies and Go installed, exercise real passing
+and deliberately failing framework processes with:
+
+```sh
+python3 scripts/test_unit_reports.py --frameworks
+```
+
+These probes qualify report contents/status preservation, not Docker isolation
+or the cause of a service failure on a VM.
+
 `make test-cli`, `test-server`, and `test-awid` prepare dependencies, then run
 behind the native deny proxy. Loopback stays direct. The exact existing
 `127.0.0.1.nip.io` fixture is forwarded to 127.0.0.1 without DNS. Reserved test
@@ -75,3 +108,6 @@ search domain; a public-name lookup must still fail the guard while the child
 handles the DNS refusal successfully. Each control retains resolver configuration,
 DNS logs, runner inspection and the child exit in its evidence directory. Neither
 control needs an external DNS service or a route out of the internal network.
+The additional startup-failure control deliberately exits the DNS process before
+it can serve queries, checks its retained stderr and exit state, and verifies
+the container is absent after cleanup. It requires the same Docker run slot.
