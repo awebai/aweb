@@ -1,5 +1,6 @@
 #!/usr/bin/env python3
 """Run the real sync generators against committed inputs without changing the checkout."""
+import json
 from pathlib import Path
 import shutil
 import subprocess
@@ -18,12 +19,18 @@ class GeneratedCopiesTest(unittest.TestCase):
         self.assertIn('run check-generated-copies', checks)
 
     def test_generators_preserve_current_committed_copies(self):
-        self.check_generators(mutate=False)
+        self.check_generators(mutation=None)
 
     def test_source_doc_without_mirror_fails(self):
-        self.check_generators(mutate=True)
+        self.check_generators(mutation="doc")
 
-    def check_generators(self, *, mutate):
+    def test_new_skill_copy_without_commit_fails(self):
+        self.check_generators(mutation="new-skill-file")
+
+    def test_unrelated_local_work_does_not_fail(self):
+        self.check_generators(mutation="unrelated")
+
+    def check_generators(self, *, mutation):
         with tempfile.TemporaryDirectory() as temporary:
             root = Path(temporary)
             paths = subprocess.check_output([
@@ -36,25 +43,34 @@ class GeneratedCopiesTest(unittest.TestCase):
                 target.parent.mkdir(parents=True, exist_ok=True)
                 shutil.copy2(ROOT / name, target)
             init_fixture_repo(root)
-            if mutate:
+            if mutation == "doc":
                 # Commit the source change without regenerating its mirror: a clean
                 # but stale checkout, exactly the main defect that blocked C1.
                 with (root / 'docs/trust-model.md').open('a') as handle:
                     handle.write('\nSource-only drift control.\n')
+            if mutation == "new-skill-file":
+                name = json.loads((root / 'skills/shipped.json').read_text())[0]
+                (root / 'skills' / name / 'new-source.md').write_text('New shipped source.\n')
+            (root / 'unrelated.txt').write_text('committed\n')
             subprocess.run(['git', 'add', '.'], cwd=root, check=True)
             subprocess.run(['git', '-c', 'user.name=fixture', '-c', 'user.email=fixture@example.test',
                             'commit', '-qm', 'fixture'], cwd=root, check=True)
+            if mutation == "unrelated":
+                (root / 'unrelated.txt').write_text('local work in progress\n')
             result = subprocess.run(['make', 'check-generated-copies'], cwd=root,
                                     capture_output=True, text=True)
-            if mutate:
+            if mutation in {"doc", "new-skill-file"}:
                 self.assertNotEqual(result.returncode, 0, result.stdout + result.stderr)
-                self.assertIn('awid/site/static/trust-model.md', result.stdout)
-                self.assertIn('Source-only drift control.', result.stdout)
+                expected = ('awid/site/static/trust-model.md' if mutation == 'doc'
+                            else f'packages/codex-plugin/skills/{name}/new-source.md')
+                self.assertIn(expected, result.stdout)
+                if mutation == 'new-skill-file':
+                    self.assertIn('?? ', result.stdout)
             else:
                 self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
                 dirty = subprocess.check_output(['git', 'status', '--porcelain=v1', '-uall'],
                                                 cwd=root, text=True)
-                self.assertEqual(dirty, '', dirty)
+                self.assertEqual(dirty, ' M unrelated.txt\n' if mutation == 'unrelated' else '', dirty)
 
 
 if __name__ == '__main__':
