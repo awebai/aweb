@@ -73,3 +73,17 @@ def test_an_assertion_already_without_uv_is_refused():
     once = without_user_verification(assertion, credential.key)
     with pytest.raises(ValueError, match="user verification"):
         without_user_verification(once, credential.key)
+
+
+def test_an_ed25519_credential_is_signed_with_ed25519():
+    # A browser may enrol an EdDSA credential where the options allow it.
+    from cryptography.hazmat.primitives.asymmetric import ed25519
+
+    credential, assertion = enrolled()
+    key = ed25519.Ed25519PrivateKey.generate()
+    changed = without_user_verification(assertion, key)
+    response = changed["response"]
+    key.public_key().verify(
+        from_b64url(response["signature"]),
+        from_b64url(response["authenticatorData"]) + hashlib.sha256(from_b64url(response["clientDataJSON"])).digest(),
+    )

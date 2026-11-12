@@ -39,9 +39,14 @@ from pathlib import Path
 from typing import Any
 
 from aweb_naapp_testing.webauthn import UV, from_b64url, without_user_verification
+from awid.signing import VerifyResult, verify_signature_with_public_key
 from cryptography.hazmat.primitives import hashes
 from cryptography.hazmat.primitives.asymmetric import ec
-from cryptography.hazmat.primitives.serialization import load_der_private_key
+from cryptography.hazmat.primitives.serialization import (
+    Encoding,
+    PublicFormat,
+    load_der_private_key,
+)
 from playwright.sync_api import Error as PlaywrightError
 from playwright.sync_api import sync_playwright
 
@@ -149,11 +154,14 @@ def approve(args, browser) -> None:
             assert before[32] & UV and after == before[:32] + bytes([before[32] & ~UV & 0xFF]) + before[33:]
             # The counter has moved past the credential's last persisted one.
             assert struct.unpack(">I", before[33:37])[0] > stored[from_b64url(assertion["rawId"])]
-            key.public_key().verify(
-                from_b64url(changed["response"]["signature"]),
-                after + hashlib.sha256(from_b64url(changed["response"]["clientDataJSON"])).digest(),
-                ec.ECDSA(hashes.SHA256()),
-            )
+            public, signature = key.public_key(), changed["response"]["signature"]
+            signed = after + hashlib.sha256(from_b64url(changed["response"]["clientDataJSON"])).digest()
+            if isinstance(public, ec.EllipticCurvePublicKey):
+                public.verify(from_b64url(signature), signed, ec.ECDSA(hashes.SHA256()))
+            else:
+                # EdDSA, through AWID's shared Ed25519 verifier.
+                raw = public.public_bytes(Encoding.Raw, PublicFormat.Raw)
+                assert verify_signature_with_public_key(raw, signed, signature) is VerifyResult.VERIFIED
             report["login_assertion"] = "injected-uv-cleared-signature-verified"
             route.continue_(post_data=json.dumps({**body, "assertion": changed}))
 
