@@ -15,7 +15,12 @@ from pathlib import Path
 from typing import Any
 
 from aweb_naapp.hooks.owner_act import owner_act_signing_bytes
-from aweb_naapp.runtime.protected_signer import RevokeHumanRole, SignerRefused
+from aweb_naapp.runtime.protected_signer import (
+    OwnerActOperation,
+    RevokeHumanRole,
+    SignerRefused,
+)
+from aweb_naapp.runtime.protected_signer.types import owner_act_operation
 from aweb_naapp.signing_key import parse_signing_key_hex
 from awid.did import did_from_public_key
 
@@ -90,11 +95,10 @@ class ProtectedControllerCustody:
                 os.close(directory_fd)
 
     def sign_owner_act(
-        self, operation: RevokeHumanRole, fields: Mapping[str, Any]
+        self, operation: RevokeHumanRole | OwnerActOperation, fields: Mapping[str, Any]
     ) -> bytes:
-        if type(operation) is not RevokeHumanRole:
-            raise SignerRefused("operation_refused")
-        context = operation.context
+        typed = owner_act_operation(operation)
+        context = typed.context
         if (
             context.service_id != self.service_id
             or context.authority_kind != "team_controller"
@@ -105,7 +109,7 @@ class ProtectedControllerCustody:
         if any(
             fields.get(name) != value
             for name, value in {
-                "act": "human-role.revoke",
+                "act": typed.operation,
                 "team_id": self.team_id,
                 "team_key_did": self.team_key_did,
                 "aud": operation.audience,

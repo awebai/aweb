@@ -36,12 +36,14 @@ from .types import (
     AuthorityProvider,
     ControllerCustody,
     OperationReceipt,
+    OwnerActOperation,
     PreparedOperation,
     ProtectedKeyContext,
     ReceiptReader,
     RestrictedRequester,
     RevokeHumanRole,
     SignerRefused,
+    owner_act_operation,
 )
 
 POLICY_REF = "aweb.human-assurance/1"
@@ -67,8 +69,9 @@ class ProtectedSigner:
     """Shared local executor. Unimplemented catalog operations fail closed.
 
     Passkeys owns UV/challenges/proofs, Approvals owns decisions/consume, and
-    the embedding owns current authority and isolated custody. This slice
-    executes human-role.revoke only. It does not apply the act remotely.
+    the embedding owns current authority and isolated custody. The catalog
+    selects the closed artifact codec; consumers apply signed owner acts through
+    their existing nonce-fenced effect transaction.
     """
 
     def __init__(
@@ -217,7 +220,7 @@ class ProtectedSigner:
                 occurred_at=self.clock(),
                 approval_id=row["approval_id"],
                 details={
-                    "operation": "human-role.revoke",
+                    "operation": _json(row["request"])["operation"],
                     "operation_id": row["operation_id"],
                     "request_sha256": row["digest"],
                     **(
@@ -234,9 +237,10 @@ class ProtectedSigner:
         )
 
     async def prepare(
-        self, operation: RevokeHumanRole, *, requester: RestrictedRequester
+        self, operation: RevokeHumanRole | OwnerActOperation, *, requester: RestrictedRequester
     ) -> PreparedOperation:
-        if type(operation) is not RevokeHumanRole or type(requester) is not RestrictedRequester:
+        typed = owner_act_operation(operation)
+        if type(requester) is not RestrictedRequester:
             raise SignerRefused("operation_refused")
         if requester.context != operation.context or not requester.principal:
             raise SignerRefused("scope_refused")
@@ -258,7 +262,7 @@ class ProtectedSigner:
             fields = {
                 "v": 1,
                 "type": "aweb.owner-act",
-                "act": "human-role.revoke",
+                "act": typed.operation,
                 "team_id": operation.context.authority_id,
                 "team_key_did": fence.team_key_did,
                 "aud": operation.audience,
@@ -565,22 +569,22 @@ class ProtectedSigner:
         )
 
     def _operation(self, request):
-        from aweb_naapp.runtime.passkeys.proof import ProtectedKeyContext
+        from .http import parse_operation
 
-        c, a, h = request["scope"], request["scope"]["authority"], request["scope"]["human"]
-        context = ProtectedKeyContext(
-            c["service_id"], a["kind"], a["id"], a["domain"], h["id"], h["domain"], c["generation"]
-        )
-        s = request["subject"]
-        return RevokeHumanRole(
-            request["operation_id"],
-            context,
-            request["audience"],
-            s["app_id"],
-            s["installation_id"],
-            s["role"],
-            s["principal"],
-            request.get("redirect_uri"),
+        return parse_operation(
+            {
+                key: request[key]
+                for key in (
+                    "operation_id",
+                    "operation",
+                    "variant",
+                    "scope",
+                    "audience",
+                    "subject",
+                    "redirect_uri",
+                )
+                if key in request
+            }
         )
 
     def _receipt(self, row):

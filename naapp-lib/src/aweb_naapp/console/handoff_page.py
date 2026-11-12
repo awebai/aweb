@@ -4,6 +4,7 @@ The page selects only the stored purpose. The existing JSON routes admit the
 browser, bind its CSRF token and verify every ceremony and effect.
 """
 
+import json
 from html import escape
 from importlib.resources import files
 from typing import TYPE_CHECKING
@@ -67,6 +68,25 @@ def handoff_page_router(
     async def canonical_json() -> Response:
         return Response(
             files("aweb_naapp").joinpath("assets/canonical-json.mjs").read_text(),
+            media_type="text/javascript",
+        )
+
+    @router.get("/handoff-assets/protected-presentation.mjs")
+    async def protected_presentation() -> Response:
+        return Response(
+            files("aweb_naapp").joinpath("assets/protected-presentation.mjs").read_text(),
+            media_type="text/javascript",
+        )
+
+    @router.get("/handoff-assets/operations.mjs")
+    async def protected_operation_table() -> Response:
+        table = {}
+        if protected_operations is not None:
+            from aweb_naapp.runtime.protected_signer.catalog import presentation_catalog
+
+            table = presentation_catalog()
+        return Response(
+            "export const operationTable = " + json.dumps(table) + ";\n",
             media_type="text/javascript",
         )
 

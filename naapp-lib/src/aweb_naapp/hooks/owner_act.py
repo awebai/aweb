@@ -50,6 +50,7 @@ __all__ = [
     "VerifiedOwnerAct",
     "hook_binding_subject",
     "owner_act_signing_bytes",
+    "validate_owner_act_subject",
 ]
 
 PREFIX = b"aweb.owner-act/1\n"
@@ -366,6 +367,43 @@ class VerifiedOwnerAct:
     transaction_id: int | None
 
 
+def _subject_schema(act: str) -> dict[str, Any]:
+    """Package presentation data from the verifier's existing one schema."""
+    spec = _SUBJECTS[act]
+    fields = {}
+    for name, definition in spec.fields.items():
+        fields[name] = {
+            **({"pattern": definition.pattern.pattern} if definition.pattern is not None else {}),
+            **({"integer": list(definition.integer)} if definition.integer is not None else {}),
+            **({"enum": list(definition.enum)} if definition.enum is not None else {}),
+            **({"list": True} if definition.is_list else {}),
+        }
+    return {
+        "fields": fields,
+        "required": list(spec.required),
+        "when": [[field, value, list(names)] for field, value, names in spec.when],
+    }
+
+
+def validate_owner_act_subject(act: str, subject: Mapping[str, Any]) -> dict[str, Any]:
+    """Validate a typed subject with the verifier's single closed schema.
+
+    A builder may use this before the key/time/nonce are frozen. It confers no
+    authority, verifies no signature, and accepts no new owner-act vocabulary.
+    """
+    spec = _SUBJECTS.get(act) if isinstance(act, str) else None
+    if spec is None:
+        raise Refused("unknown_act", "owner act is not registered")
+    if not isinstance(subject, Mapping):
+        raise Refused("invalid_value", "subject is not an object")
+    value = dict(subject)
+    _check_subject(spec, value)
+    first = value.get("team_seq_first")
+    if isinstance(first, int) and first > value["team_seq_last"]:
+        raise Refused("invalid_value", "subject.team_seq_last precedes team_seq_first")
+    return value
+
+
 def owner_act_signing_bytes(act: Mapping[str, Any]) -> bytes:
     """The bytes a team's controller key signs for ``act``: the prefix followed
     by the act's canonical JSON.
@@ -569,10 +607,7 @@ def _check_fields(f: dict[str, Any]) -> _CheckedAct:
     subject = f["subject"]
     if not isinstance(subject, dict):
         raise Refused("invalid_value", "subject is not an object")
-    _check_subject(spec, subject)
-    first = subject.get("team_seq_first")
-    if isinstance(first, int) and first > subject["team_seq_last"]:
-        raise Refused("invalid_value", "subject.team_seq_last precedes team_seq_first")
+    validate_owner_act_subject(f["act"], subject)
     return _CheckedAct(
         fields=f,
         act=f["act"],

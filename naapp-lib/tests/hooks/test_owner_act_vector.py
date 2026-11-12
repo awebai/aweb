@@ -111,7 +111,7 @@ def test_a_naive_clock_is_refused() -> None:
     assert refused.value.code == "verifier_misconfigured"
 
 
-def test_only_the_verified_type_the_signing_bytes_and_constants_are_public() -> None:
+def test_public_wire_helpers_do_not_create_verified_authority() -> None:
     import aweb_naapp.hooks.owner_act as owner_act
 
     assert set(owner_act.__all__) == {
@@ -126,6 +126,7 @@ def test_only_the_verified_type_the_signing_bytes_and_constants_are_public() -> 
         "VerifiedOwnerAct",
         "hook_binding_subject",
         "owner_act_signing_bytes",
+        "validate_owner_act_subject",
     }
     for private in ("check_owner_act", "require_subject", "verify_owner_act", "OwnerAct"):
         assert not hasattr(owner_act, private)

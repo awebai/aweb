@@ -8,6 +8,7 @@ import json
 import uuid
 from dataclasses import dataclass, replace
 from datetime import timedelta
+from pathlib import Path
 
 import pytest
 import pytest_asyncio
@@ -26,6 +27,7 @@ from aweb_naapp.runtime.approvals import (
 from aweb_naapp.runtime.passkeys import Passkeys, RelyingParty
 from aweb_naapp.runtime.protected_signer import (
     AdmittedHuman,
+    OwnerActOperation,
     ProtectedKeyContext,
     ProtectedSigner,
     ReceiptReader,
@@ -89,7 +91,11 @@ class ControllerCustody:
         self.key = key
 
     def sign_owner_act(self, operation, fields):
-        assert isinstance(operation, RevokeHumanRole)
+        from aweb_naapp.runtime.protected_signer.types import owner_act_operation
+
+        typed = owner_act_operation(operation)
+        assert fields["act"] == typed.operation
+        assert fields["subject"] == typed.intent()["subject"]
         return self.key.sign(owner_act_signing_bytes(fields)).signature
 
 
@@ -430,3 +436,52 @@ async def test_policy_change_after_options_is_distinct_from_invalid_proof(world)
     receipt = await world.signer.receipt(prepared.operation_id, reader=world.reader)
     assert receipt.state == "refused" and receipt.code == "policy_changed"
     assert "protected_operation_signed" not in await world.audit.kinds()
+
+
+# Existing verifier vectors supply real protocol subjects, not a new grammar.
+_OWNER_CASES = {
+    case["act"]["act"]: case["act"]["subject"]
+    for case in json.loads(
+        (Path(__file__).resolve().parents[3] / "docs/vectors/owner-act-v1.json").read_bytes()
+    )["positive_cases"]
+}
+_OWNER_CASES["human-credential.cap-set"] = {
+    "app_id": "logs",
+    "installation_id": "00000000-0000-4000-8000-000000000001",
+    "role": "logs.owner",
+    "cap": 3,
+}
+
+
+@pytest.mark.parametrize("act,subject", _OWNER_CASES.items(), ids=_OWNER_CASES.keys())
+async def test_all_owner_act_codecs_share_actual_uv_consume_and_one_signature(world, act, subject):
+    operation = OwnerActOperation(
+        world.operation.operation_id,
+        world.operation.context,
+        world.operation.audience,
+        act,
+        "app"
+        if act == "human-credential.cap-set"
+        else ("controller_recovery" if act == "human-credential.replace" else "default"),
+        subject,
+    )
+    prepared = await world.signer.prepare(operation, requester=world.requester)
+    assert prepared.payload["operation"] == act
+    assert prepared.payload["artifact"]["subject"] == subject
+    options = await world.signer.approval_options(operation.operation_id, human=world.human)
+    proof = world.device.get(dict(options))
+    receipt = await world.signer.execute(operation.operation_id, proof, human=world.human)
+    assert receipt.state == "committed"
+    raw = base64.b64decode(receipt.result["signing"])
+    signature = base64.b64decode(receipt.result["signature"])
+    world.key.verify_key.verify(raw, signature)
+    artifact = json.loads(raw.split(b"\n", 1)[1])
+    assert artifact["act"] == act and artifact["subject"] == subject
+    assert await world.signer.receipt(operation.operation_id, reader=world.reader) == receipt
+    assert await world.signer.execute(operation.operation_id, proof, human=world.human) == receipt
+    assert (await world.audit.kinds()).count("protected_operation_signed") == 1
+    with pytest.raises(SignerRefused, match="operation_conflict"):
+        await world.signer.prepare(
+            replace(operation, subject={**subject, "app_id": "another-app"}),
+            requester=world.requester,
+        )

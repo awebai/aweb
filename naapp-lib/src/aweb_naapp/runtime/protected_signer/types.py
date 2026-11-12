@@ -6,8 +6,9 @@ The authority adapter still validates their current association in the effect tx
 
 from __future__ import annotations
 
+import json
 from collections.abc import Mapping
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import Any, Literal, Protocol
 from uuid import UUID
 
@@ -110,6 +111,88 @@ class RevokeHumanRole:
         }
 
 
+@dataclass(frozen=True)
+class OwnerActOperation:
+    """A registered owner-act codec, with a frozen, schema-checked subject.
+
+    The operation table selects the verifier's vocabulary; neither a caller
+    field nor an embedding can select arbitrary signing bytes.
+    """
+
+    operation_id: str
+    context: ProtectedKeyContext
+    audience: str
+    operation: str
+    variant: str
+    subject: Mapping[str, Any]
+    redirect_uri: str | None = None
+    _subject_bytes: bytes = field(init=False, repr=False)
+
+    def __post_init__(self):
+        from awid.log import require_canonical_server_origin
+        from awid.signing import canonical_json_bytes
+
+        from aweb_naapp.hooks.owner_act import validate_owner_act_subject
+        from aweb_naapp.hooks.strictjson import Refused
+
+        from .catalog import operation_spec
+
+        spec = operation_spec(self.operation, self.variant)
+        if not spec.consumer_available or spec.family != "owner_act":
+            raise SignerRefused("operation_refused")
+        if self.context.authority_kind != spec.key_role:
+            raise SignerRefused("scope_refused")
+        try:
+            if str(UUID(self.operation_id)) != self.operation_id:
+                raise ValueError()
+            require_canonical_server_origin(self.audience)
+            subject = validate_owner_act_subject(self.operation, self.subject)
+            object.__setattr__(self, "_subject_bytes", canonical_json_bytes(subject))
+        except (ValueError, TypeError, Refused):
+            raise SignerRefused("request_invalid") from None
+        if self.redirect_uri is not None:
+            from aweb_naapp.console.handoff_wire import HandoffWireRefused, loopback_redirect
+
+            try:
+                loopback_redirect(self.redirect_uri)
+            except HandoffWireRefused:
+                raise SignerRefused("redirect_uri_refused") from None
+
+    @property
+    def spec(self):
+        from .catalog import operation_spec
+
+        return operation_spec(self.operation, self.variant)
+
+    def intent(self) -> dict[str, Any]:
+        return {
+            "operation_id": self.operation_id,
+            "operation": self.operation,
+            "variant": self.variant,
+            **({"redirect_uri": self.redirect_uri} if self.redirect_uri is not None else {}),
+            "scope": self.context.fields(),
+            "audience": self.audience,
+            "subject": json.loads(self._subject_bytes),
+        }
+
+
+def owner_act_operation(operation):
+    """Keep the released RevokeHumanRole constructor and wire source-compatible."""
+    if type(operation) is RevokeHumanRole:
+        return OwnerActOperation(
+            operation.operation_id,
+            operation.context,
+            operation.audience,
+            "human-role.revoke",
+            "default",
+            operation.intent()["subject"],
+            operation.redirect_uri,
+        )
+    if type(operation) is OwnerActOperation:
+        return operation
+    raise SignerRefused("operation_refused")
+
+
 class ControllerCustody(Protocol):
     """Existing local protected key adapter: closed operation, no export/sign(bytes).
 
@@ -119,7 +202,9 @@ class ControllerCustody(Protocol):
     Network custody needs a separately specified idempotent protocol.
     """
 
-    def sign_owner_act(self, operation: RevokeHumanRole, fields: Mapping[str, Any]) -> bytes: ...
+    def sign_owner_act(
+        self, operation: RevokeHumanRole | OwnerActOperation, fields: Mapping[str, Any]
+    ) -> bytes: ...
 
 
 @dataclass(frozen=True)
