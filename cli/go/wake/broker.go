@@ -30,15 +30,14 @@ const (
 	// DefaultPollInterval controls broker status persistence.
 	DefaultPollInterval = 2 * time.Second
 
-	// DefaultIdleProbe is how often an instance with nothing pending is still
-	// inspected, so `stopped` is noticed without polling every instance every
-	// two seconds.
+	// Deprecated compatibility default. The broker runs no periodic inspect of
+	// an idle instance: the instance's channel-core child reports `stopped`,
+	// and its runner then marks the instance inactive. Config still accepts
+	// the field.
 	DefaultIdleProbe = 30 * time.Second
 
-	// DefaultPendingExpiry drops a registration that never reached a confirmed
-	// live inspect. The bound is operational visibility, not data safety: it
-	// deletes no server messages, and a home that comes up later is re-raised
-	// by the reconnect snapshot (§4).
+	// Deprecated compatibility default. The broker does not expire
+	// registrations; Config still accepts the field.
 	DefaultPendingExpiry = 30 * time.Minute
 
 	// DefaultReconcile is how often the daemon re-reads registry.d, so a
@@ -57,7 +56,15 @@ type Config struct {
 	// OpenStream builds the event stream source for one identity home. It is
 	// injected so the broker can be tested with no server and no credentials,
 	// and so credential resolution stays in cmd/aw where it already lives.
-	OpenStream func(identityHome, teamID string) (run.EventStreamOpener, error)
+	// The broker calls it when it creates a stream and, unless ReloadStream is
+	// set, again before each retry of a refused one; anything it waits on must
+	// end with ctx.
+	OpenStream func(ctx context.Context, identityHome, teamID string) (run.EventStreamOpener, error)
+	// ReloadStream, when set, is what the broker calls in place of OpenStream
+	// before each retry of a refused stream. It reads the same identity home
+	// again, and may do what only a refused stream needs, such as looking for
+	// the server mount that answers; anything it waits on must end with ctx.
+	ReloadStream func(ctx context.Context, identityHome, teamID string) (run.EventStreamOpener, error)
 	// Heartbeat uses the same explicit identity/team selection as OpenStream.
 	// The runner calls it only after this tick's fresh inspect says present.
 	Heartbeat         func(ctx context.Context, identityHome, teamID string) error
@@ -67,12 +74,13 @@ type Config struct {
 	Coalesce      time.Duration // Deprecated: ignored.
 	RateLimit     time.Duration // Deprecated: ignored.
 	PollInterval  time.Duration
-	IdleProbe     time.Duration
-	PendingExpiry time.Duration
+	IdleProbe     time.Duration // Deprecated: ignored.
+	PendingExpiry time.Duration // Deprecated: ignored.
 	Reconcile     time.Duration
-	StreamTTL     time.Duration
-	BackoffMin    time.Duration
-	BackoffMax    time.Duration
+	// StreamPolicy supplies the timer and random source of the streams'
+	// reconnect policy (docs/event-stream-client-policy.md); its clock
+	// defaults to Now.
+	StreamPolicy run.StreamPolicyConfig
 
 	// Version and Commit identify the daemon's own build. They are reported in
 	// Status so readers see the running daemon, not the CLI asking.
@@ -392,13 +400,6 @@ func (b *Broker) admitRunnerStreams(runner *instanceRunner) {
 	}
 }
 
-func admittedLabel(admitted bool) string {
-	if admitted {
-		return "admitted"
-	}
-	return "over-bound"
-}
-
 func orDash(s string) string {
 	if strings.TrimSpace(s) == "" {
 		return "-"
@@ -407,7 +408,13 @@ func orDash(s string) string {
 }
 
 // ensureStream opens the identity's stream if it is not already open and the
-// stream bound allows it. It reports whether the identity has a stream.
+// stream bound allows it. It reports whether the identity is admitted: it has
+// a stream and the server is not refusing it. A refused stream keeps its slot
+// and its retries; it is reported as refused, never as admitted.
+//
+// Reconcile calls this for every binding on its timer, so it is not an
+// explicit request for the stream: a quarantined stream keeps its pace. An
+// explicit request is a registration (Register), which calls requestStreams.
 func (b *Broker) ensureStream(binding ReceiveIdentity) bool {
 	key, err := bindingKey(binding.IdentityHome, binding.TeamID)
 	if err != nil || strings.TrimSpace(binding.IdentityHome) == "" {
@@ -415,9 +422,9 @@ func (b *Broker) ensureStream(binding ReceiveIdentity) bool {
 	}
 	teamID := binding.TeamID
 	b.mu.Lock()
-	if _, ok := b.streams[key]; ok {
+	if existing, ok := b.streams[key]; ok {
 		b.mu.Unlock()
-		return true
+		return !existing.refused()
 	}
 	if len(b.streams) >= b.cfg.MaxStreams {
 		b.overBound[key] = struct{}{}
@@ -430,27 +437,60 @@ func (b *Broker) ensureStream(binding ReceiveIdentity) bool {
 	if b.cfg.OpenStream == nil {
 		return false
 	}
-	opener, err := b.cfg.OpenStream(binding.IdentityHome, teamID)
+	ctx := b.runningContext()
+	if ctx == nil {
+		ctx = context.Background()
+	}
+	opener, err := b.cfg.OpenStream(ctx, binding.IdentityHome, teamID)
 	if err != nil {
 		b.cfg.Log("stream unavailable identity_home=%s team=%s err=%v", binding.IdentityHome, teamID, err)
 		return false
 	}
-	runner := newStreamRunner(key, binding.IdentityHome, teamID, opener, func(ev awid.AgentEvent) {
+	identityHome := binding.IdentityHome
+	// OpenStream and ReloadStream resolve the identity home from disk, so
+	// calling one again is how a refused stream's retry picks up a renewed
+	// certificate or grant.
+	reopen := b.cfg.OpenStream
+	if b.cfg.ReloadStream != nil {
+		reopen = b.cfg.ReloadStream
+	}
+	reload := func(ctx context.Context) (run.EventStreamOpener, error) {
+		return reopen(ctx, identityHome, teamID)
+	}
+	runner := newStreamRunner(key, identityHome, teamID, opener, reload, func(ev awid.AgentEvent) {
 		b.dispatchStream(key, ev)
-	}, b.cfg.Log, b.cfg.Now, b.cfg.StreamTTL, b.cfg.BackoffMin, b.cfg.BackoffMax)
+	}, b.cfg.Log, b.cfg.Now, b.cfg.StreamPolicy)
 
 	b.mu.Lock()
-	if _, ok := b.streams[key]; ok {
+	if existing, ok := b.streams[key]; ok {
 		b.mu.Unlock()
-		return true
+		return !existing.refused()
 	}
 	b.streams[key] = runner
 	delete(b.overBound, key)
 	b.mu.Unlock()
-	if ctx := b.runningContext(); ctx != nil {
-		runner.start(ctx)
+	if running := b.runningContext(); running != nil {
+		runner.start(running)
 	}
 	return true
+}
+
+// requestStreams is the explicit request a registration makes for its
+// identities' streams: one that is quarantined retries at once and, if refused
+// again, continues from the 1-minute delay.
+func (b *Broker) requestStreams(reg Registration) {
+	for _, binding := range reg.ReceiveBindings() {
+		key, err := bindingKey(binding.IdentityHome, binding.TeamID)
+		if err != nil {
+			continue
+		}
+		b.mu.Lock()
+		stream := b.streams[key]
+		b.mu.Unlock()
+		if stream != nil {
+			stream.requestNow()
+		}
+	}
 }
 
 // pruneStreams stops streams no registration needs any more.
@@ -600,8 +640,8 @@ func (b *Broker) Register(reg Registration) error {
 	hadExistingRegistration := false
 	bindingsChanged := false
 	if existing, ok, _ := b.cfg.Store.LoadRegistration(canonical); ok {
-		// Re-registration keeps the original clock so the pending expiry is
-		// not restarted by a retrying hook.
+		// Re-registration keeps the original registration time, so a retrying
+		// hook does not change it.
 		reg.RegisteredAt = existing.RegisteredAt
 		hadExistingRegistration = true
 		bindingsChanged = !sameReceiveBindings(existing.ReceiveBindings(), reg.ReceiveBindings())
@@ -623,6 +663,9 @@ func (b *Broker) Register(reg Registration) error {
 			}
 		}
 	}
+	// Before the registration is applied, so the request reaches only streams
+	// that already exist: one this registration creates starts with an attempt.
+	b.requestStreams(reg)
 	b.applyRegistrationLocked(reg, "")
 	if hadExistingRunner || hadExistingRegistration {
 		if runner, ok := b.instanceRunner(reg.Home); ok && !runner.hasPendingRegistration() {
@@ -806,7 +849,12 @@ func enrichInstancesWithStreamStatus(instances []InstanceStatus, streams []Strea
 				continue
 			}
 			instances[i].ReceiveIdentities[j].StreamAdmitted = stream.Admitted
+			if !stream.Admitted {
+				instances[i].StreamAdmitted = false
+			}
 			instances[i].ReceiveIdentities[j].StreamPhase = stream.Phase
+			instances[i].ReceiveIdentities[j].StreamCause = stream.Cause
+			instances[i].ReceiveIdentities[j].StreamNextAttemptAt = stream.NextAttemptAt
 			instances[i].ReceiveIdentities[j].StreamError = stream.LastError
 			instances[i].ReceiveIdentities[j].StreamErrorDetail = stream.LastErrorDetail
 			instances[i].ReceiveIdentities[j].UnreadCount = stream.UnreadCount
@@ -819,25 +867,6 @@ func (b *Broker) writeStatus() {
 	if err := b.cfg.Store.SaveStatus(b.Status()); err != nil {
 		b.cfg.Log("status write failed err=%v", err)
 	}
-}
-
-// dropExpired removes a registration that never reached a confirmed live
-// inspect within the pending expiry, with one log line naming the home and the
-// elapsed time (§4).
-func (b *Broker) dropExpired(runner *instanceRunner, elapsed time.Duration) {
-	home := runner.home()
-	b.cfg.Log("expired home=%s pending_for=%s (never reached a confirmed live inspect; server hints are untouched and a later launch is re-raised by the reconnect snapshot)",
-		home, elapsed.Round(time.Second))
-	if _, err := b.cfg.Store.DeleteRegistration(home); err != nil {
-		b.cfg.Log("expired home=%s cleanup failed err=%v", home, err)
-	}
-	b.mu.Lock()
-	delete(b.instances, HomeKey(home))
-	b.mu.Unlock()
-	go func() {
-		runner.stop()
-		b.pruneStreams()
-	}()
 }
 
 // MaxStreams reports the configured stream bound.

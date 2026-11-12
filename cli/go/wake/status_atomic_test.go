@@ -3,6 +3,7 @@ package wake
 import (
 	"bytes"
 	"encoding/json"
+	"errors"
 	"os"
 	"path/filepath"
 	"sync"
@@ -38,7 +39,7 @@ func TestStatusTemporaryCollisionPreservesSnapshot(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			if err = s.SaveStatus(Status{UpdatedAt: time.Unix(2, 0)}); !os.IsExist(err) {
+			if err = s.SaveStatus(Status{UpdatedAt: time.Unix(2, 0)}); !errors.Is(err, os.ErrExist) {
 				t.Fatalf("collision was not refused: %v", err)
 			}
 			got, err := os.ReadFile(target)

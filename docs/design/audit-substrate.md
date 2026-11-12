@@ -66,10 +66,10 @@ main implements of the design itself is marked in Parts A and B.
 | Property of main | Evidence |
 | --- | --- |
 | Core produces no hook event. Its mutation seam is the in-process `on_mutation` callback. Route call sites await it after the state change, outside its transaction, and log and swallow its exceptions. A route call can be missed if the process dies between commit and callback. Inbound federation is the one durable path: its event commits to `federation_mutation_outbox` with the delivery and is replayed until the callback returns. | `fire_mutation_hook` and `fire_mutation_callback` in `server/src/aweb/hooks.py`; `docs/aw-hooks-sot.md` §Callback shape; `replay_federation_mutation_outbox` in `server/src/aweb/federation/delivery.py` |
-| A source-derived inventory pins every `on_mutation` call site (`fire_mutation_hook` and `fire_mcp_mutation_hook`). A build check rejects added, removed or non-literal sites. | `docs/vectors/mutation-hook-call-sites-v1.json`; `HOOK_FIRING_FUNCTIONS` and `check` in `scripts/check-extension-docs.py` |
-| Several catalogued mutations are not transactional. A mail continuation and the MCP `send_mail` tool insert the message outside any transaction unless attachments are present. Ack, task comment and dependency add and remove are bare statements. | `deliver_message` in `server/src/aweb/messaging/messages.py`; `attachment_transaction` in `server/src/aweb/attachment_service.py`; `_send_mail_conversation_continuation` and `ack_message` in `server/src/aweb/routes/messages.py`; `send_mail` in `server/src/aweb/mcp/tools/mail.py`; `add_dependency`, `remove_dependency` and `add_comment` in `server/src/aweb/coordination/tasks_service.py` |
+| A source-derived inventory pins every `on_mutation` call site (`fire_mutation_hook` and `fire_mutation_callback`). A build check rejects added, removed or non-literal sites. | `docs/vectors/mutation-hook-call-sites-v1.json`; `HOOK_FIRING_FUNCTIONS` and `check` in `scripts/check-extension-docs.py` |
+| Several catalogued mutations are not transactional. A mail continuation and the MCP `send_mail` tool insert the message outside any transaction unless attachments are present. Ack, task comment and dependency add and remove are bare statements. | `deliver_message` in `server/src/aweb/messaging/messages.py`; `attachment_transaction` in `server/src/aweb/attachment_service.py`; `_send_mail_conversation_continuation` in `server/src/aweb/routes/messages.py`; `acknowledge_mail` in `server/src/aweb/messaging/mail_ack.py`; `send_mail` in `server/src/aweb/mcp/tools/mail.py`; `add_dependency`, `remove_dependency` and `add_comment` in `server/src/aweb/coordination/tasks_service.py` |
 | The REST `send_message` route commits the conversation it opens and that conversation's first message in one transaction. Task create and update are transactional, and the route fires its hook after the transaction. `connect` writes the team, agent and workspace rows in one transaction and fires no hook. | `send_message` in `server/src/aweb/routes/messages.py`; `create_task` and `update_task` in `server/src/aweb/coordination/tasks_service.py`; `create_task_route` and `update_task_route` in `server/src/aweb/coordination/routes/tasks.py`; `connect_agent` in `server/src/aweb/routes/connect.py` |
-| MCP task tools fire no mutation hook. MCP mail and chat do. | `server/src/aweb/mcp/tools/tasks.py`; `fire_mcp_mutation_hook` calls in `server/src/aweb/mcp/tools/mail.py` and `chat_send` in `server/src/aweb/mcp/tools/chat.py` |
+| MCP task tools fire no mutation hook. MCP mail and chat do. | `server/src/aweb/mcp/tools/tasks.py`; `acknowledge_mail` in `server/src/aweb/messaging/mail_ack.py`, which the `check_mail` tool calls, and `send_chat` in `server/src/aweb/messaging/chat_send.py`, which the `send_chat` tool calls |
 | Transactional outboxes exist. Lifecycle side effects are inserted in the cascade transaction, drained with `SKIP LOCKED`, retried with backoff and delivered at least once. | `server/src/aweb/migrations/aweb/013_lifecycle_side_effect_outbox.sql`; `_enqueue_lifecycle_side_effects` and `replay_lifecycle_side_effects` in `server/src/aweb/lifecycle.py`; `recover_outboxes` in `server/src/aweb/outbox_recovery.py` |
 | An app id's origin is bound per team by that team's install. The registry keeps one row per `(app_id, origin)`. | `server/src/aweb/migrations/aweb/025_team_scoped_app_origin.sql`; `docs/app-registry.md` §Cache and consumer boundary |
 | The app-emit credential is request-bound (aud, method, path, body hash, key). It is not a content signature. | `docs/app-events.md` §Emit authentication; `verify_app_event_auth` in `server/src/aweb/app_events.py`; `cli/go/internal/conformance/vectors/app-emit-credential-v1.json` |
@@ -620,6 +620,21 @@ drain.
   team.
 - `outbox_targets`: the channel each target id belongs to.
 
+**Retention.** An event every target acknowledged is deleted, with its
+delivery rows, 30 days after it drained (`DRAINED_RETENTION`,
+`prune_drained` in `aweb_naapp.outbox`). The drain loop does it: once an hour
+it deletes up to 500 such events, oldest first, and again after its next pass
+while a batch comes back full, so a deployment runs nothing extra. An event
+that is not drained is kept at any age: one not materialized, or with a
+delivery pending, stalled, or dead-lettered and not acknowledged as lost. A
+drained event is also kept while a reader needs its rows: one with a delivery
+that was cancelled, rejected or in conflict, a critical event materialized
+with no target, and the one holding a target's latest receipt. The consequence
+for producers: enqueueing an event id again is a no-op, or a conflict on other
+bytes, only while the event is stored. Its id and `payload_sha256` are
+forgotten with it, so the same enqueue more than 30 days after the event
+drained stores and delivers a new event.
+
 The event row is written **in the same transaction as the effect**, which is
 the fail-closed point. Deliveries are materialized at drain time from the
 current registry: one per active registration with `active_from <=
@@ -675,10 +690,11 @@ rejections retry with bounded backoff, in case a registry cache is stale, then
 become `rejected` and are surfaced. Network errors and 5xx retry with capped
 exponential backoff and are **never dropped**. After the operator-disclosed
 delivery horizon, a delivery becomes `stalled` and is surfaced to the owner.
-After drain the producer keeps a minimal tombstone of `event_id` and digest.
-It also keeps at least the **highest receipt per (team, binding)**, because
-that receipt's `event_hash` commits to the target's entire chain prefix. This
-is what makes producers witnesses (§B3). The outbox is delivery
+After drain the producer keeps `event_id` and digest until
+`DRAINED_RETENTION` after the drain. It keeps the **latest receipt per
+target** (one hook binding of one team) at any age, because that receipt's `event_hash` commits to the
+target's entire chain prefix: the event holding it is the one drained event
+the 30 days never delete. This is what makes producers witnesses (§B3). The outbox is delivery
 infrastructure, not an audit store (hooks-spec §7).
 
 **Failure mode.**
@@ -834,7 +850,7 @@ each, except `hook-binding-cases-v1.json`, which only the Python kit replays
 | --- | --- |
 | docs/vectors/hook-catalog-v1.json | Hooks, class, producer kinds, audit-critical flag, precedence, the flat payload allowlists (including `post-secret-use-hook`, the `post-governance-hook` act/direction table, and the per-type fields of each §A10 mutation type, such as `app_key.revoked`), client command classes. Decision 73 re-freezes the secret-use HMAC field types and paired child-secret/grant linkage with positive and single-fault negative cases. |
 | `hook-event-envelope-v1.json` | Seeds, canonical bytes, signatures. Negatives: wrong prefix, non-canonical bytes, float, duplicate key, unknown payload field, team mismatch, client-signed server hook, a client event whose actor is not its signer, unknown catalog version. The obsolete plain-SHA pre-injection demonstration is removed by decision 73; signed envelope cases remain byte-identical. Producer HMAC/framing/lifecycle proofs belong to K4 and S13, since a signature verifier cannot recompute a private producer MAC. |
-| `hook-delivery-credential-v1.json` | `hook-delivery`. Negatives: an app-event or `hook-resolve` credential at a hook target, cross-audience, tampered body, wrong binding, stale timestamp. (`hook-resolve` vectors belong to acgh.7.) |
+| `hook-delivery-credential-v2.json` | `hook-delivery`. Negatives: an app-event or `hook-resolve` credential at a hook target, cross-audience, tampered body, wrong binding, stale timestamp. (`hook-resolve` vectors belong to acgh.7.) |
 | `owner-act-v1.json` | Activate and revoke, the generic app-governance acts, plus each logs act (**Open (aweb-acgh.16.34):** `logs.verify.delegate`). Negatives: admin signer, rotated-out team key, expired, nonce reuse, subject/generation mismatch, a valid act of the wrong type or audience, a team certificate presented as an owner act. |
 | `hook-binding-cases-v1.json` | Semantic cases: admin install leaves bindings pending, a new generation supersedes, an unknown catalog is refused, the `active_from` pad, revocation cancels pending deliveries. **Open (aweb-acgh.16.35):** core activation refusing an unknown catalog. |
 | `post-mutation-hook-sites-v1.json` | **Open (aweb-acgh.16.12).** Enqueue inventory for every §A10 v1 mutation type, `app_key.revoked` included, plus the `on_mutation` mapping (§A10). |
@@ -927,7 +943,8 @@ Per team and chain epoch, under a row lock on the team's chain head:
 - **Receipt**, signed by logs: `aweb.logs-receipt/1`
   `{v, type, team_id, event_id, chain_epoch, team_seq, event_hash,
   received_at, logs_origin, kid, did_key}`.
-  Producers keep at least their highest receipt per (team, binding) (§A7).
+  Producers keep their latest receipt per target (one hook binding of one
+  team) (§A7).
   Each such receipt commits to the whole chain prefix, so every producer is an
   independent witness of the chain.
 - **Checkpoint**, signed by logs: `aweb.logs-checkpoint/1`

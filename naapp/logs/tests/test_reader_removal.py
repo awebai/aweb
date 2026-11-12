@@ -14,6 +14,7 @@ from __future__ import annotations
 
 import asyncio
 import hashlib
+from typing import Any
 
 import pytest
 from aweb_naapp.runtime.team_auth import Principal
@@ -150,7 +151,7 @@ async def held_open(world: World) -> tuple[asyncio.Event, asyncio.Event]:
     return entered, release
 
 
-async def race(world: World, first, second) -> list:
+async def race(world: World, first, second) -> list[Any]:
     entered, release = await held_open(world)
     started = asyncio.create_task(first())
     await asyncio.wait_for(entered.wait(), 10)
@@ -158,7 +159,7 @@ async def race(world: World, first, second) -> list:
     # Let the second change run as far as it can while the first is open.
     await asyncio.sleep(0.5)
     release.set()
-    return await asyncio.gather(started, racing, return_exceptions=True)
+    return list(await asyncio.gather(started, racing, return_exceptions=True))
 
 
 async def test_concurrent_member_removals_leave_a_reader(world: World):

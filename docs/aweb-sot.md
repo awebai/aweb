@@ -495,12 +495,32 @@ never populate an entry later served to an unsigned or differently authorized
 caller.
 
 **Team-key rotation.** AWID rotates a team key at
-`POST /v1/namespaces/{domain}/teams/{name}/rotate`. With the Redis cache, aweb
-may continue reading the old key for up to 20 minutes. Old-key certificates may
-continue to verify during that stale interval, while certificates signed by the
-new key fail closed until refresh. Deleting that team's exact metadata and
-revocation cache entries is the operator's immediate invalidation mechanism;
-this contract does not promise a broad key-prefix flush command.
+`POST /v1/namespaces/{domain}/teams/{name}/rotate`. The controller-key cache
+refreshes synchronously after 60 seconds, independently of the longer-lived
+team metadata cache. Old-key certificates retain this freshness behavior and
+the existing registry-outage grace; a successful cached-key verification adds
+no signature-failure refresh reads.
+
+Only a certificate signature failure under the registry-resolved cached key
+may trigger an early `get_team_public_key_fresh` read. An unchanged key, a
+failed read, or a suppressed attempt keeps the original 401 and never renews
+the cached key's fetch timestamp. A changed key is cached at its fetch time;
+the certificate is checked again under that key. Only if those checks pass is
+the team's revocation set read fresh and checked before admission. A malformed
+certificate, member-key mismatch, unknown team or revoked certificate does
+not trigger a signature-failure refresh. The certificate's claimed key never
+establishes authority.
+
+The cached client shares each team's in-flight refresh among its callers,
+even when an attempt lasts longer than the cooldown. A five-second Redis
+`SET NX` admission window, starting before the attempt, bounds added key
+refresh reads across workers to **12 per team per minute**. Redis admission
+failure suppresses the refresh. This is per discoverable real team: a normal
+cache miss can discover and cache a team's key before signature verification.
+Those existing normal cache reads are separate from the added refresh budget.
+The OSS request middleware does not impose a per-client limit before team
+authentication, so an auth-failing request is not counted by a global client
+rate limiter here. Hosted proxy admission is deployment policy.
 
 **Revocation.** Against an honest, available registry, a newly revoked
 certificate may continue to verify for at most the 120-second fresh-plus-stale
@@ -545,6 +565,36 @@ forward migration**, never editing an existing one. Concrete cases:
 
 The principle holds across every deployment using pgdbm (the aweb server,
 AWID service, and any hosted operator schema). Once shipped, immutable.
+
+**Migration 048 (`048_chat_session_seq.sql`) and server order.** It adds
+`chat_sessions.last_seq`, `chat_messages.seq` and `chat_read_receipts.seq`,
+numbers the existing rows, and installs the triggers that number every later
+write. Apply it before running a server release that reads `seq`: the chat
+stream, the MCP reply wait and `up_to_message_id` fail without the columns. A
+server release that predates the columns keeps working once the migration is
+applied, because the triggers number its inserts, so a rolling deploy applies
+the migration first and replaces processes afterwards. The migration holds
+`ACCESS EXCLUSIVE` on the three tables for its one transaction; chat reads and
+writes wait for it. A hosted deployment that keeps its own copy of the aweb
+migrations needs the same file in that copy.
+
+**Migration 049 (`049_dead_row_indexes.sql`).** It adds an index on
+`app_events.created_at`, `control_signals.consumed_at` and
+`federation_mutation_outbox.delivered_at` for
+[`aweb delete-dead-rows`](#garbage-collection). Each index build blocks writes
+to its table, and not reads, until the migration's transaction commits. No
+server code depends on the indexes. A hosted deployment that keeps its own copy
+of the aweb migrations needs the same file in that copy.
+
+**Migration 050 (`050_one_active_team_document.sql`).** It adds a partial
+unique index on `team_roles (team_id)` and on `team_instructions (team_id)`
+where `is_active`, so a team has at most one active version of each whoever
+writes the row. It first counts the teams that already have more than one
+active row in either table and, if there are any, stops with the count and
+changes nothing: which version stays active is a decision about that team's
+data. Deactivate all but one active version for those teams, then run it again.
+A hosted deployment that keeps its own copy of the aweb migrations needs the
+same file in that copy.
 
 ### Current table inventory
 
@@ -770,6 +820,51 @@ registry dependency failure returns
 `federation_authority_coordination_unavailable` (503, retryable) with exception
 logging preserved.
 
+**Outbound delivery transport:** federated mail and chat leave through one
+function, `deliver_federated_message`, and one transport,
+`aweb.federation.transport`. The delivery origin comes from a registry record or
+a stored participant route, so the transport admits it before any connection:
+the origin is `https` and named by host, the host is resolved once, and every
+answer is a public address (loopback, private, link-local, shared CGNAT,
+unique-local, multicast, reserved, unspecified and IPv4-mapped forms of those
+are refused, and one refused answer refuses the name). The connection goes to an
+admitted address, trying the answers in order until one accepts a connection,
+while TLS verification, SNI and `Host` name the origin; proxy
+settings in the environment are not read, redirects are not followed, each
+delivery resolves and checks again, and no connection outlives its response.
+Routes and MCP tools both take the transport from the federation authority, which
+shares its resolver, origin policy and trust anchors with strict registry reads
+(`docs/vectors/federation-origin-ip-v1.json`). `http` origins, address literals
+and non-public answers are admitted only under the isolated-development
+conditions of that vector: `APP_ENV=development`, `AWEB_FEDERATION_TEST=1`, and
+both this server's public origin and the destination host isolated (a
+single-label name, `localhost`, `*.localhost`, `*.test`, `*.test.local`, or a
+loopback literal). Outside those conditions, an operator admits private
+delivery origins only by listing them, comma-separated, in
+`AWEB_FEDERATION_PRIVATE_DELIVERY_ORIGINS`: each entry is one exact origin
+named by host (`https://host[:port]`), canonicalised as every delivery origin
+is and compared for equality, never a CIDR, wildcard or pattern; an invalid
+entry refuses start-up naming the entry, and unset or empty admits none. A
+listed origin's answers may each be public or in `10.0.0.0/8`,
+`172.16.0.0/12`, `192.168.0.0/16`, `100.64.0.0/10` or `fc00::/7`
+(`PRIVATE_DELIVERY_NETWORKS`; an IPv4-mapped answer is judged by its IPv4
+address), and one answer outside those refuses it, so loopback, link-local,
+unspecified and the other special-purpose ranges stay refused; every other
+check above still applies to it. Only the delivery transport receives the list:
+ID-tree registry reads call the same address admission without it, and awid's
+registry client is not given it, so registry reads keep requiring public
+answers. A delivery is bounded to 10 seconds, a 10 MiB success body
+and a 64 KiB error body. A failed delivery reaches the sender as the status and
+one fixed reason: `delivery_origin_refused` (the origin is not `https` named by
+host), `delivery_address_refused` (an answer is not admitted; the server also
+logs a warning naming the origin and the setting),
+`delivery_origin_unreachable`, `delivery_timeout`, `delivery_unavailable` (the
+server has no delivery transport and makes no request), a response-bound reason,
+`HTTP <status>`, or the remote's `reason` when it is a federation reason from
+[`federation-error-reference.md`](federation-error-reference.md). Other text the
+remote answers, on an error status or on a success answer that is not a JSON
+object, is logged at a bounded length and is not returned.
+
 **Receiver-wide replay identity:** every accepted local or federated mail/chat,
 plaintext or encrypted, claims one `message_ingress_receipts` row keyed solely
 by `message_id`. An exact federated canonical-envelope retry returns the stored
@@ -912,10 +1007,10 @@ transient `did:key`.
 | `POST /v1/chat/sessions` | Create chat session by address first contact, stored-route continuation, or local alias; bare external `did:aw` first contact fails closed without stored route state |
 | `GET /v1/chat/pending` | Pending chats for the authenticated agent |
 | `GET /v1/chat/sessions` | List sessions |
-| `GET /v1/chat/sessions/{id}/messages` | Chat history |
+| `GET /v1/chat/sessions/{id}/messages` | Chat history, ordered by `created_at`. Each item carries its `seq`, usable as `after_seq` on the stream. |
 | `POST /v1/chat/sessions/{id}/messages` | Send chat message |
-| `GET /v1/chat/sessions/{id}/stream` | Chat SSE stream |
-| `POST /v1/chat/sessions/{id}/read` | Mark read |
+| `GET /v1/chat/sessions/{id}/stream` | Chat SSE stream. Every `message` and `read_receipt` frame carries `seq`, the session's number for that message or receipt. A session gives out its numbers under its row lock, held until the writer commits, so within a session a greater number always commits later; numbers are unique per session and not consecutive (a changed read receipt takes another number, and deleted rows leave gaps). The stream delivers every message and read receipt numbered above its cursor, in number order, whatever their `created_at` or `last_read_at` and whatever the writers' clocks. Without `after_seq` or `after`, the cursor is the session's last number, read before the response status is sent: a message whose send began after the client received the 200 is delivered, within the fallback poll interval if its wake preceded the stream's subscription. With `after_seq=<n>` the stream first replays the messages and read receipts numbered above `n`, so a client that keeps the last `seq` it received resumes with nothing skipped or repeated; a value above the session's last number is read as that last number. With `after=<timestamp>` it first replays the messages numbered above the last message stamped at or before that timestamp, and read receipts start live. `after` and `after_seq` together are refused with 422. |
+| `POST /v1/chat/sessions/{id}/read` | Mark read: the exact `message_ids`, or with `up_to_message_id` every incoming message numbered up to the named one (a message committed after it stays unread even if it is stamped earlier). |
 
 ### Agents and presence
 
@@ -959,6 +1054,7 @@ the repair is observable. Repo association remains workspace state.
 `POST /v1/connect` also retains a `repo_origin` compatibility field. When it is
 non-empty, the server canonicalizes it, ensures the team-scoped repo row, and
 binds that repo to the workspace; a newly created workspace is typed `agent`.
+On both paths, ensuring the row of a repo the team deleted restores that row.
 An invalid origin returns HTTP 422. Omitting the field leaves an existing repo
 binding unchanged and creates a new workspace as `manual`. The current `aw
 init` client intentionally omits `repo_origin`; heartbeat's
@@ -997,6 +1093,23 @@ tiebreaker rather than evidence that an offline workspace is currently
 relevant. When more matching workspaces exist than the requested limit, the
 response sets `has_more=true`. Human CLI output must state plainly when this
 bounded response is incomplete.
+
+A task claim is made and released by the task's status change, in the same
+PostgreSQL transaction, for every caller of the task service (the HTTP routes,
+the MCP task tools and an embedding host alike). Setting `in_progress` records
+the claim of the acting member's workspace, or answers `409` when another
+workspace holds one. A change of status to `open` or `closed` releases every
+claim on the task, whichever workspace holds it, and sets each released
+workspace's focus to its most recent remaining claim, else to the released
+focus task while that task is not closed, else to none. A request that does not
+change the status releases nothing, and a change that rolls back leaves the
+claim. The release does not depend on the mutation
+hook; the hook only announces it, as `task.unclaimed` workspace and team
+events. Answering a task (`POST /v1/tasks/{ref}/answer`) and cancelling an app
+request close the task and release its claims the same way. Closing a parent
+closes its open descendants without changing their claims, and deleting a task
+releases its claims through the `task.deleted` hook cascade rather than in the
+deleting transaction.
 
 Task claims have no time-based expiry or implicit lease in v1.
 `GET /v1/tasks/active` includes `owner_last_seen_at` for claim-backed tasks.
@@ -1443,7 +1556,11 @@ selection.
 ## awid API surface (what aweb depends on)
 
 The standard server uses these AWID read families through the cached registry
-client. Startup also performs an uncached AWID health check before serving.
+client. Startup also performs an uncached AWID health check before serving: the
+server does not start unless AWID answers `GET /health`. AWID's health report
+with status `unhealthy`, which it sends with 503 when its own Redis or database
+check fails, counts as reached: the server logs a warning and starts. Any other
+failure, including a 503 that is not that report, stops start-up.
 
 ### Team resolution (on first agent connection or cache miss)
 
@@ -1712,27 +1829,49 @@ callers planning around it.
 
 ### Garbage collection
 
-aweb provides three GC functions in `aweb.gc` that operators run on a
-schedule (cron, Kubernetes Job, or equivalent). All default to a
-30-day TTL and are configurable per-call:
+`aweb delete-dead-rows` (module function
+`aweb.gc.delete_dead_rows(db, apply=False)`) deletes rows that no reader of
+their table needs again. By default it is a dry run that changes nothing and
+prints, as JSON, per table: the rule's age in days (`older_than_days`), the
+number of dead rows (`dead_rows`) and `deleted_rows: 0`. With `--apply` it
+deletes them and prints the same counts with the number deleted.
 
-| Function | Default TTL | What it deletes |
+| Table | A row is dead when | Why no reader needs it |
 |---|---|---|
-| `gc_expired_messages(db_infra, ttl_days=30)` | 30 days | Mail messages and chat messages older than `ttl_days` (raw `created_at < now - ttl_days`). |
-| `gc_delivered_lifecycle_side_effects(db_infra, ttl_days=30)` | 30 days | Delivered lifecycle outbox rows older than `ttl_days`; pending rows are never removed. |
-| `gc_inactive_scopes(db_infra, ttl_days=30)` | 30 days | Teams with no message activity (mail or chat) for `ttl_days`, hard-deleted with all dependent rows (chat sessions, agents, workspaces, tasks, locks, etc.). |
+| `app_events` | `created_at` is more than 30 days ago | The event stream reads app events from a five-minute lookback window; nothing reads older ones. |
+| `control_signals` | `consumed_at` is set and more than 30 days ago | A stream consumes a signal once, by setting `consumed_at`; only unconsumed signals are read. A signal its target has not consumed is kept at any age. |
+| `federation_mutation_outbox` | `delivered_at` is set and more than 30 days ago | Delivery and recovery read only undelivered rows. An undelivered row is kept at any age. |
+| `lifecycle_side_effect_outbox` | `delivered_at` is set and more than 30 days ago | Replay and recovery read only undelivered rows. An undelivered row is kept at any age. |
 
-The GC functions are deletion-only — they do NOT cascade up to awid.
-Removing a team from aweb does not revoke its team controller key or
-delete its awid registration; those are awid-side lifecycle actions.
-Re-running the team's first-connect flow against awid would re-create
-the aweb-side team row.
+The command deletes from no other table. It never deletes a team, an agent, a
+task, a message, an `audit_log` row or an identity session grant, whatever
+their age or activity: aweb defines no retention period for `audit_log`, and
+expired and revoked grants are read by the grant list and by agent health.
+The server deletes no mail or chat message automatically.
 
-GC is not run automatically by the aweb server process. Operators
-choose how often to call these functions (typically nightly). Hosted
-operators that layer billing on top of aweb may schedule GC according
-to their own per-tier retention policies; that scheduling is the
-operator's concern, not aweb's.
+Each `DELETE` statement removes at most 1000 rows and commits on its own, so a
+run holds no long lock and may be stopped and run again. Each rule selects its
+rows through an index on the dated column; migration `049_dead_row_indexes.sql`
+adds the three that `app_events`, `control_signals` and
+`federation_mutation_outbox` need; without it the command scans those tables
+whole.
+
+The aweb server process does not run the command. Operators run it on a
+schedule (cron, a Kubernetes CronJob, or equivalent; typically nightly) with
+`AWEB_DATABASE_URL` set as for the server.
+
+### Releasing claims on closed tasks
+
+`aweb release-closed-task-claims` (module function
+`aweb.closed_task_claims.release_closed_task_claims(db, apply=False)`) is a
+one-off for claims left on closed tasks by data written before a task's claims
+were released in the transaction of its status change. By default it is a dry
+run that changes nothing and prints, as JSON, the total number of claims on
+closed tasks and, per team id, the number of tasks and claims. With `--apply`
+it releases each task's claims through `release_task_claims_on`, in a
+transaction of its own that first confirms the task is still closed, which
+also sets each released workspace's focus; it prints the same counts plus the
+number released. A second apply releases nothing.
 
 ### Rate limiting
 
@@ -1753,6 +1892,34 @@ This intentional split means a self-hosted aweb deployed inside a
 private VPC behind authenticated agent traffic does not pay the cost
 of artificial limits, while a hosted operator can apply whatever
 metering its product needs without changing the aweb contract.
+
+### Health probes
+
+Three unauthenticated routes report the server's state. None is rate limited.
+
+| Route | Checks | Answers | Use it for |
+|---|---|---|---|
+| `GET /live` | Nothing | `200 {"status": "ok"}` whenever the process serves requests | Liveness probes and container healthchecks: anything that restarts the process |
+| `GET /ready` | Redis and the database | 200 when both answer, 503 when either fails | Readiness probes, load-balancer routing, start-up ordering |
+| `GET /health` | The same as `/ready` | The same response as `/ready` | Monitoring and manual checks |
+
+`/ready` and `/health` are one handler. Their body is
+`{"status": "ok" | "unhealthy", "checks": {"redis": "ok" | "error", "database": "ok" | "error"}}`
+with either status code; failure details go to the server log, never the body.
+
+Point a restarting probe at `/live` only. A probe that restarts the process on
+`/ready` or `/health` restarts every replica during a Redis or database outage,
+into the same outage. The `server/Dockerfile` `HEALTHCHECK` probes `/live`; the
+compose files' healthchecks, which order start-up, probe `/ready`.
+
+The naapp runtime serves the same three routes with the same status codes and
+the same `status` and `checks` fields, for the dependencies each app checks;
+see [Health](../naapp-lib/README.md#health).
+
+A host that mounts the app under a prefix serves the three routes under that
+prefix. The CLI's request-compression discovery reads `GET /health` and treats
+a non-2xx answer as no advertisement, so writes to a server that is not ready
+go uncompressed.
 
 ### Server lifecycle
 

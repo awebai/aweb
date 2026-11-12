@@ -120,7 +120,15 @@ For a send to a global address (`domain/name`):
    projection for the target identity in the authenticated endpoint team.
 5. Federation delivery uses the resolved delivery origin and the target identity
    binding. The recipient server re-resolves the target address/key and fails
-   closed on mismatch.
+   closed on mismatch. The sending server connects only to an `https` delivery
+   origin whose host resolves to public addresses (or private ones, for an
+   origin its operator lists in `AWEB_FEDERATION_PRIVATE_DELIVERY_ORIGINS`), at
+   the address it checked, and does not follow redirects. A failed delivery
+   returns the status and one fixed reason (`delivery_origin_refused`,
+   `delivery_address_refused`, `delivery_origin_unreachable`,
+   `delivery_timeout`, `delivery_unavailable`, `HTTP <status>`, or the
+   recipient server's typed
+   federation `reason`); other response text is not relayed.
 
 Direct bare `did:aw` first-contact sends are unsupported: use a concrete
 address (`domain/name`) or an existing conversation/session with stored route
@@ -196,6 +204,17 @@ exact learned participant route, and supplied address/origin fields may only
 equal it. Unknown local first contact and route injection fail closed. Target
 registry or PostgreSQL/lease publication dependency failure uses
 `federation_authority_coordination_unavailable` (503, retryable).
+
+Federation's first-contact source budget uses the socket peer by default and
+ignores forwarded client-address headers. A deployment behind a trusted proxy
+can set `AWEB_CLIENT_ADDRESS_HEADER` to the header carrying the client address.
+The shared `aweb_naapp.client_identity.ClientIdentity` resolver uses its final
+comma-separated entry; an absent or blank final entry falls back to the peer.
+The proxy must strip or overwrite client-supplied values, and direct untrusted
+access to the server must be blocked. The final entry represents the client
+when exactly one trusted proxy appends to the header. With a proxy chain,
+configure a dedicated header the trusted edge overwrites with the client
+address, rather than a header every hop appends to.
 
 ## Continuations
 

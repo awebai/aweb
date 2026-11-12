@@ -80,7 +80,9 @@ class ConsoleReconciliation:
         )
         if row is None:
             raise HTTPException(403, "owner_required")
-        admitted = await self.console.installation(row["installation_id"])
+        admitted = await self.console.installation(
+            row["installation_id"], team_id=row["team_id"]
+        )
         if (admitted.installation_id, admitted.team_id) != (row["installation_id"], row["team_id"]):
             raise HTTPException(403, "owner_required")
         return admitted
@@ -241,14 +243,17 @@ class ConsoleReconciliation:
 
     async def decide(self, current, token, proof, decision):
         approval_id, _, admitted = await self._candidate(current, token)
-        # No credential-holding caller fence spans B3's fresh decision verify.
-        # The dedicated shared control audit is local and has no target gate.
-        async with self.console.db.transaction() as tx:
-            await self._owner(tx, current, admitted)
-            approval = await self.approvals.decide(
-                approval_id, decision, Assurance.PASSKEY, proof, link_token=token, tx=tx
-            )
-            await self._end(tx, current, admitted)
+        authority = ConsoleReconciliationFence(
+            console=self.console, current=current, scope=admitted
+        )
+        approval = await self.approvals.decide(
+            approval_id,
+            decision,
+            Assurance.PASSKEY,
+            proof,
+            link_token=token,
+            fence=authority.for_decision(),
+        )
         return {
             "approval_id": approval_id,
             "state": approval.state.value,

@@ -15,6 +15,18 @@ _ED25519_KEY_LEN = 32
 _DID_KEY_PREFIX = "did:key:z"
 
 
+def _longest_base58(byte_count: int) -> int:
+    """The most characters base58 uses for ``byte_count`` bytes.
+
+    Text longer than this cannot be an encoding of that many bytes, so it is
+    refused on its length, undecoded.
+    """
+    return len(b58.b58encode(b"\xff" * byte_count))
+
+
+_DID_KEY_ENCODED_MAX = _longest_base58(_MULTICODEC_LEN + _ED25519_KEY_LEN)
+
+
 def generate_keypair() -> tuple[bytes, bytes]:
     signing_key = SigningKey.generate()
     return bytes(signing_key), bytes(signing_key.verify_key)
@@ -27,6 +39,11 @@ def did_from_public_key(public_key: bytes) -> str:
         )
     multicodec_key = _MULTICODEC_ED25519 + public_key
     return _DID_KEY_PREFIX + b58.b58encode(multicodec_key).decode("ascii")
+
+
+def did_key_from_signing_key(seed: bytes) -> str:
+    """The did:key of a held 32-byte Ed25519 seed; any other length is refused."""
+    return did_from_public_key(bytes(SigningKey(seed).verify_key))
 
 
 def strict_ed25519_point(public_key: bytes) -> bool:
@@ -42,6 +59,10 @@ def public_key_from_did(did: str) -> bytes:
     if not did.startswith(_DID_KEY_PREFIX):
         raise ValueError(f"DID must start with '{_DID_KEY_PREFIX}', got '{did[:20]}'")
     encoded = did[len(_DID_KEY_PREFIX) :]
+    if len(encoded) > _DID_KEY_ENCODED_MAX:
+        raise ValueError(
+            f"did:key encoding must be at most {_DID_KEY_ENCODED_MAX} characters, got {len(encoded)}"
+        )
     try:
         decoded = b58.b58decode(encoded)
     except Exception as e:
@@ -92,6 +113,7 @@ def decode_public_key(encoded: str) -> bytes:
 
 _STABLE_ID_PREFIX = "did:aw:"
 _STABLE_ID_BYTES_LEN = 20
+_STABLE_ID_ENCODED_MAX = _longest_base58(_STABLE_ID_BYTES_LEN)
 
 
 def stable_id_from_public_key(public_key: bytes) -> str:
@@ -116,6 +138,8 @@ def validate_stable_id(value: str) -> str:
     suffix = value[len(_STABLE_ID_PREFIX) :]
     if not suffix:
         raise ValueError("stable_id suffix must not be empty")
+    if len(suffix) > _STABLE_ID_ENCODED_MAX:
+        raise ValueError(f"stable_id suffix must be at most {_STABLE_ID_ENCODED_MAX} characters")
     try:
         decoded = b58.b58decode(suffix)
     except Exception as exc:

@@ -148,7 +148,7 @@ async def test_an_expired_resolution_is_never_reused_when_the_registry_fails(reg
 
 
 async def test_a_resolution_is_keyed_by_registry_origin_and_did_and_reused_for_at_most_a_minute(registry, global_member):
-    cache = AWIDTeamCache(registry_url=REGISTRY_URL + "/", ttl_seconds=600, transport=registry.transport)
+    cache = AWIDTeamCache(registry_url=REGISTRY_URL + "/", ttl_seconds=60, transport=registry.transport)
     async with relying_app(registry, public_origin=ORIGIN, cache=cache) as (client, _):
         assert (await client.get("/v1/items", headers=get_items(global_member))).status_code == 200
         assert (await client.get("/v1/items", headers=get_items(global_member))).status_code == 200

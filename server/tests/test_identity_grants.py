@@ -1297,7 +1297,6 @@ def test_route_grant_scope_declarations_are_known_and_reviewable():
         ("PATCH", "/v1/workspaces/{workspace_id}", "presence.write"),
         ("POST", "/v1/agents/heartbeat", "presence.write"),
         ("POST", "/v1/agents/me/activity", "chat.send"),
-        ("POST", "/v1/repos/lookup", "coord.read"),
         ("POST", "/v1/reservations", "coord.write"),
         ("POST", "/v1/reservations/release", "coord.write"),
         ("POST", "/v1/reservations/renew", "coord.write"),
@@ -1560,6 +1559,7 @@ async def test_chat_stream_real_handler_revoked_and_expired_grants_emit_terminal
         session_id=session_id,
         deadline=deadline,
         after=None,
+        after_seq=None,
         include=None,
         db=_DbShim(aweb_cloud_db.aweb_db),
         redis=None,
@@ -1598,6 +1598,7 @@ async def test_chat_stream_real_handler_revoked_and_expired_grants_emit_terminal
         session_id=session_id,
         deadline=(datetime.now(timezone.utc) + timedelta(seconds=5)).isoformat().replace("+00:00", "Z"),
         after=None,
+        after_seq=None,
         include=None,
         db=_DbShim(aweb_cloud_db.aweb_db),
         redis=None,
@@ -1971,12 +1972,6 @@ async def test_grant_real_task_workspace_repo_role_instruction_routes(aweb_cloud
             content=workspace_metadata_body,
             headers=h(presence_key, presence_did, presence_grant, "PATCH", f"/v1/workspaces/{app.state.alice_workspace_id}", workspace_metadata_body),
         )
-        repo_lookup_body = json.dumps({"origin_url": "git@github.com:awebai/aweb.git"}, separators=(",", ":")).encode()
-        repo_lookup = await client.post(
-            "/v1/repos/lookup",
-            content=repo_lookup_body,
-            headers=h(read_key, read_did, read_grant, "POST", "/v1/repos/lookup", repo_lookup_body),
-        )
         repos = await client.get("/v1/repos", headers=h(read_key, read_did, read_grant, "GET", "/v1/repos"))
         roles = await client.get("/v1/roles/active", headers=h(read_key, read_did, read_grant, "GET", "/v1/roles/active"))
         instructions = await client.get("/v1/instructions/active", headers=h(read_key, read_did, read_grant, "GET", "/v1/instructions/active"))
@@ -2061,8 +2056,6 @@ async def test_grant_real_task_workspace_repo_role_instruction_routes(aweb_cloud
     assert workspace_wrong_subject.json()["detail"] == "grant workspace mismatch"
     assert workspace_metadata.status_code == 403
     assert workspace_metadata.json()["detail"] == "grant workspace metadata is not shared presence"
-    assert repo_lookup.status_code == 200, repo_lookup.text
-    assert repo_lookup.json()["repo_id"] == str(repo_id)
     assert repos.status_code == 200, repos.text
     assert repos.json()["repos"][0]["canonical_origin"] == "github.com/awebai/aweb"
     assert roles.status_code == 200, roles.text

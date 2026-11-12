@@ -28,10 +28,12 @@ from pgdbm import AsyncDatabaseManager, AsyncMigrationManager
 from pgdbm.core import TransactionManager
 
 from aweb_secrets.admission import Admission
+from aweb_secrets.broker_outcomes import prepare_legacy_broker_outcomes
 
 
 async def apply_use_context_migrations(db: AsyncDatabaseManager) -> None:
     """After app records and shared dispatch migrations, before serving uses."""
+    await prepare_legacy_broker_outcomes(db)
     await AsyncMigrationManager(
         db,
         migrations_path=str(Path(__file__).parent / "dispatch_migrations"),

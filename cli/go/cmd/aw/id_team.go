@@ -1237,13 +1237,6 @@ func resolveTeamAcceptInviteScope(cmd *cobra.Command) (string, error) {
 	return awid.IdentityModeLocal, nil
 }
 
-func teamAcceptScopeForAddress(address string) string {
-	if strings.TrimSpace(address) != "" {
-		return awid.IdentityModeGlobal
-	}
-	return awid.IdentityModeLocal
-}
-
 func teamAcceptScopeFromGlobal(global bool) string {
 	if global {
 		return awid.IdentityModeGlobal
@@ -3994,10 +3987,6 @@ func saveAcceptedTeamCertificate(workingDir, identityHome, teamID string, cert *
 	return awconfig.SaveTeamCertificateForTeam(workingDir, teamID, cert)
 }
 
-func requireTeamStateForMembership(workingDir string) (*awconfig.TeamState, error) {
-	return requireTeamStateForMembershipAt(workingDir, "")
-}
-
 func requireTeamStateForMembershipAt(workingDir, identityHome string) (*awconfig.TeamState, error) {
 	var teamState *awconfig.TeamState
 	var err error
@@ -4521,10 +4510,6 @@ func validateMemberAddressForCertificate(
 	return nil
 }
 
-func resolveOrGenerateMemberDIDKey(workingDir string, localMember bool) (string, error) {
-	return resolveOrGenerateMemberDIDKeyAt(workingDir, "", localMember)
-}
-
 func resolveOrGenerateMemberDIDKeyAt(workingDir, identityHome string, localMember bool) (string, error) {
 	// Try to load existing identity.
 	identityPath := awconfig.WorktreeIdentityPath(workingDir)
@@ -4590,10 +4575,6 @@ func resolveIdentityFieldsForCert(workingDir string) (didAW, address string) {
 		return "", ""
 	}
 	return strings.TrimSpace(identity.StableID), strings.TrimSpace(identity.Address)
-}
-
-func resolveAliasFromIdentity(workingDir string) string {
-	return resolveAliasFromIdentityAt(workingDir, "")
 }
 
 func resolveAliasFromIdentityAt(workingDir, identityHome string) string {

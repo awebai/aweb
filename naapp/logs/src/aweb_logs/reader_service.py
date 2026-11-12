@@ -50,7 +50,9 @@ CREDENTIAL_AUDIT_MODULE = "aweb_logs_credential_audit"
 
 
 class ReaderService:
-    """The reader routes of each origin, over one composed set of services."""
+    """The reader routes of each origin, over one composed set of services.
+    ``sessions`` is the console origin's one session service: every console
+    route admits only a current reader through it."""
 
     def __init__(
         self,
@@ -71,17 +73,15 @@ class ReaderService:
         # yet: owner-act delivery covers only the app-role and credential acts.
         self.governance = governance
         self.fence = fence
+        self.sessions = sessions
         self.removals = ReaderRemovals(directory, fence=fence, passkeys=passkeys, recorder=recorder)
+        reads = ReaderReads(db, sessions=sessions, directory=directory, chain_keys=chain_keys)
         router = APIRouter()
         router.include_router(console_login_router(sessions=sessions, limiter=limiter))
         router.include_router(credential_router(passkeys=passkeys, recorder=recorder))
         router.include_router(reader_governance_router(designations))
-        router.include_router(console_pages_router(sessions=sessions))
-        router.include_router(
-            reader_read_router(
-                ReaderReads(db, sessions=sessions, directory=directory, chain_keys=chain_keys)
-            )
-        )
+        router.include_router(console_pages_router(reads))
+        router.include_router(reader_read_router(reads))
         self.console_router = router
 
     def agent_router(self, authorized: Callable[..., Awaitable[Authorization]]) -> APIRouter:
@@ -99,6 +99,7 @@ async def reader_service(
     *,
     signer: LogsSigner,
     console_origin: str,
+    client_address_header: str | None,
     delivery: PasskeyDelivery,
     backlog_age: timedelta,
 ) -> ReaderService:
@@ -167,7 +168,10 @@ async def reader_service(
     )
     sessions = ConsoleSessions(db, passkeys=passkeys, scopes=directory.is_current_reader)
     limiter = LoginLimiter(
-        db, client_identity=ClientIdentity(), limit=12, window=timedelta(minutes=1)
+        db,
+        client_identity=ClientIdentity(trusted_header=client_address_header),
+        limit=12,
+        window=timedelta(minutes=1),
     )
     return ReaderService(
         db=db,

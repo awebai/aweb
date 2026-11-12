@@ -11,6 +11,7 @@ from typing import Any
 from urllib.parse import urlsplit
 
 import base58
+from aweb_naapp.did_key import DID_KEY_ENCODED_MAX
 from cryptography.exceptions import InvalidSignature, InvalidTag
 from cryptography.hazmat.primitives import hpke
 from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey, Ed25519PublicKey
@@ -101,6 +102,8 @@ def public_did(key: Ed25519PublicKey) -> str:
 def public_key(did: str) -> Ed25519PublicKey:
     if not did.startswith("did:key:z"):
         raise ValueError("key type")
+    if len(did) - 9 > DID_KEY_ENCODED_MAX:
+        raise ValueError("key encoding")
     raw = base58.b58decode(did[9:])
     if len(raw) != 34 or raw[:2] != b"\xed\x01":
         raise ValueError("key type")

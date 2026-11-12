@@ -122,7 +122,6 @@ func TestWakeBrokerOpensGrantHomeStream(t *testing.T) {
 		Store:      store,
 		Session:    oats,
 		OpenStream: wakeStreamOpener,
-		StreamTTL:  time.Minute,
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -252,7 +251,7 @@ func TestWakeStreamOpenerPinsExplicitTeamAcrossActiveSwitch(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 	for _, team := range []string{teamA, teamB} {
-		opener, err := wakeStreamOpener(identityHome, team)
+		opener, err := wakeStreamOpener(ctx, identityHome, team)
 		if err != nil {
 			t.Fatalf("opener for %s: %v", team, err)
 		}
@@ -303,14 +302,14 @@ func TestWakeStreamOpenerGrantTeamValidationIsPerCall(t *testing.T) {
 	if err := awconfig.SaveGrantHomeTo(awconfig.GrantHomeStatePath(grantHome), &awconfig.GrantHome{Version: awconfig.GrantHomeSchemaVersion, GrantID: "99999999-9999-4999-8999-999999999999", TeamID: "backend:grant.test", Subject: awconfig.GrantSubject{DIDKey: "did:key:z6MkGrant"}, Scopes: []string{"events.read"}, ExpiresAt: time.Now().Add(time.Hour).UTC().Format(time.RFC3339), AwebURL: server.URL}); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := wakeStreamOpener(grantHome, "backend:other.test"); err == nil || !strings.Contains(err.Error(), "requested team") {
+	if _, err := wakeStreamOpener(context.Background(), grantHome, "backend:other.test"); err == nil || !strings.Contains(err.Error(), "requested team") {
 		t.Fatalf("grant mismatch error=%v, want fail closed with requested team", err)
 	}
 	results := make(chan error, 2)
 	for _, team := range []string{"backend:grant.test", "backend:other.test"} {
 		team := team
 		go func() {
-			_, err := wakeStreamOpener(grantHome, team)
+			_, err := wakeStreamOpener(context.Background(), grantHome, team)
 			results <- err
 		}()
 	}
@@ -534,7 +533,7 @@ func TestWakeRunIsIdempotentAndServesItsSocket(t *testing.T) {
 		}
 		time.Sleep(20 * time.Millisecond)
 	}
-	if _, alive := wake.LockOwner(filepath.Join(stateDir, "lock")); !alive {
+	if _, alive := wake.LockOwner(filepath.Join(stateDir, "daemon.lock")); !alive {
 		t.Fatal("the daemon did not take the host lock")
 	}
 
@@ -566,6 +565,26 @@ func TestWakeRunIsIdempotentAndServesItsSocket(t *testing.T) {
 	}
 	if status.MaxStreams != wake.DefaultMaxStreams {
 		t.Fatalf("max_streams=%d want %d", status.MaxStreams, wake.DefaultMaxStreams)
+	}
+
+	// A registration the running daemon took carries no warning.
+	instanceHome := filepath.Join(root, "agent-home")
+	if err := os.MkdirAll(filepath.Join(instanceHome, ".aw"), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	registerCmd := exec.CommandContext(ctx, bin, "wake", "register", "--home", instanceHome,
+		"--identity-home", filepath.Join(instanceHome, ".aw"), "--delivery", "session", "--state-dir", stateDir)
+	registerCmd.Dir = root
+	registerCmd.Env = env
+	registerOut, err := registerCmd.CombinedOutput()
+	if err != nil {
+		t.Fatalf("register against a running daemon: %v\n%s", err, registerOut)
+	}
+	if !strings.Contains(string(registerOut), "registered "+instanceHome) {
+		t.Fatalf("register did not report the registration:\n%s", registerOut)
+	}
+	if strings.Contains(string(registerOut), "no wake broker is running") {
+		t.Fatalf("register warned of a missing broker while one runs:\n%s", registerOut)
 	}
 }
 
@@ -601,8 +620,15 @@ func TestWakeCommandsFallBackToFilesWhenTheDaemonIsDown(t *testing.T) {
 		return string(out)
 	}
 
-	run("wake", "register", "--home", instanceHome, "--identity-home", filepath.Join(instanceHome, ".aw"),
+	registered := run("wake", "register", "--home", instanceHome, "--identity-home", filepath.Join(instanceHome, ".aw"),
 		"--delivery", "session", "--state-dir", stateDir)
+	// The registration is stored, and the caller is told nothing will wake
+	// this instance until a broker runs.
+	for _, want := range []string{"registered " + instanceHome, "no wake broker is running", stateDir, "aw wake run"} {
+		if !strings.Contains(registered, want) {
+			t.Fatalf("register with no daemon does not say %q:\n%s", want, registered)
+		}
+	}
 	run("wake", "pause", "--home", instanceHome, "--state-dir", stateDir)
 
 	// No daemon ever ran: the state is on disk, where the daemon reconciles it.

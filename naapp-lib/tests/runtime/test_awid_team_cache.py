@@ -32,7 +32,7 @@ def history_cache(registry, token=SERVICE_TOKEN) -> AWIDTeamCache:
 
 
 def status_cache(registry) -> AWIDTeamCache:
-    return AWIDTeamCache(registry_url=REGISTRY_URL, ttl_seconds=600, transport=registry.transport)
+    return AWIDTeamCache(registry_url=REGISTRY_URL, ttl_seconds=60, transport=registry.transport)
 
 
 def certificate_pages(registry) -> list[httpx.Request]:
@@ -90,7 +90,7 @@ async def test_history_refuses_a_certificate_awid_never_published(registry, team
 
 
 async def test_history_facts_are_reused_for_at_most_a_minute(registry, team):
-    cache = AWIDTeamCache(registry_url=REGISTRY_URL, ttl_seconds=600, service_token=SERVICE_TOKEN,
+    cache = AWIDTeamCache(registry_url=REGISTRY_URL, ttl_seconds=60, service_token=SERVICE_TOKEN,
                           transport=registry.transport)
     await cache.get(TEAM_ID, "target")
     assert 0 < cache._cache[TEAM_ID].expires_at - time.monotonic_ns() <= seconds_to_ns(60)
@@ -435,11 +435,18 @@ async def test_status_cache_is_per_certificate(registry, team):
     assert len(registry.transport.calls) == 2
 
 
-async def test_status_path_requires_a_certificate_id(registry, team):
+async def test_without_a_certificate_id_the_team_key_is_a_plain_read(registry, team):
+    """A team-key read without a caller certificate (an owner act's verifier)
+    is a plain read: a public team answers it, a private one is refused,
+    naming the credential that would read it."""
+    visibility = (await registry.db.fetch_one("SELECT visibility FROM {{tables.teams}}"))["visibility"]
+    if visibility == "public":
+        assert (await status_cache(registry).get(TEAM_ID)).team_did_key == team.team_did_key
+        return
     with pytest.raises(HTTPException) as caught:
         await status_cache(registry).get(TEAM_ID)
-    assert caught.value.status_code == 401
-    assert registry.transport.calls == []
+    assert caught.value.status_code == 403
+    assert caught.value.detail["code"] == "team_private_unreadable"
 
 
 @pytest.mark.parametrize("kind", [404, 429, 503, "timeout", "json"])

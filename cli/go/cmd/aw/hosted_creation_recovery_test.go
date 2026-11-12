@@ -175,3 +175,17 @@ func TestAPIKeyCreationCannotReplaceAnActiveOperationsRecovery(t *testing.T) {
 		t.Fatalf("concurrent creation reached another effect: %v", err)
 	}
 }
+
+// The canonical creation response is stored in the recovery state and compared
+// with a retried response by a later run, so it writes U+2028 and U+2029 as
+// six-character escapes. This string was computed at commit 8e8d008c8.
+func TestCanonicalHostedCreationResponseWithLineSeparatorsIsStable(t *testing.T) {
+	name := "a" + string(rune(0x2028)) + "b" + string(rune(0x2029)) + "c <&>"
+	got, err := canonicalHostedCreationResponse(map[string]any{"name": name}, awid.IDTreeCreationResponse{FieldsPresent: true})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if want := `{"name":"a` + "\\u2028" + `b` + "\\u2029" + `c <&>"}`; got != want {
+		t.Fatalf("canonical = %q, want %q", got, want)
+	}
+}

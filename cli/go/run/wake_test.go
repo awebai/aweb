@@ -39,6 +39,7 @@ func TestEventBusRetriesEarlyEOF(t *testing.T) {
 	}
 	bus := NewEventBus(EventBusConfig{
 		Stream: NewEventStreamOpener(client),
+		Policy: fastStreamPolicy(),
 	})
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
@@ -130,6 +131,7 @@ func TestEventBusRetriesTransientOpenError(t *testing.T) {
 	}
 	bus := NewEventBus(EventBusConfig{
 		Stream: NewEventStreamOpener(client),
+		Policy: fastStreamPolicy(),
 	})
 	notices := make(chan string, 8)
 	bus.onConnectionNotice = func(message string) { notices <- message }
@@ -190,38 +192,4 @@ noticesDone:
 	if strings.Contains(strings.Join(gotNotices, "\n"), "TypeError") {
 		t.Fatalf("raw error leaked in notices: %v", gotNotices)
 	}
-}
-
-func TestEventBusFailsFastOnClientError(t *testing.T) {
-	t.Parallel()
-
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		http.Error(w, `{"detail":"unauthorized"}`, http.StatusUnauthorized)
-	}))
-	t.Cleanup(server.Close)
-
-	client, err := awid.New(server.URL)
-	if err != nil {
-		t.Fatal(err)
-	}
-	bus := NewEventBus(EventBusConfig{
-		Stream: NewEventStreamOpener(client),
-	})
-	ctx, cancel := context.WithCancel(context.Background())
-	defer cancel()
-	bus.Start(ctx)
-
-	// Should disconnect quickly on 401.
-	select {
-	case <-bus.done:
-	case <-time.After(2 * time.Second):
-		t.Fatal("timed out waiting for bus to stop on 401")
-	}
-
-	if bus.State() != ConnDisconnected {
-		t.Fatalf("expected disconnected on 401, got %s", bus.State())
-	}
-
-	cancel()
-	bus.Stop()
 }

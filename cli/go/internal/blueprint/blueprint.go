@@ -18,7 +18,6 @@ import (
 	"unicode/utf8"
 
 	"github.com/awebai/aw/awid"
-	"github.com/mr-tron/base58"
 	"gopkg.in/yaml.v3"
 )
 
@@ -670,8 +669,7 @@ func unsafeContent(s string) bool {
 		if len(match) < 2 {
 			continue
 		}
-		decoded, err := base58.Decode(match[1])
-		if err == nil && len(decoded) == 20 {
+		if _, err := awid.DecodeStableID(match[1]); err == nil {
 			return true
 		}
 	}
@@ -941,14 +939,15 @@ func canonicalPayloadDigest(root string, schema string) (string, []canonicalPayl
 	return "sha256:" + hex.EncodeToString(digest[:]), files, nil
 }
 
+// canonicalJSON is the encoding blueprint payload digests are computed over.
+// A digest recorded at materialization is recomputed on refresh, so U+2028 and
+// U+2029 keep the six-character escapes; file content never holds them.
 func canonicalJSON(v any) ([]byte, error) {
-	var buf bytes.Buffer
-	enc := json.NewEncoder(&buf)
-	enc.SetEscapeHTML(false)
-	if err := enc.Encode(v); err != nil {
+	canonical, err := awid.CanonicalJSONValueEscapingLineSeparators(v)
+	if err != nil {
 		return nil, err
 	}
-	return bytes.TrimSuffix(buf.Bytes(), []byte("\n")), nil
+	return []byte(canonical), nil
 }
 
 func validateProfileID(field, value string) error {

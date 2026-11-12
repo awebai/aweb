@@ -14,9 +14,11 @@ from aweb.coordination import tasks_service
 from aweb.service_errors import ConflictError, ForbiddenError
 from aweb.team_auth_deps import TeamIdentity
 from test_task_human_assignment_events import _member
-from test_tasks_http import TEAM_ID, _DbShim, _seed_team
+from test_tasks_http import TEAM_ID, _DbShim, _seed_team, member_identity
 from test_dashboard_privacy import privacy_app, TEAM as LIVE_TEAM  # noqa: F401
 from awid.signing import canonical_json_bytes, sign_message
+
+ALICE = member_identity()
 
 
 async def _question(db):
@@ -25,7 +27,7 @@ async def _question(db):
     await db.execute("UPDATE {{tables.agents}} SET certificate_id = 'cert-human' WHERE agent_id = $1", member_id)
     actor = TeamIdentity(team_id=TEAM_ID, alias="requester", did_key=f"did:key:{member_id}", did_aw="", address="", agent_id=str(member_id), identity_scope="local", certificate_id="cert-human")
     service = _DbShim(db)
-    task = await tasks_service.create_task(service, team_id=TEAM_ID, created_by_alias="alice", title="Review app request", assignee_alias="requester")
+    task = await tasks_service.create_task(service, actor=ALICE, on_mutation=None, title="Review app request", assignee_alias="requester")
     return service, task, actor
 
 
@@ -52,7 +54,7 @@ async def test_answer_replay_is_immutable_and_reopen_allows_another_answer(aweb_
     assert await _commit(db, **_answer(task, actor)) == first
     async with db.transaction() as tx:
         assert await tasks_service.get_task_answer_on(tx, team_id=TEAM_ID, task_id=UUID(task["task_id"]), answer_key="answer-1") == first
-    reopened = await tasks_service.update_task(service, team_id=TEAM_ID, ref=task["task_id"], actor_alias="alice", status="open")
+    reopened = await tasks_service.update_task(service, actor=ALICE, on_mutation=None, ref=task["task_id"], status="open")
     historical = await _commit(db, **_answer(task, actor))
     assert historical == {**first, "current": False}
     async with db.transaction() as tx:
@@ -74,7 +76,7 @@ async def test_wrong_actor_and_stale_revision_have_no_effect(aweb_cloud_db):
     service, task, actor = await _question(db)
     with pytest.raises(ForbiddenError, match="target_mismatch"):
         await _commit(db, **_answer(task, replace(actor, did_key="did:key:someone-else")))
-    edited = await tasks_service.update_task(service, team_id=TEAM_ID, ref=task["task_id"], actor_alias="alice", notes="Changed")
+    edited = await tasks_service.update_task(service, actor=ALICE, on_mutation=None, ref=task["task_id"], notes="Changed")
     with pytest.raises(ConflictError, match="revision_conflict"):
         await _commit(db, **_answer(task, actor))
     assert (await tasks_service.get_task(service, team_id=TEAM_ID, ref=task["task_id"]))["rev"] == edited["rev"]
@@ -272,7 +274,7 @@ async def test_eligible_backup_answers_and_other_candidate_reads_the_winner(aweb
     assert read["app_request"]["eligible_dids"] == task["app_request"]["eligible_dids"]
     assert await _commit(db, **_decision_answer(service, task, backup)) == winner
     assert len(await tasks_service.list_comments(service, team_id=TEAM_ID, ref=task["task_ref"])) == 1
-    reopened = await tasks_service.update_task(service, team_id=TEAM_ID, ref=task["task_ref"], actor_alias="alice", status="open")
+    reopened = await tasks_service.update_task(service, actor=ALICE, on_mutation=None, ref=task["task_ref"], status="open")
     assert reopened["app_request"]["eligible_dids"] == task["app_request"]["eligible_dids"]
     assert await _commit(db, **_decision_answer(service, task, backup)) == {**winner, "current": False}
     next_answer = await _commit(db, **_decision_answer(service, reopened, owner, key="reopened-answer"))

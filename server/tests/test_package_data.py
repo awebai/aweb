@@ -146,6 +146,9 @@ def test_canonical_chain_starts_with_reset_baseline_then_forward_migrations():
         "045_canonical_participant_dids.sql",
         "046_local_human_succession.sql",
         "047_verified_human_kind.sql",
+        "048_chat_session_seq.sql",
+        "049_dead_row_indexes.sql",
+        "050_one_active_team_document.sql",
     ]
 
 

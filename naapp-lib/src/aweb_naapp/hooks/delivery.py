@@ -2,10 +2,10 @@
 
 This is the Python reading of the contract in ``docs/hook-events.md``; the Go
 authority in ``cli/go/hookevent`` pins the bytes, and both pass the same
-public vector. A client delivery is authorized here by its team certificate,
-signed by the team's current controller key and naming the event's producer;
-the certificate's revocation status is the shared team-auth verifier's to
-check. A server delivery is self-consistent here, and its authority comes from
+public vector. A client delivery is authorized here by its team certificate:
+it names the event's producer and passes awid's one check of a team
+certificate under the team's current key, revoked certificates and registered
+certificates, as the target read them from the registry. A server delivery is self-consistent here, and its authority comes from
 resolving the producer's registered key and active production through the
 team's server.
 """
@@ -13,6 +13,7 @@ team's server.
 from __future__ import annotations
 
 import hashlib
+from collections.abc import Collection
 from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
 from typing import Any
@@ -21,8 +22,8 @@ from urllib.parse import urlsplit
 from awid.did import did_from_public_key
 from awid.team_certificate import (
     TeamCertificateError,
+    check_team_certificate,
     decode_team_certificate,
-    verify_team_certificate_signature,
 )
 from nacl.signing import SigningKey
 
@@ -77,14 +78,19 @@ class Delivery:
 @dataclass(frozen=True)
 class ReceiveOptions:
     """What the target knows independently of the request: its public origin,
-    the binding the delivery must name, the team's current controller key
-    (read fresh from the registry, for a client's certificate) and its clock.
-    ``audience`` and ``binding_id`` are required."""
+    the binding the delivery must name, its clock and, for a client's
+    certificate, what the team's registry says, read fresh: the team's current
+    controller key, its revoked certificate ids and its registered ones.
+    ``audience`` and ``binding_id`` are required. A target that takes client
+    deliveries gives all three registry facts; without the key or the
+    registered ids a client delivery is refused as ``verifier_misconfigured``."""
 
     audience: str
     binding_id: str
     now: datetime
     team_key_did: str = ""
+    revoked_certificate_ids: Collection[str] = ()
+    registered_certificate_ids: Collection[str] | None = None
 
 
 @dataclass(frozen=True)
@@ -224,27 +230,39 @@ def verify_delivery(
     ):
         raise Refused("producer_mismatch", "the credential's signer is not the event's producer")
     if envelope.producer_kind == "client":
-        _verify_client_certificate(
-            _header(headers, CERTIFICATE_HEADER), envelope, options.team_key_did
-        )
+        _verify_client_certificate(_header(headers, CERTIFICATE_HEADER), envelope, options)
     return Received(payload=payload, envelope=envelope)
 
 
-def _verify_client_certificate(encoded: str, envelope: Envelope, team_key_did: str) -> None:
+def _verify_client_certificate(encoded: str, envelope: Envelope, options: ReceiveOptions) -> None:
+    """Check a client delivery's certificate: that it names the event's
+    producer, and then awid's one check of a team certificate, with the
+    producer's key as the subject."""
     if not encoded:
         raise Refused("certificate_missing", "a client delivery carries its team certificate")
-    if not team_key_did:
+    if not options.team_key_did:
         raise Refused("verifier_misconfigured", "a client delivery needs the team's current key")
-    certificate = _decode_certificate(encoded)
-    _certificate_names_producer(certificate, envelope)
-    if certificate.get("team_did_key") != team_key_did:
-        raise Refused("certificate_invalid", "not issued under the team's current key")
+    if options.registered_certificate_ids is None:
+        raise Refused(
+            "verifier_misconfigured", "a client delivery needs the team's registered certificates"
+        )
+    _certificate_names_producer(_decode_certificate(encoded), envelope)
     try:
-        verify_team_certificate_signature(certificate, team_key_did)
+        check_team_certificate(
+            encoded,
+            subject_did_key=envelope.producer_did_key,
+            team_did_key=options.team_key_did,
+            revoked_certificate_ids=options.revoked_certificate_ids,
+            registered_certificate_ids=options.registered_certificate_ids,
+        )
     except TeamCertificateError as exc:
         if exc.reason == "invalid_team_key":
             raise Refused("verifier_misconfigured", "the team key does not decode") from None
-        raise Refused("certificate_invalid", exc.reason) from None
+        if exc.reason == "member_key_mismatch":
+            raise Refused(
+                "certificate_mismatch", "the certificate does not name this producer"
+            ) from None
+        raise Refused("certificate_invalid", str(exc)) from None
 
 
 def _decode_certificate(encoded: str) -> dict[str, Any]:

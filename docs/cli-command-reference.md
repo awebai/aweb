@@ -2155,8 +2155,8 @@ Subcommands:
 - `archive` Not supported: the beads graph is the archive
 - `check` Check for unread mail (for hooks)
 - `claim` Not supported in v1: no message queues
-- `clear` Not supported: server mail expires on its own
-- `delete` Not supported: server mail expires on its own
+- `clear` Not supported: aweb mail cannot be deleted
+- `delete` Not supported: aweb mail cannot be deleted
 - `drain` Not supported in v1
 - `help` Show help for a beads-mail verb ('bd mail' swallows --help; this reaches us)
 - `inbox` List unread messages (read-only; reading is what marks read)
@@ -2223,7 +2223,7 @@ Flags:
 
 ### `beads-mail clear`
 
-Not supported: server mail expires on its own
+Not supported: aweb mail cannot be deleted
 
 Flags:
 - `-h, --help help for clear`
@@ -2232,7 +2232,7 @@ Flags:
 
 ### `beads-mail delete`
 
-Not supported: server mail expires on its own
+Not supported: aweb mail cannot be deleted
 
 Flags:
 - `-h, --help help for delete`
@@ -2734,8 +2734,7 @@ Flags:
 
 Lists one page of this workspace's mail, read and unread. gc's Provider
 documents this as "all open messages"; aweb has no open/closed state, so
-it is every message the inbox still holds within the server's retention
-window.
+it is every message the inbox holds.
 
 Flags:
 - `-h, --help help for all`
@@ -2764,8 +2763,8 @@ Flags:
 
 ### `gc-mail count`
 
-Counts this workspace's mail. "Total" counts what the inbox holds inside
-the server's retention window — aweb mail is delivery, not an archive, so
+Counts this workspace's mail. "Total" counts what the inbox holds
+now — aweb mail is delivery, not an archive, so
 it is not a cumulative all-time total. Counting stops after 4000 messages; a larger
 inbox reports that ceiling rather than a wrong number.
 
@@ -3164,8 +3163,7 @@ instance and never removes a registration on its own; an instance it observed
 stopped is marked inactive and waits here.
 
 An unknown or already-retired home exits 0 with a note: the hook may run twice,
-or after the pending expiry already dropped the registration, and neither is a
-failed retirement.
+and that is not a failed retirement.
 
 For observed managed-worker completion, use --require-managed-stop with
 --expect-registration FILE containing managed_receiver from live wake status.
@@ -3208,7 +3206,10 @@ the instance present; pending errors are tolerated until the 30-minute expiry.
 
 Exit 0 means the registration was written durably: over the daemon's socket
 when it is up, and straight to the state directory when it is not, so a hook
-never fails because the broker is restarting. A non-zero exit means refused —
+never fails because the broker is restarting. It does not mean a broker is
+running: when none answered, register says so on stderr, and the instance is
+not woken until one starts. aw wake status reports whether a broker runs
+(daemon_running with --json). A non-zero exit means refused —
 a missing --delivery session, a relative path, or an unreadable identity home.
 
 --identity-home here names the instance's own identity home, and shadows the
@@ -3707,6 +3708,7 @@ Flags:
 - `--provider-pty Run the provider subprocess inside a pseudo-terminal instead of plain pipes when interactive controls are available`
 - `--team string Override the selected team_id for this command`
 - `--trip-on-danger Remove provider bypass flags and use native provider safety checks`
+- `--trust-config Trust this directory's .aw/run.json as it is now, so its prompts and services are used; a file that changes afterwards is ignored until trusted again`
 - `--wait int Idle seconds per wake-stream wait cycle (default 20)`
 - `--work-prompt-suffix string Override the configured work cycle prompt suffix for this run`
 

@@ -12,8 +12,10 @@ from pgdbm.errors import MigrationError
 from pgdbm.testing import AsyncTestDatabase, DatabaseTestConfig
 from pydantic_settings import SettingsConfigDict
 
+from aweb_naapp import idempotency, outbox, roles
 from aweb_naapp.idempotency import apply_idempotency_migrations
 from aweb_naapp.roles import apply_roles_migrations
+from aweb_naapp.runtime import db as runtime_db
 from aweb_naapp.runtime.db import NaappDatabase
 from aweb_naapp.runtime.settings import NaappSettings
 
@@ -63,12 +65,14 @@ def _applied(rows: list) -> list[tuple[str, str]]:
     return [(row["module_name"], row["filename"]) for row in rows]
 
 
-_SHARED = ("aweb_naapp", "001_observed_principals.sql")
-_OUTBOX = [
-    ("aweb_naapp_outbox", "001_outbox.sql"),
-    ("aweb_naapp_outbox", "002_outbox_channels.sql"),
-    ("aweb_naapp_outbox", "003_admission_backlog.sql"),
-]
+def _listed_migrations(path: Path, module: str) -> list[tuple[str, str]]:
+    return [(module, migration.name) for migration in sorted(path.glob("*.sql"))]
+
+
+_SHARED = _listed_migrations(runtime_db._SHARED_MIGRATIONS, runtime_db._SHARED_MODULE)
+_OUTBOX = _listed_migrations(outbox.MIGRATIONS_PATH, outbox.MIGRATIONS_MODULE)
+_ROLES = _listed_migrations(roles.MIGRATIONS_PATH, roles.MIGRATIONS_MODULE)
+_IDEMPOTENCY = _listed_migrations(idempotency.MIGRATIONS_PATH, idempotency.MIGRATIONS_MODULE)
 
 
 async def test_connect_applies_the_shared_and_outbox_then_the_app_migrations(
@@ -85,7 +89,7 @@ async def test_connect_applies_the_shared_and_outbox_then_the_app_migrations(
         applied = await database.db.fetch_all(
             "SELECT module_name, filename FROM schema_migrations ORDER BY id"
         )
-        assert _applied(applied) == [_SHARED, *_OUTBOX, ("example", "001_initial.sql")]
+        assert _applied(applied) == [*_SHARED, *_OUTBOX, ("example", "001_initial.sql")]
     finally:
         await database.disconnect()
 
@@ -121,7 +125,7 @@ async def test_an_app_that_already_created_the_shared_tables_keeps_its_rows(
         applied = await database.db.fetch_all(
             "SELECT module_name, filename FROM schema_migrations ORDER BY id"
         )
-        assert _applied(applied) == [("example", "001_initial.sql"), _SHARED, *_OUTBOX]
+        assert _applied(applied) == [("example", "001_initial.sql"), *_SHARED, *_OUTBOX]
     finally:
         await database.disconnect()
 
@@ -129,12 +133,13 @@ async def test_an_app_that_already_created_the_shared_tables_keeps_its_rows(
 async def test_reconnecting_applies_nothing_twice(database_url: str, tmp_path: Path) -> None:
     settings = ExampleSettings(_env_file=None, database_url=database_url)
     migrations = _migrations(tmp_path)
+    expected = [*_SHARED, *_OUTBOX, *_listed_migrations(migrations, "example")]
     for _ in range(2):
         database = NaappDatabase(settings, module_name="example", migrations_path=migrations)
         await database.connect()
         count = await database.db.fetch_value("SELECT count(*) FROM schema_migrations")
         await database.disconnect()
-        assert count == 5
+        assert count == len(expected)
 
 
 async def test_pool_follows_the_settings(database_url: str, tmp_path: Path) -> None:
@@ -181,10 +186,10 @@ async def test_an_app_migration_builds_on_the_stores_it_names(
             "SELECT module_name, filename FROM schema_migrations ORDER BY id"
         )
         assert _applied(applied) == [
-            _SHARED,
+            *_SHARED,
             *_OUTBOX,
-            ("aweb_naapp_idempotency", "001_idempotency_keys.sql"),
-            ("aweb_naapp_roles", "001_role_assignments.sql"),
+            *_IDEMPOTENCY,
+            *_ROLES,
             ("example", "001_owners.sql"),
         ]
     finally:
@@ -211,6 +216,7 @@ async def test_reconnecting_with_stores_applies_nothing_twice(
 ) -> None:
     settings = ExampleSettings(_env_file=None, database_url=database_url)
     migrations = _migrations_on_roles(tmp_path)
+    expected = [*_SHARED, *_OUTBOX, *_ROLES, *_listed_migrations(migrations, "example")]
     for _ in range(2):
         database = NaappDatabase(
             settings,
@@ -221,7 +227,7 @@ async def test_reconnecting_with_stores_applies_nothing_twice(
         await database.connect()
         count = await database.db.fetch_value("SELECT count(*) FROM schema_migrations")
         await database.disconnect()
-        assert count == 6
+        assert count == len(expected)
 
 
 async def _default_search_path_is_pg_catalog(database_url: str) -> None:
@@ -245,6 +251,8 @@ async def test_the_runtime_migrates_into_its_schema_whatever_the_roles_search_pa
     await database.connect()
     try:
         for table in ("things", "teams", "outbox_events", "schema_migrations"):
-            assert await database.db.fetch_value(f"SELECT to_regclass('{expected}.{table}') IS NOT NULL")
+            assert await database.db.fetch_value(
+                f"SELECT to_regclass('{expected}.{table}') IS NOT NULL"
+            )
     finally:
         await database.disconnect()

@@ -32,6 +32,7 @@ from aweb_naapp.manifest import (
     load_manifest,
     select_variant,
 )
+from aweb_naapp.manifest_keys import check_manifest_keys
 
 from aweb.app_registry import normalize_digest, normalize_origin, reserved_app_ids
 from aweb.service_errors import ServiceError
@@ -119,6 +120,7 @@ class ManifestFetcher:
         try:
             selected = await asyncio.to_thread(select_variant, origin, supported, fetch)
             manifest = load_manifest(selected.data, reserved_names=reserved_app_ids())
+            check_manifest_keys(manifest)
         except ManifestError as exc:
             status = 502 if exc.code.endswith("_unavailable") else 422
             raise ManifestFetchError(exc.code, "The app manifest could not be fetched or validated", status) from exc

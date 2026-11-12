@@ -12,7 +12,7 @@ import json
 import os
 import uuid
 from collections.abc import Awaitable, Callable, Mapping, Sequence
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from datetime import datetime
 from typing import Any
 
@@ -332,7 +332,8 @@ async def open_next_epoch(
 _GENESIS_COLUMNS = "chain_epoch, logs_origin, created_at, previous_checkpoint_sha256"
 _EVENT_COLUMNS = (
     "chain_epoch, team_seq, prev_event_hash, event_hash, received_at, hook, producer_origin,"
-    " content_commitment, salt, signing_bytes, signature, key_evidence, purge_act"
+    " content_commitment, salt, signing_bytes, signature, key_evidence, purge_act,"
+    " receipt_bytes, receipt_signature"
 )
 
 # logs' own governance entries in a team's epochs before $2, read through
@@ -349,6 +350,18 @@ async def load_epoch(
     db: AsyncDatabaseManager | TransactionManager, team_id: str, chain_epoch: int
 ) -> tuple[Genesis, list[StoredEvent]]:
     """One team epoch's genesis and stored events, in team_seq order, for verify."""
+    genesis = await load_genesis(db, team_id, chain_epoch)
+    rows = await db.fetch_all(
+        _EVENTS + " WHERE team_id = $1 AND chain_epoch = $2 ORDER BY team_seq",
+        team_id,
+        chain_epoch,
+    )
+    return genesis, [_stored_event(team_id, chain_epoch, row) for row in rows]
+
+
+async def load_genesis(
+    db: AsyncDatabaseManager | TransactionManager, team_id: str, chain_epoch: int
+) -> Genesis:
     epoch = await db.fetch_one(
         "SELECT " + _GENESIS_COLUMNS + " FROM {{tables.chain_epochs}}"
         " WHERE team_id = $1 AND chain_epoch = $2",
@@ -357,13 +370,7 @@ async def load_epoch(
     )
     if epoch is None:
         raise LookupError(f"team {team_id} has no epoch {chain_epoch}")
-    rows = await db.fetch_all(
-        "SELECT " + _EVENT_COLUMNS + " FROM {{tables.chain_events}}"
-        " WHERE team_id = $1 AND chain_epoch = $2 ORDER BY team_seq",
-        team_id,
-        chain_epoch,
-    )
-    return _genesis(team_id, epoch), [_stored_event(team_id, chain_epoch, row) for row in rows]
+    return _genesis(team_id, epoch)
 
 
 async def load_governance_before(
@@ -399,8 +406,6 @@ async def load_governance_before(
     ]
 
 
-
-
 def _genesis(team_id: str, row: Mapping[str, Any]) -> Genesis:
     return Genesis(
         team_id=team_id,
@@ -409,6 +414,65 @@ def _genesis(team_id: str, row: Mapping[str, Any]) -> Genesis:
         created_at=row["created_at"],
         previous_checkpoint_sha256=row["previous_checkpoint_sha256"],
     )
+
+
+async def load_head(db: AsyncDatabaseManager, team_id: str) -> tuple[int, int] | None:
+    """The team's current ``(chain_epoch, team_seq)``, read without its lock;
+    None for a team with no chain."""
+    row = await db.fetch_one(
+        "SELECT chain_epoch, team_seq FROM {{tables.chain_heads}} WHERE team_id = $1", team_id
+    )
+    return None if row is None else (row["chain_epoch"], row["team_seq"])
+
+
+async def load_events_after(
+    db: AsyncDatabaseManager,
+    team_id: str,
+    chain_epoch: int,
+    *,
+    after: int,
+    through: int | None,
+    limit: int,
+) -> list[tuple[StoredEvent, tuple[bytes, str]]]:
+    """Up to ``limit`` of an epoch's stored events with ``after < team_seq <=
+    through`` (unbounded above when ``through`` is None), in team_seq order,
+    each with the receipt logs signed for it."""
+    rows = await db.fetch_all(
+        _EVENTS + " WHERE team_id = $1 AND chain_epoch = $2 AND team_seq > $3"
+        " AND ($4::bigint IS NULL OR team_seq <= $4) ORDER BY team_seq LIMIT $5",
+        team_id,
+        chain_epoch,
+        after,
+        through,
+        limit,
+    )
+    return [
+        (
+            _stored_event(team_id, chain_epoch, row),
+            (bytes(row["receipt_bytes"]), row["receipt_signature"]),
+        )
+        for row in rows
+    ]
+
+
+async def load_checkpoints(
+    db: AsyncDatabaseManager, team_id: str, chain_epoch: int, *, after: int, through: int
+) -> list[tuple[int, tuple[bytes, str]]]:
+    """An epoch's checkpoints with ``after < team_seq <= through``, each as its
+    team_seq and artefact, in team_seq then issue order."""
+    rows = await db.fetch_all(
+        "SELECT team_seq, signing_bytes, signature FROM {{tables.chain_checkpoints}}"
+        " WHERE team_id = $1 AND chain_epoch = $2 AND team_seq > $3 AND team_seq <= $4"
+        " ORDER BY team_seq, position",
+        team_id,
+        chain_epoch,
+        after,
+        through,
+    )
+    return [(row["team_seq"], (bytes(row["signing_bytes"]), row["signature"])) for row in rows]
+
+
+_EVENTS = "SELECT " + _EVENT_COLUMNS + " FROM {{tables.chain_events}}"
 
 
 def _stored_event(team_id: str, chain_epoch: int, row: Mapping[str, Any]) -> StoredEvent:
@@ -448,14 +512,34 @@ async def verify_epoch(
     distinct. No refused content is returned. All append/epoch/fault writers use
     the same head lock, held here only for database reads, never network I/O.
     Authorization belongs to the caller; this function is not an HTTP route.
+
+    The chain is also checked against what logs itself signed: the epoch's
+    stored receipts and checkpoints, and, for the current epoch, the locked
+    head. ``stored`` reports each of logs' own artefacts the chain contradicts,
+    by kind and sequence number, and whether the last stored event is the head;
+    either fault makes the report not intact. Without logs' key, a writer of the
+    tables cannot rewrite a retained event unseen, nor drop a tail that a
+    surviving stored checkpoint covers. A tail removed together with the
+    checkpoints that cover it is seen only through witnesses held outside logs'
+    database, which the caller passes.
     """
     # Once the epoch exists the earlier ones are closed, and no purge reaches
     # logs' own governance entries, so they are read outside the head lock
     # appends wait on.
     earlier = await load_governance_before(db, team_id, chain_epoch)
     async with db.transaction() as tx:
-        await _existing_head(tx, team_id)
+        head = await _existing_head(tx, team_id)
         genesis, events = await load_epoch(tx, team_id, chain_epoch)
+        own_receipts = await tx.fetch_all(
+            "SELECT team_seq, receipt_bytes, receipt_signature FROM {{tables.chain_events}}"
+            " WHERE team_id = $1 AND chain_epoch = $2 ORDER BY team_seq",
+            team_id, chain_epoch,
+        )
+        own_checkpoints = await tx.fetch_all(
+            "SELECT team_seq, signing_bytes, signature FROM {{tables.chain_checkpoints}}"
+            " WHERE team_id = $1 AND chain_epoch = $2 ORDER BY position",
+            team_id, chain_epoch,
+        )
         faults = await tx.fetch_all(
             "SELECT f.fault_id, f.event_id, e.team_seq, f.kind, f.refused_sha256, f.recorded_at"
             " FROM {{tables.chain_faults}} f JOIN {{tables.chain_events}} e"
@@ -463,10 +547,46 @@ async def verify_epoch(
             " WHERE f.team_id = $1 AND e.chain_epoch = $2 ORDER BY f.fault_id",
             team_id, chain_epoch,
         )
-    report = verify_chain(
+    chain = verify_chain(
         genesis, events, receipt_keys=receipt_keys, checkpoint_keys=checkpoint_keys,
-        receipts=receipts, checkpoints=checkpoints,
-    ).to_json()
+        receipts=(
+            *receipts,
+            *((bytes(r["receipt_bytes"]), r["receipt_signature"]) for r in own_receipts),
+        ),
+        checkpoints=(
+            *checkpoints,
+            *((bytes(c["signing_bytes"]), c["signature"]) for c in own_checkpoints),
+        ),
+    )
+    # The caller's artefacts come first, so their positions are the caller's.
+    supplied = {"receipt": len(receipts), "checkpoint": len(checkpoints)}
+    own_seqs = {
+        "receipt": [r["team_seq"] for r in own_receipts],
+        "checkpoint": [c["team_seq"] for c in own_checkpoints],
+    }
+    own = [c for c in chain.contradicted if c.index >= supplied[c.artefact]]
+    chain = replace(
+        chain, contradicted=tuple(c for c in chain.contradicted if c.index < supplied[c.artefact])
+    )
+    last = (events[-1].link.team_seq, events[-1].event_hash) if events else (0, genesis.hash())
+    head_matches = (
+        head is None
+        or head.chain_epoch != chain_epoch
+        or last == (head.team_seq, head.event_hash)
+    )
+    report = chain.to_json()
+    report["intact"] = chain.intact and not own and head_matches
+    report["stored"] = {
+        "contradicted": [
+            {
+                "artefact": c.artefact,
+                "team_seq": own_seqs[c.artefact][c.index - supplied[c.artefact]],
+                "reason": c.reason,
+            }
+            for c in own
+        ],
+        "head_matches": head_matches,
+    }
     report["holds"] = [
         hold.to_json() for hold in disclosed_holds([*earlier, (genesis, events)])
     ]

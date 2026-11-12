@@ -67,19 +67,8 @@ type certificateConnectOptions struct {
 	BindingWorkspacePath string
 }
 
-// initCertificateConnect implements the certificate-based init flow.
+// initCertificateConnectWithOptions implements the certificate-based init flow.
 // Reads team cert + signing key, calls POST /v1/connect, writes workspace.yaml.
-func initCertificateConnect(workingDir, awebURL, role string) (connectOutput, error) {
-	home, err := identityHomeForDir(workingDir)
-	if err != nil {
-		return connectOutput{}, err
-	}
-	return initCertificateConnectWithOptions(workingDir, awebURL, certificateConnectOptions{
-		Role:         strings.TrimSpace(role),
-		IdentityHome: home.Root,
-	})
-}
-
 func initCertificateConnectWithOptions(workingDir, awebURL string, opts certificateConnectOptions) (connectOutput, error) {
 	identityHome := strings.TrimSpace(opts.IdentityHome)
 	if identityHome == "" {

@@ -8,6 +8,7 @@ import (
 	"strings"
 
 	"github.com/awebai/aw/awconfig"
+	"github.com/awebai/aw/internal/atomicfile"
 )
 
 const (
@@ -80,16 +81,25 @@ func LoadUserConfig(startDir string) (UserConfig, error) {
 		return UserConfig{}, err
 	}
 
-	localPath, err := FindLocalConfigPath(startDir)
+	// The directory's run.json overrides the user's own only when the user
+	// trusted the content that is read here.
+	localPath, key, data, found, err := readLocalConfig(startDir)
 	if err != nil {
-		if os.IsNotExist(err) {
-			return cfg, nil
-		}
 		return UserConfig{}, err
 	}
-	localCfg, err := loadUserConfigFile(localPath)
+	if !found {
+		return cfg, nil
+	}
+	state, err := localConfigState(key, data)
 	if err != nil {
 		return UserConfig{}, err
+	}
+	if state != LocalConfigTrusted {
+		return cfg, nil
+	}
+	var localCfg UserConfig
+	if err := json.Unmarshal(data, &localCfg); err != nil {
+		return UserConfig{}, fmt.Errorf("parsing %s: %w", localPath, err)
 	}
 	return mergeUserConfig(cfg, localCfg), nil
 }
@@ -209,37 +219,5 @@ func writeUserConfigTo(path string, cfg UserConfig) error {
 	}
 	data = append(data, '\n')
 
-	return atomicWriteFileMode(path, data, 0o600)
-}
-
-func atomicWriteFileMode(path string, data []byte, mode os.FileMode) error {
-	dir := filepath.Dir(path)
-	if err := os.MkdirAll(dir, 0o700); err != nil {
-		return err
-	}
-
-	tmp, err := os.CreateTemp(dir, ".tmp.*")
-	if err != nil {
-		return err
-	}
-	tmpName := tmp.Name()
-	defer func() { _ = os.Remove(tmpName) }()
-
-	if err := tmp.Chmod(mode); err != nil {
-		_ = tmp.Close()
-		return err
-	}
-	if _, err := tmp.Write(data); err != nil {
-		_ = tmp.Close()
-		return err
-	}
-	if err := tmp.Sync(); err != nil {
-		_ = tmp.Close()
-		return err
-	}
-	if err := tmp.Close(); err != nil {
-		return err
-	}
-
-	return os.Rename(tmpName, path)
+	return atomicfile.Options{Mode: 0o600, ParentMode: 0o700}.Write(path, data)
 }

@@ -234,6 +234,39 @@ async def test_app_decision_answer_checks_proposal_and_choice_then_cancellation(
 
 
 @pytest.mark.asyncio
+async def test_app_cancellation_releases_the_claim_and_fires_its_events_as_the_app(app_request_context):
+    env, _, _, _ = app_request_context
+    made = await _app_http(app_request_context, "POST", "/v1/tasks/app-requests", _body(env))
+    assert made.status_code == 201, made.text
+    receipt = made.json()
+    claimed = await _v2_request(env, "bob", "PATCH", f'/v1/tasks/{receipt["task_ref"]}', {"status": "in_progress"})
+    assert claimed.status_code == 200, claimed.text
+    assert await env.db.fetch_value("SELECT count(*) FROM {{tables.task_claims}} WHERE task_ref=$1", receipt["task_ref"]) == 1
+    env.dispatched.clear()
+
+    path = f"/v1/tasks/app-requests/action-1/cancel?originator={env.actors['alice'].did}"
+    cancelled = await _app_http(app_request_context, "POST", path)
+    assert cancelled.status_code == 200, cancelled.text
+
+    assert await env.db.fetch_value("SELECT count(*) FROM {{tables.task_claims}} WHERE task_ref=$1", receipt["task_ref"]) == 0
+    comment_id = await env.db.fetch_value(
+        "SELECT comment_id FROM {{tables.task_comments}} WHERE task_id=$1 AND author_alias='app'", UUID(receipt["task_id"]),
+    )
+    # The app is the actor: no member identity is attached to its events.
+    assert env.dispatched == [
+        ("task.status_changed", {
+            "task_id": receipt["task_id"], "team_id": TEAM, "task_ref": receipt["task_ref"],
+            "actor_alias": "fixture", "old_status": "in_progress", "new_status": "closed",
+        }),
+        ("task.comment_added", {"task_id": receipt["task_id"], "comment_id": str(comment_id)}),
+    ]
+    # A repeated cancellation changes nothing and fires nothing.
+    again = await _app_http(app_request_context, "POST", path)
+    assert again.status_code == 200, again.text
+    assert len(env.dispatched) == 2
+
+
+@pytest.mark.asyncio
 async def test_uninstall_cancellation_and_claim_release_roll_back_together(app_request_context):
     from aweb.installations import uninstall_installation_on
 
@@ -293,7 +326,7 @@ async def test_revoked_originator_cannot_create_or_read_by_replay(app_request_co
         certificate_id="privacy-alice")
     with pytest.raises(HTTPException) as caught:
         await _create(app_request_context, _body(env, expired=expired))
-    assert caught.value.status_code == 401 and caught.value.detail == "certificate_revoked"
+    assert caught.value.status_code == 401 and caught.value.detail == "revoked"
 
 
 @pytest.mark.asyncio
@@ -487,7 +520,7 @@ async def test_c2_cached_authority_observes_revocation(cached_app_request_contex
     clock[0] += cache_age
     body = _body(env, expired=expired_replay, request_id="action-1" if expired_replay else "cache-new")
     response = await _app_http(context, "POST", "/v1/tasks/app-requests", body)
-    assert response.status_code == 401 and response.json()["detail"] == "certificate_revoked", response.text
+    assert response.status_code == 401 and response.json()["detail"] == "revoked", response.text
     assert await env.db.fetch_value("SELECT count(*) FROM {{tables.task_app_requests}}") == 1
 
 
@@ -518,7 +551,7 @@ async def test_answer_requires_fresh_member_authority_even_for_replay(cached_app
     clock[0] += 61
     refused = await _v2_request(env, "bob", "POST", ref+"/answer", answer)
     assert refused.status_code == (401 if authority == "revoked" else 503), refused.text
-    assert refused.json()["detail"] == ("certificate_revoked" if authority == "revoked" else "authority_unavailable")
+    assert refused.json()["detail"] == ("revoked" if authority == "revoked" else "authority_unavailable")
     assert await env.db.fetch_value("SELECT count(*) FROM {{tables.task_answers}}") == int(replay)
     assert await env.db.fetch_value("SELECT count(*) FROM {{tables.task_answer_stage_nonces}}") == int(replay)
 

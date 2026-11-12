@@ -14,15 +14,18 @@ from pgdbm import AsyncDatabaseManager
 from pgdbm.errors import QueryError
 from pydantic import BaseModel, Field, field_validator
 
-from aweb.service_errors import RESOURCE_NOT_FOUND_DETAIL
+from aweb.audit import OperatorAuditRoute, audit_success
 from aweb.team_auth_deps import TeamIdentity, get_team_identity, team_identity_with_grant_scope
 
 from ...db import DatabaseInfra, get_db_infra
 from ..defaults import get_default_team_instructions
+from ..team_documents import activate_team_document, serialized_team_document
 
 logger = logging.getLogger(__name__)
 
-instructions_router = APIRouter(prefix="/v1/instructions", tags=["instructions"])
+instructions_router = APIRouter(
+    prefix="/v1/instructions", tags=["instructions"], route_class=OperatorAuditRoute,
+)
 router = instructions_router
 
 
@@ -140,6 +143,7 @@ async def create_team_instructions_version(
     document: Dict[str, Any],
     created_by_alias: Optional[str],
 ) -> TeamInstructionsVersion:
+    serialized = serialized_team_document(document)
     result = await db.fetch_one(
         """
         WITH active_check AS (
@@ -169,7 +173,7 @@ async def create_team_instructions_version(
                   created_by_alias, created_at, updated_at
         """,
         team_id,
-        json.dumps(document),
+        serialized,
         created_by_alias,
         base_instructions_id,
     )
@@ -213,40 +217,15 @@ async def activate_team_instructions(
     team_id: str,
     instructions_id: str,
 ) -> bool:
-    target = await db.fetch_one(
-        """
-        SELECT id, team_id
-        FROM {{tables.team_instructions}}
-        WHERE id = $1
-        """,
-        instructions_id,
+    await activate_team_document(
+        db,
+        table="{{tables.team_instructions}}",
+        # Replicas exclude each other by this name alone, so it stays what
+        # every replica already running takes.
+        lock_name="team-instructions-activation",
+        team_id=team_id,
+        document_id=instructions_id,
     )
-    if not target:
-        raise HTTPException(status_code=404, detail=RESOURCE_NOT_FOUND_DETAIL)
-
-    if target["team_id"] != team_id:
-        raise HTTPException(status_code=404, detail=RESOURCE_NOT_FOUND_DETAIL)
-
-    # Deactivate the currently active version (if any)
-    await db.execute(
-        """
-        UPDATE {{tables.team_instructions}}
-        SET is_active = false
-        WHERE team_id = $1 AND is_active = true
-        """,
-        team_id,
-    )
-
-    # Activate the target version
-    await db.execute(
-        """
-        UPDATE {{tables.team_instructions}}
-        SET is_active = true
-        WHERE id = $1
-        """,
-        instructions_id,
-    )
-
     return True
 
 
@@ -404,28 +383,30 @@ async def create_team_instructions_endpoint(
     db: DatabaseInfra = Depends(get_db_infra),
     identity: TeamIdentity = Depends(get_team_identity),
 ) -> CreateTeamInstructionsResponse:
-    aweb_db = db.get_manager("aweb")
+    manager = db.get_manager("aweb")
+    async with manager.transaction() as aweb_db:
+        version = await create_team_instructions_version(
+            aweb_db,
+            team_id=identity.team_id,
+            base_instructions_id=payload.base_team_instructions_id,
+            document=payload.document.model_dump(),
+            created_by_alias=identity.alias,
+        )
 
-    version = await create_team_instructions_version(
-        aweb_db,
-        team_id=identity.team_id,
-        base_instructions_id=payload.base_team_instructions_id,
-        document=payload.document.model_dump(),
-        created_by_alias=identity.alias,
-    )
+        await audit_success(aweb_db, request, identity.team_id)
 
-    logger.info(
-        "Team instructions created via API: team=%s id=%s version=%d",
-        identity.team_id,
-        version.id,
-        version.version,
-    )
+        logger.info(
+            "Team instructions created via API: team=%s id=%s version=%d",
+            identity.team_id,
+            version.id,
+            version.version,
+        )
 
-    return CreateTeamInstructionsResponse(
-        team_instructions_id=version.id,
-        team_id=version.team_id,
-        version=version.version,
-    )
+        return CreateTeamInstructionsResponse(
+            team_instructions_id=version.id,
+            team_id=version.team_id,
+            version=version.version,
+        )
 
 
 @instructions_router.get("/{team_instructions_id}")
@@ -474,34 +455,36 @@ async def activate_team_instructions_endpoint(
     db: DatabaseInfra = Depends(get_db_infra),
     identity: TeamIdentity = Depends(get_team_identity),
 ) -> ActivateTeamInstructionsResponse:
-    aweb_db = db.get_manager("aweb")
+    manager = db.get_manager("aweb")
+    async with manager.transaction() as aweb_db:
+        previous_active = await aweb_db.fetch_one(
+            """
+            SELECT id FROM {{tables.team_instructions}}
+            WHERE team_id = $1 AND is_active = true
+            """,
+            identity.team_id,
+        )
+        previous_instructions_id = str(previous_active["id"]) if previous_active else None
 
-    previous_active = await aweb_db.fetch_one(
-        """
-        SELECT id FROM {{tables.team_instructions}}
-        WHERE team_id = $1 AND is_active = true
-        """,
-        identity.team_id,
-    )
-    previous_instructions_id = str(previous_active["id"]) if previous_active else None
+        await activate_team_instructions(
+            aweb_db,
+            team_id=identity.team_id,
+            instructions_id=team_instructions_id,
+        )
 
-    await activate_team_instructions(
-        aweb_db,
-        team_id=identity.team_id,
-        instructions_id=team_instructions_id,
-    )
+        await audit_success(aweb_db, request, identity.team_id)
 
-    logger.info(
-        "Team instructions activated via API: team=%s id=%s (was: %s)",
-        identity.team_id,
-        team_instructions_id,
-        previous_instructions_id,
-    )
+        logger.info(
+            "Team instructions activated via API: team=%s id=%s (was: %s)",
+            identity.team_id,
+            team_instructions_id,
+            previous_instructions_id,
+        )
 
-    return ActivateTeamInstructionsResponse(
-        activated=True,
-        active_team_instructions_id=team_instructions_id,
-    )
+        return ActivateTeamInstructionsResponse(
+            activated=True,
+            active_team_instructions_id=team_instructions_id,
+        )
 
 
 @instructions_router.post("/reset")
@@ -510,40 +493,42 @@ async def reset_team_instructions_to_default_endpoint(
     db: DatabaseInfra = Depends(get_db_infra),
     identity: TeamIdentity = Depends(get_team_identity),
 ) -> ResetTeamInstructionsResponse:
-    aweb_db = db.get_manager("aweb")
+    manager = db.get_manager("aweb")
+    async with manager.transaction() as aweb_db:
+        previous_active = await aweb_db.fetch_one(
+            """
+            SELECT id FROM {{tables.team_instructions}}
+            WHERE team_id = $1 AND is_active = true
+            """,
+            identity.team_id,
+        )
+        previous_instructions_id = str(previous_active["id"]) if previous_active else None
 
-    previous_active = await aweb_db.fetch_one(
-        """
-        SELECT id FROM {{tables.team_instructions}}
-        WHERE team_id = $1 AND is_active = true
-        """,
-        identity.team_id,
-    )
-    previous_instructions_id = str(previous_active["id"]) if previous_active else None
+        version = await create_team_instructions_version(
+            aweb_db,
+            team_id=identity.team_id,
+            base_instructions_id=previous_instructions_id,
+            document=get_default_team_instructions(),
+            created_by_alias=None,
+        )
+        await activate_team_instructions(
+            aweb_db,
+            team_id=identity.team_id,
+            instructions_id=version.id,
+        )
 
-    version = await create_team_instructions_version(
-        aweb_db,
-        team_id=identity.team_id,
-        base_instructions_id=previous_instructions_id,
-        document=get_default_team_instructions(),
-        created_by_alias=None,
-    )
-    await activate_team_instructions(
-        aweb_db,
-        team_id=identity.team_id,
-        instructions_id=version.id,
-    )
+        await audit_success(aweb_db, request, identity.team_id)
 
-    logger.info(
-        "Team instructions reset to default via API: team=%s id=%s version=%d (was: %s)",
-        identity.team_id,
-        version.id,
-        version.version,
-        previous_instructions_id,
-    )
+        logger.info(
+            "Team instructions reset to default via API: team=%s id=%s version=%d (was: %s)",
+            identity.team_id,
+            version.id,
+            version.version,
+            previous_instructions_id,
+        )
 
-    return ResetTeamInstructionsResponse(
-        reset=True,
-        active_team_instructions_id=version.id,
-        version=version.version,
-    )
+        return ResetTeamInstructionsResponse(
+            reset=True,
+            active_team_instructions_id=version.id,
+            version=version.version,
+        )

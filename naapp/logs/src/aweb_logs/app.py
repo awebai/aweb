@@ -32,7 +32,6 @@ from aweb_naapp.runtime.hook_egress import HookEgress
 from aweb_naapp.runtime.origins import OriginApps
 from aweb_naapp.runtime.passkeys.email import PasskeyEmailDelivery
 from aweb_naapp.runtime.team_auth import Principal
-from awid.registry import RegistryClient
 from fastapi import FastAPI, HTTPException, Request
 from pgdbm import AsyncDatabaseManager
 
@@ -86,6 +85,27 @@ async def admit_members(request: Request, principal: Principal, tool: DeclaredTo
     return True
 
 
+def create_runtime(
+    settings: LogsSettings,
+    hooks: HookEgress,
+    *,
+    awid_transport: httpx.AsyncBaseTransport | None = None,
+    team_server_transport: httpx.AsyncBaseTransport | None = None,
+) -> NaappRuntime:
+    """logs' runtime: its schema, its manifest and its hook events leaving through ``hooks``."""
+    return NaappRuntime(
+        settings,
+        module_name=MIGRATIONS_MODULE,
+        migrations_path=MIGRATIONS_PATH,
+        manifest_path=MANIFEST_PATH,
+        awid_transport=awid_transport,
+        team_server_transport=team_server_transport,
+        hook_egress=hooks.egress,
+        hook_internal_cidr=hooks.internal_cidr,
+        hook_internal_origins=hooks.internal_origins,
+    )
+
+
 def create_app(
     settings: LogsSettings,
     *,
@@ -99,16 +119,8 @@ def create_app(
     enrolment links of designated readers. Hook events leave through the guard
     the settings configure; ``resolver`` replaces its DNS resolver."""
     hooks = HookEgress.from_settings(settings, resolver=resolver)
-    runtime = NaappRuntime(
-        settings,
-        module_name=MIGRATIONS_MODULE,
-        migrations_path=MIGRATIONS_PATH,
-        manifest_path=MANIFEST_PATH,
-        awid_transport=awid_transport,
-        team_server_transport=team_server_transport,
-        hook_egress=hooks.egress,
-        hook_internal_cidr=hooks.internal_cidr,
-        hook_internal_origins=hooks.internal_origins,
+    runtime = create_runtime(
+        settings, hooks, awid_transport=awid_transport, team_server_transport=team_server_transport
     )
     signer = chain_signer(settings, runtime.manifest)
     authorized = runtime.authorized(grants=runtime.installation_grants(), policy=admit_members)
@@ -119,15 +131,7 @@ def create_app(
         link_text="Open Logs",
     )
 
-    async def configured_registry(domain: str) -> str:
-        # Match the runtime verifier's configured authority; no event selects a registry.
-        return settings.awid_registry_url
-
-    registry = RegistryClient(
-        registry_url=settings.awid_registry_url, service_token=settings.awid_service_token,
-        transport=awid_transport, domain_registry_resolver=configured_registry,
-    )
-    ingestor = Ingestor(runtime, signer, packaged_catalog(), settings.client_quota, registry=registry)
+    ingestor = Ingestor(runtime, signer, packaged_catalog(), settings.client_quota)
     console = FastAPI(docs_url=None, redoc_url=None, openapi_url=None)
 
     @asynccontextmanager
@@ -140,6 +144,7 @@ def create_app(
                     runtime,
                     signer=signer,
                     console_origin=settings.console_origin,
+                    client_address_header=settings.client_address_header,
                     delivery=delivery,
                     backlog_age=timedelta(seconds=settings.hook_events_stalled_after_seconds),
                 )
@@ -172,9 +177,10 @@ def create_app(
         finally:
             api.router.routes[:] = api_routes
             console.router.routes[:] = console_routes
-            await registry.aclose()
 
     api = FastAPI(lifespan=lifespan, docs_url=None, redoc_url=None, openapi_url=None)
+    # The composed runtime, reachable from the ASGI app (tests reach its team cache).
+    api.state.runtime = runtime
     mount_manifest_routes(api, runtime=runtime)
     mount_health(api, settings, checks=runtime.health_checks())
 
@@ -191,6 +197,7 @@ def create_app(
 
 
 def serve() -> OriginApps:
-    """The service for this deployment, configured from its ``LOGS_`` environment,
-    its mail from ``LOGS_EMAIL_*``: ``uvicorn aweb_logs.app:serve --factory``."""
-    return create_app(LogsSettings(), email=EmailSettings.from_env("LOGS_"))
+    """The service for this deployment, configured from its ``LOGS_`` environment
+    only, never a ``.env`` file, its mail from ``LOGS_EMAIL_*``:
+    ``uvicorn aweb_logs.app:serve --factory``."""
+    return create_app(LogsSettings(_env_file=None), email=EmailSettings.from_env("LOGS_"))

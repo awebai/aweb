@@ -192,7 +192,6 @@ func init() {
 }
 
 func runTeamEnsure(ctx context.Context, cmd *cobra.Command) error {
-	loadDotenvBestEffort()
 	var org *string
 	if cmd.Flags().Changed("org") {
 		selector, _ := cmd.Flags().GetString("org")

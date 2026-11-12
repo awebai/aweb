@@ -41,6 +41,17 @@ identity/trust vector family.
 
 ## Accepting protocols awaiting client rollout
 
+### `human-assurance-v1.json` — frozen policy contract
+
+The [human-assurance contract](../human-assurance-contract.md) defines the
+shared protected-signing operation catalog and its positive/refusal policy
+scenarios for hosted and independent implementations. The fixture separates
+live exact-act approvals from bounded unattended operations, with typed
+custody, requester and receipt boundaries. These are implementation acceptance
+inputs, not cryptographic known answers or evidence that runtime paths have
+passed. Implementations must exercise the applicable cases against their
+shared signer and adapters; static catalog validation is not runtime acceptance.
+
 ### `id-certificates-v1.json` — contract candidate
 
 The [identity certificates contract](../id-certificates.md) freezes
@@ -151,6 +162,27 @@ Unknown team and unknown/mismatched certificate share one 404 response. The AWID
 real-route tests consume these bytes; active status does not authenticate an
 old-key certificate after rotation. See [the team contract](../awid-sot.md#teams).
 
+### `team-certificate-verification-v1.json`
+
+Verification of one team certificate, apart from the request that carries it:
+the header's shape, the certificate's fields, its binding to the request's
+signer, its signature under the team key the registry holds, and its standing
+at the registry (revoked, registered). Each case carries the header, the
+request's `did:key`, the registry's team key, and the revoked and registered
+certificate ids. `expected` is the verdict every verifier is to give: `null`
+for acceptance, or a `reason` from the file's `reasons`, with the `field` a
+`invalid_field` names. `today` records what each
+verifier named in `today_verifiers` answers now; where it differs from
+`expected`, that verifier has not yet been brought to the shared rule. A
+certificate has no expiry: revocation is its only end, and one case says so.
+Four cases refuse what two encoders could write differently, so that every
+verifier agrees on the bytes that were signed: a signature that is not
+unpadded standard base64, a control character below U+0020 in a string, a
+number that is not an integer, -0, and NaN or Infinity.
+The keys are derived from fixed seeds by
+`scripts/generate_team_certificate_vectors.py`, which writes the file and
+checks it with `--check`. See [the trust model](../trust-model.md).
+
 ### `team-server-record-v1.json`
 
 `aweb.team-server/1` records: a team-key-signed binding of a team to its
@@ -198,11 +230,126 @@ implementations still owe nonce, release, CAS, late-evidence and redaction-conte
 proofs; these examples do not authorize a dispatch. The existing signed/sealed
 `secrets-runner-protocol-v1.json` bytes are unchanged.
 
+### `canonical-json-v1.json`
+
+JSON values and the exact canonical bytes (`canonical_hex`) that signed and
+hashed payloads are built from: keys sorted by code point, no insignificant
+whitespace, and only the quotation mark, the reverse solidus and
+U+0000-U+001F escaped. The cases hold U+2028 and U+2029 in string values and
+object keys, `<`, `>` and `&`, a character outside the Basic Multilingual
+Plane, control characters, a reverse solidus followed by the text of a
+separator escape, and key order with non-ASCII keys. The reference is Python
+`awid.signing.canonical_json_bytes`; `awid/tests/test_canonical_json_vectors.py`
+reproduces every case. Go `cli/go/awid/canonical_json_vector_test.go`
+reproduces every case with `CanonicalJSONValue`, `StrictCanonicalJSON` and the
+ID-certificate canonical form, and the string cases with the message envelope.
+TypeScript `channel-core/test/canonical_json_vector.test.ts` reproduces every
+case with `canonicalJSONValue`. The file is ASCII: every other character is
+written as an escape, and expected bytes are hex.
+
+#### Key order
+
+Object keys are sorted by Unicode code point in the three implementations.
+This is not the order of RFC 8785 (JCS), which sorts by UTF-16 code unit. The
+two orders differ only where a key holding a character outside the Basic
+Multilingual Plane (a surrogate pair in UTF-16) is compared with a key holding
+a character in U+E000-U+FFFF at the first position where the keys differ: by
+code point the U+E000-U+FFFF key comes first. `code_point_key_order_cases`
+holds such keys (against U+E000, against U+FFFF, pairs of keys outside the
+plane, nested objects); the three tests assert every case. Go sorts the UTF-8
+bytes of the keys, Python compares `str` values, and TypeScript compares code
+points with `compareByCodePoint` (`channel-core/src/identity/canonical.ts`).
+
+#### Numbers
+
+A signed or hashed payload carries only integers of magnitude at most 2^53-1,
+written in decimal: no fraction, no exponent, no sign on zero. Anything else
+(a number with a fraction, an integral float such as `1.0`, an integer beyond
+2^53-1, negative zero, an exponent form) is outside the contract: the
+implementations do not write the same bytes for it, so a signature over such
+a payload does not verify across languages. `out_of_contract_number_cases`
+records, as measured, what each implementation does with the JSON text of each
+case, parsed with its own parser; the three tests pin their own column.
+
+| JSON text | Python `canonical_json_bytes` | Go `CanonicalJSONValue` (`float64`) | Go `CanonicalJSONValue` (`json.Number`) | Go `StrictCanonicalJSON` | TypeScript `canonicalJSONValue` |
+|---|---|---|---|---|---|
+| `1.5` | `1.5` | `1.5` | `1.5` | refused | refused |
+| `1.0` | `1.0` | `1` | `1.0` | refused | `1` |
+| `9007199254740993` | `9007199254740993` | `9007199254740992` | `9007199254740993` | refused | refused |
+| `-0` | `0` | `-0` | `-0` | `0` | `0` |
+| `-0.0` | `-0.0` | `-0` | `-0.0` | refused | `0` |
+| `1e2` | `100.0` | `100` | `1e2` | refused | `100` |
+| `1e21` | `1e+21` | `1e+21` | `1e21` | refused | refused |
+
+- Python `canonical_json_bytes` writes every number, in the form of
+  `json.dumps`: an `int` in full, a `float` with a fraction or an exponent.
+- Go `CanonicalJSONValue` writes every number. A value decoded by
+  `encoding/json` into an interface is a `float64` and is written in the form
+  `encoding/json` gives a double; a value decoded with `UseNumber` is a
+  `json.Number` and is written as the text it was read from. A Go integer is
+  written in full.
+- Go `StrictCanonicalJSON` refuses every `float64`, every `json.Number` that
+  is not a plain integer and every integer beyond 2^53-1. It writes the
+  `json.Number` `-0` as `0`.
+- TypeScript `canonicalJSONValue` refuses every number that is not a safe
+  integer. `JSON.parse` has already turned `1.0` and `1e2` into the integers
+  `1` and `100` and negative zero into a value written `0`, so those are
+  written as integers and not refused.
+
+The payloads the protocol defines keep to the contract: their numeric members
+are versions (`v`, `version`, `message_version`, `inner_version`), sequence
+numbers (`seq`, `from_seq`, `issuer_key_seq`, `current_key_seq`) and sizes
+(`ciphertext_size`, attachment `size`), each an integer in every
+implementation. Timestamps are strings. Hook event envelopes, owner acts and
+logs-chain entries go through `strictjson` (Go) and
+`aweb_naapp.hooks.strictjson` (Python), which refuse floats and integers
+beyond 2^53-1 when reading and when writing. Three commands sign JSON a
+caller supplies, and read it with `UseNumber`, so a number in it is signed as
+the text the caller typed: `aw id sign` (the payload), `aw id request
+--team-auth --sign` (the additional signed fields) and `aw agent status`
+(the status document). A caller who needs such a signature to verify in
+another language keeps those numbers within the contract.
+
+#### Unpaired surrogates
+
+A string or key holding an unpaired surrogate is outside the contract.
+`lone_surrogate_cases` records what each implementation does with one: Python
+`canonical_json_bytes` refuses it (`UnicodeEncodeError`), Go's parser has
+replaced it by U+FFFD before any serializer sees it, and TypeScript writes it
+as a six-character escape and orders a key by the surrogate's own value
+(U+D800-U+DFFF, between U+D7FF and U+E000), which is how Python orders it
+before refusing to encode it.
+
+#### The escaped form
+
+`escaped_line_separator_cases` pins a second form, written only by Go
+`CanonicalJSONValueEscapingLineSeparators`: the canonical form except that
+U+2028 and U+2029 are written as the six ASCII characters `\u2028` and
+`\u2029`, in string values and in object keys. Keys are still ordered by code
+point. It serves digests that only `aw` computes and that another `aw` build
+or a stored record reproduces: the [A2A Agent Card digest](../a2a.md), custody
+request digests, blueprint payload digests and the stored hosted creation
+response. One case is an Agent Card with its `card_digest`.
+`cli/go/awid/canonical_json_vector_test.go` reproduces every case, and
+`cli/go/a2a/card_test.go` reproduces the card case through `CardDigest`.
+
 ### `message-signing-v1.json`
 
 Canonical UTF-8 message payloads and expected Ed25519 signatures, including
 variants with and without stable-ID fields. Signatures use raw standard base64
 without padding.
+
+### `message-display-binding-v1.json`
+
+The claims a signed payload must carry before a reader reports a plaintext mail
+or chat message as verified (`type`, `body` and `from_did`, plus `subject` for
+mail), and the claim set of every payload shape a message signer produces. A
+reader compares each displayed field with the signed claim of the same name; a
+required claim the payload lacks is a mismatch, so a document signed by the
+same key for another purpose, such as a request envelope from
+`team-auth-envelope-v2.json`, is never reported as a verified message. Each
+client checks that every signer shape matches its display and that each shape
+is refused once any required claim is removed.
 
 ### `identity-log-v1.json`
 
@@ -283,8 +430,11 @@ includes a neutral OSS task request, the same request carrying a signed
 `trace_id` member (an additive case: extra signed members are signed and
 ignored by the auth layer, which is how aw-hooks carries its trace), and a
 hosted-route interoperability case; negative cases cover cross-endpoint/origin replay, body tampering, and a missing
-protocol version. The aweb server, Go conformance suite, and public naapp
-verifiers consume it. See
+protocol version. `identity_cases` holds identity-only requests, which sign
+`did_aw` in place of `team_id`: one for a stable identity and one for a local
+identity, whose `did_aw` is the empty string. The aweb server, Go conformance
+suite, and channel-core request signer consume every case; the public naapp
+verifiers consume the certificate cases. See
 [`team-auth-envelope-v2.md`](../team-auth-envelope-v2.md).
 
 ### `federation-origin-ip-v1.json`
@@ -595,14 +745,20 @@ checks and is refused by the catalog reader. A digest construction case shows
 `request_sha256` taken before credential injection. The Go authority in
 `cli/go/hookevent` regenerates every case byte for byte.
 
-### `hook-delivery-credential-v1.json`
+### `hook-delivery-credential-v2.json`
 
 The `AWEB-Hook DIDKey` request credential that carries an event to one binding
-(aweb-acgh.16.2; contract in [`hook-events.md`](../hook-events.md)). Positive
-cases pin the headers, the canonical signed payload and the body for a core
-producer and for a client producer carrying its team certificate. Negatives
-refuse a client delivery without its certificate or with one for another key,
-team or certificate id, or not signed by the team's current key; three
+(aweb-acgh.16.2, and aweb-acya.10 for version 2; contract in
+[`hook-events.md`](../hook-events.md)). Version 2 gives the receiver the
+team's revoked and registered certificate ids beside its current key, and a
+client's certificate passes the one check of
+`team-certificate-verification-v1.json`. Positive cases pin the headers, the
+canonical signed payload and the body for a core producer, for a client
+producer carrying its team certificate, and for a client whose certificate
+carries another `team_did_key` and is signed by the team's current key: the
+field is not authority. Negatives refuse a client delivery without its
+certificate or with one for another key, team or certificate id, signed by
+another key, revoked, or not registered; three
 respellings of the credential signature; a padded signed payload; an empty
 team id; a timestamp with a fraction; an app-event or `hook-resolve` credential at
 a hook target, either purpose's payload under the hook scheme, a payload altered
@@ -638,6 +794,21 @@ changed skeleton) and expects the earlier. The
 Python implementation in `naapp/logs` regenerates it byte for byte, and the Go
 verifier in `cli/go/logschain` passes it.
 
+
+### `logs-export-v1.json`
+
+A team's exported log, `aweb.logs-export/1` (aweb-acgh.16.23; contract in
+[`logs-chain.md`](../logs-chain.md), "Exporting a team's log"). Each case is a
+bundle as its JSON Lines, the keys and independently held witnesses the
+verifier is given, and the report a bundle verifier must return: a whole log
+of two epochs, a purged event, events after the last checkpoint reported as
+unanchored, a truncated tail and a dropped final epoch each alone and against a
+witness of what was dropped, witnesses that hold and one signed by another
+key, an epoch naming an earlier checkpoint, a skipped epoch and a bundle
+starting after the first epoch reported unlinked, a misplaced receipt, an
+event out of position order, a repeated event, altered content, key evidence
+that is not the producer, and a checkpoint by a key not accepted. Malformed
+cases give a bundle the verifier refuses and the number of its first bad line.
 ### `owner-act-v1.json`
 
 The `aweb.owner-act/1` artifact, signed by a team's current controller key
@@ -681,6 +852,17 @@ regenerates the file byte for byte. Its test verifies each signed case with
 the Python owner-act verifier. No implementation consumes the manifest,
 prepare and client families until the version 3 interpreters and the generic
 routes exist.
+
+### `human-role-holding-v1.json`
+
+The public identity a console session binds a human-role holding to,
+`aweb.human-role-holding/1` (aweb-acwd.4.10; contract in
+[`human-role-holders.md`](../design/human-role-holders.md#reading-a-holding)).
+Specified, not shipped. Each case gives the nine fields, their strict
+canonical JSON and the identity; the refused cases have no identity. The
+`b3_scope` of every case is the one derived from its installation, team, role
+and principal. No implementation consumes it until the shared
+`HumanRoleHandoffAuthority` exists.
 
 ## Experimental and compatibility A2A fixtures
 
@@ -774,6 +956,7 @@ reference duplication are mutation-tested failures.
 | `a2a-awid-publication-v1.json` | Python AWID `test_a2a_publication_route.py`; Go AWID `a2a_publication_test.go`; Go shared `conformance_test.go` |
 | `a2a-bridge-envelope-v0.json` | Go gateway `envelope_vector_test.go` |
 | `a2a-v1.json` | Go A2A `card_test.go`; Go gateway `gateway_rpc_test.go`; Go shared `conformance_test.go` |
+| `canonical-json-v1.json` | Python AWID `test_canonical_json_vectors.py`; Go AWID `canonical_json_vector_test.go`; Go A2A `card_test.go`; TypeScript channel-core `canonical_json_vector.test.ts` |
 | `atomic-address-claim-conflict-codes-v1.json` | Python AWID `test_atomic_claim_route.py`; Go AWID `atomic_address_claim_test.go` |
 | `atomic-address-claim-v1.json` | Python AWID `test_atomic_claim.py`; Go AWID `atomic_address_claim_test.go` |
 | `dns-txt-v1.json` | Python AWID `test_conformance_vectors.py`; Python aweb `test_identity_conformance_vectors.py`; TypeScript channel-core `registry.test.ts` |
@@ -784,6 +967,7 @@ reference duplication are mutation-tested failures.
 | `identity-log-negative-v1.json` | Python AWID `test_identity_log_verify.py`; Go shared `identity_log_negative_test.go`; TypeScript channel-core `registry.test.ts` |
 | `identity-log-raw-wire-v1.json` | Python AWID `test_identity_log_verify.py`; Go shared `identity_log_raw_wire_test.go`; TypeScript channel-core `registry.test.ts` |
 | `identity-log-v1.json` | Python AWID `test_conformance_vectors.py`, `test_did.py`, `test_external_registry.py`, and `test_identity_log_verify.py`; Python aweb `test_identity_conformance_vectors.py` and pre-activation federation harness; Go AWID `registry_register_test.go`, `federation_authority_test.go`, and `federation_external_registry_test.go`; Go shared `conformance_test.go`; TypeScript channel-core `registry.test.ts`, `log_rollback.test.ts`, and `received_sender_trust.test.ts` |
+| `message-display-binding-v1.json` | Go AWID `request_envelope_as_message_test.go`; TypeScript channel-core `request_envelope_as_message.test.ts` |
 | `message-signing-v1.json` | Python AWID and aweb conformance tests, including the pre-activation federation harness; Go shared `conformance_test.go` |
 | `mutation-hook-call-sites-v1.json` | Build guard `scripts/check-extension-docs.py` |
 | `pin-store-raw-wire-v1.json` | Go shared `pin_store_raw_wire_test.go`; TypeScript channel-core `pin_store_raw_wire.test.ts` |
@@ -791,7 +975,7 @@ reference duplication are mutation-tested failures.
 | `stable-id-v1.json` | Python AWID and aweb conformance tests; Go shared `conformance_test.go` |
 | `secrets-runner-protocol-v1.json` | secrets `test_runner_protocol_vectors.py` and production-server `test_runner_server_protocol.py` |
 | `secrets-runner-http-v1.json` | secrets `test_runner_protocol_vectors.py` |
-| `team-auth-envelope-v2.json` | Python aweb `test_team_auth_envelope.py`; naapp-lib `test_team_auth_vectors.py`; Go shared `conformance_test.go`, including its root-equality check for the managed embedded copy |
+| `team-auth-envelope-v2.json` | Python aweb `test_team_auth_envelope.py`; naapp-lib `test_team_auth_vectors.py`; Go shared `conformance_test.go`, including its root-equality check for the managed embedded copy; TypeScript channel-core `request_auth_v2.test.ts`; Go AWID `request_envelope_as_message_test.go` and TypeScript channel-core `request_envelope_as_message.test.ts`, which present each signed request as a message |
 | `federation-origin-ip-v1.json` | Python AWID `test_federation_authority_vectors.py` and `test_external_authority.py`; Python aweb pre-activation federation harness; Go AWID `federation_authority_test.go`; Go shared `federation_authority_vectors_test.go` |
 | `federation-discovery-v1.json` | Python AWID `test_federation_authority_vectors.py` and `test_external_authority.py`; Python aweb pre-activation federation harness; Go AWID `federation_authority_test.go`; Go shared `federation_authority_vectors_test.go` |
 | `federation-authority-state-v1.json` | Python AWID `test_federation_authority_vectors.py`; Python aweb `test_federation_authority_core.py`, `test_federation_authority_schema.py`, and pre-activation federation harness; Go AWID `federation_authority_test.go`; Go shared `federation_authority_vectors_test.go`; generated `federation-error-reference.md` response-shape cross-check through `generate_federation_error_reference.py` (reason/status/retryability source is `awid/src/awid/federation_errors.py`); federation SOT/support coverage in `check-extension-docs.py` |

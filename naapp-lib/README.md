@@ -270,14 +270,30 @@ Operator rules:
 
 ### Health
 
-`/live` reports the app's id and build commit. `/health` and `/ready` also run
-the app's dependency checks and report each by name: `ready` is 503 when any
-check fails, and `health` always answers 200. The runtime checks its database
+The three routes follow the probe contract of the aweb server and AWID
+([Health probes](../docs/aweb-sot.md#health-probes)):
+
+| Route | Checks | Answers | Use it for |
+|---|---|---|---|
+| `GET /live` | Nothing | 200 with the app's id and build commit whenever the process serves requests | Liveness probes and container healthchecks: anything that restarts the process |
+| `GET /ready` | The app's dependency checks | 200 when every check passes, 503 when any fails | Readiness probes, load-balancer routing, start-up ordering |
+| `GET /health` | The same as `/ready` | The same status code and body as `/ready`, plus `details` | Monitoring and manual checks |
+
+The body of `/ready` and `/health` carries `status`, `ok` or `unhealthy`, and
+`checks`, which names each check as `ok` or `error`, beside the id and build
+commit `/live` reports. Point a restarting probe at `/live` only: on `/ready`
+or `/health` it restarts every replica during a database outage, into the same
+outage. The naapp images' `HEALTHCHECK`s probe `/live`.
+
+The runtime checks its database
 and reports the age of its oldest undelivered outbox event
-(`NaappRuntime.health_checks()`). An app adds its own as async callables that
+(`NaappRuntime.health_checks()`). The age is a figure, not a dependency: no
+backlog fails the `outbox` check, the read stops at the oldest undelivered
+event without reading delivered history, and when it does not answer within
+2 s the figure is left out. An app adds its own as async callables that
 return a `CheckResult`. A check that raises, or does not answer within 5 s,
-fails, and its error is logged, never served. `/ready` serves only whether each
-check passed; `/health` adds each check's detail, whose values are numbers,
+fails, and its error is logged, never served. `/health` adds `details`, which
+holds each check's detail under the check's name; its values are numbers,
 booleans or null, never text. The routes are unauthenticated,
 so the checks run at most once every 10 s: concurrent requests share the run in
 flight, and later ones get its result until it expires.
@@ -489,6 +505,19 @@ the final fence. Do not expose prepared handles through model-visible tools.
   capability. The requester rule compares `requested_by` with each approver's
   subject and, when set, their `principal_did`, at mint and again at decide,
   so the app names the requester the same way.
+- **Provider transactions.** `PolicySource.current`,
+  `ApproverDirectory.candidates` and `ApproverDirectory.is_current` accept
+  keyword `tx=None`. When supplied, every SQL read, including nested owner,
+  policy and B3 lookups, uses that caller connection; providers never take a
+  second pool connection while the caller retains its installation fence.
+  Mint and decision/admission rechecks pass the original effect transaction,
+  so its uncommitted role changes are visible and share commit or rollback.
+  `Approvals.get`, `for_request`, `requester_view` and `open_link` also accept
+  `tx` for fenced reads. Link, approval, policy and revealed-request reads in
+  `open_link` all use that connection. Fresh authenticator verification remains
+  before effect-fence preparation, with its separately committed assertion;
+  these read adapters neither replace the verifier nor move verification under
+  authority locks.
 - **One decision.** Any one candidate decides, and the first approve or reject
   is the only one: it is recorded as `decided_by` (scope, subject, assurance,
   evidence ref) and every other candidate's link is revoked. A failed ceremony
