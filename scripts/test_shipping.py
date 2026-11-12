@@ -474,6 +474,18 @@ class CandidateBrowserImageContractTest(unittest.TestCase):
 
 
 class FinalPromotionContractTest(unittest.TestCase):
+    def test_server_image_build_inputs_require_a_new_rc(self):
+        for relative in ("awid/implementation.py", "naapp-lib/implementation.py",
+                         "scripts/oci-exact-publish.sh", ".dockerignore",
+                         ".github/workflows/service-image-release.yml"):
+            with self.subTest(path=relative):
+                root = self.repository()
+                self.promote(root)
+                path = root / relative
+                path.parent.mkdir(parents=True, exist_ok=True)
+                path.write_text("changed image input\n")
+                self.assert_both_refuse(root, "non-version file|additions", "server-v1.27.34")
+
     def repository(self):
         temporary, root = TagContractTest.repository(self)
         self.addCleanup(temporary.cleanup)
