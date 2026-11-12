@@ -121,11 +121,21 @@ compose() {
   docker compose -p "$PROJECT" --env-file .env.e2e "$@"
 }
 
+# A customer's own server: the shipped customer Compose file, with one
+# override that points it at this journey's registry in place of the public one.
+CUSTOMER_PROJECT="$PROJECT-customer"
+CUSTOMER_PORT_ALLOCATOR=""
+customer_compose() {
+  docker compose -p "$CUSTOMER_PROJECT" --env-file "$CUSTOMER_DIR/.env" \
+    -f "$SERVER_DIR/docker-compose.customer.yml" -f "$CUSTOMER_DIR/journey-registry.yml" "$@"
+}
+
 # Isolated temp dirs
 E2E_HOME="$E2E_ROOT/home"
 E2E_CWD="$E2E_ROOT/cwd"
 ALICE_DIR="$E2E_CWD/alice"
 BOB_DIR="$E2E_CWD/bob"
+CUSTOMER_DIR="$E2E_ROOT/customer-server"
 NO_KEY_DIR="$E2E_CWD/nokey"
 EVE_DIR="$E2E_CWD/eve"
 CAROL_DIR="$E2E_CWD/carol"
@@ -218,6 +228,23 @@ cleanup() {
   echo "--- Cleanup ---"
   stop_quickstart_bridges
   release_service_ports || status=1
+  if [[ -n "$CUSTOMER_PORT_ALLOCATOR" ]]; then
+    docker rm -fv "$CUSTOMER_PORT_ALLOCATOR" >/dev/null 2>&1 || status=1
+  fi
+  if [[ -f "$CUSTOMER_DIR/journey-registry.yml" ]]; then
+    customer_compose down -v --rmi local --remove-orphans >/dev/null 2>&1 || status=1
+    for kind in container network volume image; do
+      if [[ "$kind" == container ]]; then
+        ids="$(docker container ls -aq --filter label=com.docker.compose.project="$CUSTOMER_PROJECT")"
+      else
+        ids="$(docker "$kind" ls -q --filter label=com.docker.compose.project="$CUSTOMER_PROJECT")"
+      fi
+      if [[ -n "$ids" ]]; then
+        echo "cleanup left $kind residue for $CUSTOMER_PROJECT: $ids" >&2
+        status=1
+      fi
+    done
+  fi
   if [[ -f "$SERVER_DIR/.env.e2e" ]]; then
     cd "$SERVER_DIR"
     compose down -v --rmi local --remove-orphans >/dev/null 2>&1 || status=1
@@ -1357,6 +1384,147 @@ fi
 assert_eq "wrong did fetch-cert rejected" "1" "$mallory_fetch_exit"
 assert_contains "wrong did fetch-cert explains auth" "$mallory_fetch_out" "403"
 echo ""
+
+# ---------------------------------------------------------------------------
+# Phase 11b2: A customer's own server, as an ordinary member of the team
+# ---------------------------------------------------------------------------
+echo "=== Phase 11b2: Customer server with a member key ==="
+
+# The server holds one ordinary member key for the team it serves, and no
+# registry-wide token. It is started from the shipped customer Compose file.
+CUSTOMER_IDENTITY_HOME="$E2E_ROOT/customer-server-home"
+CUSTOMER_IDENTITY_DIR="$CUSTOMER_IDENTITY_HOME/identity"
+CUSTOMER_KEYS_DIR="$CUSTOMER_DIR/keys"
+mkdir -p "$CUSTOMER_IDENTITY_DIR" "$CUSTOMER_KEYS_DIR"
+
+capture_success customer_request "customer_request" run_aw_with_home_in "$CUSTOMER_IDENTITY_HOME" "$CUSTOMER_IDENTITY_DIR" id team request \
+  --create-local-key \
+  --team devteam:test.local \
+  --name server \
+  --json
+CUSTOMER_SERVER_DID_KEY="$(echo "$customer_request" | jq_field did_key)"
+assert_not_empty "customer server did_key" "$CUSTOMER_SERVER_DID_KEY"
+
+capture_success customer_add "customer_add" run_aw_in "$ALICE_DIR" id team add-member \
+  --team devteam \
+  --namespace test.local \
+  --did "$CUSTOMER_SERVER_DID_KEY" \
+  --name server \
+  --local \
+  --json
+CUSTOMER_SERVER_CERT_ID="$(echo "$customer_add" | jq_field certificate_id)"
+assert_not_empty "customer server certificate id" "$CUSTOMER_SERVER_CERT_ID"
+
+run_success "customer server fetch cert" run_aw_with_home_in "$CUSTOMER_IDENTITY_HOME" "$CUSTOMER_IDENTITY_DIR" id team fetch-cert \
+  --namespace test.local \
+  --team devteam \
+  --cert-id "$CUSTOMER_SERVER_CERT_ID" \
+  --json
+
+# The key map names the key by a path relative to itself. The key is readable
+# by the image's uid 1001 and by no one else.
+cp "$CUSTOMER_IDENTITY_DIR/.aw/signing.key" "$CUSTOMER_KEYS_DIR/devteam.key"
+printf '{"devteam:test.local": "devteam.key"}\n' > "$CUSTOMER_KEYS_DIR/member-keys.json"
+docker run --rm -v "$CUSTOMER_KEYS_DIR:/keys" --entrypoint /bin/sh redis:7-alpine \
+  -c 'chown 1001:1001 /keys/devteam.key && chmod 0400 /keys/devteam.key'
+
+CUSTOMER_PORT_ALLOCATOR="$CUSTOMER_PROJECT-port"
+docker run -d --name "$CUSTOMER_PORT_ALLOCATOR" \
+  --label "aweb.e2e.project=$PROJECT" \
+  --cpus .1 --memory 32m --pids-limit 16 \
+  -p "0:8000" \
+  --entrypoint /bin/sleep redis:7-alpine infinity >/dev/null
+CUSTOMER_PORT="$(docker inspect --format '{{(index (index .NetworkSettings.Ports "8000/tcp") 0).HostPort}}' "$CUSTOMER_PORT_ALLOCATOR")"
+CUSTOMER_URL="http://$DOCKER_PUBLISHED_HOST:$CUSTOMER_PORT"
+
+printf '%s\n' \
+  "POSTGRES_PASSWORD=customer-e2e-test" \
+  "AWEB_PUBLIC_ORIGIN=$CUSTOMER_URL" \
+  "AWEB_MEMBER_KEYS_DIR=$CUSTOMER_KEYS_DIR" \
+  "AWEB_PORT=$CUSTOMER_PORT" \
+  "AWEB_BIND_ADDRESS=$DOCKER_BIND_ADDRESS" \
+  "AWID_REGISTRY_URL=http://awid:8010" \
+  "APP_ENV=development" \
+  > "$CUSTOMER_DIR/.env"
+printf '%s\n' \
+  "services:" \
+  "  aweb:" \
+  "    networks: [default, journey]" \
+  "networks:" \
+  "  journey:" \
+  "    name: ${PROJECT}_default" \
+  "    external: true" \
+  > "$CUSTOMER_DIR/journey-registry.yml"
+
+customer_config="$(customer_compose config)"
+assert_not_contains "customer server is given no service token" "$customer_config" "AWID_SERVICE_TOKEN"
+
+docker rm -fv "$CUSTOMER_PORT_ALLOCATOR" >/dev/null
+CUSTOMER_PORT_ALLOCATOR=""
+customer_compose up --build -d
+customer_ready=1
+for _ in $(seq 1 90); do
+  if curl -sf "$CUSTOMER_URL/ready" >/dev/null 2>&1; then
+    customer_ready=0
+    break
+  fi
+  sleep 2
+done
+if [[ $customer_ready -ne 0 ]]; then
+  customer_compose logs --tail 80 --no-color aweb >&2 || true
+fi
+assert_eq "customer server is ready" "0" "$customer_ready"
+
+# Another member of the team connects to the customer's server. The server
+# can verify that member only by reading the team at the registry with its
+# own member key.
+CUSTOMER_MEMBER_HOME="$E2E_ROOT/customer-member-home"
+CUSTOMER_MEMBER_DIR="$CUSTOMER_MEMBER_HOME/workspace"
+mkdir -p "$CUSTOMER_MEMBER_DIR"
+capture_success customer_member_request "customer_member_request" run_aw_with_home_in "$CUSTOMER_MEMBER_HOME" "$CUSTOMER_MEMBER_DIR" id team request \
+  --create-local-key \
+  --team devteam:test.local \
+  --name fern \
+  --json
+CUSTOMER_MEMBER_DID_KEY="$(echo "$customer_member_request" | jq_field did_key)"
+capture_success customer_member_add "customer_member_add" run_aw_in "$ALICE_DIR" id team add-member \
+  --team devteam \
+  --namespace test.local \
+  --did "$CUSTOMER_MEMBER_DID_KEY" \
+  --name fern \
+  --local \
+  --json
+CUSTOMER_MEMBER_CERT_ID="$(echo "$customer_member_add" | jq_field certificate_id)"
+run_success "customer member fetch cert" run_aw_with_home_in "$CUSTOMER_MEMBER_HOME" "$CUSTOMER_MEMBER_DIR" id team fetch-cert \
+  --namespace test.local \
+  --team devteam \
+  --cert-id "$CUSTOMER_MEMBER_CERT_ID" \
+  --json
+run_success "member connects to the customer server" run_aw_with_home_in "$CUSTOMER_MEMBER_HOME" "$CUSTOMER_MEMBER_DIR" init --url "$CUSTOMER_URL"
+run_success "member's signed request is answered by the customer server" run_aw_with_home_in "$CUSTOMER_MEMBER_HOME" "$CUSTOMER_MEMBER_DIR" workspace status
+
+# Revoking the server's membership ends its reads: after a restart it can no
+# longer verify the team's members.
+run_success "team owner revokes the customer server's membership" run_aw_in "$ALICE_DIR" id team remove-member \
+  --namespace test.local \
+  --team devteam \
+  --cert-id "$CUSTOMER_SERVER_CERT_ID"
+customer_compose restart aweb >/dev/null
+for _ in $(seq 1 90); do
+  if curl -sf "$CUSTOMER_URL/health" >/dev/null 2>&1; then
+    break
+  fi
+  sleep 2
+done
+if run_aw_with_home_in "$CUSTOMER_MEMBER_HOME" "$CUSTOMER_MEMBER_DIR" workspace status >/dev/null 2>&1; then
+  customer_revoked_exit=0
+else
+  customer_revoked_exit=1
+fi
+assert_eq "a revoked customer server no longer answers the team's members" "1" "$customer_revoked_exit"
+
+customer_compose down -v --rmi local --remove-orphans >/dev/null 2>&1
+rm -f "$CUSTOMER_DIR/journey-registry.yml"
 
 # ---------------------------------------------------------------------------
 # Phase 11c: External AWID team registers with aweb service
