@@ -551,6 +551,8 @@ class CredentialAudit:
         try:
             async with self.db.transaction() as tx:
                 resolved = await self._contexts(scope, tx=tx)
+            if not isinstance(resolved, PasskeyInstallationContext):
+                raise ProofContextUnavailable()
             current = (await self.fence.permit(resolved.team_id)).admitted
         except (ProofContextUnavailable, InstallationRefused):
             raise CredentialChangeRefused("completion_authority_unavailable") from None
