@@ -2103,7 +2103,7 @@ async def test_session_renewal_refuses_lost_authority(aweb_cloud_db, authority):
         if authority == "other_subject":
             app.state.agent_id = str(uuid4())
         elif authority == "inactive":
-            await manager.execute("UPDATE {{tables.agents}} SET status='inactive' WHERE agent_id=$1", agent_id)
+            await manager.execute("UPDATE {{tables.agents}} SET status='retired' WHERE agent_id=$1", agent_id)
         else:
             app.state.awid_registry_client.get_team_revocations = AsyncMock(return_value={"cert-1"})
         response = await client.post(f"/v1/identity-grants/{grant_id}/renew", json={"ttl_seconds": 600})

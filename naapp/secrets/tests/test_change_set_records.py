@@ -25,6 +25,7 @@ from aweb_secrets.change_sets import ChangeSets, DraftLimit
 from aweb_secrets.custody import CustodyUnavailable, ValueInvalid, encode_value
 from aweb_secrets.operation import OperationTemplate
 from aweb_secrets.policy import Policy
+from aweb_secrets.grant import GrantRecord
 from aweb_secrets.secret import SecretRecord
 from tests.governance import view
 from tests.test_change_sets import (  # noqa: F401
@@ -898,3 +899,26 @@ async def test_an_absent_parent_ingest_prevents_reshape_after_creation_pins_zero
                 if not task.done():
                     task.cancel()
                 await asyncio.gather(task, return_exceptions=True)
+
+
+async def test_finite_grant_expires_and_only_owner_confirmation_renews_it(world):
+    from datetime import datetime, timezone
+    await enrol_owner(world, ALICE, "alice@acme.com")
+    policy = Policy.from_body(POLICY_BODY)
+    grant = {**grant_after(), "expires_at": "2000-01-01T00:00:00Z"}
+    # Storage accepts historical records so expiry enforcement has a deterministic fixture.
+    async with world.db.transaction() as tx:
+        await records.create_secret(tx, INSTALLATION_ID, TEAM, SecretRecord.from_after(SECRET))
+        await records.create_policy(tx, INSTALLATION_ID, policy)
+        await records.create_grant(tx, INSTALLATION_ID, TEAM, GrantRecord.from_after(grant))
+        assert await records.active_grants(tx, INSTALLATION_ID, SECRET_ID, principal_did=CAROL.principal_did, roles=[]) == []
+    renewed = {**grant, "expires_at": (datetime.now(timezone.utc) + timedelta(days=1)).strftime("%Y-%m-%dT%H:%M:%SZ")}
+    pending = change_set(drafter=by_member(CAROL), changes=[item("grant", "renew", grant["grant_id"], renewed)])
+    approval_id = await draft(world, pending)
+    with pytest.raises(ChangeRefused):
+        await confirm_change(world, pending)
+    await decide(world, approval_id, "alice@acme.com")
+    await confirm_change(world, pending)
+    async with world.db.transaction() as tx:
+        active = await records.active_grants(tx, INSTALLATION_ID, SECRET_ID, principal_did=CAROL.principal_did, roles=[])
+    assert [g.after for g in active] == [renewed]

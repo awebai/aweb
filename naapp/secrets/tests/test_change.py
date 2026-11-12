@@ -510,3 +510,10 @@ def test_a_console_drafter_is_compared_by_the_principal_behind_its_scope() -> No
 def test_an_unknown_four_eyes_setting_is_refused() -> None:
     with pytest.raises(ValueError):
         check_confirmer(_change(), distinct_approver="sometimes", confirmer=DID_KEY)
+
+
+def test_owner_renewal_covers_the_complete_unchanged_grant_and_new_deadline():
+    from tests.test_grant_record import USE
+    after = {**USE, "expires_at": "2026-11-13T00:00:00Z"}
+    change = _change(changes=[{"kind": "grant", "op": "renew", "ref": after["grant_id"], "after": after}])
+    validate_change(change)
