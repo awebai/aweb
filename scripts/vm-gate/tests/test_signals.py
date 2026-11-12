@@ -4,9 +4,10 @@ import subprocess
 import sys
 import unittest
 
+
 class SignalTests(unittest.TestCase):
     def test_second_termination_during_cleanup_cannot_leave_resources(self):
-        code='''
+        code = """
 import os,signal,tempfile
 from pathlib import Path
 from test_lifecycle import Backend,Remote
@@ -29,10 +30,20 @@ with tempfile.TemporaryDirectory() as tmp:
     hourly_eur='.2',ip_hourly_eur='.01',clock=lambda:100)
  assert b.items==[], 'second signal interrupted resource cleanup'
  assert result['cleanup']['exact_ids_absent']
-'''
-        root=Path(__file__).resolve().parents[1]
-        result=subprocess.run([sys.executable,'-c',code],capture_output=True,text=True,
-            timeout=20,env={'PATH':os.defpath,'PYTHONPATH':str(root)+os.pathsep+str(root/'tests')})
-        self.assertEqual(result.returncode,0,result.stdout+result.stderr)
+"""
+        root = Path(__file__).resolve().parents[1]
+        result = subprocess.run(
+            [sys.executable, "-c", code],
+            capture_output=True,
+            text=True,
+            timeout=20,
+            env={
+                "PATH": os.defpath,
+                "PYTHONPATH": str(root) + os.pathsep + str(root / "tests"),
+            },
+        )
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
 
-if __name__=='__main__':unittest.main()
+
+if __name__ == "__main__":
+    unittest.main()

@@ -6,16 +6,20 @@ Infrastructure failure (70) means a gate verdict could not be delivered safely.
 A summary always carries classification, including for a gate that itself uses
 one of these numeric codes. Infrastructure can never be reported as success.
 """
+
 from enum import IntEnum
+
 
 class Exit(IntEnum):
     INFRASTRUCTURE = 70
     REFUSED = 78
 
+
 class Refused(Exception):
-    classification = 'refused'
+    classification = "refused"
     exit_code = Exit.REFUSED
 
+
 class Infrastructure(Exception):
-    classification = 'infrastructure'
+    classification = "infrastructure"
     exit_code = Exit.INFRASTRUCTURE
