@@ -29,6 +29,10 @@ import pexpect
 import pytest
 from aweb_naapp_testing.network import make_certificates
 from nacl.signing import SigningKey
+from protected_round_trip import Holder as SharedHolder
+from protected_round_trip import aw, aw_refused, first_json
+from protected_round_trip import await_awid_txt as shared_await_awid_txt
+from protected_round_trip import docker as _docker
 
 pytestmark = pytest.mark.e2e
 
@@ -89,31 +93,6 @@ class Lane:
         return container
 
 
-def _docker(*args: str, timeout: int = 120, input: str | None = None) -> subprocess.CompletedProcess[str]:
-    return subprocess.run(["docker", *args], text=True, capture_output=True, timeout=timeout, input=input, check=False)
-
-
-def first_json(text: str):
-    """The first JSON value in a command's output; Docker may print hints after it."""
-    return json.JSONDecoder().raw_decode(text[text.index("{"):])[0]
-
-
-def aw(container: str, *args: str, env: dict[str, str] | None = None) -> dict:
-    """Run aw --json in a machine, without a terminal, and return its JSON."""
-    extra = [f"--env={k}={v}" for k, v in (env or {}).items()]
-    result = _docker("exec", *extra, container, "aw", "--json", *args, timeout=300)
-    assert result.returncode == 0, f"aw {' '.join(args)}\n{result.stdout}\n{result.stderr}"
-    return first_json(result.stdout)
-
-
-def aw_refused(container: str, *args: str, env: dict[str, str] | None = None) -> str:
-    """Run aw --json expecting a refusal; return its error code."""
-    extra = [f"--env={k}={v}" for k, v in (env or {}).items()]
-    result = _docker("exec", *extra, container, "aw", "--json", *args, timeout=300)
-    assert result.returncode != 0, result.stdout
-    return first_json(result.stdout)["error"]["code"]
-
-
 def publish_awid_txt(lane: Lane, controller_did: str) -> None:
     zone = lane.runtime / "dns" / f"{DOMAIN}.zone"
     serial = int(time.time())
@@ -127,81 +106,15 @@ def publish_awid_txt(lane: Lane, controller_did: str) -> None:
 
 
 def await_awid_txt(machine: str, controller_did: str) -> None:
-    """Wait, bounded, until the machine's resolver sees the published
-    controller: the zone is reloaded once a second, so a lookup made at once
-    can still return the previous record."""
-    for _ in range(30):
-        answer = _docker("exec", machine, "nslookup", "-type=txt", f"_awid.{DOMAIN}")
-        if controller_did in answer.stdout:
-            return
-        time.sleep(0.5)
-    raise AssertionError(f"_awid.{DOMAIN} never named {controller_did}")
+    shared_await_awid_txt(machine, DOMAIN, controller_did)
 
 
-class Holder:
-    """The holder's machine: aw with a human key in its own Secret Service."""
+class Holder(SharedHolder):
+    """The holder's machine, with the holder's own browser for this journey."""
 
     def __init__(self, lane: Lane, container: str) -> None:
-        self.lane, self.container = lane, container
-        # A disposable passphrase, generated now and never printed or stored.
-        self.passphrase = secrets.token_urlsafe(24)
-        # The session bus and the keyring's files and sockets live on the
-        # container's own filesystem: on the runtime bind mount gnome-keyring
-        # leaves the login collection locked, and once it drops its
-        # capabilities it cannot write a home the host user owns.
-        # aw reaches the keyring only over this bus.
-        self.bus = "unix:path=/tmp/holder-session.bus"
-        keyring = (
-            "XDG_RUNTIME_DIR=/tmp/holder-runtime XDG_DATA_HOME=/tmp/holder-keyring "
-            "DBUS_SESSION_BUS_ADDRESS=" + self.bus
-        )
-        # -i: without it docker exec attaches no stdin and the unlock reads no
-        # password. The other daemons get /dev/null, so only the unlock reads it.
-        started = _docker(
-            "exec", "-i", container, "sh", "-c",
-            "umask 077 && mkdir -p /tmp/holder-keyring /tmp/holder-runtime "
-            "&& dbus-daemon --session --fork --address=" + self.bus + " </dev/null "
-            "&& " + keyring + " gnome-keyring-daemon --unlock --components=secrets "
-            "&& " + keyring + " gnome-keyring-daemon --start --components=secrets </dev/null",
-            input=secrets.token_urlsafe(24),
-        )
-        assert started.returncode == 0, started.stdout + started.stderr
-
-    def act(self, principal: str, *args: str) -> pexpect.spawn:
-        """aw as the holder for a command that a holder-signed start begins.
-
-        This is the one place that chooses how the holder authenticates. Today
-        it is the existing --human participation (the human key in this
-        machine's Secret Service, unlocked at the terminal). The protected
-        profile (package 1 rule (b)) replaces only this method: a restricted
-        requester credential, a B3 UV login at the protected service, and the
-        server's holder-signed start. The H acceptance (acxy.9/11) runs there.
-        """
-        return self.spawn("--human", principal, "--human-domain", DOMAIN, *args)
-
-    def spawn(self, *args: str) -> pexpect.spawn:
-        """aw on the holder's terminal: docker exec -it gives it a real PTY."""
-        return pexpect.spawn(
-            "docker",
-            ["exec", "-it", f"--env=DBUS_SESSION_BUS_ADDRESS={self.bus}", self.container, "aw", *args],
-            encoding="utf-8", timeout=180, echo=False,
-        )
-
-    def answer_passphrases(self, child: pexpect.spawn, *, until: str | None = None) -> str:
-        """Type the passphrase at each prompt, never logging it; return the output."""
-        seen = []
-        patterns = [r"Choose a passphrase[^\r\n]*: ", r"Type the passphrase again: ", r"Passphrase for that human key: "]
-        if until:
-            patterns.append(until)
-        patterns.append(pexpect.EOF)
-        while True:
-            found = child.expect(patterns)
-            seen.append(child.before)
-            if child.match is pexpect.EOF or (until and found == len(patterns) - 2):
-                if until and found == len(patterns) - 2:
-                    seen.append(child.match.group(0))
-                return "".join(seen)
-            child.sendline(self.passphrase)
+        super().__init__(container, DOMAIN)
+        self.lane = lane
 
     def browser(self, page: str, purpose: str, *, page_check: bool) -> None:
         """The holder's browser, in the holder's network namespace."""
