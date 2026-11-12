@@ -14,9 +14,8 @@ import json
 import sys
 from pathlib import Path
 
-from awid.did import did_from_public_key
+from awid.did import did_key_from_signing_key
 from awid.signing import canonical_json_bytes, sign_message
-from nacl.signing import SigningKey
 
 VECTOR = Path(__file__).resolve().parents[1] / "docs/vectors/team-certificate-verification-v1.json"
 TEAM_ID = "backend:acme.com"
@@ -38,8 +37,7 @@ REASONS = [
 
 def _key(name: str) -> dict[str, str]:
     seed = (name.encode() * 32)[:32]
-    signing = SigningKey(seed)
-    return {"seed_hex": seed.hex(), "did_key": did_from_public_key(bytes(signing.verify_key))}
+    return {"seed_hex": seed.hex(), "did_key": did_key_from_signing_key(seed)}
 
 
 KEYS = {name: _key(name) for name in ("team", "member", "another-team", "another-member")}
