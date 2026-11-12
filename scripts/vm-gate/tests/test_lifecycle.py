@@ -53,6 +53,8 @@ class LifecycleTests(unittest.TestCase):
         self.assertEqual(result['exit'],70);self.assertEqual(result['infrastructure'],'infrastructure')
         self.assertEqual(self.backend.items,[]);self.assertIsNotNone(self.store.get('run')['settled'])
     def test_reaper_runs_before_first_create_and_preserves_live_neighbor(self):
+        self.store.reserve('expired',1,now=1,expires=99)
+        self.store.update('expired',{'hourly_eur':'.2','ip_hourly_eur':'.01','resources':[{'kind':'server','id':99}]})
         self.backend.items=[dict(kind='server',id=99,run_id='expired',expires=99),dict(kind='server',id=98,run_id='live',expires=99999)]
         self.run_session(Remote())
         self.assertEqual(self.backend.calls[0],'inventory')

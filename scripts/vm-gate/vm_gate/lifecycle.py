@@ -6,6 +6,7 @@ from pathlib import Path
 import time
 
 from .errors import Infrastructure, Refused
+from .reaping import reap_and_settle
 
 
 def write_summary(directory, summary):
@@ -25,17 +26,20 @@ def run_session(*,provider,store,remote,run_id,owner,sha,budget,directory,
     rate=Decimal(str(hourly_eur));ip_rate=Decimal(str(ip_hourly_eur))
     try:
         # The first provider operation for every admitted run is the reaper.
-        summary['reaped']=provider.reap(clock())
+        summary['reaped']=reap_and_settle(provider,store,clock)
         budget.require('setup',now=clock())
         hours=math.ceil((budget.expires-clock())/3600)
         reserve=(rate+ip_rate)*hours
         store.reserve(run_id,str(reserve),owner=owner,sha=sha,expires=budget.expires,now=clock())
         reserved=True
+        store.update(run_id,{'hourly_eur':str(rate),'ip_hourly_eur':str(ip_rate)})
         summary['spend']=store.totals(now=clock())
         key=provider.create('create_key',run_id,labels=labels)
         summary['resources'].append(key)
+        store.update(run_id,{'attempted_ip':True})
         ip=provider.create('create_ip',run_id,labels=labels)
         summary['resources'].append(ip)
+        store.update(run_id,{'attempted_server':True})
         server_start=clock()
         server=provider.create('create_server',run_id,server_type=server_type,
                                labels=labels,key=key,ip=ip)

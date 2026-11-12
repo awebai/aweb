@@ -146,4 +146,4 @@ class Store:
     def expired(self, now):
         with self._db() as db:
             return [self._row(row) for row in db.execute(
-                'SELECT * FROM runs WHERE settled IS NULL AND expires<? ORDER BY created,run_id', (now,))]
+                'SELECT * FROM runs WHERE settled IS NULL AND expires<=? ORDER BY created,run_id', (now,))]

@@ -12,7 +12,15 @@ class Backend:
     def __init__(self,client,config):
         self.client=client;self.config=config
         # SDK's internal mutation retries must remain disabled.
-        if hasattr(client,'_client'):client._client._retry_max_retries=0
+        try:
+            transport=client._client
+            if not hasattr(transport,'_retry_max_retries'):
+                raise AttributeError('unknown retry layout')
+            transport._retry_max_retries=0
+            if transport._retry_max_retries != 0:
+                raise ValueError('retry setting did not change')
+        except Exception:
+            raise Infrastructure('SDK mutation retry setting unavailable or nonzero; refusing provider access') from None
 
     @staticmethod
     def labels(values):

@@ -1,4 +1,7 @@
 import unittest
+from types import SimpleNamespace
+from hcloud import Client as RealClient
+from importlib.metadata import version
 from vm_gate.backend import Backend
 from vm_gate.errors import Infrastructure
 
@@ -6,7 +9,7 @@ class APIError(Exception):
     def __init__(self,code):self.code=code
 
 class Client:
-    def __init__(self):self.calls=[];self.deleted=[]
+    def __init__(self):self.calls=[];self.deleted=[];self._client=SimpleNamespace(_retry_max_retries=3)
     def request(self,method,url,**kw):
         self.calls.append((method,url,kw))
         if method=='DELETE':self.deleted.append(url);return {}
@@ -36,5 +39,23 @@ class BackendTests(unittest.TestCase):
         with self.assertRaisesRegex(Infrastructure,'label mismatch'):
             b.delete({'kind':'server','id':1,'run_id':'r'})
         self.assertEqual(c.deleted,[])
+
+    def test_real_pinned_sdk_has_mutation_retries_disabled_without_network(self):
+        self.assertEqual(version('hcloud'),'2.27.0')
+        client=RealClient(token='offline-fixture-token')
+        Backend(client,{})
+        self.assertEqual(client._client._retry_max_retries,0)
+
+    def test_unknown_sdk_retry_layout_refuses_before_any_network(self):
+        c=Client();del c._client
+        with self.assertRaisesRegex(Infrastructure,'retry setting'):
+            Backend(c,{})
+        self.assertEqual(c.calls,[])
+
+    def test_retry_attribute_must_exist_before_assignment(self):
+        c=Client();del c._client._retry_max_retries
+        with self.assertRaisesRegex(Infrastructure,'retry setting'):
+            Backend(c,{})
+        self.assertEqual(c.calls,[])
 
 if __name__=='__main__':unittest.main()
