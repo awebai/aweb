@@ -388,9 +388,9 @@ class World:
         """The approver's holding of the app role the round trip revokes, made
         the supported way while the owner still holds the team's key: the
         owner adds the human to the team; the human, with its own key, fetches
-        its certificate, installs the app and registers a passkey on the app's
-        own human origin in the browser; the owner designates that exact
-        credential. Checked in the app's own tables."""
+        its certificate and registers a passkey on the app's own human origin in
+        the browser, for the app the owner installed on this machine; the owner
+        designates that exact credential. Checked in the app's own tables."""
         machine, human = holder.container, founded.approver
         added = self.aw(machine, "id", "team", "add-member", "--team", TEAM, "--namespace", DOMAIN,
                         "--did", founded.approver_did_key, "--did-aw", human, "--name", "approver", "--global")
@@ -399,12 +399,12 @@ class World:
             child = holder.act(human, *args)
             return child, holder.answer_passphrases(child, until=until)
 
-        for args in (("--json", "id", "team", "fetch-cert", "--namespace", DOMAIN, "--team", TEAM, "--cert-id",
-                      added["certificate_id"], "--registry", origin("registry")),
-                     ("plugin", "install", origin("secrets-api"))):
-            child, output = as_human(*args)
-            child.close()
-            assert child.exitstatus == 0, output
+        child, output = as_human("--json", "id", "team", "fetch-cert", "--namespace", DOMAIN, "--team", TEAM,
+                                 "--cert-id", added["certificate_id"], "--registry", origin("registry"))
+        child.close()
+        assert child.exitstatus == 0, output
+        # The app is already installed on this machine: the owner installed it
+        # here, in the same aw plugin directory. aw takes no --human install.
         export = f"{site.mounted}/holder/app-export.json"
         child, output = as_human("app", "credential", "register", site.app_id, "--role", site.role, "--out", export,
                                  until=r"Open this page to continue: (\S+)")
