@@ -460,10 +460,27 @@ valid evidence; this protocol therefore makes no global freshness SLA.
 ### TOFU pins and durable continuity
 
 For global identities, current Go and TypeScript clients keep an address-to-pin
-index. A first verified contact is pinned by `did:aw` when a valid stable id is
-available, otherwise by the observed `did:key`. A stable-identity pin also keeps
-the last verified current key and the highest verified DID-log sequence/hash so
-rollback detection survives process restarts.
+index. A first contact is pinned only after the registry confirms the
+address-to-key binding (by `did:aw` when a valid stable id is present, otherwise
+by `did:key`). Until then it is `verification_stale` (could not check) or
+`identity_mismatch` (the registry disagrees, or has no such address). A client
+built with no registry to ask reports `unverified`: nothing was checked, and a
+retry would not help. A pin written this way records `confirmed_by: registry`;
+pins written before this rule carry no such field. A stable-identity pin also
+keeps the last verified current key and the highest verified DID-log
+sequence/hash so rollback detection survives process restarts.
+
+A sender already pinned stays verified by its pin while the registry cannot be
+reached. A later registry answer that names another key for a pinned address is
+an `identity_mismatch`, and the pin is kept.
+
+For a sender shown only by a display alias, with no address, `verified` means
+the message was signed by the key shown; there is no identity claim behind the
+alias, so this rule has nothing to confirm. A local team sender is still
+checked against the reader's own team roster.
+
+The cases are shared by both clients in
+[`test-vectors/trust/first-contact-v1.json`](https://github.com/awebai/aweb/blob/main/test-vectors/trust/first-contact-v1.json).
 
 Local single-team identities skip persistent global TOFU pinning. Their current
 key is refreshed against the live team roster; a changed key that cannot be

@@ -1,0 +1,268 @@
+{
+  "schema": "aweb.trust.first-contact.v1",
+  "description": "What a reader reports for a signed message from a sender outside its own team that names a qualified address, and what it pins. Each case starts from a verified signature. A sender is pinned only after the registry confirms that the address belongs to the signing key or, when the sender names one, to the stable identity whose current key it is. Until then the status is verification_stale (the check could not be made), identity_mismatch (the registry disagrees or has no such address), or unverified (the client has no registry to ask). An expected_pin_store_after of null means the store is unchanged.",
+  "vectors": [
+    {
+      "name": "registry-names-another-key",
+      "description": "The registry answers and the address belongs to another key.",
+      "from_address": "bob.example.com/bob",
+      "from_did": "did:key:z6Mkhow21JWUi49xXiMVnHL18JjZf5dYMSmSwPoHfWU4VN5q",
+      "from_stable_id": "",
+      "resolver": "registry",
+      "address_resolution": {
+        "outcome": "resolved",
+        "did_key": "did:key:z6MktojHN9D8obak7C9wjpTzCRrdE5zC6cxt5ANUFnQskgbs",
+        "stable_id": ""
+      },
+      "stable_identity": null,
+      "pin_store_before": {
+        "pins": {},
+        "addresses": {}
+      },
+      "expected_status": "identity_mismatch",
+      "expected_pin_store_after": null
+    },
+    {
+      "name": "address-cannot-be-resolved-now",
+      "description": "The registry cannot be reached; a later read retries.",
+      "from_address": "bob.example.com/bob",
+      "from_did": "did:key:z6MktojHN9D8obak7C9wjpTzCRrdE5zC6cxt5ANUFnQskgbs",
+      "from_stable_id": "",
+      "resolver": "registry",
+      "address_resolution": {
+        "outcome": "unavailable"
+      },
+      "stable_identity": null,
+      "pin_store_before": {
+        "pins": {},
+        "addresses": {}
+      },
+      "expected_status": "verification_stale",
+      "expected_pin_store_after": null
+    },
+    {
+      "name": "stable-identity-check-degraded",
+      "description": "The sender names a stable identity and the registry check could not be made.",
+      "from_address": "bob.example.com/bob",
+      "from_did": "did:key:z6MktojHN9D8obak7C9wjpTzCRrdE5zC6cxt5ANUFnQskgbs",
+      "from_stable_id": "did:aw:bob",
+      "resolver": "registry",
+      "address_resolution": {
+        "outcome": "unavailable"
+      },
+      "stable_identity": {
+        "outcome": "ok_degraded",
+        "current_did_key": ""
+      },
+      "pin_store_before": {
+        "pins": {},
+        "addresses": {}
+      },
+      "expected_status": "verification_stale",
+      "expected_pin_store_after": null
+    },
+    {
+      "name": "no-resolver",
+      "description": "A client built without a registry never checked anything, and a retry would not help.",
+      "from_address": "bob.example.com/bob",
+      "from_did": "did:key:z6MktojHN9D8obak7C9wjpTzCRrdE5zC6cxt5ANUFnQskgbs",
+      "from_stable_id": "",
+      "resolver": "none",
+      "address_resolution": null,
+      "stable_identity": null,
+      "pin_store_before": {
+        "pins": {},
+        "addresses": {}
+      },
+      "expected_status": "unverified",
+      "expected_pin_store_after": null
+    },
+    {
+      "name": "registry-has-no-such-address",
+      "description": "The registry answers that the address does not exist.",
+      "from_address": "bob.example.com/bob",
+      "from_did": "did:key:z6MktojHN9D8obak7C9wjpTzCRrdE5zC6cxt5ANUFnQskgbs",
+      "from_stable_id": "",
+      "resolver": "registry",
+      "address_resolution": {
+        "outcome": "not_found"
+      },
+      "stable_identity": null,
+      "pin_store_before": {
+        "pins": {},
+        "addresses": {}
+      },
+      "expected_status": "identity_mismatch",
+      "expected_pin_store_after": null
+    },
+    {
+      "name": "registry-confirms-the-key",
+      "description": "The registry names the signing key for the address; the key is pinned.",
+      "from_address": "bob.example.com/bob",
+      "from_did": "did:key:z6MktojHN9D8obak7C9wjpTzCRrdE5zC6cxt5ANUFnQskgbs",
+      "from_stable_id": "",
+      "resolver": "registry",
+      "address_resolution": {
+        "outcome": "resolved",
+        "did_key": "did:key:z6MktojHN9D8obak7C9wjpTzCRrdE5zC6cxt5ANUFnQskgbs",
+        "stable_id": ""
+      },
+      "stable_identity": null,
+      "pin_store_before": {
+        "pins": {},
+        "addresses": {}
+      },
+      "expected_status": "verified",
+      "expected_pin_store_after": {
+        "pins": {
+          "did:key:z6MktojHN9D8obak7C9wjpTzCRrdE5zC6cxt5ANUFnQskgbs": {
+            "address": "bob.example.com/bob",
+            "stable_id": "",
+            "did_key": "",
+            "confirmed_by": "registry"
+          }
+        },
+        "addresses": {
+          "bob.example.com/bob": "did:key:z6MktojHN9D8obak7C9wjpTzCRrdE5zC6cxt5ANUFnQskgbs"
+        }
+      }
+    },
+    {
+      "name": "registry-confirms-the-stable-identity",
+      "description": "The registry names the stable identity for the address and its current key is the signing key; the stable identity is pinned.",
+      "from_address": "bob.example.com/bob",
+      "from_did": "did:key:z6MktojHN9D8obak7C9wjpTzCRrdE5zC6cxt5ANUFnQskgbs",
+      "from_stable_id": "did:aw:bob",
+      "resolver": "registry",
+      "address_resolution": {
+        "outcome": "resolved",
+        "did_key": "did:key:z6MktojHN9D8obak7C9wjpTzCRrdE5zC6cxt5ANUFnQskgbs",
+        "stable_id": "did:aw:bob"
+      },
+      "stable_identity": {
+        "outcome": "verified",
+        "current_did_key": "did:key:z6MktojHN9D8obak7C9wjpTzCRrdE5zC6cxt5ANUFnQskgbs"
+      },
+      "pin_store_before": {
+        "pins": {},
+        "addresses": {}
+      },
+      "expected_status": "verified",
+      "expected_pin_store_after": {
+        "pins": {
+          "did:aw:bob": {
+            "address": "bob.example.com/bob",
+            "stable_id": "did:aw:bob",
+            "did_key": "did:key:z6MktojHN9D8obak7C9wjpTzCRrdE5zC6cxt5ANUFnQskgbs",
+            "confirmed_by": "registry"
+          }
+        },
+        "addresses": {
+          "bob.example.com/bob": "did:aw:bob"
+        }
+      }
+    },
+    {
+      "name": "stable-identity-verified-without-a-current-key",
+      "description": "The registry verifies the stable identity and reports no current key, so the signing key is not confirmed.",
+      "from_address": "bob.example.com/bob",
+      "from_did": "did:key:z6MktojHN9D8obak7C9wjpTzCRrdE5zC6cxt5ANUFnQskgbs",
+      "from_stable_id": "did:aw:bob",
+      "resolver": "registry",
+      "address_resolution": {
+        "outcome": "resolved",
+        "did_key": "",
+        "stable_id": "did:aw:bob"
+      },
+      "stable_identity": {
+        "outcome": "verified",
+        "current_did_key": ""
+      },
+      "pin_store_before": {
+        "pins": {},
+        "addresses": {}
+      },
+      "expected_status": "verification_stale",
+      "expected_pin_store_after": null
+    },
+    {
+      "name": "address-belongs-to-another-stable-identity",
+      "description": "The registry answers and the address belongs to another stable identity.",
+      "from_address": "bob.example.com/bob",
+      "from_did": "did:key:z6MktojHN9D8obak7C9wjpTzCRrdE5zC6cxt5ANUFnQskgbs",
+      "from_stable_id": "did:aw:bob",
+      "resolver": "registry",
+      "address_resolution": {
+        "outcome": "resolved",
+        "did_key": "did:key:z6Mkhow21JWUi49xXiMVnHL18JjZf5dYMSmSwPoHfWU4VN5q",
+        "stable_id": "did:aw:mallory"
+      },
+      "stable_identity": {
+        "outcome": "hard_error",
+        "current_did_key": ""
+      },
+      "pin_store_before": {
+        "pins": {},
+        "addresses": {}
+      },
+      "expected_status": "identity_mismatch",
+      "expected_pin_store_after": null
+    },
+    {
+      "name": "pinned-sender-while-the-registry-is-unreachable",
+      "description": "A sender pinned earlier stays verified by its pin while the registry cannot be reached.",
+      "from_address": "bob.example.com/bob",
+      "from_did": "did:key:z6MktojHN9D8obak7C9wjpTzCRrdE5zC6cxt5ANUFnQskgbs",
+      "from_stable_id": "",
+      "resolver": "registry",
+      "address_resolution": {
+        "outcome": "unavailable"
+      },
+      "stable_identity": null,
+      "pin_store_before": {
+        "pins": {
+          "did:key:z6MktojHN9D8obak7C9wjpTzCRrdE5zC6cxt5ANUFnQskgbs": {
+            "address": "bob.example.com/bob",
+            "stable_id": "",
+            "did_key": "",
+            "confirmed_by": ""
+          }
+        },
+        "addresses": {
+          "bob.example.com/bob": "did:key:z6MktojHN9D8obak7C9wjpTzCRrdE5zC6cxt5ANUFnQskgbs"
+        }
+      },
+      "expected_status": "verified",
+      "expected_pin_store_after": null
+    },
+    {
+      "name": "pinned-sender-and-the-registry-names-another-key",
+      "description": "A later registry answer that contradicts the pin is a mismatch, and the pin is kept.",
+      "from_address": "bob.example.com/bob",
+      "from_did": "did:key:z6MktojHN9D8obak7C9wjpTzCRrdE5zC6cxt5ANUFnQskgbs",
+      "from_stable_id": "",
+      "resolver": "registry",
+      "address_resolution": {
+        "outcome": "resolved",
+        "did_key": "did:key:z6Mkhow21JWUi49xXiMVnHL18JjZf5dYMSmSwPoHfWU4VN5q",
+        "stable_id": ""
+      },
+      "stable_identity": null,
+      "pin_store_before": {
+        "pins": {
+          "did:key:z6MktojHN9D8obak7C9wjpTzCRrdE5zC6cxt5ANUFnQskgbs": {
+            "address": "bob.example.com/bob",
+            "stable_id": "",
+            "did_key": "",
+            "confirmed_by": ""
+          }
+        },
+        "addresses": {
+          "bob.example.com/bob": "did:key:z6MktojHN9D8obak7C9wjpTzCRrdE5zC6cxt5ANUFnQskgbs"
+        }
+      },
+      "expected_status": "identity_mismatch",
+      "expected_pin_store_after": null
+    }
+  ]
+}
