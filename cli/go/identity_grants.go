@@ -13,11 +13,12 @@ import (
 )
 
 type IdentityGrantMintRequest struct {
-	GrantDIDKey  string   `json:"grant_did_key"`
-	Scopes       []string `json:"scopes"`
-	TTLSeconds   int      `json:"ttl_seconds"`
-	NeverExpires bool     `json:"-"`
-	Label        string   `json:"label,omitempty"`
+	GrantDIDKey         string   `json:"grant_did_key"`
+	Scopes              []string `json:"scopes"`
+	TTLSeconds          int      `json:"ttl_seconds"`
+	NeverExpires        bool     `json:"-"`
+	UseServerDefaultTTL bool     `json:"-"`
+	Label               string   `json:"label,omitempty"`
 }
 
 // NeverExpires is opt-in; existing numeric requests keep their wire shape.
@@ -27,9 +28,12 @@ func (r IdentityGrantMintRequest) MarshalJSON() ([]byte, error) {
 	if r.NeverExpires {
 		ttl = "never"
 	}
+	if r.UseServerDefaultTTL {
+		ttl = nil
+	}
 	return json.Marshal(struct {
 		fields
-		TTL any `json:"ttl_seconds"`
+		TTL any `json:"ttl_seconds,omitempty"`
 	}{fields(r), ttl})
 }
 
@@ -66,6 +70,15 @@ func (c *Client) ListIdentityGrants(ctx context.Context) (*IdentityGrantListResp
 	var out IdentityGrantListResponse
 	if err := c.Get(ctx, "/v1/identity-grants", &out); err != nil {
 		return nil, identityGrantCompatibilityError(err)
+	}
+	return &out, nil
+}
+
+// RenewIdentityGrant needs the subject's ordinary team-certificate authority.
+func (c *Client) RenewIdentityGrant(ctx context.Context, grantID string, ttlSeconds int) (*IdentityGrantView, error) {
+	var out IdentityGrantView
+	if err := c.Post(ctx, "/v1/identity-grants/"+url.PathEscape(grantID)+"/renew", map[string]int{"ttl_seconds": ttlSeconds}, &out); err != nil {
+		return nil, err
 	}
 	return &out, nil
 }

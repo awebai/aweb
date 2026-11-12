@@ -795,7 +795,7 @@ class ChangeSets:
             )
         else:
             payload.update(
-                act="grant.created"
+                act=("grant.changed" if item["op"] == "renew" else "grant.created")
                 if kind == "grant"
                 else "runner.registered"
                 if kind == "runner"
@@ -952,7 +952,8 @@ class ChangeSets:
         audited_items = [
             i
             for i in change["changes"]
-            if i["op"] == "create" and i["kind"] in AUDITED_CREATE_KINDS
+            if (i["op"] == "create" and i["kind"] in AUDITED_CREATE_KINDS)
+            or (i["kind"], i["op"]) == ("grant", "renew")
         ]
         commitment = None
         if audited_items:
@@ -1112,6 +1113,9 @@ class ChangeSets:
                 secret_ids=tuple(sorted(roots)),
                 approval_ids=(row["approval_id"],),
                 job_ids=job_prelock_ids(change["changes"]),
+                exclusive_grants=any(
+                    (i["kind"], i["op"]) == ("grant", "renew") for i in change["changes"]
+                ),
                 before_approvals=before_approvals,
             )
         except ContainmentRefused as refused:
@@ -1314,11 +1318,14 @@ class ChangeSets:
                 await _require_secret(tx, installation_id, team_id, grant.secret_id)
                 if await records.policy(tx, installation_id, grant.policy_digest) is None:
                     raise records.RecordMissing(f"no policy {grant.policy_digest}")
-                if await tx.fetch_value(
+                if op == "renew":
+                    await records.renew_grant(tx, installation_id, team_id, grant)
+                elif await tx.fetch_value(
                     "SELECT 1 FROM {{tables.grants}} WHERE grant_id = $1", grant.grant_id
                 ):
                     raise _exists(kind, grant.grant_id)
-                await records.create_grant(tx, installation_id, team_id, grant)
+                else:
+                    await records.create_grant(tx, installation_id, team_id, grant)
             elif kind == "grant_template":
                 template = GrantTemplate.from_after(after)
                 stored = await records.grant_template(

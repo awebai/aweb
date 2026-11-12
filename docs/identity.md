@@ -653,7 +653,7 @@ all of those scopes for ordinary worker operation; old grants keep exactly the
 scopes they were minted with. Grant requests outside their scopes, and root or
 admin surfaces such as team lifecycle, session leases, reservation revoke, and
 minting further grants, are refused server-side. A
-grant minted with `--ttl never` (the default) does not expire. Explicit finite
+grant minted with `--ttl never` does not expire. The CLI default, `--ttl default`, uses the server's configured grant lifetime; with no setting it remains revoke-only. Explicit finite
 TTLs from 60 seconds through 720 hours retain their expiry. Grants can be revoked
 idempotently with
 `aw id grant revoke <grant-id>`; `aw id grant list` shows each grant as
@@ -661,8 +661,29 @@ active, revoked, or expired. Root-authority commands refuse to run from a
 grant home, and `aw whoami` there reports the subject identity plus the
 grant's status, scopes, and expiry.
 
-The mint API accepts `ttl_seconds: "never"`, null, or omission for no expiry;
-existing finite integer requests remain supported. Mint/list/status responses and
+The subject can renew a grant from its ordinary identity home:
+
+```sh
+aw id grant renew <grant-id> --ttl 24h --grant-home /path/to/grant-home
+```
+
+`POST /v1/identity-grants/{grant_id}/renew` takes only a finite `ttl_seconds`
+(60..2592000) and requires the subject's ordinary team certificate. It preserves
+the grant ID, delegated key, scopes, original issuance and issuing certificate;
+the new deadline is the current time plus the requested lifetime. Expiry alone
+can be renewed by this authority. Revocation, an inactive subject or a revoked
+issuing certificate still refuses renewal. A delegated session key cannot renew
+itself. Renewal is audited. `--grant-home` updates only the matching local grant
+metadata, keeping its session key and custody locator. Without it the command
+returns the new deadline for the owner to propagate. Reconnect running workers
+and streams after updating their grant home; an already open finite stream
+retains the deadline with which it was admitted.
+
+The mint API accepts `ttl_seconds: "never"` or explicit null for no expiry;
+omission uses `AWEB_GRANT_DEFAULT_TTL_SECONDS` (`never` or 60..2592000 seconds,
+unset means never). Existing finite integer requests remain supported. This same
+setting supplies the lifetime for newly drafted Secrets grants; it never changes
+an already issued grant or an approved change set. Mint/list/status responses and
 `grant.yaml` use `expires_at: "never"` for this case. The server stores a non-null
 expiry 100 calendar years after issuance (February 29 maps to February 28 if
 needed); an interval of at least 99 calendar years is reserved for never-expiring

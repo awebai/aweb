@@ -26,6 +26,11 @@ async def effective_grant_status(request: Request, row, now: datetime) -> tuple[
     status = grant_status(row, now)
     if status != "active":
         return status, None
+    return await grant_issuer_status(request, row)
+
+
+async def grant_issuer_status(request: Request, row) -> tuple[str, Optional[str]]:
+    """Live authority, independently of the grant's own deadline (for root renewal)."""
     if row.get("subject_status") != "active" or row.get("subject_deleted_at") is not None:
         return "subject_inactive", "grant subject identity is not active"
     issuing_certificate_id = (row.get("issued_by_certificate_id") or "").strip()

@@ -2,12 +2,14 @@ package main
 
 import (
 	"context"
+	"crypto/ed25519"
 	"errors"
 	"fmt"
 	"github.com/awebai/aw/internal/custodypath"
 	"net/http"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"time"
 
@@ -30,6 +32,8 @@ var (
 	grantMintTTL           time.Duration
 	grantMintLabel         string
 	grantMintOut           string
+	grantRenewTTL          time.Duration
+	grantRenewHome         string
 )
 
 const (
@@ -50,6 +54,10 @@ func requireNeverGrantCustody(ops []string) error {
 type grantTTLFlag struct{}
 
 func (grantTTLFlag) Set(value string) error {
+	if value == "default" {
+		grantMintTTL = 0
+		return nil
+	}
 	if value == "never" {
 		grantMintTTL = identityGrantNeverTTL
 		return nil
@@ -65,6 +73,9 @@ func (grantTTLFlag) Set(value string) error {
 	return nil
 }
 func (grantTTLFlag) String() string {
+	if grantMintTTL == 0 {
+		return "default"
+	}
 	if grantMintTTL == identityGrantNeverTTL {
 		return "never"
 	}
@@ -332,7 +343,7 @@ func runGrantMint(cmd *cobra.Command, _ []string) error {
 	if err != nil {
 		return err
 	}
-	if grantMintTTL != identityGrantNeverTTL && (grantMintTTL < identityGrantMinTTL || grantMintTTL > identityGrantMaxTTL) {
+	if grantMintTTL != 0 && grantMintTTL != identityGrantNeverTTL && (grantMintTTL < identityGrantMinTTL || grantMintTTL > identityGrantMaxTTL) {
 		return usageError("--ttl must be never or between %s and %s", identityGrantMinTTL, identityGrantMaxTTL)
 	}
 	outDir, err := prepareGrantHomeDir(grantMintOut)
@@ -379,11 +390,12 @@ func runGrantMint(cmd *cobra.Command, _ []string) error {
 		}
 	}
 	view, err := client.MintIdentityGrant(ctx, &aweb.IdentityGrantMintRequest{
-		GrantDIDKey:  grantDIDKey,
-		Scopes:       scopes,
-		TTLSeconds:   int(grantMintTTL / time.Second),
-		NeverExpires: grantMintTTL == identityGrantNeverTTL,
-		Label:        strings.TrimSpace(grantMintLabel),
+		GrantDIDKey:         grantDIDKey,
+		Scopes:              scopes,
+		TTLSeconds:          int(grantMintTTL / time.Second),
+		NeverExpires:        grantMintTTL == identityGrantNeverTTL,
+		UseServerDefaultTTL: grantMintTTL == 0,
+		Label:               strings.TrimSpace(grantMintLabel),
 	})
 	if err != nil {
 		return err
@@ -508,6 +520,61 @@ func runGrantRevoke(cmd *cobra.Command, args []string) error {
 	return nil
 }
 
+func runGrantRenew(cmd *cobra.Command, args []string) error {
+	if err := requireGrantAuthorityHome(); err != nil {
+		return err
+	}
+	if grantRenewTTL < identityGrantMinTTL || grantRenewTTL > identityGrantMaxTTL {
+		return usageError("--ttl must be between %s and %s", identityGrantMinTTL, identityGrantMaxTTL)
+	}
+	client, sel, err := resolveClientSelection()
+	if err != nil {
+		return err
+	}
+	grantID := strings.TrimSpace(args[0])
+	var local *awconfig.GrantHome
+	localDID := ""
+	if grantRenewHome != "" {
+		local, err = awconfig.LoadGrantHome(grantRenewHome)
+		if err != nil {
+			return err
+		}
+		if local.GrantID != grantID || local.TeamID != sel.TeamID || strings.TrimRight(local.AwebURL, "/") != strings.TrimRight(sel.BaseURL, "/") || local.Subject.DIDKey != sel.DID {
+			return usageError("--grant-home must match this identity, team, server and grant")
+		}
+		key, err := awid.LoadSigningKey(awconfig.GrantHomeSigningKeyPath(grantRenewHome))
+		if err != nil {
+			return err
+		}
+		localDID = awid.ComputeDIDKey(key.Public().(ed25519.PublicKey))
+	}
+	ctx, cancel := commandAPIContext(cmd)
+	defer cancel()
+	view, err := client.RenewIdentityGrant(ctx, grantID, int(grantRenewTTL/time.Second))
+	if err != nil {
+		return err
+	}
+	if local != nil {
+		if view.GrantID != grantID || view.TeamID != local.TeamID || view.GrantDIDKey != localDID || view.SubjectDIDAW != local.Subject.DIDAW || !slices.Equal(view.Scopes, local.Scopes) {
+			return fmt.Errorf("server renewed grant but returned mismatched terms; grant home was not updated")
+		}
+		if view.ExpiresAt == "never" {
+			return fmt.Errorf("renewal returned an unbounded deadline; grant home was not updated")
+		}
+		if err := checkGrantExpiry(view.ExpiresAt, time.Now()); err != nil {
+			return fmt.Errorf("renewal returned an invalid deadline: %w", err)
+		}
+		local.ExpiresAt = view.ExpiresAt
+		if err := awconfig.SaveGrantHomeTo(awconfig.GrantHomeStatePath(grantRenewHome), local); err != nil {
+			return fmt.Errorf("server renewed grant; updating grant home failed: %w", err)
+		}
+	}
+	printOutput(view, func(any) string {
+		return fmt.Sprintf("Renewed identity grant %s until %s.\n", view.GrantID, view.ExpiresAt)
+	})
+	return nil
+}
+
 func runGrantShow(cmd *cobra.Command, args []string) error {
 	if err := requireGrantAuthorityHome(); err != nil {
 		return err
@@ -590,8 +657,8 @@ func init() {
 	mintCmd.Flags().StringArrayVar(&grantMintBundles, "bundle", nil, "Grant scope bundle, repeatable or comma-separated (normal-agent)")
 	mintCmd.Flags().StringArrayVar(&grantMintAppTools, "app-tool", nil, "Select app:verb tools for this grant; requires plugin install approval for this team's current installation")
 	mintCmd.Flags().StringVar(&grantMintCustodySocket, "custody-socket", "", "Resident custody Unix socket path to write into grant.yaml, or auto for the resident identity home's default custody socket")
-	grantMintTTL = identityGrantNeverTTL
-	mintCmd.Flags().Var(grantTTLFlag{}, "ttl", "Grant duration: never (revocation-only) or a duration from 60s to 720h")
+	grantMintTTL = 0
+	mintCmd.Flags().Var(grantTTLFlag{}, "ttl", "Grant duration: default (server policy), never, or 60s to 720h")
 	mintCmd.Flags().StringVar(&grantMintLabel, "label", "", "Optional label for the grant")
 	mintCmd.Flags().StringVar(&grantMintOut, "out", "", "Directory to write the grant home (created fresh; a non-empty directory is refused)")
 	listCmd := &cobra.Command{
@@ -612,6 +679,9 @@ func init() {
 		RunE:  runGrantShow,
 	}
 	bindTeamSelector(grantCmd)
-	grantCmd.AddCommand(mintCmd, listCmd, revokeCmd, showCmd)
+	renewCmd := &cobra.Command{Use: "renew <grant-id>", Short: "Renew a session grant using the identity's root authority", Args: cobra.ExactArgs(1), RunE: runGrantRenew}
+	renewCmd.Flags().DurationVar(&grantRenewTTL, "ttl", 0, "Required finite duration, 60s to 720h")
+	renewCmd.Flags().StringVar(&grantRenewHome, "grant-home", "", "Update the matching grant home's deadline after renewal")
+	grantCmd.AddCommand(mintCmd, listCmd, revokeCmd, showCmd, renewCmd)
 	identityCmd.AddCommand(grantCmd)
 }

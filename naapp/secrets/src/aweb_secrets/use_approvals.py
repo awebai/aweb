@@ -89,7 +89,8 @@ async def _granted_policy(
     """The policy, while the grant is active and still names its digest."""
     current = await tx.fetch_value(
         "SELECT 1 FROM {{tables.grants}} WHERE grant_id = $1 AND installation_id = $2 "
-        "AND team_id = $3 AND policy_digest = $4 AND revoked_at IS NULL",
+        "AND team_id = $3 AND policy_digest = $4 AND revoked_at IS NULL "
+        "AND (expires_at IS NULL OR expires_at > clock_timestamp())",
         grant_id,
         installation_id,
         team_id,

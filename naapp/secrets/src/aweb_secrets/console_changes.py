@@ -120,7 +120,7 @@ class ConsoleChanges:
             or not (
                 (item.get("kind") in AUDITED_CREATE_KINDS and item.get("op") == "create")
                 or (item.get("kind"), item.get("op"))
-                in (("approver", "create"), ("approver_contact", "update"))
+                in (("approver", "create"), ("approver_contact", "update"), ("grant", "renew"))
             )
             for item in items
         ):

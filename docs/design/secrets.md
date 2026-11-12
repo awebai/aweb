@@ -302,7 +302,7 @@ A grant is the record `grant/1`:
  subject: principal | secrets.owner | secrets.role.<name>,
  capability: use | run,
  operations: [{operation_id, digest}], open_request: bool,
- jobs: [{job_id, digest}], policy_digest}
+ jobs: [{job_id, digest}], policy_digest, expires_at?}
 ```
 
 The rules:
@@ -320,6 +320,32 @@ The rules:
   admits, the first candidate's refusal is returned.
 - **An unconfirmed secret** (no active version) refuses with `secret_disabled`
   (decision 46).
+
+A grant may carry `expires_at` as an exact UTC second timestamp
+(`YYYY-MM-DDTHH:MM:SSZ`). Omission retains the existing revoke-only record and
+its bytes. Present null, `never`, a naive time or a malformed time is refused.
+At or after the deadline the grant supplies no authority: discovery, admission,
+approval consumption and the final dispatch fence all recheck it, including
+after waits. Revocation remains independent and immediate.
+
+The owner renews through `aweb.secrets.change/1` with `kind: grant`, `op: renew`
+and the complete grant record in `after`, including a future finite deadline.
+The existing owner passkey approval covers those exact bytes. Renewal changes
+only the deadline; changing the subject, secret, capability, operation/job pins
+or policy requires a new grant. A member can draft but cannot approve renewal.
+An expired unrevoked grant can be renewed; a revoked grant cannot. Confirmation
+records `grant.changed` governance evidence atomically with the change.
+
+New HTTP access drafts resolve the shared `AWEB_GRANT_DEFAULT_TTL_SECONDS`
+setting before owner review; unset remains never. An optional `ttl_seconds` on
+that form accepts `default`, `never`, or an integer from 60 through 2592000.
+Explicit grant records retain their covered deadline or omission; configuration
+never rewrites already approved bytes. Grant templates may carry an optional
+finite `ttl_seconds` in the same range. It is part of the template's digest and
+resolves once to an absolute deadline for each issued child. An omitted template
+TTL retains the existing revoke-only terms. Derived-secret provenance retains
+the source grant's deadline at issuance; renewing the source does not revive a
+child that has already expired.
 
 ### 4.4 Policy
 

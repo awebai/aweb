@@ -514,6 +514,9 @@ def test_an_unknown_four_eyes_setting_is_refused() -> None:
 
 def test_owner_renewal_covers_the_complete_unchanged_grant_and_new_deadline():
     from tests.test_grant_record import USE
+
     after = {**USE, "expires_at": "2026-11-13T00:00:00Z"}
-    change = _change(changes=[{"kind": "grant", "op": "renew", "ref": after["grant_id"], "after": after}])
+    change = _change(
+        changes=[{"kind": "grant", "op": "renew", "ref": after["grant_id"], "after": after}]
+    )
     validate_change(change)

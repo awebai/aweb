@@ -1,7 +1,7 @@
-"""Identity session grants: mint, list, and revoke.
+"""Identity session grants: mint, renew, list, and revoke.
 
 Grants are scoped, revocable credentials derived from a durable
-identity. Minting and revocation require the subject's ordinary
+identity. Minting, renewal and revocation require the subject's ordinary
 team-certificate auth; grant-authenticated requests can never reach these
 routes (the grant verifier rejects the path, and the scheme guard below
 rejects the header even before certificate auth runs).
@@ -19,10 +19,11 @@ from fastapi.responses import JSONResponse
 from pydantic import BaseModel, ConfigDict, Field, field_validator
 
 from awid.dns_auth import validate_did_key
+from awid.grant_lifetime import default_grant_ttl_seconds
 from aweb.grant_expiry import add_years, expiry_label, never_expires
 from aweb.deps import get_db
 from aweb.identity_grant_auth import GRANT_AUTH_SCHEME, GRANT_SCOPES
-from aweb.identity_grant_status import effective_grant_status, grant_status
+from aweb.identity_grant_status import effective_grant_status, grant_issuer_status, grant_status
 from aweb.team_auth_deps import TeamIdentity, get_team_identity
 
 router = APIRouter(prefix="/v1/identity-grants", tags=["identity-grants"])
@@ -54,6 +55,11 @@ class GrantMintRequest(BaseModel):
             if scope not in normalized:
                 normalized.append(scope)
         return normalized
+
+
+class GrantRenewRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    ttl_seconds: Annotated[int, Field(strict=True, ge=GRANT_TTL_MIN_SECONDS, le=GRANT_TTL_MAX_SECONDS)]
 
 
 class GrantView(BaseModel):
@@ -110,13 +116,16 @@ async def mint_identity_grant(
         raise HTTPException(status_code=403, detail="subject identity is not active")
     subject_did_aw = (identity.did_aw or "").strip() or None
 
-    now = datetime.now(timezone.utc)
-    expires_at = add_years(now, 100) if payload.ttl_seconds in (None, "never") else now + timedelta(seconds=payload.ttl_seconds)
+    ttl = payload.ttl_seconds
+    if "ttl_seconds" not in payload.model_fields_set:
+        ttl = default_grant_ttl_seconds()
     async with manager.transaction() as tx:
         await tx.fetch_value(
             "SELECT pg_advisory_xact_lock(hashtextextended($1, 0))",
             f"identity-grant:{payload.grant_did_key}",
         )
+        now = datetime.now(timezone.utc)
+        expires_at = add_years(now, 100) if ttl in (None, "never") else now + timedelta(seconds=ttl)
         existing = await tx.fetch_one(
             """
             SELECT grant_id, issued_at, expires_at
@@ -258,6 +267,70 @@ async def identity_grant_status(
         expires_at=expiry_label(row["issued_at"], row["expires_at"]),
         revoked_at=row["revoked_at"].isoformat() if row["revoked_at"] else None,
         last_checked_at=now.isoformat(),
+    )
+
+
+@router.post("/{grant_id}/renew")
+async def renew_identity_grant(
+    grant_id: str,
+    request: Request,
+    payload: GrantRenewRequest,
+    db=Depends(get_db),
+    _scheme_guard: None = Depends(reject_grant_scheme),
+    identity: TeamIdentity = Depends(get_team_identity),
+) -> GrantView:
+    if not (identity.certificate_id or "").strip():
+        raise HTTPException(status_code=403, detail="grants can only be renewed with a team certificate")
+    try:
+        grant_id = str(UUID(grant_id))
+    except ValueError:
+        raise HTTPException(status_code=404, detail="grant not found") from None
+    manager = db.get_manager("aweb")
+    row = await manager.fetch_one(
+        """SELECT g.*, a.status AS subject_status, a.deleted_at AS subject_deleted_at
+        FROM {{tables.identity_session_grants}} g
+        JOIN {{tables.agents}} a ON a.agent_id=g.subject_agent_id
+        WHERE g.grant_id=$1::UUID AND g.team_id=$2 AND g.subject_agent_id=$3::UUID""",
+        grant_id, identity.team_id, identity.agent_id,
+    )
+    if not row:
+        raise HTTPException(status_code=404, detail="grant not found")
+    if row["revoked_at"] is not None:
+        raise HTTPException(status_code=403, detail="grant revoked")
+    # Registry I/O precedes DB locks; expiry alone is renewable by the root.
+    authority, detail = await grant_issuer_status(request, row)
+    if authority != "active":
+        raise HTTPException(status_code=403, detail=detail)
+    async with manager.transaction() as tx:
+        # Serialize with reissue of this same delegated key, then revocation.
+        await tx.fetch_value("SELECT pg_advisory_xact_lock(hashtextextended($1, 0))", f"identity-grant:{row['grant_did_key']}")
+        row = await tx.fetch_one(
+            """SELECT g.*, a.status AS subject_status, a.deleted_at AS subject_deleted_at
+            FROM {{tables.identity_session_grants}} g
+            JOIN {{tables.agents}} a ON a.agent_id=g.subject_agent_id
+            WHERE g.grant_id=$1::UUID AND g.team_id=$2 AND g.subject_agent_id=$3::UUID
+            FOR UPDATE OF g FOR SHARE OF a""",
+            grant_id, identity.team_id, identity.agent_id,
+        )
+        if row is None:
+            raise HTTPException(status_code=404, detail="grant not found")
+        if row["revoked_at"] is not None:
+            raise HTTPException(status_code=403, detail="grant revoked")
+        if row["subject_status"] != "active" or row["subject_deleted_at"] is not None:
+            raise HTTPException(status_code=403, detail="grant subject identity is not active")
+        now = datetime.now(timezone.utc)
+        expires_at = now + timedelta(seconds=payload.ttl_seconds)
+        await tx.execute("UPDATE {{tables.identity_session_grants}} SET expires_at=$2 WHERE grant_id=$1::UUID", grant_id, expires_at)
+        await tx.execute(
+            """INSERT INTO {{tables.audit_log}} (team_id, alias, event_type, resource, details)
+            VALUES ($1,$2,'identity_grant.renew',$3,$4::jsonb)""",
+            identity.team_id, identity.alias, grant_id,
+            json.dumps({"grant_id": grant_id, "expires_at": expires_at.isoformat(), "subject_agent_id": identity.agent_id}),
+        )
+    return GrantView(
+        grant_id=grant_id, team_id=identity.team_id, subject_alias=identity.alias,
+        subject_did_aw=row.get("subject_did_aw"), grant_did_key=row["grant_did_key"],
+        scopes=list(row["scopes"]), issued_at=row["issued_at"].isoformat(), expires_at=expires_at.isoformat(),
     )
 
 

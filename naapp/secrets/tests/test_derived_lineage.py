@@ -211,10 +211,21 @@ async def test_lineage_is_immutable_and_rolls_back_with_creation(db) -> None:
         assert await records.secret_by_ref(tx, INSTALLATION, TEAM, "sec_roll001") is None
 
 
-async def test_ancestry_expiry_is_checked_after_a_real_grant_lock_wait(db) -> None:
+@pytest.mark.parametrize("expiry", ["ancestry", "source_grant"])
+async def test_ancestry_expiry_is_checked_after_a_real_grant_lock_wait(db, expiry) -> None:
     async with db.transaction() as tx:
-        await _setup(tx)
+        source = await _setup(tx)
         child = await _child(tx)
+        if expiry == "source_grant":
+            import json
+
+            deadline = NOW + timedelta(minutes=30)
+            await tx.execute(
+                "UPDATE {{tables.grants}} SET record=$2, expires_at=$3 WHERE grant_id=$1",
+                source.grant_id,
+                json.dumps({**source.after, "expires_at": deadline.strftime("%Y-%m-%dT%H:%M:%SZ")}),
+                deadline,
+            )
     clock = Clock()
     ready = asyncio.get_running_loop().create_future()
 
@@ -232,10 +243,12 @@ async def test_ancestry_expiry_is_checked_after_a_real_grant_lock_wait(db) -> No
             )
             task = asyncio.create_task(check())
             await _wait_for_database_lock(db, await ready)
-            clock.at = NOW + timedelta(hours=1)
+            clock.at = NOW + (timedelta(hours=1) if expiry == "ancestry" else timedelta(minutes=30))
         with pytest.raises(lineage.LineageRefused) as refused:
             await asyncio.wait_for(task, timeout=3)
-        assert refused.value.code == "secret_disabled"
+        assert refused.value.code == (
+            "secret_disabled" if expiry == "ancestry" else "grant_revoked"
+        )
     finally:
         if task is not None and not task.done():
             task.cancel()
@@ -290,13 +303,50 @@ async def test_child_expiry_is_checked_after_a_real_recording_lock_wait(db, bloc
                 )
             task = asyncio.create_task(record())
             await _wait_for_database_lock(db, await ready)
-            clock.at = NOW + timedelta(hours=1)
+            clock.at = NOW + (timedelta(hours=1) if expiry == "ancestry" else timedelta(minutes=30))
         with pytest.raises(lineage.LineageRefused) as refused:
             await asyncio.wait_for(task, timeout=3)
-        assert refused.value.code == "secret_disabled"
+        assert refused.value.code == (
+            "secret_disabled" if expiry == "ancestry" else "grant_revoked"
+        )
         async with db.transaction() as tx:
             assert await records.secret_by_ref(tx, INSTALLATION, TEAM, "wait-child") is None
     finally:
         if task is not None and not task.done():
             task.cancel()
             await asyncio.gather(task, return_exceptions=True)
+
+
+async def test_source_grant_expiry_is_a_live_fence_and_persisted_child_bound(db):
+    import json
+    from dataclasses import replace
+
+    async with db.transaction() as tx:
+        await records.create_secret(tx, INSTALLATION, TEAM, SECRET)
+        await records.set_active_version(tx, INSTALLATION, TEAM, SECRET.secret_id, 1)
+        await records.create_policy(tx, INSTALLATION, POLICY)
+        source = replace(
+            _grant("grt_issuer01", {"principal": DID_AW}),
+            expires_at=(NOW + timedelta(seconds=30)).strftime("%Y-%m-%dT%H:%M:%SZ"),
+        )
+        await records.create_grant(tx, INSTALLATION, TEAM, source)
+        child = await _child(tx)
+        nodes = await lineage.lock_ancestry(tx, INSTALLATION, TEAM, child.secret_id)
+        assert nodes[-1].expires_at == NOW + timedelta(seconds=30)
+        await lineage.check_ancestry(tx, nodes, clock=lambda: NOW + timedelta(seconds=29))
+        with pytest.raises(lineage.LineageRefused) as refused:
+            await lineage.check_ancestry(tx, nodes, clock=lambda: NOW + timedelta(seconds=30))
+        assert refused.value.code == "grant_revoked"
+        # Even an authorized new source deadline cannot revive the old child.
+        renewed = replace(
+            source, expires_at=(NOW + timedelta(hours=2)).strftime("%Y-%m-%dT%H:%M:%SZ")
+        )
+        await tx.execute(
+            "UPDATE {{tables.grants}} SET record=$2, expires_at=$3 WHERE grant_id=$1",
+            source.grant_id,
+            json.dumps(renewed.after),
+            NOW + timedelta(hours=2),
+        )
+        with pytest.raises(lineage.LineageRefused) as refused:
+            await lineage.check_ancestry(tx, nodes, clock=lambda: NOW + timedelta(seconds=31))
+        assert refused.value.code == "secret_disabled"

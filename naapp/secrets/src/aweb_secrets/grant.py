@@ -15,10 +15,13 @@ import re
 import secrets as random
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
+from datetime import UTC, datetime
 from typing import Any
 
 from aweb_naapp.roles import is_role_name
+from awid.grant_lifetime import grant_deadline
 from awid.signing import canonical_json_bytes
+from awid.utc_timestamps import parse_utc_seconds
 
 from aweb_secrets.policy import DIGEST, IDENTIFIER
 from aweb_secrets.principal import is_principal
@@ -41,6 +44,8 @@ FIELDS = frozenset(
 )
 
 TEMPLATE_FIELDS = FIELDS - {"grant_id", "secret_id"} | {"grant_template_id"}
+OPTIONAL_FIELDS = frozenset({"expires_at"})
+TEMPLATE_OPTIONAL_FIELDS = frozenset({"ttl_seconds"})
 
 GRANT_ID = re.compile(r"grt_[A-Za-z0-9_-]{4,64}")
 GRANT_TEMPLATE_ID = re.compile(r"gtp_[A-Za-z0-9_-]{4,64}")
@@ -123,17 +128,23 @@ def _check_terms(after: Mapping[str, Any]) -> None:
 
 def _check(after: Any) -> None:
     _require(
-        isinstance(after, Mapping) and set(after) == FIELDS,
+        isinstance(after, Mapping) and FIELDS <= set(after) <= FIELDS | OPTIONAL_FIELDS,
         f"a grant needs exactly {sorted(FIELDS)}",
     )
     _require(_matches(GRANT_ID, after["grant_id"]), "grant_id is a minted grant id")
     _require(_matches(SECRET_ID, after["secret_id"]), "secret_id is a minted secret id")
     _check_terms(after)
+    if "expires_at" in after:
+        try:
+            parse_utc_seconds(after["expires_at"])
+        except ValueError as exc:
+            raise GrantInvalid(str(exc)) from None
 
 
 def _check_template(after: Any) -> None:
     _require(
-        isinstance(after, Mapping) and set(after) == TEMPLATE_FIELDS,
+        isinstance(after, Mapping)
+        and TEMPLATE_FIELDS <= set(after) <= TEMPLATE_FIELDS | TEMPLATE_OPTIONAL_FIELDS,
         f"a grant template needs exactly {sorted(TEMPLATE_FIELDS)}",
     )
     _require(
@@ -141,6 +152,12 @@ def _check_template(after: Any) -> None:
         "grant_template_id is a grant template id",
     )
     _check_terms(after)
+    if "ttl_seconds" in after:
+        try:
+            grant_deadline(datetime.now(UTC), after["ttl_seconds"])
+        except ValueError as exc:
+            raise GrantInvalid(str(exc)) from None
+        _require(after["ttl_seconds"] is not None, "template TTL is a finite lifetime")
 
 
 @dataclass(frozen=True)
@@ -154,6 +171,7 @@ class GrantRecord:
     open_request: bool
     jobs: Sequence[tuple[str, str]]
     policy_digest: str
+    expires_at: str | None = None
 
     @classmethod
     def from_after(cls, after: Mapping[str, Any]) -> GrantRecord:
@@ -169,10 +187,14 @@ class GrantRecord:
             open_request=after["open_request"],
             jobs=tuple((j["job_id"], j["digest"]) for j in after["jobs"]),
             policy_digest=after["policy_digest"],
+            expires_at=after.get("expires_at"),
         )
 
     def covers_operation(self, operation_id: str, digest: str) -> bool:
         return (operation_id, digest) in self.operations
+
+    def is_active_at(self, now: datetime) -> bool:
+        return self.expires_at is None or now < parse_utc_seconds(self.expires_at)
 
     @property
     def after(self) -> dict[str, Any]:
@@ -181,7 +203,7 @@ class GrantRecord:
             if self.subject_principal is not None
             else {"role": self.subject_role}
         )
-        return {
+        after = {
             "v": 1,
             "grant_id": self.grant_id,
             "secret_id": self.secret_id,
@@ -192,6 +214,9 @@ class GrantRecord:
             "jobs": [{"job_id": j, "digest": d} for j, d in self.jobs],
             "policy_digest": self.policy_digest,
         }
+        if self.expires_at is not None:
+            after["expires_at"] = self.expires_at
+        return after
 
 
 @dataclass(frozen=True)
@@ -208,9 +233,16 @@ class GrantTemplate:
         terms = {k: v for k, v in after.items() if k != "grant_template_id"}
         return cls(grant_template_id=after["grant_template_id"], terms=terms)
 
-    def grant_for(self, secret_id: str, *, grant_id: str) -> GrantRecord:
+    def grant_for(
+        self, secret_id: str, *, grant_id: str, now: datetime | None = None
+    ) -> GrantRecord:
         """The grant of these terms on ``secret_id``."""
-        return GrantRecord.from_after({**self.terms, "grant_id": grant_id, "secret_id": secret_id})
+        terms = dict(self.terms)
+        if "ttl_seconds" in terms:
+            deadline = grant_deadline(now or datetime.now(UTC), terms.pop("ttl_seconds"))
+            assert deadline is not None
+            terms["expires_at"] = deadline.strftime("%Y-%m-%dT%H:%M:%SZ")
+        return GrantRecord.from_after({**terms, "grant_id": grant_id, "secret_id": secret_id})
 
     @property
     def digest(self) -> str:

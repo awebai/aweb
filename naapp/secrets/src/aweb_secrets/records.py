@@ -11,8 +11,10 @@ from __future__ import annotations
 import json
 from collections.abc import Sequence
 from dataclasses import dataclass
+from datetime import UTC, datetime
 
 from aweb_naapp.egress import InternalDestinations
+from awid.utc_timestamps import parse_utc_seconds
 from pgdbm.core import TransactionManager
 
 from aweb_secrets import run_pin_store
@@ -162,8 +164,8 @@ async def create_grant(
         """
         INSERT INTO {{tables.grants}} (
             grant_id, installation_id, team_id, secret_id, subject_principal, subject_role,
-            capability, open_request, policy_digest, record
-        ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
+            capability, open_request, policy_digest, record, expires_at
+        ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)
         """,
         grant.grant_id,
         installation_id,
@@ -175,6 +177,7 @@ async def create_grant(
         grant.open_request,
         grant.policy_digest,
         json.dumps(grant.after),
+        parse_utc_seconds(grant.expires_at) if grant.expires_at is not None else None,
     )
     for operation_id, digest in grant.operations:
         await tx.execute(
@@ -237,7 +240,45 @@ async def active_grants(
         principal_did,
         list(roles),
     )
-    return [GrantRecord.from_after(json.loads(row["record"])) for row in rows]
+    now = datetime.now(UTC)  # after any lock wait, not the transaction start
+    grants = [GrantRecord.from_after(json.loads(row["record"])) for row in rows]
+    return [grant for grant in grants if grant.is_active_at(now)]
+
+
+async def renew_grant(
+    tx: TransactionManager, installation_id: str, team_id: str, grant: GrantRecord
+) -> None:
+    """Apply owner-approved deadline bytes, preserving every other grant term.
+
+    The change writer holds the forest and grant rows exclusively before B2.
+    Expiry can be renewed; revocation cannot. This function supplies no authority.
+    """
+    row = await tx.fetch_one(
+        "SELECT record, revoked_at FROM {{tables.grants}} WHERE installation_id=$1 AND team_id=$2 AND grant_id=$3 FOR UPDATE",
+        installation_id,
+        team_id,
+        grant.grant_id,
+    )
+    if row is None:
+        raise RecordMissing("no such grant in this installation")
+    if row["revoked_at"] is not None:
+        raise RecordRefused("a revoked grant cannot be renewed", "grant_revoked")
+    before = GrantRecord.from_after(json.loads(row["record"]))
+    old_terms, new_terms = before.after, grant.after
+    old_terms.pop("expires_at", None)
+    new_terms.pop("expires_at", None)
+    if old_terms != new_terms:
+        raise RecordRefused("renewal cannot change grant terms", "grant_terms_changed")
+    if grant.expires_at is None or not grant.is_active_at(datetime.now(UTC)):
+        raise RecordRefused("renewal needs a future finite deadline", "grant_expired")
+    await tx.execute(
+        "UPDATE {{tables.grants}} SET record=$4, expires_at=$5 WHERE installation_id=$1 AND team_id=$2 AND grant_id=$3",
+        installation_id,
+        team_id,
+        grant.grant_id,
+        json.dumps(grant.after),
+        parse_utc_seconds(grant.expires_at),
+    )
 
 
 async def set_grant_template(

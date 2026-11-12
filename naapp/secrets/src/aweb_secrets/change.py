@@ -50,7 +50,7 @@ KINDS: Mapping[str, frozenset[str]] = {
     "operation": frozenset({"create"}),
     "job": frozenset({"create", "update"}),
     "runner": frozenset({"create", "update"}),
-    "grant": frozenset({"create"}),
+    "grant": frozenset({"create", "renew"}),
     "grant_template": frozenset({"create", "update"}),
     "role": frozenset({"create"}),
     "approver": frozenset({"create"}),
@@ -293,13 +293,15 @@ AFTER_SHAPES: dict[tuple[str, int], AfterShape] = {
         derived=_record(runners.RunnerRecord.from_after),
     ),
     ("grant", 1): AfterShape(
-        fields=_record_fields(grant.FIELDS),
+        fields=_record_fields(grant.FIELDS | grant.OPTIONAL_FIELDS),
+        optional_fields=grant.OPTIONAL_FIELDS,
         ref_field="grant_id",
         identity=("grant_id",),
         derived=_record(grant.GrantRecord.from_after),
     ),
     ("grant_template", 1): AfterShape(
-        fields=_record_fields(grant.TEMPLATE_FIELDS),
+        fields=_record_fields(grant.TEMPLATE_FIELDS | grant.TEMPLATE_OPTIONAL_FIELDS),
+        optional_fields=grant.TEMPLATE_OPTIONAL_FIELDS,
         ref_field="grant_template_id",
         identity=("grant_template_id",),
         derived=_record(grant.GrantTemplate.from_after),
@@ -426,6 +428,8 @@ def _item(value: Any, where: str) -> tuple[str, tuple[Any, ...]]:
     if shape is None or isinstance(version, bool):
         raise ChangeRefused(f"{where}.after.v names no frozen shape for {kind}")
     _fields(after, f"{where}.after", shape.fields, optional=shape.optional_fields)
+    if kind == "grant" and op == "renew" and "expires_at" not in after:
+        raise ChangeRefused("renewal requires an explicit finite expires_at")
     found = dict(after)
     if shape.derived is not None:
         derived = shape.derived(after, f"{where}.after")

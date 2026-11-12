@@ -1,11 +1,13 @@
 """Owner HTTP access drafts; the existing change writer owns all effects."""
 
+from datetime import UTC, datetime
 from html import escape
 from pathlib import Path
 from typing import Any
 
 from aweb_naapp.console import ConsoleRoute
 from aweb_naapp.egress import EgressRefused, InternalDestinations, canonical_url
+from awid.grant_lifetime import default_grant_ttl_seconds, grant_deadline
 from fastapi import APIRouter, Depends, HTTPException, Request
 from fastapi.responses import Response
 
@@ -47,6 +49,16 @@ def _configuration(body: dict[str, Any], *, secret_id: str, owner: str) -> list[
     This form defines one fixed HTTP operation, its exact destination and a
     role grant. Digests use the domain models; the browser does not author pins.
     """
+    ttl = body.get("ttl_seconds", "default")
+    if ttl == "default":
+        ttl = default_grant_ttl_seconds()
+    elif ttl == "never":
+        ttl = None
+    try:
+        deadline = grant_deadline(datetime.now(UTC), ttl)
+    except ValueError:
+        raise _invalid("ttl_seconds") from None
+    lifetime = {} if deadline is None else {"expires_at": deadline.strftime("%Y-%m-%dT%H:%M:%SZ")}
     try:
         url = canonical_url(_text(body, "url"))
     except (ValueError, TypeError, EgressRefused):
@@ -136,6 +148,7 @@ def _configuration(body: dict[str, Any], *, secret_id: str, owner: str) -> list[
                 "open_request": False,
                 "jobs": [],
                 "policy_digest": policy.digest,
+                **lifetime,
             }
         )
     except (ValueError, TypeError):
@@ -244,6 +257,8 @@ def _form(installation_id: str) -> str:
         "<p>The secret’s own approval requirements still apply; you approve those uses with your passkey. A use approval expires after 15 minutes.</p>"
         + _input("capacity", "Uses per agent", kind="number", extra='min="1" value="30"')
         + _input("window_s", "Rate window in seconds", kind="number", extra='min="1" value="3600"')
+        + '<p><label for="grant-ttl">Grant lifetime in seconds (blank uses server policy; never means revoke-only)</label><br>'
+        '<input id="grant-ttl" name="ttl_seconds" type="text" size="24" placeholder="default"></p>'
         + '</fieldset><p><label for="grant-reason">Reason for this change (optional)</label><br>'
         '<textarea id="grant-reason" name="reason" cols="24" rows="2" maxlength="512"></textarea></p>'
         '<button class="btn primary" type="submit">Save a draft for review</button></form>'
@@ -277,7 +292,14 @@ def grant_forms_router(*, changes: ConsoleChanges) -> APIRouter:
     )
     async def draft(installation_id: str, request: Request) -> dict[str, Any]:
         current = await changes.console.sessions.current(request)
-        body = await _body(request, _FIELDS)
+        try:
+            raw = await request.json()
+        except ValueError:
+            raise HTTPException(400, "request_invalid") from None
+        fields = _FIELDS | (
+            {"ttl_seconds"} if isinstance(raw, dict) and "ttl_seconds" in raw else set()
+        )
+        body = await _body(request, fields)
         async with _errors(changes.console, current):
             admitted = await changes._installation(current, installation_id)
             async with changes.console.db.transaction() as tx:

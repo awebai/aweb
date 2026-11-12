@@ -739,6 +739,7 @@ class Containment:
         approval_ids: tuple[str, ...] = (),
         job_ids: Sequence[str] = (),
         before_approvals: BeforeApprovals | None = None,
+        exclusive_grants: bool = False,
     ) -> None:
         """Lock the complete replacement/reenable forest before B2 consumption.
 
@@ -786,7 +787,7 @@ class Containment:
         await tx.fetch_all(
             "SELECT grant_id FROM {{tables.grants}}"
             " WHERE installation_id=$1 AND team_id=$2 AND secret_id=ANY($3::text[])"
-            " ORDER BY grant_id FOR SHARE",
+            " ORDER BY grant_id" + (" FOR UPDATE" if exclusive_grants else " FOR SHARE"),
             installation_id,
             team_id,
             list(locked),

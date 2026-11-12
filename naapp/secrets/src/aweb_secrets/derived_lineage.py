@@ -181,9 +181,7 @@ class LockedForest:
         for nodes in self.paths:
             _check_locked_ancestry(nodes, self._grants, now=now, max_ttl_s=max_ttl_s)
         return frozenset(
-            grant_id
-            for grant_id, row in self._grants.items()
-            if row is not None and row["revoked_at"] is None
+            grant_id for grant_id, row in self._grants.items() if _grant_live(row, now)
         )
 
 
@@ -222,12 +220,9 @@ async def check_ancestry(
     after any later blocking phase before a new admission or recording write.
     """
     grants = await _lock_grants(tx, nodes, candidate_grant_ids)
-    _check_locked_ancestry(nodes, grants, now=clock(), max_ttl_s=max_ttl_s)
-    return frozenset(
-        grant_id
-        for grant_id, row in grants.items()
-        if row is not None and row["revoked_at"] is None
-    )
+    now = clock()
+    _check_locked_ancestry(nodes, grants, now=now, max_ttl_s=max_ttl_s)
+    return frozenset(grant_id for grant_id, row in grants.items() if _grant_live(row, now))
 
 
 async def _lock_grants(
@@ -242,7 +237,7 @@ async def _lock_grants(
     grants = {}
     for grant_id in sorted(source_ids | set(candidate_grant_ids)):
         row = await tx.fetch_one(
-            "SELECT secret_id, policy_digest, revoked_at FROM {{tables.grants}}"
+            "SELECT secret_id, policy_digest, revoked_at, expires_at FROM {{tables.grants}}"
             " WHERE installation_id=$1 AND team_id=$2 AND grant_id=$3 FOR SHARE",
             installation_id,
             team_id,
@@ -250,6 +245,14 @@ async def _lock_grants(
         )
         grants[grant_id] = row
     return grants
+
+
+def _grant_live(row: Any, now: datetime) -> bool:
+    return (
+        row is not None
+        and row["revoked_at"] is None
+        and (row.get("expires_at") is None or now < row["expires_at"])
+    )
 
 
 def _check_locked_ancestry(
@@ -262,11 +265,7 @@ def _check_locked_ancestry(
     for node in nodes:
         if node.source_grant_id is not None:
             grant = grants[node.source_grant_id]
-            if (
-                grant is None
-                or grant["revoked_at"] is not None
-                or grant["secret_id"] != node.parent_secret_id
-            ):
+            if not _grant_live(grant, now) or grant["secret_id"] != node.parent_secret_id:
                 raise LineageRefused("grant_revoked")
     for index, node in enumerate(nodes):
         if node.secret.state != "active" or node.secret.active_version is None:
@@ -326,14 +325,13 @@ async def record_lineage(
     if expires_at <= now or any(expires_at > deadline for deadline in deadlines):
         raise LineageRefused("secret_disabled")
     source = grants[source_grant_id]
-    if (
-        source is None
-        or source["revoked_at"] is not None
-        or source["secret_id"] != parent_secret_id
-    ):
+    if not _grant_live(source, now) or source["secret_id"] != parent_secret_id:
         raise LineageRefused("grant_revoked")
     if source["policy_digest"] != policy_digest:
         raise LineageRefused("operation_not_allowed")
+    if source.get("expires_at") is not None:
+        # Persist the source bound. A later renewal never revives an expired child.
+        expires_at = min(expires_at, source["expires_at"])
     await tx.execute(
         """
         INSERT INTO {{tables.derived_secrets}} (

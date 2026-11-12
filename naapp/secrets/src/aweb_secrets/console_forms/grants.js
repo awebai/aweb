@@ -16,6 +16,7 @@
     approval: "Choose the approval requirement.",
     capacity: "Enter a positive whole number of uses per agent.",
     window_s: "Enter a positive whole number of seconds.",
+    ttl_seconds: "Enter a whole number from 60 to 2592000, default, or never.",
   };
   form.addEventListener("input", event => {
     const control = event.target;
@@ -35,6 +36,8 @@
     const data = Object.fromEntries(new FormData(form));
     data.projection = data.projection.split(/\r?\n/).map(value => value.trim()).filter(Boolean);
     for (const name of ["max_bytes", "capacity", "window_s"]) data[name] = Number(data[name]);
+    data.ttl_seconds = data.ttl_seconds.trim() || "default";
+    if (/^[0-9]+$/.test(data.ttl_seconds)) data.ttl_seconds = Number(data.ttl_seconds);
     try {
       const drafted = await api.post(form.action, data);
       const root = "/installations/" + encodeURIComponent(form.dataset.installation) + "/change-sets";

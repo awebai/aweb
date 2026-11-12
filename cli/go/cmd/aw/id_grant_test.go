@@ -772,3 +772,80 @@ func TestGrantCommandsWithGrantIdentityHomeRefuseRootAuthorityInRealBinary(t *te
 		t.Fatalf("grant-home command stopped at policy gate instead of root-authority refusal:\n%s", out)
 	}
 }
+
+func TestRunGrantRenewUpdatesOnlyMatchingGrantHome(t *testing.T) {
+	resetGrantCommandGlobals(t)
+	tmp := t.TempDir()
+	realTmp, err := filepath.EvalSymlinks(tmp)
+	if err != nil {
+		t.Fatal(err)
+	}
+	tmp = realTmp
+	t.Chdir(tmp)
+	setGrantTestEnv(t, tmp)
+	out := filepath.Join(tmp, "worker")
+	var pub ed25519.PublicKey
+	var state *awconfig.GrantHome
+	var calls int
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if serveUnadvertisedHealth(w, r) {
+			return
+		}
+		calls++
+		if r.Method != http.MethodPost || r.URL.Path != "/v1/identity-grants/grant-777/renew" {
+			t.Errorf("unexpected request %s %s", r.Method, r.URL.Path)
+		}
+		if !strings.HasPrefix(r.Header.Get("Authorization"), "DIDKey ") || r.Header.Get("X-AWID-Team-Certificate") == "" {
+			t.Error("renewal needs ordinary root certificate authority")
+		}
+		_ = json.NewEncoder(w).Encode(aweb.IdentityGrantView{GrantID: state.GrantID, TeamID: state.TeamID, SubjectDIDAW: state.Subject.DIDAW, GrantDIDKey: awid.ComputeDIDKey(pub), Scopes: state.Scopes, ExpiresAt: "2099-02-01T00:00:00Z"})
+	}))
+	defer server.Close()
+	writeDefaultWorkspaceBindingForTest(t, tmp, server.URL)
+	pub, state = writeGrantHomeForTest(t, out, server.URL)
+	_, selection, err := resolveClientSelection()
+	if err != nil {
+		t.Fatal(err)
+	}
+	state.TeamID = selection.TeamID
+	state.Subject.DIDKey = selection.DID
+	if err := awconfig.SaveGrantHomeTo(awconfig.GrantHomeStatePath(out), state); err != nil {
+		t.Fatal(err)
+	}
+	grantRenewTTL = 24 * time.Hour
+	grantRenewHome = out
+	t.Cleanup(func() { grantRenewTTL = 0; grantRenewHome = "" })
+	before, err := os.ReadFile(awconfig.GrantHomeSigningKeyPath(out))
+	if err != nil {
+		t.Fatal(err)
+	}
+	var runErr error
+	captureIDCommandStdout(t, func() { runErr = runGrantRenew(&cobra.Command{}, []string{state.GrantID}) })
+	if runErr != nil {
+		t.Fatal(runErr)
+	}
+	renewed, err := awconfig.LoadGrantHome(out)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if renewed.ExpiresAt != "2099-02-01T00:00:00Z" || renewed.MintedAt != state.MintedAt {
+		t.Fatalf("renewed=%+v", renewed)
+	}
+	after, err := os.ReadFile(awconfig.GrantHomeSigningKeyPath(out))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(after) != string(before) {
+		t.Fatal("renewal changed delegated signing key")
+	}
+	if err := runGrantRenew(&cobra.Command{}, []string{"another-grant"}); err == nil {
+		t.Fatal("mismatched grant home accepted")
+	}
+	if calls != 1 {
+		t.Fatalf("mismatched renewal made a request: %d", calls)
+	}
+	t.Setenv(awconfig.IdentityHomeEnv, out)
+	if err := runGrantRenew(&cobra.Command{}, []string{state.GrantID}); !errors.Is(err, errGrantHomeRootAuthority) {
+		t.Fatalf("self-renew err=%v", err)
+	}
+}

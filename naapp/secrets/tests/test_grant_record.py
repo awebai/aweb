@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import copy
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 
 import pytest
 from awid.did import did_from_public_key, stable_id_from_public_key
@@ -104,14 +104,14 @@ def test_finite_grant_preserves_its_approved_deadline_and_refuses_at_the_boundar
     after = _grant(expires_at="2026-11-13T00:00:00Z")
     grant = GrantRecord.from_after(after)
     assert grant.after == after
-    assert grant.is_active_at(datetime(2026, 11, 12, 23, 59, 59, tzinfo=timezone.utc))
-    assert not grant.is_active_at(datetime(2026, 11, 13, tzinfo=timezone.utc))
+    assert grant.is_active_at(datetime(2026, 11, 12, 23, 59, 59, tzinfo=UTC))
+    assert not grant.is_active_at(datetime(2026, 11, 13, tzinfo=UTC))
 
 
 def test_legacy_grant_keeps_its_exact_unbounded_record():
     grant = GrantRecord.from_after(USE)
     assert grant.after == USE
-    assert grant.is_active_at(datetime(2400, 1, 1, tzinfo=timezone.utc))
+    assert grant.is_active_at(datetime(2400, 1, 1, tzinfo=UTC))
 
 
 @pytest.mark.parametrize("expiry", [None, "never", "nonsense", "2026-11-13T00:00:00"])
@@ -192,7 +192,7 @@ def test_a_template_makes_the_grant_it_describes_for_a_secret() -> None:
 def test_finite_template_resolves_a_fresh_deadline_without_changing_its_pin():
     template = GrantTemplate.from_after({**TEMPLATE, "ttl_seconds": 3600})
     before = template.digest
-    now = datetime(2026, 11, 12, tzinfo=timezone.utc)
+    now = datetime(2026, 11, 12, tzinfo=UTC)
     issued = template.grant_for("sec_child01", grant_id="grt_child01", now=now)
     assert issued.expires_at == "2026-11-12T01:00:00Z"
     assert template.digest == before

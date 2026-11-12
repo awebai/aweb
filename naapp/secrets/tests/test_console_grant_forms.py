@@ -5,6 +5,7 @@ HO6's complete vault-backed configuration journey remains separate.
 """
 
 from copy import deepcopy
+from datetime import UTC
 from urllib.parse import quote
 
 import pytest
@@ -278,3 +279,22 @@ async def test_lost_committed_response_keeps_grant_resubmission_guarded(
         assert reached_server == [201]
         assert await world.db.fetch_value("SELECT count(*) FROM {{tables.change_sets}}") == 1
         assert await world.db.fetch_value("SELECT count(*) FROM {{tables.grants}}") == 0
+
+
+def test_grant_draft_resolves_one_default_before_owner_approval(monkeypatch):
+    from datetime import datetime
+
+    from aweb_secrets.console_forms.grants import _configuration
+    from aweb_secrets.grant import GrantRecord
+
+    secret = SecretRecord.from_after(deepcopy(SECRET))
+    monkeypatch.setenv("AWEB_GRANT_DEFAULT_TTL_SECONDS", "86400")
+    items = _configuration(
+        configuration(secret), secret_id=secret.secret_id, owner=ALICE.principal_did
+    )
+    grant = GrantRecord.from_after(next(i["after"] for i in items if i["kind"] == "grant"))
+    remaining = datetime.fromisoformat(grant.expires_at.replace("Z", "+00:00")) - datetime.now(UTC)
+    assert 86398 < remaining.total_seconds() <= 86400
+    body = {**configuration(secret), "ttl_seconds": "never"}
+    items = _configuration(body, secret_id=secret.secret_id, owner=ALICE.principal_did)
+    assert "expires_at" not in next(i["after"] for i in items if i["kind"] == "grant")
