@@ -384,7 +384,8 @@ async def test_put_skip_dns_writes_no_epoch(case, tree, awid_db_infra, monkeypat
     resp = await tree.replace_controller("root_rotated")
     monkeypatch.delenv("AWID_SKIP_DNS_VERIFY")
 
-    assert resp.status_code == 200, resp.text
+    assert resp.status_code == case["expected"]["http_status"], resp.text
+    assert case["expected"]["accepted"] is False
     assert (await _namespace(tree))["controller_did"] == case["expected"]["stored_controller"]
     assert await _epochs(awid_db_infra) == epochs
     assert await _root_authority(tree, "other-human") == case["expected"]["current_authority"]
@@ -581,10 +582,15 @@ async def test_parent_recovery_propagates_delegated_children_atomically(clocked_
     assert (await _namespace(tree))["delegation"]["parent_controller_key"] == did_key("root_rotated")
 
 
+@pytest.mark.parametrize("skip_dns", [False, True])
 @pytest.mark.asyncio
-async def test_child_recovery_updates_its_delegation_and_replaced_epoch(clocked_client, manual_clock, awid_db_infra):
+async def test_child_recovery_updates_its_delegation_and_replaced_epoch(
+    clocked_client, manual_clock, awid_db_infra, monkeypatch, skip_dns,
+):
     tree, headers = await _delegated_tree(clocked_client, manual_clock)
     assert (await tree.register_namespace(headers=headers)).status_code == 200
+    if skip_dns:
+        monkeypatch.setenv("AWID_SKIP_DNS_VERIFY", "1")
     parent = build_signed_headers(seed("depth1"), did_key("depth1"), domain=DOMAIN,
                                   operation="authorize_subdomain_rotation", child_domain=DOMAIN,
                                   new_controller_did=did_key("root_rotated"))

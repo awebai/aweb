@@ -26,6 +26,10 @@ logger = logging.getLogger(__name__)
 _CERTIFICATE_VERSION = 1
 
 
+class CertificateSignatureError(ValueError):
+    """The certificate failed verification under the registry-resolved key."""
+
+
 # ---------------------------------------------------------------------------
 # Certificate verification
 # ---------------------------------------------------------------------------
@@ -96,7 +100,7 @@ def parse_and_verify_certificate(
 
     # Verify certificate signature against the registry-resolved team key
     if not _verify_certificate_signature(cert, team_did_key):
-        raise ValueError("Certificate signature verification failed")
+        raise CertificateSignatureError("Certificate signature verification failed")
 
     # Check revocation
     if revocation_checker(team_id, certificate_id):

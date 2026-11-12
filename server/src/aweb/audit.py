@@ -23,6 +23,9 @@ _ACTIONS = {
     'activate_team_roles_endpoint': 'roles.activate',
     'reset_team_roles_to_default_endpoint': 'roles.reset',
     'deactivate_team_roles_endpoint': 'roles.deactivate',
+    'create_team_instructions_endpoint': 'instructions.create',
+    'activate_team_instructions_endpoint': 'instructions.activate',
+    'reset_team_instructions_to_default_endpoint': 'instructions.reset',
     'delete_repo': 'repos.delete',
     'install_app_route': 'apps.install',
     'approve_installation_request_route': 'apps.requests.approve',
@@ -88,12 +91,13 @@ def set_verified_audit_actor(request: Request, actor: AuditActor) -> None:
 
 
 def _target(request: Request, action: str, actor: AuditActor) -> str:
-    if action == 'roles.activate':
-        value = request.path_params['team_roles_id']
+    document, _, operation = action.partition('.')
+    if document in ('roles', 'instructions') and operation == 'activate':
+        value = request.path_params[f'team_{document}_id']
         try:
-            return f'roles:{UUID(str(value))}'
+            return f'{document}:{UUID(str(value))}'
         except ValueError:
-            return 'roles:invalid'
+            return f'{document}:invalid'
     if action == 'repos.delete':
         value = request.path_params['repo_id']
         try:
@@ -102,7 +106,7 @@ def _target(request: Request, action: str, actor: AuditActor) -> str:
             return 'repo:invalid'
     if action.startswith('apps.'):
         return getattr(request.state, 'operator_audit_target', None) or 'app:invalid'
-    return f'roles:{actor.team_id}'
+    return f'{document}:{actor.team_id}'
 
 
 async def audit_success(tx, request: Request, team_id: str) -> None:

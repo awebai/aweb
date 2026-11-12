@@ -1,8 +1,9 @@
 """Runs inside a naapp's packaged image against the lab's real DNS, TLS and AWID.
 
-The lab (:mod:`aweb_naapp_testing.package_lab`) copies this file next to the
-service's own probe, which calls :func:`run`. It imports only what every naapp
-image carries, never the rest of ``aweb_naapp_testing``.
+The lab (:mod:`aweb_naapp_testing.package_lab`) copies this module and its
+identity helper as a minimal package next to the service's own probe, which
+calls :func:`run`. It imports only what every naapp image carries, never the
+rest of ``aweb_naapp_testing``.
 """
 
 import asyncio
@@ -15,10 +16,10 @@ from typing import Any
 import asyncpg
 import httpx
 from fastapi import HTTPException
-from packaged_identity import PackagedIdentityError, require_commit
 
 from aweb_naapp.runtime.app import NaappRuntime
 from aweb_naapp.runtime.team_server import TeamServerUnavailable
+from aweb_naapp_testing.packaged_identity import PackagedIdentityError, require_commit
 
 
 async def probe(
