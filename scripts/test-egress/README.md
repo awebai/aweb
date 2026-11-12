@@ -83,6 +83,23 @@ an unset or relative helper path when `AWEB_UNIT_REPORT_DIR` enables reporting.
 It never derives the repository layout from its own location. With reporting
 disabled, its standalone `make test` still runs the original `uv run pytest`.
 
+Secrets uses the same caller-supplied reporter interface. Its normal Naapp unit
+entry divides whole test modules using `candidate-gate/secrets-shards.json`.
+Before any package starts, real pytest collection checks that both shards are
+disjoint, their union equals the full unsharded collection, and each preserves
+native order. A new module omitted from the manifest fails this check. Receipts
+are retained under `packages/secrets-collection`; these are collection evidence,
+not executed-test counts. Rebalance the manifest deliberately when tests change.
+
+The first Secrets shard keeps the original package slot; the second is appended
+after the original five commands and waits for a slot. The existing five-command
+concurrency cap and all resource limits stay unchanged. Each shard owns its
+basetemp, pytest cache, package log and `naapp-secrets-1.xml` or
+`naapp-secrets-2.xml` report. Standalone `make -C naapp/secrets test` still selects
+the full suite. Local preflight includes `python3 scripts/test_secrets_shards.py
+--frameworks` and real full/shard collect-only qualification; the full package
+suites and PostgreSQL mutation target execute on the authorized VM gate.
+
 `make test-cli`, `test-server`, and `test-awid` prepare dependencies, then run
 behind the native deny proxy. Loopback stays direct. The exact existing
 `127.0.0.1.nip.io` fixture is forwarded to 127.0.0.1 without DNS. Reserved test

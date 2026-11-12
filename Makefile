@@ -142,6 +142,7 @@ test: test-egress-controls check-aw-commit-repo-stamp check-cli-go-tidy test-ide
 test-shipping:
 	python3 scripts/test-egress/test_driver_evidence.py
 	python3 scripts/test_unit_reports.py
+	python3 scripts/test_secrets_shards.py
 	python3 scripts/test_isolated_suites.py
 	python3 scripts/test_gate_budgets.py
 	python3 scripts/test_fixture_repo.py
