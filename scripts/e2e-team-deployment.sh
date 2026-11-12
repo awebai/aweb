@@ -167,12 +167,16 @@ print(json.dumps({role: sorted({info[4][0] for info in socket.getaddrinfo(host, 
 ' "$hosts" </dev/null)"
   network="${project}_services"
   denied=()
+  # A protected backend egress could reach is one on the services network;
+  # Redis is on aweb's backend network alone.
+  local address
   for service in postgres redis; do
     id="$(dc ps -q "$service")"
     [[ -n "$id" ]] || continue
-    denied+=("$(docker inspect --format "{{(index .NetworkSettings.Networks \"$network\").IPAddress}}" "$id")")
+    address="$(docker inspect --format "{{with index .NetworkSettings.Networks \"$network\"}}{{.IPAddress}}{{end}}" "$id")"
+    [[ -z "$address" ]] || denied+=("$address")
   done
-  python_in_server - "$deployment" "$TEAM_DIR" "$run_dir/egress-policy.json" "$addresses" "${denied[@]}" <<'PY'
+  python_in_server - "$deployment" "$TEAM_DIR" "$run_dir/egress-policy.json" "$addresses" ${denied[@]+"${denied[@]}"} <<'PY'
 import importlib.util
 import json
 import sys

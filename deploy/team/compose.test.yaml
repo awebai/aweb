@@ -34,12 +34,24 @@ services:
       timeout: 5s
       retries: 30
 
+  # The registry's own cache, apart from aweb's.
+  registry-redis:
+    image: redis:7-alpine
+    tmpfs:
+      - /data
+    networks: [services]
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 2s
+      timeout: 5s
+      retries: 30
+
   registry:
     image: ${TEST_AWID_IMAGE:?}
     dns: ["${TEST_DNS_IP:?}"]
     environment:
       AWID_DATABASE_URL: postgresql://postgres@registry-db:5432/postgres
-      AWID_REDIS_URL: redis://redis:6379/3
+      AWID_REDIS_URL: redis://registry-redis:6379/0
       AWID_DB_SCHEMA: awid
       AWID_HOST: 0.0.0.0
       AWID_PORT: 8010
@@ -51,7 +63,7 @@ services:
     networks: [services]
     depends_on:
       registry-db: {condition: service_healthy}
-      redis: {condition: service_healthy}
+      registry-redis: {condition: service_healthy}
 
   smtp:
     image: axllent/mailpit:v1.27

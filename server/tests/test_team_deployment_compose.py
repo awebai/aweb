@@ -52,8 +52,16 @@ def test_an_optional_component_is_its_own_file_and_the_core_file_needs_none_of_i
 
 
 def test_the_services_are_on_the_services_network_and_none_is_on_the_agents_network():
-    for name in ("aweb", "secrets", "logs", "signer", "postgres", "redis"):
+    for name in ("secrets", "logs", "signer", "postgres"):
         assert SERVICES[name]["networks"] == ["services"], name
+    assert SERVICES["aweb"]["networks"] == ["services", "backend"]
+
+
+def test_redis_is_reachable_by_aweb_alone():
+    # aweb is Redis's one client; no app, signer or agent has a route to it.
+    assert SERVICES["redis"]["networks"] == ["backend"]
+    assert [name for name, service in SERVICES.items() if "backend" in service.get("networks", [])] == ["redis", "aweb"]
+    assert COMPOSE["networks"]["backend"] == {"internal": True}
 
 
 def test_the_agents_network_has_no_route_out():
