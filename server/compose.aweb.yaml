@@ -10,7 +10,10 @@ services:
     restart: unless-stopped
     environment:
       AWEB_DATABASE_URL_FILE: /run/secrets/aweb/database-url
-      AWEB_REDIS_URL: redis://redis:6379/0
+      # A team deployment's env file sets the URL empty and names the file
+      # that holds it with the password; without either, the bundled Redis.
+      AWEB_REDIS_URL: ${AWEB_REDIS_URL-redis://redis:6379/0}
+      AWEB_REDIS_URL_FILE:
       AWEB_HOST: 0.0.0.0
       AWEB_PORT: 8000
       AWEB_PUBLIC_ORIGIN: ${AWEB_PUBLIC_ORIGIN:?AWEB_PUBLIC_ORIGIN is required, the https origin agents reach this server at}

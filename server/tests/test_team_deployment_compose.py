@@ -112,8 +112,25 @@ def test_each_service_mounts_only_its_own_secrets_read_only():
         "logs": [f"{secrets_dir}/${{LOGS_SECRETS:-logs}}:/run/secrets/logs:ro"],
         "signer": [f"{secrets_dir}/${{SIGNER_SECRETS:-signer}}:/run/secrets/signer:ro"],
         "postgres": [f"{secrets_dir}/${{POSTGRES_SECRETS:-postgres}}:/run/secrets/postgres:ro"],
-        "redis": [],
+        "redis": [f"{secrets_dir}/redis:/run/secrets/redis:ro"],
     }
+
+
+def test_redis_refuses_a_client_without_the_password_in_its_acl_file():
+    # The ACL file holds the password's SHA-256 alone; the password is in
+    # aweb's redis-url and in no argument or environment.
+    redis = SERVICES["redis"]
+    assert redis["command"] == ["redis-server", "--aclfile", "/run/secrets/redis/users.acl"]
+    assert "environment" not in redis
+    # Healthy is up and refusing a client that has not authenticated.
+    assert redis["healthcheck"]["test"] == ["CMD-SHELL", "redis-cli ping | grep -q '^NOAUTH'"]
+
+
+def test_aweb_takes_its_redis_url_from_the_env_file_or_the_bundled_default():
+    # The team deployment's env file sets the URL empty and names the file;
+    # the customer file's env sets neither and keeps the default.
+    assert environment(AWEB)["AWEB_REDIS_URL"] == "${AWEB_REDIS_URL-redis://redis:6379/0}"
+    assert environment(AWEB)["AWEB_REDIS_URL_FILE"] is None
 
 
 def test_only_aweb_and_the_apps_are_published_and_on_the_address_the_operator_gave():

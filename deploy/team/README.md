@@ -48,7 +48,12 @@ is the `x-env` of that input in the schema, so the mapping is written once.
   One exception, kept because operators' launch configurations name it: the
   agents' harness login is mounted at `/etc/agent-login/`.
 - **A database URL is one file** that holds the whole URL, password included
-  (`database-url`).
+  (`database-url`). So is aweb's Redis URL (`redis-url`).
+- **Redis refuses a client without the password.** Its one secret file,
+  `redis/users.acl` under `compose.secretsDir` (owned by the image's
+  `redis` uid, `0400`), holds one line,
+  `user default on #<SHA-256 of the password, hex> ~* &* +@all`: the hash,
+  not the password, which only aweb's `redis-url` holds.
 - **A service is reached by its component name:** `aweb:8000`,
   `signer:8080`, `secrets:8770`, `logs:8765`, `postgres:5432`, `redis:6379`,
   `egress`. Ports and service uids are fixed, not inputs.

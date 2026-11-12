@@ -364,7 +364,8 @@ For `aweb`:
 
 - `AWEB_DATABASE_URL` or `DATABASE_URL`, or `AWEB_DATABASE_URL_FILE`: a file
   that holds the URL, so the database password is in no environment
-- `AWEB_REDIS_URL` or `REDIS_URL`
+- `AWEB_REDIS_URL` or `REDIS_URL`, or `AWEB_REDIS_URL_FILE`: a file that
+  holds the URL, so a Redis password is in no environment
 - `AWID_REGISTRY_URL`
 - `AWEB_PUBLIC_ORIGIN` for federated mail/chat delivery
 - `APP_ENV=development` when using an internal `http://awid:8010` registry

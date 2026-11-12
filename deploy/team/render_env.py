@@ -183,6 +183,10 @@ def render(config: object) -> dict[str, str]:
     # aw id team add-member, so aweb refuses one the registry does not hold:
     # an unregistered certificate is one no revocation could ever name.
     out["AWEB_REQUIRE_REGISTERED_CERTIFICATES"] = "true"
+    # The bundled Redis refuses a client without its password, which aweb
+    # reads with the whole URL from its own file.
+    out["AWEB_REDIS_URL"] = ""
+    out["AWEB_REDIS_URL_FILE"] = "/run/secrets/aweb/redis-url"
     # aweb fetches app manifests from internal addresses only inside the services range.
     if "appInternalOrigins" in config["aweb"]:
         out["AWEB_APP_INTERNAL_CIDR"] = config["network"]["servicesCidr"]

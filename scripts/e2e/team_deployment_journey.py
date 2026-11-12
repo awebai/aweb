@@ -31,6 +31,7 @@ from __future__ import annotations
 
 import argparse
 import datetime
+import hashlib
 import ipaddress
 import json
 import os
@@ -224,6 +225,58 @@ class World:
             (self.secrets / component / "database-url").write_text(
                 f"postgresql://{component}:{password}@postgres:5432/{component}\n"
             )
+
+    def write_redis_files(self) -> None:
+        """Redis holds the password's SHA-256 in its ACL file; aweb holds the
+        password in its whole Redis URL."""
+        password = secrets.token_hex(24)
+        (self.secrets / "redis").mkdir()
+        (self.secrets / "redis" / "users.acl").write_text(
+            f"user default on #{hashlib.sha256(password.encode()).hexdigest()} ~* &* +@all\n"
+        )
+        (self.secrets / "aweb").mkdir(exist_ok=True)
+        (self.secrets / "aweb" / "redis-url").write_text(f"redis://default:{password}@redis:6379/0\n")
+
+    def redis_isolation(self, required: set[str]) -> dict:
+        """aweb reaches Redis with its password; from aweb's own network a
+        client without it, or with a wrong one, is refused, which shows Redis
+        is up and reachable there; and from every other running service of
+        the deployment, the required ones among them, Redis's address does
+        not answer at all."""
+        containers = dict(
+            line.split()
+            for line in run("docker", "ps", "--filter", f"label=com.docker.compose.project={self.project}",
+                            "--format", '{{.Label "com.docker.compose.service"}} {{.ID}}').splitlines()
+        )
+        missing = required - set(containers)
+        assert not missing, f"redis isolation: not running: {sorted(missing)}"
+        address = run("docker", "inspect", "--format", "{{range .NetworkSettings.Networks}}{{.IPAddress}} {{end}}",
+                      containers["redis"]).split()
+        assert len(address) == 1, f"redis isolation: Redis is on {len(address)} networks"
+
+        def ask(service: str, commands: str) -> subprocess.CompletedProcess:
+            return subprocess.run(
+                ["docker", "run", "--rm", "-i", "--network", f"container:{containers[service]}", "redis:7-alpine",
+                 "timeout", "5", "redis-cli", "-h", address[0], "-p", "6379"],
+                input=commands, text=True, capture_output=True, timeout=60, check=False)
+
+        ready = json.loads(self.compose("exec", "-T", "aweb", "curl", "-fsS", "http://localhost:8000/ready"))
+        assert ready["checks"]["redis"] == "ok", f"redis isolation: aweb's /ready: {ready}"
+        anonymous = ask("aweb", "PING\r\n")
+        assert anonymous.stdout.startswith("NOAUTH"), (
+            f"redis isolation: no password from aweb's network: {anonymous.stdout!r} {anonymous.stderr[-300:]!r}")
+        wrong = ask("aweb", f"AUTH default {secrets.token_hex(24)}\r\nPING\r\n")
+        assert wrong.stdout.startswith("WRONGPASS") and "NOAUTH" in wrong.stdout, (
+            f"redis isolation: a wrong password from aweb's network: {wrong.stdout!r} {wrong.stderr[-300:]!r}")
+        unreachable = {}
+        for service in sorted(set(containers) - {"aweb", "redis"}):
+            answer = ask(service, "PING\r\n")
+            assert answer.returncode != 0 and not answer.stdout.strip(), (
+                f"redis isolation: {service} reaches Redis: {answer.stdout!r}")
+            unreachable[service] = {"exit": answer.returncode, "error": answer.stderr.strip()[-120:]}
+        return {"redis": address[0], "aweb_ready": ready["checks"]["redis"],
+                "aweb_network_without_password": anonymous.stdout.split()[0],
+                "aweb_network_wrong_password": wrong.stdout.split()[0], "unreachable_from": unreachable}
 
     def deployment(self) -> Path:
         config: dict = {
@@ -601,6 +654,7 @@ class World:
     def own_service_files(self) -> dict[str, str]:
         owners = {
             "postgres": run("docker", "run", "--rm", "postgres:16-alpine", "id", "-u", "postgres").strip(),
+            "redis": run("docker", "run", "--rm", "redis:7-alpine", "id", "-u", "redis").strip(),
             "aweb": image_user(self.images["aweb"]),
             "secrets": image_user(self.images["secrets"]),
             "logs": image_user(self.images["logs"]),
@@ -895,6 +949,7 @@ def journey(world: World, stop_after: str | None = None, agents_only: bool = Fal
     print("=== Setup: the test world")
     world.write_world()
     world.write_database_files()
+    world.write_redis_files()
     world.deployment()
     world.compose("up", "-d", "--wait", "dns", "registry", "front", "smtp")
     site = world.site()
@@ -928,6 +983,8 @@ def journey(world: World, stop_after: str | None = None, agents_only: bool = Fal
 
     print("=== Step 5: the protected act")
     provision_signer(site, holder, founded)
+    isolated = world.redis_isolation({"aweb", "redis", "secrets", "logs", "signer"})
+    print("REDIS ISOLATED:", json.dumps(isolated, sort_keys=True))
     if agents_only:
         print("AGENTS ONLY: the signer is provisioned; no round trip, refusals or throttle legs in this run")
     else:
@@ -963,6 +1020,8 @@ def agents_stage(world: World, founded: Founded) -> int:
           " reaches it over pinned SSH and two member seats are staged")
     requalified = world.requalify_agent(founded, SEATS[0])
     print("REQUALIFIED:", json.dumps(requalified, sort_keys=True))
+    isolated = world.redis_isolation({"aweb", "redis", "secrets", "logs", "signer", "egress", "agent"})
+    print("REDIS ISOLATED:", json.dumps(isolated, sort_keys=True))
     print("AGENTS HELD: no harness login, deployment or session; wake and model are not run")
     return 0
 

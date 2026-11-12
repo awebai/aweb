@@ -26,6 +26,10 @@ def test_each_input_becomes_the_setting_its_service_reads_with_defaults_filled()
         # A team deployment's members all hold registered certificates: an
         # unregistered one is one the registry could never revoke.
         "AWEB_REQUIRE_REGISTERED_CERTIFICATES": "true",
+        # aweb reaches the bundled Redis with the password in its own file;
+        # the URL without one is not set.
+        "AWEB_REDIS_URL": "",
+        "AWEB_REDIS_URL_FILE": "/run/secrets/aweb/redis-url",
         "AWID_REGISTRY_URL": "https://api.awid.ai",
         "COMPOSE_FILE": "compose.yaml",
         "COMPOSE_PROFILES": "postgres",

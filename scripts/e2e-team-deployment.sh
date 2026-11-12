@@ -305,10 +305,10 @@ PY
 # inert probe from the agent image, as the agent service with empty state,
 # login and authorized keys and the public CA alone, beside egress and
 # nothing else. The probe is removed before the agent takes its address.
-# Protected sources are each service's secrets directory (the agents' own
-# login directory beside them is not one), the backends' data volumes, the
-# Docker socket and TEAM_DEPLOYMENT_PROTECTED_SOURCES (colon separated), each
-# as the engine host resolves it.
+# Protected sources are each service's secrets directory, Redis's included
+# (the agents' own login directory beside them is not one), the backends'
+# data volumes, the Docker socket and TEAM_DEPLOYMENT_PROTECTED_SOURCES (colon
+# separated), each as the engine host resolves it.
 boundary_probe() {
   local node="${TEAM_DEPLOYMENT_NODE:-node}" probe="$project-agent-probe" sources=() out status
   if ! "$node" -e 'process.exit(Number(process.versions.node.split(".")[0]) >= 22 ? 0 : 1)'; then
@@ -324,6 +324,7 @@ boundary_probe() {
     name="$(env_value "${component}_SECRETS")"
     [[ -z "$name" || ! -e "$secrets_dir/$name" ]] || sources+=("$(realpath "$secrets_dir/$name")")
   done
+  [[ ! -e "$secrets_dir/redis" ]] || sources+=("$(realpath "$secrets_dir/redis")")
   local volume
   for volume in postgres_data redis_data; do
     if docker volume inspect "${project}_$volume" >/dev/null 2>&1; then
