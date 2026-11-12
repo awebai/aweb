@@ -89,10 +89,16 @@ def publish_csr(name, text):
     temporary.replace(path)
 
 
-def csr_requester():
-    """Separate CLI container, HOME and D-Bus keyring; public files transport."""
+def prepare_local_human():
+    """The CSR journey's first step also tests Secret Service without a registry."""
     human, prompts = command(["id", "human", "init", "--domain", "alpha.example.com", "--json"])
     assert human["status"] == "prepared" and prompts == 2, human
+    return human
+
+
+def csr_requester():
+    """Separate CLI container, HOME and D-Bus keyring; public files transport."""
+    human = prepare_local_human()
     human_home, = (Path.home() / ".awid/humans/alpha.example.com").glob("*")
     record = yaml.safe_load((human_home / "identity.yaml").read_text())
     assert record["state"] == "prepared" and not (human_home / "id-chain.json").exists()
@@ -597,6 +603,10 @@ def delegated_namespace():
 def main():
     assert not os.environ.get("AWID_SKIP_DNS_VERIFY")
     assert os.environ.get("DBUS_SESSION_BUS_ADDRESS")
+    if sys.argv[1:] == ["--prepare-local-human"]:
+        prepare_local_human()
+        print("actual journey local human preparation PASS", flush=True)
+        return
     if "--csr-requester" in sys.argv:
         csr_requester()
         return
@@ -671,6 +681,15 @@ def main():
 
 
 if __name__ == "__main__":
+    if sys.argv[1:] == ["--prepare-local-human"]:
+        import resource
+        Path.home().mkdir(parents=True, exist_ok=True)
+        home = Path.home().stat()
+        print(json.dumps(dict(uid=os.getuid(), gid=os.getgid(), home_uid=home.st_uid,
+                              home_gid=home.st_gid, home_mode=oct(home.st_mode & 0o777),
+                              memlock=resource.getrlimit(resource.RLIMIT_MEMLOCK),
+                              cap_eff=next(line for line in Path('/proc/self/status').read_text().splitlines()
+                                           if line.startswith('CapEff:')))), flush=True)
     # Secret Service is a real D-Bus service, shared by all aw processes in
     # this session. Its disposable collection has no developer credentials.
     runtime = Path("/tmp/journey-runtime")

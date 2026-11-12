@@ -13,7 +13,7 @@ TEST_EGRESS_RUNNER ?= python3 $(abspath scripts/test-egress/native.py) --
 	test-channel-integration \
 	sync-doc-copies sync-skill-copies list-awid-site-docs sync-awid-site-docs check-awid-site-docs verify-site deploy-site \
 	test-npm-exact-publish test-pypi-exact-publish test-oci-exact-publish \
-	cli-e2e _candidate-gate-docker-boundaries _candidate-channel-version _candidate-node-deps \
+	cli-e2e _candidate-gate-docker-boundaries _candidate-gate-compose-adoption _candidate-channel-version _candidate-node-deps \
 	_candidate-unit-channel _candidate-unit-channel-core _candidate-unit-pi _candidate-oats _candidate-oats-proof-helpers \
 	_candidate-artifact-server _candidate-artifact-awid-package _candidate-artifact-awid-image \
 	_candidate-artifact-naapp-package check-naapp-lib-package \
@@ -140,15 +140,22 @@ build: sync-doc-copies
 test: test-egress-controls check-aw-commit-repo-stamp check-cli-go-tidy test-identity-primitives test-python-locks test-sot-source-inventories test-vector-provenance test-federation-error-reference test-federation-authority-mutations test-federation-harness test-cli-reference test-mcp-tools-reference test-server test-awid test-cli test-channel test-channel-name-live-contract test-channel-core test-wake-channel-core-bundle test-pi-extension test-oats test-oats-proof-helpers test-tmux-guard test-release-cli-version test-npm-exact-publish test-pypi-exact-publish test-oci-exact-publish test-go-vulnerability-audit
 
 test-shipping:
+	$(MAKE) test-vm-gate
 	python3 scripts/test_fixture_repo.py
 	python3 scripts/test_shipping.py
 	python3 scripts/test_aw_npm_publication.py
 	python3 scripts/test_candidate_cleanup.py
 	python3 scripts/test_candidate_disk_floor.py
-	python3 scripts/test_candidate_ports.py
+	python3 scripts/test_candidate_network.py
+	python3 scripts/test_candidate_bind_ownership.py
+	python3 scripts/test_candidate_published_port.py
 	python3 scripts/test_folio_wakes_gate.py
 	python3 scripts/test_user_paths_gate.py
 	python3 scripts/test_fetch_released_aw.py
+
+.PHONY: test-vm-gate
+test-vm-gate:
+	PYTHONPATH=scripts/vm-gate uv run --no-project --python 3.12 --with-requirements scripts/vm-gate/requirements.txt python -m unittest discover -s scripts/vm-gate/tests -v
 
 # AWID metadata is repeated in every committed Python lock that takes the in-repo
 # awid (awid, server, naapp-lib and each naapp). Check them all without repair,
@@ -441,7 +448,8 @@ test-a2a:
 
 test-e2e:
 	python3 scripts/test_controller_key_absence_guard.py
-	AWEB_TEST_DOCKER_PORTS=1 python3 scripts/test_oss_user_journey.py
+	python3 scripts/test_oss_user_journey.py
+	AWEB_TEST_DOCKER_NETWORK=1 python3 scripts/test_candidate_network.py ComposeNetworkTests ComposeExitStatusTests ComposeTimeoutTests
 	./scripts/e2e-oss-user-journey.sh
 	./scripts/test-e2e-controller-key-absence-guard.sh
 
@@ -608,6 +616,9 @@ test-release-cli-version:
 # ── Unified release ──────────────────────────────────────────────────
 
 # Internal steps consumed only by the complete local candidate map.
+_candidate-gate-compose-adoption:
+	AWEB_TEST_DOCKER_NETWORK=1 python3 scripts/test_candidate_network.py ComposeAdoptionTests -v
+
 _candidate-gate-docker-boundaries:
 	@test -n "$(CANDIDATE_GATE_IMAGE)" || (echo "CANDIDATE_GATE_IMAGE is required"; exit 2)
 	python3 scripts/e2e/test_candidate_gate_docker_boundaries.py --image "$(CANDIDATE_GATE_IMAGE)"
