@@ -2,10 +2,20 @@
 """Candidate-only Compose networking: no published ports, scoped service DNS."""
 from __future__ import annotations
 
+import hashlib
 import json
+import re
 import os
 import subprocess
 import sys
+
+
+def hostname(project: str, service: str) -> str:
+    """Bound DNS labels independently of Compose's resource naming rules."""
+    pair = json.dumps([project, service], ensure_ascii=True, separators=(',', ':'))
+    digest = hashlib.sha256(pair.encode('ascii')).hexdigest()[:32]
+    prefix = re.sub('[^a-z0-9-]', '-', f'{project}-{service}'.lower())[:30].strip('-') or 'candidate'
+    return f'{prefix}-{digest}.test'
 
 
 def networks(config: dict) -> dict:
@@ -34,7 +44,7 @@ def override(config: dict) -> str:
         for network in spec.get('networks', {'default': None}):
             # Append to existing aliases, including federation's TLS/DNS names.
             lines += [f'      {json.dumps(network)}:',
-                      f'        aliases: [{json.dumps(f"{project}-{service}.test")}]']
+                      f'        aliases: [{json.dumps(hostname(project, service))}]']
     # Preserve the caller's nonexternal network definitions. The pinned Compose
     # adopts prepare()'s project/network-labelled networks and removes them on down.
     return '\n'.join(lines) + '\n'
@@ -126,7 +136,9 @@ def disconnect(project: str) -> None:
 
 if __name__ == '__main__':
     try:
-        if sys.argv[1] == 'override':
+        if sys.argv[1] == 'hostname':
+            print(hostname(sys.argv[2], sys.argv[3]))
+        elif sys.argv[1] == 'override':
             print(override(json.load(sys.stdin)), end='')
         elif sys.argv[1] == 'prepare':
             prepare(json.load(sys.stdin))

@@ -7,6 +7,7 @@ import httpx
 import pytest
 from test_e2e_smoke import (
     AWID_URL,
+    candidate_hostname,
     _assert_aw_status,
     _assert_aw_success,
     _aw_request,
@@ -24,7 +25,7 @@ def test_private_certificate_refused_by_real_pre_status_registry(aw_workspace):
     _require_e2e_enabled()
     if os.environ.get("NAAPP_E2E_CONTAINER_NETWORK") == "1":
         project = os.environ["NAAPP_E2E_PROJECT"]
-        old_registry = f"http://{project}-awid-pre-status.test:8010"
+        old_registry = f"http://{candidate_hostname(project, 'awid-pre-status')}:8010"
     else:
         binding = _compose("port", "awid-pre-status", "8010").stdout.strip().splitlines()[0]
         port = int(binding.rsplit(":", 1)[1])

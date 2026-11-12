@@ -16,6 +16,8 @@ import subprocess
 import sys
 import tempfile
 import time
+from types import SimpleNamespace
+from urllib.parse import urlsplit
 import unittest
 import uuid
 
@@ -54,7 +56,7 @@ def compose_service_inventory():
                 if line == 'services:':
                     active = True
                     continue
-                if active and line and not line[0].isspace() and not line.startswith('#'):
+                if active and (re.match(r'^[A-Za-z][A-Za-z0-9_.-]*:', line) or re.fullmatch(r'[A-Z_]+', line)):
                     active = False
                 if active:
                     match = re.match(r'^  ([a-zA-Z0-9_.-]+):(?:\s|$)', line)
@@ -95,6 +97,7 @@ class HostnameTests(unittest.TestCase):
         inventory = compose_service_inventory()
         self.assertIn('scripts/e2e-cross-registry-messaging.sh', inventory)
         self.assertIn('awid-pre-status', inventory['naapp/library/docker-compose.e2e.yml'])
+        self.assertTrue({'aweb-alpha', 'aweb-beta', 'cli'} <= inventory['scripts/e2e-oss-federation.sh'])
         packages = subprocess.check_output(['make', '-s', '--no-print-directory', 'naapp-e2e-packages'],
                                           cwd=ROOT, text=True).split()
         project = 'aweb-candidate-' + 'f' * 12 + '-' + 'f' * 6 + '-naapp-' + max(
@@ -209,7 +212,8 @@ class EndpointTests(unittest.TestCase):
                               + assignment + f'\nprintf "%s" "${variable}"',
                               CANDIDATE_RUNNER_NAME='probe')
                 self.assertEqual(result.returncode, 0, result.stderr)
-                self.assertRegex(result.stdout, r'^http://proof-[a-z-]+\.test:(8000|8010|8080|8765)$')
+                service = re.search(r'journey_url "[^"]+" ([a-z-]+)', assignment)[1]
+                self.assertEqual(urlsplit(result.stdout).hostname, network.hostname('proof', service))
         # Host invocation is a supported neighboring path, not a gate route.
         result = bash('source scripts/journey-network.sh; journey_url proof awid 8010 http://127.0.0.1:49151',
                       CANDIDATE_RUNNER_NAME='')
@@ -219,7 +223,11 @@ class EndpointTests(unittest.TestCase):
         source = (ROOT / 'channel/test/integration.test.ts').read_text()
         allocation = source[source.index('  const directNetwork ='):source.index('  const projectSeed =')]
         endpoints = source[source.index('  const publishedHost ='):source.index('  await writeFile(envFilePath,')]
-        program = ('const projectName="proof"; '
+        helper = source[source.index('function candidateHostname('):source.index('function dockerPublishedHost(')]
+        helper = helper.replace(': string', '')
+        project = 'aweb-candidate-08f4f622d1ec-780cad-naapp-library'
+        program = ('import {execFileSync} from "node:child_process"; import {join} from "node:path"; '
+                   + 'const repoRoot=' + json.dumps(str(ROOT)) + '; ' + helper + 'const projectName=' + json.dumps(project) + '; '
                    'function dockerPublishedHost(){return "aweb-docker.test";} '
                    'function reserveLoopbackPorts(){throw Error("unexpected host allocation");}\n'
                    + allocation + endpoints + '\nconsole.log(JSON.stringify([awebURL,awidURL]));')
@@ -228,7 +236,7 @@ class EndpointTests(unittest.TestCase):
                                 capture_output=True, text=True)
         self.assertEqual(result.returncode, 0, result.stderr)
         self.assertEqual(json.loads(result.stdout),
-                         ['http://proof-aweb.test:8000', 'http://proof-awid.test:8010'])
+                         [f'http://{network.hostname(project, "aweb")}:8000', f'http://{network.hostname(project, "awid")}:8010'])
 
     def test_naapp_database_and_registry_endpoints_are_direct(self):
         for package in ('folio', 'library'):
@@ -236,15 +244,41 @@ class EndpointTests(unittest.TestCase):
             tree = ast.parse(path.read_text())
             definitions = [node for node in tree.body
                            if isinstance(node, (ast.ClassDef, ast.FunctionDef))
-                           and node.name in ('E2EStack', 'e2e_stack')]
-            namespace = {}
+                           and node.name in ('E2EStack', 'e2e_stack', 'candidate_hostname')]
+            namespace = {'__file__': str(path), 'Path': Path, 'subprocess': subprocess, 'sys': sys}
             exec('from __future__ import annotations\nfrom dataclasses import dataclass\n'
                  + '\n'.join(ast.unparse(node) for node in definitions), namespace)
-            stack = namespace['e2e_stack']({'NAAPP_E2E_PROJECT': 'proof',
-                                           'NAAPP_E2E_CONTAINER_NETWORK': '1',
-                                           'NAAPP_E2E_HOST': 'aweb-docker.test'})
-            self.assertEqual(stack.awid_url, 'http://proof-awid.test:8010')
-            self.assertIn('proof-postgres.test:5432', stack.postgres_url)
+            for project in ('proof', 'aweb-candidate-08f4f622d1ec-780cad-naapp-library'):
+                stack = namespace['e2e_stack']({'NAAPP_E2E_PROJECT': project,
+                                               'NAAPP_E2E_CONTAINER_NETWORK': '1',
+                                               'NAAPP_E2E_HOST': 'aweb-docker.test'})
+                self.assertEqual(stack.awid_url, f'http://{network.hostname(project, "awid")}:8010')
+                self.assertIn(f'{network.hostname(project, "postgres")}:5432', stack.postgres_url)
+                if package == 'folio':
+                    self.assertEqual(stack.redis_url, f'redis://{network.hostname(project, "redis")}:6379/0')
+                else:
+                    old_path = ROOT / 'naapp/library/tests/test_old_registry_e2e.py'
+                    test = next(node for node in ast.parse(old_path.read_text()).body
+                                if isinstance(node, ast.FunctionDef))
+                    # Execute the actual endpoint selection, stopping before HTTP.
+                    boundary = next(i for i, node in enumerate(test.body)
+                                    if isinstance(node, ast.Expr) and isinstance(node.value, ast.Call)
+                                    and isinstance(node.value.func, ast.Name) and node.value.func.id == '_wait_http_ok')
+                    namespace.update(os=SimpleNamespace(environ={'NAAPP_E2E_PROJECT': project,
+                                                                 'NAAPP_E2E_CONTAINER_NETWORK': '1'}),
+                                     _require_e2e_enabled=lambda: None)
+                    exec(compile(ast.Module(body=test.body[:boundary], type_ignores=[]), str(old_path), 'exec'), namespace)
+                    self.assertEqual(namespace['old_registry'],
+                                     f'http://{network.hostname(project, "awid-pre-status")}:8010')
+
+    def test_a2a_alias_agrees_with_its_client(self):
+        source = (ROOT / 'scripts/e2e-a2a-gateway-docker.sh').read_text()
+        assignment = next(line for line in source.splitlines() if 'GATEWAY_PUBLISH_ARGS=(--network-alias' in line)
+        project = 'aweb-candidate-08f4f622d1ec-780cad-a2a'
+        result = bash('source scripts/journey-network.sh\n' + assignment +
+                      '\nprintf "%s" "${GATEWAY_PUBLISH_ARGS[1]}"', PROJECT=project)
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertEqual(result.stdout, network.hostname(project, 'gateway'))
 
     def test_gate_does_not_allocate_or_use_host_ports(self):
         source = (ROOT / 'scripts/candidate-docker-gate.sh').read_text()
@@ -280,8 +314,8 @@ class EndpointTests(unittest.TestCase):
             'postgres': {'networks': {'data': None}}}}
         rendered = network.override(config)
         self.assertEqual(rendered.count('ports: !reset []'), 2)
-        self.assertIn('proof-awid.test', rendered)
-        self.assertIn('proof-postgres.test', rendered)
+        self.assertIn(network.hostname('proof', 'awid'), rendered)
+        self.assertIn(network.hostname('proof', 'postgres'), rendered)
         self.assertIn('"data":', rendered)
         # An overlay appends aliases. It must not reset federation TLS names.
         self.assertNotIn('aliases: !', rendered)
@@ -312,7 +346,7 @@ class ComposeConfigTests(unittest.TestCase):
             self.assertFalse(merged['networks']['data'].get('external', False))
             self.assertEqual(merged['networks'], original['networks'])
             self.assertEqual(set(merged['services']['awid']['networks']['data']['aliases']),
-                             {'registry.test', 'proof-awid.test'})
+                             {'registry.test', network.hostname('proof', 'awid')})
 
     def test_compose_failure_preserves_diagnostic_and_run_cleans_overlays(self):
         # Actual Compose CLI refusal, before any daemon call. Exercise both the
@@ -374,7 +408,7 @@ class ComposeConfigTests(unittest.TestCase):
                         self.assertEqual(service['network_mode'], 'service:aweb')
                         self.assertNotIn('networks', service)
                     else:
-                        self.assertIn(f'proof-{name}.test', service['networks']['default']['aliases'])
+                        self.assertIn(network.hostname('proof', name), service['networks']['default']['aliases'])
                 # Preserve the fixture's actual signed loopback audience.
                 self.assertEqual(merged['services']['aweb']['environment']['AWEB_PUBLIC_ORIGIN'],
                                  original['services']['aweb']['environment']['AWEB_PUBLIC_ORIGIN'])
@@ -594,7 +628,7 @@ class ComposeAdoptionTests(unittest.TestCase):
                     'command': ['python', '-m', 'http.server', '8010'],
                     'cpus': .25, 'mem_limit': '64m', 'pids_limit': 32,
                     'labels': {'aweb.candidate-gate': project},
-                    'networks': {'default': {'aliases': [project + '-awid.test']}, 'data': {}}}},
+                    'networks': {'default': {'aliases': [network.hostname(project, 'awid')]}, 'data': {}}}},
                 'networks': {'default': {}, 'data': {'internal': True}}}))
             args = ['compose', '-p', project, '-f', str(config_path)]
             config = docker(*args, 'config', '--format', 'json').stdout
@@ -620,7 +654,7 @@ class ComposeAdoptionTests(unittest.TestCase):
                 fetch = ('import urllib.request,time;\n'
                          'for attempt in range(50):\n'
                          ' try:\n'
-                         f'  print(urllib.request.urlopen("http://{project}-awid.test:8010",timeout=1).status); break\n'
+                         f'  print(urllib.request.urlopen({("http://" + network.hostname(project, "awid") + ":8010")!r},timeout=1).status); break\n'
                          ' except OSError:\n'
                          '  if attempt == 49: raise\n'
                          '  time.sleep(.1)\n')
@@ -710,7 +744,7 @@ class ComposeNetworkTests(unittest.TestCase):
                                        '--filter', 'label=com.docker.compose.service=awid').stdout.strip()
                     info = json.loads(docker('inspect', container).stdout)[0]
                     self.assertFalse(info['HostConfig'].get('PortBindings'), info['HostConfig'])
-                    url = f'http://{project}-awid.test:8010'
+                    url = f'http://{network.hostname(project, "awid")}:8010'
                     self.assertEqual(docker('exec', runner, 'python', '-c', fetch, url).stdout.strip(), project)
                     # Temporary Docker clients take the same direct route.
                     self.assertEqual(docker('run', '--rm', '--network', project + '_default',
@@ -719,7 +753,7 @@ class ComposeNetworkTests(unittest.TestCase):
                                             image, 'python', '-c', fetch, url).stdout.strip(), project)
                 outsider = docker('exec', projects[1] + '-awid-1', 'python', '-c',
                                   'import socket; socket.getaddrinfo(__import__("sys").argv[1],8010)',
-                                  projects[0] + '-awid.test', check=False)
+                                  network.hostname(projects[0], 'awid'), check=False)
                 self.assertNotEqual(outsider.returncode, 0, 'other journey unexpectedly resolved private service')
                 self.assertIn('gaierror', outsider.stderr)
                 self.assertTrue(json.loads(docker('inspect', competitor).stdout)[0]['State']['Running'])

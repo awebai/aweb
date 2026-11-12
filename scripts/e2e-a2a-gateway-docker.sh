@@ -64,7 +64,7 @@ CLIENT_NETWORK_ARGS=(--add-host=host.docker.internal:host-gateway)
 if [[ -n "${CANDIDATE_RUNNER_NAME:-}" ]]; then
   AWEB_PORT=8000 AWID_PORT=8010 REDIS_PORT=6379 PG_PORT=5432 GATEWAY_PORT=8080
   CLIENT_NETWORK_ARGS=(--network "${PROJECT}_default")
-  GATEWAY_PUBLISH_ARGS=(--network-alias "$PROJECT-gateway.test")
+  GATEWAY_PUBLISH_ARGS=(--network-alias "$(journey_hostname "$PROJECT" gateway)")
 else
   AWEB_PORT="${AWEB_A2A_E2E_PORT:-$(free_port)}"
   AWID_PORT="${AWID_A2A_E2E_PORT:-$(free_port)}"

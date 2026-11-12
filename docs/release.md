@@ -329,12 +329,18 @@ monitors, or cross-repository release transactions.
 ### Candidate journey networks
 
 Candidate Compose services do not publish host ports. The candidate Docker
-wrapper adds project-scoped service aliases (`<project>-<service>.test`), creates
+wrapper adds project-scoped service aliases, creates
 run-labelled networks and attaches the runner before `compose up`, `create` or
 `run`. Compose adopts these networks using their project/network labels and
 unchanged nonexternal definitions; creation options and existing service aliases
 are preserved. The wrapper detaches the runner before `compose down`. Service
-clients use those names and the service's container port. Temporary A2A clients
+clients use those names and the service's container port. Both producers and
+consumers call `scripts/candidate-network.py hostname PROJECT SERVICE`: it uses
+at most 30 readable ASCII characters and a 128-bit SHA-256 prefix of the JSON
+project/service pair, followed by `.test`. The first label is at most 63 bytes,
+the whole hostname at most 68; truncation, normalization and ambiguous hyphen
+joins cannot erase the pair's hash. Container and network resource names are
+unchanged. Temporary A2A clients
 also join their journey network. Existing federation DNS/TLS aliases remain.
 Services using `network_mode: service:aweb` retain that shared namespace and
 its signed loopback audience; the overlay adds no separate networks to them.

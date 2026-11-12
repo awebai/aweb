@@ -1,10 +1,15 @@
 #!/usr/bin/env bash
 # Candidate runner endpoints agree with candidate-network.py's scoped aliases.
 # Standalone host journeys retain their explicitly selected published endpoints.
+journey_hostname() {
+  python3 "$(dirname "${BASH_SOURCE[0]}")/candidate-network.py" hostname "$1" "$2"
+}
+
 journey_url() {
-  local project="$1" service="$2" internal="$3" published="$4"
+  local project="$1" service="$2" internal="$3" published="$4" host
   if [[ -n "${CANDIDATE_RUNNER_NAME:-}" ]]; then
-    printf 'http://%s-%s.test:%s\n' "$project" "$service" "$internal"
+    host="$(journey_hostname "$project" "$service")" || return
+    printf 'http://%s:%s\n' "$host" "$internal"
   else
     printf '%s\n' "$published"
   fi
