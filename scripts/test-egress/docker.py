@@ -19,7 +19,7 @@ import uuid
 
 ROOT = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(ROOT / "scripts"))
-from gate_settings import allocation, load_settings, resource_args
+from gate_settings import allocation, load_settings, resource_args  # noqa: E402 (standalone script path)
 
 
 def docker(*args):

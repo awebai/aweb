@@ -59,6 +59,24 @@ python3 scripts/test_unit_reports.py --frameworks
 These probes qualify report contents/status preservation, not Docker isolation
 or the cause of a service failure on a VM.
 
+Before handing off a gate change, run the touched packages' own contract tests
+as well as the harness controls. Reporter probes alone do not qualify a package
+Makefile: Folio requires its tools to run through its locked `uv` environment
+without depending on a sibling checkout path. Run the following container-free
+baseline at the exact handoff SHA, plus Ruff for touched Python files and
+`go vet`/`go test` for any touched Go package:
+
+```sh
+make test-identity-primitives test-vector-provenance test-sot-source-inventories test-python-locks lint-naapp
+```
+
+The mandatory `make test-federation-authority-mutations` target currently invokes
+PostgreSQL-backed activation fixtures, so it belongs in the authorized VM checks.
+Retain its pass lines and each touched package's own test results with the
+handoff. Tests requiring PostgreSQL or Docker need an authorized VM run; report
+that coverage as pending until it executes. A merge or rebase requires a new
+preflight at the resulting SHA.
+
 `make test-cli`, `test-server`, and `test-awid` prepare dependencies, then run
 behind the native deny proxy. Loopback stays direct. The exact existing
 `127.0.0.1.nip.io` fixture is forwarded to 127.0.0.1 without DNS. Reserved test
