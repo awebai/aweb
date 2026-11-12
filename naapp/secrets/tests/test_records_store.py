@@ -432,3 +432,14 @@ async def test_an_operation_on_a_sensitive_secret_needs_a_projection(db) -> None
         async with db.transaction() as tx:
             await records.create_operation(tx, INSTALLATION, TEAM, unprojected)
     assert refused.value.code == "operation_not_allowed"
+
+
+async def test_same_installation_id_keeps_secret_refs_in_separate_teams(db) -> None:
+    other_team = 'other:acme.com'
+    twin = SecretRecord.from_after({**SECRET.after, 'secret_id': 'sec_team_twin'})
+    async with db.transaction() as tx:
+        await records.create_secret(tx, INSTALLATION, TEAM, SECRET)
+        await records.create_secret(tx, INSTALLATION, other_team, twin)
+    async with db.transaction() as tx:
+        assert (await records.secret_by_ref(tx, INSTALLATION, TEAM, SECRET.ref)).record == SECRET
+        assert (await records.secret_by_ref(tx, INSTALLATION, other_team, SECRET.ref)).record == twin
