@@ -49,11 +49,19 @@ export async function validateProtectedPresentation(state, handoffId, table) {
       !nonempty(payload?.policy?.ref) || !Number.isSafeInteger(payload?.policy?.version) || payload.policy.version < 1 ||
       !spec || !spec.consumer_available || spec.rule !== "live_floor" ||
       request?.scope?.authority?.kind !== spec.key_role) refused();
+  if (!validSubject(subject, spec.subject_schema)) refused();
   if (spec.family === "owner_act") {
-    if (!validSubject(subject, spec.subject_schema) || artifact?.v !== 1 || artifact?.type !== "aweb.owner-act" ||
+    if (artifact?.v !== 1 || artifact?.type !== "aweb.owner-act" ||
         artifact.act !== request.operation || artifact.team_id !== request.scope.authority.id ||
         artifact.aud !== request.audience || !object(artifact.subject) ||
         canonical(subject) !== canonical(artifact.subject)) refused();
+  } else if (spec.family === "server_record") {
+    if (!object(artifact) || Object.keys(artifact).sort().join(",") !==
+        "issued_at,server_url,team_did_key,team_id,type,v" ||
+        artifact.v !== 1 || artifact.type !== "aweb.team-server" ||
+        artifact.team_id !== request.scope.authority.id ||
+        artifact.server_url !== subject.server_url || !nonempty(artifact.team_did_key) ||
+        !Number.isFinite(Date.parse(artifact.issued_at))) refused();
   } else {
     // A new family must provide its actual typed codec/presentation binding;
     // registering a name in the table alone never enables an approval button.

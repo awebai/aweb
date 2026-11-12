@@ -7,6 +7,7 @@ from .service import POLICY_REF, ProtectedSigner
 from .types import (
     AdmittedHuman,
     AuthorityProvider,
+    CatalogOperation,
     ControllerCustody,
     CurrentAuthority,
     OperationReceipt,
@@ -23,6 +24,7 @@ __all__ = [
     "AuthorityProvider",
     "ControllerCustody",
     "CurrentAuthority",
+    "CatalogOperation",
     "OperationReceipt",
     "OwnerActOperation",
     "POLICY_REF",

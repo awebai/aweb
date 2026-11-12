@@ -161,32 +161,57 @@ def test_browser_uses_the_same_typed_catalog_and_exact_b2_commitment():
     assert {case["operation"] for case in cases} == {
         spec.operation for spec in OPERATIONS.values() if spec.family == "owner_act"
     }
+    from datetime import UTC, datetime
+
+    from awid.did import did_from_public_key, generate_keypair
+    from awid.team_server_record import build_team_server_record
+
+    _, public = generate_keypair()
+    record = build_team_server_record(
+        "demo:example.org",
+        did_from_public_key(public),
+        "https://coord.example.org",
+        datetime(2026, 11, 12, tzinfo=UTC),
+    )
+    cases.append(
+        {
+            "operation": "team.server-record.publish",
+            "variant": "default",
+            "artifact": record,
+            "subject": {"server_url": record["server_url"]},
+        }
+    )
     script = r"""
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import { validateProtectedPresentation } from './naapp-lib/src/aweb_naapp/assets/protected-presentation.mjs';
 import { coveredRequestDigest } from './naapp-lib/src/aweb_naapp/assets/canonical-json.mjs';
 const {table, cases} = JSON.parse(readFileSync(0, 'utf8'));
-for (const {operation, variant, artifact} of cases) {
+for (const {operation, variant, artifact, subject = artifact.subject} of cases) {
   const state = {
     mode: 'governance', handoff_id: 'handoff', state: 'pending',
-    operation_id: 'operation', expires_at: artifact.expires_at,
+    operation_id: 'operation', expires_at: artifact.expires_at ?? '2026-11-12T00:10:00Z',
     payload: {policy: {ref: 'aweb.human-assurance/1', version: 1}, request: {
       operation_id: 'operation', operation, variant, artifact,
-      subject: structuredClone(artifact.subject), audience: artifact.aud,
+      subject: structuredClone(subject), audience: artifact.aud ?? "https://registry.example.org",
       scope: {authority: {kind: 'team_controller', id: artifact.team_id}},
     }},
   };
   state.digest = await coveredRequestDigest(state.payload);
-  assert.deepEqual((await validateProtectedPresentation(state, 'handoff', table)).subject, artifact.subject);
+  assert.deepEqual((await validateProtectedPresentation(state, 'handoff', table)).subject, subject);
   // Consistent request+artifact substitution retains the original approval digest.
   const substituted = structuredClone(state);
-  substituted.payload.request.subject.app_id = 'another-app';
-  substituted.payload.request.artifact.subject.app_id = 'another-app';
+  if (artifact.subject) {
+    substituted.payload.request.subject.app_id = 'another-app';
+    substituted.payload.request.artifact.subject.app_id = 'another-app';
+  } else {
+    substituted.payload.request.subject.server_url = 'https://another.example.org';
+    substituted.payload.request.artifact.server_url = 'https://another.example.org';
+  }
   await assert.rejects(validateProtectedPresentation(substituted, 'handoff', table));
   // A recomputed digest cannot enable an unregistered field or mismatched typed artifact.
   for (const mutate of [
-    s => {s.payload.request.artifact.subject.extra = 'raw'; s.payload.request.subject.extra = 'raw';},
+    s => {if (s.payload.request.artifact.subject) s.payload.request.artifact.subject.extra = 'raw'; s.payload.request.subject.extra = 'raw';},
     s => {s.payload.request.artifact.act = 'sign_bytes';},
     s => {s.payload.request.artifact.team_id = 'another:example.org';},
     s => {s.payload.request.variant = 'unknown';},

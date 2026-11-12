@@ -112,8 +112,8 @@ class RevokeHumanRole:
 
 
 @dataclass(frozen=True)
-class OwnerActOperation:
-    """A registered owner-act codec, with a frozen, schema-checked subject.
+class CatalogOperation:
+    """A registered artifact codec, with a frozen, schema-checked subject.
 
     The operation table selects the verifier's vocabulary; neither a caller
     field nor an embedding can select arbitrary signing bytes.
@@ -132,13 +132,13 @@ class OwnerActOperation:
         from awid.log import require_canonical_server_origin
         from awid.signing import canonical_json_bytes
 
-        from aweb_naapp.hooks.owner_act import validate_owner_act_subject
         from aweb_naapp.hooks.strictjson import Refused
 
         from .catalog import operation_spec
+        from .codecs import validate_subject
 
         spec = operation_spec(self.operation, self.variant)
-        if not spec.consumer_available or spec.family != "owner_act":
+        if not spec.consumer_available:
             raise SignerRefused("operation_refused")
         if self.context.authority_kind != spec.key_role:
             raise SignerRefused("scope_refused")
@@ -146,7 +146,7 @@ class OwnerActOperation:
             if str(UUID(self.operation_id)) != self.operation_id:
                 raise ValueError()
             require_canonical_server_origin(self.audience)
-            subject = validate_owner_act_subject(self.operation, self.subject)
+            subject = validate_subject(self.operation, self.variant, self.subject)
             object.__setattr__(self, "_subject_bytes", canonical_json_bytes(subject))
         except (ValueError, TypeError, Refused):
             raise SignerRefused("request_invalid") from None
@@ -176,6 +176,10 @@ class OwnerActOperation:
         }
 
 
+# Source-compatible name for the initial registered owner-act constructor.
+OwnerActOperation = CatalogOperation
+
+
 def owner_act_operation(operation):
     """Keep the released RevokeHumanRole constructor and wire source-compatible."""
     if type(operation) is RevokeHumanRole:
@@ -201,6 +205,8 @@ class ControllerCustody(Protocol):
     the typed operation and provisioned key before signing.
     Network custody needs a separately specified idempotent protocol.
     """
+
+    def sign_operation(self, operation: CatalogOperation, fields: Mapping[str, Any]) -> bytes: ...
 
     def sign_owner_act(
         self, operation: RevokeHumanRole | OwnerActOperation, fields: Mapping[str, Any]

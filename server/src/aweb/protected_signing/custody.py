@@ -8,13 +8,14 @@ There is no key import/export or general-purpose signing endpoint here.
 
 from __future__ import annotations
 
+import base64
 import os
 import stat
 from collections.abc import Mapping
 from pathlib import Path
 from typing import Any
 
-from aweb_naapp.hooks.owner_act import owner_act_signing_bytes
+from aweb_naapp.runtime.protected_signer.codecs import authority_key, signing_bytes
 from aweb_naapp.runtime.protected_signer import (
     OwnerActOperation,
     RevokeHumanRole,
@@ -23,6 +24,7 @@ from aweb_naapp.runtime.protected_signer import (
 from aweb_naapp.runtime.protected_signer.types import owner_act_operation
 from aweb_naapp.signing_key import parse_signing_key_hex
 from awid.did import did_from_public_key
+from awid.signing import sign_message
 
 
 class ProtectedControllerCustody:
@@ -97,6 +99,9 @@ class ProtectedControllerCustody:
     def sign_owner_act(
         self, operation: RevokeHumanRole | OwnerActOperation, fields: Mapping[str, Any]
     ) -> bytes:
+        return self.sign_operation(operation, fields)
+
+    def sign_operation(self, operation, fields):
         typed = owner_act_operation(operation)
         context = typed.context
         if (
@@ -106,17 +111,10 @@ class ProtectedControllerCustody:
             or context.authority_domain != self.domain
         ):
             raise SignerRefused("scope_refused")
-        if any(
-            fields.get(name) != value
-            for name, value in {
-                "act": typed.operation,
-                "team_id": self.team_id,
-                "team_key_did": self.team_key_did,
-                "aud": operation.audience,
-                "subject": operation.intent()["subject"],
-            }.items()
-        ):
+        if authority_key(typed, fields) != self.team_key_did:
             raise SignerRefused("operation_mismatch")
+        payload = signing_bytes(typed, fields)
         # The shared implementation constructs the artifact and verifies this
         # signature. Custody only supplies the one exact local key operation.
-        return self._key.sign(owner_act_signing_bytes(fields)).signature
+        signature = sign_message(bytes(self._key), payload)
+        return base64.b64decode(signature + "=" * (-len(signature) % 4), validate=True)

@@ -52,7 +52,7 @@ def parse_operation(body: Any) -> RevokeHumanRole | OwnerActOperation:
         if not isinstance(body, dict) or not _FIELDS <= set(body) <= _FIELDS | {"redirect_uri"}:
             raise ValueError()
         spec = operation_spec(body["operation"], body["variant"])
-        if not spec.consumer_available or spec.family != "owner_act":
+        if not spec.consumer_available:
             raise SignerRefused("operation_refused")
         scope, subject = body["scope"], body["subject"]
         if not isinstance(scope, dict) or set(scope) != _SCOPE or not isinstance(subject, dict):

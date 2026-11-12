@@ -90,6 +90,11 @@ class ControllerCustody:
     def __init__(self, key):
         self.key = key
 
+    def sign_operation(self, operation, fields):
+        from aweb_naapp.runtime.protected_signer.codecs import signing_bytes
+
+        return self.key.sign(signing_bytes(operation, fields)).signature
+
     def sign_owner_act(self, operation, fields):
         from aweb_naapp.runtime.protected_signer.types import owner_act_operation
 
@@ -485,3 +490,43 @@ async def test_all_owner_act_codecs_share_actual_uv_consume_and_one_signature(wo
             replace(operation, subject={**subject, "app_id": "another-app"}),
             requester=world.requester,
         )
+
+
+async def test_server_record_uses_same_real_uv_receipt_and_cannot_switch_destination(world):
+    from awid.team_server_record import verify_team_server_record
+
+    from aweb_naapp.runtime.protected_signer import CatalogOperation
+
+    operation = CatalogOperation(
+        world.operation.operation_id,
+        world.operation.context,
+        "https://registry.example.org",
+        "team.server-record.publish",
+        "default",
+        {"server_url": "https://coord.example.org"},
+    )
+    prepared = await world.signer.prepare(operation, requester=world.requester)
+    options = await world.signer.approval_options(operation.operation_id, human=world.human)
+    receipt = await world.signer.execute(
+        operation.operation_id,
+        world.device.get(dict(options)),
+        human=world.human,
+    )
+    raw = base64.b64decode(receipt.result["signing"])
+    artifact = json.loads(raw.split(b"\n", 1)[1])
+    verified = verify_team_server_record(
+        artifact,
+        receipt.result["signature"].rstrip("="),
+        team_id=operation.context.authority_id,
+        current_team_did_key=did_key(world.key),
+        now=world.clock(),
+    )
+    assert verified.server_url == operation.intent()["subject"]["server_url"]
+    assert prepared.payload["artifact"] == artifact
+    assert await world.signer.receipt(operation.operation_id, reader=world.reader) == receipt
+    with pytest.raises(SignerRefused, match="operation_conflict"):
+        await world.signer.prepare(
+            replace(operation, subject={"server_url": "https://other.example.org"}),
+            requester=world.requester,
+        )
+    assert (await world.audit.kinds()).count("protected_operation_signed") == 1

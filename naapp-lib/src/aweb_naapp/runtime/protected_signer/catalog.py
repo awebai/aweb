@@ -840,7 +840,7 @@ def presentation_catalog() -> dict[str, dict]:
     Wire field grammars come from their existing shared codecs, so neither a
     browser allowlist nor a second per-operation schema needs maintaining.
     """
-    from aweb_naapp.hooks.owner_act import _subject_schema
+    from .codecs import presentation_schema
 
     return {
         f"{spec.operation}|{spec.variant}": {
@@ -848,11 +848,7 @@ def presentation_catalog() -> dict[str, dict]:
             "key_role": spec.key_role,
             "rule": spec.rule,
             "consumer_available": spec.consumer_available,
-            **(
-                {"subject_schema": _subject_schema(spec.operation)}
-                if spec.family == "owner_act"
-                else {}
-            ),
+            "subject_schema": presentation_schema(spec.operation, spec.variant),
         }
         for spec in OPERATIONS.values()
     }

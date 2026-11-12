@@ -15,7 +15,6 @@ from awid.signing import canonical_json_bytes, verify_did_key_signature
 from pgdbm import AsyncDatabaseManager, AsyncMigrationManager
 
 from aweb_naapp.console import ConsoleSession, session_is_current
-from aweb_naapp.hooks.owner_act import owner_act_signing_bytes
 from aweb_naapp.runtime.approvals import (
     ApprovalDelivery,
     ApprovalRefused,
@@ -31,6 +30,8 @@ from aweb_naapp.runtime.approvals import (
 from aweb_naapp.runtime.audit import AuditEvent, AuditKind, AuditSink
 from aweb_naapp.runtime.passkeys import Passkeys, passkey_evidence_commitment
 
+from .catalog import operation_spec
+from .codecs import artifact_for, authority_key, signing_bytes
 from .types import (
     AdmittedHuman,
     AuthorityProvider,
@@ -259,19 +260,8 @@ class ProtectedSigner:
             if policy is None or policy.min_assurance is not Assurance.PASSKEY:
                 raise SignerRefused("policy_changed")
             now = self.clock().replace(microsecond=0)
-            fields = {
-                "v": 1,
-                "type": "aweb.owner-act",
-                "act": typed.operation,
-                "team_id": operation.context.authority_id,
-                "team_key_did": fence.team_key_did,
-                "aud": operation.audience,
-                "subject": operation.intent()["subject"],
-                "nonce": uuid.uuid4().hex,
-                "issued_at": _stamp(now),
-                "expires_at": _stamp(now + timedelta(seconds=600)),
-            }
-            owner_act_signing_bytes(fields)  # Existing closed wire validation, no raw-byte route.
+            fields = artifact_for(typed, fence.team_key_did, now)
+            signing_bytes(typed, fields)  # Validate the existing consumer's closed wire.
             request = {
                 **operation.intent(),
                 "requester": requester.principal,
@@ -430,7 +420,7 @@ class ProtectedSigner:
                 self._session_fresh(human_session)
                 return self._receipt(row)
             request = _json(row["request"])
-            if fence.team_key_did != request["artifact"]["team_key_did"]:
+            if fence.team_key_did != authority_key(self._operation(request), request["artifact"]):
                 raise SignerRefused("authority_changed")
             held = await self.passkeys.prepare_current_approvers(
                 tx, [(human.b3_scope, human.subject)]
@@ -465,8 +455,15 @@ class ProtectedSigner:
             if not admission.may_send:
                 raise SignerRefused("external_effect_unresolved")
             operation = self._operation(request)
-            signature = self.custody.sign_owner_act(operation, request["artifact"])
-            signing = owner_act_signing_bytes(request["artifact"])
+            signature = (
+                self.custody.sign_owner_act(operation, request["artifact"])
+                if operation_spec(
+                    operation.intent()["operation"], operation.intent()["variant"]
+                ).family
+                == "owner_act"
+                else self.custody.sign_operation(operation, request["artifact"])
+            )
+            signing = signing_bytes(owner_act_operation(operation), request["artifact"])
             if not isinstance(signature, bytes) or len(signature) != 64:
                 raise SignerRefused("operation_refused")
             verify_did_key_signature(
