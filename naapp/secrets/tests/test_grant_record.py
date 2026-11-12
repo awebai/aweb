@@ -187,3 +187,13 @@ def test_a_template_makes_the_grant_it_describes_for_a_secret() -> None:
     grant = GrantTemplate.from_after(TEMPLATE).grant_for("sec_derived01", grant_id="grt_derived01")
     expected = {k: v for k, v in TEMPLATE.items() if k != "grant_template_id"}
     assert grant.after == {**expected, "grant_id": "grt_derived01", "secret_id": "sec_derived01"}
+
+
+def test_finite_template_resolves_a_fresh_deadline_without_changing_its_pin():
+    template = GrantTemplate.from_after({**TEMPLATE, "ttl_seconds": 3600})
+    before = template.digest
+    now = datetime(2026, 11, 12, tzinfo=timezone.utc)
+    issued = template.grant_for("sec_child01", grant_id="grt_child01", now=now)
+    assert issued.expires_at == "2026-11-12T01:00:00Z"
+    assert template.digest == before
+    assert "ttl_seconds" not in issued.after

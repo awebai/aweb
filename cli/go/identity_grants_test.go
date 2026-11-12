@@ -287,3 +287,27 @@ func TestGrantAuthenticatedRequestsCarryCredentialHeaders(t *testing.T) {
 		})
 	}
 }
+
+func TestRenewIdentityGrantUsesFiniteTTLAndReturnsSameKey(t *testing.T) {
+ server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+  if serveUnadvertisedHealth(w,r) { return }
+  if r.Method != http.MethodPost || r.URL.Path != "/v1/identity-grants/grant-1/renew" { t.Errorf("unexpected %s %s", r.Method,r.URL.Path) }
+  var body map[string]any
+  _ = json.NewDecoder(r.Body).Decode(&body)
+  if len(body)!=1 || body["ttl_seconds"]!=float64(86400) { t.Errorf("renewal body=%v",body) }
+  _ = json.NewEncoder(w).Encode(IdentityGrantView{GrantID:"grant-1",GrantDIDKey:"did:key:zSession",ExpiresAt:"2099-01-01T00:00:00Z"})
+ }))
+ defer server.Close()
+ client,err:=New(server.URL)
+ if err!=nil { t.Fatal(err) }
+ view,err:=client.RenewIdentityGrant(context.Background(),"grant-1",86400)
+ if err!=nil || view.GrantID!="grant-1" || view.GrantDIDKey!="did:key:zSession" { t.Fatalf("view=%+v err=%v",view,err) }
+}
+
+func TestMintIdentityGrantCanDeferToServerDefaultWithoutChangingNumericWireForm(t *testing.T) {
+ raw,err:=json.Marshal(IdentityGrantMintRequest{GrantDIDKey:"did:key:zSession",Scopes:[]string{"mail.read"},UseServerDefaultTTL:true})
+ if err!=nil { t.Fatal(err) }
+ var body map[string]any
+ _=json.Unmarshal(raw,&body)
+ if _,present:=body["ttl_seconds"];present { t.Fatalf("default must omit ttl_seconds: %s",raw) }
+}

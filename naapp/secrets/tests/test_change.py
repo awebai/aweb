@@ -307,7 +307,7 @@ def test_only_a_secret_is_widened_by_update() -> None:
         "operation": {"create"},
         "job": {"create", "update"},
         "runner": {"create", "update"},
-        "grant": {"create"},
+        "grant": {"create", "renew"},
         "grant_template": {"create", "update"},
         "role": {"create"},
         "approver": {"create"},
