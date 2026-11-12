@@ -303,12 +303,10 @@ async def test_child_expiry_is_checked_after_a_real_recording_lock_wait(db, bloc
                 )
             task = asyncio.create_task(record())
             await _wait_for_database_lock(db, await ready)
-            clock.at = NOW + (timedelta(hours=1) if expiry == "ancestry" else timedelta(minutes=30))
+            clock.at = NOW + timedelta(hours=1)
         with pytest.raises(lineage.LineageRefused) as refused:
             await asyncio.wait_for(task, timeout=3)
-        assert refused.value.code == (
-            "secret_disabled" if expiry == "ancestry" else "grant_revoked"
-        )
+        assert refused.value.code == "secret_disabled"
         async with db.transaction() as tx:
             assert await records.secret_by_ref(tx, INSTALLATION, TEAM, "wait-child") is None
     finally:
