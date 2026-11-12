@@ -581,8 +581,8 @@ def journey(world: World) -> int:
     world.configure_agents()
     status = world.up()
     if status == 3:
-        print("AGENTS HELD: egress is healthy, the agents network isolated, and the ingress refusal and boundary"
-              " probes passed; no agent is admitted yet")
+        print("AGENTS HELD: the ingress refusal and boundary probes passed and the agent container passed its"
+              " acceptance; it runs credential-free, with no seat, deployment or session admitted")
         return 0
     print("BOUNDARY: the agents stage did not come up; see the adapter's output")
     return 1

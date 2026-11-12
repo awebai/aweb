@@ -342,6 +342,30 @@ PY
   [[ "$status" -eq 0 && "$out" == OATS_EGRESS_BOUNDARY_PASS ]]
 }
 
+# The agent container, from the unchanged pinned service at its own address,
+# then OATS's acceptance of it (agent accept.sh, live-lab evidence: this is
+# a live run) against the deployment's values: image, user, network and the
+# exact mounts. Its report is kept in the run directory.
+start_agent() {
+  local node="${TEAM_DEPLOYMENT_NODE:-node}" status
+  if ! dc up -d --no-deps --wait --wait-timeout "${TEAM_DEPLOYMENT_WAIT_SECONDS:-300}" agent; then
+    dc logs --no-color --timestamps agent >"$run_dir/agent.log" 2>&1 || true
+    echo "e2e-team-deployment: the agent did not become healthy; logs in $run_dir/agent.log" >&2
+    return 1
+  fi
+  env AGENT_IMAGE="$(env_value AGENT_IMAGE)" AGENT_UID="$(env_value AGENT_UID)" AGENT_GID="$(env_value AGENT_GID)" \
+    AGENTS_NETWORK="${project}_agents" AGENT_IP="$(env_value AGENT_IP)" AGENT_PIDS="$(env_value AGENT_PIDS)" \
+    AGENT_MEMORY="$(env_value AGENT_MEMORY)" AGENT_CPUS="$(env_value AGENT_CPUS)" \
+    TEAM_STATE_DIR="$(env_value TEAM_STATE_DIR)" TEAM_LOGIN_DIR="$(env_value TEAM_LOGIN_DIR)" \
+    AUTHORIZED_KEYS_FILE="$(env_value AUTHORIZED_KEYS_FILE)" RESOLV_CONF_FILE="$(env_value RESOLV_CONF_FILE)" \
+    PATH="$(dirname "$(command -v "$node")"):$PATH" \
+    "$(env_value OATS_SOURCE)/container/agent/accept.sh" "oats-agent-$(env_value TEAM)" --evidence live-lab \
+    >"$run_dir/agent-accept.out" 2>&1 </dev/null && status=0 || status=$?
+  echo "agent acceptance: exit $status; report in $run_dir/agent-accept.out"
+  grep -E '^\[live-lab\] (FAIL|NOT RUN)' "$run_dir/agent-accept.out" || true
+  [[ "$status" -eq 0 ]]
+}
+
 up() {
   mkdir -p "$run_dir"
   python_in_server "$TEAM_DIR/render_env.py" "$deployment" >"$env_file.tmp"
@@ -428,7 +452,11 @@ sys.exit(status != 200)
       echo "e2e-team-deployment: agents held: the boundary probe did not pass" >&2
       exit 1
     fi
-    echo "e2e-team-deployment: agents held: the boundary passed; agent admission has not run" >&2
+    if ! start_agent; then
+      echo "e2e-team-deployment: agents held: the agent container did not pass its acceptance" >&2
+      exit 1
+    fi
+    echo "e2e-team-deployment: agents held: the agent runs credential-free; no seat, deployment or session is admitted" >&2
     exit 3
   fi
   dc ps --format '{{.Service}} {{.Status}}'
