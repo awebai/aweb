@@ -15,13 +15,18 @@ EXAMPLE = yaml.safe_load((REPO_ROOT / "deploy" / "team" / "deployment.example.ya
 
 
 def run(
-    tmp_path: Path, *args: str, project: str | None = "teamrun", extra_files: str | None = None
+    tmp_path: Path, *args: str, project: str | None = "teamrun", extra_files: str | None = None, docker_ok: bool = False
 ) -> subprocess.CompletedProcess:
-    # A docker that records being called: these commands must not start anything.
+    # A docker that records being called. By default it fails: these commands
+    # must not start anything. With docker_ok it succeeds and, like the real
+    # one, docker compose exec reads its standard input.
     bin_dir = tmp_path / "bin"
     bin_dir.mkdir(exist_ok=True)
     docker = bin_dir / "docker"
-    docker.write_text(f'#!/bin/sh\necho "$@" >> {tmp_path / "docker-calls"}\nexit 1\n', encoding="utf-8")
+    succeed = 'case "$*" in *" exec "*) cat >/dev/null;; esac\nexit 0' if docker_ok else "exit 1"
+    # One line per call, whatever newlines its arguments hold.
+    log = f'printf "%s " "$@" | tr "\\n" " " >> {tmp_path / "docker-calls"}; echo >> {tmp_path / "docker-calls"}'
+    docker.write_text(f"#!/bin/sh\n{log}\n{succeed}\n", encoding="utf-8")
     docker.chmod(0o755)
     env = {**os.environ, "PATH": f"{bin_dir}:{os.environ['PATH']}", "TEAM_DEPLOYMENT_RUN_DIR": str(tmp_path / "run")}
     env.pop("TEAM_DEPLOYMENT_PROJECT", None)
@@ -97,3 +102,30 @@ def test_the_runner_refuses_what_it_cannot_run(tmp_path, args, project):
     assert result.returncode == 2
     assert "usage" in result.stderr
     assert not (tmp_path / "docker-calls").exists()
+
+
+def test_up_checks_every_service_even_though_exec_reads_its_input(tmp_path):
+    # Observed on the VM at f2564657b: exec read the rest of the service list
+    # from the loop's input, so only aweb was asked whether it was ready.
+    apps = {
+        app: {
+            "image": f"ghcr.io/awebai/aweb-{app}@sha256:" + "3" * 64,
+            "appId": f"{app}-devteam",
+            "publicOrigin": f"https://{app}.example.com",
+            "consoleOrigin": f"https://{app}-console.example.com",
+            "emailSmtpHost": "smtp.example.com",
+            "emailFrom": f"{app}@example.com",
+            "egressDeniedNetworks": ["169.254.0.0/16"],
+        }
+        for app in ("secrets", "logs")
+    }
+    apps["secrets"]["hookInternalOrigins"] = ["https://logs.example.com"]
+    aweb = {**EXAMPLE["aweb"], "appInternalOrigins": ["https://secrets.example.com", "https://logs.example.com"]}
+    path = deployment(tmp_path, {**EXAMPLE, "aweb": aweb, **apps})
+    result = run(tmp_path, "compose", "up", path, docker_ok=True)
+    assert result.returncode == 0, result.stderr
+    calls = (tmp_path / "docker-calls").read_text().splitlines()
+    readiness = [call.split(" exec -T ")[1].split()[0] for call in calls if " exec -T " in call and "/ready" in call]
+    resolving = [call.split(" exec -T ")[1].split()[0] for call in calls if " exec -T " in call and "getaddrinfo" in call]
+    assert readiness == ["aweb", "secrets", "logs"]
+    assert resolving == ["aweb", "secrets"]

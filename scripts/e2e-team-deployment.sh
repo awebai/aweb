@@ -141,7 +141,7 @@ for host in sys.argv[2:]:
     outside = sorted(a for a in addresses if ipaddress.ip_address(a) not in net)
     if outside:
         sys.exit(f"{host} resolves outside {net}: {outside}")
-' "$cidr" $hosts; then
+' "$cidr" $hosts </dev/null; then
       echo "e2e-team-deployment: $service's internal origins do not resolve inside $cidr" >&2
       exit 1
     fi
@@ -149,23 +149,31 @@ for host in sys.argv[2:]:
   # Healthy is the images' liveness checks. Ready is each service's own
   # readiness answer, asked with the Host its proxy sends; anything but 200
   # fails the run.
+  # exec gets no stdin: it would read the rest of the list.
+  local targets ready=0
+  targets="$(readiness_targets)"
   while read -r service port path host; do
     if ! dc exec -T "$service" python -c '
 import sys, urllib.error, urllib.request
-port, path, host = sys.argv[1:]
+service, port, path, host = sys.argv[1:]
 request = urllib.request.Request(f"http://127.0.0.1:{port}{path}", headers={"Host": host})
 opener = urllib.request.build_opener(urllib.request.ProxyHandler({}))
 try:
     status = opener.open(request, timeout=10).status
 except urllib.error.HTTPError as refused:
     status = refused.code
-print(f"{path} {status}")
+print(f"{service} {path} {status}")
 sys.exit(status != 200)
-' "$port" "$path" "$host"; then
+' "$service" "$port" "$path" "$host" </dev/null; then
       echo "e2e-team-deployment: $service is not ready" >&2
       exit 1
     fi
-  done < <(readiness_targets)
+    ready=$((ready + 1))
+  done <<<"$targets"
+  if [[ "$ready" -ne "$(grep -c . <<<"$targets")" ]]; then
+    echo "e2e-team-deployment: $ready services checked for readiness, not every one" >&2
+    exit 1
+  fi
   dc ps --format '{{.Service}} {{.Status}}'
 }
 
