@@ -135,6 +135,9 @@ def lane(tmp_path_factory: pytest.TempPathFactory) -> Iterator[ProtectedLane]:
         assert result.returncode == 0, result.stdout + result.stderr
         yield lane
     finally:
+        # Every service's own record of the run, kept beside the runtime.
+        logs = lane.compose("--profile", "protected", "logs", "--no-color", "--timestamps")
+        (runtime / "compose.log").write_text(logs.stdout + logs.stderr)
         lane.compose("--profile", "protected", "--profile", "chromium", "--profile", "browser",
                      "down", "-v", "--remove-orphans")
         for name in ("controller", "holder"):
