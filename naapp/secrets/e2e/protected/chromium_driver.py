@@ -251,6 +251,9 @@ def main() -> None:
     login.add_argument("--login-without-uv", action="store_true")
     args = parser.parse_args()
     trust(args.ca)
+    # Playwright's own requests (route.fetch) run in its Node driver, which
+    # does not read the browser's NSS store: give it the same authority.
+    os.environ["NODE_EXTRA_CA_CERTS"] = args.ca
     with sync_playwright() as playwright:
         browser = playwright.chromium.launch()
         try:
