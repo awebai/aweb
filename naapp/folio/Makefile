@@ -7,7 +7,7 @@ export NAAPP_E2E_PROJECT ?= folio-e2e
 PROD_CONFIG ?= ops/render-production.json
 
 test:
-	$(if $(AWEB_UNIT_REPORT_DIR),python3 "$(abspath ../../scripts/unit_report.py)" pytest naapp-folio --) uv run pytest -q -m "not e2e"
+	uv run pytest -q -m "not e2e" $(if $(AWEB_UNIT_REPORT_DIR),--junitxml="$(AWEB_UNIT_REPORT_DIR)/naapp-folio.xml" -o junit_duration_report=total)
 
 test-server:
 	uv run pytest -q
