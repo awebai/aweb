@@ -235,6 +235,10 @@ SIGNER_HUMAN_PATH=/handoff-assets/handoff.css
 # its services cannot be probed here. TEAM_DEPLOYMENT_INGRESS_CA names the
 # ingress's trust anchors when a private authority signed it.
 INGRESS_ROUTES="aweb:aweb:/ready secrets:secrets:/ready logs:logs:/ready signer:signer:/readyz registry:registry:/health"
+# The one path every backend logs, Secrets included (it logs /ready and /live
+# alone): the probe sends its extra coverage controls and every forbidden
+# request there, so a misrouted request cannot go unseen.
+INGRESS_AUDIT_PATH=/ready
 
 ingress_probe() {
   local origins logs followers=() route role service path ca_mount=() ca_flag=() out status services
@@ -285,7 +289,8 @@ PY
     -v "$run_dir/egress-policy.json:/input/egress-policy.json:ro" -v "$logs/route-logs.json:/input/route-logs.json:ro" \
     ${ca_mount[@]+"${ca_mount[@]}"} --entrypoint node "$(env_value EGRESS_IMAGE)" /opt/egress/probe-ingress.mjs \
     --address "${origins[0]}" --request-origin "${origins[1]}" --human-origin "${origins[2]}" \
-    --human-log /logs/signer.log --human-path "$SIGNER_HUMAN_PATH" ${ca_flag[@]+"${ca_flag[@]}"} \
+    --human-log /logs/signer.log --human-path "$SIGNER_HUMAN_PATH" --audit-path "$INGRESS_AUDIT_PATH" \
+    ${ca_flag[@]+"${ca_flag[@]}"} \
     --policy /input/egress-policy.json --route-logs /input/route-logs.json </dev/null)" && status=0 || status=$?
   for follower in "${followers[@]}"; do
     kill "$follower" 2>/dev/null || true
