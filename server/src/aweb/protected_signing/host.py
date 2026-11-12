@@ -19,6 +19,7 @@ from aweb_naapp.console import (
 from aweb_naapp.console.handoff_store import HandoffStore
 from aweb_naapp.email import EmailSettings, Mailer
 from aweb_naapp.hooks.strictjson import parse_strict
+from aweb_naapp.key_file import read_key_file
 from aweb_naapp.runtime.origins import OriginApps
 from aweb_naapp.runtime.protected_signer import SignerRefused
 from awid.db_config import build_database_config
@@ -27,8 +28,9 @@ from awid.registry import RegistryClient
 from awid.signing import load_signing_key_pem
 from awid.team_ids import build_team_id, parse_team_id
 from fastapi import FastAPI
+from fastapi.responses import JSONResponse
 from pgdbm import AsyncDatabaseManager
-from pydantic import Field, SecretStr, StrictInt
+from pydantic import Field, SecretStr, StrictInt, model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 from .composition import IndependentProtectedSigner
@@ -47,7 +49,8 @@ class HostSettings(BaseSettings):
     controller_key_file: Path
     member_keys_file: Path
     worker_uids: list[Annotated[StrictInt, Field(gt=0)]] = Field(min_length=1)
-    database_url: SecretStr = Field(repr=False)
+    database_url: SecretStr = Field(default_factory=lambda: SecretStr(""), repr=False)
+    database_url_file: Path | None = None
     database_schema: str = Field(
         default="protected_signer", pattern=r"^[a-z][a-z0-9_]{0,62}$"
     )
@@ -61,6 +64,28 @@ class HostSettings(BaseSettings):
 
     def client_identity(self):
         return ClientIdentity(trusted_header=self.trusted_client_header)
+
+    @model_validator(mode="after")
+    def database_source(self):
+        if self.database_url_file is not None:
+            if "database_url" in self.model_fields_set:
+                raise ValueError("protected_database_url_sources_conflict")
+            try:
+                value = (
+                    read_key_file(self.database_url_file)
+                    .decode("utf-8")
+                    .removesuffix("\n")
+                )
+                if not value or any(char in value for char in ("\n", "\r", "\x00")):
+                    raise ValueError()
+            except (OSError, ValueError):
+                # Configuration failures never expose DSN contents. The
+                # existing pgdbm/asyncpg adapter remains the only DSN parser.
+                raise ValueError("protected_database_url_file_invalid") from None
+            self.database_url = SecretStr(value)
+        if not self.database_url.get_secret_value():
+            raise ValueError("protected_database_url_required")
+        return self
 
 
 def _member_keys(path):
@@ -145,8 +170,12 @@ def create_app(settings=None, *, mailer=None, registry_transport=None):
         ):
             raise SignerRefused("custody_not_isolated")
         async with AsyncExitStack() as resources:
-            resources.callback(api.router.routes.clear)
-            resources.callback(human.router.routes.clear)
+            resources.callback(
+                api.router.routes.__setitem__, slice(None), list(api.router.routes)
+            )
+            resources.callback(
+                human.router.routes.__setitem__, slice(None), list(human.router.routes)
+            )
             db = AsyncDatabaseManager(
                 build_database_config(
                     connection_string=settings.database_url.get_secret_value(),
@@ -204,15 +233,26 @@ def create_app(settings=None, *, mailer=None, registry_transport=None):
                 )
             )
             api.state.composition = human.state.composition = composition
+            api.state.protected_ready = True
             try:
                 yield
             finally:
-                api.router.routes.clear()
-                human.router.routes.clear()
+                api.state.protected_ready = False
                 del api.state.composition
                 del human.state.composition
 
     api = FastAPI(lifespan=lifespan, docs_url=None, redoc_url=None, openapi_url=None)
+    api.state.protected_ready = False
+
+    @api.get("/readyz")
+    async def readiness():
+        ready = api.state.protected_ready
+        return JSONResponse(
+            {"ready": ready},
+            status_code=200 if ready else 503,
+            headers={"Cache-Control": "no-store"},
+        )
+
     host = OriginApps(
         api,
         human,

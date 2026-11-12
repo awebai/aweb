@@ -31,7 +31,7 @@ Required operator settings (paths below are illustrative container paths):
 ```sh
 export AWEB_PROTECTED_PROFILE_FILE=/config/protected-profile.json
 export AWEB_PROTECTED_SCOPE_FILE=/config/protected-scope.json
-export AWEB_PROTECTED_DATABASE_URL=postgresql://signer:REPLACE@postgres/protected
+export AWEB_PROTECTED_DATABASE_URL_FILE=/run/secrets/signer/database-url
 export AWEB_PROTECTED_DATABASE_SCHEMA=protected_signer
 export AWEB_PROTECTED_CONTROLLER_KEY_FILE=/private-controller/controller.key
 export AWEB_PROTECTED_MEMBER_KEYS_FILE=/private-member/members.json
@@ -44,6 +44,22 @@ profile. The profile selects the registry origin and namespace/authority public
 keys; there is no second registry URL, Cloud token, DNS fallback or runtime URL
 override. See `docs/protected-service-profile.md` and its public synthetic
 fixture. Those example public keys do not supply controller custody.
+
+`DATABASE_URL_FILE` reads the whole UTF-8 DSN through the existing shared
+secret-file reader (at most 1 KiB, nonwritable by group/others, one optional
+final LF), and passes it unchanged to the existing database adapter. The
+existing `AWEB_PROTECTED_DATABASE_URL` input remains supported for current
+callers; configuring both refuses. The resolved `settings.database_url` remains
+a `SecretStr`; file/error handling never prints its contents.
+
+GET `/readyz` is served on the request origin only, with `no-store` and a fixed
+boolean: 200 after owned startup/provisioning validation and route mounting;
+503 before startup, on failure and during/after shutdown. It does not refresh
+registry evidence or sign anything. Probes must send the configured request
+Host, even over Pod-IP/loopback HTTP. Override the base server image's
+`/live:8000` healthcheck when this entrypoint runs on8080. The bundle descriptor
+is `deploy/team/descriptors/signer.md`; the bundle owns its one configuration
+schema and controller private-volume materialization.
 
 The controller file is the operator-provisioned 32-byte Ed25519 seed encoded as
 64 hex characters, optionally followed by one newline. Its directory belongs
