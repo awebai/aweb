@@ -133,7 +133,12 @@ async def _mint(
         snapshot,
         expected_digest=store["grant_template_digest"],
     )
-    policy = await records.policy(tx, installation.installation_id, template.terms["policy_digest"])
+    policy = await records.policy(
+        tx,
+        installation.installation_id,
+        template.terms["policy_digest"],
+        team_id=installation.team_id,
+    )
     if policy is None:
         raise RunPlanRefused("operation_not_allowed")
     return PlannedMint(issuer, expanded, snapshot, policy)
@@ -265,7 +270,10 @@ class RunPlanner:
                     if candidate.grant_id not in alive or not run_grant_covers_job(candidate, job):
                         continue
                     policy = await records.policy(
-                        tx, installation.installation_id, candidate.policy_digest
+                        tx,
+                        installation.installation_id,
+                        candidate.policy_digest,
+                        team_id=installation.team_id,
                     )
                     if policy is None:
                         raise RunPlanRefused("job_not_allowed")
@@ -418,7 +426,9 @@ class _RunAuthority:
             _require(
                 path[-1].secret.active_version == frozen.source_version, "secret_version_changed"
             )
-            policy = await records.policy(tx, installation.installation_id, grant.policy_digest)
+            policy = await records.policy(
+                tx, installation.installation_id, grant.policy_digest, team_id=installation.team_id
+            )
             _require(policy is not None, "job_not_allowed")
             mint = await _mint(
                 tx,

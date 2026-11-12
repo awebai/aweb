@@ -87,7 +87,7 @@ async def db(test_db_factory) -> AsyncIterator[AsyncDatabaseManager]:
 async def _setup(db: AsyncDatabaseManager) -> None:
     async with db.transaction() as tx:
         await records.create_secret(tx, INSTALLATION, TEAM, SECRET)
-        await records.create_policy(tx, INSTALLATION, POLICY)
+        await records.create_policy(tx, INSTALLATION, POLICY, team_id=TEAM)
 
 
 async def test_a_secret_is_found_by_its_ref_in_its_installation(db) -> None:
@@ -131,9 +131,9 @@ async def test_a_secret_update_cannot_move_it_to_another_installation(db) -> Non
 async def test_a_policy_is_read_back_by_digest_and_never_changes(db) -> None:
     await _setup(db)
     async with db.transaction() as tx:
-        await records.create_policy(tx, INSTALLATION, POLICY)
-        assert await records.policy(tx, INSTALLATION, POLICY.digest) == POLICY
-        assert await records.policy(tx, OTHER_INSTALLATION, POLICY.digest) is None
+        await records.create_policy(tx, INSTALLATION, POLICY, team_id=TEAM)
+        assert await records.policy(tx, INSTALLATION, POLICY.digest, team_id=TEAM) == POLICY
+        assert await records.policy(tx, OTHER_INSTALLATION, POLICY.digest, team_id=TEAM) is None
     with pytest.raises(asyncpg.RaiseError):
         async with db.transaction() as tx:
             await tx.execute("UPDATE {{tables.policies}} SET body = '{}'::jsonb")
@@ -231,10 +231,16 @@ async def test_a_grant_template_is_created_and_updated_in_place(db) -> None:
     changed = GrantTemplate.from_after({**template.after, "subject": {"principal": DID_AW}})
     await _setup(db)
     async with db.transaction() as tx:
-        await records.set_grant_template(tx, INSTALLATION, template)
-        await records.set_grant_template(tx, INSTALLATION, changed)
-        assert await records.grant_template(tx, INSTALLATION, "gtp_sts-derived") == changed
-        assert await records.grant_template(tx, OTHER_INSTALLATION, "gtp_sts-derived") is None
+        await records.set_grant_template(tx, INSTALLATION, template, team_id=TEAM)
+        await records.set_grant_template(tx, INSTALLATION, changed, team_id=TEAM)
+        assert (
+            await records.grant_template(tx, INSTALLATION, "gtp_sts-derived", team_id=TEAM)
+            == changed
+        )
+        assert (
+            await records.grant_template(tx, OTHER_INSTALLATION, "gtp_sts-derived", team_id=TEAM)
+            is None
+        )
 
 
 async def test_records_roll_back_with_the_callers_transaction(db) -> None:
@@ -252,11 +258,11 @@ async def test_revoking_a_grant_moves_the_installation_to_its_next_revision(db) 
         await records.create_grant(
             tx, INSTALLATION, TEAM, _grant("grt_member01", {"principal": DID_AW})
         )
-        drafted_at = await bump_config_revision(tx, INSTALLATION)
+        drafted_at = await bump_config_revision(tx, INSTALLATION, team_id=TEAM)
     async with db.transaction() as tx:
         await records.revoke_grant(tx, INSTALLATION, "grt_member01")
-    assert await config_revision(db, INSTALLATION) == drafted_at + 1
-    assert await config_revision(db, OTHER_INSTALLATION) == 0
+    assert await config_revision(db, INSTALLATION, team_id=TEAM) == drafted_at + 1
+    assert await config_revision(db, OTHER_INSTALLATION, team_id=TEAM) == 0
 
 
 async def test_revoking_a_revoked_grant_leaves_the_revision_alone(db) -> None:
@@ -266,11 +272,11 @@ async def test_revoking_a_revoked_grant_leaves_the_revision_alone(db) -> None:
             tx, INSTALLATION, TEAM, _grant("grt_member01", {"principal": DID_AW})
         )
         await records.revoke_grant(tx, INSTALLATION, "grt_member01")
-    revoked_at = await config_revision(db, INSTALLATION)
+    revoked_at = await config_revision(db, INSTALLATION, team_id=TEAM)
     async with db.transaction() as tx:
         await records.revoke_grant(tx, INSTALLATION, "grt_member01")
         await records.revoke_grant(tx, INSTALLATION, "grt_unknown01")
-    assert await config_revision(db, INSTALLATION) == revoked_at
+    assert await config_revision(db, INSTALLATION, team_id=TEAM) == revoked_at
 
 
 async def test_a_revocation_rolled_back_leaves_the_revision_alone(db) -> None:
@@ -283,7 +289,7 @@ async def test_a_revocation_rolled_back_leaves_the_revision_alone(db) -> None:
         async with db.transaction() as tx:
             await records.revoke_grant(tx, INSTALLATION, "grt_member01")
             raise RuntimeError("the narrowing act failed later")
-    assert await config_revision(db, INSTALLATION) == 0
+    assert await config_revision(db, INSTALLATION, team_id=TEAM) == 0
 
 
 def _destination(destination_id: str = "dst_charges01", **changes) -> DestinationRecord:
@@ -337,14 +343,14 @@ async def test_removing_a_destination_is_a_narrowing_act(db) -> None:
     await _setup(db)
     async with db.transaction() as tx:
         await records.create_destination(tx, INSTALLATION, TEAM, _destination())
-    before = await config_revision(db, INSTALLATION)
+    before = await config_revision(db, INSTALLATION, team_id=TEAM)
     async with db.transaction() as tx:
         await records.remove_destination(tx, INSTALLATION, "dst_charges01")
         assert await records.destinations(tx, INSTALLATION, SECRET.secret_id) == []
-    assert await config_revision(db, INSTALLATION) == before + 1
+    assert await config_revision(db, INSTALLATION, team_id=TEAM) == before + 1
     async with db.transaction() as tx:
         await records.remove_destination(tx, INSTALLATION, "dst_charges01")
-    assert await config_revision(db, INSTALLATION) == before + 1
+    assert await config_revision(db, INSTALLATION, team_id=TEAM) == before + 1
 
 
 def _operation(**changes) -> OperationTemplate:
@@ -435,43 +441,69 @@ async def test_an_operation_on_a_sensitive_secret_needs_a_projection(db) -> None
 
 
 async def test_same_installation_id_keeps_secret_refs_in_separate_teams(db) -> None:
-    other_team = 'other:acme.com'
-    twin = SecretRecord.from_after({**SECRET.after, 'secret_id': 'sec_team_twin'})
+    other_team = "other:acme.com"
+    twin = SecretRecord.from_after({**SECRET.after, "secret_id": "sec_team_twin"})
     async with db.transaction() as tx:
         await records.create_secret(tx, INSTALLATION, TEAM, SECRET)
         await records.create_secret(tx, INSTALLATION, other_team, twin)
     async with db.transaction() as tx:
         assert (await records.secret_by_ref(tx, INSTALLATION, TEAM, SECRET.ref)).record == SECRET
-        assert (await records.secret_by_ref(tx, INSTALLATION, other_team, SECRET.ref)).record == twin
+        assert (
+            await records.secret_by_ref(tx, INSTALLATION, other_team, SECRET.ref)
+        ).record == twin
 
 
-async def test_policies_and_templates_are_owned_by_team_even_with_the_same_installation_id(db) -> None:
-    other_team = 'other:acme.com'
-    template = GrantTemplate.from_after({
-        'v': 1, 'grant_template_id': 'gtp_shared', 'subject': {'principal': DID_AW},
-        'capability': 'use', 'operations': [], 'open_request': True, 'jobs': [],
-        'policy_digest': POLICY.digest,
-    })
-    changed = GrantTemplate.from_after({**template.after, 'subject': {'role': 'secrets.role.deployers'}})
+async def test_policies_and_templates_are_owned_by_team_even_with_the_same_installation_id(
+    db,
+) -> None:
+    other_team = "other:acme.com"
+    template = GrantTemplate.from_after(
+        {
+            "v": 1,
+            "grant_template_id": "gtp_shared",
+            "subject": {"principal": DID_AW},
+            "capability": "use",
+            "operations": [],
+            "open_request": True,
+            "jobs": [],
+            "policy_digest": POLICY.digest,
+        }
+    )
+    changed = GrantTemplate.from_after(
+        {**template.after, "subject": {"role": "secrets.role.deployers"}}
+    )
     async with db.transaction() as tx:
         await records.create_policy(tx, INSTALLATION, POLICY, team_id=TEAM)
         await records.set_grant_template(tx, INSTALLATION, template, team_id=TEAM)
         assert await records.policy(tx, INSTALLATION, POLICY.digest, team_id=other_team) is None
-        assert await records.grant_template(tx, INSTALLATION, template.grant_template_id, team_id=other_team) is None
+        assert (
+            await records.grant_template(
+                tx, INSTALLATION, template.grant_template_id, team_id=other_team
+            )
+            is None
+        )
         await records.create_policy(tx, INSTALLATION, POLICY, team_id=other_team)
         await records.set_grant_template(tx, INSTALLATION, changed, team_id=other_team)
         assert await records.policy(tx, INSTALLATION, POLICY.digest, team_id=TEAM) == POLICY
-        assert await records.grant_template(tx, INSTALLATION, template.grant_template_id, team_id=TEAM) == template
-        assert await records.grant_template(tx, INSTALLATION, template.grant_template_id, team_id=other_team) == changed
+        assert (
+            await records.grant_template(tx, INSTALLATION, template.grant_template_id, team_id=TEAM)
+            == template
+        )
+        assert (
+            await records.grant_template(
+                tx, INSTALLATION, template.grant_template_id, team_id=other_team
+            )
+            == changed
+        )
 
 
 async def test_grant_cannot_reference_another_teams_policy_in_the_same_installation(db) -> None:
     await _setup(db)
-    other_team = 'other:acme.com'
-    twin = SecretRecord.from_after({**SECRET.after, 'secret_id': 'sec_team_twin'})
+    other_team = "other:acme.com"
+    twin = SecretRecord.from_after({**SECRET.after, "secret_id": "sec_team_twin"})
     async with db.transaction() as tx:
         await records.create_secret(tx, INSTALLATION, other_team, twin)
-    grant = _grant('grt_team_twin', {'principal': DID_AW}, secret_id=twin.secret_id)
+    grant = _grant("grt_team_twin", {"principal": DID_AW}, secret_id=twin.secret_id)
     with pytest.raises(asyncpg.ForeignKeyViolationError):
         async with db.transaction() as tx:
             await records.create_grant(tx, INSTALLATION, other_team, grant)
