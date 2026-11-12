@@ -31,7 +31,7 @@ class Provider:
                     raise Infrastructure(f'provider read {method} failed ({name})') from None
                 self.sleep(attempt+1)
 
-    def create(self, method, run_id, *args, **kwargs):
+    def create(self, method, run_id, *args, reconcile_method='list', **kwargs):
         try:
             return getattr(self.backend, method)(*args, **kwargs)
         except Exception as exc:
@@ -40,7 +40,7 @@ class Provider:
                        error_type=type(exc).__name__)
             # No mutation retry, even if successful reconciliation finds nothing.
             try:
-                resources = self.read('list', run_id)
+                resources = self.read(reconcile_method, run_id)
             except Infrastructure:
                 resources = None
             if name in CAPACITY:
@@ -50,7 +50,7 @@ class Provider:
             error.resources = resources
             raise error from None
 
-    def cleanup(self, run_id):
+    def cleanup(self, run_id, recorded=()):
         owned = self.read('list', run_id)
         order = {'server': 0, 'ip': 1, 'key': 2, 'image': 3}
         failures = []
@@ -62,7 +62,8 @@ class Provider:
                 self.event('provider_delete_error', kind=item['kind'], id=item['id'],
                            code=code(exc), error_type=type(exc).__name__)
         remaining = []
-        for item in owned:
+        exact={(item['kind'],item['id']):item for item in [*owned,*recorded]}
+        for item in exact.values():
             if self.read('get', item['kind'], item['id']) is not None:
                 remaining.append((item['kind'], item['id']))
         by_label = self.read('list', run_id)
@@ -71,7 +72,8 @@ class Provider:
                                  f'IDs={remaining}, label_count={len(by_label)}; errors={failures}')
         # A failed DELETE response can still have completed. Exact-ID and label
         # reads above establish the result; no DELETE has been blindly repeated.
-        return {'run_id': run_id, 'exact_ids_absent': True, 'labels_absent': True}
+        return {'run_id': run_id, 'exact_ids_absent': True, 'labels_absent': True,
+                'exact_ids':[{'kind':kind,'id':id} for kind,id in sorted(exact)]}
 
     def reap(self, now):
         expired = set()

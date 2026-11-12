@@ -1,6 +1,10 @@
 """Freeze exact local Git bytes; credentials and live remotes never go to a VM."""
 from pathlib import Path
 import json
+import os
+import fcntl
+import hashlib
+from contextlib import contextmanager
 import re
 import subprocess
 import uuid
@@ -12,7 +16,10 @@ from .errors import Refused
 def git(repo, *args, check=True):
     try:
         result = subprocess.run(['git','-C',str(repo),*args],text=True,
-                                capture_output=True,timeout=120)
+                                capture_output=True,timeout=120,env={**{k:os.environ[k] for k in
+                                    ['PATH','HOME','USER','LOGNAME','SSH_AUTH_SOCK','SSH_AGENT_PID','GIT_SSH',
+                                     'GIT_SSH_COMMAND','GH_CONFIG_DIR','LANG','LC_ALL'] if k in os.environ},
+                                    'GIT_TERMINAL_PROMPT':'0'})
     except (OSError,subprocess.TimeoutExpired):
         raise Refused('local Git operation unavailable or timed out') from None
     if check and result.returncode:
@@ -30,7 +37,7 @@ def verify_train_main(repo, source):
         raise Refused('stale train candidate: real origin/main moved since source admission')
 
 
-def prepare(repo, sha, out, *, observed, intent='branch'):
+def _prepare(repo, sha, out, *, observed, intent='branch'):
     repo=Path(repo).resolve();out=Path(out).resolve()
     if intent not in {'train','branch'}:
         raise Refused('source intent must be train or branch')
@@ -66,3 +73,21 @@ def prepare(repo, sha, out, *, observed, intent='branch'):
     verify_train_main(repo,result)
     (out/'source.json').write_text(json.dumps(result,indent=2)+'\n')
     return result
+
+
+@contextmanager
+def source_lease(repo,root):
+    common=git(repo,'rev-parse','--git-common-dir').stdout.strip()
+    common=Path(common) if Path(common).is_absolute() else Path(repo)/common
+    identity=hashlib.sha256(str(common.resolve()).encode()).hexdigest()
+    locks=Path(root)/'source-locks';locks.mkdir(parents=True,exist_ok=True,mode=0o700)
+    with (locks/(identity+'.lock')).open('a') as lock:
+        fcntl.flock(lock,fcntl.LOCK_EX)
+        yield
+
+
+def prepare(repo,sha,out,*,observed,intent='branch',lock_root=None):
+    # Git refs/FETCH_HEAD are shared even by distinct worktrees. Serialize the
+    # short freeze, while VM execution and spend transactions remain parallel.
+    with source_lease(repo,lock_root or Path(out).parent):
+        return _prepare(repo,sha,out,observed=observed,intent=intent)

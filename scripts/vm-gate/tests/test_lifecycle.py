@@ -60,6 +60,15 @@ class LifecycleTests(unittest.TestCase):
         self.assertEqual(self.backend.calls[0],'inventory')
         self.assertLess(self.backend.calls.index('delete-server'),self.backend.calls.index('create-key'))
         self.assertEqual([x['id'] for x in self.backend.items],[98])
+    def test_controller_failure_retains_available_partial_stage_evidence(self):
+        remote=Remote()
+        def broken(server,timeout):raise Infrastructure('controller timeout')
+        remote.execute=broken
+        result=self.run_session(remote)
+        self.assertEqual(result['exit'],70)
+        self.assertEqual(result['stages'][0]['stage'],'checks')
+        self.assertEqual(self.backend.items,[])
+
     def test_capacity_is_one_refusal_and_no_second_type(self):
         self.backend.capacity=True;result=self.run_session(Remote())
         self.assertEqual(result['exit'],78);self.assertEqual(result['infrastructure'],'refused')
@@ -69,10 +78,26 @@ class LifecycleTests(unittest.TestCase):
         self.store=Store(self.root/'small-db',.01,clock=lambda:100)
         result=self.run_session(Remote())
         self.assertEqual(result['exit'],78);self.assertFalse(any(x.startswith('create') for x in self.backend.calls))
+    def test_per_run_acceptance_ceiling_refuses_live_price_before_create(self):
+        result=self.run_session(Remote(),max_reserve_eur='.10')
+        self.assertEqual(result['exit'],78)
+        self.assertIn('per-run ceiling',result['error'])
+        self.assertFalse(any(x.startswith('create') for x in self.backend.calls))
+
     def test_cleanup_failure_cannot_settle_reservation_or_return_gate_pass(self):
         def fail(item):raise RuntimeError('lost provider')
         self.backend.delete=fail;result=self.run_session(Remote())
         self.assertEqual(result['exit'],70);self.assertIsNone(self.store.get('run')['settled'])
+
+    def test_recorded_id_missing_from_label_list_cannot_be_claimed_absent(self):
+        remote=Remote()
+        def collect(server,timeout):
+            self.backend.list=lambda run_id=None:[]
+            return {}
+        remote.collect=collect
+        result=self.run_session(remote)
+        self.assertEqual(result['exit'],70)
+        self.assertIsNone(self.store.get('run')['settled'])
 
     def test_live_ip_rate_is_included_in_cost(self):
         result=self.run_session(Remote())

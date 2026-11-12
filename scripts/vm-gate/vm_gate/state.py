@@ -147,3 +147,7 @@ class Store:
         with self._db() as db:
             return [self._row(row) for row in db.execute(
                 'SELECT * FROM runs WHERE settled IS NULL AND expires<=? ORDER BY created,run_id', (now,))]
+
+    def runs(self):
+        with self._db() as db:
+            return [self._row(row) for row in db.execute('SELECT * FROM runs ORDER BY created DESC,run_id')]

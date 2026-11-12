@@ -10,7 +10,7 @@ from vm_gate.source import prepare, verify_train_main
 def git(root,*args):
     return subprocess.check_output(['git','-C',str(root),*args],stderr=subprocess.PIPE,text=True).strip()
 
-class SourceTests(unittest.TestCase):
+class GitFixture:
     def setUp(self):
         self.tmp=tempfile.TemporaryDirectory();self.addCleanup(self.tmp.cleanup)
         self.root=Path(self.tmp.name);self.repo=self.root/'repo';self.repo.mkdir()
@@ -23,10 +23,14 @@ class SourceTests(unittest.TestCase):
         git(self.repo,'tag','fixture-base')
         self.remote=self.root/'remote.git';git(self.repo,'clone','--bare',str(self.repo),str(self.remote))
         git(self.repo,'remote','add','origin',str(self.remote));git(self.repo,'fetch','origin')
-        (self.repo/'new').write_text('candidate');git(self.repo,'add','new');git(self.repo,'commit','-m','candidate')
+        (self.repo/'scripts').mkdir()
+        (self.repo/'scripts/candidate-suite.sh').write_text('checks() {\n run lint-fixture\n}\n')
+        (self.repo/'Makefile').write_text('lint-fixture:\n\t@echo \"All checks passed!\"\n')
+        (self.repo/'new').write_text('candidate');git(self.repo,'add','.');git(self.repo,'commit','-m','candidate')
         self.sha=git(self.repo,'rev-parse','HEAD');self.out=self.root/'evidence'
         self.observed={'go':'1.2.3','uv':'0.1.2','node':'22','python':'3.12'}
 
+class SourceTests(GitFixture, unittest.TestCase):
     def run_prepare(self,**kwargs):
         return prepare(self.repo,self.sha,self.out,observed=self.observed,**kwargs)
 
@@ -72,5 +76,15 @@ class SourceTests(unittest.TestCase):
         sha=git(self.repo,'rev-parse','HEAD')
         with self.assertRaisesRegex(Refused,'origin/main is not an ancestor'):
             prepare(self.repo,sha,self.out,observed=self.observed,intent='train')
+
+    def test_parallel_source_freezes_share_the_repo_lease_but_keep_separate_bundles(self):
+        from concurrent.futures import ThreadPoolExecutor
+        with ThreadPoolExecutor(max_workers=2) as pool:
+            futures=[pool.submit(prepare,self.repo,self.sha,self.root/str(i),observed=self.observed,
+                                 lock_root=self.root/'state') for i in range(2)]
+            results=[f.result() for f in futures]
+        self.assertNotEqual(results[0]['bundle'],results[1]['bundle'])
+        self.assertEqual([r['sha'] for r in results],[self.sha,self.sha])
+        self.assertEqual(git(self.repo,'for-each-ref','--format=%(refname)','refs/vm-gate'),'')
 
 if __name__=='__main__':unittest.main()

@@ -5,12 +5,12 @@ from .provider import Provider
 
 KINDS={'server':('servers','server'),'ip':('primary_ips','primary_ip'),
        'key':('ssh_keys','ssh_key'),'image':('images','image')}
-PREFIX='aweb-gates.'
+PREFIX='aweb-vm-gate.'
 
 
 class Backend:
     def __init__(self,client,config):
-        self.client=client;self.config=config
+        self.client=client;self.config=config;self.deadline=None
         # SDK's internal mutation retries must remain disabled.
         try:
             transport=client._client
@@ -21,6 +21,13 @@ class Backend:
                 raise ValueError('retry setting did not change')
         except Exception:
             raise Infrastructure('SDK mutation retry setting unavailable or nonzero; refusing provider access') from None
+
+    def request(self,method,url,**kwargs):
+        if self.deadline is not None:
+            remaining=self.deadline-time.monotonic()
+            if remaining<=0:raise Infrastructure('provider completion deadline exhausted')
+            kwargs['timeout']=(min(10,remaining/2),min(60,remaining/2))
+        return self.client.request(method,url,**kwargs)
 
     @staticmethod
     def labels(values):
@@ -48,14 +55,14 @@ class Backend:
                 seen.add(page)
                 params={'label_selector':selector,'page':page,'per_page':50}
                 if kind=='image':params['type']='snapshot'
-                result=self.client.request('GET','/'+plural,params=params)
+                result=self.request('GET','/'+plural,params=params)
                 items.extend(self.resource(kind,item) for item in result[plural])
                 page=result.get('meta',{}).get('pagination',{}).get('next_page')
         return items
 
     def _get(self,kind,id):
         plural,singular=KINDS[kind]
-        try:return self.client.request('GET',f'/{plural}/{id}')[singular]
+        try:return self.request('GET',f'/{plural}/{id}')[singular]
         except Exception as exc:
             if getattr(exc,'code',None)=='not_found':return None
             raise
@@ -65,7 +72,7 @@ class Backend:
         return self.resource(kind,item) if item else None
 
     def action(self,id):
-        return self.client.request('GET',f'/actions/{id}')['action']
+        return self.request('GET',f'/actions/{id}')['action']
 
     def wait(self,action,seconds=120):
         deadline=time.monotonic()+seconds
@@ -83,25 +90,25 @@ class Backend:
         if current.get('labels',{}).get(PREFIX+'run')!=item['run_id']:
             raise Infrastructure(f"delete label mismatch for {item['kind']} {item['id']}")
         plural,_=KINDS[item['kind']]
-        result=self.client.request('DELETE',f"/{plural}/{item['id']}")
+        result=self.request('DELETE',f"/{plural}/{item['id']}")
         if result:self.wait(result.get('action'))
 
     def create_key(self,*,labels):
-        result=self.client.request('POST','/ssh_keys',json={
+        result=self.request('POST','/ssh_keys',json={
             'name':labels['run_id'],'public_key':self.config['public_key'],
             'labels':self.labels(labels)})
         return self.resource('key',result['ssh_key'])
 
     def create_ip(self,*,labels):
-        result=self.client.request('POST','/primary_ips',json={
-            'name':labels['run_id'],'type':'ipv4','assignee_type':'server',
-            'datacenter':self.config['datacenter'],'auto_delete':False,
+        result=self.request('POST','/primary_ips',json={
+            'name':labels['run_id'],'type':'ipv4','location':self.config['location'],
+            'auto_delete':False,
             'labels':self.labels(labels)})
         self.wait(result.get('action'))
         return self.resource('ip',result['primary_ip'])
 
     def create_server(self,*,server_type,labels,key,ip):
-        result=self.client.request('POST','/servers',json={
+        result=self.request('POST','/servers',json={
             'name':labels['run_id'],'server_type':server_type,'image':self.config['snapshot_id'],
             'ssh_keys':[key['id']],'location':self.config['location'],
             'public_net':{'enable_ipv4':True,'enable_ipv6':False,'ipv4':ip['id']},
@@ -110,12 +117,15 @@ class Backend:
         return self.resource('server',result['server'])
 
     def server_info(self,id):
-        return self.client.request('GET',f'/servers/{id}')['server']
+        return self.request('GET',f'/servers/{id}')['server']
+
+    def image_info(self,id):
+        return self.request('GET',f'/images/{id}')['image']
 
     def pricing(self,server_type):
-        result=self.client.request('GET','/pricing')['pricing']
+        result=self.request('GET','/pricing')['pricing']
         if result['currency']!='EUR':raise Refused('provider pricing currency must be EUR')
-        types=self.client.request('GET','/server_types',params={'name':server_type})['server_types']
+        types=self.request('GET','/server_types',params={'name':server_type})['server_types']
         if len(types)!=1:raise Refused(f'requested server type unavailable: {server_type}')
         price=next((p for p in types[0]['prices'] if p['location']==self.config['location']),None)
         if price is None:raise Refused('no price at configured location')
@@ -124,4 +134,39 @@ class Backend:
         ip_price=next((p for p in ip['prices'] if p['location']==self.config['location']),None)
         if ip_price is None:raise Refused('no IPv4 price at configured location')
         return {'server_hourly':price['price_hourly']['gross'],
-                'ip_hourly':ip_price['price_hourly']['gross'],'currency':'EUR'}
+                'ip_hourly':ip_price['price_hourly']['gross'],'currency':'EUR','disk':types[0]['disk']}
+
+    def snapshot_pricing(self):
+        return self.request('GET','/pricing')['pricing']
+
+    def create_image(self,*,server,labels):
+        protected=self.labels(labels)
+        protected[PREFIX+'snapshot-run']=protected.pop(PREFIX+'run')
+        protected[PREFIX+'base']='candidate'
+        result=self.request('POST',f"/servers/{server['id']}/actions/create_image",json={
+            'type':'snapshot','description':labels['run_id'],'labels':protected})
+        return {'id':result['image']['id'],'action':result.get('action')}
+
+    def snapshot_candidates(self,run_id):
+        page=1;items=[];seen=set()
+        while page:
+            if page in seen or len(seen)>=1000:raise Infrastructure('snapshot pagination did not terminate')
+            seen.add(page)
+            result=self.request('GET','/images',params={'type':'snapshot',
+                'label_selector':PREFIX+'snapshot-run='+run_id,'page':page,'per_page':50})
+            items.extend({'kind':'image','id':item['id'],'snapshot_run':run_id} for item in result['images'])
+            page=result.get('meta',{}).get('pagination',{}).get('next_page')
+        return items
+
+    def promote_image(self,id,run_id):
+        image=self.image_info(id);labels=dict(image.get('labels',{}))
+        if labels.get(PREFIX+'snapshot-run')!=run_id:
+            raise Infrastructure('snapshot promotion label mismatch')
+        labels[PREFIX+'base']='verified'
+        self.request('PUT',f'/images/{id}',json={'labels':labels})
+
+    def delete_base(self,id,new_id):
+        if id==new_id:raise Infrastructure('old and new base IDs must differ')
+        image=self.image_info(id)
+        if image['type']!='snapshot':raise Infrastructure('configured old base is not a snapshot')
+        self.request('DELETE',f'/images/{id}')

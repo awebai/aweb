@@ -4,8 +4,8 @@ from .errors import Infrastructure, Refused
 
 
 class CompletionBudget:
-    def __init__(self, created, timeout, *, setup=900, pull=600, cleanup=300, margin=300):
-        self.steps = {'setup': setup, 'gate': timeout, 'pull': pull,
+    def __init__(self, created, timeout, *, setup=900, pull=600, cleanup=300, margin=300, grace=45):
+        self.steps = {'setup': setup, 'gate': timeout, 'grace': grace, 'pull': pull,
                       'cleanup': cleanup, 'margin': margin}
         if any(not isinstance(x,(int,float)) or not math.isfinite(x) or x <= 0
                for x in [created, *self.steps.values()]):

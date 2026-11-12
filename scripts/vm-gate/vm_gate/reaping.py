@@ -19,9 +19,10 @@ def reap_and_settle(provider,store,clock=time.time):
         if row.get('hourly_eur') is None or row.get('ip_hourly_eur') is None:
             raise Infrastructure(f'reaped run {run_id} lacks pricing; reservation held')
         hours=max(1,math.ceil((now-row['created'])/3600))
-        server=any(x['kind']=='server' for x in resources) or row.get('attempted_server',False)
+        server=max(len({x['id'] for x in resources if x['kind']=='server'}),
+                   row.get('server_attempts',int(row.get('attempted_server',False))))
         ip=any(x['kind']=='ip' for x in resources) or row.get('attempted_ip',False)
-        actual=hours*(Decimal(row['hourly_eur'])*int(server)+Decimal(row['ip_hourly_eur'])*int(ip))
+        actual=hours*(Decimal(row['hourly_eur'])*int(server)+Decimal(row['ip_hourly_eur'])*int(ip))+Decimal(row.get('storage_reserve_eur','0'))
         store.settle(run_id,str(actual),now=now)
         store.update(run_id,{'reaped':now,'cost_basis':'conservative creation-to-reap upper bound'})
         settled.append({'run_id':run_id,'cost_eur':str(actual)})

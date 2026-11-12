@@ -33,4 +33,9 @@ class ReapSettlementTests(unittest.TestCase):
             reap_and_settle(self.provider,self.store,clock=lambda:3701)
         self.assertIsNone(self.store.get('old')['settled'])
 
+    def test_reaped_snapshot_counts_both_vms_and_storage_upper_bound(self):
+        self.store.update('old',{'server_attempts':2,'storage_reserve_eur':'.1'})
+        reap_and_settle(self.provider,self.store,clock=lambda:3701)
+        self.assertEqual(self.store.get('old')['actual'],'0.920000')
+
 if __name__=='__main__':unittest.main()

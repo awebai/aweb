@@ -4,6 +4,7 @@ Operations must create candidate images under protected base labels outside the
 transient run selector. Failed candidates are reported, never auto-deleted.
 """
 from .errors import Infrastructure
+from .signals import handling
 
 
 def rebuild(operations):
@@ -24,8 +25,9 @@ def rebuild(operations):
         error=exc
     finally:
         try:
-            operations.cleanup()
-            operations.settle()
+            with handling(cleanup=True):
+                operations.cleanup()
+                operations.settle()
         except BaseException as exc:
             error=Infrastructure('snapshot cleanup/settlement failed: '+type(exc).__name__)
         if error is not None:

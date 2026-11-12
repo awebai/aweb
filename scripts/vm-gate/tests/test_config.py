@@ -7,6 +7,10 @@ from vm_gate.config import load, child_environment
 from vm_gate.preflight import read_hcloud_token
 from vm_gate.errors import Refused
 
+def hashes():
+    return {name:{'path':'/bin/'+name,'target':'/bin/'+name,'sha256':'a'*64}
+            for name in ['go','uv','uvx','node','npm','python3','git','make','bash','docker']}
+
 class ConfigTests(unittest.TestCase):
     def setUp(self):
         self.tmp=tempfile.TemporaryDirectory();self.addCleanup(self.tmp.cleanup)
@@ -16,7 +20,7 @@ class ConfigTests(unittest.TestCase):
                      'snapshot_manifest':str(self.root/'manifest.json'),'token_file':str(self.root/'credential'),
                      'owner':'seat','location':'location','datacenter':'datacenter','snapshot_id':1,
                      'cap_eur':'150','seed_eur':'0'}
-        (self.root/'manifest.json').write_text(json.dumps({'observed':{'go':'1'},'commands':{},'dpkg':''}))
+        (self.root/'manifest.json').write_text(json.dumps({'observed':{'go':'1'},'commands':hashes(),'dpkg':'fixture=1'}))
     def write(self):self.path.write_text(json.dumps(self.config));return self.path
     def test_config_and_state_must_stay_outside_the_repo(self):
         self.config['state_root']=str(self.repo/'state')
@@ -36,5 +40,13 @@ class ConfigTests(unittest.TestCase):
     def test_valid_external_config_loads_recorded_manifest(self):
         result=load(self.write(),self.repo)
         self.assertEqual(result['manifest']['observed']['go'],'1')
+
+    def test_invalid_phase_budget_is_refused_locally(self):
+        self.config['setup_seconds']=-1
+        with self.assertRaisesRegex(Refused,'setup_seconds'):load(self.write(),self.repo)
+
+    def test_empty_binary_manifest_is_not_a_verified_snapshot(self):
+        (self.root/'manifest.json').write_text(json.dumps({'observed':{'go':'1'},'commands':{},'dpkg':'fixture=1'}))
+        with self.assertRaisesRegex(Refused,'binary manifest'):load(self.write(),self.repo)
 
 if __name__=='__main__':unittest.main()
