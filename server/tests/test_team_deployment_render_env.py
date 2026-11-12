@@ -191,12 +191,18 @@ AGENTS = {
         "authorizedKeysFile": "/srv/team/authorized_keys",
         "pidsLimit": 512,
         "name": "devteam",
+        "oatsSource": "/srv/oats",
     },
 }
 
 
-def test_the_agents_section_renders_limits_in_bytes_and_the_address_plan():
-    rendered = render_env.render({**EXAMPLE, "network": {"servicesCidr": "172.31.0.0/24"}, "agents": AGENTS})
+EGRESS = {"image": "ghcr.io/oats-project/team-egress@sha256:" + "4" * 64, "privateIngressAddresses": ["172.31.0.250"]}
+
+
+def test_the_agents_section_renders_limits_in_bytes_and_the_address_plan(signer):
+    rendered = render_env.render(
+        {**EXAMPLE, "network": {"servicesCidr": "172.31.0.0/24"}, "agents": AGENTS, "signer": signer, "egress": EGRESS, **APPS}
+    )
     agents = {name: value for name, value in rendered.items() if name.startswith(("AGENT", "TEAM_", "AUTHORIZED")) or name in ("TEAM", "SERVICES_CIDR")}
     assert agents == {
         "AGENT_IMAGE": AGENTS["image"],
@@ -215,7 +221,30 @@ def test_the_agents_section_renders_limits_in_bytes_and_the_address_plan():
         "TEAM": "devteam",
         "TEAM_ID": "devteam:example.com",
         "SERVICES_CIDR": "172.31.0.0/24",
+        "TEAM_LOGIN_DIR": "/etc/aweb-secrets/agents",
+        "AGENTS_NETWORK": "agents",
     }
+
+
+def test_agents_go_out_only_through_egress_at_their_resolver_address(signer):
+    rendered = render_env.render({**EXAMPLE, "agents": AGENTS, "signer": signer, "egress": EGRESS, **APPS})
+    assert rendered["EGRESS_IMAGE"] == EGRESS["image"]
+    assert rendered["EGRESS_ADDRESS"] == AGENTS["resolverIp"]
+    assert rendered["AGENTS_NETWORK"] == "agents"
+    assert rendered["OATS_SOURCE"] == "/srv/oats"
+    assert rendered["COMPOSE_FILE"] == (
+        "compose.yaml:compose.secrets.yaml:compose.logs.yaml:compose.signer.yaml:compose.agents.yaml"
+    )
+    # The policy's ingress exceptions are the adapter's input, not a service setting.
+    assert not any("INGRESS" in name for name in rendered)
+
+
+@pytest.mark.parametrize("missing", ["signer", "egress", "secrets", "logs"])
+def test_agents_need_the_signer_egress_and_the_apps_they_reach(signer, missing):
+    config = {**EXAMPLE, "agents": AGENTS, "signer": signer, "egress": EGRESS, "secrets": app("secrets"), "logs": app("logs")}
+    del config[missing]
+    with pytest.raises(render_env.Refused, match=f"agents: requires {missing}"):
+        render_env.render(config)
 
 
 @pytest.mark.parametrize(
@@ -230,7 +259,7 @@ def test_the_agents_section_renders_limits_in_bytes_and_the_address_plan():
         (("compose",), None),
     ],
 )
-def test_the_agents_section_refuses_quantity_spellings_a_raw_team_id_as_a_name_and_credentials(path, value):
+def test_the_agents_section_refuses_quantity_spellings_a_raw_team_id_as_a_name_and_credentials(signer, path, value):
     agents = copy.deepcopy(AGENTS)
     target = agents
     for key in path[:-1]:
@@ -239,12 +268,13 @@ def test_the_agents_section_refuses_quantity_spellings_a_raw_team_id_as_a_name_a
         del target[path[-1]]
     else:
         target[path[-1]] = value
-    with pytest.raises(render_env.Refused):
-        render_env.render({**EXAMPLE, "agents": agents})
+    with pytest.raises(render_env.Refused) as refused:
+        render_env.render({**EXAMPLE, "agents": agents, "signer": signer, "egress": EGRESS, **APPS})
+    assert "requires" not in str(refused.value)
 
 
 def test_the_signer_must_name_the_agents_uid_as_a_worker(signer):
-    config = {**EXAMPLE, "signer": {**signer, "workerUids": [30000]}, "agents": AGENTS}
+    config = {**EXAMPLE, "signer": {**signer, "workerUids": [30000]}, "agents": AGENTS, "egress": EGRESS, **APPS}
     with pytest.raises(render_env.Refused, match="signer.workerUids"):
         render_env.render(config)
     config["signer"]["workerUids"] = [20001]
@@ -261,6 +291,9 @@ def app(name: str) -> dict:
         "emailFrom": f"{name}@example.com",
         "egressDeniedNetworks": ["169.254.0.0/16"],
     }
+
+
+APPS = {name: app(name) for name in ("secrets", "logs")}
 
 
 def test_secrets_and_logs_render_the_settings_each_app_reads():

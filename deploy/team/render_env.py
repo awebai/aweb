@@ -71,7 +71,7 @@ def _collect(schema: dict, value: object, out: dict[str, str]) -> None:
 
 
 # The components an operator can leave out, each in its own Compose file.
-OPTIONAL_COMPONENTS = ("secrets", "logs", "signer")
+OPTIONAL_COMPONENTS = ("secrets", "logs", "signer", "agents")
 
 # Where the signer's public configuration is mounted, outside its secrets.
 SIGNER_CONFIG = "/etc/aweb/signer"
@@ -103,7 +103,13 @@ def render(config: object) -> dict[str, str]:
         raise Refused("network.servicesCidr: missing; the Compose layer creates the services network with it")
     if "agents" in config and "compose" not in config["agents"]:
         raise Refused("agents: missing compose; the Compose layer needs agents.compose")
-    if "agents" in config and "signer" in config:
+    if "agents" in config:
+        # Agents reach nothing but through egress, whose DNS answers for the
+        # namespaces the signer's profile names, and only the five origins of
+        # aweb, Secrets, Logs, the signer's requests and the registry.
+        for needed in ("signer", "egress", "secrets", "logs"):
+            if needed not in config:
+                raise Refused(f"agents: requires {needed}")
         # The signer refuses custody that a worker's uid could read; it has to know the agents' uid.
         if config["agents"].get("uid", 20001) not in config["signer"]["workerUids"]:
             raise Refused("signer.workerUids: does not name agents.uid")
@@ -118,6 +124,12 @@ def render(config: object) -> dict[str, str]:
         out["SIGNER_SCOPE_FILE"] = f"{SIGNER_CONFIG}/scope.json"
         if "emailCaFile" in config["signer"]:
             out["AWEB_PROTECTED_EMAIL_CA_FILE"] = f"{SIGNER_CONFIG}/email-ca.pem"
+    if "agents" in config:
+        out["EGRESS_ADDRESS"] = config["agents"]["resolverIp"]
+        # The name the agent's own Compose file gives the network; the
+        # deployment's agents network takes its place.
+        out["AGENTS_NETWORK"] = "agents"
+        out["TEAM_LOGIN_DIR"] = f"{config['compose']['secretsDir']}/{out['AGENTS_SECRETS']}"
     # Secrets holds its custody key as a mounted file unless the operator names a KMS key.
     if "secrets" in config and "kmsKeyId" not in config["secrets"]:
         out["SECRETS_CUSTODY_KEY_FILE"] = "/run/secrets/secrets/custody-key"

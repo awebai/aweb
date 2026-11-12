@@ -266,3 +266,22 @@ def test_the_signer_reads_every_setting_its_section_of_the_schema_renders():
     read = set(environment(SIGNER)) | set(re.findall(r"\$\{([A-Z_]+)", SIGNER_FILE + team))
     assert rendered - wrapper - sources <= read
     assert {source for source in sources if source in team} == sources
+
+
+AGENTS_FILE = yaml.safe_load((TEAM / "compose.agents.yaml").read_text(encoding="utf-8"))["services"]
+OATS = "${OATS_SOURCE:?OATS_SOURCE is required, agents.compose.oatsSource}"
+
+
+def test_the_agent_and_its_egress_are_the_oats_sources_own_services():
+    assert AGENTS_FILE["egress"] == {
+        "extends": {"file": f"{OATS}/container/agent/egress/compose.egress.yaml", "service": "egress"}
+    }
+    assert AGENTS_FILE["agent"]["extends"] == {"file": f"{OATS}/container/agent/compose.agent.yaml", "service": "agent"}
+
+
+def test_the_agent_starts_only_once_its_egress_is_healthy_and_adds_no_route_or_mount():
+    agent = AGENTS_FILE["agent"]
+    assert agent["depends_on"] == {"egress": {"condition": "service_healthy"}}
+    # Its networks, mounts and limits are the OATS service's: the deployment adds none.
+    assert set(agent) == {"extends", "depends_on"}
+    assert set(AGENTS_FILE) == {"egress", "agent"}
