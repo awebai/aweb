@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import logging
+import os
 import socket
 from collections.abc import AsyncIterator
 
@@ -19,8 +20,9 @@ from aweb_secrets.custody import (
     LocalKeyFileProvider,
     SealContext,
     apply_custody_migrations,
+    seal_canary,
 )
-from tests.custody.conftest import initial_record, record_tables, value_bytes
+from tests.custody.conftest import initial_record, record_tables, value_bytes, write_key_file
 
 INSTALLATION = "installation-1"
 TEAM = "team-1"
@@ -177,6 +179,48 @@ async def test_the_same_secret_id_under_two_teams_is_independent(
 
 async def test_health_is_ok_with_a_working_key(custody: Custody) -> None:
     assert (await custody.health()).ok
+
+
+@pytest.mark.parametrize("private_backend", [False, True])
+async def test_health_refuses_a_replacement_key_for_retained_inert_ciphertext(
+    custody, db, provider, kek_file, canary, private_backend
+) -> None:
+    async with db.transaction() as tx:
+        if private_backend:
+            await custody.stage_backend_credential(
+                tx, installation_id=INSTALLATION, team_id=TEAM, value=value_bytes(canary)
+            )
+        else:
+            await custody.sealer.ingest(
+                tx,
+                **_secret("sec_secret1"),
+                value=value_bytes(canary),
+                initial=initial_record("sec_secret1"),
+            )
+    retained = await db.fetch_all("SELECT * FROM {{tables.sealed_versions}}")
+    assert retained
+    assert (await custody.health()).ok
+    write_key_file(kek_file, os.urandom(32))
+    # The current process keeps its key; a restart reads the replacement.
+    assert (await custody.health()).ok
+    replacement = LocalKeyFileProvider(kek_file)
+    seal_canary(replacement)
+    health = await Custody(replacement, db).health()
+    assert not health.ok
+    if provider.key_id in repr(health) or replacement.key_id in repr(health):
+        raise AssertionError("custody health disclosed key identity")
+    if await db.fetch_all("SELECT * FROM {{tables.sealed_versions}}") != retained:
+        raise AssertionError("custody health changed retained ciphertext")
+
+
+async def test_health_checks_older_versions_and_other_teams(db, provider, tmp_path, canary):
+    original = Custody(provider, db)
+    await _ingest(original, db, "sec_secret1", canary, team_id="other-team")
+    replacement = LocalKeyFileProvider(write_key_file(tmp_path / "replacement", os.urandom(32)))
+    current = Custody(replacement, db)
+    await _ingest(current, db, "sec_secret1", canary, team_id="other-team")
+    await _ingest(current, db, "sec_secret2", canary)
+    assert not (await current.health()).ok
 
 
 async def test_health_is_degraded_when_kms_is_unreachable(db: AsyncDatabaseManager) -> None:

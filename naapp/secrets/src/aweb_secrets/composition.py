@@ -87,12 +87,10 @@ from aweb_secrets.custody import (
     AwsKmsProvider,
     BackendCredentialOpener,
     Custody,
-    CustodyUnavailable,
     KeyProvider,
     LocalKeyFileProvider,
     SecretOpener,
     apply_custody_migrations,
-    seal_canary,
 )
 from aweb_secrets.custody.opening import UseSecretOpener
 from aweb_secrets.human_holders import OwnerHoldingAuthority
@@ -170,6 +168,7 @@ class _Services:
     broker: BrokerRequests
     runs: RunDispatch
     status: UseStatus
+    custody: Custody
 
 
 async def _compose(
@@ -444,6 +443,7 @@ async def _compose(
         broker,
         runs,
         UseStatus(db, fence=fence, approvals=approvals, runs=runs.status),
+        custody,
     )
 
 
@@ -524,11 +524,9 @@ def create_service(
         return active
 
     async def kms():
-        try:
-            await asyncio.to_thread(seal_canary, provider)
-        except CustodyUnavailable:
+        if active is None:
             return CheckResult(ok=False)
-        return CheckResult(ok=True)
+        return CheckResult(ok=(await active.custody.health()).ok)
 
     async def tool_policy(request, principal, tool):
         # B1 validates member/manifest/context/granted scopes. Each business
