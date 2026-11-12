@@ -230,7 +230,7 @@ dev = [
 
 [[package]]
 name = "aweb-naapp"
-version = "0.5.1"
+version = "0.5.2"
 source = { editable = "." }
 
 [package.optional-dependencies]
@@ -353,7 +353,7 @@ dev = [
 
 [[package]]
 name = "aweb-naapp-testing"
-version = "0.5.1"
+version = "0.5.2"
 source = { editable = "testing" }
 dependencies = [
     { name = "aiosmtpd" },
@@ -387,7 +387,7 @@ provides-extras = ["server"]
 
 [[package]]
 name = "awid-service"
-version = "0.5.39"
+version = "0.5.40"
 source = { editable = "../awid" }
 dependencies = [
     { name = "base58" },

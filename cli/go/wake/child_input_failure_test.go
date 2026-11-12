@@ -32,7 +32,7 @@ func TestBundledSubmittedFalseUsesBoundedRetryWithoutAcknowledgment(t *testing.T
 			json.NewEncoder(w).Encode(map[string]any{"ok": true})
 			return
 		}
-		json.NewEncoder(w).Encode(map[string]any{"messages": []map[string]any{signedWakeMessage(t, map[string]any{"message_id": "mail-false", "from_alias": "bob", "body": "unsubmitted", "created_at": "2026-01-01T00:00:00Z"})}})
+		json.NewEncoder(w).Encode(map[string]any{"messages": []map[string]any{signedWakeMessage(t, "mail", map[string]any{"message_id": "mail-false", "from_alias": "bob", "body": "unsubmitted", "created_at": "2026-01-01T00:00:00Z"})}})
 	}))
 	defer server.Close()
 	grantHome := writeGrantHome(t, root, server.URL, []string{"events.read", "mail.read", "mail.send"})

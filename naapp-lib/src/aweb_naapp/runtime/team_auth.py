@@ -33,7 +33,7 @@ from typing import Any
 from urllib.parse import quote, urlsplit
 
 import httpx
-from awid.did import did_from_public_key, public_key_from_did, validate_stable_id
+from awid.did import did_key_from_signing_key, public_key_from_did, validate_stable_id
 from awid.log import canonical_server_origin
 from awid.registry_auth import RegistryRequestAuth
 from awid.signing import (
@@ -47,7 +47,6 @@ from awid.team_certificate import (
 )
 from awid.team_ids import parse_team_id
 from fastapi import HTTPException, Request
-from nacl.signing import SigningKey
 from pgdbm import AsyncDatabaseManager
 
 from aweb_naapp.runtime.clock import seconds_to_ns
@@ -185,7 +184,7 @@ class AWIDMemberCredential:
     certificate: Mapping[str, Any]
 
     def __post_init__(self) -> None:
-        did_key = did_from_public_key(bytes(SigningKey(self.signing_key).verify_key))
+        did_key = did_key_from_signing_key(self.signing_key)
         if self.certificate.get("member_did_key") != did_key:
             raise ValueError("an AWID member credential's certificate is not its signing key's")
 

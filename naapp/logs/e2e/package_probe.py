@@ -1,10 +1,10 @@
 """Runs inside the packaged image against the lab's real DNS, TLS and AWID.
 
-The lab copies this file to /lab/probe.py, beside the shared packaged_probe.
+The lab copies this file to /lab/probe.py, beside the minimal shared probe package.
 """
 
 from aweb_naapp.runtime.hook_egress import HookEgress
-from packaged_probe import run
+from aweb_naapp_testing.packaged_probe import run
 
 from aweb_logs.app import create_runtime
 from aweb_logs.config import LogsSettings
