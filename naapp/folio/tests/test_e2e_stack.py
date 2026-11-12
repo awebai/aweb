@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from test_e2e_smoke import e2e_stack
+from test_e2e_smoke import candidate_hostname, e2e_stack
 
 
 def test_stack_defaults_to_the_local_make_e2e_stack() -> None:
@@ -37,7 +37,7 @@ def test_candidate_stack_uses_its_owned_compose_network() -> None:
         }
     )
 
-    assert stack.awid_url == "http://gate-run-folio-awid.test:8010"
-    assert stack.postgres_url == "postgresql://folio:folio@gate-run-folio-postgres.test:5432/folio"
-    assert stack.redis_url == "redis://gate-run-folio-redis.test:6379/0"
+    assert stack.awid_url == f"http://{candidate_hostname('gate-run-folio', 'awid')}:8010"
+    assert stack.postgres_url == f"postgresql://folio:folio@{candidate_hostname('gate-run-folio', 'postgres')}:5432/folio"
+    assert stack.redis_url == f"redis://{candidate_hostname('gate-run-folio', 'redis')}:6379/0"
     assert stack.compose == ["docker", "compose", "-p", "gate-run-folio", "-f", "docker-compose.e2e.yml"]
