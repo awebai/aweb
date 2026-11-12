@@ -80,6 +80,13 @@ The fields:
 - `notice_contact_sha256` is B3's `contact_sha256` of the notice contact
   (`naapp-lib/src/aweb_naapp/runtime/passkeys/service.py:314`).
 
+### Credential cap
+
+`human-credential.cap-set`, also additive, names `app_id`, `installation_id`,
+`role` and `cap`, a positive integer. It sets B3's per-holding credential cap
+for the role, 5 by default, and names no holder. Like the three acts, it is a
+team owner act ([owner-act delivery](../owner-act-delivery.md#delivery)).
+
 `app-role.designate`, `app-credential.recover` and `app-role.revoke` keep
 their meaning. An app that declares a role with the human-role acts accepts no
 contact act for that role (H1).
@@ -87,7 +94,8 @@ contact act for that role (H1).
 ### Declaration
 
 An `owner_acts.roles` entry keeps `name`, `label`, `description` and `acts`.
-Its `acts` is a nonempty subset of the three human-role acts. It adds
+Its `acts` is a nonempty subset of the three human-role acts and
+`human-credential.cap-set`. It adds
 `notice_contact`, a boolean that is true when designate and replace must name
 one (H3). It drops `principal`, because every human role binds a principal,
 and `prepare_tool`, for the reason in the next section.
