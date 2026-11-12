@@ -2075,7 +2075,14 @@ async def test_root_renews_same_session_key_and_terms_but_revocation_wins(aweb_c
         grant_id = original["grant_id"]
         path = f"/v1/identity-grants/{grant_id}/renew"
         # An expired credential cannot renew itself. Ordinary subject authority can.
-        await manager.execute("UPDATE {{tables.identity_session_grants}} SET expires_at=NOW()-INTERVAL '1 second' WHERE grant_id=$1::UUID", grant_id)
+        await manager.execute(
+            """
+            UPDATE {{tables.identity_session_grants}}
+            SET issued_at = NOW() - INTERVAL '120 seconds', expires_at = NOW() - INTERVAL '1 second'
+            WHERE grant_id = $1::UUID
+            """,
+            grant_id,
+        )
         body = {"ttl_seconds": 86400}
         refused = await client.post(path, json=body, headers=_grant_headers(signing_key=key, did_key=did_key, grant_id=grant_id, method="POST", path=path, body=json.dumps(body).encode()))
         assert refused.status_code == 403
