@@ -80,6 +80,7 @@ def test_database_url_file_reuses_whole_dsn_and_keeps_existing_settings_port(tmp
         == "postgresql://signer:SYNTH@db/protected"
     )
     assert "SYNTH" not in repr(config)
+    assert HostSettings.model_validate(config).database_url == config.database_url
 
 
 def test_database_url_file_accepts_readonly_projected_file_symlink(tmp_path):

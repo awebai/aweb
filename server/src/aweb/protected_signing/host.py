@@ -82,7 +82,9 @@ class HostSettings(BaseSettings):
                 # Configuration failures never expose DSN contents. The
                 # existing pgdbm/asyncpg adapter remains the only DSN parser.
                 raise ValueError("protected_database_url_file_invalid") from None
-            self.database_url = SecretStr(value)
+            # Preserve declared input provenance on instance revalidation:
+            # this compatibility value is derived, not a second DSN source.
+            object.__setattr__(self, "database_url", SecretStr(value))
         if not self.database_url.get_secret_value():
             raise ValueError("protected_database_url_required")
         return self
