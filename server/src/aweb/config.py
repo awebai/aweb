@@ -2,6 +2,7 @@ import json
 import os
 import re
 from dataclasses import dataclass, field
+from ipaddress import IPv4Network, IPv6Network, ip_network
 from pathlib import Path
 from datetime import datetime
 from typing import Optional
@@ -13,6 +14,8 @@ from awid.ratelimit import normalize_service_token
 from awid.utc_timestamps import parse_utc_seconds
 from awid.team_ids import build_team_id, parse_team_id
 from awid.signing import load_signing_key_pem
+from aweb_naapp.egress import EgressRefused, InternalDestinations
+from aweb_naapp.egress.addresses import check_internal_cidr
 
 
 def _env_bool(*names: str, default: bool = False) -> bool:
@@ -31,6 +34,54 @@ def _env_optional_int(*names: str) -> Optional[int]:
             continue
         return int(value)
     return None
+
+
+@dataclass(frozen=True)
+class AppInternalOrigins:
+    """The exact app origins the operator lets this server fetch manifests from
+    on internal addresses, and the one network those addresses must lie in."""
+
+    origins: frozenset[str] = frozenset()
+    cidr: IPv4Network | IPv6Network | None = None
+
+    @property
+    def destinations(self) -> InternalDestinations:
+        return InternalDestinations.ALLOWED if self.origins else InternalDestinations.DISABLED
+
+
+def get_app_internal_origins() -> AppInternalOrigins:
+    """Read AWEB_APP_INTERNAL_ORIGINS (a JSON list of exact HTTPS origins) and
+    AWEB_APP_INTERNAL_CIDR (their network), supplied together or not at all.
+
+    Unset, every app origin is public: a manifest on a private address is
+    refused. These are operator startup settings; no install request names them.
+    """
+    from aweb.app_registry import canonical_app_origin
+    from aweb.service_errors import ServiceError
+
+    raw_origins = (os.getenv("AWEB_APP_INTERNAL_ORIGINS") or "").strip()
+    raw_cidr = (os.getenv("AWEB_APP_INTERNAL_CIDR") or "").strip()
+    if not raw_origins and not raw_cidr:
+        return AppInternalOrigins()
+    if not raw_origins or not raw_cidr:
+        raise ValueError("AWEB_APP_INTERNAL_ORIGINS and AWEB_APP_INTERNAL_CIDR must be supplied together")
+    try:
+        listed = json.loads(raw_origins)
+    except json.JSONDecodeError as exc:
+        raise ValueError("AWEB_APP_INTERNAL_ORIGINS must be a JSON list of exact HTTPS origins") from exc
+    if not isinstance(listed, list) or not listed or not all(isinstance(entry, str) for entry in listed):
+        raise ValueError("AWEB_APP_INTERNAL_ORIGINS must be a JSON list of exact HTTPS origins")
+    origins = set()
+    for entry in listed:
+        try:
+            origins.add(canonical_app_origin(entry))
+        except (ServiceError, EgressRefused, ValueError) as exc:
+            raise ValueError(f"AWEB_APP_INTERNAL_ORIGINS: {entry!r} is not an exact HTTPS origin") from exc
+    try:
+        cidr = check_internal_cidr(ip_network(raw_cidr, strict=True))
+    except (ValueError, EgressRefused) as exc:
+        raise ValueError("AWEB_APP_INTERNAL_CIDR must be an exact, permitted internal network") from exc
+    return AppInternalOrigins(frozenset(origins), cidr)
 
 
 @dataclass
@@ -52,6 +103,7 @@ class Settings:
     app_grant_max_age_seconds: int
     hook_producer_keys: tuple["HookProducerKey", ...]
     awid_member_signing_keys: dict[str, bytes] = field(default_factory=dict, repr=False)
+    app_internal_origins: AppInternalOrigins = field(default_factory=AppInternalOrigins)
 
 
 def get_awid_registry_url() -> str:
@@ -317,4 +369,5 @@ def get_settings() -> Settings:
         require_registered_certificates=require_registered_certificates(),
         app_grant_max_age_seconds=get_app_grant_max_age_seconds(),
         hook_producer_keys=get_hook_producer_keys(),
+        app_internal_origins=get_app_internal_origins(),
     )

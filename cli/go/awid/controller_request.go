@@ -38,6 +38,13 @@ func ControllerRequestPayload(aud, method, path string, body []byte, timestamp, 
 	return []byte(raw), nil
 }
 
+// VerifyControllerRequestSignature checks a signer's answer over a covering-v2
+// payload with the shared strict verifier, as the registry does: a valid
+// signature by a valid key over exactly these bytes.
+func VerifyControllerRequestSignature(didKey string, signature, payload []byte) error {
+	return idStrictVerify(didKey, signature, func() ([]byte, error) { return payload, nil })
+}
+
 // RegisterIDCertificate registers bundle's leaf at its domain's registry,
 // with the bundle as its supporting chain. signer holds the subject's
 // current key.

@@ -36,6 +36,8 @@ APP_DIR = Path(__file__).resolve().parents[1]
 REPO = APP_DIR.parents[1]
 DOMAIN = "h.test"
 TEAM = "h"
+# The lane's own app id: only the hosted origin may serve the hosted id "secrets".
+APP_ID = "lane-secrets"
 TEAM_ID = f"{TEAM}:{DOMAIN}"
 REGISTRY = "http://awid.svc.test:8010"
 AWEB = "http://aweb.svc.test:8000"
@@ -58,14 +60,30 @@ class Lane:
 
     def up(self, *services: str) -> None:
         result = self.compose("up", "-d", "--build", "--wait", *services)
-        assert result.returncode == 0, result.stdout + result.stderr
+        if result.returncode != 0:
+            # The services' own last words, before the fixture's down -v.
+            logs = self.compose("logs", "--no-color", "--tail", "60", *services)
+            raise AssertionError(result.stderr[-4000:] + "\n--- service logs ---\n" + logs.stdout + logs.stderr)
 
     def machine(self, name: str) -> str:
         """Start a cli container as one person's machine; its HOME is /runtime/<name>."""
         container = f"{self.project}-{name}"
         (self.runtime / name).mkdir(mode=0o700)
+        # The machine runs as the host user who owns the runtime directory, so
+        # aw accepts the homes the test prepares there and the test can read
+        # what aw writes. dbus needs that user in the passwd database.
+        uid, gid = os.getuid(), os.getgid()
+        accounts = self.runtime / "accounts"
+        if not accounts.exists():
+            accounts.mkdir(mode=0o755)
+            (accounts / "passwd").write_text(f"root:x:0:0:root:/root:/bin/sh\nlane:x:{uid}:{gid}:lane:/runtime:/bin/sh\n")
+            (accounts / "group").write_text(f"root:x:0:\nlane:x:{gid}:\n")
+            for path in accounts.iterdir():
+                path.chmod(0o644)
         result = self.compose(
-            "run", "-d", "--name", container, "-e", f"HOME=/runtime/{name}", "-w", f"/runtime/{name}", "cli",
+            "run", "-d", "--name", container, "--user", f"{uid}:{gid}",
+            "-v", f"{accounts / 'passwd'}:/etc/passwd:ro", "-v", f"{accounts / 'group'}:/etc/group:ro",
+            "-e", f"HOME=/runtime/{name}", "-w", f"/runtime/{name}", "cli",
         )
         assert result.returncode == 0, result.stdout + result.stderr
         return container
@@ -75,12 +93,17 @@ def _docker(*args: str, timeout: int = 120, input: str | None = None) -> subproc
     return subprocess.run(["docker", *args], text=True, capture_output=True, timeout=timeout, input=input, check=False)
 
 
+def first_json(text: str):
+    """The first JSON value in a command's output; Docker may print hints after it."""
+    return json.JSONDecoder().raw_decode(text[text.index("{"):])[0]
+
+
 def aw(container: str, *args: str, env: dict[str, str] | None = None) -> dict:
     """Run aw --json in a machine, without a terminal, and return its JSON."""
     extra = [f"--env={k}={v}" for k, v in (env or {}).items()]
     result = _docker("exec", *extra, container, "aw", "--json", *args, timeout=300)
     assert result.returncode == 0, f"aw {' '.join(args)}\n{result.stdout}\n{result.stderr}"
-    return json.loads(result.stdout[result.stdout.index("{"):])
+    return first_json(result.stdout)
 
 
 def aw_refused(container: str, *args: str, env: dict[str, str] | None = None) -> str:
@@ -88,7 +111,7 @@ def aw_refused(container: str, *args: str, env: dict[str, str] | None = None) ->
     extra = [f"--env={k}={v}" for k, v in (env or {}).items()]
     result = _docker("exec", *extra, container, "aw", "--json", *args, timeout=300)
     assert result.returncode != 0, result.stdout
-    return json.loads(result.stdout[result.stdout.index("{"):])["error"]["code"]
+    return first_json(result.stdout)["error"]["code"]
 
 
 def publish_awid_txt(lane: Lane, controller_did: str) -> None:
@@ -103,6 +126,18 @@ def publish_awid_txt(lane: Lane, controller_did: str) -> None:
     zone.with_suffix(".tmp").replace(zone)
 
 
+def await_awid_txt(machine: str, controller_did: str) -> None:
+    """Wait, bounded, until the machine's resolver sees the published
+    controller: the zone is reloaded once a second, so a lookup made at once
+    can still return the previous record."""
+    for _ in range(30):
+        answer = _docker("exec", machine, "nslookup", "-type=txt", f"_awid.{DOMAIN}")
+        if controller_did in answer.stdout:
+            return
+        time.sleep(0.5)
+    raise AssertionError(f"_awid.{DOMAIN} never named {controller_did}")
+
+
 class Holder:
     """The holder's machine: aw with a human key in its own Secret Service."""
 
@@ -110,13 +145,25 @@ class Holder:
         self.lane, self.container = lane, container
         # A disposable passphrase, generated now and never printed or stored.
         self.passphrase = secrets.token_urlsafe(24)
-        self.bus = "unix:path=/runtime/holder/.bus"
+        # The session bus and the keyring's files and sockets live on the
+        # container's own filesystem: on the runtime bind mount gnome-keyring
+        # leaves the login collection locked, and once it drops its
+        # capabilities it cannot write a home the host user owns.
+        # aw reaches the keyring only over this bus.
+        self.bus = "unix:path=/tmp/holder-session.bus"
+        keyring = (
+            "XDG_RUNTIME_DIR=/tmp/holder-runtime XDG_DATA_HOME=/tmp/holder-keyring "
+            "DBUS_SESSION_BUS_ADDRESS=" + self.bus
+        )
+        # -i: without it docker exec attaches no stdin and the unlock reads no
+        # password. The other daemons get /dev/null, so only the unlock reads it.
         started = _docker(
-            "exec", container, "sh", "-c",
-            "dbus-daemon --session --fork --address=" + self.bus + " "
-            "&& DBUS_SESSION_BUS_ADDRESS=" + self.bus + " gnome-keyring-daemon --unlock --components=secrets "
-            "&& DBUS_SESSION_BUS_ADDRESS=" + self.bus + " gnome-keyring-daemon --start --components=secrets",
-            input=secrets.token_urlsafe(24) + "\n",
+            "exec", "-i", container, "sh", "-c",
+            "umask 077 && mkdir -p /tmp/holder-keyring /tmp/holder-runtime "
+            "&& dbus-daemon --session --fork --address=" + self.bus + " </dev/null "
+            "&& " + keyring + " gnome-keyring-daemon --unlock --components=secrets "
+            "&& " + keyring + " gnome-keyring-daemon --start --components=secrets </dev/null",
+            input=secrets.token_urlsafe(24),
         )
         assert started.returncode == 0, started.stdout + started.stderr
 
@@ -178,7 +225,8 @@ def lane(tmp_path_factory: pytest.TempPathFactory) -> Iterator[Lane]:
     runtime = tmp_path_factory.mktemp("owner-acts")
     runtime.chmod(0o755)
     commit = subprocess.run(["git", "rev-parse", "HEAD"], cwd=REPO, text=True, capture_output=True, check=True).stdout.strip()
-    lane = Lane(project, runtime, {**os.environ, "SECRETS_E2E_RUNTIME": str(runtime), "SECRETS_E2E_SOURCE_COMMIT": commit})
+    lane = Lane(project, runtime, {**os.environ, "SECRETS_E2E_RUNTIME": str(runtime), "SECRETS_E2E_SOURCE_COMMIT": commit,
+                                       "SECRETS_E2E_AWID_SERVICE_TOKEN": secrets.token_hex(32)})
 
     (runtime / "dns").mkdir()
     (runtime / "dns" / "Corefile").write_text(
@@ -186,8 +234,8 @@ def lane(tmp_path_factory: pytest.TempPathFactory) -> Iterator[Lane]:
         ".:53 {\n  errors\n  forward . 127.0.0.11\n}\n"
     )
     publish_awid_txt(lane, "did:key:z6MkpendingpendingpendingpendingpendingpendingpendingP")
+    (runtime / "tls").mkdir()
     tls = make_certificates(runtime / "tls", ["api.secrets.svc.test", "console.secrets.svc.test"], [])
-    shutil.copyfile(tls.ca_file, runtime / "tls" / "ca.pem")
     (runtime / "front").mkdir()
     (runtime / "front" / "Caddyfile").write_text(
         "{\n  auto_https off\n}\n"
@@ -213,6 +261,14 @@ def lane(tmp_path_factory: pytest.TempPathFactory) -> Iterator[Lane]:
             _docker("rm", "-f", f"{project}-{name}")
 
 
+def grant_install_owner(lane: Lane, did_key: str) -> None:
+    """The server operator's local bootstrap of the team's first installation
+    owner. Membership grants no install authority; only this does."""
+    granted = lane.compose("exec", "-T", "aweb", "aweb", "install-admin", "grant", "--team-id", TEAM_ID,
+                           "--principal-did", did_key, "--role", "owner")
+    assert granted.returncode == 0, granted.stdout + granted.stderr
+
+
 def write_service_member(lane: Lane, controller: str) -> None:
     """The app's own team member credential (no AWID service token), and its config."""
     keys = lane.runtime / "keys"
@@ -223,21 +279,30 @@ def write_service_member(lane: Lane, controller: str) -> None:
     did = did_from_public_key(bytes(service_key.verify_key))
     added = aw(controller, "id", "team", "add-member", "--team", TEAM, "--namespace", DOMAIN,
                "--did", did, "--name", "secrets-service", "--global")
-    certificate = aw(controller, "id", "team", "cert", "show", "--cert-id", added["certificate_id"])
-    (keys / "member.pem").write_text(
+    pem = (
         "-----BEGIN ED25519 PRIVATE KEY-----\n"
         + __import__("base64").b64encode(bytes(service_key)).decode()
         + "\n-----END ED25519 PRIVATE KEY-----\n"
     )
-    (keys / "member-cert.json").write_text(json.dumps(certificate))
+    (keys / "member.pem").write_text(pem)
+    # The member fetches its own certificate with its key alone, as any
+    # member does (aw id team fetch-cert), in an identity home of its own.
+    home = keys / "service-home"
+    home.mkdir(mode=0o700)
+    (home / "signing.key").write_text(pem)
+    (home / "signing.key").chmod(0o600)
+    fetched = aw(controller, "--identity-home", "/runtime/keys/service-home", "id", "team", "fetch-cert",
+                 "--namespace", DOMAIN, "--team", TEAM, "--cert-id", added["certificate_id"], "--registry", REGISTRY)
+    shutil.copyfile(home / fetched["cert_path"], keys / "member-cert.json")
     for name in ("custody", "request", "params", "response", "runner", "smtp", "manifest", "event", "delivery", "grant", "resolve"):
-        (keys / name).write_bytes(secrets.token_bytes(32))
+        # The app's shared key-file format: 64 hex characters, each independent.
+        (keys / name).write_text(secrets.token_hex(32) + "\n")
     for path in keys.iterdir():
         path.chmod(0o644)
     env = {
         "SECRETS_DATABASE_URL": "postgresql://secrets:disposable@postgres:5432/secrets",
         "SECRETS_DB_SCHEMA": "secrets",
-        "SECRETS_APP_ID": "secrets",
+        "SECRETS_APP_ID": APP_ID,
         "SECRETS_PUBLIC_ORIGIN": API,
         "SECRETS_CONSOLE_ORIGIN": CONSOLE,
         "SECRETS_AWID_REGISTRY_URL": REGISTRY,
@@ -273,11 +338,12 @@ def test_the_owner_designates_a_human_holder_registered_on_another_machine(lane:
     # Setup authority: the namespace, its root human (the holder) and the team.
     prepared = aw(holder.container, "id", "namespace", "prepare-controller", "--domain", DOMAIN, "--registry", REGISTRY)
     publish_awid_txt(lane, prepared["controller_did"])
+    await_awid_txt(holder.container, prepared["controller_did"])
     child = holder.spawn("--json", "id", "human", "init", "--domain", DOMAIN, "--as-root")
     output = holder.answer_passphrases(child)
     child.close()
     assert child.exitstatus == 0, output
-    human = json.loads(output[output.index("{"):])
+    human = first_json(output)
     principal = human["id"]
     aw(holder.container, "id", "team", "create", "--name", TEAM, "--namespace", DOMAIN, "--registry", REGISTRY)
 
@@ -288,7 +354,7 @@ def test_the_owner_designates_a_human_holder_registered_on_another_machine(lane:
     shutil.move(str(team_key), owner_keys / f"{TEAM}.key")
 
     # The owner's own agent identity and membership, then the holder's.
-    aw(controller, "id", "create", "--name", "owner", "--domain", DOMAIN, "--root-parent", "--registry", REGISTRY)
+    owner = aw(controller, "id", "create", "--name", "owner", "--domain", DOMAIN, "--root-parent", "--registry", REGISTRY)
     invite = aw(controller, "id", "team", "invite", "--team", TEAM, "--namespace", DOMAIN, "--member-global")
     aw(controller, "id", "team", "accept-invite", invite["token"], "--name", "owner", "--global")
     aw(controller, "init", "--url", AWEB, "--name", "owner", "--do-not-touch-agents-md")
@@ -303,6 +369,7 @@ def test_the_owner_designates_a_human_holder_registered_on_another_machine(lane:
     # The app, as its owner installs it.
     write_service_member(lane, controller)
     lane.up("secrets", "front")
+    grant_install_owner(lane, owner["did_key"])
     installed = aw(controller, "plugin", "install", API)
     assert installed["approved"], installed
     child = holder.act(principal, "plugin", "install", API)
@@ -311,7 +378,7 @@ def test_the_owner_designates_a_human_holder_registered_on_another_machine(lane:
 
     # The holder registers a passkey on their own machine and exports it.
     child = holder.act(principal, "app", "credential", "register",
-                         "secrets", "--role", ROLE, "--out", "/runtime/holder/export.json")
+                         APP_ID, "--role", ROLE, "--out", "/runtime/holder/export.json")
     output = holder.answer_passphrases(child, until=r"Open this page to continue: (\S+)")
     page = re.search(r"Open this page to continue: (\S+)", output).group(1)
     assert page.startswith(CONSOLE + "/handoff/"), page
@@ -324,18 +391,18 @@ def test_the_owner_designates_a_human_holder_registered_on_another_machine(lane:
 
     # The owner signs only for that exact credential: the fingerprint matches.
     shutil.copyfile(lane.runtime / "holder" / "export.json", lane.runtime / "controller" / "export.json")
-    result = _docker("exec", controller, "aw", "app", "role", "designate", "secrets", "--role", ROLE,
+    result = _docker("exec", controller, "aw", "app", "role", "designate", APP_ID, "--role", ROLE,
                      "--principal", principal, "--credential", "/runtime/controller/export.json", "--yes", timeout=300)
     assert result.returncode == 0, result.stdout + result.stderr
     assert fingerprint in result.stderr, result.stderr
     assert "human-role.designate" in result.stdout
 
     # A second designation of the same holding is refused by the app.
-    code = aw_refused(controller, "app", "role", "designate", "secrets", "--role", ROLE, "--principal", principal,
+    code = aw_refused(controller, "app", "role", "designate", APP_ID, "--role", ROLE, "--principal", principal,
                       "--credential", "/runtime/controller/export.json", "--yes")
     assert code == "owner_required", code
 
     # The holder holds the role: a session handoff starts for it.
-    child = holder.act(principal, "--json", "app", "human", "secrets", "--help")
+    child = holder.act(principal, "--json", "app", "human", APP_ID, "--help")
     listed = holder.answer_passphrases(child)
     assert "confirm" in listed and "draft-change" in listed, listed

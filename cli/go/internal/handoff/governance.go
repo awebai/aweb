@@ -430,8 +430,13 @@ func decodeReceipt(reply []byte) (*Receipt, bool) {
 	return receipt, true
 }
 
-// decodeObject decodes exactly one JSON object, refusing duplicate members at
-// any depth, so what aw checks is what any other reader of the bytes sees.
+// DecodeObject decodes exactly one JSON object, numbers as json.Number,
+// refusing duplicate members at any depth, so what aw checks is what any other
+// reader of the bytes sees.
+func DecodeObject(raw []byte) (map[string]any, bool) {
+	return decodeObject(raw)
+}
+
 func decodeObject(raw []byte) (map[string]any, bool) {
 	decoder := json.NewDecoder(bytes.NewReader(raw))
 	decoder.UseNumber()
