@@ -299,7 +299,7 @@ async def test_mcp_chat_hides_missing_and_nonparticipant_on_both_guards(privacy_
 
 
 @pytest.mark.asyncio
-async def test_chat_http_sender_removed_between_resolution_and_send_is_hidden(privacy_app, monkeypatch):
+async def test_chat_http_sender_removed_between_resolution_and_send_is_hidden(privacy_app, monkeypatch):  # noqa: F811
     from aweb.routes import chat as chat_route
 
     env = privacy_app

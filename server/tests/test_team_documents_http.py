@@ -107,8 +107,9 @@ async def test_a_team_document_over_the_limit_is_refused_and_one_at_the_limit_is
 
 @pytest.mark.asyncio
 @pytest.mark.parametrize('kind', ['instructions', 'roles'])
-async def test_concurrent_document_creation_allocates_distinct_versions(privacy_app, kind):
+async def test_concurrent_document_creation_allocates_distinct_versions(privacy_app, kind):  # noqa: F811
     import asyncio
+
     from aweb.coordination.routes.team_instructions import create_team_instructions_version
     from aweb.coordination.routes.team_roles import create_team_roles_version
 
