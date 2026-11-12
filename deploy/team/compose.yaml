@@ -78,6 +78,9 @@ networks:
     ipam:
       config:
         - subnet: ${AGENTS_SUBNET:-172.30.0.0/24}
+          # Explicit: the boundary probe reads this network's own IPv4 gateway,
+          # which Docker leaves unreported for an isolated bridge it allocates.
+          gateway: ${AGENTS_GATEWAY:-172.30.0.1}
 
   # aweb and Redis: no app, signer or agent reaches Redis.
   backend:

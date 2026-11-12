@@ -71,7 +71,11 @@ def test_the_agents_network_has_no_route_out():
     # bridge's gateway address; isolated removes that address's route.
     assert networks["agents"]["driver_opts"] == {"com.docker.network.bridge.gateway_mode_ipv4": "isolated"}
     assert networks["agents"]["enable_ipv6"] is False
-    assert networks["agents"]["ipam"]["config"] == [{"subnet": "${AGENTS_SUBNET:-172.30.0.0/24}"}]
+    # An explicit gateway: the boundary probe reads the agents network's own
+    # IPv4 gateway, which Docker leaves unreported for an isolated bridge it allocates.
+    assert networks["agents"]["ipam"]["config"] == [
+        {"subnet": "${AGENTS_SUBNET:-172.30.0.0/24}", "gateway": "${AGENTS_GATEWAY:-172.30.0.1}"}
+    ]
     assert "internal" not in networks["services"]
     assert networks["services"]["ipam"]["config"] == [
         {"subnet": "${SERVICES_CIDR:?SERVICES_CIDR is required, network.servicesCidr}"}

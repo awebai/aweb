@@ -9,6 +9,7 @@ schema has no key that could hold one.
 """
 
 import copy
+import ipaddress
 import json
 import sys
 from pathlib import Path
@@ -163,6 +164,14 @@ def render(config: object) -> dict[str, str]:
             out["AWEB_PROTECTED_EMAIL_CA_FILE"] = f"{SIGNER_CONFIG}/email-ca.pem"
     if "agents" in config:
         out["EGRESS_ADDRESS"] = config["agents"]["resolverIp"]
+        # The agents network's gateway is its subnet's first address; neither
+        # egress nor the agent may hold it.
+        gateway = str(next(ipaddress.ip_network(out["AGENTS_SUBNET"]).hosts()))
+        for key, address in (("agents.resolverIp", config["agents"]["resolverIp"]),
+                             ("agents.network.address", config["agents"]["network"]["address"])):
+            if address == gateway:
+                raise Refused(f"{key}: is the agents network's gateway address")
+        out["AGENTS_GATEWAY"] = gateway
         # The name the agent's own Compose file gives the network; the
         # deployment's agents network takes its place.
         out["AGENTS_NETWORK"] = "agents"

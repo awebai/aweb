@@ -226,6 +226,7 @@ def test_the_agents_section_renders_limits_in_bytes_and_the_address_plan(signer)
         "SERVICES_CIDR": "172.31.0.0/24",
         "TEAM_LOGIN_DIR": "/etc/aweb-secrets/agents",
         "AGENTS_NETWORK": "agents",
+        "AGENTS_GATEWAY": "172.30.0.1",
     }
 
 
@@ -465,3 +466,22 @@ def test_a_mirrors_claim_is_a_kubernetes_name(signer, claim):
         render_env.normalize(
             {**EXAMPLE, "agents": kubernetes_agents(mirrorsClaim=claim), "signer": signer, "egress": EGRESS, **APPS}
         )
+
+
+def test_the_agents_network_gateway_is_the_first_address_of_its_subnet(signer):
+    rendered = render_env.render({**EXAMPLE, "agents": AGENTS, "signer": signer, "egress": EGRESS, **APPS})
+    assert rendered["AGENTS_GATEWAY"] == "172.30.0.1"
+    agents = {**AGENTS, "resolverIp": "10.9.0.2", "network": {"subnet": "10.9.0.0/24", "address": "10.9.0.10"}}
+    rendered = render_env.render({**EXAMPLE, "agents": agents, "signer": signer, "egress": EGRESS, **APPS})
+    assert rendered["AGENTS_GATEWAY"] == "10.9.0.1"
+
+
+@pytest.mark.parametrize("taken", ["resolverIp", "address"])
+def test_neither_egress_nor_the_agent_may_take_the_gateway_address(signer, taken):
+    agents = copy.deepcopy(AGENTS)
+    if taken == "resolverIp":
+        agents["resolverIp"] = "172.30.0.1"
+    else:
+        agents["network"]["address"] = "172.30.0.1"
+    with pytest.raises(render_env.Refused, match="gateway"):
+        render_env.render({**EXAMPLE, "agents": agents, "signer": signer, "egress": EGRESS, **APPS})
