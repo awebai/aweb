@@ -28,6 +28,8 @@ class Evidence(unittest.TestCase):
             calls.append(args)
             if args[:2] == ('network', 'create'):
                 return 'network'
+            if args[0] == 'exec' and args[-1] == 'SHOW max_connections':
+                return '100'
             if args[0] == 'create':
                 role = ('dns' if 'scripts/test-egress/dns.py' in args else
                         'postgres' if 'postgres:17' in args else

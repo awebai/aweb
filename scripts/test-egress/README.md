@@ -110,4 +110,8 @@ DNS logs, runner inspection and the child exit in its evidence directory. Neithe
 control needs an external DNS service or a route out of the internal network.
 The additional startup-failure control deliberately exits the DNS process before
 it can serve queries, checks its retained stderr and exit state, and verifies
-the container is absent after cleanup. It requires the same Docker run slot.
+the container is absent after cleanup. The normal candidate checks stage runs
+this control with its existing tools image and retains `dns-startup-control`
+under the stage evidence root. The injected failing process needs no source
+bind mount from the gate container onto the host daemon. Direct qualification
+still requires the same Docker run slot.

@@ -621,8 +621,10 @@ test-release-cli-version:
 # Internal steps consumed only by the complete local candidate map.
 _candidate-gate-docker-boundaries:
 	@test -n "$(CANDIDATE_GATE_IMAGE)" || (echo "CANDIDATE_GATE_IMAGE is required"; exit 2)
+	@test -n "$(CANDIDATE_LOG_DIR)" || (echo "CANDIDATE_LOG_DIR is required"; exit 2)
 	python3 scripts/e2e/test_candidate_gate_docker_boundaries.py --image "$(CANDIDATE_GATE_IMAGE)"
 	python3 scripts/test-egress/test_postgres.py -v
+	python3 scripts/test-egress/test_docker_dns.py --image "$(CANDIDATE_GATE_IMAGE)" --evidence "$(CANDIDATE_LOG_DIR)/dns-startup-control" DockerDNS.test_startup_failure_survives_container_cleanup -v
 
 _candidate-channel-version:
 	@test "$(CHANNEL_VERSION)" = "$(CHANNEL_PLUGIN_VERSION)" || \
