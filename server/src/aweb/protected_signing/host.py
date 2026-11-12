@@ -16,19 +16,17 @@ from aweb_naapp.console import (
     apply_console_migrations,
     console_login_router,
 )
-from aweb_naapp.console.handoff_page import handoff_page_router
 from aweb_naapp.console.handoff_store import HandoffStore
 from aweb_naapp.email import EmailSettings, Mailer
 from aweb_naapp.hooks.strictjson import parse_strict
 from aweb_naapp.runtime.origins import OriginApps
 from aweb_naapp.runtime.protected_signer import SignerRefused
 from awid.db_config import build_database_config
-from awid.did import did_from_public_key
+from awid.did import did_key_from_signing_key
 from awid.registry import RegistryClient
 from awid.signing import load_signing_key_pem
 from awid.team_ids import build_team_id, parse_team_id
 from fastapi import FastAPI
-from nacl.signing import SigningKey
 from pgdbm import AsyncDatabaseManager
 from pydantic import Field, SecretStr, StrictInt
 from pydantic_settings import BaseSettings, SettingsConfigDict
@@ -40,7 +38,9 @@ from .profile import ProtectedServiceProfile
 
 
 class HostSettings(BaseSettings):
-    model_config = SettingsConfigDict(env_prefix="AWEB_PROTECTED_", extra="forbid")
+    model_config = SettingsConfigDict(
+        env_prefix="AWEB_PROTECTED_", extra="forbid", hide_input_in_errors=True
+    )
 
     profile_file: Path
     scope_file: Path
@@ -55,6 +55,12 @@ class HostSettings(BaseSettings):
     human_csrf_key: str = Field(
         default="aweb.protected.console.csrf", pattern=r"^[A-Za-z0-9._-]{1,128}$"
     )
+    trusted_client_header: str | None = Field(
+        default=None, pattern=r"^[A-Za-z][A-Za-z0-9_-]{0,127}$"
+    )
+
+    def client_identity(self):
+        return ClientIdentity(trusted_header=self.trusted_client_header)
 
 
 def _member_keys(path):
@@ -134,8 +140,7 @@ def create_app(settings=None, *, mailer=None, registry_transport=None):
             raise SignerRefused("authority_changed")
         keys = _member_keys(settings.member_keys_file)
         if context.authority_id not in keys or any(
-            did_from_public_key(bytes(SigningKey(key).verify_key))
-            == custody.team_key_did
+            did_key_from_signing_key(key) == custody.team_key_did
             for key in keys.values()
         ):
             raise SignerRefused("custody_not_isolated")
@@ -172,10 +177,14 @@ def create_app(settings=None, *, mailer=None, registry_transport=None):
             await composition.migrate()
             await apply_console_migrations(db)
             await validate_provisioning(composition)
+            # The page source is a composed dependency. Load it only when
+            # mounting the complete host, not for local settings validation.
+            from aweb_naapp.console.handoff_page import handoff_page_router
+
             sessions = composition.protected_sessions()
             limiter = LoginLimiter(
                 db,
-                client_identity=ClientIdentity(),
+                client_identity=settings.client_identity(),
                 limit=30,
                 window=timedelta(minutes=1),
             )

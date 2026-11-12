@@ -18,6 +18,9 @@ class ProtectedNotifications(PasskeyEmailDelivery):
         self.db = db
 
     async def deliver_approval_link(self, approver, link_token, approval):
+        # Post-commit only: self.db's fresh read cannot see the preparing
+        # transaction's uncommitted handoff. The shared signer currently does
+        # not dispatch this port; future wiring must call after commit.
         # Shared prepare retains the candidate tokens privately. The public
         # handoff is only a locator: actual LOGIN and distinct act UV remain
         # mandatory. Never put a candidate bearer token or payload in mail.
