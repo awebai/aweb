@@ -200,3 +200,80 @@ func TestCancellingAHintedWaitKeepsTheSavedRequest(t *testing.T) {
 		t.Fatalf("%+v %v forgotten %v reads %d", receipt, err, forgotten, stub.reads)
 	}
 }
+
+func TestAZeroHintStillWaitsThePollInterval(t *testing.T) {
+	waits := recordPauses(t)
+	stub := newSignerStub(t, committedReceipt)
+	stub.postThrottle = []string{"0"}
+	var opened string
+	opts := stub.options(&opened)
+	opts.PollInterval = 2 * time.Second
+	if receipt, err := Approve(context.Background(), opts, "b1b1b1b1-b1b1-41b1-81b1-b1b1b1b1b1b1", revokeIntent()); err != nil || receipt.State != "committed" {
+		t.Fatalf("%+v %v", receipt, err)
+	}
+	if !slices.Equal(*waits, []time.Duration{2 * time.Second}) || stub.posts.Load() != 2 {
+		t.Fatalf("waits %v posts %d", *waits, stub.posts.Load())
+	}
+
+	// The same on the read that reconciles a lost prepare.
+	waits = recordPauses(t)
+	stub = newSignerStub(t, "!503:receipt_unavailable:0", committedReceipt)
+	stub.dropPrepare = true
+	opts = stub.options(&opened)
+	opts.PollInterval = 2 * time.Second
+	if receipt, err := Approve(context.Background(), opts, "b2b2b2b2-b2b2-42b2-82b2-b2b2b2b2b2b2", revokeIntent()); err != nil || receipt.State != "committed" {
+		t.Fatalf("lost prepare: %+v %v", receipt, err)
+	}
+	if !slices.Equal(*waits, []time.Duration{2 * time.Second}) || stub.reads != 2 {
+		t.Fatalf("lost prepare: waits %v reads %d", *waits, stub.reads)
+	}
+}
+
+func TestAWaitThatOutrunsItsBoundSendsNoFurtherRequest(t *testing.T) {
+	// The process sleeps longer than asked: the bound is checked again
+	// before the next request, not only before the wait.
+	recordPauses(t)
+	var overslept time.Duration
+	pause = func(_ context.Context, d time.Duration) error { overslept += d + 30*time.Second; return nil }
+	now = func() time.Time { return time.Now().Add(overslept) }
+
+	stub := newSignerStub(t, committedReceipt)
+	stub.postThrottle = []string{"7"}
+	var opened string
+	opts := stub.options(&opened)
+	opts.RetryWithin = 20 * time.Second
+	if _, err := Approve(context.Background(), opts, "b3b3b3b3-b3b3-43b3-83b3-b3b3b3b3b3b3", revokeIntent()); ErrorCode(err) != "receipt_unavailable" || stub.posts.Load() != 1 {
+		t.Fatalf("prepare: %v posts %d", err, stub.posts.Load())
+	}
+
+	overslept = 0
+	stub = newSignerStub(t, "!503:receipt_unavailable:7", committedReceipt)
+	stub.expiresIn = 30 * time.Second
+	if receipt, err := Approve(context.Background(), stub.options(&opened), "b4b4b4b4-b4b4-44b4-84b4-b4b4b4b4b4b4", revokeIntent()); ErrorCode(err) != "receipt_unavailable" || receipt.State != "unknown" || stub.reads != 1 {
+		t.Fatalf("receipt: %+v %v reads %d", receipt, err, stub.reads)
+	}
+}
+
+func TestARetriedRequestThatHangsEndsAtTheInvocationsBound(t *testing.T) {
+	// The retried prepare never answers: the invocation's bound cuts it off,
+	// the lost answer's reconciliation shares that bound, and the saved
+	// request is kept to resume.
+	stub := newSignerStub(t, committedReceipt)
+	stub.postThrottle = []string{"1"}
+	stub.blockPrepare = true
+	var opened string
+	var forgotten []string
+	opts := stub.options(&opened)
+	opts.RetryWithin = 1500 * time.Millisecond
+	opts.PollInterval = 10 * time.Millisecond
+	opts.Forget = func(id string) error { forgotten = append(forgotten, id); return nil }
+	start := time.Now()
+	receipt, err := Approve(context.Background(), opts, "b5b5b5b5-b5b5-45b5-85b5-b5b5b5b5b5b5", revokeIntent())
+	elapsed := time.Since(start)
+	if ErrorCode(err) != "receipt_unavailable" || receipt == nil || receipt.State != "unknown" || len(forgotten) != 0 {
+		t.Fatalf("%+v %v forgotten %v", receipt, err, forgotten)
+	}
+	if elapsed < time.Second || elapsed > 3*time.Second || stub.posts.Load() != 2 || opened != "" {
+		t.Fatalf("ended after %v with %d posts, opened %q", elapsed, stub.posts.Load(), opened)
+	}
+}

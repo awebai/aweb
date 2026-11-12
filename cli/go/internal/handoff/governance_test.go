@@ -43,6 +43,9 @@ type signerStub struct {
 	postBodies   [][]byte
 	// auths is each request's own signing mark, in order.
 	auths []string
+	// blockPrepare holds every unthrottled prepare open until the client
+	// gives up on it.
+	blockPrepare bool
 }
 
 func newSignerStub(t *testing.T, receipts ...string) *signerStub {
@@ -62,6 +65,12 @@ func newSignerStub(t *testing.T, receipts ...string) *signerStub {
 				s.postThrottle = s.postThrottle[1:]
 				w.WriteHeader(http.StatusServiceUnavailable)
 				_, _ = w.Write([]byte(`{"detail":"receipt_unavailable"}`))
+				return
+			}
+			if s.blockPrepare {
+				s.mu.Unlock()
+				<-r.Context().Done()
+				s.mu.Lock()
 				return
 			}
 			if s.firstBody != nil && !bytes.Equal(body, s.firstBody) {
