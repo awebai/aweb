@@ -1,6 +1,7 @@
 """Archive handoff uses the ordinary pinned SSH/lifecycle/registry path."""
 
 import inspect
+import base64
 import json
 import re
 import shlex
@@ -9,7 +10,7 @@ from pathlib import Path
 
 from .errors import Infrastructure, Refused
 from .executor import Executor, REMOTE
-from . import native_host
+from . import native_host, cloud_init
 from .native_oci import (
     ARCHIVE,
     parse_receipt,
@@ -134,9 +135,59 @@ class ArchiveExecutor(Executor):
 
 class NativeARMExecutor(ArchiveExecutor):
     def directories_program(self):
-        return native_host.preparation_program(self.config["native_profile"])
+        probe = (
+            Path(cloud_init.__file__)
+            .read_text()
+            .replace(
+                "from .errors import Refused", "class Refused(RuntimeError):\n    pass"
+            )
+        )
+        return (
+            'set -euo pipefail\ntest "$(uname -m)" = aarch64\n'
+            '. /etc/os-release\ntest "$ID" = ubuntu && test "$VERSION_ID" = 24.04\n'
+            'test "$(dpkg --print-architecture)" = arm64\n'
+            + "python3 -c "
+            + Q(probe)
+            + " /var/log/vm-gate/cloud-init\n"
+        )
+
+    def run(self, command, name, check=True):
+        if name != "directories":
+            return super().run(command, name, check=check)
+        result = super().run(command, name, check=False)
+        markers = [
+            line[len(cloud_init.MARKER) :]
+            for line in result.stdout.splitlines()
+            if line.startswith(cloud_init.MARKER)
+        ]
+        if len(markers) == 1:
+            bundle = json.loads(base64.b64decode(markers[0], validate=True))
+            target = self.directory / "cloud-init"
+            target.mkdir(mode=0o700, exist_ok=True)
+            for filename in cloud_init.FILES:
+                if filename in bundle:
+                    file = target / filename
+                    file.write_text(bundle[filename])
+                    file.chmod(0o600)
+        if check and result.returncode:
+            raise Infrastructure(
+                f"remote directories failed (exit {result.returncode}); cloud-init diagnostics retained locally when available"
+            )
+        if result.returncode == 0 and (
+            len(markers) != 1
+            or not json.loads(bundle["observation.json"]).get("admitted")
+        ):
+            raise Infrastructure(
+                "cloud-init admission lacks its retained successful receipt"
+            )
+        return result
 
     def after_directories(self):
+        self.run(
+            "bash -c "
+            + Q(native_host.preparation_program(self.config["native_profile"])),
+            "native-root-preparation",
+        )
         account = (
             self.run("getent passwd 1000", "native-account").stdout.strip().split(":")
         )

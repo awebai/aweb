@@ -159,7 +159,6 @@ class Backend:
         user_data = "#cloud-config\n" + json.dumps(
             {
                 "ssh_deletekeys": True,
-                "ssh_genkeytypes": [],
                 "ssh_keys": {"ed25519_private": private, "ed25519_public": public},
             }
         )

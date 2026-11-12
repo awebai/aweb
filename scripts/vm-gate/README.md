@@ -260,3 +260,20 @@ the local per-run directory after deletion; the operator owns their final
 removal. SSH host pinning, wrong-key refusal, spend registry, expiry/reaper
 and exact-ID cleanup are shared with the x86 dispatcher. The distinct
 profile is recorded in the summary and on the server label.
+
+Stock-host cloud-init admission records the original wait status, detailed
+JSON status and warning/error lines before interpreting them. An unknown
+recoverable error refuses even when cloud-init reports `done`. The production
+allowlist is empty; adding an exact category/message requires review of an
+observed diagnostic. Initialization runs as its own checked phase before
+package preparation. Its private diagnostic bundle is retained locally even
+when admission fails before the ordinary evidence collector can run.
+[Cloud-init documents the distinct exit codes and detailed status](https://docs.cloud-init.io/en/24.3/explanation/return_codes.html).
+
+Host-key user-data supplies the per-run `ssh_keys` directly and omits the
+redundant empty `ssh_genkeytypes` array: the
+[SSH schema requires a nonempty generation list when supplied](https://github.com/canonical/cloud-init/blob/main/cloudinit/config/schemas/schema-cloud-config-v1.json),
+and [supplied keys select the existing-key branch rather than generation](https://github.com/canonical/cloud-init/blob/main/cloudinit/config/cc_ssh.py).
+Strict host pinning and the valid wrong-key refusal still apply. This removes
+a source-level schema violation; it does not establish which warning occurred
+on a deleted host whose detailed initialization errors were not retained.

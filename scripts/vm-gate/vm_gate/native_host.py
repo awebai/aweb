@@ -60,7 +60,6 @@ test "$(uname -m)" = aarch64
 . /etc/os-release
 test "$ID" = ubuntu && test "$VERSION_ID" = 24.04
 test "$(dpkg --print-architecture)" = arm64
-cloud-init status --wait
 export DEBIAN_FRONTEND=noninteractive
 apt-get update
 apt-get install -y ca-certificates curl gnupg git make python3 skopeo jq

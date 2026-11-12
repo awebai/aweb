@@ -173,6 +173,9 @@ class BackendTests(unittest.TestCase):
         payload = calls[-1][2]["json"]
         self.assertTrue(payload["user_data"].startswith("#cloud-config\n"))
         cloud = json.loads(payload["user_data"].split("\n", 1)[1])
+        # Cloud-init's SSH schema requires a nonempty generation list. Explicit
+        # ssh_keys already selects supplied keys without generating another pair.
+        self.assertNotIn("ssh_genkeytypes", cloud)
         self.assertEqual(cloud["ssh_keys"]["ed25519_private"], "PRIVATE FIXTURE")
         self.assertEqual(
             cloud["ssh_keys"]["ed25519_public"], "ssh-ed25519 PUBLIC-FIXTURE"
