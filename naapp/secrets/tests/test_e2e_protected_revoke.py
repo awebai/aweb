@@ -47,6 +47,7 @@ from tests.test_e2e_owner_acts import (
     Lane,
     _docker,
     aw,
+    await_awid_txt,
     publish_awid_txt,
     write_service_member,
 )
@@ -193,6 +194,7 @@ def test_a_human_approves_a_protected_revoke_in_a_real_browser(lane: ProtectedLa
     # The namespace, its root human H (the approver) and the team, on H's machine.
     prepared = aw(holder.container, "id", "namespace", "prepare-controller", "--domain", DOMAIN, "--registry", REGISTRY)
     publish_awid_txt(lane, prepared["controller_did"])
+    await_awid_txt(holder.container, prepared["controller_did"])
     child = holder.spawn("--json", "id", "human", "init", "--domain", DOMAIN, "--as-root")
     output = holder.answer_passphrases(child)
     child.close()

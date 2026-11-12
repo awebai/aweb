@@ -106,6 +106,18 @@ def publish_awid_txt(lane: Lane, controller_did: str) -> None:
     zone.with_suffix(".tmp").replace(zone)
 
 
+def await_awid_txt(machine: str, controller_did: str) -> None:
+    """Wait, bounded, until the machine's resolver sees the published
+    controller: the zone is reloaded once a second, so a lookup made at once
+    can still return the previous record."""
+    for _ in range(30):
+        answer = _docker("exec", machine, "nslookup", "-type=txt", f"_awid.{DOMAIN}")
+        if controller_did in answer.stdout:
+            return
+        time.sleep(0.5)
+    raise AssertionError(f"_awid.{DOMAIN} never named {controller_did}")
+
+
 class Holder:
     """The holder's machine: aw with a human key in its own Secret Service."""
 
@@ -277,6 +289,7 @@ def test_the_owner_designates_a_human_holder_registered_on_another_machine(lane:
     # Setup authority: the namespace, its root human (the holder) and the team.
     prepared = aw(holder.container, "id", "namespace", "prepare-controller", "--domain", DOMAIN, "--registry", REGISTRY)
     publish_awid_txt(lane, prepared["controller_did"])
+    await_awid_txt(holder.container, prepared["controller_did"])
     child = holder.spawn("--json", "id", "human", "init", "--domain", DOMAIN, "--as-root")
     output = holder.answer_passphrases(child)
     child.close()
