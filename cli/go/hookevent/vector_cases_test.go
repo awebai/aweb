@@ -527,7 +527,7 @@ func buildDeliveryVector(t *testing.T) map[string]any {
 
 	return map[string]any{
 		"name":   "hook-delivery-credential-v2",
-		"status": "under review (aweb-acya.10)",
+		"status": "frozen (aweb-acya.10)",
 		"scheme": map[string]any{
 			"authority":       "docs/hook-events.md, The delivery credential",
 			"authorization":   "AWEB-Hook DIDKey <did:key> <signature>, the signature over the canonical signed payload: exactly 86 characters of the standard base64 alphabet, no padding, zero trailing bits",
