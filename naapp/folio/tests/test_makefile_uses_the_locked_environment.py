@@ -22,8 +22,12 @@ target would have let the others drift exactly as they did.
 
 from __future__ import annotations
 
+import os
 import re
+import subprocess
 from pathlib import Path
+
+import pytest
 
 _MAKEFILE = Path(__file__).resolve().parents[1] / "Makefile"
 
@@ -96,3 +100,28 @@ def test_the_test_target_runs_pytest_through_uv() -> None:
 
     assert "uv run pytest" in body
     assert "python3 -m pytest" not in body
+
+
+@pytest.mark.parametrize("target", ["e2e", "e2e-up"])
+def test_e2e_requires_an_explicit_helper_before_starting_tools(tmp_path: Path, target: str) -> None:
+    # Relocate the Makefile: no sibling repository or installed Docker is needed.
+    (tmp_path / "Makefile").write_text(_MAKEFILE.read_text())
+    env = {key: value for key, value in os.environ.items()
+           if key not in {"PREPARE_RELEASE_WHEELS", "MAKEFLAGS", "MAKEOVERRIDES"}}
+    result = subprocess.run(["make", target], cwd=tmp_path, env=env,
+                            capture_output=True, text=True)
+    assert result.returncode != 0
+    assert "PREPARE_RELEASE_WHEELS is required" in result.stderr
+
+
+@pytest.mark.parametrize("target", ["e2e", "e2e-up"])
+def test_relocated_e2e_sources_the_supplied_helper(tmp_path: Path, target: str) -> None:
+    (tmp_path / "Makefile").write_text(_MAKEFILE.read_text())
+    helper = tmp_path / "caller supplied helper.sh"
+    # Stop at the sourcing boundary; this contract test must never start Docker.
+    helper.write_text("echo caller-helper-reached >&2; exit 73\n")
+    result = subprocess.run(["make", target, f"PREPARE_RELEASE_WHEELS={helper}"],
+                            cwd=tmp_path, capture_output=True, text=True)
+    assert result.returncode != 0
+    assert "caller-helper-reached" in result.stderr
+    assert "Error 73" in result.stderr

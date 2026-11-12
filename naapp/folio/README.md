@@ -118,10 +118,12 @@ Agent-readable docs are served from the same app: `GET /llms.txt` for the compac
 ```bash
 make test-server
 make lint
-make e2e
+make e2e PREPARE_RELEASE_WHEELS=/absolute/path/to/aweb/scripts/prepare-release-wheels.sh
 ```
 
-`make e2e` starts disposable Postgres, Redis and AWID via Docker Compose and
+`make e2e` and `make e2e-up` require the caller to supply `PREPARE_RELEASE_WHEELS`;
+there is no default based on Folio's location. The repository root gate supplies it
+automatically. `make e2e` starts disposable Postgres, Redis and AWID via Docker Compose and
 runs Folio with the checkout's built `aw`. The install-after-mint journey also
 starts the real aweb server from its locked source environment and a real custody
 process, then uses a replacement grant for create/append/show. Prepare that

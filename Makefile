@@ -121,9 +121,9 @@ e2e-naapp:
 			set -- $$allocation; \
 			NAAPP_E2E_PROJECT="$$1" NAAPP_E2E_AWID_PORT="$$2" NAAPP_E2E_POSTGRES_PORT="$$3" \
 			NAAPP_E2E_HOST="$${AWEB_DOCKER_PUBLISHED_HOST:-127.0.0.1}" \
-			$(MAKE) -C "$$package" e2e; \
+			$(MAKE) -C "$$package" e2e PREPARE_RELEASE_WHEELS="$(abspath scripts/prepare-release-wheels.sh)"; \
 		else \
-			$(MAKE) -C "$$package" e2e; \
+			$(MAKE) -C "$$package" e2e PREPARE_RELEASE_WHEELS="$(abspath scripts/prepare-release-wheels.sh)"; \
 		fi; \
 	done
 
