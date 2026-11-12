@@ -7,7 +7,8 @@
 # up       renders deployment.yaml to RUN_DIR/.env, starts deploy/team/compose.yaml
 #          and waits until every service is healthy, then checks from inside
 #          aweb and each app that its internal origins resolve inside
-#          network.servicesCidr. The renderer has already refused a signer
+#          network.servicesCidr, and that every service answers its own
+#          readiness route with 200 for the Host its proxy sends. The renderer has already refused a signer
 #          profile whose origins or registry differ from the deployment's.
 # connect  prints, as JSON, what the journey needs: the origins, the team and
 #          registry, the agent container and the command that removes it all.
@@ -93,6 +94,25 @@ for service, origins in named.items():
 PY
 }
 
+# One line per deployed service: the service, its port, its readiness path
+# and the Host it answers to (its public origin's authority).
+readiness_targets() {
+  python_in_server - "$deployment" <<'PY'
+import sys
+from urllib.parse import urlsplit
+
+import yaml
+
+config = yaml.safe_load(open(sys.argv[1], encoding="utf-8"))
+print("aweb", 8000, "/ready", urlsplit(config["aweb"]["publicOrigin"]).netloc)
+for app, port in (("secrets", 8770), ("logs", 8765)):
+    if app in config:
+        print(app, port, "/ready", urlsplit(config[app]["publicOrigin"]).netloc)
+if "signer" in config:
+    print("signer", 8080, "/readyz", urlsplit(config["signer"]["requestOrigin"]).netloc)
+PY
+}
+
 up() {
   mkdir -p "$run_dir"
   python_in_server "$TEAM_DIR/render_env.py" "$deployment" >"$env_file.tmp"
@@ -126,6 +146,26 @@ for host in sys.argv[2:]:
       exit 1
     fi
   done < <(internal_hosts)
+  # Healthy is the images' liveness checks. Ready is each service's own
+  # readiness answer, asked with the Host its proxy sends; anything but 200
+  # fails the run.
+  while read -r service port path host; do
+    if ! dc exec -T "$service" python -c '
+import sys, urllib.error, urllib.request
+port, path, host = sys.argv[1:]
+request = urllib.request.Request(f"http://127.0.0.1:{port}{path}", headers={"Host": host})
+opener = urllib.request.build_opener(urllib.request.ProxyHandler({}))
+try:
+    status = opener.open(request, timeout=10).status
+except urllib.error.HTTPError as refused:
+    status = refused.code
+print(f"{path} {status}")
+sys.exit(status != 200)
+' "$port" "$path" "$host"; then
+      echo "e2e-team-deployment: $service is not ready" >&2
+      exit 1
+    fi
+  done < <(readiness_targets)
   dc ps --format '{{.Service}} {{.Status}}'
 }
 
