@@ -141,7 +141,9 @@ def approve(args, browser) -> None:
         )
         page.click("#handoff-action")
         report["states"].append(wait_state(page, TERMINAL + ("ready",)))
-    report["status"] = page.text_content("#handoff-status")
+    # Once the page has handed back to aw's loopback there is no status to read.
+    if report["states"][-1] != "navigated":
+        report["status"] = page.text_content("#handoff-status")
     report["url"] = page.url
     print(json.dumps(report))
 
