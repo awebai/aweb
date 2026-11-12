@@ -78,12 +78,17 @@ def _docker(*args: str, timeout: int = 120, input: str | None = None) -> subproc
     return subprocess.run(["docker", *args], text=True, capture_output=True, timeout=timeout, input=input, check=False)
 
 
+def first_json(text: str):
+    """The first JSON value in a command's output; Docker may print hints after it."""
+    return json.JSONDecoder().raw_decode(text[text.index("{"):])[0]
+
+
 def aw(container: str, *args: str, env: dict[str, str] | None = None) -> dict:
     """Run aw --json in a machine, without a terminal, and return its JSON."""
     extra = [f"--env={k}={v}" for k, v in (env or {}).items()]
     result = _docker("exec", *extra, container, "aw", "--json", *args, timeout=300)
     assert result.returncode == 0, f"aw {' '.join(args)}\n{result.stdout}\n{result.stderr}"
-    return json.loads(result.stdout[result.stdout.index("{"):])
+    return first_json(result.stdout)
 
 
 def aw_refused(container: str, *args: str, env: dict[str, str] | None = None) -> str:
@@ -91,7 +96,7 @@ def aw_refused(container: str, *args: str, env: dict[str, str] | None = None) ->
     extra = [f"--env={k}={v}" for k, v in (env or {}).items()]
     result = _docker("exec", *extra, container, "aw", "--json", *args, timeout=300)
     assert result.returncode != 0, result.stdout
-    return json.loads(result.stdout[result.stdout.index("{"):])["error"]["code"]
+    return first_json(result.stdout)["error"]["code"]
 
 
 def publish_awid_txt(lane: Lane, controller_did: str) -> None:
@@ -301,7 +306,7 @@ def test_the_owner_designates_a_human_holder_registered_on_another_machine(lane:
     output = holder.answer_passphrases(child)
     child.close()
     assert child.exitstatus == 0, output
-    human = json.loads(output[output.index("{"):])
+    human = first_json(output)
     principal = human["id"]
     aw(holder.container, "id", "team", "create", "--name", TEAM, "--namespace", DOMAIN, "--registry", REGISTRY)
 

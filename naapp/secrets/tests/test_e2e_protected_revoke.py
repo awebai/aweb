@@ -48,6 +48,7 @@ from tests.test_e2e_owner_acts import (
     _docker,
     aw,
     await_awid_txt,
+    first_json,
     publish_awid_txt,
     write_service_member,
 )
@@ -74,7 +75,7 @@ class ProtectedLane(Lane):
             env=self.env, text=True, capture_output=True, input=stdin, timeout=300, check=False,
         )
         assert result.returncode == 0, result.stdout + result.stderr
-        return json.loads(result.stdout[result.stdout.index("{"):])
+        return first_json(result.stdout)
 
     def chromium(self, machine: str, *args: str) -> dict:
         """The approving human's Chromium, in the requester's network namespace."""
@@ -82,7 +83,7 @@ class ProtectedLane(Lane):
                          f"{self.project}-chromium", *args, "--ca", "/runtime/tls/ca.pem", timeout=300)
         assert result.returncode == 0, result.stdout + result.stderr
         out = result.stdout.strip()
-        return json.loads(out[out.index("{"):]) if "{" in out else {}
+        return first_json(out) if "{" in out else {}
 
 
 @pytest.fixture(scope="module")
@@ -199,7 +200,7 @@ def test_a_human_approves_a_protected_revoke_in_a_real_browser(lane: ProtectedLa
     output = holder.answer_passphrases(child)
     child.close()
     assert child.exitstatus == 0, output
-    approver = json.loads(output[output.index("{"):])["id"]
+    approver = first_json(output)["id"]
     aw(holder.container, "id", "team", "create", "--name", TEAM, "--namespace", DOMAIN, "--registry", REGISTRY)
     team_key = lane.runtime / "holder" / ".awid" / "team-keys" / DOMAIN / f"{TEAM}.key"
 
@@ -301,7 +302,7 @@ def test_a_human_approves_a_protected_revoke_in_a_real_browser(lane: ProtectedLa
     assert report["digest"] == digest and report["act"] == "human-role.revoke", report
     status, output = finish(child)
     assert status == 0, output
-    receipt = json.loads(output[output.index("{"):])
+    receipt = first_json(output)
     assert (receipt["operation_id"], receipt["state"]) == (operation, "committed"), receipt
     assert lane.provision("evidence", "--operation-id", operation)[operation] == {"signed": True, "refusal_code": None}
     assert not (saved / f"{operation}.json").exists(), "a committed operation's saved request remains"
@@ -332,7 +333,7 @@ def test_a_human_approves_a_protected_revoke_in_a_real_browser(lane: ProtectedLa
     (saved / f"{changed}.json").write_text(json.dumps(record))
     refused = _docker("exec", owner, "aw", "--json", "app", "role", "resume", changed, "--protected-profile", PROFILE)
     assert refused.returncode != 0, refused.stdout
-    assert json.loads(refused.stdout[refused.stdout.index("{"):])["error"]["code"] == "operation_conflict", refused.stdout
+    assert first_json(refused.stdout)["error"]["code"] == "operation_conflict", refused.stdout
     assert lane.provision("evidence", "--operation-id", changed)[changed]["signed"] is False
 
     # 4. A lost prepare answer: the front drops the committed prepare's
@@ -352,7 +353,7 @@ def test_a_human_approves_a_protected_revoke_in_a_real_browser(lane: ProtectedLa
     caddyfile.write_text(original)
     reload_front(lane)
     assert lost.returncode != 0, lost.stdout
-    assert json.loads(lost.stdout[lost.stdout.index("{"):])["error"]["code"] == "prepare_unconfirmed", lost.stdout
+    assert first_json(lost.stdout)["error"]["code"] == "prepare_unconfirmed", lost.stdout
     operation = re.search(r"Preparing operation (\S+)", lost.stderr).group(1)
     assert (saved / f"{operation}.json").exists()
     child = pexpect.spawn("docker", ["exec", "-it", owner, "aw", "--json", "app", "role", "resume", operation,
@@ -362,7 +363,7 @@ def test_a_human_approves_a_protected_revoke_in_a_real_browser(lane: ProtectedLa
     assert report["states"] == ["login-required", "ready", "navigated"], report
     status, output = finish(child)
     assert status == 0, output
-    receipt = json.loads(output[output.index("{"):])
+    receipt = first_json(output)
     assert (receipt["operation_id"], receipt["state"]) == (operation, "committed"), receipt
     assert lane.provision("evidence", "--operation-id", operation)[operation] == {"signed": True, "refusal_code": None}
 
