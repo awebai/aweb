@@ -642,9 +642,39 @@ async def test_rotate_local_namespace_controller_requires_previous_key(client):
 
 
 @pytest.mark.asyncio
-async def test_rotate_namespace_controller_recovers_lost_old_key_via_dns(
-    client, awid_db_infra, fake_redis, controller_identity, monkeypatch,
+async def test_skip_dns_bootstraps_but_cannot_replace_controller_without_dns(
+    client, controller_identity, monkeypatch,
 ):
+    old_key, old_did = controller_identity
+    domain = "skip-dns-bootstrap.example"
+    monkeypatch.setenv("AWID_SKIP_DNS_VERIFY", "1")
+
+    async def unavailable_dns(_domain):
+        raise DnsVerificationError("No DNS authority available")
+
+    app = client._transport.app
+    app.dependency_overrides[get_domain_verifier] = lambda: unavailable_dns
+    await _register_namespace(client, old_key, old_did, domain)
+    before = (await client.get(f"/v1/namespaces/{domain}")).json()
+    new_key, new_public = generate_keypair()
+    new_did = did_from_public_key(new_public)
+    response = await client.put(
+        f"/v1/namespaces/{domain}", json={"new_controller_did": new_did},
+        headers=_sign(new_key, new_did, domain=domain, operation="rotate_controller",
+                      new_controller_did=new_did),
+    )
+    assert response.status_code == 422, response.text
+    assert response.json()["detail"] == "No DNS authority available"
+    assert (await client.get(f"/v1/namespaces/{domain}")).json() == before
+
+
+@pytest.mark.parametrize("skip_dns", [False, True])
+@pytest.mark.asyncio
+async def test_rotate_namespace_controller_recovers_lost_old_key_via_dns(
+    client, awid_db_infra, fake_redis, controller_identity, monkeypatch, skip_dns,
+):
+    if skip_dns:
+        monkeypatch.setenv("AWID_SKIP_DNS_VERIFY", "1")
     old_signing_key, old_controller_did = controller_identity
     domain = "recover.example"
     await _register_namespace(client, old_signing_key, old_controller_did, domain)

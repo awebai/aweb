@@ -11315,19 +11315,20 @@
         "proof_lane": "skip_dns",
         "new_key_proof": true,
         "new_controller": "did:key:z6Mko9hTggMwjSTEaJaPUfE6tqcy2xvU6BnNq3e3o8qVBiyH",
-        "exact_dns_key": null,
+        "exact_dns_key": "did:key:z6Mkon3Necd6NkkyfoGoHxid2znGc59LU3K7mubaRcFbLfLX",
         "open_epoch": {
           "seq": 1,
           "did_key": "did:key:z6Mkon3Necd6NkkyfoGoHxid2znGc59LU3K7mubaRcFbLfLX"
         }
       },
       "expected": {
-        "accepted": true,
-        "stored_controller": "did:key:z6Mko9hTggMwjSTEaJaPUfE6tqcy2xvU6BnNq3e3o8qVBiyH",
+        "accepted": false,
+        "stored_controller": "did:key:z6Mkon3Necd6NkkyfoGoHxid2znGc59LU3K7mubaRcFbLfLX",
         "epoch_writes": 0,
         "open_epoch_seq": 1,
-        "current_authority": "unavailable",
-        "old_tree_cut_off": false
+        "current_authority": "available",
+        "old_tree_cut_off": false,
+        "http_status": 403
       }
     },
     {
