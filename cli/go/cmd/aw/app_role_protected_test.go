@@ -1,6 +1,7 @@
 package main
 
 import (
+	"encoding/json"
 	"os"
 	"strings"
 	"testing"
@@ -91,5 +92,56 @@ func TestASavedBodysScopeIsTheScopeItsReceiptIsReadUnder(t *testing.T) {
 	}
 	if _, err := savedScope(profile, []byte(`{"operation_id":"x"}`)); err == nil {
 		t.Fatal("a body without a scope was accepted")
+	}
+}
+
+// twoDomainProfile is the vector profile with the same authority and human
+// ID also bound in a second configured human domain, in either row order.
+func twoDomainProfile(t *testing.T, secondFirst bool) *handoff.Profile {
+	t.Helper()
+	raw, err := os.ReadFile("../../../../docs/vectors/protected-service-profile-v1.json")
+	if err != nil {
+		t.Fatal(err)
+	}
+	var doc map[string]any
+	if err := json.Unmarshal(raw, &doc); err != nil {
+		t.Fatal(err)
+	}
+	namespaces := doc["namespace_authorities"].([]any)
+	other := map[string]any{"domain": "other.example", "controller_did": namespaces[0].(map[string]any)["controller_did"]}
+	doc["namespace_authorities"] = append(namespaces, other)
+	first := doc["bindings"].([]any)[0].(map[string]any)
+	encoded, _ := json.Marshal(first)
+	var second map[string]any
+	_ = json.Unmarshal(encoded, &second)
+	second["scope"].(map[string]any)["human"].(map[string]any)["domain"] = "other.example"
+	if secondFirst {
+		doc["bindings"] = []any{second, first}
+	} else {
+		doc["bindings"] = []any{first, second}
+	}
+	data, _ := json.Marshal(doc)
+	profile, err := handoff.ParseProfile(data)
+	if err != nil {
+		t.Fatalf("the two-domain profile is valid: %v", err)
+	}
+	return profile
+}
+
+func TestAnApproverBoundInTwoHumanDomainsIsAmbiguousInEitherOrder(t *testing.T) {
+	for _, secondFirst := range []bool{false, true} {
+		profile := twoDomainProfile(t, secondFirst)
+		if binding, err := protectedBinding(profile, "engineering:customer.example", "did:aw:3YDAM5ZLRKg7eHH1Zs6sSMwkga8w"); err == nil {
+			t.Errorf("secondFirst=%v: chose %v", secondFirst, binding.Scope["human"])
+		}
+	}
+}
+
+func TestASavedBodyWithADuplicateScopeIsRefused(t *testing.T) {
+	profile, _ := vectorProfile(t)
+	scope := `{"v":1,"kind":"protected_key","service_id":"customer-signer","authority":{"kind":"team_controller","id":"engineering:customer.example","domain":"customer.example"},"human":{"id":"did:aw:3YDAM5ZLRKg7eHH1Zs6sSMwkga8w","domain":"customer.example"},"generation":1}`
+	body := `{"scope":{"v":1},"scope":` + scope + `}`
+	if _, err := savedScope(profile, []byte(body)); err == nil {
+		t.Fatal("a body with two scopes was read as its last")
 	}
 }

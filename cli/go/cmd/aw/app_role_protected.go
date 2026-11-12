@@ -52,8 +52,9 @@ func loadProtectedProfile() (*handoff.Profile, error) {
 	return handoff.ParseProfile(raw)
 }
 
-// protectedBinding is the profile's binding for exactly this team's
-// controller and the named approving human; it never picks a default human.
+// protectedBinding is the profile's one binding for exactly this team's
+// controller and the named approving human. It never picks a default human,
+// and refuses an approver the profile binds more than once.
 func protectedBinding(profile *handoff.Profile, teamID, approver string) (*handoff.ProfileBinding, error) {
 	if strings.TrimSpace(approver) == "" {
 		return nil, usageError("--approver is required: the did:aw of the human who approves this act")
@@ -62,15 +63,24 @@ func protectedBinding(profile *handoff.Profile, teamID, approver string) (*hando
 	if err != nil {
 		return nil, err
 	}
+	var matches []*handoff.ProfileBinding
 	for i := range profile.Bindings {
 		scope := profile.Bindings[i].Scope
 		authority, _ := scope["authority"].(map[string]any)
 		human, _ := scope["human"].(map[string]any)
 		if authority["kind"] == "team_controller" && authority["id"] == teamID && authority["domain"] == domain && human["id"] == approver {
-			return &profile.Bindings[i], nil
+			matches = append(matches, &profile.Bindings[i])
 		}
 	}
-	return nil, withErrorCode("profile_scope_refused", fmt.Errorf("the protected-service profile configures no binding for team %s approved by %s", teamID, approver))
+	switch len(matches) {
+	case 1:
+		return matches[0], nil
+	case 0:
+		return nil, withErrorCode("profile_scope_refused", fmt.Errorf("the protected-service profile configures no binding for team %s approved by %s", teamID, approver))
+	}
+	// The same approver bound in more than one human domain: the profile's
+	// row order must not choose whose scope is signed.
+	return nil, withErrorCode("profile_scope_ambiguous", fmt.Errorf("the protected-service profile binds %s for team %s in %d human domains; it must name one", approver, teamID, len(matches)))
 }
 
 // protectedRoleIntent is the act aw asks the service to prepare.
@@ -171,18 +181,16 @@ func pendingOperationFor(profile *handoff.Profile, operationID string) (*awconfi
 
 // savedScope is the configured scope a saved request was prepared under.
 func savedScope(profile *handoff.Profile, body []byte) (map[string]any, error) {
-	decoder := json.NewDecoder(bytes.NewReader(body))
-	decoder.UseNumber()
-	var fields struct {
-		Scope map[string]any `json:"scope"`
-	}
-	if err := decoder.Decode(&fields); err != nil || fields.Scope == nil {
+	// Decoded as strictly as Resume decodes the same bytes.
+	fields, ok := handoff.DecodeObject(body)
+	scope, _ := fields["scope"].(map[string]any)
+	if !ok || scope == nil {
 		return nil, errors.New("the saved request names no scope")
 	}
-	if _, err := profile.BindingFor(fields.Scope); err != nil {
+	if _, err := profile.BindingFor(scope); err != nil {
 		return nil, err
 	}
-	return fields.Scope, nil
+	return scope, nil
 }
 
 func runProtectedResume(cmd *cobra.Command, operationID string) error {
