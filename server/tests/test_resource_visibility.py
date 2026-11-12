@@ -322,7 +322,7 @@ async def test_chat_http_sender_removed_between_resolution_and_send_is_hidden(pr
     before = await env.db.fetch_value("SELECT count(*) FROM {{tables.chat_messages}}")
 
     async def send(actor, sid):
-        return await _request(env, actor, "POST", f"/v1/chat/sessions/{sid}/messages", {"message": "reply"})
+        return await _request(env, actor, "POST", f"/v1/chat/sessions/{sid}/messages", {"body": "reply"})
 
     hidden = await send("alice", session["session_id"])
     missing = await send("alice", str(uuid4()))
