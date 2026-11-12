@@ -43,6 +43,7 @@ canonicalize_dir() {
 }
 
 REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd -P)"
+source "$REPO_ROOT/scripts/journey-network.sh"
 TEMP_ROOT="$(canonicalize_dir "${TMPDIR:-/tmp}")"
 case "$TEMP_ROOT" in
   /|"$REPO_ROOT"|"$REPO_ROOT"/*) echo "FATAL: unsafe journey temp root: $TEMP_ROOT" >&2; exit 2 ;;
@@ -90,6 +91,11 @@ PROJECT="${AWEB_E2E_PROJECT:-aweb-user-e2e-$RANDOM-$$}"
 PORT_ALLOCATOR=""
 
 allocate_service_ports() {
+  if [[ -n "${CANDIDATE_RUNNER_NAME:-}" ]]; then
+    AWEB_PORT=8000
+    AWID_PORT=8010
+    return 0
+  fi
   # Replacing a service behind the same published port can leave stale TCP
   # forwarding tuples on Docker Desktop. Back-to-back journeys must not reuse
   # fixed ports. Allocate on the daemon, not in the runner's network namespace.
@@ -640,8 +646,8 @@ echo ""
 echo "=== Phase 1: Start awid + aweb in Docker ==="
 
 allocate_service_ports
-AWEB_URL="http://$DOCKER_PUBLISHED_HOST:$AWEB_PORT"
-AWID_URL="http://$DOCKER_PUBLISHED_HOST:$AWID_PORT"
+AWEB_URL="$(journey_url "$PROJECT" aweb 8000 "http://$DOCKER_PUBLISHED_HOST:$AWEB_PORT")"
+AWID_URL="$(journey_url "$PROJECT" awid 8010 "http://$DOCKER_PUBLISHED_HOST:$AWID_PORT")"
 echo "  Service origins: $AWEB_URL, $AWID_URL"
 
 if grep -Fq 'echo "AWID_SERVICE_TOKEN=$(openssl rand -hex 32)" >> .env' \
@@ -707,25 +713,12 @@ compose build --no-cache
 release_service_ports
 compose up -d
 
-echo "Waiting for awid health..."
-for i in $(seq 1 60); do
-  if curl -sf "$AWID_URL/health" >/dev/null 2>&1; then
-    break
-  fi
-  sleep 2
-done
-awid_health="$(curl -sf "$AWID_URL/health" 2>/dev/null || echo '{}')"
+# Distinguish transport failure from an application health response. Keep the
+# curl error and the actual service/address/path in the gate evidence.
+awid_health="$(journey_wait_health awid "$AWID_URL")" || { compose logs --tail 30 awid >&2; exit 1; }
 awid_status="$(echo "$awid_health" | jq_field status)"
 assert_eq "awid health" "ok" "$awid_status"
-
-echo "Waiting for aweb health..."
-for i in $(seq 1 60); do
-  if curl -sf "$AWEB_URL/health" >/dev/null 2>&1; then
-    break
-  fi
-  sleep 2
-done
-aweb_health="$(curl -sf "$AWEB_URL/health" 2>/dev/null || echo '{}')"
+aweb_health="$(journey_wait_health aweb "$AWEB_URL")" || { compose logs --tail 30 aweb >&2; exit 1; }
 aweb_status="$(echo "$aweb_health" | jq_field status)"
 assert_eq "aweb health" "ok" "$aweb_status"
 
@@ -2862,13 +2855,13 @@ phase_aw_init_local_quickstart() {
     assert_eq "recreated server audience matches requested origin" "$2" "$configured_origin"
   }
   local quickstart_bridge_required=0
-  if [[ "$DOCKER_PUBLISHED_HOST" != "127.0.0.1" ]]; then
+  if [[ -n "${CANDIDATE_RUNNER_NAME:-}" || "$DOCKER_PUBLISHED_HOST" != "127.0.0.1" ]]; then
     quickstart_bridge_required=1
     start_quickstart_bridge "TCP4-LISTEN:$AWID_PORT,bind=127.0.0.1,reuseaddr,fork" \
-      "TCP4:aweb-docker.test:$AWID_PORT" &
+      "TCP4:${AWID_URL#http://}" &
     QUICKSTART_AWID_SOCAT_PID=$!
     start_quickstart_bridge "TCP4-LISTEN:$AWEB_PORT,bind=127.0.0.1,reuseaddr,fork" \
-      "TCP4:aweb-docker.test:$AWEB_PORT" &
+      "TCP4:${AWEB_URL#http://}" &
     QUICKSTART_AWEB_SOCAT_PID=$!
   fi
   local bridges_ready=0
