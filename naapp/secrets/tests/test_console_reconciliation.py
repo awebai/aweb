@@ -75,7 +75,9 @@ async def repeated_broker(uses, repeat_state, *, settled=False):
             repeat_state.value,
         )
         if settled:
-            await machine.reconcile(tx, original_id, State.RECONCILED_UNKNOWN, {"state": "closed"})
+            await machine.reconcile(
+                tx, original_id, State.RECONCILED_UNKNOWN, {"state": "reconciled_unknown"}
+            )
     return admission.intent_id
 
 

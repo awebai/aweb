@@ -21,6 +21,7 @@ from pathlib import Path
 from urllib.parse import urlsplit
 
 PREFIX = Path("/opt/aweb-secrets-e2e")
+EGRESS_READY = Path("/run/aweb-secrets-runner/egress-ready")
 MAX_REQUEST = 4096
 GRACE_SECONDS = 3
 
@@ -86,13 +87,39 @@ class Policy:
         ):
             raise ValueError("unsafe installation")
 
+    def _ancestors(self, directory):
+        # Exact ancestor checks, not resolve(): a symlink must never be adopted.
+        for parent in reversed((directory, *directory.parents)):
+            if parent == self.ancestor_root or self.ancestor_root in parent.parents:
+                self._entry(parent, self.protected_uid, directory=True)
+
+    def require_egress_ready(self):
+        if sys.platform != "linux":
+            return
+        if os.geteuid() != self.runner_uid:
+            raise ValueError("wrong uid")
+        marker = EGRESS_READY  # Read at the launch boundary, never at import time.
+        descriptor = os.open(marker, os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK | os.O_CLOEXEC)
+        try:
+            self._ancestors(marker.parent)
+            self._entry(marker.parent, self.protected_uid, mode=0o755, directory=True)
+            info = os.fstat(descriptor)
+            if (
+                info.st_uid != self.protected_uid
+                or not stat.S_ISREG(info.st_mode)
+                or stat.S_IMODE(info.st_mode) != 0o644
+            ):
+                raise ValueError("unsafe egress readiness")
+            expected = f"{self.runner_uid}\n".encode("ascii")
+            if os.read(descriptor, len(expected) + 1) != expected:
+                raise ValueError("unsafe egress readiness")
+        finally:
+            os.close(descriptor)
+
     def check(self):
         if os.geteuid() != self.runner_uid:
             raise ValueError("wrong uid")
-        # Exact ancestor checks, not resolve(): a symlink must never be adopted.
-        for parent in reversed((self.prefix, *self.prefix.parents)):
-            if parent == self.ancestor_root or self.ancestor_root in parent.parents:
-                self._entry(parent, self.protected_uid, directory=True)
+        self._ancestors(self.prefix)
         self._entry(self.state, self.runner_uid, mode=0o700, directory=True)
         self._entry(self.prefix / "runner-config.json", self.runner_uid, mode=0o600)
 
@@ -210,7 +237,7 @@ def _ignore_other_signals():
         signal.signal(getattr(signal, name), signal.SIG_IGN)
 
 
-def _worker(argv, data, report):
+def _worker(argv, data, report, policy):
     identity_r, identity_w = os.pipe()
     error_r, error_w = os.pipe()
     input_r, input_w = os.pipe()
@@ -235,6 +262,8 @@ def _worker(argv, data, report):
             os.dup2(error_w, 3, inheritable=False)
             failure = 3
             os.closerange(4, resource.getrlimit(resource.RLIMIT_NOFILE)[0])
+            if argv[1] in ("register", "run"):
+                policy.require_egress_ready()
             os.execve(argv[0], argv, {"PATH": "/usr/bin:/bin", "LANG": "C.UTF-8"})
         except BaseException:
             try:
@@ -263,7 +292,7 @@ def _worker(argv, data, report):
     return pid
 
 
-def _guardian(control, report, argv, data):
+def _guardian(control, report, argv, data, policy):
     """The worker's parent survives supervisor death, kills and reaps its child.
 
     macOS has no PR_SET_PDEATHSIG. EOF on this private, non-inherited pipe
@@ -277,7 +306,7 @@ def _guardian(control, report, argv, data):
         # channel controls its child; external signals must not orphan it.
         for number in (signal.SIGTERM, signal.SIGINT):
             signal.signal(number, signal.SIG_IGN)
-        pid = _worker(argv, data, report)
+        pid = _worker(argv, data, report, policy)
         with selectors.DefaultSelector() as poll:
             poll.register(control, selectors.EVENT_READ)
             while True:
@@ -312,6 +341,8 @@ def supervise(policy):
         _ignore_other_signals()
         policy.check()
         argv, data = policy.request(_object(_line(0, MAX_REQUEST)))
+        if argv[1] in ("register", "run"):
+            policy.require_egress_ready()
     except (OSError, ValueError, TypeError, KeyError, UnicodeError, RecursionError):
         return 2
     control_r, control_w = os.pipe()
@@ -325,7 +356,7 @@ def supervise(policy):
         os.close(1)
         os.close(2)
         try:
-            _guardian(control_r, report_w, argv, data)
+            _guardian(control_r, report_w, argv, data, policy)
             os._exit(0)
         except BaseException:
             os._exit(1)

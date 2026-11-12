@@ -268,6 +268,46 @@ Operator rules:
   bytes, on every replica and restart, so their digests can be recorded at
   deploy.
 
+### Human-role owner acts and manifest v3
+
+An app with owner-designated human roles passes its committed `owner_acts`
+declaration (roles and optional session actions) and its configured console
+origin as `owner_acts=` and `owner_acts_origin=` to `NaappRuntime`. Keep the
+existing v2 `manifest_path`: the runtime derives v3, fills the human origin,
+validates both, and publishes `/manifests/v2.json` and `/manifests/v3.json`
+through the manifest catalog. `check_v2_variant(v2, v3)` checks that all common
+declarations match. `runtime.manifest` and `manifest_bytes` select v3; G1 accepts
+each exact published version/digest pair, so an existing v2 pin still works.
+Owner acts require a v3 pin. The human and agent hostnames must differ.
+
+`aweb_naapp.runtime.owner_act_router.mount_owner_act_routes` accepts a human
+`FastAPI` or `APIRouter`, `runtime=`, `effect=`, `verifier=` and `limiter=`.
+It mounts `POST /.well-known/aweb-owner-act`. The dedicated `OwnerActVerifier`
+has `scope=runtime.manifest.app_id`, the configured human origin as audience,
+and `HUMAN_ROLE_ACTS` as vocabulary. It shares the app's `owner_act_nonces`
+store with its other verifiers. `OwnerActLimiter(client_identity=ClientIdentity(...),
+limit=..., window=...)` uses the existing ratelimit store; apply its migrations
+and `apply_owner_act_migrations` with the app's other stores.
+
+Implement the existing `OwnerActEffect` protocol (in `runtime.owner_act_delivery`)
+once per app composition. Its `prepare` runs only after controller authentication
+and installation admission, before effect locks; it reads the holding before
+checking the supplied certificate. Its prepared object independently constructs
+`expected_subject`, then `apply(tx, installation=..., act=...)` runs the writer
+and governance enqueue in the router's original transaction. Retire gates precede
+role/B3/S4 locks. After the last effect await, the router rechecks its held F6
+fence, then synchronously checks the original member and owner-act deadlines
+immediately before commit. Failure rolls back the nonce and all effects. Only
+`after_commit(result)` sends notices; a notice failure cannot undo the commit.
+The app's existing complete installation-retirement callback stays its owner.
+
+The human router uses the same public Host allowlist as `split_origins`.
+Behind TLS termination, preserve that public Host when forwarding to the app;
+the signed audience stays the configured HTTPS origin. Neither `Forwarded` nor
+`X-Forwarded-*` selects an origin. `ClientIdentity.trusted_header` controls only
+rate-limit client attribution: configure it only for a header the trusted proxy
+overwrites, and prevent direct access that could supply it.
+
 ### Health
 
 The three routes follow the probe contract of the aweb server and AWID
@@ -505,6 +545,19 @@ the final fence. Do not expose prepared handles through model-visible tools.
   capability. The requester rule compares `requested_by` with each approver's
   subject and, when set, their `principal_did`, at mint and again at decide,
   so the app names the requester the same way.
+- **Provider transactions.** `PolicySource.current`,
+  `ApproverDirectory.candidates` and `ApproverDirectory.is_current` accept
+  keyword `tx=None`. When supplied, every SQL read, including nested owner,
+  policy and B3 lookups, uses that caller connection; providers never take a
+  second pool connection while the caller retains its installation fence.
+  Mint and decision/admission rechecks pass the original effect transaction,
+  so its uncommitted role changes are visible and share commit or rollback.
+  `Approvals.get`, `for_request`, `requester_view` and `open_link` also accept
+  `tx` for fenced reads. Link, approval, policy and revealed-request reads in
+  `open_link` all use that connection. Fresh authenticator verification remains
+  before effect-fence preparation, with its separately committed assertion;
+  these read adapters neither replace the verifier nor move verification under
+  authority locks.
 - **One decision.** Any one candidate decides, and the first approve or reject
   is the only one: it is recorded as `decided_by` (scope, subject, assurance,
   evidence ref) and every other candidate's link is revoked. A failed ceremony
