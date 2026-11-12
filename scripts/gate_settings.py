@@ -1,6 +1,8 @@
 """Reviewed budgets and allocations shared by CI, lanes and release gates."""
 import argparse
+import copy
 import json
+import os
 from pathlib import Path
 
 SETTINGS = Path(__file__).resolve().parents[1] / 'candidate-gate/unit-settings.json'
@@ -21,6 +23,8 @@ def validate(settings):
     if settings['server_shards'] < 1 or settings['server_workers'] < 1:
         raise ValueError('server shard and worker counts must be positive')
     for name, profile in settings['profiles'].items():
+        if name == 'vm' and settings['server_workers'] > profile['groups']['server']['runner']['cpus']:
+            raise ValueError('VM server workers exceed runner CPUs')
         if not 1 <= profile['concurrency'] <= len(groups(settings)):
             raise ValueError('invalid group concurrency')
         for field in ('cpus', 'memory_mib'):
@@ -36,8 +40,20 @@ def validate(settings):
                     raise ValueError('resource limits must be positive')
 
 
-def load_settings():
+def load_settings(profile=None, *, host_cpus=None):
     settings = json.loads(SETTINGS.read_text())
+    profile = profile or os.environ.get('AWEB_GATE_PROFILE', 'lane')
+    if profile == 'vm':
+        if host_cpus is None:
+            host_cpus = int(os.environ.get('AWEB_GATE_HOST_CPUS', '0'))
+        if not isinstance(host_cpus, int) or host_cpus < 1:
+            raise ValueError('VM profile requires the measured host CPU count')
+        vm = settings['vm']
+        limits = copy.deepcopy(settings['profiles']['release'])
+        limits['cpus'] = host_cpus - vm['host_cpu_reserve']
+        limits['groups']['server']['postgres']['cpus'] = vm['server_postgres_cpus']
+        settings['profiles']['vm'] = limits
+        settings['server_workers'] = vm['server_workers']
     validate(settings)
     return settings
 
@@ -53,7 +69,7 @@ if __name__ == '__main__':
     parser.add_argument('field', choices=['server_shards', 'server_workers', 'matrix', 'budget', 'profile'])
     parser.add_argument('name', nargs='?')
     args = parser.parse_args()
-    settings = load_settings()
+    settings = load_settings(args.name if args.field == 'profile' else None)
     if args.field == 'matrix':
         print(json.dumps({'suite': groups(settings)}))
     elif args.field == 'budget':

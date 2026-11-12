@@ -137,6 +137,13 @@ profile_default=lane
 [[ -n "$STAGES" ]] || profile_default=release
 AWEB_GATE_PROFILE="${AWEB_GATE_PROFILE:-$profile_default}"
 external_inputs+="AWEB_GATE_PROFILE=$AWEB_GATE_PROFILE"$'\n'
+AWEB_GATE_HOST_CPUS=""
+if [[ "$AWEB_GATE_PROFILE" == vm ]]; then
+  AWEB_GATE_HOST_CPUS="$(docker info --format '{{.NCPU}}')" || refuse "could not measure VM CPU capacity"
+  [[ "$AWEB_GATE_HOST_CPUS" =~ ^[1-9][0-9]*$ ]] || refuse "invalid VM CPU capacity"
+  external_inputs+="AWEB_GATE_HOST_CPUS=$AWEB_GATE_HOST_CPUS"$'\n'
+fi
+export AWEB_GATE_HOST_CPUS
 read -r profile_cpus profile_memory < <(python3 "$ROOT/scripts/gate_settings.py" profile "$AWEB_GATE_PROFILE")
 [[ -n "${profile_cpus:-}" && -n "${profile_memory:-}" ]] || refuse "invalid gate profile"
 gate_setting AWEB_CANDIDATE_RUNNER_CPUS "$profile_cpus"
@@ -429,6 +436,7 @@ docker run --rm --init \
   -e CANDIDATE_SOURCE_SHA="$SOURCE_SHA" \
   -e CANDIDATE_RUNNER_NAME="$runner_name" \
   -e AWEB_GATE_PROFILE="$AWEB_GATE_PROFILE" \
+  -e AWEB_GATE_HOST_CPUS="$AWEB_GATE_HOST_CPUS" \
   -e CANDIDATE_BUILDER_NAME="$builder_container" \
   -e CANDIDATE_POSTGRES_NAME="$pg_name" \
   -e CANDIDATE_REDIS_NAME="$redis_name" \

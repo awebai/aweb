@@ -75,14 +75,14 @@ def main():
     parser.add_argument('--evidence', type=Path, required=True)
     parser.add_argument('--image', help='already prepared source/dependency image')
     parser.add_argument('--build-image', help='prepare this image once and exit, retaining it')
-    parser.add_argument('--profile', choices=['release', 'lane'], default=os.environ.get('AWEB_GATE_PROFILE', 'lane'))
+    parser.add_argument('--profile', choices=['release', 'lane', 'vm'], default=os.environ.get('AWEB_GATE_PROFILE', 'lane'))
     parser.add_argument('--group', help='shared make test-unit group')
     parser.add_argument('--command', nargs=argparse.REMAINDER, help='guard qualification command instead of make targets')
     parser.add_argument('targets', nargs='*', default=['test-server', 'test-awid', 'test-cli', 'test-channel', 'test-channel-name-live-contract', 'test-channel-core', 'test-pi-extension'])
     args = parser.parse_args()
     if args.image and args.build_image:
         parser.error('--image and --build-image are mutually exclusive')
-    settings = load_settings()
+    settings = load_settings(args.profile)
     limits = allocation(settings, args.profile, args.group or 'server-1')
     gomaxprocs = max(1, math.ceil(limits['runner']['cpus']))
     args.evidence.mkdir(parents=True, exist_ok=False)
@@ -139,6 +139,8 @@ def main():
                         '--add-host', '127.0.0.1.nip.io:127.0.0.1',
                         '--name', token + '-runner', *resource_args(limits['runner']),
                         '-e', f'GOMAXPROCS={gomaxprocs}',
+                        '-e', f'AWEB_GATE_PROFILE={args.profile}',
+                        '-e', f'AWEB_GATE_HOST_CPUS={os.environ.get("AWEB_GATE_HOST_CPUS", "")}',
                         '-e', 'PGHOST=127.0.0.1', '-e', 'PGUSER=postgres', '-e', 'PGPASSWORD=postgres',
                         '-e', 'REDIS_URL=redis://127.0.0.1:6379/0',
                         image, 'sleep', 'infinity')

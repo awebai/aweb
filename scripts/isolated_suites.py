@@ -92,9 +92,9 @@ def unit_allocation(containers, reserve, receipt, docker='docker'):
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('--evidence', type=Path, required=True)
-    parser.add_argument('--profile', choices=['release', 'lane'], default=os.environ.get('AWEB_GATE_PROFILE', 'lane'))
+    parser.add_argument('--profile', choices=['release', 'lane', 'vm'], default=os.environ.get('AWEB_GATE_PROFILE', 'lane'))
     args = parser.parse_args()
-    settings = load_settings()
+    settings = load_settings(args.profile)
     profile = settings['profiles'][args.profile]
     args.evidence.mkdir(parents=True, exist_ok=False)
     image = 'aw-unit-' + uuid.uuid4().hex[:12]

@@ -1,6 +1,7 @@
 {
   "server_shards": 2,
   "server_workers": 4,
+  "vm": {"host_cpu_reserve": 1, "server_workers": 2, "server_postgres_cpus": 2},
   "budgets": {"checks": 360, "unit": 900, "artifacts": 240, "integration": 900},
   "profiles": {
     "release": {
