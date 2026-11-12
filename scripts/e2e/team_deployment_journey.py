@@ -309,6 +309,43 @@ class World:
         self.agents_configured = True
         self.deployment()
 
+    def operator_ssh(self) -> Path:
+        """The operator's SSH into the running agent (OATS docs/container.md,
+        isolated bridge): a disposable key outside every agent mount, only its
+        public half in the agent's authorized keys (written in place, root
+        owned, as sshd's strict modes require), the agent's host key pinned
+        through the engine, and stdio relayed by docker exec, so the agents
+        network gains no endpoint and no port is published. Returns the SSH
+        config; a wrong pinned host key is refused."""
+        operator = self.run_dir / "operator"
+        operator.mkdir(mode=0o700)
+        key = operator / "id_ed25519"
+        run("ssh-keygen", "-q", "-t", "ed25519", "-N", "", "-C", "deploy-team-operator", "-f", str(key))
+        authorized = self.world / "agent-authorized-keys"
+        run("docker", "run", "--rm", "-v", f"{authorized}:/authorized_keys", "-v", f"{key}.pub:/operator.pub:ro",
+            "alpine:3.22", "sh", "-c",
+            "cat /operator.pub > /authorized_keys && chown 0:0 /authorized_keys && chmod 0644 /authorized_keys")
+        container = f"oats-agent-{TEAM}"
+        host_key = run("docker", "exec", container, "cat", "/state/ssh/ssh_host_ed25519_key.pub").split()[:2]
+        (operator / "known_hosts").write_text(f"[oats-agent]:2222 {' '.join(host_key)}\n")
+        relay = ('const s=require("node:net").connect(2222,"127.0.0.1");'
+                 'process.stdin.pipe(s);s.pipe(process.stdout);s.on("error",()=>process.exit(1));')
+        config = operator / "ssh_config"
+        config.write_text(
+            "Host team-agent\n  HostName oats-agent\n  User agent\n  Port 2222\n"
+            f"  IdentityFile {key}\n  IdentitiesOnly yes\n  UserKnownHostsFile {operator / 'known_hosts'}\n"
+            "  StrictHostKeyChecking yes\n  BatchMode yes\n"
+            f"  ProxyCommand docker exec -i {container} node -e '{relay}'\n"
+        )
+        print("operator ssh:", run("ssh", "-F", str(config), "team-agent", "id -un; hostname").split())
+        (operator / "wrong_known_hosts").write_text(f"[oats-agent]:2222 {' '.join(key.with_suffix('.pub').read_text().split()[:2])}\n")
+        wrong = subprocess.run(["ssh", "-F", str(config), "-o", f"UserKnownHostsFile={operator / 'wrong_known_hosts'}",
+                                "team-agent", "true"], capture_output=True, text=True, timeout=60, check=False)
+        (operator / "wrong_known_hosts").unlink()
+        if wrong.returncode != 255 or "host key" not in wrong.stderr.lower():
+            raise SystemExit("FAILED: the operator's SSH reached the agent under a host key it does not hold")
+        return config
+
     def machine(self, name: str) -> str:
         """A cli container as one machine; its HOME is /world/<name>."""
         container = f"{self.project}-{name}"
@@ -581,8 +618,10 @@ def journey(world: World) -> int:
     world.configure_agents()
     status = world.up()
     if status == 3:
-        print("AGENTS HELD: the ingress refusal and boundary probes passed and the agent container passed its"
-              " acceptance; it runs credential-free, with no seat, deployment or session admitted")
+        world.operator_ssh()
+        print("AGENTS HELD: the ingress refusal and boundary probes passed, the agent container passed its"
+              " acceptance and the operator reaches it over pinned SSH; it runs credential-free, with no seat,"
+              " deployment or session admitted")
         return 0
     print("BOUNDARY: the agents stage did not come up; see the adapter's output")
     return 1
