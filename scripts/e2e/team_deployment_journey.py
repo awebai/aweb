@@ -409,7 +409,10 @@ class World:
             print("UP: the signer is ready")
 
         def chromium(machine: str, *args: str) -> dict:
+            # As the host user, so the journey reads what the driver writes; its
+            # NSS database lives in a HOME of its own.
             out = run("docker", "run", "--rm", f"--network=container:{machine}", "-v", f"{self.world}:/world",
+                      "--user", f"{os.getuid()}:{os.getgid()}", "-e", "HOME=/tmp",
                       self.images["chromium"], *args, "--ca", "/world/tls/ca.pem", timeout=300).strip()
             return first_json(out) if "{" in out else {}
 

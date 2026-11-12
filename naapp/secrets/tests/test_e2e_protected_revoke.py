@@ -84,7 +84,10 @@ class ProtectedLane(Lane):
 
     def chromium(self, machine: str, *args: str) -> dict:
         """The approving human's Chromium, in the requester's network namespace."""
+        # As the host user, so the test reads what the driver writes; its NSS
+        # database lives in a HOME of its own.
         result = _docker("run", "--rm", f"--network=container:{machine}", f"--volume={self.runtime}:/runtime",
+                         f"--user={os.getuid()}:{os.getgid()}", "--env=HOME=/tmp",
                          f"{self.project}-chromium", *args, "--ca", "/runtime/tls/ca.pem", timeout=300)
         assert result.returncode == 0, result.stdout + result.stderr
         out = result.stdout.strip()
