@@ -346,6 +346,28 @@ class World:
             raise SystemExit("FAILED: the operator's SSH reached the agent under a host key it does not hold")
         return config
 
+    def stage_seat(self, owner: str, alias: str) -> dict:
+        """One agent seat: an ordinary member whose key aw creates on its own
+        machine, admitted by the team owner (owner-issued, local, not a
+        global identity), with its certificate and its connection to the
+        team's aweb. Only that member's .aw is staged into the agent's state,
+        at /state/seats/<alias>/.aw, owned by the agents' uid and private; no
+        owner, team or controller key goes with it. Returns the member."""
+        machine = self.machine(f"seat-{alias}")
+        requested = self.aw(machine, "id", "team", "request", "--create-local-key", "--team", TEAM_ID, "--name", alias)
+        added = self.aw(owner, "id", "team", "add-member", "--team", TEAM, "--namespace", DOMAIN,
+                        "--did", requested["did_key"], "--name", alias, "--local")
+        self.aw(machine, "id", "team", "fetch-cert", "--namespace", DOMAIN, "--team", TEAM,
+                "--cert-id", added["certificate_id"], "--registry", origin("registry"))
+        connected = self.aw(machine, "workspace", "connect", "--service", origin("aweb"))
+        run("docker", "run", "--rm", "-v", f"{self.world / f'seat-{alias}' / '.aw'}:/member:ro",
+            "-v", f"{self.world / 'agent-state'}:/state", "alpine:3.22", "sh", "-c",
+            f"mkdir -p /state/seats/{alias} && cp -a /member /state/seats/{alias}/.aw"
+            f" && chown -R {AGENT_UID}:{AGENT_UID} /state/seats && chmod 0700 /state/seats /state/seats/{alias}"
+            f" && find /state/seats/{alias}/.aw -type d -exec chmod 0700 {{}} + && find /state/seats/{alias}/.aw -type f -exec chmod 0600 {{}} +")
+        return {"alias": alias, "did_key": requested["did_key"], "certificate_id": added["certificate_id"],
+                "connected": connected}
+
     def machine(self, name: str) -> str:
         """A cli container as one machine; its HOME is /world/<name>."""
         container = f"{self.project}-{name}"
