@@ -138,9 +138,12 @@ prepare_agents() {
 }
 
 # Egress's policy, from what each of the five origins' hosts resolves to on
-# the services network and the protected backends' addresses there.
+# the services network, and the two backends no agent may reach: PostgreSQL
+# and Redis, at the addresses aweb itself connects to (Redis's is on aweb's
+# backend network alone). The resolved addresses are kept with the run for
+# the boundary probe.
 derive_egress_policy() {
-  local hosts addresses denied network service id
+  local hosts addresses
   hosts="$(python_in_server - "$deployment" <<'PY'
 import json
 import sys
@@ -156,27 +159,26 @@ origins = {
     "signer": config["signer"]["requestOrigin"],
     "registry": config["team"].get("registryUrl", "https://api.awid.ai"),
 }
-print(json.dumps({role: urlsplit(origin).hostname for role, origin in origins.items()}))
+print(json.dumps({
+    "origins": {role: urlsplit(origin).hostname for role, origin in origins.items()},
+    "backends": {"postgres": config.get("postgres", {}).get("host", "postgres"), "redis": "redis"},
+}))
 PY
 )"
   addresses="$(dc exec -T aweb python -c '
 import json, socket, sys
 hosts = json.loads(sys.argv[1])
-print(json.dumps({role: sorted({info[4][0] for info in socket.getaddrinfo(host, 443, socket.AF_INET, socket.SOCK_STREAM)})
-                  for role, host in hosts.items()}))
+def resolve(host):
+    return sorted({info[4][0] for info in socket.getaddrinfo(host, 443, socket.AF_INET, socket.SOCK_STREAM)})
+backends = {role: resolve(host) for role, host in hosts["backends"].items()}
+for role, found in backends.items():
+    if len(found) != 1:
+        sys.exit(f"{role} resolves to {len(found)} addresses, not one")
+print(json.dumps({"origins": {role: resolve(host) for role, host in hosts["origins"].items()},
+                  "backends": {role: found[0] for role, found in backends.items()}}))
 ' "$hosts" </dev/null)"
-  network="${project}_services"
-  denied=()
-  # A protected backend egress could reach is one on the services network;
-  # Redis is on aweb's backend network alone.
-  local address
-  for service in postgres redis; do
-    id="$(dc ps -q "$service")"
-    [[ -n "$id" ]] || continue
-    address="$(docker inspect --format "{{with index .NetworkSettings.Networks \"$network\"}}{{.IPAddress}}{{end}}" "$id")"
-    [[ -z "$address" ]] || denied+=("$address")
-  done
-  python_in_server - "$deployment" "$TEAM_DIR" "$run_dir/egress-policy.json" "$addresses" ${denied[@]+"${denied[@]}"} <<'PY'
+  printf '%s\n' "$addresses" >"$run_dir/egress-addresses.json"
+  python_in_server - "$deployment" "$TEAM_DIR" "$run_dir/egress-policy.json" "$addresses" <<'PY'
 import importlib.util
 import json
 import sys
@@ -184,14 +186,15 @@ from pathlib import Path
 
 import yaml
 
-path, team_dir, out, addresses, *denied = sys.argv[1:]
+path, team_dir, out, resolved = sys.argv[1:]
+resolved = json.loads(resolved)
 spec = importlib.util.spec_from_file_location("egress_policy", Path(team_dir) / "egress_policy.py")
 egress_policy = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(egress_policy)
 config = yaml.safe_load(open(path, encoding="utf-8"))
 profile = json.loads(Path(config["signer"]["profileFile"]).read_text(encoding="utf-8"))
 try:
-    policy = egress_policy.derive(config, profile, json.loads(addresses), denied)
+    policy = egress_policy.derive(config, profile, resolved["origins"], list(resolved["backends"].values()))
 except egress_policy.Refused as refused:
     sys.exit(f"e2e-team-deployment: no egress policy: {refused}")
 Path(out).write_text(json.dumps(policy, indent=2) + "\n", encoding="utf-8")
@@ -261,6 +264,76 @@ PY
   wait "$follower" 2>/dev/null || true
   echo "ingress refusal probe: exit $status, $out"
   [[ "$status" -eq 0 && "$out" == OATS_EGRESS_INGRESS_PASS ]]
+}
+
+# The OATS boundary probe (egress probe-compose-boundary.mjs, run on the
+# Docker engine host with Node 22) against the actual agents network: an
+# inert probe from the agent image, as the agent service with empty state,
+# login and authorized keys and the public CA alone, beside egress and
+# nothing else. The probe is removed before the agent takes its address.
+# Protected sources are the services' secrets directory, the backends' data
+# volumes, the Docker socket and TEAM_DEPLOYMENT_PROTECTED_SOURCES (colon
+# separated), each as the engine host resolves it.
+boundary_probe() {
+  local node="${TEAM_DEPLOYMENT_NODE:-node}" probe="$project-agent-probe" ca=0 ca_mount=() sources=() out status
+  if ! "$node" -e 'process.exit(Number(process.versions.node.split(".")[0]) >= 22 ? 0 : 1)'; then
+    echo "e2e-team-deployment: the boundary probe needs Node 22 or later as $node" >&2
+    return 1
+  fi
+  rm -rf "$run_dir/probe"
+  mkdir -p "$run_dir/probe/state" "$run_dir/probe/login"
+  : >"$run_dir/probe/authorized_keys"
+  if [[ -n "${TEAM_DEPLOYMENT_INGRESS_CA:-}" ]]; then
+    ca=1
+    cp "$TEAM_DEPLOYMENT_INGRESS_CA" "$run_dir/probe/ca.pem"
+    ca_mount=(-v "$run_dir/probe/ca.pem:/public/world-ca.pem:ro")
+  fi
+  sources+=("$(cd "$TEAM_DIR" && realpath "$(env_value SECRETS_DIR)")")
+  local volume
+  for volume in postgres_data redis_data; do
+    if docker volume inspect "${project}_$volume" >/dev/null 2>&1; then
+      sources+=("$(docker volume inspect --format '{{.Mountpoint}}' "${project}_$volume")")
+    fi
+  done
+  sources+=("$(realpath /var/run/docker.sock)")
+  local extra
+  while IFS= read -r extra; do
+    [[ -z "$extra" ]] || sources+=("$(realpath "$extra")")
+  done < <(tr ':' '\n' <<<"${TEAM_DEPLOYMENT_PROTECTED_SOURCES:-}")
+  docker rm -f "$probe" >/dev/null 2>&1 || true
+  TEAM_STATE_DIR="$run_dir/probe/state" TEAM_LOGIN_DIR="$run_dir/probe/login" \
+    AUTHORIZED_KEYS_FILE="$run_dir/probe/authorized_keys" \
+    dc run -d --no-deps --name "$probe" --entrypoint sleep ${ca_mount[@]+"${ca_mount[@]}"} agent infinity >/dev/null
+  python_in_server - "$deployment" "$TEAM_DIR" "$run_dir" "$project" "$(env_value AGENT_IMAGE)" "$(env_value EGRESS_IMAGE)" \
+    "$ca" "${sources[@]}" >"$run_dir/boundary-plan.json" <<'PY'
+import importlib.util
+import json
+import sys
+from pathlib import Path
+
+import yaml
+
+path, team_dir, run_dir, project, agent, egress, ca, *sources = sys.argv[1:]
+spec = importlib.util.spec_from_file_location("egress_policy", Path(team_dir) / "egress_policy.py")
+egress_policy = importlib.util.module_from_spec(spec)
+spec.loader.exec_module(egress_policy)
+plan = egress_policy.boundary_plan(
+    yaml.safe_load(open(path, encoding="utf-8")),
+    json.loads(Path(run_dir, "egress-policy.json").read_text(encoding="utf-8")),
+    project=project,
+    images={"agent": agent, "egress": egress},
+    run_dir=run_dir,
+    backends=json.loads(Path(run_dir, "egress-addresses.json").read_text(encoding="utf-8"))["backends"],
+    protected_sources=sources,
+    ca=ca == "1",
+)
+print(json.dumps(plan, indent=2))
+PY
+  out="$("$node" "$(env_value OATS_SOURCE)/container/agent/egress/probe-compose-boundary.mjs" \
+    --plan "$run_dir/boundary-plan.json" </dev/null)" && status=0 || status=$?
+  docker rm -f "$probe" >/dev/null
+  echo "boundary probe: exit $status, $out"
+  [[ "$status" -eq 0 && "$out" == OATS_EGRESS_BOUNDARY_PASS ]]
 }
 
 up() {
@@ -345,7 +418,11 @@ sys.exit(status != 200)
       echo "e2e-team-deployment: agents held: the ingress refusal probe did not pass" >&2
       exit 1
     fi
-    echo "e2e-team-deployment: agents held: the boundary probes from the agents network have not run" >&2
+    if ! boundary_probe; then
+      echo "e2e-team-deployment: agents held: the boundary probe did not pass" >&2
+      exit 1
+    fi
+    echo "e2e-team-deployment: agents held: the boundary passed; agent admission has not run" >&2
     exit 3
   fi
   dc ps --format '{{.Service}} {{.Status}}'

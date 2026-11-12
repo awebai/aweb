@@ -135,6 +135,9 @@ class World:
             "TEST_REGISTRY_ORIGIN": origin("registry"),
             # The front's certificates come from this world's own authority.
             "TEAM_DEPLOYMENT_INGRESS_CA": str(self.world / "tls" / "ca.pem"),
+            # The world holds the machines' keys, the front's TLS keys and the
+            # controller's provisioning copy: no agent mount may reach into it.
+            "TEAM_DEPLOYMENT_PROTECTED_SOURCES": str(self.world),
         }
 
     # --- files ---------------------------------------------------------
@@ -578,8 +581,8 @@ def journey(world: World) -> int:
     world.configure_agents()
     status = world.up()
     if status == 3:
-        print("AGENTS HELD: egress is healthy, the agents network isolated and the ingress refusal probe passed;"
-              " the boundary probes from the agents network have not run")
+        print("AGENTS HELD: egress is healthy, the agents network isolated, and the ingress refusal and boundary"
+              " probes passed; no agent is admitted yet")
         return 0
     print("BOUNDARY: the agents stage did not come up; see the adapter's output")
     return 1

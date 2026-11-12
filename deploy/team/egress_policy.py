@@ -64,3 +64,64 @@ def derive(config: dict, profile: dict, addresses: dict[str, list[str]], denied:
         "authorityRecords": records,
         "targets": {role: {"origin": origins[role], "addresses": _pinned(role, addresses[role])} for role in ROLES},
     }
+
+
+# The probe's credential-free stand-ins for the agent's state, login and
+# authorized keys, under the run directory, and where the agent sees them.
+PROBE_MOUNTS = (
+    ("probe/state", "/state", True),
+    ("probe/login", "/etc/agent-login", False),
+    ("probe/authorized_keys", "/etc/agent-ssh/authorized_keys", False),
+    ("resolv.conf", "/etc/resolv.conf", False),
+)
+PROBE_CA = ("probe/ca.pem", "/public/world-ca.pem")
+# One existing GET route per role that answers 200 and changes nothing.
+ALLOWED_PATHS = {"aweb": "/ready", "secrets": "/ready", "logs": "/ready", "signer": "/readyz", "registry": "/health"}
+
+
+def boundary_plan(
+    config: dict,
+    policy: dict,
+    *,
+    project: str,
+    images: dict[str, str],
+    run_dir: str,
+    backends: dict[str, str],
+    protected_sources: list[str],
+    ca: bool,
+) -> dict:
+    """The runtime plan of the OATS boundary probe (egress
+    probe-compose-boundary.mjs) for this deployment's Compose project: its
+    inert probe container and the egress proxy on the actual agents network,
+    the mounts the probe is approved to have, the protected sources none may
+    overlap, and the two backends no agent may reach."""
+    for role, address in backends.items():
+        if address not in policy["deniedAddresses"]:
+            raise Refused(f"{role}: {address} is not one of the policy's denied addresses")
+    mounts = [*PROBE_MOUNTS, (*PROBE_CA, False)] if ca else PROBE_MOUNTS
+    result = {
+        "probeContainer": f"{project}-agent-probe",
+        "proxyContainer": f"{project}-egress-1",
+        "agentsNetwork": f"{project}_agents",
+        "servicesNetwork": f"{project}_services",
+        "probeImage": images["agent"],
+        "proxyImage": images["egress"],
+        "uid": config["agents"].get("uid", 20001),
+        "gid": config["agents"].get("gid", 20001),
+        "approvedProbeMounts": [
+            {"Type": "bind", "Source": f"{run_dir}/{source}", "Destination": target, "RW": writable}
+            for source, target, writable in mounts
+        ],
+        "protectedSources": list(protected_sources),
+        "policy": policy,
+        "allowedPaths": dict(ALLOWED_PATHS),
+        "deniedBackends": [
+            {"role": "postgres", "address": backends["postgres"], "port": config.get("postgres", {}).get("port", 5432)},
+            # Redis is on aweb's backend network alone.
+            {"role": "redis", "address": backends["redis"], "port": 6379, "controlNetwork": f"{project}_backend"},
+        ],
+        "protectedPaths": [],
+    }
+    if ca:
+        result["caFile"] = PROBE_CA[1]
+    return result

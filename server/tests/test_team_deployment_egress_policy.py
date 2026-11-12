@@ -71,3 +71,74 @@ def test_a_profile_that_names_another_signer_or_registry_is_refused(field, value
 def test_each_origin_is_pinned_to_one_to_eight_distinct_ipv4_addresses(addresses):
     with pytest.raises(egress_policy.Refused, match="aweb"):
         egress_policy.derive(CONFIG, PROFILE, {**INGRESS, "aweb": addresses}, [])
+
+
+POLICY = egress_policy.derive(CONFIG, PROFILE, INGRESS, ["172.31.0.6", "172.32.0.3"])
+IMAGES = {"agent": "registry.example/agent@sha256:" + "a" * 64, "egress": "registry.example/egress@sha256:" + "b" * 64}
+BACKENDS = {"postgres": "172.31.0.6", "redis": "172.32.0.3"}
+PROTECTED = ["/srv/team/secrets", "/var/lib/docker/volumes/team_postgres_data/_data", "/run/docker.sock"]
+
+
+def plan(**changes):
+    arguments = {
+        "project": "team",
+        "images": IMAGES,
+        "run_dir": "/srv/team/run",
+        "backends": BACKENDS,
+        "protected_sources": PROTECTED,
+        "ca": True,
+    } | changes
+    return egress_policy.boundary_plan(CONFIG, POLICY, **arguments)
+
+
+def test_the_boundary_plan_names_the_deployment_s_runtime_and_the_probe_s_credential_free_mounts():
+    assert plan() == {
+        "probeContainer": "team-agent-probe",
+        "proxyContainer": "team-egress-1",
+        "agentsNetwork": "team_agents",
+        "servicesNetwork": "team_services",
+        "probeImage": IMAGES["agent"],
+        "proxyImage": IMAGES["egress"],
+        "uid": 20001,
+        "gid": 20001,
+        "approvedProbeMounts": [
+            {"Type": "bind", "Source": "/srv/team/run/probe/state", "Destination": "/state", "RW": True},
+            {"Type": "bind", "Source": "/srv/team/run/probe/login", "Destination": "/etc/agent-login", "RW": False},
+            {
+                "Type": "bind",
+                "Source": "/srv/team/run/probe/authorized_keys",
+                "Destination": "/etc/agent-ssh/authorized_keys",
+                "RW": False,
+            },
+            {"Type": "bind", "Source": "/srv/team/run/resolv.conf", "Destination": "/etc/resolv.conf", "RW": False},
+            {"Type": "bind", "Source": "/srv/team/run/probe/ca.pem", "Destination": "/public/world-ca.pem", "RW": False},
+        ],
+        "protectedSources": PROTECTED,
+        "policy": POLICY,
+        "allowedPaths": {"aweb": "/ready", "secrets": "/ready", "logs": "/ready", "signer": "/readyz", "registry": "/health"},
+        "deniedBackends": [
+            {"role": "postgres", "address": "172.31.0.6", "port": 5432},
+            {"role": "redis", "address": "172.32.0.3", "port": 6379, "controlNetwork": "team_backend"},
+        ],
+        "caFile": "/public/world-ca.pem",
+        "protectedPaths": [],
+    }
+
+
+def test_the_boundary_plan_uses_the_configured_agent_identity_and_database_port_and_a_public_ca():
+    config = CONFIG | {"agents": CONFIG["agents"] | {"uid": 30001, "gid": 30002}, "postgres": {"port": 6543}}
+    result = egress_policy.boundary_plan(
+        config, POLICY, project="team", images=IMAGES, run_dir="/r", backends=BACKENDS,
+        protected_sources=PROTECTED, ca=False,
+    )
+    assert (result["uid"], result["gid"]) == (30001, 30002)
+    assert result["deniedBackends"][0]["port"] == 6543
+    assert "caFile" not in result
+    assert [mount["Destination"] for mount in result["approvedProbeMounts"]] == [
+        "/state", "/etc/agent-login", "/etc/agent-ssh/authorized_keys", "/etc/resolv.conf",
+    ]
+
+
+def test_a_backend_the_policy_does_not_deny_is_refused():
+    with pytest.raises(egress_policy.Refused, match="redis"):
+        plan(backends={"postgres": "172.31.0.6", "redis": "172.32.0.9"})
