@@ -745,3 +745,12 @@ async def test_replay_rechecks_original_key_deadline_after_observed_nonce_lock_w
     assert (response.status_code, response.json()) == expected
     assert world.effect.prepares == world.effect.committed == 1
     assert await world.counts() == (1, 1, 1)
+
+
+async def test_identical_act_with_substituted_body_credential_is_not_acknowledged(world):
+    body = world.body()
+    assert (await world.post(body)).status_code == 200
+    body["credential"] = holder(rp_id="app.example.com").body
+    response = await world.post(body)
+    assert (response.status_code, response.json()["detail"]) == (403, "owner_required")
+    assert await world.counts() == (1, 1, 1)
