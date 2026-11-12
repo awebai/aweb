@@ -38,6 +38,35 @@ def docker(*args: str, timeout: int = 120, input: str | None = None) -> subproce
     return subprocess.run(["docker", *args], text=True, capture_output=True, timeout=timeout, input=input, check=False)
 
 
+
+# AWID's did_key limit (awid/ratelimit.py _BUCKET_DEFAULTS): 60 reads a minute
+# per client address, counted in a fixed window keyed by its start.
+DID_KEY_LIMIT, DID_KEY_WINDOW = 60, 60
+# The least of a window a throttle leg uses: a shorter remainder becomes a
+# Retry-After the SDK's own 5 s budget absorbs, and nothing reaches aw.
+LEAST_THROTTLED_SECONDS = 20
+
+
+def did_key_window(now: float, client_ip: str) -> dict:
+    """The real limiter's key for client_ip's did_key window at now, as
+    RedisFixedWindowRateLimiter writes it (key, limit, its EXPIRE), and how long
+    to wait first so that at least LEAST_THROTTLED_SECONDS of it remain."""
+    remaining = DID_KEY_WINDOW - now % DID_KEY_WINDOW
+    wait = remaining if remaining < LEAST_THROTTLED_SECONDS else 0.0
+    window_id = int((now + wait) // DID_KEY_WINDOW)
+    return {"key": f"aweb:rl:did_key:{client_ip}:{window_id}", "limit": DID_KEY_LIMIT, "ttl": DID_KEY_WINDOW + 2,
+            "wait": wait, "remaining": remaining if not wait else float(DID_KEY_WINDOW)}
+
+
+def changed_act(record: dict, role: str) -> dict:
+    """aw's saved request with only its act's role changed: a validly encoded
+    intent under the same operation id."""
+    body = json.loads(base64.b64decode(record["body"]))
+    body["subject"]["role"] = role
+    encoded = base64.b64encode(json.dumps(body, separators=(",", ":"), sort_keys=True).encode()).decode()
+    return {**record, "body": encoded}
+
+
 def first_json(text: str):
     """The first JSON value in a command's output; Docker may print hints after it."""
     return json.JSONDecoder().raw_decode(text[text.index("{"):])[0]
@@ -408,10 +437,7 @@ def refusals(site: Site, holder: Holder, founded: Founded) -> None:
     # with another role, resent from aw's saved request. The service refuses
     # operation_conflict and signs nothing.
     changed = pending[0]
-    record = json.loads((saved / f"{changed}.json").read_text())
-    body = json.loads(base64.b64decode(record["body"]))
-    body["subject"]["role"] = site.role + "-other"
-    record["body"] = base64.b64encode(json.dumps(body, separators=(",", ":"), sort_keys=True).encode()).decode()
+    record = changed_act(json.loads((saved / f"{changed}.json").read_text()), site.role + "-other")
     (saved / f"{changed}.json").write_text(json.dumps(record))
     refused = docker("exec", machine, "aw", "--json", "app", "role", "resume", changed,
                      "--protected-profile", site.profile_in_machine)

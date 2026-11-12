@@ -30,6 +30,7 @@ No credential is printed. Each one is a file the service that owns it mounts.
 from __future__ import annotations
 
 import argparse
+import datetime
 import ipaddress
 import json
 import os
@@ -41,6 +42,7 @@ import sys
 import time
 from pathlib import Path
 
+import pexpect
 import yaml
 from aweb_naapp_testing.network import make_certificates
 
@@ -51,14 +53,21 @@ EVIDENCE = REPO / "naapp" / "secrets" / "e2e" / "protected" / "evidence.py"
 sys.path.insert(0, str(REPO / "naapp" / "secrets" / "e2e"))
 
 from protected_round_trip import (  # noqa: E402
+    Founded,
     Holder,
     Site,
+    approve,
+    changed_act,
     connect_requester,
+    did_key_window,
+    docker,
+    finish,
     first_json,
     found_team,
     provision_signer,
     refusals,
     round_trip,
+    start_revoke,
 )
 
 DOMAIN = "lf.test"
@@ -375,6 +384,54 @@ class World:
                 f" && find /state/seats/{alias}/.aw -type d -exec chmod 0700 {{}} +"
                 f" && find /state/seats/{alias}/.aw -type f -exec chmod 0600 {{}} +")
 
+    # --- the registry's real limiter, for the throttle legs -----------------
+
+    def fill_did_key_window(self) -> dict:
+        """Fill AWID's did_key window for the front's address to its limit, in
+        this run's own registry Redis, with the limiter's own key, limit and
+        expiry: every later read from that address in the window is refused 429
+        with the limiter's own Retry-After. Waits first for a fresh window when
+        too little of this one is left. Returns what it wrote and when."""
+        def now() -> float:
+            seconds, micros = self.compose("exec", "-T", "registry-redis", "redis-cli", "TIME").split()
+            return int(seconds) + int(micros) / 1e6
+        seed = did_key_window(now(), self.front_ip)
+        if seed["wait"]:
+            time.sleep(seed["wait"] + 0.5)
+            seed = did_key_window(now(), self.front_ip)
+        self.compose("exec", "-T", "registry-redis", "redis-cli", "SET", seed["key"], str(seed["limit"]),
+                     "EX", str(seed["ttl"]))
+        return {**seed, "seeded_at": now()}
+
+    def since(self) -> str:
+        return datetime.datetime.now(datetime.UTC).strftime("%Y-%m-%dT%H:%M:%S.%fZ")
+
+    def service_log(self, service: str, since: str) -> str:
+        return self.compose("logs", "--no-color", "--no-log-prefix", "--since", since, service)
+
+    def signer_table(self) -> dict:
+        """The signer's own record: each operation's id, whether it holds a
+        signature, and its expiry."""
+        rows = self.compose("exec", "-T", "postgres", "psql", "-U", "postgres", "-d", "signer", "-At", "-F", " ", "-c",
+                            "select operation_id, result is not null, expires_at from "
+                            "protected_signer.protected_signer_operations")
+        table = {}
+        for line in rows.splitlines():
+            operation, signed, expires = line.split(" ", 2)
+            table[operation] = {"signed": signed == "t", "expires_at": expires}
+        return table
+
+    def control_aw(self, machine: str) -> str:
+        """The aw of the control CLI image (the caller without its throttle
+        retry), copied into the machine beside its own aw. Returns its path."""
+        created = run("docker", "create", self.images["cli-control"]).strip()
+        try:
+            run("docker", "cp", f"{created}:/usr/local/bin/aw", str(self.run_dir / "aw-control"))
+        finally:
+            run("docker", "rm", created)
+        run("docker", "cp", str(self.run_dir / "aw-control"), f"{machine}:/tmp/aw-control")
+        return "/tmp/aw-control"
+
     def machine(self, name: str) -> str:
         """A cli container as one machine; its HOME is /world/<name>."""
         container = f"{self.project}-{name}"
@@ -565,13 +622,138 @@ class World:
         )
 
 
+# --- critical calls under the registry's real limiter ------------------------
+
+THROTTLED = re.compile(r"RegistryThrottled: .*retry_after_seconds=([0-9.]+)")
+PREPARES = re.compile(r'"POST /protected-operations HTTP/[\d.]+" (\d{3})')
+
+
+def throttle_evidence(world: World, since: str) -> dict:
+    """What the registry and the signer recorded since: the registry's 429s,
+    the hints the signer was given, and the signer's answers to prepares."""
+    registry = world.service_log("registry", since)
+    signer = world.service_log("signer", since)
+    return {
+        "registry_429": registry.count(" 429 "),
+        "hints": [float(h) for h in THROTTLED.findall(signer)],
+        "prepares": [int(code) for code in PREPARES.findall(signer)],
+    }
+
+
+def resume(machine: str, aw_bin: str, operation: str, site: Site) -> subprocess.CompletedProcess:
+    return docker("exec", machine, aw_bin, "--json", "app", "role", "resume", operation,
+                  "--protected-profile", site.profile_in_machine, timeout=300)
+
+
+def changed_act_leg(world: World, site: Site, holder: Holder, founded: Founded, aw_bin: str) -> dict:
+    """Run 22's failure, made certain: a changed act resent from aw's saved
+    request while the registry refuses the signer's key lookups. The signer
+    answers 503 with the registry's Retry-After; aw waits it and resends the
+    same changed bytes, which the signer refuses operation_conflict, signing
+    nothing."""
+    machine, approver = holder.container, founded.approver
+    saved = site.runtime / "holder" / ".config" / "aw" / "governance"
+    child, page, operation, _ = start_revoke(site, machine, approver)
+    report = approve(site, machine, page, "--approve-uv", "no")
+    assert report["states"][-1] == "ready", report
+    child.sendintr()
+    finish(child)
+    written = json.dumps(changed_act(json.loads((saved / f"{operation}.json").read_text()), site.role + "-other"))
+    (saved / f"{operation}.json").write_text(written)
+    expires = world.signer_table()[operation]["expires_at"]
+    seed = world.fill_did_key_window()
+    since, started = world.since(), time.monotonic()
+    result = resume(machine, aw_bin, operation, site)
+    elapsed = time.monotonic() - started
+    after = world.signer_table()[operation]
+    return {
+        "operation": operation, "seed": seed, "elapsed": round(elapsed, 1), **throttle_evidence(world, since),
+        "code": first_json(result.stdout).get("error", {}).get("code") if result.returncode else "ok",
+        "signed": after["signed"], "expires_unchanged": after["expires_at"] == expires,
+        "saved_unchanged": (saved / f"{operation}.json").read_text() == written,
+    }
+
+
+def lost_prepare_leg(world: World, site: Site, holder: Holder, founded: Founded, aw_bin: str) -> dict:
+    """A lost prepare answer resumed while the registry refuses the signer's
+    key lookups: aw waits the hint, resends the saved bytes, and once
+    approved the original operation completes with one signature."""
+    machine, approver = holder.container, founded.approver
+    saved = site.runtime / "holder" / ".config" / "aw" / "governance"
+    site.drop_prepare_answers(True)
+    try:
+        lost = docker("exec", machine, "aw", "--json", "app", "role", "revoke", site.app_id, "--role", site.role,
+                      "--principal", approver, "--protected-profile", site.profile_in_machine, "--approver", approver,
+                      timeout=240)
+    finally:
+        site.drop_prepare_answers(False)
+    assert first_json(lost.stdout)["error"]["code"] == "prepare_unconfirmed", lost.stdout
+    operation = re.search(r"Preparing operation (\S+)", lost.stderr).group(1)
+    request = (saved / f"{operation}.json").read_text()
+    before = world.signer_table()
+    signed_before = sum(row["signed"] for row in before.values())
+    seed = world.fill_did_key_window()
+    since, started = world.since(), time.monotonic()
+    child = pexpect.spawn("docker", ["exec", "-it", machine, aw_bin, "--json", "app", "role", "resume", operation,
+                                     "--protected-profile", site.profile_in_machine],
+                          encoding="utf-8", timeout=300, echo=False)
+    evidence = {"operation": operation, "seed": seed}
+    index = child.expect([r"Approve it on this page: (\S+)", pexpect.EOF])
+    evidence["waited"] = round(time.monotonic() - started, 1)
+    if index == 0:
+        report = approve(site, machine, child.match.group(1))
+        assert report["states"] == ["login-required", "ready", "navigated"], report
+        status, output = finish(child)
+        receipt = first_json(output)
+        evidence["state"] = receipt.get("state") if status == 0 else first_json(output)["error"]["code"]
+    else:
+        child.close()
+        evidence["state"] = first_json(child.before)["error"]["code"]
+    after = world.signer_table()
+    evidence.update(throttle_evidence(world, since))
+    evidence.update({
+        "rows_for_operation": sum(1 for op in after if op == operation),
+        "signed": after[operation]["signed"],
+        "new_signatures": sum(row["signed"] for row in after.values()) - signed_before,
+        "expires_unchanged": after[operation]["expires_at"] == before[operation]["expires_at"],
+        "request_was_saved": bool(request),
+    })
+    return evidence
+
+
+def throttled_calls(world: World, site: Site, holder: Holder, founded: Founded) -> None:
+    """Both legs with the candidate's aw, then with the control aw, whose
+    caller does not wait out the hint and so must not recover."""
+    for name, aw_bin in (("candidate", "aw"), ("control", world.control_aw(holder.container))):
+        changed = changed_act_leg(world, site, holder, founded, aw_bin)
+        lost = lost_prepare_leg(world, site, holder, founded, aw_bin)
+        (world.run_dir / f"throttle-{name}.json").write_text(json.dumps({"changed_act": changed, "lost_prepare": lost},
+                                                                       indent=2))
+        print(f"throttle {name}:", json.dumps({"changed_act": changed, "lost_prepare": lost}, sort_keys=True))
+        for leg in (changed, lost):
+            # The fixture worked only if the registry really refused, past the SDK's budget.
+            assert leg["registry_429"] >= 1 and leg["hints"] and min(leg["hints"]) > 5, leg
+            assert leg["prepares"][0] == 503, leg
+            assert leg["expires_unchanged"], leg
+        if name == "candidate":
+            assert changed["code"] == "operation_conflict" and changed["prepares"][-1] == 409, changed
+            assert changed["elapsed"] >= min(changed["hints"]) - 1, changed
+            assert changed["signed"] is False and changed["saved_unchanged"], changed
+            assert lost["state"] == "committed" and lost["waited"] >= min(lost["hints"]) - 1, lost
+            assert lost["signed"] and lost["rows_for_operation"] == 1 and lost["new_signatures"] == 1, lost
+        else:
+            assert changed["code"] != "operation_conflict" and changed["signed"] is False, changed
+            assert lost["state"] != "committed" and lost["new_signatures"] == 0, lost
+
+
 def load_images(path: Path) -> dict[str, str]:
     images = {}
     for line in path.read_text().splitlines():
         name, _, reference = line.partition(" ")
         if "@sha256:" in reference:
             images[name] = reference
-    missing = {"aweb", "aweb-protected", "secrets", "logs", "awid", "cli", "chromium"} - set(images)
+    # cli-control: the CLI the throttle legs expect not to recover (no caller retry).
+    missing = {"aweb", "aweb-protected", "secrets", "logs", "awid", "cli", "cli-control", "chromium"} - set(images)
     if missing:
         raise SystemExit(f"FAILED: no pinned image for {', '.join(sorted(missing))} in {path}")
     return images
@@ -643,6 +825,11 @@ def journey(world: World) -> int:
     print(f"SIGNED: {operation} committed, approved in the browser, receipt read by aw")
     refusals(site, holder, founded)
     print("REFUSED: no UV signs nothing; a changed act is operation_conflict; a lost prepare completes once")
+
+    print("=== Step 6: critical calls under the registry's real limiter")
+    throttled_calls(world, site, holder, founded)
+    print("THROTTLED: a changed act waits out the registry's Retry-After and is operation_conflict; a lost prepare"
+          " waits it out and completes once; the control aw recovers from neither")
 
     if "agent" not in world.images:
         print("AGENTS: not in this run (no agent or egress image)")
