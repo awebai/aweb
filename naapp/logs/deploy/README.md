@@ -27,13 +27,13 @@ setting's meaning. A customer deployment sets:
 
 | Input | Customer requirement |
 | --- | --- |
-| `LOGS_DATABASE_URL`, `LOGS_DB_SCHEMA` | Customer PostgreSQL DSN in the private environment file; an app-owned role and schema (default `public`). Migrations run on startup. |
+| `LOGS_DATABASE_URL_FILE`, `LOGS_DB_SCHEMA` | Whole customer PostgreSQL DSN in a mounted file, never the environment; an app-owned role and schema (default `public`). Migrations run on startup. |
 | `LOGS_APP_ID` | Stable customer app id. The hosted id `logs` is refused at any other origin. |
 | `LOGS_PUBLIC_ORIGIN` | HTTPS origin of ingest, the manifest and the member tools. |
 | `LOGS_CONSOLE_ORIGIN` | Plain HTTPS reader-console origin. Startup refuses the public host itself and any parent of it, where readers' passkeys would be usable from the public host. A subdomain of the public host is accepted. |
 | `LOGS_AWID_REGISTRY_URL` | The customer registry, the same one the customer's Secrets uses and the namespace's `_awid` TXT selects. The default is the public `api.awid.ai`. |
 | `LOGS_APP_KEY_FILES` | JSON object mapping the four manifest kids to mounted key files, as below. |
-| `LOGS_EMAIL_SMTP_HOST`, `LOGS_EMAIL_SMTP_PORT`, `LOGS_EMAIL_TLS`, `LOGS_EMAIL_USERNAME`, `LOGS_EMAIL_PASSWORD_FILE`, `LOGS_EMAIL_FROM`, `LOGS_EMAIL_CA_FILE` | Transactional SMTP for readers' enrolment links. All but TLS (default `starttls`) and the CA are required; the password is read only from its mounted file. |
+| `LOGS_EMAIL_SMTP_HOST`, `LOGS_EMAIL_SMTP_PORT`, `LOGS_EMAIL_TLS`, `LOGS_EMAIL_USERNAME_FILE`, `LOGS_EMAIL_PASSWORD_FILE`, `LOGS_EMAIL_FROM`, `LOGS_EMAIL_CA_FILE` | Transactional SMTP for readers' enrolment links. All but TLS (default `starttls`) and the CA are required; the username and password are read only from their mounted files. |
 | `LOGS_EGRESS_DENIED_NETWORKS` | JSON array of the deployment's metadata or internal ranges hook delivery must never reach; default none. |
 | `LOGS_HOOK_*` | Optional internal hook destinations and CA, below. |
 | `LOGS_GIT_SHA` | Set in the image from `SOURCE_COMMIT`; keep it unchanged at runtime. |
@@ -151,3 +151,31 @@ directory's 60-second cache expires during a registry outage. It removes its
 own containers, network and generated files. It does not claim namespace or
 team bootstrap, SMTP delivery, event ingestion, a reader's journey or an
 export.
+
+## Mounted service secrets in the shared deployment
+
+The canonical service descriptor is [deploy/team/descriptors/logs.md](../../../deploy/team/descriptors/logs.md).
+Helm and Compose use the same image and setting names. Configuration holds
+references, never credential bytes. Mount this service's files read-only under
+`/run/secrets/logs/`, readable by UID 10001 (mode 0400), or by its
+service-only group 10001 (root-owned mode 0440). Never mount them into agents.
+
+The shared settings source accepts `NAME_FILE` for a scalar setting, including
+`LOGS_DATABASE_URL_FILE` and `LOGS_EMAIL_USERNAME_FILE`.
+Each holds UTF-8 text, at most 1 KiB; one trailing LF is removed. A missing,
+empty, oversized, non-regular or group/world-writable file refuses startup;
+projected Secret symlinks are supported. Supplying both `NAME` and `NAME_FILE`
+refuses instead of choosing one. Explicit constructor inputs retain precedence.
+`EMAIL_PASSWORD_FILE` remains the existing password reader; never supply raw
+`EMAIL_PASSWORD`. Other key and certificate settings continue to carry paths.
+
+Set `LOGS_AWID_MEMBER_CREDENTIALS` to a JSON map from the customer team
+ID to `signing_key_file` and `certificate_file` paths under this service's
+secret mount. The signing key is the ordinary member's aw-compatible PEM and
+the certificate is JSON. Provision them through the supported team authority,
+not by writing public-registry records. Leave `LOGS_AWID_SERVICE_TOKEN`
+absent. `LOGS_AWID_REGISTRY_URL` must match DNS-selected customer AWID.
+The mounted DSN file contains the entire URL and password; no wrapper expands
+a password into an environment value. Plain origins and path references can
+remain environment configuration; the earlier environment-valued DSN form
+does not satisfy the LF no-environment-secrets requirement.
