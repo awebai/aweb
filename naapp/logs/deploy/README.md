@@ -178,4 +178,4 @@ absent. `LOGS_AWID_REGISTRY_URL` must match DNS-selected customer AWID.
 The mounted DSN file contains the entire URL and password; no wrapper expands
 a password into an environment value. Plain origins and path references can
 remain environment configuration; the earlier environment-valued DSN form
-does not satisfy the LF no-environment-secrets requirement.
+does not satisfy the no-environment-secrets requirement.
