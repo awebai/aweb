@@ -218,9 +218,9 @@ whether a holding or installation exists. It checks in three stages:
       designate and replace, the SHA-256 of the body's `credential` and of its
       `notice_contact` when the role declares one. For holder acts, the holding
       is re-read under the transaction's lock. For every act, `expires_at` is
-      checked again against the clock read after the effect's locks: an act
-      that expired while stage 3 waited is refused and the transaction rolls
-      back.
+      checked again against the clock read after the effect's last wait, its
+      locks and its final fence check: an act that expired while stage 3 waited
+      is refused and the transaction rolls back.
 
 Revoke checks no membership or kind. It targets the stored holding, so a
 controller act can retire a holder whose membership has already ended, and a
