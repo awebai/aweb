@@ -45,7 +45,11 @@ func consoleHeaders(key ed25519.PrivateKey, r consoleRequest) (http.Header, erro
 	headers.Set("X-Console-Key", awid.ComputeDIDKey(key.Public().(ed25519.PublicKey)))
 	headers.Set("X-Console-Timestamp", timestamp)
 	headers.Set("X-Console-Signed-Payload", base64.RawURLEncoding.EncodeToString([]byte(payload)))
-	headers.Set("X-Console-Signature", base64.RawStdEncoding.EncodeToString(ed25519.Sign(key, []byte(payload))))
+	_, signature, err := awid.KeySigner(key)([]byte(payload))
+	if err != nil {
+		return nil, err
+	}
+	headers.Set("X-Console-Signature", base64.RawStdEncoding.EncodeToString(signature))
 	return headers, nil
 }
 

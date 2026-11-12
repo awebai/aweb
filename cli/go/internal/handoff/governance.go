@@ -31,6 +31,9 @@ type GovernanceOptions struct {
 	// Save persists an operation's exact prepare body before it is sent, so a
 	// lost answer can be resumed with Resume under the same id and binding.
 	Save func(operationID string, body []byte) error
+	// Forget drops what Save kept once a receipt is final: committed or
+	// refused. A pending, unknown, lost or expired operation stays saved.
+	Forget func(operationID string) error
 }
 
 // Prepared is a prepared protected operation: the frozen request the human
@@ -161,7 +164,7 @@ func approve(ctx context.Context, opts GovernanceOptions, operationID string, bo
 		case err != nil:
 			return unresolvedReceipt(operationID, ErrorCode(err)), err
 		case receipt.State != "pending":
-			return receipt, finalError(receipt)
+			return settled(opts, receipt)
 		case time.Now().After(prepared.ExpiresAt):
 			return receipt, coded("operation_expired", fmt.Errorf("operation %s was still pending at its expiry", operationID))
 		}
@@ -185,6 +188,18 @@ func reconcileLostPrepare(ctx context.Context, opts GovernanceOptions, operation
 	}
 	if receipt.State == "pending" {
 		return receipt, coded("prepare_unconfirmed", fmt.Errorf("operation %s is pending but its prepare answer was lost; resume it from its saved request", operationID))
+	}
+	return settled(opts, receipt)
+}
+
+// settled returns a receipt that is no longer pending, forgetting the saved
+// operation when its outcome is final. A failure to forget leaves a stale
+// saved body behind; it does not change the outcome.
+func settled(opts GovernanceOptions, receipt *Receipt) (*Receipt, error) {
+	if opts.Forget != nil && (receipt.State == "committed" || receipt.State == "refused") {
+		if err := opts.Forget(receipt.OperationID); err != nil {
+			fmt.Fprintf(opts.Notify, "Operation %s is %s, but its saved request could not be removed: %v\n", receipt.OperationID, receipt.State, err)
+		}
 	}
 	return receipt, finalError(receipt)
 }
