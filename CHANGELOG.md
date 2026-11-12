@@ -2,6 +2,9 @@
 
 ## Unreleased
 
+- Chat sends return not-found when the sender leaves the session after target
+  resolution, matching the response for an absent session.
+
 - Secrets keeps installation-scoped state separate by team, even when two teams
   report the same installation id. Upgrading existing state requires an
   unambiguous retained team binding; missing or conflicting bindings stop the
