@@ -430,3 +430,38 @@ def test_normalize_fills_the_kubernetes_fields_of_a_kubernetes_agents_section(si
 def test_normalize_refuses_what_the_schema_refuses():
     with pytest.raises(render_env.Refused, match="no such key"):
         render_env.normalize({**EXAMPLE, "unknown": {}})
+
+
+def test_the_agents_trust_a_public_ca_and_read_mirrors_from_operator_paths(signer):
+    agents = {**AGENTS, "caFile": "/srv/team/agent-ca.pem", "mirrorsDir": "/srv/team/mirrors"}
+    rendered = render_env.render({**EXAMPLE, "agents": agents, "signer": signer, "egress": EGRESS, **APPS})
+    assert (rendered["AGENT_CA_FILE"], rendered["AGENT_MIRRORS_DIR"]) == ("/srv/team/agent-ca.pem", "/srv/team/mirrors")
+    rendered = render_env.render({**EXAMPLE, "agents": AGENTS, "signer": signer, "egress": EGRESS, **APPS})
+    assert "AGENT_CA_FILE" not in rendered and "AGENT_MIRRORS_DIR" not in rendered
+
+
+def kubernetes_agents(**kubernetes) -> dict:
+    agents = {key: value for key, value in AGENTS.items() if key != "compose"}
+    agents["kubernetes"] = {"authorizedKeys": {"name": "team-keys"}, **kubernetes}
+    return agents
+
+
+def test_kubernetes_mirrors_come_from_an_existing_claim_without_a_host_directory(signer):
+    agents = kubernetes_agents(mirrorsClaim="team-mirrors")
+    normalized = render_env.normalize({**EXAMPLE, "agents": agents, "signer": signer, "egress": EGRESS, **APPS})
+    assert normalized["agents"]["kubernetes"]["mirrorsClaim"] == "team-mirrors"
+    assert "mirrorsDir" not in normalized["agents"]
+
+
+def test_kubernetes_mirrors_without_a_claim_are_refused_naming_it(signer):
+    agents = {**kubernetes_agents(), "mirrorsDir": "/srv/team/mirrors"}
+    with pytest.raises(render_env.Refused, match="agents.kubernetes: missing mirrorsClaim"):
+        render_env.normalize({**EXAMPLE, "agents": agents, "signer": signer, "egress": EGRESS, **APPS})
+
+
+@pytest.mark.parametrize("claim", ["Team_Mirrors", "-mirrors", ""])
+def test_a_mirrors_claim_is_a_kubernetes_name(signer, claim):
+    with pytest.raises(render_env.Refused, match="mirrorsClaim"):
+        render_env.normalize(
+            {**EXAMPLE, "agents": kubernetes_agents(mirrorsClaim=claim), "signer": signer, "egress": EGRESS, **APPS}
+        )

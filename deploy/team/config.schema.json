@@ -371,6 +371,16 @@
           "$ref": "#/$defs/ipv4",
           "x-env": "AGENT_RESOLVER_IP"
         },
+        "caFile": {
+          "description": "A public PEM certificate authority the agents trust in addition to the system roots, for a deployment whose origins a private authority signed. Never a private key.",
+          "$ref": "#/$defs/file",
+          "x-env": "AGENT_CA_FILE"
+        },
+        "mirrorsDir": {
+          "description": "Compose: an operator-maintained host directory of bare Git mirrors, mounted read-only at /mirrors outside /state. Kubernetes names an existing claim instead (agents.kubernetes.mirrorsClaim).",
+          "$ref": "#/$defs/file",
+          "x-env": "AGENT_MIRRORS_DIR"
+        },
         "network": {
           "type": "object",
           "additionalProperties": false,
@@ -517,10 +527,35 @@
                   "default": false
                 }
               }
+            },
+            "mirrorsClaim": {
+              "description": "An existing operator-provisioned PersistentVolumeClaim of bare Git mirrors, mounted read-only at /mirrors outside /state. Never the agents' state claim.",
+              "type": "string",
+              "pattern": "^[a-z0-9]([a-z0-9-]*[a-z0-9])?$",
+              "maxLength": 63
             }
           }
         }
-      }
+      },
+      "allOf": [
+        {
+          "if": {
+            "required": [
+              "kubernetes",
+              "mirrorsDir"
+            ]
+          },
+          "then": {
+            "properties": {
+              "kubernetes": {
+                "required": [
+                  "mirrorsClaim"
+                ]
+              }
+            }
+          }
+        }
+      ]
     },
     "egress": {
       "description": "The agents' only way out: authoritative DNS and a TLS forwarder to the deployment's own origins (descriptors/egress.md).",
