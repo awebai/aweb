@@ -95,3 +95,24 @@ func TestAHolderAppRefusesWhatItCannotAct(t *testing.T) {
 		t.Fatalf("role: err %v", err)
 	}
 }
+
+func TestAHumanHolderUsesTheAppThisMachineInstalled(t *testing.T) {
+	// The installed-app record is this machine's configuration (AW_HOME), not an
+	// identity's: what an ordinary `aw plugin install` wrote is what a human
+	// holder's `aw --human H app credential register` resolves. Installing is
+	// not a human act, so --human stays refused for plugin install.
+	origin, ownerOrigin := installHolderTestApp(t, "example", true)
+	previousHuman, previousDomain := humanFlag, humanDomainFlag
+	humanFlag, humanDomainFlag = "did:aw:2TdFnyW1MyzkH5x8Q3hM7Pgx98Mn", "example.com"
+	t.Cleanup(func() { humanFlag, humanDomainFlag = previousHuman, previousDomain })
+	app, err := installedHolderApp("example")
+	if err != nil || app.Origins.App != origin || app.Origins.Human != ownerOrigin || app.Digest != "sha256:pinned" {
+		t.Fatalf("app %+v err %v", app, err)
+	}
+	if !humanParticipationAllowed(appCredentialRegisterCmd) || !humanParticipationAllowed(appRoleDesignateCmd) {
+		t.Fatal("a human holder cannot register or be designated")
+	}
+	if humanParticipationAllowed(pluginInstallCmd) {
+		t.Fatal("plugin install accepts --human")
+	}
+}
