@@ -8,6 +8,7 @@ from datetime import UTC, datetime
 from pathlib import Path
 
 import pytest
+
 from aweb.protected_signing.profile import ProfileRefused, ProtectedServiceProfile
 
 FIXTURE = (
@@ -148,10 +149,9 @@ def test_unknown_top_level_field_refuses(fields):
 async def test_published_prepare_and_receipt_fixtures_use_the_reviewed_verifier(
     monkeypatch, fields
 ):
+    from awid import dns_auth
     from awid.protected_request import verify_protected_request
     from starlette.requests import Request
-
-    from awid import dns_auth
 
     monkeypatch.setattr(
         dns_auth, "_utc_now", lambda: datetime(2026, 11, 11, tzinfo=UTC)
@@ -201,9 +201,10 @@ async def test_published_prepare_and_receipt_fixtures_use_the_reviewed_verifier(
 async def test_registry_accessor_view_refuses_configuration_or_service_fallback(
     fields, mismatch
 ):
-    from aweb.protected_signing.registry import PinnedRegistryView
     from aweb_naapp.runtime.protected_signer import SignerRefused
     from awid.registry import RegistryClient
+
+    from aweb.protected_signing.registry import PinnedRegistryView
 
     profile = load(fields)
     client = RegistryClient(
@@ -225,9 +226,10 @@ async def test_registry_accessor_view_refuses_configuration_or_service_fallback(
 @pytest.mark.asyncio
 async def test_registry_accessor_view_refuses_unknown_namespace(fields):
     import httpx
-    from aweb.protected_signing.registry import PinnedRegistryView
     from aweb_naapp.runtime.protected_signer import SignerRefused
     from awid.registry import RegistryClient
+
+    from aweb.protected_signing.registry import PinnedRegistryView
 
     profile = load(fields)
 
@@ -256,8 +258,9 @@ async def test_pinned_read_cannot_change_registry_between_route_check_and_sdk_re
     fields,
 ):
     import httpx
-    from aweb.protected_signing.registry import PinnedRegistryView
     from awid.registry import RegistryClient
+
+    from aweb.protected_signing.registry import PinnedRegistryView
 
     profile = load(fields)
     resolutions, requested = [], []

@@ -6,9 +6,10 @@ import os
 
 import httpx
 import pytest
-from aweb.protected_signing.host import HostSettings, create_app
 from aweb_naapp.runtime.protected_signer import SignerRefused
 from pydantic import SecretStr
+
+from aweb.protected_signing.host import HostSettings, create_app
 from tests.test_independent_protected_http import headers, profile_for
 from tests.test_independent_protected_signer import HUMAN_ORIGIN, ORIGIN
 from tests.test_protected_signer_host import CapturedMail

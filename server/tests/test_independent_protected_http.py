@@ -10,8 +10,6 @@ from types import SimpleNamespace
 import httpx
 import pytest
 import pytest_asyncio
-from aweb.protected_signing.composition import IndependentProtectedSigner
-from aweb.protected_signing.profile import ProtectedServiceProfile
 from aweb_naapp.console import (
     ClientIdentity,
     LoginLimiter,
@@ -21,6 +19,9 @@ from aweb_naapp.console import (
 from aweb_naapp.runtime.protected_signer import SignerRefused
 from awid.signing import canonical_json_bytes
 from fastapi import FastAPI
+
+from aweb.protected_signing.composition import IndependentProtectedSigner
+from aweb.protected_signing.profile import ProtectedServiceProfile
 from tests.test_independent_protected_signer import (
     ORIGIN,
     did,

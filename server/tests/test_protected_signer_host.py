@@ -6,13 +6,14 @@ from types import SimpleNamespace
 
 import httpx
 import pytest
-from aweb.protected_signing.host import HostSettings, create_app
-from aweb.protected_signing.notifications import ProtectedNotifications
 from aweb_naapp.email import EmailNotSent
 from aweb_naapp.runtime.approvals import DeliveryStatus
 from aweb_naapp.runtime.protected_signer import SignerRefused
 from pydantic import SecretStr, ValidationError
 from starlette.requests import Request
+
+from aweb.protected_signing.host import HostSettings, create_app
+from aweb.protected_signing.notifications import ProtectedNotifications
 from tests.test_protected_service_profile import FIXTURE
 
 
