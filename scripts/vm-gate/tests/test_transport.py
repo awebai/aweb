@@ -6,25 +6,39 @@ from unittest.mock import patch
 from types import SimpleNamespace
 from vm_gate.transport import Transport
 from vm_gate.errors import Infrastructure
+from vm_gate.host_keys import public_key
 
 
 class TransportTests(unittest.TestCase):
     def keys(self, directory):
-        for name in ["ssh-host-key", "ssh-key"]:
-            subprocess.run(
-                [
-                    "ssh-keygen",
-                    "-q",
-                    "-t",
-                    "ed25519",
-                    "-N",
-                    "",
-                    "-f",
-                    str(Path(directory) / name),
-                ],
-                check=True,
-                capture_output=True,
+        # Public-only fixtures: transport assertions do not generate keys or
+        # contact SSH. A gate runner's forwarded UID may lack a passwd entry.
+        # Runtime._key and the covering VM run exercise real key generation.
+        keys = {
+            "ssh-host-key": "AAAAC3NzaC1lZDI1NTE5AAAAIJVT4IkgrsEEScNgao9YPHLMTLEOtTXqtS8/sVl3lUbl",
+            "ssh-key": "AAAAC3NzaC1lZDI1NTE5AAAAIAFmLU1X9asa5mCPdbyPEVoxcIE5w/s6jmuAURvsN2X6",
+        }
+        for name, encoded in keys.items():
+            (Path(directory) / (name + ".pub")).write_text(
+                "ssh-ed25519 " + encoded + "\n"
             )
+
+    def test_public_pin_fixtures_work_without_a_runner_passwd_entry(self):
+        # OpenSSH exits 255 before key generation for an unmapped container UID.
+        error = subprocess.CalledProcessError(
+            255, ["ssh-keygen"], stderr=b"No user exists for uid 501\n"
+        )
+        with tempfile.TemporaryDirectory() as directory:
+            with patch("subprocess.run", side_effect=error) as run:
+                self.keys(directory)
+            run.assert_not_called()
+            root = Path(directory)
+            self.assertNotEqual(
+                public_key(root / "ssh-host-key.pub"),
+                public_key(root / "ssh-key.pub"),
+            )
+            self.assertFalse((root / "ssh-host-key").exists())
+            self.assertFalse((root / "ssh-key").exists())
 
     def test_first_contact_is_pinned_and_a_changed_expected_key_is_refused(self):
         with tempfile.TemporaryDirectory() as directory:
