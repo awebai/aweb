@@ -246,7 +246,7 @@ def provision_signer(site: Site, holder: Holder, founded: Founded) -> None:
                                   "id", "team", "request", "--create-local-key", "--team", site.team_id,
                                   "--name", "protected-reader", timeout=300).stdout)
     added = aw(machine, "id", "team", "add-member", "--team", site.team, "--namespace", site.domain,
-               "--did", requested["did_key"], "--name", "protected-reader", "--global")
+               "--did", requested["did_key"], "--name", "protected-reader", "--local")
     assert added["certificate_id"]
     site.store_member((site.runtime / "protected-reader" / "identity" / ".aw" / "signing.key").read_text())
 

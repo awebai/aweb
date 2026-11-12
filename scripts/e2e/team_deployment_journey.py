@@ -334,7 +334,7 @@ class World:
         requested = self.aw(machine, "id", "team", "request", "--create-local-key", "--team", TEAM_ID,
                             "--name", f"{name}-service", home=home)
         added = self.aw(machine, "id", "team", "add-member", "--team", TEAM, "--namespace", DOMAIN,
-                        "--did", requested["did_key"], "--name", f"{name}-service", "--global")
+                        "--did", requested["did_key"], "--name", f"{name}-service", "--local")
         fetched = self.aw(machine, "id", "team", "fetch-cert", "--namespace", DOMAIN, "--team", TEAM,
                           "--cert-id", added["certificate_id"], "--registry", origin("registry"), home=home)
         # Both are in the identity's .aw: the certificate path aw reports is relative to it.
