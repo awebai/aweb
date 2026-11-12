@@ -41,6 +41,17 @@ identity/trust vector family.
 
 ## Accepting protocols awaiting client rollout
 
+### `human-assurance-v1.json` — frozen policy contract
+
+The [human-assurance contract](../human-assurance-contract.md) defines the
+shared protected-signing operation catalog and its positive/refusal policy
+scenarios for hosted and independent implementations. The fixture separates
+live exact-act approvals from bounded unattended operations, with typed
+custody, requester and receipt boundaries. These are implementation acceptance
+inputs, not cryptographic known answers or evidence that runtime paths have
+passed. Implementations must exercise the applicable cases against their
+shared signer and adapters; static catalog validation is not runtime acceptance.
+
 ### `id-certificates-v1.json` — contract candidate
 
 The [identity certificates contract](../id-certificates.md) freezes
