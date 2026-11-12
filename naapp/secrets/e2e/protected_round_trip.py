@@ -198,7 +198,8 @@ class Founded:
 def found_team(site: Site, holder: Holder) -> Founded:
     """The namespace, its root human H and the team, on H's machine. The same
     machine holds the namespace controller, so aw creates the root-parented
-    requester there, beside H's human key."""
+    requester there, beside H's human key; connect_requester connects it to
+    aweb once aweb serves the team."""
     machine = holder.container
     prepared = aw(machine, "id", "namespace", "prepare-controller", "--domain", site.domain, "--registry", site.registry)
     site.publish_controller(prepared["controller_did"])
@@ -213,17 +214,21 @@ def found_team(site: Site, holder: Holder) -> Founded:
                  "--registry", site.registry)
     invite = aw(machine, "id", "team", "invite", "--team", site.team, "--namespace", site.domain, "--member-global")
     aw(machine, "id", "team", "accept-invite", invite["token"], "--name", "owner", "--global")
-    aw(machine, "init", "--url", site.aweb, "--name", "owner", "--do-not-touch-agents-md")
     return Founded(prepared["controller_did"], approver, created["did_aw"], created["did_key"])
+
+
+def connect_requester(site: Site, holder: Holder) -> None:
+    """The requester, a member of the team, connects to the team's aweb."""
+    aw(holder.container, "init", "--url", site.aweb, "--name", "owner", "--do-not-touch-agents-md")
 
 
 def enrolment_token(site: Site, machine: str) -> str:
     """The approver's enrolment link, read from the captured transport."""
-    listing = docker("exec", machine, "curl", "-fsS", f"{site.mail_api}/api/v1/messages")
+    listing = docker("exec", machine, "wget", "-qO-", f"{site.mail_api}/api/v1/messages")
     assert listing.returncode == 0, listing.stderr
     messages = [m for m in json.loads(listing.stdout)["messages"] if any(t["Address"] == site.contact for t in m["To"])]
     assert len(messages) == 1, messages
-    message = docker("exec", machine, "curl", "-fsS", f"{site.mail_api}/api/v1/message/{messages[0]['ID']}")
+    message = docker("exec", machine, "wget", "-qO-", f"{site.mail_api}/api/v1/message/{messages[0]['ID']}")
     link = re.search(re.escape(site.human) + r"/enrolment#token=(\S+)", json.loads(message.stdout)["Text"])
     assert link, message.stdout
     return unquote(link.group(1))

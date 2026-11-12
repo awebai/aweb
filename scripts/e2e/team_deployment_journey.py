@@ -1,21 +1,28 @@
-"""The team deployment journey on one machine: Setup and step 1, bring-up.
+"""The team deployment journey on one machine.
 
-    uv run --project server python scripts/e2e/team_deployment_journey.py \\
+    uv run --project naapp/secrets python scripts/e2e/team_deployment_journey.py \\
         --run-dir DIR --project NAME --images IMAGES
 
 IMAGES lists one pinned image per line, "<name> <repository@sha256:...>", for
-aweb, secrets, logs, awid and cli, all built from one source commit.
+aweb, aweb-protected, secrets, logs, awid, cli and chromium, all built from one
+source commit.
 
 Setup makes a disposable world in the deployment's own services network
 (deploy/team/compose.test.yaml): an AWID registry, DNS for its namespace,
-captured SMTP and a TLS front. The real aw, in a cli machine, prepares the
-namespace, creates the team and admits each service as an ordinary member;
-each service holds only its own member key and certificate. Then the
-deployment starts through the Compose adapter (scripts/e2e-team-deployment.sh).
+captured SMTP and a TLS front that refuses a Host its SNI does not name. On the
+holder's machine the real aw founds the namespace, its root human (the
+approver) and the team, and admits each service as an ordinary member; each
+service holds only its own member key and certificate. The deployment starts
+through the Compose adapter (scripts/e2e-team-deployment.sh), and the team's
+owner installs Secrets and Logs after the operator's install-owner grant.
 
-The protected signer needs its human root, authority rows and B3 enrolment
-through a real browser, which this journey does not perform yet: it is left
-out of the deployment and reported. The agents wait for the egress boundary.
+Then the protected round trip (naapp/secrets/e2e/protected_round_trip.py, the
+same body the secrets e2e lane runs): the signer is configured, provisioned
+and started, the approver's passkey is enrolled with Chromium, aw prepares a
+human-role revoke, the approver approves it in the browser, aw reads the
+committed receipt, and the refusals sign nothing they must not.
+
+The agents wait for the egress boundary.
 
 No credential is printed. Each one is a file the service that owns it mounts.
 """
@@ -39,6 +46,19 @@ from aweb_naapp_testing.network import make_certificates
 REPO = Path(__file__).resolve().parents[2]
 TEAM_DIR = REPO / "deploy" / "team"
 ADAPTER = REPO / "scripts" / "e2e-team-deployment.sh"
+PROVISION = REPO / "naapp" / "secrets" / "e2e" / "protected" / "provision.py"
+sys.path.insert(0, str(REPO / "naapp" / "secrets" / "e2e"))
+
+from protected_round_trip import (  # noqa: E402
+    Holder,
+    Site,
+    connect_requester,
+    first_json,
+    found_team,
+    provision_signer,
+    refusals,
+    round_trip,
+)
 
 DOMAIN = "lf.test"
 TEAM = "lfteam"
@@ -50,6 +70,8 @@ HOSTS = {
     "secrets-console": f"console.secrets.{DOMAIN}",
     "logs-api": f"api.logs.{DOMAIN}",
     "logs-console": f"console.logs.{DOMAIN}",
+    "signer": f"signer.{DOMAIN}",
+    "human": f"human.{DOMAIN}",
 }
 UPSTREAMS = {
     "registry": "registry:8010",
@@ -58,8 +80,14 @@ UPSTREAMS = {
     "secrets-console": "secrets:8770",
     "logs-api": "logs:8765",
     "logs-console": "logs:8765",
+    "signer": "signer:8080",
+    "human": "signer:8080",
 }
 MAIL = f"mail.{DOMAIN}"
+# The role the round trip revokes, of this deployment's Secrets app.
+ROLE = "secrets.owner"
+# The agents' uid: the signer refuses custody a worker could read.
+AGENT_UID = 20001
 
 
 def origin(name: str) -> str:
@@ -71,10 +99,6 @@ def run(*args: str, env: dict[str, str] | None = None, input: str | None = None,
     if result.returncode != 0:
         raise SystemExit(f"FAILED: {' '.join(args[:6])} ...\n{result.stdout[-3000:]}\n{result.stderr[-3000:]}")
     return result.stdout
-
-
-def first_json(text: str):
-    return json.JSONDecoder().raw_decode(text[text.index("{") :])[0]
 
 
 def image_user(image: str) -> str:
@@ -89,6 +113,7 @@ class World:
         self.world = run_dir / "world"
         self.deployment_path = run_dir / "deployment.yaml"
         self.secrets = run_dir / "secrets"
+        self.signer_configured = False
         network = ipaddress.ip_network(cidr)
         self.cidr = cidr
         top = network.broadcast_address
@@ -113,20 +138,24 @@ class World:
         (self.world / "dns").mkdir(parents=True)
         (self.world / "tls").mkdir()
         (self.world / "front").mkdir()
+        (self.world / "signer").mkdir()
         (self.world / "dns" / "Corefile").write_text(
             f"{DOMAIN}:53 {{\n  errors\n  file /zones/{DOMAIN}.zone {DOMAIN} {{ reload 1s }}\n}}\n"
             ".:53 {\n  errors\n  forward . 127.0.0.11\n}\n"
         )
         self.publish_controller("did:key:z6MkpendingpendingpendingpendingpendingpendingpendingP")
         tls = make_certificates(self.world / "tls", [*HOSTS.values(), MAIL], [])
-        (self.world / "front" / "Caddyfile").write_text(
-            "{\n  auto_https off\n}\n"
+        self.caddyfile = (
+            # A request whose Host its TLS SNI does not name is refused: the
+            # signer's request host must never reach its human host.
+            "{\n  auto_https off\n  servers {\n    strict_sni_host on\n  }\n}\n"
             + "".join(
                 f"{HOSTS[name]}:443 {{\n  tls /tls/{tls.cert_file.name} /tls/{tls.key_file.name}\n"
                 f"  reverse_proxy {UPSTREAMS[name]}\n}}\n"
                 for name in HOSTS
             )
         )
+        (self.world / "front" / "Caddyfile").write_text(self.caddyfile)
         for path in [*(self.world / "tls").iterdir(), *(self.world / "front").iterdir(), *(self.world / "dns").iterdir()]:
             path.chmod(0o644)
 
@@ -159,11 +188,12 @@ class World:
 
     def write_database_files(self) -> None:
         """One role and database per component; the password is in the role's
-        file for the bundled server and in the component's whole URL."""
+        file for the bundled server and in the component's whole URL. The
+        roles exist only from the bundled server's first start."""
         roles = self.secrets / "postgres" / "roles"
         roles.mkdir(parents=True)
         (self.secrets / "postgres" / "password").write_text(secrets.token_hex(24))
-        for component in ("aweb", "secrets", "logs"):
+        for component in ("aweb", "secrets", "logs", "signer"):
             password = secrets.token_hex(24)
             (roles / component).write_text(password)
             (self.secrets / component).mkdir(exist_ok=True)
@@ -171,34 +201,48 @@ class World:
                 f"postgresql://{component}:{password}@postgres:5432/{component}\n"
             )
 
-    def deployment(self, *, apps: bool) -> Path:
+    def deployment(self) -> Path:
         config: dict = {
             "team": {"id": TEAM_ID, "registryUrl": origin("registry")},
             "postgres": {"bundled": True},
             "network": {"servicesCidr": self.cidr},
-            "aweb": {"image": self.images["aweb"], "publicOrigin": origin("aweb")},
+            "aweb": {"image": self.images["aweb"], "publicOrigin": origin("aweb"),
+                     "appInternalOrigins": [origin("secrets-api"), origin("logs-api")]},
             "compose": {"secretsDir": str(self.secrets)},
         }
-        if apps:
-            config["aweb"]["appInternalOrigins"] = [origin("secrets-api"), origin("logs-api")]
-            for app in ("secrets", "logs"):
-                config[app] = {
-                    "image": self.images[app],
-                    "appId": f"{TEAM}-{app}",
-                    "publicOrigin": origin(f"{app}-api"),
-                    "consoleOrigin": origin(f"{app}-console"),
-                    "emailSmtpHost": MAIL,
-                    "emailSmtpPort": 1025,
-                    "emailFrom": f"{app}@{DOMAIN}",
-                    "emailCaFile": f"/run/secrets/{app}/smtp-ca.pem",
-                    "egressDeniedNetworks": ["169.254.0.0/16"],
-                }
-            # Secrets sends its use and governance events to this deployment's Logs.
-            config["secrets"]["hookInternalOrigins"] = [origin("logs-api")]
-            config["secrets"]["hookCaFile"] = "/run/secrets/secrets/hook-ca.pem"
+        for app in ("secrets", "logs"):
+            config[app] = {
+                "image": self.images[app],
+                "appId": f"{TEAM}-{app}",
+                "publicOrigin": origin(f"{app}-api"),
+                "consoleOrigin": origin(f"{app}-console"),
+                "emailSmtpHost": MAIL,
+                "emailSmtpPort": 1025,
+                "emailFrom": f"{app}@{DOMAIN}",
+                "emailCaFile": f"/run/secrets/{app}/smtp-ca.pem",
+                "egressDeniedNetworks": ["169.254.0.0/16"],
+            }
+        # Secrets sends its use and governance events to this deployment's Logs.
+        config["secrets"]["hookInternalOrigins"] = [origin("logs-api")]
+        config["secrets"]["hookCaFile"] = "/run/secrets/secrets/hook-ca.pem"
+        if self.signer_configured:
+            config["signer"] = {
+                "image": self.images["aweb-protected"],
+                "profileFile": str(self.world / "signer" / "profile.json"),
+                "scopeFile": str(self.world / "signer" / "scope.json"),
+                "requestOrigin": origin("signer"),
+                "humanOrigin": origin("human"),
+                "workerUids": [AGENT_UID],
+                "emailSmtpHost": MAIL,
+                "emailSmtpPort": 1025,
+                "emailUsername": "signer",
+                "emailFrom": f"signer@{DOMAIN}",
+                "emailCaFile": str(self.world / "tls" / "ca.pem"),
+            }
         path = self.run_dir / "deployment.yaml"
         path.write_text(yaml.safe_dump(config, sort_keys=False))
         self.write_trust(["aweb", *(name for name in ("secrets", "logs", "signer") if name in config)])
+        self.render(path)
         return path
 
     # --- running --------------------------------------------------------
@@ -206,14 +250,23 @@ class World:
     def connect(self) -> dict:
         return json.loads(run(str(ADAPTER), "compose", "connect", str(self.deployment_path), env=self.env))
 
-    def compose(self, *args: str) -> str:
+    def compose(self, *args: str, input: str | None = None) -> str:
         """The deployment's own docker compose command, as the adapter gives it."""
-        return run(*self.connect()["compose"], *args, env=self.env)
+        return run(*self.connect()["compose"], *args, env=self.env, input=input)
 
     def render(self, deployment: Path) -> None:
         rendered = run(sys.executable, str(TEAM_DIR / "render_env.py"), str(deployment))
         (self.run_dir / ".env").write_text(rendered)
         self.deployment_path = deployment
+
+    def up(self) -> bool:
+        """The adapter's up: every service healthy, internal origins inside
+        the services range, every service ready."""
+        result = subprocess.run([str(ADAPTER), "compose", "up", str(self.deployment_path)], env=self.env, text=True,
+                                check=False)
+        connect = json.dumps(self.connect(), indent=2)
+        (self.run_dir / "connect.json").write_text(connect)
+        return result.returncode == 0
 
     def machine(self, name: str) -> str:
         """A cli container as one machine; its HOME is /world/<name>."""
@@ -239,15 +292,6 @@ class World:
         identity whose home is there."""
         where = ["-e", f"HOME={home}", "-w", f"{home}/identity"] if home else []
         return first_json(run("docker", "exec", *where, machine, "aw", "--json", *args, timeout=300))
-
-    def await_controller(self, machine: str, controller_did: str) -> None:
-        for _ in range(30):
-            answer = subprocess.run(["docker", "exec", machine, "nslookup", "-type=txt", f"_awid.{DOMAIN}"],
-                                    text=True, capture_output=True, check=False)
-            if controller_did in answer.stdout:
-                return
-            time.sleep(0.5)
-        raise SystemExit(f"FAILED: _awid.{DOMAIN} never named {controller_did}")
 
     def admit_service(self, machine: str, name: str) -> tuple[str, Path]:
         """One service as an ordinary member: aw creates its key in its own
@@ -289,22 +333,107 @@ class World:
             shutil.copyfile(ca, directory / "smtp-ca.pem")
             shutil.copyfile(ca, directory / "hook-ca.pem")
 
-    def own_service_files(self) -> dict[str, str]:
+    def own(self, owners: dict[str, str]) -> None:
         """Each component's files belong to the uid its image runs as, mode 0400;
         the public trust files are 0444."""
-        owners = {
-            "postgres": run("docker", "run", "--rm", "postgres:16-alpine", "id", "-u", "postgres").strip(),
-            "aweb": image_user(self.images["aweb"]),
-            "secrets": image_user(self.images["secrets"]),
-            "logs": image_user(self.images["logs"]),
-        }
         script = " && ".join(
             f"chown -R {uid}:{uid} /s/{component} && find /s/{component} -type f ! -name '*-ca.pem' -exec chmod 0400 {{}} +"
             f" && find /s/{component} -type f -name '*-ca.pem' -exec chmod 0444 {{}} +"
             for component, uid in owners.items()
         )
         run("docker", "run", "--rm", "-v", f"{self.secrets}:/s", "alpine:3.22", "sh", "-c", script)
+
+    def own_service_files(self) -> dict[str, str]:
+        owners = {
+            "postgres": run("docker", "run", "--rm", "postgres:16-alpine", "id", "-u", "postgres").strip(),
+            "aweb": image_user(self.images["aweb"]),
+            "secrets": image_user(self.images["secrets"]),
+            "logs": image_user(self.images["logs"]),
+        }
+        self.own(owners)
         return owners
+
+    def install_apps(self, machine: str, owner_did_key: str) -> None:
+        """The operator's explicit install-owner grant, then the owner installs
+        Secrets and Logs from their internal origins. Membership alone grants
+        no install authority."""
+        self.compose("exec", "-T", "aweb", "aweb", "install-admin", "grant", "--team-id", TEAM_ID,
+                     "--principal-did", owner_did_key, "--role", "owner")
+        for app in ("secrets", "logs"):
+            installed = self.aw(machine, "plugin", "install", origin(f"{app}-api"))
+            if not installed.get("approved"):
+                raise SystemExit(f"BOUNDARY: {app} was not installed: {json.dumps(installed)}")
+            print(f"INSTALLED: {app} from {origin(app + '-api')}")
+
+    # --- the protected round trip's Site --------------------------------
+
+    def site(self) -> Site:
+        signer_uid = image_user(self.images["aweb-protected"])
+        signer_secrets = self.secrets / "signer"
+
+        def store_member(pem: str) -> None:
+            (signer_secrets / "member-signer.pem").write_text(pem)
+            (signer_secrets / "members.json").write_text(json.dumps({TEAM_ID: "member-signer.pem"}))
+
+        def store_controller(seed: str) -> None:
+            # A real directory owned by the signer's uid, mode 0700, and the key
+            # in it, mode 0400: the custody check refuses anything else.
+            run("docker", "run", "--rm", "-i", "-v", f"{signer_secrets}:/s", "alpine:3.22", "sh", "-c",
+                f"umask 077 && mkdir /s/private-controller && cat > /s/private-controller/controller.key "
+                f"&& chown -R {signer_uid}:{signer_uid} /s/private-controller "
+                f"&& chmod 0700 /s/private-controller && chmod 0400 /s/private-controller/controller.key",
+                input=seed + "\n")
+
+        def configure_signer(profile: dict, scope: dict) -> None:
+            for name, document in (("profile.json", profile), ("scope.json", scope)):
+                (self.world / "signer" / name).write_text(json.dumps(document))
+                (self.world / "signer" / name).chmod(0o644)
+            (signer_secrets / "smtp-password").write_text(secrets.token_urlsafe(16))
+            run("docker", "run", "--rm", "-v", f"{signer_secrets}:/s", "alpine:3.22", "sh", "-c",
+                f"chown {signer_uid}:{signer_uid} /s/database-url /s/smtp-password /s/members.json "
+                f"/s/member-signer.pem && chmod 0400 /s/database-url /s/smtp-password /s/members.json "
+                f"/s/member-signer.pem")
+            self.signer_configured = True
+            self.deployment()
+
+        def provision(*args: str, stdin: str | None = None) -> dict:
+            """provision.py inside the signer's container, as its uid, with the
+            signer's own settings."""
+            output = self.compose("run", "--rm", "-T", "--no-deps", "-v", f"{PROVISION}:/provision.py:ro",
+                                  "--entrypoint", "python", "signer", "/provision.py", *args, input=stdin)
+            return first_json(output)
+
+        def start_signer() -> None:
+            if not self.up():
+                raise SystemExit("BOUNDARY: the signer did not come up ready; see compose.log in the run directory")
+            print("UP: the signer is ready")
+
+        def chromium(machine: str, *args: str) -> dict:
+            out = run("docker", "run", "--rm", f"--network=container:{machine}", "-v", f"{self.world}:/world",
+                      self.images["chromium"], *args, "--ca", "/world/tls/ca.pem", timeout=300).strip()
+            return first_json(out) if "{" in out else {}
+
+        def drop_prepare_answers(on: bool) -> None:
+            caddyfile = self.caddyfile
+            if on:
+                caddyfile = caddyfile.replace(
+                    f"{HOSTS['signer']}:443 {{\n",
+                    f"{HOSTS['signer']}:443 {{\n  @prepare {{\n    method POST\n    path /protected-operations\n  }}\n"
+                    "  reverse_proxy @prepare signer:8080 {\n    @answered status 2xx\n"
+                    "    handle_response @answered {\n      abort\n    }\n  }\n", 1)
+            (self.world / "front" / "Caddyfile").write_text(caddyfile)
+            self.compose("exec", "-T", "front", "caddy", "reload", "--config", "/etc/caddy/Caddyfile",
+                         "--adapter", "caddyfile")
+
+        return Site(
+            runtime=self.world, mounted="/world", domain=DOMAIN, team=TEAM, registry=origin("registry"),
+            aweb=origin("aweb"), signer=origin("signer"), human=origin("human"), service_id=f"{TEAM}-signer",
+            app_id=f"{TEAM}-secrets", role=ROLE, contact=f"approver@{DOMAIN}", mail_api=f"http://{MAIL}:8025",
+            profile_in_machine="/world/signer/profile.json", publish_controller=self.publish_controller,
+            store_member=store_member, store_controller=store_controller, configure_signer=configure_signer,
+            provision=provision, start_signer=start_signer, chromium=chromium,
+            drop_prepare_answers=drop_prepare_answers,
+        )
 
 
 def load_images(path: Path) -> dict[str, str]:
@@ -313,7 +442,7 @@ def load_images(path: Path) -> dict[str, str]:
         name, _, reference = line.partition(" ")
         if "@sha256:" in reference:
             images[name] = reference
-    missing = {"aweb", "secrets", "logs", "awid", "cli"} - set(images)
+    missing = {"aweb", "aweb-protected", "secrets", "logs", "awid", "cli", "chromium"} - set(images)
     if missing:
         raise SystemExit(f"FAILED: no pinned image for {', '.join(sorted(missing))} in {path}")
     return images
@@ -337,7 +466,6 @@ def main() -> int:
     (run_dir / "world.env").write_text(
         "".join(f"{name}={world.env[name]}\n" for name in sorted(world.env) if name.startswith(("TEAM_DEPLOYMENT_", "TEST_")))
     )
-
     try:
         return journey(world)
     finally:
@@ -352,49 +480,34 @@ def journey(world: World) -> int:
     print("=== Setup: the test world")
     world.write_world()
     world.write_database_files()
-    world.render(world.deployment(apps=False))
+    world.deployment()
     world.compose("up", "-d", "--wait", "dns", "registry", "front", "smtp")
-    controller = world.machine("controller")
+    site = world.site()
+    holder = Holder(world.machine("holder"), DOMAIN)
 
-    print("=== Setup: namespace, team and service members, through the real aw")
-    prepared = world.aw(controller, "id", "namespace", "prepare-controller", "--domain", DOMAIN,
-                        "--registry", origin("registry"))
-    world.publish_controller(prepared["controller_did"])
-    world.await_controller(controller, prepared["controller_did"])
-    world.aw(controller, "id", "team", "create", "--name", TEAM, "--namespace", DOMAIN, "--registry", origin("registry"))
-    world.write_service_files(controller)
+    print("=== Setup: namespace, root human, team and service members, through the real aw")
+    founded = found_team(site, holder)
+    world.write_service_files(holder.container)
     owners = world.own_service_files()
     print("service file owners:", json.dumps(owners, sort_keys=True))
 
     print("=== Step 1: bring up the deployment")
-    deployment = world.deployment(apps=True)
-    world.deployment_path = deployment
-    up = subprocess.run([str(ADAPTER), "compose", "up", str(deployment)], env=world.env, text=True, check=False)
-    connect = json.dumps(world.connect(), indent=2)
-    (world.run_dir / "connect.json").write_text(connect)
-    print(connect)
-    if up.returncode != 0:
+    if not world.up():
         print("BOUNDARY: the deployment did not come up; see compose.log in the run directory")
         return 1
-    print("UP: aweb, secrets and logs are healthy; signer and agents are not in this run")
-
+    print("UP: aweb, secrets and logs are ready")
+    connect_requester(site, holder)
     print("=== Setup: the team owner installs Secrets and Logs from their internal origins")
-    # The owner is an ordinary member; only the server operator's explicit
-    # grant gives it install authority.
-    owner = world.aw(controller, "id", "create", "--name", "owner", "--domain", DOMAIN, "--root-parent",
-                     "--registry", origin("registry"))
-    invite = world.aw(controller, "id", "team", "invite", "--team", TEAM, "--namespace", DOMAIN, "--member-global")
-    world.aw(controller, "id", "team", "accept-invite", invite["token"], "--name", "owner", "--global")
-    world.aw(controller, "init", "--url", origin("aweb"), "--name", "owner", "--do-not-touch-agents-md")
-    world.compose("exec", "-T", "aweb", "aweb", "install-admin", "grant", "--team-id", TEAM_ID,
-                  "--principal-did", owner["did_key"], "--role", "owner")
-    for app in ("secrets", "logs"):
-        installed = world.aw(controller, "plugin", "install", origin(f"{app}-api"))
-        if not installed.get("approved"):
-            print(f"BOUNDARY: {app} was not installed: {json.dumps(installed)}")
-            return 1
-        print(f"INSTALLED: {app} from {origin(app + '-api')}")
+    world.install_apps(holder.container, founded.requester_did_key)
+
+    print("=== Step 5: the protected act")
+    provision_signer(site, holder, founded)
+    operation = round_trip(site, holder, founded)
+    print(f"SIGNED: {operation} committed, approved in the browser, receipt read by aw")
+    refusals(site, holder, founded)
+    print("REFUSED: no UV signs nothing; a changed act is operation_conflict; a lost prepare completes once")
     return 0
+
 
 if __name__ == "__main__":
     sys.exit(main())

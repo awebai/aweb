@@ -32,6 +32,7 @@ from aweb_naapp_testing.network import make_certificates
 from protected_round_trip import (
     Site,
     aw,
+    connect_requester,
     first_json,
     found_team,
     provision_signer,
@@ -227,6 +228,7 @@ def test_a_human_approves_a_protected_revoke_in_a_real_browser(lane: ProtectedLa
     site = protected_site(lane)
     holder = Holder(lane, lane.machine("holder"))
     founded = found_team(site, holder)
+    connect_requester(site, holder)
     owner = holder.container
 
     # The fixture app, installed as its owner installs it.

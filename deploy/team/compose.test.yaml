@@ -81,6 +81,8 @@ services:
   cli:
     image: ${TEST_CLI_IMAGE:?}
     profiles: [cli]
+    # The holder's keyring locks its memory.
+    cap_add: [IPC_LOCK]
     dns: ["${TEST_DNS_IP:?}"]
     entrypoint: ["sleep", "infinity"]
     environment:
