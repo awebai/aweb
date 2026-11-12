@@ -88,9 +88,15 @@ def render(config: object) -> dict[str, str]:
     for section, schema in SCHEMA["properties"].items():
         if section in config:
             _collect(schema, config[section], out)
-    # The bundled PostgreSQL is the one service that an operator can leave out.
+    # Secrets holds its custody key as a mounted file unless the operator names a KMS key.
+    if "secrets" in config and "kmsKeyId" not in config["secrets"]:
+        out["SECRETS_CUSTODY_KEY_FILE"] = "/run/secrets/secrets/custody-key"
+    # The services an operator can leave out start only when the file has them.
+    optional = [name for name in ("logs", "secrets") if name in config]
     if config["postgres"].get("bundled", True):
-        out["COMPOSE_PROFILES"] = "postgres"
+        optional.append("postgres")
+    if optional:
+        out["COMPOSE_PROFILES"] = ",".join(sorted(optional))
     return out
 
 

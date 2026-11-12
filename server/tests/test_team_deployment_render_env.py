@@ -229,9 +229,18 @@ def test_secrets_and_logs_render_the_settings_each_app_reads():
         "SECRETS_EGRESS_DENIED_NETWORKS": '["169.254.0.0/16"]',
         "SECRETS_BIND_ADDRESS": "127.0.0.1",
         "SECRETS_PORT": "8770",
+        "SECRETS_CUSTODY_KEY_FILE": "/run/secrets/secrets/custody-key",
     }
+    assert rendered["COMPOSE_PROFILES"] == "logs,postgres,secrets"
     assert rendered["LOGS_HOOK_INTERNAL_ORIGINS"] == '["https://logs.example.com"]'
     assert (rendered["LOGS_PORT"], rendered["LOGS_CHECKPOINT_INTERVAL_SECONDS"]) == ("8765", "300")
+
+
+def test_a_kms_key_takes_the_place_of_the_mounted_custody_key():
+    secrets = {**app("secrets"), "kmsKeyId": "alias/custody", "kmsRegion": "eu-central-1"}
+    rendered = render_env.render({**EXAMPLE, "secrets": secrets})
+    assert "SECRETS_CUSTODY_KEY_FILE" not in rendered
+    assert rendered["SECRETS_KMS_KEY_ID"] == "alias/custody"
 
 
 @pytest.mark.parametrize(

@@ -1,0 +1,46 @@
+# The LOGS app as every Compose file here runs it. A file that runs it
+# extends this service and adds the image, its secrets mount, its network
+# and its port.
+#
+# Every credential is a file under /run/secrets/logs, which no agent and no
+# other service mounts; none is in the environment. The image carries the
+# healthcheck: /live, asked with the Host of LOGS_PUBLIC_ORIGIN.
+services:
+  logs:
+    restart: unless-stopped
+    read_only: true
+    tmpfs:
+      - /tmp
+    environment:
+      LOGS_DATABASE_URL_FILE: /run/secrets/logs/database-url
+      LOGS_DB_SCHEMA: ${LOGS_DB_SCHEMA:-public}
+      LOGS_APP_ID: ${LOGS_APP_ID:?LOGS_APP_ID is required, logs.appId}
+      LOGS_PUBLIC_ORIGIN: ${LOGS_PUBLIC_ORIGIN:?LOGS_PUBLIC_ORIGIN is required, logs.publicOrigin}
+      LOGS_CONSOLE_ORIGIN: ${LOGS_CONSOLE_ORIGIN:?LOGS_CONSOLE_ORIGIN is required, logs.consoleOrigin}
+      LOGS_AWID_REGISTRY_URL: ${AWID_REGISTRY_URL:-https://api.awid.ai}
+      # The app is an ordinary member of the team: it holds that member's key
+      # and certificate, and no AWID_SERVICE_TOKEN.
+      LOGS_AWID_MEMBER_CREDENTIALS: >-
+        {"${TEAM_ID:?TEAM_ID is required, team.id}":
+        {"signing_key_file": "/run/secrets/logs/awid-member-key",
+        "certificate_file": "/run/secrets/logs/awid-member-certificate"}}
+      LOGS_APP_KEY_FILES: >-
+        {"logs-chain": "/run/secrets/logs/logs-chain",
+        "logs-resolve": "/run/secrets/logs/logs-resolve",
+        "logs-grants": "/run/secrets/logs/logs-grants",
+        "logs-governance": "/run/secrets/logs/logs-governance"}
+      LOGS_CHECKPOINT_INTERVAL_SECONDS: ${LOGS_CHECKPOINT_INTERVAL_SECONDS:-300}
+      LOGS_RETENTION_INTERVAL_SECONDS: ${LOGS_RETENTION_INTERVAL_SECONDS:-3600}
+      LOGS_EMAIL_SMTP_HOST: ${LOGS_EMAIL_SMTP_HOST:?LOGS_EMAIL_SMTP_HOST is required, logs.emailSmtpHost}
+      LOGS_EMAIL_SMTP_PORT: ${LOGS_EMAIL_SMTP_PORT:-587}
+      LOGS_EMAIL_TLS: ${LOGS_EMAIL_TLS:-starttls}
+      LOGS_EMAIL_USERNAME_FILE: /run/secrets/logs/smtp-username
+      LOGS_EMAIL_PASSWORD_FILE: /run/secrets/logs/smtp-password
+      LOGS_EMAIL_FROM: ${LOGS_EMAIL_FROM:?LOGS_EMAIL_FROM is required, logs.emailFrom}
+      # Hooks reach a receiver at an internal address only when the operator
+      # names its origin, and then only inside the services network.
+      LOGS_HOOK_INTERNAL_ORIGINS: ${LOGS_HOOK_INTERNAL_ORIGINS:-}
+      LOGS_HOOK_INTERNAL_DESTINATIONS: ${LOGS_HOOK_INTERNAL_ORIGINS:+allowed}
+      LOGS_HOOK_INTERNAL_CIDR: ${LOGS_HOOK_INTERNAL_ORIGINS:+${SERVICES_CIDR}}
+      LOGS_EGRESS_DENIED_NETWORKS: ${LOGS_EGRESS_DENIED_NETWORKS:?LOGS_EGRESS_DENIED_NETWORKS is required, logs.egressDeniedNetworks}
+      LOGS_CLIENT_ADDRESS_HEADER: ${LOGS_CLIENT_ADDRESS_HEADER:-}
