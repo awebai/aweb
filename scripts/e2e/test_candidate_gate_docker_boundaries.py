@@ -422,12 +422,29 @@ class DockerBoundaryTests(unittest.TestCase):
         competitor = f"aweb-publish-competitor-{uuid.uuid4().hex[:12]}"
         try:
             port = wait_for_published_port(container)
+            before = run("docker", "inspect", "--format",
+                         "{{json .State}} {{json .NetworkSettings.Ports}}", container,
+                         check=False, timeout=10)
             result = run(
                 "docker", "run", "--detach", "--name", competitor,
                 "--publish", f"127.0.0.1:{port}:80", PROBE_SERVICE_IMAGE,
                 check=False,
             )
-            self.assertNotEqual(result.returncode, 0, result.stdout + result.stderr)
+            if result.returncode == 0:
+                # A published mapping alone does not establish that its owner
+                # stayed alive. Retain both lifetimes before cleanup so an
+                # exited probe is distinguishable from simultaneous binding.
+                details = [f"port={port}; owner before competitor: {before.stdout}{before.stderr}"]
+                for name in (container, competitor):
+                    state = run("docker", "inspect", "--format",
+                                "{{json .State}} {{json .NetworkSettings.Ports}}", name,
+                                check=False, timeout=10)
+                    logs = run("docker", "logs", "--tail", "30", name,
+                               check=False, timeout=10)
+                    details.append(f"{name}: {state.stdout}{state.stderr}\n"
+                                   f"logs: {logs.stdout}{logs.stderr}")
+                self.fail("competitor publication succeeded: " + result.stdout + result.stderr
+                          + "\n" + "\n".join(details))
             self.assertRegex(result.stderr.lower(),
                              "port is already allocated|address already in use|ports are not available")
         finally:
