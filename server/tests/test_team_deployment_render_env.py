@@ -485,3 +485,14 @@ def test_neither_egress_nor_the_agent_may_take_the_gateway_address(signer, taken
         agents["network"]["address"] = "172.30.0.1"
     with pytest.raises(render_env.Refused, match="gateway"):
         render_env.render({**EXAMPLE, "agents": agents, "signer": signer, "egress": EGRESS, **APPS})
+
+
+def test_the_agents_public_ca_and_mirrors_add_the_agent_images_own_fragments_only_when_given(signer):
+    base = {**EXAMPLE, "signer": signer, "egress": EGRESS, **APPS}
+    plain = render_env.render({**base, "agents": AGENTS})["COMPOSE_FILE"].split(":")
+    assert not any("compose.agent." in name for name in plain)
+    agents = {**AGENTS, "caFile": "/srv/team/agent-ca.pem", "mirrorsDir": "/srv/team/mirrors"}
+    files = render_env.render({**base, "agents": agents})["COMPOSE_FILE"].split(":")
+    oats = AGENTS["compose"]["oatsSource"]
+    assert files[-2:] == [f"{oats}/container/agent/compose.agent.trust.yaml",
+                          f"{oats}/container/agent/compose.agent.mirrors.yaml"]

@@ -270,6 +270,8 @@ class World:
                 "gid": AGENT_UID,
                 "resolverIp": "172.30.0.2",
                 "network": {"address": "172.30.0.10"},
+                # The world's public CA, copied outside every protected root.
+                "caFile": str(self.run_dir / "agent-ca.pem"),
                 "compose": {
                     "stateDir": str(self.world / "agent-state"),
                     "authorizedKeysFile": str(self.world / "agent-authorized-keys"),
@@ -315,6 +317,8 @@ class World:
         (self.world / "agent-state").mkdir()
         (self.world / "agent-authorized-keys").write_text("")
         (self.run_dir / "operator").mkdir(mode=0o700)
+        shutil.copyfile(self.world / "tls" / "ca.pem", self.run_dir / "agent-ca.pem")
+        (self.run_dir / "agent-ca.pem").chmod(0o644)
         (self.secrets / "agents").mkdir()
         run("docker", "run", "--rm", "-v", f"{self.world / 'agent-state'}:/state",
             "-v", f"{self.secrets / 'agents'}:/login", "alpine:3.22", "sh", "-c",
@@ -489,6 +493,35 @@ class World:
             run("docker", "rm", created)
         run("docker", "cp", str(self.run_dir / "aw-control"), f"{machine}:/tmp/aw-control")
         return "/tmp/aw-control"
+
+    def requalify_agent(self, founded: Founded, seat: str) -> dict:
+        """The real agent, over the operator's SSH, as a staged seat: aw's own
+        application answer from aweb (an Inbound mode, not unknown), aw (Go)
+        reading the registry, and Node reaching the registry and aweb, all over
+        verified HTTPS with the agents' public CA and nothing relaxed."""
+        config = str(self.run_dir / "operator" / "ssh_config")
+        home = f"/state/seats/{seat}/.aw"
+
+        def ssh(command: str) -> subprocess.CompletedProcess:
+            return subprocess.run(["ssh", "-F", config, "team-agent", command], capture_output=True, text=True,
+                                  timeout=120, check=False)
+
+        trust = ssh('printf "%s %s" "$SSL_CERT_FILE" "$NODE_EXTRA_CA_CERTS"').stdout.split()
+        assert trust == ["/etc/agent-trust/ca.pem", "/etc/agent-trust/ca.pem"], trust
+        whoami = ssh(f"aw --identity-home {home} whoami")
+        inbound = re.search(r"^Inbound:\s+(\S.*)$", whoami.stdout, re.MULTILINE)
+        assert whoami.returncode == 0 and inbound and not inbound.group(1).startswith("unknown"), (
+            whoami.stdout + whoami.stderr)
+        resolved = ssh(f"aw --identity-home {home} --json id resolve {founded.approver}")
+        assert resolved.returncode == 0, resolved.stdout + resolved.stderr
+        reach = ("const https=require('node:https');const get=u=>new Promise((ok,no)=>https.get(u,r=>{r.resume();"
+                 "ok(r.statusCode)}).on('error',no));"
+                 f"Promise.all([get('{origin('registry')}/health'),get('{origin('aweb')}/ready')])"
+                 ".then(s=>{console.log(s.join(' '))},e=>{console.error(e.code||e.message);process.exit(1)})")
+        node = ssh(f'node -e "{reach}"')
+        assert node.returncode == 0 and node.stdout.split() == ["200", "200"], node.stdout + node.stderr
+        return {"seat": seat, "trust": trust, "inbound": inbound.group(1), "resolved": first_json(resolved.stdout),
+                "node": node.stdout.split()}
 
     def machine(self, name: str) -> str:
         """A cli container as one machine; its HOME is /world/<name>."""
@@ -829,6 +862,9 @@ def main() -> int:
     parser.add_argument("--services-cidr", default="172.31.0.0/24")
     parser.add_argument("--oats-source", type=Path, help="checkout of the pinned OATS source, for the agents")
     parser.add_argument("--keep", action="store_true", help="leave the deployment running for inspection")
+    parser.add_argument("--agents-only", action="store_true",
+                        help="provision the signer, then go straight to the agents stage: no holding, protected"
+                             " round trip, refusals or throttle legs")
     parser.add_argument("--stop-after", choices=["holding"],
                         help="end the journey after this setup step: holding, the approver's app holding")
     args = parser.parse_args()
@@ -846,7 +882,7 @@ def main() -> int:
         "".join(f"{name}={world.env[name]}\n" for name in sorted(world.env) if name.startswith(("TEAM_DEPLOYMENT_", "TEST_")))
     )
     try:
-        return journey(world, stop_after=args.stop_after)
+        return journey(world, stop_after=args.stop_after, agents_only=args.agents_only)
     finally:
         if not args.keep:
             print("=== Teardown")
@@ -855,7 +891,7 @@ def main() -> int:
             print("DOWN: nothing of the project is left" if down.returncode == 0 else "DOWN FAILED: see above")
 
 
-def journey(world: World, stop_after: str | None = None) -> int:
+def journey(world: World, stop_after: str | None = None, agents_only: bool = False) -> int:
     print("=== Setup: the test world")
     world.write_world()
     world.write_database_files()
@@ -882,15 +918,27 @@ def journey(world: World, stop_after: str | None = None) -> int:
     connect_requester(site, holder)
     print("=== Setup: the team owner installs Secrets and Logs from their internal origins")
     world.install_apps(holder.container, founded.requester_did_key)
-    print("=== Setup: the owner designates the approver's holding of the app role, before the signer holds the key")
-    designated = world.designate_holding(site, holder, founded)
-    print("HOLDING:", json.dumps({k: designated[k] for k in ("role", "principal")}))
-    if stop_after == "holding":
-        print("STOPPED: after the approver's holding, as asked")
-        return 0
+    if not agents_only:
+        print("=== Setup: the owner designates the approver's holding of the app role, before the signer holds the key")
+        designated = world.designate_holding(site, holder, founded)
+        print("HOLDING:", json.dumps({k: designated[k] for k in ("role", "principal")}))
+        if stop_after == "holding":
+            print("STOPPED: after the approver's holding, as asked")
+            return 0
 
     print("=== Step 5: the protected act")
     provision_signer(site, holder, founded)
+    if agents_only:
+        print("AGENTS ONLY: the signer is provisioned; no round trip, refusals or throttle legs in this run")
+    else:
+        protected_act(world, site, holder, founded)
+    if "agent" not in world.images:
+        print("AGENTS: not in this run (no agent or egress image)")
+        return 0
+    return agents_stage(world, founded)
+
+
+def protected_act(world: World, site: Site, holder: Holder, founded: Founded) -> None:
     operation = round_trip(site, holder, founded)
     print(f"SIGNED: {operation} committed, approved in the browser, receipt read by aw")
     refusals(site, holder, founded)
@@ -901,21 +949,22 @@ def journey(world: World, stop_after: str | None = None) -> int:
     print("THROTTLED: a changed act waits out the registry's Retry-After and is operation_conflict; a lost prepare"
           " waits it out and completes once; the control aw recovers from neither")
 
-    if "agent" not in world.images:
-        print("AGENTS: not in this run (no agent or egress image)")
-        return 0
+
+def agents_stage(world: World, founded: Founded) -> int:
     print("=== Step 2: the agents, behind egress")
     world.configure_agents()
     status = world.up()
-    if status == 3:
-        world.operator_ssh()
-        world.stage_seats(SEATS)
-        print("AGENTS HELD: the ingress refusal and boundary probes passed, the agent container passed its"
-              " acceptance, the operator reaches it over pinned SSH and two member seats are staged; it has no"
-              " harness login, deployment or session")
-        return 0
-    print("BOUNDARY: the agents stage did not come up; see the adapter's output")
-    return 1
+    if status != 3:
+        print("BOUNDARY: the agents stage did not come up; see the adapter's output")
+        return 1
+    world.operator_ssh()
+    world.stage_seats(SEATS)
+    print("AGENTS: the ingress and boundary probes passed, the agent container passed its acceptance, the operator"
+          " reaches it over pinned SSH and two member seats are staged")
+    requalified = world.requalify_agent(founded, SEATS[0])
+    print("REQUALIFIED:", json.dumps(requalified, sort_keys=True))
+    print("AGENTS HELD: no harness login, deployment or session; wake and model are not run")
+    return 0
 
 
 if __name__ == "__main__":

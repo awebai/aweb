@@ -86,7 +86,6 @@ def plan(**changes):
         "run_dir": "/srv/team/run",
         "backends": BACKENDS,
         "protected_sources": PROTECTED,
-        "ca": True,
     } | changes
     return egress_policy.boundary_plan(CONFIG, POLICY, **arguments)
 
@@ -111,7 +110,6 @@ def test_the_boundary_plan_names_the_deployment_s_runtime_and_the_probe_s_creden
                 "RW": False,
             },
             {"Type": "bind", "Source": "/srv/team/run/resolv.conf", "Destination": "/etc/resolv.conf", "RW": False},
-            {"Type": "bind", "Source": "/srv/team/run/probe/ca.pem", "Destination": "/public/world-ca.pem", "RW": False},
         ],
         "protectedSources": PROTECTED,
         "policy": POLICY,
@@ -120,25 +118,44 @@ def test_the_boundary_plan_names_the_deployment_s_runtime_and_the_probe_s_creden
             {"role": "postgres", "address": "172.31.0.6", "port": 5432},
             {"role": "redis", "address": "172.32.0.3", "port": 6379, "controlNetwork": "team_backend"},
         ],
-        "caFile": "/public/world-ca.pem",
         "protectedPaths": [],
     }
 
 
-def test_the_boundary_plan_uses_the_configured_agent_identity_and_database_port_and_a_public_ca():
+def test_the_boundary_plan_uses_the_configured_agent_identity_and_database_port():
     config = CONFIG | {"agents": CONFIG["agents"] | {"uid": 30001, "gid": 30002}, "postgres": {"port": 6543}}
     result = egress_policy.boundary_plan(
         config, POLICY, project="team", images=IMAGES, run_dir="/r", backends=BACKENDS,
-        protected_sources=PROTECTED, ca=False,
+        protected_sources=PROTECTED,
     )
     assert (result["uid"], result["gid"]) == (30001, 30002)
     assert result["deniedBackends"][0]["port"] == 6543
-    assert "caFile" not in result
-    assert [mount["Destination"] for mount in result["approvedProbeMounts"]] == [
-        "/state", "/etc/agent-login", "/etc/agent-ssh/authorized_keys", "/etc/resolv.conf",
-    ]
 
 
 def test_a_backend_the_policy_does_not_deny_is_refused():
     with pytest.raises(egress_policy.Refused, match="redis"):
         plan(backends={"postgres": "172.31.0.6", "redis": "172.32.0.9"})
+
+
+def test_a_configured_agent_ca_and_mirrors_are_approved_probe_mounts_and_the_ca_verifies_the_controls():
+    config = CONFIG | {"agents": CONFIG["agents"] | {"caFile": "/srv/team/agent-ca.pem", "mirrorsDir": "/srv/team/mirrors"}}
+    result = egress_policy.boundary_plan(
+        config, POLICY, project="team", images=IMAGES, run_dir="/r", backends=BACKENDS,
+        protected_sources=PROTECTED,
+    )
+    mounts = {m["Destination"]: m for m in result["approvedProbeMounts"]}
+    assert mounts["/etc/agent-trust/ca.pem"] == {"Type": "bind", "Source": "/srv/team/agent-ca.pem",
+                                                  "Destination": "/etc/agent-trust/ca.pem", "RW": False}
+    assert mounts["/mirrors"] == {"Type": "bind", "Source": "/srv/team/mirrors", "Destination": "/mirrors", "RW": False}
+    assert "/public/world-ca.pem" not in mounts
+    assert result["caFile"] == "/etc/agent-trust/ca.pem"
+
+
+def test_without_an_agent_ca_the_controls_use_the_public_roots():
+    result = egress_policy.boundary_plan(
+        CONFIG, POLICY, project="team", images=IMAGES, run_dir="/r", backends=BACKENDS, protected_sources=PROTECTED,
+    )
+    assert "caFile" not in result
+    assert [m["Destination"] for m in result["approvedProbeMounts"]] == [
+        "/state", "/etc/agent-login", "/etc/agent-ssh/authorized_keys", "/etc/resolv.conf",
+    ]

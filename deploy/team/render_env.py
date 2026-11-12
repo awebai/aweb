@@ -192,9 +192,13 @@ def render(config: object) -> dict[str, str]:
             out[f"{app.upper()}_HOOK_INTERNAL_DESTINATIONS"] = "allowed"
             out[f"{app.upper()}_HOOK_INTERNAL_CIDR"] = config["network"]["servicesCidr"]
     # A component the operator leaves out has no file in the model.
-    out["COMPOSE_FILE"] = ":".join(
-        ["compose.yaml", *(f"compose.{name}.yaml" for name in OPTIONAL_COMPONENTS if name in config)]
-    )
+    files = ["compose.yaml", *(f"compose.{name}.yaml" for name in OPTIONAL_COMPONENTS if name in config)]
+    # The agent image's own fragments for the agents' optional inputs, from its
+    # pinned source: the public CA they trust and the operator's Git mirrors.
+    for key, fragment in (("caFile", "trust"), ("mirrorsDir", "mirrors")):
+        if key in config.get("agents", {}):
+            files.append(f"{config['agents']['compose']['oatsSource']}/container/agent/compose.agent.{fragment}.yaml")
+    out["COMPOSE_FILE"] = ":".join(files)
     if config["postgres"].get("bundled", True):
         out["COMPOSE_PROFILES"] = "postgres"
     return out

@@ -74,7 +74,11 @@ PROBE_MOUNTS = (
     ("probe/authorized_keys", "/etc/agent-ssh/authorized_keys", False),
     ("resolv.conf", "/etc/resolv.conf", False),
 )
-PROBE_CA = ("probe/ca.pem", "/public/world-ca.pem")
+# Where the agent image's optional fragments mount the agents' public CA
+# (compose.agent.trust.yaml) and the operator's Git mirrors
+# (compose.agent.mirrors.yaml); the probe, as the agent service, has them too.
+AGENT_CA = "/etc/agent-trust/ca.pem"
+MIRRORS = "/mirrors"
 # One existing GET route per role that answers 200 and changes nothing.
 ALLOWED_PATHS = {"aweb": "/ready", "secrets": "/ready", "logs": "/ready", "signer": "/readyz", "registry": "/health"}
 
@@ -88,7 +92,6 @@ def boundary_plan(
     run_dir: str,
     backends: dict[str, str],
     protected_sources: list[str],
-    ca: bool,
 ) -> dict:
     """The runtime plan of the OATS boundary probe (egress
     probe-compose-boundary.mjs) for this deployment's Compose project: its
@@ -98,7 +101,7 @@ def boundary_plan(
     for role, address in backends.items():
         if address not in policy["deniedAddresses"]:
             raise Refused(f"{role}: {address} is not one of the policy's denied addresses")
-    mounts = [*PROBE_MOUNTS, (*PROBE_CA, False)] if ca else PROBE_MOUNTS
+    agents = config["agents"]
     result = {
         "probeContainer": f"{project}-agent-probe",
         "proxyContainer": f"{project}-egress-1",
@@ -106,11 +109,14 @@ def boundary_plan(
         "servicesNetwork": f"{project}_services",
         "probeImage": images["agent"],
         "proxyImage": images["egress"],
-        "uid": config["agents"].get("uid", 20001),
-        "gid": config["agents"].get("gid", 20001),
+        "uid": agents.get("uid", 20001),
+        "gid": agents.get("gid", 20001),
         "approvedProbeMounts": [
             {"Type": "bind", "Source": f"{run_dir}/{source}", "Destination": target, "RW": writable}
-            for source, target, writable in mounts
+            for source, target, writable in PROBE_MOUNTS
+        ] + [
+            {"Type": "bind", "Source": agents[key], "Destination": target, "RW": False}
+            for key, target in (("caFile", AGENT_CA), ("mirrorsDir", MIRRORS)) if key in agents
         ],
         "protectedSources": list(protected_sources),
         "policy": policy,
@@ -122,6 +128,8 @@ def boundary_plan(
         ],
         "protectedPaths": [],
     }
-    if ca:
-        result["caFile"] = PROBE_CA[1]
+    # The probe verifies its HTTPS controls with the agents' own trust: the
+    # configured public CA, or else the image's public roots alone.
+    if "caFile" in agents:
+        result["caFile"] = AGENT_CA
     return result

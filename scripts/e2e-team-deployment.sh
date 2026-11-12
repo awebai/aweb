@@ -221,48 +221,75 @@ start_egress() {
   fi
 }
 
-# The signer's two surfaces each have one existing GET route that answers 200:
-# its request origin's readiness and its human origin's page stylesheet.
-SIGNER_REQUEST_PATH=/readyz
+# The signer's human origin has one existing GET route that answers 200: its
+# page stylesheet. The ingress probe's human controls use it.
 SIGNER_HUMAN_PATH=/handoff-assets/handoff.css
 
-# The OATS ingress refusal probe (egress image, probe-ingress.mjs), from the
-# services side against the actual TLS ingress: the signer's request SNI must
-# never carry a request for its human Host or :authority to the backend, and
-# matched requests must reach it. It reads the signer's own access log,
-# followed from before the first probe request. TEAM_DEPLOYMENT_INGRESS_CA
-# names the ingress's trust anchors when a private authority signed it.
+# The OATS ingress probe (egress image, probe-ingress.mjs, full mode), from the
+# services side against the actual TLS ingress, for every route egress allows:
+# the policy's five origins at their pinned addresses, each with matched H1/H2
+# controls that must reach its own backend, and the human origin's Host or
+# :authority carried under any of them, which must reach no backend. Each
+# backend's own access log is followed from before the first probe request.
+# The registry's log is one of them: a deployment whose registry is not one of
+# its services cannot be probed here. TEAM_DEPLOYMENT_INGRESS_CA names the
+# ingress's trust anchors when a private authority signed it.
+INGRESS_ROUTES="aweb:aweb:/ready secrets:secrets:/ready logs:logs:/ready signer:signer:/readyz registry:registry:/health"
+
 ingress_probe() {
-  local origins log follower ca_mount=() ca_flag=() out status
-  read -r -a origins < <(python_in_server - "$deployment" "$run_dir/egress-policy.json" <<'PY'
+  local origins logs followers=() route role service path ca_mount=() ca_flag=() out status
+  read -r -a origins < <(python_in_server - "$run_dir/egress-policy.json" <<'PY'
 import json
 import sys
 
-import yaml
-
-config = yaml.safe_load(open(sys.argv[1], encoding="utf-8"))
-policy = json.load(open(sys.argv[2], encoding="utf-8"))
-print(policy["targets"]["signer"]["addresses"][0], config["signer"]["requestOrigin"], config["signer"]["humanOrigin"])
+policy = json.load(open(sys.argv[1], encoding="utf-8"))
+print(policy["targets"]["signer"]["addresses"][0], policy["targets"]["signer"]["origin"], policy["humanOrigin"])
 PY
 )
-  log="$run_dir/signer-backend.log"
-  : >"$log"
-  dc logs --follow --no-color --no-log-prefix signer >>"$log" 2>&1 &
-  follower=$!
-  # The follower is attached once it has written the log so far.
-  for _ in $(seq 1 50); do [[ -s "$log" ]] && break; sleep 0.2; done
+  logs="$run_dir/ingress-logs"
+  rm -rf "$logs"
+  mkdir -p "$logs"
+  for route in $INGRESS_ROUTES; do
+    IFS=: read -r role service path <<<"$route"
+    if ! dc config --services | grep -qx "$service"; then
+      echo "e2e-team-deployment: the ingress probe needs $role's backend log, and $service is not a service of this deployment" >&2
+      return 1
+    fi
+    : >"$logs/$role.log"
+    dc logs --follow --no-color --no-log-prefix "$service" >>"$logs/$role.log" 2>&1 &
+    followers+=($!)
+  done
+  # Each follower is attached once it has written its log so far.
+  for route in $INGRESS_ROUTES; do
+    IFS=: read -r role service path <<<"$route"
+    for _ in $(seq 1 50); do [[ -s "$logs/$role.log" ]] && break; sleep 0.2; done
+  done
+  python_in_server - "$logs/route-logs.json" $INGRESS_ROUTES <<'PY'
+import json
+import sys
+
+out, *routes = sys.argv[1:]
+table = {}
+for route in routes:
+    role, _service, path = route.split(":")
+    table[role] = {"path": path, "log": f"/logs/{role}.log"}
+open(out, "w", encoding="utf-8").write(json.dumps(table, indent=2) + "\n")
+PY
   if [[ -n "${TEAM_DEPLOYMENT_INGRESS_CA:-}" ]]; then
-    ca_mount=(-v "$TEAM_DEPLOYMENT_INGRESS_CA:/probe/ca.pem:ro")
-    ca_flag=(--ca-file /probe/ca.pem)
+    ca_mount=(-v "$TEAM_DEPLOYMENT_INGRESS_CA:/input/world-ca.pem:ro")
+    ca_flag=(--ca-file /input/world-ca.pem)
   fi
-  out="$(docker run --rm --network "${project}_services" -v "$log:/probe/signer.log:ro" ${ca_mount[@]+"${ca_mount[@]}"} \
-    --entrypoint node "$(env_value EGRESS_IMAGE)" /opt/egress/probe-ingress.mjs \
+  out="$(docker run --rm --network "${project}_services" -v "$logs:/logs:ro" \
+    -v "$run_dir/egress-policy.json:/input/egress-policy.json:ro" -v "$logs/route-logs.json:/input/route-logs.json:ro" \
+    ${ca_mount[@]+"${ca_mount[@]}"} --entrypoint node "$(env_value EGRESS_IMAGE)" /opt/egress/probe-ingress.mjs \
     --address "${origins[0]}" --request-origin "${origins[1]}" --human-origin "${origins[2]}" \
-    --request-log /probe/signer.log --human-log /probe/signer.log ${ca_flag[@]+"${ca_flag[@]}"} \
-    --request-path "$SIGNER_REQUEST_PATH" --human-path "$SIGNER_HUMAN_PATH" </dev/null)" && status=0 || status=$?
-  kill "$follower" 2>/dev/null || true
-  wait "$follower" 2>/dev/null || true
-  echo "ingress refusal probe: exit $status, $out"
+    --human-log /logs/signer.log --human-path "$SIGNER_HUMAN_PATH" ${ca_flag[@]+"${ca_flag[@]}"} \
+    --policy /input/egress-policy.json --route-logs /input/route-logs.json </dev/null)" && status=0 || status=$?
+  for follower in "${followers[@]}"; do
+    kill "$follower" 2>/dev/null || true
+    wait "$follower" 2>/dev/null || true
+  done
+  echo "ingress probe: exit $status, $out"
   [[ "$status" -eq 0 && "$out" == OATS_EGRESS_INGRESS_PASS ]]
 }
 
@@ -276,7 +303,7 @@ PY
 # Docker socket and TEAM_DEPLOYMENT_PROTECTED_SOURCES (colon separated), each
 # as the engine host resolves it.
 boundary_probe() {
-  local node="${TEAM_DEPLOYMENT_NODE:-node}" probe="$project-agent-probe" ca=0 ca_mount=() sources=() out status
+  local node="${TEAM_DEPLOYMENT_NODE:-node}" probe="$project-agent-probe" sources=() out status
   if ! "$node" -e 'process.exit(Number(process.versions.node.split(".")[0]) >= 22 ? 0 : 1)'; then
     echo "e2e-team-deployment: the boundary probe needs Node 22 or later as $node" >&2
     return 1
@@ -284,11 +311,6 @@ boundary_probe() {
   rm -rf "$run_dir/probe"
   mkdir -p "$run_dir/probe/state" "$run_dir/probe/login"
   : >"$run_dir/probe/authorized_keys"
-  if [[ -n "${TEAM_DEPLOYMENT_INGRESS_CA:-}" ]]; then
-    ca=1
-    cp "$TEAM_DEPLOYMENT_INGRESS_CA" "$run_dir/probe/ca.pem"
-    ca_mount=(-v "$run_dir/probe/ca.pem:/public/world-ca.pem:ro")
-  fi
   local secrets_dir component name
   secrets_dir="$(cd "$TEAM_DIR" && realpath "$(env_value SECRETS_DIR)")"
   for component in POSTGRES AWEB SECRETS LOGS SIGNER; do
@@ -309,9 +331,9 @@ boundary_probe() {
   docker rm -f "$probe" >/dev/null 2>&1 || true
   TEAM_STATE_DIR="$run_dir/probe/state" TEAM_LOGIN_DIR="$run_dir/probe/login" \
     AUTHORIZED_KEYS_FILE="$run_dir/probe/authorized_keys" \
-    dc run -d --no-deps --name "$probe" --entrypoint sleep ${ca_mount[@]+"${ca_mount[@]}"} agent infinity >/dev/null
+    dc run -d --no-deps --name "$probe" --entrypoint sleep agent infinity >/dev/null
   python_in_server - "$deployment" "$TEAM_DIR" "$run_dir" "$project" "$(env_value AGENT_IMAGE)" "$(env_value EGRESS_IMAGE)" \
-    "$ca" "${sources[@]}" >"$run_dir/boundary-plan.json" <<'PY'
+    "${sources[@]}" >"$run_dir/boundary-plan.json" <<'PY'
 import importlib.util
 import json
 import sys
@@ -319,7 +341,7 @@ from pathlib import Path
 
 import yaml
 
-path, team_dir, run_dir, project, agent, egress, ca, *sources = sys.argv[1:]
+path, team_dir, run_dir, project, agent, egress, *sources = sys.argv[1:]
 spec = importlib.util.spec_from_file_location("egress_policy", Path(team_dir) / "egress_policy.py")
 egress_policy = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(egress_policy)
@@ -331,7 +353,6 @@ plan = egress_policy.boundary_plan(
     run_dir=run_dir,
     backends=json.loads(Path(run_dir, "egress-addresses.json").read_text(encoding="utf-8"))["backends"],
     protected_sources=sources,
-    ca=ca == "1",
 )
 print(json.dumps(plan, indent=2))
 PY
@@ -358,6 +379,8 @@ start_agent() {
     AGENT_MEMORY="$(env_value AGENT_MEMORY)" AGENT_CPUS="$(env_value AGENT_CPUS)" \
     TEAM_STATE_DIR="$(env_value TEAM_STATE_DIR)" TEAM_LOGIN_DIR="$(env_value TEAM_LOGIN_DIR)" \
     AUTHORIZED_KEYS_FILE="$(env_value AUTHORIZED_KEYS_FILE)" RESOLV_CONF_FILE="$(env_value RESOLV_CONF_FILE)" \
+    AGENT_TMP_SIZE="$(env_value AGENT_TMP_SIZE)" AGENT_CA_FILE="$(env_value AGENT_CA_FILE)" \
+    AGENT_MIRRORS_DIR="$(env_value AGENT_MIRRORS_DIR)" \
     PATH="$(dirname "$(command -v "$node")"):$PATH" \
     "$(env_value OATS_SOURCE)/container/agent/accept.sh" "oats-agent-$(env_value TEAM)" --evidence live-lab \
     >"$run_dir/agent-accept.out" 2>&1 </dev/null && status=0 || status=$?
