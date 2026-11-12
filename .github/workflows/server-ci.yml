@@ -93,7 +93,6 @@ jobs:
       - name: Validate the customer compose file
         working-directory: server
         env:
-          POSTGRES_PASSWORD: testpass
           AWEB_PUBLIC_ORIGIN: https://aweb.example.com
-          AWEB_MEMBER_KEYS_DIR: /etc/aweb
+          SECRETS_DIR: /etc/aweb-secrets
         run: docker compose -f docker-compose.customer.yml config

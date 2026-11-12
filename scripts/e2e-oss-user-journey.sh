@@ -1394,7 +1394,8 @@ echo "=== Phase 11b2: Customer server with a member key ==="
 # registry-wide token. It is started from the shipped customer Compose file.
 CUSTOMER_IDENTITY_HOME="$E2E_ROOT/customer-server-home"
 CUSTOMER_IDENTITY_DIR="$CUSTOMER_IDENTITY_HOME/identity"
-CUSTOMER_KEYS_DIR="$CUSTOMER_DIR/keys"
+CUSTOMER_SECRETS_DIR="$CUSTOMER_DIR/secrets"
+CUSTOMER_KEYS_DIR="$CUSTOMER_SECRETS_DIR/aweb"
 mkdir -p "$CUSTOMER_IDENTITY_DIR" "$CUSTOMER_KEYS_DIR"
 
 capture_success customer_request "customer_request" run_aw_with_home_in "$CUSTOMER_IDENTITY_HOME" "$CUSTOMER_IDENTITY_DIR" id team request \
@@ -1425,8 +1426,11 @@ run_success "customer server fetch cert" run_aw_with_home_in "$CUSTOMER_IDENTITY
 # by the image's uid 1001 and by no one else.
 cp "$CUSTOMER_IDENTITY_DIR/.aw/signing.key" "$CUSTOMER_KEYS_DIR/devteam.key"
 printf '{"devteam:test.local": "devteam.key"}\n' > "$CUSTOMER_KEYS_DIR/member-keys.json"
+printf 'postgresql://aweb:customer-e2e-test@postgres:5432/aweb\n' > "$CUSTOMER_KEYS_DIR/database-url"
+mkdir -p "$CUSTOMER_SECRETS_DIR/postgres"
+printf 'customer-e2e-test' > "$CUSTOMER_SECRETS_DIR/postgres/password"
 docker run --rm -v "$CUSTOMER_KEYS_DIR:/keys" --entrypoint /bin/sh redis:7-alpine \
-  -c 'chown 1001:1001 /keys/devteam.key && chmod 0400 /keys/devteam.key'
+  -c 'chown 1001:1001 /keys/devteam.key /keys/database-url && chmod 0400 /keys/devteam.key /keys/database-url'
 
 CUSTOMER_PORT_ALLOCATOR="$CUSTOMER_PROJECT-port"
 docker run -d --name "$CUSTOMER_PORT_ALLOCATOR" \
@@ -1438,9 +1442,8 @@ CUSTOMER_PORT="$(docker inspect --format '{{(index (index .NetworkSettings.Ports
 CUSTOMER_URL="http://$DOCKER_PUBLISHED_HOST:$CUSTOMER_PORT"
 
 printf '%s\n' \
-  "POSTGRES_PASSWORD=customer-e2e-test" \
   "AWEB_PUBLIC_ORIGIN=$CUSTOMER_URL" \
-  "AWEB_MEMBER_KEYS_DIR=$CUSTOMER_KEYS_DIR" \
+  "SECRETS_DIR=$CUSTOMER_SECRETS_DIR" \
   "AWEB_PORT=$CUSTOMER_PORT" \
   "AWEB_BIND_ADDRESS=$DOCKER_BIND_ADDRESS" \
   "AWID_REGISTRY_URL=http://awid:8010" \

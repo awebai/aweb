@@ -532,23 +532,32 @@ aweb serve
 To run the same thing under Docker Compose, use
 [`server/docker-compose.customer.yml`](../server/docker-compose.customer.yml).
 It runs aweb, PostgreSQL and Redis, no registry, and has no service token.
-Put `member-keys.json` and the key files it names in one directory, with
-relative paths in the JSON, and name that directory. The key files must be
-readable by uid `1001` and by no one else: owner `1001` with mode `0400`, or
-`root:1001` with mode `0440`.
+Every credential is a file under one directory, and none is in the
+environment or in `.env`:
+
+```text
+/etc/aweb-secrets/
+  aweb/member-keys.json    team id -> key file, relative paths
+  aweb/<name>.key          the member key files it names
+  aweb/database-url        postgresql://aweb:<password>@postgres:5432/aweb
+  postgres/password        the same password, alone
+```
+
+The files under `aweb/` must be readable by uid `1001` and by no one else:
+owner `1001` with mode `0400`, or `root:1001` with mode `0440`.
+`postgres/password` is read by root in the database container.
 
 ```bash
 cd server
 cat > .env <<'ENV'
-POSTGRES_PASSWORD=<a generated password>
 AWEB_PUBLIC_ORIGIN=https://aweb.example.com
-AWEB_MEMBER_KEYS_DIR=/etc/aweb
+SECRETS_DIR=/etc/aweb-secrets
 ENV
 docker compose -f docker-compose.customer.yml up --build -d
 curl http://localhost:8000/ready
 ```
 
-The directory is mounted read-only at `/etc/aweb`. The default
+Each subdirectory is mounted read-only at `/run/secrets/<service>`. The default
 `server/docker-compose.yml` is the other shape: it operates its own AWID
 service and uses the shared token. Startup refuses missing credentials,
 an empty key map, unreadable keys or non-Ed25519 PEM keys. Restart after changing

@@ -2,7 +2,8 @@
 #
 # The server is an ordinary member of each team it serves: it holds that
 # member's key and nothing wider. It runs no registry and has no
-# AWID_SERVICE_TOKEN. See "Customer server using the public AWID registry" in
+# AWID_SERVICE_TOKEN. Every credential is a file under SECRETS_DIR, mounted
+# read-only at /run/secrets/<service>; none is in the environment. See "Customer server using the public AWID registry" in
 # docs/self-hosting-guide.md for how the team owner issues the membership.
 #
 #   docker compose -f docker-compose.customer.yml up --build -d
@@ -23,10 +24,11 @@ services:
     restart: unless-stopped
     environment:
       POSTGRES_USER: ${POSTGRES_USER:-aweb}
-      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?POSTGRES_PASSWORD is required}
+      POSTGRES_PASSWORD_FILE: /run/secrets/postgres/password
       POSTGRES_DB: ${POSTGRES_DB:-aweb}
     volumes:
       - postgres_data:/var/lib/postgresql/data
+      - "${SECRETS_DIR:?SECRETS_DIR is required, the directory that holds aweb/ and postgres/}/postgres:/run/secrets/postgres:ro"
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-aweb} -d ${POSTGRES_DB:-aweb}"]
       interval: 10s
@@ -41,7 +43,7 @@ services:
     ports:
       - "${AWEB_BIND_ADDRESS:-127.0.0.1}:${AWEB_PORT:-8000}:8000"
     environment:
-      AWEB_DATABASE_URL: postgresql://${POSTGRES_USER:-aweb}:${POSTGRES_PASSWORD}@postgres:5432/${POSTGRES_DB:-aweb}
+      AWEB_DATABASE_URL_FILE: /run/secrets/aweb/database-url
       AWEB_REDIS_URL: redis://redis:6379/0
       AWEB_HOST: 0.0.0.0
       AWEB_PORT: 8000
@@ -49,9 +51,9 @@ services:
       APP_ENV: ${APP_ENV:-production}
       AWEB_LOG_JSON: ${AWEB_LOG_JSON:-true}
       AWID_REGISTRY_URL: ${AWID_REGISTRY_URL:-https://api.awid.ai}
-      AWID_MEMBER_KEYS_FILE: /etc/aweb/member-keys.json
+      AWID_MEMBER_KEYS_FILE: /run/secrets/aweb/member-keys.json
     volumes:
-      - "${AWEB_MEMBER_KEYS_DIR:?AWEB_MEMBER_KEYS_DIR is required, the directory that holds member-keys.json and the member key files it names}:/etc/aweb:ro"
+      - "${SECRETS_DIR:?SECRETS_DIR is required, the directory that holds aweb/ and postgres/}/aweb:/run/secrets/aweb:ro"
     depends_on:
       redis:
         condition: service_healthy
