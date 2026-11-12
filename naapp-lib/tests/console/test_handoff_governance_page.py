@@ -316,11 +316,22 @@ async def test_malformed_real_authenticated_state_disables_approval(governance_s
         assert not s.callback.done()
 
 
-async def test_even_a_committed_response_cannot_add_a_code_to_the_callback(governance_service):
+@pytest.mark.parametrize("width", [375, 1440])
+async def test_even_a_committed_response_cannot_add_a_code_to_the_callback(
+    governance_service, width, tmp_path
+):
     s = governance_service
-    context, page, _, _ = await open_page(s, 375)
+    context, page, _, _ = await open_page(s, width)
     async with context:
-        observed = []
+        observed, executes = [], []
+        page.on(
+            "request",
+            lambda r: (
+                executes.append(r.url)
+                if r.method == "POST" and r.url.endswith("/governance/execute")
+                else None
+            ),
+        )
 
         async def corrupt(route):
             response = await route.fetch()
@@ -336,12 +347,20 @@ async def test_even_a_committed_response_cannot_add_a_code_to_the_callback(gover
         await page.locator("#handoff-action").click()
         await page.wait_for_function("document.body.dataset.handoffState === 'refused'")
         assert observed == [(200, "committed")]
+        await expect(page.locator("#handoff-action")).to_be_disabled()
+        await expect(page.get_by_role("status")).to_contain_text("cannot confirm")
+        await expect(page.get_by_role("status")).to_contain_text(
+            "Check the existing receipt in your terminal before retrying."
+        )
         assert not s.callback.done()
         # The effect committed before its browser reply was damaged. Refusing
         # navigation must never replay it; aw can recover its receipt.
         assert (
             await s.world.signer.receipt(s.prepared.operation_id, reader=s.world.reader)
         ).state == "committed"
+        assert executes == [s.origin + f"/handoff/{s.prepared.handoff_id}/governance/execute"]
+        assert await page.evaluate("document.documentElement.scrollWidth <= innerWidth")
+        await page.screenshot(path=tmp_path / f"governance-uncertain-{width}.png", full_page=True)
 
 
 @pytest.mark.parametrize("governance_service", [False], indirect=True)

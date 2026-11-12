@@ -46,7 +46,9 @@
     }
     csrf = undefined;
     document.body.dataset.handoffState = "refused";
-    status.textContent = "This request could not be completed. Return to your terminal and start again.";
+    status.textContent = governance
+      ? "This page cannot confirm the operation’s outcome. Check the existing receipt in your terminal before retrying."
+      : "This request could not be completed. Return to your terminal and start again.";
   }
 
   function complete(result) {
