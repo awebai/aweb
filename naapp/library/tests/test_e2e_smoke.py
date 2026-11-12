@@ -28,15 +28,23 @@ class E2EStack:
     compose: list[str]
 
 
+def candidate_hostname(project: str, service: str) -> str:
+    helper = Path(__file__).resolve().parents[3] / "scripts/candidate-network.py"
+    return subprocess.check_output([sys.executable, str(helper), "hostname", project, service], text=True).strip()
+
+
 def e2e_stack(env: Mapping[str, str]) -> E2EStack:
     """Endpoints and project for the stack allocated by the gate or local make."""
     host = env.get("NAAPP_E2E_HOST", "127.0.0.1")
     project = env.get("NAAPP_E2E_PROJECT", "library-e2e")
     awid_port = env.get("NAAPP_E2E_AWID_PORT", "18010")
     postgres_port = env.get("NAAPP_E2E_POSTGRES_PORT", "55432")
+    container_network = env.get("NAAPP_E2E_CONTAINER_NETWORK") == "1"
     return E2EStack(
-        awid_url=f"http://{host}:{awid_port}",
-        postgres_url=f"postgresql://library:library@{host}:{postgres_port}/library",
+        awid_url=(f"http://{candidate_hostname(project, 'awid')}:8010" if container_network
+                  else f"http://{host}:{awid_port}"),
+        postgres_url=(f"postgresql://library:library@{candidate_hostname(project, 'postgres')}:5432/library" if container_network
+                      else f"postgresql://library:library@{host}:{postgres_port}/library"),
         compose=["docker", "compose", "-p", project, "-f", "docker-compose.e2e.yml"],
     )
 

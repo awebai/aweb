@@ -2,6 +2,8 @@
 FROM python:3.12-bookworm
 
 ARG GO_VERSION=1.26.11
+ARG DOCKER_COMPOSE_VERSION=5.7.1-1~debian.12~bookworm
+COPY candidate-gate/check-compose-version.sh /opt/candidate/check-compose-version.sh
 
 RUN apt-get update \
     && apt-get install -y --no-install-recommends \
@@ -17,7 +19,8 @@ RUN apt-get update \
     && echo "deb [arch=$(dpkg --print-architecture) signed-by=/etc/apt/keyrings/docker.gpg] https://download.docker.com/linux/debian bookworm stable" \
        > /etc/apt/sources.list.d/docker.list \
     && apt-get update \
-    && apt-get install -y --no-install-recommends nodejs docker-ce-cli docker-buildx-plugin docker-compose-plugin \
+    && apt-get install -y --no-install-recommends nodejs docker-ce-cli docker-buildx-plugin "docker-compose-plugin=${DOCKER_COMPOSE_VERSION}" \
+    && bash /opt/candidate/check-compose-version.sh "$DOCKER_COMPOSE_VERSION" \
     && rm -rf /var/lib/apt/lists/*
 
 RUN curl -fsSL "https://go.dev/dl/go${GO_VERSION}.linux-$(dpkg --print-architecture | sed 's/amd64/amd64/;s/arm64/arm64/').tar.gz" \

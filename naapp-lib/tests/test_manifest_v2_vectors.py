@@ -12,11 +12,13 @@ import pytest
 
 from aweb_naapp.manifest import (
     Attestation,
+    Manifest,
     ManifestError,
     check_v1_variant,
     load_manifest,
     select_variant,
 )
+from aweb_naapp.manifest_keys import check_manifest_keys
 
 VECTORS = Path(__file__).resolve().parents[2] / "test-vectors" / "app-manifests"
 V2 = json.loads((VECTORS / "app-manifest-v2-v1.json").read_text(encoding="utf-8"))
@@ -60,13 +62,21 @@ def _manifest_bytes(case: dict[str, Any], bases: dict[str, Any] | None = None) -
     return json.dumps(doc, separators=(",", ":"), ensure_ascii=False).encode("utf-8")
 
 
+def _read(data: bytes) -> Manifest:
+    """The Python reader's verdict: the manifest's shape at load, then its keys,
+    which every consumer checks before it acts on them."""
+    manifest = load_manifest(data, reserved_names=RESERVED)
+    check_manifest_keys(manifest)
+    return manifest
+
+
 def _assert_outcome(data: bytes, expected: dict[str, Any]) -> None:
     if not expected["accepted"]:
         with pytest.raises(ManifestError) as refused:
-            load_manifest(data, reserved_names=RESERVED)
+            _read(data)
         assert refused.value.code == expected["error"], refused.value
         return
-    assert load_manifest(data, reserved_names=RESERVED).view() == expected["resolved"]
+    assert _read(data).view() == expected["resolved"]
 
 
 def test_vector_schemas() -> None:

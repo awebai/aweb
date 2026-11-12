@@ -38,7 +38,7 @@ async def test_a_lone_surrogate_in_the_certificate_is_a_401(registry, member) ->
     async with relying_app(registry, public_origin=ORIGIN) as (client, _):
         response = await client.get("/v1/items", headers=headers)
     assert response.status_code == 401, response.text
-    assert response.json()["detail"] == "Team certificate signature verification failed"
+    assert response.json()["detail"] == "bad_signature"
 
 
 async def test_a_lone_surrogate_in_the_signed_payload_is_a_401(registry, member) -> None:
@@ -63,7 +63,7 @@ async def test_deeply_nested_certificate_is_a_401(registry, member, depth) -> No
     async with relying_app(registry, public_origin=ORIGIN) as (client, _):
         response = await client.get("/v1/items", headers=headers)
     assert response.status_code == 401, response.text
-    assert response.json()["detail"] == "Malformed team certificate"
+    assert response.json()["detail"] == "malformed"
 
 
 async def test_a_deeply_nested_signed_payload_is_a_401(registry, member) -> None:
@@ -73,3 +73,12 @@ async def test_a_deeply_nested_signed_payload_is_a_401(registry, member) -> None
         response = await client.get("/v1/items", headers=headers)
     assert response.status_code == 401, response.text
     assert response.json()["detail"] == "Invalid X-AWEB-Signed-Payload"
+
+
+async def test_a_certificate_for_a_team_id_that_is_not_one_is_a_401(registry) -> None:
+    stranger = Member(team_id="not-a-team-id")
+    headers = stranger.headers(aud=ORIGIN, method="GET", path="/v1/items")
+    async with relying_app(registry, public_origin=ORIGIN) as (client, _):
+        response = await client.get("/v1/items", headers=headers)
+    assert response.status_code == 401, response.text
+    assert response.json()["detail"] == "invalid_field: team_id"

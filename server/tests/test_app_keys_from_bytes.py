@@ -35,6 +35,7 @@ from aweb_naapp.manifest import (
     load_manifest,
     template_kids,
 )
+from awid.did import did_from_public_key
 from awid.signing import canonical_json_bytes, sign_message
 from tests.installation_fixtures import install_fixture_app as install_app
 from tests.test_app_credentials import _app as _probe_app
@@ -565,3 +566,24 @@ async def test_every_live_apps_committed_manifest_installs_through_the_reader(db
         assert await get_active_app_emit_key(
             db, team_id=TEAM_ID, app_id=app_id, kid=emitter["kid"], did_key=emitter["did_key"]
         ) is not None
+
+
+BAD_DID = next(case for case in VECTOR["cases"] if case["name"] == "app_key_bad_did")["mutations"][0]["value"]
+# The encoding of the identity point, a small-order Ed25519 key anyone can sign as.
+SMALL_ORDER_DID = did_from_public_key(b"\x01" + b"\x00" * 31)
+
+
+@pytest.mark.parametrize("did_key", [BAD_DID, SMALL_ORDER_DID], ids=["app_key_bad_did", "small-order"])
+@pytest.mark.parametrize(("manifest_version", "code"), [(1, "manifest_invalid"), (2, "app_keys_invalid")])
+def test_registration_refuses_a_well_shaped_key_that_is_no_ed25519_key(did_key, manifest_version, code):
+    document = copy.deepcopy(VECTOR["base_manifests"][f"v{manifest_version}"])
+    if manifest_version == 1:
+        document["event_emitters"][0]["did_key"] = did_key
+    else:
+        document["app_keys"][0]["did_key"] = did_key
+    manifest = _canonical(document)
+    with pytest.raises(ValidationError) as refused:
+        manifest_registration(manifest, app_id=APP_ID, origin=ORIGIN, digest=_digest(manifest))
+    assert refused.value.detail["code"] == code
+    assert isinstance(refused.value.__cause__, ManifestError)
+    assert refused.value.__cause__.code == code

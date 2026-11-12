@@ -34,6 +34,11 @@ class E2EStack:
     redis_url: str | None = None
 
 
+def candidate_hostname(project: str, service: str) -> str:
+    helper = Path(__file__).resolve().parents[3] / "scripts/candidate-network.py"
+    return subprocess.check_output([sys.executable, str(helper), "hostname", project, service], text=True).strip()
+
+
 def e2e_stack(env: Mapping[str, str]) -> E2EStack:
     """The docker-compose stack `make e2e` brings up, as the NAAPP_E2E_* names place it.
 
@@ -47,12 +52,12 @@ def e2e_stack(env: Mapping[str, str]) -> E2EStack:
     container_network = env.get("NAAPP_E2E_CONTAINER_NETWORK") == "1"
     return E2EStack(
         host=host,
-        awid_url=(f"http://{project}-awid.test:8010" if container_network
+        awid_url=(f"http://{candidate_hostname(project, 'awid')}:8010" if container_network
                   else f"http://{host}:{awid_port}"),
-        postgres_url=(f"postgresql://folio:folio@{project}-postgres.test:5432/folio" if container_network
+        postgres_url=(f"postgresql://folio:folio@{candidate_hostname(project, 'postgres')}:5432/folio" if container_network
                       else f"postgresql://folio:folio@{host}:{postgres_port}/folio"),
         compose=["docker", "compose", "-p", project, "-f", "docker-compose.e2e.yml"],
-        redis_url=f"redis://{project}-redis.test:6379/0" if container_network else None,
+        redis_url=f"redis://{candidate_hostname(project, 'redis')}:6379/0" if container_network else None,
     )
 
 

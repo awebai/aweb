@@ -107,7 +107,7 @@ manifest or manufacture a receipt to clear a backlog.
 
 | Logs ingest status | Public codes / meaning | Operator disposition to exercise |
 | --- | --- | --- |
-| 401 | `transport_certificate_invalid`, `transport_invalid_value`, `transport_<code>` (for example `transport_wrong_scheme`), `provenance_client_certificate` | Check the actual sender identity/certificate contract and whether the producer certificate is active; do not bypass verification. |
+| 401 | `transport_certificate_invalid`, `transport_invalid_value`, `transport_<code>` (for example `transport_wrong_scheme`) | Check the actual sender identity/certificate contract and whether the producer certificate is active; do not bypass verification. |
 | 403 | `binding_required`, `provenance_app_production`, `provenance_core_key` | Check installation, activated binding and provenance; this is not a transient successful delivery. |
 | 409 | `event_conflict` | Preserve both event identity and existing receiver evidence; escalate the conflict. |
 | 422 | `occurred_after_receipt`, `unknown_catalog`, `schema_<code>` | Check envelope schema, version/catalog/time compatibility using metadata only. |

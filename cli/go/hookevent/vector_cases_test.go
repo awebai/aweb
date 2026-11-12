@@ -312,8 +312,15 @@ var teamSeed = seedFrom(0x80)
 // the check that it is a real certificate.
 func fixtureCertificate(t *testing.T, signer ed25519.PrivateKey, team, certificateID, memberDIDKey string) *awid.TeamCertificate {
 	t.Helper()
+	return fixtureCertificateNaming(t, signer, didKeyOf(signer), team, certificateID, memberDIDKey)
+}
+
+// fixtureCertificateNaming is fixtureCertificate with the team_did_key the
+// certificate claims given apart from the key that signs it.
+func fixtureCertificateNaming(t *testing.T, signer ed25519.PrivateKey, teamDIDKey, team, certificateID, memberDIDKey string) *awid.TeamCertificate {
+	t.Helper()
 	cert := &awid.TeamCertificate{
-		Version: 1, CertificateID: certificateID, Team: team, TeamDIDKey: didKeyOf(signer),
+		Version: 1, CertificateID: certificateID, Team: team, TeamDIDKey: teamDIDKey,
 		MemberDIDKey: memberDIDKey, Alias: "bond", IdentityScope: awid.IdentityModeLocal,
 		IssuedAt: "2026-10-01T09:00:00Z",
 	}
@@ -354,8 +361,18 @@ func buildDeliveryVector(t *testing.T) map[string]any {
 	target, _ := url.Parse(logsTarget)
 	stamp, _ := time.Parse(deliveryTimeLayout, signedAt)
 	team := keyFrom(teamSeed)
-	receive := map[string]any{"audience": logsOrigin, "binding_id": bindingID, "team_key_did": didKeyOf(team), "now": receivedAt}
+	// What the team's registry says: its current key, no revoked certificate,
+	// and the client's certificate registered.
+	received := func() map[string]any {
+		return map[string]any{
+			"audience": logsOrigin, "binding_id": bindingID, "team_key_did": didKeyOf(team), "now": receivedAt,
+			"revoked_certificate_ids": []string{}, "registered_certificate_ids": []string{"c_77"},
+		}
+	}
+	receive := received()
 	clientCert := fixtureCertificate(t, team, teamID, "c_77", didKeyOf(keyFrom(clientSeed)))
+	// The team_did_key a certificate carries is not authority: the registry's key is.
+	claimsAnotherKey := fixtureCertificateNaming(t, team, didKeyOf(keyFrom(memberSeed)), teamID, "c_77", didKeyOf(keyFrom(clientSeed)))
 
 	type positive struct {
 		name string
@@ -368,6 +385,7 @@ func buildDeliveryVector(t *testing.T) map[string]any {
 	for _, p := range []positive{
 		{"core_event_to_logs", coreSeed, coreEnvelope(), nil},
 		{"client_event_to_logs_with_its_certificate", clientSeed, clientEnvelope(), clientCert},
+		{"team_did_key_field_not_authority", clientSeed, clientEnvelope(), claimsAnotherKey},
 	} {
 		key := keyFrom(p.seed)
 		signing, signature, err := Sign(key, p.env)
@@ -444,8 +462,8 @@ func buildDeliveryVector(t *testing.T) map[string]any {
 		receive                       map[string]any
 		client                        bool
 	}
-	rx := func(key, value string) map[string]any {
-		r := map[string]any{"audience": logsOrigin, "binding_id": bindingID, "team_key_did": didKeyOf(team), "now": receivedAt}
+	rx := func(key string, value any) map[string]any {
+		r := received()
 		r[key] = value
 		return r
 	}
@@ -474,7 +492,9 @@ func buildDeliveryVector(t *testing.T) map[string]any {
 		{name: "certificate_for_another_key", client: true, headers: certFor(fixtureCertificate(t, team, teamID, "c_77", didKeyOf(member))), err: "certificate_mismatch"},
 		{name: "certificate_for_another_team", client: true, headers: certFor(fixtureCertificate(t, team, "other:example.com", "c_77", clientDID)), err: "certificate_mismatch"},
 		{name: "certificate_for_another_certificate_id", client: true, headers: certFor(fixtureCertificate(t, team, teamID, "c_78", clientDID)), err: "certificate_mismatch"},
-		{name: "certificate_not_from_the_team_key", client: true, headers: certFor(fixtureCertificate(t, member, teamID, "c_77", clientDID)), err: "certificate_invalid"},
+		{name: "signed_by_another_team_key", client: true, headers: certFor(fixtureCertificate(t, member, teamID, "c_77", clientDID)), err: "certificate_invalid"},
+		{name: "client_certificate_revoked", client: true, headers: client.Headers, receive: rx("revoked_certificate_ids", []string{"c_77"}), err: "certificate_invalid"},
+		{name: "client_certificate_not_registered", client: true, headers: client.Headers, receive: rx("registered_certificate_ids", []string{"c_41"}), err: "certificate_invalid"},
 	}
 	forgedSignature := fixtureCertificate(t, team, teamID, "c_77", clientDID)
 	forgedSignature.Signature = sign(member, []byte("not the certificate"))
@@ -506,19 +526,19 @@ func buildDeliveryVector(t *testing.T) map[string]any {
 	}
 
 	return map[string]any{
-		"name":   "hook-delivery-credential-v1",
-		"status": "frozen (aweb-acgh.16.2)",
+		"name":   "hook-delivery-credential-v2",
+		"status": "frozen (aweb-acya.10)",
 		"scheme": map[string]any{
 			"authority":       "docs/hook-events.md, The delivery credential",
 			"authorization":   "AWEB-Hook DIDKey <did:key> <signature>, the signature over the canonical signed payload: exactly 86 characters of the standard base64 alphabet, no padding, zero trailing bits",
 			"signed_payload":  "X-AWEB-Signed-Payload carries the canonical payload, strict unpadded base64url",
-			"certificate":     "a client delivery carries the member's team certificate in X-AWID-Team-Certificate, encoded as team-auth encodes it; it must be signed by the team's current key and name the event's team, producer key and certificate id; a server delivery carries none",
+			"certificate":     "a client delivery carries the member's team certificate in X-AWID-Team-Certificate, encoded as team-auth encodes it; it must name the event's team, producer key and certificate id, and pass awid's one check of a team certificate under the team's current key, revoked and registered certificates as the target read them; the team_did_key the certificate carries is not authority; a server delivery carries none",
 			"payload_fields":  "v, auth (hook-delivery), aud (the target's origin), method, path (raw path and query), body_sha256, team_id, binding_id, event_id, producer, kid, did_key, timestamp",
 			"producer":        "core, app:<app_id> or client:<certificate_id>; kid is the server producer's kid, or member for a client producer",
 			"body":            "canonical JSON {hook_event: strict unpadded base64url signing bytes, signature: the envelope signature}",
 			"timestamp":       "UTC to the second in its one canonical spelling; refused when more than 300 seconds from the receiver's clock",
 			"order":           "audience and binding are required options; scheme; signed payload strict and canonical; signature by the header did:key; auth; payload fields; did_key equals the header's; v; team_id; aud; method and path; body_sha256; timestamp; binding_id; body; the event (with the credential's team); event_id; producer, kid and did_key equal the event's producer; for a client, the certificate",
-			"receive_options": "what the target knows independently: its own public origin, the binding the delivery must name, the team's current controller key read fresh from the registry, and its clock",
+			"receive_options": "what the target knows independently: its own public origin, the binding the delivery must name, its clock and, read fresh from the team's registry, the team's current controller key, its revoked certificate ids and its registered certificate ids",
 			"what_it_proves":  "these checks prove self-consistency and, for a client, membership by certificate; a server producer's authority comes from resolving its registered key and active production through the team's server",
 		},
 		"positive_cases": positiveCases,

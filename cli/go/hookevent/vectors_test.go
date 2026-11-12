@@ -18,7 +18,7 @@ import (
 
 const (
 	envelopeVectorPath = "../../../docs/vectors/hook-event-envelope-v1.json"
-	deliveryVectorPath = "../../../docs/vectors/hook-delivery-credential-v1.json"
+	deliveryVectorPath = "../../../docs/vectors/hook-delivery-credential-v2.json"
 	catalogVectorPath  = "../../../docs/vectors/hook-catalog-v1.json"
 )
 
@@ -182,10 +182,12 @@ type deliveryVector struct {
 }
 
 type receiveCase struct {
-	Audience   string `json:"audience"`
-	BindingID  string `json:"binding_id"`
-	TeamKeyDID string `json:"team_key_did"`
-	Now        string `json:"now"`
+	Audience                 string   `json:"audience"`
+	BindingID                string   `json:"binding_id"`
+	TeamKeyDID               string   `json:"team_key_did"`
+	RevokedCertificateIDs    []string `json:"revoked_certificate_ids"`
+	RegisteredCertificateIDs []string `json:"registered_certificate_ids"`
+	Now                      string   `json:"now"`
 }
 
 func (r receiveCase) options(t *testing.T) ReceiveOptions {
@@ -193,7 +195,12 @@ func (r receiveCase) options(t *testing.T) ReceiveOptions {
 	if err != nil {
 		t.Fatal(err)
 	}
-	return ReceiveOptions{Audience: r.Audience, BindingID: r.BindingID, TeamKeyDID: r.TeamKeyDID, Now: now}
+	return ReceiveOptions{
+		Audience: r.Audience, BindingID: r.BindingID, TeamKeyDID: r.TeamKeyDID,
+		RevokedCertificateIDs:  r.RevokedCertificateIDs,
+		RegisteredCertificates: awid.RegisteredCertificateIDs(r.RegisteredCertificateIDs),
+		Now:                    now,
+	}
 }
 
 func TestDeliveryVectorCases(t *testing.T) {

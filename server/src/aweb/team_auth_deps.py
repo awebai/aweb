@@ -34,7 +34,7 @@ from aweb.identity_binding import (
     verify_identity_binding,
 )
 from aweb.identity_scope import legacy_lifetime_for_scope, normalize_identity_scope
-from aweb.team_auth import CertificateSignatureError, parse_and_verify_certificate
+from aweb.team_auth import certificate_refusal, parse_and_verify_certificate
 from aweb.team_auth_envelope import team_auth_signature_payload
 
 logger = logging.getLogger(__name__)
@@ -199,10 +199,12 @@ async def verify_request_certificate(request: Request, db, *, fresh: bool = Fals
 
     try:
         cert_data = decode_team_certificate(cert_header)
-    except TeamCertificateError:
-        raise HTTPException(status_code=401, detail="Malformed certificate")
+    except TeamCertificateError as e:
+        raise certificate_refusal(e) from None
 
-    cert_team_id = cert_data.get("team_id", "")
+    cert_team_id = cert_data.get("team_id")
+    if not isinstance(cert_team_id, str) or not cert_team_id.strip():
+        raise certificate_refusal(TeamCertificateError("invalid_field", "team_id"))
 
     # Verify Ed25519 signature over the team-auth request envelope.
     # Legacy clients sign compact v1: {team_id, timestamp, body_sha256}.
@@ -238,76 +240,65 @@ async def verify_request_certificate(request: Request, db, *, fresh: bool = Fals
     # -- Step 4: Resolve team public key from awid --
     team_did_key = await _resolve_team_key(request, cert_team_id)
     if not team_did_key:
-        raise HTTPException(status_code=401, detail=f"Unknown team: {cert_team_id}")
+        raise HTTPException(status_code=401, detail="unknown_team")
 
-    # -- Step 5: Check revocation --
+    # -- Step 5: The team's revoked and registered certificates --
     revoked_certs = await _get_revoked_certificates(request, cert_team_id)
+    # Staged, default OFF: require registry existence (aweb-acya.9). An
+    # unregistered certificate is unrevocable — the revocation set can never
+    # name it — so once hosted anchoring backfill completes, "not registered"
+    # becomes a verification failure. The check keeps its order: signature and
+    # revocation come first, so a revoked certificate keeps its revocation
+    # verdict. See aweb.config.require_registered_certificates for the
+    # activation contract; when OFF this adds zero registry reads, and None
+    # says so to the check.
+    registered_certs = (
+        await _get_registered_certificates(request, cert_team_id)
+        if require_registered_certificates()
+        else None
+    )
 
-    def team_key_resolver(_team_id: str) -> str:
-        return team_did_key
-
-    def revocation_checker(_team_id: str, certificate_id: str) -> bool:
-        return certificate_id in revoked_certs
-
-    def verify_certificate():
+    def check_certificate(team_key: str):
         return parse_and_verify_certificate(
             cert_header,
             request_did_key=did_key,
-            team_public_key_resolver=team_key_resolver,
-            revocation_checker=revocation_checker,
+            team_did_key=team_key,
+            revoked_certificate_ids=revoked_certs,
+            registered_certificate_ids=registered_certs,
         )
 
     try:
-        cert_info = verify_certificate()
-    except CertificateSignatureError as e:
-        # A controller may have rotated outside this client's invalidation
-        # path. Only this failure may spend the bounded refresh budget.
-        registry = getattr(request.app.state, "awid_registry_client", None)
-        refresh = getattr(registry, "refresh_team_key_after_signature_failure", None)
-        refreshed_key = None
-        if refresh is not None:
-            domain, team_name = parse_team_id(cert_team_id)
-            refreshed_key = await refresh(domain, team_name, rejected_key=team_did_key)
-        if not refreshed_key or refreshed_key == team_did_key:
-            raise HTTPException(status_code=401, detail=str(e)) from e
-        team_did_key = refreshed_key
         try:
-            cert_info = verify_certificate()
-        except ValueError as retry_error:
-            raise HTTPException(status_code=401, detail=str(retry_error)) from retry_error
-        # Bad signatures under the refreshed key must not drive revocation
-        # reads. A valid replacement certificate also needs current revocations.
-        revoked_certs = await _get_revoked_certificates(request, cert_team_id, fresh=True)
-        if cert_info["certificate_id"] in revoked_certs:
-            raise HTTPException(
-                status_code=401,
-                detail=f"Certificate {cert_info['certificate_id']} has been revoked",
-            )
-    except ValueError as e:
-        raise HTTPException(status_code=401, detail=str(e))
-
-    # -- Step 5b (staged, default OFF): require registry existence --
-    # An unregistered certificate is unrevocable — the revocation set can
-    # never name it — so once hosted anchoring backfill completes,
-    # "not registered" becomes a verification failure. Ordering matters:
-    # this runs only after signature and revocation checks pass, so a
-    # revoked certificate keeps its revocation verdict. See
-    # aweb.config.require_registered_certificates for the activation
-    # contract; when OFF this adds zero registry reads.
-    if require_registered_certificates():
-        registered_certs = await _get_registered_certificates(request, cert_team_id)
-        presented_certificate_id = (cert_info.get("certificate_id") or "").strip()
-        if presented_certificate_id not in registered_certs:
+            # The team key was resolved from the certificate's own team_id (step 4).
+            cert_info = check_certificate(team_did_key)
+        except TeamCertificateError as e:
+            if e.reason != "bad_signature":
+                raise
+            # A controller may have rotated outside this client's invalidation
+            # path. Only this failure may spend the bounded refresh budget.
+            registry = getattr(request.app.state, "awid_registry_client", None)
+            refresh = getattr(registry, "refresh_team_key_after_signature_failure", None)
+            refreshed_key = None
+            if refresh is not None:
+                domain, team_name = parse_team_id(cert_team_id)
+                refreshed_key = await refresh(domain, team_name, rejected_key=team_did_key)
+            if not refreshed_key or refreshed_key == team_did_key:
+                raise
+            team_did_key = refreshed_key
+            cert_info = check_certificate(team_did_key)
+            # Bad signatures under the refreshed key must not drive revocation
+            # reads. A valid replacement certificate also needs current revocations.
+            revoked_certs = await _get_revoked_certificates(request, cert_team_id, fresh=True)
+            if cert_info["certificate_id"] in revoked_certs:
+                raise TeamCertificateError("revoked") from None
+    except TeamCertificateError as e:
+        if e.reason == "unregistered":
             logger.warning(
-                "certificate existence check failed: certificate %s presented for team %s "
+                "certificate existence check failed: a certificate presented for team %s "
                 "is not registered at the AWID registry",
-                presented_certificate_id,
                 cert_team_id,
             )
-            raise HTTPException(
-                status_code=403,
-                detail=f"Certificate not registered: {presented_certificate_id}",
-            )
+        raise certificate_refusal(e) from None
 
     # Team authority does not establish the member's stable identity/address.
     binding = await verify_identity_binding(
