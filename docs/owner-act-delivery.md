@@ -4,7 +4,8 @@ Status: **specified, not shipped**. Owner: the aweb OSS hooks lane
 (aweb-acgh.16.38, with the [human-role holders](design/human-role-holders.md)
 design that Juan ruled). This document is the source of truth for how a client
 delivers an app's human-role owner act (`human-role.designate`,
-`human-role.revoke` and `human-credential.replace`, defined in
+`human-role.revoke`, `human-credential.replace` and
+`human-credential.cap-set`, defined in
 [the owner-act contract](owner-act.md)) to the naapp that verifies it, with no
 per-app code in the client. Its vector is
 `docs/vectors/owner-act-delivery-v1.json`.
@@ -82,8 +83,10 @@ fixes its validation codes. An app with no owner-designated role omits it.
   - `label` and the optional `description` follow the rules of the version 2
     `roles` field: 1 to 128 and 1 to 512 characters, with no C0, C1 or bidi
     control. Every surface that shows the role shows the pair of app and name.
-  - `acts` is a nonempty set of the three human-role acts, ascending by code
-    point with no repeat.
+  - `acts` is a nonempty set of the human-role acts
+    (`human-credential.cap-set`, `human-credential.replace`,
+    `human-role.designate` and `human-role.revoke`), ascending by code point
+    with no repeat.
   - `notice_contact` is `true` when designate and replace name a notice
     contact for the holder, and `false` when they name none.
 - `session_actions`, optional, declares the human-origin actions `aw` drives
@@ -169,6 +172,9 @@ Body, a JSON object with exactly these fields:
   refused in stage 3 with `principal_not_member`
   ([membership evidence](design/human-confirmation-from-aw.md#membership-evidence)).
 
+A cap-set body carries `signing` and `signature` only; any other field is
+`400 request_invalid`.
+
 The route authenticates the act before any check that depends on the app's
 state, so no refusal before authentication can tell an anonymous caller
 whether a holding or installation exists. It checks in three stages:
@@ -193,7 +199,8 @@ whether a holding or installation exists. It checks in three stages:
       of the act's `aud` or, where the app enables the optional security key,
       exactly `aweb:`;
    3. the holding of (installation, role, principal): designate requires that
-      none is current, and replace and revoke require that one is;
+      none is current, and replace and revoke require that one is. Cap-set
+      names a role, not a holder, and reads no holding;
    4. for designate and replace, the principal: it holds a current certificate
       of that team, and its own registered ID kind is `human`. The kind is the
       subject's own, never the kind of its nearest human ancestor or a label.
@@ -206,12 +213,14 @@ whether a holding or installation exists. It checks in three stages:
       retains a verified certificate with the holding;
    5. in the transaction that applies the effect, the act against the expected
       subject, and its nonce, consumed. The expected subject is the app's own
-      `app_id`, the installation, the act's `role` and `principal` and, for
+      `app_id`, the installation, the act's `role`, its `principal` or, for
+      cap-set, its `cap`, and, for
       designate and replace, the SHA-256 of the body's `credential` and of its
-      `notice_contact` when the role declares one. The holding is re-read under
-      the transaction's lock, and the act's `expires_at` is checked again
-      against the clock read after that lock: an act that expired while
-      stage 3 waited is refused and the transaction rolls back.
+      `notice_contact` when the role declares one. For holder acts, the holding
+      is re-read under the transaction's lock. For every act, `expires_at` is
+      checked again against the clock read after the effect's locks: an act
+      that expired while stage 3 waited is refused and the transaction rolls
+      back.
 
 Revoke checks no membership or kind. It targets the stored holding, so a
 controller act can retire a holder whose membership has already ended, and a
@@ -232,7 +241,11 @@ Response `200`:
 ```
 
 `effective_at` is when the effect holds; a replacement names the end of its
-cooling-off period.
+cooling-off period. A cap-set response names `cap` in place of `principal`:
+
+```json
+{"act": "human-credential.cap-set", "role": "secrets.owner", "cap": 3, "effective_at": "2026-11-07T12:01:00Z"}
+```
 
 | Status | `detail` | When |
 | --- | --- | --- |
@@ -267,9 +280,16 @@ same act again until it expires.
   in effect at the end of the cooling-off period. Until then, the holder's
   approvals and the widening changes they gate are frozen.
 - **Revoke** ends the holding.
+- **Cap-set** sets the most active credentials one holding of the role may
+  have. It is B3's per-holding credential cap, 5 by default. A holding at the
+  cap refuses another credential, and none is evicted; a lower cap leaves an
+  existing larger set in place, and the holding adds none until it is under
+  the cap. Replacing one credential keeps the count, so it succeeds at or
+  above the cap when at least one usable credential remains.
 
 Each emits `post-governance-hook` with `authority: owner_act`, and the app
-sends no enrolment link.
+sends no enrolment link. Cap-set emits `policy.changed`, a widening act
+whichever way the cap moves.
 
 ## Rollout of manifest version 3
 
