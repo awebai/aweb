@@ -113,20 +113,24 @@ compose_with_limits() {
     fi
   fi
 
-  if [[ -n "${CANDIDATE_RESOURCE_MANIFEST:-}" ]]; then
+  if [[ -n "${CANDIDATE_RESOURCE_MANIFEST:-}${CANDIDATE_RUNNER_NAME:-}" ]]; then
     local project config_json
     config_json="$("$real" compose "${compose_prefix[@]}" config --format json)"
     project="$(printf '%s' "$config_json" | python3 -c 'import json,sys; print(json.load(sys.stdin)["name"])')"
     mapfile -t build_services < <(printf '%s' "$config_json" | python3 -c 'import json,sys; print("\n".join(k for k,v in json.load(sys.stdin).get("services", {}).items() if "build" in v))')
     [[ -n "$project" ]] || { printf 'candidate compose project is unknown\n' >&2; exit 2; }
-    printf 'compose-project\t%s\n' "$project" >> "$CANDIDATE_RESOURCE_MANIFEST"
+    [[ -z "${CANDIDATE_RESOURCE_MANIFEST:-}" ]] || printf 'compose-project\t%s\n' "$project" >> "$CANDIDATE_RESOURCE_MANIFEST"
   fi
   mapfile -t services < <("$real" compose "${compose_prefix[@]}" config --services 2>/dev/null || true)
   if [[ "${#services[@]}" -eq 0 ]]; then
     exec "$real" compose "${prefix[@]}" "${rest[@]}"
   fi
-  local override
-  override="$(mktemp "${TMPDIR:-/tmp}/aweb-candidate-compose-limits.XXXXXX")"
+  # Exec must preserve the caller's timeout/kill target. These files therefore
+  # belong to the run, whose cleanup removes the complete docker-bind root.
+  local override network_override network_helper overlay_root
+  overlay_root="${AWEB_DOCKER_BIND_ROOT:?candidate compose requires a run-owned bind root}/compose"
+  mkdir -p "$overlay_root"
+  override="$(mktemp "$overlay_root/aweb-candidate-compose-limits.XXXXXX")"
   {
     printf 'services:\n'
     local service
@@ -142,7 +146,18 @@ compose_with_limits() {
       printf '    pids_limit: %s\n' "$sibling_pids"
     done
   } > "$override"
-  exec "$real" compose "${compose_prefix[@]}" -f "$override" "${rest[@]}"
+  compose_prefix+=(-f "$override")
+  if [[ -n "${CANDIDATE_RUNNER_NAME:-}" ]]; then
+    network_helper="$(cd "$(dirname "${BASH_SOURCE[0]}")/../../scripts" && pwd)/candidate-network.py"
+    network_override="$(mktemp "$overlay_root/aweb-candidate-compose-network.XXXXXX")"
+    printf '%s' "$config_json" | python3 "$network_helper" override > "$network_override"
+    compose_prefix+=(-f "$network_override")
+    case "${rest[0]}" in
+      up|create|run) printf '%s' "$config_json" | python3 "$network_helper" prepare ;;
+      down) python3 "$network_helper" disconnect "$project" ;;
+    esac
+  fi
+  exec "$real" compose "${compose_prefix[@]}" "${rest[@]}"
 }
 
 case "$cmd" in

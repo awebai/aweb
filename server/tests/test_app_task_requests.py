@@ -326,7 +326,7 @@ async def test_revoked_originator_cannot_create_or_read_by_replay(app_request_co
         certificate_id="privacy-alice")
     with pytest.raises(HTTPException) as caught:
         await _create(app_request_context, _body(env, expired=expired))
-    assert caught.value.status_code == 401 and caught.value.detail == "certificate_revoked"
+    assert caught.value.status_code == 401 and caught.value.detail == "revoked"
 
 
 @pytest.mark.asyncio
@@ -520,7 +520,7 @@ async def test_c2_cached_authority_observes_revocation(cached_app_request_contex
     clock[0] += cache_age
     body = _body(env, expired=expired_replay, request_id="action-1" if expired_replay else "cache-new")
     response = await _app_http(context, "POST", "/v1/tasks/app-requests", body)
-    assert response.status_code == 401 and response.json()["detail"] == "certificate_revoked", response.text
+    assert response.status_code == 401 and response.json()["detail"] == "revoked", response.text
     assert await env.db.fetch_value("SELECT count(*) FROM {{tables.task_app_requests}}") == 1
 
 
@@ -551,7 +551,7 @@ async def test_answer_requires_fresh_member_authority_even_for_replay(cached_app
     clock[0] += 61
     refused = await _v2_request(env, "bob", "POST", ref+"/answer", answer)
     assert refused.status_code == (401 if authority == "revoked" else 503), refused.text
-    assert refused.json()["detail"] == ("certificate_revoked" if authority == "revoked" else "authority_unavailable")
+    assert refused.json()["detail"] == ("revoked" if authority == "revoked" else "authority_unavailable")
     assert await env.db.fetch_value("SELECT count(*) FROM {{tables.task_answers}}") == int(replay)
     assert await env.db.fetch_value("SELECT count(*) FROM {{tables.task_answer_stage_nonces}}") == int(replay)
 

@@ -173,10 +173,10 @@ async def test_flag_on_unregistered_certificate_fails_with_distinct_verdict(monk
     with pytest.raises(HTTPException) as excinfo:
         await verify_request_certificate(request, db=object())
 
-    # Distinct from signature failure (401) and from revocation ("revoked").
-    assert excinfo.value.status_code == 403
-    assert excinfo.value.detail == "Certificate not registered: cert-001"
-    assert "revoked" not in excinfo.value.detail
+    # An invalid credential like any other, with a reason of its own: neither
+    # a failed signature nor a revocation, and nothing of the certificate in it.
+    assert excinfo.value.status_code == 401
+    assert excinfo.value.detail == "unregistered"
     # The existence read went through the cached listing with active_only
     # False: existence means "the registry has seen it", independent of
     # revocation state (which is checked separately, first).
@@ -209,9 +209,10 @@ async def test_flag_on_revoked_certificate_keeps_revocation_verdict(monkeypatch)
         await verify_request_certificate(request, db=object())
 
     assert excinfo.value.status_code == 401
-    assert "revoked" in excinfo.value.detail
-    assert "not registered" not in excinfo.value.detail
-    assert registry.list_calls == 0
+    assert excinfo.value.detail == "revoked"
+    # The registered set is an input of the one check, read with the revoked
+    # set before it runs.
+    assert registry.list_calls == 1
 
 
 @pytest.mark.asyncio
@@ -244,8 +245,8 @@ async def test_flag_on_team_unknown_to_registry_means_not_registered(monkeypatch
     with pytest.raises(HTTPException) as excinfo:
         await verify_request_certificate(request, db=object())
 
-    assert excinfo.value.status_code == 403
-    assert excinfo.value.detail == "Certificate not registered: cert-001"
+    assert excinfo.value.status_code == 401
+    assert excinfo.value.detail == "unregistered"
 
 
 # ---------------------------------------------------------------------------
@@ -342,5 +343,5 @@ async def test_mcp_certificate_branch_flag_on_rejects_unregistered_certificate(m
     with pytest.raises(HTTPException) as excinfo:
         await middleware._resolve_auth(request)
 
-    assert excinfo.value.status_code == 403
-    assert excinfo.value.detail == "Certificate not registered: cert-001"
+    assert excinfo.value.status_code == 401
+    assert excinfo.value.detail == "unregistered"

@@ -35,7 +35,7 @@ from aweb_naapp.runtime.hook_resolver import (
     OwnHookBinding,
 )
 from aweb_naapp.runtime.manifest_hooks import bounded_body
-from aweb_naapp.runtime.team_auth import raw_request_target, require_active_certificate
+from aweb_naapp.runtime.team_auth import CachedTeamFacts, raw_request_target
 from awid.log import canonical_server_origin
 from awid.team_certificate import decode_team_certificate
 from fastapi import HTTPException, Request
@@ -145,6 +145,7 @@ class Ingestor:
         body = await request.body()
         headers = dict(request.headers)
         team_key_did = ""
+        client_facts: CachedTeamFacts | None = None
         try:
             # Every team uses one route. Select the signed binding as a hint;
             # only the resolver below can establish that it is ours. Authenticate
@@ -167,13 +168,22 @@ class Ingestor:
             producer = hint.get("producer")
             if isinstance(producer, str) and producer.startswith("client:"):
                 team_key_did = await self._current_team_key(team_id)
+                client_facts = await self._team_certificates(team_id, producer.removeprefix("client:"))
             received = verify_delivery(
                 request.method, raw_request_target(request), headers, body,
                 ReceiveOptions(
                     audience=self.runtime.settings.public_origin, binding_id=binding_id,
                     now=received_at, team_key_did=team_key_did,
+                    revoked_certificate_ids=client_facts.revoked_certificate_ids if client_facts else (),
+                    registered_certificate_ids=(
+                        client_facts.published_certificate_ids if client_facts else None
+                    ),
                 ),
             )
+            # The certificate was verified under the key read fresh; the
+            # certificate ids must have been read under that same key.
+            if client_facts is not None and client_facts.team_did_key != team_key_did:
+                raise IngestRefused(503, "client_authority_changed")
         except Refused as refused:
             raise IngestRefused(401, f"transport_{refused.code}") from refused
         except (ValueError, TypeError) as exc:
@@ -233,6 +243,18 @@ class Ingestor:
             raise IngestRefused(401, "transport_certificate_invalid")
         return team_did_key
 
+    async def _team_certificates(self, team_id: str, certificate_id: str) -> CachedTeamFacts:
+        """The team's revoked and registered certificate ids, through the
+        shared cache, which reads again for a certificate it has not seen."""
+        try:
+            return await self.runtime.team_cache().get(team_id, certificate_id)
+        except HTTPException as exc:
+            if _private_team_unreadable(exc):
+                raise IngestRefused(403, PRIVATE_TEAM_UNREADABLE) from exc
+            if exc.status_code == 401:
+                raise IngestRefused(401, "transport_certificate_invalid") from exc
+            raise IngestRefused(503, "client_authority_unavailable") from exc
+
     async def _binding(
         self, event: Envelope, binding_id: UUID, occurred_at: datetime, request: Request
     ) -> OwnHookBinding:
@@ -262,19 +284,6 @@ class Ingestor:
             "purposes": [], "installation_id": None, "generation": None, "binding_ids": [],
         }
         if event.producer_kind == "client":
-            try:
-                facts = await require_active_certificate(
-                    self.runtime.team_cache(), team_id=event.team_id,
-                    certificate_id=producer["certificate_id"],
-                )
-            except HTTPException as exc:
-                if _private_team_unreadable(exc):
-                    raise IngestRefused(403, PRIVATE_TEAM_UNREADABLE) from exc
-                status = 401 if exc.status_code == 401 else 503
-                code = "provenance_client_certificate" if status == 401 else "client_authority_unavailable"
-                raise IngestRefused(status, code) from exc
-            if facts.team_did_key != team_key_did:
-                raise IngestRefused(503, "client_authority_changed")
             evidence.update(
                 kid="member", certificate=decode_team_certificate(headers["x-awid-team-certificate"]),
                 team_did_key=team_key_did,

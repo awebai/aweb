@@ -477,7 +477,7 @@ async def test_verify_request_certificate_refuses_a_hostile_certificate_with_401
     with pytest.raises(HTTPException) as refused:
         await verify_request_certificate(request, db=object())
     assert refused.value.status_code == 401
-    assert refused.value.detail == "Malformed certificate"
+    assert refused.value.detail == "malformed"
 
 
 @pytest.mark.parametrize("certificate", HOSTILE_CERTIFICATES.values(), ids=HOSTILE_CERTIFICATES.keys())
@@ -488,7 +488,8 @@ def test_parse_and_verify_certificate_refuses_a_hostile_certificate(certificate)
         parse_and_verify_certificate(
             certificate,
             request_did_key="did:key:z6MkhaXgBZDvotDkL5257faiztiGiC2QtKLGpbnnEGta2doK",
-            team_public_key_resolver=lambda _team_id: "",
-            revocation_checker=lambda _team_id, _certificate_id: False,
+            team_did_key="",
+            revoked_certificate_ids=(),
+            registered_certificate_ids=None,
         )
-    assert str(refused.value) == "Malformed certificate: invalid base64 or JSON"
+    assert str(refused.value) == "malformed"
