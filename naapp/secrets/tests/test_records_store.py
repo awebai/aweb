@@ -452,7 +452,7 @@ async def test_policies_and_templates_are_owned_by_team_even_with_the_same_insta
         'capability': 'use', 'operations': [], 'open_request': True, 'jobs': [],
         'policy_digest': POLICY.digest,
     })
-    changed = GrantTemplate.from_after({**template.after, 'open_request': False})
+    changed = GrantTemplate.from_after({**template.after, 'subject': {'role': 'secrets.role.deployers'}})
     async with db.transaction() as tx:
         await records.create_policy(tx, INSTALLATION, POLICY, team_id=TEAM)
         await records.set_grant_template(tx, INSTALLATION, template, team_id=TEAM)
