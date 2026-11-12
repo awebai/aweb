@@ -291,7 +291,7 @@ class World:
 
     def own_service_files(self) -> dict[str, str]:
         """Each component's files belong to the uid its image runs as, mode 0400;
-        the public trust files stay readable."""
+        the public trust files are 0444."""
         owners = {
             "postgres": run("docker", "run", "--rm", "postgres:16-alpine", "id", "-u", "postgres").strip(),
             "aweb": image_user(self.images["aweb"]),
@@ -300,6 +300,7 @@ class World:
         }
         script = " && ".join(
             f"chown -R {uid}:{uid} /s/{component} && find /s/{component} -type f ! -name '*-ca.pem' -exec chmod 0400 {{}} +"
+            f" && find /s/{component} -type f -name '*-ca.pem' -exec chmod 0444 {{}} +"
             for component, uid in owners.items()
         )
         run("docker", "run", "--rm", "-v", f"{self.secrets}:/s", "alpine:3.22", "sh", "-c", script)
