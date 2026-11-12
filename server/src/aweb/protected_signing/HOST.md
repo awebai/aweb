@@ -66,7 +66,7 @@ The controller file is the operator-provisioned 32-byte Ed25519 seed encoded as
 to the protected process euid with mode 0700; the regular file belongs to that
 euid with mode 0400 or 0600. All declared worker UIDs must be positive and differ
 from the protected process euid. Exclude that directory from worker/CLI mounts,
-ACLs, backups and debugger access. Runtime neither generates nor imports a key.
+ACLs, backups and debugger access. The serving process neither generates nor installs a key.
 The key must match both the selected profile binding and the registry's current
 team controller. A mismatch refuses startup and later operations.
 
@@ -112,27 +112,132 @@ Resources close on startup failure and shutdown. Existing deployments require
 their authorized migration procedure; this entry point is not permission to
 apply migrations or move keys in a real deployment.
 
-The disposable fixture must explicitly provision its throwaway namespace,
-verified human ID chain, team controller, ordinary member/certificate and
-requester through the existing registry APIs. Apply migrations, then provision
-the declared authorizer/requester rows from
-`migrations/001_independent_authority.sql`, and its designated B3 approver with
-the same `subject` and `b3_scope`. No worker-facing writer or automatic missing
-binding recovery is mounted. The fixture must enroll its real WebAuthn
-credential through B3's `reissue_enrolment`/`deliver`, `enrolment_options` and
-`complete_enrolment` APIs using an actual browser-generated attestation on the
-pinned human origin. A trusted fixture helper can perform those B3 calls
-against the same database; it must not insert credential/session/assertion
-success rows. The complete existing native provisioning example is
-`server/tests/test_independent_protected_signer.py:world`. Bootstrap/admission
-HTTP routes are a separate slice and are not exposed by this host.
+## First operator enrollment
+
+Use the production package's local administrator command, as the protected
+process uid and with the **same** file settings/mounts as the host. This is an
+explicit administrator action under `docs/human-assurance-contract.md` section
+3; there is no bootstrap HTTP endpoint. The existing team controller, ordinary
+member/certificate, registered own-human identity and requester must already
+exist in the pinned registry. This command creates no human, team or key and
+does not claim to implement protected human issuance or agent admission.
+
+1. Independently verify the selected profile's public controller and namespace
+   pins, explicit human stable ID/domain, exact HTTPS human origin/RP and
+   request origin. Choose the existing requester stable ID and the human's
+   enrollment contact through the operator's trusted provisioning procedure.
+   A worker, runtime response, email or ancestry lookup cannot choose them.
+2. Mount the private controller and ordinary member files as described below.
+   Configure the private database and SMTP password **files**, then run:
+
+   ```sh
+   python -m aweb.protected_signing.operator bootstrap \
+     --requester did:aw:REQUESTER --contact approver@example.org
+   ```
+
+   Replace those public placeholders. The command uses the serving host's
+   actual custody/member-key exclusion, pinned registry client, migrations and
+   same database. It observes the selected human's own verified human kind,
+   current team controller and current requester mapping before its transaction.
+   It records the first authority/requester binding and calls B3's public
+   `designate_first` API. It records that administrator action locally, freezes
+   context/origin/key/policy/contact, and delivers B3's link only after commit.
+   Its output contains scope/delivery status, never the bearer link or a key.
+3. Start the host with the factory command above. Open the email link on its
+   pinned human origin. `/enrolment` uses the existing shared browser page and
+   real B3 registration requiring user presence and verification. It creates
+   no console session and signs no act. Its effect transaction holds the exact
+   bootstrap/authority association, rechecks original link and registry evidence
+   deadlines after the final wait, and consumes the bootstrap together with the
+   credential, link and local audit. LOGIN and approval remain separate gestures.
+4. Run `python -m aweb.protected_signing.operator check` to verify the current
+   registry/custody/provisioning configuration, then use the normal approval
+   link to sign in. `/readyz` is a lifecycle probe, not proof that a credential
+   or remote app role is usable.
+
+If delivery fails or an unused link expires, repeat the **identical** local
+bootstrap command. It reissues a link for the same still-pending subject and
+contact. Any credential history closes this path, including revoked keys.
+Different humans, contacts, requesters, policy, key or origin refuse; existing
+or ambiguous authority without this bootstrap record is never adopted. Do not
+remove rows or reset the database to replace an authorizer or recover access.
+Later credential/authorizer/contact changes and recovery require their own
+protected operations and recovery floors; this first-enrollment path cannot
+perform them. Unsupported operations refuse. No automatic agent admission is
+enabled by this command.
+
+A disposable deployment runs this **same package command** against its declared
+throwaway authorities and private captured SMTP transport. It must not seed
+credential/session/assertion rows or replace this host with a test-only signer.
+
+## Controller key installation, backup and cutover
+
+The input is the **existing** registered team's controller seed, normally held
+by its authorized owner in aw's `ED25519 PRIVATE KEY` PEM format. The aw state
+path is `~/.awid/team-keys/<domain>/<team>.key` (legacy installations may retain
+`~/.config/aw/team-keys/...`). Obtain the actual path from that owner's configuration;
+never copy an ordinary member key or generate a replacement seed merely because
+a path is missing. Team creation and controller authority remain the existing
+registry procedure; installing this host is not permission to create a team.
+The controller public key must already equal the independently checked profile
+and current registry team key.
+
+Transfer the PEM through the operator's private provisioning channel to a
+short-lived read-only source file accessible only to the protected uid. Never
+put the seed in a shell argument, environment variable, terminal output, image
+layer, source repository, worker mount or shared backup. Create the destination
+private volume directory as its owner, then convert it using the package:
+
+```sh
+# Trusted host/init provisioning; replace the source path with a private mount.
+install -d -m 0700 -o 1001 -g 1001 /run/secrets/signer/private-controller
+# Run as uid 1001 with the same profile/scope/settings as the protected host:
+python -m aweb.protected_signing.operator install-controller \
+  --source-pem /private-provisioning/team-controller.pem
+```
+
+The command validates the existing PEM with AWID's shared loader and compares
+its public key to the selected profile. It writes one **new** regular
+`CONTROLLER_KEY_FILE` (32-byte seed as 64 hex characters plus LF), exclusively,
+mode 0400, under a real 0700 directory owned by the invoking uid. It refuses
+existing paths, symlinks, unsafe directory ownership/mode and a mismatched key;
+it never overwrites, registers or rotates authority. The serving host also
+checks the registry's current key. Remove the short-lived input after successful
+checks. This command neither installs ordinary member certificates nor gives
+workers access to the controller. Kubernetes projected Secret symlinks/root
+ownership cannot be used as the custody file: materialize into the private
+volume with a trusted init step; retain the existing custody checks.
+
+The owner's separately protected **offline copy is the controller backup**.
+Keep it encrypted under the owner's recovery procedure with access independent
+of workers and the online host. The instruction to exclude the live private
+volume from generic backups is not an instruction to discard that offline
+copy. Back up the private signer database separately through an operator-only
+channel: bootstrap consumption, credential/public-key records, bindings and
+receipts must survive a restore. Treat the database as sensitive; do not restore
+an old pending bootstrap over a completed enrollment. Losing all working human
+credentials is recovery, not permission to rerun bootstrap.
+
+This revoke-only binary does not implement protected controller rotation or
+recovery. Do not use an unattended raw-key command to bypass that missing floor
+act. An authorized controller cutover must preserve the existing authorizer and
+credential history, replace the private custody file and public profile pin as
+one controlled maintenance change, and reissue ordinary member certificates
+against the new team key using the existing registry procedure. Until those
+inputs agree, startup/operations correctly refuse `authority_changed`; no old
+key, DNS or status-response fallback is accepted. Preserve receipts and do not
+delete the bootstrap record. A namespace-controller rotation likewise requires
+an independently authorized update of the profile's namespace pin before reads
+resume. The host never learns replacement pins from a worker or status response.
 
 The host constructs one `composition.protected_sessions()` instance for both
 `console_login_router` and `operations_http`. On the human app it mounts the
 existing `handoff_page_router(store=HandoffStore(db), limiter=...,
 protected_operations=mount)`, which serves its own assets, and
 `mount.human_router()`. There is one page and no synthetic installation.
-The request app mounts only `mount.api_router()`.
+The request app mounts only `mount.api_router()` and the lifecycle probe.
+The human app additionally mounts the shared first-enrollment page/POSTs; it
+does not expose a local administrator/bootstrap command over HTTP.
 
 The joined journey is CLI prepare, `/handoff/{id}`, fresh real LOGIN, separate
 exact-act UV, retained signed receipt, and CLI exact receipt read. The signer

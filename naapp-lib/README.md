@@ -645,6 +645,14 @@ the approval, decision, policy and the app's own origin.
   decided approval, admitted and completed through B2 in the same transaction.
   It designates only a scope's first approver. Whether the approved request asks
   for that designation is the app's check.
+- `designate_first(tx, scope=..., subject=..., contact=..., evidence=...)`
+  designates a protected authority's first approver with no team owner act.
+  The evidence is a `ProtectedBootstrap` that the authority's signer admitted
+  from its once-only local bootstrap, in the same transaction it names. The
+  signer chooses the pending subject. A scope that has ever had an approver is
+  refused, as are a subject that already exists and a bootstrap that has
+  already taken effect. Bootstraps are serialized with one another. The
+  approver takes effect at once and enrols like any other.
 - Nothing is sent inside the transaction. After the commit the caller sends the
   enrolment link and any recovery notices with `deliver(designation)`. If that
   never happens, `reissue_enrolment(tx, scope=...)` revokes the unused link and
