@@ -11,8 +11,8 @@ authority and policy. Public configuration grants no authority.
 
 Build the existing `server/Dockerfile` from the **current joined source** with
 `AWEB_EXTRA=protected`; use its existing optional-extra support from the joined
-lane, not an older Dockerfile without that argument. Antares/aweb supplies the
-LF image repository and immutable source/digest pin. No published protected
+lane, not an older Dockerfile without that argument. The deployment supplies the
+image repository and immutable source/digest pin. No published protected
 image tag is asserted here. The executable remains the existing aweb package:
 
 ```text
@@ -126,3 +126,14 @@ The signed revoke act is retained in the receipt and local transactional audit.
 This process does not apply it remotely. The joined aw/browser flow remains the
 integration priority; this descriptor and the two host inputs do not repin or
 interrupt its current run.
+
+Operator bootstrap and key runbook: [HOST.md](../../../server/src/aweb/protected_signing/HOST.md#first-operator-enrollment).
+Use the same package's local `python -m aweb.protected_signing.operator bootstrap`
+under the protected uid and private mounts before serving; the emailed link now
+uses the mounted shared `/enrolment` page and real B3 UV registration. The
+operator action is once-only, with exact pending resumption and no replacement
+or recovery. `install-controller --source-pem <private-file>` creates the
+validated private hex-seed file without overwriting. The owner's protected
+offline controller copy is the backup; preserve the private database and
+consumed-bootstrap history separately. Controller rotation/recovery remains a
+separate protected operation, never a reset of this bootstrap.
