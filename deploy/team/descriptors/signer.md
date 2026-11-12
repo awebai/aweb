@@ -37,6 +37,11 @@ profile or subject and performs no remote registry lookup or signing. It is a
 lifecycle signal, not a fresh authority, SMTP or database-availability receipt;
 protected operations still perform their own checks.
 
+The owned Compose service body is `server/compose.signer.yaml`. It consumes the
+shared schema's `x-env` names; the deployment layer adds the image, mounts,
+networks, ports and dependencies. Its loopback probe takes the public request
+origin as data, derives the Host authority, and ignores ambient HTTP proxies.
+
 Kubernetes `readinessProbe.httpGet` must use port 8080, path `/readyz`, and a Host
 header equal to the **authority of `profile.request_origin`**, including a
 nondefault port if configured. A raw Pod-IP Host will correctly fail. Compose
