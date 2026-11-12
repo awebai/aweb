@@ -7,7 +7,6 @@ import httpx
 import pytest
 from test_e2e_smoke import (
     AWID_URL,
-    candidate_hostname,
     _assert_aw_status,
     _assert_aw_success,
     _aw_request,
@@ -16,6 +15,7 @@ from test_e2e_smoke import (
     _require_e2e_enabled,
     _running_library,
     _wait_http_ok,
+    candidate_hostname,
 )
 
 pytestmark = pytest.mark.e2e
