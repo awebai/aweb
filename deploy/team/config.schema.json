@@ -1,0 +1,83 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "One team's deployment",
+  "description": "The operator's deployment.yaml. Literals that are not secret and references to secrets; never a credential. A component's section is added with its descriptor.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["team", "postgres", "aweb"],
+  "$defs": {
+    "origin": {
+      "type": "string",
+      "pattern": "^https://[A-Za-z0-9.-]+(:[0-9]+)?$"
+    },
+    "image": {
+      "type": "string",
+      "pattern": "^[a-z0-9][a-z0-9._/:-]*@sha256:[0-9a-f]{64}$"
+    },
+    "secrets": {
+      "description": "Where the component's secret files come from: an existing Secret's name in Kubernetes, a directory under compose.secretsDir on one machine.",
+      "type": "string",
+      "pattern": "^[a-z0-9]([a-z0-9-]*[a-z0-9])?$"
+    }
+  },
+  "properties": {
+    "team": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["id"],
+      "properties": {
+        "id": {
+          "description": "The canonical team id, name:domain.",
+          "type": "string",
+          "pattern": "^[a-z0-9][a-z0-9-]*:[a-z0-9][a-z0-9.-]*$"
+        },
+        "registryUrl": { "$ref": "#/$defs/origin", "default": "https://api.awid.ai" }
+      }
+    },
+    "postgres": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "bundled": {
+          "description": "Run a PostgreSQL server in the deployment and create each component's database and role at first start.",
+          "type": "boolean",
+          "default": true
+        },
+        "host": { "type": "string", "default": "postgres" },
+        "port": { "type": "integer", "minimum": 1, "maximum": 65535, "default": 5432 },
+        "secrets": { "$ref": "#/$defs/secrets", "default": "postgres" }
+      }
+    },
+    "aweb": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["image", "publicOrigin"],
+      "properties": {
+        "image": { "$ref": "#/$defs/image" },
+        "publicOrigin": { "$ref": "#/$defs/origin" },
+        "secrets": { "$ref": "#/$defs/secrets", "default": "aweb" },
+        "compose": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "bindAddress": { "type": "string", "default": "127.0.0.1" },
+            "port": { "type": "integer", "minimum": 1, "maximum": 65535, "default": 8000 }
+          }
+        }
+      }
+    },
+    "compose": {
+      "description": "Inputs of the Compose layer alone.",
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["secretsDir"],
+      "properties": {
+        "secretsDir": {
+          "description": "The host directory that holds one subdirectory of secret files per component.",
+          "type": "string",
+          "pattern": "^/"
+        }
+      }
+    }
+  }
+}
