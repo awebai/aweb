@@ -164,3 +164,20 @@ class SoftAuthenticator:
             for cid, c in self.credentials.items()
         }
         return twin
+
+
+def without_user_verification(assertion: dict, key: ec.EllipticCurvePrivateKey) -> dict:
+    """The same assertion with only its authenticator data's user-verification
+    flag cleared, signed again by its credential's key over the same client
+    data: RP id hash, other flags, counter and client data are unchanged."""
+    response = assertion["response"]
+    auth_data = bytearray(from_b64url(response["authenticatorData"]))
+    if not auth_data[32] & UV:
+        raise ValueError("the assertion carries no user verification to clear")
+    auth_data[32] &= ~UV & 0xFF
+    client_data = from_b64url(response["clientDataJSON"])
+    signature = key.sign(bytes(auth_data) + hashlib.sha256(client_data).digest(), ec.ECDSA(hashes.SHA256()))
+    return {
+        **assertion,
+        "response": {**response, "authenticatorData": b64url(bytes(auth_data)), "signature": b64url(signature)},
+    }
