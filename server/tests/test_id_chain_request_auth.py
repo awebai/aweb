@@ -15,7 +15,7 @@ import httpx
 import pytest
 from fastapi import FastAPI, HTTPException, Request
 
-from awid.dns_verify import DomainAuthority
+from awid.dns_verify import DnsVerificationError, DomainAuthority
 from awid.id_certificates import id_certificate_signing_bytes
 from awid.registry import CachedRegistryClient, IDTreeEnrollment
 from awid_service.deps import get_domain_verifier
@@ -86,9 +86,20 @@ async def test_factory_without_cached_evidence_never_fetches_a_tree(monkeypatch,
 
     monkeypatch.setenv('AWID_REGISTRY_URL', 'https://registry.example')
     monkeypatch.setenv('AWEB_DATABASE_URL', 'postgresql://unused/test')
+
+    async def no_dns(*args, **kwargs):
+        pytest.fail('chainless local did DNS work')
+
+    monkeypatch.setattr('dns.asyncresolver.resolve', no_dns)
+
+    async def no_record(domain):
+        # The enrolled domain publishes no _awid authority: evidence is unavailable.
+        raise DnsVerificationError(f'No TXT records found for _awid.{domain}')
+
     app = FastAPI()
     client = _build_awid_registry_client(app, redis=_FakeRedis() if redis_present else None,
-                                       transport=httpx.MockTransport(lambda req: pytest.fail('chainless local did network work')))
+                                       transport=httpx.MockTransport(lambda req: pytest.fail('chainless local did network work')),
+                                       domain_verifier=no_record)
     app.state.awid_registry_client = client
     try:
         result = await authenticate_id_chain(request(app), IdentityBinding(did_key=ALICE['did_key']))

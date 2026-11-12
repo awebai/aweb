@@ -12,6 +12,7 @@ from aweb_naapp.email import EmailNotSent
 from aweb_naapp.runtime.approvals import DeliveryStatus
 from aweb_naapp.runtime.protected_signer import SignerRefused
 from pydantic import SecretStr, ValidationError
+from starlette.requests import Request
 from tests.test_protected_service_profile import FIXTURE
 
 
@@ -46,6 +47,42 @@ def test_settings_hide_database_secret_and_require_explicit_inputs(
     assert "private-password" not in repr(settings(tmp_path))
     with pytest.raises(ValidationError):
         HostSettings(_env_file=None)
+
+
+def test_incomplete_environment_error_does_not_echo_database_password(monkeypatch):
+    for name in os.environ:
+        if name.startswith("AWEB_PROTECTED_"):
+            monkeypatch.delenv(name)
+    secret = "SYNTH"
+    monkeypatch.setenv("AWEB_PROTECTED_DATABASE_URL", "postgres://u:" + secret + "@d/x")
+    with pytest.raises(ValidationError) as caught:
+        HostSettings(_env_file=None)
+    assert secret not in str(caught.value)
+    assert "input_value" not in str(caught.value)
+
+
+def test_limiter_ignores_spoofed_header_by_default_and_separates_trusted_clients(
+    tmp_path,
+):
+    config = settings(tmp_path)
+
+    def request(address):
+        return Request(
+            {
+                "type": "http",
+                "client": ("proxy-peer", 443),
+                "headers": [(b"x-real-ip", address.encode())],
+            }
+        )
+
+    first, second = request("198.51.100.1"), request("198.51.100.2")
+    assert config.client_identity().of(first) == "proxy-peer"
+    assert config.client_identity().of(second) == "proxy-peer"
+    trusted = HostSettings(
+        **{**config.model_dump(), "trusted_client_header": "X-Real-IP"}
+    )
+    assert trusted.client_identity().of(first) == "198.51.100.1"
+    assert trusted.client_identity().of(second) == "198.51.100.2"
 
 
 def test_same_host_origins_refuse_before_resources_open(tmp_path):

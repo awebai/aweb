@@ -15,6 +15,17 @@ splitter serves only the two configured hosts, refuses agent credentials on the
 human origin, and strips cookies on the request origin. Forwarded headers never
 select the signed request audience. No other coordination API is mounted here.
 
+Behind a proxy, set `AWEB_PROTECTED_TRUSTED_CLIENT_HEADER=X-Real-IP` (or the
+equivalent operator-controlled header) so the shared limiter distinguishes
+clients. The proxy must remove any incoming value and set its own; restrict
+direct access to the protected process to that proxy. This header selects
+only rate-limit identity, never authentication, request audience or authority.
+With no configured header, forwarded values are ignored and identity is the
+connection peer. Behind a single proxy this means one shared 30-per-minute
+budget per bucket: a CLI polling every two seconds can use that entire budget.
+That default is suitable for a single-human host; configure the trusted header
+for multiple clients rather than broadly enabling forwarded-header trust.
+
 Required operator settings (paths below are illustrative container paths):
 
 ```sh
@@ -66,6 +77,8 @@ port: it sends a retained public handoff locator to the recorded contact, never
 a candidate bearer token, request payload or signature. The shared signer
 currently retains B2 links privately and does not dispatch these notices from
 prepare. Enrollment/contact notices use the existing B3 delivery contract.
+Any future dispatch of the B2 notification port must happen after the prepare
+transaction commits: its fresh database read needs the committed handoff row.
 
 For a disposable fixture, configure those same SMTP settings to a private TLS
 capture server with a fixture CA/authentication, and keep its mailbox available
