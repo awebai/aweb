@@ -60,3 +60,57 @@ def test_the_env_file_is_sorted_lines_and_refuses_a_value_that_would_break_one()
     assert render_env.env_file({"B": "2", "A": "1"}) == "A=1\nB=2\n"
     with pytest.raises(render_env.Refused, match="A"):
         render_env.env_file({"A": "1\nINJECTED=2"})
+
+
+SIGNER = {
+    "image": "ghcr.io/awebai/aweb-protected@sha256:" + "1" * 64,
+    "profileFile": "/etc/aweb-team/signer/profile.json",
+    "scopeFile": "/etc/aweb-team/signer/scope.json",
+    "requestOrigin": "https://sign.example.com",
+    "humanOrigin": "https://approve.example.com",
+    "workerUids": [20001],
+    "emailSmtpHost": "smtp.example.com",
+    "emailSmtpPort": 587,
+    "emailUsername": "notifications",
+    "emailFrom": "notifications@example.com",
+}
+
+
+def test_the_signer_section_keeps_a_list_as_json_and_fills_its_defaults():
+    rendered = render_env.render({**EXAMPLE, "signer": SIGNER})
+    signer = {name: value for name, value in rendered.items() if "PROTECTED" in name or name.startswith("SIGNER_")}
+    assert signer == {
+        "SIGNER_IMAGE": SIGNER["image"],
+        "SIGNER_PROFILE_FILE": "/etc/aweb-team/signer/profile.json",
+        "SIGNER_SCOPE_FILE": "/etc/aweb-team/signer/scope.json",
+        "SIGNER_REQUEST_ORIGIN": "https://sign.example.com",
+        "SIGNER_HUMAN_ORIGIN": "https://approve.example.com",
+        "SIGNER_SECRETS": "signer",
+        "SIGNER_BIND_ADDRESS": "127.0.0.1",
+        "SIGNER_PORT": "8080",
+        "AWEB_PROTECTED_WORKER_UIDS": "[20001]",
+        "AWEB_PROTECTED_DATABASE_SCHEMA": "protected_signer",
+        "AWEB_PROTECTED_DATABASE_USES_TRANSACTION_POOLER": "false",
+        "AWEB_PROTECTED_HUMAN_CSRF_KEY": "aweb.protected.console.csrf",
+        "AWEB_PROTECTED_EMAIL_SMTP_HOST": "smtp.example.com",
+        "AWEB_PROTECTED_EMAIL_SMTP_PORT": "587",
+        "AWEB_PROTECTED_EMAIL_USERNAME": "notifications",
+        "AWEB_PROTECTED_EMAIL_FROM": "notifications@example.com",
+        "AWEB_PROTECTED_EMAIL_TLS": "starttls",
+    }
+
+
+@pytest.mark.parametrize(
+    ("key", "value"),
+    [
+        ("workerUids", []),
+        ("workerUids", [1001]),
+        ("emailTls", "none"),
+        ("requestOrigin", "http://sign.example.com"),
+        ("databaseUrl", "postgresql://signer:s3cret@postgres:5432/signer"),
+        ("controllerKey", "00" * 32),
+    ],
+)
+def test_the_signer_section_refuses_its_own_uid_as_a_worker_plain_smtp_and_credentials(key, value):
+    with pytest.raises(render_env.Refused):
+        render_env.render({**EXAMPLE, "signer": {**SIGNER, key: value}})

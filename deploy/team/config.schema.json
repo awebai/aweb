@@ -22,6 +22,11 @@
       "description": "Where the component's secret files come from: an existing Secret's name in Kubernetes, a directory under compose.secretsDir on one machine.",
       "type": "string",
       "pattern": "^[a-z0-9]([a-z0-9-]*[a-z0-9])?$"
+    },
+    "file": {
+      "description": "An absolute path of a configuration file that is not secret.",
+      "type": "string",
+      "pattern": "^/"
     }
   },
   "properties": {
@@ -128,6 +133,148 @@
           "type": "string",
           "pattern": "^/",
           "x-env": "SECRETS_DIR"
+        }
+      }
+    },
+    "signer": {
+      "description": "The protected signer host: human approval with passkeys (descriptors/signer.md).",
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "image",
+        "profileFile",
+        "scopeFile",
+        "requestOrigin",
+        "humanOrigin",
+        "workerUids",
+        "emailSmtpHost",
+        "emailSmtpPort",
+        "emailUsername",
+        "emailFrom"
+      ],
+      "properties": {
+        "image": {
+          "$ref": "#/$defs/image",
+          "x-env": "SIGNER_IMAGE"
+        },
+        "profileFile": {
+          "$ref": "#/$defs/file",
+          "x-env": "SIGNER_PROFILE_FILE",
+          "description": "The one protected service profile. The origins and registry in this file must equal the profile's."
+        },
+        "scopeFile": {
+          "$ref": "#/$defs/file",
+          "x-env": "SIGNER_SCOPE_FILE"
+        },
+        "requestOrigin": {
+          "$ref": "#/$defs/origin",
+          "x-env": "SIGNER_REQUEST_ORIGIN"
+        },
+        "humanOrigin": {
+          "$ref": "#/$defs/origin",
+          "x-env": "SIGNER_HUMAN_ORIGIN"
+        },
+        "secrets": {
+          "$ref": "#/$defs/secrets",
+          "default": "signer",
+          "x-env": "SIGNER_SECRETS"
+        },
+        "workerUids": {
+          "description": "The uids agents and workers run as. The signer's own uid, 1001, is not one of them.",
+          "type": "array",
+          "minItems": 1,
+          "uniqueItems": true,
+          "items": {
+            "type": "integer",
+            "minimum": 1,
+            "not": {
+              "const": 1001
+            }
+          },
+          "x-env": "AWEB_PROTECTED_WORKER_UIDS"
+        },
+        "databaseSchema": {
+          "type": "string",
+          "pattern": "^[a-z][a-z0-9_]{0,62}$",
+          "default": "protected_signer",
+          "x-env": "AWEB_PROTECTED_DATABASE_SCHEMA"
+        },
+        "databaseUsesTransactionPooler": {
+          "type": "boolean",
+          "default": false,
+          "x-env": "AWEB_PROTECTED_DATABASE_USES_TRANSACTION_POOLER"
+        },
+        "humanCsrfKey": {
+          "type": "string",
+          "pattern": "^[A-Za-z0-9._-]{1,128}$",
+          "default": "aweb.protected.console.csrf",
+          "x-env": "AWEB_PROTECTED_HUMAN_CSRF_KEY"
+        },
+        "trustedClientHeader": {
+          "type": "string",
+          "pattern": "^[A-Za-z0-9-]{1,64}$",
+          "x-env": "AWEB_PROTECTED_TRUSTED_CLIENT_HEADER"
+        },
+        "emailSmtpHost": {
+          "type": "string",
+          "pattern": "^[A-Za-z0-9.-]+$",
+          "x-env": "AWEB_PROTECTED_EMAIL_SMTP_HOST"
+        },
+        "emailSmtpPort": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 65535,
+          "x-env": "AWEB_PROTECTED_EMAIL_SMTP_PORT"
+        },
+        "emailUsername": {
+          "type": "string",
+          "minLength": 1,
+          "x-env": "AWEB_PROTECTED_EMAIL_USERNAME"
+        },
+        "emailFrom": {
+          "type": "string",
+          "minLength": 1,
+          "x-env": "AWEB_PROTECTED_EMAIL_FROM"
+        },
+        "emailTls": {
+          "enum": [
+            "starttls",
+            "implicit"
+          ],
+          "default": "starttls",
+          "x-env": "AWEB_PROTECTED_EMAIL_TLS"
+        },
+        "emailCaFile": {
+          "$ref": "#/$defs/file",
+          "x-env": "SIGNER_EMAIL_CA_FILE"
+        },
+        "compose": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "bindAddress": {
+              "type": "string",
+              "default": "127.0.0.1",
+              "x-env": "SIGNER_BIND_ADDRESS"
+            },
+            "port": {
+              "type": "integer",
+              "minimum": 1,
+              "maximum": 65535,
+              "default": 8080,
+              "x-env": "SIGNER_PORT"
+            }
+          }
+        },
+        "kubernetes": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "configMap": {
+              "description": "An existing ConfigMap that supplies the profile, the scope and the optional CA file.",
+              "$ref": "#/$defs/secrets"
+            }
+          }
         }
       }
     }

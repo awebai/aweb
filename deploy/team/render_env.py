@@ -66,7 +66,8 @@ def _collect(schema: dict, value: object, out: dict[str, str]) -> None:
         value = schema.get("default")
     if value is None:
         return
-    out[name] = json.dumps(value) if isinstance(value, bool) else str(value)
+    # A list or a boolean keeps its JSON form: the service parses it as JSON.
+    out[name] = value if isinstance(value, str) else json.dumps(value)
 
 
 def render(config: object) -> dict[str, str]:
@@ -75,7 +76,10 @@ def render(config: object) -> dict[str, str]:
     if "compose" not in config:
         raise Refused("compose: missing; the Compose layer needs compose.secretsDir")
     out: dict[str, str] = {}
-    _collect(SCHEMA, config, out)
+    # A component the file leaves out is not deployed: none of its defaults is rendered.
+    for section, schema in SCHEMA["properties"].items():
+        if section in config:
+            _collect(schema, config[section], out)
     return out
 
 
