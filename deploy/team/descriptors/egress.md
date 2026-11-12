@@ -20,7 +20,7 @@
 
 | Key | Platform | Why no shared form |
 | --- | --- | --- |
-| `agents.network.subnet`, `agents.network.address` | Compose | Docker bridge CIDR/static endpoint; Kubernetes uses its pod network and proxy Service. Only proxy joins agents and services; agents network is internal. |
+| `agents.network.subnet`, `agents.network.address` | Compose | Docker bridge CIDR/static endpoint; Kubernetes uses its pod network and proxy Service. Only proxy joins agents and services; agents network is internal with Docker >=28 isolated gateway mode, not a host-addressed bridge. |
 | `egress.kubernetes` selectors/Service address | Kubernetes | NetworkPolicy selects agent/proxy pods and pinned ingress addresses; requires measured CNI enforcement. Compose uses explicit bridge membership. |
 | policy artifact bind source | Compose | Wrapper-generated host path, canonicalized on the Docker engine host. Kubernetes mounts the same bytes from a ConfigMap. |
 
