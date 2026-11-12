@@ -148,3 +148,61 @@ def test_operator_error_never_echoes_private_exception(monkeypatch, capsys):
     captured = capsys.readouterr()
     assert "SYNTH_PASSWORD" not in captured.out + captured.err
     assert "protected_operator_failed" in captured.out
+
+
+def test_operator_generates_key_only_in_exclusive_private_volume(tmp_path):
+    import os
+    from types import SimpleNamespace
+
+    from awid.did import did_key_from_signing_key
+    from aweb.protected_signing.operator import create_controller
+
+    directory = tmp_path / "private"
+    directory.mkdir(mode=0o700)
+    settings = SimpleNamespace(
+        controller_key_file=directory / "controller.key",
+        worker_uids=[os.geteuid() + 1000],
+    )
+    result = create_controller(settings)
+    encoded = settings.controller_key_file.read_text()
+    assert len(encoded) == 65 and encoded.endswith("\n")
+    assert result == {
+        "authority_key_did": did_key_from_signing_key(bytes.fromhex(encoded.strip()))
+    }
+    assert settings.controller_key_file.stat().st_mode & 0o777 == 0o400
+    with pytest.raises(FileExistsError):
+        create_controller(settings)
+    assert settings.controller_key_file.read_text() == encoded
+    settings.controller_key_file.unlink()
+    directory.chmod(0o755)
+    with pytest.raises(SignerRefused, match="custody_not_isolated"):
+        create_controller(settings)
+    assert not settings.controller_key_file.exists()
+    directory.chmod(0o700)
+    settings.worker_uids = [os.geteuid()]
+    with pytest.raises(SignerRefused, match="custody_not_isolated"):
+        create_controller(settings)
+    assert not settings.controller_key_file.exists()
+
+
+def test_key_creation_precedes_profile_loading_and_prints_only_public_reference(
+    monkeypatch, capsys, tmp_path
+):
+    import json
+    import os
+    from types import SimpleNamespace
+
+    from aweb.protected_signing import operator
+
+    directory = tmp_path / "private"
+    directory.mkdir(mode=0o700)
+    settings = SimpleNamespace(
+        controller_key_file=directory / "controller.key",
+        worker_uids=[os.geteuid() + 1000],
+    )  # No profile, DB, registry, notification or ordinary member keys yet.
+    monkeypatch.setattr(operator, "HostSettings", lambda: settings)
+    monkeypatch.setattr("sys.argv", ["operator", "create-controller"])
+    operator.main()
+    output = capsys.readouterr().out
+    assert set(json.loads(output)) == {"authority_key_did"}
+    assert settings.controller_key_file.read_text().strip() not in output

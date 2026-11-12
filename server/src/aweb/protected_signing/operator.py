@@ -4,9 +4,11 @@ Use the host's AWEB_PROTECTED_* file settings and run as its service uid:
   python -m aweb.protected_signing.operator bootstrap --requester DID_AW --contact EMAIL
   python -m aweb.protected_signing.operator check
   python -m aweb.protected_signing.operator install-controller --source-pem FILE
+  python -m aweb.protected_signing.operator create-controller
 
-The last command converts an EXISTING controller seed; it never generates,
-registers, rotates or overwrites a key. No secret is printed or accepted in argv.
+install-controller converts an EXISTING matching controller seed; create-controller
+creates a seed only for explicit new-authority provisioning. Neither registers,
+rotates, replaces or overwrites authority. No secret is printed or accepted in argv.
 """
 
 import argparse
@@ -21,7 +23,7 @@ from aweb_naapp.email import EmailSettings, Mailer
 from aweb_naapp.hooks.strictjson import parse_strict
 from aweb_naapp.key_file import read_key_file
 from aweb_naapp.runtime.protected_signer import SignerRefused
-from awid.did import did_key_from_signing_key
+from awid.did import did_from_public_key, did_key_from_signing_key, generate_keypair
 from awid.signing import load_signing_key_pem
 
 from .bootstrap import initialise
@@ -41,6 +43,24 @@ def install_controller(settings, *, profile, scope, source_pem):
         or public_key != binding.authority_key_did
     ):
         raise SignerRefused("authority_changed")
+    _write_controller(settings, seed)
+    return {"authority_key_did": public_key}
+
+
+def create_controller(settings):
+    """Create one private seed for explicit new-authority provisioning only.
+
+    No registry is contacted. An existing authority needs its matching key or
+    its separately approved rotation; this command is never a repair fallback.
+    """
+    seed, public = generate_keypair()
+    _write_controller(settings, seed)
+    return {"authority_key_did": did_from_public_key(public)}
+
+
+def _write_controller(settings, seed):
+    if os.geteuid() in settings.worker_uids:
+        raise SignerRefused("custody_not_isolated")
     directory = os.open(
         settings.controller_key_file.parent,
         os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW,
@@ -61,7 +81,6 @@ def install_controller(settings, *, profile, scope, source_pem):
             os.fsync(stream.fileno())
     finally:
         os.close(directory)
-    return {"authority_key_did": public_key}
 
 
 async def run(args, settings, *, profile, scope, mailer=None, registry_transport=None):
@@ -96,6 +115,10 @@ def parser():
     sub.add_parser(
         "check", help="Check current custody/registry/provisioning; create no grants"
     )
+    sub.add_parser(
+        "create-controller",
+        help="Create a new private key once; register, replace or rotate no authority",
+    )
     key = sub.add_parser(
         "install-controller",
         help="Install the existing controller PEM as a private hex-seed file, without overwrite",
@@ -108,14 +131,19 @@ def main():
     args = parser().parse_args()
     try:
         settings = HostSettings()
-        profile = ProtectedServiceProfile.from_json(settings.profile_file.read_bytes())
-        scope = parse_strict(settings.scope_file.read_bytes())
-        if args.command == "install-controller":
-            result = install_controller(
-                settings, profile=profile, scope=scope, source_pem=args.source_pem
-            )
+        if args.command == "create-controller":
+            result = create_controller(settings)
         else:
-            result = asyncio.run(run(args, settings, profile=profile, scope=scope))
+            profile = ProtectedServiceProfile.from_json(
+                settings.profile_file.read_bytes()
+            )
+            scope = parse_strict(settings.scope_file.read_bytes())
+            if args.command == "install-controller":
+                result = install_controller(
+                    settings, profile=profile, scope=scope, source_pem=args.source_pem
+                )
+            else:
+                result = asyncio.run(run(args, settings, profile=profile, scope=scope))
     except Exception as error:
         # Config/DB/SMTP libraries may carry DSNs, tokens or private key data in
         # exception text. Never print the raw exception or a traceback here.

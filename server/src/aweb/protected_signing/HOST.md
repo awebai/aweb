@@ -172,6 +172,24 @@ credential/session/assertion rows or replace this host with a test-only signer.
 
 ## Controller key installation, backup and cutover
 
+For an explicitly new authority, create its key **inside the private signer
+volume**, as the protected uid, before writing the public profile binding:
+
+```sh
+python -m aweb.protected_signing.operator create-controller
+```
+
+Use the normal `AWEB_PROTECTED_*` settings, including `CONTROLLER_KEY_FILE` and
+`WORKER_UIDS`. The command opens no DB/registry/mail connection and needs no
+profile or scope file yet. It writes the same exclusive mode-0400 hex-seed
+file under a real uid-owned mode-0700 directory, and prints only
+`{"authority_key_did":"did:key:..."}`. Bind that public DID in the operator
+profile and the explicit new-authority creation request. It never registers
+or changes registry authority, overwrites a key, or repairs an existing
+team whose key is missing. Existing teams use the matching-key installation
+path below; a controller change needs its separately approved rotation.
+
+
 The input is the **existing** registered team's controller seed, normally held
 by its authorized owner in aw's `ED25519 PRIVATE KEY` PEM format. The aw state
 path is `~/.awid/team-keys/<domain>/<team>.key` (legacy installations may retain
