@@ -495,12 +495,32 @@ never populate an entry later served to an unsigned or differently authorized
 caller.
 
 **Team-key rotation.** AWID rotates a team key at
-`POST /v1/namespaces/{domain}/teams/{name}/rotate`. With the Redis cache, aweb
-may continue reading the old key for up to 20 minutes. Old-key certificates may
-continue to verify during that stale interval, while certificates signed by the
-new key fail closed until refresh. Deleting that team's exact metadata and
-revocation cache entries is the operator's immediate invalidation mechanism;
-this contract does not promise a broad key-prefix flush command.
+`POST /v1/namespaces/{domain}/teams/{name}/rotate`. The controller-key cache
+refreshes synchronously after 60 seconds, independently of the longer-lived
+team metadata cache. Old-key certificates retain this freshness behavior and
+the existing registry-outage grace; a successful cached-key verification adds
+no signature-failure refresh reads.
+
+Only a certificate signature failure under the registry-resolved cached key
+may trigger an early `get_team_public_key_fresh` read. An unchanged key, a
+failed read, or a suppressed attempt keeps the original 401 and never renews
+the cached key's fetch timestamp. A changed key is cached at its fetch time;
+the certificate is checked again under that key. Only if those checks pass is
+the team's revocation set read fresh and checked before admission. A malformed
+certificate, member-key mismatch, unknown team or revoked certificate does
+not trigger a signature-failure refresh. The certificate's claimed key never
+establishes authority.
+
+The cached client shares each team's in-flight refresh among its callers,
+even when an attempt lasts longer than the cooldown. A five-second Redis
+`SET NX` admission window, starting before the attempt, bounds added key
+refresh reads across workers to **12 per team per minute**. Redis admission
+failure suppresses the refresh. This is per discoverable real team: a normal
+cache miss can discover and cache a team's key before signature verification.
+Those existing normal cache reads are separate from the added refresh budget.
+The OSS request middleware does not impose a per-client limit before team
+authentication, so an auth-failing request is not counted by a global client
+rate limiter here. Hosted proxy admission is deployment policy.
 
 **Revocation.** Against an honest, available registry, a newly revoked
 certificate may continue to verify for at most the 120-second fresh-plus-stale
