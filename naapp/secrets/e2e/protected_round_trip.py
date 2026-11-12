@@ -374,7 +374,9 @@ def refusals(site: Site, holder: Holder, founded: Founded) -> None:
         site.drop_prepare_answers(False)
     assert lost.returncode != 0, lost.stdout
     assert first_json(lost.stdout)["error"]["code"] == "prepare_unconfirmed", lost.stdout
-    operation = re.search(r"Preparing operation (\S+)", lost.stderr).group(1)
+    preparing = re.search(r"Preparing operation (\S+)", lost.stderr)
+    assert preparing, lost.stderr
+    operation = preparing.group(1)
     assert (saved / f"{operation}.json").exists()
     child = pexpect.spawn("docker", ["exec", "-it", machine, "aw", "--json", "app", "role", "resume", operation,
                                      "--protected-profile", site.profile_in_machine],
