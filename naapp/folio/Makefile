@@ -2,6 +2,7 @@
 	prod-status prod-deploy prod-wait prod-verify prod-rollback
 
 API_PORT ?= 8765
+AWEB_REPO_ROOT := $(abspath $(dir $(lastword $(MAKEFILE_LIST)))/../..)
 # The e2e stack's compose project; a gate passes its own with the NAAPP_E2E_* ports.
 export NAAPP_E2E_PROJECT ?= folio-e2e
 PROD_CONFIG ?= ops/render-production.json
@@ -18,7 +19,7 @@ lint:
 
 e2e e2e-up: SHELL := /bin/bash
 e2e:
-	set -e; source ../../scripts/prepare-release-wheels.sh; \
+	set -e; source "$(AWEB_REPO_ROOT)/scripts/prepare-release-wheels.sh"; \
 	network="$(NAAPP_E2E_PROJECT)_default"; connected=; \
 	cleanup() { \
 		status=$$?; trap - EXIT; \
@@ -40,7 +41,7 @@ e2e:
 	FOLIO_E2E=1 uv run pytest -q -m e2e
 
 e2e-up:
-	set -e; source ../../scripts/prepare-release-wheels.sh; docker compose -p $(NAAPP_E2E_PROJECT) -f docker-compose.e2e.yml up --build -d
+	set -e; source "$(AWEB_REPO_ROOT)/scripts/prepare-release-wheels.sh"; docker compose -p $(NAAPP_E2E_PROJECT) -f docker-compose.e2e.yml up --build -d
 
 e2e-down:
 	docker compose -p $(NAAPP_E2E_PROJECT) -f docker-compose.e2e.yml down -v --remove-orphans

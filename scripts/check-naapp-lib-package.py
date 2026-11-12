@@ -27,7 +27,10 @@ from email.message import Message
 from pathlib import Path
 
 from release_versions import PYTHON_VERSION, VersionRefusal, python_version_key
-from release_artifacts import build_python as _build, wheel as manifest_wheel, prepare_python
+from release_artifacts import build_python, wheel as manifest_wheel, prepare_python
+
+# Existing package controls call the same builder used by the artifact producer.
+_build = build_python
 
 ROOT = Path(__file__).resolve().parents[1]
 NAAPP_LIB = ROOT / "naapp-lib"
