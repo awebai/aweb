@@ -16,7 +16,7 @@ from tests.test_protected_signer_host import CapturedMail
 pytest_plugins = ("tests.test_independent_protected_signer",)
 
 
-def host_for(w, tmp_path):
+def host_settings_for(w, tmp_path):
     profile = profile_for(w)
     private = tmp_path / "host-controller"
     private.mkdir(mode=0o700)
@@ -46,6 +46,11 @@ def host_for(w, tmp_path):
         database_url_file=database_url_file,
         database_schema=w.db.schema,
     )
+    return settings
+
+
+def host_for(w, tmp_path):
+    settings = host_settings_for(w, tmp_path)
     # Capture only notification transport. Custody, registry, SQL bindings,
     # original B2/B3, LOGIN and exact-act assertions are the real adapters.
     return create_app(

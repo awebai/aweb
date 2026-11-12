@@ -64,14 +64,17 @@ def install_controller(settings, *, profile, scope, source_pem):
     return {"authority_key_did": public_key}
 
 
-async def run(args, settings, *, profile, scope):
+async def run(args, settings, *, profile, scope, mailer=None, registry_transport=None):
     # Same real custody, member-key exclusion, registry pins, connection config
     # and resource cleanup as the serving host. No fixture-only composition.
     async with open_composition(
         settings,
         profile=profile,
         scope=scope,
-        mailer=Mailer(EmailSettings.from_env("AWEB_PROTECTED_")),
+        mailer=Mailer(EmailSettings.from_env("AWEB_PROTECTED_"))
+        if mailer is None
+        else mailer,
+        registry_transport=registry_transport,
     ) as c:
         await c.migrate()
         await apply_console_migrations(c.db)

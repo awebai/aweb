@@ -13,7 +13,13 @@ from aweb_naapp.runtime.protected_signer import SignerRefused
 
 from aweb.protected_signing.bootstrap import initialise, prepare_completion
 from tests.test_independent_protected_signer import HUMAN_ORIGIN, ORIGIN
-from tests.test_protected_host_native import host_for
+from tests.test_protected_host_native import host_settings_for
+from tests.test_protected_signer_host import CapturedMail
+from tests.test_independent_protected_http import profile_for
+from aweb.protected_signing.operator import run
+from aweb.protected_signing.host import create_app
+from types import SimpleNamespace
+from urllib.parse import parse_qs, urlsplit
 
 pytest_plugins = ("tests.test_independent_protected_signer",)
 CONTACT = "operator@customer.example"
@@ -46,10 +52,28 @@ async def test_local_operator_real_host_mailed_link_uv_login_and_bootstrap_consu
     world, tmp_path
 ):
     w = world
-    result, token = await first(w)
+    await empty_authority(w)
+    settings = host_settings_for(w, tmp_path)
+    mailer = CapturedMail()
+    result = await run(
+        SimpleNamespace(command="bootstrap", requester=w.root_id, contact=CONTACT),
+        settings,
+        profile=profile_for(w),
+        scope=w.context.fields(),
+        mailer=mailer,
+        registry_transport=w.host.transport,
+    )
     assert result["delivery"] == "delivered"
     assert "token" not in result
-    host = host_for(w, tmp_path)
+    assert len(mailer.messages) == 1
+    assert mailer.messages[0].to == CONTACT
+    url = next(
+        word
+        for word in mailer.messages[0].text.split()
+        if word.startswith(HUMAN_ORIGIN + "/enrolment#")
+    )
+    token = parse_qs(urlsplit(url).fragment)["token"][0]
+    host = create_app(settings, mailer=mailer, registry_transport=w.host.transport)
     async with host.api_app.router.lifespan_context(host.api_app):
         async with httpx.AsyncClient(transport=httpx.ASGITransport(app=host)) as client:
             assert (await client.get(ORIGIN + "/enrolment")).status_code == 404
