@@ -671,25 +671,14 @@ async def test_correctly_signed_different_act_with_same_nonce_is_not_applied_ear
     assert await world.counts() == (1, 1, 1)
 
 
-@pytest.mark.parametrize("lost", ["installation", "controller", "expiry"])
+@pytest.mark.parametrize("lost", ["controller", "expiry"])
 async def test_applied_earlier_requires_current_authority_installation_and_valid_act(world, lost):
     assert (await world.post(world.body())).status_code == 200
     revoke = world.body(act="human-role.revoke")
     assert (await world.post(revoke)).status_code == 200
     before = world.effect.prepares
     expected = (403, "owner_required")
-    if lost == "installation":
-        from aweb.installations import uninstall_installation_on
-
-        async with world.coordination.server.db.get_manager().transaction() as tx:
-            await uninstall_installation_on(
-                tx,
-                team_id=world.member.team_id,
-                app_id="example",
-                expected_generation=world.installation["generation"],
-            )
-        expected = (403, "installation_inactive")
-    elif lost == "controller":
+    if lost == "controller":
         from aweb_naapp_testing import did_key
 
         await world.coordination.registry.rotate_team_key(
@@ -704,6 +693,49 @@ async def test_applied_earlier_requires_current_authority_installation_and_valid
     assert (response.status_code, response.json()["detail"]) == expected
     assert world.effect.prepares == before
     assert await world.counts() == (2, 0, 2)
+
+
+async def test_replay_and_fresh_delivery_share_the_remote_uninstall_observation_window(
+    world, monkeypatch
+):
+    from aweb.installations import uninstall_installation_on
+
+    # F6 observes remote uninstall within AWEB_APP_GRANT_MAX_AGE_SECONDS
+    # plus the refresh; replay uses the same admission as a fresh delivery.
+    monkeypatch.setenv("AWEB_APP_GRANT_MAX_AGE_SECONDS", "1")
+    designation = world.body()
+    assert (await world.post(designation)).status_code == 200
+    observed = await world.runtime.installation_grants().status_for(world.member.team_id)
+    assert observed is not None and observed.state == "active"
+    assert observed.max_age_seconds == 1
+    deadline = observed.fresh_until
+    async with world.coordination.server.db.get_manager().transaction() as tx:
+        await uninstall_installation_on(
+            tx,
+            team_id=world.member.team_id,
+            app_id="example",
+            expected_generation=world.installation["generation"],
+        )
+
+    # Both requests are admitted while that original observation is fresh.
+    # Only the fresh revoke changes the holding; the replay never prepares it.
+    before = world.effect.prepares
+    replay = await world.post(designation)
+    assert (replay.status_code, replay.json()["detail"]) == (409, "applied_earlier")
+    assert world.effect.prepares == before
+    assert await world.counts() == (1, 1, 1)
+    assert (await world.post(world.body(act="human-role.revoke"))).status_code == 200
+    assert monotonic_ns() < deadline
+    assert await world.counts() == (2, 0, 2)
+
+    # Cross the retained deadline once; do not clear the cache or force a read.
+    await asyncio.sleep(max(0, (deadline - monotonic_ns()) / 1e9) + 0.01)
+    before = world.effect.prepares
+    for body in (designation, world.body()):
+        refused = await world.post(body)
+        assert (refused.status_code, refused.json()["detail"]) == (403, "installation_inactive")
+        assert world.effect.prepares == before
+        assert await world.counts() == (2, 0, 2)
 
 
 @pytest.mark.parametrize("stale", [False, True])
