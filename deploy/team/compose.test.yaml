@@ -1,0 +1,117 @@
+# The journey's test world beside one team's deployment, added after
+# compose.yaml: its own AWID registry, the DNS that names it and every public
+# host, a captured SMTP server, a TLS front for every public origin, and the
+# image with the real aw. Production has none of these: it uses the
+# operator's registry, DNS, SMTP and reverse proxy.
+#
+# The journey writes TEST_WORLD_DIR (DNS zone, certificates, front
+# configuration) before it starts any of them, and passes the TEST_ settings
+# in its environment. Nothing here is a credential of the deployment.
+services:
+  dns:
+    image: coredns/coredns:1.11.3
+    command: ["-conf", "/zones/Corefile"]
+    volumes:
+      - "${TEST_WORLD_DIR:?}/dns:/zones:ro"
+    networks:
+      services:
+        ipv4_address: ${TEST_DNS_IP:?}
+
+  # The registry's own disposable database, reachable only on the services
+  # network and gone with the run.
+  registry-db:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_HOST_AUTH_METHOD: trust
+    tmpfs:
+      - /var/lib/postgresql/data
+    networks: [services]
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres"]
+      interval: 2s
+      timeout: 5s
+      retries: 30
+
+  registry:
+    image: ${TEST_AWID_IMAGE:?}
+    dns: ["${TEST_DNS_IP:?}"]
+    environment:
+      AWID_DATABASE_URL: postgresql://postgres@registry-db:5432/postgres
+      AWID_REDIS_URL: redis://redis:6379/3
+      AWID_DB_SCHEMA: awid
+      AWID_HOST: 0.0.0.0
+      AWID_PORT: 8010
+      AWID_PUBLIC_ORIGINS: ${TEST_REGISTRY_ORIGIN:?}
+      AWID_RATE_LIMIT_DISABLED: "1"
+      SSL_CERT_FILE: /etc/aweb-test/ca.pem
+    volumes:
+      - "${TEST_WORLD_DIR:?}/tls/ca.pem:/etc/aweb-test/ca.pem:ro"
+    networks: [services]
+    depends_on:
+      registry-db: {condition: service_healthy}
+      redis: {condition: service_healthy}
+
+  smtp:
+    image: axllent/mailpit:v1.27
+    environment:
+      MP_SMTP_TLS_CERT: /tls/server.pem
+      MP_SMTP_TLS_KEY: /tls/server.key
+      MP_SMTP_REQUIRE_STARTTLS: "true"
+      MP_SMTP_AUTH_ACCEPT_ANY: "true"
+    volumes:
+      - "${TEST_WORLD_DIR:?}/tls:/tls:ro"
+    networks:
+      services:
+        ipv4_address: ${TEST_SMTP_IP:?}
+
+  # Terminates TLS for every public origin and keeps the public Host.
+  front:
+    image: caddy:2.10-alpine
+    volumes:
+      - "${TEST_WORLD_DIR:?}/front/Caddyfile:/etc/caddy/Caddyfile:ro"
+      - "${TEST_WORLD_DIR:?}/tls:/tls:ro"
+    networks:
+      services:
+        ipv4_address: ${TEST_FRONT_IP:?}
+
+  # One person's or operator's machine with the real aw; the journey starts
+  # each with docker compose run.
+  cli:
+    image: ${TEST_CLI_IMAGE:?}
+    profiles: [cli]
+    dns: ["${TEST_DNS_IP:?}"]
+    entrypoint: ["sleep", "infinity"]
+    environment:
+      SSL_CERT_FILE: /world/tls/ca.pem
+      AW_NO_UPDATE_CHECK: "1"
+      AWID_REGISTRY_URL: ${TEST_REGISTRY_ORIGIN:?}
+    volumes:
+      - "${TEST_WORLD_DIR:?}:/world"
+    networks: [services]
+
+  # The deployment's services resolve through the world's DNS and trust its
+  # certificate authority, as they would the operator's.
+  aweb:
+    dns: ["${TEST_DNS_IP:?}"]
+    environment:
+      SSL_CERT_FILE: /etc/aweb-test/ca.pem
+    volumes:
+      - "${TEST_WORLD_DIR:?}/tls/ca.pem:/etc/aweb-test/ca.pem:ro"
+  secrets:
+    dns: ["${TEST_DNS_IP:?}"]
+    environment:
+      SSL_CERT_FILE: /etc/aweb-test/ca.pem
+    volumes:
+      - "${TEST_WORLD_DIR:?}/tls/ca.pem:/etc/aweb-test/ca.pem:ro"
+  logs:
+    dns: ["${TEST_DNS_IP:?}"]
+    environment:
+      SSL_CERT_FILE: /etc/aweb-test/ca.pem
+    volumes:
+      - "${TEST_WORLD_DIR:?}/tls/ca.pem:/etc/aweb-test/ca.pem:ro"
+  signer:
+    dns: ["${TEST_DNS_IP:?}"]
+    environment:
+      SSL_CERT_FILE: /etc/aweb-test/ca.pem
+    volumes:
+      - "${TEST_WORLD_DIR:?}/tls/ca.pem:/etc/aweb-test/ca.pem:ro"
