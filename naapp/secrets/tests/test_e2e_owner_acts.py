@@ -58,7 +58,10 @@ class Lane:
 
     def up(self, *services: str) -> None:
         result = self.compose("up", "-d", "--build", "--wait", *services)
-        assert result.returncode == 0, result.stdout + result.stderr
+        if result.returncode != 0:
+            # The services' own last words, before the fixture's down -v.
+            logs = self.compose("logs", "--no-color", "--tail", "60", *services)
+            raise AssertionError(result.stderr[-4000:] + "\n--- service logs ---\n" + logs.stdout + logs.stderr)
 
     def machine(self, name: str) -> str:
         """Start a cli container as one person's machine; its HOME is /runtime/<name>."""
