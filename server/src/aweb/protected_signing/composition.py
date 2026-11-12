@@ -21,6 +21,7 @@ from aweb_naapp.runtime.protected_signer import (
     RestrictedRequester,
     SignerRefused,
 )
+from awid.did import validate_stable_id
 from awid.protected_request import verify_protected_request
 from awid.registry_types import RegistryError
 from awid.request_body_limit import RequestBodyTooLarge
@@ -28,6 +29,7 @@ from pgdbm import AsyncMigrationManager
 from starlette.requests import Request
 
 from .authority import IndependentAuthority
+from .registry import PinnedRegistryView
 
 MAX_PREPARE_BYTES = 65536
 logger = logging.getLogger(__name__)
@@ -48,13 +50,19 @@ class LocalAudit:
 
 
 class BindingPolicy:
-    def __init__(self, authority):
+    def __init__(self, authority, expected_version=None):
         self.authority = authority
+        self.expected_version = expected_version
 
     async def current(self, policy_ref, *, tx=None):
         if policy_ref != "aweb.human-assurance/1":
             return None
         row = await self.authority.binding(tx if tx is not None else self.authority.db)
+        if (
+            self.expected_version is not None
+            and row["policy_version"] != self.expected_version
+        ):
+            raise SignerRefused("policy_changed")
         return ActionPolicy(
             policy_ref,
             row["policy_version"],
@@ -73,7 +81,16 @@ class IndependentProtectedSigner:
     """
 
     def __init__(
-        self, db, *, context, registry, custody, human_origin, request_origin, delivery
+        self,
+        db,
+        *,
+        context,
+        registry,
+        custody,
+        human_origin,
+        request_origin,
+        delivery,
+        policy_version=None,
     ):
         from awid.log import require_canonical_server_origin
 
@@ -107,11 +124,82 @@ class IndependentProtectedSigner:
         self.signer = ProtectedSigner(
             db,
             passkeys=self.passkeys,
-            policies=BindingPolicy(self.authority),
+            policies=BindingPolicy(self.authority, policy_version),
             delivery=delivery,
             audit=self.audit,
             authority=self.authority,
             custody=custody,
+        )
+
+    @classmethod
+    def from_profile(cls, db, *, profile, scope, registry_client, custody, delivery):
+        """Use the host's lifespan-owned registry_client(), without another client.
+
+        The profile must already come from trusted operator configuration.
+        An exact explicit binding is required; public references are checked
+        against the configured custody and shared current policy, never used
+        as approval evidence.
+        """
+        binding = profile.binding_for(scope)
+        if binding.authority_key_did != custody.team_key_did:
+            raise SignerRefused("authority_changed")
+        return cls(
+            db,
+            context=binding.context(),
+            registry=PinnedRegistryView(registry_client, profile=profile),
+            custody=custody,
+            human_origin=profile.human_origin,
+            request_origin=profile.request_origin,
+            delivery=delivery,
+            policy_version=binding.policy.version,
+        )
+
+    async def authenticate_prepare(self, request, operation):
+        if operation.context != self.context:
+            raise SignerRefused("scope_refused")
+        return await self.requester(
+            request,
+            principal=request.headers.get("X-AWEB-DID-AW", ""),
+            operation="protected_operation_prepare",
+            context=operation.context,
+        )
+
+    async def authenticate_receipt(self, request, operation_id):
+        context = await self.signer.lookup_context(operation_id)
+        if context is None:
+            raise SignerRefused("operation_not_found")
+        return await self.requester(
+            request,
+            principal=request.headers.get("X-AWEB-DID-AW", ""),
+            operation="protected_operation_receipt",
+            context=context,
+        )
+
+    def protected_sessions(self):
+        from aweb_naapp.console import ConsoleSessions
+
+        async def current_scope(scope):
+            try:
+                return (
+                    await self.authority.context_for_scope(scope, tx=self.db)
+                    == self.context
+                )
+            except SignerRefused:
+                return False
+
+        return ConsoleSessions(self.db, passkeys=self.passkeys, scopes=current_scope)
+
+    def operations_http(self, *, limiter, human_sessions=None, human_csrf_key=None):
+        from aweb_naapp.runtime.protected_signer import ProtectedOperationsHTTP
+
+        return ProtectedOperationsHTTP(
+            self.signer,
+            request_origin=self.request_origin,
+            requester=self.authenticate_prepare,
+            reader=self.authenticate_receipt,
+            limiter=limiter,
+            human_sessions=human_sessions,
+            human_csrf_key=human_csrf_key,
         )
 
     async def migrate(self):
@@ -122,7 +210,7 @@ class IndependentProtectedSigner:
         ).apply_pending_migrations()
         await self.signer.migrate()
 
-    async def requester(self, request, *, principal, operation):
+    async def requester(self, request, *, principal, operation, context=None):
         """Build a restricted actor only after proof/current registered mapping.
 
         The shared route supplies its fixed label and validated typed scope.
@@ -134,8 +222,21 @@ class IndependentProtectedSigner:
             "protected_operation_receipt",
         }:
             raise SignerRefused("scope_refused")
-        if not isinstance(principal, str) or not principal.startswith("did:aw:"):
-            raise SignerRefused("subject_ineligible")
+        context = self.context if context is None else context
+        expected, selected = self.context.fields(), context.fields()
+        if operation == "protected_operation_receipt":
+            expected.pop("generation")
+            selected.pop("generation")
+        if expected != selected:
+            raise SignerRefused("scope_refused")
+        try:
+            if (
+                not isinstance(principal, str)
+                or validate_stable_id(principal) != principal
+            ):
+                raise ValueError()
+        except ValueError:
+            raise SignerRefused("requester_invalid") from None
         chunks, length = [], 0
         async for chunk in request.stream():
             length += len(chunk)
@@ -151,9 +252,9 @@ class IndependentProtectedSigner:
             Request(request.scope, receive),
             operation=operation,
             request_origin=self.request_origin,
-            service_id=self.context.service_id,
-            domain=self.context.authority_domain,
-            scope=self.context.fields(),
+            service_id=context.service_id,
+            domain=context.authority_domain,
+            scope=context.fields(),
         )
         try:
             resolution = await self.registry.resolve_key_fresh(principal)
@@ -168,5 +269,5 @@ class IndependentProtectedSigner:
         if resolution.did_aw != principal or resolution.current_did_key != did:
             raise SignerRefused("requester_invalid")
         if operation == "protected_operation_receipt":
-            return ReceiptReader(principal, self.context)
-        return RestrictedRequester(principal, self.context)
+            return ReceiptReader(principal, context)
+        return RestrictedRequester(principal, context)

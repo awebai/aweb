@@ -12,7 +12,12 @@ import pytest
 import pytest_asyncio
 from aweb.protected_signing.composition import IndependentProtectedSigner
 from aweb.protected_signing.profile import ProtectedServiceProfile
-from aweb_naapp.console import ClientIdentity, LoginLimiter, apply_console_migrations
+from aweb_naapp.console import (
+    ClientIdentity,
+    LoginLimiter,
+    apply_console_migrations,
+    console_login_router,
+)
 from aweb_naapp.runtime.protected_signer import SignerRefused
 from awid.signing import canonical_json_bytes
 from fastapi import FastAPI
@@ -23,8 +28,8 @@ from tests.test_independent_protected_signer import (
 )
 from tests.test_protected_service_profile import FIXTURE
 
-
 pytest_plugins = ("tests.test_independent_protected_signer",)
+
 
 def profile_for(w):
     fields = json.loads(FIXTURE.read_bytes())
@@ -38,7 +43,7 @@ def profile_for(w):
     return ProtectedServiceProfile.from_json(canonical_json_bytes(fields))
 
 
-def mount(w, profile):
+def mount(w, profile, *, human=False):
     composition = IndependentProtectedSigner.from_profile(
         w.db,
         profile=profile,
@@ -51,7 +56,17 @@ def mount(w, profile):
         w.db, client_identity=ClientIdentity(), limit=100, window=timedelta(minutes=1)
     )
     app = FastAPI()
-    app.include_router(composition.operations_http(limiter=limiter).api_router())
+    sessions = composition.protected_sessions() if human else None
+    shared = composition.operations_http(
+        limiter=limiter,
+        human_sessions=sessions,
+        human_csrf_key="protected-human-csrf" if human else None,
+    )
+    app.include_router(shared.api_router())
+    if human:
+        app.include_router(console_login_router(sessions=sessions, limiter=limiter))
+        app.include_router(shared.human_router())
+    app.state.protected_operations = shared
     return composition, app
 
 
@@ -225,3 +240,81 @@ async def test_unavailable_configured_registry_keeps_http_503(http_world):
     response = await post(h)
     assert response.status_code == 503, response.text
     assert response.json()["detail"] == "receipt_unavailable"
+
+
+@pytest.mark.asyncio
+async def test_real_human_login_and_separate_uv_reach_exact_agent_receipt(http_world):
+    from tests.test_independent_protected_signer import HUMAN_ORIGIN
+
+    h, w = http_world, http_world.w
+    composition, app = mount(w, h.profile, human=True)
+    async with httpx.AsyncClient(
+        transport=httpx.ASGITransport(app=app), base_url=ORIGIN
+    ) as cli:
+        body = canonical_json_bytes(w.operation.intent())
+        response = await cli.post(
+            "/protected-operations", content=body, headers=headers(w, body=body)
+        )
+        assert response.status_code == 200, response.text
+        prepared = response.json()
+        path = "/handoff/" + prepared["handoff_id"] + "/governance"
+        routing = await app.state.protected_operations.page_context(
+            prepared["handoff_id"]
+        )
+        assert routing == {"b3_scope": w.scope, "csrf_key": "protected-human-csrf"}
+        async with httpx.AsyncClient(
+            transport=httpx.ASGITransport(app=app), base_url=HUMAN_ORIGIN
+        ) as browser:
+            assert (await browser.get(path)).status_code == 401
+            login_options = await browser.post(
+                "/login/options", json={"scope": w.scope}
+            )
+            assert login_options.status_code == 200, login_options.text
+            login = await browser.post(
+                "/login",
+                json={
+                    "scope": w.scope,
+                    "assertion": w.device.get(login_options.json()),
+                },
+            )
+            assert login.status_code == 200, login.text
+            human_headers = {
+                "Origin": HUMAN_ORIGIN,
+                "X-CSRF-Token": login.json()["csrf_token"],
+            }
+            state = await browser.get(path)
+            assert state.status_code == 200, state.text
+            assert state.json()["payload"] == prepared["payload"]
+            options = await browser.post(
+                path + "/options", json={}, headers=human_headers
+            )
+            assert options.status_code == 200, options.text
+            result = await browser.post(
+                path + "/execute",
+                json={"assertion": w.device.get(options.json())},
+                headers=human_headers,
+            )
+            assert result.status_code == 200, result.text
+            assert result.json()["state"] == "committed"
+        receipt_path = "/protected-operations/" + prepared["operation_id"]
+        receipt = await cli.get(
+            receipt_path, headers=headers(w, method="GET", path=receipt_path)
+        )
+        assert receipt.status_code == 200, receipt.text
+        assert receipt.json() == {
+            "state": "committed",
+            "result": result.json()["result"],
+        }
+        assert composition.registry.client is w.registry
+
+
+@pytest.mark.asyncio
+async def test_scope_admission_comes_from_current_provisioning_not_a_label(http_world):
+    h, w = http_world, http_world.w
+    sessions = h.composition.protected_sessions()
+    assert await sessions.scopes(w.scope)
+    assert not await sessions.scopes("other-scope")
+    await w.db.execute(
+        "UPDATE {{tables.protected_authorizer_bindings}} SET active=false"
+    )
+    assert not await sessions.scopes(w.scope)

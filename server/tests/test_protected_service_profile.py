@@ -130,6 +130,14 @@ def test_absent_scope_never_selects_a_default(fields):
         profile.binding_for(scope)
 
 
+def test_scope_selection_does_not_treat_true_as_generation_one(fields):
+    profile = load(fields)
+    scope = copy.deepcopy(fields["bindings"][0]["scope"])
+    scope["generation"] = True
+    with pytest.raises(ProfileRefused, match="profile_scope_refused"):
+        profile.binding_for(scope)
+
+
 def test_unknown_top_level_field_refuses(fields):
     fields["response_url"] = "https://other.example/handoff"
     with pytest.raises(ProfileRefused, match="profile_invalid"):
@@ -186,3 +194,100 @@ async def test_published_prepare_and_receipt_fixtures_use_the_reviewed_verifier(
             == vector["requester_key"]
         )
         assert request.headers["X-AWEB-DID-AW"] == vector["requester_id"]
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("mismatch", ["origin", "service_token", "base_url"])
+async def test_registry_accessor_view_refuses_configuration_or_service_fallback(
+    fields, mismatch
+):
+    from aweb.protected_signing.registry import PinnedRegistryView
+    from aweb_naapp.runtime.protected_signer import SignerRefused
+    from awid.registry import RegistryClient
+
+    profile = load(fields)
+    client = RegistryClient(
+        registry_url="https://other.example"
+        if mismatch == "origin"
+        else profile.registry_origin,
+        base_url="https://other.example/prefix" if mismatch == "base_url" else None,
+        service_token="operator-service-token-32-characters"
+        if mismatch == "service_token"
+        else None,
+    )
+    try:
+        with pytest.raises(SignerRefused, match="scope_refused"):
+            PinnedRegistryView(client, profile=profile)
+    finally:
+        await client.aclose()
+
+
+@pytest.mark.asyncio
+async def test_registry_accessor_view_refuses_unknown_namespace(fields):
+    import httpx
+    from aweb.protected_signing.registry import PinnedRegistryView
+    from aweb_naapp.runtime.protected_signer import SignerRefused
+    from awid.registry import RegistryClient
+
+    profile = load(fields)
+
+    async def redirected(_domain):
+        return "https://different-registry.example"
+
+    def no_request(request):
+        pytest.fail("configuration refusal must precede every HTTP request")
+
+    client = RegistryClient(
+        registry_url=profile.registry_origin,
+        domain_registry_resolver=redirected,
+        transport=httpx.MockTransport(no_request),
+    )
+    try:
+        view = PinnedRegistryView(client, profile=profile)
+        assert view.client is client
+        with pytest.raises(SignerRefused, match="scope_refused"):
+            await view.get_team_public_key_fresh("unknown.example", "engineering")
+    finally:
+        await client.aclose()
+
+
+@pytest.mark.asyncio
+async def test_pinned_read_cannot_change_registry_between_route_check_and_sdk_read(
+    fields,
+):
+    import httpx
+    from aweb.protected_signing.registry import PinnedRegistryView
+    from awid.registry import RegistryClient
+
+    profile = load(fields)
+    resolutions, requested = [], []
+
+    async def changing_route(domain):
+        resolutions.append(domain)
+        return (
+            profile.registry_origin
+            if len(resolutions) == 1
+            else "https://different-registry.example"
+        )
+
+    def record(request):
+        requested.append(str(request.url))
+        return httpx.Response(404, json={"detail": "not found"})
+
+    client = RegistryClient(
+        registry_url=profile.registry_origin,
+        domain_registry_resolver=changing_route,
+        transport=httpx.MockTransport(record),
+    )
+    try:
+        view = PinnedRegistryView(client, profile=profile)
+        assert (
+            await view.get_team_public_key_fresh("customer.example", "engineering")
+            is None
+        )
+        assert requested == [
+            profile.registry_origin
+            + "/v1/namespaces/customer.example/teams/engineering"
+        ]
+    finally:
+        await client.aclose()

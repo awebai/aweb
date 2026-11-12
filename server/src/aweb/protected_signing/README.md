@@ -32,20 +32,69 @@ custody = ProtectedControllerCustody(
     worker_uids=worker_os_uids,
 )
 composition = IndependentProtectedSigner(
-    db, context=context, registry=registry, custody=custody,
-    human_origin=human_origin, request_origin=request_origin,
+    db,
+    context=context,
+    registry=registry,
+    custody=custody,
+    human_origin=human_origin,
+    request_origin=request_origin,
     delivery=existing_approval_and_passkey_delivery,
 )
 await composition.migrate()
 # No authority binding or key is created when one is absent.
 requester = await composition.requester(
-    request, principal=registered_requester_id,
+    request,
+    principal=registered_requester_id,
     operation="protected_operation_prepare",
 )
 prepared = await composition.signer.prepare(operation, requester=requester)
 # Shared human mounts independently authenticate the exact H/holding and use
 # signer.approval_options / execute with B3's exact-act UV assertion.
 ```
+
+The profile-driven HTTP seam uses the same composition and the host's existing
+lifespan-owned `runtime.registry_client()` accessor:
+
+```python
+from aweb.protected_signing.profile import ProtectedServiceProfile
+from aweb_naapp.console import console_login_router
+
+profile = ProtectedServiceProfile.from_json(operator_profile_file.read_bytes())
+composition = IndependentProtectedSigner.from_profile(
+    db, profile=profile, scope=explicit_selected_scope,
+    registry_client=runtime.registry_client(), custody=custody,
+    delivery=existing_approval_and_passkey_delivery,
+)
+# Apply the existing console migrations and use its existing LoginLimiter.
+sessions = composition.protected_sessions()
+mount = composition.operations_http(
+    limiter=existing_login_limiter, human_sessions=sessions,
+    human_csrf_key=trusted_console_brand.csrf_key,
+)
+request_app.include_router(mount.api_router())
+human_app.include_router(console_login_router(sessions=sessions, limiter=existing_login_limiter))
+human_app.include_router(mount.human_router())
+```
+
+`authenticate_prepare` and `authenticate_receipt` are the actual callbacks on
+this mount. They use the existing `X-AWEB-DID-AW` selection header plus reviewed
+covering-v2 proof, current registry key and SQL scope authority. Receipt scope
+comes from `signer.lookup_context`, retaining the original generation even
+when the current profile changes. The public profile/fixture and exact POST/GET
+bytes are specified in `docs/protected-service-profile.md`.
+
+The registry view reuses the accessor's transport/member credentials and leaves
+closing it to the host. Its team/status reads pass an explicit `registry_origin`
+to the SDK, preventing domain routing from changing the destination between a
+check and the request. The SDK's ordinary calls retain their existing routing.
+A different base URL or service-token fallback refuses in this independent view.
+
+`protected_sessions()` admits only the current provisioned scope/generation.
+Shared console owns LOGIN, session/CSRF/current-credential checks, protected
+context retention and the human actor. Its existing page dispatcher uses
+`mount.page_context(handoff_id)` for routing; this adapter creates no HTML page
+or actor from browser JSON. The shared governance router performs the separate
+exact-act UV after real LOGIN. The CLI uses its own cookie-free receipt proof.
 
 The provisioned `ProtectedKeyContext` selects one exact service, team-controller
 authority, human/domain and association generation. Its authoritative row in

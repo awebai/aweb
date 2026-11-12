@@ -63,3 +63,53 @@ class CustomerRegistry(RegistryClient):
             },
             age_seconds=monotonic() - started,
         )
+
+
+class PinnedRegistryView:
+    """Profile-bound reads over runtime.registry_client(); the host owns close.
+
+    Preserve its actual ordinary member credentials and transport. Do not
+    create another HTTP client, swap in controller authority, or discover a
+    fallback registry. Namespace trust stays with the explicit profile pins.
+    """
+
+    def __init__(self, client, *, profile):
+        if (
+            client.registry_url != profile.registry_origin
+            or getattr(client, "service_token", None)
+            or (
+                getattr(client, "base_url", None) is not None
+                and client.base_url.rstrip("/") != profile.registry_origin
+            )
+        ):
+            raise SignerRefused("scope_refused")
+        self.client, self.registry_url = client, profile.registry_origin
+        self.namespace_keys = MappingProxyType(profile.namespace_keys())
+
+    def _domain(self, domain):
+        if domain not in self.namespace_keys:
+            raise SignerRefused("scope_refused")
+
+    async def resolve_key_fresh(self, principal):
+        return await self.client.resolve_key_fresh(principal)
+
+    async def get_team_public_key_fresh(self, domain, name):
+        self._domain(domain)
+        return await self.client.get_team_public_key_fresh(
+            domain,
+            name,
+            registry_origin=self.registry_url,
+        )
+
+    async def fetch_id_certificate_status(self, domain, request):
+        self._domain(domain)
+        return await self.client.fetch_id_certificate_status(
+            domain,
+            request,
+            registry_origin=self.registry_url,
+        )
+
+    async def id_chain_evidence(self, bundle, subject, *, domain):
+        return await CustomerRegistry.id_chain_evidence(
+            self, bundle, subject, domain=domain
+        )

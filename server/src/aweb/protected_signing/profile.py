@@ -179,8 +179,12 @@ class ProtectedServiceProfile(_Closed):
         return {row.domain: row.controller_did for row in self.namespace_authorities}
 
     def binding_for(self, scope):
+        try:
+            selected = ProfileScope.model_validate(scope)
+        except (ValueError, TypeError):
+            raise ProfileRefused("profile_scope_refused") from None
         for binding in self.bindings:
-            if binding.scope.model_dump(mode="json") == scope:
+            if binding.scope == selected:
                 return binding
         raise ProfileRefused("profile_scope_refused")
 
