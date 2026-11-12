@@ -50,3 +50,36 @@ func TestCredentialCapRefusesNonIntegersAndHolderOrExtraFields(t *testing.T) {
 		}
 	}
 }
+
+func TestCredentialCapSubjectFromSavedJSONUsesTheSameClosedGrammar(t *testing.T) {
+	original := capSubject(json.Number("3"))
+	normalized, err := ValidateOwnerActSubject(CredentialCapOwnerAct, original)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if normalized["cap"] != int64(3) {
+		t.Fatalf("cap not normalized: %#v", normalized["cap"])
+	}
+	original["cap"] = json.Number("4")
+	if normalized["cap"] != int64(3) {
+		t.Fatal("subject still aliases caller input")
+	}
+	fields := ownerAct(CredentialCapOwnerAct, ownerAppAud, normalized, nonceFor(93))
+	raw, signature, err := SignOwnerAct(ownerKey(ownerTeamSeed), fields)
+	if err != nil {
+		t.Fatal(err)
+	}
+	now, _ := time.Parse(time.RFC3339, ownerNow)
+	if _, err := VerifyOwnerAct(raw, signature, OwnerActVerifyOptions{
+		TeamID: ownerTeamIDValue, CurrentTeamKeyDID: ownerDID(ownerTeamSeed), Audience: ownerAppAud,
+		Acts: []string{CredentialCapOwnerAct}, ExpectedSubject: normalized, Now: now,
+		NonceUsed: func(string) bool { return false },
+	}); err != nil {
+		t.Fatal(err)
+	}
+	for _, cap := range []any{json.Number("3.0"), json.Number("3e0"), json.Number("9007199254740992"), nil, true} {
+		if _, err := ValidateOwnerActSubject(CredentialCapOwnerAct, capSubject(cap)); err == nil {
+			t.Fatalf("accepted non-canonical or invalid saved cap %#v", cap)
+		}
+	}
+}

@@ -236,6 +236,31 @@ func ownerActTime(value string) (time.Time, error) {
 	return parsed, nil
 }
 
+// ValidateOwnerActSubject snapshots a builder's typed subject using the same
+// closed schema as the verifier. In particular it accepts the exact integer
+// json.Number values produced by saved-request decoders, and returns int64s.
+// This verifies no signature, key authority, nonce or effect.
+func ValidateOwnerActSubject(act string, subject map[string]any) (map[string]any, error) {
+	spec, ok := ownerSubjects[act]
+	if !ok {
+		return nil, strictjson.Refuse("unknown_act", "%s", act)
+	}
+	raw, err := StrictCanonicalJSON(subject)
+	if err != nil {
+		return nil, strictjson.Refuse("invalid_value", "subject has no canonical form")
+	}
+	// The existing owner-act parser enforces its narrower portable profile:
+	// printable ASCII, no nulls, safe integers and the original depth bound.
+	normalized, err := strictjson.ParseCanonicalObject(raw)
+	if err != nil {
+		return nil, err
+	}
+	if err := checkOwnerSubject(spec, normalized); err != nil {
+		return nil, err
+	}
+	return normalized, nil
+}
+
 // OwnerActSigningBytes validates an owner act and returns the bytes the team
 // key signs: the prefix followed by the act's canonical JSON. It refuses what
 // the act itself gets wrong, its fields, subject and lifetime, so a signer
@@ -405,9 +430,6 @@ func checkOwnerAct(f map[string]any) (*OwnerAct, error) {
 	if err := checkOwnerSubject(spec, subject); err != nil {
 		return nil, err
 	}
-	if first, ok := subject["team_seq_first"].(int64); ok && first > subject["team_seq_last"].(int64) {
-		return nil, strictjson.Refuse("invalid_value", "subject.team_seq_last precedes team_seq_first")
-	}
 	return &OwnerAct{
 		Fields: f, Act: actName, TeamID: f["team_id"].(string), Audience: f["aud"].(string),
 		Subject: subject, Nonce: f["nonce"].(string), issuedAt: issued, expiresAt: expires,
@@ -454,6 +476,9 @@ func checkOwnerSubject(spec ownerSubject, subject map[string]any) error {
 		if !spec.fields[name].accepts(subject[name]) {
 			return strictjson.Refuse("invalid_value", "subject.%s", name)
 		}
+	}
+	if first, ok := subject["team_seq_first"].(int64); ok && first > subject["team_seq_last"].(int64) {
+		return strictjson.Refuse("invalid_value", "subject.team_seq_last precedes team_seq_first")
 	}
 	return nil
 }
