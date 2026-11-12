@@ -118,6 +118,8 @@ async def test_legacy_record_keys_retain_their_evidenced_team(test_db_factory, t
         )
         == TEAM
     )
-    assert await db.fetch_value(
-        "SELECT body FROM {{tables.policies}} WHERE installation_id=$1", INSTALLATION
-    ) == json.dumps(dict(POLICY.body))
+    assert json.loads(
+        await db.fetch_value(
+            "SELECT body FROM {{tables.policies}} WHERE installation_id=$1", INSTALLATION
+        )
+    ) == dict(POLICY.body)
