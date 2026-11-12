@@ -75,7 +75,8 @@ canonical_git_input() {
   printf '%s\n' "$canonical"
 }
 LIBRARY_E2E_BLUEPRINT_SRC="$(canonical_git_input blueprints "$LIBRARY_E2E_BLUEPRINT_SRC")"
-LOG_DIR="/tmp/aweb-candidate-gate-$SOURCE_SHA"
+run_id="$(date -u +%Y%m%dT%H%M%SZ)-$$"
+LOG_DIR="/tmp/aweb-candidate-gate-$SOURCE_SHA-$run_id"
 [[ "$SOURCE_SHA" =~ ^[0-9a-f]{40}$ ]] || refuse "CANDIDATE_SOURCE_SHA must be a full lowercase SHA"
 [[ -z "$(git -C "$ROOT" status --porcelain --untracked-files=all)" ]] \
   || refuse "source checkout is dirty or has untracked files"
@@ -235,7 +236,7 @@ suite_projects=(
   "$gate_run_id-library"
 )
 # Install cleanup before the first Docker allocation. Logs outlive the run.
-[[ "$LOG_DIR" == "/tmp/aweb-candidate-gate-$SOURCE_SHA" ]] || refuse "unsafe log directory"
+[[ "$LOG_DIR" == "/tmp/aweb-candidate-gate-$SOURCE_SHA-$run_id" ]] || refuse "unsafe log directory"
 rm -rf -- "$LOG_DIR"
 mkdir -p "$LOG_DIR"
 : > "$LOG_DIR/owned-resources.tsv"
@@ -379,9 +380,11 @@ socket_gid="$(docker run --rm \
   "$IMAGE" stat -c '%g' /var/run/docker.sock)"
 naapp_packages_text="$(make -s --no-print-directory -C "$ROOT" naapp-e2e-packages)"
 read -r -a naapp_packages <<<"$(printf '%s\n' "$naapp_packages_text" | tr '\n' ' ')"
-python3 "$checkout/scripts/candidate-ports.py" "$gate_run_id" \
-  "$work/ports.env" "$work/naapp-ports.tsv" "${naapp_packages[@]}"
-naapp_e2e_allocations="$(cat "$work/naapp-ports.tsv")"
+naapp_e2e_allocations=""
+for package in "${naapp_packages[@]}"; do
+  # These are container ports; no host socket is allocated or published.
+  naapp_e2e_allocations+="$package $gate_run_id-naapp-${package##*/} 8010 5432"$'\n'
+done
 
 # Copy the exact checkout and inputs through the Docker API. The host checkout
 # is never mounted into a container; extracted dependency trees stay in Docker.
@@ -405,7 +408,6 @@ docker run --rm --init \
   --network "$owned_network" \
   --user "$(id -u):$(id -g)" \
   --group-add "$socket_gid" \
-  --add-host aweb-docker.test:host-gateway \
   -e HOME="$checkout/.candidate-home" \
   -e PLAYWRIGHT_BROWSERS_PATH=/opt/ms-playwright \
   -e PATH="$checkout/candidate-gate/bin:/usr/local/go/bin:/opt/uv:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin" \
@@ -440,13 +442,12 @@ docker run --rm --init \
   -e GOFLAGS=-modcacherw \
   -e NPM_CONFIG_CACHE=/tmp/npm-cache \
   -e AWEB_DOCKER_BIND_ROOT="$docker_bind_root" \
-  -e AWEB_DOCKER_PUBLISHED_HOST=aweb-docker.test \
-  --env-file "$work/ports.env" \
   -e AWEB_SKEW_PROJECT_TOKEN="${suite_projects[0]}" \
   -e AWEB_E2E_PROJECT="${suite_projects[1]}" \
   -e AWEB_FED_AUTH_PROJECT="${suite_projects[2]}" \
   -e AWEB_FED_E2E_PROJECT="${suite_projects[3]}" \
   -e LIBRARY_E2E_PROJECT="${suite_projects[4]}" \
+  -e NAAPP_E2E_CONTAINER_NETWORK=1 \
   -e NAAPP_E2E_ALLOCATIONS="$naapp_e2e_allocations" \
   -e TEST_DB_HOST="$pg_name" \
   -e TEST_DB_PORT=5432 \
@@ -482,7 +483,6 @@ printf 'candidate gate PASSED at %s; logs: %s\n' \
 # The child owns Docker cleanup. A stage is recorded only after it exits, and
 # only from this invocation's logs; stale logs cannot supply a missing result.
 started="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
-run_id="$(date -u +%Y%m%dT%H%M%SZ)-$$"
 run_log="$LEDGER_LOGS/${KEY:0:12}-run-$run_id.log"
 set +e
 run_candidate 2>&1 | tee "$run_log"

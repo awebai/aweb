@@ -1,6 +1,6 @@
 import { afterAll, beforeAll, describe, expect, test } from "vitest";
 import { mkdir, mkdtemp, readFile, rename, rm, writeFile } from "node:fs/promises";
-import { execFile, spawn } from "node:child_process";
+import { execFile, execFileSync, spawn } from "node:child_process";
 import { promisify } from "node:util";
 import { tmpdir } from "node:os";
 import { createHash } from "node:crypto";
@@ -633,6 +633,11 @@ function dockerBindRoot(): string {
   return resolve(rawRoot);
 }
 
+function candidateHostname(project: string, service: string): string {
+  return execFileSync("python3", [join(repoRoot, "scripts/candidate-network.py"), "hostname", project, service],
+    { encoding: "utf8" }).trim();
+}
+
 function dockerPublishedHost(): string {
   const host = process.env.AWEB_DOCKER_PUBLISHED_HOST || "127.0.0.1";
   if (host !== "127.0.0.1" && host !== "aweb-docker.test") {
@@ -644,8 +649,12 @@ function dockerPublishedHost(): string {
 function requireLoopbackURL(rawURL: string, label: string): void {
   const url = new URL(rawURL);
   const allowed = new Set(["127.0.0.1", "::1", dockerPublishedHost()]);
+  if (process.env.CANDIDATE_RUNNER_NAME && process.env.AWEB_SKEW_PROJECT_TOKEN) {
+    allowed.add(candidateHostname(process.env.AWEB_SKEW_PROJECT_TOKEN, "aweb"));
+    allowed.add(candidateHostname(process.env.AWEB_SKEW_PROJECT_TOKEN, "awid"));
+  }
   if (url.protocol !== "http:" || !allowed.has(url.hostname)) {
-    throw new Error(`${label} live-proof endpoint must use the fixed Docker host, got ${rawURL}`);
+    throw new Error(`${label} live-proof endpoint must use the selected local Docker route, got ${rawURL}`);
   }
 }
 
@@ -696,7 +705,9 @@ async function ensureServer(tempRoot: string): Promise<ServerHandle> {
     throw new Error("Docker daemon unavailable; start Docker or set AWEB_TEST_URL/AWID_TEST_URL");
   }
 
-  const [awebPort, awidPort, pgPort, redisPort] = await reserveLoopbackPorts(4);
+  const directNetwork = Boolean(process.env.CANDIDATE_RUNNER_NAME);
+  const [awebPort, awidPort, pgPort, redisPort] = directNetwork
+    ? [8000, 8010, 5432, 6379] : await reserveLoopbackPorts(4);
   const projectSeed = process.env.AWEB_SKEW_PROJECT_TOKEN
     || `aweb-skew-${basename(tempRoot)}-${process.env.AWEB_SKEW_CELL_ID || "channel"}`;
   const projectName = projectSeed
@@ -713,6 +724,8 @@ async function ensureServer(tempRoot: string): Promise<ServerHandle> {
   const postgresDb = "aweb";
 
   const publishedHost = dockerPublishedHost();
+  const awebURL = `http://${directNetwork ? candidateHostname(projectName, "aweb") : publishedHost}:${awebPort}`;
+  const awidURL = `http://${directNetwork ? candidateHostname(projectName, "awid") : publishedHost}:${awidPort}`;
   await writeFile(envFilePath, [
     `POSTGRES_USER=${postgresUser}`,
     `POSTGRES_PASSWORD=${postgresPassword}`,
@@ -721,9 +734,9 @@ async function ensureServer(tempRoot: string): Promise<ServerHandle> {
     `REDIS_PORT=${redisPort}`,
     `AWEB_PORT=${awebPort}`,
     `AWID_PORT=${awidPort}`,
-    `AWEB_PUBLIC_ORIGIN=http://${publishedHost}:${awebPort}`,
-    `AWEB_DISCOVERY_ORIGIN=http://${publishedHost}:${awebPort}`,
-    `AWID_PUBLIC_REGISTRY_URL=http://${publishedHost}:${awidPort}`,
+    `AWEB_PUBLIC_ORIGIN=${awebURL}`,
+    `AWEB_DISCOVERY_ORIGIN=${awebURL}`,
+    `AWID_PUBLIC_REGISTRY_URL=${awidURL}`,
     "AWID_LOG_JSON=true",
     "AWEB_LOG_JSON=true",
     "AWID_RATE_LIMIT_BACKEND=redis",
@@ -793,8 +806,6 @@ async function ensureServer(tempRoot: string): Promise<ServerHandle> {
   }
   await writeFile(overrideFilePath, overrideLines.join("\n"));
 
-  const awidURL = `http://${publishedHost}:${awidPort}`;
-  const awebURL = `http://${publishedHost}:${awebPort}`;
   const handle: ServerHandle = {
     awebURL,
     awidURL,
