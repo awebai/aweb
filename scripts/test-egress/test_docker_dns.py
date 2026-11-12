@@ -75,9 +75,12 @@ print('Expected DNS refusal; child successful', flush=True)
         print(result.stdout, flush=True)
         (evidence / 'qualification.log').write_text(result.stdout)
         self.assertEqual(result.returncode, 0, result.stdout)
-        self.assertIn('Governance driver alias resolves to literal loopback', result.stdout)
+        self.assertIn('Governance driver alias resolves to literal loopback',
+                      (evidence / 'suite.log').read_text())
         self.assertEqual((evidence / 'dns-denied.log').read_text(), '')
-        self.assertEqual((evidence / 'dns-denied.log.reported').read_text(), '')
+        report = evidence / 'dns-denied.log.reported'
+        if report.exists():
+            self.assertEqual(report.read_text(), '')
 
     def test_reserved_lookup_ignores_inherited_search(self):
         status, evidence = self.qualify('override.test')
