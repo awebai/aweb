@@ -20,9 +20,11 @@ import argparse
 import json
 import os
 import subprocess
+import time
 from pathlib import Path
 from typing import Any
 
+from playwright.sync_api import Error as PlaywrightError
 from playwright.sync_api import sync_playwright
 
 TERMINAL = ("complete", "refused", "unconfirmed", "pending")
@@ -33,16 +35,27 @@ def trust(ca: str) -> None:
     nssdb.mkdir(parents=True, exist_ok=True)
     if not (nssdb / "cert9.db").exists():
         subprocess.run(["certutil", "-d", f"sql:{nssdb}", "-N", "--empty-password"], check=True)
-    subprocess.run(["certutil", "-d", f"sql:{nssdb}", "-A", "-t", "C,,", "-n", "lane-ca", "-i", ca], check=True)
+    subprocess.run(
+        ["certutil", "-d", f"sql:{nssdb}", "-A", "-t", "C,,", "-n", "lane-ca", "-i", ca], check=True
+    )
 
 
 def authenticator(page, user_verified: bool):
     cdp = page.context.new_cdp_session(page)
     cdp.send("WebAuthn.enable")
-    found = cdp.send("WebAuthn.addVirtualAuthenticator", {"options": {
-        "protocol": "ctap2", "transport": "internal", "hasResidentKey": True,
-        "hasUserVerification": True, "isUserVerified": user_verified,
-        "automaticPresenceSimulation": True}})
+    found = cdp.send(
+        "WebAuthn.addVirtualAuthenticator",
+        {
+            "options": {
+                "protocol": "ctap2",
+                "transport": "internal",
+                "hasResidentKey": True,
+                "hasUserVerification": True,
+                "isUserVerified": user_verified,
+                "automaticPresenceSimulation": True,
+            }
+        },
+    )
     return cdp, found["authenticatorId"]
 
 
@@ -53,28 +66,44 @@ def enrol(args, browser) -> None:
     options = json.loads(Path(args.options).read_text())
     attestation = page.evaluate(
         "async (o) => (await navigator.credentials.create({publicKey: PublicKeyCredential.parseCreationOptionsFromJSON(o)})).toJSON()",
-        options)
+        options,
+    )
     Path(args.attestation).write_text(json.dumps(attestation))
-    credentials = cdp.send("WebAuthn.getCredentials", {"authenticatorId": authenticator_id})["credentials"]
+    credentials = cdp.send("WebAuthn.getCredentials", {"authenticatorId": authenticator_id})[
+        "credentials"
+    ]
     device = Path(args.device)
     device.write_text(json.dumps(credentials))
     device.chmod(0o600)
 
 
 def wait_state(page, states: tuple[str, ...], timeout: int = 60000) -> str:
-    page.wait_for_function(
-        "(states) => states.includes(document.body.dataset.handoffState) || !location.protocol.startsWith('https')",
-        arg=list(states), timeout=timeout)
-    if not page.url.startswith("https"):
-        return "navigated"
-    return page.evaluate("document.body.dataset.handoffState")
+    """The page's handoff state once it is one of states, or "navigated" once the
+    page has left its https origin (the loopback hand-back to aw).
+
+    Waits with selectors and page.url rather than an evaluated predicate: the
+    page's CSP refuses eval, and the lane keeps that CSP."""
+    selector = ", ".join(f'body[data-handoff-state="{state}"]' for state in states)
+    deadline = time.monotonic() + timeout / 1000
+    while time.monotonic() < deadline:
+        if not page.url.startswith("https"):
+            return "navigated"
+        try:
+            page.wait_for_selector(selector, timeout=500)
+            return page.get_attribute("body", "data-handoff-state")
+        except PlaywrightError:
+            continue  # not yet in a wanted state, or the document is navigating
+    raise TimeoutError(f"page never reached {states}; at {page.url}")
 
 
 def approve(args, browser) -> None:
     page = browser.new_context().new_page()
     cdp, authenticator_id = authenticator(page, args.login_uv == "yes")
     for credential in json.loads(Path(args.device).read_text()):
-        cdp.send("WebAuthn.addCredential", {"authenticatorId": authenticator_id, "credential": credential})
+        cdp.send(
+            "WebAuthn.addCredential",
+            {"authenticatorId": authenticator_id, "credential": credential},
+        )
     report: dict[str, Any] = {"states": []}
     page.goto(args.url)
     report["states"].append(wait_state(page, ("login-required", "refused")))
@@ -85,7 +114,10 @@ def approve(args, browser) -> None:
         report["digest"] = page.text_content("#handoff-digest")
         report["fingerprint"] = page.text_content("#handoff-fingerprint")
         report["act"] = page.text_content("#handoff-act")
-        cdp.send("WebAuthn.setUserVerified", {"authenticatorId": authenticator_id, "isUserVerified": args.approve_uv == "yes"})
+        cdp.send(
+            "WebAuthn.setUserVerified",
+            {"authenticatorId": authenticator_id, "isUserVerified": args.approve_uv == "yes"},
+        )
         page.click("#handoff-action")
         report["states"].append(wait_state(page, TERMINAL + ("ready",)))
     report["url"] = page.url
@@ -93,7 +125,9 @@ def approve(args, browser) -> None:
 
 
 def main() -> None:
-    parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
+    parser = argparse.ArgumentParser(
+        description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter
+    )
     commands = parser.add_subparsers(dest="command", required=True)
     e = commands.add_parser("enrol")
     for name in ("--origin", "--options", "--attestation", "--device", "--ca"):
