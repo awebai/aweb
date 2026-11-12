@@ -4,6 +4,9 @@ An Ed25519 did:key decodes to 34 bytes, so text longer than those bytes can
 encode is refused without decoding it.
 """
 
+import inspect
+
+import aweb_naapp.did_key
 import base58
 import pytest
 from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey
@@ -27,8 +30,12 @@ def decoded(monkeypatch):
 
 
 def test_the_bound_is_the_longest_base58_of_a_did_key():
-    # awid's Python did.py derives _DID_KEY_ENCODED_MAX (47) the same way.
-    assert protocol.DID_KEY_ENCODED_MAX == len(base58.b58encode(b"\xff" * 34)) == 47
+    assert protocol.DID_KEY_ENCODED_MAX == len(base58.b58encode(b"\xff" * 34))
+
+
+def test_the_bound_is_aweb_naapps_one_definition():
+    assert protocol.DID_KEY_ENCODED_MAX is aweb_naapp.did_key.DID_KEY_ENCODED_MAX
+    assert "DID_KEY_ENCODED_MAX =" not in inspect.getsource(protocol)
 
 
 def test_a_real_did_key_still_decodes(decoded):

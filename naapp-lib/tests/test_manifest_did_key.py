@@ -18,6 +18,7 @@ from awid import did as did_module
 from awid.did import did_from_public_key, generate_keypair
 
 from aweb_naapp import manifest as manifest_module
+from aweb_naapp.did_key import DID_KEY_ENCODED_MAX
 from aweb_naapp.manifest import Manifest, ManifestError, canonical_bytes, load_manifest
 
 VECTORS = Path(__file__).resolve().parents[2] / "test-vectors" / "app-manifests"
@@ -84,8 +85,21 @@ def _v2(did_key: str) -> bytes:
 VERSIONS = [pytest.param(_v1, "manifest_invalid", id="v1"), pytest.param(_v2, "app_keys_invalid", id="v2")]
 
 
-def test_the_load_bound_is_awids_encoded_did_key_bound():
-    assert manifest_module._DID_KEY_ENCODED_MAX == did_module._DID_KEY_ENCODED_MAX
+def _base58_length(byte_count: int) -> int:
+    """How many base58 characters the largest value of byte_count bytes takes."""
+    value, length = 256**byte_count - 1, 0
+    while value:
+        value, length = value // 58, length + 1
+    return length
+
+
+def test_the_encoded_bound_is_the_longest_base58_of_a_did_key():
+    # 34 bytes: the two of the Ed25519 multicodec and the 32 of the key.
+    assert DID_KEY_ENCODED_MAX == _base58_length(34)
+
+
+def test_load_checks_the_shape_against_the_one_bound():
+    assert manifest_module._DID_KEY_SHAPE.pattern.endswith(f"{{1,{DID_KEY_ENCODED_MAX}}}")
 
 
 @pytest.mark.parametrize(("build", "code"), VERSIONS)

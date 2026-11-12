@@ -30,6 +30,8 @@ from pathlib import Path
 from typing import Any
 from urllib.parse import unquote, urlsplit
 
+from aweb_naapp.did_key import DID_KEY_ENCODED_MAX
+
 
 def canonical_bytes(obj: Any) -> bytes:
     """Canonical JSON bytes: sorted keys, no insignificant whitespace, UTF-8.
@@ -209,10 +211,7 @@ _KEY_ID = re.compile(r"[A-Za-z0-9][A-Za-z0-9._:-]{0,127}")
 _HOOK_NAME = re.compile(r"[A-Za-z0-9][A-Za-z0-9._:-]{0,127}")
 _SCOPE_NAME = re.compile(r"[A-Za-z0-9][A-Za-z0-9:._/-]{0,127}")
 _DIGEST = re.compile(r"sha256:[0-9a-f]{64}")
-# awid.did._DID_KEY_ENCODED_MAX: the most base58 characters an Ed25519
-# did:key's 34 bytes encode to. A test pins the two equal.
-_DID_KEY_ENCODED_MAX = 47
-_DID_KEY_SHAPE = re.compile(f"did:key:z[1-9A-HJ-NP-Za-km-z]{{1,{_DID_KEY_ENCODED_MAX}}}")
+_DID_KEY_SHAPE = re.compile(f"did:key:z[1-9A-HJ-NP-Za-km-z]{{1,{DID_KEY_ENCODED_MAX}}}")
 
 
 class ManifestError(ValueError):
