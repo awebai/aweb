@@ -24,14 +24,35 @@ def run(*args, **kwargs):
     return subprocess.run(args, text=True, capture_output=True, timeout=90, **kwargs)
 
 
+def image_identity(inspect_json):
+    info, = json.loads(inspect_json)
+    configured_user = info['Config'].get('User') or ''
+    return {'image_id': info['Id'], 'configured_user': configured_user,
+            'effective_user': configured_user or '0'}
+
+
+def inspect_image(real, image):
+    inspected = run(real, 'image', 'inspect', image)
+    assert inspected.returncode == 0, inspected.stderr
+    return image_identity(inspected.stdout)
+
+
+class ImageInspectTests(unittest.TestCase):
+    def test_omitted_and_empty_user_mean_root_but_explicit_user_is_preserved(self):
+        for config, expected in (({}, '0'), ({'User': ''}, '0'),
+                                 ({'User': '1000:1000'}, '1000:1000')):
+            with self.subTest(config=config):
+                result = image_identity(json.dumps([{'Id': 'sha256:probe', 'Config': config}]))
+                self.assertEqual(result['effective_user'], expected)
+                self.assertEqual(result['image_id'], 'sha256:probe')
+
+
 @contextmanager
 def fixture():
     real = os.environ.get('AWEB_CANDIDATE_REAL_DOCKER') or shutil.which('docker')
     image = os.environ['AWEB_TEST_FEDERATION_CLI_IMAGE']
     assert platform.system() == 'Linux' and os.getuid() != 0, 'requires native Linux and a nonroot caller'
-    inspected = run(real, 'image', 'inspect', image, '--format', '{{json .Config.User}} {{.Id}}')
-    assert inspected.returncode == 0, inspected.stderr
-    print('CLI image user/id: ' + inspected.stdout.strip(), flush=True)
+    print('CLI image user/id: ' + json.dumps(inspect_image(real, image)), flush=True)
     project = 'acwx-bind-' + uuid.uuid4().hex[:12]
     with tempfile.TemporaryDirectory(prefix='aweb-candidate-work.',
                                      dir=os.environ.get('AWEB_DOCKER_BIND_ROOT')) as tmp:
