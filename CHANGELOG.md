@@ -2,6 +2,11 @@
 
 ## Unreleased
 
+- aweb server: `AWEB_APP_INTERNAL_ORIGINS` (a JSON list of exact HTTPS app
+  origins) with `AWEB_APP_INTERNAL_CIDR` (their one network) lets a self-hosted
+  server install apps that run on internal addresses beside it. Only listed
+  origins, and only addresses inside that network, are fetched as internal;
+  every other app origin stays public. Unset, behaviour is unchanged.
 - Naapp runtime publishes compatible v2/v3 manifests from one v2 template and
   an owner-role declaration with a configured human origin. Its shared anonymous
   owner-act route authenticates before app reads and commits the single-use act,

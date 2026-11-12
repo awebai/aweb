@@ -5,11 +5,13 @@ from __future__ import annotations
 import hashlib
 import json
 from dataclasses import dataclass
+from ipaddress import ip_address, ip_network
 from pathlib import Path
 
 import pytest
 import pytest_asyncio
 from aweb.app_manifests import ManifestFetcher, ManifestFetchError
+from aweb.config import AppInternalOrigins
 from aweb_naapp.egress import (
     AddressPolicy,
     DnsResolver,
@@ -43,6 +45,8 @@ class Origin:
     public_fetcher: ManifestFetcher
     routes: dict
     dns: DnsServer
+    host: str
+    guard: object
 
     def manifest(self, manifest_version=2, **app_changes):
         vectors = Path(__file__).parents[2] / "test-vectors/app-manifests/app-manifest-v2-v1.json"
@@ -91,6 +95,7 @@ async def origin(tmp_path_factory):
             f"https://{NAME}:{tls.port}", tls,
             ManifestFetcher(egress=guard(InternalDestinations.ALLOWED), destination=destination),
             ManifestFetcher(egress=guard(InternalDestinations.DISABLED)), routes, dns,
+            host, guard,
         )
     finally:
         dns.close()
@@ -179,6 +184,37 @@ async def test_default_public_policy_refuses_private_dns_before_connect(origin):
         await origin.public_fetcher.fetch(origin.url)
     assert refused.value.code == "catalog_unavailable"
     assert origin.dns.queries[(NAME, "A")] > 0
+    assert not origin.tls.seen
+
+
+def operator_listed(origin, *origins, network=None):
+    """A fetcher as the operator's settings build it: exact origins, one network."""
+    internal = AppInternalOrigins(frozenset(origins), network or ip_network(f"{origin.host}/32"))
+    return ManifestFetcher(egress=origin.guard(InternalDestinations.ALLOWED), internal=internal)
+
+
+async def test_an_operator_listed_origin_on_an_internal_address_is_fetched(origin):
+    data = origin.manifest()
+    origin.publish(data)
+    fetched = await operator_listed(origin, origin.url).fetch(origin.url)
+    assert fetched.data == data
+    assert fetched.origin == origin.url
+
+
+async def test_an_unlisted_origin_stays_public_when_another_is_listed(origin):
+    origin.publish(origin.manifest())
+    with pytest.raises(ManifestFetchError) as refused:
+        await operator_listed(origin, "https://other-app.fetch.test").fetch(origin.url)
+    assert refused.value.code == "catalog_unavailable"
+    assert not origin.tls.seen
+
+
+async def test_a_listed_origin_resolving_outside_its_network_is_refused(origin):
+    origin.publish(origin.manifest())
+    elsewhere = ip_network(f"{ip_address(origin.host) + 1}/32")
+    with pytest.raises(ManifestFetchError) as refused:
+        await operator_listed(origin, origin.url, network=elsewhere).fetch(origin.url)
+    assert refused.value.code == "catalog_unavailable"
     assert not origin.tls.seen
 
 

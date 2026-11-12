@@ -13,6 +13,7 @@ from pathlib import Path
 from typing import Any
 from urllib.parse import urlparse
 
+from aweb_naapp.egress import canonical_url
 from aweb_naapp.manifest import ManifestError, load_manifest
 from awid.team_ids import parse_team_id
 
@@ -152,6 +153,15 @@ def normalize_origin(value: str) -> str:
     default_port = 80 if scheme == "http" else 443
     port = None if parsed_port in {None, default_port} else parsed_port
     return f"{scheme}://{host_out}{f':{port}' if port is not None else ''}"
+
+
+def canonical_app_origin(value: str) -> str:
+    """The exact HTTPS origin an app's manifest is fetched from and compared as.
+
+    Refuses (ValidationError, EgressRefused or ValueError) anything but an
+    HTTPS origin the shared egress can address."""
+    canonical = canonical_url(normalize_origin(value) + "/")
+    return "https://" + canonical.authority
 
 
 def normalize_digest(value: str) -> str:

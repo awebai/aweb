@@ -367,6 +367,15 @@ For `aweb`:
 - `AWID_REGISTRY_URL`
 - `AWEB_PUBLIC_ORIGIN` for federated mail/chat delivery
 - `APP_ENV=development` when using an internal `http://awid:8010` registry
+- `AWEB_APP_INTERNAL_ORIGINS` and `AWEB_APP_INTERNAL_CIDR`, together, when the
+  apps you install run on internal addresses beside the server (for example in
+  the same cluster). `AWEB_APP_INTERNAL_ORIGINS` is a JSON list of exact HTTPS
+  app origins, such as `["https://secrets.apps.internal"]`;
+  `AWEB_APP_INTERNAL_CIDR` is the one network their addresses must lie in, such
+  as the cluster's service CIDR. Only a listed origin is fetched on an internal
+  address, and only inside that network; every other app origin stays public,
+  so a manifest on a private address is refused. Unset, no origin is internal.
+  The server refuses to start if either value is malformed or only one is set.
 
 For `awid`:
 
