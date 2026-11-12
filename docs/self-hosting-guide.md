@@ -532,7 +532,9 @@ To run the same thing under Docker Compose, use
 [`server/docker-compose.customer.yml`](../server/docker-compose.customer.yml).
 It runs aweb, PostgreSQL and Redis, no registry, and has no service token.
 Put `member-keys.json` and the key files it names in one directory, with
-relative paths in the JSON, readable by uid `1001`, and name that directory:
+relative paths in the JSON, and name that directory. The key files must be
+readable by uid `1001` and by no one else: owner `1001` with mode `0400`, or
+`root:1001` with mode `0440`.
 
 ```bash
 cd server
