@@ -528,8 +528,26 @@ unset AWID_SERVICE_TOKEN
 aweb serve
 ```
 
-This configures standalone aweb; the bundled Compose stack still operates its
-own AWID service and uses its shared token. Startup refuses missing credentials,
+To run the same thing under Docker Compose, use
+[`server/docker-compose.customer.yml`](../server/docker-compose.customer.yml).
+It runs aweb, PostgreSQL and Redis, no registry, and has no service token.
+Put `member-keys.json` and the key files it names in one directory, with
+relative paths in the JSON, readable by uid `1001`, and name that directory:
+
+```bash
+cd server
+cat > .env <<'ENV'
+POSTGRES_PASSWORD=<a generated password>
+AWEB_PUBLIC_ORIGIN=https://aweb.example.com
+AWEB_MEMBER_KEYS_DIR=/etc/aweb
+ENV
+docker compose -f docker-compose.customer.yml up --build -d
+curl http://localhost:8000/ready
+```
+
+The directory is mounted read-only at `/etc/aweb`. The default
+`server/docker-compose.yml` is the other shape: it operates its own AWID
+service and uses the shared token. Startup refuses missing credentials,
 an empty key map, unreadable keys or non-Ed25519 PEM keys. Restart after changing
 the key map. If a service token is also configured, it takes precedence.
 

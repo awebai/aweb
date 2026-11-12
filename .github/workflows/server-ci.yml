@@ -89,3 +89,11 @@ jobs:
           POSTGRES_PASSWORD: testpass
           AWID_SERVICE_TOKEN: ci-compose-validation-only
         run: docker compose config
+
+      - name: Validate the customer compose file
+        working-directory: server
+        env:
+          POSTGRES_PASSWORD: testpass
+          AWEB_PUBLIC_ORIGIN: https://aweb.example.com
+          AWEB_MEMBER_KEYS_DIR: /etc/aweb
+        run: docker compose -f docker-compose.customer.yml config

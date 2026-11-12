@@ -88,3 +88,30 @@ def test_compose_healthchecks_gate_startup_on_readiness():
         text = (REPO_ROOT / compose).read_text(encoding="utf-8")
         for port, expected in probes.items():
             assert healthcheck_probes(text, port) == expected, (compose, port)
+
+
+def customer_compose() -> dict:
+    import yaml
+
+    return yaml.safe_load(
+        (REPO_ROOT / "server" / "docker-compose.customer.yml").read_text(encoding="utf-8")
+    )
+
+
+def test_customer_compose_runs_aweb_against_the_public_registry_with_member_keys():
+    # A customer's server is a member of the team it serves: it holds an
+    # ordinary member key and no registry-wide token, and runs no registry.
+    services = customer_compose()["services"]
+    assert sorted(services) == ["aweb", "postgres", "redis"]
+    environment = services["aweb"]["environment"]
+    assert "AWID_SERVICE_TOKEN" not in environment
+    assert environment["AWID_MEMBER_KEYS_FILE"] == "/etc/aweb/member-keys.json"
+    assert environment["AWID_REGISTRY_URL"] == "${AWID_REGISTRY_URL:-https://api.awid.ai}"
+
+
+def test_customer_compose_mounts_the_member_keys_read_only():
+    mounts = customer_compose()["services"]["aweb"]["volumes"]
+    assert mounts == [
+        "${AWEB_MEMBER_KEYS_DIR:?AWEB_MEMBER_KEYS_DIR is required, the directory "
+        "that holds member-keys.json and the member key files it names}:/etc/aweb:ro"
+    ]

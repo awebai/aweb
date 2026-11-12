@@ -83,6 +83,11 @@
   the setting and the limit. The shipped `.env.example` set
   `LIBRARY_AUTH_CACHE_TTL_SECONDS=600`; a deployment made from it must lower
   it to 60 or remove the line before upgrading.
+- **A Compose file for a customer's own server.**
+  `server/docker-compose.customer.yml` runs aweb with PostgreSQL and Redis
+  against the public AWID registry, with ordinary member keys mounted
+  read-only and no service token or registry of its own. The self-hosting
+  guide's customer-server section shows how to start it.
 - **A customer-run aweb server can read its private team at the public
   registry without the registry-wide `AWID_SERVICE_TOKEN`.** Give the server
   an ordinary member certificate in each team it serves
