@@ -392,7 +392,8 @@ def refusals(site: Site, holder: Holder, founded: Founded) -> None:
     child, page, operation, _ = start_revoke(site, machine, approver)
     report = approve(site, machine, page, "--login-cancel")
     assert report["states"] == ["login-required", "login-required"], report
-    assert "NotAllowedError" in report["exception_names"], report
+    # The rejection comes at the shortened timeout, not at once.
+    assert report["login_seconds"] >= 0.9, report
     # The page shows this only when navigator.credentials.get rejected with NotAllowedError.
     assert report["status"] == "The passkey prompt was cancelled. You can try again.", report
     requests = handoff_requests(site, page)

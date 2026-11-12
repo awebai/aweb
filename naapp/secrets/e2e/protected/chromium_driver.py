@@ -14,7 +14,7 @@
           --login-cancel lets the browser itself reject the LOGIN prompt: the
           authenticator gets no user presence and the options' timeout hint is
           shortened, so navigator.credentials.get rejects with no assertion
-          sent; the exceptions the page caught are reported by name.
+          sent.
           --login-without-uv injects a correctly signed assertion without user
           verification: the browser's own LOGIN assertion, with only its UV
           flag cleared and signed again by the enrolled credential (verified
@@ -128,7 +128,6 @@ def approve(args, browser) -> None:
             "WebAuthn.addCredential",
             {"authenticatorId": authenticator_id, "credential": credential},
         )
-    exceptions: list[str] = []
     if args.login_without_uv:
         keys = {
             base64.b64decode(c["credentialId"]): load_der_private_key(base64.b64decode(c["privateKey"]), None)
@@ -167,28 +166,6 @@ def approve(args, browser) -> None:
 
         page.route("**/login", without_uv)
     if args.login_cancel:
-        # The caught exception's name, read by the debugger as the page
-        # handles it; the page's own code runs unchanged.
-        def paused(event):
-            try:
-                object_id = (event.get("data") or {}).get("objectId")
-                if object_id:
-                    named = cdp.send(
-                        "Runtime.callFunctionOn",
-                        {
-                            "objectId": object_id,
-                            "functionDeclaration": "function() { return this.name; }",
-                            "returnByValue": True,
-                            "silent": True,
-                        },
-                    )
-                    exceptions.append(named["result"].get("value"))
-            finally:
-                cdp.send("Debugger.resume")
-
-        cdp.send("Debugger.enable")
-        cdp.on("Debugger.paused", paused)
-        cdp.send("Debugger.setPauseOnExceptions", {"state": "all"})
         # No presence, and the real options' client timeout hint shortened:
         # the browser rejects the prompt itself. Nothing else is changed.
         cdp.send(
@@ -211,9 +188,6 @@ def approve(args, browser) -> None:
         page.click("#handoff-action")
         report["states"].append(wait_state(page, ("ready", "refused", "login-required")))
         report["login_seconds"] = round(time.monotonic() - clicked, 1)
-        if args.login_cancel:
-            cdp.send("Debugger.setPauseOnExceptions", {"state": "none"})
-            report["exception_names"] = exceptions
     if report["states"][-1] == "ready":
         report["digest"] = page.text_content("#handoff-digest")
         report["fingerprint"] = page.text_content("#handoff-fingerprint")
