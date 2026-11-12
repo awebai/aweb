@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import logging
+import os
 from uuid import UUID, uuid4
 
 from fastapi import APIRouter, Depends, Request
@@ -9,6 +10,7 @@ from fastapi.responses import JSONResponse
 
 from awid.federation_errors import FederationAuthorityError
 from awid.log import canonical_server_origin
+from aweb_naapp.client_identity import ClientIdentity
 
 from aweb.agent_wake import agent_wake_publisher, agent_wake_scope
 from aweb.awid_error_handling import AWID_DEPENDENCY_ERRORS
@@ -384,7 +386,9 @@ async def receive_federated_message(
                     current_did_key=envelope.sender_current_did_key,
                     delivery_origin=sender_origin or "",
                 ),
-                source_ip=str(request.client.host if request.client else "unknown"),
+                source_ip=ClientIdentity(
+                    trusted_header=os.getenv("AWEB_CLIENT_ADDRESS_HEADER", "").strip() or None,
+                ).of(request) or "unknown",
             )
             authority_token = getattr(authorized, "token", authorized)
             envelope = envelope.model_copy(
