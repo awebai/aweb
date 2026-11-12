@@ -21,6 +21,10 @@ const OwnerActMaxLifetime = 10 * time.Minute
 // OwnerActClockSkew is how far issued_at may run ahead of the verifier.
 const OwnerActClockSkew = 60 * time.Second
 
+// CredentialCapOwnerAct is the opt-in app-role credential-cap vocabulary.
+// It does not widen the existing human-role or contact-role allowlists.
+const CredentialCapOwnerAct = "human-credential.cap-set"
+
 const ownerActTimeLayout = "2006-01-02T15:04:05Z"
 
 // Owner-act vocabularies. A verifier accepts only its own closed list.
@@ -171,6 +175,12 @@ var ownerSubjects = map[string]ownerSubject{
 	"human-role.designate":     humanHoldingSubject(),
 	"human-credential.replace": humanHoldingSubject(),
 	"human-role.revoke":        humanRevocationSubject(),
+	CredentialCapOwnerAct: {
+		fields: appFields(map[string]ownerField{
+			"role": ownerString(ownerToken), "cap": ownerInteger(1, strictjson.MaxSafeInteger),
+		}),
+		required: []string{"app_id", "installation_id", "role", "cap"},
+	},
 	"logs.retention.set": {
 		fields: appFields(map[string]ownerField{
 			"event_class": ownerString(ownerEventClass), "retention": ownerEnum("keep", "days"),
