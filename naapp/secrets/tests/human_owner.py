@@ -249,6 +249,7 @@ async def bind_owner(db, fence, registry, *, team_id):
     from aweb_naapp.runtime.passkeys import Passkeys, RelyingParty
     from aweb_naapp_testing.owner_acts import team_owner
 
+    from aweb_secrets.change_sets import apply_change_set_migrations
     from aweb_secrets.owners import apply_owner_migrations, is_owner_scope
     from aweb_secrets.passkey_context import PasskeyContexts
     from tests.governance import credential_audit
@@ -285,6 +286,7 @@ async def bind_owner(db, fence, registry, *, team_id):
     )
     await passkeys.migrate()
     await apply_owner_migrations(db)
+    await apply_change_set_migrations(db)
     recorder = await credential_audit(
         db=db,
         passkeys=passkeys,
