@@ -32,6 +32,8 @@ const TEAM = "backend:acme.com";
 const SENDER_ALIAS = "grace";
 const SENDER_ADDRESS = `${TEAM}/${SENDER_ALIAS}`;
 const SENDER_STABLE_ID = "did:aw:graceStableIdentity";
+const MAIL_SUBJECT = "composition";
+const MAIL_BODY = "steady state";
 const PROCESS_COUNT = 3;
 
 let dir: string;
@@ -60,6 +62,9 @@ async function senderDID(): Promise<string> {
  */
 async function signedFields(did: string, messageID: string): Promise<Record<string, string>> {
   const payload = JSON.stringify({
+    type: "mail",
+    subject: MAIL_SUBJECT,
+    body: MAIL_BODY,
     from: SENDER_ADDRESS,
     from_did: did,
     from_stable_id: SENDER_STABLE_ID,
@@ -163,8 +168,8 @@ async function inboxClient(did: string, burst: number, process: number) {
         to_alias: "eve",
         to_did: self.did,
         to_stable_id: self.stableID,
-        subject: "composition",
-        body: "steady state",
+        subject: MAIL_SUBJECT,
+        body: MAIL_BODY,
         priority: "normal",
         created_at: "2026-02-22T10:00:00Z",
       }],

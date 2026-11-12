@@ -26,9 +26,7 @@ func migrationClient(t *testing.T, path string) (*Client, *PinStore) {
 	}
 	ps := NewPinStore()
 	c.SetPinStore(ps, path)
-	c.SetResolver(&stubStableIdentityResolver{
-		result: &StableIdentityVerification{Outcome: StableIdentityDegraded},
-	})
+	c.SetResolver(registryNaming{did: migrationDID, stableID: migrationStableID})
 	return c, ps
 }
 

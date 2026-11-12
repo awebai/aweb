@@ -250,11 +250,26 @@ var apiTransientRetryBaseDelay = 100 * time.Millisecond
 
 // agentMeta holds cached metadata about a resolved agent.
 type agentMeta struct {
-	DID             string
-	IdentityScope   string // "local" or "global"
-	Custody         string // "self" or "custodial"
-	Resolved        bool
-	ResolutionError string // "not_found" or "unavailable" after a forced refresh
+	DID           string
+	StableID      string
+	IdentityScope string // "local" or "global"
+	Custody       string // "self" or "custodial"
+	Resolved      bool
+	// Authoritative says the answer came from the authority for the address,
+	// the registry or the reader's own team roster, and not from a pin or
+	// from the key alone.
+	Authoritative bool
+	// ResolutionError says why an address was not resolved: "not_found" when
+	// the authority answered that it does not exist, "unavailable" when it
+	// could not be asked now, "no_resolver" when the client has none to ask.
+	ResolutionError string
+}
+
+// names reports whether the authority for the address named this key and,
+// when the sender claims a stable identity, that identity.
+func (m *agentMeta) names(did, stableID string) bool {
+	return m.Resolved && m.Authoritative && m.DID != "" && m.DID == did &&
+		(stableID == "" || m.StableID == stableID)
 }
 
 // Client is an aweb HTTP client.
@@ -760,11 +775,7 @@ func (c *Client) resolveAgentMetaFresh(ctx context.Context, address string, forc
 			return v.(*agentMeta)
 		}
 	}
-	fallback := &agentMeta{
-		IdentityScope: IdentityModeGlobal,
-		Custody:       CustodySelf,
-		Resolved:      true,
-	}
+	resolutionError := "no_resolver"
 	if c.resolver != nil {
 		resolve := c.resolver.Resolve
 		if forceRefresh {
@@ -777,9 +788,11 @@ func (c *Client) resolveAgentMetaFresh(ctx context.Context, address string, forc
 		if identity, err := resolve(ctx, trustAddress); err == nil {
 			meta := &agentMeta{
 				DID:           strings.TrimSpace(identity.DID),
+				StableID:      strings.TrimSpace(identity.StableID),
 				IdentityScope: IdentityModeGlobal,
 				Custody:       CustodySelf,
 				Resolved:      true,
+				Authoritative: identity.ResolvedVia == "registry" || identity.ResolvedVia == "team_roster",
 			}
 			if identity.IdentityScope != "" {
 				meta.IdentityScope = NormalizeIdentityScope(identity.IdentityScope)
@@ -789,24 +802,20 @@ func (c *Client) resolveAgentMetaFresh(ctx context.Context, address string, forc
 			}
 			c.metaCache.Store(trustAddress, meta)
 			return meta
-		} else if forceRefresh {
-			resolutionError := "unavailable"
+		} else {
+			resolutionError = "unavailable"
 			if code, ok := HTTPStatusCode(err); ok && code == http.StatusNotFound {
 				resolutionError = "not_found"
 			}
-			return &agentMeta{ResolutionError: resolutionError}
 		}
 	}
-	// Bare local aliases are ambiguous across teams; fail closed unless the
-	// resolver resolved them under the current namespace. Fully qualified
-	// addresses keep the historical fallback behavior.
-	if rawAddress != trustAddress {
+	// A bare alias is a display name, not an address the sender claims, so
+	// there is no address-to-key binding to report on.
+	if !forceRefresh && rawAddress != trustAddress {
 		return &agentMeta{}
 	}
-	// Resolver absent or failed for an already-qualified address: return
-	// defaults but don't cache, so a transient failure retries on the next
-	// message.
-	return fallback
+	// Not cached, so a failure is asked again on the next message.
+	return &agentMeta{ResolutionError: resolutionError}
 }
 
 // NormalizeSenderTrust applies sender-specific trust normalization after
@@ -991,13 +1000,29 @@ func (c *Client) CheckTOFUPin(ctx context.Context, status VerificationStatus, fr
 }
 
 func (c *Client) checkTOFUPinWithMeta(ctx context.Context, status VerificationStatus, rawAddress, trustAddress, fromDID, fromStableID string, ra *RotationAnnouncement, repl *ReplacementAnnouncement, meta *agentMeta, registryConfirmedCurrentKey bool) VerificationStatus {
-	if c.pinStore == nil || (status != Verified && status != VerifiedCustodial) || fromDID == "" || trustAddress == "" || meta == nil {
+	if (status != Verified && status != VerifiedCustodial) || fromDID == "" || trustAddress == "" || meta == nil {
 		return status
 	}
-	if !meta.Resolved {
+	if !meta.Resolved && meta.ResolutionError == "" {
 		return status
 	}
-	if meta.IdentityScope == IdentityModeLocal {
+	// The address belongs to this sender when the registry confirmed the
+	// stable identity's current key, or the authority for the address named
+	// the signing key and the stable identity the sender claims.
+	confirmed := registryConfirmedCurrentKey || meta.names(fromDID, fromStableID)
+	if c.pinStore == nil {
+		if meta.Resolved && meta.IdentityScope == IdentityModeLocal {
+			return status
+		}
+		if !confirmed {
+			return unconfirmedSenderStatus(meta, fromStableID)
+		}
+		if meta.Custody == CustodyCustodial && status == Verified {
+			return VerifiedCustodial
+		}
+		return status
+	}
+	if meta.Resolved && meta.IdentityScope == IdentityModeLocal {
 		c.pinStore.mu.Lock()
 		removed := c.pinStore.RemoveAddress(trustAddress)
 		rawAddress = strings.TrimSpace(rawAddress)
@@ -1049,13 +1074,23 @@ func (c *Client) checkTOFUPinWithMeta(ctx context.Context, status VerificationSt
 	pinResult := c.pinStore.CheckPin(trustAddress, pinKey, meta.IdentityScope)
 	switch pinResult {
 	case PinNew:
+		// A pin is written only for a sender the registry confirmed.
+		if !confirmed {
+			return unconfirmedSenderStatus(meta, fromStableID)
+		}
 		c.pinStore.StorePin(pinKey, trustAddress, "", "")
+		c.pinStore.Pins[pinKey].ConfirmedBy = "registry"
 		if fromStableID != "" {
 			c.pinStore.Pins[pinKey].StableID = fromStableID
 			c.pinStore.Pins[pinKey].DIDKey = fromDID
 		}
 		status = c.commitContinuity(status)
 	case PinOK:
+		// A pin does not outlast the authority's own answer: the address now
+		// belongs to another key.
+		if fromStableID == "" && meta.Resolved && meta.Authoritative && meta.DID != "" && meta.DID != fromDID {
+			return IdentityMismatch
+		}
 		if fromStableID != "" {
 			if pin, ok := c.pinStore.Pins[pinKey]; ok && strings.TrimSpace(pin.DIDKey) != "" && pin.DIDKey != fromDID {
 				// Same stable identity, different did:key: this is key rotation,
@@ -1120,6 +1155,27 @@ func (c *Client) checkTOFUPinWithMeta(ctx context.Context, status VerificationSt
 		return IdentityMismatch
 	}
 	return status
+}
+
+// unconfirmedSenderStatus is what a reader reports for a signed message whose
+// sender has no pin and whose address the registry did not confirm.
+func unconfirmedSenderStatus(meta *agentMeta, fromStableID string) VerificationStatus {
+	switch {
+	case meta.ResolutionError == "no_resolver":
+		// Nothing was checked and a retry would not help.
+		return Unverified
+	case meta.ResolutionError == "not_found":
+		return IdentityMismatch
+	case !meta.Resolved || !meta.Authoritative:
+		return VerificationStale
+	case meta.DID == "" && fromStableID != "":
+		// The authority knows the address and reported no current key for the
+		// stable identity, so the signing key could not be checked.
+		return VerificationStale
+	default:
+		// The authority answered and the address is not this sender's.
+		return IdentityMismatch
+	}
 }
 
 // verifyRotationAnnouncement checks that a rotation announcement is valid:
