@@ -306,6 +306,23 @@ def test_an_app_trusts_a_private_authority_through_a_file_the_operator_names():
     assert "LOGS_EMAIL_CA_FILE" not in rendered and "LOGS_EGRESS_CA_FILE" not in rendered
 
 
+def test_aweb_installs_apps_from_internal_origins_only_inside_the_services_range():
+    config = copy.deepcopy(EXAMPLE)
+    config["aweb"]["appInternalOrigins"] = ["https://secrets.example.com", "https://logs.example.com"]
+    rendered = render_env.render(config)
+    assert rendered["AWEB_APP_INTERNAL_ORIGINS"] == '["https://secrets.example.com", "https://logs.example.com"]'
+    assert rendered["AWEB_APP_INTERNAL_CIDR"] == "172.31.0.0/24"
+    assert "AWEB_APP_INTERNAL_CIDR" not in render_env.render(EXAMPLE)
+
+
+@pytest.mark.parametrize("value", [[], ["http://secrets.example.com"], ["https://secrets.example.com/manifest"]])
+def test_aweb_refuses_internal_app_origins_that_are_not_exact_https_origins(value):
+    config = copy.deepcopy(EXAMPLE)
+    config["aweb"]["appInternalOrigins"] = value
+    with pytest.raises(render_env.Refused, match="aweb.appInternalOrigins"):
+        render_env.render(config)
+
+
 def test_a_kms_key_takes_the_place_of_the_mounted_custody_key():
     secrets = {**app("secrets"), "kmsKeyId": "alias/custody", "kmsRegion": "eu-central-1"}
     rendered = render_env.render({**EXAMPLE, "secrets": secrets})

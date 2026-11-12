@@ -11,15 +11,11 @@ it holds that member's key, no registry-wide token, and runs no registry.
 | `aweb.publicOrigin` | `AWEB_PUBLIC_ORIGIN` | https origin | none | The origin agents reach this server at. |
 | `aweb.secrets` | mount at `/run/secrets/aweb` | reference | `aweb` | Where the secret files come from. |
 | `team.registryUrl` | `AWID_REGISTRY_URL` | https origin | `https://api.awid.ai` | The AWID registry the team is in. |
+| `aweb.appInternalOrigins` | `AWEB_APP_INTERNAL_ORIGINS`, with `AWEB_APP_INTERNAL_CIDR` set to `network.servicesCidr` | exact https origins, each resolving inside `network.servicesCidr` | unset | The origins of this deployment's Secrets and Logs, which the server installs from internal addresses. Unset, it refuses to fetch a manifest from a private address. |
 
 Fixed: `AWEB_DATABASE_URL_FILE=/run/secrets/aweb/database-url`,
 `AWID_MEMBER_KEYS_FILE=/run/secrets/aweb/member-keys.json`,
 `AWEB_REDIS_URL=redis://redis:6379/0`, uid 1001.
-
-Pending, set when the server has the setting: `AWEB_APP_INTERNAL_ORIGINS`, the
-exact origins of this deployment's Secrets and Logs (`http://secrets:8770`,
-`http://logs:8765`); fixed, because the service names are. Without it the
-server refuses to fetch their manifests.
 
 Bring-up, once, before any app is installed: the operator grants the install
 authority with `aweb install-admin grant --role owner`.

@@ -113,6 +113,16 @@
           "$ref": "#/$defs/origin",
           "x-env": "AWEB_PUBLIC_ORIGIN"
         },
+        "appInternalOrigins": {
+          "description": "The exact origins of apps this server installs from internal addresses. They must resolve inside network.servicesCidr.",
+          "type": "array",
+          "minItems": 1,
+          "uniqueItems": true,
+          "items": {
+            "$ref": "#/$defs/origin"
+          },
+          "x-env": "AWEB_APP_INTERNAL_ORIGINS"
+        },
         "secrets": {
           "$ref": "#/$defs/secrets",
           "default": "aweb",

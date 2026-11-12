@@ -6,7 +6,7 @@
 #
 # up       renders deployment.yaml to RUN_DIR/.env, starts deploy/team/compose.yaml
 #          and waits until every service is healthy, then checks from inside
-#          each app that its internal hook origins resolve inside
+#          aweb and each app that its internal origins resolve inside
 #          network.servicesCidr. The renderer has already refused a signer
 #          profile whose origins or registry differ from the deployment's.
 # connect  prints, as JSON, what the journey needs: the origins, the team and
@@ -52,8 +52,8 @@ dc() {
   docker compose -p "$project" --env-file "$env_file" "${compose_files[@]}" "$@"
 }
 
-# One line per app that names internal hook origins: the service, the range
-# and the origins' hosts.
+# One line per service that names internal origins (aweb's apps, the apps'
+# hook receivers): the service, the range and the origins' hosts.
 internal_hosts() {
   python_in_server - "$deployment" <<'PY'
 import sys
@@ -63,10 +63,12 @@ import yaml
 
 config = yaml.safe_load(open(sys.argv[1], encoding="utf-8"))
 cidr = config["network"]["servicesCidr"]
+named = {"aweb": config["aweb"].get("appInternalOrigins", [])}
 for app in ("secrets", "logs"):
-    origins = config.get(app, {}).get("hookInternalOrigins", [])
+    named[app] = config.get(app, {}).get("hookInternalOrigins", [])
+for service, origins in named.items():
     if origins:
-        print(app, cidr, *sorted({urlsplit(origin).hostname for origin in origins}))
+        print(service, cidr, *sorted({urlsplit(origin).hostname for origin in origins}))
 PY
 }
 
@@ -86,11 +88,11 @@ up() {
     echo "e2e-team-deployment: not every service became healthy; logs in $run_dir/compose.log" >&2
     exit 1
   fi
-  # A hook to an internal origin is allowed only inside the services range:
-  # every address its host resolves to, seen from the app that sends it.
-  while read -r app cidr hosts; do
+  # An internal origin is allowed only inside the services range: every
+  # address its host resolves to, seen from the service that connects to it.
+  while read -r service cidr hosts; do
     # shellcheck disable=SC2086
-    if ! dc exec -T "$app" python -c '
+    if ! dc exec -T "$service" python -c '
 import ipaddress, socket, sys
 net = ipaddress.ip_network(sys.argv[1])
 for host in sys.argv[2:]:
@@ -99,7 +101,7 @@ for host in sys.argv[2:]:
     if outside:
         sys.exit(f"{host} resolves outside {net}: {outside}")
 ' "$cidr" $hosts; then
-      echo "e2e-team-deployment: $app's internal hook origins do not resolve inside $cidr" >&2
+      echo "e2e-team-deployment: $service's internal origins do not resolve inside $cidr" >&2
       exit 1
     fi
   done < <(internal_hosts)

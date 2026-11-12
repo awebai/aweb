@@ -106,6 +106,17 @@ def test_the_team_and_the_customer_file_run_the_same_aweb_service():
         assert "environment" not in service
 
 
+def test_aweb_is_given_its_internal_app_origins_only_when_the_env_file_has_them():
+    assert environment(AWEB)["AWEB_APP_INTERNAL_ORIGINS"] is None
+    assert environment(AWEB)["AWEB_APP_INTERNAL_CIDR"] is None
+
+
+def test_aweb_reads_every_setting_its_section_of_the_schema_renders():
+    rendered = settings_of(SCHEMA["properties"]["aweb"])
+    wrapper = {f"AWEB_{suffix}" for suffix in ("IMAGE", "SECRETS", "BIND_ADDRESS", "PORT")}
+    assert rendered - wrapper <= set(environment(AWEB))
+
+
 def test_the_bundled_postgres_is_optional_and_aweb_waits_for_it_when_it_runs():
     assert SERVICES["postgres"]["profiles"] == ["postgres"]
     assert SERVICES["aweb"]["depends_on"] == {
