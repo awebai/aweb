@@ -45,8 +45,8 @@ def gated_channel_tarball(directory, version):
     """A channel tarball meeting the shipped-package contract the e2e lane fixture states."""
     import re
     lane = (ROOT / "scripts/e2e/test_npm_exact_publish.sh").read_text()
-    markers = re.search(r"^CHANNEL_MARKERS='(.*?)'$", lane, re.S | re.M).group(1)
-    sentinel = re.search(r"^SENTINEL='(.*?)'$", lane, re.M).group(1)
+    markers = re.search(r"^CHANNEL_MARKERS='(.*?)'$", lane, re.DOTALL | re.MULTILINE).group(1)
+    sentinel = re.search(r"^SENTINEL='(.*?)'$", lane, re.MULTILINE).group(1)
     files = {
         "package/package.json": json.dumps({"name": "@awebai/claude-channel", "version": version,
                                             "main": "./dist/index.js",
@@ -120,8 +120,8 @@ class PublicationTest(unittest.TestCase):
             gated = root / "gated"
             gated.mkdir()
             archive = gated_channel_tarball(gated, "3.4.5")
-            row = dict(package="@awebai/claude-channel", version="3.4.5", path=str(archive),
-                       sha256=hashlib.sha256(archive.read_bytes()).hexdigest())
+            row = {"package": "@awebai/claude-channel", "version": "3.4.5", "path": str(archive),
+                   "sha256": hashlib.sha256(archive.read_bytes()).hexdigest()}
             commands = []
             real_run = publisher.run
             def observe_run(root, *args, **kwargs):
@@ -216,10 +216,12 @@ with open({str(compiles)!r}, "a") as calls: calls.write("compile\\n")
                 for package_dir in publisher.build_aw_npm(root, "1.2.3", "a" * 40):
                     real_run(root / "cli/go/npm" / package_dir, "npm", "pack", "--ignore-scripts",
                              "--pack-destination", str(gated))
-                archives = {json.load(tarfile.open(path).extractfile("package/package.json"))["name"]: path
-                            for path in gated.glob("*.tgz")}
-                rows = [dict(package=name, version="1.2.3", path=str(archives[name]),
-                             sha256=hashlib.sha256(archives[name].read_bytes()).hexdigest())
+                archives = {}
+                for path in gated.glob("*.tgz"):
+                    with tarfile.open(path) as packed:
+                        archives[json.load(packed.extractfile("package/package.json"))["name"]] = path
+                rows = [{"package": name, "version": "1.2.3", "path": str(archives[name]),
+                         "sha256": hashlib.sha256(archives[name].read_bytes()).hexdigest()}
                         for name in publisher.lane_files("aw-v")]
                 compiled = compiles.read_text()
                 if lag:

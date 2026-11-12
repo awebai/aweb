@@ -294,8 +294,8 @@ class PypiLaneContractTest(unittest.TestCase):
             for name in (f"{normalized}-{version}-py3-none-any.whl", f"{normalized}-{version}.tar.gz"):
                 path = directory / name
                 path.write_bytes(f"gated bytes of {name}".encode())
-                rows.append(dict(path=str(path), package=package, version=version,
-                                 sha256=hashlib.sha256(path.read_bytes()).hexdigest()))
+                rows.append({"path": str(path), "package": package, "version": version,
+                             "sha256": hashlib.sha256(path.read_bytes()).hexdigest()})
         return rows
 
     def test_the_aweb_naapp_lane_waits_for_awid_before_uploading_gated_files(self):

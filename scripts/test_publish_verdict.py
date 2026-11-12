@@ -11,10 +11,11 @@ prove what OSS asked for and that the checkout itself is left untouched.
 import hashlib
 import json
 import os
-from pathlib import Path
 import subprocess
 import tempfile
 import unittest
+from pathlib import Path
+from types import MappingProxyType
 from unittest.mock import patch
 
 from publish_release import PublishRefusal, gated_publish_set
@@ -53,21 +54,21 @@ def write_artifacts(directory: Path) -> str:
     for name, (package, payload) in files.items():
         (directory / name).write_bytes(payload)
         version = '1.0.0' if package == 'aweb' else '0.5.0'
-        rows.append(dict(path=name, package=package, version=version,
-                         sha256=hashlib.sha256(payload).hexdigest()))
+        rows.append({'path': name, 'package': package, 'version': version,
+                     'sha256': hashlib.sha256(payload).hexdigest()})
     (directory / 'aweb-1.0.0-py2-none-any.whl').write_bytes(b'stray bytes never gated')
-    manifest = json.dumps(dict(schema=2, source_sha=SOURCE_SHA, source_tree='b' * 40,
-                               build_inputs={}, files=rows), indent=2, sort_keys=True) + '\n'
+    manifest = json.dumps({'schema': 2, 'source_sha': SOURCE_SHA, 'source_tree': 'b' * 40,
+                           'build_inputs': {}, 'files': rows}, indent=2, sort_keys=True) + '\n'
     (directory / 'manifest.json').write_text(manifest)
     return hashlib.sha256(manifest.encode()).hexdigest()
 
 
 def verdict(digest: str, tree: str, released: str = RELEASED, *, passed: bool = True) -> dict:
     key = f'{tree}-{"e" * 64}'
-    return dict(schema=1, cloud_tree=tree, oss_manifest_sha256=digest, passed=passed,
-                keys=[key] if passed else [],
-                effective_inputs={key: {'oss-manifest-sha256': digest, 'aw-released': released}} if passed else {},
-                evidence=[])
+    return {'schema': 1, 'cloud_tree': tree, 'oss_manifest_sha256': digest, 'passed': passed,
+            'keys': [key] if passed else [],
+            'effective_inputs': {key: {'oss-manifest-sha256': digest, 'aw-released': released}} if passed else {},
+            'evidence': []}
 
 
 class GatedPublishSet(unittest.TestCase):
@@ -205,14 +206,15 @@ class GatedPublishSet(unittest.TestCase):
 
 class MandatoryInputs(unittest.TestCase):
     REQUIRED = ('CANDIDATE_ARTIFACT_DIR', 'CLOUD_CHECKOUT', 'CLOUD_TREE', 'OSS_MANIFEST_SHA256', 'EXPECTED_AW_RELEASED')
-    COMPLETE = dict(CANDIDATE_ARTIFACT_DIR='/nonexistent/artifacts', CLOUD_CHECKOUT='/nonexistent/cloud',
-                    CLOUD_TREE='c' * 40, OSS_MANIFEST_SHA256='0' * 64, EXPECTED_AW_RELEASED=RELEASED)
+    COMPLETE = MappingProxyType({'CANDIDATE_ARTIFACT_DIR': '/nonexistent/artifacts',
+                                 'CLOUD_CHECKOUT': '/nonexistent/cloud', 'CLOUD_TREE': 'c' * 40,
+                                 'OSS_MANIFEST_SHA256': '0' * 64, 'EXPECTED_AW_RELEASED': RELEASED})
 
     def release_publish(self, tag: str, **inputs: str) -> subprocess.CompletedProcess:
         environment = {name: value for name, value in os.environ.items() if name not in (*self.COMPLETE, 'TAG')}
         return subprocess.run(['make', '--no-print-directory', '-C', str(ROOT), 'release-publish', f'TAG={tag}',
                                *(f'{name}={value}' for name, value in inputs.items())],
-                              env=environment, capture_output=True, text=True)
+                              env=environment, capture_output=True, text=True, check=False)
 
     def test_each_missing_input_of_a_manifest_lane_exits_2_before_publishing(self):
         for tag in ('server-v1.0.0', 'channel-v1.0.0', 'aw-v1.0.0'):
@@ -241,7 +243,7 @@ class MandatoryInputs(unittest.TestCase):
                 cwd=root)
             git('tag', 'awid-v0.5.19', cwd=root)
             result = subprocess.run(['python3', str(ROOT / 'scripts/publish_release.py'), '--dry-run', 'awid-v0.5.19'],
-                                    cwd=root, capture_output=True, text=True)
+                                    cwd=root, capture_output=True, text=True, check=False)
             self.assertEqual(result.returncode, 0, result.stderr)
             self.assertIn('awid-v0.5.19 is not manifest-gated', result.stdout)
 
