@@ -147,6 +147,7 @@ test-shipping:
 	python3 scripts/test_candidate_disk_floor.py
 	python3 scripts/test_candidate_network.py
 	python3 scripts/test_candidate_bind_ownership.py
+	python3 scripts/test_candidate_published_port.py
 	python3 scripts/test_folio_wakes_gate.py
 	python3 scripts/test_user_paths_gate.py
 	python3 scripts/test_fetch_released_aw.py

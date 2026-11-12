@@ -287,6 +287,16 @@ printf 'NOT RELEVANT: OSS packages do not bundle Library; it is built only for i
   > "$LOG_DIR/compatibility.txt"
 
 python3 "$ROOT/scripts/candidate-host-pressure.py" capture "$LOG_DIR/host-before.json"
+# The published socket belongs to the Docker host, not the bridge runner.
+if [[ " $pending " == *" checks "* ]]; then
+  if ! AWEB_CANDIDATE_RESOURCE_LABEL="$resource_label" python3 \
+    "$checkout/scripts/e2e/test_candidate_gate_docker_boundaries.py" \
+    --image unused HostPublishedPortTests -v > "$LOG_DIR/host-published-port.log" 2>&1; then
+    cp "$LOG_DIR/host-published-port.log" "$LOG_DIR/checks.log"
+    cat "$LOG_DIR/checks.log" >&2
+    exit 1
+  fi
+fi
 mkdir -p "$buildx_config"
 printf 'builder\t%s\n' "$builder_name" >> "$LOG_DIR/owned-resources.tsv"
 BUILDX_CONFIG="$buildx_config" docker buildx create \

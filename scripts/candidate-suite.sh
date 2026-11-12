@@ -21,6 +21,7 @@ fi
 log_dir="${CANDIDATE_LOG_DIR:?CANDIDATE_LOG_DIR is required}"
 stages="${1:-checks user-paths unit artifacts integration}"
 checks() {
+  cat "$log_dir/host-published-port.log"
   run check-private-boundary
   run _candidate-gate-docker-boundaries
   run _candidate-gate-compose-adoption

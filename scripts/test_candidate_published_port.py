@@ -1,8 +1,11 @@
 #!/usr/bin/env python3
 """Container-free controls for the host published-port property."""
 import importlib.util
+import io
 import json
+import os
 import subprocess
+import tempfile
 import unittest
 from pathlib import Path
 from unittest.mock import patch
@@ -65,6 +68,7 @@ class PublishedPortPropertyTests(unittest.TestCase):
         try:
             with patch.object(boundaries, "run", side_effect=docker), \
                     patch.object(boundaries, "read_published_response", side_effect=http), \
+                    patch("sys.stdout", new_callable=io.StringIO), \
                     patch.dict(boundaries.os.environ, {}, clear=True):
                 boundary.test_docker_assigned_published_port_is_reserved_by_its_service()
         finally:
@@ -105,6 +109,37 @@ class HostPublishedPortWiringTests(unittest.TestCase):
         suite = (ROOT / "scripts/candidate-suite.sh").read_text()
         self.assertIn('cat "$log_dir/host-published-port.log"', suite)
         self.assertIn('run _candidate-gate-docker-boundaries', suite)
+
+    def test_host_failure_preserves_checks_evidence_and_stops_before_runner(self):
+        source = (ROOT / "scripts/candidate-docker-gate.sh").read_text()
+        start = source.index('# The published socket belongs to the Docker host')
+        block = source[start:source.index('\nfi', start) + 3]
+        for pending, code in (("checks integration", 7), ("checks", 0), ("integration", 7)):
+            with self.subTest(pending=pending, code=code), tempfile.TemporaryDirectory() as tmp:
+                root = Path(tmp)
+                python = root / "python3"
+                python.write_text('#!/bin/sh\nprintf "host proof %s\\n" "$*"\nexit "$PROBE_EXIT"\n')
+                python.chmod(0o755)
+                env = dict(os.environ, PATH=str(root) + os.pathsep + os.environ["PATH"],
+                           pending=pending, resource_label="test-label", checkout="/exact checkout",
+                           LOG_DIR=tmp, PROBE_EXIT=str(code))
+                result = subprocess.run(["bash", "-c", 'set -eu\n' + block + '\necho runner-reached'],
+                                        env=env, text=True, capture_output=True, timeout=5)
+                if pending.startswith("checks"):
+                    evidence = (root / "host-published-port.log").read_text()
+                    self.assertIn('/exact checkout/scripts/e2e/test_candidate_gate_docker_boundaries.py',
+                                  evidence)
+                    if code:
+                        self.assertEqual(result.returncode, 1)
+                        self.assertEqual((root / "checks.log").read_text(), evidence)
+                        self.assertNotIn('runner-reached', result.stdout)
+                        self.assertIn(evidence, result.stderr)
+                    else:
+                        self.assertEqual(result.returncode, 0)
+                        self.assertIn('runner-reached', result.stdout)
+                else:
+                    self.assertEqual(result.returncode, 0)
+                    self.assertFalse((root / "host-published-port.log").exists())
 
 
 if __name__ == "__main__":

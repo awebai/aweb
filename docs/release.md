@@ -365,9 +365,17 @@ remove both networks before fallback cleanup. Keep this guard when upgrading
 Compose. Caller-declared external networks are refused before Docker access.
 
 The only candidate publication controls are
-`DockerBoundaryTests.test_docker_assigned_published_port_is_reserved_by_its_service`
+`HostPublishedPortTests.test_docker_assigned_published_port_is_reserved_by_its_service`
 and `ComposeNetworkTests.test_real_services_start_despite_competing_host_port_and_stay_isolated`.
-Docker chooses and holds the actual published binding in both. The latter holds
+Docker chooses and holds the actual published binding in both. The first runs
+on the Docker host from the exact candidate checkout when checks is pending,
+before the bridge runner starts. It requires the original mapping and distinct
+HTTP response to survive a competitor's attempt: Linux refuses that attempt;
+Desktop may start the competitor with no host mapping. Either outcome must
+leave the original response reachable through the host's real loopback socket.
+The probe pins a multi-architecture index; its diagnostics and failures remain
+in checks evidence. The remaining Docker boundaries run inside the runner.
+The latter holds
 a competing host port while two intended services start successfully without
 publishing, serves distinct responses over their scoped aliases, exercises a
 sibling client, and checks that one journey cannot resolve the other's service.
