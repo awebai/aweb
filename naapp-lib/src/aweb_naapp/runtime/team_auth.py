@@ -394,8 +394,13 @@ class AWIDTeamCache:
             try:
                 # A check, not a load: requests read their own facts.
                 facts = await self._refresh_team_facts(team_id, time.monotonic_ns(), store=False)
-                _require_active_certificate(facts, certificate_id)
-                verify_team_certificate_signature(dict(credential.certificate), facts.team_did_key)
+                check_team_certificate(
+                    base64.b64encode(json.dumps(dict(credential.certificate)).encode()).decode("ascii"),
+                    subject_did_key=did_key_from_signing_key(credential.signing_key),
+                    team_did_key=facts.team_did_key,
+                    revoked_certificate_ids=facts.revoked_certificate_ids,
+                    registered_certificate_ids=facts.published_certificate_ids,
+                )
             except (HTTPException, TeamCertificateError) as exc:
                 detail = exc.detail if isinstance(exc, HTTPException) else str(exc)
                 raise RuntimeError(
