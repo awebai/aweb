@@ -35,6 +35,10 @@ ordering, timeout or retry is changed. Lightweight auxiliary Python controls
 remain in `suite.log`. If a command stops before a framework emits a report,
 that report is absent: absence is not zero tests or a pass. `report-copy.status`
 and `report-copy.log` distinguish a copy failure from missing framework output.
+Evidence retention failure fails the suite driver even when the tests passed.
+Use the test outcome and finalization diagnostics separately: a failed report
+copy or container log/inspect capture is an evidence failure, not a test assertion
+failure. When startup already raised, that original exception remains primary.
 
 Before cleanup, `containers/<role>.log` and `<role>.inspect.json` retain each
 owned DNS/runner/PostgreSQL/Redis container, including failed starts. Containers
