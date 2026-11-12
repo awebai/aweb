@@ -169,6 +169,7 @@ def main():
                         '--name', token + '-runner', *resource_args(limits['runner']),
                         '-e', f'GOMAXPROCS={gomaxprocs}',
                         '-e', 'AWEB_UNIT_REPORT_DIR=/tmp/aweb-unit-reports',
+                        '-e', 'AWEB_UNIT_REPORTER=/src/scripts/unit_report.py',
                         '-e', 'PGHOST=127.0.0.1', '-e', 'PGUSER=postgres', '-e', 'PGPASSWORD=postgres',
                         '-e', 'REDIS_URL=redis://127.0.0.1:6379/0',
                         image, 'sleep', 'infinity')

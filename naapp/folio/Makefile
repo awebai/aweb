@@ -7,7 +7,12 @@ export NAAPP_E2E_PROJECT ?= folio-e2e
 PROD_CONFIG ?= ops/render-production.json
 
 test:
-	uv run pytest -q -m "not e2e" $(if $(AWEB_UNIT_REPORT_DIR),--junitxml="$(AWEB_UNIT_REPORT_DIR)/naapp-folio.xml" -o junit_duration_report=total)
+	@if [ -n "$${AWEB_UNIT_REPORT_DIR:-}" ]; then \
+		case "$${AWEB_UNIT_REPORTER:-}" in /*) ;; *) echo "AWEB_UNIT_REPORTER must be an absolute path when reporting" >&2; exit 2;; esac; \
+		uv run python "$$AWEB_UNIT_REPORTER" pytest naapp-folio -- uv run pytest -q -m "not e2e"; \
+	else \
+		uv run pytest -q -m "not e2e"; \
+	fi
 
 test-server:
 	uv run pytest -q

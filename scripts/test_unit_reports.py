@@ -14,6 +14,42 @@ REPORTER = ROOT / 'scripts/unit_report.py'
 
 
 class ReportCommands(unittest.TestCase):
+    def test_folio_reporting_requires_caller_path_and_uses_locked_interpreter(self):
+        # Exercise the actual Make recipe; only uv is a command-recording unit
+        # double, so missing-path controls cannot accidentally run DB tests.
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            capture = root / 'uv-args.json'
+            uv = root / 'uv'
+            uv.write_text('#!' + sys.executable + '\nimport json, os, pathlib, sys\n'
+                          'pathlib.Path(os.environ["CAPTURE"]).write_text(json.dumps(sys.argv[1:]))\n')
+            uv.chmod(0o755)
+            env = dict(os.environ, PATH=tmp + os.pathsep + os.environ['PATH'],
+                       CAPTURE=str(capture), AWEB_UNIT_REPORT_DIR=str(root / 'reports'))
+            env.pop('AWEB_UNIT_REPORTER', None)
+            for reporter in (None, 'relative/reporter.py', str(root / 'supplied reporter.py')):
+                with self.subTest(reporter=reporter):
+                    capture.unlink(missing_ok=True)
+                    if reporter is not None:
+                        env['AWEB_UNIT_REPORTER'] = reporter
+                    result = subprocess.run(['make', '-C', str(ROOT / 'naapp/folio'), 'test'],
+                                            env=env, text=True, capture_output=True)
+                    if reporter is None or not reporter.startswith('/'):
+                        self.assertNotEqual(result.returncode, 0, result.stdout + result.stderr)
+                        self.assertIn('AWEB_UNIT_REPORTER', result.stderr)
+                        self.assertFalse(capture.exists())
+                    else:
+                        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+                        self.assertEqual(json.loads(capture.read_text()),
+                                         ['run', 'python', reporter, 'pytest', 'naapp-folio', '--',
+                                          'uv', 'run', 'pytest', '-q', '-m', 'not e2e'])
+            env.pop('AWEB_UNIT_REPORT_DIR')
+            env.pop('AWEB_UNIT_REPORTER')
+            plain = subprocess.run(['make', '-C', str(ROOT / 'naapp/folio'), 'test'], env=env,
+                                   text=True, capture_output=True)
+            self.assertEqual(plain.returncode, 0, plain.stdout + plain.stderr)
+            self.assertEqual(json.loads(capture.read_text()), ['run', 'pytest', '-q', '-m', 'not e2e'])
+
     def test_signal_failure_is_not_converted_to_success(self):
         with tempfile.TemporaryDirectory() as tmp:
             for kind in ('pytest', 'vitest', 'go', 'tap'):
@@ -50,6 +86,19 @@ class ReportCommands(unittest.TestCase):
 
 @unittest.skipUnless('--frameworks' in sys.argv, 'pass --frameworks after installing locked test tools')
 class Reports(unittest.TestCase):
+    def test_folio_make_reports_through_its_real_locked_environment(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            env = dict(os.environ, AWEB_UNIT_REPORT_DIR=str(root / 'reports'),
+                       AWEB_UNIT_REPORTER=str(REPORTER), UV_FROZEN='1', UV_OFFLINE='1',
+                       PYTEST_ADDOPTS='-k test_makefile_uses_the_locked_environment --basetemp=' + str(root / 'pytest'))
+            result = subprocess.run(['make', '-C', str(ROOT / 'naapp/folio'), 'test'], env=env,
+                                    text=True, capture_output=True)
+            self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+            cases = ET.parse(root / 'reports/naapp-folio.xml').findall('.//testcase')
+            self.assertEqual(len(cases), 3)
+            self.assertFalse(any(c.find(tag) is not None for c in cases for tag in ('failure', 'error', 'skipped')))
+
     def run_report(self, root, kind, name, command, enabled=True):
         env = dict(os.environ)
         env.pop('AWEB_UNIT_REPORT_DIR', None)
