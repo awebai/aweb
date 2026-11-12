@@ -3,6 +3,7 @@
 import asyncio
 import base64
 import json
+import re
 import socket
 from dataclasses import replace
 from datetime import UTC, datetime, timedelta
@@ -253,8 +254,8 @@ async def test_non_uv_never_executes_or_calls_back(governance_service, stage):
             "WebAuthn.setUserVerified", {"authenticatorId": device, "isUserVerified": False}
         )
         await action.click()
-        await page.wait_for_function(
-            "['refused', 'ready'].includes(document.body.dataset.handoffState)"
+        await expect(page.locator("body")).to_have_attribute(
+            "data-handoff-state", re.compile(r"^(refused|ready)$")
         )
         assert not s.callback.done()
         assert (
@@ -274,7 +275,7 @@ async def test_current_authority_refusal_never_executes_or_calls_back(
         await expect(page.locator("#handoff-digest")).to_have_text(s.prepared.digest)
         await s.world.passkeys.db.execute("UPDATE {{tables.signer_authority}} SET active=false")
         await page.locator("#handoff-action").click()
-        await page.wait_for_function("document.body.dataset.handoffState === 'refused'")
+        await expect(page.locator("body")).to_have_attribute("data-handoff-state", "refused")
         assert await page.evaluate("document.documentElement.scrollWidth <= innerWidth")
         await page.screenshot(path=tmp_path / f"governance-refused-{width}.png", full_page=True)
         assert not s.callback.done()
@@ -324,7 +325,7 @@ async def test_malformed_real_authenticated_state_disables_approval(governance_s
         await page.route("**/handoff/*/governance", corrupt)
         await page.goto(s.origin + "/handoff/" + s.prepared.handoff_id)
         await page.locator("#handoff-action").click()
-        await page.wait_for_function("document.body.dataset.handoffState === 'refused'")
+        await expect(page.locator("body")).to_have_attribute("data-handoff-state", "refused")
         assert observed == [(200, s.prepared.digest)]
         await expect(page.locator("#handoff-action")).to_be_disabled()
         await expect(page.locator("#handoff-scope")).to_be_hidden()
@@ -366,7 +367,7 @@ async def test_committed_operation_with_damaged_or_lost_response_is_unconfirmed(
         await page.locator("#handoff-action").click()
         await expect(page.locator("#handoff-digest")).to_have_text(s.prepared.digest)
         await page.locator("#handoff-action").click()
-        await page.wait_for_function("document.body.dataset.handoffState === 'unconfirmed'")
+        await expect(page.locator("body")).to_have_attribute("data-handoff-state", "unconfirmed")
         assert observed == [(200, "committed")]
         await expect(page.locator("#handoff-action")).to_be_disabled()
         await expect(page.get_by_role("status")).to_contain_text("cannot confirm")
@@ -399,7 +400,7 @@ async def test_unconfigured_callback_completes_in_place_with_a_real_receipt(
         await page.locator("#handoff-action").click()
         await expect(page.locator("#handoff-digest")).to_have_text(s.prepared.digest)
         await page.locator("#handoff-action").click()
-        await page.wait_for_function("document.body.dataset.handoffState === 'complete'")
+        await expect(page.locator("body")).to_have_attribute("data-handoff-state", "complete")
         assert page.url == s.origin + "/handoff/" + s.prepared.handoff_id
         assert not s.callback.done()
         assert (

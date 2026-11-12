@@ -8,6 +8,7 @@ import asyncio
 import base64
 import hashlib
 import json
+import re
 import secrets
 import socket
 from dataclasses import asdict
@@ -360,8 +361,8 @@ async def browser_flow(journey, browser, service, tmp_path, purpose, width, *, u
         assert await action.evaluate("element => element === document.activeElement")
         await page.keyboard.press("Enter")
         if not user_verified:
-            await page.wait_for_function(
-                "['refused', 'ready'].includes(document.body.dataset.handoffState)"
+            await expect(page.locator("body")).to_have_attribute(
+                "data-handoff-state", re.compile(r"^(refused|ready)$")
             )
             assert not callback.done()
             row = await journey.world.db.fetch_one(
@@ -474,8 +475,8 @@ async def test_the_requesting_agent_is_shown_apart_from_the_identity_or_the_page
             await page.route(f"**/handoff/{handoff}/session", malformed)
         response = await page.goto(origin + "/handoff/" + handoff)
         assert response.status == 200
-        await page.wait_for_function(
-            "['refused', 'ready'].includes(document.body.dataset.handoffState)"
+        await expect(page.locator("body")).to_have_attribute(
+            "data-handoff-state", re.compile(r"^(refused|ready)$")
         )
         label, value = page.locator("#handoff-requester-label"), page.locator("#handoff-requester")
         action = page.locator("#handoff-action")
