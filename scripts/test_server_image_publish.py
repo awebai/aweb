@@ -207,51 +207,69 @@ class NativeArchiveHandoffTests(unittest.TestCase):
             self.exercise("ppc64le", {"AWEB_SERVER_IMAGE_ARCHIVE_IN": "", "AWEB_SERVER_IMAGE_ARCHIVE_OUT": ""})
 
 
-@unittest.skipUnless(os.environ.get("AWEB_TEST_SERVER_IMAGE_BUILD") == "1", "requires Docker buildx, skopeo and both platform runtimes")
+@unittest.skipUnless(os.environ.get("AWEB_TEST_SERVER_IMAGE_BUILD") == "1", "requires Docker, skopeo and native platform runtime")
 class ServerPlatformBuildTests(unittest.TestCase):
-    def test_both_release_platforms_build_and_run_the_server_cli(self):
+    def test_release_archive_and_native_server_cli(self):
         version = tomllib.loads((ROOT / "server/pyproject.toml").read_text())["project"]["version"]
         sha = command(ROOT, "git", "rev-parse", "HEAD")
+        daemon = json.loads(PUBLISH.run(ROOT, "docker", "info", "--format", "{{json .}}"))
+        native = {"x86_64": ("amd64", "x86_64"), "amd64": ("amd64", "x86_64"),
+                  "aarch64": ("arm64", "aarch64"), "arm64": ("arm64", "aarch64")}
+        self.assertEqual(daemon["OSType"], "linux")
+        self.assertIn(daemon["Architecture"], native, "unsupported native architecture")
+        architecture, machine = native[daemon["Architecture"]]
+        archive_in = os.environ.get("AWEB_SERVER_IMAGE_ARCHIVE_IN", "")
+        archive_out = os.environ.get("AWEB_SERVER_IMAGE_ARCHIVE_OUT", "")
+        self.assertFalse(archive_in and archive_out, "select archive input OR output")
         run_id = "server-image-test-" + uuid.uuid4().hex
         with tempfile.TemporaryDirectory(prefix=run_id) as temporary:
-            archive = Path(temporary) / "server.oci.tar"
+            archive = Path(archive_in or archive_out or str(Path(temporary) / "server.oci.tar")).resolve()
             identities = Path(temporary) / "identities.json"
-            # The publication path uses this exact builder, not a second recipe.
-            PUBLISH.build_oci_archive(ROOT, "server-v", version, sha, archive)
+            if archive_in:
+                self.assertTrue(archive.is_file(), "input archive must exist; never rebuild a transferred artifact")
+            else:
+                self.assertFalse(archive.exists(), "output archive already exists; do not overwrite release bytes")
+                # The publication path uses this exact builder, not a second recipe.
+                PUBLISH.build_oci_archive(ROOT, "server-v", version, sha, archive)
             PUBLISH.run(ROOT, "bash", "scripts/oci-exact-publish.sh", "inspect-staged",
                         "--archive", str(archive), "--version", version,
                         "--source-sha", sha, "--out", str(identities))
             identity = json.loads(identities.read_text())
             self.assertEqual(set(identity["platforms"]), {"linux/amd64", "linux/arm64"})
             print("server image staged identity=" + json.dumps(identity, sort_keys=True), flush=True)
-            for architecture, machine in (("amd64", "x86_64"), ("arm64", "aarch64")):
-                with self.subTest(platform=architecture):
-                    image = run_id + ":" + architecture
-                    container = run_id + "-" + architecture
-                    loaded = False
-                    try:
-                        PUBLISH.run(ROOT, "skopeo", "--override-os", "linux", "--override-arch", architecture,
-                                    "copy", "oci-archive:" + str(archive), "docker-daemon:" + image, timeout=600)
-                        loaded = True
-                        observed = json.loads(PUBLISH.run(ROOT, "docker", "image", "inspect", image))[0]
-                        self.assertEqual(observed["Architecture"], architecture)
-                        self.assertEqual(observed["Config"]["Labels"]["org.opencontainers.image.revision"], sha)
-                        probe = ("import importlib.metadata as m, json, os, platform; "
-                                 "import aweb.cli, awid, aweb_naapp; "
-                                 "print(json.dumps(dict(version=m.version('aweb'), machine=platform.machine(), uid=os.getuid())))")
-                        result = json.loads(PUBLISH.run(ROOT, "docker", "run", "--rm", "--name", container,
-                                                       "--platform", "linux/" + architecture, image,
-                                                       "python", "-c", probe, timeout=120))
-                        self.assertEqual(result, {"version": version, "machine": machine, "uid": 1001})
-                        help_text = PUBLISH.run(ROOT, "docker", "run", "--rm", "--name", container,
-                                               "--platform", "linux/" + architecture, image, "aweb", "serve", "--help", timeout=120)
-                        self.assertIn("Usage", help_text)
-                        print(f"server image linux/{architecture} PASS: {result}", flush=True)
-                    finally:
-                        # Remove only this probe's resources, including a timed-out container.
-                        subprocess.run(["docker", "rm", "-f", container], capture_output=True, timeout=60, check=False)
-                        if loaded:
-                            PUBLISH.run(ROOT, "docker", "image", "rm", "-f", image, timeout=60)
+            with archive.open("rb") as stream:
+                archive_hash = hashlib.file_digest(stream, "sha256").hexdigest()
+            print("server image archive receipt=" + json.dumps({
+                "sha256": archive_hash, "bytes": archive.stat().st_size,
+                "index": identity["index"], "source_sha": sha, "version": version,
+                "native_platform": "linux/" + architecture}, sort_keys=True), flush=True)
+            with self.subTest(platform=architecture):
+                image = run_id + ":" + architecture
+                container = run_id + "-" + architecture
+                loaded = False
+                try:
+                    PUBLISH.run(ROOT, "skopeo", "--override-os", "linux", "--override-arch", architecture,
+                                "copy", "oci-archive:" + str(archive), "docker-daemon:" + image, timeout=600)
+                    loaded = True
+                    observed = json.loads(PUBLISH.run(ROOT, "docker", "image", "inspect", image))[0]
+                    self.assertEqual(observed["Architecture"], architecture)
+                    self.assertEqual(observed["Config"]["Labels"]["org.opencontainers.image.revision"], sha)
+                    probe = ("import importlib.metadata as m, json, os, platform; "
+                             "import aweb.cli, awid, aweb_naapp; "
+                             "print(json.dumps(dict(version=m.version('aweb'), machine=platform.machine(), uid=os.getuid())))")
+                    result = json.loads(PUBLISH.run(ROOT, "docker", "run", "--rm", "--name", container,
+                                                   "--platform", "linux/" + architecture, image,
+                                                   "python", "-c", probe, timeout=120))
+                    self.assertEqual(result, {"version": version, "machine": machine, "uid": 1001})
+                    help_text = PUBLISH.run(ROOT, "docker", "run", "--rm", "--name", container,
+                                           "--platform", "linux/" + architecture, image, "aweb", "serve", "--help", timeout=120)
+                    self.assertIn("Usage", help_text)
+                    print(f"server image linux/{architecture} PASS: {result}", flush=True)
+                finally:
+                    # Remove only this probe's resources, including a timed-out container.
+                    subprocess.run(["docker", "rm", "-f", container], capture_output=True, timeout=60, check=False)
+                    if loaded:
+                        PUBLISH.run(ROOT, "docker", "image", "rm", "-f", image, timeout=60)
 
 
 if __name__ == "__main__":

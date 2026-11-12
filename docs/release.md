@@ -419,9 +419,37 @@ prints `release-index` with its digest, source SHA and version. Deployments pin
 server image; it adds no protected signer variant.
 
 `python3 scripts/test_server_image_publish.py` runs the dispatch, identity,
-immutability and readback controls without Docker. `make test-server-image-build`
-on an authorized build host with Docker buildx, skopeo and both platform runtimes
-builds the actual archive through the same publisher function, validates it with
-the exact helper, and runs the packaged server CLI on both architectures as the
-image's non-root user. It does not publish to a registry. Public pullability is
-established by the tag publisher's registry readback at release time.
+immutability, readback and archive-handoff controls without Docker.
+`make test-server-image-build` builds both platforms through the same publisher
+function, validates the archive with the exact helper, and runs the packaged
+imports and server CLI as the image's non-root user on the Docker daemon's
+**native** platform only. Both runtime probes have a 120-second bound.
+A one-host PASS qualifies only the platform printed in its receipt.
+
+Complete platform qualification requires the same archive, index and source SHA
+on native Linux amd64 and native Linux arm64 hosts. On the authorized x86 build
+host (Docker buildx, skopeo and build support for both architectures):
+
+```sh
+AWEB_SERVER_IMAGE_ARCHIVE_OUT=/evidence/server.oci.tar make test-server-image-build
+```
+
+The output path must not already exist. Preserve the archive and its printed
+SHA-256/size/index/source receipt. Transfer it to the authorized ARM host and
+verify its file hash. From the **same source checkout SHA** on that host (Docker
+and skopeo; no build or emulated execution needed):
+
+```sh
+AWEB_SERVER_IMAGE_ARCHIVE_IN=/evidence/server.oci.tar make test-server-image-build
+```
+
+An input archive must exist: the ARM run never silently rebuilds it. Each host
+validates both platforms and their version/source labels before loading its
+native variant, and prints the same archive identity with its actual native
+platform. The external input/output archive survives test cleanup for transfer
+and audit; the operator owns its final removal. Probe containers and loaded
+image tags are removed by the test. With neither variable, the archive is
+temporary and removed after the one-host run. Input and output are exclusive.
+
+These tests do not publish to a registry. Public pullability is established by
+the tag publisher's registry readback at release time.
