@@ -47,7 +47,7 @@ from aweb_naapp_testing.network import make_certificates
 REPO = Path(__file__).resolve().parents[2]
 TEAM_DIR = REPO / "deploy" / "team"
 ADAPTER = REPO / "scripts" / "e2e-team-deployment.sh"
-PROVISION = REPO / "naapp" / "secrets" / "e2e" / "protected" / "provision.py"
+EVIDENCE = REPO / "naapp" / "secrets" / "e2e" / "protected" / "evidence.py"
 sys.path.insert(0, str(REPO / "naapp" / "secrets" / "e2e"))
 
 from protected_round_trip import (  # noqa: E402
@@ -413,33 +413,47 @@ class World:
             (signer_secrets / "member-signer.pem").write_text(pem)
             (signer_secrets / "members.json").write_text(json.dumps({TEAM_ID: "member-signer.pem"}))
 
-        def store_controller(seed: str) -> None:
-            # A real directory owned by the signer's uid, mode 0700, and the key
-            # in it, mode 0400: the custody check refuses anything else.
-            run("docker", "run", "--rm", "-i", "-v", f"{signer_secrets}:/s", "alpine:3.22", "sh", "-c",
-                f"umask 077 && mkdir /s/private-controller && cat > /s/private-controller/controller.key "
-                f"&& chown -R {signer_uid}:{signer_uid} /s/private-controller "
-                f"&& chmod 0700 /s/private-controller && chmod 0400 /s/private-controller/controller.key",
-                input=seed + "\n")
+        def install_controller(pem: Path) -> None:
+            """HOST.md, controller key installation: the owner's existing PEM in
+            a short-lived source only the signer's uid reads, converted into
+            its private directory by the package command, then removed."""
+            source = self.world / "private-provisioning"
+            source.mkdir(mode=0o700)
+            shutil.copyfile(pem, source / "team-controller.pem")
+            run("docker", "run", "--rm", "-v", f"{source}:/p", "alpine:3.22", "sh", "-c",
+                f"chown -R {signer_uid}:{signer_uid} /p && chmod 0400 /p/team-controller.pem")
+            try:
+                operator_command("install-controller", "--source-pem", "/private-provisioning/team-controller.pem",
+                                 mounts=["-v", f"{source}:/private-provisioning:ro"])
+            finally:
+                run("docker", "run", "--rm", "-v", f"{self.world}:/w", "alpine:3.22", "rm", "-rf",
+                    "/w/private-provisioning")
 
         def configure_signer(profile: dict, scope: dict) -> None:
             for name, document in (("profile.json", profile), ("scope.json", scope)):
                 (self.world / "signer" / name).write_text(json.dumps(document))
                 (self.world / "signer" / name).chmod(0o644)
             (signer_secrets / "smtp-password").write_text(secrets.token_urlsafe(16))
+            # The private controller directory, created as its owner before
+            # the controller is installed into it.
             run("docker", "run", "--rm", "-v", f"{signer_secrets}:/s", "alpine:3.22", "sh", "-c",
                 f"chown {signer_uid}:{signer_uid} /s/database-url /s/smtp-password /s/members.json "
                 f"/s/member-signer.pem && chmod 0400 /s/database-url /s/smtp-password /s/members.json "
-                f"/s/member-signer.pem")
+                f"/s/member-signer.pem && install -d -m 0700 -o {signer_uid} -g {signer_uid} /s/private-controller")
             self.signer_configured = True
             self.deployment()
 
-        def provision(*args: str, stdin: str | None = None) -> dict:
-            """provision.py inside the signer's container, as its uid, with the
-            signer's own settings."""
-            output = self.compose("run", "--rm", "-T", "--no-deps", "-v", f"{PROVISION}:/provision.py:ro",
-                                  "--entrypoint", "python", "signer", "/provision.py", *args, input=stdin)
+        def operator_command(*args: str, mounts: list[str] | None = None) -> dict:
+            """The package's local administrator command in the signer's
+            container, as its uid, with the signer's own settings and mounts."""
+            output = self.compose("run", "--rm", "-T", "--no-deps", *(mounts or []), "--entrypoint", "python",
+                                  "signer", "-m", "aweb.protected_signing.operator", *args)
             return first_json(output)
+
+        def signer_evidence(operation: str) -> dict:
+            output = self.compose("run", "--rm", "-T", "--no-deps", "-v", f"{EVIDENCE}:/evidence.py:ro",
+                                  "--entrypoint", "python", "signer", "/evidence.py", "--operation-id", operation)
+            return first_json(output)[operation]
 
         def start_signer() -> None:
             if self.up() != 0:
@@ -471,9 +485,9 @@ class World:
             aweb=origin("aweb"), signer=origin("signer"), human=origin("human"), service_id=f"{TEAM}-signer",
             app_id=f"{TEAM}-secrets", role=ROLE, contact=f"approver@{DOMAIN}", mail_api=f"http://{MAIL}:8025",
             profile_in_machine="/world/signer/profile.json", publish_controller=self.publish_controller,
-            store_member=store_member, store_controller=store_controller, configure_signer=configure_signer,
-            provision=provision, start_signer=start_signer, chromium=chromium,
-            drop_prepare_answers=drop_prepare_answers,
+            store_member=store_member, configure_signer=configure_signer, install_controller=install_controller,
+            operator=operator_command, start_signer=start_signer, signer_evidence=signer_evidence,
+            chromium=chromium, drop_prepare_answers=drop_prepare_answers,
         )
 
 

@@ -1,9 +1,9 @@
 """The approving human's Chromium in the protected round trip.
 
-  enrol   --origin O --options F --attestation OUT --device D --ca CA
-          On a page of the human origin, create the passkey from B3's
-          enrolment options with a CDP virtual authenticator (user verified),
-          write the browser's attestation JSON, and keep the credential in D.
+  enrol-page --url LINK --device D --ca CA
+          Open the enrolment link the signer delivered, on its human origin,
+          and complete the page's own registration with a CDP virtual
+          authenticator (user verified); keep the credential in D.
   approve --url PAGE --device D --ca CA [--login-uv yes|no] [--approve-uv yes|no]
           Open the governance page in a fresh context (no cookie, no token),
           click through its real LOGIN and its separate approval, and print the
@@ -59,22 +59,22 @@ def authenticator(page, user_verified: bool):
     return cdp, found["authenticatorId"]
 
 
-def enrol(args, browser) -> None:
+def enrol_page(args, browser) -> None:
     page = browser.new_context().new_page()
-    page.goto(args.origin + "/handoff/enrolment-host")  # any document of the human origin
     cdp, authenticator_id = authenticator(page, True)
-    options = json.loads(Path(args.options).read_text())
-    attestation = page.evaluate(
-        "async (o) => (await navigator.credentials.create({publicKey: PublicKeyCredential.parseCreationOptionsFromJSON(o)})).toJSON()",
-        options,
-    )
-    Path(args.attestation).write_text(json.dumps(attestation))
+    page.goto(args.url)
+    page.wait_for_selector("#complete:not([disabled])", timeout=30000)
+    page.click("#complete")
+    # The page shows the way on to sign in once B3 has registered the passkey;
+    # on a refusal it enables the button again and shows no such link.
+    page.wait_for_selector("#continue:not([hidden])", timeout=60000)
     credentials = cdp.send("WebAuthn.getCredentials", {"authenticatorId": authenticator_id})[
         "credentials"
     ]
     device = Path(args.device)
     device.write_text(json.dumps(credentials))
     device.chmod(0o600)
+    print(json.dumps({"enrolled": len(credentials)}))
 
 
 def wait_state(page, states: tuple[str, ...], timeout: int = 60000) -> str:
@@ -129,9 +129,9 @@ def main() -> None:
         description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter
     )
     commands = parser.add_subparsers(dest="command", required=True)
-    e = commands.add_parser("enrol")
-    for name in ("--origin", "--options", "--attestation", "--device", "--ca"):
-        e.add_argument(name, required=True)
+    p = commands.add_parser("enrol-page")
+    for name in ("--url", "--device", "--ca"):
+        p.add_argument(name, required=True)
     a = commands.add_parser("approve")
     for name in ("--url", "--device", "--ca"):
         a.add_argument(name, required=True)
@@ -142,7 +142,7 @@ def main() -> None:
     with sync_playwright() as playwright:
         browser = playwright.chromium.launch()
         try:
-            {"enrol": enrol, "approve": approve}[args.command](args, browser)
+            {"enrol-page": enrol_page, "approve": approve}[args.command](args, browser)
         finally:
             browser.close()
 

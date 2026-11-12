@@ -26,6 +26,7 @@ import secrets
 import shutil
 import subprocess
 from collections.abc import Iterator
+from pathlib import Path
 
 import pytest
 from aweb_naapp_testing.network import make_certificates
@@ -71,16 +72,17 @@ class ProtectedLane(Lane):
     def protected(self, *args: str, timeout: int = 900) -> subprocess.CompletedProcess[str]:
         return self.compose("--profile", "protected", *args, timeout=timeout)
 
-    def provision(self, *args: str, stdin: str | None = None) -> dict:
-        """The trusted provisioner, inside the protected container as its uid."""
+    def evidence(self, operation: str) -> dict:
+        """What the protected server signed for one operation, read from its
+        database inside its container as its uid."""
         result = subprocess.run(
             ["docker", "compose", "-p", self.project, "-f", str(REPO / "naapp/secrets/docker-compose.e2e.yml"),
              "--profile", "protected", "run", "--rm", "-T", "--no-deps", "--entrypoint", "python",
-             "protected", "/provision.py", *args],
-            env=self.env, text=True, capture_output=True, input=stdin, timeout=300, check=False,
+             "protected", "/evidence.py", "--operation-id", operation],
+            env=self.env, text=True, capture_output=True, timeout=300, check=False,
         )
         assert result.returncode == 0, result.stdout + result.stderr
-        return first_json(result.stdout)
+        return first_json(result.stdout)[operation]
 
     def chromium(self, machine: str, *args: str) -> dict:
         """The approving human's Chromium, in the requester's network namespace."""
@@ -163,15 +165,43 @@ def protected_site(lane: ProtectedLane) -> Site:
         for path in member_dir.iterdir():
             path.chmod(0o644)
 
-    def store_controller(seed: str) -> None:
-        # The protected server's custody volume, as the protected uid, mode 0400.
-        stored = subprocess.run(
-            ["docker", "compose", "-p", lane.project, "-f", str(REPO / "naapp/secrets/docker-compose.e2e.yml"),
-             "--profile", "protected", "run", "--rm", "-T", "--no-deps", "--entrypoint", "sh", "protected", "-c",
-             "umask 077 && chmod 700 /private-controller && cat > /private-controller/controller.key "
-             "&& chmod 400 /private-controller/controller.key"],
-            env=lane.env, text=True, capture_output=True, input=seed + "\n", timeout=120, check=False)
-        assert stored.returncode == 0, stored.stderr
+    def protected_run(*args: str, user: str | None = None, mounts: tuple[str, ...] = ()) -> str:
+        command = ["docker", "compose", "-p", lane.project, "-f", str(REPO / "naapp/secrets/docker-compose.e2e.yml"),
+                   "--profile", "protected", "run", "--rm", "-T", "--no-deps"]
+        command += ["--user", user] if user else []
+        for mount in mounts:
+            command += ["-v", mount]
+        result = subprocess.run([*command, *args], env=lane.env, text=True, capture_output=True, timeout=300,
+                                check=False)
+        assert result.returncode == 0, result.stdout + result.stderr
+        return result.stdout
+
+    def operator(*args: str, mounts: tuple[str, ...] = ()) -> dict:
+        """The package's local administrator command, as the protected uid with
+        the protected host's own settings."""
+        return first_json(protected_run("--entrypoint", "python", "protected", "-m", "aweb.protected_signing.operator",
+                                        *args, mounts=mounts))
+
+    def install_controller(pem: Path) -> None:
+        """HOST.md, controller key installation: the custody volume's directory
+        made the protected uid's, mode 0700, by trusted provisioning; the
+        owner's existing PEM in a short-lived source only that uid reads; the
+        package command converts it."""
+        protected_run("--entrypoint", "sh", "protected", "-c",
+                      "chown 1001:1001 /private-controller && chmod 0700 /private-controller", user="0")
+        source = lane.runtime / "private-provisioning"
+        source.mkdir(mode=0o700)
+        shutil.copyfile(pem, source / "team-controller.pem")
+        _docker("run", "--rm", "-v", f"{source}:/p", "alpine:3.22", "sh", "-c",
+                "chown -R 1001:1001 /p && chmod 0400 /p/team-controller.pem")
+        try:
+            operator("install-controller", "--source-pem", "/private-provisioning/team-controller.pem",
+                     mounts=(f"{source}:/private-provisioning:ro",))
+        finally:
+            _docker("run", "--rm", "-v", f"{lane.runtime}:/r", "alpine:3.22", "rm", "-rf", "/r/private-provisioning")
+
+    def signer_evidence(operation: str) -> dict:
+        return lane.evidence(operation)
 
     def configure_signer(profile: dict, scope: dict) -> None:
         config.mkdir(parents=True)
@@ -222,8 +252,9 @@ def protected_site(lane: ProtectedLane) -> Site:
         signer=SIGNER, human=HUMAN, service_id=SERVICE_ID, app_id=APP_ID, role=ROLE, contact=CONTACT,
         mail_api="http://mail.svc.test:8025", profile_in_machine=PROFILE,
         publish_controller=lambda did: publish_awid_txt(lane, did), store_member=store_member,
-        store_controller=store_controller, configure_signer=configure_signer, provision=lane.provision,
-        start_signer=start_signer, chromium=lane.chromium, drop_prepare_answers=drop_prepare_answers,
+        configure_signer=configure_signer, install_controller=install_controller, operator=operator,
+        start_signer=start_signer, signer_evidence=signer_evidence,
+        chromium=lane.chromium, drop_prepare_answers=drop_prepare_answers,
     )
 
 

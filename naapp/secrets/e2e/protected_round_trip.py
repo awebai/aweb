@@ -28,7 +28,6 @@ import time
 from collections.abc import Callable
 from dataclasses import dataclass
 from pathlib import Path
-from urllib.parse import unquote
 
 import pexpect
 from awid.did import did_key_from_signing_key
@@ -161,15 +160,20 @@ class Site:
     # The operator profile, as aw in the holder's machine reads it.
     profile_in_machine: str
     publish_controller: Callable[[str], None]
-    # The signer's ordinary member key (aw's PEM file) and its custody of the
-    # team controller seed (64 hex characters), each stored where only it reads.
+    # The signer's ordinary member key (aw's PEM file), stored where only it reads.
     store_member: Callable[[str], None]
-    store_controller: Callable[[str], None]
     # The operator profile and scope, and the process configuration.
     configure_signer: Callable[[dict, dict], None]
-    # provision.py inside the signer's container, as its uid; returns its JSON.
-    provision: Callable[..., dict]
+    # The team owner's existing controller PEM into the signer's private
+    # custody, by the package's install-controller command.
+    install_controller: Callable[[Path], None]
+    # python -m aweb.protected_signing.operator in the signer's container, as
+    # its uid with its own settings; returns its JSON.
+    operator: Callable[..., dict]
     start_signer: Callable[[], None]
+    # What the signer signed for one operation, read from its database
+    # (e2e/protected/evidence.py): {"signed": bool, "refusal_code": ...}.
+    signer_evidence: Callable[[str], dict]
     # The approving human's Chromium in a machine's network namespace.
     chromium: Callable[..., dict]
     # While on, the front drops the answer of a committed prepare once.
@@ -222,21 +226,23 @@ def connect_requester(site: Site, holder: Holder) -> None:
     aw(holder.container, "init", "--url", site.aweb, "--name", "owner", "--do-not-touch-agents-md")
 
 
-def enrolment_token(site: Site, machine: str) -> str:
-    """The approver's enrolment link, read from the captured transport."""
+def enrolment_link(site: Site, machine: str) -> str:
+    """The approver's enrolment link, as the signer delivered it to the
+    captured transport."""
     listing = docker("exec", machine, "wget", "-qO-", f"{site.mail_api}/api/v1/messages")
     assert listing.returncode == 0, listing.stderr
     messages = [m for m in json.loads(listing.stdout)["messages"] if any(t["Address"] == site.contact for t in m["To"])]
     assert len(messages) == 1, messages
     message = docker("exec", machine, "wget", "-qO-", f"{site.mail_api}/api/v1/message/{messages[0]['ID']}")
-    link = re.search(re.escape(site.human) + r"/enrolment#token=(\S+)", json.loads(message.stdout)["Text"])
+    link = re.search(re.escape(site.human) + r"/enrolment#token=\S+", json.loads(message.stdout)["Text"])
     assert link, message.stdout
-    return unquote(link.group(1))
+    return link.group(0)
 
 
 def provision_signer(site: Site, holder: Holder, founded: Founded) -> None:
-    """Configure, provision and start the signer, and enrol the approver's
-    passkey with Chromium's own attestation on the human origin."""
+    """Configure the signer, install its controller, bootstrap its first
+    approver with the operator command, start it, and enrol the approver's
+    passkey on its human origin's own page."""
     machine = holder.container
     # The protected server's ordinary member credential (never the controller):
     # aw creates the key in the member's own identity.
@@ -250,14 +256,11 @@ def provision_signer(site: Site, holder: Holder, founded: Founded) -> None:
     assert added["certificate_id"]
     site.store_member((site.runtime / "protected-reader" / "identity" / ".aw" / "signing.key").read_text())
 
-    # Team administration is done: the controller key leaves the holder's
-    # machine for the protected server's custody.
-    team_key = site.runtime / "holder" / ".awid" / "team-keys" / site.domain / f"{site.team}.key"
-    seed = load_signing_key_pem(team_key.read_bytes())
-    team_key.unlink()
-    site.store_controller(seed.hex())
-
     # The operator profile, its one binding, and the process configuration.
+    # The binding names the team controller's public key, read from the
+    # owner's existing PEM.
+    team_key = site.runtime / "holder" / ".awid" / "team-keys" / site.domain / f"{site.team}.key"
+    controller_did = did_key_from_signing_key(load_signing_key_pem(team_key.read_bytes()))
     scope = {"v": 1, "kind": "protected_key", "service_id": site.service_id,
              "authority": {"kind": "team_controller", "id": site.team_id, "domain": site.domain},
              "human": {"id": founded.approver, "domain": site.domain}, "generation": 1}
@@ -265,21 +268,25 @@ def provision_signer(site: Site, holder: Holder, founded: Founded) -> None:
         "v": 1, "service_id": site.service_id, "request_origin": site.signer, "human_origin": site.human,
         "rp_id": site.rp_id, "registry_origin": site.registry,
         "namespace_authorities": [{"domain": site.domain, "controller_did": founded.controller_did}],
-        "bindings": [{"scope": scope, "authority_key_did": did_key_from_signing_key(seed),
+        "bindings": [{"scope": scope, "authority_key_did": controller_did,
                       "policy": {"ref": "aweb.human-assurance/1", "version": 1}}],
     }
     site.configure_signer(profile, scope)
 
-    # HOST.md provisioning: declared rows, then B3 enrolment with the
-    # browser's own attestation on the human origin.
-    site.provision("setup", "--human-id", founded.approver, "--requester", founded.requester, "--contact", site.contact)
-    token = enrolment_token(site, machine)
-    options = site.provision("options", "--token", token)
-    (site.runtime / "enrolment-options.json").write_text(json.dumps(options))
+    # Team administration is done: the controller key leaves the holder's
+    # machine for the protected server's custody (HOST.md, controller key
+    # installation).
+    site.install_controller(team_key)
+    team_key.unlink()
+
+    # HOST.md, first operator enrollment: the operator's once-only bootstrap
+    # mails the approver's enrolment link; on the started host's human origin
+    # the shared page registers the passkey through B3, then check.
+    site.operator("bootstrap", "--requester", founded.requester, "--contact", site.contact)
     site.start_signer()
-    site.chromium(machine, "enrol", "--origin", site.human, "--options", f"{site.mounted}/enrolment-options.json",
-                  "--attestation", f"{site.mounted}/attestation.json", "--device", f"{site.mounted}/approver-device.json")
-    site.provision("complete", "--token", token, stdin=(site.runtime / "attestation.json").read_text())
+    site.chromium(machine, "enrol-page", "--url", enrolment_link(site, machine),
+                  "--device", f"{site.mounted}/approver-device.json")
+    assert site.operator("check") == {"provisioned": True, "service_id": site.service_id}
 
 
 def start_revoke(site: Site, machine: str, principal: str) -> tuple[pexpect.spawn, str, str, str]:
@@ -322,7 +329,7 @@ def round_trip(site: Site, holder: Holder, founded: Founded) -> str:
     assert status == 0, output
     receipt = first_json(output)
     assert (receipt["operation_id"], receipt["state"]) == (operation, "committed"), receipt
-    assert site.provision("evidence", "--operation-id", operation)[operation] == {"signed": True, "refusal_code": None}
+    assert site.signer_evidence(operation) == {"signed": True, "refusal_code": None}
     assert not (saved / f"{operation}.json").exists(), "a committed operation's saved request remains"
     return operation
 
@@ -342,7 +349,7 @@ def refusals(site: Site, holder: Holder, founded: Founded) -> None:
         assert report["states"][-1] == ("login-required" if phase == "login" else "ready"), report
         child.sendintr()
         finish(child)
-        assert site.provision("evidence", "--operation-id", operation)[operation]["signed"] is False
+        assert site.signer_evidence(operation)["signed"] is False
         assert (saved / f"{operation}.json").exists()
         pending.append(operation)
 
@@ -359,7 +366,7 @@ def refusals(site: Site, holder: Holder, founded: Founded) -> None:
                      "--protected-profile", site.profile_in_machine)
     assert refused.returncode != 0, refused.stdout
     assert first_json(refused.stdout)["error"]["code"] == "operation_conflict", refused.stdout
-    assert site.provision("evidence", "--operation-id", changed)[changed]["signed"] is False
+    assert site.signer_evidence(changed)["signed"] is False
 
     # A lost prepare answer: the front drops the committed prepare's
     # response once. aw reads the receipt instead of preparing again, keeps
@@ -388,4 +395,4 @@ def refusals(site: Site, holder: Holder, founded: Founded) -> None:
     assert status == 0, output
     receipt = first_json(output)
     assert (receipt["operation_id"], receipt["state"]) == (operation, "committed"), receipt
-    assert site.provision("evidence", "--operation-id", operation)[operation] == {"signed": True, "refusal_code": None}
+    assert site.signer_evidence(operation) == {"signed": True, "refusal_code": None}
