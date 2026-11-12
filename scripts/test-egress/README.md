@@ -73,6 +73,12 @@ handoff. Tests requiring PostgreSQL or Docker need an authorized VM run; report
 that coverage as pending until it executes. A merge or rebase requires a new
 preflight at the resulting SHA.
 
+For Folio reports the driver supplies `AWEB_UNIT_REPORTER`, the absolute helper
+path in its prepared image. Folio invokes it through `uv run python` and refuses
+an unset or relative helper path when `AWEB_UNIT_REPORT_DIR` enables reporting.
+It never derives the repository layout from its own location. With reporting
+disabled, its standalone `make test` still runs the original `uv run pytest`.
+
 `make test-cli`, `test-server`, and `test-awid` prepare dependencies, then run
 behind the native deny proxy. Loopback stays direct. The exact existing
 `127.0.0.1.nip.io` fixture is forwarded to 127.0.0.1 without DNS. Reserved test

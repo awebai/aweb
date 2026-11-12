@@ -41,6 +41,7 @@ class Evidence(unittest.TestCase):
                     (evidence / 'dns-denied.log').touch()
                 if role == 'runner':
                     self.assertIn('AWEB_UNIT_REPORT_DIR=/tmp/aweb-unit-reports', args)
+                    self.assertIn('AWEB_UNIT_REPORTER=/src/scripts/unit_report.py', args)
                 return role
             if args[0] == 'inspect':
                 if '--format' in args:
