@@ -71,6 +71,7 @@ networks:
   # alone still leaves the host reachable at the bridge's gateway address.
   agents:
     internal: true
+    enable_ipv6: false
     driver_opts:
       com.docker.network.bridge.gateway_mode_ipv4: isolated
     ipam:
