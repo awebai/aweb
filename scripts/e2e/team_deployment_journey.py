@@ -423,8 +423,12 @@ class World:
             run("docker", "run", "--rm", "-v", f"{source}:/p", "alpine:3.22", "sh", "-c",
                 f"chown -R {signer_uid}:{signer_uid} /p && chmod 0400 /p/team-controller.pem")
             try:
+                # The signer's secrets are read-only to it; this one trusted
+                # provisioning step writes its private controller directory.
                 operator_command("install-controller", "--source-pem", "/private-provisioning/team-controller.pem",
-                                 mounts=["-v", f"{source}:/private-provisioning:ro"])
+                                 mounts=["-v", f"{source}:/private-provisioning:ro",
+                                         "-v", f"{signer_secrets / 'private-controller'}:"
+                                               "/run/secrets/signer/private-controller"])
             finally:
                 run("docker", "run", "--rm", "-v", f"{self.world}:/w", "alpine:3.22", "rm", "-rf",
                     "/w/private-provisioning")
