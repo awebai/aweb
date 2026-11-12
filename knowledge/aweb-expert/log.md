@@ -1,5 +1,10 @@
 # Knowledge log
 
+## 2026-11-12
+* **Harvest**: OKF proposal from aweb-expert/aweb-expert-testing-servers (gate lessons from the Linux VM move).
+* **Creation**: decision [authors prove the cheap checks before any train or VM handoff](/aweb-expert/decisions/authors-prove-cheap-checks-before-handoff.md).
+* **Creation**: lessons [a gate asserts the property, not a proxy for it](/aweb-expert/lessons/a-gate-asserts-the-property-not-a-proxy.md) and [VM gate time comes from database quotas and run-to-run variance](/aweb-expert/lessons/vm-gate-time-comes-from-database-quotas-and-variance.md).
+
 ## 2026-11-04
 * **Harvest**: OKF proposal from aweb-expert/aweb-expert-fresh-eyes (tasks aweb-acst and aweb-actf).
 * **Update**: [identity and routing review needs the real client](/aweb-expert/lessons/identity-and-routing-review-needs-the-real-client.md) gains that the real client includes the last released binary and that a skipped released-client case is not evidence.
