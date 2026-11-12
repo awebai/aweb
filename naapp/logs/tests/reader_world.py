@@ -29,7 +29,7 @@ from aweb_naapp.runtime.installation import InstallationFence, apply_installatio
 from aweb_naapp.runtime.passkeys import Passkeys, RelyingParty
 from aweb_naapp_testing.owner_acts import APP_ID, INSTALLATION_ID, TEAM_ID, TeamOwner, team_owner
 from aweb_naapp_testing.webauthn import SoftAuthenticator, SoftCredential, b64url
-from awid_service.testing import running_registry
+from awid_service.testing import Registry, running_registry
 from cryptography.hazmat.primitives.asymmetric import ec
 from nacl.signing import SigningKey
 from pgdbm import AsyncDatabaseManager, AsyncMigrationManager
@@ -125,6 +125,8 @@ class World:
     registered: list[bool]
     grant: Grant
     fence: InstallationFence
+    # The running AWID the owner's team is registered in.
+    registry: Registry = field(init=False)
     governance: LogsGovernance = field(init=False)
     removals: ReaderRemovals = field(init=False)
     recorder: CredentialAudit = field(init=False)
@@ -171,6 +173,7 @@ async def world_fixture(test_db_factory) -> AsyncIterator[World]:
         owner = await team_owner(registry, team_id=TEAM_ID, acts=APP_ACTS + LOGS_ACTS)
         directory = ReaderDirectory(db, app_id=APP_ID, passkeys=lambda: state.passkeys)
         state = World(db, owner, signer, directory, Inbox(), registered, installations.grant, fence)
+        state.registry = registry
         append_own = directory.appender(signer)
 
         async def append(tx, event_id) -> None:

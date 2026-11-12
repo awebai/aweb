@@ -149,6 +149,7 @@ def create_app(
                     backlog_age=timedelta(seconds=settings.hook_events_stalled_after_seconds),
                 )
                 api.include_router(readers.agent_router(authorized))
+                api.include_router(readers.handoff_router)
                 console.include_router(readers.console_router)
                 runtime.check_authorized_routes(api)
                 stop = asyncio.Event()

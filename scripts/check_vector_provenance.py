@@ -386,6 +386,10 @@ ROOT_CONSUMERS = {
         "principal-attestation-v1.json",
         '(Path(__file__).parents[3] / "docs" / "vectors" / "principal-attestation-v1.json")',
     ),
+    PurePosixPath("naapp-lib/tests/console/test_human_role_holding_identity.py"): _consumer(
+        "human-role-holding-v1.json",
+        '"docs/vectors/human-role-holding-v1.json"',
+    ),
     PurePosixPath("naapp-lib/renderer/tests/decision-display.test.mjs"): _consumer(
         "decision-display-v1.json",
         '"../../../docs/vectors/decision-display-v1.json"',
