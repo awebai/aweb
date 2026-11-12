@@ -177,20 +177,20 @@
         },
         "profileFile": {
           "$ref": "#/$defs/file",
-          "x-env": "SIGNER_PROFILE_FILE",
-          "description": "The one protected service profile. The origins and registry in this file must equal the profile's."
+          "x-env": "SIGNER_PROFILE_SOURCE",
+          "description": "The one protected service profile, on the machine that renders and runs the deployment. Its request and human origins must equal requestOrigin and humanOrigin, and its registry team.registryUrl."
         },
         "scopeFile": {
           "$ref": "#/$defs/file",
-          "x-env": "SIGNER_SCOPE_FILE"
+          "x-env": "SIGNER_SCOPE_SOURCE"
         },
         "requestOrigin": {
           "$ref": "#/$defs/origin",
           "x-env": "SIGNER_REQUEST_ORIGIN"
         },
         "humanOrigin": {
-          "$ref": "#/$defs/origin",
-          "x-env": "SIGNER_HUMAN_ORIGIN"
+          "description": "Where people approve with their passkeys. The signer takes it from its profile; the deployment routes it.",
+          "$ref": "#/$defs/origin"
         },
         "secrets": {
           "$ref": "#/$defs/secrets",
@@ -264,7 +264,8 @@
         },
         "emailCaFile": {
           "$ref": "#/$defs/file",
-          "x-env": "SIGNER_EMAIL_CA_FILE"
+          "description": "Trust anchors for the SMTP server, when a private authority signed its certificate.",
+          "x-env": "SIGNER_EMAIL_CA_SOURCE"
         },
         "compose": {
           "type": "object",

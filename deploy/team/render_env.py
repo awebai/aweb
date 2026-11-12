@@ -70,6 +70,27 @@ def _collect(schema: dict, value: object, out: dict[str, str]) -> None:
     out[name] = value if isinstance(value, str) else json.dumps(value)
 
 
+# Where the signer's public configuration is mounted, outside its secrets.
+SIGNER_CONFIG = "/etc/aweb/signer"
+
+
+def _check_signer_profile(config: dict, registry_url: str) -> None:
+    """The bundle and the signer's profile name the same origins and registry."""
+    signer = config["signer"]
+    try:
+        profile = json.loads(Path(signer["profileFile"]).read_text(encoding="utf-8"))
+        named = {
+            "signer.requestOrigin": (profile["request_origin"], signer["requestOrigin"]),
+            "signer.humanOrigin": (profile["human_origin"], signer["humanOrigin"]),
+            "team.registryUrl": (profile["registry_origin"], registry_url),
+        }
+    except (OSError, ValueError, TypeError, KeyError):
+        raise Refused("signer.profileFile: cannot be read as a protected service profile") from None
+    differ = [key for key, (in_profile, given) in named.items() if in_profile != given]
+    if differ:
+        raise Refused(f"{', '.join(differ)}: not the one signer.profileFile names")
+
+
 def render(config: object) -> dict[str, str]:
     """The settings of the Compose layer for this configuration."""
     _check(config)
@@ -88,6 +109,12 @@ def render(config: object) -> dict[str, str]:
     for section, schema in SCHEMA["properties"].items():
         if section in config:
             _collect(schema, config[section], out)
+    if "signer" in config:
+        _check_signer_profile(config, out["AWID_REGISTRY_URL"])
+        out["SIGNER_PROFILE_FILE"] = f"{SIGNER_CONFIG}/profile.json"
+        out["SIGNER_SCOPE_FILE"] = f"{SIGNER_CONFIG}/scope.json"
+        if "emailCaFile" in config["signer"]:
+            out["AWEB_PROTECTED_EMAIL_CA_FILE"] = f"{SIGNER_CONFIG}/email-ca.pem"
     # Secrets holds its custody key as a mounted file unless the operator names a KMS key.
     if "secrets" in config and "kmsKeyId" not in config["secrets"]:
         out["SECRETS_CUSTODY_KEY_FILE"] = "/run/secrets/secrets/custody-key"
@@ -97,7 +124,7 @@ def render(config: object) -> dict[str, str]:
             out[f"{app.upper()}_HOOK_INTERNAL_DESTINATIONS"] = "allowed"
             out[f"{app.upper()}_HOOK_INTERNAL_CIDR"] = config["network"]["servicesCidr"]
     # The services an operator can leave out start only when the file has them.
-    optional = [name for name in ("logs", "secrets") if name in config]
+    optional = [name for name in ("logs", "secrets", "signer") if name in config]
     if config["postgres"].get("bundled", True):
         optional.append("postgres")
     if optional:

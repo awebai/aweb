@@ -2,6 +2,7 @@
 
 import copy
 import importlib.util
+import json
 from pathlib import Path
 
 import pytest
@@ -90,16 +91,34 @@ SIGNER = {
     "emailFrom": "notifications@example.com",
 }
 
+PROFILE = {
+    "v": 1,
+    "service_id": "devteam-signer",
+    "request_origin": "https://sign.example.com",
+    "human_origin": "https://approve.example.com",
+    "rp_id": "approve.example.com",
+    "registry_origin": "https://api.awid.ai",
+}
 
-def test_the_signer_section_keeps_a_list_as_json_and_fills_its_defaults():
-    rendered = render_env.render({**EXAMPLE, "signer": SIGNER})
-    signer = {name: value for name, value in rendered.items() if "PROTECTED" in name or name.startswith("SIGNER_")}
-    assert signer == {
+
+@pytest.fixture
+def signer(tmp_path):
+    """The signer section, with its profile file on this machine."""
+    profile = tmp_path / "profile.json"
+    profile.write_text(json.dumps(PROFILE), encoding="utf-8")
+    return {**SIGNER, "profileFile": str(profile)}
+
+
+def test_the_signer_section_keeps_a_list_as_json_and_fills_its_defaults(signer):
+    rendered = render_env.render({**EXAMPLE, "signer": signer})
+    settings = {name: value for name, value in rendered.items() if "PROTECTED" in name or name.startswith("SIGNER_")}
+    assert settings == {
         "SIGNER_IMAGE": SIGNER["image"],
-        "SIGNER_PROFILE_FILE": "/etc/aweb-team/signer/profile.json",
-        "SIGNER_SCOPE_FILE": "/etc/aweb-team/signer/scope.json",
+        "SIGNER_PROFILE_SOURCE": signer["profileFile"],
+        "SIGNER_SCOPE_SOURCE": "/etc/aweb-team/signer/scope.json",
+        "SIGNER_PROFILE_FILE": "/etc/aweb/signer/profile.json",
+        "SIGNER_SCOPE_FILE": "/etc/aweb/signer/scope.json",
         "SIGNER_REQUEST_ORIGIN": "https://sign.example.com",
-        "SIGNER_HUMAN_ORIGIN": "https://approve.example.com",
         "SIGNER_SECRETS": "signer",
         "SIGNER_BIND_ADDRESS": "127.0.0.1",
         "SIGNER_PORT": "8080",
@@ -113,6 +132,37 @@ def test_the_signer_section_keeps_a_list_as_json_and_fills_its_defaults():
         "AWEB_PROTECTED_EMAIL_FROM": "notifications@example.com",
         "AWEB_PROTECTED_EMAIL_TLS": "starttls",
     }
+    assert rendered["COMPOSE_PROFILES"] == "postgres,signer"
+
+
+def test_the_signer_trusts_a_private_smtp_authority_through_a_file_mounted_outside_its_secrets(signer):
+    rendered = render_env.render({**EXAMPLE, "signer": {**signer, "emailCaFile": "/etc/aweb-team/signer/smtp-ca.pem"}})
+    assert rendered["SIGNER_EMAIL_CA_SOURCE"] == "/etc/aweb-team/signer/smtp-ca.pem"
+    assert rendered["AWEB_PROTECTED_EMAIL_CA_FILE"] == "/etc/aweb/signer/email-ca.pem"
+    rendered = render_env.render({**EXAMPLE, "signer": signer})
+    assert "SIGNER_EMAIL_CA_SOURCE" not in rendered and "AWEB_PROTECTED_EMAIL_CA_FILE" not in rendered
+
+
+@pytest.mark.parametrize(
+    ("field", "value", "key"),
+    [
+        ("request_origin", "https://other-sign.example.com", "signer.requestOrigin"),
+        ("human_origin", "https://other-approve.example.com", "signer.humanOrigin"),
+        ("registry_origin", "https://registry.example.com", "team.registryUrl"),
+    ],
+)
+def test_the_signer_is_refused_when_its_profile_names_other_origins_or_another_registry(signer, field, value, key):
+    Path(signer["profileFile"]).write_text(json.dumps({**PROFILE, field: value}), encoding="utf-8")
+    with pytest.raises(render_env.Refused, match=key):
+        render_env.render({**EXAMPLE, "signer": signer})
+
+
+def test_the_signer_is_refused_when_its_profile_cannot_be_read(signer, tmp_path):
+    for broken in (str(tmp_path / "missing.json"), signer["profileFile"]):
+        if broken == signer["profileFile"]:
+            Path(broken).write_text("{not json", encoding="utf-8")
+        with pytest.raises(render_env.Refused, match="signer.profileFile"):
+            render_env.render({**EXAMPLE, "signer": {**signer, "profileFile": broken}})
 
 
 @pytest.mark.parametrize(
@@ -126,9 +176,9 @@ def test_the_signer_section_keeps_a_list_as_json_and_fills_its_defaults():
         ("controllerKey", "00" * 32),
     ],
 )
-def test_the_signer_section_refuses_its_own_uid_as_a_worker_plain_smtp_and_credentials(key, value):
+def test_the_signer_section_refuses_its_own_uid_as_a_worker_plain_smtp_and_credentials(signer, key, value):
     with pytest.raises(render_env.Refused):
-        render_env.render({**EXAMPLE, "signer": {**SIGNER, key: value}})
+        render_env.render({**EXAMPLE, "signer": {**signer, key: value}})
 
 
 AGENTS = {
@@ -192,8 +242,8 @@ def test_the_agents_section_refuses_quantity_spellings_a_raw_team_id_as_a_name_a
         render_env.render({**EXAMPLE, "agents": agents})
 
 
-def test_the_signer_must_name_the_agents_uid_as_a_worker():
-    config = {**EXAMPLE, "signer": {**SIGNER, "workerUids": [30000]}, "agents": AGENTS}
+def test_the_signer_must_name_the_agents_uid_as_a_worker(signer):
+    config = {**EXAMPLE, "signer": {**signer, "workerUids": [30000]}, "agents": AGENTS}
     with pytest.raises(render_env.Refused, match="signer.workerUids"):
         render_env.render(config)
     config["signer"]["workerUids"] = [20001]

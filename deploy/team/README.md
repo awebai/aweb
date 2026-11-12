@@ -51,7 +51,8 @@ is the `x-env` of that input in the schema, so the mapping is written once.
 - **Two networks.** `services` holds aweb, signer, secrets, logs, postgres
   and redis. `agents` holds the team container and `egress`, and has no
   route out of its own: `egress` is the only way out, and its allowlist
-  names the services agents use (aweb, Secrets, Logs) and denies PostgreSQL,
+  names the services agents use (aweb, Secrets, Logs, and the signer's
+  request origin for prepare and receipt) and denies PostgreSQL,
   Redis and every custody key.
 - **One PostgreSQL server, one database and one role per component.**
   `postgres.bundled: true` runs one and creates them at first start; with an

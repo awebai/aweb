@@ -23,6 +23,8 @@ APPS = {
     )["services"][name]
     for name in ("secrets", "logs")
 }
+SIGNER_FILE = (REPO_ROOT / "server" / "compose.signer.yaml").read_text(encoding="utf-8")
+SIGNER = yaml.safe_load(SIGNER_FILE)["services"]["signer"]
 SCHEMA = json.loads((TEAM / "config.schema.json").read_text(encoding="utf-8"))
 
 CREDENTIAL_NAME = re.compile(r"PASSWORD|USERNAME|TOKEN|CREDENTIALS|DATABASE_URL|_KEY$|_KEY_FILE")
@@ -33,7 +35,7 @@ def environment(service: dict) -> dict:
 
 
 def test_the_services_are_on_the_services_network_and_none_is_on_the_agents_network():
-    for name in ("aweb", "secrets", "logs", "postgres", "redis"):
+    for name in ("aweb", "secrets", "logs", "signer", "postgres", "redis"):
         assert SERVICES[name]["networks"] == ["services"], name
 
 
@@ -75,6 +77,7 @@ def test_each_service_mounts_only_its_own_secrets_read_only():
         "aweb": [f"{secrets_dir}/${{AWEB_SECRETS:-aweb}}:/run/secrets/aweb:ro"],
         "secrets": [f"{secrets_dir}/${{SECRETS_SECRETS:-secrets}}:/run/secrets/secrets:ro"],
         "logs": [f"{secrets_dir}/${{LOGS_SECRETS:-logs}}:/run/secrets/logs:ro"],
+        "signer": [f"{secrets_dir}/${{SIGNER_SECRETS:-signer}}:/run/secrets/signer:ro"],
         "postgres": [f"{secrets_dir}/${{POSTGRES_SECRETS:-postgres}}:/run/secrets/postgres:ro"],
         "redis": [],
     }
@@ -86,6 +89,7 @@ def test_only_aweb_and_the_apps_are_published_and_on_the_address_the_operator_ga
         "aweb": ["${AWEB_BIND_ADDRESS:-127.0.0.1}:${AWEB_PORT:-8000}:8000"],
         "secrets": ["${SECRETS_BIND_ADDRESS:-127.0.0.1}:${SECRETS_PORT:-8770}:8770"],
         "logs": ["${LOGS_BIND_ADDRESS:-127.0.0.1}:${LOGS_PORT:-8765}:8765"],
+        "signer": ["${SIGNER_BIND_ADDRESS:-127.0.0.1}:${SIGNER_PORT:-8080}:8080"],
     }
 
 
@@ -186,3 +190,49 @@ def test_a_setting_the_operator_does_not_give_never_reaches_an_app_as_a_blank():
             assert environment(service)[key] is None, key
         for key, value in environment(service).items():
             assert ":-}" not in str(value) and ":+" not in str(value), key
+
+
+def test_the_signer_is_optional_and_runs_its_owners_service_body_from_the_pinned_image():
+    signer = SERVICES["signer"]
+    assert signer["profiles"] == ["signer"]
+    assert signer["extends"] == {"file": "../../server/compose.signer.yaml", "service": "signer"}
+    assert signer["image"] == "${SIGNER_IMAGE:?SIGNER_IMAGE is required, signer.image}"
+    assert "build" not in signer
+    assert signer["depends_on"] == {"postgres": {"condition": "service_healthy", "required": False}}
+
+
+def test_the_signers_controller_and_member_keys_are_in_its_secrets_mount_at_their_canonical_paths():
+    # The controller's directory and key keep the owner and modes the operator
+    # gave them on the host: a bind mount does not change them.
+    env = environment(SIGNER)
+    assert env["AWEB_PROTECTED_CONTROLLER_KEY_FILE"] == "/run/secrets/signer/private-controller/controller.key"
+    assert env["AWEB_PROTECTED_MEMBER_KEYS_FILE"] == "/run/secrets/signer/members.json"
+    assert env["AWEB_PROTECTED_DATABASE_URL_FILE"] == "/run/secrets/signer/database-url"
+    assert env["AWEB_PROTECTED_EMAIL_PASSWORD_FILE"] == "/run/secrets/signer/smtp-password"
+    assert "AWEB_PROTECTED_DATABASE_URL" not in env and SIGNER["user"] == "1001:1001"
+
+
+def test_the_signers_public_configuration_is_mounted_read_only_outside_its_secrets():
+    public = [volume for volume in SERVICES["signer"]["volumes"] if "/run/secrets" not in volume]
+    assert public == [
+        "${SIGNER_PROFILE_SOURCE:?SIGNER_PROFILE_SOURCE is required, signer.profileFile}:/etc/aweb/signer/profile.json:ro",
+        "${SIGNER_SCOPE_SOURCE:?SIGNER_SCOPE_SOURCE is required, signer.scopeFile}:/etc/aweb/signer/scope.json:ro",
+        # Without a private SMTP authority nothing is mounted at the CA path
+        # and the signer is not told of one: it trusts the system roots.
+        "${SIGNER_EMAIL_CA_SOURCE:-/dev/null}:/etc/aweb/signer/email-ca.pem:ro",
+    ]
+
+
+def test_a_setting_the_operator_does_not_give_never_reaches_the_signer_as_a_blank():
+    assert environment(SERVICES["signer"]) == {"AWEB_PROTECTED_EMAIL_CA_FILE": None}
+    assert environment(SIGNER)["AWEB_PROTECTED_TRUSTED_CLIENT_HEADER"] is None
+
+
+def test_the_signer_reads_every_setting_its_section_of_the_schema_renders():
+    rendered = settings_of(SCHEMA["properties"]["signer"])
+    wrapper = {f"SIGNER_{suffix}" for suffix in ("IMAGE", "SECRETS", "BIND_ADDRESS", "PORT")}
+    sources = {"SIGNER_PROFILE_SOURCE", "SIGNER_SCOPE_SOURCE", "SIGNER_EMAIL_CA_SOURCE"}
+    team = yaml.safe_dump(SERVICES["signer"])
+    read = set(environment(SIGNER)) | set(re.findall(r"\$\{([A-Z_]+)", SIGNER_FILE + team))
+    assert rendered - wrapper - sources <= read
+    assert {source for source in sources if source in team} == sources
