@@ -237,7 +237,7 @@ SIGNER_HUMAN_PATH=/handoff-assets/handoff.css
 INGRESS_ROUTES="aweb:aweb:/ready secrets:secrets:/ready logs:logs:/ready signer:signer:/readyz registry:registry:/health"
 
 ingress_probe() {
-  local origins logs followers=() route role service path ca_mount=() ca_flag=() out status
+  local origins logs followers=() route role service path ca_mount=() ca_flag=() out status services
   read -r -a origins < <(python_in_server - "$run_dir/egress-policy.json" <<'PY'
 import json
 import sys
@@ -249,9 +249,11 @@ PY
   logs="$run_dir/ingress-logs"
   rm -rf "$logs"
   mkdir -p "$logs"
+  # Read once: grep -q on a live pipe would end it early, and pipefail fails it.
+  services="$(dc config --services)"
   for route in $INGRESS_ROUTES; do
     IFS=: read -r role service path <<<"$route"
-    if ! dc config --services | grep -qx "$service"; then
+    if ! grep -qx "$service" <<<"$services"; then
       echo "e2e-team-deployment: the ingress probe needs $role's backend log, and $service is not a service of this deployment" >&2
       return 1
     fi
