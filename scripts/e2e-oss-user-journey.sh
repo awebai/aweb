@@ -1394,20 +1394,27 @@ echo "=== Phase 11b2: Customer server with a member key ==="
 # registry-wide token. It is started from the shipped customer Compose file.
 CUSTOMER_IDENTITY_HOME="$E2E_ROOT/customer-server-home"
 CUSTOMER_IDENTITY_DIR="$CUSTOMER_IDENTITY_HOME/identity"
+# The customer's team is its own, private as a team is when it is created.
+run_success "customer team create" run_aw_in "$ALICE_DIR" id team create \
+  --name customerteam \
+  --namespace test.local \
+  --registry "$AWID_URL" \
+  --json
+
 CUSTOMER_SECRETS_DIR="$CUSTOMER_DIR/secrets"
 CUSTOMER_KEYS_DIR="$CUSTOMER_SECRETS_DIR/aweb"
 mkdir -p "$CUSTOMER_IDENTITY_DIR" "$CUSTOMER_KEYS_DIR"
 
 capture_success customer_request "customer_request" run_aw_with_home_in "$CUSTOMER_IDENTITY_HOME" "$CUSTOMER_IDENTITY_DIR" id team request \
   --create-local-key \
-  --team devteam:test.local \
+  --team customerteam:test.local \
   --name server \
   --json
 CUSTOMER_SERVER_DID_KEY="$(echo "$customer_request" | jq_field did_key)"
 assert_not_empty "customer server did_key" "$CUSTOMER_SERVER_DID_KEY"
 
 capture_success customer_add "customer_add" run_aw_in "$ALICE_DIR" id team add-member \
-  --team devteam \
+  --team customerteam \
   --namespace test.local \
   --did "$CUSTOMER_SERVER_DID_KEY" \
   --name server \
@@ -1418,19 +1425,19 @@ assert_not_empty "customer server certificate id" "$CUSTOMER_SERVER_CERT_ID"
 
 run_success "customer server fetch cert" run_aw_with_home_in "$CUSTOMER_IDENTITY_HOME" "$CUSTOMER_IDENTITY_DIR" id team fetch-cert \
   --namespace test.local \
-  --team devteam \
+  --team customerteam \
   --cert-id "$CUSTOMER_SERVER_CERT_ID" \
   --json
 
 # The key map names the key by a path relative to itself. The key is readable
 # by the image's uid 1001 and by no one else.
-cp "$CUSTOMER_IDENTITY_DIR/.aw/signing.key" "$CUSTOMER_KEYS_DIR/devteam.key"
-printf '{"devteam:test.local": "devteam.key"}\n' > "$CUSTOMER_KEYS_DIR/member-keys.json"
+cp "$CUSTOMER_IDENTITY_DIR/.aw/signing.key" "$CUSTOMER_KEYS_DIR/customerteam.key"
+printf '{"customerteam:test.local": "customerteam.key"}\n' > "$CUSTOMER_KEYS_DIR/member-keys.json"
 printf 'postgresql://aweb:customer-e2e-test@postgres:5432/aweb\n' > "$CUSTOMER_KEYS_DIR/database-url"
 mkdir -p "$CUSTOMER_SECRETS_DIR/postgres"
 printf 'customer-e2e-test' > "$CUSTOMER_SECRETS_DIR/postgres/password"
 docker run --rm -v "$CUSTOMER_KEYS_DIR:/keys" --entrypoint /bin/sh redis:7-alpine \
-  -c 'chown 1001:1001 /keys/devteam.key /keys/database-url && chmod 0400 /keys/devteam.key /keys/database-url'
+  -c 'chown 1001:1001 /keys/customerteam.key /keys/database-url && chmod 0400 /keys/customerteam.key /keys/database-url'
 
 CUSTOMER_PORT_ALLOCATOR="$CUSTOMER_PROJECT-port"
 docker run -d --name "$CUSTOMER_PORT_ALLOCATOR" \
@@ -1486,12 +1493,12 @@ CUSTOMER_MEMBER_DIR="$CUSTOMER_MEMBER_HOME/workspace"
 mkdir -p "$CUSTOMER_MEMBER_DIR"
 capture_success customer_member_request "customer_member_request" run_aw_with_home_in "$CUSTOMER_MEMBER_HOME" "$CUSTOMER_MEMBER_DIR" id team request \
   --create-local-key \
-  --team devteam:test.local \
+  --team customerteam:test.local \
   --name fern \
   --json
 CUSTOMER_MEMBER_DID_KEY="$(echo "$customer_member_request" | jq_field did_key)"
 capture_success customer_member_add "customer_member_add" run_aw_in "$ALICE_DIR" id team add-member \
-  --team devteam \
+  --team customerteam \
   --namespace test.local \
   --did "$CUSTOMER_MEMBER_DID_KEY" \
   --name fern \
@@ -1500,18 +1507,21 @@ capture_success customer_member_add "customer_member_add" run_aw_in "$ALICE_DIR"
 CUSTOMER_MEMBER_CERT_ID="$(echo "$customer_member_add" | jq_field certificate_id)"
 run_success "customer member fetch cert" run_aw_with_home_in "$CUSTOMER_MEMBER_HOME" "$CUSTOMER_MEMBER_DIR" id team fetch-cert \
   --namespace test.local \
-  --team devteam \
+  --team customerteam \
   --cert-id "$CUSTOMER_MEMBER_CERT_ID" \
   --json
 run_success "member connects to the customer server" run_aw_with_home_in "$CUSTOMER_MEMBER_HOME" "$CUSTOMER_MEMBER_DIR" init --url "$CUSTOMER_URL"
 run_success "member's signed request is answered by the customer server" run_aw_with_home_in "$CUSTOMER_MEMBER_HOME" "$CUSTOMER_MEMBER_DIR" workspace status
 
-# Revoking the server's membership ends its reads: after a restart it can no
-# longer verify the team's members.
+# Revoking the server's membership ends its reads of the team. What it read
+# before stays in its registry cache until it expires, so the cache is
+# emptied here in place of waiting; after that the server can no longer
+# verify the team's members.
 run_success "team owner revokes the customer server's membership" run_aw_in "$ALICE_DIR" id team remove-member \
   --namespace test.local \
-  --team devteam \
+  --team customerteam \
   --cert-id "$CUSTOMER_SERVER_CERT_ID"
+run_success "the customer server's registry cache is emptied" customer_compose exec -T redis redis-cli FLUSHALL
 customer_compose restart aweb >/dev/null
 for _ in $(seq 1 90); do
   if curl -sf "$CUSTOMER_URL/health" >/dev/null 2>&1; then
@@ -1519,12 +1529,17 @@ for _ in $(seq 1 90); do
   fi
   sleep 2
 done
-if run_aw_with_home_in "$CUSTOMER_MEMBER_HOME" "$CUSTOMER_MEMBER_DIR" workspace status >/dev/null 2>&1; then
+if customer_revoked_out="$(run_aw_with_home_in "$CUSTOMER_MEMBER_HOME" "$CUSTOMER_MEMBER_DIR" workspace status 2>&1)"; then
   customer_revoked_exit=0
 else
   customer_revoked_exit=1
 fi
 assert_eq "a revoked customer server no longer answers the team's members" "1" "$customer_revoked_exit"
+# The cause is the registry refusing the server's read of the team, not the
+# emptied cache: the server says which read failed.
+assert_contains "the member is told the service is unavailable" "$customer_revoked_out" "service temporarily unavailable"
+assert_contains "the revoked server could not read its team at the registry" \
+  "$(customer_compose logs --no-color aweb 2>&1)" "AWID registry dependency failed for team key resolution: customerteam:test.local"
 
 customer_compose down -v --rmi local --remove-orphans >/dev/null 2>&1
 rm -f "$CUSTOMER_DIR/journey-registry.yml"
