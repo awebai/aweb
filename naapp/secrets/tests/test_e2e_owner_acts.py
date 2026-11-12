@@ -67,8 +67,21 @@ class Lane:
         """Start a cli container as one person's machine; its HOME is /runtime/<name>."""
         container = f"{self.project}-{name}"
         (self.runtime / name).mkdir(mode=0o700)
+        # The machine runs as the host user who owns the runtime directory, so
+        # aw accepts the homes the test prepares there and the test can read
+        # what aw writes. dbus needs that user in the passwd database.
+        uid, gid = os.getuid(), os.getgid()
+        accounts = self.runtime / "accounts"
+        if not accounts.exists():
+            accounts.mkdir(mode=0o755)
+            (accounts / "passwd").write_text(f"root:x:0:0:root:/root:/bin/sh\nlane:x:{uid}:{gid}:lane:/runtime:/bin/sh\n")
+            (accounts / "group").write_text(f"root:x:0:\nlane:x:{gid}:\n")
+            for path in accounts.iterdir():
+                path.chmod(0o644)
         result = self.compose(
-            "run", "-d", "--name", container, "-e", f"HOME=/runtime/{name}", "-w", f"/runtime/{name}", "cli",
+            "run", "-d", "--name", container, "--user", f"{uid}:{gid}",
+            "-v", f"{accounts / 'passwd'}:/etc/passwd:ro", "-v", f"{accounts / 'group'}:/etc/group:ro",
+            "-e", f"HOME=/runtime/{name}", "-w", f"/runtime/{name}", "cli",
         )
         assert result.returncode == 0, result.stdout + result.stderr
         return container
