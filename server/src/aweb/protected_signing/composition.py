@@ -23,7 +23,7 @@ from aweb_naapp.runtime.protected_signer import (
 )
 from awid.did import validate_stable_id
 from awid.protected_request import verify_protected_request
-from awid.registry_types import RegistryError
+from awid.registry_types import RegistryError, RegistryThrottled
 from awid.request_body_limit import RequestBodyTooLarge
 from pgdbm import AsyncMigrationManager
 from starlette.requests import Request
@@ -262,7 +262,14 @@ class IndependentProtectedSigner:
             if exc.status_code == 404:
                 raise SignerRefused("requester_invalid") from None
             logger.warning("Protected requester registry lookup failed", exc_info=True)
-            raise SignerRefused("evidence_unavailable") from None
+            raise SignerRefused(
+                "evidence_unavailable",
+                retry_after_seconds=(
+                    exc.retry_after_seconds
+                    if isinstance(exc, RegistryThrottled)
+                    else None
+                ),
+            ) from None
         except Exception:
             logger.warning("Protected requester registry lookup failed", exc_info=True)
             raise SignerRefused("evidence_unavailable") from None

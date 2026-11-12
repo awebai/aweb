@@ -5,6 +5,7 @@ from __future__ import annotations
 import re
 from collections.abc import Awaitable, Callable
 from dataclasses import asdict
+from math import ceil
 from typing import Any
 from urllib.parse import urlencode
 
@@ -108,6 +109,18 @@ def receipt_json(receipt: OperationReceipt) -> dict[str, Any]:
     return {"state": receipt.state, "code": receipt.code}
 
 
+def _retry_after_headers(error: SignerRefused) -> dict[str, str] | None:
+    """Diagnostic only: invalid hints never mask the original refusal.
+
+    Keep standard delta-seconds representable on all supported clients. A
+    caller still checks this hint against its original operation deadline.
+    """
+    value = error.retry_after_seconds
+    if type(value) not in (int, float) or not 0 <= value <= 2**31 - 1:
+        return None
+    return {"Retry-After": str(ceil(value))}
+
+
 def _http(error: Exception) -> HTTPException:
     if isinstance(error, HTTPException):
         if error.status_code == 429:
@@ -136,7 +149,9 @@ def _http(error: Exception) -> HTTPException:
             "evidence_unavailable": (503, "receipt_unavailable"),
             "receipt_unavailable": (503, "receipt_unavailable"),
         }.get(error.code, (403, "operation_refused"))
-        return HTTPException(status, code)
+        return HTTPException(
+            status, code, headers=_retry_after_headers(error) if status == 503 else None
+        )
     if isinstance(error, (Refused, RequestNotCanonical)):
         return HTTPException(400, "request_invalid")
     if isinstance(error, ApprovalRefused):
