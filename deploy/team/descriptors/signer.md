@@ -14,8 +14,8 @@ and `/readyz` at `f8947bf94`, and the Compose service body at `1a86d3ff7`.
 
 Build the existing `server/Dockerfile` from the **current joined source** with
 `AWEB_EXTRA=protected`; use its existing optional-extra support from the joined
-lane, not an older Dockerfile without that argument. Antares/aweb supplies the
-LF image repository and immutable source/digest pin. No published protected
+lane, not an older Dockerfile without that argument. The deployment supplies the
+image repository and immutable source/digest pin. No published protected
 image tag is asserted here. The executable remains the existing aweb package:
 
 ```text
