@@ -56,7 +56,6 @@ services:
       AWID_HOST: 0.0.0.0
       AWID_PORT: 8010
       AWID_PUBLIC_ORIGINS: ${TEST_REGISTRY_ORIGIN:?}
-      AWID_RATE_LIMIT_DISABLED: "1"
       SSL_CERT_FILE: /etc/aweb-test/ca.pem
     volumes:
       - "${TEST_WORLD_DIR:?}/tls/ca.pem:/etc/aweb-test/ca.pem:ro"
