@@ -7,6 +7,7 @@ import (
 	"encoding/json"
 	"errors"
 	"io"
+	"regexp"
 	"strings"
 	"unicode/utf8"
 )
@@ -27,6 +28,10 @@ var TeamCertificateReasons = []string{
 	"revoked",
 	"unregistered",
 }
+
+// teamCertificateSignature is a signature as every issuer writes it: standard
+// base64 without padding.
+var teamCertificateSignature = regexp.MustCompile(`^[A-Za-z0-9+/]+$`)
 
 // teamCertificateRequiredFields must each be a non-empty string. The version
 // is checked apart. Any other member is signed with the rest and is the
@@ -88,7 +93,8 @@ type TeamCertificateFacts struct {
 // CheckTeamCertificate checks one team certificate, given as its transport
 // header, and returns it. A certificate has no expiry: revocation is its
 // only end. It refuses, in this order, for the header's shape, the version,
-// the required fields, the subject, the signature, revocation and
+// the required fields, the subject, the signature ("malformed" when it is
+// not unpadded standard base64, then "bad_signature"), revocation and
 // registration, with a *TeamCertificateError.
 func CheckTeamCertificate(header string, facts TeamCertificateFacts) (map[string]any, error) {
 	if !facts.Registered.stated {
@@ -113,6 +119,9 @@ func CheckTeamCertificate(header string, facts TeamCertificateFacts) (map[string
 	}
 	if certificate["member_did_key"] != facts.SubjectDIDKey {
 		return nil, &TeamCertificateError{Reason: "member_key_mismatch"}
+	}
+	if !teamCertificateSignature.MatchString(certificate["signature"].(string)) {
+		return nil, &TeamCertificateError{Reason: "malformed"}
 	}
 	if err := verifyTeamCertificateObjectSignature(certificate, facts.TeamDIDKey); err != nil {
 		return nil, err
@@ -148,10 +157,40 @@ func decodeTeamCertificateObject(header string) (map[string]any, error) {
 		return nil, malformed
 	}
 	certificate, ok := value.(map[string]any)
-	if !ok {
+	if !ok || !hasOnlyPortableValues(certificate) {
 		return nil, malformed
 	}
 	return certificate, nil
+}
+
+// hasOnlyPortableValues reports whether every verifier re-serialises value
+// to the same bytes: no number that is not an integer, and no control
+// character below U+0020 in a string or a key. Encoders write those
+// differently. NaN and Infinity are not JSON and never reach here.
+func hasOnlyPortableValues(value any) bool {
+	switch v := value.(type) {
+	case map[string]any:
+		for key, member := range v {
+			if !hasOnlyPortableValues(key) || !hasOnlyPortableValues(member) {
+				return false
+			}
+		}
+	case []any:
+		for _, item := range v {
+			if !hasOnlyPortableValues(item) {
+				return false
+			}
+		}
+	case string:
+		for _, character := range v {
+			if character < 0x20 {
+				return false
+			}
+		}
+	case json.Number:
+		return !strings.ContainsAny(v.String(), ".eE")
+	}
+	return true
 }
 
 // verifyTeamCertificateObjectSignature verifies the signature over the

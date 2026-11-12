@@ -81,6 +81,16 @@ def _unsigned() -> dict:
     return cert
 
 
+def _url_safe_signature() -> dict:
+    """A certificate whose correct signature is written in the URL-safe alphabet."""
+    for second in range(60):
+        cert = _certificate(issued_at=f"2026-11-01T00:00:{second:02d}+00:00")
+        if "+" in cert["signature"] or "/" in cert["signature"]:
+            cert["signature"] = cert["signature"].replace("+", "-").replace("/", "_")
+            return cert
+    raise AssertionError("no signature with a character outside the URL-safe alphabet")
+
+
 def _case(name: str, about: str, header: str, expected: str | None, today: dict[str, str], **context) -> dict:
     reason, _, field = (expected or "").partition(":")
     assert expected is None or reason in REASONS, expected
@@ -141,6 +151,36 @@ def cases() -> list[dict]:
             "malformed",
             refused("malformed", "refused"),
         ),
+        _case(
+            "signature_url_safe_alphabet",
+            "A correct signature written in the URL-safe alphabet. A signature is unpadded standard base64, "
+            "as every issuer writes it; any other spelling is refused, so no two verifiers can disagree on it.",
+            _header(_url_safe_signature()),
+            "malformed",
+            refused("accepted", "refused"),
+        ),
+        _case(
+            "control_character_in_a_string",
+            "A correctly signed certificate with a control character below U+0020 in a string: encoders "
+            "write those differently, so what was signed is not one sequence of bytes everywhere.",
+            _header(_certificate(note="a\bb")),
+            "malformed",
+            refused("malformed", "refused"),
+        ),
+        _case(
+            "number_not_an_integer",
+            "A correctly signed certificate with a number that is not an integer.",
+            _header(_certificate(weight=1.5)),
+            "malformed",
+            refused("malformed", "refused"),
+        ),
+        _case(
+            "not_a_number_constant",
+            "A correctly signed certificate with NaN, which is not JSON.",
+            _header(_certificate(weight=float("nan"))),
+            "malformed",
+            refused("malformed", "refused"),
+        ),
         _case("version_2", "A version this verifier does not know.", _header(_certificate(version=2)), "unsupported_version", refused("accepted", "refused")),
         _case("version_string", 'version is the string "1".', _header(_certificate(version="1")), "unsupported_version", refused("accepted", "refused")),
         _case("version_true", "version is true, which equals 1 in some languages.", _header(_certificate(version=True)), "unsupported_version", refused("accepted", "refused")),
@@ -183,6 +223,10 @@ def cases() -> list[dict]:
 # What the naapp runtime verifier answers today for each case.
 NAAPP_RUNTIME_TODAY = {
     "valid": "accepted",
+    "signature_url_safe_alphabet": "refused",
+    "control_character_in_a_string": "refused",
+    "number_not_an_integer": "refused",
+    "not_a_number_constant": "refused",
     "team_did_key_absent": "accepted",
     "identity_scope_absent": "accepted",
     "issued_at_absent": "accepted",
@@ -230,6 +274,10 @@ LIBRARY_TODAY = {
 # delivery's producer where the others compare it with the request's signer.
 HOOKS_TODAY = {
     "valid": "accepted",
+    "signature_url_safe_alphabet": "accepted",
+    "control_character_in_a_string": "certificate_invalid",
+    "number_not_an_integer": "certificate_invalid",
+    "not_a_number_constant": "certificate_invalid",
     "team_did_key_absent": "certificate_invalid",
     "identity_scope_absent": "accepted",
     "issued_at_absent": "accepted",

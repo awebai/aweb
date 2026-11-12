@@ -274,6 +274,90 @@
       }
     },
     {
+      "name": "signature_url_safe_alphabet",
+      "about": "A correct signature written in the URL-safe alphabet. A signature is unpadded standard base64, as every issuer writes it; any other spelling is refused, so no two verifiers can disagree on it.",
+      "certificate_header": "eyJ2ZXJzaW9uIjogMSwgImNlcnRpZmljYXRlX2lkIjogImNlcnQtMDAxIiwgInRlYW1faWQiOiAiYmFja2VuZDphY21lLmNvbSIsICJ0ZWFtX2RpZF9rZXkiOiAiZGlkOmtleTp6Nk1rcnNxb3BFMTV0RXhYQzE2YnpaRVc3a0o5M1p1TW16Z0FBcEhOYVFWdW1zbjYiLCAibWVtYmVyX2RpZF9rZXkiOiAiZGlkOmtleTp6Nk1ra05RcXNtODlCRm04ZE5MdWJtNjU4S2locFZ1NnhuZzZhWHhCa0ZENDZ2bWIiLCAibWVtYmVyX2RpZF9hdyI6ICIiLCAibWVtYmVyX2FkZHJlc3MiOiAiIiwgImFsaWFzIjogImFsaWNlIiwgImlkZW50aXR5X3Njb3BlIjogImdsb2JhbCIsICJpc3N1ZWRfYXQiOiAiMjAyNi0xMS0wMVQwMDowMDowMCswMDowMCIsICJzaWduYXR1cmUiOiAiYUxCc1dNaEZTU3pZWVRFazBTbXZBemJMZElrY0J6RTdwcVpmTWxJRUVhWjZTNVlHR0ZOamF3bklfbmh1WDRXNWZQX3hCZWVnWEJ5ck13RTlPSU5rQ3cifQ==",
+      "request_did_key": "did:key:z6MkkNQqsm89BFm8dNLubm658KihpVu6xng6aXxBkFD46vmb",
+      "team_did_key": "did:key:z6MkrsqopE15tExXC16bzZEW7kJ93ZuMmzgAApHNaQVumsn6",
+      "revoked_certificate_ids": [],
+      "registered_certificate_ids": [
+        "cert-001"
+      ],
+      "expected": {
+        "reason": "malformed"
+      },
+      "today": {
+        "awid": "accepted",
+        "server": "refused",
+        "naapp_runtime": "refused",
+        "library": "refused",
+        "hooks": "accepted"
+      }
+    },
+    {
+      "name": "control_character_in_a_string",
+      "about": "A correctly signed certificate with a control character below U+0020 in a string: encoders write those differently, so what was signed is not one sequence of bytes everywhere.",
+      "certificate_header": "eyJ2ZXJzaW9uIjogMSwgImNlcnRpZmljYXRlX2lkIjogImNlcnQtMDAxIiwgInRlYW1faWQiOiAiYmFja2VuZDphY21lLmNvbSIsICJ0ZWFtX2RpZF9rZXkiOiAiZGlkOmtleTp6Nk1rcnNxb3BFMTV0RXhYQzE2YnpaRVc3a0o5M1p1TW16Z0FBcEhOYVFWdW1zbjYiLCAibWVtYmVyX2RpZF9rZXkiOiAiZGlkOmtleTp6Nk1ra05RcXNtODlCRm04ZE5MdWJtNjU4S2locFZ1NnhuZzZhWHhCa0ZENDZ2bWIiLCAibWVtYmVyX2RpZF9hdyI6ICIiLCAibWVtYmVyX2FkZHJlc3MiOiAiIiwgImFsaWFzIjogImFsaWNlIiwgImlkZW50aXR5X3Njb3BlIjogImdsb2JhbCIsICJpc3N1ZWRfYXQiOiAiMjAyNi0xMS0wMVQwMDowMDowMCswMDowMCIsICJub3RlIjogImFcYmIiLCAic2lnbmF0dXJlIjogIm9XMDBiZWFpWTRqQ2MzTytuUjI0cXVRL01MVlRTdFo3bEFSdUtQR2kwaGFPR2UvZDd6ZUc4djZET1hiNjU1NXYrZm02b3QzNm9ZelFuVW9kVmJBZUJnIn0=",
+      "request_did_key": "did:key:z6MkkNQqsm89BFm8dNLubm658KihpVu6xng6aXxBkFD46vmb",
+      "team_did_key": "did:key:z6MkrsqopE15tExXC16bzZEW7kJ93ZuMmzgAApHNaQVumsn6",
+      "revoked_certificate_ids": [],
+      "registered_certificate_ids": [
+        "cert-001"
+      ],
+      "expected": {
+        "reason": "malformed"
+      },
+      "today": {
+        "awid": "malformed",
+        "server": "refused",
+        "naapp_runtime": "refused",
+        "library": "refused",
+        "hooks": "certificate_invalid"
+      }
+    },
+    {
+      "name": "number_not_an_integer",
+      "about": "A correctly signed certificate with a number that is not an integer.",
+      "certificate_header": "eyJ2ZXJzaW9uIjogMSwgImNlcnRpZmljYXRlX2lkIjogImNlcnQtMDAxIiwgInRlYW1faWQiOiAiYmFja2VuZDphY21lLmNvbSIsICJ0ZWFtX2RpZF9rZXkiOiAiZGlkOmtleTp6Nk1rcnNxb3BFMTV0RXhYQzE2YnpaRVc3a0o5M1p1TW16Z0FBcEhOYVFWdW1zbjYiLCAibWVtYmVyX2RpZF9rZXkiOiAiZGlkOmtleTp6Nk1ra05RcXNtODlCRm04ZE5MdWJtNjU4S2locFZ1NnhuZzZhWHhCa0ZENDZ2bWIiLCAibWVtYmVyX2RpZF9hdyI6ICIiLCAibWVtYmVyX2FkZHJlc3MiOiAiIiwgImFsaWFzIjogImFsaWNlIiwgImlkZW50aXR5X3Njb3BlIjogImdsb2JhbCIsICJpc3N1ZWRfYXQiOiAiMjAyNi0xMS0wMVQwMDowMDowMCswMDowMCIsICJ3ZWlnaHQiOiAxLjUsICJzaWduYXR1cmUiOiAiN3RaUitwcVNPM3RQakZzK3AzNWZDWWh6SWsvbktOc0EyMDZJVHYvNkFKV3hIWGdhVUVSN3dWeG5XVXhHd3ZLMDJ3WGtBM0tOS2RsTy92QzQ4ODZFREEifQ==",
+      "request_did_key": "did:key:z6MkkNQqsm89BFm8dNLubm658KihpVu6xng6aXxBkFD46vmb",
+      "team_did_key": "did:key:z6MkrsqopE15tExXC16bzZEW7kJ93ZuMmzgAApHNaQVumsn6",
+      "revoked_certificate_ids": [],
+      "registered_certificate_ids": [
+        "cert-001"
+      ],
+      "expected": {
+        "reason": "malformed"
+      },
+      "today": {
+        "awid": "malformed",
+        "server": "refused",
+        "naapp_runtime": "refused",
+        "library": "refused",
+        "hooks": "certificate_invalid"
+      }
+    },
+    {
+      "name": "not_a_number_constant",
+      "about": "A correctly signed certificate with NaN, which is not JSON.",
+      "certificate_header": "eyJ2ZXJzaW9uIjogMSwgImNlcnRpZmljYXRlX2lkIjogImNlcnQtMDAxIiwgInRlYW1faWQiOiAiYmFja2VuZDphY21lLmNvbSIsICJ0ZWFtX2RpZF9rZXkiOiAiZGlkOmtleTp6Nk1rcnNxb3BFMTV0RXhYQzE2YnpaRVc3a0o5M1p1TW16Z0FBcEhOYVFWdW1zbjYiLCAibWVtYmVyX2RpZF9rZXkiOiAiZGlkOmtleTp6Nk1ra05RcXNtODlCRm04ZE5MdWJtNjU4S2locFZ1NnhuZzZhWHhCa0ZENDZ2bWIiLCAibWVtYmVyX2RpZF9hdyI6ICIiLCAibWVtYmVyX2FkZHJlc3MiOiAiIiwgImFsaWFzIjogImFsaWNlIiwgImlkZW50aXR5X3Njb3BlIjogImdsb2JhbCIsICJpc3N1ZWRfYXQiOiAiMjAyNi0xMS0wMVQwMDowMDowMCswMDowMCIsICJ3ZWlnaHQiOiBOYU4sICJzaWduYXR1cmUiOiAiZjMzczdtK0xjZnlEWjNiWHBxRGhwNWJDaU9aQmkrT1QxeEw1NnVCWitoYnNabm9wUFZUbjB5ZXM1dDJvYVU3anpDWE4yRWN4SEVSRlF0Ny92OS8rQkEifQ==",
+      "request_did_key": "did:key:z6MkkNQqsm89BFm8dNLubm658KihpVu6xng6aXxBkFD46vmb",
+      "team_did_key": "did:key:z6MkrsqopE15tExXC16bzZEW7kJ93ZuMmzgAApHNaQVumsn6",
+      "revoked_certificate_ids": [],
+      "registered_certificate_ids": [
+        "cert-001"
+      ],
+      "expected": {
+        "reason": "malformed"
+      },
+      "today": {
+        "awid": "malformed",
+        "server": "refused",
+        "naapp_runtime": "refused",
+        "library": "refused",
+        "hooks": "certificate_invalid"
+      }
+    },
+    {
       "name": "version_2",
       "about": "A version this verifier does not know.",
       "certificate_header": "eyJ2ZXJzaW9uIjogMiwgImNlcnRpZmljYXRlX2lkIjogImNlcnQtMDAxIiwgInRlYW1faWQiOiAiYmFja2VuZDphY21lLmNvbSIsICJ0ZWFtX2RpZF9rZXkiOiAiZGlkOmtleTp6Nk1rcnNxb3BFMTV0RXhYQzE2YnpaRVc3a0o5M1p1TW16Z0FBcEhOYVFWdW1zbjYiLCAibWVtYmVyX2RpZF9rZXkiOiAiZGlkOmtleTp6Nk1ra05RcXNtODlCRm04ZE5MdWJtNjU4S2locFZ1NnhuZzZhWHhCa0ZENDZ2bWIiLCAibWVtYmVyX2RpZF9hdyI6ICIiLCAibWVtYmVyX2FkZHJlc3MiOiAiIiwgImFsaWFzIjogImFsaWNlIiwgImlkZW50aXR5X3Njb3BlIjogImdsb2JhbCIsICJpc3N1ZWRfYXQiOiAiMjAyNi0xMS0wMVQwMDowMDowMCswMDowMCIsICJzaWduYXR1cmUiOiAibldtNnlmNGF3SmV2ZEt6MzRKNmY3STdLQXd6U0Fjd3hqN1Q1T2JoRVEzNEVTV1VXRWZlL0JKbXdvUzhGd3R1UWUvSVlpeW1LaVVCQ0psK2wwUFhLQWcifQ==",

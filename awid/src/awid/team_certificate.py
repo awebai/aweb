@@ -12,6 +12,7 @@ from __future__ import annotations
 import base64
 import binascii
 import json
+import re
 from collections.abc import Collection
 from typing import Any
 
@@ -76,17 +77,41 @@ class TeamCertificateError(ValueError):
         self.field = field
 
 
+# A signature as every issuer writes it: standard base64 without padding.
+_SIGNATURE = re.compile(r"[A-Za-z0-9+/]+")
+
+
+def _refuse_constant(_name: str) -> None:
+    raise ValueError("not JSON")
+
+
+def _has_only_portable_values(value: Any) -> bool:
+    """Whether every verifier re-serialises ``value`` to the same bytes: no
+    number that is not an integer, and no control character below U+0020 in a
+    string or a key. Encoders write those differently."""
+    if isinstance(value, dict):
+        return all(_has_only_portable_values(k) and _has_only_portable_values(v) for k, v in value.items())
+    if isinstance(value, list):
+        return all(_has_only_portable_values(item) for item in value)
+    if isinstance(value, str):
+        return not any(ord(character) < 0x20 for character in value)
+    return not isinstance(value, float)
+
+
 def decode_team_certificate(header: str) -> dict[str, Any]:
     """Decode the ``X-AWID-Team-Certificate`` header: base64 of a JSON object,
-    at most MAX_HEADER_BYTES long."""
+    at most MAX_HEADER_BYTES long, holding only values that every verifier
+    re-serialises alike (_has_only_portable_values) and no NaN or Infinity."""
     if len(header) > MAX_HEADER_BYTES:
         raise TeamCertificateError("malformed")
     try:
-        certificate = json.loads(base64.b64decode(header, validate=True).decode("utf-8"))
+        certificate = json.loads(
+            base64.b64decode(header, validate=True).decode("utf-8"), parse_constant=_refuse_constant
+        )
     except (binascii.Error, ValueError, UnicodeDecodeError, RecursionError):
         # RecursionError is what deep nesting raises on some Python versions.
         raise TeamCertificateError("malformed") from None
-    if not isinstance(certificate, dict):
+    if not isinstance(certificate, dict) or not _has_only_portable_values(certificate):
         raise TeamCertificateError("malformed")
     return certificate
 
@@ -143,7 +168,8 @@ def check_team_certificate(
 
     Raises TeamCertificateError with a reason from REASONS, in this order:
     the header's shape, the version, the required fields, the subject, the
-    signature, revocation, registration.
+    signature (``malformed`` when it is not unpadded standard base64, then
+    ``bad_signature``), revocation, registration.
     """
     certificate = decode_team_certificate(header)
     if "version" not in certificate:
@@ -157,6 +183,8 @@ def check_team_certificate(
             raise TeamCertificateError("invalid_field", name)
     if certificate["member_did_key"] != subject_did_key:
         raise TeamCertificateError("member_key_mismatch")
+    if _SIGNATURE.fullmatch(certificate["signature"]) is None:
+        raise TeamCertificateError("malformed")
     verify_team_certificate_signature(certificate, team_did_key)
     if certificate["certificate_id"] in revoked_certificate_ids:
         raise TeamCertificateError("revoked")
