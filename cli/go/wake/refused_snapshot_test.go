@@ -72,7 +72,7 @@ func TestRefusedMessageReturnsFromFreshSnapshot(t *testing.T) {
 				}
 				if req.Method == http.MethodGet {
 					fetches.Add(1)
-					_ = json.NewEncoder(w).Encode(map[string]any{"messages": []map[string]any{signedWakeMessage(t, map[string]any{"message_id": "mail-1", "from_alias": "bob", "body": "snapshot recovery mail", "created_at": "2026-01-01T00:00:00Z"})}})
+					_ = json.NewEncoder(w).Encode(map[string]any{"messages": []map[string]any{signedWakeMessage(t, "mail", map[string]any{"message_id": "mail-1", "from_alias": "bob", "body": "snapshot recovery mail", "created_at": "2026-01-01T00:00:00Z"})}})
 				} else {
 					acks.Add(1)
 					_ = json.NewEncoder(w).Encode(map[string]any{"ok": true})

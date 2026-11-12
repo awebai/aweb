@@ -22,8 +22,9 @@ from urllib.parse import urlsplit
 import httpx
 from cryptography.hazmat.primitives import serialization
 
-# Copied beside this script in the browser image (browser.Dockerfile).
-from webauthn import SoftAuthenticator, SoftCredential  # type: ignore[import-not-found]
+# The shared software authenticator, copied beside this script in the browser
+# image as soft_webauthn (browser.Dockerfile), so it never shadows py_webauthn.
+from soft_webauthn import SoftAuthenticator, SoftCredential  # type: ignore[import-not-found]
 
 
 def load_device(path: Path, origin: str) -> SoftAuthenticator:

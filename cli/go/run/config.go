@@ -81,16 +81,25 @@ func LoadUserConfig(startDir string) (UserConfig, error) {
 		return UserConfig{}, err
 	}
 
-	localPath, err := FindLocalConfigPath(startDir)
+	// The directory's run.json overrides the user's own only when the user
+	// trusted the content that is read here.
+	localPath, key, data, found, err := readLocalConfig(startDir)
 	if err != nil {
-		if os.IsNotExist(err) {
-			return cfg, nil
-		}
 		return UserConfig{}, err
 	}
-	localCfg, err := loadUserConfigFile(localPath)
+	if !found {
+		return cfg, nil
+	}
+	state, err := localConfigState(key, data)
 	if err != nil {
 		return UserConfig{}, err
+	}
+	if state != LocalConfigTrusted {
+		return cfg, nil
+	}
+	var localCfg UserConfig
+	if err := json.Unmarshal(data, &localCfg); err != nil {
+		return UserConfig{}, fmt.Errorf("parsing %s: %w", localPath, err)
 	}
 	return mergeUserConfig(cfg, localCfg), nil
 }

@@ -389,6 +389,35 @@ func TestAnApprovalWhoseBodyCannotBeSavedSendsNothing(t *testing.T) {
 	}
 }
 
+func TestOnlyAFinalReceiptForgetsTheSavedOperation(t *testing.T) {
+	for _, tc := range []struct {
+		name     string
+		receipts []string
+		drop     bool
+		forgets  bool
+	}{
+		{"committed", []string{committedReceipt}, false, true},
+		{"refused", []string{refusedReceipt}, false, true},
+		{"unknown", []string{unknownReceipt}, false, false},
+		{"unreadable until expiry", []string{"!503"}, false, false},
+		{"lost answer, pending", []string{pendingReceipt}, true, false},
+		{"lost answer, committed", []string{committedReceipt}, true, true},
+	} {
+		stub := newSignerStub(t, tc.receipts...)
+		stub.dropPrepare = tc.drop
+		stub.expiresIn = 300 * time.Millisecond
+		var opened string
+		var forgotten []string
+		opts := stub.options(&opened)
+		opts.Save = func(string, []byte) error { return nil }
+		opts.Forget = func(id string) error { forgotten = append(forgotten, id); return nil }
+		_, _ = Approve(context.Background(), opts, "17171717-1717-4717-8717-171717171717", revokeIntent())
+		if tc.forgets != (len(forgotten) == 1 && forgotten[0] == "17171717-1717-4717-8717-171717171717") || len(forgotten) > 1 {
+			t.Errorf("%s: forgotten %v", tc.name, forgotten)
+		}
+	}
+}
+
 func TestAnUnreadableReceiptIsReadAgainUntilTheOperationExpires(t *testing.T) {
 	stub := newSignerStub(t, "!503", committedReceipt)
 	var opened string

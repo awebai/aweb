@@ -780,6 +780,20 @@ func TestExternalPluginTraceReportsThatHTTPTracingIsUnavailable(t *testing.T) {
 	}
 }
 
+func TestAnAppWhoseIDIsLogsIsNotReserved(t *testing.T) {
+	// The logs app installs under its own id; no aw command takes that name.
+	var manifest appmanifest.Manifest
+	decoder := json.NewDecoder(strings.NewReader(string(readLibraryManifestFixtureForTest(t))))
+	decoder.UseNumber()
+	if err := decoder.Decode(&manifest); err != nil {
+		t.Fatalf("decode library manifest fixture: %v", err)
+	}
+	manifest.App.ID = "logs"
+	if err := appmanifest.Validate(manifest, reservedRootCommandNames()); err != nil {
+		t.Fatalf("an app whose id is logs does not validate: %v", err)
+	}
+}
+
 func TestLibraryManifestFixtureConformsAndDeclaresExpectedTools(t *testing.T) {
 	data := readLibraryManifestFixtureForTest(t)
 	sum := sha256.Sum256(data)

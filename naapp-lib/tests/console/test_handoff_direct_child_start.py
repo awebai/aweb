@@ -12,8 +12,10 @@ from datetime import timedelta
 
 import httpx
 import pytest
-from aweb_naapp_testing import REGISTRY_URL, SERVICE_TOKEN, Member
+from aweb_naapp_testing import REGISTRY_URL, SERVICE_TOKEN, Member, did_key
+from awid.did import stable_id_from_did_key
 from fastapi import FastAPI, Request
+from nacl.signing import SigningKey
 
 from aweb_naapp.console import ClientIdentity, LoginLimiter
 from aweb_naapp.console.handoff_requester import RequesterEvidence
@@ -25,7 +27,8 @@ from tests.console.test_handoff_store import ORIGIN, handoff_db, start_body
 __all__ = ["handoff_db"]
 
 API = "https://api.example"
-HOLDER = "did:aw:2Zf4Lq8m3VYb9nKc5RjTs7Hd"
+# The holder: a valid stable id of a key nobody here signs with.
+HOLDER = stable_id_from_did_key(did_key(SigningKey.generate()))
 
 
 @pytest.fixture

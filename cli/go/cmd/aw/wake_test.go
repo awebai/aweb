@@ -566,6 +566,26 @@ func TestWakeRunIsIdempotentAndServesItsSocket(t *testing.T) {
 	if status.MaxStreams != wake.DefaultMaxStreams {
 		t.Fatalf("max_streams=%d want %d", status.MaxStreams, wake.DefaultMaxStreams)
 	}
+
+	// A registration the running daemon took carries no warning.
+	instanceHome := filepath.Join(root, "agent-home")
+	if err := os.MkdirAll(filepath.Join(instanceHome, ".aw"), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	registerCmd := exec.CommandContext(ctx, bin, "wake", "register", "--home", instanceHome,
+		"--identity-home", filepath.Join(instanceHome, ".aw"), "--delivery", "session", "--state-dir", stateDir)
+	registerCmd.Dir = root
+	registerCmd.Env = env
+	registerOut, err := registerCmd.CombinedOutput()
+	if err != nil {
+		t.Fatalf("register against a running daemon: %v\n%s", err, registerOut)
+	}
+	if !strings.Contains(string(registerOut), "registered "+instanceHome) {
+		t.Fatalf("register did not report the registration:\n%s", registerOut)
+	}
+	if strings.Contains(string(registerOut), "no wake broker is running") {
+		t.Fatalf("register warned of a missing broker while one runs:\n%s", registerOut)
+	}
 }
 
 // TestWakeCommandsFallBackToFilesWhenTheDaemonIsDown: an OATS hook must not
@@ -600,8 +620,15 @@ func TestWakeCommandsFallBackToFilesWhenTheDaemonIsDown(t *testing.T) {
 		return string(out)
 	}
 
-	run("wake", "register", "--home", instanceHome, "--identity-home", filepath.Join(instanceHome, ".aw"),
+	registered := run("wake", "register", "--home", instanceHome, "--identity-home", filepath.Join(instanceHome, ".aw"),
 		"--delivery", "session", "--state-dir", stateDir)
+	// The registration is stored, and the caller is told nothing will wake
+	// this instance until a broker runs.
+	for _, want := range []string{"registered " + instanceHome, "no wake broker is running", stateDir, "aw wake run"} {
+		if !strings.Contains(registered, want) {
+			t.Fatalf("register with no daemon does not say %q:\n%s", want, registered)
+		}
+	}
 	run("wake", "pause", "--home", instanceHome, "--state-dir", stateDir)
 
 	// No daemon ever ran: the state is on disk, where the daemon reconciles it.

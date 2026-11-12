@@ -64,7 +64,7 @@ Vector fields:
 Registry harness stubs must fail closed on unexpected lookup keys. Skip vectors
 therefore prove the resolver was not called, instead of silently degrading.
 
-## `tofu-v1.json`
+## `tofu-v2.json`
 
 TOFU vectors cover Pass D. They start after crypto, recipient binding, and
 sender registry verification, and assert mutable pin-store continuity behavior.
@@ -74,7 +74,7 @@ test runtime from deterministic seed bytes and `timestamp_delta_seconds`.
 
 Top-level fields:
 
-- `schema`: must be `aweb.trust.tofu.v1`.
+- `schema`: must be `aweb.trust.tofu.v2`.
 - `description`: human-readable summary.
 - `vectors`: ordered list of TOFU pin-continuity cases.
 
@@ -103,12 +103,51 @@ Vector fields:
   - `custody`: `self` or `custodial`.
   - `controller_did`: optional controller used for replacement verification.
 - `registry_confirmed_current_key`: Pass C output used to disambiguate stale pins.
+- `registry_names_key`: whether the registry named `from_did` as the key of
+  the sender's address. A sender with no pin is pinned only when this or
+  `registry_confirmed_current_key` is true; version 1 pinned the first observed
+  key without it.
 - `pin_store_before`: initial pin store with `pins` and `addresses` maps.
 - `expected_status`: canonical status after TOFU normalization.
 - `expected_pin_store_after`: expected post-state, or `null` for unchanged.
 
 Pin timestamp expectations may use `$ANY_TIMESTAMP` for newly written pins and
 `$CHANGED_TIMESTAMP` for existing pins whose `last_seen` should be refreshed.
+A newly written pin carries `confirmed_by: registry`.
+
+## `first-contact-v1.json`
+
+First-contact vectors run the whole sender-trust decision for a sender outside
+the reader's team that names a qualified address, starting from a verified
+signature: what the reader reports and what it pins. Each client runs them
+through the functions it calls for a received message (Go
+`NormalizeSenderTrust`; TypeScript `resolveTrustMetadata` then
+`normalizeResolvedTrust`), with a stub registry that answers as the vector says.
+
+Top-level fields:
+
+- `schema`: must be `aweb.trust.first-contact.v1`.
+- `description`: human-readable summary of the rule.
+- `vectors`: ordered list of cases.
+
+Vector fields:
+
+- `name`, `description`: stable identifier and what the case shows.
+- `from_address`, `from_did`, `from_stable_id`: the sender as the message
+  presents it; `from_stable_id` may be empty.
+- `resolver`: `registry`, or `none` for a client built without one. A runtime
+  that cannot be built without a registry skips the `none` case.
+- `address_resolution`: what the registry answers for `from_address`:
+  - `outcome`: `resolved`, `not_found` (the registry answers that the address
+    does not exist) or `unavailable` (it could not be asked).
+  - `did_key`, `stable_id`: the key and stable identity it names, when resolved.
+- `stable_identity`: `null`, or what the stable-identity check returns:
+  `outcome` (`verified`, `hard_error`, `ok_degraded`) and `current_did_key`.
+- `pin_store_before`: pins (`address`, `stable_id`, `did_key`, `confirmed_by`)
+  and the address index.
+- `expected_status`: the status reported.
+- `expected_pin_store_after`: the store afterwards, or `null` for unchanged.
+  Timestamps are not compared.
 
 ## `recipient-binding-v1.json`
 

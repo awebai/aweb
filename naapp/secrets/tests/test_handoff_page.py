@@ -155,45 +155,76 @@ async def test_throttled_page_is_html_with_retry_after_and_ceremony_refusal_stay
 
 
 @pytest.fixture
-async def page_service(journey, request):
-    sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-    sock.bind(("127.0.0.1", 0))
-    port = sock.getsockname()[1]
-    origin, callback_origin = f"http://localhost:{port}", f"http://127.0.0.1:{port}"
-    journey.world.passkeys.rp = RelyingParty(origin=origin, name="Secrets")
-    member, scope, device = await journey.enrol_owner("browser")
-    human, loopback = FastAPI(), FastAPI()
-    factory = (
-        limited_factory(journey.factory) if getattr(request, "param", False) else journey.factory
-    )
-    human.include_router(factory.human_router())
-    callback = asyncio.get_running_loop().create_future()
-
-    @loopback.get("/callback")
-    async def complete(request: Request):
-        assert not callback.done()
-        callback.set_result(parse_qs(request.url.query))
-        return HTMLResponse(
-            "<!doctype html><html lang=en><title>Complete</title><p>Return to your terminal.</p></html>"
+async def page_service(journey, request, console_listener, console_tls):
+    # The holder act's audience and credential must share the real HTTPS RP.
+    # aw's callback remains plain HTTP loopback on its own listener.
+    origin = console_listener.origin
+    with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as callback_socket:
+        callback_socket.bind(("127.0.0.1", 0))
+        callback_origin = f"http://127.0.0.1:{callback_socket.getsockname()[1]}"
+        journey.world.passkeys.rp = RelyingParty(origin=origin, name="Secrets")
+        member, scope, device = await journey.enrol_owner("browser")
+        human, loopback = FastAPI(), FastAPI()
+        factory = (
+            limited_factory(journey.factory)
+            if getattr(request, "param", False)
+            else journey.factory
         )
+        human.include_router(factory.human_router())
+        callback = asyncio.get_running_loop().create_future()
 
-    app = split_origins(loopback, human, agent_origin=callback_origin, human_origin=origin)
-    server = uvicorn.Server(
-        uvicorn.Config(app, log_level="warning", access_log=False, lifespan="off")
-    )
-    task = asyncio.create_task(server.serve(sockets=[sock]))
-    try:
-        async with asyncio.timeout(10):
-            while not server.started:
-                if task.done():
-                    await task
-                    raise RuntimeError("handoff server stopped before startup")
-                await asyncio.sleep(0.01)
-        yield origin, callback_origin, callback, member, scope, device
-    finally:
-        server.should_exit = True
-        await asyncio.wait_for(task, 10)
-        sock.close()
+        @loopback.get("/callback")
+        async def complete(request: Request):
+            assert not callback.done()
+            callback.set_result(parse_qs(request.url.query))
+            return HTMLResponse(
+                "<!doctype html><html lang=en><title>Complete</title><p>Return to your terminal.</p></html>"
+            )
+
+        app = split_origins(loopback, human, agent_origin=callback_origin, human_origin=origin)
+        servers = [
+            (
+                uvicorn.Server(
+                    uvicorn.Config(
+                        app,
+                        log_level="warning",
+                        access_log=False,
+                        lifespan="off",
+                        ssl_certfile=str(console_tls.cert_file),
+                        ssl_keyfile=str(console_tls.key_file),
+                    )
+                ),
+                console_listener.socket,
+            ),
+            (
+                uvicorn.Server(
+                    uvicorn.Config(
+                        app,
+                        log_level="warning",
+                        access_log=False,
+                        lifespan="off",
+                    )
+                ),
+                callback_socket,
+            ),
+        ]
+        tasks = []
+        try:
+            for server, sock in servers:
+                tasks.append(asyncio.create_task(server.serve(sockets=[sock])))
+            async with asyncio.timeout(10):
+                for (server, _), task in zip(servers, tasks, strict=True):
+                    while not server.started:
+                        if task.done():
+                            await task
+                            raise RuntimeError("handoff server stopped before startup")
+                        await asyncio.sleep(0.01)
+            yield origin, callback_origin, callback, member, scope, device
+        finally:
+            for server, _ in servers:
+                server.should_exit = True
+            if tasks:
+                await asyncio.wait_for(asyncio.gather(*tasks), 10)
 
 
 @pytest.mark.parametrize(
@@ -233,7 +264,10 @@ async def test_unavailable_link_renders_recovery_without_starting_a_ceremony(
     expected_status,
 ):
     origin, _, callback, _, _, _ = page_service
-    async with await browser.new_context(viewport={"width": width, "height": 900}) as context:
+    async with await browser.new_context(
+        viewport={"width": width, "height": 900},
+        ignore_https_errors=True,
+    ) as context:
         page = await context.new_page()
         requests = []
         page.on("request", lambda request: requests.append(request.url))
@@ -261,7 +295,10 @@ async def browser_flow(journey, browser, service, tmp_path, purpose, width, *, u
     handoff, key, verifier = await start(
         journey, purpose, callback_origin + "/callback", member, scope
     )
-    async with await browser.new_context(viewport={"width": width, "height": 900}) as context:
+    async with await browser.new_context(
+        viewport={"width": width, "height": 900},
+        ignore_https_errors=True,
+    ) as context:
         page = await context.new_page()
         cdp = await context.new_cdp_session(page)
         await cdp.send("WebAuthn.enable")
@@ -411,15 +448,19 @@ async def test_the_requesting_agent_is_shown_apart_from_the_identity_or_the_page
     origin, callback_origin, callback, member, scope, _ = page_service
     laptop, chain = await certify_agent(journey, member, [member.id_certificate], "laptop")
     if requester == "none":
-        handoff, _, _ = await start(journey, "session", callback_origin + "/callback", member, scope)
+        handoff, _, _ = await start(
+            journey, "session", callback_origin + "/callback", member, scope
+        )
     else:
         handoff = await requester_start(
             journey, member, scope, laptop, chain, callback_origin + "/callback"
         )
-    async with await browser.new_context(viewport={"width": width, "height": 900}) as context:
+    async with await browser.new_context(
+        viewport={"width": width, "height": 900},
+        ignore_https_errors=True,
+    ) as context:
         page = await context.new_page()
         if requester == "malformed":
-
             original = []
 
             async def malformed(route):

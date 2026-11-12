@@ -327,9 +327,6 @@ func Execute() {
 }
 
 func activateIdentityHomeForPluginDispatch(args []string) (func(), error) {
-	if namesOfflineCommand(args) {
-		return func() {}, nil
-	}
 	previous, existed := os.LookupEnv(awconfig.IdentityHomeEnv)
 	explicit := identityHomeForPluginDispatch(args)
 	home, err := awconfig.ResolveIdentityHome("", explicit)
