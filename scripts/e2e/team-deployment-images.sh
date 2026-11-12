@@ -24,10 +24,19 @@ out="$2"
 oats="${3:-}"
 src="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 
+# The control CLI's source: a full commit id, which must name itself.
+control="${TEAM_DEPLOYMENT_CONTROL_CLI_COMMIT:-74e70251cad33177bd964e432ad939585b8ea79c}"
+[[ "$control" =~ ^[0-9a-f]{40}$ ]] || {
+  echo "TEAM_DEPLOYMENT_CONTROL_CLI_COMMIT must be a full commit id (40 lowercase hex), not $control" >&2
+  exit 1
+}
+[[ "$(git -C "$src" rev-parse --verify --quiet "$control^{commit}" 2>/dev/null)" == "$control" ]] || {
+  echo "the control CLI commit $control is not a commit in this checkout" >&2
+  exit 1
+}
+
 [[ -z "$(git -C "$src" status --porcelain)" ]] || { echo "the aweb checkout has changes" >&2; exit 1; }
 sha="$(git -C "$src" rev-parse HEAD)"
-control="${TEAM_DEPLOYMENT_CONTROL_CLI_COMMIT:-74e70251cad33177bd964e432ad939585b8ea79c}"
-git -C "$src" cat-file -e "$control^{commit}" || { echo "the control CLI commit $control is not in this checkout" >&2; exit 1; }
 : >"$out"
 
 build() {
