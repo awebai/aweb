@@ -63,6 +63,8 @@ from protected_round_trip import (  # noqa: E402
 
 DOMAIN = "lf.test"
 TEAM = "lfteam"
+# The agents' two seats: ordinary members of the team.
+SEATS = ["agent-one", "agent-two"]
 TEAM_ID = f"{TEAM}:{DOMAIN}"
 HOSTS = {
     "registry": f"registry.{DOMAIN}",
@@ -135,9 +137,10 @@ class World:
             "TEST_REGISTRY_ORIGIN": origin("registry"),
             # The front's certificates come from this world's own authority.
             "TEAM_DEPLOYMENT_INGRESS_CA": str(self.world / "tls" / "ca.pem"),
-            # The world holds the machines' keys, the front's TLS keys and the
-            # controller's provisioning copy: no agent mount may reach into it.
-            "TEAM_DEPLOYMENT_PROTECTED_SOURCES": str(self.world),
+            # No agent mount may reach into the world (the machines' keys, the
+            # front's TLS keys, the controller's provisioning copy) or the
+            # operator's directory (its private SSH key).
+            "TEAM_DEPLOYMENT_PROTECTED_SOURCES": f"{self.world}:{run_dir / 'operator'}",
         }
 
     # --- files ---------------------------------------------------------
@@ -302,6 +305,7 @@ class World:
         group, and no harness login in it for this run."""
         (self.world / "agent-state").mkdir()
         (self.world / "agent-authorized-keys").write_text("")
+        (self.run_dir / "operator").mkdir(mode=0o700)
         (self.secrets / "agents").mkdir()
         run("docker", "run", "--rm", "-v", f"{self.world / 'agent-state'}:/state",
             "-v", f"{self.secrets / 'agents'}:/login", "alpine:3.22", "sh", "-c",
@@ -318,7 +322,6 @@ class World:
         network gains no endpoint and no port is published. Returns the SSH
         config; a wrong pinned host key is refused."""
         operator = self.run_dir / "operator"
-        operator.mkdir(mode=0o700)
         key = operator / "id_ed25519"
         run("ssh-keygen", "-q", "-t", "ed25519", "-N", "", "-C", "deploy-team-operator", "-f", str(key))
         authorized = self.world / "agent-authorized-keys"
@@ -346,27 +349,31 @@ class World:
             raise SystemExit("FAILED: the operator's SSH reached the agent under a host key it does not hold")
         return config
 
-    def stage_seat(self, owner: str, alias: str) -> dict:
+    def admit_seat(self, owner: str, alias: str) -> dict:
         """One agent seat: an ordinary member whose key aw creates on its own
-        machine, admitted by the team owner (owner-issued, local, not a
-        global identity), with its certificate and its connection to the
-        team's aweb. Only that member's .aw is staged into the agent's state,
-        at /state/seats/<alias>/.aw, owned by the agents' uid and private; no
-        owner, team or controller key goes with it. Returns the member."""
+        machine, admitted by the team owner while the owner still holds the
+        team's key (owner-issued and local, not a global identity), with its
+        certificate and its connection to the team's aweb. Returns the
+        member's public provenance."""
         machine = self.machine(f"seat-{alias}")
         requested = self.aw(machine, "id", "team", "request", "--create-local-key", "--team", TEAM_ID, "--name", alias)
         added = self.aw(owner, "id", "team", "add-member", "--team", TEAM, "--namespace", DOMAIN,
                         "--did", requested["did_key"], "--name", alias, "--local")
         self.aw(machine, "id", "team", "fetch-cert", "--namespace", DOMAIN, "--team", TEAM,
                 "--cert-id", added["certificate_id"], "--registry", origin("registry"))
-        connected = self.aw(machine, "workspace", "connect", "--service", origin("aweb"))
-        run("docker", "run", "--rm", "-v", f"{self.world / f'seat-{alias}' / '.aw'}:/member:ro",
-            "-v", f"{self.world / 'agent-state'}:/state", "alpine:3.22", "sh", "-c",
-            f"mkdir -p /state/seats/{alias} && cp -a /member /state/seats/{alias}/.aw"
-            f" && chown -R {AGENT_UID}:{AGENT_UID} /state/seats && chmod 0700 /state/seats /state/seats/{alias}"
-            f" && find /state/seats/{alias}/.aw -type d -exec chmod 0700 {{}} + && find /state/seats/{alias}/.aw -type f -exec chmod 0600 {{}} +")
-        return {"alias": alias, "did_key": requested["did_key"], "certificate_id": added["certificate_id"],
-                "connected": connected}
+        self.aw(machine, "workspace", "connect", "--service", origin("aweb"))
+        return {"alias": alias, "did_key": requested["did_key"], "certificate_id": added["certificate_id"]}
+
+    def stage_seats(self, aliases: list[str]) -> None:
+        """Only each seat member's own .aw goes into the agent's state, at
+        /state/seats/<alias>/.aw, owned by the agents' uid and private."""
+        for alias in aliases:
+            run("docker", "run", "--rm", "-v", f"{self.world / f'seat-{alias}' / '.aw'}:/member:ro",
+                "-v", f"{self.world / 'agent-state'}:/state", "alpine:3.22", "sh", "-c",
+                f"mkdir -p /state/seats/{alias} && cp -a /member /state/seats/{alias}/.aw"
+                f" && chown -R {AGENT_UID}:{AGENT_UID} /state/seats && chmod 0700 /state/seats /state/seats/{alias}"
+                f" && find /state/seats/{alias}/.aw -type d -exec chmod 0700 {{}} +"
+                f" && find /state/seats/{alias}/.aw -type f -exec chmod 0600 {{}} +")
 
     def machine(self, name: str) -> str:
         """A cli container as one machine; its HOME is /world/<name>."""
@@ -614,6 +621,10 @@ def journey(world: World) -> int:
     print("=== Setup: namespace, root human, team and service members, through the real aw")
     founded = found_team(site, holder)
     world.write_service_files(holder.container)
+    # The agents' seats are admitted now, while the owner holds the team's
+    # key; the protected act below moves it into the signer's custody.
+    seats = [world.admit_seat(holder.container, alias) for alias in SEATS]
+    print("seats admitted:", json.dumps(seats, sort_keys=True))
     owners = world.own_service_files()
     print("service file owners:", json.dumps(owners, sort_keys=True))
 
@@ -641,9 +652,10 @@ def journey(world: World) -> int:
     status = world.up()
     if status == 3:
         world.operator_ssh()
+        world.stage_seats(SEATS)
         print("AGENTS HELD: the ingress refusal and boundary probes passed, the agent container passed its"
-              " acceptance and the operator reaches it over pinned SSH; it runs credential-free, with no seat,"
-              " deployment or session admitted")
+              " acceptance, the operator reaches it over pinned SSH and two member seats are staged; it has no"
+              " harness login, deployment or session")
         return 0
     print("BOUNDARY: the agents stage did not come up; see the adapter's output")
     return 1
