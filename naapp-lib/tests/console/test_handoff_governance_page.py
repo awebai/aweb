@@ -38,12 +38,18 @@ CSRF_KEY = "aweb.protected.console.csrf"
 
 
 def governance_browser_options():
-    return {
-        "args": [
-            "--host-resolver-rules=MAP signer.example.com 127.0.0.1",
-            "--no-proxy-server",
-        ]
-    }
+    args = ["--host-resolver-rules=MAP signer.example.com 127.0.0.1"]
+    if proxy := os.environ.get("HTTPS_PROXY"):
+        # Route.fetch runs in Playwright's driver, outside Chromium's resolver
+        # map. An explicit proxy reaches both request paths; the native guard
+        # forwards this exact RP host to loopback without public DNS.
+        return {
+            "args": args,
+            "proxy": {"server": proxy, "bypass": "localhost,127.0.0.1,[::1]"},
+        }
+    # The isolated runner has an exact hosts entry for driver DNS and no
+    # external route. Keep direct routing when no native guard was selected.
+    return {"args": [*args, "--no-proxy-server"]}
 
 
 def test_governance_browser_selects_the_native_guard_for_browser_and_route_fetch(monkeypatch):

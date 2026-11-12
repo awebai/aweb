@@ -1,7 +1,6 @@
 """Real subprocess controls: no mocked transport or service responses."""
 from contextlib import contextmanager
 import http.server
-import os
 from pathlib import Path
 import subprocess
 import sys
