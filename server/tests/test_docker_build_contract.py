@@ -98,12 +98,25 @@ def customer_compose() -> dict:
     )
 
 
+def aweb_service() -> dict:
+    """The aweb service that the customer file extends."""
+    import yaml
+
+    assert customer_compose()["services"]["aweb"]["extends"] == {
+        "file": "compose.aweb.yaml",
+        "service": "aweb",
+    }
+    return yaml.safe_load(
+        (REPO_ROOT / "server" / "compose.aweb.yaml").read_text(encoding="utf-8")
+    )["services"]["aweb"]
+
+
 def test_customer_compose_runs_aweb_against_the_public_registry_with_member_keys():
     # A customer's server is a member of the team it serves: it holds an
     # ordinary member key and no registry-wide token, and runs no registry.
     services = customer_compose()["services"]
     assert sorted(services) == ["aweb", "postgres", "redis"]
-    environment = services["aweb"]["environment"]
+    environment = aweb_service()["environment"]
     assert "AWID_SERVICE_TOKEN" not in environment
     assert environment["AWID_MEMBER_KEYS_FILE"] == "/run/secrets/aweb/member-keys.json"
     assert environment["AWID_REGISTRY_URL"] == "${AWID_REGISTRY_URL:-https://api.awid.ai}"
@@ -117,7 +130,7 @@ def test_customer_compose_takes_every_credential_from_a_read_only_file():
     required = "${SECRETS_DIR:?SECRETS_DIR is required, the directory that holds aweb/ and postgres/}"
     assert services["aweb"]["volumes"] == [f"{required}/aweb:/run/secrets/aweb:ro"]
     assert f"{required}/postgres:/run/secrets/postgres:ro" in services["postgres"]["volumes"]
-    aweb, postgres = services["aweb"]["environment"], services["postgres"]["environment"]
+    aweb, postgres = aweb_service()["environment"], services["postgres"]["environment"]
     assert aweb["AWEB_DATABASE_URL_FILE"] == "/run/secrets/aweb/database-url"
     assert postgres["POSTGRES_PASSWORD_FILE"] == "/run/secrets/postgres/password"
     for environment in (aweb, postgres):

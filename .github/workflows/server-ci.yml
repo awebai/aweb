@@ -96,3 +96,9 @@ jobs:
           AWEB_PUBLIC_ORIGIN: https://aweb.example.com
           SECRETS_DIR: /etc/aweb-secrets
         run: docker compose -f docker-compose.customer.yml config
+
+      - name: Validate the team deployment compose file
+        working-directory: server
+        run: |
+          uv run python ../deploy/team/render_env.py ../deploy/team/deployment.example.yaml > "$RUNNER_TEMP/team.env"
+          docker compose --env-file "$RUNNER_TEMP/team.env" -f ../deploy/team/compose.yaml config

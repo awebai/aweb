@@ -13,6 +13,8 @@ This directory holds what both layers share.
 | `config.schema.json` | The schema of the operator's `deployment.yaml`. The Helm chart uses it as its `values.schema.json`. |
 | `deployment.example.yaml` | An example that the schema accepts. |
 | `render_env.py` | Checks a `deployment.yaml` against the schema and prints the env file the Compose layer reads: `python render_env.py deployment.yaml > .env`. It needs PyYAML and jsonschema, which the aweb server image has. |
+| `compose.yaml` | The Compose layer: the two networks, Redis, the bundled PostgreSQL and the services. |
+| `postgres-roles.sh` | Run by the bundled PostgreSQL at its first start: one role and one database per component. |
 | `descriptors/<component>.md` | What one component needs from an operator, written by its owner. |
 
 ## The configuration file
@@ -53,7 +55,12 @@ is the `x-env` of that input in the schema, so the mapping is written once.
   Redis and every custody key.
 - **One PostgreSQL server, one database and one role per component.**
   `postgres.bundled: true` runs one and creates them at first start; with an
-  operator's own server the operator creates them.
+  operator's own server the operator creates them. The bundled server
+  creates a role and a database named after each file in its
+  `roles/` secrets directory (`postgres/roles/aweb`), which holds that
+  role's password: the same password that is in the component's own
+  `database-url`. A component added after the first start needs its role
+  and database created by hand.
 - **Public origins are inputs; TLS is the operator's.** A reverse proxy or
   an Ingress terminates TLS and routes by Host to the service.
 - **An input that only one platform has** is under `<component>.kubernetes`

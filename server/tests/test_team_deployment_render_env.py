@@ -23,11 +23,13 @@ def test_each_input_becomes_the_setting_its_service_reads_with_defaults_filled()
         "AWEB_PORT": "8000",
         "AWEB_SECRETS": "aweb",
         "AWID_REGISTRY_URL": "https://api.awid.ai",
+        "COMPOSE_PROFILES": "postgres",
         "POSTGRES_BUNDLED": "true",
         "POSTGRES_HOST": "postgres",
         "POSTGRES_PORT": "5432",
         "POSTGRES_SECRETS": "postgres",
         "SECRETS_DIR": "/etc/aweb-secrets",
+        "SERVICES_CIDR": "172.31.0.0/24",
         "TEAM_ID": "devteam:example.com",
     }
 
@@ -54,6 +56,19 @@ def test_the_compose_layer_needs_its_own_section():
     del config["compose"]
     with pytest.raises(render_env.Refused, match="compose"):
         render_env.render(config)
+
+
+def test_the_compose_layer_needs_the_range_it_creates_the_services_network_with():
+    config = copy.deepcopy(EXAMPLE)
+    del config["network"]
+    with pytest.raises(render_env.Refused, match="network.servicesCidr"):
+        render_env.render(config)
+
+
+def test_an_operator_who_brings_a_postgres_server_gets_none_started():
+    config = copy.deepcopy(EXAMPLE)
+    config["postgres"] = {"bundled": False, "host": "db.internal"}
+    assert "COMPOSE_PROFILES" not in render_env.render(config)
 
 
 def test_the_env_file_is_sorted_lines_and_refuses_a_value_that_would_break_one():

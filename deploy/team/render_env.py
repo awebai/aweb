@@ -75,6 +75,8 @@ def render(config: object) -> dict[str, str]:
     _check(config)
     if "compose" not in config:
         raise Refused("compose: missing; the Compose layer needs compose.secretsDir")
+    if "servicesCidr" not in config.get("network", {}):
+        raise Refused("network.servicesCidr: missing; the Compose layer creates the services network with it")
     if "agents" in config and "compose" not in config["agents"]:
         raise Refused("agents: missing compose; the Compose layer needs agents.compose")
     if "agents" in config and "signer" in config:
@@ -86,6 +88,9 @@ def render(config: object) -> dict[str, str]:
     for section, schema in SCHEMA["properties"].items():
         if section in config:
             _collect(schema, config[section], out)
+    # The bundled PostgreSQL is the one service that an operator can leave out.
+    if config["postgres"].get("bundled", True):
+        out["COMPOSE_PROFILES"] = "postgres"
     return out
 
 

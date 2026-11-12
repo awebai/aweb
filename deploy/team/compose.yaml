@@ -1,0 +1,74 @@
+# One team's deployment on one machine. See README.md.
+#
+# The env file is rendered from the operator's deployment.yaml, which holds
+# no credential; every credential is a file under SECRETS_DIR, mounted
+# read-only into the one service that owns it:
+#
+#   python render_env.py deployment.yaml > .env
+#   docker compose --env-file .env -f compose.yaml up -d
+services:
+  redis:
+    image: redis:7-alpine
+    restart: unless-stopped
+    networks: [services]
+    volumes:
+      - redis_data:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  # Runs when postgres.bundled is true. At first start it creates one
+  # database and one role per file in /run/secrets/postgres/roles/.
+  postgres:
+    profiles: [postgres]
+    image: postgres:16-alpine
+    restart: unless-stopped
+    networks: [services]
+    environment:
+      POSTGRES_PASSWORD_FILE: /run/secrets/postgres/password
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+      - "${SECRETS_DIR:?SECRETS_DIR is required, compose.secretsDir}/${POSTGRES_SECRETS:-postgres}:/run/secrets/postgres:ro"
+      - ./postgres-roles.sh:/docker-entrypoint-initdb.d/roles.sh:ro
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  aweb:
+    extends:
+      file: ../../server/compose.aweb.yaml
+      service: aweb
+    image: ${AWEB_IMAGE:?AWEB_IMAGE is required, aweb.image}
+    networks: [services]
+    ports:
+      - "${AWEB_BIND_ADDRESS:-127.0.0.1}:${AWEB_PORT:-8000}:8000"
+    volumes:
+      - "${SECRETS_DIR:?SECRETS_DIR is required, compose.secretsDir}/${AWEB_SECRETS:-aweb}:/run/secrets/aweb:ro"
+    depends_on:
+      redis:
+        condition: service_healthy
+      postgres:
+        condition: service_healthy
+        required: false
+
+networks:
+  # aweb, the apps, PostgreSQL and Redis.
+  services:
+    ipam:
+      config:
+        - subnet: ${SERVICES_CIDR:?SERVICES_CIDR is required, network.servicesCidr}
+  # The team container and the egress boundary. It has no route out of its
+  # own: an agent reaches a service only through egress.
+  agents:
+    internal: true
+    ipam:
+      config:
+        - subnet: ${AGENTS_SUBNET:-172.30.0.0/24}
+
+volumes:
+  postgres_data:
+  redis_data:

@@ -1,0 +1,26 @@
+# The aweb server as every Compose file here runs it. A file that runs it
+# extends this service and adds where the image comes from, its secrets
+# mount, its port and what it waits for.
+#
+# The server is an ordinary member of each team it serves: it holds that
+# member's key and nothing wider, and has no AWID_SERVICE_TOKEN. Every
+# credential is a file under /run/secrets/aweb; none is in the environment.
+services:
+  aweb:
+    restart: unless-stopped
+    environment:
+      AWEB_DATABASE_URL_FILE: /run/secrets/aweb/database-url
+      AWEB_REDIS_URL: redis://redis:6379/0
+      AWEB_HOST: 0.0.0.0
+      AWEB_PORT: 8000
+      AWEB_PUBLIC_ORIGIN: ${AWEB_PUBLIC_ORIGIN:?AWEB_PUBLIC_ORIGIN is required, the https origin agents reach this server at}
+      APP_ENV: ${APP_ENV:-production}
+      AWEB_LOG_JSON: ${AWEB_LOG_JSON:-true}
+      AWID_REGISTRY_URL: ${AWID_REGISTRY_URL:-https://api.awid.ai}
+      AWID_MEMBER_KEYS_FILE: /run/secrets/aweb/member-keys.json
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8000/ready"]
+      interval: 30s
+      timeout: 5s
+      start_period: 30s
+      retries: 3
