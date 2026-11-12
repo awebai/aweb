@@ -392,6 +392,10 @@ class World:
         the browser, for the app the owner installed on this machine; the owner
         designates that exact credential. Checked in the app's own tables."""
         machine, human = holder.container, founded.approver
+        # --global for this human holder only (services and seats stay --local):
+        # aw binds a holder only if its team certificate names its did:aw
+        # (verifyHolderEvidence), and a did:aw on a member certificate is a
+        # global identity's.
         added = self.aw(machine, "id", "team", "add-member", "--team", TEAM, "--namespace", DOMAIN,
                         "--did", founded.approver_did_key, "--did-aw", human, "--name", "approver", "--global")
 
