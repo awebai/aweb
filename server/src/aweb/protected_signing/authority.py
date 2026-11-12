@@ -12,7 +12,11 @@ from aweb_naapp.runtime.protected_signer import (
     RestrictedRequester,
     SignerRefused,
 )
-from awid.identity_observation import observe_identity_binding, observe_identity_kind
+from awid.identity_observation import (
+    IdentityObservationRefused,
+    observe_identity_binding,
+    observe_identity_kind,
+)
 from awid.registry_types import RegistryThrottled
 
 logger = logging.getLogger(__name__)
@@ -95,14 +99,19 @@ class IndependentAuthority:
         except SignerRefused:
             raise
         except Exception as exc:
+            # The public binding helper preserves the SDK failure as its
+            # explicit cause. Keep only that known wrapper's typed metadata.
+            cause = (
+                exc.__cause__ if isinstance(exc, IdentityObservationRefused) else exc
+            )
             logger.warning(
                 "Protected signer registry evidence unavailable", exc_info=True
             )
             raise SignerRefused(
                 "evidence_unavailable",
                 retry_after_seconds=(
-                    exc.retry_after_seconds
-                    if isinstance(exc, RegistryThrottled)
+                    cause.retry_after_seconds
+                    if isinstance(cause, RegistryThrottled)
                     else None
                 ),
             ) from None
