@@ -717,13 +717,18 @@ class RegistryClient:
             headers[header] = f"DIDKey {did_key} {base64.b64encode(signature).rstrip(b'=').decode('ascii')}"
         return await self._request_json("POST", path, headers=headers, content=body, registry_url=registry_url)
 
-    async def fetch_id_certificate_status(self, domain: str, request: dict[str, Any]) -> dict[str, Any]:
+    async def fetch_id_certificate_status(
+        self, domain: str, request: dict[str, Any], *, registry_origin: str | None = None,
+    ) -> dict[str, Any]:
         """POST a status request to the registry ``domain`` routes to.
 
         Raises RegistryError for a refused answer and MalformedIDStatusError
         for a successful answer that is not a JSON object.
+        An operator-selected registry_origin pins this one read, bypassing
+        domain discovery; ordinary callers retain their existing routing.
         """
-        registry_url = await self._registry_url_for_domain(domain)
+        registry_url = (canonical_server_origin(registry_origin) if registry_origin is not None
+                        else await self._registry_url_for_domain(domain))
         try:
             status = await self._request_json("POST", _ID_STATUS_PATH, json=request, registry_url=registry_url)
         except ValueError as exc:
@@ -1160,8 +1165,22 @@ class RegistryClient:
             return None
         return team.team_did_key
 
-    async def get_team_public_key_fresh(self, domain: str, name: str) -> str | None:
-        """Read current team authority, without cached or outage-grace data."""
+    async def get_team_public_key_fresh(
+        self, domain: str, name: str, *, registry_origin: str | None = None,
+    ) -> str | None:
+        """Read current team authority, without cached or outage-grace data.
+
+        registry_origin is an optional trusted-host pin, never caller wire
+        authority. Omitting it retains existing domain discovery semantics.
+        """
+        if registry_origin is not None:
+            # An operator-pinned reader selects its destination once. Do not
+            # re-discover it between an adapter's route check and this read.
+            data = await self._request_optional_json(
+                'GET', f'/v1/namespaces/{domain}/teams/{name}',
+                registry_url=canonical_server_origin(registry_origin),
+            )
+            return _team_from_json(data).team_did_key if data is not None else None
         # Bind to the HTTP implementation: self.get_team() can dispatch to
         # CachedRegistryClient's stale-while-revalidate path.
         team = await RegistryClient.get_team(self, domain, name)

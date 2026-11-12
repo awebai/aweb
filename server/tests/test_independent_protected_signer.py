@@ -69,6 +69,8 @@ def proof_request(
     body=b"{}",
     operation="protected_operation_prepare",
     method="POST",
+    path="/protected-operations",
+    context=None,
 ):
     key = key or world.root
     timestamp = datetime.now(UTC).isoformat()
@@ -80,12 +82,14 @@ def proof_request(
             "domain": DOMAIN,
             "operation": operation,
             "method": method,
-            "path": "/protected-operations",
+            "path": path,
             "body_sha256": hashlib.sha256(body).hexdigest(),
             "timestamp": timestamp,
             "service_id": SERVICE,
             "scope_sha256": hashlib.sha256(
-                canonical_json_bytes(world.context.fields())
+                canonical_json_bytes(
+                    (world.context if context is None else context).fields()
+                )
             ).hexdigest(),
         }
     )
@@ -103,8 +107,8 @@ def proof_request(
         {
             "type": "http",
             "method": method,
-            "path": "/protected-operations",
-            "raw_path": b"/protected-operations",
+            "path": path,
+            "raw_path": path.encode(),
             "query_string": b"",
             "headers": [(k.encode(), v.encode()) for k, v in headers.items()],
         },
@@ -286,6 +290,7 @@ async def world(test_db_factory, tmp_path):
                 root_id=root_id,
                 device=device,
                 scope=scope,
+                delivery=delivery,
             )
         finally:
             await registry.aclose()
