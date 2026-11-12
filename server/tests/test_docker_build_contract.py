@@ -19,9 +19,11 @@ def test_server_image_installs_from_committed_lock():
     dockerfile = (REPO_ROOT / "server" / "Dockerfile").read_text(encoding="utf-8")
 
     assert "COPY server/pyproject.toml server/uv.lock server/README.md ./" in dockerfile
+    # AWEB_EXTRA adds an optional extra of the same lock ("protected" for the
+    # protected signer); empty, it builds the coordination server alone.
     assert sync_commands(dockerfile) == [
-        "RUN uv sync --frozen --no-dev --no-install-project",
-        "RUN uv sync --frozen --no-dev",
+        'RUN uv sync --frozen --no-dev --no-install-project ${AWEB_EXTRA:+--extra "$AWEB_EXTRA"}',
+        'RUN uv sync --frozen --no-dev ${AWEB_EXTRA:+--extra "$AWEB_EXTRA"}',
     ]
 
 
