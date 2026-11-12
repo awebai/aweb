@@ -36,6 +36,7 @@ from aweb_naapp_testing.network import make_certificates
 
 from tests.test_e2e_owner_acts import (
     API,
+    APP_ID,
     AWEB,
     DOMAIN,
     REGISTRY,
@@ -169,7 +170,7 @@ def start_revoke(machine: str, principal: str) -> tuple[pexpect.spawn, str, str,
     """aw prepares the revoke as the requester; returns the page it names, the
     operation id and the digest it printed."""
     child = pexpect.spawn(
-        "docker", ["exec", "-it", machine, "aw", "--json", "app", "role", "revoke", "secrets", "--role", ROLE,
+        "docker", ["exec", "-it", machine, "aw", "--json", "app", "role", "revoke", APP_ID, "--role", ROLE,
                    "--principal", principal, "--protected-profile", PROFILE, "--approver", principal],
         encoding="utf-8", timeout=180, echo=False,
     )
@@ -346,7 +347,7 @@ def test_a_human_approves_a_protected_revoke_in_a_real_browser(lane: ProtectedLa
         "  reverse_proxy @prepare protected:8080 {\n    @answered status 2xx\n"
         "    handle_response @answered {\n      abort\n    }\n  }\n", 1))
     reload_front(lane)
-    lost = _docker("exec", owner, "aw", "--json", "app", "role", "revoke", "secrets", "--role", ROLE, "--principal",
+    lost = _docker("exec", owner, "aw", "--json", "app", "role", "revoke", APP_ID, "--role", ROLE, "--principal",
                    approver, "--protected-profile", PROFILE, "--approver", approver, timeout=240)
     caddyfile.write_text(original)
     reload_front(lane)

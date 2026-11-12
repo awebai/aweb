@@ -36,6 +36,8 @@ APP_DIR = Path(__file__).resolve().parents[1]
 REPO = APP_DIR.parents[1]
 DOMAIN = "h.test"
 TEAM = "h"
+# The lane's own app id: only the hosted origin may serve the hosted id "secrets".
+APP_ID = "lane-secrets"
 TEAM_ID = f"{TEAM}:{DOMAIN}"
 REGISTRY = "http://awid.svc.test:8010"
 AWEB = "http://aweb.svc.test:8000"
@@ -292,7 +294,7 @@ def write_service_member(lane: Lane, controller: str) -> None:
     env = {
         "SECRETS_DATABASE_URL": "postgresql://secrets:disposable@postgres:5432/secrets",
         "SECRETS_DB_SCHEMA": "secrets",
-        "SECRETS_APP_ID": "secrets",
+        "SECRETS_APP_ID": APP_ID,
         "SECRETS_PUBLIC_ORIGIN": API,
         "SECRETS_CONSOLE_ORIGIN": CONSOLE,
         "SECRETS_AWID_REGISTRY_URL": REGISTRY,
@@ -367,7 +369,7 @@ def test_the_owner_designates_a_human_holder_registered_on_another_machine(lane:
 
     # The holder registers a passkey on their own machine and exports it.
     child = holder.act(principal, "app", "credential", "register",
-                         "secrets", "--role", ROLE, "--out", "/runtime/holder/export.json")
+                         APP_ID, "--role", ROLE, "--out", "/runtime/holder/export.json")
     output = holder.answer_passphrases(child, until=r"Open this page to continue: (\S+)")
     page = re.search(r"Open this page to continue: (\S+)", output).group(1)
     assert page.startswith(CONSOLE + "/handoff/"), page
@@ -380,18 +382,18 @@ def test_the_owner_designates_a_human_holder_registered_on_another_machine(lane:
 
     # The owner signs only for that exact credential: the fingerprint matches.
     shutil.copyfile(lane.runtime / "holder" / "export.json", lane.runtime / "controller" / "export.json")
-    result = _docker("exec", controller, "aw", "app", "role", "designate", "secrets", "--role", ROLE,
+    result = _docker("exec", controller, "aw", "app", "role", "designate", APP_ID, "--role", ROLE,
                      "--principal", principal, "--credential", "/runtime/controller/export.json", "--yes", timeout=300)
     assert result.returncode == 0, result.stdout + result.stderr
     assert fingerprint in result.stderr, result.stderr
     assert "human-role.designate" in result.stdout
 
     # A second designation of the same holding is refused by the app.
-    code = aw_refused(controller, "app", "role", "designate", "secrets", "--role", ROLE, "--principal", principal,
+    code = aw_refused(controller, "app", "role", "designate", APP_ID, "--role", ROLE, "--principal", principal,
                       "--credential", "/runtime/controller/export.json", "--yes")
     assert code == "owner_required", code
 
     # The holder holds the role: a session handoff starts for it.
-    child = holder.act(principal, "--json", "app", "human", "secrets", "--help")
+    child = holder.act(principal, "--json", "app", "human", APP_ID, "--help")
     listed = holder.answer_passphrases(child)
     assert "confirm" in listed and "draft-change" in listed, listed
