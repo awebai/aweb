@@ -3705,6 +3705,7 @@ Flags:
 - `--provider-pty Run the provider subprocess inside a pseudo-terminal instead of plain pipes when interactive controls are available`
 - `--team string Override the selected team_id for this command`
 - `--trip-on-danger Remove provider bypass flags and use native provider safety checks`
+- `--trust-config Trust this directory's .aw/run.json as it is now, so its prompts and services are used; a file that changes afterwards is ignored until trusted again`
 - `--wait int Idle seconds per wake-stream wait cycle (default 20)`
 - `--work-prompt-suffix string Override the configured work cycle prompt suffix for this run`
 
