@@ -181,7 +181,8 @@ def lane(tmp_path_factory: pytest.TempPathFactory) -> Iterator[Lane]:
     runtime = tmp_path_factory.mktemp("owner-acts")
     runtime.chmod(0o755)
     commit = subprocess.run(["git", "rev-parse", "HEAD"], cwd=REPO, text=True, capture_output=True, check=True).stdout.strip()
-    lane = Lane(project, runtime, {**os.environ, "SECRETS_E2E_RUNTIME": str(runtime), "SECRETS_E2E_SOURCE_COMMIT": commit})
+    lane = Lane(project, runtime, {**os.environ, "SECRETS_E2E_RUNTIME": str(runtime), "SECRETS_E2E_SOURCE_COMMIT": commit,
+                                       "SECRETS_E2E_AWID_SERVICE_TOKEN": secrets.token_hex(32)})
 
     (runtime / "dns").mkdir()
     (runtime / "dns" / "Corefile").write_text(
