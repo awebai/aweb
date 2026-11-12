@@ -92,6 +92,10 @@ def main() -> None:
         (repo / "naapp/library/test-vectors/blueprints/team/proof").write_text("fixture\n")
         shutil.copy2(ROOT / "docker-compose.e2e.yml", repo / "docker-compose.e2e.yml")
         shutil.copytree(ROOT / "scripts/e2e/initdb", repo / "scripts/e2e/initdb")
+        # The real wrapper's host preflight must execute the real probe from
+        # this committed fixture checkout, just as it does for a candidate.
+        shutil.copy2(ROOT / "scripts/e2e/test_candidate_gate_docker_boundaries.py",
+                     repo / "scripts/e2e/test_candidate_gate_docker_boundaries.py")
         (repo / "server").mkdir()
         (repo / "server/pyproject.toml").write_text('[project]\nname="ledger-proof"\nversion="1.2.3"\n')
         recipes = f".PHONY: candidate-gate {' '.join(SOURCE_CHECKS)}\n{' '.join(SOURCE_CHECKS)}:\n\t@git diff --exit-code\n"

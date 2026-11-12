@@ -102,6 +102,8 @@ class UserPathsAdmission(unittest.TestCase):
             make = root / 'make'
             make.write_text('#!/bin/bash\nprintf "%s\\n" "$1" >> "$CALLS"\n[[ "$1" != e2e-user-paths ]] || exit 86\n')
             make.chmod(0o755)
+            # This isolated stage test models a completed host preflight.
+            (root / 'host-published-port.log').write_text('fixture host publication PASS\n')
             result = run_fixture(['bash', str(ROOT / 'scripts/candidate-suite.sh'), 'checks user-paths unit'],
                                     env=dict(os.environ, PATH=f'{root}:{os.environ["PATH"]}',
                                              CALLS=str(root / 'calls'), CANDIDATE_LOG_DIR=str(root)),
@@ -159,6 +161,11 @@ class FrozenGateInput(unittest.TestCase):
                 commands.mkdir()
                 for name in ['candidate-docker-gate.sh', 'candidate-suite.sh', 'candidate-cleanup.sh', 'candidate-network.py', 'fetch_released_aw.py']:
                     shutil.copy2(ROOT / 'scripts' / name, repo / 'scripts' / name)
+                # Docker itself is fake in this input/ledger test. Keep the
+                # wrapper's real host-preflight call, with an explicit stand-in.
+                (repo / 'scripts/e2e').mkdir()
+                (repo / 'scripts/e2e/test_candidate_gate_docker_boundaries.py').write_text(
+                    'print("fixture host publication PASS")\n')
                 shutil.copy2(ROOT / 'scripts/e2e/user_paths_result.py', repo / 'scripts/user_paths_result.py')
                 (repo / 'scripts/coverage_fixture.py').write_text('from user_paths_result import qualification\nr=qualification({},0,[])\nfor h in r["required_humans"]: print(h["case"]+": "+h["status"])\nprint(r["coverage_summary"])\n')
                 (repo / 'scripts/candidate-host-pressure.py').write_text('import pathlib,sys\nif sys.argv[1]=="capture": pathlib.Path(sys.argv[2]).write_text("{}")\n')
