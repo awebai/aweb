@@ -189,8 +189,10 @@ def finish(child: pexpect.spawn) -> tuple[int, str]:
 
 
 def test_a_human_approves_a_protected_revoke_in_a_real_browser(lane: ProtectedLane) -> None:
-    owner = lane.machine("controller")
     holder = Holder(lane, lane.machine("holder"))
+    # One machine holds the namespace controller (from prepare-controller), so
+    # aw creates the root-parented requester there, beside H's human key.
+    owner = holder.container
 
     # The namespace, its root human H (the approver) and the team, on H's machine.
     prepared = aw(holder.container, "id", "namespace", "prepare-controller", "--domain", DOMAIN, "--registry", REGISTRY)
@@ -204,10 +206,7 @@ def test_a_human_approves_a_protected_revoke_in_a_real_browser(lane: ProtectedLa
     aw(holder.container, "id", "team", "create", "--name", TEAM, "--namespace", DOMAIN, "--registry", REGISTRY)
     team_key = lane.runtime / "holder" / ".awid" / "team-keys" / DOMAIN / f"{TEAM}.key"
 
-    # The requester: an agent identity on its own machine, a team member, connected.
-    owner_keys = lane.runtime / "controller" / ".awid" / "team-keys" / DOMAIN
-    owner_keys.mkdir(parents=True)
-    shutil.copyfile(team_key, owner_keys / f"{TEAM}.key")
+    # The requester: a root-parented agent identity, a team member, connected.
     requester = aw(owner, "id", "create", "--name", "owner", "--domain", DOMAIN, "--root-parent", "--registry", REGISTRY)["did_aw"]
     invite = aw(owner, "id", "team", "invite", "--team", TEAM, "--namespace", DOMAIN, "--member-global")
     aw(owner, "id", "team", "accept-invite", invite["token"], "--name", "owner", "--global")
@@ -236,7 +235,6 @@ def test_a_human_approves_a_protected_revoke_in_a_real_browser(lane: ProtectedLa
     # the protected server's custody volume, as the protected uid, mode 0400.
     seed = seed_hex(team_key.read_text())
     team_key.unlink()
-    (owner_keys / f"{TEAM}.key").unlink()
     stored = subprocess.run(
         ["docker", "compose", "-p", lane.project, "-f", str(REPO / "naapp/secrets/docker-compose.e2e.yml"),
          "--profile", "protected", "run", "--rm", "-T", "--no-deps", "--entrypoint", "sh", "protected", "-c",
@@ -292,7 +290,7 @@ def test_a_human_approves_a_protected_revoke_in_a_real_browser(lane: ProtectedLa
                   "--attestation", "/runtime/attestation.json", "--device", "/runtime/approver-device.json")
     lane.provision("complete", "--token", token, stdin=(lane.runtime / "attestation.json").read_text())
 
-    saved = lane.runtime / "controller" / ".config" / "aw" / "governance"
+    saved = lane.runtime / "holder" / ".config" / "aw" / "governance"
 
     # 1. The round trip: aw prepares, the page logs the human in, then the
     # human approves the exact act aw printed, and aw reports its receipt.
