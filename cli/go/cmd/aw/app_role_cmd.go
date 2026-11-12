@@ -416,6 +416,9 @@ func formatHumanRoleAct(fields map[string]any, r humanRoleActRequest, app *holde
 
 // deliverOwnerAct posts a signed act to the app's human origin, with no
 // team-auth and no redirect, and returns the app's answer.
+// ownerActTransport carries owner-act deliveries to an app.
+var ownerActTransport = func() http.RoundTripper { return awid.NewAPITransport() }
+
 func deliverOwnerAct(cmd *cobra.Command, humanOrigin string, body map[string]any) (map[string]any, error) {
 	data, err := json.Marshal(body)
 	if err != nil {
@@ -433,7 +436,7 @@ func deliverOwnerAct(cmd *cobra.Command, humanOrigin string, body map[string]any
 	}
 	req.Header.Set("Content-Type", "application/json")
 	client := &http.Client{
-		Timeout: awid.APITimeout(), Transport: awid.NewAPITransport(),
+		Timeout: awid.APITimeout(), Transport: ownerActTransport(),
 		CheckRedirect: func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse },
 	}
 	resp, err := client.Do(req)

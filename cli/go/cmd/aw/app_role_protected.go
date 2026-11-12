@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"cmp"
 	"context"
+	"crypto/ed25519"
 	"encoding/base64"
 	"encoding/json"
 	"errors"
@@ -226,8 +227,9 @@ func runProtectedResume(cmd *cobra.Command, operationID string) error {
 // A committed one carries the act the service signed: aw checks it is exactly
 // the act it requested, under the authority key the profile pins, and
 // delivers it to the app's owner-act route. The saved request is forgotten
-// only once the app has applied the act, so an undelivered act can be
-// resumed and delivered again; it is never re-signed.
+// only once the app has applied the act, now or on an earlier delivery whose
+// answer was lost; otherwise the same signed act is resumed and delivered
+// again, never re-signed.
 func settleProtectedAct(cmd *cobra.Command, operationID string, intent map[string]any, binding *handoff.ProfileBinding, receipt *handoff.Receipt, err error) error {
 	if receipt != nil && receipt.State == "refused" {
 		forgetProtectedOperation(cmd, operationID)
@@ -245,13 +247,13 @@ func settleProtectedAct(cmd *cobra.Command, operationID string, intent map[strin
 	report := map[string]any{"operation_id": operationID, "state": receipt.State, "result": json.RawMessage(receipt.Result)}
 	applied, err := deliverOwnerAct(cmd, signed.Audience, humanRoleActRequest{Act: signed.Act}.deliveryBody(signed.Signing, signed.Signature))
 	switch {
-	case errorCodeOf(err) == "nonce_reused":
-		// The app consumes an act's nonce only with its effect, so this act
-		// already took effect on an earlier delivery.
+	case errorCodeOf(err) == "applied_earlier":
+		// The app found this exact act (by its signing hash) already applied:
+		// an earlier delivery took effect and its answer was lost.
 		report["applied"] = "earlier"
 	case err != nil:
 		return withErrorCode(cmp.Or(errorCodeOf(err), "owner_act_undelivered"), fmt.Errorf(
-			"operation %s is signed but the app did not apply it: %w; deliver it again with aw app role resume %s --protected-profile <profile>", operationID, err, operationID))
+			"operation %s is signed but the app did not apply it: %w; its request is kept, and aw app role resume %s --protected-profile <profile> delivers the same act again", operationID, err, operationID))
 	default:
 		report["applied"] = applied
 	}
@@ -296,6 +298,13 @@ func signedActFor(intent map[string]any, authorityKeyDID string, result []byte, 
 	if err != nil {
 		return nil, invalid("its signing bytes are not base64")
 	}
+	// The service writes the 64-byte signature in padded base64; the owner-act
+	// contract spells it unpadded, and that canonical spelling is verified and sent.
+	raw, err := base64.StdEncoding.Strict().DecodeString(signature)
+	if err != nil || len(raw) != ed25519.SignatureSize {
+		return nil, invalid("its signature is not 64 bytes of padded base64")
+	}
+	signature = base64.RawStdEncoding.EncodeToString(raw)
 	act, _ := intent["operation"].(string)
 	audience, _ := intent["audience"].(string)
 	subject, _ := intent["subject"].(map[string]any)
