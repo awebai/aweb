@@ -4,9 +4,7 @@ Status: **draft for security review (aweb-acya.5).** Scope: the open-source
 aweb server, the AWID registry and the `aw` client, as a team would run them
 or use them. It does not describe the hosted service at app.aweb.ai, nor
 human roles, owner acts and passkey-gated acts, which have their own
-contracts: [design/human-role-holders.md](design/human-role-holders.md),
-[design/human-confirmation-from-aw.md](design/human-confirmation-from-aw.md)
-and [owner-act-delivery.md](owner-act-delivery.md).
+contract: [human-assurance-contract.md](human-assurance-contract.md).
 
 This page says who can do what, on whose signature, and what the people who
 operate the servers hold. Which key authorizes which fact, and what happens
