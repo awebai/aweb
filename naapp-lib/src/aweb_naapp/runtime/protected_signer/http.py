@@ -2,14 +2,22 @@
 
 from __future__ import annotations
 
+import re
 from collections.abc import Awaitable, Callable
 from dataclasses import asdict
 from typing import Any
+from urllib.parse import urlencode
 
 from awid.log import require_canonical_server_origin
 from fastapi import APIRouter, HTTPException, Request
 
-from aweb_naapp.console import ConsoleRoute, LoginLimiter, require_json
+from aweb_naapp.console import (
+    ConsoleRoute,
+    ConsoleSession,
+    ConsoleSessions,
+    LoginLimiter,
+    require_json,
+)
 from aweb_naapp.console.handoff_wire import HandoffWireRefused, loopback_redirect
 from aweb_naapp.hooks.strictjson import Refused
 from aweb_naapp.runtime.approvals import ApprovalRefused, RequestNotCanonical, parse_request_json
@@ -18,6 +26,7 @@ from aweb_naapp.runtime.passkeys import ProofContextUnavailable
 
 from .service import ProtectedSigner
 from .types import (
+    AdmittedHuman,
     OperationReceipt,
     ProtectedKeyContext,
     ReceiptReader,
@@ -153,10 +162,23 @@ class ProtectedOperationsHTTP:
         requester: Requester,
         reader: Reader,
         limiter: LoginLimiter,
+        human_sessions: ConsoleSessions | None = None,
+        human_csrf_key: str | None = None,
     ):
         require_canonical_server_origin(request_origin)
         self.signer, self.requester, self.reader, self.limiter = signer, requester, reader, limiter
         self.hosts = _origin_hosts(request_origin)
+        if (human_sessions is None) != (human_csrf_key is None):
+            raise ValueError("human sessions and CSRF storage key must be configured together")
+        if human_sessions is not None and (
+            human_sessions._db is not signer.db
+            or human_sessions.passkeys is not signer.passkeys
+            or not re.fullmatch(r"[A-Za-z0-9_.:-]{1,128}", human_csrf_key or "")
+        ):
+            raise ValueError("human mount needs the same database/B3 and an explicit CSRF key")
+        self.human_sessions, self.human_csrf_key = human_sessions, human_csrf_key
+        self.human_origin = signer.passkeys.rp.origin
+        self.human_hosts = _origin_hosts(self.human_origin)
 
     async def _guard(self, request: Request) -> None:
         await self.limiter.admit(
@@ -214,5 +236,132 @@ class ProtectedOperationsHTTP:
                 return receipt_json(await self.signer.receipt(operation_id, reader=reader))
             except Exception as error:
                 raise _http(error) from None
+
+        return router
+
+    async def page_context(self, handoff_id: str) -> dict[str, str] | None:
+        """Public stored routing facts for the one existing page dispatcher.
+
+        This grants no session, payload read or signing authority. The caller
+        serves its existing page once; the human JSON routes reauthenticate.
+        """
+        if self.human_sessions is None:
+            return None
+        retained = await self.signer.lookup_handoff(handoff_id)
+        if retained is None or not await self.human_sessions.scopes(retained["login_scope"]):
+            return None
+        assert self.human_csrf_key is not None
+        return {"b3_scope": retained["login_scope"], "csrf_key": self.human_csrf_key}
+
+    async def _human(self, handoff_id, request):
+        if self.human_sessions is None:
+            raise HTTPException(503, "human_admission_unavailable")
+        await self.limiter.admit(request, "protected-human", bucket="protected.human.client")
+        if _host(request.scope) not in self.human_hosts or (
+            request.method != "GET" and request.headers.get("Origin") != self.human_origin
+        ):
+            raise HTTPException(403, "scope_refused")
+        if request.headers.get("authorization") or any(
+            name.lower().startswith("x-console-") for name in request.headers
+        ):
+            raise HTTPException(401, "console_session_required")
+        # current() checks the genuine shared LOGIN, current credential/scope,
+        # and, for every POST, its original console CSRF token.
+        session = await self.human_sessions.current(request)
+        if type(session) is not ConsoleSession:
+            raise HTTPException(401, "console_session_required")
+        retained = await self.signer.lookup_handoff(handoff_id)
+        if retained is None:
+            raise SignerRefused("operation_not_found")
+        human = AdmittedHuman(
+            retained["context"].human_id, session.subject, session.scope, retained["context"]
+        )
+        return retained["operation_id"], human, session
+
+    @staticmethod
+    def _human_error(error):
+        # Human authentication has its existing codes, distinct from restricted
+        # requester credentials. Never send callback exception details.
+        if isinstance(error, HTTPException) and error.detail in {
+            "console_session_required",
+            "csrf_token_required",
+            "scope_refused",
+            "human_admission_unavailable",
+            "json_required",
+        }:
+            return error
+        if isinstance(error, SignerRefused) and error.code == "console_session_required":
+            return HTTPException(401, "console_session_required")
+        return _http(error)
+
+    async def _human_body(self, request, fields):
+        await require_json(request)
+        raw = bytearray()
+        async for chunk in request.stream():
+            raw.extend(chunk)
+            if len(raw) > 64 * 1024:
+                raise SignerRefused("request_invalid")
+        body = parse_request_json(bytes(raw))
+        if not isinstance(body, dict) or set(body) != fields:
+            raise SignerRefused("request_invalid")
+        return body
+
+    def human_router(self) -> APIRouter:
+        """Only governance JSON; console owns the existing HTML page and LOGIN."""
+        router = APIRouter(route_class=ConsoleRoute)
+
+        @router.get("/handoff/{handoff_id}/governance")
+        async def state(handoff_id: str, request: Request):
+            try:
+                operation_id, human, session = await self._human(handoff_id, request)
+                prepared = await self.signer.inspect(
+                    operation_id, human=human, human_session=session
+                )
+                receipt = await self.signer.receipt(
+                    operation_id, reader=human, human_session=session
+                )
+                result = asdict(prepared)
+                frozen = prepared.payload
+                result["payload"] = {
+                    "policy": {"ref": frozen["policy_ref"], "version": frozen["policy_version"]},
+                    "request": frozen,
+                }
+                return {"mode": "governance", **result, **receipt_json(receipt)}
+            except Exception as error:
+                raise self._human_error(error) from None
+
+        @router.post("/handoff/{handoff_id}/governance/options")
+        async def options(handoff_id: str, request: Request):
+            try:
+                operation_id, human, session = await self._human(handoff_id, request)
+                await self._human_body(request, set())
+                return dict(
+                    await self.signer.approval_options(
+                        operation_id, human=human, human_session=session
+                    )
+                )
+            except Exception as error:
+                raise self._human_error(error) from None
+
+        @router.post("/handoff/{handoff_id}/governance/execute")
+        async def execute(handoff_id: str, request: Request):
+            try:
+                operation_id, human, session = await self._human(handoff_id, request)
+                body = await self._human_body(request, {"assertion"})
+                if not isinstance(body["assertion"], dict):
+                    raise SignerRefused("request_invalid")
+                prepared = await self.signer.inspect(
+                    operation_id, human=human, human_session=session
+                )
+                receipt = await self.signer.execute(
+                    operation_id, body["assertion"], human=human, human_session=session
+                )
+                result = receipt_json(receipt)
+                redirect = prepared.payload.get("redirect_uri")
+                if receipt.state == "committed" and redirect is not None:
+                    result["redirect_uri"] = redirect + "?" + urlencode({"handoff_id": handoff_id})
+                return result
+            except Exception as error:
+                raise self._human_error(error) from None
 
         return router

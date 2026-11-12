@@ -78,20 +78,26 @@ async def http_world(world):
             return w.reader
 
     auth = Authentication()
+
+    async def admitted_scope(scope):
+        return scope == SCOPE
+
+    sessions = ConsoleSessions(w.passkeys.db, passkeys=w.passkeys, scopes=admitted_scope)
+
     mount = ProtectedOperationsHTTP(
         w.signer,
         request_origin=ORIGIN,
         requester=auth.requester,
         reader=auth.reader,
         limiter=limiter,
+        human_sessions=sessions,
+        human_csrf_key="protected-human-csrf",
     )
     app = FastAPI()
     app.include_router(mount.api_router())
+    app.include_router(mount.human_router())
+    app.state.protected_operations = mount
 
-    async def admitted_scope(scope):
-        return scope == SCOPE
-
-    sessions = ConsoleSessions(w.passkeys.db, passkeys=w.passkeys, scopes=admitted_scope)
     app.include_router(console_login_router(sessions=sessions, limiter=limiter, prefix="/human"))
     async with httpx.AsyncClient(transport=httpx.ASGITransport(app=app), base_url=ORIGIN) as client:
         yield w, client, key

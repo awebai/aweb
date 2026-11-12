@@ -519,6 +519,8 @@ class ConsoleHandoffs:
 
     def human_router(self):
         router = APIRouter(route_class=ConsoleRoute)
+        if self.protected_operations is not None:
+            router.include_router(self.protected_operations.human_router())
         router.include_router(
             credential_handoff_router(
                 store=self.store,
