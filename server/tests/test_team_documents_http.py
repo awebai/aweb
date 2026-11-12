@@ -117,11 +117,11 @@ async def test_concurrent_document_creation_allocates_distinct_versions(privacy_
     # Each INSERT has already selected MAX(version) when this trigger pauses
     # it. Without the per-team lock, concurrent writers select the same value.
     await env.db.execute("""
-        CREATE FUNCTION pg_temp.delay_team_document_insert() RETURNS trigger
+        CREATE FUNCTION {{tables.delay_team_document_insert}}() RETURNS trigger
         LANGUAGE plpgsql AS $$ BEGIN PERFORM pg_sleep(0.15); RETURN NEW; END $$
     """)
     await env.db.execute(f"CREATE TRIGGER delay_team_document_insert BEFORE INSERT ON {table} "
-                         "FOR EACH ROW EXECUTE FUNCTION pg_temp.delay_team_document_insert()")
+                         "FOR EACH ROW EXECUTE FUNCTION {{tables.delay_team_document_insert}}()")
 
     async def create(index):
         args = dict(team_id=TEAM, created_by_alias='alice')
