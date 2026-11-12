@@ -56,6 +56,15 @@ class DockerTransport:
             ["docker", "cp", *pair], check=True, capture_output=True, timeout=timeout
         )
         if not download:
+            # docker cp preserved the host UID in the observed first probe.
+            # Establish the root-owned0600 precondition explicitly, as scp did.
+            self.run(
+                "chown 0:0 "
+                + shlex.quote(str(target))
+                + " && chmod 0600 "
+                + shlex.quote(str(target)),
+                timeout=10,
+            )
             receipt = self.run(
                 'stat -c "%u %g %a" ' + shlex.quote(str(target)), timeout=10
             ).stdout.strip()

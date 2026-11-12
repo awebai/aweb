@@ -28,7 +28,7 @@ Snapshot restored-host preparation uses the same transfer/ownership path.
 
 `acceptance/linux_launch.py` runs the actual prepare → root refusal → UID1000
 host verification → launch → exit receipt → evidence collection using a Linux
-container transport. Inputs begin root-owned0600. It first loads the observed
+container transport. Inputs are explicitly chowned to root and chmodded0600 after Docker cp, then stat-checked before Executor normalizes them. It first loads the observed
 pre-fix Executor at ae79d4e92 and requires its source.json PermissionError, then
 runs the corrected path. Git, Python, runuser, file permissions and collection
 are real; Go/uv/Node version commands and the provider/SSH connection are fixture
