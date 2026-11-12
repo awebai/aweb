@@ -829,6 +829,8 @@ def main() -> int:
     parser.add_argument("--services-cidr", default="172.31.0.0/24")
     parser.add_argument("--oats-source", type=Path, help="checkout of the pinned OATS source, for the agents")
     parser.add_argument("--keep", action="store_true", help="leave the deployment running for inspection")
+    parser.add_argument("--stop-after", choices=["holding"],
+                        help="end the journey after this setup step: holding, the approver's app holding")
     args = parser.parse_args()
     run_dir = args.run_dir.resolve()
     if run_dir.exists():
@@ -844,7 +846,7 @@ def main() -> int:
         "".join(f"{name}={world.env[name]}\n" for name in sorted(world.env) if name.startswith(("TEAM_DEPLOYMENT_", "TEST_")))
     )
     try:
-        return journey(world)
+        return journey(world, stop_after=args.stop_after)
     finally:
         if not args.keep:
             print("=== Teardown")
@@ -853,7 +855,7 @@ def main() -> int:
             print("DOWN: nothing of the project is left" if down.returncode == 0 else "DOWN FAILED: see above")
 
 
-def journey(world: World) -> int:
+def journey(world: World, stop_after: str | None = None) -> int:
     print("=== Setup: the test world")
     world.write_world()
     world.write_database_files()
@@ -883,6 +885,9 @@ def journey(world: World) -> int:
     print("=== Setup: the owner designates the approver's holding of the app role, before the signer holds the key")
     designated = world.designate_holding(site, holder, founded)
     print("HOLDING:", json.dumps({k: designated[k] for k in ("role", "principal")}))
+    if stop_after == "holding":
+        print("STOPPED: after the approver's holding, as asked")
+        return 0
 
     print("=== Step 5: the protected act")
     provision_signer(site, holder, founded)
