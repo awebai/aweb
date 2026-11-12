@@ -80,7 +80,7 @@ async def http_world(world):
     auth = Authentication()
 
     async def admitted_scope(scope):
-        return scope == SCOPE
+        return scope in {SCOPE, "other-console-scope"}
 
     sessions = ConsoleSessions(w.passkeys.db, passkeys=w.passkeys, scopes=admitted_scope)
 

@@ -273,6 +273,8 @@ class ProtectedOperationsHTTP:
         retained = await self.signer.lookup_handoff(handoff_id)
         if retained is None:
             raise SignerRefused("operation_not_found")
+        if session.scope != retained["login_scope"]:
+            raise HTTPException(401, "console_session_required")
         human = AdmittedHuman(
             retained["context"].human_id, session.subject, session.scope, retained["context"]
         )

@@ -2,7 +2,9 @@
 
 from __future__ import annotations
 
+import asyncio
 import hashlib
+from datetime import UTC, datetime, timedelta
 
 import pytest
 from awid.signing import canonical_json_bytes
@@ -139,3 +141,160 @@ async def test_closed_session_after_options_cannot_sign(http_world):
     response = await client.post(path + "/execute", json={"assertion": proof}, headers=browser)
     assert response.status_code == 401
     assert (await w.audit.kinds()).count("protected_operation_signed") == 0
+
+
+@pytest.mark.parametrize("route", ["state", "options", "execute"])
+async def test_valid_other_scope_login_with_same_subject_cannot_approve(http_world, route):
+    w, client, _ = http_world
+    operation = await prepared(http_world)
+    # The original candidate is frozen in B2. The same subject now genuinely
+    # logs in to another admitted console scope with its real credential.
+    await w.passkeys.db.execute(
+        "UPDATE {{tables.passkey_approvers}} SET scope='other-console-scope'"
+    )
+    options = await client.post("/human/login/options", json={"scope": "other-console-scope"})
+    assert options.status_code == 200, options.text
+    signed_in = await client.post(
+        "/human/login",
+        json={"scope": "other-console-scope", "assertion": w.device.get(options.json())},
+    )
+    assert signed_in.status_code == 200, signed_in.text
+    session = await w.passkeys.db.fetch_one("SELECT * FROM {{tables.console_sessions}}")
+    assert session["subject"] == w.human.subject
+    assert await w.passkeys.login_evidence_is_current(
+        "other-console-scope", session["subject"], session["evidence_ref"]
+    )
+    path = "/handoff/" + operation["handoff_id"] + "/governance"
+    if route == "state":
+        response = await client.get(path)
+    else:
+        response = await client.post(
+            path + "/" + route,
+            json={} if route == "options" else {"assertion": {}},
+            headers={"Origin": ORIGIN, "X-CSRF-Token": signed_in.json()["csrf_token"]},
+        )
+    assert response.status_code == 401, response.text
+    assert response.json() == {"detail": "console_session_required"}
+    assert (await w.audit.kinds()).count("protected_operation_signed") == 0
+
+
+class WaitingSQLAuthority:
+    """Real authority checks plus a SQL gate at the selected effect phase.
+
+    This adds latency, not responses: every existing authority check delegates,
+    every wait is a real PostgreSQL row-lock wait, and every result is real SQL.
+    """
+
+    def __init__(self, delegate, operation_id, phase):
+        self.delegate, self.operation_id, self.phase = delegate, operation_id, phase
+
+    async def observe(self, context, *, purpose):
+        held = await self.delegate.observe(context, purpose=purpose)
+        owner = self
+
+        class Fence:
+            team_key_did = held.team_key_did
+
+            async def wait(self, tx, phase):
+                row = await tx.fetch_one(
+                    "SELECT a.state, o.result IS NOT NULL AS signed "
+                    "FROM {{tables.protected_signer_operations}} o "
+                    "JOIN {{tables.approvals}} a ON a.approval_id=o.approval_id "
+                    "WHERE o.operation_id=$1",
+                    owner.operation_id,
+                )
+                if (
+                    purpose == "execute"
+                    and owner.phase == phase
+                    and (row["state"] == "approved" if phase == "prepare" else row["signed"])
+                ):
+                    await tx.fetch_value(
+                        "SELECT id FROM {{tables.human_effect_gate}} WHERE id=1 FOR SHARE"
+                    )
+
+            async def prepare(self, tx, actor):
+                await held.prepare(tx, actor)
+                await self.wait(tx, "prepare")
+
+            async def check(self, tx, actor):
+                await held.check(tx, actor)
+                await self.wait(tx, "final")
+
+            def require_fresh(self):
+                held.require_fresh()
+
+        return Fence()
+
+
+async def observed_gate_wait(db, blocker_pid, request_task):
+    async with asyncio.timeout(15):
+        while True:
+            if request_task.done():
+                result = request_task.result()
+                pytest.fail(f"request completed before the database wait: {result.status_code}")
+            if await db.fetch_value(
+                "SELECT EXISTS(SELECT 1 FROM pg_stat_activity WHERE "
+                "$1=ANY(pg_blocking_pids(pid)) AND query LIKE '%human_effect_gate%')",
+                blocker_pid,
+            ):
+                return
+            await asyncio.sleep(0.01)
+
+
+@pytest.mark.parametrize("interruption", ["closed_before_effect", "expired_at_final", "current"])
+async def test_admitted_browser_session_is_rechecked_across_real_effect_wait(
+    http_world, interruption
+):
+    w, client, _ = http_world
+    # One injected clock governs the original operation, UV and final session
+    # deadline. SQL sessions still have a real, unexpired original timestamp.
+    w.clock.now = datetime.now(UTC)
+    operation = await prepared(http_world)
+    browser = await login(w, client)
+    expiry = w.clock() + timedelta(seconds=120)
+    await w.passkeys.db.execute("UPDATE {{tables.console_sessions}} SET expires_at=$1", expiry)
+    path = "/handoff/" + operation["handoff_id"] + "/governance"
+    options = await client.post(path + "/options", json={}, headers=browser)
+    assert options.status_code == 200, options.text
+    assertion = w.device.get(options.json())
+    await w.passkeys.db.execute("CREATE TABLE {{tables.human_effect_gate}} (id INT PRIMARY KEY)")
+    await w.passkeys.db.execute("INSERT INTO {{tables.human_effect_gate}} VALUES(1)")
+    phase = "prepare" if interruption == "closed_before_effect" else "final"
+    w.signer.authority = WaitingSQLAuthority(w.signer.authority, operation["operation_id"], phase)
+    task = None
+    try:
+        async with w.passkeys.db.transaction() as blocker:
+            await blocker.fetch_one(
+                "SELECT id FROM {{tables.human_effect_gate}} WHERE id=1 FOR UPDATE"
+            )
+            pid = await blocker.fetch_value("SELECT pg_backend_pid()")
+            task = asyncio.create_task(
+                client.post(path + "/execute", json={"assertion": assertion}, headers=browser)
+            )
+            await observed_gate_wait(w.passkeys.db, pid, task)
+            if interruption == "closed_before_effect":
+                await w.passkeys.db.execute(
+                    "UPDATE {{tables.console_sessions}} SET closed_at=NOW()"
+                )
+            elif interruption == "expired_at_final":
+                w.clock.now = expiry + timedelta(milliseconds=1)
+        response = await asyncio.wait_for(task, 15)
+    finally:
+        if task is not None and not task.done():
+            task.cancel()
+            await asyncio.gather(task, return_exceptions=True)
+    row = await w.passkeys.db.fetch_one(
+        "SELECT o.result,a.state FROM {{tables.protected_signer_operations}} o "
+        "JOIN {{tables.approvals}} a ON a.approval_id=o.approval_id WHERE o.operation_id=$1",
+        operation["operation_id"],
+    )
+    if interruption == "current":
+        assert response.status_code == 200, response.text
+        assert response.json()["state"] == "committed"
+        assert row["result"] is not None and row["state"] == "consumed"
+        assert (await w.audit.kinds()).count("protected_operation_signed") == 1
+    else:
+        assert response.status_code == 401, response.text
+        assert response.json() == {"detail": "console_session_required"}
+        assert row["result"] is None and row["state"] == "approved"
+        assert (await w.audit.kinds()).count("protected_operation_signed") == 0

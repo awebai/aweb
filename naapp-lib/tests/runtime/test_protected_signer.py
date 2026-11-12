@@ -128,6 +128,10 @@ async def world(test_db_factory):
     )
 
     async def proof_context(scope, *, tx):
+        # A second explicitly configured protected scope supports the genuine
+        # same-subject, different-scope LOGIN refusal regression.
+        if scope == "other-console-scope":
+            return replace(context, service_id="other-test-signer")
         assert scope == SCOPE
         return context
 

@@ -180,9 +180,8 @@ class ProtectedSigner:
         ):
             raise SignerRefused("console_session_required")
 
-    @staticmethod
-    def _session_fresh(session):
-        if session is not None and datetime.now(UTC) >= session.expires_at:
+    def _session_fresh(self, session):
+        if session is not None and self.clock() >= session.expires_at:
             raise SignerRefused("console_session_required")
 
     async def _lock(self, tx, operation_id):
