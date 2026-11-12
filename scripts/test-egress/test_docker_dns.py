@@ -27,10 +27,11 @@ import os
 import sys
 args = sys.argv[1:]
 if args and args[0] in ('run', 'create') and 'scripts/test-egress/dns.py' in args:
-    args[1:1] = ['--mount', 'type=bind,src=' + os.environ['TEST_DNS_SOURCE'] +
-                 ',dst=/src/scripts/test-egress,readonly', '--workdir', '/src']
     if os.environ.get('TEST_DNS_START_FAILURE') == '1':
         args[args.index('python3'):] = ['python3', '-c', 'raise SystemExit("planted DNS startup failure")']
+    else:
+        args[1:1] = ['--mount', 'type=bind,src=' + os.environ['TEST_DNS_SOURCE'] +
+                     ',dst=/src/scripts/test-egress,readonly', '--workdir', '/src']
 if args and args[0] in ('run', 'create') and '--dns' in args and not any(
     arg == '--dns-search' or arg.startswith('--dns-search=') for arg in args
 ):
