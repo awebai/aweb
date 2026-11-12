@@ -596,6 +596,13 @@ data. Deactivate all but one active version for those teams, then run it again.
 A hosted deployment that keeps its own copy of the aweb migrations needs the
 same file in that copy.
 
+Creation of a team's instructions or roles version takes the same per-team
+transaction advisory lock as activation (`team-instructions-activation` or
+`team-roles-activation`). Version allocation and the optional active-base check
+run after taking that lock, so concurrent creators allocate distinct ordered
+versions rather than racing on `MAX(version) + 1`. The database's one-active
+indexes remain the final invariant for every writer.
+
 ### Current table inventory
 
 The following list is exhaustive for current **aweb application tables declared

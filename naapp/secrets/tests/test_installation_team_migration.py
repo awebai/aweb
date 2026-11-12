@@ -11,6 +11,7 @@ from pgdbm import AsyncMigrationManager
 from aweb_secrets.app import MIGRATIONS_PATH, MODULE_NAME
 from aweb_secrets.change_policy import MIGRATIONS_PATH as SETTINGS_PATH
 from aweb_secrets.change_policy import apply_change_policy_migrations
+from aweb_secrets.grant import GrantTemplate
 from aweb_secrets.revisions import MIGRATIONS_PATH as REVISIONS_PATH
 from aweb_secrets.revisions import apply_revision_migrations
 from tests.test_records_store import INSTALLATION, POLICY, SECRET, TEAM
@@ -109,6 +110,24 @@ async def test_legacy_record_keys_retain_their_evidenced_team(test_db_factory, t
         POLICY.digest,
         json.dumps(dict(POLICY.body)),
     )
+    template = GrantTemplate.from_after(
+        {
+            "v": 1,
+            "grant_template_id": "gtp_legacy",
+            "subject": {"role": "secrets.role.deployers"},
+            "capability": "use",
+            "operations": [],
+            "open_request": True,
+            "jobs": [],
+            "policy_digest": POLICY.digest,
+        }
+    )
+    await db.execute(
+        "INSERT INTO {{tables.grant_templates}} (installation_id,grant_template_id,record) VALUES ($1,$2,$3)",
+        INSTALLATION,
+        template.grant_template_id,
+        json.dumps(template.after),
+    )
     await AsyncMigrationManager(
         db, migrations_path=str(MIGRATIONS_PATH), module_name=MODULE_NAME
     ).apply_pending_migrations()
@@ -123,3 +142,45 @@ async def test_legacy_record_keys_retain_their_evidenced_team(test_db_factory, t
             "SELECT body FROM {{tables.policies}} WHERE installation_id=$1", INSTALLATION
         )
     ) == dict(POLICY.body)
+    assert (
+        await db.fetch_value(
+            "SELECT team_id FROM {{tables.grant_templates}} WHERE installation_id=$1", INSTALLATION
+        )
+        == TEAM
+    )
+    assert (
+        json.loads(
+            await db.fetch_value(
+                "SELECT record FROM {{tables.grant_templates}} WHERE installation_id=$1",
+                INSTALLATION,
+            )
+        )
+        == template.after
+    )
+    # The temporary backfill exception must not disable normal immutability.
+    with pytest.raises(Exception, match="immutable"):
+        await db.execute("UPDATE {{tables.policies}} SET body='{}'::jsonb")
+
+
+async def test_unattributed_legacy_policy_rolls_back_without_disabling_immutability(
+    test_db_factory, tmp_path
+):
+    db = await test_db_factory.create_db(suffix="policy_team_refusal")
+    await _legacy(db, tmp_path, MIGRATIONS_PATH, MODULE_NAME, 7)
+    await db.execute(
+        "INSERT INTO {{tables.policies}} (installation_id,digest,body) VALUES ($1,$2,$3)",
+        INSTALLATION,
+        POLICY.digest,
+        json.dumps(dict(POLICY.body)),
+    )
+    with pytest.raises(Exception, match="missing or ambiguous team attribution"):
+        await AsyncMigrationManager(
+            db, migrations_path=str(MIGRATIONS_PATH), module_name=MODULE_NAME
+        ).apply_pending_migrations()
+    assert json.loads(
+        await db.fetch_value(
+            "SELECT body FROM {{tables.policies}} WHERE installation_id=$1", INSTALLATION
+        )
+    ) == dict(POLICY.body)
+    with pytest.raises(Exception, match="immutable"):
+        await db.execute("UPDATE {{tables.policies}} SET body='{}'::jsonb")

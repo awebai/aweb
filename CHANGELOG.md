@@ -2,6 +2,13 @@
 
 ## Unreleased
 
+- Secrets keeps installation-scoped state separate by team, even when two teams
+  report the same installation id. Upgrading existing state requires an
+  unambiguous retained team binding; missing or conflicting bindings stop the
+  migration for an explicit attribution decision.
+- Concurrent team instructions and roles version creation allocates distinct
+  version numbers under the same per-team lock as activation.
+
 - The Python registry client checks and pins the addresses of DNS-selected
   registry overrides, retaining the original hostname for TLS. Registry list
   scans stop after 500 pages with an explicit error instead of accumulating
