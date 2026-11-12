@@ -384,6 +384,28 @@ class World:
                 f" && find /state/seats/{alias}/.aw -type d -exec chmod 0700 {{}} +"
                 f" && find /state/seats/{alias}/.aw -type f -exec chmod 0600 {{}} +")
 
+    def designate_holding(self, site: Site, holder: Holder, founded: Founded) -> dict:
+        """The approver's holding of the app role the round trip revokes, made
+        the supported way while the owner still holds the team's key: aw app
+        role designate as the holder, who registers a passkey on the app's own
+        human origin in the browser before aw signs. Checked in the app's own
+        tables."""
+        machine = holder.container
+        child = pexpect.spawn("docker", ["exec", "-it", machine, "aw", "--json", "app", "role", "designate",
+                                         site.app_id, "--role", site.role, "--principal", founded.approver, "--yes"],
+                              encoding="utf-8", timeout=180, echo=False)
+        child.expect(r"Open this page to continue: (\S+)")
+        report = site.chromium(machine, "credential", "--url", child.match.group(1),
+                               "--device", f"{site.mounted}/holder-app-device.json")
+        assert report["states"] == ["ready", "navigated"] and report["credentials"] == 1, report
+        status, output = finish(child)
+        assert status == 0, output
+        held = self.compose("exec", "-T", "postgres", "psql", "-U", "postgres", "-d", "secrets", "-At", "-c",
+                            "select count(*) from public.role_assignments where role = '" + site.role
+                            + "' and principal_did = '" + founded.approver + "'").strip()
+        assert held == "1", held
+        return {"role": site.role, "principal": founded.approver, "designated": first_json(output)}
+
     # --- the registry's real limiter, for the throttle legs -----------------
 
     def fill_did_key_window(self) -> dict:
@@ -818,6 +840,9 @@ def journey(world: World) -> int:
     connect_requester(site, holder)
     print("=== Setup: the team owner installs Secrets and Logs from their internal origins")
     world.install_apps(holder.container, founded.requester_did_key)
+    print("=== Setup: the owner designates the approver's holding of the app role, before the signer holds the key")
+    designated = world.designate_holding(site, holder, founded)
+    print("HOLDING:", json.dumps({k: designated[k] for k in ("role", "principal")}))
 
     print("=== Step 5: the protected act")
     provision_signer(site, holder, founded)

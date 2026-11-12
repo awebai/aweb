@@ -208,6 +208,30 @@ def approve(args, browser) -> None:
     print(json.dumps(report))
 
 
+def credential(args, browser) -> None:
+    """A holder's credential handoff on an app's human origin: the page shows
+    the scope, the passkey is created on the action, and the page hands back to
+    aw's loopback. The new credential is written to --device."""
+    page = browser.new_context().new_page()
+    cdp, authenticator_id = authenticator(page, True)
+    report: dict[str, Any] = {"states": []}
+    page.goto(args.url)
+    report["states"].append(wait_state(page, ("ready", "refused")))
+    if report["states"][-1] == "ready":
+        report["principal"] = page.text_content("#handoff-principal")
+        report["role"] = page.text_content("#handoff-role")
+        page.click("#handoff-action")
+        report["states"].append(wait_state(page, TERMINAL + ("ready",)))
+    credentials = cdp.send("WebAuthn.getCredentials", {"authenticatorId": authenticator_id})["credentials"]
+    device = Path(args.device)
+    device.write_text(json.dumps(credentials))
+    device.chmod(0o600)
+    report["credentials"] = len(credentials)
+    if report["states"][-1] != "navigated":
+        report["status"] = page.text_content("#handoff-status")
+    print(json.dumps(report))
+
+
 def main() -> None:
     parser = argparse.ArgumentParser(
         description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter
@@ -216,6 +240,9 @@ def main() -> None:
     p = commands.add_parser("enrol-page")
     for name in ("--url", "--device", "--ca"):
         p.add_argument(name, required=True)
+    c = commands.add_parser("credential")
+    for name in ("--url", "--device", "--ca"):
+        c.add_argument(name, required=True)
     a = commands.add_parser("approve")
     for name in ("--url", "--device", "--ca"):
         a.add_argument(name, required=True)
@@ -231,7 +258,7 @@ def main() -> None:
     with sync_playwright() as playwright:
         browser = playwright.chromium.launch()
         try:
-            {"enrol-page": enrol_page, "approve": approve}[args.command](args, browser)
+            {"enrol-page": enrol_page, "credential": credential, "approve": approve}[args.command](args, browser)
         finally:
             browser.close()
 
