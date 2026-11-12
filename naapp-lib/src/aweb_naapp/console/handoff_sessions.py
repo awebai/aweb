@@ -16,10 +16,7 @@ from awid.team_certificate import TeamCertificateError, decode_team_certificate
 from fastapi import APIRouter, Depends, HTTPException, Request, Response
 from pgdbm import AsyncDatabaseManager
 
-if TYPE_CHECKING:
-    from aweb_naapp.runtime.protected_signer.http import ProtectedOperationsHTTP
-
-
+from aweb_naapp import roles
 from aweb_naapp.console import (
     MAX_SESSION,
     ConsoleRoute,
@@ -37,6 +34,13 @@ from aweb_naapp.console.handoff_credential import (
     _token,
     credential_handoff_router,
 )
+from aweb_naapp.console.handoff_page import handoff_page_router
+from aweb_naapp.console.handoff_requester import (
+    Requester,
+    RequesterEvidence,
+    RequesterParent,
+    key_fingerprint,
+)
 from aweb_naapp.console.handoff_store import HandoffStart, HandoffStore, handoff_start_router
 from aweb_naapp.console.handoff_wire import (
     HandoffWireRefused,
@@ -49,6 +53,9 @@ from aweb_naapp.runtime.human_member import HumanMemberProof
 from aweb_naapp.runtime.passkeys import Passkeys
 from aweb_naapp.runtime.passkeys.service import _client_challenge
 from aweb_naapp.runtime.team_auth import Principal
+
+if TYPE_CHECKING:
+    from aweb_naapp.runtime.protected_signer.http import ProtectedOperationsHTTP
 
 
 def _required() -> HTTPException:
@@ -183,9 +190,13 @@ class ConsoleHandoffs:
         principal: Callable[[Request], Awaitable[Principal]],
         human_member: Callable[..., Awaitable[HumanMemberProof]],
         limiter: LoginLimiter,
+        requester_parent: RequesterParent | None = None,
         protected_operations: "ProtectedOperationsHTTP | None" = None,
     ):
         self.db, self.passkeys, self.authority = db, passkeys, authority
+        # Admits a session start by the holder's verified direct-child agent
+        # (handoff-wire 1a). None admits only starts the holder signs.
+        self.requester_parent = requester_parent
         self.principal, self.human_member, self.limiter = principal, human_member, limiter
         self.store = HandoffStore(db)
         if protected_operations is not None and (
@@ -288,28 +299,125 @@ class ConsoleHandoffs:
         proof.require_fresh()
         return held
 
-    async def _start(self, start: HandoffStart, signer: Principal, request: Request):
+    async def _start(
+        self,
+        start: HandoffStart,
+        signer: Principal,
+        request: Request,
+        *,
+        requester: RequesterEvidence | None = None,
+    ):
         target = await self._target(start.scope, team_id=signer.team_id)
         if target.team_id != signer.team_id:
             raise HTTPException(403, "principal_not_member")
-        certificate = request.headers.get("X-AWID-Team-Certificate", "")
+        shown = None
+        if requester is not None:
+            # The holder's evidence comes only from its own holding, verified
+            # now; nothing about the holder comes from the requester.
+            shown = Requester(signer.did_aw or "", signer.address, key_fingerprint(signer.did_key))
+            certificate = await self._retained_certificate(start.scope, target)
+        else:
+            certificate = request.headers.get("X-AWID-Team-Certificate", "")
         proof = await self._proof(target, certificate)
         async with self.db.transaction() as tx:
             await self._hold(tx, {"login_evidence_ref": None}, target, proof)
             created = await self.store.create(start, tx=tx, team_id=signer.team_id)
             await tx.execute(
                 "UPDATE {{tables.console_handoffs}} SET team_id=$2,b3_scope=$3,subject=$4,"
-                "holding_identity=$5,member_certificate=$6 WHERE handoff_id=$1",
+                "holding_identity=$5,member_certificate=$6,requester=$7::jsonb WHERE handoff_id=$1",
                 _id(created["handoff_id"]),
                 target.team_id,
                 target.b3_scope,
                 target.subject,
                 self.authority.holding_identity(target),
                 certificate,
+                json.dumps(shown.public()) if shown else None,
             )
             proof.require_fresh()
+            if requester is not None:
+                # The requester's original evidence window is not renewed by
+                # any wait above.
+                requester.require_fresh()
+        await self.prune()
+        return created
+
+    async def _credential_start(self, start: HandoffStart, signer: Principal, request: Request):
+        """A credential start the holder signed. When the holder already holds
+        the role, its verified start certificate refreshes that holding's
+        retained certificate, committed with the accepted start. A failed or
+        mismatched verification changes nothing; the start itself grants
+        nothing either way (contract 584d76c9c :459)."""
+        certificate = request.headers.get("X-AWID-Team-Certificate", "")
+        refresh = None
+        holding = await roles.read_holding(
+            self.db,
+            installation_id=start.scope.installation_id,
+            team_id=signer.team_id,
+            role=start.scope.role,
+            principal=start.scope.principal,
+        )
+        if holding is not None:
+            try:
+                target = await self._target(start.scope, team_id=signer.team_id)
+                if target.team_id == signer.team_id:
+                    refresh = (target, await self._proof(target, certificate), holding.held_since)
+            except HTTPException:
+                refresh = None
+        async with self.db.transaction() as tx:
+            created = await self.store.create(start, tx=tx, team_id=signer.team_id)
+            if refresh is not None:
+                target, proof, held_since = refresh
+                await self._retain_certificate(tx, target, certificate, held_since=held_since)
+                proof.require_fresh()
         await self.store.prune()
         return created
+
+    async def _retained_certificate(self, scope: PublicScope, target) -> str:
+        """The certificate retained with the holder's own holding, in the
+        header encoding _proof reads. It is the canonical holding record's,
+        written by designate/replace and refreshed by starts the holder signs."""
+        holding = await roles.read_holding(
+            self.db,
+            installation_id=scope.installation_id,
+            team_id=target.team_id,
+            role=scope.role,
+            principal=scope.principal,
+        )
+        if holding is None or holding.certificate is None:
+            raise HTTPException(403, "principal_not_member")
+        return base64.b64encode(holding.certificate).decode()
+
+    async def _retain_certificate(self, tx, target, certificate: str, *, held_since) -> bool:
+        """Retain the holder's verified certificate for exactly the holding
+        held since ``held_since``: in the canonical holding record, which
+        rechecks that holding under its lock, then in the console's
+        browser-admission cache. False, writing nothing, when that holding
+        has ended."""
+        scope = target.public_scope
+        refreshed = await roles.refresh_holding_certificate(
+            tx,
+            installation_id=scope.installation_id,
+            team_id=target.team_id,
+            role=scope.role,
+            principal=scope.principal,
+            held_since=held_since,
+            certificate=base64.b64decode(certificate, validate=True),
+        )
+        if not refreshed:
+            return False
+        await tx.execute(
+            "INSERT INTO {{tables.console_holding_certificates}} VALUES($1,$2,$3,$4,$5,$6,$7) "
+            "ON CONFLICT(installation_id,role,principal) DO UPDATE SET "
+            "holding_identity=$4,b3_scope=$5,subject=$6,member_certificate=$7",
+            scope.installation_id,
+            scope.role,
+            scope.principal,
+            self.authority.holding_identity(target),
+            target.b3_scope,
+            target.subject,
+            certificate,
+        )
+        return True
 
     def api_router(self):
         router = handoff_start_router(
@@ -317,6 +425,8 @@ class ConsoleHandoffs:
             limiter=self.limiter,
             principal=self.principal,
             session_start=self._start,
+            requester_parent=self.requester_parent,
+            credential_start=self._credential_start,
         )
         if self.protected_operations is not None:
             router.include_router(self.protected_operations.api_router())
@@ -519,6 +629,13 @@ class ConsoleHandoffs:
 
     def human_router(self):
         router = APIRouter(route_class=ConsoleRoute)
+        router.include_router(
+            handoff_page_router(
+                store=self.store,
+                limiter=self.limiter,
+                protected_operations=self.protected_operations,
+            )
+        )
         if self.protected_operations is not None:
             router.include_router(self.protected_operations.human_router())
         router.include_router(
@@ -559,7 +676,10 @@ class ConsoleHandoffs:
                 path="/",
                 max_age=600,
             )
-            return {"scope": _scope(row), "csrf_token": csrf}
+            requester = row["requester"]
+            if isinstance(requester, str):
+                requester = json.loads(requester)
+            return {"scope": _scope(row), "csrf_token": csrf, "requester": requester}
 
         @router.post(
             "/handoff/{handoff_id}/session/options",

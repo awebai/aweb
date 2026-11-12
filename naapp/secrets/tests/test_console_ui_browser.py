@@ -1,21 +1,18 @@
 """Production login JS, real S4/B3/PG and Chromium's WebAuthn authenticator."""
 
 import asyncio
-import base64
-import socket
 from collections.abc import AsyncIterator
 from pathlib import Path
 from urllib.parse import parse_qs, urlencode, urlsplit
 
 import pytest
 import uvicorn
-from aweb_naapp.runtime.passkeys import RelyingParty, contact_sha256
-from aweb_naapp_testing.owner_acts import INSTALLATION_ID
+from aweb_naapp.runtime.passkeys import RelyingParty
 from playwright.async_api import Browser, async_playwright, expect
 from playwright.async_api import Error as PlaywrightError
 
-from aweb_secrets.owners import owner_scope
-from tests.test_change_sets import ALICE, TEAM, World
+from tests.console_network import passkey_origin as passkey_origin
+from tests.test_change_sets import ALICE, World
 from tests.test_change_sets import world as _world
 from tests.test_console_ui import application
 
@@ -24,10 +21,23 @@ CSRF_KEY = "aweb.secrets.console.csrf"
 
 
 @pytest.fixture
-async def browser() -> AsyncIterator[Browser]:
+async def browser(console_tls) -> AsyncIterator[Browser]:
+    import base64
+    import hashlib
+
+    from cryptography import x509
+    from cryptography.hazmat.primitives.serialization import Encoding, PublicFormat
+
+    certificate = x509.load_pem_x509_certificate(console_tls.cert_file.read_bytes())
+    public_key = certificate.public_key().public_bytes(
+        Encoding.DER, PublicFormat.SubjectPublicKeyInfo
+    )
+    pin = base64.b64encode(hashlib.sha256(public_key).digest()).decode()
     async with async_playwright() as playwright:
         try:
-            running = await playwright.chromium.launch()
+            running = await playwright.chromium.launch(
+                args=["--ignore-certificate-errors-spki-list=" + pin]
+            )
         except PlaywrightError as error:
             if "Executable doesn't exist" not in str(error):
                 raise
@@ -39,16 +49,22 @@ async def browser() -> AsyncIterator[Browser]:
 
 
 @pytest.fixture
-async def service(world: World) -> AsyncIterator[str]:
-    sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-    sock.bind(("127.0.0.1", 0))
-    port = sock.getsockname()[1]
-    origin = f"http://localhost:{port}"
+async def service(world: World, console_tls, console_listener) -> AsyncIterator[str]:
+    sock = console_listener.socket
+    port, origin = console_listener.port, console_listener.origin
     # Configure this fixture's real verifier for its ephemeral browser origin,
     # before designating or enrolling anyone. No WebAuthn method is replaced.
     world.passkeys.rp = RelyingParty(origin=origin, name="Secrets")
-    app = await application(world, human_origin=origin, agent_origin=f"http://127.0.0.1:{port}")
-    server = uvicorn.Server(uvicorn.Config(app, log_level="warning", lifespan="off"))
+    app = await application(world, human_origin=origin, agent_origin=f"https://127.0.0.1:{port}")
+    server = uvicorn.Server(
+        uvicorn.Config(
+            app,
+            log_level="warning",
+            lifespan="off",
+            ssl_certfile=str(console_tls.cert_file),
+            ssl_keyfile=str(console_tls.key_file),
+        )
+    )
     task = asyncio.create_task(server.serve(sockets=[sock]))
     try:
         async with asyncio.timeout(10):
@@ -85,47 +101,13 @@ async def test_browser_login_and_bodiless_csrf_logout(
                 }
             },
         )
-        scope = owner_scope(INSTALLATION_ID, TEAM, ALICE.principal_did)
+        from tests.human_owner import install_virtual_credential
+        from tests.test_change_sets import enrol_owner
+
         contact = "alice@acme.com"
-        subject = {
-            "app_id": world.admitted.app_id,
-            "installation_id": INSTALLATION_ID,
-            "role": scope,
-            "contact_sha256": contact_sha256(contact),
-        }
-        signing, signature = world.owner.sign("app-role.designate", subject)
-        response = await context.request.post(
-            service + f"/installations/{INSTALLATION_ID}/owner-acts",
-            data={
-                "signing": base64.b64encode(signing).decode(),
-                "signature": signature,
-                "team_id": TEAM,
-                "principal": ALICE.principal_did,
-                "contact": contact,
-            },
-        )
-        assert response.status == 200
+        scope = await enrol_owner(world, ALICE, contact)
+        await install_virtual_credential(cdp, result["authenticatorId"], world.devices[contact])
         await page.goto(service + "/login?" + urlencode({"scope": scope}))
-        # Registration and the direct helper consumer are test-driven. The
-        # sign-in/logout buttons run the production UI under its actual CSP.
-        status = await page.evaluate(
-            """async token => {
-              const options = await fetch('/enrolment/options', {
-                method: 'POST', headers: {'Content-Type': 'application/json'},
-                body: JSON.stringify({link_token: token})
-              });
-              if (!options.ok) return options.status;
-              const credential = await navigator.credentials.create({
-                publicKey: PublicKeyCredential.parseCreationOptionsFromJSON(await options.json())
-              });
-              return (await fetch('/enrolment', {
-                method: 'POST', headers: {'Content-Type': 'application/json'},
-                body: JSON.stringify({link_token: token, credential: credential.toJSON()})
-              })).status;
-            }""",
-            world.inbox.enrolments[contact][-1],
-        )
-        assert status == 200
         # A second consumer can use the exported helper with the real server
         # options and submit its result to B3 without copying assertion packing.
         options = await context.request.post(service + "/login/options", data={"scope": scope})

@@ -559,6 +559,34 @@ ROOT_CONSUMERS = {
         "owner-act-v1.json",
         '"../../../docs/vectors/owner-act-v1.json"',
     ),
+    PurePosixPath("cli/go/awid/human_credential_test.go"): _consumer(
+        "owner-act-delivery-v1.json",
+        '"../../../docs/vectors/owner-act-delivery-v1.json"',
+    ),
+    PurePosixPath("cli/go/cmd/aw/app_holder_test.go"): _consumer(
+        "owner-act-delivery-v1.json",
+        '"../../../../docs/vectors/owner-act-delivery-v1.json"',
+    ),
+    PurePosixPath("cli/go/cmd/aw/app_human_test.go"): _consumer(
+        "owner-act-delivery-v1.json",
+        '"../../../../docs/vectors/owner-act-delivery-v1.json"',
+    ),
+    PurePosixPath("cli/go/internal/handoff/covered_request_test.go"): _consumer(
+        "approval-request-v1.json",
+        '"../../../../docs/vectors/approval-request-v1.json"',
+    ),
+    PurePosixPath("cli/go/cmd/aw/app_requester_test.go"): _consumer(
+        "id-certificates-v1.json",
+        '"../../../../docs/vectors/id-certificates-v1.json"',
+    ),
+    PurePosixPath("cli/go/cmd/aw/app_role_test.go"): _consumer(
+        "owner-act-delivery-v1.json",
+        '"../../../../docs/vectors/owner-act-delivery-v1.json"',
+    ),
+    PurePosixPath("naapp-lib/tests/console/test_human_role_holding_identity.py"): _consumer(
+        "human-role-holding-v1.json",
+        'Path(__file__).resolve().parents[3] / "docs/vectors/human-role-holding-v1.json"',
+    ),
     PurePosixPath("cli/go/hookevent/vectors_test.go"): _consumer(
         {"hook-catalog-v1.json", "hook-delivery-credential-v1.json", "hook-event-envelope-v1.json"},
         '"../../../docs/vectors/hook-event-envelope-v1.json"',

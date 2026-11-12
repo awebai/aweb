@@ -393,6 +393,22 @@ async def refresh_holding_certificate(
     return True
 
 
+async def holding_scopes_of_team(db: Executor, team_id: str) -> dict[str, list[str]]:
+    """The B3 scope of every holding the team's installations recorded, current
+    or ended, by installation. It grants nothing: it names the scopes whose
+    credentials go with the team's installation, read before purge_team
+    deletes the records."""
+    rows = await db.fetch_all(
+        "SELECT installation_id, b3_scope FROM {{tables.role_holdings}}"
+        " WHERE team_id = $1 ORDER BY installation_id, b3_scope",
+        team_id,
+    )
+    scopes: dict[str, list[str]] = {}
+    for row in rows:
+        scopes.setdefault(row["installation_id"], []).append(row["b3_scope"])
+    return scopes
+
+
 async def purge_team(tx: TransactionManager, team_id: str) -> None:
     """Remove every role assignment of the team in the caller's transaction.
 

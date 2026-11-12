@@ -6,6 +6,7 @@ log on the console origin logs composes."""
 from __future__ import annotations
 
 import asyncio
+import base64
 import socket
 from collections.abc import AsyncIterator
 from datetime import timedelta
@@ -21,6 +22,7 @@ from aweb_naapp.console import (
 )
 from aweb_naapp.runtime.origins import split_origins
 from aweb_naapp.runtime.passkeys import RelyingParty
+from cryptography.hazmat.primitives import serialization
 from fastapi import FastAPI
 from playwright.async_api import (
     Browser,
@@ -34,7 +36,7 @@ from playwright.async_api import Error as PlaywrightError
 
 from aweb_logs.reader_service import ReaderService
 
-from .reader_world import CONTACT, World, designated_reader, world_fixture  # noqa: F401
+from .reader_world import World, held_reader, world_fixture  # noqa: F401
 from .test_reader_viewer import recorded
 
 
@@ -68,7 +70,6 @@ async def service(world: World) -> AsyncIterator[str]:
             db=world.db,
             directory=world.directory,
             fence=world.fence,
-            designations=world.designations,
             governance=world.governance,
             passkeys=world.passkeys,
             recorder=world.recorder,
@@ -100,12 +101,12 @@ async def service(world: World) -> AsyncIterator[str]:
 
 
 async def signed_in_page(world: World, context: BrowserContext, service: str) -> Page:
-    """A tab of a designated reader that enrolled its passkey from its mailed
-    link and signed in with it."""
+    """A tab of a reader the owner named, whose authenticator holds the
+    credential the owner's act bound, signed in with it."""
     page = await context.new_page()
     cdp = await context.new_cdp_session(page)
     await cdp.send("WebAuthn.enable")
-    await cdp.send(
+    authenticator = await cdp.send(
         "WebAuthn.addVirtualAuthenticator",
         {
             "options": {
@@ -118,20 +119,29 @@ async def signed_in_page(world: World, context: BrowserContext, service: str) ->
             }
         },
     )
-    scope, _ = await designated_reader(world)
-    await page.goto(service + "/login?" + urlencode({"scope": scope}))
-    status = await page.evaluate(
-        """async link_token => {
-      const response = await fetch('/enrolment/options', {method:'POST',
-        headers:{'Content-Type':'application/json'}, body:JSON.stringify({link_token})});
-      const credential = await navigator.credentials.create({publicKey:
-        PublicKeyCredential.parseCreationOptionsFromJSON(await response.json())});
-      return (await fetch('/enrolment', {method:'POST', headers:{'Content-Type':'application/json'},
-        body:JSON.stringify({link_token, credential:credential.toJSON()})})).status;
-    }""",
-        world.inbox.enrolments[CONTACT][-1],
+    scope, _ = await held_reader(world)
+    (credential,) = world.devices[scope].credentials.values()
+    await cdp.send(
+        "WebAuthn.addCredential",
+        {
+            "authenticatorId": authenticator["authenticatorId"],
+            "credential": {
+                "credentialId": base64.b64encode(credential.credential_id).decode(),
+                "isResidentCredential": True,
+                "rpId": credential.rp_id,
+                "privateKey": base64.b64encode(
+                    credential.key.private_bytes(
+                        serialization.Encoding.DER,
+                        serialization.PrivateFormat.PKCS8,
+                        serialization.NoEncryption(),
+                    )
+                ).decode(),
+                "userHandle": base64.b64encode(credential.user_handle).decode(),
+                "signCount": 0,
+            },
+        },
     )
-    assert status == 200
+    await page.goto(service + "/login?" + urlencode({"scope": scope}))
     await page.locator("#login button[type=submit]").click()
     await page.wait_for_url(service + "/")
     return page

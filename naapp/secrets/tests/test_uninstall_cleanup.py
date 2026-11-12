@@ -6,11 +6,10 @@ from uuid import uuid4
 
 import asyncpg
 import pytest
-from aweb_naapp.roles import PrincipalKey
 
 from aweb_secrets.app import installation_fence
 from aweb_secrets.custody import encode_value
-from aweb_secrets.owners import approver_scope, owner_scope, record_owner
+from aweb_secrets.owners import approver_scope, owner_scope
 from tests.test_change_sets import ALICE, enrol_owner
 from tests.test_change_sets import world as world
 from tests.test_console_changes import clients, sign_in, token_draft
@@ -96,36 +95,51 @@ async def test_retirement_receipt_failure_rolls_back_credential_destruction(worl
 
 
 async def another_installation(world):
-    other = PrincipalKey(team_id="other:example.com", principal_did=ALICE.principal_did)
-    scope = owner_scope("other-installation", other.team_id, other.principal_did)
-    subject = str(uuid4())
-    credential_id = secrets.token_bytes(32)
+    from copy import copy
+
+    from aweb_naapp.hooks.owner_act import HUMAN_ROLE_ACTS
+    from aweb_naapp_testing.owner_acts import team_owner
+
+    from tests.governance import credential_audit
+    from tests.human_owner import apply_holder, fixture_principal
+
+    other = fixture_principal("other:example.com", "other")
+    source = copy(world)
+    source.owner = await team_owner(world.registry, team_id=other.team_id, acts=HUMAN_ROLE_ACTS)
+    authority = TeamServer()
+    authority.grant = _grant(str(uuid4()), 1, other.team_id)
+    source.fence = installation_fence(world.db, app_id=world.admitted.app_id, grants=authority)
+    await source.fence.refresh(other.team_id)
+    async with world.db.transaction() as tx:
+        source.admitted = await source.fence.admit(tx, authority.grant)
+    original = world.passkeys._audit
+    try:
+        source.credential_audit = await credential_audit(
+            db=world.db,
+            passkeys=world.passkeys,
+            owner=source.owner,
+            fence=source.fence,
+            admitted=source.admitted,
+            origin=world.passkeys.rp.origin,
+        )
+        # The shallow fixture copy must use the other genuine F6, not a console
+        # dependency attached to the original app world by a preceding read.
+        if hasattr(source, "console"):
+            del source.console
+        designation = await apply_holder(source, "human-role.designate", other, "other@example.com")
+    finally:
+        world.passkeys._audit = original
     async with world.db.transaction() as tx:
         await world.custody.stage_backend_credential(
             tx,
-            installation_id="other-installation",
+            installation_id=source.admitted.installation_id,
             team_id=other.team_id,
             value=encode_value("bearer", {"value": secrets.token_urlsafe(32)}),
         )
-        await record_owner(tx, installation_id="other-installation", principal=other)
-        # An unrelated stored credential, copied from the real enrolled key's
-        # valid public material. It is fixture state, never used to authenticate.
-        await tx.execute(
-            "INSERT INTO {{tables.passkey_approvers}}"
-            " (subject,scope,contact,designated_by,designated_at,effective_at)"
-            " SELECT $1,$2,contact,designated_by,designated_at,effective_at"
-            " FROM {{tables.passkey_approvers}} LIMIT 1",
-            subject,
-            scope,
-        )
-        await tx.execute(
-            "INSERT INTO {{tables.passkey_credentials}}"
-            " (credential_id,subject,public_key,sign_count,created_at)"
-            " SELECT $1,$2,public_key,sign_count,created_at FROM {{tables.passkey_credentials}} LIMIT 1",
-            credential_id,
-            subject,
-        )
-    return credential_id
+    return await world.db.fetch_value(
+        "SELECT credential_id FROM {{tables.passkey_credentials}} WHERE subject=$1",
+        designation.approver.subject,
+    )
 
 
 async def test_retirement_keeps_another_installations_sealed_value_and_passkey(world):

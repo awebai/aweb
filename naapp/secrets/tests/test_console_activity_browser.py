@@ -1,7 +1,6 @@
 """Activity is readable at mobile and desktop sizes with real owner auth."""
 
 import asyncio
-import socket
 from datetime import UTC, datetime
 
 import pytest
@@ -9,6 +8,7 @@ import uvicorn
 from aweb_naapp.runtime.passkeys import RelyingParty
 from playwright.async_api import expect
 
+from tests.console_network import passkey_origin as passkey_origin
 from tests.test_change_sets import world as _world
 from tests.test_console_activity import application, recorded
 from tests.test_console_forms import enrolled_page
@@ -19,14 +19,20 @@ browser = _browser
 
 
 @pytest.fixture
-async def service(world):
-    sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-    sock.bind(("127.0.0.1", 0))
-    port = sock.getsockname()[1]
-    origin = f"http://localhost:{port}"
+async def service(world, console_tls, console_listener):
+    sock = console_listener.socket
+    port, origin = console_listener.port, console_listener.origin
     world.passkeys.rp = RelyingParty(origin=origin, name="Secrets")
-    app = await application(world, origin=origin, agent_origin=f"http://127.0.0.1:{port}")
-    server = uvicorn.Server(uvicorn.Config(app, log_level="warning", lifespan="off"))
+    app = await application(world, origin=origin, agent_origin=f"https://127.0.0.1:{port}")
+    server = uvicorn.Server(
+        uvicorn.Config(
+            app,
+            log_level="warning",
+            lifespan="off",
+            ssl_certfile=str(console_tls.cert_file),
+            ssl_keyfile=str(console_tls.key_file),
+        )
+    )
     task = asyncio.create_task(server.serve(sockets=[sock]))
     try:
         async with asyncio.timeout(10):

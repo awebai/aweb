@@ -41,7 +41,7 @@ from .reader_world import (
     LOGS,
     World,
     console_headed,
-    enrolled_reader,
+    held_reader,
     world_fixture,  # noqa: F401
 )
 from .test_read_routes import login, other_team_event
@@ -119,7 +119,6 @@ async def console(world: World) -> AsyncIterator[httpx.AsyncClient]:
         db=world.db,
         directory=world.directory,
         fence=world.fence,
-        designations=world.designations,
         governance=world.governance,
         passkeys=world.passkeys,
         recorder=world.recorder,
@@ -172,12 +171,12 @@ async def purged(world: World, event_id: str) -> int:
 
 
 async def signed_in(world: World, human: httpx.AsyncClient) -> None:
-    scope, _ = await enrolled_reader(world)
+    scope, _ = await held_reader(world)
     assert (await login(world, human, scope)).status_code == 200
 
 
 async def test_without_a_session_each_viewer_page_sends_the_browser_to_sign_in(world: World):
-    await enrolled_reader(world)
+    await held_reader(world)
     async with console(world) as human:
         for path in VIEWER_PAGES:
             response = await human.get(path)

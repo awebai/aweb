@@ -1,10 +1,14 @@
 """The reader's API on logs' console origin (audit-substrate.md §B4, §B5), on
 real PostgreSQL with a real AWID registry, real owner acts and a software
-passkey: a designated reader logs in with its passkey, and the session's scope
-is the only thing that says which team it reads."""
+passkey: a reader the owner named logs in with its bound passkey, and the
+session's scope is the only thing that says which team it reads.
+
+Each test appends its team's own events and reads those, so nothing here
+depends on what logs records of the reader's designation."""
 
 from __future__ import annotations
 
+import uuid
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
 from datetime import UTC, datetime, timedelta
@@ -29,12 +33,17 @@ from .fixtures import signed_event
 from .reader_world import (
     CONSOLE,
     LOGS,
+    OTHER_READER,
     World,
+    chained,
     console_headed,
-    enrolled_reader,
-    revocation,
-    slot,
+    held_reader,
+    reader_scope,
+    revoked_reader,
     world_fixture,  # noqa: F401
+)
+from .reader_world import (
+    TEAM_ID as TEAM,
 )
 
 OTHER_TEAM = "other:example.com"
@@ -80,20 +89,39 @@ async def login(world: World, human: httpx.AsyncClient, scope: str) -> httpx.Res
 
 
 async def other_team_event(world: World) -> None:
-    signing, signature = signed_event("core", team_id=OTHER_TEAM)
+    await team_event(world, "task.updated", team_id=OTHER_TEAM)
+
+
+async def team_event(world: World, mutation_type: str, *, team_id: str = TEAM, seq: int = 1) -> str:
+    """Append a core event of ``team_id`` to its chain: its event id."""
+    event_id = str(uuid.uuid4())
+    signing, signature = signed_event(
+        "core",
+        event_id=event_id,
+        seq=seq,
+        team_id=team_id,
+        payload={"mutation_type": mutation_type, "changes": ["status"]},
+    )
     await append(
         world.db,
         world.signer,
-        event=verify(signing, signature, team_id=OTHER_TEAM),
+        event=verify(signing, signature, team_id=team_id),
         signing_bytes=signing,
         signature=signature,
         key_evidence={"kid": "core", "did_key": "did:key:z", "admissions": []},
         received_at=datetime.now(UTC),
     )
+    return event_id
+
+
+async def team_chain_ids(world: World) -> list[str]:
+    """The event ids of the team's chain, newest first."""
+    return [entry["event_id"] for entry in reversed(await chained(world))]
 
 
 async def test_a_reader_reads_its_own_teams_events_in_a_passkey_session(world: World):
-    scope, _ = await enrolled_reader(world)
+    scope, _ = await held_reader(world)
+    await team_event(world, "task.updated")
     await other_team_event(world)
     async with origins(world) as (human, _):
         assert (await login(world, human, scope)).status_code == 200
@@ -101,13 +129,14 @@ async def test_a_reader_reads_its_own_teams_events_in_a_passkey_session(world: W
     assert response.status_code == 200
     assert console_headed(response)
     events = response.json()["events"]
-    assert [event["event_type"] for event in events] == ["credential.enrolled", "role.designated"]
+    assert [event["event_id"] for event in events] == await team_chain_ids(world)
+    assert "task.updated" in [event["event_type"] for event in events]
     assert {event["mediation"] for event in events} == {"server"}
     assert response.json()["next_cursor"] is None
 
 
 async def test_without_a_session_nothing_is_read(world: World):
-    await enrolled_reader(world)
+    await held_reader(world)
     async with origins(world) as (human, _):
         for path in ("/v1/events", "/v1/tail", "/v1/verify"):
             response = await human.get(path)
@@ -118,7 +147,7 @@ async def test_without_a_session_nothing_is_read(world: World):
 
 
 async def test_the_agent_origin_serves_no_reads(world: World):
-    scope, _ = await enrolled_reader(world)
+    scope, _ = await held_reader(world)
     async with origins(world) as (human, agent):
         await login(world, human, scope)
         agent.cookies = human.cookies
@@ -126,26 +155,31 @@ async def test_the_agent_origin_serves_no_reads(world: World):
             assert (await agent.get(path)).status_code == 404, path
 
 
-async def test_a_pending_slot_cannot_log_in(world: World):
-    scope = await slot(world)
+async def test_a_scope_no_one_holds_cannot_log_in(world: World):
+    await held_reader(world)
+    revoked, _ = await held_reader(world, OTHER_READER)
+    await revoked_reader(world, OTHER_READER)
     async with origins(world) as (human, _):
-        response = await human.post("/login/options", json={"scope": scope})
-    assert (response.status_code, response.json()) == (401, {"detail": "login_refused"})
+        for scope in (revoked, reader_scope("did:aw:5Zt1pAq7oS3uW4yB8cD2eF6gH9")):
+            response = await human.post("/login/options", json={"scope": scope})
+            assert (response.status_code, response.json()) == (
+                401,
+                {"detail": "login_refused"},
+            ), scope
 
 
 async def test_a_revoked_reader_s_session_ends(world: World):
-    scope, reader = await enrolled_reader(world)
+    scope, _ = await held_reader(world)
     async with origins(world) as (human, _):
         await login(world, human, scope)
         assert (await human.get("/v1/events")).status_code == 200
-        signing, signature = world.owner.sign("app-role.revoke", revocation(scope, reader))
-        await world.designations.revoke(signing=signing, signature=signature, scope=scope)
+        await revoked_reader(world)
         response = await human.get("/v1/events")
     assert (response.status_code, response.json()) == (401, {"detail": "console_session_required"})
 
 
 async def test_no_parameter_names_another_team(world: World):
-    scope, _ = await enrolled_reader(world)
+    scope, _ = await held_reader(world)
     await other_team_event(world)
     async with origins(world) as (human, _):
         await login(world, human, scope)
@@ -159,22 +193,27 @@ async def test_no_parameter_names_another_team(world: World):
 
 
 async def test_a_reader_filters_pages_and_tails(world: World):
-    scope, _ = await enrolled_reader(world)
+    scope, _ = await held_reader(world)
+    updated = await team_event(world, "task.updated", seq=1)
+    closed = await team_event(world, "task.closed", seq=2)
+    head_seq = len(await chained(world))
+    mutations = {"hook": "post-mutation-hook"}
     async with origins(world) as (human, _):
         await login(world, human, scope)
-        designated = await human.get("/v1/events", params={"event_type": "role.designated"})
-        assert [e["event_type"] for e in designated.json()["events"]] == ["role.designated"]
-        first = await human.get("/v1/events", params={"limit": "1"})
-        assert [e["event_type"] for e in first.json()["events"]] == ["credential.enrolled"]
+        only = await human.get("/v1/events", params={"event_type": "task.closed"})
+        assert [e["event_id"] for e in only.json()["events"]] == [closed]
+        first = await human.get("/v1/events", params={**mutations, "limit": "1"})
+        assert [e["event_id"] for e in first.json()["events"]] == [closed]
         rest = await human.get(
-            "/v1/events", params={"limit": "1", "cursor": first.json()["next_cursor"]}
+            "/v1/events",
+            params={**mutations, "limit": "1", "cursor": first.json()["next_cursor"]},
         )
-        assert [e["event_type"] for e in rest.json()["events"]] == ["role.designated"]
+        assert [e["event_id"] for e in rest.json()["events"]] == [updated]
         head = (await human.get("/v1/tail")).json()
-        assert head == {"events": [], "next_cursor": Cursor(1, 2).encode()}
+        assert head == {"events": [], "next_cursor": Cursor(1, head_seq).encode()}
         assert (await human.get("/v1/tail", params={"after": head["next_cursor"]})).json() == head
-        followed = await human.get("/v1/tail", params={"after": Cursor(1, 1).encode()})
-        assert [e["event_type"] for e in followed.json()["events"]] == ["credential.enrolled"]
+        followed = await human.get("/v1/tail", params={"after": Cursor(1, head_seq - 1).encode()})
+        assert [e["event_id"] for e in followed.json()["events"]] == [closed]
         assert followed.json()["next_cursor"] == head["next_cursor"]
         bad_queries: tuple[list[tuple[str, str | int | float | bool | None]], ...] = (
             [("limit", "-1")],
@@ -189,7 +228,8 @@ async def test_a_reader_filters_pages_and_tails(world: World):
 
 
 async def test_a_reader_verifies_its_chain_without_content(world: World):
-    scope, _ = await enrolled_reader(world)
+    scope, _ = await held_reader(world)
+    await team_event(world, "task.updated")
     async with origins(world) as (human, _):
         await login(world, human, scope)
         response = await human.get("/v1/verify")
@@ -198,12 +238,12 @@ async def test_a_reader_verifies_its_chain_without_content(world: World):
     assert (report["chain_epoch"], report["intact"]) == (1, True)
     assert report["delivery"]["scope"] == "observed_internal_only"
     assert report["conflicts"] == []
-    assert "role.designated" not in response.text
+    assert "task.updated" not in response.text
     assert "payload" not in response.text
 
 
 async def test_verify_refuses_an_epoch_outside_the_chain_s_range(world: World):
-    scope, _ = await enrolled_reader(world)
+    scope, _ = await held_reader(world)
     async with origins(world) as (human, _):
         await login(world, human, scope)
         for epoch in ("0", "-1", str(2**31), str(2**63)):
