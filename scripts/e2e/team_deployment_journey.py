@@ -23,7 +23,6 @@ No credential is printed. Each one is a file the service that owns it mounts.
 from __future__ import annotations
 
 import argparse
-import base64
 import ipaddress
 import json
 import os
@@ -36,8 +35,6 @@ from pathlib import Path
 
 import yaml
 from aweb_naapp_testing.network import make_certificates
-from awid.did import did_from_public_key
-from nacl.signing import SigningKey
 
 REPO = Path(__file__).resolve().parents[2]
 TEAM_DIR = REPO / "deploy" / "team"
@@ -237,8 +234,11 @@ class World:
         )
         return container
 
-    def aw(self, machine: str, *args: str) -> dict:
-        return first_json(run("docker", "exec", machine, "aw", "--json", *args, timeout=300))
+    def aw(self, machine: str, *args: str, home: str | None = None) -> dict:
+        """aw --json in a machine, as its own person or, with home, as another
+        identity whose home is there."""
+        where = ["-e", f"HOME={home}", "-w", f"{home}/identity"] if home else []
+        return first_json(run("docker", "exec", *where, machine, "aw", "--json", *args, timeout=300))
 
     def await_controller(self, machine: str, controller_did: str) -> None:
         for _ in range(30):
@@ -250,24 +250,21 @@ class World:
         raise SystemExit(f"FAILED: _awid.{DOMAIN} never named {controller_did}")
 
     def admit_service(self, machine: str, name: str) -> tuple[str, Path]:
-        """A new ordinary member key for one service, and its certificate as the
-        member itself fetches it."""
-        key = SigningKey.generate()
-        pem = (
-            "-----BEGIN ED25519 PRIVATE KEY-----\n"
-            + base64.b64encode(bytes(key)).decode()
-            + "\n-----END ED25519 PRIVATE KEY-----\n"
-        )
+        """One service as an ordinary member: aw creates its key in its own
+        identity, the team owner adds it, and the member fetches its
+        certificate with its own key. Returns the key file's text and the
+        certificate's path."""
+        home = f"/world/{name}-member"
+        (self.world / f"{name}-member" / "identity").mkdir(parents=True, mode=0o700)
+        requested = self.aw(machine, "id", "team", "request", "--create-local-key", "--team", TEAM_ID,
+                            "--name", f"{name}-service", home=home)
         added = self.aw(machine, "id", "team", "add-member", "--team", TEAM, "--namespace", DOMAIN,
-                        "--did", did_from_public_key(bytes(key.verify_key)), "--name", f"{name}-service", "--global")
-        home = self.world / f"{name}-member"
-        home.mkdir(mode=0o700)
-        (home / "signing.key").write_text(pem)
-        (home / "signing.key").chmod(0o600)
-        fetched = self.aw(machine, "--identity-home", f"/world/{name}-member", "id", "team", "fetch-cert",
-                          "--namespace", DOMAIN, "--team", TEAM, "--cert-id", added["certificate_id"],
-                          "--registry", origin("registry"))
-        return pem, home / fetched["cert_path"]
+                        "--did", requested["did_key"], "--name", f"{name}-service", "--global")
+        fetched = self.aw(machine, "id", "team", "fetch-cert", "--namespace", DOMAIN, "--team", TEAM,
+                          "--cert-id", added["certificate_id"], "--registry", origin("registry"), home=home)
+        # Both are in the identity's .aw: the certificate path aw reports is relative to it.
+        keys = self.world / f"{name}-member" / "identity" / ".aw"
+        return (keys / "signing.key").read_text(), keys / fetched["cert_path"]
 
     def write_service_files(self, machine: str) -> None:
         pem, _ = self.admit_service(machine, "aweb")
