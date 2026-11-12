@@ -1,5 +1,6 @@
 """Unit controls for evidence/cleanup ordering; these never contact Docker."""
 import json
+import os
 from pathlib import Path
 import subprocess
 import sys
@@ -11,6 +12,13 @@ import docker as driver
 
 
 class Evidence(unittest.TestCase):
+    def setUp(self):
+        # The fake receipt models lane limits, regardless of the enclosing
+        # candidate gate's release/VM profile. No live Docker is involved.
+        environment = patch.dict(os.environ, AWEB_GATE_PROFILE='lane')
+        environment.start()
+        self.addCleanup(environment.stop)
+
     def run_complete_driver(self, evidence, failure=None, suite_status=0, copy_status=0, read_status=0):
         calls, configs = [], {}
         token = 'aw-egress-' + 'a' * 12
