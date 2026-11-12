@@ -23,6 +23,9 @@ def test_each_input_becomes_the_setting_its_service_reads_with_defaults_filled()
         "AWEB_BIND_ADDRESS": "127.0.0.1",
         "AWEB_PORT": "8000",
         "AWEB_SECRETS": "aweb",
+        # A team deployment's members all hold registered certificates: an
+        # unregistered one is one the registry could never revoke.
+        "AWEB_REQUIRE_REGISTERED_CERTIFICATES": "true",
         "AWID_REGISTRY_URL": "https://api.awid.ai",
         "COMPOSE_FILE": "compose.yaml",
         "COMPOSE_PROFILES": "postgres",

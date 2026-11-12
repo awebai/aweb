@@ -133,6 +133,10 @@ def render(config: object) -> dict[str, str]:
     # Secrets holds its custody key as a mounted file unless the operator names a KMS key.
     if "secrets" in config and "kmsKeyId" not in config["secrets"]:
         out["SECRETS_CUSTODY_KEY_FILE"] = "/run/secrets/secrets/custody-key"
+    # Every member of a team deployment holds a certificate registered through
+    # aw id team add-member, so aweb refuses one the registry does not hold:
+    # an unregistered certificate is one no revocation could ever name.
+    out["AWEB_REQUIRE_REGISTERED_CERTIFICATES"] = "true"
     # aweb fetches app manifests from internal addresses only inside the services range.
     if "appInternalOrigins" in config["aweb"]:
         out["AWEB_APP_INTERNAL_CIDR"] = config["network"]["servicesCidr"]

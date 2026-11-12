@@ -18,6 +18,8 @@ services:
       AWEB_LOG_JSON: ${AWEB_LOG_JSON:-true}
       AWID_REGISTRY_URL: ${AWID_REGISTRY_URL:-https://api.awid.ai}
       AWID_MEMBER_KEYS_FILE: /run/secrets/aweb/member-keys.json
+      # Passed only when the env file has it: a team deployment's does.
+      AWEB_REQUIRE_REGISTERED_CERTIFICATES:
       # The apps it installs from internal addresses, and their one network:
       # passed together from the env file, or not at all.
       AWEB_APP_INTERNAL_ORIGINS:
