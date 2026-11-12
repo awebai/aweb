@@ -47,11 +47,12 @@ def test_registry_url_local_detection_is_rejected_case_insensitively(monkeypatch
         get_awid_registry_url()
 
 
-def test_aweb_registry_client_rejects_missing_service_token(monkeypatch):
+def test_aweb_registry_client_rejects_missing_credentials(monkeypatch):
     monkeypatch.delenv("AWID_SERVICE_TOKEN", raising=False)
+    monkeypatch.delenv("AWID_MEMBER_KEYS_FILE", raising=False)
     monkeypatch.setenv("AWEB_DATABASE_URL", "postgresql://unused/test")
 
-    with pytest.raises(ValueError, match="AWID_SERVICE_TOKEN is required") as caught:
+    with pytest.raises(ValueError, match="AWID_SERVICE_TOKEN or AWID_MEMBER_KEYS_FILE is required") as caught:
         _build_awid_registry_client(create_app(), redis=None)
 
     assert "openssl rand -hex 32" in str(caught.value)
@@ -59,11 +60,10 @@ def test_aweb_registry_client_rejects_missing_service_token(monkeypatch):
 
 
 @pytest.mark.parametrize("value", ["", "   "])
-def test_aweb_registry_client_rejects_empty_service_token(monkeypatch, value):
+def test_empty_service_token_does_not_supply_credentials(monkeypatch, value):
     monkeypatch.setenv("AWID_SERVICE_TOKEN", value)
 
-    with pytest.raises(ValueError, match="AWID_SERVICE_TOKEN is required"):
-        get_awid_service_token()
+    assert get_awid_service_token() is None
 
 
 @pytest.mark.asyncio

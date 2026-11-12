@@ -10,8 +10,9 @@ from pathlib import Path
 
 import httpx
 
+from awid.did import did_key_from_signing_key
 from awid.dns_verify import verify_domain
-from awid.registry import RegistryClient, _did_key_from_signing_key
+from awid.registry import RegistryClient
 
 DOMAIN = "delegated.alpha.example.com"
 PARENT = "alpha.example.com"
@@ -31,8 +32,8 @@ async def main():
     assert authority.inherited and authority.dns_name == "_awid." + PARENT
     parent_seed = controller_seed("/tmp/journey-parent-controller.key")
     child_seed = controller_seed("/tmp/journey-child-controller.key")
-    parent_key = _did_key_from_signing_key(parent_seed)
-    child_key = _did_key_from_signing_key(child_seed)
+    parent_key = did_key_from_signing_key(parent_seed)
+    child_key = did_key_from_signing_key(child_seed)
     assert authority.controller_did == parent_key and child_key != parent_key
     # A discovered ancestor alone cannot establish an unregistered child.
     async with httpx.AsyncClient() as http:

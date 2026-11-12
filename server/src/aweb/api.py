@@ -13,6 +13,7 @@ from redis.asyncio import Redis
 from redis.asyncio import from_url as async_redis_from_url
 from starlette.routing import Mount
 
+from awid.dns_verify import DomainVerifier
 from awid.registry import CachedRegistryClient, RegistryClient, RegistryError
 from awid.federation_errors import FederationAuthorityError
 from .config import get_public_origin, get_settings
@@ -233,13 +234,22 @@ async def _shutdown_awid_registry_client(app: FastAPI) -> None:
 
 
 def _build_awid_registry_client(
-    app: FastAPI, redis: Redis | None, transport: httpx.AsyncBaseTransport | None = None
+    app: FastAPI,
+    redis: Redis | None,
+    transport: httpx.AsyncBaseTransport | None = None,
+    domain_verifier: DomainVerifier | None = None,
 ) -> RegistryClient:
     settings = get_settings()
     registry_url = settings.awid_registry_url
     service_token = settings.awid_service_token
     client_class = CachedRegistryClient if redis is not None else RegistryClient
-    client_kwargs = {"registry_url": registry_url, "service_token": service_token, "transport": transport}
+    client_kwargs = {
+        "registry_url": registry_url,
+        "service_token": service_token,
+        "member_signing_keys": settings.awid_member_signing_keys,
+        "transport": transport,
+        "domain_verifier": domain_verifier,
+    }
     if redis is not None:
         return client_class(redis_client=redis, **client_kwargs)
     return client_class(**client_kwargs)
@@ -350,7 +360,10 @@ def _make_standalone_lifespan():
 
 
 def _make_library_lifespan(
-    db_infra: DatabaseInfra, redis: Redis, awid_transport: httpx.AsyncBaseTransport | None
+    db_infra: DatabaseInfra,
+    redis: Redis,
+    awid_transport: httpx.AsyncBaseTransport | None,
+    domain_verifier: DomainVerifier | None,
 ):
     """Create lifespan for library mode (uses externally provided connections)."""
 
@@ -366,7 +379,9 @@ def _make_library_lifespan(
         app.state.db = db_infra
         app.state.rate_limiter = build_rate_limiter(redis=redis)
         app.state.on_mutation = create_mutation_handler(redis, db_infra)
-        app.state.awid_registry_client = _build_awid_registry_client(app, redis, awid_transport)
+        app.state.awid_registry_client = _build_awid_registry_client(
+            app, redis, awid_transport, domain_verifier
+        )
         app.state.federation_authority = build_federation_authority_activation(
             db_infra,
             public_origin=app.state.public_origin,
@@ -403,6 +418,7 @@ def create_app(
     attachment_backend=None,
     public_origin: str | None = None,
     awid_transport: httpx.AsyncBaseTransport | None = None,
+    domain_verifier: DomainVerifier | None = None,
     host_runs_outbox_recovery: bool = False,
 ) -> FastAPI:
     """Create the aweb coordination FastAPI application.
@@ -417,6 +433,9 @@ def create_app(
         awid_transport: The transport the AWID registry client uses (library
                         mode only), such as a host's in-process AWID. The
                         startup health check and every AWID call go through it.
+        domain_verifier: The `_awid` DNS lookup the AWID registry client uses
+                        for namespace authority (library mode only), such as
+                        a host's in-process AWID's own; real DNS otherwise.
         host_runs_outbox_recovery: The host runs aweb.outbox_recovery's
                         recover_outboxes on its own scheduler. Otherwise an app
                         that receives no lifespan (a mount) starts the recovery
@@ -457,6 +476,8 @@ def create_app(
     library_mode = db_infra is not None
     if awid_transport is not None and not library_mode:
         raise ValueError("awid_transport is available in library mode only")
+    if domain_verifier is not None and not library_mode:
+        raise ValueError("domain_verifier is available in library mode only")
 
     # Validate db_infra is initialized in library mode
     if library_mode:
@@ -467,7 +488,7 @@ def create_app(
                 "Call 'await db_infra.initialize()' before creating the app."
             )
         assert redis is not None  # Required when db_infra is provided
-        lifespan = _make_library_lifespan(db_infra, redis, awid_transport)
+        lifespan = _make_library_lifespan(db_infra, redis, awid_transport, domain_verifier)
     else:
         lifespan = _make_standalone_lifespan()
 

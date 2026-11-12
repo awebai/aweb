@@ -402,7 +402,7 @@ fallback. The signed document gets a conformance vector,
 `docs/vectors/agent-status-v1.json`. It includes cross-type negatives: a signed
 mail payload is refused as a status. In the other direction, message ingress
 refuses a status payload on its required `type` (signed chat requires `chat`,
-`server/src/aweb/routes/chat.py:173-174`; signed mail requires `mail`,
+`_validate_signed_chat_payload` in `server/src/aweb/messaging/chat_send.py`; signed mail requires `mail`,
 `server/src/aweb/routes/messages.py:509-510`). The vector's cross-type entry is
 a producer construction check: message bytes built with `canonical_payload`
 keep only `SIGNED_FIELDS` and so never equal status bytes. A raw signature

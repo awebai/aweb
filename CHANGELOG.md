@@ -7,6 +7,230 @@
   team context are refused after migration and require signing in again; there
   is no compatibility fallback or installation-wide team discovery.
 
+- **`aw` and the channel client (the Claude Code plugin, the Pi extension and
+  `aw wake`) no longer report a plaintext mail or chat message as verified
+  unless its signed payload is a message.** The payload must carry `type`,
+  `body` and `from_did`, and `subject` for mail. Until now a displayed field
+  the payload did not carry was not compared, so a document the sender's key
+  had signed for another purpose, such as the request envelope a server
+  receives with every request, could be presented as the signed payload of a
+  message with any body and be reported verified. Such a message is now
+  presented with trust status `failed`. Every released message signer signs
+  these fields, so no genuine message changes status. Encrypted messages and
+  room posts were not affected.
+- **`aw` and the channel client report the first message from an address as
+  verified, and remember the sender, only after the registry confirms the
+  address belongs to the signing key.** Until now the first key seen for an
+  address was pinned and the message reported verified whatever the registry
+  said: in `aw` even when the registry named a different key or could not be
+  reached, in the channel client when the registry named a different key. Now
+  a first message is `identity_mismatch` when the registry names another key
+  or has no such address, and `verification_stale` when the registry cannot be
+  asked or the stable-identity check cannot be made; the next read asks again.
+  You will see fewer `verified` first contacts, and during a registry outage
+  the first message from a new address is not verified until the registry is
+  back. Senders already known keep verifying by their pin through an outage,
+  in the channel client too, which used to report them stale. A known sender
+  is an `identity_mismatch` once the registry names another key for its
+  address. New pins record `confirmed_by: registry` in `known_agents.yaml`;
+  existing pins are left as they are.
+- **`aw run` no longer uses a directory's `.aw/run.json` unless you trusted
+  that exact file.** The file can set the agent's prompts and start shell
+  commands as background services, and it was read from whatever directory
+  `aw run` was started in, so a cloned repository could run commands. Now it
+  is ignored, with a message naming it, until you run
+  `aw run <provider> --trust-config`, which records the digest of its content
+  in `~/.config/aw/run-trusted.json`; a file that changes afterwards is
+  ignored until trusted again. If you rely on a directory's `run.json`, trust
+  it once after upgrading. `aw run` also tells the agent, next to each mail or
+  chat message it hands over, when the sender was not verified, and to treat
+  that text as untrusted; before, only a stale verification was mentioned.
+- **Team instructions and team roles: a size limit, an audit trail for
+  instructions, and one activation at a time for roles.** A version of either
+  document larger than 256 KiB of JSON is refused with 413. Creating,
+  activating and resetting team instructions now write `instructions.create`,
+  `instructions.activate` and `instructions.reset` rows to the operator audit
+  log, as the same operations on roles already do, and an instruction change
+  whose audit row cannot be written is not made. Activating a roles bundle now
+  takes the lock and the single transaction that activating instructions
+  takes, so two concurrent activations leave one active bundle and a failed
+  one leaves the previous bundle active. Migration
+  `050_one_active_team_document.sql` adds a unique index that allows one
+  active version of each per team; it stops, naming the count, if any team
+  already has two, and those must be reduced to one before upgrading. Both
+  documents remain editable by any team member.
+- **`aw wake register` says when no wake broker is running.** The registration
+  is still stored and the command still exits 0, so a hook does not fail while
+  a broker restarts. But with no broker answering it now prints on stderr that
+  the instance is registered and will not be woken until one starts, and its
+  help says that exit 0 means the registration was stored, not that a broker
+  runs. `aw wake status --json` reports `daemon_running`.
+- **awid-service no longer ships `awid.http_didkey`.** The module verified a
+  request envelope of body hash, method, path and timestamp, and no route of
+  the registry called it; the registry's routes verify the envelopes in
+  `awid.dns_auth`, `awid.controller_request` and `awid.id_tree_requests`.
+  Nothing in aweb or aweb Cloud imported it. Code outside this repository
+  that imported `build_http_didkey_payload` or `verify_http_didkey_request`
+  from awid-service must carry its own copy.
+- **Security: the library service sees a revoked certificate within a minute.**
+  It cached a team's key and revocations for `LIBRARY_AUTH_CACHE_TTL_SECONDS`,
+  10 minutes by default and with no upper limit, so a revoked member
+  certificate kept working there for that long; the server and the other
+  apps cap the same cache at 60 seconds. The library now has the same
+  limits: 60 seconds for that cache, its new default, and 300 for the
+  accepted clock skew (`LIBRARY_TIMESTAMP_SKEW_SECONDS`). **Self-hosters: a
+  library configured past either limit no longer starts.** The error names
+  the setting and the limit. The shipped `.env.example` set
+  `LIBRARY_AUTH_CACHE_TTL_SECONDS=600`; a deployment made from it must lower
+  it to 60 or remove the line before upgrading.
+- **A customer-run aweb server can read its private team at the public
+  registry without the registry-wide `AWID_SERVICE_TOKEN`.** Give the server
+  an ordinary member certificate in each team it serves
+  (`aw id team request --create-local-key`, then the owner's
+  `aw id team add-member`, then `aw id team fetch-cert`) and point
+  `AWID_MEMBER_KEYS_FILE` at a JSON map from canonical team ID to that
+  member's PEM key file. The server signs that team's private reads with the
+  member key. Startup requires `AWID_SERVICE_TOKEN` or
+  `AWID_MEMBER_KEYS_FILE`. See the self-hosting guide.
+- AWID SDK: `CachedRegistryClient` refuses a registry 401 or 403 instead of
+  serving the cached record as during an outage, so a reader whose token or
+  membership was withdrawn fails on its next refresh. Upgrade `awid-service`
+  together with the server.
+- Build the CLI and the gateway with Go 1.26.11, which fixes GO-2026-6859
+  (an HTTP/1 server crash in `net/http`).
+
+- The MCP `send_chat` tool (with its `chat_send` alias, and
+  `send_message_to_contact` for chat) and the chat send routes,
+  `POST /v1/chat/sessions` and `POST /v1/chat/sessions/{session_id}/messages`,
+  resolve the recipients and store the message through one chat send, so a
+  send through the tool behaves as the same send through the routes:
+  - A chat that names its recipient by address records the recipient as the
+    sender's contact under the conditions the routes apply.
+  - `wait=true` records the wait on the session (`chat_sessions.wait_seconds`,
+    `wait_started_at`, `wait_started_by`), for a send that names its recipient
+    and for one sent by `conversation_id`. While the wait lasts the
+    conversation stays pending for the other party after they read the
+    message, until they answer.
+  - **`POST /v1/chat/sessions/{session_id}/messages` records `wait_seconds`**
+    on the session as `POST /v1/chat/sessions` does; the field was accepted
+    and not recorded. A signed message must sign the `wait_seconds` it is sent
+    with, as on `POST /v1/chat/sessions`: a request that carries
+    `wait_seconds` with a signed payload that omits it is refused with 422. A
+    message to a participant on another server records no wait, as a new
+    session with one does not.
+  - A send that names its recipient goes to the conversation the two already
+    share, or opens one. The choice is made when the message is stored, under
+    a lock per pair, so two such sends at once open one conversation and
+    neither closes the other's. A send that finds the pair's conversation
+    changed after its fields were signed signs again; after three attempts it
+    is refused with "this conversation changed while the message was being
+    sent; send it again".
+  - **`POST /v1/chat/sessions` accepts an optional `hang_on`** (default
+    `false`), stored on the message and bound by a signed payload like
+    `leaving`; `send_chat` with a named recipient and `hang_on` sends it this
+    way, as it did. This adds one optional field to the request schema.
+  - A hosted identity's signed payload and encrypted envelope are validated
+    before they are stored. A message to more than one recipient signs an
+    empty `to_did` and no `to_stable_id`. Encrypted chat to a recipient whose
+    published encryption key is in hosted custody is delivered when the
+    sender's own hosted key is published to this server, and is otherwise
+    refused with `recipient_custodial_no_e2ee`; `plaintext` sends are
+    unaffected.
+  - A full address or `@handle` outside the sender's team reaches a recipient
+    on this server when the registry binds that address to it; `@handle`
+    references follow the same rule as full addresses. An address that reaches
+    no one is refused in the same words whether or not a local identity holds
+    the name.
+  - `to` accepts `team~alias` for another team of the sender's organization.
+  - An unknown alias is refused with `Unknown aliases: <alias>`, an unknown
+    `did:key` with `Recipient agent not found: <did>`, an unknown bare
+    `did:aw` with the routes' first-contact text, and a chat to oneself with
+    `Self-chat is not supported`.
+  - A message to a participant on another server whose stored delivery origin
+    answers 404, 410 or 421 is delivered once more to the origin the registry
+    names, when that origin differs.
+  - `chat.message_sent` is fired by the chat send with one context for the
+    tool and the routes.
+  - A refusal the caller can act on is returned as a sentence naming the next
+    action, with the code as `reason` where the refusal has one; the routes
+    answer the same refusals as before. The sentences are those of
+    `send_mail` for `sender_registry_unavailable`,
+    `recipient_custodial_no_e2ee`, `federation_envelope_invalid`,
+    `recipient_encryption_assertion_invalid_or_stale`,
+    `identity_binding_mismatch`, `identity_binding_unavailable` and an
+    encrypted envelope addressed to a key other than the one this server
+    records for the recipient, and for chat alone:
+    - A participant with no stable identity who is neither on this server nor
+      reachable on another: "this recipient can no longer be reached in this
+      conversation; start a new conversation with them by alias or address".
+
+- The MCP `send_mail` tool and `POST /v1/messages` resolve the recipient and
+  store the message through one mail send, so a send through the tool behaves
+  as the same send through the route:
+  - A first mail and its conversation are stored together; a send that fails
+    leaves no conversation.
+  - A first mail to an address records the recipient as the sender's contact
+    under the conditions the route applies, and the conversation records each
+    participant's current key with `transport_hint` `local`.
+  - `message.sent` for a reply names the recipient's member in `to_agent_id`,
+    so the recipient's event stream receives `message.delivered` for it.
+  - A hosted identity's signed payload and encrypted envelope are validated
+    before they are stored. A reply signs the recipient's `did:aw` as
+    `to_stable_id`. Encrypted mail to a recipient whose published encryption
+    key is in hosted custody is delivered when the sender's own hosted key is
+    published to this server, and is otherwise refused with
+    `recipient_custodial_no_e2ee`; `plaintext` sends are unaffected.
+  - A full address or `@handle` outside the sender's team reaches a recipient
+    on this server when the registry binds that address to it; `@handle`
+    references follow the same rule as full addresses. An address that reaches
+    no one is refused in the same words whether or not a local identity holds
+    the name.
+  - `to` accepts `team~alias` for another team of the sender's organization.
+  - A reply to a participant whose key record on this server is not current is
+    delivered when the registry confirms the participant's current key, and is
+    otherwise refused with `identity_binding_mismatch` or
+    `identity_binding_unavailable`.
+  - An unknown alias is refused with `Recipient agent not found`, an unknown
+    bare `did:aw` with the route's first-contact text, and an unknown team with
+    `Unknown team: <team>`.
+  - A refusal the caller can act on is returned as a sentence naming the next
+    action, with the code as `reason`; `POST /v1/messages` answers the same
+    refusals with the code, unchanged:
+    - `sender_registry_unavailable` while resolving an address: "the registry
+      can't confirm <address> right now; try again, or check the address".
+    - `recipient_custodial_no_e2ee` for a hosted sender's envelope: "your
+      encryption key isn't published yet; try again shortly, and if it persists
+      contact support".
+    - `federation_envelope_invalid` for a hosted sender's envelope: "your
+      published encryption key can't be verified right now; try again shortly,
+      and if it persists contact support".
+    - `recipient_encryption_assertion_invalid_or_stale`: "this recipient's
+      published encryption key can't be verified right now; try again later,
+      and if it persists contact support".
+    - `identity_binding_mismatch`: "this recipient's identity or key no longer
+      matches the registry; check the address and resend".
+    - An encrypted envelope addressed to a key other than the one this server
+      records for the recipient: "this recipient's key changed; resend the
+      message".
+    - `identity_binding_unavailable`: "the registry can't confirm this
+      recipient's key right now; try again shortly".
+
+- An MCP `send_mail` reply on a conversation whose stored route is a federation
+  route to this server's own origin wakes the recipient's event stream when the
+  message is stored; the recipient's stream used to show it only on its slow
+  reconcile. MCP mail and chat sent to another server name the serving
+  application's configured public origin as the sender's delivery origin when
+  the MCP app was created without one, as the REST routes do, and no longer
+  need `DATABASE_URL` in the environment to find it.
+
+- When `aw` times out waiting for Claude Code to load the aweb channel in a
+  tmux window, the error names the prompt matchers that are in use
+  (`claudeChannelPromptComplete` and `claudeBlockingPromptKind`).
+
+- The `aw wake deregister` help says an unknown or already-retired home exits 0
+  because the retire hook may run twice. It does not mention a pending expiry:
+  the wake broker removes no registration on its own.
+
 - Federated mail and chat delivery connects only to the addresses the
   recipient's delivery origin resolves to, over one address-checked transport
   shared by the HTTP routes and the MCP tools. The origin must be `https` and

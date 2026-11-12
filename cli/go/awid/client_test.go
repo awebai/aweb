@@ -4195,6 +4195,7 @@ func TestInboxVerifiesSignedMessages(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	c.SetResolver(registryNaming{did: did})
 	resp, err := c.Inbox(context.Background(), InboxParams{})
 	if err != nil {
 		t.Fatal(err)
@@ -4264,6 +4265,7 @@ func TestInboxSignedPayloadOverridesStableDIDForVerification(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	c.SetResolver(registryNaming{did: did, stableID: stableID})
 	resp, err := c.Inbox(context.Background(), InboxParams{})
 	if err != nil {
 		t.Fatal(err)
@@ -4402,6 +4404,7 @@ func TestChatHistoryVerifiesSignedMessages(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	c.SetResolver(registryNaming{did: did})
 	resp, err := c.ChatHistory(context.Background(), ChatHistoryParams{SessionID: "sess-1"})
 	if err != nil {
 		t.Fatal(err)
@@ -4471,6 +4474,7 @@ func TestChatHistorySignedPayloadOverridesStableDIDForVerification(t *testing.T)
 	if err != nil {
 		t.Fatal(err)
 	}
+	c.SetResolver(registryNaming{did: did, stableID: stableID})
 	resp, err := c.ChatHistory(context.Background(), ChatHistoryParams{SessionID: "sess-1"})
 	if err != nil {
 		t.Fatal(err)
@@ -5227,6 +5231,7 @@ func TestInboxSenderViewVerifiesOutgoingMessageWithoutRecipientSelfCheck(t *test
 	if err != nil {
 		t.Fatal(err)
 	}
+	client.SetResolver(registryNaming{did: senderDID})
 	response, err := client.Inbox(context.Background(), InboxParams{})
 	if err != nil {
 		t.Fatal(err)
@@ -5407,6 +5412,7 @@ func TestSenderConversationSkipsRecipientSelfBindingLikeExactMessage(t *testing.
 	if err != nil {
 		t.Fatal(err)
 	}
+	client.SetResolver(registryNaming{did: residentDID, stableID: stableID})
 	client.SetGrantSubject("backend:example.com", stableID, residentDID, env.From, "agent")
 	exact, err := client.Message(context.Background(), messageID)
 	if err != nil {
@@ -5487,13 +5493,17 @@ func TestExactMessageRotatedStableSenderSkipsRecipientSelfBinding(t *testing.T) 
 	if err != nil {
 		t.Fatal(err)
 	}
+	client.SetResolver(registryNaming{did: currentSenderDID, stableID: stableID})
 	client.SetStableID(stableID)
 	response, err := client.Message(context.Background(), messageID)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if got := response.Messages[0].VerificationStatus; got != Verified {
-		t.Fatalf("rotated sender exact-read status=%q, want %q", got, Verified)
+	// The registry names the identity's current key, not the retired one that
+	// signed this message, and nothing pinned the sender while that key was
+	// current.
+	if got := response.Messages[0].VerificationStatus; got != IdentityMismatch {
+		t.Fatalf("rotated sender exact-read status=%q, want %q", got, IdentityMismatch)
 	}
 	if got := response.Messages[0].FromDID; got != oldSenderDID {
 		t.Fatalf("signed historical from_did=%q, want %q", got, oldSenderDID)
@@ -5677,6 +5687,7 @@ func TestInboxStableRecipientBindingSurvivesLocalKeyRotation(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	c.SetResolver(registryNaming{did: senderDID})
 	c.SetStableID(receiverStableID)
 
 	resp, err := c.Inbox(context.Background(), InboxParams{})
@@ -5740,6 +5751,7 @@ func TestInboxTOFUPinFirstContact(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	c.SetResolver(registryNaming{did: senderDID})
 	ps := NewPinStore()
 	c.SetPinStore(ps, "")
 
@@ -6382,6 +6394,7 @@ func TestInboxUsesFromAddressForVerification(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	c.SetResolver(registryNaming{did: did})
 	resp, err := c.Inbox(context.Background(), InboxParams{})
 	if err != nil {
 		t.Fatal(err)
@@ -6439,6 +6452,7 @@ func TestChatHistoryUsesFromAddressForVerification(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	c.SetResolver(registryNaming{did: did})
 	resp, err := c.ChatHistory(context.Background(), ChatHistoryParams{SessionID: "sess-1"})
 	if err != nil {
 		t.Fatal(err)
@@ -6777,13 +6791,17 @@ func TestCheckTOFUPinResolverFailureNotCached(t *testing.T) {
 		},
 	})
 
-	// First call: resolver fails → status remains verified, and the failure is not cached.
+	// First call: the resolver fails, so the address is not confirmed and
+	// nothing is pinned. The failure is not cached.
 	resp, err := c.Inbox(context.Background(), InboxParams{})
 	if err != nil {
 		t.Fatal(err)
 	}
-	if resp.Messages[0].VerificationStatus != Verified {
-		t.Fatalf("first call: status=%q, want verified", resp.Messages[0].VerificationStatus)
+	if resp.Messages[0].VerificationStatus != VerificationStale {
+		t.Fatalf("first call: status=%q, want %q", resp.Messages[0].VerificationStatus, VerificationStale)
+	}
+	if len(ps.Pins) != 0 {
+		t.Fatalf("a pin was written while the address could not be resolved: %+v", ps.Pins)
 	}
 	if resolveCount != 1 {
 		t.Fatalf("resolveCount=%d after first call", resolveCount)
@@ -6999,6 +7017,7 @@ func TestCheckTOFUPinUpgradeOnFirstSight(t *testing.T) {
 	}
 	ps := NewPinStore()
 	c.SetPinStore(ps, "")
+	c.SetResolver(registryNaming{did: senderDID, stableID: stableID})
 
 	// Step 1: First message without stable_id → pin by did:key (Phase-1).
 	status := c.CheckTOFUPin(context.Background(), Verified, "myco/sender", senderDID, "", nil, nil)
@@ -7067,14 +7086,11 @@ func TestCheckTOFUPinAcceptsValidReplacementAnnouncement(t *testing.T) {
 		},
 	})
 
-	// Pin the old DID
-	status := c.CheckTOFUPin(context.Background(), Verified, address, oldDID, "", nil, nil)
-	if status != Verified {
-		t.Fatalf("initial pin: status=%q, want verified", status)
-	}
+	// The old DID is the one pinned at the address.
+	ps.StorePin(oldDID, address, "", "")
 
 	// Now send a message from the new DID with a valid replacement announcement
-	status = c.CheckTOFUPin(context.Background(), Verified, address, newDID, "", nil, repl)
+	status := c.CheckTOFUPin(context.Background(), Verified, address, newDID, "", nil, repl)
 	if status != Verified {
 		t.Fatalf("replacement: status=%q, want verified (accepted via controller authorization)", status)
 	}
@@ -7126,8 +7142,8 @@ func TestCheckTOFUPinRejectsReplacementWrongController(t *testing.T) {
 		},
 	})
 
-	// Pin the old DID
-	c.CheckTOFUPin(context.Background(), Verified, address, oldDID, "", nil, nil)
+	// The old DID is the one pinned at the address.
+	ps.StorePin(oldDID, address, "", "")
 
 	// Replacement with wrong controller should be rejected
 	status := c.CheckTOFUPin(context.Background(), Verified, address, newDID, "", nil, repl)
@@ -7169,7 +7185,7 @@ func TestCheckTOFUPinRejectsReplacementBadSignature(t *testing.T) {
 		},
 	})
 
-	c.CheckTOFUPin(context.Background(), Verified, address, oldDID, "", nil, nil)
+	ps.StorePin(oldDID, address, "", "")
 
 	status := c.CheckTOFUPin(context.Background(), Verified, address, newDID, "", nil, repl)
 	if status != IdentityMismatch {
@@ -7215,7 +7231,7 @@ func TestCheckTOFUPinRejectsReplacementStaleTimestamp(t *testing.T) {
 		},
 	})
 
-	c.CheckTOFUPin(context.Background(), Verified, address, oldDID, "", nil, nil)
+	ps.StorePin(oldDID, address, "", "")
 
 	status := c.CheckTOFUPin(context.Background(), Verified, address, newDID, "", nil, repl)
 	if status != IdentityMismatch {

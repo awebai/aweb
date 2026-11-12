@@ -130,7 +130,7 @@ checks the stored raw `signed_payload` (`server/src/aweb/messaging/verification.
 What separates them is a required, distinct `type` at every ingress:
 
 - Message ingress refuses activity bytes. Signed chat requires `type` `chat`
-  (`server/src/aweb/routes/chat.py:173-174`), and signed mail requires `mail`
+  (`_validate_signed_chat_payload` in `server/src/aweb/messaging/chat_send.py`), and signed mail requires `mail`
   (`server/src/aweb/routes/messages.py:509-510`). Both refuse with 422.
 - Activity ingress refuses message bytes. `type` must be `agent_activity`, and
   it is checked before any other field (vector case

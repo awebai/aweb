@@ -152,7 +152,10 @@ var wakeRegisterCmd = &cobra.Command{
 		"the instance present; pending errors are tolerated until the 30-minute expiry.\n\n" +
 		"Exit 0 means the registration was written durably: over the daemon's socket\n" +
 		"when it is up, and straight to the state directory when it is not, so a hook\n" +
-		"never fails because the broker is restarting. A non-zero exit means refused —\n" +
+		"never fails because the broker is restarting. It does not mean a broker is\n" +
+		"running: when none answered, register says so on stderr, and the instance is\n" +
+		"not woken until one starts. aw wake status reports whether a broker runs\n" +
+		"(daemon_running with --json). A non-zero exit means refused —\n" +
 		"a missing --delivery session, a relative path, or an unreadable identity home.\n\n" +
 		"--identity-home here names the instance's own identity home, and shadows the\n" +
 		"root flag of the same name for this command. Give the principal's home before\n" +
@@ -193,13 +196,20 @@ var wakeRegisterCmd = &cobra.Command{
 		if err != nil {
 			return err
 		}
+		brokerDown := false
 		_, err = wakeCallOrFallback(store, wake.ControlRequest{Op: wake.OpRegister, Registration: &reg}, func() error {
+			brokerDown = true
 			return wake.RegisterInStore(store, reg)
 		})
 		if err != nil {
 			return err
 		}
 		fmt.Fprintf(cmd.OutOrStdout(), "registered %s (identity home %s)\n", reg.Home, reg.IdentityHome)
+		if brokerDown {
+			fmt.Fprintf(cmd.ErrOrStderr(),
+				"aw wake: no wake broker is running for %s; %s is registered and will not be woken until one starts (aw wake run).\n",
+				store.Dir(), reg.Home)
+		}
 		return nil
 	},
 }
@@ -248,8 +258,7 @@ var wakeDeregisterCmd = &cobra.Command{
 		"instance and never removes a registration on its own; an instance it observed\n" +
 		"stopped is marked inactive and waits here.\n\n" +
 		"An unknown or already-retired home exits 0 with a note: the hook may run twice,\n" +
-		"or after the pending expiry already dropped the registration, and neither is a\n" +
-		"failed retirement.\n\n" +
+		"and that is not a failed retirement.\n\n" +
 		"For observed managed-worker completion, use --require-managed-stop with\n" +
 		"--expect-registration FILE containing managed_receiver from live wake status.\n" +
 		"This strict mode requires an eligible captured child and a supporting daemon,\n" +
@@ -523,13 +532,6 @@ func wakeLogger() func(string, ...any) {
 	return func(format string, args ...any) {
 		fmt.Fprintf(os.Stderr, "%s wake: %s\n", time.Now().UTC().Format(time.RFC3339), fmt.Sprintf(format, args...))
 	}
-}
-
-func millis(v int) time.Duration {
-	if v <= 0 {
-		return 0
-	}
-	return time.Duration(v) * time.Millisecond
 }
 
 func formatWakeStatus(v any) string {

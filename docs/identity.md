@@ -279,8 +279,8 @@ To create a **new** self-custodial global member in an explicitly chosen hosted
 team, select a fresh credential root and a Cloud service UUID or canonical team ID:
 
 ```bash
-aw --identity-home /path/to/steward id create --org alice-laptop \
-  --team-id SERVICE_TEAM_UUID --name steward \
+aw --identity-home /path/to/worker id create --org alice-laptop \
+  --team-id SERVICE_TEAM_UUID --name worker \
   --inbound-mode team-and-contacts --json
 ```
 
@@ -315,9 +315,9 @@ the new member's fresh credential directory:
 
 ```bash
 aw --identity-home /team-root/.aw inbound-mode --json
-aw --identity-home /steward-root/.aw id create \
+aw --identity-home /worker-root/.aw id create \
   --owner-identity-home /team-root/.aw --org alice \
-  --team-id TEAM_ID_FROM_INBOUND_MODE --name steward \
+  --team-id TEAM_ID_FROM_INBOUND_MODE --name worker \
   --inbound-mode contacts-only --json
 ```
 
@@ -707,9 +707,10 @@ CLI reports verification status on reads such as `aw mail inbox` and
 `aw chat open`.
 
 The clients use Trust on First Use (TOFU) pinning for globally addressed peer
-continuity. A stable identity is pinned by `did:aw` when available, together
-with its observed current key and durable DID-log checkpoint; otherwise the
-first verified contact is pinned by `did:key`. Future changes require verified
+continuity. A sender is pinned only after the registry confirms that its
+address belongs to it: by `did:aw` when a stable identity is available,
+together with its current key and durable DID-log checkpoint, otherwise by
+`did:key`. Future changes require verified
 DID-log/rotation continuity or a namespace-controller-signed address
 replacement. Local single-team identities are refreshed against the live team
 roster rather than persisted as global address pins. See

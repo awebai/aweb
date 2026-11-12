@@ -1078,14 +1078,6 @@ func configureAnsweringMountHint(c *aweb.Client, sel *awconfig.Selection, baseUR
 	})
 }
 
-func newConfiguredRegistryResolver(httpClient *http.Client, baseURL, preferredRegistryURL string) (*awid.RegistryResolver, error) {
-	registry := awid.NewRegistryResolver(httpClient, nil)
-	if err := configureEmbeddedRegistryBaseURLWithDefault(baseURL, preferredRegistryURL, registry.SetFallbackRegistryURL); err != nil {
-		return nil, err
-	}
-	return registry, nil
-}
-
 func newSelectionRegistryResolver(httpClient *http.Client, selectionRegistryURL, identityAddress string) (*awid.RegistryResolver, error) {
 	registry := awid.NewRegistryResolver(httpClient, nil)
 	registryURL := strings.TrimSpace(selectionRegistryURL)
@@ -1299,77 +1291,8 @@ func resolveReloadBaseURLContext(ctx context.Context, stored string) (string, er
 	return working, nil
 }
 
-func resolveBaseURLForInit(urlVal, serverVal string) (baseURL string, serverName string, err error) {
-	baseURL, serverName, err = selectInitBaseURL(urlVal, serverVal)
-	if err != nil {
-		return "", "", err
-	}
-	baseURL, err = resolveWorkingBaseURL(baseURL)
-	if err != nil {
-		return "", "", err
-	}
-	return baseURL, serverName, nil
-}
-
-// Select the requested/default URL without contacting it. Reachability and
-// API-mount discovery belong to resolveBaseURLForInit's separate network step.
-func selectInitBaseURL(urlVal, serverVal string) (baseURL string, serverName string, err error) {
-	baseURL = strings.TrimSpace(urlVal)
-	serverName = strings.TrimSpace(serverVal)
-
-	if baseURL == "" {
-		baseURL = strings.TrimSpace(os.Getenv("AWEB_URL"))
-	}
-	if baseURL == "" && serverName != "" {
-		baseURL, err = awconfig.DeriveBaseURLFromServerName(serverName)
-		if err != nil {
-			return "", "", err
-		}
-	}
-	baseURL = awebURLOrDefault(baseURL)
-	if serverName == "" {
-		derived, derr := awconfig.DeriveServerNameFromURL(baseURL)
-		if derr == nil {
-			serverName = derived
-		}
-	}
-	if err := awconfig.ValidateBaseURL(baseURL); err != nil {
-		return "", "", err
-	}
-	return baseURL, serverName, nil
-}
-
 func isTTY() bool {
 	return term.IsTerminal(int(os.Stdin.Fd()))
-}
-
-func sanitizeSlug(s string) string {
-	s = strings.TrimSpace(strings.ToLower(s))
-	if s == "" {
-		return ""
-	}
-	var b strings.Builder
-	lastDash := false
-	for _, r := range s {
-		switch {
-		case r >= 'a' && r <= 'z':
-			b.WriteRune(r)
-			lastDash = false
-		case r >= '0' && r <= '9':
-			b.WriteRune(r)
-			lastDash = false
-		default:
-			if !lastDash {
-				b.WriteByte('-')
-				lastDash = true
-			}
-		}
-	}
-	out := strings.Trim(b.String(), "-")
-	if out == "" {
-		return "demo"
-	}
-	return out
 }
 
 func bufferedPromptReader(in io.Reader) *bufio.Reader {
@@ -1428,10 +1351,6 @@ func promptRequiredStringWithIO(label, suggestedValue string, in io.Reader, out 
 		}
 		fmt.Fprintf(out, "%s is required.\n", label)
 	}
-}
-
-func promptRequiredString(label, suggestedValue string) (string, error) {
-	return promptRequiredStringWithIO(label, suggestedValue, os.Stdin, os.Stderr)
 }
 
 func promptIndexedChoice(label string, options []string, defaultIndex int, in io.Reader, out io.Writer) (string, error) {
@@ -1521,14 +1440,6 @@ func selectionAddress(sel *awconfig.Selection) string {
 
 func handleFromAddress(address string) string {
 	return identityutil.HandleFromAddress(address)
-}
-
-func ensureWorktreeContextAt(workingDir string) error {
-	home, err := identityHomeForDir(workingDir)
-	if err != nil {
-		return err
-	}
-	return ensureWorktreeContextAtIdentityHome(home.Root)
 }
 
 func ensureWorktreeContextAtIdentityHome(identityHome string) error {
@@ -1781,14 +1692,11 @@ func mailShowConversationError(err error, conversationID string) error {
 	return fmt.Errorf("mail conversation not found: %s", conversationID)
 }
 
-// checkIdentityMismatch verifies that the resolved account matches
-// the local workspace identity. Prevents silently running as the
-// wrong agent when .aw/context resolves to a different account than
-// .aw/workspace.yaml expects.
-func checkIdentityMismatch(workingDir string, sel *awconfig.Selection) error {
-	return checkIdentityMismatchAtIdentityHome(workingDir, "", sel)
-}
-
+// checkIdentityMismatchAtIdentityHome verifies that the resolved account
+// matches the workspace identity, read from identityHome when it is set and
+// from workingDir otherwise. Prevents silently running as the wrong agent
+// when the context resolves to a different account than workspace.yaml
+// expects.
 func checkIdentityMismatchAtIdentityHome(workingDir, identityHome string, sel *awconfig.Selection) error {
 	if sel == nil || strings.TrimSpace(sel.Alias) == "" {
 		return nil

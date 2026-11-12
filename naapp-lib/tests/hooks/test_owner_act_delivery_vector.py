@@ -8,7 +8,6 @@ import binascii
 import dataclasses
 import hashlib
 import json
-import os
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
@@ -41,16 +40,11 @@ SIGNED = [
 ACCEPTED = [c for c in VECTOR["delivery_cases"] if c["result"]["status"] == 200]
 
 
-@pytest.mark.skipif(
-    os.environ.get("OWNER_ACT_DELIVERY_WRITE_VECTOR") != "1",
-    reason="set OWNER_ACT_DELIVERY_WRITE_VECTOR=1",
-)
-def test_write_vector() -> None:
-    VECTOR_PATH.write_bytes(render(build_vector()))
-
-
 def test_the_vector_regenerates_byte_for_byte() -> None:
-    assert VECTOR_PATH.read_bytes() == render(build_vector())
+    assert VECTOR_PATH.read_bytes() == render(build_vector()), (
+        "Regenerate from the repository root: uv run --frozen --project naapp-lib "
+        "python scripts/generate_owner_act_delivery_vector.py"
+    )
 
 
 def _verify(case: dict[str, Any], expected_subject: dict[str, Any]):
