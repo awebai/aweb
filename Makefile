@@ -140,6 +140,8 @@ build: sync-doc-copies
 test: test-egress-controls check-aw-commit-repo-stamp check-cli-go-tidy test-identity-primitives test-python-locks test-sot-source-inventories test-vector-provenance test-federation-error-reference test-federation-authority-mutations test-federation-harness test-cli-reference test-mcp-tools-reference test-server test-awid test-cli test-channel test-channel-name-live-contract test-channel-core test-wake-channel-core-bundle test-pi-extension test-oats test-oats-proof-helpers test-tmux-guard test-release-cli-version test-npm-exact-publish test-pypi-exact-publish test-oci-exact-publish test-go-vulnerability-audit
 
 test-shipping:
+	python3 scripts/test-egress/test_driver_evidence.py
+	python3 scripts/test_unit_reports.py
 	python3 scripts/test_isolated_suites.py
 	python3 scripts/test_gate_budgets.py
 	python3 scripts/test_fixture_repo.py
@@ -305,7 +307,7 @@ test-server:
 			(cd ../cli/go && go build -o "$$server_test_dir/aw" ./cmd/aw); \
 			export AW_TEST_CLI_BINARY="$$server_test_dir/aw"; \
 		fi; \
-		uv run --offline --no-sync pytest -q "$$@"' server-tests $(PYTEST_SERVER_ARGS) $(if $(PYTEST_SERVER_SHARD),--server-shard=$(PYTEST_SERVER_SHARD))
+		python3 "$(abspath scripts/unit_report.py)" pytest server -- uv run --offline --no-sync pytest -q "$$@"' server-tests $(PYTEST_SERVER_ARGS) $(if $(PYTEST_SERVER_SHARD),--server-shard=$(PYTEST_SERVER_SHARD))
 
 # The naapp packages the candidate gate covers. Each provides `make lint` and
 # `make test`: the checks stage lints them, and the isolated unit stage runs
@@ -334,7 +336,7 @@ test-naapp: naapp-sync
 
 test-awid:
 	cd awid && UV_CACHE_DIR=/tmp/uv-cache uv sync --frozen
-	cd awid && UV_CACHE_DIR=/tmp/uv-cache PYTHONPYCACHEPREFIX=/tmp/pycache $(TEST_EGRESS_RUNNER) uv run --offline --no-sync pytest -q
+	cd awid && UV_CACHE_DIR=/tmp/uv-cache PYTHONPYCACHEPREFIX=/tmp/pycache $(TEST_EGRESS_RUNNER) python3 "$(abspath scripts/unit_report.py)" pytest awid -- uv run --offline --no-sync pytest -q
 
 # awid's database session tests through a real transaction-mode PgBouncer.
 test-awid-pooler:
@@ -351,12 +353,12 @@ test-cli:
 	cd awid && UV_CACHE_DIR=/tmp/uv-cache uv sync --frozen
 	# A short, canonical temp root avoids macOS /var symlinks and socket limits.
 	cd cli/go && TMPDIR="$$(python3 -c 'import os; print(os.path.realpath("/tmp"))')" \
-		GOCACHE=/tmp/go-build $(TEST_EGRESS_RUNNER) go test ./... -count=1
+		GOCACHE=/tmp/go-build $(TEST_EGRESS_RUNNER) python3 "$(abspath scripts/unit_report.py)" go cli-go -- go test ./... -count=1
 
 # Exercise current SDK/CLI request auth against actual aweb/AWID/PG/Redis.
 test-cli-auth-v2:
 	cd server && UV_CACHE_DIR=/tmp/uv-cache uv sync --frozen
-	cd server && PYTHONPATH=tests UV_CACHE_DIR=/tmp/uv-cache UV_OFFLINE=1 PYTHONPYCACHEPREFIX=/tmp/pycache $(TEST_EGRESS_RUNNER) uv run --offline --no-sync pytest -q ../cli/tests/test_request_auth_v2_stack.py
+	cd server && PYTHONPATH=tests UV_CACHE_DIR=/tmp/uv-cache UV_OFFLINE=1 PYTHONPYCACHEPREFIX=/tmp/pycache $(TEST_EGRESS_RUNNER) python3 "$(abspath scripts/unit_report.py)" pytest cli-auth -- uv run --offline --no-sync pytest -q ../cli/tests/test_request_auth_v2_stack.py
 
 # The Node suites have separate lockfiles and a local file: dependency from the
 # host adapters to channel-core. Install all three before any Node test target
@@ -375,7 +377,7 @@ test-wake-channel-core-bundle:
 	bash scripts/check-wake-channel-core-bundle.sh --self-test
 
 test-channel:
-	cd channel && $(TEST_EGRESS_RUNNER) npm test
+	cd channel && $(TEST_EGRESS_RUNNER) python3 "$(abspath scripts/unit_report.py)" vitest channel -- npm test
 
 test-channel-name-live-contract:
 	python3 scripts/e2e/test_channel_name_live_contract.py
@@ -399,7 +401,7 @@ test-channel-integration:
 # channel-core holds the identity, trust, pinstore and signature-decode logic
 # that channel and pi-extension are both built from, so its suite gates them.
 test-channel-core:
-	cd channel-core && $(TEST_EGRESS_RUNNER) npm test
+	cd channel-core && $(TEST_EGRESS_RUNNER) python3 "$(abspath scripts/unit_report.py)" vitest channel-core -- npm test
 
 # The multi-process DeliveryStore guard spawns 16 real subprocesses, enough to
 # blow unrelated timing deadlines elsewhere on a shared machine (default-aadj),
@@ -410,7 +412,7 @@ test-channel-core-process-guard:
 	cd channel-core && npm run test:process-guard
 
 test-pi-extension:
-	cd pi-extension && $(TEST_EGRESS_RUNNER) npm test
+	cd pi-extension && $(TEST_EGRESS_RUNNER) python3 "$(abspath scripts/unit_report.py)" tap pi-extension -- npm test
 
 prepare-oats-test-root:
 	@if [ "$(abspath $(OATS_TEST_ROOT))" = "$(abspath $(OATS_PINNED_ROOT))" ]; then \

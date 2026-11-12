@@ -37,7 +37,7 @@ export ALLOW_LEGACY_MISSING_BUILD_FOR APPLY PROD_EVIDENCE_DIR
 export AATK_EVIDENCE_INDEX LIBRARY_GATE_TOOL_ROOT
 
 test:
-	uv run pytest -q -m "not e2e"
+	$(if $(AWEB_UNIT_REPORT_DIR),python3 "$(abspath ../../scripts/unit_report.py)" pytest naapp-library --) uv run pytest -q -m "not e2e"
 
 test-server:
 	uv run pytest -q -m "not e2e"

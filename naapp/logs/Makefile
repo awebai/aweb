@@ -1,7 +1,7 @@
 .PHONY: test lint
 
 test:
-	uv run pytest -q
+	$(if $(AWEB_UNIT_REPORT_DIR),python3 "$(abspath ../../scripts/unit_report.py)" pytest naapp-logs --) uv run pytest -q
 
 lint:
 	uv run ruff check .

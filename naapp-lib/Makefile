@@ -8,4 +8,4 @@ lint:
 	uv run mypy src
 
 test:
-	uv run pytest -q
+	$(if $(AWEB_UNIT_REPORT_DIR),python3 "$(abspath ../scripts/unit_report.py)" pytest naapp-lib --) uv run pytest -q
