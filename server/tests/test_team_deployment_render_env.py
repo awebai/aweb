@@ -232,8 +232,28 @@ def test_secrets_and_logs_render_the_settings_each_app_reads():
         "SECRETS_CUSTODY_KEY_FILE": "/run/secrets/secrets/custody-key",
     }
     assert rendered["COMPOSE_PROFILES"] == "logs,postgres,secrets"
-    assert rendered["LOGS_HOOK_INTERNAL_ORIGINS"] == '["https://logs.example.com"]'
+    assert {name: value for name, value in rendered.items() if "HOOK_INTERNAL" in name} == {
+        "LOGS_HOOK_INTERNAL_ORIGINS": '["https://logs.example.com"]',
+        "LOGS_HOOK_INTERNAL_DESTINATIONS": "allowed",
+        "LOGS_HOOK_INTERNAL_CIDR": "172.31.0.0/24",
+    }
     assert (rendered["LOGS_PORT"], rendered["LOGS_CHECKPOINT_INTERVAL_SECONDS"]) == ("8765", "300")
+
+
+def test_an_app_trusts_a_private_authority_through_a_file_the_operator_names():
+    secrets = {
+        **app("secrets"),
+        "emailCaFile": "/run/secrets/secrets/smtp-ca.pem",
+        "hookCaFile": "/run/secrets/secrets/hook-ca.pem",
+        "egressCaFile": "/run/secrets/secrets/broker-ca.pem",
+    }
+    logs = {**app("logs"), "hookCaFile": "/run/secrets/logs/hook-ca.pem"}
+    rendered = render_env.render({**EXAMPLE, "secrets": secrets, "logs": logs})
+    assert rendered["SECRETS_EMAIL_CA_FILE"] == "/run/secrets/secrets/smtp-ca.pem"
+    assert rendered["SECRETS_HOOK_CA_FILE"] == "/run/secrets/secrets/hook-ca.pem"
+    assert rendered["SECRETS_EGRESS_CA_FILE"] == "/run/secrets/secrets/broker-ca.pem"
+    assert rendered["LOGS_HOOK_CA_FILE"] == "/run/secrets/logs/hook-ca.pem"
+    assert "LOGS_EMAIL_CA_FILE" not in rendered and "LOGS_EGRESS_CA_FILE" not in rendered
 
 
 def test_a_kms_key_takes_the_place_of_the_mounted_custody_key():
@@ -252,6 +272,8 @@ def test_a_kms_key_takes_the_place_of_the_mounted_custody_key():
         ("databaseUrl", "postgresql://secrets:s3cret@postgres:5432/secrets"),
         ("custodyKey", "00" * 32),
         ("hookInternalOrigins", ["https://logs.example.com/path"]),
+        ("hookInternalOrigins", []),
+        ("hookCaFile", "hook-ca.pem"),
     ],
 )
 def test_an_app_section_refuses_plain_origins_plain_smtp_and_credentials(key, value):

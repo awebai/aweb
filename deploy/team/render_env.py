@@ -91,6 +91,11 @@ def render(config: object) -> dict[str, str]:
     # Secrets holds its custody key as a mounted file unless the operator names a KMS key.
     if "secrets" in config and "kmsKeyId" not in config["secrets"]:
         out["SECRETS_CUSTODY_KEY_FILE"] = "/run/secrets/secrets/custody-key"
+    # An app takes the three settings of internal hook destinations together.
+    for app in ("secrets", "logs"):
+        if "hookInternalOrigins" in config.get(app, {}):
+            out[f"{app.upper()}_HOOK_INTERNAL_DESTINATIONS"] = "allowed"
+            out[f"{app.upper()}_HOOK_INTERNAL_CIDR"] = config["network"]["servicesCidr"]
     # The services an operator can leave out start only when the file has them.
     optional = [name for name in ("logs", "secrets") if name in config]
     if config["postgres"].get("bundled", True):

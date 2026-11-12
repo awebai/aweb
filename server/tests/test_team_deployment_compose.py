@@ -57,9 +57,9 @@ def test_no_credential_is_in_an_environment():
             if key.endswith(("_KEY_FILES", "_MEMBER_CREDENTIALS")):
                 paths = re.findall(r'": "([^"]*)"', str(value))
                 assert paths and all(path.startswith("/run/secrets/") for path in paths), (name, key)
-            elif key == "SECRETS_CUSTODY_KEY_FILE":
-                # Rendered as /run/secrets/secrets/custody-key, or left out for a KMS key.
-                assert value == "${SECRETS_CUSTODY_KEY_FILE:-}"
+            elif value is None:
+                # Passed through from the rendered env file, where it is a path under /run/secrets.
+                assert key == "SECRETS_CUSTODY_KEY_FILE", (name, key)
             else:
                 assert key.endswith("_FILE"), (name, key)
                 assert str(value).startswith("/run/secrets/"), (name, key)
@@ -157,3 +157,32 @@ def test_an_app_is_an_optional_ordinary_member_with_a_read_only_root():
                 "certificate_file": f"/run/secrets/{name}/awid-member-certificate",
             }
         }
+
+
+OPTIONAL = (
+    "HOOK_INTERNAL_ORIGINS",
+    "HOOK_INTERNAL_DESTINATIONS",
+    "HOOK_INTERNAL_CIDR",
+    "CLIENT_ADDRESS_HEADER",
+    "EMAIL_CA_FILE",
+    "HOOK_CA_FILE",
+)
+
+
+def test_a_setting_the_operator_does_not_give_never_reaches_an_app_as_a_blank():
+    # The apps tell an absent setting from an empty one, and refuse the empty
+    # one. A setting with no value here is passed only when the env file has it.
+    for name, service in APPS.items():
+        prefix = name.upper()
+        optional = [f"{prefix}_{suffix}" for suffix in OPTIONAL]
+        if name == "secrets":
+            optional += [
+                "SECRETS_CUSTODY_KEY_FILE",
+                "SECRETS_KMS_KEY_ID",
+                "SECRETS_KMS_REGION",
+                "SECRETS_EGRESS_CA_FILE",
+            ]
+        for key in optional:
+            assert environment(service)[key] is None, key
+        for key, value in environment(service).items():
+            assert ":-}" not in str(value) and ":+" not in str(value), key

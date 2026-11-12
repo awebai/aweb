@@ -5,6 +5,9 @@
 # Every credential is a file under /run/secrets/logs, which no agent and no
 # other service mounts; none is in the environment. The image carries the
 # healthcheck: /live, asked with the Host of LOGS_PUBLIC_ORIGIN.
+#
+# A setting with no value here is passed only when the env file has it: the
+# app tells an absent setting from an empty one.
 services:
   logs:
     restart: unless-stopped
@@ -38,9 +41,12 @@ services:
       LOGS_EMAIL_PASSWORD_FILE: /run/secrets/logs/smtp-password
       LOGS_EMAIL_FROM: ${LOGS_EMAIL_FROM:?LOGS_EMAIL_FROM is required, logs.emailFrom}
       # Hooks reach a receiver at an internal address only when the operator
-      # names its origin, and then only inside the services network.
-      LOGS_HOOK_INTERNAL_ORIGINS: ${LOGS_HOOK_INTERNAL_ORIGINS:-}
-      LOGS_HOOK_INTERNAL_DESTINATIONS: ${LOGS_HOOK_INTERNAL_ORIGINS:+allowed}
-      LOGS_HOOK_INTERNAL_CIDR: ${LOGS_HOOK_INTERNAL_ORIGINS:+${SERVICES_CIDR}}
+      # names its origin, and then only inside the services network. The
+      # three settings come together from the env file, or not at all.
+      LOGS_HOOK_INTERNAL_ORIGINS:
+      LOGS_HOOK_INTERNAL_DESTINATIONS:
+      LOGS_HOOK_INTERNAL_CIDR:
       LOGS_EGRESS_DENIED_NETWORKS: ${LOGS_EGRESS_DENIED_NETWORKS:?LOGS_EGRESS_DENIED_NETWORKS is required, logs.egressDeniedNetworks}
-      LOGS_CLIENT_ADDRESS_HEADER: ${LOGS_CLIENT_ADDRESS_HEADER:-}
+      LOGS_CLIENT_ADDRESS_HEADER:
+      LOGS_EMAIL_CA_FILE:
+      LOGS_HOOK_CA_FILE:

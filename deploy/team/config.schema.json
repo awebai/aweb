@@ -581,7 +581,8 @@
           "items": {
             "$ref": "#/$defs/origin"
           },
-          "x-env": "SECRETS_HOOK_INTERNAL_ORIGINS"
+          "x-env": "SECRETS_HOOK_INTERNAL_ORIGINS",
+          "minItems": 1
         },
         "egressDeniedNetworks": {
           "description": "Addresses and ranges the app never connects to, beyond its fixed floor.",
@@ -627,6 +628,21 @@
           "type": "string",
           "pattern": "^[a-z0-9-]+$",
           "x-env": "SECRETS_KMS_REGION"
+        },
+        "emailCaFile": {
+          "description": "Trust anchors for the SMTP server, when a private authority signed its certificate.",
+          "$ref": "#/$defs/file",
+          "x-env": "SECRETS_EMAIL_CA_FILE"
+        },
+        "hookCaFile": {
+          "description": "Trust anchors for hook receivers, when a private authority signed their certificates.",
+          "$ref": "#/$defs/file",
+          "x-env": "SECRETS_HOOK_CA_FILE"
+        },
+        "egressCaFile": {
+          "description": "Trust anchors for the upstreams the broker calls, when a private authority signed their certificates.",
+          "$ref": "#/$defs/file",
+          "x-env": "SECRETS_EGRESS_CA_FILE"
         }
       }
     },
@@ -706,7 +722,8 @@
           "items": {
             "$ref": "#/$defs/origin"
           },
-          "x-env": "LOGS_HOOK_INTERNAL_ORIGINS"
+          "x-env": "LOGS_HOOK_INTERNAL_ORIGINS",
+          "minItems": 1
         },
         "egressDeniedNetworks": {
           "description": "Addresses and ranges the app never connects to, beyond its fixed floor.",
@@ -753,6 +770,16 @@
           "minimum": 1,
           "default": 3600,
           "x-env": "LOGS_RETENTION_INTERVAL_SECONDS"
+        },
+        "emailCaFile": {
+          "description": "Trust anchors for the SMTP server, when a private authority signed its certificate.",
+          "$ref": "#/$defs/file",
+          "x-env": "LOGS_EMAIL_CA_FILE"
+        },
+        "hookCaFile": {
+          "description": "Trust anchors for hook receivers, when a private authority signed their certificates.",
+          "$ref": "#/$defs/file",
+          "x-env": "LOGS_HOOK_CA_FILE"
         }
       }
     }
