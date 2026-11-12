@@ -2,6 +2,7 @@ package wake
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"os"
 	"sort"
@@ -136,6 +137,8 @@ type Broker struct {
 	instances map[string]*instanceRunner
 	// overBound holds identity homes refused a stream by MaxStreams.
 	overBound map[string]struct{}
+	// registrationFaults are the registry files the last sweep skipped.
+	registrationFaults []RegistrationFault
 
 	ctx context.Context
 }
@@ -249,12 +252,26 @@ func (b *Broker) Reconcile() {
 
 	// Reading and normalizing every durable registration can be slow. Controls
 	// need only their own apply lock, not this whole disk snapshot.
-	registrations, err := b.cfg.Store.ListRegistrations()
+	registrations, faults, err := b.cfg.Store.ListRegistrations()
 	if err != nil {
 		b.cfg.Log("reconcile failed err=%v", err)
 		return
 	}
+	b.mu.Lock()
+	b.registrationFaults = faults
+	b.mu.Unlock()
 	seen := map[string]bool{}
+	for _, fault := range faults {
+		b.cfg.Log("registration unreadable path=%s err=%s (skipped)", fault.Path, fault.Error)
+		// A home whose own file became unreadable keeps its last-good runner.
+		b.mu.Lock()
+		runner, ok := b.instances[registrationFileKey(fault.Path)]
+		b.mu.Unlock()
+		if ok {
+			seen[runner.home()] = true
+			runner.recordRegistrationError(errors.New(fault.Error))
+		}
+	}
 	bindingOwners := map[string]string{}
 	for _, reg := range registrations {
 		canonical, err := CanonicalHome(reg.Home)
@@ -676,7 +693,8 @@ func (b *Broker) Register(reg Registration) error {
 }
 
 func (b *Broker) refuseDuplicateBinding(reg Registration) error {
-	existing, err := b.cfg.Store.ListRegistrations()
+	// A file that cannot be read owns no binding the broker can serve.
+	existing, _, err := b.cfg.Store.ListRegistrations()
 	if err != nil {
 		return err
 	}
@@ -812,6 +830,7 @@ func (b *Broker) Status() Status {
 	for _, runner := range b.instances {
 		instances = append(instances, runner.snapshot())
 	}
+	faults := append([]RegistrationFault(nil), b.registrationFaults...)
 	b.mu.Unlock()
 
 	enrichInstancesWithStreamStatus(instances, streams)
@@ -828,6 +847,8 @@ func (b *Broker) Status() Status {
 		MaxStreams:    b.cfg.MaxStreams,
 		Streams:       streams,
 		Instances:     instances,
+
+		RegistrationFaults: faults,
 	}
 }
 

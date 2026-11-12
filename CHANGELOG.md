@@ -2,6 +2,13 @@
 
 ## Unreleased
 
+- **One unreadable file in the `aw wake` registry no longer stops waking for
+  every other registered home.** A registry file that does not parse, or names
+  an empty or relative home, is skipped and logged; `aw wake status` (text and
+  `--json` as `registration_faults`) lists it, with the daemon running or down,
+  and `aw wake register` for another home succeeds beside it. A home whose own
+  file became unreadable keeps its last-good delivery and shows the error.
+
 - Human handoffs retain their authenticated team for credential collection and
   console session requests. Existing key-bound console sessions without retained
   team context are refused after migration and require signing in again; there
