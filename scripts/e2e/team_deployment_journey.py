@@ -33,6 +33,7 @@ import argparse
 import ipaddress
 import json
 import os
+import re
 import secrets
 import shutil
 import subprocess
@@ -151,10 +152,14 @@ class World:
         tls = make_certificates(self.world / "tls", [*HOSTS.values(), MAIL], [])
         self.caddyfile = (
             # A request whose Host its TLS SNI does not name is refused: the
-            # signer's request host must never reach its human host.
+            # signer's request host must never reach its human host. Caddy
+            # compares hostnames alone, so each site also refuses, itself,
+            # any authority but its own host on port 443.
             "{\n  auto_https off\n  servers {\n    strict_sni_host on\n  }\n}\n"
             + "".join(
                 f"{HOSTS[name]}:443 {{\n  tls /tls/{tls.cert_file.name} /tls/{tls.key_file.name}\n"
+                f"  @misdirected not header_regexp Host ^{re.escape(HOSTS[name])}(:443)?$\n"
+                "  respond @misdirected 421\n"
                 f"  reverse_proxy {UPSTREAMS[name]}\n}}\n"
                 for name in HOSTS
             )
