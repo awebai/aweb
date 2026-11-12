@@ -3,6 +3,7 @@
 import asyncio
 import base64
 import json
+import re
 import socket
 from dataclasses import replace
 from datetime import UTC, datetime, timedelta
@@ -219,6 +220,8 @@ async def test_fresh_tab_logs_in_then_approves_the_frozen_act_with_two_real_uv_g
         await expect(page.locator("#handoff-act")).to_have_text("human-role.revoke")
         await expect(page.locator("#handoff-target")).to_contain_text(s.world.operation.principal)
         await expect(page.locator("#handoff-governance-title")).to_be_focused()
+        await expect(page.locator("body")).to_have_attribute("data-handoff-state", "ready")
+        await expect(action).to_have_text("Approve operation with passkey")
         assert page.url == s.origin + "/handoff/" + s.prepared.handoff_id
         assert await page.evaluate("key => !!sessionStorage.getItem(key)", CSRF_KEY)
         assert not any(url.endswith("/execute") for url in posts)
@@ -244,6 +247,16 @@ async def test_non_uv_never_executes_or_calls_back(governance_service, stage):
     s = governance_service
     context, page, cdp, device = await open_page(s, 375)
     async with context:
+        posts, responses = [], []
+        page.on("request", lambda r: posts.append(r.url) if r.method == "POST" else None)
+        page.on(
+            "response",
+            lambda r: (
+                responses.append((r.url.removeprefix(s.origin), r.status))
+                if r.request.method == "POST"
+                else None
+            ),
+        )
         await page.goto(s.origin + "/handoff/" + s.prepared.handoff_id)
         action = page.locator("#handoff-action")
         if stage == "approval":
@@ -253,13 +266,71 @@ async def test_non_uv_never_executes_or_calls_back(governance_service, stage):
             "WebAuthn.setUserVerified", {"authenticatorId": device, "isUserVerified": False}
         )
         await action.click()
-        await page.wait_for_function(
-            "['refused', 'ready'].includes(document.body.dataset.handoffState)"
+        await expect(page.locator("body")).to_have_attribute(
+            "data-handoff-state",
+            "login-required" if stage == "login" else re.compile(r"^(refused|ready)$"),
         )
+        if stage == "login":
+            # A cancelled LOGIN is still a sign-in step, never an empty act
+            # ready for approval (the actual bundle run9 regression).
+            assert responses == [("/login/options", 200)]
+            assert [url.removeprefix(s.origin) for url in posts] == ["/login/options"]
+            await expect(action).to_be_enabled()
+            await expect(action).to_have_text("Sign in with passkey")
+            await expect(page.locator("#handoff-governance")).to_be_hidden()
+            for field in ("act", "digest", "fingerprint"):
+                await expect(page.locator(f"#handoff-{field}")).to_be_empty()
+            await expect(
+                page.get_by_role("button", name="Approve operation with passkey")
+            ).to_be_hidden()
+            assert not any("/governance/" in url for url in posts)
         assert not s.callback.done()
         assert (
             await s.world.signer.receipt(s.prepared.operation_id, reader=s.world.reader)
         ).state != "committed"
+        assert "protected_operation_signed" not in await s.world.audit.kinds()
+
+
+async def test_login_401_cannot_expose_approval_or_send_governance_requests(governance_service):
+    s = governance_service
+    context, page, _, _ = await open_page(s, 375)
+    async with context:
+        options, login_statuses, posts = [], [], []
+        page.on("request", lambda r: posts.append(r.url) if r.method == "POST" else None)
+
+        async def retain_options(route):
+            response = await route.fetch()
+            assert response.status == 200
+            options.append(await response.json())
+            await route.fulfill(response=response)
+
+        async def without_uv(route):
+            # Same enrolled holder and real challenge/signature, but no UV.
+            # The actual LOGIN service decides; no refusal response is faked.
+            body = route.request.post_data_json
+            body["assertion"] = s.world.device.get(
+                options[-1], origin=s.origin, user_verified=False
+            )
+            response = await route.fetch(post_data=json.dumps(body))
+            login_statuses.append(response.status)
+            await route.fulfill(response=response)
+
+        await page.route("**/login/options", retain_options)
+        await page.route("**/login", without_uv)
+        await page.goto(s.origin + "/handoff/" + s.prepared.handoff_id)
+        await page.locator("#handoff-action").click()
+        await expect(page.locator("body")).to_have_attribute("data-handoff-state", "refused")
+        assert login_statuses == [401]
+        assert [url.removeprefix(s.origin) for url in posts] == ["/login/options", "/login"]
+        await expect(page.locator("#handoff-action")).to_be_disabled()
+        await expect(page.locator("#handoff-governance")).to_be_hidden()
+        for field in ("act", "digest", "fingerprint"):
+            await expect(page.locator(f"#handoff-{field}")).to_be_empty()
+        assert not s.callback.done()
+        assert (
+            await s.world.signer.receipt(s.prepared.operation_id, reader=s.world.reader)
+        ).state != "committed"
+        assert "protected_operation_signed" not in await s.world.audit.kinds()
 
 
 @pytest.mark.parametrize("width", [375, 1440])
