@@ -412,7 +412,11 @@ class World:
         export = f"{site.mounted}/holder/app-export.json"
         child, output = as_human("app", "credential", "register", site.app_id, "--role", site.role, "--out", export,
                                  until=r"Open this page to continue: (\S+)")
-        page = re.search(r"Open this page to continue: (\S+)", output).group(1)
+        linked = re.search(r"Open this page to continue: (\S+)", output)
+        if not linked:
+            child.close()
+            raise SystemExit(f"FAILED: the holder's credential registration showed no page (exit {child.exitstatus}):\n{output}")
+        page = linked.group(1)
         report = site.chromium(machine, "credential", "--url", page, "--device",
                                f"{site.mounted}/holder-app-device.json")
         assert report["states"] == ["ready", "navigated"] and report["credentials"] == 1, report
@@ -420,7 +424,9 @@ class World:
         rest = child.before
         child.close()
         assert child.exitstatus == 0, rest
-        fingerprint = re.search(r"Fingerprint: ([0-9a-f]{4}(?: [0-9a-f]{4}){3})", output + rest).group(1)
+        printed = re.search(r"Fingerprint: ([0-9a-f]{4}(?: [0-9a-f]{4}){3})", output + rest)
+        assert printed, output + rest
+        fingerprint = printed.group(1)
         # The owner signs only for that exact credential: aw shows its fingerprint.
         designated = docker("exec", machine, "aw", "app", "role", "designate", site.app_id, "--role", site.role,
                             "--principal", human, "--credential", export, "--yes", timeout=300)
