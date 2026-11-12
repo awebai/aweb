@@ -241,9 +241,22 @@ def get_settings() -> Settings:
     that keeps deployment wiring simple.
     """
     database_url = os.getenv("AWEB_DATABASE_URL") or os.getenv("DATABASE_URL")
+    database_url_file = os.getenv("AWEB_DATABASE_URL_FILE", "").strip()
+    if database_url_file:
+        if database_url:
+            raise ValueError(
+                "AWEB_DATABASE_URL_FILE is set together with AWEB_DATABASE_URL or DATABASE_URL; set one"
+            )
+        try:
+            database_url = Path(database_url_file).read_text().strip()
+        except OSError:
+            database_url = ""
+        if not database_url:
+            # Do not echo the file's content: it holds the database password.
+            raise ValueError("AWEB_DATABASE_URL_FILE must name a readable file that holds the database URL")
     if not database_url:
         raise ValueError(
-            "DATABASE_URL or AWEB_DATABASE_URL environment variable is required. "
+            "DATABASE_URL, AWEB_DATABASE_URL or AWEB_DATABASE_URL_FILE is required. "
             "Example: postgresql://user:pass@localhost:5432/aweb"
         )
 

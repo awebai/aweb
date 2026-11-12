@@ -83,6 +83,10 @@
   the setting and the limit. The shipped `.env.example` set
   `LIBRARY_AUTH_CACHE_TTL_SECONDS=600`; a deployment made from it must lower
   it to 60 or remove the line before upgrading.
+- **The server reads its database URL from a file.** `AWEB_DATABASE_URL_FILE`
+  names a file that holds the URL, so the database password need not be in
+  the environment. Setting it together with `AWEB_DATABASE_URL` or
+  `DATABASE_URL` is refused at startup.
 - **A Compose file for a customer's own server.**
   `server/docker-compose.customer.yml` runs aweb with PostgreSQL and Redis
   against the public AWID registry, with ordinary member keys mounted

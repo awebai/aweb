@@ -362,7 +362,8 @@ audit directory, writable) by uid `1001`.
 
 For `aweb`:
 
-- `AWEB_DATABASE_URL` or `DATABASE_URL`
+- `AWEB_DATABASE_URL` or `DATABASE_URL`, or `AWEB_DATABASE_URL_FILE`: a file
+  that holds the URL, so the database password is in no environment
 - `AWEB_REDIS_URL` or `REDIS_URL`
 - `AWID_REGISTRY_URL`
 - `AWEB_PUBLIC_ORIGIN` for federated mail/chat delivery
