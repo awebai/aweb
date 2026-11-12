@@ -28,6 +28,11 @@ type GovernanceOptions struct {
 	Notify io.Writer
 	// PollInterval bounds how often the receipt is read without a wake.
 	PollInterval time.Duration
+	// RetryWithin bounds how long aw keeps waiting out a throttled prepare,
+	// or the receipt read that reconciles a lost one, before it stops and
+	// leaves the operation to be resumed (default two minutes). The
+	// operation's own expiry is the service's and is never extended.
+	RetryWithin time.Duration
 	// Save persists an operation's exact prepare body before it is sent, so a
 	// lost answer can be resumed with Resume under the same id and binding.
 	Save func(operationID string, body []byte) error
@@ -122,8 +127,50 @@ func Resume(ctx context.Context, opts GovernanceOptions, saved []byte) (*Receipt
 	return approve(ctx, opts, operationID, body, saved, nil)
 }
 
+// now and pause are the clock and the wait the governance client uses.
+var (
+	now   = time.Now
+	pause = func(ctx context.Context, d time.Duration) error {
+		timer := time.NewTimer(d)
+		defer timer.Stop()
+		select {
+		case <-timer.C:
+			return nil
+		case <-ctx.Done():
+			return ctx.Err()
+		}
+	}
+)
+
+func retryWithin(opts GovernanceOptions) time.Duration {
+	if opts.RetryWithin > 0 {
+		return opts.RetryWithin
+	}
+	return 2 * time.Minute
+}
+
+// prepareRetrying sends the exact prepare bytes again after each explicit
+// throttle hint, within the retry budget. A repeat of the same id and bytes
+// is answered with the original operation; a changed body stays a conflict.
+func prepareRetrying(ctx context.Context, opts GovernanceOptions, operationID string, body map[string]any, raw []byte) (*Prepared, error) {
+	until := now().Add(retryWithin(opts))
+	for {
+		prepared, err := prepare(ctx, opts, body, raw)
+		hint, ok := retryHint(err)
+		if !ok {
+			return prepared, err
+		}
+		if hint >= until.Sub(now()) {
+			return nil, coded(ErrorCode(err), fmt.Errorf("operation %s could not be prepared now (%w); its request is saved, resume it later", operationID, err))
+		}
+		if err := pause(ctx, hint); err != nil {
+			return nil, err
+		}
+	}
+}
+
 func approve(ctx context.Context, opts GovernanceOptions, operationID string, body map[string]any, raw []byte, wake *Loopback) (*Receipt, error) {
-	prepared, err := prepare(ctx, opts, body, raw)
+	prepared, err := prepareRetrying(ctx, opts, operationID, body, raw)
 	if ErrorCode(err) == "prepare_answer_lost" {
 		return reconcileLostPrepare(ctx, opts, operationID, err)
 	}
@@ -154,18 +201,30 @@ func approve(ctx context.Context, opts GovernanceOptions, operationID string, bo
 		interval = 2 * time.Second
 	}
 	for {
-		receipt, err := ReadReceipt(ctx, opts, operationID)
+		// No read outlasts the operation.
+		readCtx, cancelRead := context.WithDeadline(ctx, prepared.ExpiresAt)
+		receipt, err := ReadReceipt(readCtx, opts, operationID)
+		cancelRead()
 		switch {
 		case ErrorCode(err) == "receipt_unavailable":
-			// Read again until the operation expires; the outcome stays unknown.
-			if time.Now().After(prepared.ExpiresAt) {
+			// Read again, after the service's hint if it gave one, while the
+			// wait ends before the operation expires; the outcome stays unknown.
+			hint, ok := retryHint(err)
+			wait := max(interval, hint)
+			if wait >= prepared.ExpiresAt.Sub(now()) {
 				return unresolvedReceipt(operationID, "receipt_unavailable"), err
+			}
+			if ok {
+				if err := pause(ctx, wait); err != nil {
+					return unresolvedReceipt(operationID, "receipt_unavailable"), err
+				}
+				continue
 			}
 		case err != nil:
 			return unresolvedReceipt(operationID, ErrorCode(err)), err
 		case receipt.State != "pending":
 			return settled(opts, receipt)
-		case time.Now().After(prepared.ExpiresAt):
+		case now().After(prepared.ExpiresAt):
 			return receipt, coded("operation_expired", fmt.Errorf("operation %s was still pending at its expiry", operationID))
 		}
 		select {
@@ -181,10 +240,18 @@ func approve(ctx context.Context, opts GovernanceOptions, operationID string, bo
 // never arrived. A pending operation cannot be shown without its frozen
 // request, so aw reports it under its id, to be resumed from its saved body.
 func reconcileLostPrepare(ctx context.Context, opts GovernanceOptions, operationID string, lost error) (*Receipt, error) {
+	until := now().Add(retryWithin(opts))
 	receipt, err := ReadReceipt(ctx, opts, operationID)
-	if err != nil {
-		return unresolvedReceipt(operationID, "receipt_unavailable"),
-			coded("receipt_unavailable", fmt.Errorf("operation %s: %v, and its receipt could not be read: %w", operationID, lost, err))
+	for err != nil {
+		hint, ok := retryHint(err)
+		if !ok || hint >= until.Sub(now()) {
+			return unresolvedReceipt(operationID, "receipt_unavailable"),
+				coded("receipt_unavailable", fmt.Errorf("operation %s: %v, and its receipt could not be read: %w", operationID, lost, err))
+		}
+		if err := pause(ctx, hint); err != nil {
+			return unresolvedReceipt(operationID, "receipt_unavailable"), err
+		}
+		receipt, err = ReadReceipt(ctx, opts, operationID)
 	}
 	if receipt.State == "pending" {
 		return receipt, coded("prepare_unconfirmed", fmt.Errorf("operation %s is pending but its prepare answer was lost; resume it from its saved request", operationID))
@@ -253,7 +320,7 @@ func prepare(ctx context.Context, opts GovernanceOptions, body map[string]any, d
 		return nil, coded("prepare_answer_lost", err)
 	}
 	if resp.StatusCode != http.StatusOK {
-		return nil, refusal(resp.StatusCode, reply)
+		return nil, hinted(refusal(resp.StatusCode, reply), resp)
 	}
 	answer, ok := decodeObject(reply)
 	if !ok || !exactMembers(answer, preparedMembers) {
@@ -379,7 +446,7 @@ func ReadReceipt(ctx context.Context, opts GovernanceOptions, operationID string
 	}
 	switch {
 	case resp.StatusCode == http.StatusTooManyRequests || resp.StatusCode >= 500:
-		return nil, unavailable(refusal(resp.StatusCode, reply))
+		return nil, hinted(unavailable(refusal(resp.StatusCode, reply)), resp)
 	case resp.StatusCode != http.StatusOK:
 		// A refusal of the requester, its scope or the id does not pass.
 		return nil, refusal(resp.StatusCode, reply)
