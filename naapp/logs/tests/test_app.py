@@ -91,15 +91,22 @@ async def test_the_catalog_lists_the_served_manifest(tmp_path: Path, database) -
     settings = _deployment_on(tmp_path, database)
     async with running(_app(settings)) as client:
         catalog = (await client.get("/.well-known/aweb-app-versions.json")).json()
-        (variant,) = catalog["variants"]
-        served = await client.get(variant["url"])
-        assert served.status_code == 200
-        assert variant["digest"] == "sha256:" + hashlib.sha256(served.content).hexdigest()
-        manifest = json.loads(served.content)
-        assert manifest["app"]["origin"] == ORIGIN
-        assert {e["kid"]: e["did_key"] for e in manifest["app_keys"]} == {
-            kid: did_key_of(path) for kid, path in settings.app_key_files.items()
-        }
+        served = {}
+        for variant in catalog["variants"]:
+            response = await client.get(variant["url"])
+            assert response.status_code == 200
+            assert variant["digest"] == "sha256:" + hashlib.sha256(response.content).hexdigest()
+            manifest = json.loads(response.content)
+            assert manifest["app"]["origin"] == ORIGIN
+            assert {e["kid"]: e["did_key"] for e in manifest["app_keys"]} == {
+                kid: did_key_of(path) for kid, path in settings.app_key_files.items()
+            }
+            served[variant["manifest_version"]] = manifest
+        # Released clients select version 2; only version 3 declares the
+        # reader role its owner designates on the console origin.
+        assert sorted(served) == [2, 3]
+        assert "owner_acts" not in served[2]
+        assert served[3]["owner_acts"]["origin"] == CONSOLE
         assert (await client.get("/.well-known/aweb-app.json")).status_code == 404
 
 
@@ -306,7 +313,7 @@ async def test_each_origin_serves_only_its_own_routes(tmp_path: Path, database) 
             transport=httpx.ASGITransport(app=service), base_url=CONSOLE
         ) as console:
             # The member tools are on the public origin, behind team-auth.
-            for path in ("/v1/reader-slots", "/v1/reader-removals", "/v1/hooks/ingest"):
+            for path in ("/v1/reader-removals", "/v1/hooks/ingest"):
                 assert (await public.post(path, json={})).status_code == 401, path
                 assert (await console.post(path, json={})).status_code == 404, path
             # The reader's console is on the console origin only.
@@ -326,6 +333,6 @@ async def test_a_stopped_logs_starts_again_with_the_same_routes(tmp_path: Path, 
     service = _app(_deployment_on(tmp_path, database))
     for _ in range(2):
         async with running(service) as public:
-            assert (await public.post("/v1/reader-slots", json={})).status_code == 401
+            assert (await public.post("/v1/reader-removals", json={})).status_code == 401
             assert (await public.get("/ready")).status_code == 200
     assert {route.path for route in service.console_app.routes} == set()
