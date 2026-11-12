@@ -23,6 +23,25 @@ from vm_gate.transport import Transport
 from vm_gate.backend import PREFIX
 
 
+def local_environment():
+    # These credentials are for the local origin fetch only. Executor/Transport
+    # independently construct the scrubbed VM/SSH environment.
+    names = [
+        "PATH",
+        "HOME",
+        "USER",
+        "LOGNAME",
+        "LANG",
+        "LC_ALL",
+        "SSH_AUTH_SOCK",
+        "SSH_AGENT_PID",
+        "GIT_SSH",
+        "GIT_SSH_COMMAND",
+        "GH_CONFIG_DIR",
+    ]
+    return {name: os.environ[name] for name in names if name in os.environ}
+
+
 def main():
     p = argparse.ArgumentParser(description=__doc__)
     p.add_argument("--config", required=True)
@@ -54,6 +73,12 @@ def main():
         p.error("acceptance requires setup180/pull60/cleanup60/margin30 seconds")
     if git(args.repo, "status", "--porcelain", "--untracked-files=all").stdout:
         p.error("clean source required")
+    args.sha_a = git(
+        args.repo, "rev-parse", "--verify", args.sha_a + "^{commit}"
+    ).stdout.strip()
+    args.sha_b = git(
+        args.repo, "rev-parse", "--verify", args.sha_b + "^{commit}"
+    ).stdout.strip()
     trees = [
         git(args.repo, "rev-parse", s + "^{tree}").stdout.strip()
         for s in [args.sha_a, args.sha_b]
@@ -85,9 +110,7 @@ def main():
         "cap_eur": args.max_eur,
     }
     cli = Path(__file__).resolve().parents[1] / "vm-gate"
-    env = {
-        k: os.environ[k] for k in ["PATH", "HOME", "LANG", "LC_ALL"] if k in os.environ
-    }
+    env = local_environment()
 
     def save():
         (output / "acceptance.json").write_text(json.dumps(receipt, indent=2) + "\n")
