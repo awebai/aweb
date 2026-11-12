@@ -7,7 +7,10 @@ import io
 import json
 import os
 import subprocess
+import tempfile
+import tomllib
 import unittest
+import uuid
 from contextlib import redirect_stdout
 from pathlib import Path
 from unittest.mock import patch
@@ -70,7 +73,7 @@ class ServerDispatchTests(unittest.TestCase):
 
 
 class ServerOciTests(unittest.TestCase):
-    def exercise(self, *, existing=False, conflict=False, fail_readback=False):
+    def exercise(self, *, existing=False, conflict=False, fail_readback=False, version="1.2.3"):
         raw = b'{"schemaVersion":2}\n'
         digest = "sha256:" + hashlib.sha256(raw).hexdigest()
         calls = []
@@ -87,7 +90,7 @@ class ServerOciTests(unittest.TestCase):
 
         observed = subprocess.CompletedProcess([], 0, b"different" if conflict else raw, b"")
         with patch.dict(os.environ, GHCR_USERNAME="fixture", GHCR_TOKEN="fixture-token"), patch.object(PUBLISH.shutil, "which", return_value="skopeo"), patch.object(PUBLISH, "run", run), patch.object(PUBLISH.subprocess, "run", return_value=observed), redirect_stdout(io.StringIO()) as output:
-            PUBLISH.publish_oci(ROOT, "server-v", "1.2.3", "a" * 40)
+            PUBLISH.publish_oci(ROOT, "server-v", version, "a" * 40)
         return calls, output.getvalue(), digest
 
     def test_server_builds_both_platforms_and_uses_exact_helper_and_readback(self):
@@ -107,6 +110,12 @@ class ServerOciTests(unittest.TestCase):
         self.assertEqual(calls[-1][-1], "ghcr.io/awebai/aweb-server")
         self.assertEqual(json.loads(output.split("release-index=")[1]), {"digest": digest, "source_sha": "a" * 40, "version": "1.2.3"})
 
+    def test_rc_publishes_and_reads_back_only_its_immutable_version(self):
+        calls, _, _ = self.exercise(version="1.2.3rc1")
+        copies = [args for args in calls if args[:2] == ("skopeo", "copy")]
+        self.assertEqual([args[-1] for args in copies], ["docker://ghcr.io/awebai/aweb-server:1.2.3rc1"])
+        self.assertIn("--version-only", calls[-1])
+
     def test_identical_published_index_is_adopted_and_read_back(self):
         calls, _, _ = self.exercise(existing=True)
         self.assertFalse(any(args[:2] == ("skopeo", "copy") for args in calls))
@@ -119,6 +128,50 @@ class ServerOciTests(unittest.TestCase):
     def test_readback_failure_is_not_success(self):
         with self.assertRaisesRegex(PUBLISH.PublishRefusal, "published digest mismatch"):
             self.exercise(fail_readback=True)
+
+
+@unittest.skipUnless(os.environ.get("AWEB_TEST_SERVER_IMAGE_BUILD") == "1", "requires Docker buildx, skopeo and both platform runtimes")
+class ServerPlatformBuildTests(unittest.TestCase):
+    def test_both_release_platforms_build_and_run_the_server_cli(self):
+        version = tomllib.loads((ROOT / "server/pyproject.toml").read_text())["project"]["version"]
+        sha = command(ROOT, "git", "rev-parse", "HEAD")
+        run_id = "server-image-test-" + uuid.uuid4().hex
+        with tempfile.TemporaryDirectory(prefix=run_id) as temporary:
+            archive = Path(temporary) / "server.oci.tar"
+            identities = Path(temporary) / "identities.json"
+            # The publication path uses this exact builder, not a second recipe.
+            PUBLISH.build_oci_archive(ROOT, "server-v", version, sha, archive)
+            PUBLISH.run(ROOT, "bash", "scripts/oci-exact-publish.sh", "inspect-staged",
+                        "--archive", str(archive), "--version", version,
+                        "--source-sha", sha, "--out", str(identities))
+            identity = json.loads(identities.read_text())
+            self.assertEqual(set(identity["platforms"]), {"linux/amd64", "linux/arm64"})
+            print("server image staged identity=" + json.dumps(identity, sort_keys=True), flush=True)
+            for architecture, machine in (("amd64", "x86_64"), ("arm64", "aarch64")):
+                with self.subTest(platform=architecture):
+                    image = run_id + ":" + architecture
+                    container = run_id + "-" + architecture
+                    try:
+                        PUBLISH.run(ROOT, "skopeo", "--override-os", "linux", "--override-arch", architecture,
+                                    "copy", "oci-archive:" + str(archive), "docker-daemon:" + image, timeout=600)
+                        observed = json.loads(PUBLISH.run(ROOT, "docker", "image", "inspect", image))[0]
+                        self.assertEqual(observed["Architecture"], architecture)
+                        self.assertEqual(observed["Config"]["Labels"]["org.opencontainers.image.revision"], sha)
+                        probe = ("import importlib.metadata as m, json, os, platform; "
+                                 "import aweb.cli, awid, aweb_naapp; "
+                                 "print(json.dumps(dict(version=m.version('aweb'), machine=platform.machine(), uid=os.getuid())))")
+                        result = json.loads(PUBLISH.run(ROOT, "docker", "run", "--rm", "--name", container,
+                                                       "--platform", "linux/" + architecture, image,
+                                                       "python", "-c", probe, timeout=120))
+                        self.assertEqual(result, {"version": version, "machine": machine, "uid": 1001})
+                        help_text = PUBLISH.run(ROOT, "docker", "run", "--rm", "--name", container,
+                                               "--platform", "linux/" + architecture, image, "aweb", "serve", "--help", timeout=120)
+                        self.assertIn("Usage", help_text)
+                        print(f"server image linux/{architecture} PASS: {result}", flush=True)
+                    finally:
+                        # Remove only this probe's resources, including a timed-out container.
+                        subprocess.run(["docker", "rm", "-f", container], capture_output=True, timeout=60, check=False)
+                        PUBLISH.run(ROOT, "docker", "image", "rm", "-f", image, timeout=60)
 
 
 if __name__ == "__main__":

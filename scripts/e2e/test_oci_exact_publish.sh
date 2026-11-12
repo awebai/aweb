@@ -45,7 +45,7 @@ def add(data: bytes) -> str:
 MANIFEST = "application/vnd.oci.image.manifest.v1+json"
 INDEX = "application/vnd.oci.image.index.v1+json"
 
-version = "9.9.9" if "--wrong-version-label" in flags else "0.5.14"
+version = "9.9.9" if "--wrong-version-label" in flags else ("0.5.14rc1" if "--rc" in flags else "0.5.14")
 revision = ("b" * 40) if "--wrong-revision-label" in flags else ("a" * 40)
 labels = {
     "org.opencontainers.image.title": "awid",
@@ -120,6 +120,18 @@ bash "$LANE" verify-published --archive "$tmp/good.tar" --version 0.5.14 \
   --observed-digest "latest=$INDEX_DIGEST" >/dev/null \
   || fail "matching tag observations refused"
 ok "version and latest resolving to the staged index verify"
+
+RC_DIGEST="$(make_archive "$tmp/rc.tar" --rc)"
+bash "$LANE" verify-published --archive "$tmp/rc.tar" --version 0.5.14rc1 \
+  --source-sha "$SRC_SHA" --repository ghcr.io/awebai/aweb-server --version-only \
+  --observed-digest "0.5.14rc1=$RC_DIGEST" \
+  --observed-digest "latest=sha256:unrelated-final" >/dev/null \
+  || fail "RC version-only readback must not require or observe latest"
+ok "RC version-only readback leaves latest independent"
+expect_refusal "RC digest mismatch" "resolves to" \
+  bash "$LANE" verify-published --archive "$tmp/rc.tar" --version 0.5.14rc1 \
+  --source-sha "$SRC_SHA" --repository ghcr.io/awebai/aweb-server --version-only \
+  --observed-digest "0.5.14rc1=sha256:wrong"
 
 make_archive "$tmp/wrongver.tar" --wrong-version-label >/dev/null
 expect_refusal "wrong version label" "labels version" \
