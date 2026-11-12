@@ -768,14 +768,18 @@ def throttled_calls(world: World, site: Site, holder: Holder, founded: Founded) 
             assert lost["state"] != "committed" and lost["new_signatures"] == 0, lost
 
 
+# Every image scripts/e2e/team-deployment-images.sh builds for the journey;
+# cli-control is the CLI the throttle legs expect not to recover (no caller retry).
+REQUIRED_IMAGES = {"aweb", "aweb-protected", "secrets", "logs", "awid", "cli", "cli-control", "chromium"}
+
+
 def load_images(path: Path) -> dict[str, str]:
     images = {}
     for line in path.read_text().splitlines():
         name, _, reference = line.partition(" ")
         if "@sha256:" in reference:
             images[name] = reference
-    # cli-control: the CLI the throttle legs expect not to recover (no caller retry).
-    missing = {"aweb", "aweb-protected", "secrets", "logs", "awid", "cli", "cli-control", "chromium"} - set(images)
+    missing = REQUIRED_IMAGES - set(images)
     if missing:
         raise SystemExit(f"FAILED: no pinned image for {', '.join(sorted(missing))} in {path}")
     return images
