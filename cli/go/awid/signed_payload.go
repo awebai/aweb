@@ -88,6 +88,17 @@ func signedDisplayMatches(payload string, fields map[string]string) bool {
 	return true
 }
 
+// SignedChatDisplayMatches reports whether a plaintext chat message shows what
+// its signed payload says. It takes the fields as received, before signed
+// metadata is projected over them.
+func SignedChatDisplayMatches(payload, body, messageID, conversationID, fromDID, toDID string) bool {
+	return signedDisplayMatches(payload, map[string]string{
+		"type": "chat", "body": body,
+		"message_id": messageID, "conversation_id": conversationID,
+		"from_did": fromDID, "to_did": toDID,
+	})
+}
+
 // signedMailDisplayMatches permits the legacy empty recipient-key claim only
 // for mail delivered to this reader. The authenticated read establishes the
 // recipient; authenticated sender-visible reads also preserve the reader's own

@@ -276,6 +276,14 @@ func parseSSEEvent(sseEvent *awid.SSEEvent) Event {
 		}
 	}
 
+	if ev.ContentMode != awid.ContentModeEncryptedV2 && ev.MessageVersion != awid.E2EEMessageVersion && ev.Encrypted == nil && ev.SignedPayload != "" &&
+		!awid.SignedChatDisplayMatches(ev.SignedPayload, ev.Body, ev.MessageID, ev.SessionID, ev.FromDID, ev.ToDID) {
+		// Keep the observed row: a mismatch must not be hidden by projecting
+		// signed metadata over it.
+		ev.VerificationStatus = awid.Failed
+		return ev
+	}
+
 	if meta, ok := parseSignedEnvelopeMetadata(ev.SignedPayload); ok {
 		// The chat stream row may carry a stable DID in from_did/to_did when the
 		// session participant was stored under did:aw. The signed payload is the
