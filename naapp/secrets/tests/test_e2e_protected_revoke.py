@@ -254,6 +254,7 @@ def protected_site(lane: ProtectedLane) -> Site:
         publish_controller=lambda did: publish_awid_txt(lane, did), store_member=store_member,
         configure_signer=configure_signer, install_controller=install_controller, operator=operator,
         start_signer=start_signer, signer_evidence=signer_evidence,
+        signer_access_log=lambda: lane.protected("logs", "--no-color", "--no-log-prefix", "protected").stdout,
         chromium=lane.chromium, drop_prepare_answers=drop_prepare_answers,
     )
 

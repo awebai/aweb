@@ -174,6 +174,8 @@ class Site:
     # What the signer signed for one operation, read from its database
     # (e2e/protected/evidence.py): {"signed": bool, "refusal_code": ...}.
     signer_evidence: Callable[[str], dict]
+    # The signer's own access log so far, as uvicorn writes it.
+    signer_access_log: Callable[[], str]
     # The approving human's Chromium in a machine's network namespace.
     chromium: Callable[..., dict]
     # While on, the front drops the answer of a committed prepare once.
@@ -316,6 +318,24 @@ def approve(site: Site, machine: str, page: str, *uv: str) -> dict:
     return site.chromium(machine, "approve", "--url", page, "--device", f"{site.mounted}/approver-device.json", *uv)
 
 
+ACCESS = re.compile(r'"(GET|POST) (\S+) HTTP/[\d.]+" (\d{3})')
+
+
+def handoff_requests(site: Site, page: str) -> list[tuple[str, str, int]]:
+    """The requests the signer served for one handoff page, in order: from the
+    page's own load up to the next page or prepare, so another handoff's
+    requests cannot count for this one."""
+    handoff = "/handoff/" + page.rsplit("/handoff/", 1)[1]
+    served = [(m.group(1), m.group(2), int(m.group(3))) for m in ACCESS.finditer(site.signer_access_log())]
+    start = next(i for i, (method, path, _) in enumerate(served) if method == "GET" and path == handoff)
+    segment = []
+    for method, path, status in served[start + 1:]:
+        if (method == "GET" and path.startswith("/handoff/")) or (method == "POST" and path == "/protected-operations"):
+            break
+        segment.append((method, path, status))
+    return segment
+
+
 def round_trip(site: Site, holder: Holder, founded: Founded) -> str:
     """aw prepares, the page logs the human in, then the human approves the
     exact act aw printed, and aw reports its receipt. Returns the operation."""
@@ -346,7 +366,17 @@ def refusals(site: Site, holder: Holder, founded: Founded) -> None:
         child, page, operation, _ = start_revoke(site, machine, approver)
         report = approve(site, machine, page, f"--{phase}-uv", "no")
         assert "navigated" not in report["states"], report
-        assert report["states"][-1] == ("login-required" if phase == "login" else "ready"), report
+        if phase == "login":
+            # The authenticator answers without user verification; the signer
+            # refuses that LOGIN with 401 and the page ends refused, never
+            # showing an act ready for approval or asking about one.
+            assert report["states"] == ["login-required", "refused"], report
+            assert not report.get("digest") and not report.get("act"), report
+            requests = handoff_requests(site, page)
+            assert ("POST", "/login", 401) in requests, requests
+            assert not any("/governance/" in path for _, path, _ in requests), requests
+        else:
+            assert report["states"][-1] == "ready", report
         child.sendintr()
         finish(child)
         assert site.signer_evidence(operation)["signed"] is False

@@ -487,6 +487,7 @@ class World:
             profile_in_machine="/world/signer/profile.json", publish_controller=self.publish_controller,
             store_member=store_member, configure_signer=configure_signer, install_controller=install_controller,
             operator=operator_command, start_signer=start_signer, signer_evidence=signer_evidence,
+            signer_access_log=lambda: self.compose("logs", "--no-color", "--no-log-prefix", "signer"),
             chromium=chromium, drop_prepare_answers=drop_prepare_answers,
         )
 
