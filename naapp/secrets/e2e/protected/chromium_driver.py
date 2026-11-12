@@ -21,6 +21,7 @@ import json
 import os
 import subprocess
 from pathlib import Path
+from typing import Any
 
 from playwright.sync_api import sync_playwright
 
@@ -74,7 +75,7 @@ def approve(args, browser) -> None:
     cdp, authenticator_id = authenticator(page, args.login_uv == "yes")
     for credential in json.loads(Path(args.device).read_text()):
         cdp.send("WebAuthn.addCredential", {"authenticatorId": authenticator_id, "credential": credential})
-    report = {"states": []}
+    report: dict[str, Any] = {"states": []}
     page.goto(args.url)
     report["states"].append(wait_state(page, ("login-required", "refused")))
     if report["states"][-1] == "login-required":
