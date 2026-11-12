@@ -261,6 +261,14 @@ def lane(tmp_path_factory: pytest.TempPathFactory) -> Iterator[Lane]:
             _docker("rm", "-f", f"{project}-{name}")
 
 
+def grant_install_owner(lane: Lane, did_key: str) -> None:
+    """The server operator's local bootstrap of the team's first installation
+    owner. Membership grants no install authority; only this does."""
+    granted = lane.compose("exec", "-T", "aweb", "aweb", "install-admin", "grant", "--team-id", TEAM_ID,
+                           "--principal-did", did_key, "--role", "owner")
+    assert granted.returncode == 0, granted.stdout + granted.stderr
+
+
 def write_service_member(lane: Lane, controller: str) -> None:
     """The app's own team member credential (no AWID service token), and its config."""
     keys = lane.runtime / "keys"
@@ -346,7 +354,7 @@ def test_the_owner_designates_a_human_holder_registered_on_another_machine(lane:
     shutil.move(str(team_key), owner_keys / f"{TEAM}.key")
 
     # The owner's own agent identity and membership, then the holder's.
-    aw(controller, "id", "create", "--name", "owner", "--domain", DOMAIN, "--root-parent", "--registry", REGISTRY)
+    owner = aw(controller, "id", "create", "--name", "owner", "--domain", DOMAIN, "--root-parent", "--registry", REGISTRY)
     invite = aw(controller, "id", "team", "invite", "--team", TEAM, "--namespace", DOMAIN, "--member-global")
     aw(controller, "id", "team", "accept-invite", invite["token"], "--name", "owner", "--global")
     aw(controller, "init", "--url", AWEB, "--name", "owner", "--do-not-touch-agents-md")
@@ -361,6 +369,7 @@ def test_the_owner_designates_a_human_holder_registered_on_another_machine(lane:
     # The app, as its owner installs it.
     write_service_member(lane, controller)
     lane.up("secrets", "front")
+    grant_install_owner(lane, owner["did_key"])
     installed = aw(controller, "plugin", "install", API)
     assert installed["approved"], installed
     child = holder.act(principal, "plugin", "install", API)

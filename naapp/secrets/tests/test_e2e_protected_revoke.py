@@ -50,6 +50,7 @@ from tests.test_e2e_owner_acts import (
     aw,
     await_awid_txt,
     first_json,
+    grant_install_owner,
     publish_awid_txt,
     write_service_member,
 )
@@ -208,7 +209,8 @@ def test_a_human_approves_a_protected_revoke_in_a_real_browser(lane: ProtectedLa
     team_key = lane.runtime / "holder" / ".awid" / "team-keys" / DOMAIN / f"{TEAM}.key"
 
     # The requester: a root-parented agent identity, a team member, connected.
-    requester = aw(owner, "id", "create", "--name", "owner", "--domain", DOMAIN, "--root-parent", "--registry", REGISTRY)["did_aw"]
+    created = aw(owner, "id", "create", "--name", "owner", "--domain", DOMAIN, "--root-parent", "--registry", REGISTRY)
+    requester = created["did_aw"]
     invite = aw(owner, "id", "team", "invite", "--team", TEAM, "--namespace", DOMAIN, "--member-global")
     aw(owner, "id", "team", "accept-invite", invite["token"], "--name", "owner", "--global")
     aw(owner, "init", "--url", AWEB, "--name", "owner", "--do-not-touch-agents-md")
@@ -216,6 +218,7 @@ def test_a_human_approves_a_protected_revoke_in_a_real_browser(lane: ProtectedLa
     # The fixture app, installed as its owner installs it.
     write_service_member(lane, owner)
     lane.up("secrets", "front")
+    grant_install_owner(lane, created["did_key"])
     assert aw(owner, "plugin", "install", API)["approved"]
 
     # The protected server's ordinary member credential (never the controller).
