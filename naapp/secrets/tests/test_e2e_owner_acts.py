@@ -126,8 +126,10 @@ class Holder:
         # A disposable passphrase, generated now and never printed or stored.
         self.passphrase = secrets.token_urlsafe(24)
         self.bus = "unix:path=/runtime/holder/.bus"
+        # -i: without it docker exec attaches no stdin, the unlock reads no
+        # password and the Secret Service has no default collection.
         started = _docker(
-            "exec", container, "sh", "-c",
+            "exec", "-i", container, "sh", "-c",
             "dbus-daemon --session --fork --address=" + self.bus + " "
             "&& DBUS_SESSION_BUS_ADDRESS=" + self.bus + " gnome-keyring-daemon --unlock --components=secrets "
             "&& DBUS_SESSION_BUS_ADDRESS=" + self.bus + " gnome-keyring-daemon --start --components=secrets",
