@@ -159,7 +159,9 @@ PY
 }
 
 down() {
-  dc down --volumes --remove-orphans
+  # Every profile: a service whose profile is off at down (the journey's aw
+  # machines) is still the project's.
+  dc --profile '*' down --volumes --remove-orphans
   local left=0 kind ids
   for kind in container network volume; do
     if [[ "$kind" == container ]]; then
