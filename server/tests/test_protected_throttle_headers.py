@@ -149,3 +149,38 @@ async def test_requester_current_key_lookup_preserves_the_hint_after_proof(monke
             request, principal=context.human_id, operation="protected_operation_receipt"
         )
     assert _http(caught.value).headers == {"Retry-After": "7"}
+
+
+@pytest.mark.asyncio
+async def test_authority_binding_wrapped_throttle_retains_the_same_explicit_hint():
+    """The real binding helper wraps its second current-key read's failure."""
+    context = PROFILE.bindings[0].context()
+
+    class Registry:
+        calls = 0
+
+        async def resolve_key_fresh(self, principal):
+            self.calls += 1
+            if self.calls == 2:
+                raise RegistryThrottled(
+                    retry_after_seconds=17, attempts=1, reason="elapsed_budget"
+                )
+            return SimpleNamespace(
+                current_did_key=PROFILE.bindings[0].authority_key_did
+            )
+
+    registry = Registry()
+    authority = IndependentAuthority(
+        object(),
+        context=context,
+        registry=registry,
+        custody=SimpleNamespace(
+            service_id=context.service_id, team_id=context.authority_id
+        ),
+    )
+    with pytest.raises(SignerRefused) as caught:
+        await authority.observe(context, purpose="receipt")
+    assert registry.calls == 2
+    response = _http(caught.value)
+    assert response.status_code == 503 and response.detail == "receipt_unavailable"
+    assert response.headers == {"Retry-After": "17"}
