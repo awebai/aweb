@@ -2063,3 +2063,48 @@ async def test_grant_real_task_workspace_repo_role_instruction_routes(aweb_cloud
     for response in (delete_task, ensure_repo, reset_roles, reset_instructions, delete_workspace):
         assert response.status_code == 403
         assert response.json()["detail"] == "outside grant scope"
+
+
+@pytest.mark.asyncio
+async def test_root_renews_same_session_key_and_terms_but_revocation_wins(aweb_cloud_db):
+    manager = aweb_cloud_db.aweb_db
+    app, _ = await _fixture(manager)
+    key, did_key = _session_keypair()
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+        original = (await _mint(client, grant_did_key=did_key, scopes=["mail.read"])).json()
+        grant_id = original["grant_id"]
+        path = f"/v1/identity-grants/{grant_id}/renew"
+        # An expired credential cannot renew itself. Ordinary subject authority can.
+        await manager.execute("UPDATE {{tables.identity_session_grants}} SET expires_at=NOW()-INTERVAL '1 second' WHERE grant_id=$1::UUID", grant_id)
+        body = {"ttl_seconds": 86400}
+        refused = await client.post(path, json=body, headers=_grant_headers(signing_key=key, did_key=did_key, grant_id=grant_id, method="POST", path=path, body=json.dumps(body).encode()))
+        assert refused.status_code == 403
+        renewed = await client.post(path, json=body)
+        assert renewed.status_code == 200, renewed.text
+        assert renewed.json()["grant_id"] == grant_id
+        assert renewed.json()["grant_did_key"] == did_key
+        assert renewed.json()["scopes"] == original["scopes"]
+        assert datetime.fromisoformat(renewed.json()["expires_at"]) > datetime.now(timezone.utc) + timedelta(hours=23)
+        await client.post(f"/v1/identity-grants/{grant_id}/revoke")
+        denied = await client.post(path, json=body)
+        assert denied.status_code == 403
+        assert denied.json()["detail"] == "grant revoked"
+    assert await manager.fetch_value("SELECT COUNT(*) FROM {{tables.audit_log}} WHERE event_type='identity_grant.renew'") == 1
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("authority", ["other_subject", "inactive", "issuer_revoked"])
+async def test_session_renewal_refuses_lost_authority(aweb_cloud_db, authority):
+    manager = aweb_cloud_db.aweb_db
+    app, agent_id = await _fixture(manager)
+    _, did_key = _session_keypair()
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+        grant_id = (await _mint(client, grant_did_key=did_key, scopes=["mail.read"])).json()["grant_id"]
+        if authority == "other_subject":
+            app.state.agent_id = str(uuid4())
+        elif authority == "inactive":
+            await manager.execute("UPDATE {{tables.agents}} SET status='inactive' WHERE agent_id=$1", agent_id)
+        else:
+            app.state.awid_registry_client.get_team_revocations = AsyncMock(return_value={"cert-1"})
+        response = await client.post(f"/v1/identity-grants/{grant_id}/renew", json={"ttl_seconds": 600})
+    assert response.status_code == (404 if authority == "other_subject" else 403)

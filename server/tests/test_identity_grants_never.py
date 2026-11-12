@@ -22,3 +22,13 @@ def test_never_status_survives_horizon_but_revocation_wins():
     assert grant_status(row, now) == "revoked"
     row.update(expires_at=issued+timedelta(hours=1), revoked_at=None)
     assert grant_status(row, now) == "expired"
+
+
+def test_renewal_requires_an_explicit_finite_lifetime():
+    from aweb.routes.identity_grants import GrantRenewRequest
+    from pydantic import ValidationError
+
+    assert GrantRenewRequest(ttl_seconds=86400).ttl_seconds == 86400
+    for body in ({}, {"ttl_seconds": None}, {"ttl_seconds": "never"}, {"ttl_seconds": 59}, {"ttl_seconds": 2592001}, {"ttl_seconds": 600, "scopes": ["mail.send"]}):
+        with pytest.raises(ValidationError):
+            GrantRenewRequest(**body)
