@@ -48,6 +48,17 @@ class ServerDispatchTests(unittest.TestCase):
                 self.assertEqual(pypi.call_count, int(selected == "pypi"))
                 self.assertEqual(oci.call_count, int(selected == "oci"))
 
+    def test_cli_selector_reaches_the_image_lane(self):
+        prior = Path.cwd()
+        try:
+            os.chdir(self.root)
+            with patch.object(PUBLISH, "publish_pypi") as pypi, patch.object(PUBLISH, "publish_oci") as oci:
+                self.assertEqual(PUBLISH.main(["--only", "oci", "server-v1.2.3"]), 0)
+                pypi.assert_not_called()
+                oci.assert_called_once()
+        finally:
+            os.chdir(prior)
+
     def test_identity_failure_still_precedes_either_publication(self):
         command(self.root, "git", "tag", "server-v1.2.4")
         with patch.object(PUBLISH, "publish_pypi") as pypi, patch.object(PUBLISH, "publish_oci") as oci:
@@ -151,9 +162,11 @@ class ServerPlatformBuildTests(unittest.TestCase):
                 with self.subTest(platform=architecture):
                     image = run_id + ":" + architecture
                     container = run_id + "-" + architecture
+                    loaded = False
                     try:
                         PUBLISH.run(ROOT, "skopeo", "--override-os", "linux", "--override-arch", architecture,
                                     "copy", "oci-archive:" + str(archive), "docker-daemon:" + image, timeout=600)
+                        loaded = True
                         observed = json.loads(PUBLISH.run(ROOT, "docker", "image", "inspect", image))[0]
                         self.assertEqual(observed["Architecture"], architecture)
                         self.assertEqual(observed["Config"]["Labels"]["org.opencontainers.image.revision"], sha)
@@ -171,7 +184,8 @@ class ServerPlatformBuildTests(unittest.TestCase):
                     finally:
                         # Remove only this probe's resources, including a timed-out container.
                         subprocess.run(["docker", "rm", "-f", container], capture_output=True, timeout=60, check=False)
-                        PUBLISH.run(ROOT, "docker", "image", "rm", "-f", image, timeout=60)
+                        if loaded:
+                            PUBLISH.run(ROOT, "docker", "image", "rm", "-f", image, timeout=60)
 
 
 if __name__ == "__main__":

@@ -6,7 +6,7 @@ commit.
 
 | Tag | Published artifact |
 |---|---|
-| `server-vX.Y.Z` | PyPI `aweb` |
+| `server-vX.Y.Z` | PyPI `aweb` and `ghcr.io/awebai/aweb-server` image |
 | `awid-service-vX.Y.Z` | PyPI `awid-service` |
 | `aweb-naapp-vX.Y.Z` | PyPI `aweb-naapp`, the shared naapp toolkit in `naapp-lib/`, then its dev-only test support `aweb-naapp-testing` (`naapp-lib/testing/`) at the same version |
 | `awid-vX.Y.Z` | `ghcr.io/awebai/awid` image |
@@ -41,7 +41,8 @@ values package, must equal the tag. The aw spelling is SemVer:
 
 The coordinator publishes these RCs first. The Cloud candidate pins the exact
 RC versions and must pass its ordinary pin gate against real services before
-OSS final publication and Cloud deployment. Python RCs publish to PyPI. Every
+OSS final publication and Cloud deployment. Python RCs publish to PyPI; server RCs also publish the immutable RC image tag
+without moving `latest`. Final server images update `latest`. Every
 aw RC npm package publishes with `--tag next`; final packages use `latest`
 unless the release explicitly stages the final on `next` as described below.
 The downstream `awebai/aw` workflow accepts `v*`, uses the synced
@@ -107,8 +108,10 @@ shared build commands in `scripts/publish_release.py`, root checkout filters
 Python's root `pyproject.toml`, `uv.toml`, `uv.lock`, `.python-version` and PyPI
 workflow; Go's root `go.work`, `go.work.sum`, aw release workflow and shared
 `scripts/npm-exact-publish.sh` packing recipe.
-Unrelated files elsewhere, including the root Makefile and another package's
-source, do not force a new RC of this package.
+The server image also bundles `awid/` and `naapp-lib/`, so those trees, the
+root `.dockerignore`, service image workflow and `scripts/oci-exact-publish.sh`
+are server RC inputs. Unbundled package source and unrelated files such as the
+root Makefile do not force a new RC.
 
 Within that scope, only manifest versions and exact dependency pins or
 lower-bound floors on promoted packages may move to the same final base.
@@ -397,3 +400,28 @@ ledger still serializes/reuses proof for a tree. An explicitly authorized
 concurrency proof uses separate `AWEB_GATE_LEDGER` directories for its two runs;
 it must not share either ledger or retained artifact directory. Resource labels,
 Compose project names, networks, workspaces and logs remain unique per run.
+
+## Server OCI image
+
+A `server-v*` tag dispatches both the Python and image publishers. The PyPI
+workflow selects `--only pypi`; the service image workflow selects `--only oci`,
+so each needs only its own registry credentials. Runnerless publication without
+`--only` publishes both. Both selectors still validate the tagged manifest and
+RC-to-final source identity before checking out that exact commit.
+
+The image uses `server/Dockerfile` with the repository root context and builds
+`linux/amd64` and `linux/arm64` into one OCI archive. The shared exact OCI helper
+checks the complete archive and each platform's version/source labels before
+publication. Version tags are immutable: a different existing digest refuses;
+an identical one is adopted. The publisher reads back the published index and
+prints `release-index` with its digest, source SHA and version. Deployments pin
+`ghcr.io/awebai/aweb-server@sha256:...` using that receipt. This is the ordinary
+server image; it adds no protected signer variant.
+
+`python3 scripts/test_server_image_publish.py` runs the dispatch, identity,
+immutability and readback controls without Docker. `make test-server-image-build`
+on an authorized build host with Docker buildx, skopeo and both platform runtimes
+builds the actual archive through the same publisher function, validates it with
+the exact helper, and runs the packaged server CLI on both architectures as the
+image's non-root user. It does not publish to a registry. Public pullability is
+established by the tag publisher's registry readback at release time.

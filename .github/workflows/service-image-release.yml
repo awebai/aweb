@@ -2,7 +2,7 @@ name: Publish service image
 
 on:
   push:
-    tags: ["awid-v*", "secrets-v*", "logs-v*"]
+    tags: ["server-v*", "awid-v*", "secrets-v*", "logs-v*"]
 
 permissions:
   contents: read
@@ -34,4 +34,4 @@ jobs:
         env:
           GHCR_USERNAME: ${{ github.actor }}
           GHCR_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        run: python3 scripts/publish_release.py "${GITHUB_REF_NAME}"
+        run: python3 scripts/publish_release.py --only oci "${GITHUB_REF_NAME}"

@@ -670,18 +670,15 @@ sdist = { url = "https://files.example/unrelated.tar.gz", hash = "sha256:unchang
                 # The reported failure: a root Makefile change or another
                 # package moving on must not demand another RC of this package.
                 (root / "Makefile").write_text("unrelated-target:\n\t@true\n")
-                other = "server" if directory != "server" else "awid"
-                (root / other / "implementation.py").unlink()
-                manifest = root / other / "pyproject.toml"
-                manifest.write_text(manifest.read_text().replace('version = "', 'version = "9'))
-                # Leave dependency floors on their RC versions: no promotion
-                # of the unrelated target is being asserted by this test.
                 if directory == "server":
-                    for relative in ("server/pyproject.toml", "server/uv.lock"):
-                        path = root / relative
-                        path.write_text(command(root, "git", "show", "HEAD:" + relative)
-                                        .replace("1.27.34rc1", "1.27.34")
-                                        .replace("0.4.1rc1", "0.4.1") + "\n")
+                    # AWID/naapp-lib are bundled in the server image now.
+                    # An unbundled npm package remains outside its RC scope.
+                    manifest = root / "channel/package.json"
+                    manifest.write_text(manifest.read_text().replace("3.4.5", "9.9.9"))
+                else:
+                    (root / "server/implementation.py").unlink()
+                    manifest = root / "server/pyproject.toml"
+                    manifest.write_text(manifest.read_text().replace('version = "', 'version = "9'))
                 self.assert_both_accept(root, tag)
 
     def test_each_package_source_change_refuses_candidate_and_publisher(self):
