@@ -3,20 +3,22 @@ from __future__ import annotations
 
 import asyncio
 import hashlib
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from types import SimpleNamespace
 
+import awid.registry as registry_module
 import httpx
 import pytest
 import pytest_asyncio
-from fastapi import HTTPException
-
-import awid.registry as registry_module
+from aweb.team_auth_deps import verify_request_certificate
 from awid.registry import CachedRegistryClient
 from awid.signing import canonical_json_bytes, sign_message
-from aweb.team_auth_deps import verify_request_certificate
+from fastapi import HTTPException
 from test_team_auth_deps import (
-    _encode_certificate, _make_certificate, _make_keypair, _request_with_app_state,
+    _encode_certificate,
+    _make_certificate,
+    _make_keypair,
+    _request_with_app_state,
 )
 from test_team_key_rotation_cache import _Redis
 
@@ -83,7 +85,7 @@ async def _verify(env, certificate_id, *, signer=None, registry=None, bad_reques
     signer_key, signer_did = signer or (env.team, env.team_did)
     cert = _make_certificate(signer_key, signer_did, env.member_did,
                              certificate_id=certificate_id, identity_scope="local")
-    timestamp = datetime.now(timezone.utc).isoformat()
+    timestamp = datetime.now(UTC).isoformat()
     payload = canonical_json_bytes({
         "team_id": cert["team_id"], "timestamp": timestamp, "body_sha256": hashlib.sha256(b"").hexdigest(),
     })
@@ -143,6 +145,9 @@ async def test_forged_signature_does_not_spend_list_refresh_budget(world, bad_re
     assert error.status_code == 401
     assert error.detail != "unregistered"
     assert world.list_reads == 0
+    assert not any(key.startswith("awid:team_certificates_miss_refresh:") for key in world.redis.values)
+    if bad_request:
+        assert not any(key.startswith("awid:team_key_signature_refresh:") for key in world.redis.values)
     world.registered.append("cert-new")
     assert (await _verify(world, "cert-new"))["certificate_id"] == "cert-new"
     assert world.list_reads == 1
@@ -253,4 +258,20 @@ async def test_refresh_writes_only_its_reader_authority_partition(world):
     )}
     # The independent reader cannot reuse private facts or bypass the shared budget.
     assert (await _refused(world, "cert-new")).status_code == 503
+    assert world.list_reads == 1
+
+
+@pytest.mark.asyncio
+async def test_existing_positive_never_acquires_miss_admission(world):
+    world.redis.deny_admission = True
+    assert (await _verify(world, "cert-earlier"))["certificate_id"] == "cert-earlier"
+    assert world.list_reads == 0
+
+
+@pytest.mark.asyncio
+async def test_new_registration_and_rotated_key_can_recover_together(world):
+    new, _, new_did = _make_keypair()
+    world.registry_key = new_did
+    world.registered.append("cert-new")
+    assert (await _verify(world, "cert-new", signer=(new, new_did)))["certificate_id"] == "cert-new"
     assert world.list_reads == 1

@@ -8,13 +8,12 @@ from uuid import UUID, uuid4
 
 import httpx
 import pytest
-
+from aweb.api import _build_awid_registry_client
 from awid.dns_verify import DomainAuthority
 from awid_service.deps import get_domain_verifier
-from aweb.api import _build_awid_registry_client
-from test_dashboard_privacy import privacy_app, TEAM, TEAM_NAME  # noqa: F401
 from test_cli_never_grants import registry_listener
-from test_id_chain_request_auth import ALICE, ROOT, _signed_fixture_certificate, _fixture_signer
+from test_dashboard_privacy import TEAM, TEAM_NAME, privacy_app  # noqa: F401
+from test_id_chain_request_auth import ALICE, ROOT, _fixture_signer, _signed_fixture_certificate
 from test_messages_http import _encode_certificate, _make_certificate, _signed_team_headers
 
 
@@ -30,7 +29,7 @@ class _CountLists(httpx.AsyncHTTPTransport):
 
 
 @pytest.mark.asyncio
-async def test_newly_admitted_global_human_connects_behind_warm_strict_list(privacy_app, monkeypatch):
+async def test_newly_admitted_global_human_connects_behind_warm_strict_list(privacy_app, monkeypatch):  # noqa: F811
     env = privacy_app
     monkeypatch.setenv("AWEB_REQUIRE_REGISTERED_CERTIFICATES", "true")
     domain = f"awtest-admission-{uuid4().hex}.test"
