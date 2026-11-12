@@ -332,6 +332,11 @@ def main() -> int:
         raise SystemExit(f"FAILED: {run_dir} exists; each run has its own directory")
     run_dir.mkdir(parents=True)
     world = World(run_dir, args.project, load_images(args.images), args.services_cidr)
+    # The settings the adapter needs for this run, none secret, for a later
+    # connect or down: set -a; . world.env; scripts/e2e-team-deployment.sh ...
+    (run_dir / "world.env").write_text(
+        "".join(f"{name}={world.env[name]}\n" for name in sorted(world.env) if name.startswith(("TEAM_DEPLOYMENT_", "TEST_")))
+    )
 
     print("=== Setup: the test world")
     world.write_world()
