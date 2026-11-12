@@ -37,6 +37,48 @@ class ArtifactOrdering(unittest.TestCase):
                              'focused journey bypassed the release artifact prerequisite')
 
 
+class SourceAdmission(unittest.TestCase):
+    def test_dirty_refusal_names_tracked_and_untracked_paths(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary) / "source"
+            root.mkdir()
+            init_fixture_repo(root)
+            (root / "tracked.txt").write_text("committed\n")
+            subprocess.run(['git', 'add', '.'], cwd=root, check=True)
+            subprocess.run(['git', '-c', 'user.name=fixture', '-c', 'user.email=fixture@example.test',
+                            'commit', '-qm', 'fixture'], cwd=root, check=True)
+            (root / "tracked.txt").write_text("changed\n")
+            (root / "untracked.txt").write_text("new\n")
+            output = Path(temporary) / "artifacts"
+            result = subprocess.run([sys.executable, str(ROOT / 'scripts/release_artifacts.py'),
+                                     'python', '--root', str(root), '--directory', str(output)],
+                                    text=True, capture_output=True)
+            self.assertEqual(result.returncode, 1, result.stdout + result.stderr)
+            self.assertIn('source checkout is dirty', result.stderr)
+            self.assertIn(' M tracked.txt', result.stderr)
+            self.assertIn('?? untracked.txt', result.stderr)
+            self.assertFalse(output.exists(), 'dirty source started artifact production')
+
+    def test_dirty_refusal_caps_large_inventories(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary) / 'source'
+            root.mkdir()
+            init_fixture_repo(root)
+            subprocess.run(['git', 'add', '.'], cwd=root, check=True)
+            subprocess.run(['git', '-c', 'user.name=fixture', '-c', 'user.email=fixture@example.test',
+                            'commit', '-qm', 'fixture'], cwd=root, check=True)
+            for index in range(55):
+                (root / f'untracked-{index:02}.txt').touch()
+            result = subprocess.run([sys.executable, str(ROOT / 'scripts/release_artifacts.py'),
+                                     'python', '--root', str(root), '--directory', temporary + '/out'],
+                                    text=True, capture_output=True)
+            self.assertEqual(result.returncode, 1)
+            self.assertIn('?? untracked-00.txt', result.stderr)
+            self.assertIn('5 more status entries omitted', result.stderr)
+            self.assertNotIn('?? untracked-54.txt', result.stderr)
+
+
+
 class ContextCleanup(unittest.TestCase):
     def test_preparation_removes_each_context_and_preserves_exit_status(self):
         for status in (0, 17):
