@@ -103,3 +103,35 @@ async def test_a_team_document_over_the_limit_is_refused_and_one_at_the_limit_is
     refused = await _request(env, 'POST', '/v1/roles', oversized_roles)
     assert refused.status_code == 413, refused.text
     assert await env.db.fetch_value('SELECT count(*) FROM {{tables.team_roles}}') == 0
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize('kind', ['instructions', 'roles'])
+async def test_concurrent_document_creation_allocates_distinct_versions(privacy_app, kind):
+    import asyncio
+    from aweb.coordination.routes.team_instructions import create_team_instructions_version
+    from aweb.coordination.routes.team_roles import create_team_roles_version
+
+    env = privacy_app
+    table = '{{tables.team_' + kind + '}}'
+    # Each INSERT has already selected MAX(version) when this trigger pauses
+    # it. Without the per-team lock, concurrent writers select the same value.
+    await env.db.execute("""
+        CREATE FUNCTION pg_temp.delay_team_document_insert() RETURNS trigger
+        LANGUAGE plpgsql AS $$ BEGIN PERFORM pg_sleep(0.15); RETURN NEW; END $$
+    """)
+    await env.db.execute(f"CREATE TRIGGER delay_team_document_insert BEFORE INSERT ON {table} "
+                         "FOR EACH ROW EXECUTE FUNCTION pg_temp.delay_team_document_insert()")
+
+    async def create(index):
+        args = dict(team_id=TEAM, created_by_alias='alice')
+        if kind == 'instructions':
+            return await create_team_instructions_version(
+                env.db, base_instructions_id=None, document={'body_md': str(index)}, **args)
+        return await create_team_roles_version(
+            env.db, base_roles_id=None, bundle={'roles': {}, 'adapters': {}}, **args)
+
+    outcomes = await asyncio.gather(*(create(i) for i in range(3)), return_exceptions=True)
+    assert not [r for r in outcomes if isinstance(r, BaseException)], outcomes
+    assert sorted(r.version for r in outcomes) == [1, 2, 3]
+    assert await env.db.fetch_value(f'SELECT count(*) FROM {table} WHERE team_id=$1', TEAM) == 3
