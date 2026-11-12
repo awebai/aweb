@@ -10,10 +10,13 @@ import yaml
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
 RUNNER = REPO_ROOT / "scripts" / "e2e-team-deployment.sh"
+TEAM = REPO_ROOT / "deploy" / "team"
 EXAMPLE = yaml.safe_load((REPO_ROOT / "deploy" / "team" / "deployment.example.yaml").read_text(encoding="utf-8"))
 
 
-def run(tmp_path: Path, *args: str, project: str | None = "teamrun") -> subprocess.CompletedProcess:
+def run(
+    tmp_path: Path, *args: str, project: str | None = "teamrun", extra_files: str | None = None
+) -> subprocess.CompletedProcess:
     # A docker that records being called: these commands must not start anything.
     bin_dir = tmp_path / "bin"
     bin_dir.mkdir(exist_ok=True)
@@ -22,6 +25,9 @@ def run(tmp_path: Path, *args: str, project: str | None = "teamrun") -> subproce
     docker.chmod(0o755)
     env = {**os.environ, "PATH": f"{bin_dir}:{os.environ['PATH']}", "TEAM_DEPLOYMENT_RUN_DIR": str(tmp_path / "run")}
     env.pop("TEAM_DEPLOYMENT_PROJECT", None)
+    env.pop("TEAM_DEPLOYMENT_COMPOSE_FILES", None)
+    if extra_files is not None:
+        env["TEAM_DEPLOYMENT_COMPOSE_FILES"] = extra_files
     if project is not None:
         env["TEAM_DEPLOYMENT_PROJECT"] = project
     return subprocess.run([str(RUNNER), *args], env=env, capture_output=True, text=True, timeout=120)
@@ -47,7 +53,7 @@ def test_connect_hands_the_journey_the_origins_and_how_to_reach_and_remove_the_d
         },
     }
     path = deployment(tmp_path, config)
-    result = run(tmp_path, "compose", "connect", path)
+    result = run(tmp_path, "compose", "connect", path, extra_files="/srv/journey/compose.test.yaml")
     assert result.returncode == 0, result.stderr
     assert json.loads(result.stdout) == {
         "project": "teamrun",
@@ -59,6 +65,11 @@ def test_connect_hands_the_journey_the_origins_and_how_to_reach_and_remove_the_d
             "secrets": {"api": "https://secrets.example.com", "console": "https://secrets-console.example.com"},
         },
         "agent": None,
+        "compose": [
+            "docker", "compose", "-p", "teamrun", "--env-file", str(tmp_path / "run" / ".env"),
+            "-f", str(TEAM / "compose.yaml"), "-f", str(TEAM / "compose.secrets.yaml"),
+            "-f", "/srv/journey/compose.test.yaml",
+        ],
         "down": [str(RUNNER), "compose", "down", path],
     }
     assert not (tmp_path / "docker-calls").exists()

@@ -9,7 +9,12 @@ import yaml
 REPO_ROOT = Path(__file__).resolve().parents[2]
 TEAM = REPO_ROOT / "deploy" / "team"
 COMPOSE = yaml.safe_load((TEAM / "compose.yaml").read_text(encoding="utf-8"))
-SERVICES = COMPOSE["services"]
+OPTIONAL = ("secrets", "logs", "signer")
+COMPONENT_FILES = {name: (TEAM / f"compose.{name}.yaml").read_text(encoding="utf-8") for name in OPTIONAL}
+SERVICES = {
+    **COMPOSE["services"],
+    **{name: yaml.safe_load(text)["services"][name] for name, text in COMPONENT_FILES.items()},
+}
 CUSTOMER = yaml.safe_load(
     (REPO_ROOT / "server" / "docker-compose.customer.yml").read_text(encoding="utf-8")
 )["services"]
@@ -32,6 +37,18 @@ CREDENTIAL_NAME = re.compile(r"PASSWORD|USERNAME|TOKEN|CREDENTIALS|DATABASE_URL|
 
 def environment(service: dict) -> dict:
     return service.get("environment", {})
+
+
+def test_an_optional_component_is_its_own_file_and_the_core_file_needs_none_of_its_settings():
+    # Compose interpolates every service of every file it loads, whatever its
+    # profile; a component left out must not be loaded at all.
+    # SECRETS_DIR is every component's secrets directory, not the Secrets app's.
+    core = set(re.findall(r"\$\{([A-Z_]+)", (TEAM / "compose.yaml").read_text(encoding="utf-8"))) - {"SECRETS_DIR"}
+    assert set(COMPOSE["services"]) == {"redis", "postgres", "aweb"}
+    for name, text in COMPONENT_FILES.items():
+        assert list(yaml.safe_load(text)["services"]) == [name]
+        assert not {variable for variable in core if variable.startswith(f"{name.upper()}_")}, name
+        assert "profiles" not in yaml.safe_load(text)["services"][name]
 
 
 def test_the_services_are_on_the_services_network_and_none_is_on_the_agents_network():
@@ -156,9 +173,8 @@ def test_an_app_reads_every_setting_its_section_of_the_schema_renders():
         assert rendered - wrapper <= set(environment(service)), name
 
 
-def test_an_app_is_an_optional_ordinary_member_with_a_read_only_root():
+def test_an_app_is_an_ordinary_member_with_a_read_only_root():
     for name, service in APPS.items():
-        assert SERVICES[name]["profiles"] == [name]
         assert service["read_only"] is True and service["tmpfs"] == ["/tmp"]
         assert not any("AWID_SERVICE_TOKEN" in key for key in environment(service))
         credentials = json.loads(
@@ -174,7 +190,7 @@ def test_an_app_is_an_optional_ordinary_member_with_a_read_only_root():
         }
 
 
-OPTIONAL = (
+UNSET_UNLESS_GIVEN = (
     "HOOK_INTERNAL_ORIGINS",
     "HOOK_INTERNAL_DESTINATIONS",
     "HOOK_INTERNAL_CIDR",
@@ -189,7 +205,7 @@ def test_a_setting_the_operator_does_not_give_never_reaches_an_app_as_a_blank():
     # one. A setting with no value here is passed only when the env file has it.
     for name, service in APPS.items():
         prefix = name.upper()
-        optional = [f"{prefix}_{suffix}" for suffix in OPTIONAL]
+        optional = [f"{prefix}_{suffix}" for suffix in UNSET_UNLESS_GIVEN]
         if name == "secrets":
             optional += [
                 "SECRETS_CUSTODY_KEY_FILE",
@@ -203,9 +219,8 @@ def test_a_setting_the_operator_does_not_give_never_reaches_an_app_as_a_blank():
             assert ":-}" not in str(value) and ":+" not in str(value), key
 
 
-def test_the_signer_is_optional_and_runs_its_owners_service_body_from_the_pinned_image():
+def test_the_signer_runs_its_owners_service_body_from_the_pinned_image():
     signer = SERVICES["signer"]
-    assert signer["profiles"] == ["signer"]
     assert signer["extends"] == {"file": "../../server/compose.signer.yaml", "service": "signer"}
     assert signer["image"] == "${SIGNER_IMAGE:?SIGNER_IMAGE is required, signer.image}"
     assert "build" not in signer

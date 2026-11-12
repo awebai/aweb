@@ -6,7 +6,9 @@
 #
 # The journey writes TEST_WORLD_DIR (DNS zone, certificates, front
 # configuration) before it starts any of them, and passes the TEST_ settings
-# in its environment. Nothing here is a credential of the deployment.
+# in its environment. Nothing here is a credential of the deployment. It also
+# writes there the overlay that points each deployed service at this world's
+# DNS and certificate authority, since only it knows which ones it deploys.
 services:
   dns:
     image: coredns/coredns:1.11.3
@@ -88,30 +90,3 @@ services:
     volumes:
       - "${TEST_WORLD_DIR:?}:/world"
     networks: [services]
-
-  # The deployment's services resolve through the world's DNS and trust its
-  # certificate authority, as they would the operator's.
-  aweb:
-    dns: ["${TEST_DNS_IP:?}"]
-    environment:
-      SSL_CERT_FILE: /etc/aweb-test/ca.pem
-    volumes:
-      - "${TEST_WORLD_DIR:?}/tls/ca.pem:/etc/aweb-test/ca.pem:ro"
-  secrets:
-    dns: ["${TEST_DNS_IP:?}"]
-    environment:
-      SSL_CERT_FILE: /etc/aweb-test/ca.pem
-    volumes:
-      - "${TEST_WORLD_DIR:?}/tls/ca.pem:/etc/aweb-test/ca.pem:ro"
-  logs:
-    dns: ["${TEST_DNS_IP:?}"]
-    environment:
-      SSL_CERT_FILE: /etc/aweb-test/ca.pem
-    volumes:
-      - "${TEST_WORLD_DIR:?}/tls/ca.pem:/etc/aweb-test/ca.pem:ro"
-  signer:
-    dns: ["${TEST_DNS_IP:?}"]
-    environment:
-      SSL_CERT_FILE: /etc/aweb-test/ca.pem
-    volumes:
-      - "${TEST_WORLD_DIR:?}/tls/ca.pem:/etc/aweb-test/ca.pem:ro"

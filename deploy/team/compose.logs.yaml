@@ -1,0 +1,17 @@
+# The Logs app of one team's deployment, in the model only when
+# deployment.yaml has a logs section: the rendered COMPOSE_FILE names it.
+services:
+  logs:
+    extends:
+      file: ../../naapp/logs/compose.logs.yaml
+      service: logs
+    image: ${LOGS_IMAGE:?LOGS_IMAGE is required, logs.image}
+    networks: [services]
+    ports:
+      - "${LOGS_BIND_ADDRESS:-127.0.0.1}:${LOGS_PORT:-8765}:8765"
+    volumes:
+      - "${SECRETS_DIR:?SECRETS_DIR is required, compose.secretsDir}/${LOGS_SECRETS:-logs}:/run/secrets/logs:ro"
+    depends_on:
+      postgres:
+        condition: service_healthy
+        required: false

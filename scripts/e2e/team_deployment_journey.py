@@ -90,6 +90,7 @@ class World:
     def __init__(self, run_dir: Path, project: str, images: dict[str, str], cidr: str):
         self.run_dir, self.project, self.images = run_dir, project, images
         self.world = run_dir / "world"
+        self.deployment_path = run_dir / "deployment.yaml"
         self.secrets = run_dir / "secrets"
         network = ipaddress.ip_network(cidr)
         self.cidr = cidr
@@ -99,7 +100,7 @@ class World:
             **os.environ,
             "TEAM_DEPLOYMENT_PROJECT": project,
             "TEAM_DEPLOYMENT_RUN_DIR": str(run_dir),
-            "TEAM_DEPLOYMENT_COMPOSE_FILES": str(TEAM_DIR / "compose.test.yaml"),
+            "TEAM_DEPLOYMENT_COMPOSE_FILES": f"{TEAM_DIR / 'compose.test.yaml'}:{self.world / 'compose.trust.yaml'}",
             "TEST_WORLD_DIR": str(self.world),
             "TEST_DNS_IP": self.dns_ip,
             "TEST_FRONT_IP": self.front_ip,
@@ -131,6 +132,19 @@ class World:
         )
         for path in [*(self.world / "tls").iterdir(), *(self.world / "front").iterdir(), *(self.world / "dns").iterdir()]:
             path.chmod(0o644)
+
+    def write_trust(self, services: list[str]) -> None:
+        """Each deployed service resolves through this world's DNS and trusts
+        its certificate authority, as it would the operator's."""
+        trust = {
+            name: {
+                "dns": [self.dns_ip],
+                "environment": {"SSL_CERT_FILE": "/etc/aweb-test/ca.pem"},
+                "volumes": [f"{self.world / 'tls' / 'ca.pem'}:/etc/aweb-test/ca.pem:ro"],
+            }
+            for name in services
+        }
+        (self.world / "compose.trust.yaml").write_text(yaml.safe_dump({"services": trust}))
 
     def publish_controller(self, controller_did: str) -> None:
         zone = self.world / "dns" / f"{DOMAIN}.zone"
@@ -187,18 +201,22 @@ class World:
             config["secrets"]["hookCaFile"] = "/run/secrets/secrets/hook-ca.pem"
         path = self.run_dir / "deployment.yaml"
         path.write_text(yaml.safe_dump(config, sort_keys=False))
+        self.write_trust(["aweb", *(name for name in ("secrets", "logs", "signer") if name in config)])
         return path
 
     # --- running --------------------------------------------------------
 
+    def connect(self) -> dict:
+        return json.loads(run(str(ADAPTER), "compose", "connect", str(self.deployment_path), env=self.env))
+
     def compose(self, *args: str) -> str:
-        files = ["-f", str(TEAM_DIR / "compose.yaml"), "-f", str(TEAM_DIR / "compose.test.yaml")]
-        return run("docker", "compose", "-p", self.project, "--env-file", str(self.run_dir / ".env"), *files, *args,
-                   env=self.env)
+        """The deployment's own docker compose command, as the adapter gives it."""
+        return run(*self.connect()["compose"], *args, env=self.env)
 
     def render(self, deployment: Path) -> None:
         rendered = run(sys.executable, str(TEAM_DIR / "render_env.py"), str(deployment))
         (self.run_dir / ".env").write_text(rendered)
+        self.deployment_path = deployment
 
     def machine(self, name: str) -> str:
         """A cli container as one machine; its HOME is /world/<name>."""
@@ -336,7 +354,8 @@ def main() -> int:
     print("=== Step 1: bring up the deployment")
     deployment = world.deployment(apps=True)
     up = subprocess.run([str(ADAPTER), "compose", "up", str(deployment)], env=world.env, text=True, check=False)
-    connect = run(str(ADAPTER), "compose", "connect", str(deployment), env=world.env)
+    world.deployment_path = deployment
+    connect = json.dumps(world.connect(), indent=2)
     (run_dir / "connect.json").write_text(connect)
     print(connect)
     if up.returncode != 0:

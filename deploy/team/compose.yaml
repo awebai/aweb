@@ -2,10 +2,15 @@
 #
 # The env file is rendered from the operator's deployment.yaml, which holds
 # no credential; every credential is a file under SECRETS_DIR, mounted
-# read-only into the one service that owns it:
+# read-only into the one service that owns it. From this directory:
 #
 #   python render_env.py deployment.yaml > .env
-#   docker compose --env-file .env -f compose.yaml up -d
+#   docker compose --env-file .env up -d
+#
+# The env file's COMPOSE_FILE names this file and the file of each optional
+# component deployment.yaml has (compose.secrets.yaml, compose.logs.yaml,
+# compose.signer.yaml). A component it leaves out is not in the model at all,
+# so none of its settings is required.
 services:
   redis:
     image: redis:7-alpine
@@ -51,65 +56,6 @@ services:
     depends_on:
       redis:
         condition: service_healthy
-      postgres:
-        condition: service_healthy
-        required: false
-
-  secrets:
-    profiles: [secrets]
-    extends:
-      file: ../../naapp/secrets/compose.secrets.yaml
-      service: secrets
-    image: ${SECRETS_IMAGE:?SECRETS_IMAGE is required, secrets.image}
-    networks: [services]
-    ports:
-      - "${SECRETS_BIND_ADDRESS:-127.0.0.1}:${SECRETS_PORT:-8770}:8770"
-    volumes:
-      - "${SECRETS_DIR:?SECRETS_DIR is required, compose.secretsDir}/${SECRETS_SECRETS:-secrets}:/run/secrets/secrets:ro"
-    depends_on:
-      postgres:
-        condition: service_healthy
-        required: false
-
-  logs:
-    profiles: [logs]
-    extends:
-      file: ../../naapp/logs/compose.logs.yaml
-      service: logs
-    image: ${LOGS_IMAGE:?LOGS_IMAGE is required, logs.image}
-    networks: [services]
-    ports:
-      - "${LOGS_BIND_ADDRESS:-127.0.0.1}:${LOGS_PORT:-8765}:8765"
-    volumes:
-      - "${SECRETS_DIR:?SECRETS_DIR is required, compose.secretsDir}/${LOGS_SECRETS:-logs}:/run/secrets/logs:ro"
-    depends_on:
-      postgres:
-        condition: service_healthy
-        required: false
-
-  # The protected host: human approval with passkeys. Its secrets directory
-  # holds private-controller/, a real directory owned by uid 1001 with mode
-  # 0700, and controller.key in it with mode 0400 or 0600; the bind mount keeps
-  # both, and the signer refuses to start without them.
-  signer:
-    profiles: [signer]
-    extends:
-      file: ../../server/compose.signer.yaml
-      service: signer
-    image: ${SIGNER_IMAGE:?SIGNER_IMAGE is required, signer.image}
-    networks: [services]
-    ports:
-      - "${SIGNER_BIND_ADDRESS:-127.0.0.1}:${SIGNER_PORT:-8080}:8080"
-    environment:
-      # Passed only when the env file has it: without a private SMTP authority
-      # the signer trusts the system roots.
-      AWEB_PROTECTED_EMAIL_CA_FILE:
-    volumes:
-      - "${SECRETS_DIR:?SECRETS_DIR is required, compose.secretsDir}/${SIGNER_SECRETS:-signer}:/run/secrets/signer:ro"
-      - "${SIGNER_PROFILE_SOURCE:?SIGNER_PROFILE_SOURCE is required, signer.profileFile}:/etc/aweb/signer/profile.json:ro"
-      - "${SIGNER_SCOPE_SOURCE:?SIGNER_SCOPE_SOURCE is required, signer.scopeFile}:/etc/aweb/signer/scope.json:ro"
-      - "${SIGNER_EMAIL_CA_SOURCE:-/dev/null}:/etc/aweb/signer/email-ca.pem:ro"
-    depends_on:
       postgres:
         condition: service_healthy
         required: false

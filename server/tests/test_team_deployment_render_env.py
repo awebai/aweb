@@ -24,6 +24,7 @@ def test_each_input_becomes_the_setting_its_service_reads_with_defaults_filled()
         "AWEB_PORT": "8000",
         "AWEB_SECRETS": "aweb",
         "AWID_REGISTRY_URL": "https://api.awid.ai",
+        "COMPOSE_FILE": "compose.yaml",
         "COMPOSE_PROFILES": "postgres",
         "POSTGRES_BUNDLED": "true",
         "POSTGRES_HOST": "postgres",
@@ -132,7 +133,7 @@ def test_the_signer_section_keeps_a_list_as_json_and_fills_its_defaults(signer):
         "AWEB_PROTECTED_EMAIL_FROM": "notifications@example.com",
         "AWEB_PROTECTED_EMAIL_TLS": "starttls",
     }
-    assert rendered["COMPOSE_PROFILES"] == "postgres,signer"
+    assert rendered["COMPOSE_FILE"] == "compose.yaml:compose.signer.yaml"
 
 
 def test_the_signer_trusts_a_private_smtp_authority_through_a_file_mounted_outside_its_secrets(signer):
@@ -281,7 +282,7 @@ def test_secrets_and_logs_render_the_settings_each_app_reads():
         "SECRETS_PORT": "8770",
         "SECRETS_CUSTODY_KEY_FILE": "/run/secrets/secrets/custody-key",
     }
-    assert rendered["COMPOSE_PROFILES"] == "logs,postgres,secrets"
+    assert rendered["COMPOSE_FILE"] == "compose.yaml:compose.secrets.yaml:compose.logs.yaml"
     assert {name: value for name, value in rendered.items() if "HOOK_INTERNAL" in name} == {
         "LOGS_HOOK_INTERNAL_ORIGINS": '["https://logs.example.com"]',
         "LOGS_HOOK_INTERNAL_DESTINATIONS": "allowed",

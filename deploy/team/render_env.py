@@ -70,6 +70,9 @@ def _collect(schema: dict, value: object, out: dict[str, str]) -> None:
     out[name] = value if isinstance(value, str) else json.dumps(value)
 
 
+# The components an operator can leave out, each in its own Compose file.
+OPTIONAL_COMPONENTS = ("secrets", "logs", "signer")
+
 # Where the signer's public configuration is mounted, outside its secrets.
 SIGNER_CONFIG = "/etc/aweb/signer"
 
@@ -126,12 +129,12 @@ def render(config: object) -> dict[str, str]:
         if "hookInternalOrigins" in config.get(app, {}):
             out[f"{app.upper()}_HOOK_INTERNAL_DESTINATIONS"] = "allowed"
             out[f"{app.upper()}_HOOK_INTERNAL_CIDR"] = config["network"]["servicesCidr"]
-    # The services an operator can leave out start only when the file has them.
-    optional = [name for name in ("logs", "secrets", "signer") if name in config]
+    # A component the operator leaves out has no file in the model.
+    out["COMPOSE_FILE"] = ":".join(
+        ["compose.yaml", *(f"compose.{name}.yaml" for name in OPTIONAL_COMPONENTS if name in config)]
+    )
     if config["postgres"].get("bundled", True):
-        optional.append("postgres")
-    if optional:
-        out["COMPOSE_PROFILES"] = ",".join(sorted(optional))
+        out["COMPOSE_PROFILES"] = "postgres"
     return out
 
 

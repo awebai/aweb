@@ -42,14 +42,35 @@ python_in_server() {
   uv run --quiet --project "$REPO_ROOT/server" python "$@"
 }
 
-compose_files=(-f "$TEAM_DIR/compose.yaml")
-if [[ -n "${TEAM_DEPLOYMENT_COMPOSE_FILES:-}" ]]; then
-  IFS=: read -r -a extra <<<"$TEAM_DEPLOYMENT_COMPOSE_FILES"
-  for file in "${extra[@]}"; do compose_files+=(-f "$file"); done
-fi
+# The docker compose command of this deployment, one argument per line: the
+# files the renderer's COMPOSE_FILE names (compose.yaml and each component the
+# deployment has), then the journey's own.
+compose_command() {
+  python_in_server - "$deployment" "$project" "$env_file" "$TEAM_DIR" "${TEAM_DEPLOYMENT_COMPOSE_FILES:-}" <<'PY'
+import importlib.util
+import sys
+from pathlib import Path
 
+import yaml
+
+path, project, env_file, team_dir, extra = sys.argv[1:]
+spec = importlib.util.spec_from_file_location("render_env", Path(team_dir) / "render_env.py")
+render_env = importlib.util.module_from_spec(spec)
+spec.loader.exec_module(render_env)
+files = render_env.render(yaml.safe_load(open(path, encoding="utf-8")))["COMPOSE_FILE"].split(":")
+command = ["docker", "compose", "-p", project, "--env-file", env_file]
+for file in [str(Path(team_dir) / name) for name in files] + [name for name in extra.split(":") if name]:
+    command += ["-f", file]
+print("\n".join(command))
+PY
+}
+
+compose=()
 dc() {
-  docker compose -p "$project" --env-file "$env_file" "${compose_files[@]}" "$@"
+  if [[ ${#compose[@]} -eq 0 ]]; then
+    while IFS= read -r argument; do compose+=("$argument"); done < <(compose_command)
+  fi
+  "${compose[@]}" "$@"
 }
 
 # One line per service that names internal origins (aweb's apps, the apps'
@@ -109,13 +130,13 @@ for host in sys.argv[2:]:
 }
 
 connect() {
-  python_in_server - "$deployment" "$project" "$env_file" "$SELF" <<'PY'
+  python_in_server - "$deployment" "$project" "$env_file" "$SELF" "$(compose_command)" <<'PY'
 import json
 import sys
 
 import yaml
 
-path, project, env_file, runner = sys.argv[1:]
+path, project, env_file, runner, compose = sys.argv[1:]
 config = yaml.safe_load(open(path, encoding="utf-8"))
 origins = {"aweb": config["aweb"]["publicOrigin"]}
 for app in ("secrets", "logs"):
@@ -131,6 +152,7 @@ print(json.dumps({
     "registry": config["team"].get("registryUrl", "https://api.awid.ai"),
     "origins": origins,
     "agent": {"container": f"oats-agent-{agents['compose']['name']}"} if agents else None,
+    "compose": compose.split("\n"),
     "down": [runner, "compose", "down", path],
 }))
 PY

@@ -13,7 +13,9 @@ This directory holds what both layers share.
 | `config.schema.json` | The schema of the operator's `deployment.yaml`. The Helm chart uses it as its `values.schema.json`. |
 | `deployment.example.yaml` | An example that the schema accepts. |
 | `render_env.py` | Checks a `deployment.yaml` against the schema and prints the env file the Compose layer reads: `python render_env.py deployment.yaml > .env`. It needs PyYAML and jsonschema, which the aweb server image has. |
-| `compose.yaml` | The Compose layer: the two networks, Redis, the bundled PostgreSQL and the services. |
+| `compose.yaml` | The Compose layer: the two networks, Redis, the bundled PostgreSQL and aweb. From this directory: `docker compose --env-file .env up -d`. |
+| `compose.secrets.yaml`, `compose.logs.yaml`, `compose.signer.yaml` | One optional component each. The env file's `COMPOSE_FILE` names those `deployment.yaml` has; Compose never loads the others. |
+| `compose.test.yaml` | The journey's test world: its own registry, DNS, SMTP, TLS front and aw. Never in a production deployment. |
 | `postgres-roles.sh` | Run by the bundled PostgreSQL at its first start: one role and one database per component. |
 | `descriptors/<component>.md` | What one component needs from an operator, written by its owner. |
 
