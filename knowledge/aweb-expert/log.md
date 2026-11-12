@@ -1,5 +1,10 @@
 # Knowledge log
 
+## 2026-11-12
+* **Harvest**: OKF proposal from aweb-expert/aweb-expert-deploy-team.
+* **Creation**: decision [an optional deployment component is its own Compose file](/aweb-expert/decisions/an-optional-deployment-component-is-its-own-compose-file.md).
+* **Creation**: lesson [correlate a log line before blaming a component](/aweb-expert/lessons/correlate-a-log-line-before-blaming-a-component.md).
+
 ## 2026-11-04
 * **Harvest**: OKF proposal from aweb-expert/aweb-expert-fresh-eyes (tasks aweb-acst and aweb-actf).
 * **Update**: [identity and routing review needs the real client](/aweb-expert/lessons/identity-and-routing-review-needs-the-real-client.md) gains that the real client includes the last released binary and that a skipped released-client case is not evidence.
