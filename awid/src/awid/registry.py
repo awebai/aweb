@@ -76,6 +76,7 @@ logger = logging.getLogger(__name__)
 
 MAX_REGISTRY_RESPONSE_BYTES = 10 * 1024 * 1024
 MAX_REGISTRY_ERROR_BYTES = 64 * 1024
+MAX_REGISTRY_PAGES = 500
 
 
 def _safe_error_text(content: bytes) -> str:
@@ -488,7 +489,7 @@ class RegistryClient:
         items: list[dict[str, Any]] = []
         cursor: str | None = None
         seen_cursors: set[str] = set()
-        while True:
+        for _page in range(MAX_REGISTRY_PAGES):
             query = "limit=200"
             if cursor is not None:
                 query += f"&cursor={quote(cursor, safe='')}"
@@ -509,6 +510,7 @@ class RegistryClient:
                 )
             seen_cursors.add(next_cursor)
             cursor = next_cursor
+        raise RegistryError(f"AWID {items_key} pagination exceeded {MAX_REGISTRY_PAGES} pages", status_code=502)
 
     async def _request_json(
         self,
@@ -1261,7 +1263,7 @@ class RegistryClient:
         all_timestamped = True
         cursor: str | None = None
         legacy_since: str | None = since
-        while True:
+        for _page in range(MAX_REGISTRY_PAGES):
             query = "limit=200"
             if cursor is not None:
                 query += f"&cursor={quote(cursor, safe='')}"
@@ -1302,6 +1304,7 @@ class RegistryClient:
                 return _RevocationScan(revoked, newest, all_timestamped, False)
             legacy_since = page_newest.isoformat()
             cursor = None
+        raise RegistryError(f"AWID revocations pagination exceeded {MAX_REGISTRY_PAGES} pages", status_code=502)
 
     async def list_team_certificates(
         self,
