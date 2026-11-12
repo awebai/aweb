@@ -41,6 +41,17 @@ identity/trust vector family.
 
 ## Accepting protocols awaiting client rollout
 
+### `protected-service-profile-v1.json` and `protected-service-request-v1.json` — implementation fixtures
+
+The [protected-service profile seam](../protected-service-profile.md) supplies
+one public operator-provisioned configuration and matching prepare/receipt
+covering-v2 proofs. They contain public synthetic identities and signatures,
+no private key material, and assert no deployed service or registry state.
+`server/tests/test_protected_service_profile.py` validates the profile and both
+request proofs against the shared strict configuration and reviewed verifier.
+CLI consumers use these same root bytes for cross-language parity. The fixed
+timestamp is exercised under the test clock; live proofs require current time.
+
 ### `id-certificates-v1.json` — contract candidate
 
 The [identity certificates contract](../id-certificates.md) freezes
