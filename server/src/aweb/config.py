@@ -285,6 +285,25 @@ def _key_time(kid: str, name: str, value: object) -> datetime:
         ) from exc
 
 
+def _url_from_environment_or_file(variable: str, fallback: str, file_variable: str, what: str) -> str:
+    """The URL from its environment variable, or the whole content of the file
+    the file variable names. The file holds a password, so no error repeats
+    its content."""
+    url = os.getenv(variable) or os.getenv(fallback) or ""
+    path = os.getenv(file_variable, "").strip()
+    if not path:
+        return url
+    if url:
+        raise ValueError(f"{file_variable} is set together with {variable} or {fallback}; set one")
+    try:
+        url = Path(path).read_text().strip()
+    except OSError:
+        url = ""
+    if not url:
+        raise ValueError(f"{file_variable} must name a readable file that holds the {what}")
+    return url
+
+
 def get_settings() -> Settings:
     """
     Load settings from environment at call time.
@@ -292,27 +311,19 @@ def get_settings() -> Settings:
     Uses `AWEB_*` settings, falling back to unprefixed infrastructure vars where
     that keeps deployment wiring simple.
     """
-    database_url = os.getenv("AWEB_DATABASE_URL") or os.getenv("DATABASE_URL")
-    database_url_file = os.getenv("AWEB_DATABASE_URL_FILE", "").strip()
-    if database_url_file:
-        if database_url:
-            raise ValueError(
-                "AWEB_DATABASE_URL_FILE is set together with AWEB_DATABASE_URL or DATABASE_URL; set one"
-            )
-        try:
-            database_url = Path(database_url_file).read_text().strip()
-        except OSError:
-            database_url = ""
-        if not database_url:
-            # Do not echo the file's content: it holds the database password.
-            raise ValueError("AWEB_DATABASE_URL_FILE must name a readable file that holds the database URL")
+    database_url = _url_from_environment_or_file(
+        "AWEB_DATABASE_URL", "DATABASE_URL", "AWEB_DATABASE_URL_FILE", "database URL"
+    )
     if not database_url:
         raise ValueError(
             "DATABASE_URL, AWEB_DATABASE_URL or AWEB_DATABASE_URL_FILE is required. "
             "Example: postgresql://user:pass@localhost:5432/aweb"
         )
 
-    redis_url = os.getenv("AWEB_REDIS_URL") or os.getenv("REDIS_URL") or "redis://localhost:6379/0"
+    redis_url = (
+        _url_from_environment_or_file("AWEB_REDIS_URL", "REDIS_URL", "AWEB_REDIS_URL_FILE", "Redis URL")
+        or "redis://localhost:6379/0"
+    )
 
     port_str = os.getenv("AWEB_PORT", "8000")
     try:
