@@ -353,21 +353,21 @@ class World:
         """One agent seat: an ordinary member whose key aw creates on its own
         machine, admitted by the team owner while the owner still holds the
         team's key (owner-issued and local, not a global identity), with its
-        certificate and its connection to the team's aweb. Returns the
-        member's public provenance."""
+        certificate. Returns the member's public provenance."""
         machine = self.machine(f"seat-{alias}")
         requested = self.aw(machine, "id", "team", "request", "--create-local-key", "--team", TEAM_ID, "--name", alias)
         added = self.aw(owner, "id", "team", "add-member", "--team", TEAM, "--namespace", DOMAIN,
                         "--did", requested["did_key"], "--name", alias, "--local")
         self.aw(machine, "id", "team", "fetch-cert", "--namespace", DOMAIN, "--team", TEAM,
                 "--cert-id", added["certificate_id"], "--registry", origin("registry"))
-        self.aw(machine, "workspace", "connect", "--service", origin("aweb"))
         return {"alias": alias, "did_key": requested["did_key"], "certificate_id": added["certificate_id"]}
 
     def stage_seats(self, aliases: list[str]) -> None:
-        """Only each seat member's own .aw goes into the agent's state, at
+        """Each seat member connects to the team's aweb from its own machine,
+        then only its own .aw goes into the agent's state, at
         /state/seats/<alias>/.aw, owned by the agents' uid and private."""
         for alias in aliases:
+            self.aw(f"{self.project}-seat-{alias}", "workspace", "connect", "--service", origin("aweb"))
             run("docker", "run", "--rm", "-v", f"{self.world / f'seat-{alias}' / '.aw'}:/member:ro",
                 "-v", f"{self.world / 'agent-state'}:/state", "alpine:3.22", "sh", "-c",
                 f"mkdir -p /state/seats/{alias} && cp -a /member /state/seats/{alias}/.aw"
