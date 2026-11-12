@@ -116,7 +116,7 @@ def _retry_after_headers(error: SignerRefused) -> dict[str, str] | None:
     caller still checks this hint against its original operation deadline.
     """
     value = error.retry_after_seconds
-    if type(value) not in (int, float) or not 0 <= value <= 2**31 - 1:
+    if value is None or type(value) not in (int, float) or not 0 <= value <= 2**31 - 1:
         return None
     return {"Retry-After": str(ceil(value))}
 
