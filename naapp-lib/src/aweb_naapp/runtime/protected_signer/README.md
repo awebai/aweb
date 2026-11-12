@@ -27,10 +27,10 @@ This slice accepts only `RevokeHumanRole`, the `human-role.revoke` owner act.
 The operation ID is a canonical UUID selected before prepare. Repeating the
 same ID and intent returns the frozen preparation; a changed intent refuses.
 The signature and its exact signing bytes are base64 in the committed result.
-It does not deliver or apply the act remotely. HTTP/page mounts and the other
-catalog operations are subsequent slices; embeddings must refuse those until
-the shared implementation supports them. `handoff_id` is an association ID,
-not a URL or a currently mounted page.
+It does not deliver or apply the act remotely. Request-origin and human-origin
+JSON mounts are below; console supplies the existing page's governance mode.
+Other catalog operations remain unsupported. `handoff_id` is an association ID,
+not a URL or authority.
 
 `ProtectedKeyContext` names the service, authority kind/ID/domain, selected
 human ID/domain, and current generation. It is B3's explicit preinstallation
@@ -145,7 +145,47 @@ text. Every response is no-store. Unknown/duplicate input fields, noninteger
 numbers and malformed callbacks refuse. Cookies and console session headers
 cannot substitute for a restricted request proof.
 
-This slice adds the request-origin mounts only. Governance human routes and
-the shared page mode remain a separate composition; until mounted, a returned
-handoff association is not a working browser ceremony. No request-origin
+The request and human JSON mounts are shared here; console's existing page mode
+is composed separately. Until that page and the trusted sessions are mounted,
+a returned association is not a working browser ceremony. No request-origin
 execute route permits this live-floor operation.
+
+
+## Human-origin governance mode
+
+`ProtectedOperationsHTTP(..., human_sessions=sessions,
+human_csrf_key="configured-tab-storage-key")` adds `human_router()` with the
+frozen `/handoff/{id}/governance` state, `/options` and `/execute` JSON mounts.
+`ConsoleHandoffs(..., protected_operations=mount).human_router()` includes them.
+The sessions must use the exact signer's database and B3 instance. The embedding
+admits its exact provisioned protected B3 scope through `sessions.scopes`; it
+mounts the existing `console_login_router` once at `/login/options` and `/login`
+on the human origin. A fresh tab performs that real LOGIN in place, retaining
+the handoff, then performs the separate B3 approval UV. Account/CLI tokens and
+key-bound CLI sessions cannot stand in for the browser LOGIN.
+
+Console owns the single HTML page and its existing JS module. It calls
+`await mount.page_context(handoff_id)` only after no app handoff matches; this
+returns only `{b3_scope, csrf_key}` or `None`, before login. That routing read
+never exposes a payload or grants admission. The configured CSRF key names the
+actual console login token in tab storage; the page never guesses/scans keys.
+This module mounts no competing `GET /handoff/{id}` and no second page.
+
+The authenticated state returns `{mode:"governance", operation_id, handoff_id,
+digest, payload, expires_at, state}` plus the receipt's `reason`/`code`/`result`
+where applicable. `payload` is the exact covered `{policy,request}` object also
+returned to aw. Options accepts `{}` and returns existing B3 required-UV JSON.
+Execute accepts only `{assertion:...}` and returns the ordinary receipt JSON.
+Only committed execute adds the frozen loopback `redirect_uri` with `handoff_id`
+as its sole query member. It carries no code or authority; aw still authenticates
+and reads its exact immutable receipt. With no frozen callback it is omitted.
+
+Human routes require the pinned human Host; POST also requires its exact Origin,
+JSON and the real console session's `X-CSRF-Token`. The actor is built from the
+stored context and that authenticated session, then rechecked against current
+provisioned authority. It never comes from browser JSON. The original session
+is held after the ordered B3 preparation and checked with the same SQL effect
+transaction. Its original deadline and the retained approval challenge deadlines
+are sampled synchronously after the last authority await. No receipt/audit work
+follows those samples. Existing library calls may omit a session; this HTTP
+mount always supplies the authenticated frame.
