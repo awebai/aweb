@@ -12,6 +12,7 @@ from urllib.parse import parse_qs
 
 import pytest
 import uvicorn
+from aweb_naapp_testing.browser_capture import capture_enabled_control
 from aweb_naapp_testing.network import make_certificates
 from cryptography.hazmat.primitives.serialization import Encoding, NoEncryption, PrivateFormat
 from fastapi import FastAPI, HTTPException, Request
@@ -211,7 +212,7 @@ async def test_fresh_tab_logs_in_then_approves_the_frozen_act_with_two_real_uv_g
         await expect(action).to_be_enabled()
         assert not s.callback.done()
         assert await page.evaluate("document.documentElement.scrollWidth <= innerWidth")
-        await page.screenshot(path=tmp_path / f"governance-login-{width}.png", full_page=True)
+        await capture_enabled_control(page, action, tmp_path / f"governance-login-{width}.png")
         await action.click()
         await expect(page.locator("#handoff-digest")).to_have_text(s.prepared.digest)
         await expect(page.locator("#handoff-fingerprint")).to_have_text(
@@ -225,7 +226,13 @@ async def test_fresh_tab_logs_in_then_approves_the_frozen_act_with_two_real_uv_g
         assert not any(url.endswith("/execute") for url in posts)
         assert not s.callback.done()
         assert await page.evaluate("document.documentElement.scrollWidth <= innerWidth")
-        await page.screenshot(path=tmp_path / f"governance-ready-{width}.png", full_page=True)
+        await capture_enabled_control(page, action, tmp_path / f"governance-ready-{width}.png")
+        summary = page.get_by_text("View the frozen operation", exact=True)
+        await summary.click()
+        await expect(page.locator("#handoff-payload")).to_be_visible()
+        assert await page.evaluate("document.documentElement.scrollWidth <= innerWidth")
+        await capture_enabled_control(page, action, tmp_path / f"governance-expanded-{width}.png")
+        await summary.click()
         await action.click()
         async with asyncio.timeout(10):
             assert await s.callback == {"handoff_id": [s.prepared.handoff_id]}

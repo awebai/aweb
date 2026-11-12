@@ -24,6 +24,7 @@ from aweb_naapp.console.handoff_sessions import ConsoleHandoffs
 from aweb_naapp.runtime.origins import split_origins
 from aweb_naapp.runtime.passkeys import RelyingParty
 from aweb_naapp_testing import did_key
+from aweb_naapp_testing.browser_capture import capture_enabled_control
 from awid.id_certificates import encode_id_chain_header
 from cryptography.hazmat.primitives.serialization import Encoding, NoEncryption, PrivateFormat
 from fastapi import FastAPI, Request
@@ -355,7 +356,7 @@ async def browser_flow(journey, browser, service, tmp_path, purpose, width, *, u
         assert await page.locator("#handoff-principal").text_content() == scope.principal
         assert await page.locator("#handoff-role").text_content() == scope.role
         assert await page.evaluate("document.documentElement.scrollWidth <= innerWidth")
-        await page.screenshot(path=tmp_path / f"handoff-{purpose}-{width}.png", full_page=True)
+        await capture_enabled_control(page, action, tmp_path / f"handoff-{purpose}-{width}.png")
         assert not callback.done()
         await action.focus()
         assert await action.evaluate("element => element === document.activeElement")
@@ -383,7 +384,8 @@ async def browser_flow(journey, browser, service, tmp_path, purpose, width, *, u
                 handoff,
             )
             assert row["login_evidence_ref"] and row["completed_at"] is None
-            await page.screenshot(path=tmp_path / f"handoff-allow-{width}.png", full_page=True)
+            await expect(page.locator("#handoff-allow-title")).to_be_focused()
+            await capture_enabled_control(page, allow, tmp_path / f"handoff-allow-{width}.png")
             await allow.click()
         async with asyncio.timeout(10):
             result = await callback
@@ -499,7 +501,9 @@ async def test_the_requesting_agent_is_shown_apart_from_the_identity_or_the_page
             await expect(page.locator("#handoff-scope")).to_be_hidden()
             await expect(action).to_be_disabled()
         assert await page.evaluate("document.documentElement.scrollWidth <= innerWidth")
-        await page.screenshot(
-            path=tmp_path / f"handoff-requester-{requester}-{width}.png", full_page=True
-        )
+        capture = tmp_path / f"handoff-requester-{requester}-{width}.png"
+        if requester == "malformed":
+            await page.screenshot(path=capture, full_page=True)
+        else:
+            await capture_enabled_control(page, action, capture)
         assert not callback.done()
