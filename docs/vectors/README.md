@@ -178,7 +178,7 @@ certificate has no expiry: revocation is its only end, and one case says so.
 Four cases refuse what two encoders could write differently, so that every
 verifier agrees on the bytes that were signed: a signature that is not
 unpadded standard base64, a control character below U+0020 in a string, a
-number that is not an integer, and NaN or Infinity.
+number that is not an integer, -0, and NaN or Infinity.
 The keys are derived from fixed seeds by
 `scripts/generate_team_certificate_vectors.py`, which writes the file and
 checks it with `--check`. See [the trust model](../trust-model.md).

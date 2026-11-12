@@ -85,6 +85,14 @@ def _refuse_constant(_name: str) -> None:
     raise ValueError("not JSON")
 
 
+def _integer(text: str) -> int:
+    """An integer as JSON spells it. -0 is refused: one reader keeps the sign
+    when it re-serialises and another drops it."""
+    if text == "-0":
+        raise ValueError("not portable")
+    return int(text)
+
+
 def _has_only_portable_values(value: Any) -> bool:
     """Whether every verifier re-serialises ``value`` to the same bytes: no
     number that is not an integer, and no control character below U+0020 in a
@@ -101,12 +109,15 @@ def _has_only_portable_values(value: Any) -> bool:
 def decode_team_certificate(header: str) -> dict[str, Any]:
     """Decode the ``X-AWID-Team-Certificate`` header: base64 of a JSON object,
     at most MAX_HEADER_BYTES long, holding only values that every verifier
-    re-serialises alike (_has_only_portable_values) and no NaN or Infinity."""
+    re-serialises alike (_has_only_portable_values), no -0 and no NaN or
+    Infinity."""
     if len(header) > MAX_HEADER_BYTES:
         raise TeamCertificateError("malformed")
     try:
         certificate = json.loads(
-            base64.b64decode(header, validate=True).decode("utf-8"), parse_constant=_refuse_constant
+            base64.b64decode(header, validate=True).decode("utf-8"),
+            parse_constant=_refuse_constant,
+            parse_int=_integer,
         )
     except (binascii.Error, ValueError, UnicodeDecodeError, RecursionError):
         # RecursionError is what deep nesting raises on some Python versions.

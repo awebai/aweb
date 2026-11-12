@@ -101,7 +101,7 @@
   `docs/vectors/team-certificate-verification-v1.json` the same verdict. A
   certificate is `malformed` when its signature is not unpadded standard
   base64, when a string in it holds a control character below U+0020, when a
-  number in it is not an integer, or when it holds NaN or Infinity. No issuer
+  number in it is not an integer or is -0, or when it holds NaN or Infinity. No issuer
   writes any of these.
 - **Changed: the naapp runtime verifier (`aweb_naapp.runtime.team_auth`)
   checks a team certificate with awid's one check.** Apps built on naapp-lib

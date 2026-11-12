@@ -69,6 +69,13 @@ def _header(cert: object) -> str:
     return base64.b64encode(json.dumps(cert).encode()).decode()
 
 
+def _negative_zero() -> str:
+    """A certificate signed with a member that is 0, spelled -0 in the header."""
+    text = json.dumps(_certificate(weight=0))
+    assert text.count('"weight": 0') == 1
+    return base64.b64encode(text.replace('"weight": 0', '"weight": -0').encode()).decode()
+
+
 def _tampered() -> dict:
     cert = _certificate()
     cert["alias"] = "mallory"
@@ -175,6 +182,13 @@ def cases() -> list[dict]:
             refused("malformed", "refused"),
         ),
         _case(
+            "negative_zero",
+            "A certificate signed with a member that is 0, spelled -0: one reader keeps the sign and another drops it.",
+            _negative_zero(),
+            "malformed",
+            refused("malformed", "refused"),
+        ),
+        _case(
             "not_a_number_constant",
             "A correctly signed certificate with NaN, which is not JSON.",
             _header(_certificate(weight=float("nan"))),
@@ -226,6 +240,7 @@ NAAPP_RUNTIME_TODAY = {
     "signature_url_safe_alphabet": "refused",
     "control_character_in_a_string": "refused",
     "number_not_an_integer": "refused",
+    "negative_zero": "refused",
     "not_a_number_constant": "refused",
     "team_did_key_absent": "accepted",
     "identity_scope_absent": "accepted",
@@ -279,6 +294,7 @@ HOOKS_TODAY = {
     "signature_url_safe_alphabet": "certificate_invalid",
     "control_character_in_a_string": "certificate_invalid",
     "number_not_an_integer": "certificate_invalid",
+    "negative_zero": "certificate_invalid",
     "not_a_number_constant": "certificate_invalid",
     "team_did_key_absent": "accepted",
     "identity_scope_absent": "accepted",

@@ -167,7 +167,7 @@ func DecodeTeamCertificate(header string) (map[string]any, error) {
 }
 
 // hasOnlyPortableValues reports whether every verifier re-serialises value
-// to the same bytes: no number that is not an integer, and no control
+// to the same bytes: no number that is not an integer, no -0, and no control
 // character below U+0020 in a string or a key. Encoders write those
 // differently. NaN and Infinity are not JSON and never reach here.
 func hasOnlyPortableValues(value any) bool {
@@ -191,7 +191,7 @@ func hasOnlyPortableValues(value any) bool {
 			}
 		}
 	case json.Number:
-		return !strings.ContainsAny(v.String(), ".eE")
+		return v.String() != "-0" && !strings.ContainsAny(v.String(), ".eE")
 	}
 	return true
 }

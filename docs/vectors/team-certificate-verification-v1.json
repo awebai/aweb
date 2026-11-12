@@ -337,6 +337,27 @@
       }
     },
     {
+      "name": "negative_zero",
+      "about": "A certificate signed with a member that is 0, spelled -0: one reader keeps the sign and another drops it.",
+      "certificate_header": "eyJ2ZXJzaW9uIjogMSwgImNlcnRpZmljYXRlX2lkIjogImNlcnQtMDAxIiwgInRlYW1faWQiOiAiYmFja2VuZDphY21lLmNvbSIsICJ0ZWFtX2RpZF9rZXkiOiAiZGlkOmtleTp6Nk1rcnNxb3BFMTV0RXhYQzE2YnpaRVc3a0o5M1p1TW16Z0FBcEhOYVFWdW1zbjYiLCAibWVtYmVyX2RpZF9rZXkiOiAiZGlkOmtleTp6Nk1ra05RcXNtODlCRm04ZE5MdWJtNjU4S2locFZ1NnhuZzZhWHhCa0ZENDZ2bWIiLCAibWVtYmVyX2RpZF9hdyI6ICIiLCAibWVtYmVyX2FkZHJlc3MiOiAiIiwgImFsaWFzIjogImFsaWNlIiwgImlkZW50aXR5X3Njb3BlIjogImdsb2JhbCIsICJpc3N1ZWRfYXQiOiAiMjAyNi0xMS0wMVQwMDowMDowMCswMDowMCIsICJ3ZWlnaHQiOiAtMCwgInNpZ25hdHVyZSI6ICJsL2ZMUExSYXEyS3d4djN2RzNFeHRja2FqdFd3K2NwVGpxRjJzdWdPTVk3a0t1R2NmS2dNQXJDeUhEZnlkcm51cEVqRFFrT09XbmQyUWtLdFRiUlhDUSJ9",
+      "request_did_key": "did:key:z6MkkNQqsm89BFm8dNLubm658KihpVu6xng6aXxBkFD46vmb",
+      "team_did_key": "did:key:z6MkrsqopE15tExXC16bzZEW7kJ93ZuMmzgAApHNaQVumsn6",
+      "revoked_certificate_ids": [],
+      "registered_certificate_ids": [
+        "cert-001"
+      ],
+      "expected": {
+        "reason": "malformed"
+      },
+      "today": {
+        "awid": "malformed",
+        "server": "refused",
+        "naapp_runtime": "refused",
+        "library": "refused",
+        "hooks": "certificate_invalid"
+      }
+    },
+    {
       "name": "not_a_number_constant",
       "about": "A correctly signed certificate with NaN, which is not JSON.",
       "certificate_header": "eyJ2ZXJzaW9uIjogMSwgImNlcnRpZmljYXRlX2lkIjogImNlcnQtMDAxIiwgInRlYW1faWQiOiAiYmFja2VuZDphY21lLmNvbSIsICJ0ZWFtX2RpZF9rZXkiOiAiZGlkOmtleTp6Nk1rcnNxb3BFMTV0RXhYQzE2YnpaRVc3a0o5M1p1TW16Z0FBcEhOYVFWdW1zbjYiLCAibWVtYmVyX2RpZF9rZXkiOiAiZGlkOmtleTp6Nk1ra05RcXNtODlCRm04ZE5MdWJtNjU4S2locFZ1NnhuZzZhWHhCa0ZENDZ2bWIiLCAibWVtYmVyX2RpZF9hdyI6ICIiLCAibWVtYmVyX2FkZHJlc3MiOiAiIiwgImFsaWFzIjogImFsaWNlIiwgImlkZW50aXR5X3Njb3BlIjogImdsb2JhbCIsICJpc3N1ZWRfYXQiOiAiMjAyNi0xMS0wMVQwMDowMDowMCswMDowMCIsICJ3ZWlnaHQiOiBOYU4sICJzaWduYXR1cmUiOiAiZjMzczdtK0xjZnlEWjNiWHBxRGhwNWJDaU9aQmkrT1QxeEw1NnVCWitoYnNabm9wUFZUbjB5ZXM1dDJvYVU3anpDWE4yRWN4SEVSRlF0Ny92OS8rQkEifQ==",
