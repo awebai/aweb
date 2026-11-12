@@ -40,6 +40,11 @@ dependencies = [
     "prometheus-client>=0.22.1",
 ]
 
+[project.optional-dependencies]
+# The independent protected-host entry point uses the shared B2/B3 runtime.
+# Release source/package pins are composed by the repository train.
+protected = ["aweb-naapp[runtime]>=0.5.1"]
+
 [tool.uv.sources]
 awid-service = { path = "../awid", editable = true }
 aweb-naapp = { path = "../naapp-lib", editable = true }
