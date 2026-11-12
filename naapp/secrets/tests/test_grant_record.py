@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import copy
+from datetime import datetime, timezone
 
 import pytest
 from awid.did import did_from_public_key, stable_id_from_public_key
@@ -97,6 +98,26 @@ def test_a_grant_covers_exactly_its_operation_digests() -> None:
     assert grant.covers_operation("refund", "a" * 64)
     assert not grant.covers_operation("refund", "d" * 64)
     assert not grant.covers_operation("charge", "a" * 64)
+
+
+def test_finite_grant_preserves_its_approved_deadline_and_refuses_at_the_boundary():
+    after = _grant(expires_at="2026-11-13T00:00:00Z")
+    grant = GrantRecord.from_after(after)
+    assert grant.after == after
+    assert grant.is_active_at(datetime(2026, 11, 12, 23, 59, 59, tzinfo=timezone.utc))
+    assert not grant.is_active_at(datetime(2026, 11, 13, tzinfo=timezone.utc))
+
+
+def test_legacy_grant_keeps_its_exact_unbounded_record():
+    grant = GrantRecord.from_after(USE)
+    assert grant.after == USE
+    assert grant.is_active_at(datetime(2400, 1, 1, tzinfo=timezone.utc))
+
+
+@pytest.mark.parametrize("expiry", [None, "never", "nonsense", "2026-11-13T00:00:00"])
+def test_an_explicit_grant_deadline_must_be_a_real_utc_instant(expiry):
+    with pytest.raises(GrantInvalid):
+        GrantRecord.from_after(_grant(expires_at=expiry))
 
 
 def test_minted_grant_ids_are_valid() -> None:
