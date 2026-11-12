@@ -24,16 +24,18 @@ import json
 import logging
 import re
 import time
-from collections.abc import Callable
+from collections.abc import Callable, Mapping
 from dataclasses import dataclass
+from dataclasses import field as dataclass_field
 from datetime import UTC, datetime
 from enum import StrEnum
 from typing import Any
-from urllib.parse import quote
+from urllib.parse import quote, urlsplit
 
 import httpx
-from awid.did import public_key_from_did, validate_stable_id
+from awid.did import did_key_from_signing_key, public_key_from_did, validate_stable_id
 from awid.log import canonical_server_origin
+from awid.registry_auth import RegistryRequestAuth
 from awid.signing import (
     canonical_json_bytes,
     verify_did_key_signature,
@@ -150,7 +152,7 @@ def _current_member_refusal(status_code: int) -> HTTPException:
     return HTTPException(status_code=status_code, detail={"code": code})
 
 
-def _raise_if_private_team_unreadable(response: httpx.Response) -> None:
+def _raise_if_private_team_unreadable(response: httpx.Response, team_id: str) -> None:
     if response.status_code != 403:
         return
     try:
@@ -163,9 +165,36 @@ def _raise_if_private_team_unreadable(response: httpx.Response) -> None:
             status_code=403,
             detail={
                 "code": "team_private_unreadable",
-                "message": "App cannot read private AWID team facts; configure its AWID service token",
+                "message": (
+                    f"App cannot read private AWID team {team_id}; configure "
+                    f"awid_member_credentials[{team_id}] with a current member "
+                    "certificate of that team, or the AWID service token"
+                ),
             },
         )
+
+
+@dataclass(frozen=True)
+class AWIDMemberCredential:
+    """An ordinary member certificate the app holds for one team, and its
+    signing key: the app path-signs that team's gated AWID reads with it, as
+    the CLI does. The certificate must be the key's own."""
+
+    signing_key: bytes = dataclass_field(repr=False)
+    certificate: Mapping[str, Any]
+
+    def __post_init__(self) -> None:
+        did_key = did_key_from_signing_key(self.signing_key)
+        if self.certificate.get("member_did_key") != did_key:
+            raise ValueError("an AWID member credential's certificate is not its signing key's")
+
+    @property
+    def team_id(self) -> str:
+        return str(self.certificate.get("team_id") or "")
+
+    @property
+    def certificate_id(self) -> str:
+        return str(self.certificate.get("certificate_id") or "")
 
 
 class AWIDTeamCache:
@@ -177,15 +206,25 @@ class AWIDTeamCache:
         registry_url: str,
         ttl_seconds: int,
         service_token: str | None = None,
+        member_credentials: Mapping[str, AWIDMemberCredential] | None = None,
         transport: httpx.AsyncBaseTransport | None = None,
     ) -> None:
+        """Gated reads of a private team use the service token when there is
+        one (a hosted deployment), else that team's member credential; any
+        other read is a plain one."""
         self.registry_url = registry_url.rstrip("/")
         self.registry_origin = canonical_server_origin(self.registry_url)
         self.ttl_seconds = min(ttl_seconds, MAX_TEAM_FACTS_TTL_SECONDS)
-        self._headers = (
-            {"X-AWID-Service-Token": service_token.strip()}
-            if service_token and service_token.strip()
-            else {}
+        self._member_credentials = dict(member_credentials or {})
+        for team_id, credential in self._member_credentials.items():
+            if credential.team_id != team_id:
+                raise ValueError(f"the AWID member credential for {team_id} certifies another team")
+        self._request_auth = RegistryRequestAuth(
+            service_token=service_token,
+            member_signing_keys={
+                team_id: credential.signing_key
+                for team_id, credential in self._member_credentials.items()
+            },
         )
         self._cache: dict[str, CachedTeamFacts] = {}
         self._team_refresh_locks: dict[str, asyncio.Lock] = {}
@@ -194,6 +233,13 @@ class AWIDTeamCache:
         self._certificate_cache: dict[tuple[str, str], CachedTeamFacts] = {}
         self._did_keys: dict[tuple[str, str], CachedDidKey] = {}
         self._transport = transport
+
+    def _read_headers(self, url: str) -> dict[str, str]:
+        """The authentication of one AWID read."""
+        return self._request_auth.headers("GET", urlsplit(url).path)
+
+    def _reads_team_history(self, team_id: str) -> bool:
+        return bool(self._request_auth.service_token) or team_id in self._member_credentials
 
     def _client(self) -> httpx.AsyncClient:
         if self._transport is None:
@@ -258,9 +304,7 @@ class AWIDTeamCache:
         )
 
     async def get(self, team_id: str, certificate_id: str | None = None) -> CachedTeamFacts:
-        if not self._headers:
-            if not certificate_id:
-                raise HTTPException(status_code=401, detail="Missing AWID certificate id")
+        if certificate_id and not self._reads_team_history(team_id):
             return await self._get_certificate_status(team_id, certificate_id)
         now = time.monotonic_ns()
         cached = self._cache.get(team_id)
@@ -310,15 +354,58 @@ class AWIDTeamCache:
                 self._unknown_refresh_at.pop(team_id, None)
             return facts
 
-    async def _refresh_team_facts(self, team_id: str, now: int) -> CachedTeamFacts:
+    async def current_team_did_key(self, team_id: str) -> str | None:
+        """The team's current controller key, read fresh (never cached), with
+        the team's read authentication; None for a team AWID does not know.
+        403 team_private_unreadable or 503 when AWID cannot answer."""
+        domain, team_name = parse_team_id(team_id)
+        team_url = f"{self.registry_url}/v1/namespaces/{domain}/teams/{team_name}"
+        try:
+            async with self._client() as client:
+                response = await client.get(team_url, headers=self._read_headers(team_url))
+        except httpx.HTTPError as exc:
+            raise HTTPException(status_code=503, detail="AWID registry unavailable") from exc
+        _raise_if_private_team_unreadable(response, team_id)
+        if response.status_code == 404:
+            return None
+        if response.status_code >= 400:
+            raise HTTPException(status_code=503, detail="AWID registry unavailable")
+        try:
+            team_did_key = str(response.json().get("team_did_key") or "").strip()
+        except (ValueError, AttributeError) as exc:
+            raise HTTPException(status_code=503, detail="AWID registry unavailable") from exc
+        if not team_did_key:
+            raise HTTPException(status_code=503, detail="AWID team response missing team_did_key")
+        return team_did_key
+
+    async def check_member_credentials(self) -> None:
+        """Read each configured member credential's team with that credential,
+        fresh, and require its certificate to be published, unrevoked and
+        signed by the team's current key: the app's startup check. RuntimeError
+        names the team and the certificate."""
+        for team_id, credential in self._member_credentials.items():
+            certificate_id = credential.certificate_id
+            try:
+                # A check, not a load: requests read their own facts.
+                facts = await self._refresh_team_facts(team_id, time.monotonic_ns(), store=False)
+                _require_active_certificate(facts, certificate_id)
+                verify_team_certificate_signature(dict(credential.certificate), facts.team_did_key)
+            except (HTTPException, TeamCertificateError) as exc:
+                detail = exc.detail if isinstance(exc, HTTPException) else str(exc)
+                raise RuntimeError(
+                    f"awid_member_credentials[{team_id}]: certificate {certificate_id} "
+                    f"cannot read the team's AWID facts ({detail})"
+                ) from None
+
+    async def _refresh_team_facts(
+        self, team_id: str, now: int, *, store: bool = True
+    ) -> CachedTeamFacts:
         domain, team_name = parse_team_id(team_id)
         try:
             async with self._client() as client:
-                team_resp = await client.get(
-                    f"{self.registry_url}/v1/namespaces/{domain}/teams/{team_name}",
-                    headers=self._headers,
-                )
-                _raise_if_private_team_unreadable(team_resp)
+                team_url = f"{self.registry_url}/v1/namespaces/{domain}/teams/{team_name}"
+                team_resp = await client.get(team_url, headers=self._read_headers(team_url))
+                _raise_if_private_team_unreadable(team_resp, team_id)
                 if team_resp.status_code == 404:
                     raise HTTPException(status_code=401, detail="Unknown AWID team")
                 if team_resp.status_code >= 400:
@@ -339,11 +426,11 @@ class AWIDTeamCache:
                     }
                     if cursor is not None:
                         params["cursor"] = cursor
+                    certificates_url = f"{self.registry_url}/v1/namespaces/{domain}/teams/{team_name}/certificates"
                     cert_resp = await client.get(
-                        f"{self.registry_url}/v1/namespaces/{domain}/teams/{team_name}/certificates",
-                        params=params, headers=self._headers,
+                        certificates_url, params=params, headers=self._read_headers(certificates_url),
                     )
-                    _raise_if_private_team_unreadable(cert_resp)
+                    _raise_if_private_team_unreadable(cert_resp, team_id)
                     if cert_resp.status_code >= 400:
                         raise HTTPException(status_code=503, detail="AWID certificate revocation lookup unavailable")
                     cert_payload = cert_resp.json()
@@ -387,7 +474,8 @@ class AWIDTeamCache:
             fetched_at=now,
             expires_at=now + seconds_to_ns(self.ttl_seconds),
         )
-        self._cache[team_id] = facts
+        if store:
+            self._cache[team_id] = facts
         return facts
 
     async def _get_certificate_status(
@@ -463,11 +551,10 @@ class AWIDTeamCache:
         cached = self._did_keys.get(cache_key)
         if cached and cached.expires_at > now:
             return cached.current_did_key
+        key_url = f"{self.registry_url}/v1/did/{quote(did_aw, safe=':')}/key"
         try:
             async with self._client() as client:
-                response = await client.get(
-                    f"{self.registry_url}/v1/did/{quote(did_aw, safe=':')}/key", headers=self._headers
-                )
+                response = await client.get(key_url, headers=self._read_headers(key_url))
             current_did_key: str | None
             if response.status_code == 404:
                 current_did_key = None

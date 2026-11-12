@@ -2,6 +2,11 @@
 
 ## Unreleased
 
+- Human handoffs retain their authenticated team for credential collection and
+  console session requests. Existing key-bound console sessions without retained
+  team context are refused after migration and require signing in again; there
+  is no compatibility fallback or installation-wide team discovery.
+
 - **A customer-run aweb server can read its private team at the public
   registry without the registry-wide `AWID_SERVICE_TOKEN`.** Give the server
   an ordinary member certificate in each team it serves

@@ -6,6 +6,7 @@ import json
 from datetime import UTC, datetime, timedelta
 from uuid import uuid4
 
+import asyncpg
 import pytest
 from aweb_naapp.hooks.envelope import verify
 from aweb_naapp.hooks.producer import Registration, RegistrationView
@@ -27,6 +28,21 @@ from tests.test_change_sets import ALICE, APP_ID, ORIGIN, TEAM
 from tests.test_change_sets import world as _world
 
 world = _world
+
+
+@pytest.mark.parametrize("operation", ["DELETE FROM", "TRUNCATE TABLE"])
+async def test_credential_audit_refuses_deletion_and_truncation(world, operation):
+    audit = await audit_for(world)
+    await designate(world, audit)
+    before = await world.db.fetch_value("SELECT count(*) FROM {{tables.credential_audit_events}}")
+    assert before > 0
+    with pytest.raises(asyncpg.RaiseError):
+        async with world.db.transaction() as tx:
+            await tx.execute(f"{operation} {{{{tables.credential_audit_events}}}}")
+    assert (
+        await world.db.fetch_value("SELECT count(*) FROM {{tables.credential_audit_events}}")
+        == before
+    )
 
 
 def target():

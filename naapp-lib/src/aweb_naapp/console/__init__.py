@@ -23,10 +23,10 @@ import hmac
 import logging
 import secrets
 from collections.abc import Awaitable, Callable, Coroutine
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
-from typing import TYPE_CHECKING, Annotated, Any
+from typing import TYPE_CHECKING, Annotated, Any, Protocol
 
 from fastapi import APIRouter, Depends, HTTPException, Request, Response
 from fastapi.exceptions import RequestValidationError
@@ -89,6 +89,26 @@ class ConsoleSession:
     token_sha256: bytes
 
 
+class BoundSessionCheck(Protocol):
+    async def check(
+        self, tx: TransactionManager, session: "KeyBoundConsoleSession", *, hold: bool
+    ) -> bool: ...
+
+
+@dataclass(frozen=True)
+class KeyBoundConsoleSession(ConsoleSession):
+    """Verified request binding issued only by the shared handoff factory.
+
+    The callback retains process-local proof and app-issued handles. It is
+    never serialized, selected by a caller or reused in another request.
+    """
+
+    installation_id: str
+    role: str
+    principal: str
+    _binding: BoundSessionCheck = field(repr=False, compare=False)
+
+
 async def session_is_current(
     tx: TransactionManager, session: ConsoleSession, *, hold: bool
 ) -> bool:
@@ -99,10 +119,11 @@ async def session_is_current(
     a logout waits for the caller; the caller takes it after its own earlier
     locks. The clock is read after any row-lock wait.
     """
+    if isinstance(session, KeyBoundConsoleSession):
+        return await session._binding.check(tx, session, hold=hold)
     row = await tx.fetch_one(
         "SELECT scope,subject,evidence_ref,expires_at,closed_at"
-        " FROM {{tables.console_sessions}} WHERE token_sha256=$1"
-        + (" FOR SHARE" if hold else ""),
+        " FROM {{tables.console_sessions}} WHERE token_sha256=$1" + (" FOR SHARE" if hold else ""),
         session.token_sha256,
     )
     return (
@@ -137,6 +158,19 @@ async def _housekeeping(table: str, work: Awaitable[Any]) -> None:
         logger.warning("console prune of %s failed: %s", table, type(error).__name__)
 
 
+async def _prune_sessions(db: AsyncDatabaseManager) -> None:
+    """Bounded post-commit cleanup; held sessions and their nonces stay intact."""
+    await _housekeeping(
+        "console_sessions",
+        db.execute(
+            "DELETE FROM {{tables.console_sessions}} WHERE token_sha256 IN ("
+            "SELECT token_sha256 FROM {{tables.console_sessions}} "
+            "WHERE expires_at <= NOW() OR closed_at IS NOT NULL "
+            "ORDER BY expires_at LIMIT 64 FOR UPDATE SKIP LOCKED)"
+        ),
+    )
+
+
 ScopeAdmission = Callable[[str], Awaitable[bool]]
 
 
@@ -156,6 +190,7 @@ class ConsoleSessions:
         passkeys: Passkeys,
         scopes: ScopeAdmission,
         ttl: timedelta = MAX_SESSION,
+        key_bound: Callable[[Request], Awaitable[ConsoleSession]] | None = None,
     ) -> None:
         if not timedelta(0) < ttl <= MAX_SESSION:
             raise ValueError("a console session lasts more than 0 and at most 15 minutes")
@@ -163,6 +198,7 @@ class ConsoleSessions:
         self._ttl = ttl
         self.passkeys = passkeys
         self.scopes = scopes
+        self._key_bound = key_bound
 
     async def open(self, *, subject: str, scope: str, evidence_ref: str) -> IssuedSession:
         """Open a session for a subject whose passkey login B3 has verified."""
@@ -186,16 +222,7 @@ class ConsoleSessions:
         # A session that has ended is refused already; dropping it, after the
         # insert has committed and skipping rows another transaction holds,
         # bounds the table without ever waiting on a login.
-        await _housekeeping(
-            "console_sessions",
-            self._db.execute(
-                """
-                DELETE FROM {{tables.console_sessions}} WHERE token_sha256 IN (
-                    SELECT token_sha256 FROM {{tables.console_sessions}}
-                    WHERE expires_at <= NOW() OR closed_at IS NOT NULL FOR UPDATE SKIP LOCKED)
-                """
-            ),
-        )
+        await _prune_sessions(self._db)
         return IssuedSession(token, csrf_token, expires_at, int(self._ttl.total_seconds()))
 
     def set_cookie(self, response: Response, issued: IssuedSession) -> None:
@@ -225,13 +252,19 @@ class ConsoleSessions:
 
     async def current(self, request: Request) -> ConsoleSession:
         """The request's open session; a state change must also carry its CSRF token."""
+        from aweb_naapp.console.handoff_wire import CONSOLE_SIGNATURE_HEADERS
+
+        if any(name in request.headers for name in CONSOLE_SIGNATURE_HEADERS):
+            if self._key_bound is None:
+                raise self._required()
+            return await self._key_bound(request)
         token = request.cookies.get(COOKIE_NAME)
         if not token:
             raise self._required()
         row = await self._db.fetch_one(
             """
             SELECT * FROM {{tables.console_sessions}}
-            WHERE token_sha256 = $1 AND closed_at IS NULL AND expires_at > NOW()
+            WHERE token_sha256 = $1 AND client_key IS NULL AND closed_at IS NULL AND expires_at > NOW()
             """,
             _sha256(token),
         )
@@ -262,7 +295,7 @@ class ConsoleSessions:
 
     async def _close(self, token_sha256: bytes) -> None:
         await self._db.execute(
-            "UPDATE {{tables.console_sessions}} SET closed_at = NOW() WHERE token_sha256 = $1",
+            "UPDATE {{tables.console_sessions}} SET closed_at = NOW(), member_certificate=NULL WHERE token_sha256 = $1",
             token_sha256,
         )
 
@@ -413,8 +446,7 @@ class ConsoleRoute(APIRoute):
                 )
             except RequestValidationError as error:
                 detail = [
-                    {"loc": problem["loc"], "type": problem["type"]}
-                    for problem in error.errors()
+                    {"loc": problem["loc"], "type": problem["type"]} for problem in error.errors()
                 ]
                 response = JSONResponse({"detail": detail}, 422)
             response.headers.update(CONSOLE_HEADERS)

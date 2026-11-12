@@ -13,9 +13,9 @@ from aweb_secrets import records
 from tests.harness import running_upstream
 from tests.test_broker_approved_service import setup as approved_setup
 from tests.test_broker_audit import INSTALLATION, envelopes
+from tests.test_broker_service import completed_receipt, setup, submission
 from tests.test_broker_service import db as db
 from tests.test_broker_service import fence as fence
-from tests.test_broker_service import setup, submission
 from tests.test_use_approvals import SECRET
 from tests.test_use_approvals import uses as uses
 from tests.test_use_approvals import world as world
@@ -64,7 +64,9 @@ async def test_broker_public_ref_is_stable_through_send_and_stored_replay(db, fe
         original = submission(upstream, request_id=marker)
         reply = await service.submit(secret=SECRET["ref"], submission=original)
         assert reply.body["state"] == "completed"
-        assert await service.submit(secret=SECRET["ref"], submission=original) == reply
+        receipt = await completed_receipt(db, reply)
+        assert await service.submit(secret=SECRET["ref"], submission=original) == receipt
+        assert upstream.paths == ["/bearer/echo"]
         events = use_events(await envelopes(db))
         assert_scope(events, original.authorization)
         assert [e["payload"]["action"] for e in events] == ["admitted", "dispatching", "completed"]
@@ -185,7 +187,9 @@ async def test_broker_approval_wait_decision_resubmission_and_replay_keep_one_re
             result.body["state"] == "completed"
             and result.body["request_ref"] == pending.body["request_ref"]
         )
-        assert await service.submit(secret=SECRET["ref"], submission=request) == result
+        receipt = await completed_receipt(uses.world.db, result)
+        assert await service.submit(secret=SECRET["ref"], submission=request) == receipt
+        assert upstream.paths == ["/bearer/echo"]
         events = use_events(await envelopes(uses.world.db))
         assert_scope(events, request.authorization)
         assert [e["payload"]["action"] for e in events] == [
