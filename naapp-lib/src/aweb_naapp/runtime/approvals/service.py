@@ -509,6 +509,7 @@ class Approvals:
         subject: str | None,
         *,
         deciding: bool,
+        tx: TransactionManager | None = None,
     ) -> tuple[Approval, Candidate, str | None]:
         """Check the call arrives through the approval's own presentation, and
         find the candidate it is for. A link is personal: it is for the
@@ -530,7 +531,7 @@ class Approvals:
             return approval, candidate, None
         if task_answer_ref is not None or subject is not None or link_token is None:
             raise ApprovalRefused(Refusal.PRESENTATION_MISMATCH)
-        link = await self._usable_link(link_token)
+        link = await self._usable_link(link_token, tx=tx)
         if (
             link.approval_id != approval.approval_id
             or link.request_sha256 != approval.request_sha256
@@ -772,7 +773,12 @@ class Approvals:
         the fresh assertion stays spent.
         """
         approval, candidate, link_id = await self._presented(
-            await self._store.get(approval_id), link_token, task_answer_ref, subject, deciding=True
+            await self._store.get(approval_id),
+            link_token,
+            task_answer_ref,
+            subject,
+            deciding=True,
+            tx=tx,
         )
         self._check_pending(approval)
         if task_answer_ref is not None:
@@ -790,6 +796,11 @@ class Approvals:
             # Keep the store's decision savepoint open through the final fence,
             # so catching a refusal in a caller-owned tx cannot commit B2 writes.
             locked = await stack.enter_async_context(self._store.locked(approval_id, effect_tx))
+            if link_token is not None:
+                # A link used or revoked while this decision waited for the
+                # row answers as it would at presentation: link_unavailable,
+                # whatever the approval's state, never revealing the decision.
+                await self._usable_link(link_token, tx=locked.transaction)
             current = self._check_pending(locked.approval)
             # Eligibility again under the lock: a retirement serialises with
             # this decision on the approval row, so one committed during the
