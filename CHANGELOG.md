@@ -103,6 +103,70 @@
   against the public AWID registry, with ordinary member keys mounted
   read-only and no service token or registry of its own. The self-hosting
   guide's customer-server section shows how to start it.
+- **A hook delivery from a client is checked with the one team-certificate
+  check, in Python and in Go.** The receiver (`aweb_naapp.hooks.delivery`,
+  `cli/go/hookevent`) takes the team's revoked and registered certificate ids
+  beside its current key, and refuses a revoked or unregistered certificate
+  itself as `certificate_invalid`. The `team_did_key` a certificate carries is
+  no longer compared with the registry's key: the signature under the
+  registry's key is the check. The delivery vectors are
+  `hook-delivery-credential-v2.json`; version 1 is removed. Logs' ingest
+  answers a revoked or unregistered client certificate with 401
+  `transport_certificate_invalid`, where it answered
+  `provenance_client_certificate`. A team id that is not one is 401
+  `invalid_field: team_id` in the naapp runtime.
+- **The team-certificate check refuses what two encoders could write
+  differently, in Python and in Go.** `check_team_certificate` and the new
+  Go `awid.CheckTeamCertificate` give every case of
+  `docs/vectors/team-certificate-verification-v1.json` the same verdict. A
+  certificate is `malformed` when its signature is not unpadded standard
+  base64, when a string in it holds a control character below U+0020, when a
+  number in it is not an integer or is -0, or when it holds NaN or Infinity. No issuer
+  writes any of these.
+- **Changed: the naapp runtime verifier (`aweb_naapp.runtime.team_auth`)
+  checks a team certificate with awid's one check.** Apps built on naapp-lib
+  now refuse a certificate whose `version` is not the integer 1 and one whose
+  `alias` is not a string, which they accepted. A certificate that fails is
+  401 with the check's reason as the detail (`malformed`,
+  `unsupported_version`, `invalid_field: <field>`, `member_key_mismatch`,
+  `bad_signature`, `revoked`, `unregistered`) where the detail was a
+  sentence; a registry key that does not decode is 503
+  `authority_unavailable`. The reason-to-status table is awid's
+  (`awid.team_certificate.refusal_answer`), shared with the server.
+  `AWIDTeamCache` refuses a lifetime above 60 seconds at construction, where
+  it read a larger one as 60; the settings already refused it.
+- **Changed: the server checks a team certificate with awid's one check, and
+  its refusals change.** Every team-authenticated request, app task
+  authorization and room read now calls
+  `awid.team_certificate.check_team_certificate`.
+  - **Newly refused:** a certificate whose `version` is `true`, and one whose
+    `alias` is absent, empty or not a string. Production holds no such
+    certificate.
+  - **One answer per reason.** A certificate that fails is 401 with the
+    reason as the detail: `malformed`, `unsupported_version`,
+    `invalid_field: <field>`, `member_key_mismatch`, `bad_signature`,
+    `revoked`, `unregistered`; an unknown team is 401 `unknown_team`. The
+    details no longer carry the team id, the certificate id or the version
+    presented. A registry key that does not decode is 503
+    `authority_unavailable`.
+  - **Status changes:** a certificate that is not registered, with
+    `AWEB_REQUIRE_REGISTERED_CERTIFICATES` on, was 403 and is 401; a room
+    read with a certificate that fails was 403 and is 401 ("Room membership
+    changed" stays 403); app task requests answer `revoked` where they
+    answered `certificate_revoked`, and the certificate's own reason where
+    they answered `signature_invalid` for it.
+  - With the registered-certificate requirement on, the registered set is
+    read with the revoked set, before the check, where it was read after.
+- **awid-service has one check for a team certificate,
+  `awid.team_certificate.check_team_certificate`.** It takes the header, the
+  key the certificate must name, the team's current key, and the team's
+  revoked and registered certificate ids, all required, and refuses with one
+  of seven reasons: `malformed`, `unsupported_version`, `invalid_field` (with
+  the field), `member_key_mismatch`, `bad_signature`, `revoked`,
+  `unregistered`. `docs/vectors/team-certificate-verification-v1.json` holds
+  the cases it answers. No verifier calls it yet; the server, the naapp
+  runtime, the hook receiver and the library each still run their own check,
+  and the vector file records what each answers today.
 - **A customer-run aweb server can read its private team at the public
   registry without the registry-wide `AWID_SERVICE_TOKEN`.** Give the server
   an ordinary member certificate in each team it serves
@@ -388,6 +452,17 @@
   sets to the client address it saw, and keeps the console login limit per that
   address. Unset, the limit is kept per TCP peer, which behind a proxy is one
   limit for every reader.
+- App manifest did:keys: `aweb_naapp.manifest.load_manifest` checks a declared
+  v1 `event_emitters[].did_key` or v2 `app_keys[].did_key` for its shape only
+  (the `did:key:z` prefix, at most 47 base58 characters, the base58 alphabet)
+  and decodes nothing, so an over-long key is refused unread. Each key is
+  validated as a canonical prime-order Ed25519 key with awid by
+  `aweb_naapp.manifest_keys.check_manifest_keys` where it is used: the
+  server's manifest fetch and its install, update and reseed registration.
+  The refusal codes are unchanged (`manifest_invalid` for v1,
+  `app_keys_invalid` for v2); a small-order key is now refused there too.
+  naapp-lib's `runtime` and `hooks` extras and the server require
+  `awid-service>=0.5.38`.
 
 - `aw` writes U+2028 (line separator) and U+2029 (paragraph separator) as UTF-8
   in the canonical JSON it signs, as the Python reference

@@ -12,6 +12,7 @@ import pytest
 import pytest_asyncio
 from aweb.app_manifests import ManifestFetcher, ManifestFetchError
 from aweb.config import AppInternalOrigins
+from awid.did import did_from_public_key
 from aweb_naapp.egress import (
     AddressPolicy,
     DnsResolver,
@@ -223,3 +224,31 @@ async def test_http_origin_is_refused_before_any_request(origin):
         await origin.fetcher.fetch(origin.url.replace("https:", "http:"))
     assert refused.value.code == "origin_invalid"
     assert not origin.tls.seen
+
+
+VECTORS = Path(__file__).parents[2] / "test-vectors/app-manifests/app-manifest-v2-v1.json"
+BAD_DID = next(
+    case for case in json.loads(VECTORS.read_bytes())["cases"] if case["name"] == "app_key_bad_did"
+)["mutations"][0]["value"]
+# The encoding of the identity point, a small-order Ed25519 key anyone can sign as.
+SMALL_ORDER_DID = did_from_public_key(b"\x01" + b"\x00" * 31)
+
+
+@pytest.mark.parametrize("did_key", [BAD_DID, SMALL_ORDER_DID], ids=["app_key_bad_did", "small-order"])
+async def test_a_v2_manifest_whose_key_is_no_ed25519_key_is_refused(origin, did_key):
+    doc = json.loads(origin.manifest())
+    doc["app_keys"][0]["did_key"] = did_key
+    origin.publish(json.dumps(doc).encode())
+    with pytest.raises(ManifestFetchError) as refused:
+        await origin.fetcher.fetch(origin.url)
+    assert (refused.value.code, refused.value.status_code) == ("app_keys_invalid", 422)
+
+
+@pytest.mark.parametrize("did_key", [BAD_DID, SMALL_ORDER_DID], ids=["app_key_bad_did", "small-order"])
+async def test_a_v1_manifest_whose_emitter_key_is_no_ed25519_key_is_refused(origin, did_key):
+    doc = json.loads(origin.manifest(1))
+    doc["event_emitters"][0]["did_key"] = did_key
+    origin.routes[LEGACY] = (200, json.dumps(doc).encode(), [])
+    with pytest.raises(ManifestFetchError) as refused:
+        await origin.fetcher.fetch(origin.url)
+    assert (refused.value.code, refused.value.status_code) == ("manifest_invalid", 422)

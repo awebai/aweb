@@ -126,6 +126,10 @@ ROOT_CONSUMERS = {
         "id-certificates-v1.json",
         'filepath.Join("..", "..", "..", "docs", "vectors", "id-certificates-v1.json")',
     ),
+    PurePosixPath("cli/go/awid/team_certificate_check_test.go"): _consumer(
+        "team-certificate-verification-v1.json",
+        'filepath.Join("..", "..", "..", "docs", "vectors", "team-certificate-verification-v1.json")',
+    ),
     PurePosixPath("cli/go/awid/didkey_strict_test.go"): _consumer(
         "id-certificates-v1.json",
         'filepath.Join("..", "..", "..", "docs", "vectors", "id-certificates-v1.json")',
@@ -251,6 +255,30 @@ ROOT_CONSUMERS = {
     PurePosixPath("awid/tests/test_certificate_status.py"): _consumer(
         "team-certificate-status-v1.json",
         'Path(__file__).parents[2] / "docs" / "vectors" / "team-certificate-status-v1.json"',
+    ),
+    PurePosixPath("awid/tests/test_team_certificate_vectors.py"): _consumer(
+        "team-certificate-verification-v1.json",
+        '(Path(__file__).resolve().parents[2] / "docs/vectors/team-certificate-verification-v1.json")',
+    ),
+    PurePosixPath("server/tests/test_team_certificate_vectors.py"): _consumer(
+        "team-certificate-verification-v1.json",
+        '(Path(__file__).resolve().parents[2] / "docs/vectors/team-certificate-verification-v1.json")',
+    ),
+    PurePosixPath("naapp-lib/tests/runtime/test_team_certificate_vectors.py"): _consumer(
+        "team-certificate-verification-v1.json",
+        '(Path(__file__).resolve().parents[3] / "docs/vectors/team-certificate-verification-v1.json")',
+    ),
+    PurePosixPath("naapp-lib/tests/runtime/test_member_credential_startup_check.py"): _consumer(
+        "team-certificate-verification-v1.json",
+        '(Path(__file__).resolve().parents[3] / "docs/vectors/team-certificate-verification-v1.json")',
+    ),
+    PurePosixPath("naapp-lib/tests/hooks/test_team_certificate_vectors.py"): _consumer(
+        "team-certificate-verification-v1.json",
+        '(Path(__file__).resolve().parents[3] / "docs/vectors/team-certificate-verification-v1.json")',
+    ),
+    PurePosixPath("naapp/library/tests/test_team_certificate_vectors.py"): _consumer(
+        "team-certificate-verification-v1.json",
+        '(Path(__file__).resolve().parents[3] / "docs/vectors/team-certificate-verification-v1.json")',
     ),
     PurePosixPath("awid/tests/test_principal_attestation_vectors.py"): _consumer(
         "principal-attestation-v1.json",
@@ -500,8 +528,8 @@ ROOT_CONSUMERS = {
         '(AWEB_ROOT / "docs" / "vectors" / "hook-catalog-v1.json")',
     ),
     PurePosixPath("naapp-lib/tests/hooks/test_delivery.py"): _consumer(
-        "hook-delivery-credential-v1.json",
-        '(AWEB_ROOT / "docs" / "vectors" / "hook-delivery-credential-v1.json")',
+        "hook-delivery-credential-v2.json",
+        '(AWEB_ROOT / "docs" / "vectors" / "hook-delivery-credential-v2.json")',
     ),
     PurePosixPath("naapp-lib/tests/hooks/test_envelope_bound.py"): _consumer(
         "hook-catalog-v1.json",
@@ -597,9 +625,9 @@ ROOT_CONSUMERS = {
         'Path(__file__).resolve().parents[3] / "docs/vectors/human-role-holding-v1.json"',
     ),
     PurePosixPath("cli/go/hookevent/vectors_test.go"): _consumer(
-        {"hook-catalog-v1.json", "hook-delivery-credential-v1.json", "hook-event-envelope-v1.json"},
+        {"hook-catalog-v1.json", "hook-delivery-credential-v2.json", "hook-event-envelope-v1.json"},
         '"../../../docs/vectors/hook-event-envelope-v1.json"',
-        '"../../../docs/vectors/hook-delivery-credential-v1.json"',
+        '"../../../docs/vectors/hook-delivery-credential-v2.json"',
         '"../../../docs/vectors/hook-catalog-v1.json"',
     ),
     PurePosixPath("cli/go/a2a/card_test.go"): _consumer(
@@ -838,6 +866,9 @@ NON_CONSUMING_CODE_REFERENCES = {
     PurePosixPath("scripts/freeze_human_channels_profile.py"): (
         "docs/vectors/human-channels-profile-v1.json",
         "docs/vectors/human-channels-v1.json",
+    ),
+    PurePosixPath("scripts/generate_team_certificate_vectors.py"): (
+        "docs/vectors/team-certificate-verification-v1.json",
     ),
     PurePosixPath("cli/go/awid/human_channels_contract.go"): (
         "docs/vectors/human-channels-profile-v1.json",
