@@ -113,17 +113,129 @@ if "signer" in config:
 PY
 }
 
+env_value() {
+  sed -n "s/^$1=//p" "$env_file"
+}
+
+# With agents: the agents' resolv.conf and the path of egress's policy go in
+# the env file, and the OATS source must be a clean checkout, whose commit and
+# fragment blobs are recorded with the run.
+prepare_agents() {
+  printf 'nameserver %s\n' "$(env_value AGENT_RESOLVER_IP)" >"$run_dir/resolv.conf"
+  printf 'RESOLV_CONF_FILE=%s\nEGRESS_POLICY_FILE=%s\n' "$run_dir/resolv.conf" "$run_dir/egress-policy.json" >>"$env_file"
+  local oats
+  oats="$(env_value OATS_SOURCE)"
+  if [[ -n "$(git -C "$oats" status --porcelain)" ]]; then
+    echo "e2e-team-deployment: the OATS source at $oats has changes; it must be the pinned commit as it is" >&2
+    exit 1
+  fi
+  {
+    echo "commit $(git -C "$oats" rev-parse HEAD)"
+    for file in container/agent/compose.agent.yaml container/agent/egress/compose.egress.yaml; do
+      echo "blob $(git -C "$oats" rev-parse "HEAD:$file") $file"
+    done
+  } >"$run_dir/oats-source.txt"
+}
+
+# Egress's policy, from what each of the five origins' hosts resolves to on
+# the services network and the protected backends' addresses there.
+derive_egress_policy() {
+  local hosts addresses denied network service id
+  hosts="$(python_in_server - "$deployment" <<'PY'
+import json
+import sys
+from urllib.parse import urlsplit
+
+import yaml
+
+config = yaml.safe_load(open(sys.argv[1], encoding="utf-8"))
+origins = {
+    "aweb": config["aweb"]["publicOrigin"],
+    "secrets": config["secrets"]["publicOrigin"],
+    "logs": config["logs"]["publicOrigin"],
+    "signer": config["signer"]["requestOrigin"],
+    "registry": config["team"].get("registryUrl", "https://api.awid.ai"),
+}
+print(json.dumps({role: urlsplit(origin).hostname for role, origin in origins.items()}))
+PY
+)"
+  addresses="$(dc exec -T aweb python -c '
+import json, socket, sys
+hosts = json.loads(sys.argv[1])
+print(json.dumps({role: sorted({info[4][0] for info in socket.getaddrinfo(host, 443, socket.AF_INET, socket.SOCK_STREAM)})
+                  for role, host in hosts.items()}))
+' "$hosts" </dev/null)"
+  network="${project}_services"
+  denied=()
+  for service in postgres redis; do
+    id="$(dc ps -q "$service")"
+    [[ -n "$id" ]] || continue
+    denied+=("$(docker inspect --format "{{(index .NetworkSettings.Networks \"$network\").IPAddress}}" "$id")")
+  done
+  python_in_server - "$deployment" "$TEAM_DIR" "$run_dir/egress-policy.json" "$addresses" "${denied[@]}" <<'PY'
+import importlib.util
+import json
+import sys
+from pathlib import Path
+
+import yaml
+
+path, team_dir, out, addresses, *denied = sys.argv[1:]
+spec = importlib.util.spec_from_file_location("egress_policy", Path(team_dir) / "egress_policy.py")
+egress_policy = importlib.util.module_from_spec(spec)
+spec.loader.exec_module(egress_policy)
+config = yaml.safe_load(open(path, encoding="utf-8"))
+profile = json.loads(Path(config["signer"]["profileFile"]).read_text(encoding="utf-8"))
+try:
+    policy = egress_policy.derive(config, profile, json.loads(addresses), denied)
+except egress_policy.Refused as refused:
+    sys.exit(f"e2e-team-deployment: no egress policy: {refused}")
+Path(out).write_text(json.dumps(policy, indent=2) + "\n", encoding="utf-8")
+Path(out).chmod(0o644)
+PY
+}
+
+# Egress alone, then the agents network as Docker created it: internal, no
+# IPv6 and no route to the host's bridge gateway, or no agent starts.
+start_egress() {
+  derive_egress_policy
+  if ! dc up -d --wait --wait-timeout "${TEAM_DEPLOYMENT_WAIT_SECONDS:-300}" egress; then
+    dc logs --no-color --timestamps egress >"$run_dir/egress.log" 2>&1 || true
+    echo "e2e-team-deployment: egress did not become healthy; logs in $run_dir/egress.log" >&2
+    exit 1
+  fi
+  local inspected
+  inspected="$(docker network inspect "${project}_agents" \
+    --format '{{.Internal}} {{.EnableIPv6}} {{index .Options "com.docker.network.bridge.gateway_mode_ipv4"}}')"
+  echo "agents network: internal ipv6 gateway_mode_ipv4 = $inspected"
+  if [[ "$inspected" != "true false isolated" ]]; then
+    echo "e2e-team-deployment: the agents network is not internal, IPv6-free and gateway-isolated" >&2
+    exit 1
+  fi
+}
+
 up() {
   mkdir -p "$run_dir"
   python_in_server "$TEAM_DIR/render_env.py" "$deployment" >"$env_file.tmp"
   mv "$env_file.tmp" "$env_file"
+  local with_agents=0 services=()
+  if [[ -n "$(env_value EGRESS_ADDRESS)" ]]; then
+    with_agents=1
+    prepare_agents
+  fi
   # The resolved model holds no credential: every one is a mounted file.
   dc config >"$run_dir/compose.config.yaml"
   if grep -q AWID_SERVICE_TOKEN "$run_dir/compose.config.yaml"; then
     echo "e2e-team-deployment: a service is given AWID_SERVICE_TOKEN" >&2
     exit 1
   fi
-  if ! dc up -d --wait --wait-timeout "${TEAM_DEPLOYMENT_WAIT_SECONDS:-300}"; then
+  # The agent and its egress start last, after their policy is derived.
+  if [[ "$with_agents" -eq 1 ]]; then
+    while read -r service; do
+      [[ "$service" == egress || "$service" == agent ]] || services+=("$service")
+    done < <(dc config --services)
+  fi
+  if ! dc up -d --wait --wait-timeout "${TEAM_DEPLOYMENT_WAIT_SECONDS:-300}" ${services[@]+"${services[@]}"}; then
     dc ps --all --format '{{.Service}} {{.Status}}' >&2 || true
     dc logs --no-color --timestamps >"$run_dir/compose.log" 2>&1 || true
     echo "e2e-team-deployment: not every service became healthy; logs in $run_dir/compose.log" >&2
@@ -173,6 +285,15 @@ sys.exit(status != 200)
   if [[ "$ready" -ne "$(grep -c . <<<"$targets")" ]]; then
     echo "e2e-team-deployment: $ready services checked for readiness, not every one" >&2
     exit 1
+  fi
+  if [[ "$with_agents" -eq 1 ]]; then
+    start_egress
+    dc ps --format '{{.Service}} {{.Status}}'
+    # The signer's request origin is one of egress's five routes. Until the
+    # ingress is shown to refuse that origin's SNI carrying the human origin's
+    # Host or :authority (OATS probe-ingress.mjs), no agent is admitted.
+    echo "e2e-team-deployment: agents held: the ingress refusal probe has not run" >&2
+    exit 3
   fi
   dc ps --format '{{.Service}} {{.Status}}'
 }

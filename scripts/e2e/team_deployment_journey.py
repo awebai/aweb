@@ -114,6 +114,8 @@ class World:
         self.deployment_path = run_dir / "deployment.yaml"
         self.secrets = run_dir / "secrets"
         self.signer_configured = False
+        self.agents_configured = False
+        self.oats_source: Path | None = None
         network = ipaddress.ip_network(cidr)
         self.cidr = cidr
         top = network.broadcast_address
@@ -239,6 +241,22 @@ class World:
                 "emailFrom": f"signer@{DOMAIN}",
                 "emailCaFile": str(self.world / "tls" / "ca.pem"),
             }
+        if self.agents_configured:
+            config["agents"] = {
+                "image": self.images["agent"],
+                "uid": AGENT_UID,
+                "gid": AGENT_UID,
+                "resolverIp": "172.30.0.2",
+                "network": {"address": "172.30.0.10"},
+                "compose": {
+                    "stateDir": str(self.world / "agent-state"),
+                    "authorizedKeysFile": str(self.world / "agent-authorized-keys"),
+                    "pidsLimit": 512,
+                    "name": TEAM,
+                    "oatsSource": str(self.oats_source),
+                },
+            }
+            config["egress"] = {"image": self.images["egress"], "privateIngressAddresses": [self.front_ip]}
         path = self.run_dir / "deployment.yaml"
         path.write_text(yaml.safe_dump(config, sort_keys=False))
         self.write_trust(["aweb", *(name for name in ("secrets", "logs", "signer") if name in config)])
@@ -259,14 +277,27 @@ class World:
         (self.run_dir / ".env").write_text(rendered)
         self.deployment_path = deployment
 
-    def up(self) -> bool:
+    def up(self) -> int:
         """The adapter's up: every service healthy, internal origins inside
-        the services range, every service ready."""
+        the services range, every service ready. 3 means the agents are held."""
         result = subprocess.run([str(ADAPTER), "compose", "up", str(self.deployment_path)], env=self.env, text=True,
                                 check=False)
         connect = json.dumps(self.connect(), indent=2)
         (self.run_dir / "connect.json").write_text(connect)
-        return result.returncode == 0
+        return result.returncode
+
+    def configure_agents(self) -> None:
+        """The team container's state, SSH keys and login directory: state
+        owned by the agents' uid, the login directory readable only by their
+        group, and no harness login in it for this run."""
+        (self.world / "agent-state").mkdir()
+        (self.world / "agent-authorized-keys").write_text("")
+        (self.secrets / "agents").mkdir()
+        run("docker", "run", "--rm", "-v", f"{self.world / 'agent-state'}:/state",
+            "-v", f"{self.secrets / 'agents'}:/login", "alpine:3.22", "sh", "-c",
+            f"chown {AGENT_UID}:{AGENT_UID} /state && chown 0:{AGENT_UID} /login && chmod 0750 /login")
+        self.agents_configured = True
+        self.deployment()
 
     def machine(self, name: str) -> str:
         """A cli container as one machine; its HOME is /world/<name>."""
@@ -404,7 +435,7 @@ class World:
             return first_json(output)
 
         def start_signer() -> None:
-            if not self.up():
+            if self.up() != 0:
                 raise SystemExit("BOUNDARY: the signer did not come up ready; see compose.log in the run directory")
             print("UP: the signer is ready")
 
@@ -457,6 +488,7 @@ def main() -> int:
     parser.add_argument("--project", required=True)
     parser.add_argument("--images", type=Path, required=True)
     parser.add_argument("--services-cidr", default="172.31.0.0/24")
+    parser.add_argument("--oats-source", type=Path, help="checkout of the pinned OATS source, for the agents")
     parser.add_argument("--keep", action="store_true", help="leave the deployment running for inspection")
     args = parser.parse_args()
     run_dir = args.run_dir.resolve()
@@ -464,6 +496,9 @@ def main() -> int:
         raise SystemExit(f"FAILED: {run_dir} exists; each run has its own directory")
     run_dir.mkdir(parents=True)
     world = World(run_dir, args.project, load_images(args.images), args.services_cidr)
+    world.oats_source = args.oats_source.resolve() if args.oats_source else None
+    if ("agent" in world.images) != (world.oats_source is not None):
+        raise SystemExit("FAILED: the agents need both their images and --oats-source")
     # The settings the adapter needs for this run, none secret, for a later
     # connect or down: set -a; . world.env; scripts/e2e-team-deployment.sh ...
     (run_dir / "world.env").write_text(
@@ -495,7 +530,7 @@ def journey(world: World) -> int:
     print("service file owners:", json.dumps(owners, sort_keys=True))
 
     print("=== Step 1: bring up the deployment")
-    if not world.up():
+    if world.up() != 0:
         print("BOUNDARY: the deployment did not come up; see compose.log in the run directory")
         return 1
     print("UP: aweb, secrets and logs are ready")
@@ -509,7 +544,18 @@ def journey(world: World) -> int:
     print(f"SIGNED: {operation} committed, approved in the browser, receipt read by aw")
     refusals(site, holder, founded)
     print("REFUSED: no UV signs nothing; a changed act is operation_conflict; a lost prepare completes once")
-    return 0
+
+    if "agent" not in world.images:
+        print("AGENTS: not in this run (no agent or egress image)")
+        return 0
+    print("=== Step 2: the agents, behind egress")
+    world.configure_agents()
+    status = world.up()
+    if status == 3:
+        print("AGENTS HELD: egress is healthy and the agents network isolated; the ingress refusal probe has not run")
+        return 0
+    print("BOUNDARY: the agents stage did not come up; see the adapter's output")
+    return 1
 
 
 if __name__ == "__main__":
