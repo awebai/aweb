@@ -13,6 +13,8 @@ from contextlib import contextmanager
 import errno
 import socket
 
+from fixture_repo import init_fixture_repo, run_fixture
+
 
 @contextmanager
 def held_library_default():
@@ -24,8 +26,6 @@ def held_library_default():
             if error.errno != errno.EADDRINUSE:
                 raise
         yield
-
-from fixture_repo import init_fixture_repo, run_fixture
 
 ROOT = Path(__file__).resolve().parents[1]
 STAGES = "checks user-paths unit artifacts integration"
