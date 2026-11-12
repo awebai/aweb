@@ -39,7 +39,10 @@ class Provider:
             self.event('provider_create_error', operation=method, code=name,
                        error_type=type(exc).__name__)
             # No mutation retry, even if successful reconciliation finds nothing.
-            resources = self.read('list', run_id)
+            try:
+                resources = self.read('list', run_id)
+            except Infrastructure:
+                resources = None
             if name in CAPACITY:
                 error = Refused(f'{kwargs.get("server_type", method)} refused: {name}')
             else:
@@ -56,6 +59,8 @@ class Provider:
                 self.backend.delete(item)
             except Exception as exc:
                 failures.append((item['kind'], item['id'], code(exc)))
+                self.event('provider_delete_error', kind=item['kind'], id=item['id'],
+                           code=code(exc), error_type=type(exc).__name__)
         remaining = []
         for item in owned:
             if self.read('get', item['kind'], item['id']) is not None:
@@ -69,14 +74,26 @@ class Provider:
         return {'run_id': run_id, 'exact_ids_absent': True, 'labels_absent': True}
 
     def reap(self, now):
-        expired = {}
+        expired = set()
+        invalid_runs = set()
+        failures = []
         for item in self.read('list'):
-            if item['expires'] < now:
-                expired.setdefault(item['run_id'], []).append(item)
+            expiry = item.get('expires')
+            if not isinstance(expiry, (int, float)):
+                invalid_runs.add(item['run_id'])
+                failures.append(f"labelled resource without expiry: {item['kind']} {item['id']}")
+            elif expiry <= now:
+                expired.add(item['run_id'])
         result = []
-        for run_id in sorted(expired):
-            all_owned = self.read('list', run_id)
-            if any(item['expires'] >= now for item in all_owned):
-                raise Infrastructure(f'inconsistent expiry labels for {run_id}')
-            result.append(self.cleanup(run_id))
+        for run_id in sorted(expired - invalid_runs):
+            try:
+                all_owned = self.read('list', run_id)
+                if any(not isinstance(item.get('expires'), (int,float)) or
+                       item['expires'] > now for item in all_owned):
+                    raise Infrastructure(f'inconsistent expiry labels for {run_id}')
+                result.append(self.cleanup(run_id))
+            except Infrastructure as exc:
+                failures.append(str(exc))
+        if failures:
+            raise Infrastructure('; '.join(failures))
         return result

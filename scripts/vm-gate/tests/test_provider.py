@@ -73,4 +73,18 @@ class ProviderTests(unittest.TestCase):
         Provider(b,sleep=lambda _:None).reap(10)
         self.assertEqual([x['id'] for x in b.items],[4])
 
+    def test_capacity_classification_survives_failed_reconciliation(self):
+        b=FakeBackend();b.outcomes=[APIError('resource_limit_exceeded'),APIError('forbidden')]
+        with self.assertRaisesRegex(Refused,'ccx43.*resource_limit_exceeded') as got:
+            Provider(b,sleep=lambda _:None).create('create_server','r',server_type='ccx43')
+        self.assertIsNone(got.exception.resources)
+        self.assertEqual(sum(x[0]=='create' for x in b.calls),1)
+
+    def test_reaper_reports_missing_expiry_but_still_reaps_valid_runs(self):
+        b=FakeBackend();bad=resource('server',4,run='bad');del bad['expires']
+        b.items=[bad,resource('server',1),resource('ip',2)]
+        with self.assertRaisesRegex(Infrastructure,'labelled resource without expiry'):
+            Provider(b,sleep=lambda _:None).reap(10)
+        self.assertEqual([x['id'] for x in b.items],[4])
+
 if __name__=='__main__':unittest.main()
