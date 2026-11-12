@@ -388,8 +388,8 @@ class World:
         """The approver's holding of the app role the round trip revokes, made
         the supported way while the owner still holds the team's key: the
         owner adds the human to the team; the human, with its own key, fetches
-        its certificate and registers a passkey on the app's own human origin in
-        the browser, for the app the owner installed on this machine; the owner
+        its certificate, connects to the team's aweb and registers a passkey on
+        the app's own human origin in the browser, for the app the owner installed on this machine; the owner
         designates that exact credential. Checked in the app's own tables."""
         machine, human = holder.container, founded.approver
         # --global for this human holder only (services and seats stay --local):
@@ -403,10 +403,14 @@ class World:
             child = holder.act(human, *args)
             return child, holder.answer_passphrases(child, until=until)
 
-        child, output = as_human("--json", "id", "team", "fetch-cert", "--namespace", DOMAIN, "--team", TEAM,
-                                 "--cert-id", added["certificate_id"], "--registry", origin("registry"))
-        child.close()
-        assert child.exitstatus == 0, output
+        for args in (("--json", "id", "team", "fetch-cert", "--namespace", DOMAIN, "--team", TEAM, "--cert-id",
+                      added["certificate_id"], "--registry", origin("registry")),
+                     # The human's own connection to the team's aweb: the
+                     # requester's does not serve this separate identity.
+                     ("--json", "init", "--url", origin("aweb"), "--human-name", "approver")):
+            child, output = as_human(*args)
+            child.close()
+            assert child.exitstatus == 0, output
         # The app is already installed on this machine: the owner installed it
         # here, in the same aw plugin directory. aw takes no --human install.
         export = f"{site.mounted}/holder/app-export.json"
