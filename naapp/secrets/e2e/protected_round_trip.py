@@ -383,6 +383,22 @@ def refusals(site: Site, holder: Holder, founded: Founded) -> None:
         assert (saved / f"{operation}.json").exists()
         pending.append(operation)
 
+    # A cancelled LOGIN prompt: the browser itself rejects it (no user
+    # presence, the options' timeout hint shortened), so no assertion is sent.
+    # The page returns to sign-in and shows no act for approval.
+    child, page, operation, _ = start_revoke(site, machine, approver)
+    report = approve(site, machine, page, "--login-cancel")
+    assert report["states"] == ["login-required", "login-required"], report
+    # The page shows this only when navigator.credentials.get rejected with NotAllowedError.
+    assert report["status"] == "The passkey prompt was cancelled. You can try again.", report
+    requests = handoff_requests(site, page)
+    assert ("POST", "/login/options", 200) in requests, requests
+    assert not any(path == "/login" or "/governance/" in path for _, path, _ in requests), requests
+    child.sendintr()
+    finish(child)
+    assert site.signer_evidence(operation)["signed"] is False
+    assert (saved / f"{operation}.json").exists()
+
     # A changed act under the same operation id: a validly encoded intent
     # with another role, resent from aw's saved request. The service refuses
     # operation_conflict and signs nothing.

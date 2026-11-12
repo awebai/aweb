@@ -5,10 +5,14 @@
           and complete the page's own registration with a CDP virtual
           authenticator (user verified); keep the credential in D.
   approve --url PAGE --device D --ca CA [--login-uv yes|no] [--approve-uv yes|no]
+          [--login-cancel]
           Open the governance page in a fresh context (no cookie, no token),
           click through its real LOGIN and its separate approval, and print the
-          states the page reached, the digest and fingerprint it showed, and
-          the URL it ended on.
+          states the page reached, the digest and fingerprint it showed, the
+          page's own status text and the URL it ended on. --login-cancel lets
+          the browser itself reject the LOGIN prompt: the authenticator gets no
+          user presence and the options' timeout hint is shortened, so
+          navigator.credentials.get rejects with no assertion sent.
 
 The credential's private key lives only in D, a file of the lane's runtime
 directory. The page's own script does every request; this driver only clicks.
@@ -104,12 +108,29 @@ def approve(args, browser) -> None:
             "WebAuthn.addCredential",
             {"authenticatorId": authenticator_id, "credential": credential},
         )
+    if args.login_cancel:
+        # No presence, and the real options' client timeout hint shortened:
+        # the browser rejects the prompt itself. Nothing else is changed.
+        cdp.send(
+            "WebAuthn.setAutomaticPresenceSimulation",
+            {"authenticatorId": authenticator_id, "enabled": False},
+        )
+
+        def shorten(route):
+            response = route.fetch()
+            options = response.json()
+            options["timeout"] = 1000
+            route.fulfill(response=response, json=options)
+
+        page.route("**/login/options", shorten)
     report: dict[str, Any] = {"states": []}
     page.goto(args.url)
     report["states"].append(wait_state(page, ("login-required", "refused")))
     if report["states"][-1] == "login-required":
+        clicked = time.monotonic()
         page.click("#handoff-action")
         report["states"].append(wait_state(page, ("ready", "refused", "login-required")))
+        report["login_seconds"] = round(time.monotonic() - clicked, 1)
     if report["states"][-1] == "ready":
         report["digest"] = page.text_content("#handoff-digest")
         report["fingerprint"] = page.text_content("#handoff-fingerprint")
@@ -120,6 +141,7 @@ def approve(args, browser) -> None:
         )
         page.click("#handoff-action")
         report["states"].append(wait_state(page, TERMINAL + ("ready",)))
+    report["status"] = page.text_content("#handoff-status")
     report["url"] = page.url
     print(json.dumps(report))
 
@@ -137,6 +159,7 @@ def main() -> None:
         a.add_argument(name, required=True)
     a.add_argument("--login-uv", choices=["yes", "no"], default="yes")
     a.add_argument("--approve-uv", choices=["yes", "no"], default="yes")
+    a.add_argument("--login-cancel", action="store_true")
     args = parser.parse_args()
     trust(args.ca)
     with sync_playwright() as playwright:
