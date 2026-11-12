@@ -364,12 +364,15 @@ def refusals(site: Site, holder: Holder, founded: Founded) -> None:
     pending = []
     for phase in ("login", "approve"):
         child, page, operation, _ = start_revoke(site, machine, approver)
-        report = approve(site, machine, page, f"--{phase}-uv", "no")
+        uv = ("--login-without-uv",) if phase == "login" else ("--approve-uv", "no")
+        report = approve(site, machine, page, *uv)
         assert "navigated" not in report["states"], report
         if phase == "login":
-            # The authenticator answers without user verification; the signer
-            # refuses that LOGIN with 401 and the page ends refused, never
-            # showing an act ready for approval or asking about one.
+            # An injected, correctly signed LOGIN assertion without user
+            # verification (the driver checks it before sending); the signer
+            # refuses it with 401 and the page ends refused, never showing an
+            # act ready for approval or asking about one.
+            assert report["login_assertion"] == "injected-uv-cleared-signature-verified", report
             assert report["states"] == ["login-required", "refused"], report
             assert not report.get("digest") and not report.get("act"), report
             requests = handoff_requests(site, page)
@@ -389,6 +392,7 @@ def refusals(site: Site, holder: Holder, founded: Founded) -> None:
     child, page, operation, _ = start_revoke(site, machine, approver)
     report = approve(site, machine, page, "--login-cancel")
     assert report["states"] == ["login-required", "login-required"], report
+    assert "NotAllowedError" in report["exception_names"], report
     # The page shows this only when navigator.credentials.get rejected with NotAllowedError.
     assert report["status"] == "The passkey prompt was cancelled. You can try again.", report
     requests = handoff_requests(site, page)
