@@ -293,7 +293,62 @@ def check_metadata_owner_constructors(db):
         member.certificate_id,
         member.alias,
     )
-    return {"local_constructors": 3, "canonical_actor": "matches actual registered member fields"}
+    # Resolve the helper's actual pre-designation migration calls, then compare
+    # their CREATE TABLE declarations with the real context resolver's SQL.
+    # This checks dependency coverage, not a required helper/migration name.
+    import importlib
+    import inspect
+    import re
+    import textwrap
+
+    migrations = dict(vars(human_owner))
+    for statement in function.body:
+        if isinstance(statement, ast.ImportFrom):
+            module = importlib.import_module(statement.module)
+            for name in statement.names:
+                migrations[name.asname or name.name] = getattr(module, name.name)
+    declared_tables = set()
+    for statement in function.body:
+        if not isinstance(statement, ast.Expr) or not isinstance(statement.value, ast.Await):
+            continue
+        call = statement.value.value
+        if not isinstance(call, ast.Call) or not isinstance(call.func, ast.Name):
+            continue
+        if call.func.id == "apply_holder":
+            break
+        migrate = migrations.get(call.func.id)
+        if not inspect.isfunction(migrate):
+            continue
+        for node in ast.walk(ast.parse(textwrap.dedent(inspect.getsource(migrate)))):
+            if not (
+                isinstance(node, ast.Call)
+                and isinstance(node.func, ast.Name)
+                and node.func.id == "AsyncMigrationManager"
+            ):
+                continue
+            path = next(k.value for k in node.keywords if k.arg == "migrations_path")
+            folder = Path(
+                eval(compile(ast.Expression(path), "<migration-path>", "eval"), migrate.__globals__)
+            )
+            for sql in folder.glob("*.sql"):
+                declared_tables.update(
+                    re.findall(
+                        r"CREATE TABLE(?: IF NOT EXISTS)?\s+\{\{tables\.(\w+)\}\}",
+                        sql.read_text(),
+                        re.I,
+                    )
+                )
+    context_reads = set(
+        re.findall(r"FROM\s+\{\{tables\.(\w+)\}\}", inspect.getsource(PasskeyContexts), re.I)
+    )
+    assert context_reads and context_reads <= declared_tables, {
+        "context_tables_missing_from_metadata_setup": sorted(context_reads - declared_tables)
+    }
+    return {
+        "local_constructors": 3,
+        "canonical_actor": "matches actual registered member fields",
+        "context_tables_migrated_before_designation": sorted(context_reads),
+    }
 
 
 def check_owner_boundary_and_grant_sources():
