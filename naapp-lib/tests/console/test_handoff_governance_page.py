@@ -3,6 +3,7 @@
 import asyncio
 import base64
 import json
+import os
 import re
 import socket
 from dataclasses import replace
@@ -34,6 +35,32 @@ from tests.runtime.test_protected_signer import SCOPE
 from tests.runtime.test_protected_signer import world as world
 
 CSRF_KEY = "aweb.protected.console.csrf"
+
+
+def governance_browser_options():
+    return {
+        "args": [
+            "--host-resolver-rules=MAP signer.example.com 127.0.0.1",
+            "--no-proxy-server",
+        ]
+    }
+
+
+def test_governance_browser_selects_the_native_guard_for_browser_and_route_fetch(monkeypatch):
+    monkeypatch.setenv("HTTPS_PROXY", "http://127.0.0.1:43210")
+    options = governance_browser_options()
+    assert options["proxy"]["server"] == "http://127.0.0.1:43210"
+    assert "signer.example.com" not in options["proxy"]["bypass"]
+    assert "--no-proxy-server" not in options["args"]
+    assert "--host-resolver-rules=MAP signer.example.com 127.0.0.1" in options["args"]
+
+
+def test_governance_browser_keeps_direct_routing_inside_the_isolated_runner(monkeypatch):
+    monkeypatch.delenv("HTTPS_PROXY", raising=False)
+    options = governance_browser_options()
+    assert "proxy" not in options
+    assert "--no-proxy-server" in options["args"]
+    assert "--host-resolver-rules=MAP signer.example.com 127.0.0.1" in options["args"]
 
 
 @pytest.fixture
@@ -128,12 +155,7 @@ async def governance_service(world, tmp_path, request):
                             raise RuntimeError("governance server stopped before startup")
                         await asyncio.sleep(0.01)
             async with async_playwright() as playwright:
-                browser = await playwright.chromium.launch(
-                    args=[
-                        "--host-resolver-rules=MAP signer.example.com 127.0.0.1",
-                        "--no-proxy-server",
-                    ]
-                )
+                browser = await playwright.chromium.launch(**governance_browser_options())
                 try:
                     yield SimpleNamespace(
                         world=w,
