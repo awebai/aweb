@@ -261,11 +261,11 @@ async def human(deployment: Deployment, alias: str) -> HumanMember:
     )
 
 
-async def designate(
+def designation(
     deployment: Deployment, reader: HumanMember, *, installation_id: str | None = None
-) -> httpx.Response:
-    """The owner designates ``reader`` as a reader of the installation, binding a
-    new passkey, by a human-role act delivered to the console origin."""
+) -> dict:
+    """The body of the owner's act designating ``reader`` as a reader of the
+    installation, binding a new passkey the deployment keeps for its scope."""
     installation_id = installation_id or deployment.installation_id
     device = SoftAuthenticator(CONSOLE)
     credential = device.bind(urlsplit(CONSOLE).hostname or "")
@@ -280,18 +280,29 @@ async def designate(
         },
     )
     certificate = json.dumps(reader.member.certificate()).encode()
-    response = await deployment.owner_console.post(
-        OWNER_ACT_PATH,
-        json={
-            "signing": base64.b64encode(signing).decode(),
-            "signature": signature,
-            "credential": credential,
-            "certificate": base64.b64encode(certificate).decode(),
-        },
-    )
     scope = holding_scope(installation_id, deployment.member.team_id, READER_ROLE, reader.principal)
     deployment.devices[scope] = device
-    return response
+    return {
+        "signing": base64.b64encode(signing).decode(),
+        "signature": signature,
+        "credential": credential,
+        "certificate": base64.b64encode(certificate).decode(),
+    }
+
+
+async def deliver(deployment: Deployment, body: dict) -> httpx.Response:
+    """The owner's act delivered to the console origin from the owner's own client."""
+    return await deployment.owner_console.post(OWNER_ACT_PATH, json=body)
+
+
+async def designate(
+    deployment: Deployment, reader: HumanMember, *, installation_id: str | None = None
+) -> httpx.Response:
+    """The owner designates ``reader`` as a reader of the installation, binding a
+    new passkey, by a human-role act delivered to the console origin."""
+    return await deliver(
+        deployment, designation(deployment, reader, installation_id=installation_id)
+    )
 
 
 async def designated_reader(deployment: Deployment, alias: str = "reader") -> str:
@@ -495,3 +506,77 @@ async def test_a_reinstalled_logs_ends_the_old_readers_and_the_owner_designates_
     new = holding_scope(reinstalled, deployment.member.team_id, READER_ROLE, reader.principal)
     assert (await log_in(deployment, new)).status_code == 200
     assert (await deployment.console.get("/v1/events")).status_code == 200
+
+
+async def set_governance_target(deployment: Deployment, *, active: bool) -> None:
+    """Take logs' post-governance-hook binding in the team back to pending, so
+    logs has no governance target, or activate it again."""
+    team_id = deployment.member.team_id
+    if active:
+        now = datetime.now(UTC)
+        await deployment.server_db.execute(
+            "UPDATE {{tables.app_hook_bindings}} SET state='active',"
+            " activated_at=$2::timestamptz - INTERVAL '60 seconds', active_from=$2,"
+            " activation_act_sha256=$3 WHERE team_id=$1 AND hook='post-governance-hook'"
+            " AND ended_by IS NULL",
+            team_id,
+            now - timedelta(minutes=1),
+            "ab" * 32,
+        )
+    else:
+        await deployment.server_db.execute(
+            "UPDATE {{tables.app_hook_bindings}} SET state='pending', activated_at=NULL,"
+            " active_from=NULL, activation_act_sha256=NULL"
+            " WHERE team_id=$1 AND hook='post-governance-hook' AND ended_by IS NULL",
+            team_id,
+        )
+
+
+async def governed_state(deployment: Deployment) -> tuple[int, ...]:
+    """The counts a designation would change: holdings, credentials, consumed
+    nonces, outbox events and chain events."""
+    return tuple(
+        [
+            await deployment.db.fetch_value(f"SELECT count(*) FROM {{{{tables.{table}}}}}")
+            for table in (
+                "role_holdings",
+                "passkey_credentials",
+                "owner_act_nonces",
+                "outbox_events",
+                "chain_events",
+            )
+        ]
+    )
+
+
+async def test_a_designation_without_logs_governance_target_changes_nothing_until_it_returns(
+    prompt_installation_status: float, deployment: Deployment
+):
+    reader = await human(deployment, "reader")
+    body = designation(deployment, reader)
+    before = await governed_state(deployment)
+
+    await set_governance_target(deployment, active=False)
+    await asyncio.sleep(prompt_installation_status)
+    refused = await deliver(deployment, body)
+    assert (refused.status_code, refused.json()["detail"]) == (
+        503,
+        "release_context_unavailable",
+    )
+    assert await governed_state(deployment) == before
+
+    # The same unexpired act is admitted once the target is back.
+    await set_governance_target(deployment, active=True)
+    await asyncio.sleep(prompt_installation_status)
+    admitted = await deliver(deployment, body)
+    assert admitted.status_code == 200, admitted.text
+    assert (
+        await read_holding(
+            deployment.db,
+            installation_id=deployment.installation_id,
+            team_id=deployment.member.team_id,
+            role=READER_ROLE,
+            principal=reader.principal,
+        )
+        is not None
+    )
