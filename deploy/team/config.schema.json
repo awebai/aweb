@@ -1,10 +1,14 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "title": "One team's deployment",
-  "description": "The operator's deployment.yaml. Literals that are not secret and references to secrets; never a credential. A component's section is added with its descriptor.",
+  "description": "The operator's deployment.yaml. Literals that are not secret and references to secrets; never a credential. A component's section is added with its descriptor. x-env on an input is the setting its service reads; the Compose layer's env file is rendered from it.",
   "type": "object",
   "additionalProperties": false,
-  "required": ["team", "postgres", "aweb"],
+  "required": [
+    "team",
+    "postgres",
+    "aweb"
+  ],
   "$defs": {
     "origin": {
       "type": "string",
@@ -24,14 +28,21 @@
     "team": {
       "type": "object",
       "additionalProperties": false,
-      "required": ["id"],
+      "required": [
+        "id"
+      ],
       "properties": {
         "id": {
           "description": "The canonical team id, name:domain.",
           "type": "string",
-          "pattern": "^[a-z0-9][a-z0-9-]*:[a-z0-9][a-z0-9.-]*$"
+          "pattern": "^[a-z0-9][a-z0-9-]*:[a-z0-9][a-z0-9.-]*$",
+          "x-env": "TEAM_ID"
         },
-        "registryUrl": { "$ref": "#/$defs/origin", "default": "https://api.awid.ai" }
+        "registryUrl": {
+          "$ref": "#/$defs/origin",
+          "default": "https://api.awid.ai",
+          "x-env": "AWID_REGISTRY_URL"
+        }
       }
     },
     "postgres": {
@@ -41,27 +52,65 @@
         "bundled": {
           "description": "Run a PostgreSQL server in the deployment and create each component's database and role at first start.",
           "type": "boolean",
-          "default": true
+          "default": true,
+          "x-env": "POSTGRES_BUNDLED"
         },
-        "host": { "type": "string", "default": "postgres" },
-        "port": { "type": "integer", "minimum": 1, "maximum": 65535, "default": 5432 },
-        "secrets": { "$ref": "#/$defs/secrets", "default": "postgres" }
+        "host": {
+          "type": "string",
+          "default": "postgres",
+          "x-env": "POSTGRES_HOST"
+        },
+        "port": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 65535,
+          "default": 5432,
+          "x-env": "POSTGRES_PORT"
+        },
+        "secrets": {
+          "$ref": "#/$defs/secrets",
+          "default": "postgres",
+          "x-env": "POSTGRES_SECRETS"
+        }
       }
     },
     "aweb": {
       "type": "object",
       "additionalProperties": false,
-      "required": ["image", "publicOrigin"],
+      "required": [
+        "image",
+        "publicOrigin"
+      ],
       "properties": {
-        "image": { "$ref": "#/$defs/image" },
-        "publicOrigin": { "$ref": "#/$defs/origin" },
-        "secrets": { "$ref": "#/$defs/secrets", "default": "aweb" },
+        "image": {
+          "$ref": "#/$defs/image",
+          "x-env": "AWEB_IMAGE"
+        },
+        "publicOrigin": {
+          "$ref": "#/$defs/origin",
+          "x-env": "AWEB_PUBLIC_ORIGIN"
+        },
+        "secrets": {
+          "$ref": "#/$defs/secrets",
+          "default": "aweb",
+          "x-env": "AWEB_SECRETS"
+        },
         "compose": {
           "type": "object",
           "additionalProperties": false,
           "properties": {
-            "bindAddress": { "type": "string", "default": "127.0.0.1" },
-            "port": { "type": "integer", "minimum": 1, "maximum": 65535, "default": 8000 }
+            "bindAddress": {
+              "type": "string",
+              "default": "127.0.0.1",
+              "x-env": "AWEB_BIND_ADDRESS"
+            },
+            "port": {
+              "type": "integer",
+              "minimum": 1,
+              "maximum": 65535,
+              "default": 8000,
+              "x-env": "AWEB_PORT"
+            }
           }
         }
       }
@@ -70,12 +119,15 @@
       "description": "Inputs of the Compose layer alone.",
       "type": "object",
       "additionalProperties": false,
-      "required": ["secretsDir"],
+      "required": [
+        "secretsDir"
+      ],
       "properties": {
         "secretsDir": {
           "description": "The host directory that holds one subdirectory of secret files per component.",
           "type": "string",
-          "pattern": "^/"
+          "pattern": "^/",
+          "x-env": "SECRETS_DIR"
         }
       }
     }

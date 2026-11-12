@@ -12,6 +12,7 @@ This directory holds what both layers share.
 | --- | --- |
 | `config.schema.json` | The schema of the operator's `deployment.yaml`. The Helm chart uses it as its `values.schema.json`. |
 | `deployment.example.yaml` | An example that the schema accepts. |
+| `render_env.py` | Checks a `deployment.yaml` against the schema and prints the env file the Compose layer reads: `python render_env.py deployment.yaml > .env`. It needs PyYAML and jsonschema, which the aweb server image has. |
 | `descriptors/<component>.md` | What one component needs from an operator, written by its owner. |
 
 ## The configuration file
@@ -26,7 +27,8 @@ second set of names.
 
 Helm reads the file as its values. Compose cannot read YAML, so its wrapper
 checks the file against the schema and renders it to the env file Compose
-reads; that file holds no credential either.
+reads; that file holds no credential either. The setting an input becomes
+is the `x-env` of that input in the schema, so the mapping is written once.
 
 ## Rules every component follows
 
