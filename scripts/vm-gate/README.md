@@ -200,3 +200,63 @@ The expiry wait is part of the reaper proof, not permission to shorten a live
 run's completion bound. Report provider IDs, overlap, exit-7 propagation,
 absence and total cost from acceptance.json. No full-gate PASS is inferred from
 these focused infrastructure controls.
+
+## Native ARM OCI consumer
+
+`native-arm64-oci-v1` is a separate, narrowly scoped host profile. It uses
+CAX21 in fsn1 and stock Ubuntu 24.04 ARM image 161547270. It does not claim
+compatibility with a verified x86 snapshot or run a candidate gate. The
+operator must obtain review/allocation authority for this profile and the
+exact image-test source before using it.
+
+An external config uses the same `state_root`, `ledger`, `token_file`,
+`owner`, `location`, cap and seed as the existing dispatcher. Set
+`host_profile` to `native-arm64-oci-v1` and `native_profile` to an absolute
+external JSON path; omit `snapshot_id` and `snapshot_manifest`. The profile
+JSON contains `profile` and `apt`: the official Docker Ubuntu URI,
+`noble`/`stable`/`arm64`, signing-key primary fingerprint and SHA256, and
+exact `Package`, `Version`, `Architecture`, `Filename` and `SHA256` entries
+for docker-ce, docker-ce-cli and containerd.io. Package payloads must match
+both those pins and the signed APT index. Preparation records the actual
+kernel, package set and tool hashes. It reuses the account whose UID is
+1000, adds Docker group membership, and verifies admission again in a fresh
+non-root process. No runtime emulation is installed.
+
+The CLI accepts only this focused consumer invocation (paths are examples):
+
+```sh
+scripts/vm-gate/vm-gate --config /operator/native-arm.json run \
+  --repo /operator/checkout --sha <full-reviewed-source-sha> \
+  --type cax21 --timeout 900 --command 'make test-server-image-build' \
+  --archive-in /operator/x86-run/server.oci.tar \
+  --amd64-receipt /operator/x86-run/native-receipt.json
+```
+
+Before provider access it verifies the local archive's size/SHA256, the x86
+native success receipt, source/version, and the dual-platform OCI index
+using the candidate's existing pure `oci-exact-publish.sh inspect-staged`.
+Transfer uses a temporary path, explicit UID-1000 ownership and mode 0600,
+then verifies size/SHA256 on the ARM host before publishing the fixed input
+path. The consumer sets `AWEB_SERVER_IMAGE_ARCHIVE_IN`, never OUT. The
+reviewed image harness independently validates source/version/platforms
+before importing and executes only the Docker daemon's native architecture.
+
+For the x86 build half, `run --archive-out --command 'make
+test-server-image-build'` selects `ArchiveExecutor`, sets
+`AWEB_SERVER_IMAGE_ARCHIVE_OUT=/evidence/server.oci.tar`, and explicitly
+collects the actual tar with local SHA256/size verification before host
+cleanup. It retains the tar even when a later runtime probe fails. This flag
+adds retention; x86 build prerequisites still require the existing reviewed
+x86 preparation adapter/manifest. An operator using that preparation
+extension can subclass `ArchiveExecutor` through `Runtime.executor_factory`.
+The flag does not admit changes to a snapshot's package/binary manifest.
+
+Both halves emit `native-receipt.json`. A complete qualification requires
+native amd64 AND native arm64 success, packaged UID 1001, and identical tar
+SHA256/size, OCI index, source and version. One successful host never produces
+a pair verdict. Archive retention failure is an infrastructure/refusal
+result, and ordinary owned-resource cleanup still runs. Archives remain in
+the local per-run directory after deletion; the operator owns their final
+removal. SSH host pinning, wrong-key refusal, spend registry, expiry/reaper
+and exact-ID cleanup are shared with the x86 dispatcher. The distinct
+profile is recorded in the summary and on the server label.

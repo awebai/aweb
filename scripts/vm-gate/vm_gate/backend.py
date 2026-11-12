@@ -169,7 +169,7 @@ class Backend:
             json={
                 "name": labels["run_id"],
                 "server_type": server_type,
-                "image": self.config["snapshot_id"],
+                "image": self.config.get("image_id", self.config.get("snapshot_id")),
                 "ssh_keys": [key["id"]],
                 "user_data": user_data,
                 "location": self.config["location"],
@@ -178,7 +178,14 @@ class Backend:
                     "enable_ipv6": False,
                     "ipv4": ip["id"],
                 },
-                "labels": self.labels(labels),
+                "labels": {
+                    **self.labels(labels),
+                    **(
+                        {PREFIX + "profile": self.config["host_profile"]}
+                        if self.config.get("host_profile")
+                        else {}
+                    ),
+                },
             },
         )
         # Return before waiting: the registry records the ID before SSH starts.
@@ -218,6 +225,10 @@ class Backend:
             "ip_hourly": ip_price["price_hourly"]["gross"],
             "currency": "EUR",
             "disk": types[0]["disk"],
+            "architecture": types[0].get("architecture"),
+            "deprecated": types[0].get("deprecated") or types[0].get("deprecation"),
+            "cores": types[0].get("cores"),
+            "memory": types[0].get("memory"),
         }
 
     def snapshot_pricing(self):

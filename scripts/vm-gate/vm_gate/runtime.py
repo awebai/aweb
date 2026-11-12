@@ -51,6 +51,17 @@ class Runtime:
             seed_eur=config.get("seed_eur", 0),
         )
         self.provider_factory = provider_factory
+        if (
+            executor_factory is Executor
+            and config.get("host_profile") == "native-arm64-oci-v1"
+        ):
+            from .native_executor import NativeARMExecutor
+
+            executor_factory = NativeARMExecutor
+        elif executor_factory is Executor and config.get("archive_out"):
+            from .native_executor import ArchiveExecutor
+
+            executor_factory = ArchiveExecutor
         self.executor_factory = executor_factory
 
     def event(self, name, **fields):
@@ -189,8 +200,25 @@ class Runtime:
             reaped = reap_and_settle(provider, self.store)
             self._forget_reaped_keys()
             quote = provider.read("pricing", self.args.type)
-            image = provider.read("image_info", self.config["snapshot_id"])
-            if (
+            image = provider.read(
+                "image_info",
+                self.config.get("image_id", self.config.get("snapshot_id")),
+            )
+            native = self.config.get("host_profile") == "native-arm64-oci-v1"
+            if native:
+                from .native_oci import validate_image
+
+                if (
+                    self.args.type != "cax21"
+                    or quote.get("architecture") != "arm"
+                    or quote.get("deprecated")
+                    or quote.get("cores") != 4
+                    or quote.get("memory") != 8
+                    or quote.get("disk") != 80
+                ):
+                    raise Refused("native ARM profile requires CAX21")
+                validate_image(image, quote["disk"])
+            elif (
                 image.get("status") != "available"
                 or image.get("architecture") != "x86"
                 or image.get("disk_size", 0) > quote["disk"]
@@ -225,6 +253,7 @@ class Runtime:
                 requested_command=self.command,
                 requested_stages=self.args.stages,
                 scope=source["scope"],
+                host_profile=self.config.get("host_profile", "snapshot"),
             )
             try:
                 after = self.directory / "evidence/var/log/vm-gate/ledger-after.tsv"

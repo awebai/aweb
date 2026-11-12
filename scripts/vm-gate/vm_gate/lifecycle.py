@@ -163,6 +163,8 @@ def run_session(
                         "memory",
                         "archive_sha256",
                         "archive_links_omitted",
+                        "retained_oci_archive",
+                        "oci_archive_identity",
                     ]:
                         if field in partial:
                             summary[field] = partial[field]

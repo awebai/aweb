@@ -22,7 +22,11 @@ def load(path, repo):
         config = json.loads(path.read_text())
     except (OSError, ValueError):
         raise Refused("external config is unreadable or invalid JSON") from None
-    for name in ["state_root", "ledger", "snapshot_manifest", "token_file"]:
+    native = config.get("host_profile") == "native-arm64-oci-v1"
+    if config.get("host_profile") not in {None, "snapshot", "native-arm64-oci-v1"}:
+        raise Refused("unknown host profile")
+    profile_path = "native_profile" if native else "snapshot_manifest"
+    for name in ["state_root", "ledger", profile_path, "token_file"]:
         value = config.get(name)
         if not isinstance(value, str) or not Path(value).is_absolute():
             raise Refused(f"external config requires absolute {name}")
@@ -33,7 +37,9 @@ def load(path, repo):
             "[a-zA-Z0-9_.-]{1,63}", config[name]
         ):
             raise Refused(f"external config has invalid {name}")
-    if type(config.get("snapshot_id")) is not int or config["snapshot_id"] <= 0:
+    if not native and (
+        type(config.get("snapshot_id")) is not int or config["snapshot_id"] <= 0
+    ):
         raise Refused("external config requires a snapshot ID")
     money(config.get("cap_eur", "150"))
     money(config.get("seed_eur", "0"))
@@ -52,6 +58,40 @@ def load(path, repo):
             raise Refused(f"{key} must be positive and finite")
     if "run_ceiling_eur" in config:
         money(config["run_ceiling_eur"])
+    if native:
+        from .native_host import validate_profile
+
+        if (
+            config.get("snapshot_id")
+            or config.get("snapshot_manifest")
+            or config["location"] != "fsn1"
+        ):
+            raise Refused(
+                "native ARM profile is distinct from snapshots and requires fsn1"
+            )
+        for key, maximum in [
+            ("setup", 900),
+            ("pull", 600),
+            ("cleanup", 300),
+            ("margin", 300),
+        ]:
+            if config.get(key + "_seconds", maximum) > maximum:
+                raise Refused(
+                    "native ARM completion budget exceeds reviewed bound: " + key
+                )
+        try:
+            profile = json.loads(Path(config["native_profile"]).read_text())
+        except (OSError, ValueError):
+            raise Refused("native profile is unavailable") from None
+        validate_profile(profile)
+        config.update(
+            native_profile_path=config["native_profile"],
+            native_profile=profile,
+            manifest={},
+            image_id=161547270,
+        )
+        config["config_path"] = str(path)
+        return config
     try:
         manifest = json.loads(Path(config["snapshot_manifest"]).read_text())
     except (OSError, ValueError):

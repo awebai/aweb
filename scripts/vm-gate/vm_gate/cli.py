@@ -34,8 +34,20 @@ def parser():
     work.add_argument("--stages")
     work.add_argument("--command")
     run.add_argument("--intent", choices=["branch", "train"], default="branch")
-    run.add_argument("--type", choices=["ccx33", "ccx43"], default="ccx33")
+    run.add_argument("--type", choices=["ccx33", "ccx43", "cax21"], default="ccx33")
     run.add_argument("--timeout", type=int, default=7200)
+    archive = run.add_mutually_exclusive_group()
+    archive.add_argument(
+        "--archive-in", help="retained x86 archive, never rebuilt on ARM"
+    )
+    archive.add_argument(
+        "--archive-out",
+        action="store_true",
+        help="collect /evidence/server.oci.tar before deletion",
+    )
+    run.add_argument(
+        "--amd64-receipt", help="successful native x86 JSON receipt for --archive-in"
+    )
     snap = sub.add_parser("snapshot")
     snap.add_argument("--sha", required=True)
     snap.add_argument("--repo")
@@ -80,9 +92,49 @@ def main(argv=None, *, factory=None, out=None):
                 invocation = aweb.command(
                     stages=args.stages, focused=args.command, intent=args.intent
                 )
-                observed = config["manifest"]["observed"]
+                native = config.get("host_profile") == "native-arm64-oci-v1"
+                if native:
+                    if (
+                        args.type != "cax21"
+                        or not args.archive_in
+                        or not args.amd64_receipt
+                        or args.command != "make test-server-image-build"
+                        or args.stages
+                        or args.intent != "branch"
+                        or args.timeout > 900
+                    ):
+                        raise Refused(
+                            "native ARM profile requires CAX21, archive input and x86 receipt for focused image qualification"
+                        )
+                    from .native_oci import verify_archive
+
+                    try:
+                        config["amd64_receipt"] = json.loads(
+                            Path(args.amd64_receipt).read_text()
+                        )
+                    except (OSError, ValueError):
+                        raise Refused("x86 native receipt is unavailable") from None
+                    config["archive_in"] = str(Path(args.archive_in).resolve())
+                    verify_archive(args.archive_in, config["amd64_receipt"])
+                elif args.type == "cax21" or args.archive_in or args.amd64_receipt:
+                    raise Refused(
+                        "CAX21/archive input requires the distinct native ARM profile"
+                    )
+                if args.archive_out:
+                    if (
+                        args.command != "make test-server-image-build"
+                        or args.stages
+                        or args.intent != "branch"
+                    ):
+                        raise Refused(
+                            "archive output requires focused native image qualification"
+                        )
+                    config["archive_out"] = True
+                observed = config["manifest"].get("observed", {})
                 intent = args.intent
             else:
+                if config.get("host_profile") == "native-arm64-oci-v1":
+                    raise Refused("native ARM profile cannot rebuild a snapshot")
                 invocation = None
                 intent = "branch"
                 observed = aweb_requirements(
@@ -97,6 +149,7 @@ def main(argv=None, *, factory=None, out=None):
                 observed=observed,
                 intent=intent,
                 lock_root=config["state_root"],
+                host_profile=config.get("host_profile", "snapshot"),
             )
             if args.action == "run":
                 local_checks = run_guard(

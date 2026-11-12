@@ -28,6 +28,16 @@ class ConfigLease:
             ) from None
         try:
             current = json.loads(path.read_text())
+            if self.config.get("host_profile") == "native-arm64-oci-v1":
+                if (
+                    current.get("host_profile") != self.config["host_profile"]
+                    or current.get("native_profile")
+                    != self.config["native_profile_path"]
+                    or json.loads(Path(self.config["native_profile_path"]).read_text())
+                    != self.config["native_profile"]
+                ):
+                    raise Refused("native profile changed during local admission")
+                return self
             if any(
                 current.get(k) != self.config.get(k)
                 for k in ["snapshot_id", "snapshot_manifest"]

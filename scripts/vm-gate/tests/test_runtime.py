@@ -158,6 +158,61 @@ class RuntimeTests(GitFixture, unittest.TestCase):
         runtime._forget_reaped_keys()
         self.assertEqual([p.name for p in old.iterdir()], ["evidence.json"])
 
+    def test_native_image_and_type_metadata_refuse_before_any_create(self):
+        from vm_gate.errors import Refused
+
+        self.config.update(host_profile="native-arm64-oci-v1", image_id=161547270)
+        self.args.type = "cax21"
+        self.backend.pricing = lambda kind: {
+            "server_hourly": ".0168",
+            "ip_hourly": ".0008",
+            "disk": 80,
+            "architecture": "arm",
+            "cores": 4,
+            "memory": 8,
+            "deprecated": None,
+        }
+        image = {
+            "id": 161547270,
+            "status": "available",
+            "architecture": "arm",
+            "type": "system",
+            "name": "ubuntu-24.04",
+            "os_flavor": "ubuntu",
+            "os_version": "24.04",
+            "disk_size": 4,
+        }
+        for key, value in [
+            ("architecture", "x86"),
+            ("os_version", "22.04"),
+            ("type", "snapshot"),
+        ]:
+            self.backend.image_info = lambda id, key=key, value=value: {
+                **image,
+                key: value,
+            }
+            self.directory = self.root / ("native-refusal-" + key)
+            self.directory.mkdir()
+            runtime = self.runtime()
+            with patch.object(runtime, "_key"), self.assertRaises(Refused):
+                runtime._run()
+            self.assertEqual(self.backend.items, [])
+        self.backend.image_info = lambda id: image
+        self.backend.pricing = lambda kind: {
+            "server_hourly": ".0168",
+            "ip_hourly": ".0008",
+            "disk": 80,
+            "architecture": "x86",
+            "cores": 4,
+            "memory": 8,
+        }
+        self.directory = self.root / "native-type-refusal"
+        self.directory.mkdir()
+        runtime = self.runtime()
+        with patch.object(runtime, "_key"), self.assertRaises(Refused):
+            runtime._run()
+        self.assertEqual(self.backend.items, [])
+
     def test_cap_refusal_remains_refusal_when_no_registry_row_was_created(self):
         self.config["cap_eur"] = ".01"
         runtime = self.runtime()

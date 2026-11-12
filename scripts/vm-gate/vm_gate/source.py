@@ -61,7 +61,7 @@ def verify_train_main(repo, source):
         )
 
 
-def _prepare(repo, sha, out, *, observed, intent="branch"):
+def _prepare(repo, sha, out, *, observed, intent="branch", host_profile="snapshot"):
     repo = Path(repo).resolve()
     out = Path(out).resolve()
     if intent not in {"train", "branch"}:
@@ -78,7 +78,10 @@ def _prepare(repo, sha, out, *, observed, intent="branch"):
         git(repo, "show", sha + ":candidate-gate/Dockerfile").stdout,
         sha,
     )
-    validate_snapshot(required, observed, sha)
+    if host_profile == "snapshot":
+        validate_snapshot(required, observed, sha)
+    elif host_profile != "native-arm64-oci-v1":
+        raise Refused("unknown source host profile")
     git(
         repo,
         "fetch",
@@ -132,6 +135,7 @@ def _prepare(repo, sha, out, *, observed, intent="branch"):
         "frozen_main": sha if scope == "branch qualification" else real_main,
         "bundle": str(bundle),
         "requirements": required,
+        "host_profile": host_profile,
     }
     verify_train_main(repo, result)
     (out / "source.json").write_text(json.dumps(result, indent=2) + "\n")
@@ -150,8 +154,19 @@ def source_lease(repo, root):
         yield
 
 
-def prepare(repo, sha, out, *, observed, intent="branch", lock_root=None):
+def prepare(
+    repo,
+    sha,
+    out,
+    *,
+    observed,
+    intent="branch",
+    lock_root=None,
+    host_profile="snapshot",
+):
     # Git refs/FETCH_HEAD are shared even by distinct worktrees. Serialize the
     # short freeze, while VM execution and spend transactions remain parallel.
     with source_lease(repo, lock_root or Path(out).parent):
-        return _prepare(repo, sha, out, observed=observed, intent=intent)
+        return _prepare(
+            repo, sha, out, observed=observed, intent=intent, host_profile=host_profile
+        )

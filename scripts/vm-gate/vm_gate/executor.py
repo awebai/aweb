@@ -31,6 +31,9 @@ class Executor:
         self.transport = None
         self.deadline = None
         self.verify_host = True
+        self.user = "gateuser"
+        self.group = "gateuser"
+        self.home = "/home/gateuser"
 
     def remaining(self):
         left = self.deadline - time.monotonic()
@@ -47,8 +50,8 @@ class Executor:
         return result
 
     def env(self, root=False):
-        home = "/root" if root else "/home/gateuser"
-        return f"env -i HOME={home} PATH={HOST_PATH} GOTOOLCHAIN=local PYTHONPATH={REMOTE}/operator "
+        home = "/root" if root else self.home
+        return f"env -i HOME={Q(home)} PATH={HOST_PATH} GOTOOLCHAIN=local PYTHONPATH={REMOTE}/operator "
 
     def host_check(self, root=False):
         return (
@@ -91,10 +94,10 @@ git --git-dir=origin update-ref refs/heads/main {self.source["frozen_main"]}
 git --git-dir=origin symbolic-ref HEAD refs/heads/main
 git clone origin source
 git -C source checkout --detach {self.source["sha"]}
-install -d -m 0700 -o gateuser -g gateuser {parent} {parent}/gate-locks {parent}/gate-logs
-install -m 0600 -o gateuser -g gateuser ledger-before.tsv {ledger}
+install -d -m 0700 -o {Q(self.user)} -g {Q(self.group)} {parent} {parent}/gate-locks {parent}/gate-logs
+install -m 0600 -o {Q(self.user)} -g {Q(self.group)} ledger-before.tsv {ledger}
 tar -xzf ledger-logs-before.tar.gz -C {parent}
-chown -R gateuser:gateuser {parent}/gate-logs origin source
+chown -R {Q(self.user + ':' + self.group)} {parent}/gate-logs origin source
 chmod -R u+rwX,go-rwx {parent}/gate-logs
 
 """
@@ -127,6 +130,9 @@ exit "$status"
         validate_command(script)
         (self.directory / "launch.sh").write_text(script)
 
+    def after_directories(self):
+        """Profile adapters may bind the existing UID-1000 account here."""
+
     def prepare(self, server, timeout):
         self.deadline = time.monotonic() + timeout
         while True:
@@ -149,6 +155,9 @@ exit "$status"
         (self.directory / "ssh-host-key-negative.stderr").write_text(negative.stderr)
         (self.directory / "ssh-host-key-negative.stdout").write_text(negative.stdout)
         self.run("bash -c " + Q(self.directories_program()), "directories")
+        self.after_directories()
+        # Account binding may change HOME; freeze the actual launch script.
+        (self.directory / "launch.sh").write_text(self.launch_program())
         expected = self.directory / "expected-host.json"
         expected.write_text(json.dumps(self.config["manifest"], indent=2) + "\n")
         operator = self.directory / "operator.tar.gz"
@@ -170,7 +179,7 @@ exit "$status"
             (self.directory / "launch.sh", "launch.sh"),
         ]:
             owner = (
-                "gateuser:gateuser"
+                self.user + ":" + self.group
                 if target in {"source.json", "expected-host.json", "launch.sh"}
                 else "root:root"
             )
@@ -189,7 +198,7 @@ exit "$status"
             raise Infrastructure("UID 0 admission negative control failed")
         if self.verify_host:
             result = self.run(
-                f"cd {REMOTE}/source && runuser -u gateuser -- " + self.host_check(),
+                f"cd {REMOTE}/source && runuser -u {Q(self.user)} -- " + self.host_check(),
                 "host-contract",
                 check=False,
             )
@@ -207,7 +216,7 @@ exit "$status"
         ledger = Q(self.config["ledger"])
         logs = Q(str(Path(self.config["ledger"]).parent / "gate-logs"))
         command = (
-            f"cd {REMOTE}/source && timeout --signal=TERM --kill-after=30s {timeout} runuser -u gateuser -- "
+            f"cd {REMOTE}/source && timeout --signal=TERM --kill-after=30s {timeout} runuser -u {Q(self.user)} -- "
             + self.env()
             + f"AWEB_GATE_LEDGER={ledger} AWEB_GATE_LOG_DIR={logs} GATE_OWNER={Q(self.config['owner'])} bash {REMOTE}/launch.sh"
         )
