@@ -120,3 +120,14 @@ async def test_requiring_while_an_owner_is_revoked_waits_and_is_refused(settings
         await requiring
     assert refused.value.code == "four_eyes_needs_two_owners"
     assert await four_eyes(settings.db, INSTALLATION_ID) == "not_required"
+
+
+async def test_four_eyes_does_not_cross_teams_with_the_same_installation(settings: World) -> None:
+    await designate_owner(settings, ALICE, 'alice@acme.com')
+    await designate_owner(settings, BOB, 'bob@acme.com')
+    await _require(settings)
+    assert await four_eyes(settings.db, INSTALLATION_ID, team_id=TEAM) == 'required'
+    assert await four_eyes(settings.db, INSTALLATION_ID, team_id='other:acme.com') == 'not_required'
+    async with settings.db.transaction() as tx:
+        await relax_four_eyes(tx, installation_id=INSTALLATION_ID, team_id='other:acme.com')
+    assert await four_eyes(settings.db, INSTALLATION_ID, team_id=TEAM) == 'required'

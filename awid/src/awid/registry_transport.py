@@ -1,9 +1,13 @@
 """Address-checked, pinned transport for domain-selected registry origins."""
+
 from __future__ import annotations
 
 import httpx
 
-from awid.external_authority import canonical_registry_origin, validate_resolved_addresses
+from awid.external_authority import (
+    canonical_registry_origin,
+    validate_resolved_addresses,
+)
 from awid.external_registry import SystemHostResolver
 from awid.federation_errors import FederationAuthorityError
 
@@ -31,6 +35,7 @@ class RegistryOverrideTransport(httpx.AsyncBaseTransport):
     existing policy. DNS-selected origins always use production address policy.
     The request owner's timeout covers lookup, connection and response reading.
     """
+
     async def handle_async_request(self, request):
         try:
             canonical_registry_origin(str(request.url.copy_with(path="/", query=None)))
@@ -38,7 +43,9 @@ class RegistryOverrideTransport(httpx.AsyncBaseTransport):
                 await SystemHostResolver().resolve_all(request.url.host)
             )
         except FederationAuthorityError as exc:
-            raise httpx.ConnectError("registry destination refused or unavailable", request=request) from exc
+            raise httpx.ConnectError(
+                "registry destination refused or unavailable", request=request
+            ) from exc
         origin_url = request.url
         request.headers["Host"] = origin_url.netloc.decode("ascii")
         request.extensions["sni_hostname"] = origin_url.host

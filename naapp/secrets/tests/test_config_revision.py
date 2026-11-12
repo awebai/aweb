@@ -144,3 +144,13 @@ async def test_two_confirms_on_one_base_apply_exactly_once(
     results = sorted(await asyncio.gather(first, second))
     assert results == ["applied", "base_revision_stale"]
     assert await config_revision(db, INSTALLATION) == base + 1
+
+
+async def test_configuration_revisions_do_not_cross_teams_with_the_same_installation(db) -> None:
+    async with db.transaction() as tx:
+        assert await bump_config_revision(tx, INSTALLATION, team_id='team-a:acme.com') == 1
+        assert await bump_config_revision(tx, INSTALLATION, team_id='team-b:acme.com') == 1
+    assert await config_revision(db, INSTALLATION, team_id='team-a:acme.com') == 1
+    async with db.transaction() as tx:
+        assert await claim_config_revision(tx, INSTALLATION, 1, team_id='team-b:acme.com') == 2
+    assert await config_revision(db, INSTALLATION, team_id='team-a:acme.com') == 1

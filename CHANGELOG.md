@@ -2,6 +2,11 @@
 
 ## Unreleased
 
+- The Python registry client checks and pins the addresses of DNS-selected
+  registry overrides, retaining the original hostname for TLS. Registry list
+  scans stop after 500 pages with an explicit error instead of accumulating
+  unbounded results.
+
 - Human handoffs retain their authenticated team for credential collection and
   console session requests. Existing key-bound console sessions without retained
   team context are refused after migration and require signing in again; there

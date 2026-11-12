@@ -443,3 +443,35 @@ async def test_same_installation_id_keeps_secret_refs_in_separate_teams(db) -> N
     async with db.transaction() as tx:
         assert (await records.secret_by_ref(tx, INSTALLATION, TEAM, SECRET.ref)).record == SECRET
         assert (await records.secret_by_ref(tx, INSTALLATION, other_team, SECRET.ref)).record == twin
+
+
+async def test_policies_and_templates_are_owned_by_team_even_with_the_same_installation_id(db) -> None:
+    other_team = 'other:acme.com'
+    template = GrantTemplate.from_after({
+        'v': 1, 'grant_template_id': 'gtp_shared', 'subject': {'principal': DID_AW},
+        'capability': 'use', 'operations': [], 'open_request': True, 'jobs': [],
+        'policy_digest': POLICY.digest,
+    })
+    changed = GrantTemplate.from_after({**template.after, 'open_request': False})
+    async with db.transaction() as tx:
+        await records.create_policy(tx, INSTALLATION, POLICY, team_id=TEAM)
+        await records.set_grant_template(tx, INSTALLATION, template, team_id=TEAM)
+        assert await records.policy(tx, INSTALLATION, POLICY.digest, team_id=other_team) is None
+        assert await records.grant_template(tx, INSTALLATION, template.grant_template_id, team_id=other_team) is None
+        await records.create_policy(tx, INSTALLATION, POLICY, team_id=other_team)
+        await records.set_grant_template(tx, INSTALLATION, changed, team_id=other_team)
+        assert await records.policy(tx, INSTALLATION, POLICY.digest, team_id=TEAM) == POLICY
+        assert await records.grant_template(tx, INSTALLATION, template.grant_template_id, team_id=TEAM) == template
+        assert await records.grant_template(tx, INSTALLATION, template.grant_template_id, team_id=other_team) == changed
+
+
+async def test_grant_cannot_reference_another_teams_policy_in_the_same_installation(db) -> None:
+    await _setup(db)
+    other_team = 'other:acme.com'
+    twin = SecretRecord.from_after({**SECRET.after, 'secret_id': 'sec_team_twin'})
+    async with db.transaction() as tx:
+        await records.create_secret(tx, INSTALLATION, other_team, twin)
+    grant = _grant('grt_team_twin', {'principal': DID_AW}, secret_id=twin.secret_id)
+    with pytest.raises(asyncpg.ForeignKeyViolationError):
+        async with db.transaction() as tx:
+            await records.create_grant(tx, INSTALLATION, other_team, grant)
