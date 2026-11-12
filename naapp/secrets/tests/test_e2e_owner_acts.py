@@ -267,7 +267,8 @@ def write_service_member(lane: Lane, controller: str) -> None:
                  "--namespace", DOMAIN, "--team", TEAM, "--cert-id", added["certificate_id"], "--registry", REGISTRY)
     shutil.copyfile(home / fetched["cert_path"], keys / "member-cert.json")
     for name in ("custody", "request", "params", "response", "runner", "smtp", "manifest", "event", "delivery", "grant", "resolve"):
-        (keys / name).write_bytes(secrets.token_bytes(32))
+        # The app's shared key-file format: 64 hex characters, each independent.
+        (keys / name).write_text(secrets.token_hex(32) + "\n")
     for path in keys.iterdir():
         path.chmod(0o644)
     env = {
