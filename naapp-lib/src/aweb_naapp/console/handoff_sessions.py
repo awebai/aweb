@@ -54,7 +54,6 @@ from aweb_naapp.runtime.passkeys import Passkeys
 from aweb_naapp.runtime.passkeys.service import _client_challenge
 from aweb_naapp.runtime.team_auth import Principal
 
-
 if TYPE_CHECKING:
     from aweb_naapp.runtime.protected_signer.http import ProtectedOperationsHTTP
 
@@ -630,7 +629,13 @@ class ConsoleHandoffs:
 
     def human_router(self):
         router = APIRouter(route_class=ConsoleRoute)
-        router.include_router(handoff_page_router(store=self.store, limiter=self.limiter))
+        router.include_router(
+            handoff_page_router(
+                store=self.store,
+                limiter=self.limiter,
+                protected_operations=self.protected_operations,
+            )
+        )
         if self.protected_operations is not None:
             router.include_router(self.protected_operations.human_router())
         router.include_router(
