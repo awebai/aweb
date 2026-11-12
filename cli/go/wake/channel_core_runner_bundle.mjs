@@ -3922,9 +3922,13 @@ function signedMailDisplayMatches(signedPayload, displayed, reader) {
   }
   return everyClaimMatches(signed, displayed);
 }
+var REQUIRED_MESSAGE_CLAIMS = /* @__PURE__ */ new Set(["type", "body", "from_did", "subject"]);
 function everyClaimMatches(signed, displayed) {
   for (const [name, value] of Object.entries(displayed)) {
-    if (!(name in signed)) continue;
+    if (!(name in signed)) {
+      if (REQUIRED_MESSAGE_CLAIMS.has(name)) return false;
+      continue;
+    }
     const shown = value ?? "";
     const claim = signed[name];
     if (typeof claim !== "string") return false;

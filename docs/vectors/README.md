@@ -307,6 +307,18 @@ Canonical UTF-8 message payloads and expected Ed25519 signatures, including
 variants with and without stable-ID fields. Signatures use raw standard base64
 without padding.
 
+### `message-display-binding-v1.json`
+
+The claims a signed payload must carry before a reader reports a plaintext mail
+or chat message as verified (`type`, `body` and `from_did`, plus `subject` for
+mail), and the claim set of every payload shape a message signer produces. A
+reader compares each displayed field with the signed claim of the same name; a
+required claim the payload lacks is a mismatch, so a document signed by the
+same key for another purpose, such as a request envelope from
+`team-auth-envelope-v2.json`, is never reported as a verified message. Each
+client checks that every signer shape matches its display and that each shape
+is refused once any required claim is removed.
+
 ### `identity-log-v1.json`
 
 Canonical identity-only `register_did` and `rotate_key` envelope payloads,
@@ -917,6 +929,7 @@ reference duplication are mutation-tested failures.
 | `identity-log-negative-v1.json` | Python AWID `test_identity_log_verify.py`; Go shared `identity_log_negative_test.go`; TypeScript channel-core `registry.test.ts` |
 | `identity-log-raw-wire-v1.json` | Python AWID `test_identity_log_verify.py`; Go shared `identity_log_raw_wire_test.go`; TypeScript channel-core `registry.test.ts` |
 | `identity-log-v1.json` | Python AWID `test_conformance_vectors.py`, `test_did.py`, `test_external_registry.py`, and `test_identity_log_verify.py`; Python aweb `test_identity_conformance_vectors.py` and pre-activation federation harness; Go AWID `registry_register_test.go`, `federation_authority_test.go`, and `federation_external_registry_test.go`; Go shared `conformance_test.go`; TypeScript channel-core `registry.test.ts`, `log_rollback.test.ts`, and `received_sender_trust.test.ts` |
+| `message-display-binding-v1.json` | Go AWID `request_envelope_as_message_test.go`; TypeScript channel-core `request_envelope_as_message.test.ts` |
 | `message-signing-v1.json` | Python AWID and aweb conformance tests, including the pre-activation federation harness; Go shared `conformance_test.go` |
 | `mutation-hook-call-sites-v1.json` | Build guard `scripts/check-extension-docs.py` |
 | `pin-store-raw-wire-v1.json` | Go shared `pin_store_raw_wire_test.go`; TypeScript channel-core `pin_store_raw_wire.test.ts` |
@@ -924,7 +937,7 @@ reference duplication are mutation-tested failures.
 | `stable-id-v1.json` | Python AWID and aweb conformance tests; Go shared `conformance_test.go` |
 | `secrets-runner-protocol-v1.json` | secrets `test_runner_protocol_vectors.py` and production-server `test_runner_server_protocol.py` |
 | `secrets-runner-http-v1.json` | secrets `test_runner_protocol_vectors.py` |
-| `team-auth-envelope-v2.json` | Python aweb `test_team_auth_envelope.py`; naapp-lib `test_team_auth_vectors.py`; Go shared `conformance_test.go`, including its root-equality check for the managed embedded copy; TypeScript channel-core `request_auth_v2.test.ts` |
+| `team-auth-envelope-v2.json` | Python aweb `test_team_auth_envelope.py`; naapp-lib `test_team_auth_vectors.py`; Go shared `conformance_test.go`, including its root-equality check for the managed embedded copy; TypeScript channel-core `request_auth_v2.test.ts`; Go AWID `request_envelope_as_message_test.go` and TypeScript channel-core `request_envelope_as_message.test.ts`, which present each signed request as a message |
 | `federation-origin-ip-v1.json` | Python AWID `test_federation_authority_vectors.py` and `test_external_authority.py`; Python aweb pre-activation federation harness; Go AWID `federation_authority_test.go`; Go shared `federation_authority_vectors_test.go` |
 | `federation-discovery-v1.json` | Python AWID `test_federation_authority_vectors.py` and `test_external_authority.py`; Python aweb pre-activation federation harness; Go AWID `federation_authority_test.go`; Go shared `federation_authority_vectors_test.go` |
 | `federation-authority-state-v1.json` | Python AWID `test_federation_authority_vectors.py`; Python aweb `test_federation_authority_core.py`, `test_federation_authority_schema.py`, and pre-activation federation harness; Go AWID `federation_authority_test.go`; Go shared `federation_authority_vectors_test.go`; generated `federation-error-reference.md` response-shape cross-check through `generate_federation_error_reference.py` (reason/status/retryability source is `awid/src/awid/federation_errors.py`); federation SOT/support coverage in `check-extension-docs.py` |
