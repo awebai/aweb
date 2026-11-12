@@ -8,6 +8,7 @@ when the file does not give it. The output holds no credential, because the
 schema has no key that could hold one.
 """
 
+import copy
 import json
 import sys
 from pathlib import Path
@@ -50,6 +51,42 @@ def _check(config: object) -> None:
         else:
             said.append(f"{where}: not a valid value ({error.validator})")
     raise Refused("; ".join(said))
+
+
+# A deployment layer's subsection names how the operator deploys a component
+# (agents.compose, agents.kubernetes, aweb.compose, ...); it is theirs to give.
+LAYERS = ("compose", "kubernetes")
+
+
+def _with_defaults(schema: dict, value: dict) -> dict:
+    """The object with its schema's defaults filled in, recursively. An absent
+    object that requires nothing is filled with its defaults too, unless it is
+    a deployment layer's subsection."""
+    schema = _resolved(schema)
+    out = dict(value)
+    for key, child in schema.get("properties", {}).items():
+        child = _resolved(child)
+        if key in out:
+            if child.get("type") == "object" and isinstance(out[key], dict):
+                out[key] = _with_defaults(child, out[key])
+        elif "default" in child:
+            out[key] = copy.deepcopy(child["default"])
+        elif child.get("type") == "object" and not child.get("required") and key not in LAYERS:
+            filled = _with_defaults(child, {})
+            if filled:
+                out[key] = filled
+    return out
+
+
+def normalize(config: object) -> dict:
+    """The deployment with every schema default written out, for a layer that
+    applies no defaults of its own (Helm validates against the same schema but
+    inserts none). A component the file leaves out stays out."""
+    _check(config)
+    return {
+        section: _with_defaults(SCHEMA["properties"][section], value) if isinstance(value, dict) else value
+        for section, value in config.items()
+    }
 
 
 def _collect(schema: dict, value: object, out: dict[str, str]) -> None:
@@ -96,7 +133,7 @@ def _check_signer_profile(config: dict, registry_url: str) -> None:
 
 def render(config: object) -> dict[str, str]:
     """The settings of the Compose layer for this configuration."""
-    _check(config)
+    config = normalize(config)
     if "compose" not in config:
         raise Refused("compose: missing; the Compose layer needs compose.secretsDir")
     if "servicesCidr" not in config.get("network", {}):

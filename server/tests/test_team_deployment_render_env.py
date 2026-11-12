@@ -383,3 +383,50 @@ def test_a_kms_key_takes_the_place_of_the_mounted_custody_key():
 def test_an_app_section_refuses_plain_origins_plain_smtp_and_credentials(key, value):
     with pytest.raises(render_env.Refused):
         render_env.render({**EXAMPLE, "secrets": {**app("secrets"), key: value}})
+
+
+def test_normalize_fills_every_default_and_leaves_absent_components_absent():
+    normalized = render_env.normalize(EXAMPLE)
+    assert normalized["team"]["registryUrl"] == "https://api.awid.ai"
+    assert normalized["postgres"] == {"bundled": True, "host": "postgres", "port": 5432, "secrets": "postgres"}
+    assert normalized["aweb"]["secrets"] == "aweb"
+    for component in ("secrets", "logs", "signer", "agents", "egress"):
+        assert component not in normalized
+    # The operator's file is not changed.
+    assert "registryUrl" not in EXAMPLE["team"]
+
+
+def test_normalize_keeps_what_the_file_gives_and_its_layer_choices():
+    config = copy.deepcopy(EXAMPLE)
+    config["postgres"] = {"port": 6543}
+    normalized = render_env.normalize(config)
+    assert normalized["postgres"]["port"] == 6543
+    # A deployment layer's subsection is the operator's choice: the Compose
+    # file names aweb.compose only if the operator gave it.
+    assert "compose" not in normalized["aweb"]
+
+
+def test_normalize_fills_the_kubernetes_fields_of_a_kubernetes_agents_section(signer):
+    agents = {key: value for key, value in AGENTS.items() if key != "compose"}
+    agents["kubernetes"] = {"authorizedKeys": {"name": "team-keys"}}
+    normalized = render_env.normalize({**EXAMPLE, "agents": agents, "signer": signer, "egress": EGRESS, **APPS})
+    assert normalized["agents"]["kubernetes"] == {
+        "fsGroup": 20001,
+        "stateSize": 10737418240,
+        "storageClass": "",
+        "requests": {"cpu": 0.5, "memory": 2147483648},
+        "ephemeralStorage": {"request": 268435456, "limit": 1073741824},
+        "authorizedKeys": {"name": "team-keys", "kind": "ConfigMap"},
+        "imagePullPolicy": "IfNotPresent",
+        "service": {"enabled": False},
+    }
+    assert "compose" not in normalized["agents"]
+    assert normalized["agents"]["network"]["subnet"] == "172.30.0.0/24"
+    assert normalized["egress"]["privateIngressAddresses"] == ["172.31.0.250"]
+    # The normalized document is itself one the schema accepts.
+    render_env._check(normalized)
+
+
+def test_normalize_refuses_what_the_schema_refuses():
+    with pytest.raises(render_env.Refused, match="no such key"):
+        render_env.normalize({**EXAMPLE, "unknown": {}})
