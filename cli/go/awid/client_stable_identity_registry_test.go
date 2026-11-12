@@ -22,7 +22,9 @@ func (s *stubStableIdentityResolver) VerifyStableIdentityCurrent(context.Context
 	return s.result
 }
 
-func TestNormalizeSenderTrustRegistryDegradedFallsBackToTOFU(t *testing.T) {
+// A registry check that could not be made confirms nothing: the first message
+// from the address is not verified, and no pin is written for it.
+func TestNormalizeSenderTrustRegistryDegradedIsStaleAndPinsNothing(t *testing.T) {
 	t.Parallel()
 
 	c, err := New("http://example")
@@ -40,15 +42,11 @@ func TestNormalizeSenderTrustRegistryDegradedFallsBackToTOFU(t *testing.T) {
 	did := "did:key:z6Mks3e5U8apRpvF9c8mpPGZ3TQyeG2gXpv4qcbF8DvnVSpB"
 
 	status, _ := c.NormalizeSenderTrust(context.Background(), Verified, address, did, stableID, nil, nil, nil)
-	if status != Verified {
-		t.Fatalf("status=%q, want %q", status, Verified)
+	if status != VerificationStale {
+		t.Fatalf("status=%q, want %q", status, VerificationStale)
 	}
-	pin, ok := ps.Pins[stableID]
-	if !ok {
-		t.Fatalf("expected stable_id pin %q", stableID)
-	}
-	if pin.DIDKey != did {
-		t.Fatalf("pin DIDKey=%q, want %q", pin.DIDKey, did)
+	if len(ps.Pins) != 0 || len(ps.Addresses) != 0 {
+		t.Fatalf("a pin was written for an unconfirmed sender: %+v %+v", ps.Pins, ps.Addresses)
 	}
 }
 

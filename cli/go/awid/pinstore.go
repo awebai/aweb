@@ -44,6 +44,10 @@ type Pin struct {
 	// are persisted with the pin so a restart cannot forget what was already
 	// verified; a served log that is behind them, or that does not contain this
 	// entry, is refused (default-aajc.8).
+	// ConfirmedBy says what confirmed that the pinned address belongs to this
+	// identity when the pin was written: "registry", or empty for a pin written
+	// before pins recorded it.
+	ConfirmedBy  string `yaml:"confirmed_by,omitempty"`
 	LogSeq       int    `yaml:"log_seq,omitempty"`
 	LogEntryHash string `yaml:"log_entry_hash,omitempty"`
 	FirstSeen    string `yaml:"first_seen"`
@@ -402,7 +406,8 @@ const mergeKey = "<<"
 // verbatim; see Pin.unknown.
 var pinFields = map[string]bool{
 	"address": true, "handle": true, "stable_id": true, "did_key": true,
-	"log_seq": true, "log_entry_hash": true,
+	"confirmed_by": true,
+	"log_seq":      true, "log_entry_hash": true,
 	"first_seen": true, "last_seen": true, "server": true,
 }
 
@@ -450,6 +455,8 @@ func parsePin(key string, node *yaml.Node) (*Pin, error) {
 			pin.StableID = text
 		case "did_key":
 			pin.DIDKey = text
+		case "confirmed_by":
+			pin.ConfirmedBy = text
 		case "log_entry_hash":
 			pin.LogEntryHash = text
 		case "first_seen":

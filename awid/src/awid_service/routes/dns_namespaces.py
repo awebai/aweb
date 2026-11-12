@@ -543,7 +543,8 @@ async def rotate_namespace_controller(
     This is intentional key-loss recovery: the old controller key may be gone.
     The caller must prove possession of the new controller key, and authority
     then comes from either DNS re-verification or parent-domain authorization
-    for registered subdomains.
+    for registered subdomains. The registration-time DNS bypass cannot
+    authorize replacing an existing controller.
     """
     db = db_infra.get_manager("aweb")
     domain = _validate_domain(domain)
@@ -563,10 +564,9 @@ async def rotate_namespace_controller(
         domain=domain,
         new_controller_did=new_controller_did,
     )
-    skip_dns = os.environ.get("AWID_SKIP_DNS_VERIFY", "").strip() == "1"
     parent_auth_present = request.headers.get(_PARENT_AUTH_HEADER) is not None
     dns_authority = None
-    if not skip_dns and not parent_auth_present:
+    if not parent_auth_present:
         try:
             dns_authority = await verify_domain(domain)
         except DnsVerificationError as e:
