@@ -268,6 +268,15 @@ check-node-audit:
 
 # Runtime copies ship in Git for source-based plugin/capability installs. Edit
 # skills/ and docs/, then sync; normal builds regenerate these copies too.
+.PHONY: check-generated-copies test-generated-copies
+# All sync-* generators belong under sync-doc-copies. Check the regenerated
+# tracked bytes before link checks/builds can silently repair stale copies.
+check-generated-copies: sync-doc-copies
+	git diff --exit-code
+
+test-generated-copies:
+	python3 scripts/test_generated_copies.py
+
 sync-doc-copies: sync-skill-copies sync-awid-site-docs
 
 sync-skill-copies:
