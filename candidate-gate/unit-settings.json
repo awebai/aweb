@@ -1,7 +1,57 @@
 {
   "server_shards": 2,
   "server_workers": 4,
-  "vm": {"host_cpu_reserve": 1, "server_workers": 2, "server_postgres_cpus": 2},
+  "vm": {
+    "host_cpu_reserve": 1,
+    "server_workers": 2,
+    "concurrency": 4,
+    "reserve_cpus": {
+      "outer": 0.1,
+      "builder": 0.05,
+      "postgres": 0.05,
+      "redis": 0.05
+    },
+    "group_cpus": {
+      "server": {
+        "runner": 2.25,
+        "postgres": 2,
+        "redis": 0.03,
+        "dns": 0.03
+      },
+      "awid": {
+        "runner": 0.75,
+        "postgres": 1,
+        "redis": 0.03,
+        "dns": 0.03
+      },
+      "naapp": {
+        "runner": 1.5,
+        "postgres": 2,
+        "redis": 0.03,
+        "dns": 0.03
+      },
+      "cli": {
+        "runner": 1.5,
+        "postgres": 1,
+        "redis": 0.03,
+        "dns": 0.03
+      },
+      "channel-pi": {
+        "runner": 1.5,
+        "postgres": 1,
+        "redis": 0.03,
+        "dns": 0.03
+      }
+    },
+    "server_connections": {
+      "nodes_per_worker": 2,
+      "service_pools_per_node": 2,
+      "service_pool_max": 20,
+      "test_pool_max": 5,
+      "admin_pool_max": 2,
+      "control_reserve": 8
+    }
+  },
   "budgets": {"checks": 360, "unit": 900, "artifacts": 240, "integration": 900},
   "profiles": {
     "release": {

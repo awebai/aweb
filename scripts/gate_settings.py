@@ -19,12 +19,25 @@ def allocation(settings, profile, group):
     return settings['profiles'][profile]['groups']['server' if group.startswith('server-') else group]
 
 
+def server_connection_capacity(settings, workers):
+    # route_pair owns two nodes per worker; each retains registry/server,
+    # pgdbm test and admin pools. These are maxima, not average active queries.
+    pools = settings['vm']['server_connections']
+    if any(not isinstance(value, int) or value < 1 for value in pools.values()):
+        raise ValueError('server connection capacity inputs must be positive integers')
+    return (workers * pools['nodes_per_worker'] *
+            (pools['service_pools_per_node'] * pools['service_pool_max'] +
+             pools['test_pool_max'] + pools['admin_pool_max']) + pools['control_reserve'])
+
+
 def validate(settings):
     if settings['server_shards'] < 1 or settings['server_workers'] < 1:
         raise ValueError('server shard and worker counts must be positive')
     for name, profile in settings['profiles'].items():
         if name == 'vm' and settings['server_workers'] > profile['groups']['server']['runner']['cpus']:
             raise ValueError('VM server workers exceed runner CPUs')
+        if name == 'vm' and profile['groups']['server']['postgres']['max_connections'] < server_connection_capacity(settings, settings['server_workers']):
+            raise ValueError('VM PostgreSQL connection capacity is below the worker pool envelope')
         if not 1 <= profile['concurrency'] <= len(groups(settings)):
             raise ValueError('invalid group concurrency')
         for field in ('cpus', 'memory_mib'):
@@ -51,7 +64,13 @@ def load_settings(profile=None, *, host_cpus=None):
         vm = settings['vm']
         limits = copy.deepcopy(settings['profiles']['release'])
         limits['cpus'] = host_cpus - vm['host_cpu_reserve']
-        limits['groups']['server']['postgres']['cpus'] = vm['server_postgres_cpus']
+        limits['concurrency'] = vm['concurrency']
+        for role, cpus in vm['reserve_cpus'].items():
+            limits['reserve'][role]['cpus'] = cpus
+        for group, roles in vm['group_cpus'].items():
+            for role, cpus in roles.items():
+                limits['groups'][group][role]['cpus'] = cpus
+        limits['groups']['server']['postgres']['max_connections'] = server_connection_capacity(settings, vm['server_workers'])
         settings['profiles']['vm'] = limits
         settings['server_workers'] = vm['server_workers']
     validate(settings)

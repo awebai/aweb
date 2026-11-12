@@ -35,7 +35,8 @@ def postgres_args(runner, limits=None):
             '--tmpfs', f'/var/lib/postgresql/data:rw,noexec,nosuid,size={limits["memory_mib"] * 3 // 4}m',
             '-e', 'PGDATA=/var/lib/postgresql/data/pgdata',
             '-e', 'POSTGRES_PASSWORD=postgres', 'postgres:17',
-            '-c', 'max_wal_size=128MB', '-c', 'min_wal_size=32MB']
+            '-c', 'max_wal_size=128MB', '-c', 'min_wal_size=32MB',
+            *(['-c', f'max_connections={limits["max_connections"]}'] if 'max_connections' in limits else [])]
 
 
 def wait_for_postgres(container):
@@ -150,6 +151,10 @@ def main():
                                  *resource_args(limits['redis']), 'redis:7'))
         wait_for_postgres(containers[-2])
         storage = require_memory_postgres(containers[-2])
+        storage['max_connections'] = int(docker('exec', containers[-2], 'psql', '-At', '-U', 'postgres',
+                                                '-d', 'postgres', '-c', 'SHOW max_connections'))
+        if 'max_connections' in limits['postgres'] and storage['max_connections'] != limits['postgres']['max_connections']:
+            raise RuntimeError('Postgres connection capacity differs from settings')
         (evidence / 'postgres-storage.json').write_text(json.dumps(storage, indent=2) + '\n')
         # Preserve the candidate gate's production role-default control.
         docker('exec', containers[-2], 'psql', '-v', 'ON_ERROR_STOP=1', '-U', 'postgres', '-d', 'postgres',
