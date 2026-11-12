@@ -38,10 +38,7 @@ def install_controller(settings, *, profile, scope, source_pem):
     seed = load_signing_key_pem(read_key_file(source_pem))
     public_key = did_key_from_signing_key(seed)
     binding = profile.binding_for(scope)
-    if (
-        binding.context().authority_kind != "team_controller"
-        or public_key != binding.authority_key_did
-    ):
+    if public_key != binding.authority_key_did:
         raise SignerRefused("authority_changed")
     _write_controller(settings, seed)
     return {"authority_key_did": public_key}

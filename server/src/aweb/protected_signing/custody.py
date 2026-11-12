@@ -36,6 +36,7 @@ class ProtectedControllerCustody:
         domain: str,
         key_file: Path,
         worker_uids: frozenset[int],
+        authority_kind: str = "team_controller",
     ):
         if (
             os.name != "posix"
@@ -50,10 +51,20 @@ class ProtectedControllerCustody:
             not service_id
             or not team_id
             or not domain
-            or team_id.partition(":")[2] != domain
+            or authority_kind
+            not in {"team_controller", "namespace_controller", "human_identity"}
+            or (
+                authority_kind == "team_controller"
+                and team_id.partition(":")[2] != domain
+            )
+            or (authority_kind == "namespace_controller" and team_id != domain)
+            or (
+                authority_kind == "human_identity" and not team_id.startswith("did:aw:")
+            )
         ):
             raise SignerRefused("scope_refused")
         self.service_id, self.team_id, self.domain = service_id, team_id, domain
+        self.authority_kind = authority_kind
         self._key = self._read_private_key(key_file)
         self.team_key_did = did_from_public_key(bytes(self._key.verify_key))
 
@@ -106,7 +117,7 @@ class ProtectedControllerCustody:
         context = typed.context
         if (
             context.service_id != self.service_id
-            or context.authority_kind != "team_controller"
+            or context.authority_kind != self.authority_kind
             or context.authority_id != self.team_id
             or context.authority_domain != self.domain
         ):

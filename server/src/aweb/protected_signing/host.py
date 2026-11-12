@@ -94,7 +94,7 @@ def _member_keys(path):
     """Same canonical-team/Ed25519-PEM manifest format as aweb configuration."""
     try:
         entries = parse_strict(path.read_bytes())
-        if not isinstance(entries, dict) or not entries:
+        if not isinstance(entries, dict):
             raise ValueError()
         keys = {}
         for team_id, filename in entries.items():
@@ -143,19 +143,20 @@ async def open_composition(
     """The same isolated custody and owned DB/client for host and local admin."""
     binding = profile.binding_for(scope)
     context = binding.context()
-    if context.authority_kind != "team_controller":
-        raise SignerRefused("operation_refused")
     custody = ProtectedControllerCustody(
         service_id=context.service_id,
         team_id=context.authority_id,
         domain=context.authority_domain,
         key_file=settings.controller_key_file,
         worker_uids=frozenset(settings.worker_uids),
+        authority_kind=context.authority_kind,
     )
     if custody.team_key_did != binding.authority_key_did:
         raise SignerRefused("authority_changed")
     keys = _member_keys(settings.member_keys_file)
-    if context.authority_id not in keys or any(
+    if (
+        context.authority_kind == "team_controller" and context.authority_id not in keys
+    ) or any(
         did_key_from_signing_key(key) == custody.team_key_did for key in keys.values()
     ):
         raise SignerRefused("custody_not_isolated")
@@ -200,10 +201,7 @@ def create_app(settings=None, *, mailer=None, registry_transport=None):
     settings = HostSettings() if settings is None else settings
     profile = ProtectedServiceProfile.from_json(settings.profile_file.read_bytes())
     scope = parse_strict(settings.scope_file.read_bytes())
-    binding = profile.binding_for(scope)
-    context = binding.context()
-    if context.authority_kind != "team_controller":
-        raise SignerRefused("operation_refused")
+    profile.binding_for(scope)
     # Validate origin separation before any resource opens, even when both
     # origins share a process behind a TLS reverse proxy.
     human = FastAPI(docs_url=None, redoc_url=None, openapi_url=None)

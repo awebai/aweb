@@ -170,7 +170,7 @@ A disposable deployment runs this **same package command** against its declared
 throwaway authorities and private captured SMTP transport. It must not seed
 credential/session/assertion rows or replace this host with a test-only signer.
 
-## Controller key installation, backup and cutover
+## Protected authority key installation, backup and cutover
 
 For an explicitly new authority, create its key **inside the private signer
 volume**, as the protected uid, before writing the public profile binding:
@@ -190,7 +190,13 @@ team whose key is missing. Existing teams use the matching-key installation
 path below; a controller change needs its separately approved rotation.
 
 
-The input is the **existing** registered team's controller seed, normally held
+The selected profile binding names one exact team controller, namespace
+controller or human identity key. The historical `CONTROLLER_KEY_FILE`,
+`install-controller` and `create-controller` names address that selected private
+key slot for all three roles. Current registry authority is checked for that
+role independently of its authorizer.
+
+For an existing team, the input is its **existing** registered controller seed, normally held
 by its authorized owner in aw's `ED25519 PRIVATE KEY` PEM format. The aw state
 path is `~/.awid/team-keys/<domain>/<team>.key` (legacy installations may retain
 `~/.config/aw/team-keys/...`). Obtain the actual path from that owner's configuration;

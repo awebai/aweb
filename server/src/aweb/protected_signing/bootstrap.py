@@ -152,14 +152,16 @@ async def initialise(c, *, requester, contact):
             )
             await tx.execute(
                 "INSERT INTO {{tables.protected_authorizer_bindings}} "
-                "(service_id,team_id,human_id,human_domain,generation,subject,b3_scope,policy_version) "
-                "VALUES($1,$2,$3,$4,1,$5,$6,1)",
+                "(service_id,team_id,human_id,human_domain,generation,subject,b3_scope,policy_version,authority_kind,authority_domain) "
+                "VALUES($1,$2,$3,$4,1,$5,$6,1,$7,$8)",
                 c.context.service_id,
                 c.context.authority_id,
                 c.context.human_id,
                 c.context.human_domain,
                 subject,
                 scope,
+                c.context.authority_kind,
+                c.context.authority_domain,
             )
             await tx.execute(
                 "INSERT INTO {{tables.protected_requester_bindings}} (b3_scope,principal) VALUES($1,$2)",
