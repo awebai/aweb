@@ -1,11 +1,9 @@
 package handoff
 
 import (
-	"crypto/ed25519"
 	"crypto/sha256"
 	"encoding/base64"
 	"encoding/hex"
-	"errors"
 	"fmt"
 	"net/http"
 	"regexp"
@@ -79,9 +77,8 @@ func ProtectedRequestHeaders(r ProtectedRequest) (http.Header, error) {
 	if err != nil {
 		return nil, err
 	}
-	key, err := awid.ExtractPublicKey(didKey)
-	if err != nil || !ed25519.Verify(key, payload, signature) {
-		return nil, errors.New("the requester's signature does not verify over the exact request")
+	if err := awid.VerifyControllerRequestSignature(didKey, signature, payload); err != nil {
+		return nil, fmt.Errorf("the requester's signature does not verify over the exact request: %w", err)
 	}
 	headers := http.Header{}
 	headers.Set("Authorization", "DIDKey "+didKey+" "+base64.RawStdEncoding.EncodeToString(signature))

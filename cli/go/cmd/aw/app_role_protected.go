@@ -3,7 +3,6 @@ package main
 import (
 	"bytes"
 	"context"
-	"crypto/ed25519"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -97,9 +96,7 @@ func protectedRequesterSigner(profile *handoff.Profile, scope map[string]any, id
 			Profile: profile, Scope: scope, RequesterID: identity.StableID,
 			Method: method, Path: target.EscapedPath(), Body: body,
 			Timestamp: time.Now().UTC().Format("2006-01-02T15:04:05Z"),
-			Sign: func(payload []byte) (string, []byte, error) {
-				return identity.DIDKey, ed25519.Sign(identity.SigningKey, payload), nil
-			},
+			Sign:      handoff.RequestKeySigner(awid.KeySigner(identity.SigningKey)),
 		})
 		if err != nil {
 			return nil, err
