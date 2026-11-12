@@ -26,9 +26,17 @@ func parseSignedEnvelopeMetadata(payload string) (signedEnvelopeMetadata, bool) 
 	return meta, true
 }
 
+// requiredMessageClaims are the claims that make a signed payload a message.
+// The same key signs other documents, such as request envelopes; a payload
+// without these says nothing about the text a reader is shown. Every message
+// signer signs them; subject is displayed, and so required, for mail only.
+var requiredMessageClaims = map[string]bool{"type": true, "body": true, "from_did": true, "subject": true}
+
 // signedDisplayMatches checks the original response before signed metadata is
-// projected over it. Missing legacy fields are not claims; present empty values
-// are claims and must match. Null and non-string claims are invalid.
+// projected over it. A displayed field that is a required message claim must
+// be signed. Any other field the payload does not carry is not a claim.
+// Present empty values are claims and must match. Null and non-string claims
+// are invalid.
 func signedDisplayMatches(payload string, fields map[string]string) bool {
 	var signed map[string]json.RawMessage
 	if err := json.Unmarshal([]byte(payload), &signed); err != nil || signed == nil {
@@ -37,6 +45,9 @@ func signedDisplayMatches(payload string, fields map[string]string) bool {
 	for name, displayed := range fields {
 		raw, present := signed[name]
 		if !present {
+			if requiredMessageClaims[name] {
+				return false
+			}
 			continue
 		}
 		var value *string

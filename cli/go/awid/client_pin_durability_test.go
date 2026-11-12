@@ -40,6 +40,7 @@ func TestFirstContactPinThatCannotPersistIsNotVerified(t *testing.T) {
 
 	const addr = "alice@example.com"
 	const did = "did:key:z6Mks3e5U8apRpvF9c8mpPGZ3TQyeG2gXpv4qcbF8DvnVSpB"
+	c.SetResolver(registryByAddress{addr: did})
 
 	status := c.CheckTOFUPin(context.Background(), Verified, addr, did, "", nil, nil)
 	if status == Verified || status == VerifiedCustodial {
@@ -74,6 +75,9 @@ func TestClientCASPersisterAdvancesThenRefusesAStaleSnapshot(t *testing.T) {
 		return nil
 	})
 
+	c.SetResolver(registryByAddress{
+		"alice@example.com": "did:key:zAlice", "carol@example.com": "did:key:zCarol", "dave@example.com": "did:key:zDave",
+	})
 	if status := c.CheckTOFUPin(context.Background(), Verified, "alice@example.com", "did:key:zAlice", "", nil, nil); status != Verified {
 		t.Fatalf("first status=%q, want verified", status)
 	}
@@ -104,6 +108,7 @@ func TestFirstContactPinThatPersistsIsVerified(t *testing.T) {
 
 	const addr = "alice@example.com"
 	const did = "did:key:z6Mks3e5U8apRpvF9c8mpPGZ3TQyeG2gXpv4qcbF8DvnVSpB"
+	c.SetResolver(registryByAddress{addr: did})
 
 	status := c.CheckTOFUPin(context.Background(), Verified, addr, did, "", nil, nil)
 	if status != Verified {
@@ -128,6 +133,7 @@ func TestAlreadyPinnedSenderStaysVerifiedWhenRefreshCannotPersist(t *testing.T) 
 
 	const addr = "alice@example.com"
 	const did = "did:key:z6Mks3e5U8apRpvF9c8mpPGZ3TQyeG2gXpv4qcbF8DvnVSpB"
+	c.SetResolver(registryByAddress{addr: did})
 	ps.StorePin(did, addr, "", "")
 
 	status := c.CheckTOFUPin(context.Background(), Verified, addr, did, "", nil, nil)
@@ -203,6 +209,7 @@ func TestSenderStaysUnverifiedWhileTheStoreCannotBeCommitted(t *testing.T) {
 
 	const addr = "alice@example.com"
 	const did = "did:key:z6Mks3e5U8apRpvF9c8mpPGZ3TQyeG2gXpv4qcbF8DvnVSpB"
+	c.SetResolver(registryByAddress{addr: did})
 
 	first := c.CheckTOFUPin(context.Background(), Verified, addr, did, "", nil, nil)
 	if first == Verified {
@@ -231,6 +238,7 @@ func TestSenderRecoversOnceTheStoreCanBeCommitted(t *testing.T) {
 
 	const addr = "alice@example.com"
 	const did = "did:key:z6Mks3e5U8apRpvF9c8mpPGZ3TQyeG2gXpv4qcbF8DvnVSpB"
+	c.SetResolver(registryByAddress{addr: did})
 
 	if status := c.CheckTOFUPin(context.Background(), Verified, addr, did, "", nil, nil); status == Verified {
 		t.Fatal("precondition: the first commit must fail")

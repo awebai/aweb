@@ -3,7 +3,6 @@ package wake
 import (
 	"context"
 	"crypto/ed25519"
-	"encoding/base64"
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
@@ -56,7 +55,7 @@ func TestBundledBusyMailRecoversAtIdle(t *testing.T) {
 				}
 				switch {
 				case r.Method == http.MethodGet && r.URL.Path == "/v1/messages/inbox":
-					_ = json.NewEncoder(w).Encode(map[string]any{"messages": []map[string]any{signedBusyMessage(t, map[string]any{
+					_ = json.NewEncoder(w).Encode(map[string]any{"messages": []map[string]any{signedMessageFrom(t, busySenderKey, "mail", map[string]any{
 						"message_id": "busy-brief", "from_alias": "bob", "subject": "builder brief", "body": "begin assigned work", "created_at": "2026-01-01T00:00:00Z",
 					})}})
 				case r.Method == http.MethodPost && r.URL.Path == "/v1/messages/busy-brief/ack":
@@ -145,23 +144,4 @@ func serveBusySender(w http.ResponseWriter, r *http.Request) bool {
 		"alias": "bob", "did_key": awid.ComputeDIDKey(busySenderKey.Public().(ed25519.PublicKey)), "identity_scope": "local",
 	}}})
 	return true
-}
-
-func signedBusyMessage(t *testing.T, message map[string]any) map[string]any {
-	t.Helper()
-	payload := map[string]any{"from": "bob", "from_did": awid.ComputeDIDKey(busySenderKey.Public().(ed25519.PublicKey))}
-	for _, field := range []string{"message_id", "conversation_id", "subject", "body"} {
-		if value, ok := message[field]; ok {
-			payload[field] = value
-		}
-	}
-	payload["timestamp"] = "2026-01-01T00:00:00Z"
-	canonical, err := awid.CanonicalJSONValue(payload)
-	if err != nil {
-		t.Fatal(err)
-	}
-	message["from_did"] = payload["from_did"]
-	message["signature"] = base64.RawStdEncoding.EncodeToString(ed25519.Sign(busySenderKey, []byte(canonical)))
-	message["signed_payload"] = canonical
-	return message
 }
