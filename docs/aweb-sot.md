@@ -566,6 +566,16 @@ to its table, and not reads, until the migration's transaction commits. No
 server code depends on the indexes. A hosted deployment that keeps its own copy
 of the aweb migrations needs the same file in that copy.
 
+**Migration 050 (`050_one_active_team_document.sql`).** It adds a partial
+unique index on `team_roles (team_id)` and on `team_instructions (team_id)`
+where `is_active`, so a team has at most one active version of each whoever
+writes the row. It first counts the teams that already have more than one
+active row in either table and, if there are any, stops with the count and
+changes nothing: which version stays active is a decision about that team's
+data. Deactivate all but one active version for those teams, then run it again.
+A hosted deployment that keeps its own copy of the aweb migrations needs the
+same file in that copy.
+
 ### Current table inventory
 
 The following list is exhaustive for current **aweb application tables declared

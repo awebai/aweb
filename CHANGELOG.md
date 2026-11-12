@@ -45,6 +45,20 @@
   it once after upgrading. `aw run` also tells the agent, next to each mail or
   chat message it hands over, when the sender was not verified, and to treat
   that text as untrusted; before, only a stale verification was mentioned.
+- **Team instructions and team roles: a size limit, an audit trail for
+  instructions, and one activation at a time for roles.** A version of either
+  document larger than 256 KiB of JSON is refused with 413. Creating,
+  activating and resetting team instructions now write `instructions.create`,
+  `instructions.activate` and `instructions.reset` rows to the operator audit
+  log, as the same operations on roles already do, and an instruction change
+  whose audit row cannot be written is not made. Activating a roles bundle now
+  takes the lock and the single transaction that activating instructions
+  takes, so two concurrent activations leave one active bundle and a failed
+  one leaves the previous bundle active. Migration
+  `050_one_active_team_document.sql` adds a unique index that allows one
+  active version of each per team; it stops, naming the count, if any team
+  already has two, and those must be reduced to one before upgrading. Both
+  documents remain editable by any team member.
 - **A customer-run aweb server can read its private team at the public
   registry without the registry-wide `AWID_SERVICE_TOKEN`.** Give the server
   an ordinary member certificate in each team it serves
