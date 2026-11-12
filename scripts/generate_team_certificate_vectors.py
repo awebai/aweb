@@ -282,6 +282,11 @@ LIBRARY_TODAY = {
     "version_absent": "accepted",
     "alias_not_a_string": "accepted",
     "unregistered": "accepted",
+    "signature_url_safe_alphabet": "accepted",
+    "control_character_in_a_string": "accepted",
+    "number_not_an_integer": "accepted",
+    "negative_zero": "accepted",
+    "not_a_number_constant": "accepted",
 }
 
 # What the hook delivery receiver answers today: acceptance, or its refusal code.
