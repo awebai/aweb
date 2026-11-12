@@ -231,10 +231,9 @@ print(json.dumps(receipt))
             + Q(check),
             "base-identity",
         )
-        self.remote.transport.copy(
+        self.remote.upload(
             self.directory / "tool-download-plan.json",
             REMOTE + "/tool-download-plan.json",
-            timeout=self.remaining(),
         )
         self.remote.run(
             self.remote.env(root=True)
@@ -254,11 +253,7 @@ print(json.dumps(receipt))
         )
         self.manifest_path = self.directory / "new-host-manifest.json"
         self.manifest_path.write_text(json.dumps(self.manifest, indent=2) + "\n")
-        self.remote.transport.copy(
-            self.manifest_path,
-            REMOTE + "/new-host-manifest.json",
-            timeout=self.remaining(),
-        )
+        self.remote.upload(self.manifest_path, REMOTE + "/new-host-manifest.json")
         self.remote.run(
             f"install -m 0644 {REMOTE}/new-host-manifest.json /var/lib/aweb-gates/host-toolchain-manifest.json",
             "record-image-manifest",

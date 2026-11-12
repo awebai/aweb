@@ -56,28 +56,46 @@ class Executor:
             + f"python3 -m vm_gate.host_contract {REMOTE}/source {REMOTE}/source.json {REMOTE}/expected-host.json"
         )
 
+    def upload(self, source, target, *, owner="root:root", mode="0600"):
+        """Root transfers always finish with explicit ownership and mode."""
+        self.transport.copy(source, target, timeout=self.remaining())
+        self.run(
+            f"chown {Q(owner)} {Q(str(target))} && chmod {Q(mode)} {Q(str(target))}",
+            "upload-" + Path(target).name,
+        )
+
+    def directories_program(self):
+        return f"""set -e
+umask 022
+id gateuser >/dev/null 2>&1 || useradd --uid 1000 --create-home --shell /bin/bash --groups docker gateuser
+usermod -aG docker gateuser
+test "$(id -u gateuser)" = 1000
+install -d -m 0750 -o gateuser -g gateuser {REMOTE} {LOGS}
+install -d -m 0755 -o root -g root {REMOTE}/operator
+"""
+
     def bootstrap_program(self, bundle_hash):
         ledger = Q(self.config["ledger"])
         parent = Q(str(Path(self.config["ledger"]).parent))
         return f"""set -euo pipefail
+umask 022
 cd {REMOTE}
 test "$(sha256sum source.bundle | cut -d' ' -f1)" = {bundle_hash}
 tar -xzf operator.tar.gz -C operator
+find operator -type d -exec chmod 0755 {{}} +
+find operator -type f -exec chmod 0644 {{}} +
 git init --bare origin
 git --git-dir=origin fetch source.bundle '+refs/*:refs/*'
 git --git-dir=origin update-ref refs/heads/main {self.source["frozen_main"]}
 git --git-dir=origin symbolic-ref HEAD refs/heads/main
 git clone origin source
 git -C source checkout --detach {self.source["sha"]}
-id gateuser >/dev/null 2>&1 || useradd --uid 1000 --create-home --shell /bin/bash --groups docker gateuser
-usermod -aG docker gateuser
-test "$(id -u gateuser)" = 1000
-mkdir -p {parent}/gate-locks {parent}/gate-logs
-cp ledger-before.tsv {ledger}
+install -d -m 0700 -o gateuser -g gateuser {parent} {parent}/gate-locks {parent}/gate-logs
+install -m 0600 -o gateuser -g gateuser ledger-before.tsv {ledger}
 tar -xzf ledger-logs-before.tar.gz -C {parent}
-chown gateuser:gateuser {parent} {ledger} {parent}/gate-locks
-chown -R gateuser:gateuser {parent}/gate-logs
-chown -R gateuser:gateuser source {LOGS}
+chown -R gateuser:gateuser {parent}/gate-logs origin source
+chmod -R u+rwX,go-rwx {parent}/gate-logs
+
 """
 
     def focused_shell(self):
@@ -102,6 +120,7 @@ exit "$status"
 """
 
     def preflight(self):
+        validate_command(self.directories_program())
         validate_command(self.bootstrap_program("0" * 64))
         script = self.launch_program()
         validate_command(script)
@@ -125,7 +144,7 @@ exit "$status"
                 except Infrastructure:
                     pass  # Bounded, idempotent readiness probe; never a create retry.
             time.sleep(min(2, self.remaining()))
-        self.run(f"mkdir -p {REMOTE}/operator {LOGS}", "mkdir")
+        self.run("bash -c " + Q(self.directories_program()), "directories")
         expected = self.directory / "expected-host.json"
         expected.write_text(json.dumps(self.config["manifest"], indent=2) + "\n")
         operator = self.directory / "operator.tar.gz"
@@ -144,8 +163,19 @@ exit "$status"
             (operator, "operator.tar.gz"),
             (self.directory / "ledger-before.tsv", "ledger-before.tsv"),
             (self.directory / "ledger-logs-before.tar.gz", "ledger-logs-before.tar.gz"),
+            (self.directory / "launch.sh", "launch.sh"),
         ]:
-            self.transport.copy(path, REMOTE + "/" + target, timeout=self.remaining())
+            owner = (
+                "gateuser:gateuser"
+                if target in {"source.json", "expected-host.json", "launch.sh"}
+                else "root:root"
+            )
+            self.upload(
+                path,
+                REMOTE + "/" + target,
+                owner=owner,
+                mode="0700" if target == "launch.sh" else "0600",
+            )
         bundle_hash = hashlib.sha256(
             Path(self.source["bundle"]).read_bytes()
         ).hexdigest()
@@ -163,8 +193,6 @@ exit "$status"
                 raise Refused(result.stderr.strip())
             if result.returncode:
                 raise Infrastructure("remote host contract failed")
-        launch = self.directory / "launch.sh"
-        self.transport.copy(launch, REMOTE + "/launch.sh", timeout=self.remaining())
 
     def execute(self, server, timeout):
         self.deadline = time.monotonic() + timeout + 45

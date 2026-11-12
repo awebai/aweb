@@ -65,6 +65,9 @@ class SnapshotRemote:
         self.transport = SimpleNamespace(copy=lambda *a, **kw: None)
         self.verify_host = True
 
+    def upload(self, *args, **kwargs):
+        pass
+
     def preflight(self):
         pass
 
