@@ -1565,6 +1565,8 @@ class Passkeys:
         fence prepares authority in the effect tx before B3, and checks it
         after audit before commit. A refused effect leaves the link unused;
         its WebAuthn challenge stays spent, so retry needs fresh options.
+        The challenge and the link must both still be live once the fence's
+        check has returned, just before the commit.
         """
         enrolment = await self._usable_enrolment(link_token)
         try:
@@ -1629,6 +1631,10 @@ class Passkeys:
             )
             if fence is not None:
                 await fence.check(tx)
+            # After the last await: a lock wait in the fence may outlast the
+            # registration challenge or the link, which then enrol nothing.
+            if self._clock() >= min(issued["expires_at"], enrolment["expires_at"]):
+                raise EnrolmentRefused("the registration or its link expired")
         return Approver(
             scope=enrolment["scope"],
             subject=enrolment["subject"],
