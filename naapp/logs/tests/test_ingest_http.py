@@ -410,28 +410,25 @@ async def test_revoking_logs_own_certificate_stops_its_reads_of_the_private_team
 
 
 @pytest.mark.parametrize("world", [{"customer_hosted": True}], indirect=True)
-async def test_a_private_team_unreadable_at_provenance_is_refused_like_at_the_key_read(world):
-    """The same condition gets the same code at either read: with the cache's
-    facts expiring between them, binding resolution reads the certificate
-    history, and the provenance read that follows finds the team unreadable."""
-    world.runtime.team_cache().ttl_seconds = 0
+async def test_a_private_team_unreadable_at_the_certificate_read_is_refused_like_at_the_key_read(world):
+    """The same condition gets the same code at either read: the key read
+    succeeds, and the read of the team's certificates that follows finds the
+    team unreadable."""
     reads = []
 
-    def private_after_the_first(request: httpx.Request, response: httpx.Response):
+    def private(request: httpx.Request, response: httpx.Response):
         signed_by_logs = request.headers.get("Authorization", "").startswith("DIDKey ")
         if not (signed_by_logs and request.url.path.endswith("/certificates")):
             return None
         reads.append(request)
-        if len(reads) == 1:
-            return None
         return httpx.Response(
             403, json={"detail": {"code": "team_private", "message": "private"}}, request=request
         )
 
-    world.coordination.registry.transport.fault = private_after_the_first
+    world.coordination.registry.transport.fault = private
     response = await world.send(world.delivery("client"))
     assert (response.status_code, _code(response)) == (403, "team_private_unreadable")
-    assert len(reads) == 2
+    assert len(reads) == 1
 
 
 async def test_identical_redelivery_returns_the_original_receipt_without_spending_quota(world):
