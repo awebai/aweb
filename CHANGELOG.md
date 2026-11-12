@@ -2,6 +2,87 @@
 
 ## Unreleased
 
+- Human handoffs retain their authenticated team for credential collection and
+  console session requests. Existing key-bound console sessions without retained
+  team context are refused after migration and require signing in again; there
+  is no compatibility fallback or installation-wide team discovery.
+
+- **`aw` and the channel client (the Claude Code plugin, the Pi extension and
+  `aw wake`) no longer report a plaintext mail or chat message as verified
+  unless its signed payload is a message.** The payload must carry `type`,
+  `body` and `from_did`, and `subject` for mail. Until now a displayed field
+  the payload did not carry was not compared, so a document the sender's key
+  had signed for another purpose, such as the request envelope a server
+  receives with every request, could be presented as the signed payload of a
+  message with any body and be reported verified. Such a message is now
+  presented with trust status `failed`. Every released message signer signs
+  these fields, so no genuine message changes status. Encrypted messages and
+  room posts were not affected.
+- **`aw` and the channel client report the first message from an address as
+  verified, and remember the sender, only after the registry confirms the
+  address belongs to the signing key.** Until now the first key seen for an
+  address was pinned and the message reported verified whatever the registry
+  said: in `aw` even when the registry named a different key or could not be
+  reached, in the channel client when the registry named a different key. Now
+  a first message is `identity_mismatch` when the registry names another key
+  or has no such address, and `verification_stale` when the registry cannot be
+  asked or the stable-identity check cannot be made; the next read asks again.
+  You will see fewer `verified` first contacts, and during a registry outage
+  the first message from a new address is not verified until the registry is
+  back. Senders already known keep verifying by their pin through an outage,
+  in the channel client too, which used to report them stale. A known sender
+  is an `identity_mismatch` once the registry names another key for its
+  address. New pins record `confirmed_by: registry` in `known_agents.yaml`;
+  existing pins are left as they are.
+- **`aw run` no longer uses a directory's `.aw/run.json` unless you trusted
+  that exact file.** The file can set the agent's prompts and start shell
+  commands as background services, and it was read from whatever directory
+  `aw run` was started in, so a cloned repository could run commands. Now it
+  is ignored, with a message naming it, until you run
+  `aw run <provider> --trust-config`, which records the digest of its content
+  in `~/.config/aw/run-trusted.json`; a file that changes afterwards is
+  ignored until trusted again. If you rely on a directory's `run.json`, trust
+  it once after upgrading. `aw run` also tells the agent, next to each mail or
+  chat message it hands over, when the sender was not verified, and to treat
+  that text as untrusted; before, only a stale verification was mentioned.
+- **Team instructions and team roles: a size limit, an audit trail for
+  instructions, and one activation at a time for roles.** A version of either
+  document larger than 256 KiB of JSON is refused with 413. Creating,
+  activating and resetting team instructions now write `instructions.create`,
+  `instructions.activate` and `instructions.reset` rows to the operator audit
+  log, as the same operations on roles already do, and an instruction change
+  whose audit row cannot be written is not made. Activating a roles bundle now
+  takes the lock and the single transaction that activating instructions
+  takes, so two concurrent activations leave one active bundle and a failed
+  one leaves the previous bundle active. Migration
+  `050_one_active_team_document.sql` adds a unique index that allows one
+  active version of each per team; it stops, naming the count, if any team
+  already has two, and those must be reduced to one before upgrading. Both
+  documents remain editable by any team member.
+- **`aw wake register` says when no wake broker is running.** The registration
+  is still stored and the command still exits 0, so a hook does not fail while
+  a broker restarts. But with no broker answering it now prints on stderr that
+  the instance is registered and will not be woken until one starts, and its
+  help says that exit 0 means the registration was stored, not that a broker
+  runs. `aw wake status --json` reports `daemon_running`.
+- **awid-service no longer ships `awid.http_didkey`.** The module verified a
+  request envelope of body hash, method, path and timestamp, and no route of
+  the registry called it; the registry's routes verify the envelopes in
+  `awid.dns_auth`, `awid.controller_request` and `awid.id_tree_requests`.
+  Nothing in aweb or aweb Cloud imported it. Code outside this repository
+  that imported `build_http_didkey_payload` or `verify_http_didkey_request`
+  from awid-service must carry its own copy.
+- **Security: the library service sees a revoked certificate within a minute.**
+  It cached a team's key and revocations for `LIBRARY_AUTH_CACHE_TTL_SECONDS`,
+  10 minutes by default and with no upper limit, so a revoked member
+  certificate kept working there for that long; the server and the other
+  apps cap the same cache at 60 seconds. The library now has the same
+  limits: 60 seconds for that cache, its new default, and 300 for the
+  accepted clock skew (`LIBRARY_TIMESTAMP_SKEW_SECONDS`). **Self-hosters: a
+  library configured past either limit no longer starts.** The error names
+  the setting and the limit. The shipped `.env.example` set
+  `LIBRARY_AUTH_CACHE_TTL_SECONDS=600`; a deployment made from it must lower
+  it to 60 or remove the line before upgrading.
 - **A customer-run aweb server can read its private team at the public
   registry without the registry-wide `AWID_SERVICE_TOKEN`.** Give the server
   an ordinary member certificate in each team it serves

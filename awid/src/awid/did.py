@@ -41,6 +41,11 @@ def did_from_public_key(public_key: bytes) -> str:
     return _DID_KEY_PREFIX + b58.b58encode(multicodec_key).decode("ascii")
 
 
+def did_key_from_signing_key(seed: bytes) -> str:
+    """The did:key of a held 32-byte Ed25519 seed; any other length is refused."""
+    return did_from_public_key(bytes(SigningKey(seed).verify_key))
+
+
 def strict_ed25519_point(public_key: bytes) -> bool:
     """Whether 32 bytes encode a canonical Ed25519 point of prime order.
 

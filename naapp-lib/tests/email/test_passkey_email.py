@@ -126,3 +126,11 @@ async def test_a_failed_mail_is_a_failure_without_a_retry_or_a_logged_token(tmp_
 def test_the_console_origin_must_be_exact_and_secure(origin):
     with pytest.raises(ValueError):
         PasskeyEmailDelivery(mailer=None, console_origin=origin, product="App", link_text="Open")
+
+
+async def test_no_enrolment_link_is_sent_for_an_approver_without_a_contact(tmp_path):
+    approver = Approver("restricted-scope", "restricted-subject", "app_local", None)
+    with SmtpServer(tmp_path / "smtp") as server:
+        with pytest.raises(ValueError):
+            await delivery(server, tmp_path).deliver_enrolment_link(approver, "token")
+        assert server.received == []

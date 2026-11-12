@@ -73,7 +73,7 @@ class Policies:
     def set(self, p: ActionPolicy) -> None:
         self.by_ref[p.policy_ref] = p
 
-    async def current(self, policy_ref: str) -> ActionPolicy | None:
+    async def current(self, policy_ref: str, *, tx=None) -> ActionPolicy | None:
         return self.by_ref.get(policy_ref)
 
 
@@ -102,10 +102,10 @@ class Directory:
         if self.by_scope.get(approver.scope) == approver:
             del self.by_scope[approver.scope]
 
-    async def candidates(self, policy: ActionPolicy, request) -> list[Approver]:
+    async def candidates(self, policy: ActionPolicy, request, *, tx=None) -> list[Approver]:
         return [self.by_scope[s] for s in policy.approver_scopes if s in self.by_scope]
 
-    async def is_current(self, scope: str, subject: str) -> bool:
+    async def is_current(self, scope: str, subject: str, *, tx=None) -> bool:
         current = self.by_scope.get(scope)
         return current is not None and current.subject == subject
 

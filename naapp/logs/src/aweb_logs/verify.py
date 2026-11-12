@@ -261,54 +261,82 @@ def verify_chain(
     """Recompute a team epoch's chain from its genesis and check each artefact
     against it. ``receipt_keys`` and ``checkpoint_keys`` are the did:keys the
     logs manifest declares for each purpose."""
-    genesis_hash = genesis.hash()
-    first_break: Break | None = None
-    missing: list[tuple[int, int]] = []
-    purged: list[PurgedRange] = []
-    hashes: dict[int, str] = {0: genesis_hash}
+    epoch = EpochState(genesis)
+    hashes: dict[int, str] = {0: epoch.genesis_hash}
     stored_events: dict[int, StoredEvent] = {}
-    prev_hash = genesis_hash
-    expected_seq = 1
 
     for event in sorted(events, key=lambda stored: stored.link.team_seq):
         seq = event.link.team_seq
         if seq in hashes:
-            first_break = first_break or Break(seq, "sequence_duplicate")
+            epoch.fail(seq, "sequence_duplicate")
             continue
-        if seq > expected_seq:
-            missing.append((expected_seq, seq - 1))
-            linked = True
-        else:
-            linked = event.link.prev_event_hash == prev_hash
-        reason = _event_fault(genesis, event, linked)
-        if reason is not None:
-            first_break = first_break or Break(seq, reason)
-        if event.content is None and event.purge_act is not None:
-            _extend_purged(purged, seq, event.purge_act)
+        epoch.add(event)
         hashes[seq] = event.event_hash
         stored_events[seq] = event
-        prev_hash = event.event_hash
-        expected_seq = seq + 1
+
+    def contradiction(
+        signing: bytes,
+        signature: str,
+        open_artefact: Callable[[bytes, str], Receipt | Checkpoint],
+        keys: frozenset[str],
+    ) -> str | None:
+        artefact, reason = opened_artefact(signing, signature, open_artefact, keys, genesis)
+        if artefact is None:
+            return reason
+        stored = hashes.get(artefact.team_seq)
+        if stored is None:
+            return "not_in_chain"
+        return position_fault(artefact, stored, stored_events.get(artefact.team_seq))
 
     contradicted = [
         Contradiction("receipt", index, reason)
         for index, (signing, signature) in enumerate(receipts)
-        if (
-            reason := _contradiction(
-                signing, signature, open_receipt, receipt_keys, genesis, hashes, stored_events
-            )
-        )
+        if (reason := contradiction(signing, signature, open_receipt, receipt_keys))
     ]
     contradicted += [
         Contradiction("checkpoint", index, reason)
         for index, (signing, signature) in enumerate(checkpoints)
-        if (
-            reason := _contradiction(
-                signing, signature, open_checkpoint, checkpoint_keys, genesis, hashes, stored_events
-            )
-        )
+        if (reason := contradiction(signing, signature, open_checkpoint, checkpoint_keys))
     ]
-    return ChainReport(first_break, tuple(missing), tuple(purged), tuple(contradicted))
+    return epoch.report(contradicted)
+
+
+class EpochState:
+    """The running check of one epoch's events, in increasing ``team_seq`` order:
+    the chain links, sequence gaps, purged ranges and the first break."""
+
+    def __init__(self, genesis: Genesis) -> None:
+        self.genesis = genesis
+        self.genesis_hash = genesis.hash()
+        self.first_break: Break | None = None
+        self.missing: list[tuple[int, int]] = []
+        self.purged: list[PurgedRange] = []
+        self.prev_hash = self.genesis_hash
+        self.expected_seq = 1
+
+    def fail(self, seq: int, reason: str) -> None:
+        self.first_break = self.first_break or Break(seq, reason)
+
+    def add(self, event: StoredEvent) -> None:
+        """Check the next event, whose ``team_seq`` is greater than any before it."""
+        seq = event.link.team_seq
+        if seq > self.expected_seq:
+            self.missing.append((self.expected_seq, seq - 1))
+            linked = True
+        else:
+            linked = event.link.prev_event_hash == self.prev_hash
+        reason = _event_fault(self.genesis, event, linked)
+        if reason is not None:
+            self.fail(seq, reason)
+        if event.content is None and event.purge_act is not None:
+            _extend_purged(self.purged, seq, event.purge_act)
+        self.prev_hash = event.event_hash
+        self.expected_seq = seq + 1
+
+    def report(self, contradicted: Sequence[Contradiction]) -> ChainReport:
+        return ChainReport(
+            self.first_break, tuple(self.missing), tuple(self.purged), tuple(contradicted)
+        )
 
 
 def _event_fault(genesis: Genesis, event: StoredEvent, linked: bool) -> str | None:
@@ -352,35 +380,38 @@ def _extend_purged(purged: list[PurgedRange], seq: int, act: str) -> None:
         purged.append(PurgedRange(seq, seq, act))
 
 
-def _contradiction(
+def opened_artefact(
     signing: bytes,
     signature: str,
     open_artefact: Callable[[bytes, str], Receipt | Checkpoint],
     keys: frozenset[str],
     genesis: Genesis,
-    hashes: dict[int, str],
-    stored_events: dict[int, StoredEvent],
-) -> str | None:
-    """Why the chain contradicts one artefact, or None when it holds."""
+) -> tuple[Receipt | Checkpoint | None, str | None]:
+    """An artefact signed by an accepted key for this epoch, or why it is
+    contradicted before its position is looked at."""
     try:
         artefact = open_artefact(signing, signature)
     except Refused:
-        return "signature_invalid"
+        return None, "signature_invalid"
     if artefact.did_key not in keys:
-        return "signature_invalid"
+        return None, "signature_invalid"
     if (artefact.team_id, artefact.chain_epoch, artefact.logs_origin) != (
         genesis.team_id,
         genesis.chain_epoch,
         genesis.logs_origin,
     ):
-        return "wrong_chain"
-    stored = hashes.get(artefact.team_seq)
-    if stored is None:
-        return "not_in_chain"
-    if stored != artefact.event_hash:
+        return None, "wrong_chain"
+    return artefact, None
+
+
+def position_fault(
+    artefact: Receipt | Checkpoint, stored_hash: str, stored_event: StoredEvent | None
+) -> str | None:
+    """Why the chain at the artefact's position contradicts it, or None when it holds."""
+    if stored_hash != artefact.event_hash:
         return "hash_mismatch"
-    if isinstance(artefact, Receipt) and not _receipt_names_event(
-        artefact, stored_events[artefact.team_seq]
+    if isinstance(artefact, Receipt) and (
+        stored_event is None or not _receipt_names_event(artefact, stored_event)
     ):
         return "event_mismatch"
     return None

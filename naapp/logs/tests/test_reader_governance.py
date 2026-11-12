@@ -61,6 +61,7 @@ async def test_an_owner_act_naming_a_slot_designates_its_reader_on_logs_own_chai
         signing=signing, signature=signature, scope=scope, contact=CONTACT
     )
     reader = await world.directory.reader(scope)
+    assert reader is not None
     assert (reader.installation_id, reader.team_id) == (INSTALLATION_ID, TEAM_ID)
     assert len(world.inbox.enrolments[CONTACT]) == 1
     [(event_id, payload, event_signature)] = await outbox(world)
@@ -80,6 +81,7 @@ async def test_an_owner_act_naming_a_slot_designates_its_reader_on_logs_own_chai
         "SELECT signing_bytes, signature FROM {{tables.chain_events}} WHERE event_id = $1",
         event_id,
     )
+    assert stored is not None
     assert (bytes(stored["signing_bytes"]), stored["signature"]) == (payload, event_signature)
     report = await verify_epoch(
         world.db,
