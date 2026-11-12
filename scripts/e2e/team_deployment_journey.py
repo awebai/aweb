@@ -338,6 +338,17 @@ def main() -> int:
         "".join(f"{name}={world.env[name]}\n" for name in sorted(world.env) if name.startswith(("TEAM_DEPLOYMENT_", "TEST_")))
     )
 
+    try:
+        return journey(world)
+    finally:
+        if not args.keep:
+            print("=== Teardown")
+            down = subprocess.run([str(ADAPTER), "compose", "down", str(world.deployment_path)], env=world.env,
+                                  text=True, check=False)
+            print("DOWN: nothing of the project is left" if down.returncode == 0 else "DOWN FAILED: see above")
+
+
+def journey(world: World) -> int:
     print("=== Setup: the test world")
     world.write_world()
     world.write_database_files()
@@ -357,22 +368,33 @@ def main() -> int:
 
     print("=== Step 1: bring up the deployment")
     deployment = world.deployment(apps=True)
-    up = subprocess.run([str(ADAPTER), "compose", "up", str(deployment)], env=world.env, text=True, check=False)
     world.deployment_path = deployment
+    up = subprocess.run([str(ADAPTER), "compose", "up", str(deployment)], env=world.env, text=True, check=False)
     connect = json.dumps(world.connect(), indent=2)
-    (run_dir / "connect.json").write_text(connect)
+    (world.run_dir / "connect.json").write_text(connect)
     print(connect)
     if up.returncode != 0:
         print("BOUNDARY: the deployment did not come up; see compose.log in the run directory")
-    else:
-        print("UP: aweb, secrets and logs are healthy; signer and agents are not in this run")
-    if args.keep:
-        return up.returncode
-    print("=== Teardown")
-    down = subprocess.run([str(ADAPTER), "compose", "down", str(deployment)], env=world.env, text=True, check=False)
-    print("DOWN: nothing of the project is left" if down.returncode == 0 else "DOWN FAILED: see above")
-    return up.returncode or down.returncode
+        return 1
+    print("UP: aweb, secrets and logs are healthy; signer and agents are not in this run")
 
+    print("=== Setup: the team owner installs Secrets and Logs from their internal origins")
+    # The owner is an ordinary member; only the server operator's explicit
+    # grant gives it install authority.
+    owner = world.aw(controller, "id", "create", "--name", "owner", "--domain", DOMAIN, "--root-parent",
+                     "--registry", origin("registry"))
+    invite = world.aw(controller, "id", "team", "invite", "--team", TEAM, "--namespace", DOMAIN, "--member-global")
+    world.aw(controller, "id", "team", "accept-invite", invite["token"], "--name", "owner", "--global")
+    world.aw(controller, "init", "--url", origin("aweb"), "--name", "owner", "--do-not-touch-agents-md")
+    world.compose("exec", "-T", "aweb", "aweb", "install-admin", "grant", "--team-id", TEAM_ID,
+                  "--principal-did", owner["did_key"], "--role", "owner")
+    for app in ("secrets", "logs"):
+        installed = world.aw(controller, "plugin", "install", origin(f"{app}-api"))
+        if not installed.get("approved"):
+            print(f"BOUNDARY: {app} was not installed: {json.dumps(installed)}")
+            return 1
+        print(f"INSTALLED: {app} from {origin(app + '-api')}")
+    return 0
 
 if __name__ == "__main__":
     sys.exit(main())
