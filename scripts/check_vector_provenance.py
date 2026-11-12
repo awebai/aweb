@@ -293,6 +293,10 @@ ROOT_CONSUMERS = {
         "identity-log-v1.json",
         '_IDENTITY_VECTOR = _ROOT / "docs" / "vectors" / "identity-log-v1.json"',
     ),
+    PurePosixPath("awid/tests/test_did_key_from_signing_key.py"): _consumer(
+        "identity-log-v1.json",
+        'Path(__file__).resolve().parents[2] / "docs" / "vectors" / "identity-log-v1.json"',
+    ),
     PurePosixPath("awid/tests/test_federation_authority_vectors.py"): _consumer(
         {
             "federation-authority-state-v1.json",
@@ -510,6 +514,14 @@ ROOT_CONSUMERS = {
         "logs-chain-v1.json",
         'AWEB_ROOT / "docs" / "vectors" / "logs-chain-v1.json"',
     ),
+    PurePosixPath("cli/go/logschain/bundle_vectors_test.go"): _consumer(
+        "logs-export-v1.json",
+        '"../../../docs/vectors/logs-export-v1.json"',
+    ),
+    PurePosixPath("naapp/logs/tests/export_vector.py"): _consumer(
+        "logs-export-v1.json",
+        'AWEB_ROOT / "docs" / "vectors" / "logs-export-v1.json"',
+    ),
     PurePosixPath("naapp-lib/tests/hooks/test_owner_act_vector.py"): _consumer(
         "owner-act-v1.json",
         '(AWEB_ROOT / "docs" / "vectors" / "owner-act-v1.json")',
@@ -718,6 +730,22 @@ ROOT_CONSUMERS = {
         "canonical-json-v1.json",
         'new URL("../../docs/vectors/canonical-json-v1.json", import.meta.url)',
     ),
+    PurePosixPath("cli/go/awid/request_envelope_as_message_test.go"): _consumer(
+        {
+            "message-display-binding-v1.json",
+            "team-auth-envelope-v2.json",
+        },
+        'filepath.Join("..", "..", "..", "docs", "vectors", "team-auth-envelope-v2.json")',
+        'filepath.Join("..", "..", "..", "docs", "vectors", "message-display-binding-v1.json")',
+    ),
+    PurePosixPath("channel-core/test/request_envelope_as_message.test.ts"): _consumer(
+        {
+            "message-display-binding-v1.json",
+            "team-auth-envelope-v2.json",
+        },
+        'new URL("../../docs/vectors/team-auth-envelope-v2.json", import.meta.url)',
+        'new URL("../../docs/vectors/message-display-binding-v1.json", import.meta.url)',
+    ),
     PurePosixPath("scripts/check-extension-docs.py"): _consumer(
         {
             "federation-authority-state-v1.json",
@@ -756,6 +784,9 @@ PACKAGE_GUARDS = {
     ),
 }
 NON_CONSUMING_CODE_REFERENCES = {
+    PurePosixPath("scripts/generate_owner_act_delivery_vector.py"): (
+        "docs/vectors/owner-act-delivery-v1.json",
+    ),
     PurePosixPath("scripts/freeze_human_channels_presence.py"): (
         "docs/vectors/human-channels-presence-v1.json",
     ),
