@@ -87,6 +87,9 @@ async def test_repeated_throttle_is_finite_and_error_is_sanitized(clock):
     assert error.attempts == len(attempts) == 3
     assert len(clock.delays) == 2 and all(delay > 0 for delay in clock.delays)
     assert "SECRET" not in str(error) + str(error.detail) + str(error.body)
+    assert "reason=attempt_budget" in str(error)
+    assert "attempts=3" in str(error)
+    assert "retry_after_seconds=0.0" in str(error)
 
 
 @pytest.mark.asyncio
