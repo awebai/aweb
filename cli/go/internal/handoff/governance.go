@@ -149,30 +149,64 @@ func retryWithin(opts GovernanceOptions) time.Duration {
 	return 2 * time.Minute
 }
 
-// prepareRetrying sends the exact prepare bytes again after each explicit
-// throttle hint, within the retry budget. A repeat of the same id and bytes
-// is answered with the original operation; a changed body stays a conflict.
-func prepareRetrying(ctx context.Context, opts GovernanceOptions, operationID string, body map[string]any, raw []byte) (*Prepared, error) {
-	until := now().Add(retryWithin(opts))
+func pollInterval(opts GovernanceOptions) time.Duration {
+	if opts.PollInterval > 0 {
+		return opts.PollInterval
+	}
+	return 2 * time.Second
+}
+
+// withinBound runs attempt, and again after each explicit throttle hint, until
+// it gives no hint or the invocation's retry bound until would pass. Each
+// attempt runs under that bound; each wait is at least the poll interval and
+// must end inside it, and the bound is checked again before the next attempt.
+// exhausted reports the bound stopped it, with the last attempt's error.
+// until is aw's own bound on this invocation, never the operation's expiry.
+func withinBound(ctx context.Context, opts GovernanceOptions, until time.Time, attempt func(context.Context) error) (err error, exhausted bool) {
 	for {
-		prepared, err := prepare(ctx, opts, body, raw)
+		boundCtx, cancel := context.WithDeadline(ctx, until)
+		err = attempt(boundCtx)
+		cancel()
 		hint, ok := retryHint(err)
 		if !ok {
-			return prepared, err
+			return err, false
 		}
-		if hint >= until.Sub(now()) {
-			return nil, coded(ErrorCode(err), fmt.Errorf("operation %s could not be prepared now (%w); its request is saved, resume it later", operationID, err))
+		wait := max(pollInterval(opts), hint)
+		if wait >= until.Sub(now()) {
+			return err, true
 		}
-		if err := pause(ctx, hint); err != nil {
-			return nil, err
+		if waitErr := pause(ctx, wait); waitErr != nil {
+			return waitErr, false
+		}
+		if !now().Before(until) {
+			return err, true
 		}
 	}
 }
 
+// prepareRetrying sends the exact prepare bytes again after each explicit
+// throttle hint, within the invocation's retry bound. A repeat of the same id
+// and bytes is answered with the original operation; a changed body stays a
+// conflict.
+func prepareRetrying(ctx context.Context, opts GovernanceOptions, operationID string, body map[string]any, raw []byte, until time.Time) (*Prepared, error) {
+	var prepared *Prepared
+	err, exhausted := withinBound(ctx, opts, until, func(ctx context.Context) error {
+		var err error
+		prepared, err = prepare(ctx, opts, body, raw)
+		return err
+	})
+	if exhausted {
+		return nil, coded(ErrorCode(err), fmt.Errorf("operation %s could not be prepared now (%w); its request is saved, resume it later", operationID, err))
+	}
+	return prepared, err
+}
+
 func approve(ctx context.Context, opts GovernanceOptions, operationID string, body map[string]any, raw []byte, wake *Loopback) (*Receipt, error) {
-	prepared, err := prepareRetrying(ctx, opts, operationID, body, raw)
+	// One retry bound for preparing and for reconciling a lost answer.
+	until := now().Add(retryWithin(opts))
+	prepared, err := prepareRetrying(ctx, opts, operationID, body, raw, until)
 	if ErrorCode(err) == "prepare_answer_lost" {
-		return reconcileLostPrepare(ctx, opts, operationID, err)
+		return reconcileLostPrepare(ctx, opts, operationID, err, until)
 	}
 	if err != nil {
 		return nil, err
@@ -196,10 +230,7 @@ func approve(ctx context.Context, opts GovernanceOptions, operationID string, bo
 			}
 		}()
 	}
-	interval := opts.PollInterval
-	if interval <= 0 {
-		interval = 2 * time.Second
-	}
+	interval := pollInterval(opts)
 	for {
 		// No read outlasts the operation.
 		readCtx, cancelRead := context.WithDeadline(ctx, prepared.ExpiresAt)
@@ -218,7 +249,6 @@ func approve(ctx context.Context, opts GovernanceOptions, operationID string, bo
 				if err := pause(ctx, wait); err != nil {
 					return unresolvedReceipt(operationID, "receipt_unavailable"), err
 				}
-				continue
 			}
 		case err != nil:
 			return unresolvedReceipt(operationID, ErrorCode(err)), err
@@ -227,11 +257,20 @@ func approve(ctx context.Context, opts GovernanceOptions, operationID string, bo
 		case now().After(prepared.ExpiresAt):
 			return receipt, coded("operation_expired", fmt.Errorf("operation %s was still pending at its expiry", operationID))
 		}
-		select {
-		case <-woken:
-		case <-time.After(interval):
-		case <-ctx.Done():
-			return unresolvedReceipt(operationID, "receipt_unavailable"), ctx.Err()
+		if _, hintedWait := retryHint(err); !hintedWait {
+			select {
+			case <-woken:
+			case <-time.After(interval):
+			case <-ctx.Done():
+				return unresolvedReceipt(operationID, "receipt_unavailable"), ctx.Err()
+			}
+		}
+		// A wait that ran past the expiry sends no further read.
+		if !now().Before(prepared.ExpiresAt) {
+			if err != nil {
+				return unresolvedReceipt(operationID, "receipt_unavailable"), err
+			}
+			return receipt, coded("operation_expired", fmt.Errorf("operation %s was still pending at its expiry", operationID))
 		}
 	}
 }
@@ -239,19 +278,19 @@ func approve(ctx context.Context, opts GovernanceOptions, operationID string, bo
 // reconcileLostPrepare reads the receipt of an operation whose prepare answer
 // never arrived. A pending operation cannot be shown without its frozen
 // request, so aw reports it under its id, to be resumed from its saved body.
-func reconcileLostPrepare(ctx context.Context, opts GovernanceOptions, operationID string, lost error) (*Receipt, error) {
-	until := now().Add(retryWithin(opts))
-	receipt, err := ReadReceipt(ctx, opts, operationID)
-	for err != nil {
-		hint, ok := retryHint(err)
-		if !ok || hint >= until.Sub(now()) {
-			return unresolvedReceipt(operationID, "receipt_unavailable"),
-				coded("receipt_unavailable", fmt.Errorf("operation %s: %v, and its receipt could not be read: %w", operationID, lost, err))
-		}
-		if err := pause(ctx, hint); err != nil {
+func reconcileLostPrepare(ctx context.Context, opts GovernanceOptions, operationID string, lost error, until time.Time) (*Receipt, error) {
+	var receipt *Receipt
+	err, _ := withinBound(ctx, opts, until, func(ctx context.Context) error {
+		var err error
+		receipt, err = ReadReceipt(ctx, opts, operationID)
+		return err
+	})
+	if err != nil {
+		if ctx.Err() != nil {
 			return unresolvedReceipt(operationID, "receipt_unavailable"), err
 		}
-		receipt, err = ReadReceipt(ctx, opts, operationID)
+		return unresolvedReceipt(operationID, "receipt_unavailable"),
+			coded("receipt_unavailable", fmt.Errorf("operation %s: %v, and its receipt could not be read: %w", operationID, lost, err))
 	}
 	if receipt.State == "pending" {
 		return receipt, coded("prepare_unconfirmed", fmt.Errorf("operation %s is pending but its prepare answer was lost; resume it from its saved request", operationID))
