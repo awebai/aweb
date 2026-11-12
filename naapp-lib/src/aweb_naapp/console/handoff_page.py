@@ -63,6 +63,13 @@ def handoff_page_router(
     async def stylesheet() -> Response:
         return Response(_ASSETS.joinpath("handoff.css").read_text(), media_type="text/css")
 
+    @router.get("/handoff-assets/canonical-json.mjs")
+    async def canonical_json() -> Response:
+        return Response(
+            files("aweb_naapp").joinpath("assets/canonical-json.mjs").read_text(),
+            media_type="text/javascript",
+        )
+
     @router.get("/handoff/{handoff_id}")
     async def page(handoff_id: str, request: Request) -> HTMLResponse:
         # The HTML contains only stored routing facts: UUID, purpose and the
@@ -135,7 +142,7 @@ def handoff_page_router(
             f"<title>{title}</title>"
             f'<link rel="stylesheet" href="/css/aweb.{CSS_SHA256[:12]}.css">'
             '<link rel="stylesheet" href="/handoff-assets/handoff.css">'
-            '<script src="/handoff-assets/handoff.js" defer></script></head>'
+            '<script type="module" src="/handoff-assets/handoff.js"></script></head>'
             f'<body data-handoff-id="{identifier}" data-purpose="{purpose}"{data} data-handoff-state="loading">'
             '<main class="handoff"><p class="handoff-eyebrow">Terminal request</p>'
             f"<h1>{title}</h1><p>{explanation}</p>"

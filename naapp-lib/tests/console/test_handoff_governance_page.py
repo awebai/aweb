@@ -287,12 +287,22 @@ async def test_current_authority_refusal_never_executes_or_calls_back(
         )
 
 
-@pytest.mark.parametrize("fault", ["digest", "handoff", "payload"])
+@pytest.mark.parametrize(
+    "fault", ["digest", "handoff", "payload", "consistent_target", "valid_digest"]
+)
 async def test_malformed_real_authenticated_state_disables_approval(governance_service, fault):
     s = governance_service
     context, page, _, _ = await open_page(s, 375)
     async with context:
-        observed = []
+        observed, executes = [], []
+        page.on(
+            "request",
+            lambda r: (
+                executes.append(r.url)
+                if r.method == "POST" and r.url.endswith("/governance/execute")
+                else None
+            ),
+        )
 
         async def corrupt(route):
             response = await route.fetch()
@@ -302,6 +312,11 @@ async def test_malformed_real_authenticated_state_disables_approval(governance_s
                 state["digest"] = "not-a-digest"
             elif fault == "handoff":
                 state["handoff_id"] = s.prepared.operation_id
+            elif fault == "consistent_target":
+                state["payload"]["request"]["subject"]["role"] = "changed.owner"
+                state["payload"]["request"]["artifact"]["subject"]["role"] = "changed.owner"
+            elif fault == "valid_digest":
+                state["digest"] = ("0" if state["digest"][0] != "0" else "1") + state["digest"][1:]
             else:
                 state["payload"]["request"]["subject"] = None
             await route.fulfill(response=response, body=json.dumps(state))
@@ -313,12 +328,14 @@ async def test_malformed_real_authenticated_state_disables_approval(governance_s
         assert observed == [(200, s.prepared.digest)]
         await expect(page.locator("#handoff-action")).to_be_disabled()
         await expect(page.locator("#handoff-scope")).to_be_hidden()
+        assert executes == []
         assert not s.callback.done()
 
 
 @pytest.mark.parametrize("width", [375, 1440])
-async def test_even_a_committed_response_cannot_add_a_code_to_the_callback(
-    governance_service, width, tmp_path
+@pytest.mark.parametrize("response_fault", ["code", "drop"])
+async def test_committed_operation_with_damaged_or_lost_response_is_unconfirmed(
+    governance_service, width, response_fault, tmp_path
 ):
     s = governance_service
     context, page, _, _ = await open_page(s, width)
@@ -337,15 +354,19 @@ async def test_even_a_committed_response_cannot_add_a_code_to_the_callback(
             response = await route.fetch()
             result = await response.json()
             observed.append((response.status, result.get("state")))
-            result["redirect_uri"] += "&code=unexpected"
-            await route.fulfill(response=response, body=json.dumps(result))
+            if response_fault == "drop":
+                # Execute really committed; only its reply to the browser is lost.
+                await route.abort("failed")
+            else:
+                result["redirect_uri"] += "&code=unexpected"
+                await route.fulfill(response=response, body=json.dumps(result))
 
         await page.route("**/handoff/*/governance/execute", corrupt)
         await page.goto(s.origin + "/handoff/" + s.prepared.handoff_id)
         await page.locator("#handoff-action").click()
         await expect(page.locator("#handoff-digest")).to_have_text(s.prepared.digest)
         await page.locator("#handoff-action").click()
-        await page.wait_for_function("document.body.dataset.handoffState === 'refused'")
+        await page.wait_for_function("document.body.dataset.handoffState === 'unconfirmed'")
         assert observed == [(200, "committed")]
         await expect(page.locator("#handoff-action")).to_be_disabled()
         await expect(page.get_by_role("status")).to_contain_text("cannot confirm")
@@ -358,9 +379,12 @@ async def test_even_a_committed_response_cannot_add_a_code_to_the_callback(
         assert (
             await s.world.signer.receipt(s.prepared.operation_id, reader=s.world.reader)
         ).state == "committed"
+        assert (await s.world.audit.kinds()).count("protected_operation_signed") == 1
         assert executes == [s.origin + f"/handoff/{s.prepared.handoff_id}/governance/execute"]
         assert await page.evaluate("document.documentElement.scrollWidth <= innerWidth")
-        await page.screenshot(path=tmp_path / f"governance-uncertain-{width}.png", full_page=True)
+        await page.screenshot(
+            path=tmp_path / f"governance-uncertain-{response_fault}-{width}.png", full_page=True
+        )
 
 
 @pytest.mark.parametrize("governance_service", [False], indirect=True)

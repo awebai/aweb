@@ -1,5 +1,7 @@
 "use strict";
 
+import { coveredRequestDigest } from "/handoff-assets/canonical-json.mjs";
+
 (() => {
   const {handoffId, purpose} = document.body.dataset;
   const prefix = `/handoff/${handoffId}/${purpose}`;
@@ -12,6 +14,7 @@
   const csrfKey = document.body.dataset.consoleCsrfKey;
   let loggedIn = false;
   let operationId;
+  let submitted = false;
   let frozenRedirect;
   let csrf;
 
@@ -45,7 +48,7 @@
       document.getElementById("handoff-scope").hidden = true;
     }
     csrf = undefined;
-    document.body.dataset.handoffState = "refused";
+    document.body.dataset.handoffState = governance && submitted ? "unconfirmed" : "refused";
     status.textContent = governance
       ? "This page cannot confirm the operation’s outcome. Check the existing receipt in your terminal before retrying."
       : "This request could not be completed. Return to your terminal and start again.";
@@ -65,7 +68,7 @@
     return typeof value === "string" && value.length > 0;
   }
 
-  function governanceState(state) {
+  async function governanceState(state) {
     const {payload, digest} = state;
     const request = payload?.request;
     const subject = request?.subject;
@@ -85,6 +88,7 @@
         Object.keys(subject).some(key => artifact.subject[key] !== subject[key])) {
       throw new Error("handoff_refused");
     }
+    if (await coveredRequestDigest(payload) !== digest) throw new Error("handoff_refused");
     operationId = state.operation_id;
     frozenRedirect = request.redirect_uri;
     if (frozenRedirect !== undefined) {
@@ -153,7 +157,7 @@
       }
       const state = await request("");
       if (governance) {
-        governanceState(state);
+        await governanceState(state);
         return;
       }
       if (typeof state.csrf_token !== "string" || !state.csrf_token) throw new Error("handoff_refused");
@@ -217,6 +221,7 @@
           publicKey: PublicKeyCredential.parseRequestOptionsFromJSON(options),
         });
         if (!credential) throw new Error("handoff_refused");
+        submitted = true;
         governanceComplete(await request("/execute", {assertion: credential.toJSON()}));
         return;
       }
