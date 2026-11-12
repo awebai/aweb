@@ -183,3 +183,53 @@ def test_the_signer_must_name_the_agents_uid_as_a_worker():
         render_env.render(config)
     config["signer"]["workerUids"] = [20001]
     assert render_env.render(config)["AWEB_PROTECTED_WORKER_UIDS"] == "[20001]"
+
+
+def app(name: str) -> dict:
+    return {
+        "image": f"ghcr.io/awebai/aweb-{name}@sha256:" + "3" * 64,
+        "appId": f"{name}-devteam",
+        "publicOrigin": f"https://{name}.example.com",
+        "consoleOrigin": f"https://{name}-console.example.com",
+        "emailSmtpHost": "smtp.example.com",
+        "emailFrom": f"{name}@example.com",
+        "egressDeniedNetworks": ["169.254.0.0/16"],
+    }
+
+
+def test_secrets_and_logs_render_the_settings_each_app_reads():
+    config = {**EXAMPLE, "secrets": app("secrets"), "logs": {**app("logs"), "hookInternalOrigins": ["https://logs.example.com"]}}
+    rendered = render_env.render(config)
+    assert {name: value for name, value in rendered.items() if name.startswith("SECRETS_") and name != "SECRETS_DIR"} == {
+        "SECRETS_IMAGE": config["secrets"]["image"],
+        "SECRETS_SECRETS": "secrets",
+        "SECRETS_APP_ID": "secrets-devteam",
+        "SECRETS_PUBLIC_ORIGIN": "https://secrets.example.com",
+        "SECRETS_CONSOLE_ORIGIN": "https://secrets-console.example.com",
+        "SECRETS_DB_SCHEMA": "public",
+        "SECRETS_EMAIL_SMTP_HOST": "smtp.example.com",
+        "SECRETS_EMAIL_SMTP_PORT": "587",
+        "SECRETS_EMAIL_TLS": "starttls",
+        "SECRETS_EMAIL_FROM": "secrets@example.com",
+        "SECRETS_EGRESS_DENIED_NETWORKS": '["169.254.0.0/16"]',
+        "SECRETS_BIND_ADDRESS": "127.0.0.1",
+        "SECRETS_PORT": "8770",
+    }
+    assert rendered["LOGS_HOOK_INTERNAL_ORIGINS"] == '["https://logs.example.com"]'
+    assert (rendered["LOGS_PORT"], rendered["LOGS_CHECKPOINT_INTERVAL_SECONDS"]) == ("8765", "300")
+
+
+@pytest.mark.parametrize(
+    ("key", "value"),
+    [
+        ("consoleOrigin", "http://secrets-console.example.com"),
+        ("emailTls", "none"),
+        ("emailPassword", "s3cret"),
+        ("databaseUrl", "postgresql://secrets:s3cret@postgres:5432/secrets"),
+        ("custodyKey", "00" * 32),
+        ("hookInternalOrigins", ["https://logs.example.com/path"]),
+    ],
+)
+def test_an_app_section_refuses_plain_origins_plain_smtp_and_credentials(key, value):
+    with pytest.raises(render_env.Refused):
+        render_env.render({**EXAMPLE, "secrets": {**app("secrets"), key: value}})

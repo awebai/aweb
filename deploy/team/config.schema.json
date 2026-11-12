@@ -504,6 +504,257 @@
           }
         }
       }
+    },
+    "secrets": {
+      "description": "The Secrets app (descriptors/secrets.md).",
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "image",
+        "appId",
+        "publicOrigin",
+        "consoleOrigin",
+        "emailSmtpHost",
+        "emailFrom",
+        "egressDeniedNetworks"
+      ],
+      "properties": {
+        "image": {
+          "$ref": "#/$defs/image",
+          "x-env": "SECRETS_IMAGE"
+        },
+        "secrets": {
+          "$ref": "#/$defs/secrets",
+          "default": "secrets",
+          "x-env": "SECRETS_SECRETS"
+        },
+        "appId": {
+          "description": "The id this deployment installs the app under. Each deployment chooses its own.",
+          "type": "string",
+          "pattern": "^[a-z0-9][a-z0-9-]{0,62}$",
+          "x-env": "SECRETS_APP_ID"
+        },
+        "publicOrigin": {
+          "$ref": "#/$defs/origin",
+          "x-env": "SECRETS_PUBLIC_ORIGIN"
+        },
+        "consoleOrigin": {
+          "description": "The console's own host, distinct from the public origin's.",
+          "$ref": "#/$defs/origin",
+          "x-env": "SECRETS_CONSOLE_ORIGIN"
+        },
+        "dbSchema": {
+          "type": "string",
+          "pattern": "^[a-z][a-z0-9_]{0,62}$",
+          "default": "public",
+          "x-env": "SECRETS_DB_SCHEMA"
+        },
+        "emailSmtpHost": {
+          "type": "string",
+          "pattern": "^[A-Za-z0-9.-]+$",
+          "x-env": "SECRETS_EMAIL_SMTP_HOST"
+        },
+        "emailSmtpPort": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 65535,
+          "default": 587,
+          "x-env": "SECRETS_EMAIL_SMTP_PORT"
+        },
+        "emailTls": {
+          "enum": [
+            "starttls",
+            "implicit"
+          ],
+          "default": "starttls",
+          "x-env": "SECRETS_EMAIL_TLS"
+        },
+        "emailFrom": {
+          "type": "string",
+          "minLength": 1,
+          "x-env": "SECRETS_EMAIL_FROM"
+        },
+        "hookInternalOrigins": {
+          "description": "The exact origins of hook receivers on internal addresses. They must resolve inside network.servicesCidr.",
+          "type": "array",
+          "uniqueItems": true,
+          "items": {
+            "$ref": "#/$defs/origin"
+          },
+          "x-env": "SECRETS_HOOK_INTERNAL_ORIGINS"
+        },
+        "egressDeniedNetworks": {
+          "description": "Addresses and ranges the app never connects to, beyond its fixed floor.",
+          "type": "array",
+          "uniqueItems": true,
+          "items": {
+            "type": "string",
+            "pattern": "^[0-9A-Fa-f:.]+(/[0-9]{1,3})?$"
+          },
+          "x-env": "SECRETS_EGRESS_DENIED_NETWORKS"
+        },
+        "clientAddressHeader": {
+          "description": "A header the operator's proxy overwrites with the client address. Never one a caller controls.",
+          "type": "string",
+          "pattern": "^[A-Za-z0-9-]{1,64}$",
+          "x-env": "SECRETS_CLIENT_ADDRESS_HEADER"
+        },
+        "compose": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "bindAddress": {
+              "type": "string",
+              "default": "127.0.0.1",
+              "x-env": "SECRETS_BIND_ADDRESS"
+            },
+            "port": {
+              "type": "integer",
+              "minimum": 1,
+              "maximum": 65535,
+              "default": 8770,
+              "x-env": "SECRETS_PORT"
+            }
+          }
+        },
+        "kmsKeyId": {
+          "description": "A KMS key in place of the local custody key file.",
+          "type": "string",
+          "minLength": 1,
+          "x-env": "SECRETS_KMS_KEY_ID"
+        },
+        "kmsRegion": {
+          "type": "string",
+          "pattern": "^[a-z0-9-]+$",
+          "x-env": "SECRETS_KMS_REGION"
+        }
+      }
+    },
+    "logs": {
+      "description": "The Logs app (descriptors/logs.md).",
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "image",
+        "appId",
+        "publicOrigin",
+        "consoleOrigin",
+        "emailSmtpHost",
+        "emailFrom",
+        "egressDeniedNetworks"
+      ],
+      "properties": {
+        "image": {
+          "$ref": "#/$defs/image",
+          "x-env": "LOGS_IMAGE"
+        },
+        "secrets": {
+          "$ref": "#/$defs/secrets",
+          "default": "logs",
+          "x-env": "LOGS_SECRETS"
+        },
+        "appId": {
+          "description": "The id this deployment installs the app under. Each deployment chooses its own.",
+          "type": "string",
+          "pattern": "^[a-z0-9][a-z0-9-]{0,62}$",
+          "x-env": "LOGS_APP_ID"
+        },
+        "publicOrigin": {
+          "$ref": "#/$defs/origin",
+          "x-env": "LOGS_PUBLIC_ORIGIN"
+        },
+        "consoleOrigin": {
+          "description": "The console's own host, distinct from the public origin's.",
+          "$ref": "#/$defs/origin",
+          "x-env": "LOGS_CONSOLE_ORIGIN"
+        },
+        "dbSchema": {
+          "type": "string",
+          "pattern": "^[a-z][a-z0-9_]{0,62}$",
+          "default": "public",
+          "x-env": "LOGS_DB_SCHEMA"
+        },
+        "emailSmtpHost": {
+          "type": "string",
+          "pattern": "^[A-Za-z0-9.-]+$",
+          "x-env": "LOGS_EMAIL_SMTP_HOST"
+        },
+        "emailSmtpPort": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 65535,
+          "default": 587,
+          "x-env": "LOGS_EMAIL_SMTP_PORT"
+        },
+        "emailTls": {
+          "enum": [
+            "starttls",
+            "implicit"
+          ],
+          "default": "starttls",
+          "x-env": "LOGS_EMAIL_TLS"
+        },
+        "emailFrom": {
+          "type": "string",
+          "minLength": 1,
+          "x-env": "LOGS_EMAIL_FROM"
+        },
+        "hookInternalOrigins": {
+          "description": "The exact origins of hook receivers on internal addresses. They must resolve inside network.servicesCidr.",
+          "type": "array",
+          "uniqueItems": true,
+          "items": {
+            "$ref": "#/$defs/origin"
+          },
+          "x-env": "LOGS_HOOK_INTERNAL_ORIGINS"
+        },
+        "egressDeniedNetworks": {
+          "description": "Addresses and ranges the app never connects to, beyond its fixed floor.",
+          "type": "array",
+          "uniqueItems": true,
+          "items": {
+            "type": "string",
+            "pattern": "^[0-9A-Fa-f:.]+(/[0-9]{1,3})?$"
+          },
+          "x-env": "LOGS_EGRESS_DENIED_NETWORKS"
+        },
+        "clientAddressHeader": {
+          "description": "A header the operator's proxy overwrites with the client address. Never one a caller controls.",
+          "type": "string",
+          "pattern": "^[A-Za-z0-9-]{1,64}$",
+          "x-env": "LOGS_CLIENT_ADDRESS_HEADER"
+        },
+        "compose": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "bindAddress": {
+              "type": "string",
+              "default": "127.0.0.1",
+              "x-env": "LOGS_BIND_ADDRESS"
+            },
+            "port": {
+              "type": "integer",
+              "minimum": 1,
+              "maximum": 65535,
+              "default": 8765,
+              "x-env": "LOGS_PORT"
+            }
+          }
+        },
+        "checkpointIntervalSeconds": {
+          "type": "integer",
+          "minimum": 1,
+          "default": 300,
+          "x-env": "LOGS_CHECKPOINT_INTERVAL_SECONDS"
+        },
+        "retentionIntervalSeconds": {
+          "type": "integer",
+          "minimum": 1,
+          "default": 3600,
+          "x-env": "LOGS_RETENTION_INTERVAL_SECONDS"
+        }
+      }
     }
   }
 }
