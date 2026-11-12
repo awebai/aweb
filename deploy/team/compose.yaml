@@ -67,9 +67,12 @@ networks:
       config:
         - subnet: ${SERVICES_CIDR:?SERVICES_CIDR is required, network.servicesCidr}
   # The team container and the egress boundary. It has no route out of its
-  # own: an agent reaches a service only through egress.
+  # own: an agent reaches a service only through egress. Isolated: internal
+  # alone still leaves the host reachable at the bridge's gateway address.
   agents:
     internal: true
+    driver_opts:
+      com.docker.network.bridge.gateway_mode_ipv4: isolated
     ipam:
       config:
         - subnet: ${AGENTS_SUBNET:-172.30.0.0/24}

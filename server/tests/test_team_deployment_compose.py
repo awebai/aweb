@@ -59,6 +59,10 @@ def test_the_services_are_on_the_services_network_and_none_is_on_the_agents_netw
 def test_the_agents_network_has_no_route_out():
     networks = COMPOSE["networks"]
     assert networks["agents"]["internal"] is True
+    # internal alone still lets a container reach the host through the
+    # bridge's gateway address; isolated removes that address's route.
+    assert networks["agents"]["driver_opts"] == {"com.docker.network.bridge.gateway_mode_ipv4": "isolated"}
+    assert networks["agents"].get("enable_ipv6") is not True
     assert networks["agents"]["ipam"]["config"] == [{"subnet": "${AGENTS_SUBNET:-172.30.0.0/24}"}]
     assert "internal" not in networks["services"]
     assert networks["services"]["ipam"]["config"] == [
