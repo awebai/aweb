@@ -88,13 +88,10 @@ class NativeGuard(unittest.TestCase):
 
     def test_governance_alias_neighbours_remain_denied_and_never_reach_fixture(self):
         with local_fixture() as (port, seen):
-            for host in ('other.example.com', 'signer.example.com.attacker.invalid'):
+            for host in ('other.example.com', 'signer.example.com.attacker.com'):
                 with self.subTest(host=host):
                     result = self.run_request(f'http://{host}:{port}/fixture')
-                    # A reserved name is still refused, but is a benign guard
-                    # report; a public name must fail the wrapper as before.
-                    self.assertEqual(result.returncode, 0 if host.endswith('.invalid') else 1,
-                                     result.stdout + result.stderr)
+                    self.assertEqual(result.returncode, 1, result.stdout + result.stderr)
                     self.assertIn(f'GET {host}:{port}', result.stdout)
             self.assertEqual(seen, [])
 
