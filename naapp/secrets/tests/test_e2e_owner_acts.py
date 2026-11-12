@@ -251,13 +251,21 @@ def write_service_member(lane: Lane, controller: str) -> None:
     did = did_from_public_key(bytes(service_key.verify_key))
     added = aw(controller, "id", "team", "add-member", "--team", TEAM, "--namespace", DOMAIN,
                "--did", did, "--name", "secrets-service", "--global")
-    certificate = aw(controller, "id", "team", "cert", "show", "--cert-id", added["certificate_id"])
-    (keys / "member.pem").write_text(
+    pem = (
         "-----BEGIN ED25519 PRIVATE KEY-----\n"
         + __import__("base64").b64encode(bytes(service_key)).decode()
         + "\n-----END ED25519 PRIVATE KEY-----\n"
     )
-    (keys / "member-cert.json").write_text(json.dumps(certificate))
+    (keys / "member.pem").write_text(pem)
+    # The member fetches its own certificate with its key alone, as any
+    # member does (aw id team fetch-cert), in an identity home of its own.
+    home = keys / "service-home"
+    home.mkdir(mode=0o700)
+    (home / "signing.key").write_text(pem)
+    (home / "signing.key").chmod(0o600)
+    fetched = aw(controller, "--identity-home", "/runtime/keys/service-home", "id", "team", "fetch-cert",
+                 "--namespace", DOMAIN, "--team", TEAM, "--cert-id", added["certificate_id"], "--registry", REGISTRY)
+    shutil.copyfile(home / fetched["cert_path"], keys / "member-cert.json")
     for name in ("custody", "request", "params", "response", "runner", "smtp", "manifest", "event", "delivery", "grant", "resolve"):
         (keys / name).write_bytes(secrets.token_bytes(32))
     for path in keys.iterdir():
