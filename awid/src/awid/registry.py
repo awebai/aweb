@@ -1613,6 +1613,7 @@ class CachedRegistryClient(RegistryClient):
     _domain_verifier: DomainVerifier | None
     _id_status_refreshes: dict[str, asyncio.Task[_IDStatusRefresh]]
     _team_key_signature_refreshes: dict[str, asyncio.Task[str | None]]
+    _team_certificate_miss_refreshes: dict[str, asyncio.Task[list[TeamCertificate]]]
 
     def __init__(
         self,
@@ -1641,6 +1642,7 @@ class CachedRegistryClient(RegistryClient):
         object.__setattr__(self, "_refresh_tasks", {})
         object.__setattr__(self, "_id_status_refreshes", {})
         object.__setattr__(self, "_team_key_signature_refreshes", {})
+        object.__setattr__(self, "_team_certificate_miss_refreshes", {})
 
     async def id_chain_evidence(
         self, bundle: dict[str, Any] | None, subject: dict[str, Any], *, domain: str,
@@ -2092,6 +2094,56 @@ class CachedRegistryClient(RegistryClient):
             retention_seconds=retention_seconds,
         )
         return set(fresh_value)
+
+    async def refresh_team_certificates_after_miss(
+        self, domain: str, name: str,
+    ) -> list[TeamCertificate]:
+        """Recheck a verified certificate's omission, once per team per five seconds.
+
+        Call only after the presented certificate's signature and revocation
+        checks. Suppression is unavailable authority, never proof of absence.
+        Both a waiter and the shared producer retain the client's total bound;
+        cancelling a waiter does not cancel another waiter's bounded producer.
+        """
+        cache_key = self._team_certificates_cache_key(domain, name, active_only=False)
+        async with asyncio.timeout(self.timeout_seconds):
+            task = self._team_certificate_miss_refreshes.get(cache_key)
+            if task is None:
+                task = asyncio.create_task(self._refresh_missing_team_certificate(
+                    domain, name, cache_key=cache_key,
+                ))
+                self._team_certificate_miss_refreshes[cache_key] = task
+
+                def finished(done: asyncio.Task[list[TeamCertificate]]) -> None:
+                    self._team_certificate_miss_refreshes.pop(cache_key, None)
+                    if not done.cancelled():
+                        done.exception()  # Observe failures after every waiter was cancelled.
+
+                task.add_done_callback(finished)
+            try:
+                return await asyncio.shield(task)
+            except (RedisError, OSError) as exc:
+                raise RegistryError("AWID certificate existence refresh unavailable", status_code=503) from exc
+
+    async def _refresh_missing_team_certificate(
+        self, domain: str, name: str, *, cache_key: str,
+    ) -> list[TeamCertificate]:
+        async with asyncio.timeout(self.timeout_seconds):
+            # Forged certificates spend only the separate signature bucket.
+            admitted = await self.redis_client.set(
+                f"awid:team_certificates_miss_refresh:{self.registry_url}:{domain}/{name}",
+                "1", nx=True, ex=_TEAM_KEY_SIGNATURE_REFRESH_COOLDOWN_SECONDS,
+            )
+            if not admitted:
+                raise RegistryError("AWID certificate existence refresh suppressed", status_code=503)
+            certificates = await self.list_team_certificates_fresh(domain, name, active_only=False)
+            await self._write_cache_entry(
+                cache_key, value=certificates,
+                ttl_seconds=_TEAM_CERTIFICATES_CACHE_TTL_SECONDS,
+                encode=lambda value: [_team_certificate_to_json(item) for item in value],
+                require_write=True,
+            )
+            return certificates
 
     async def list_team_certificates(
         self,
@@ -2545,6 +2597,7 @@ class CachedRegistryClient(RegistryClient):
         encode: Callable[[Any], Any],
         retention_seconds: int | None = None,
         extra_from_value: Callable[[Any], dict[str, Any]] | None = None,
+        require_write: bool = False,
     ) -> None:
         now = _cache_now()
         entry: dict[str, Any] = {}
@@ -2562,7 +2615,11 @@ class CachedRegistryClient(RegistryClient):
         payload = json.dumps(entry, separators=(",", ":"), sort_keys=True)
         if retention_seconds is None:
             retention_seconds = ttl_seconds * _STALE_MULTIPLIER
-        await self._redis_set(cache_key, payload, ex=retention_seconds)
+        if require_write:
+            if not await self.redis_client.set(cache_key, payload, ex=retention_seconds):
+                raise RegistryError("AWID certificate existence cache write failed", status_code=503)
+        else:
+            await self._redis_set(cache_key, payload, ex=retention_seconds)
 
     def _schedule_refresh(
         self,

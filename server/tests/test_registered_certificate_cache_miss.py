@@ -202,3 +202,55 @@ async def test_key_rotation_and_list_miss_cannot_bypass_current_revocation(world
     world.revoked.append("cert-new")
     error = await _refused(world, "cert-new", signer=(new, new_did))
     assert (error.status_code, error.detail) == (401, "revoked")
+
+
+@pytest.mark.asyncio
+async def test_caller_cancellation_does_not_extend_deadline_or_cancel_other_waiter(world):
+    world.registered.append("cert-new")
+    world.release = asyncio.Event()
+    first = asyncio.create_task(_verify(world, "cert-new"))
+    await asyncio.wait_for(world.entered.wait(), 1)
+    second = asyncio.create_task(_verify(world, "cert-new"))
+    await asyncio.sleep(0)
+    first.cancel()
+    with pytest.raises(asyncio.CancelledError):
+        await asyncio.wait_for(first, 0.1)
+    world.release.set()
+    assert (await asyncio.wait_for(second, 1))["certificate_id"] == "cert-new"
+    assert world.list_reads == 1
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("stall", [False, True])
+async def test_cache_write_failure_or_stall_is_transient(world, monkeypatch, stall):
+    world.registered.append("cert-new")
+    original = world.redis.set
+
+    async def write(key, value, ex=None, nx=False):
+        if not nx:
+            if stall:
+                await asyncio.Event().wait()
+            raise OSError("Cache write failed")
+        return await original(key, value, ex=ex, nx=nx)
+
+    monkeypatch.setattr(world.redis, "set", write)
+    client = world.client(timeout_seconds=0.05)
+    error = await asyncio.wait_for(_refused(world, "cert-new", registry=client), 0.5)
+    assert error.status_code == 503
+    assert world.list_reads == 1
+
+
+@pytest.mark.asyncio
+async def test_refresh_writes_only_its_reader_authority_partition(world):
+    service = world.client(service_token="test-service-capability-at-least-32-bytes")
+    await service.list_team_certificates("acme.com", "backend", active_only=False)
+    world.list_reads = 0
+    world.registered.append("cert-new")
+    assert (await _verify(world, "cert-new", registry=service))["certificate_id"] == "cert-new"
+    assert world.list_reads == 1
+    assert "cert-new" not in {cert.certificate_id for cert in await world.registry.list_team_certificates(
+        "acme.com", "backend", active_only=False,
+    )}
+    # The independent reader cannot reuse private facts or bypass the shared budget.
+    assert (await _refused(world, "cert-new")).status_code == 503
+    assert world.list_reads == 1
