@@ -206,8 +206,6 @@ class ControllerCustody(Protocol):
     Network custody needs a separately specified idempotent protocol.
     """
 
-    def sign_operation(self, operation: CatalogOperation, fields: Mapping[str, Any]) -> bytes: ...
-
     def sign_owner_act(
         self, operation: RevokeHumanRole | OwnerActOperation, fields: Mapping[str, Any]
     ) -> bytes: ...

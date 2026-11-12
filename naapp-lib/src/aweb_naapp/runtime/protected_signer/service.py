@@ -241,6 +241,12 @@ class ProtectedSigner:
         self, operation: RevokeHumanRole | OwnerActOperation, *, requester: RestrictedRequester
     ) -> PreparedOperation:
         typed = owner_act_operation(operation)
+        # Existing owner-act-only embeddings retain their released port. A
+        # missing adapter for a new family refuses before creating B2 state.
+        if typed.spec.family != "owner_act" and not callable(
+            getattr(self.custody, "sign_operation", None)
+        ):
+            raise SignerRefused("operation_refused")
         if type(requester) is not RestrictedRequester:
             raise SignerRefused("operation_refused")
         if requester.context != operation.context or not requester.principal:
@@ -461,7 +467,7 @@ class ProtectedSigner:
                     operation.intent()["operation"], operation.intent()["variant"]
                 ).family
                 == "owner_act"
-                else self.custody.sign_operation(operation, request["artifact"])
+                else self._sign_artifact(operation, request["artifact"])
             )
             signing = signing_bytes(owner_act_operation(operation), request["artifact"])
             if not isinstance(signature, bytes) or len(signature) != 64:
@@ -507,6 +513,12 @@ class ProtectedSigner:
             if self.clock() >= deadline:
                 raise SignerRefused("gesture_expired")
         return OperationReceipt(operation_id, "committed", result=result)
+
+    def _sign_artifact(self, operation, artifact):
+        adapter = getattr(self.custody, "sign_operation", None)
+        if not callable(adapter):
+            raise SignerRefused("operation_refused")
+        return adapter(operation, artifact)
 
     async def _claim_verification(self, operation_id, human, *, human_session=None):
         # A durable phase claim serializes the decision, not its authority. B3
