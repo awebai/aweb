@@ -42,6 +42,8 @@ OATS_TEST_ROOT ?= $(OATS_PINNED_ROOT)
 AWID_SITE_DOC_NAMES := identity-guide.md trust-model.md hosted-global-bootstrap.md
 AWID_SITE_DOC_SOURCE_DIR ?= docs
 AWID_SITE_DOC_MIRROR_DIR ?= awid/site/static
+CODEX_SKILL_COPY_DIR ?= packages/codex-plugin/skills
+OATS_TASK_SKILL_COPY_DIR ?= oats/.agents/capabilities/owned/aweb-tasks/skills
 AWID_SITE_DOC_MIRRORS := $(addprefix $(AWID_SITE_DOC_MIRROR_DIR)/,$(AWID_SITE_DOC_NAMES))
 SITE_DEPLOY_BRANCH ?= deploy-awid-landing
 
@@ -275,10 +277,21 @@ check-node-audit:
 
 # Runtime copies ship in Git for source-based plugin/capability installs. Edit
 # skills/ and docs/, then sync; normal builds regenerate these copies too.
+.PHONY: check-generated-copies test-generated-copies
+# All sync-* generators belong under sync-doc-copies. Check the regenerated
+# tracked and untracked outputs before link checks/builds can repair stale copies.
+check-generated-copies: sync-doc-copies
+	@set -e; status=$$(git status --porcelain=v1 -uall -- "$(CODEX_SKILL_COPY_DIR)" "$(OATS_TASK_SKILL_COPY_DIR)" "$(AWID_SITE_DOC_MIRROR_DIR)"); \
+	if [ -n "$$status" ]; then printf '%s\n' "Generated copies differ from committed files:" "$$status"; exit 1; fi
+
+test-generated-copies:
+	python3 scripts/test_generated_copies.py
+
 sync-doc-copies: sync-skill-copies sync-awid-site-docs
 
 sync-skill-copies:
-	bash scripts/sync-skill-copies.sh
+	CODEX_SKILL_COPY_DIR="$(abspath $(CODEX_SKILL_COPY_DIR))" \
+	OATS_TASK_SKILL_COPY_DIR="$(abspath $(OATS_TASK_SKILL_COPY_DIR))" bash scripts/sync-skill-copies.sh
 
 list-awid-site-docs:
 	@for name in $(AWID_SITE_DOC_NAMES); do printf '%s\n' "$$name"; done
