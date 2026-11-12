@@ -101,8 +101,8 @@ def lane(tmp_path_factory: pytest.TempPathFactory) -> Iterator[ProtectedLane]:
     )
     publish_awid_txt(lane, "did:key:z6MkpendingpendingpendingpendingpendingpendingpendingP")
     hosts = ["api.secrets.svc.test", "console.secrets.svc.test", "signer.svc.test", "human.svc.test", "mail.svc.test"]
+    (runtime / "tls").mkdir()
     tls = make_certificates(runtime / "tls", hosts, [])
-    shutil.copyfile(tls.ca_file, runtime / "tls" / "ca.pem")
     shutil.copyfile(tls.cert_file, runtime / "tls" / "smtp.pem")
     shutil.copyfile(tls.key_file, runtime / "tls" / "smtp-key.pem")
     for path in (runtime / "tls").iterdir():

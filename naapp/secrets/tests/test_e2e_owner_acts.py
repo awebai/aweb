@@ -186,8 +186,8 @@ def lane(tmp_path_factory: pytest.TempPathFactory) -> Iterator[Lane]:
         ".:53 {\n  errors\n  forward . 127.0.0.11\n}\n"
     )
     publish_awid_txt(lane, "did:key:z6MkpendingpendingpendingpendingpendingpendingpendingP")
+    (runtime / "tls").mkdir()
     tls = make_certificates(runtime / "tls", ["api.secrets.svc.test", "console.secrets.svc.test"], [])
-    shutil.copyfile(tls.ca_file, runtime / "tls" / "ca.pem")
     (runtime / "front").mkdir()
     (runtime / "front" / "Caddyfile").write_text(
         "{\n  auto_https off\n}\n"
