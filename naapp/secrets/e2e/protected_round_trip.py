@@ -226,6 +226,7 @@ class Founded:
 
     controller_did: str
     approver: str
+    approver_did_key: str
     requester: str
     requester_did_key: str
 
@@ -243,13 +244,14 @@ def found_team(site: Site, holder: Holder) -> Founded:
     output = holder.answer_passphrases(child)
     child.close()
     assert child.exitstatus == 0, output
-    approver = first_json(output)["id"]
+    human = first_json(output)
+    approver = human["id"]
     aw(machine, "id", "team", "create", "--name", site.team, "--namespace", site.domain, "--registry", site.registry)
     created = aw(machine, "id", "create", "--name", "owner", "--domain", site.domain, "--root-parent",
                  "--registry", site.registry)
     invite = aw(machine, "id", "team", "invite", "--team", site.team, "--namespace", site.domain, "--member-global")
     aw(machine, "id", "team", "accept-invite", invite["token"], "--name", "owner", "--global")
-    return Founded(prepared["controller_did"], approver, created["did_aw"], created["did_key"])
+    return Founded(prepared["controller_did"], approver, human["did_key"], created["did_aw"], created["did_key"])
 
 
 def connect_requester(site: Site, holder: Holder) -> None:

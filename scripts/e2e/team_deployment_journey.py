@@ -386,25 +386,47 @@ class World:
 
     def designate_holding(self, site: Site, holder: Holder, founded: Founded) -> dict:
         """The approver's holding of the app role the round trip revokes, made
-        the supported way while the owner still holds the team's key: aw app
-        role designate as the holder, who registers a passkey on the app's own
-        human origin in the browser before aw signs. Checked in the app's own
-        tables."""
-        machine = holder.container
-        child = pexpect.spawn("docker", ["exec", "-it", machine, "aw", "--json", "app", "role", "designate",
-                                         site.app_id, "--role", site.role, "--principal", founded.approver, "--yes"],
-                              encoding="utf-8", timeout=180, echo=False)
-        child.expect(r"Open this page to continue: (\S+)")
-        report = site.chromium(machine, "credential", "--url", child.match.group(1),
-                               "--device", f"{site.mounted}/holder-app-device.json")
+        the supported way while the owner still holds the team's key: the
+        owner adds the human to the team; the human, with its own key, fetches
+        its certificate, installs the app and registers a passkey on the app's
+        own human origin in the browser; the owner designates that exact
+        credential. Checked in the app's own tables."""
+        machine, human = holder.container, founded.approver
+        added = self.aw(machine, "id", "team", "add-member", "--team", TEAM, "--namespace", DOMAIN,
+                        "--did", founded.approver_did_key, "--did-aw", human, "--name", "approver", "--global")
+
+        def as_human(*args: str, until: str | None = None) -> tuple[pexpect.spawn, str]:
+            child = holder.act(human, *args)
+            return child, holder.answer_passphrases(child, until=until)
+
+        for args in (("--json", "id", "team", "fetch-cert", "--namespace", DOMAIN, "--team", TEAM, "--cert-id",
+                      added["certificate_id"], "--registry", origin("registry")),
+                     ("plugin", "install", origin("secrets-api"))):
+            child, output = as_human(*args)
+            child.close()
+            assert child.exitstatus == 0, output
+        export = f"{site.mounted}/holder/app-export.json"
+        child, output = as_human("app", "credential", "register", site.app_id, "--role", site.role, "--out", export,
+                                 until=r"Open this page to continue: (\S+)")
+        page = re.search(r"Open this page to continue: (\S+)", output).group(1)
+        report = site.chromium(machine, "credential", "--url", page, "--device",
+                               f"{site.mounted}/holder-app-device.json")
         assert report["states"] == ["ready", "navigated"] and report["credentials"] == 1, report
-        status, output = finish(child)
-        assert status == 0, output
+        child.expect(pexpect.EOF)
+        rest = child.before
+        child.close()
+        assert child.exitstatus == 0, rest
+        fingerprint = re.search(r"Fingerprint: ([0-9a-f]{4}(?: [0-9a-f]{4}){3})", output + rest).group(1)
+        # The owner signs only for that exact credential: aw shows its fingerprint.
+        designated = docker("exec", machine, "aw", "app", "role", "designate", site.app_id, "--role", site.role,
+                            "--principal", human, "--credential", export, "--yes", timeout=300)
+        assert designated.returncode == 0, designated.stdout + designated.stderr
+        assert fingerprint in designated.stderr, designated.stderr
         held = self.compose("exec", "-T", "postgres", "psql", "-U", "postgres", "-d", "secrets", "-At", "-c",
                             "select count(*) from public.role_assignments where role = '" + site.role
-                            + "' and principal_did = '" + founded.approver + "'").strip()
+                            + "' and principal_did = '" + human + "'").strip()
         assert held == "1", held
-        return {"role": site.role, "principal": founded.approver, "designated": first_json(output)}
+        return {"role": site.role, "principal": human, "fingerprint": fingerprint}
 
     # --- the registry's real limiter, for the throttle legs -----------------
 
