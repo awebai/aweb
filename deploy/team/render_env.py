@@ -75,6 +75,12 @@ def render(config: object) -> dict[str, str]:
     _check(config)
     if "compose" not in config:
         raise Refused("compose: missing; the Compose layer needs compose.secretsDir")
+    if "agents" in config and "compose" not in config["agents"]:
+        raise Refused("agents: missing compose; the Compose layer needs agents.compose")
+    if "agents" in config and "signer" in config:
+        # The signer refuses custody that a worker's uid could read; it has to know the agents' uid.
+        if config["agents"].get("uid", 20001) not in config["signer"]["workerUids"]:
+            raise Refused("signer.workerUids: does not name agents.uid")
     out: dict[str, str] = {}
     # A component the file leaves out is not deployed: none of its defaults is rendered.
     for section, schema in SCHEMA["properties"].items():

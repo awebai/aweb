@@ -27,6 +27,24 @@
       "description": "An absolute path of a configuration file that is not secret.",
       "type": "string",
       "pattern": "^/"
+    },
+    "ipv4": {
+      "type": "string",
+      "pattern": "^((25[0-5]|2[0-4][0-9]|1?[0-9]?[0-9])\\.){3}(25[0-5]|2[0-4][0-9]|1?[0-9]?[0-9])$"
+    },
+    "cidr": {
+      "type": "string",
+      "pattern": "^((25[0-5]|2[0-4][0-9]|1?[0-9]?[0-9])\\.){3}(25[0-5]|2[0-4][0-9]|1?[0-9]?[0-9])/([0-9]|[12][0-9]|3[0-2])$"
+    },
+    "bytes": {
+      "description": "A size in bytes, as an integer: Docker and Kubernetes spell quantities differently.",
+      "type": "integer",
+      "minimum": 1
+    },
+    "id": {
+      "type": "integer",
+      "minimum": 1,
+      "maximum": 2147483647
     }
   },
   "properties": {
@@ -273,6 +291,215 @@
             "configMap": {
               "description": "An existing ConfigMap that supplies the profile, the scope and the optional CA file.",
               "$ref": "#/$defs/secrets"
+            }
+          }
+        }
+      }
+    },
+    "network": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "servicesCidr": {
+          "description": "The address range of the services. Compose creates the services network with it; in Kubernetes it states the cluster's pod range. Hook and app-manifest fetches to internal addresses are allowed only inside it.",
+          "$ref": "#/$defs/cidr",
+          "x-env": "SERVICES_CIDR"
+        }
+      }
+    },
+    "agents": {
+      "description": "The OATS team container (descriptors/agents.md).",
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "image",
+        "resolverIp",
+        "network"
+      ],
+      "properties": {
+        "image": {
+          "$ref": "#/$defs/image",
+          "x-env": "AGENT_IMAGE"
+        },
+        "uid": {
+          "$ref": "#/$defs/id",
+          "default": 20001,
+          "x-env": "AGENT_UID"
+        },
+        "gid": {
+          "$ref": "#/$defs/id",
+          "default": 20001,
+          "x-env": "AGENT_GID"
+        },
+        "secrets": {
+          "description": "The harness login alone, mounted at /etc/agent-login/. Never a service, provider, tool or database credential.",
+          "$ref": "#/$defs/secrets",
+          "default": "agents",
+          "x-env": "AGENTS_SECRETS"
+        },
+        "cpus": {
+          "type": "number",
+          "exclusiveMinimum": 0,
+          "maximum": 2,
+          "default": 2,
+          "x-env": "AGENT_CPUS"
+        },
+        "memory": {
+          "$ref": "#/$defs/bytes",
+          "maximum": 4294967296,
+          "default": 4294967296,
+          "x-env": "AGENT_MEMORY"
+        },
+        "tmpSize": {
+          "$ref": "#/$defs/bytes",
+          "default": 134217728,
+          "x-env": "AGENT_TMP_SIZE"
+        },
+        "resolverIp": {
+          "description": "The egress resolver, the only nameserver the agents have.",
+          "$ref": "#/$defs/ipv4",
+          "x-env": "AGENT_RESOLVER_IP"
+        },
+        "network": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "address"
+          ],
+          "properties": {
+            "subnet": {
+              "$ref": "#/$defs/cidr",
+              "default": "172.30.0.0/24",
+              "x-env": "AGENTS_SUBNET"
+            },
+            "address": {
+              "$ref": "#/$defs/ipv4",
+              "x-env": "AGENT_IP"
+            }
+          }
+        },
+        "compose": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "stateDir",
+            "authorizedKeysFile",
+            "pidsLimit",
+            "name"
+          ],
+          "properties": {
+            "stateDir": {
+              "$ref": "#/$defs/file",
+              "x-env": "TEAM_STATE_DIR"
+            },
+            "authorizedKeysFile": {
+              "$ref": "#/$defs/file",
+              "x-env": "AUTHORIZED_KEYS_FILE"
+            },
+            "workDir": {
+              "$ref": "#/$defs/file",
+              "x-env": "TEAM_WORK_DIR"
+            },
+            "pidsLimit": {
+              "type": "integer",
+              "minimum": 1,
+              "x-env": "AGENT_PIDS"
+            },
+            "name": {
+              "description": "The container name's suffix. Not the team id, whose colon Docker refuses.",
+              "type": "string",
+              "pattern": "^[a-z0-9][a-z0-9_.-]{0,62}$",
+              "x-env": "TEAM"
+            }
+          }
+        },
+        "kubernetes": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "fsGroup": {
+              "$ref": "#/$defs/id",
+              "default": 20001
+            },
+            "stateSize": {
+              "$ref": "#/$defs/bytes",
+              "default": 10737418240
+            },
+            "storageClass": {
+              "type": "string",
+              "default": ""
+            },
+            "requests": {
+              "type": "object",
+              "additionalProperties": false,
+              "properties": {
+                "cpu": {
+                  "type": "number",
+                  "exclusiveMinimum": 0,
+                  "default": 0.5
+                },
+                "memory": {
+                  "$ref": "#/$defs/bytes",
+                  "default": 2147483648
+                }
+              }
+            },
+            "ephemeralStorage": {
+              "type": "object",
+              "additionalProperties": false,
+              "properties": {
+                "request": {
+                  "$ref": "#/$defs/bytes",
+                  "default": 268435456
+                },
+                "limit": {
+                  "$ref": "#/$defs/bytes",
+                  "default": 1073741824
+                }
+              }
+            },
+            "authorizedKeys": {
+              "type": "object",
+              "additionalProperties": false,
+              "required": [
+                "name"
+              ],
+              "properties": {
+                "kind": {
+                  "enum": [
+                    "ConfigMap",
+                    "Secret"
+                  ],
+                  "default": "ConfigMap"
+                },
+                "name": {
+                  "$ref": "#/$defs/secrets"
+                }
+              }
+            },
+            "imagePullSecrets": {
+              "type": "array",
+              "items": {
+                "$ref": "#/$defs/secrets"
+              }
+            },
+            "imagePullPolicy": {
+              "enum": [
+                "IfNotPresent",
+                "Always",
+                "Never"
+              ],
+              "default": "IfNotPresent"
+            },
+            "service": {
+              "type": "object",
+              "additionalProperties": false,
+              "properties": {
+                "enabled": {
+                  "type": "boolean",
+                  "default": false
+                }
+              }
             }
           }
         }

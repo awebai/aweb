@@ -114,3 +114,72 @@ def test_the_signer_section_keeps_a_list_as_json_and_fills_its_defaults():
 def test_the_signer_section_refuses_its_own_uid_as_a_worker_plain_smtp_and_credentials(key, value):
     with pytest.raises(render_env.Refused):
         render_env.render({**EXAMPLE, "signer": {**SIGNER, key: value}})
+
+
+AGENTS = {
+    "image": "ghcr.io/oats-project/team-agent@sha256:" + "2" * 64,
+    "resolverIp": "172.30.0.2",
+    "network": {"address": "172.30.0.10"},
+    "compose": {
+        "stateDir": "/srv/team/state",
+        "authorizedKeysFile": "/srv/team/authorized_keys",
+        "pidsLimit": 512,
+        "name": "devteam",
+    },
+}
+
+
+def test_the_agents_section_renders_limits_in_bytes_and_the_address_plan():
+    rendered = render_env.render({**EXAMPLE, "network": {"servicesCidr": "172.31.0.0/24"}, "agents": AGENTS})
+    agents = {name: value for name, value in rendered.items() if name.startswith(("AGENT", "TEAM_", "AUTHORIZED")) or name in ("TEAM", "SERVICES_CIDR")}
+    assert agents == {
+        "AGENT_IMAGE": AGENTS["image"],
+        "AGENT_UID": "20001",
+        "AGENT_GID": "20001",
+        "AGENTS_SECRETS": "agents",
+        "AGENT_CPUS": "2",
+        "AGENT_MEMORY": "4294967296",
+        "AGENT_TMP_SIZE": "134217728",
+        "AGENT_RESOLVER_IP": "172.30.0.2",
+        "AGENTS_SUBNET": "172.30.0.0/24",
+        "AGENT_IP": "172.30.0.10",
+        "TEAM_STATE_DIR": "/srv/team/state",
+        "AUTHORIZED_KEYS_FILE": "/srv/team/authorized_keys",
+        "AGENT_PIDS": "512",
+        "TEAM": "devteam",
+        "TEAM_ID": "devteam:example.com",
+        "SERVICES_CIDR": "172.31.0.0/24",
+    }
+
+
+@pytest.mark.parametrize(
+    ("path", "value"),
+    [
+        (("memory",), "4Gi"),
+        (("memory",), 4294967297),
+        (("cpus",), 3),
+        (("image",), "ghcr.io/oats-project/team-agent:latest"),
+        (("compose", "name"), "devteam:example.com"),
+        (("loginToken",), "sk-not-here"),
+        (("compose",), None),
+    ],
+)
+def test_the_agents_section_refuses_quantity_spellings_a_raw_team_id_as_a_name_and_credentials(path, value):
+    agents = copy.deepcopy(AGENTS)
+    target = agents
+    for key in path[:-1]:
+        target = target[key]
+    if value is None:
+        del target[path[-1]]
+    else:
+        target[path[-1]] = value
+    with pytest.raises(render_env.Refused):
+        render_env.render({**EXAMPLE, "agents": agents})
+
+
+def test_the_signer_must_name_the_agents_uid_as_a_worker():
+    config = {**EXAMPLE, "signer": {**SIGNER, "workerUids": [30000]}, "agents": AGENTS}
+    with pytest.raises(render_env.Refused, match="signer.workerUids"):
+        render_env.render(config)
+    config["signer"]["workerUids"] = [20001]
+    assert render_env.render(config)["AWEB_PROTECTED_WORKER_UIDS"] == "[20001]"
