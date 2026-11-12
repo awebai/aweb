@@ -38,6 +38,7 @@ set -euo pipefail
 ACTION="${1:-all}"
 
 REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd -P)"
+source "$REPO_ROOT/scripts/journey-network.sh"
 COMPOSE_FILE="$REPO_ROOT/docker-compose.e2e.yml"
 # Per-worktree compose project name so concurrent runs from different checkouts
 # (e.g. an author and a reviewer worktree) never tear down each other's stack.
@@ -60,9 +61,9 @@ case "$DOCKER_PUBLISHED_HOST" in
   *) echo "unsupported AWEB_DOCKER_PUBLISHED_HOST: $DOCKER_PUBLISHED_HOST" >&2; exit 2 ;;
 esac
 
-AWID_URL="http://$DOCKER_PUBLISHED_HOST:$AWID_PORT"
-AWEB_URL="http://$DOCKER_PUBLISHED_HOST:$AWEB_PORT"
-LIBRARY_URL="http://$DOCKER_PUBLISHED_HOST:$LIBRARY_PORT"
+AWID_URL="$(journey_url "$PROJECT" awid 8010 "http://$DOCKER_PUBLISHED_HOST:$AWID_PORT")"
+AWEB_URL="$(journey_url "$PROJECT" aweb 8000 "http://$DOCKER_PUBLISHED_HOST:$AWEB_PORT")"
+LIBRARY_URL="$(journey_url "$PROJECT" library 8765 "http://$DOCKER_PUBLISHED_HOST:$LIBRARY_PORT")"
 
 # Both inputs are versioned under this checkout, so release evidence and normal
 # e2e runs consume the same exact source. The blueprint override remains supported.

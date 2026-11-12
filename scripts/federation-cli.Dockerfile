@@ -22,6 +22,11 @@ RUN npm run build
 
 FROM ${RUNTIME_IMAGE}
 RUN apk add --no-cache ca-certificates dbus gnome-keyring py3-pexpect py3-yaml nodejs
+ARG FIXTURE_UID=0
+ARG FIXTURE_GID=0
+# D-Bus needs passwd metadata even when Compose supplies a numeric --user.
+COPY scripts/federation-cli-user.py /tmp/federation-cli-user.py
+RUN python3 /tmp/federation-cli-user.py "$FIXTURE_UID" "$FIXTURE_GID" && rm /tmp/federation-cli-user.py
 COPY --from=build /out/aw /usr/local/bin/aw
 COPY --from=build /out/id-tree-verifier /usr/local/bin/id-tree-verifier
 COPY scripts/cross-registry-human-journey.py /usr/local/bin/cross-registry-human-journey.py
