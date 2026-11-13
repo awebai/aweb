@@ -286,7 +286,7 @@ async def _compose(
     ) -> None:
         # HumanRoleActs calls this after its role/B3 writer. Revision is the
         # last SQL lock, in the original nonce/effect/governance transaction.
-        await bump_config_revision(tx, installation.installation_id)
+        await bump_config_revision(tx, installation.installation_id, team_id=installation.team_id)
 
     owner_delivery = APIRouter()
     mount_owner_act_routes(
