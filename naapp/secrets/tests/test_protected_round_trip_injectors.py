@@ -8,7 +8,9 @@ from pathlib import Path
 
 import pytest
 from protected_round_trip import (
+    ANSWER_WITNESS_PORT,
     AnswerDrop,
+    AnswerWitness,
     Designation,
     Holding,
     SignedAct,
@@ -92,6 +94,156 @@ def test_a_drop_cannot_start_twice(tmp_path):
         with pytest.raises(SystemExit, match="already"):
             answer.__enter__()
     assert rendered.read_text() == WITH_SIGNER
+
+
+class ReloadFailed(Exception):
+    pass
+
+
+def failing_reloads(rendered, *outcomes):
+    """A reload that fails or succeeds, in order, and records what it read."""
+    seen, pending = [], list(outcomes)
+
+    def reload():
+        seen.append(rendered.read_text())
+        if pending.pop(0) == "fail":
+            raise ReloadFailed(f"reload {len(seen)} failed")
+    return seen, reload
+
+
+def test_a_drop_whose_first_reload_fails_puts_the_front_back_and_reloads_it(tmp_path):
+    rendered = tmp_path / "Caddyfile"
+    rendered.write_text(WITH_SIGNER)
+    seen, reload = failing_reloads(rendered, "fail", "ok")
+    answer = AnswerDrop(rendered, "signer.lf.test", "POST", "/protected-operations", "signer:8080", reload)
+    with pytest.raises(ReloadFailed, match="reload 1 failed"):
+        with answer:
+            pytest.fail("the step ran although the drop never took effect")
+    # The first reload read the drop; the second, the front as it was.
+    assert "@dropped" in seen[0] and seen[1] == WITH_SIGNER and len(seen) == 2
+    assert rendered.read_text() == WITH_SIGNER
+    # The drop is not left half-started: it can be used again.
+    seen.clear()
+    reload_ok = []
+    answer.reload = lambda: reload_ok.append(rendered.read_text())
+    with answer:
+        assert "@dropped" in rendered.read_text()
+    assert rendered.read_text() == WITH_SIGNER
+
+
+def test_a_drop_that_cannot_restore_the_front_after_a_failed_reload_says_the_front_is_uncertain(tmp_path):
+    rendered = tmp_path / "Caddyfile"
+    rendered.write_text(WITH_SIGNER)
+    seen, reload = failing_reloads(rendered, "fail", "fail")
+    answer = AnswerDrop(rendered, "signer.lf.test", "POST", "/protected-operations", "signer:8080", reload)
+    with pytest.raises(SystemExit, match="uncertain") as raised:
+        answer.__enter__()
+    # The original failure is kept as the cause; the restoration's own is named.
+    assert isinstance(raised.value.__cause__, ReloadFailed) and "reload 2 failed" in str(raised.value)
+    assert rendered.read_text() == WITH_SIGNER and len(seen) == 2
+
+
+# --- the witness of an app's answers, which the app itself does not log
+
+
+CONSOLE_HOST = "console.secrets.lf.test"
+OWNER_ACT = "/.well-known/aweb-owner-act"
+
+
+def witness(tmp_path, text=WITH_SIGNER):
+    rendered = tmp_path / "Caddyfile"
+    rendered.write_text(text)
+    reloads = []
+    watched = AnswerWitness(rendered, CONSOLE_HOST, "POST", OWNER_ACT, "secrets:8770",
+                            lambda: reloads.append(rendered.read_text()))
+    return rendered, reloads, watched
+
+
+WITNESS_SITE = (
+    f"http://:{ANSWER_WITNESS_PORT} {{\n  bind 127.0.0.1\n  log answer-witness {{\n    output stdout\n"
+    "    format filter {\n      wrap json\n      fields {\n        request>headers delete\n"
+    "        request>tls delete\n        request>remote_ip delete\n        request>remote_port delete\n"
+    "        request>client_ip delete\n        resp_headers delete\n        user_id delete\n      }\n    }\n"
+    "  }\n  reverse_proxy secrets:8770\n}\n")
+
+
+def test_the_witness_routes_only_the_watched_request_through_a_loopback_listener_that_logs_its_answer(tmp_path):
+    rendered, reloads, watched = witness(tmp_path)
+    with watched:
+        text = rendered.read_text()
+        route = (f"{CONSOLE_HOST}:443 {{\n  @witnessed {{\n    method POST\n    path {OWNER_ACT}\n  }}\n"
+                 f"  reverse_proxy @witnessed 127.0.0.1:{ANSWER_WITNESS_PORT}\n  tls")
+        assert route in text and text.endswith(WITNESS_SITE)
+        # Every other site, and the console host's own proxy, are untouched.
+        assert text.replace(route, f"{CONSOLE_HOST}:443 {{\n  tls").removesuffix(WITNESS_SITE) == WITH_SIGNER
+        assert reloads == [text]
+    assert rendered.read_text() == WITH_SIGNER and reloads[-1] == WITH_SIGNER
+
+
+def test_a_witness_whose_first_reload_fails_puts_the_front_back(tmp_path):
+    rendered = tmp_path / "Caddyfile"
+    rendered.write_text(WITH_SIGNER)
+    seen, reload = failing_reloads(rendered, "fail", "ok")
+    with pytest.raises(ReloadFailed):
+        with AnswerWitness(rendered, CONSOLE_HOST, "POST", OWNER_ACT, "secrets:8770", reload):
+            pytest.fail("the step ran although the witness never took effect")
+    assert rendered.read_text() == WITH_SIGNER and seen[1] == WITH_SIGNER
+
+
+@pytest.mark.parametrize("text", [
+    WITHOUT_SIGNER.replace(f"{CONSOLE_HOST}:443", "console.other.lf.test:443"),
+    WITH_SIGNER + f"http://:{ANSWER_WITNESS_PORT} {{\n  respond 200\n}}\n",
+])
+def test_a_witness_with_no_single_site_or_a_taken_listener_is_refused_and_left_alone(tmp_path, text):
+    rendered, reloads, watched = witness(tmp_path, text)
+    with pytest.raises(SystemExit):
+        with watched:
+            pytest.fail("the step ran under a witness that was never installed")
+    assert rendered.read_text() == text and reloads == []
+
+
+def test_a_drop_under_the_witness_aborts_the_answer_the_witness_has_already_logged(tmp_path):
+    # The shape a local Caddy 2.10.2 was seen to log the app's 200 under, with
+    # the client's answer lost (notes: caddy-abort-hides-the-upstream-status).
+    rendered, _, watched = witness(tmp_path)
+    with watched:
+        with AnswerDrop(rendered, CONSOLE_HOST, "POST", OWNER_ACT, watched.listener, lambda: None):
+            text = rendered.read_text()
+            site = text[text.index(f"{CONSOLE_HOST}:443 {{"):]
+            assert site.index("reverse_proxy @dropped 127.0.0.1:") < site.index("reverse_proxy @witnessed 127.0.0.1:")
+            assert text.endswith(WITNESS_SITE)
+        assert "@dropped" not in rendered.read_text() and "@witnessed" in rendered.read_text()
+    assert rendered.read_text() == WITH_SIGNER
+
+
+def witnessed(status, *, host=CONSOLE_HOST, method="POST", uri=OWNER_ACT, logger="http.log.access.answer-witness"):
+    return json.dumps({"level": "info", "logger": logger, "msg": "handled request",
+                       "request": {"proto": "HTTP/1.1", "method": method, "host": host, "uri": uri},
+                       "bytes_read": 2, "size": 11, "status": status})
+
+
+def test_the_witness_reads_the_apps_answers_to_the_watched_request_only(tmp_path):
+    _, _, watched = witness(tmp_path)
+    log = "\n".join([
+        witnessed(200),
+        witnessed(503, host="console.other.lf.test"),
+        witnessed(200, uri="/live"),
+        witnessed(200, method="GET"),
+        witnessed(500, logger="http.log.access.front"),
+        '{"level":"info","logger":"tls","msg":"certificate renewed"}',
+        "not json at all",
+        witnessed(409),
+    ])
+    assert watched.answers(log) == [200, 409]
+
+
+def test_the_witness_does_not_depend_on_an_app_log_the_shipped_image_disables():
+    # The Secrets image serves with no access log, on purpose: its logger
+    # covers only health routes. The witness reads the front's log instead.
+    dockerfile = (Path(__file__).resolve().parents[1] / "Dockerfile").read_text()
+    command = next(line for line in dockerfile.splitlines() if line.startswith("CMD "))
+    assert '"--no-access-log"' in command
+    assert AnswerWitness("unused", CONSOLE_HOST, "POST", OWNER_ACT, "secrets:8770", lambda: None).answers("") == []
 
 
 # --- the signed act a committed operation names, and one effect at the app

@@ -60,6 +60,7 @@ sys.path.insert(0, str(REPO / "naapp" / "secrets" / "e2e"))
 
 from protected_round_trip import (  # noqa: E402
     AnswerDrop,
+    AnswerWitness,
     Founded,
     Holder,
     Site,
@@ -909,9 +910,13 @@ class World:
             return AnswerDrop(front, HOSTS["signer"], "POST", "/protected-operations", UPSTREAMS["signer"],
                               reload_front)
 
+        def witness_owner_act_answers() -> AnswerWitness:
+            return AnswerWitness(front, HOSTS["secrets-console"], "POST", "/.well-known/aweb-owner-act",
+                                 UPSTREAMS["secrets-console"], reload_front)
+
         def drop_owner_act_answers() -> AnswerDrop:
             return AnswerDrop(front, HOSTS["secrets-console"], "POST", "/.well-known/aweb-owner-act",
-                              UPSTREAMS["secrets-console"], reload_front)
+                              witness_owner_act_answers().listener, reload_front)
 
         def secrets_query(select: str) -> str:
             return self.compose("exec", "-T", "postgres", *read_only_psql("postgres", "secrets", select)).strip()
@@ -928,7 +933,8 @@ class World:
             chromium=chromium, drop_prepare_answers=drop_prepare_answers,
             signatures=lambda: sum(row["signed"] for row in self.signer_table().values()),
             drop_owner_act_answers=drop_owner_act_answers, secrets_query=secrets_query,
-            app_log=lambda: self.compose("logs", "--no-color", "--no-log-prefix", "secrets"),
+            witness_owner_act_answers=witness_owner_act_answers,
+            front_log=lambda: self.compose("logs", "--no-color", "--no-log-prefix", "front"),
         )
 
 

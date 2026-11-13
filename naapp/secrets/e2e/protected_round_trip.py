@@ -521,15 +521,19 @@ def assert_unchanged(after: dict, duplicate: dict) -> None:
         assert duplicate[key] == after[key], f"duplicate: {key} changed {after[key]} -> {duplicate[key]}"
 
 
-class AnswerDrop:
-    """The front withholds the answer to one request: while it is in effect,
-    every 2xx answer to `method` `path` on `host` is aborted, so the caller
-    sees its connection lost after the upstream has answered.
+class FrontChange:
+    """A temporary change to one site of the front's Caddyfile, in effect
+    while the context is.
 
-    Entering it reads the front's Caddyfile as it is rendered then, and
-    refuses, changing nothing, unless the file holds exactly one site for
-    `host`; leaving it, also on an exception, puts back exactly the text it
-    replaced. Each change is reloaded."""
+    Entering it reads the Caddyfile as it is rendered then, and refuses,
+    changing nothing, unless the file holds exactly one site for `host`; it
+    then writes the change and reloads the front. If that reload fails, it
+    writes back the text it read and reloads again, then raises the reload's
+    failure; if the second reload fails too, it says the running front is
+    uncertain. Leaving it, also on an exception, writes back exactly the text
+    it replaced and reloads."""
+
+    what = "change"
 
     def __init__(self, rendered: Path, host: str, method: str, path: str, upstream: str,
                  reload: Callable[[], None]):
@@ -537,21 +541,30 @@ class AnswerDrop:
         self.upstream, self.reload = upstream, reload
         self.replaced: str | None = None
 
-    def __enter__(self) -> AnswerDrop:
+    def change(self, current: str, site: str) -> str:
+        raise NotImplementedError
+
+    def __enter__(self):
         if self.replaced is not None:
-            raise SystemExit(f"FAILED: the drop for {self.method} {self.path} on {self.host} is already in effect")
+            raise SystemExit(f"FAILED: the {self.what} for {self.method} {self.path} on {self.host} is already in effect")
         current = self.rendered.read_text()
         site = f"{self.host}:443 {{\n"
         if current.count(site) != 1:
             raise SystemExit(f"FAILED: the front holds {current.count(site)} sites for {self.host}, not one;"
-                             f" the answers to {self.method} {self.path} cannot be dropped")
-        self.rendered.write_text(current.replace(
-            site,
-            f"{site}  @dropped {{\n    method {self.method}\n    path {self.path}\n  }}\n"
-            f"  reverse_proxy @dropped {self.upstream} {{\n    @answered status 2xx\n"
-            "    handle_response @answered {\n      abort\n    }\n  }\n", 1))
+                             f" no {self.what} for {self.method} {self.path}")
+        self.rendered.write_text(self.change(current, site))
+        try:
+            self.reload()
+        except BaseException as failure:
+            self.rendered.write_text(current)
+            try:
+                self.reload()
+            except BaseException as restoring:
+                raise SystemExit(f"FAILED: the front did not reload the {self.what} for {self.method} {self.path} on"
+                                 f" {self.host}, and its reload of the original text, written back, failed too"
+                                 f" ({restoring!r}): the running front is uncertain") from failure
+            raise
         self.replaced = current
-        self.reload()
         return self
 
     def __exit__(self, *_: object) -> None:
@@ -560,6 +573,75 @@ class AnswerDrop:
         self.rendered.write_text(self.replaced)
         self.replaced = None
         self.reload()
+
+
+class AnswerDrop(FrontChange):
+    """The front withholds the answer to one request: while it is in effect,
+    every 2xx answer to `method` `path` on `host` is aborted, so the caller
+    sees its connection lost after `upstream` has answered."""
+
+    what = "drop"
+
+    def change(self, current: str, site: str) -> str:
+        return current.replace(
+            site,
+            f"{site}  @dropped {{\n    method {self.method}\n    path {self.path}\n  }}\n"
+            f"  reverse_proxy @dropped {self.upstream} {{\n    @answered status 2xx\n"
+            "    handle_response @answered {\n      abort\n    }\n  }\n", 1)
+
+
+# The loopback port of the front's witness listener.
+ANSWER_WITNESS_PORT = 7099
+
+
+class AnswerWitness(FrontChange):
+    """The front's own record of the upstream's answers to one request, for an
+    app that does not log them (the Secrets image runs with no access log).
+    While it is in effect, `method` `path` on `host` goes through a listener
+    on the front's loopback that proxies it to `upstream` and logs, as JSON
+    on the front's output, the method, Host, path and the upstream's status,
+    with the request's headers, TLS, client address and response headers
+    filtered out. A drop installed after it, aimed at `listener`, aborts the
+    answer only after the listener has logged it: Caddy logs an aborted
+    request's status as 0 and nothing appended to it."""
+
+    what = "witness"
+    logger = "answer-witness"
+
+    @property
+    def listener(self) -> str:
+        return f"127.0.0.1:{ANSWER_WITNESS_PORT}"
+
+    def change(self, current: str, site: str) -> str:
+        inner = f"http://:{ANSWER_WITNESS_PORT} {{\n"
+        if inner in current:
+            raise SystemExit(f"FAILED: the front already serves {inner.strip()}; no witness for {self.method} {self.path}")
+        routed = current.replace(
+            site,
+            f"{site}  @witnessed {{\n    method {self.method}\n    path {self.path}\n  }}\n"
+            f"  reverse_proxy @witnessed {self.listener}\n", 1)
+        return routed + (
+            f"{inner}  bind 127.0.0.1\n  log {self.logger} {{\n    output stdout\n"
+            "    format filter {\n      wrap json\n      fields {\n        request>headers delete\n"
+            "        request>tls delete\n        request>remote_ip delete\n        request>remote_port delete\n"
+            "        request>client_ip delete\n        resp_headers delete\n        user_id delete\n      }\n    }\n"
+            f"  }}\n  reverse_proxy {self.upstream}\n}}\n")
+
+    def answers(self, log: str) -> list[int]:
+        """The upstream's statuses for `method` `path` on `host`, in the order
+        the witness logged them in the front's `log`."""
+        statuses = []
+        for line in log.splitlines():
+            try:
+                entry = json.loads(line[line.index("{"):]) if "{" in line else None
+            except json.JSONDecodeError:
+                continue
+            if not isinstance(entry, dict) or entry.get("logger") != f"http.log.access.{self.logger}":
+                continue
+            request = entry.get("request", {})
+            if (request.get("method"), request.get("host"), request.get("uri")) == (self.method, self.host, self.path):
+                statuses.append(entry["status"])
+        return statuses
 
 
 @dataclass
@@ -615,10 +697,14 @@ class Site:
     # The front withholding the app's answers to POST /.well-known/aweb-owner-act
     # on the app's console host.
     drop_owner_act_answers: Callable[[], AnswerDrop]
+    # The front's record of the app's answers to POST /.well-known/aweb-owner-act
+    # on its console host, from its loopback witness listener; a drop of those
+    # answers is aimed at that listener.
+    witness_owner_act_answers: Callable[[], AnswerWitness]
     # One SELECT against the app's database, read only (read_only_psql).
     secrets_query: Callable[[str], str]
-    # The app's own access log so far.
-    app_log: Callable[[], str]
+    # The front's own output so far, where its witness logs.
+    front_log: Callable[[], str]
 
     @property
     def team_id(self) -> str:
@@ -1005,26 +1091,20 @@ def lost_prepare(site: Site, holder: Holder, founded: Founded) -> str:
     return operation
 
 
-# The app's answers to the owner-act deliveries, in its own access log.
-DELIVERIES = re.compile(r'"POST /\.well-known/aweb-owner-act HTTP/[\d.]+" (\d{3})')
-
-
-def deliveries(site: Site) -> list[int]:
-    return [int(m.group(1)) for m in DELIVERIES.finditer(site.app_log())]
-
-
 def deliver_once_lost(site: Site, holder: Holder, operation: str, aw_bin: str = "aw",
                       timeout: int = 300) -> dict:
     """Approval and the first application, with its answer lost: aw resumes
     the pending operation from its saved request, the human approves the
     exact act aw printed, the signer signs it once, and aw delivers it to the
     app, which applies it; the front withholds the app's answer, so aw keeps
-    the request. Returns when aw printed the page, the printed digest and the
+    the request. The front's witness records the app's answer before the drop
+    aborts it. Returns when aw printed the page, the printed digest and the
     signed act."""
     machine = holder.container
     saved = site.runtime / "holder" / ".config" / "aw" / "governance"
-    answered = deliveries(site)
-    with site.drop_owner_act_answers():
+    witness = site.witness_owner_act_answers()
+    with witness, site.drop_owner_act_answers():
+        answered = witness.answers(site.front_log())
         child = pexpect.spawn("docker", ["exec", "-it", machine, aw_bin, "--json", "app", "role", "resume", operation,
                                          "--protected-profile", site.profile_in_machine],
                               encoding="utf-8", timeout=timeout, echo=False)
@@ -1035,6 +1115,8 @@ def deliver_once_lost(site: Site, holder: Holder, operation: str, aw_bin: str = 
         paged = round(time.monotonic() - started, 1)
         report = approve(site, machine, child.match.group(1))
         status, output = finish(child)
+        # The app answered the one delivery 200; the front withheld it.
+        first = witness.answers(site.front_log())[len(answered):]
     assert printed == operation, f"approval: aw resumed {printed}, not {operation}"
     assert report["states"] == ["login-required", "ready", "navigated"], f"approval: {report}"
     assert report["digest"] == digest and report["act"] == "human-role.revoke", f"approval: {report}"
@@ -1046,8 +1128,7 @@ def deliver_once_lost(site: Site, holder: Holder, operation: str, aw_bin: str = 
     assert error["code"] == "owner_act_undelivered", f"lost answer: {error}"
     assert f"aw app role resume {operation}" in error["message"], f"lost answer: {error}"
     assert (saved / f"{operation}.json").exists(), "lost answer: the request was not kept"
-    # The app answered the one delivery 200; the front withheld it.
-    assert deliveries(site)[len(answered):] == [200], f"first application: the app answered {deliveries(site)}"
+    assert first == [200], f"first application: the app answered {first}"
     act = SignedAct(nonce=evidence["nonce"], sha256=evidence["act_sha256"], act="human-role.revoke",
                     expires_at=evidence["act_expires_at"])
     return {"paged": paged, "digest": digest, "act": act}
@@ -1057,12 +1138,16 @@ def replay_delivery(site: Site, holder: Holder, operation: str, act: SignedAct, 
     """Exact replay: aw resumes the same operation, which is already committed,
     and delivers the identical signed act again; the app finds it applied
     earlier and answers 409, so aw settles it as applied earlier and forgets
-    the request. Returns aw's report."""
+    the request. The front's witness records the app's answer. Returns aw's
+    report."""
     machine = holder.container
     saved = site.runtime / "holder" / ".config" / "aw" / "governance"
-    answered = deliveries(site)
-    replayed = docker("exec", machine, aw_bin, "--json", "app", "role", "resume", operation,
-                      "--protected-profile", site.profile_in_machine, timeout=300)
+    witness = site.witness_owner_act_answers()
+    with witness:
+        answered = witness.answers(site.front_log())
+        replayed = docker("exec", machine, aw_bin, "--json", "app", "role", "resume", operation,
+                          "--protected-profile", site.profile_in_machine, timeout=300)
+        again = witness.answers(site.front_log())[len(answered):]
     assert replayed.returncode == 0, f"replay: {replayed.stdout}{replayed.stderr}"
     report = first_json(replayed.stdout)
     assert (report["operation_id"], report["state"], report["applied"]) == (operation, "committed", "earlier"), (
@@ -1070,7 +1155,7 @@ def replay_delivery(site: Site, holder: Holder, operation: str, act: SignedAct, 
     assert signed_act(report["result"]["signing"]) == act, "replay: aw delivered other signing bytes"
     assert site.signer_evidence(operation)["act_sha256"] == act.sha256, "replay: the signer's act changed"
     assert not (saved / f"{operation}.json").exists(), "replay: the settled request was kept"
-    assert deliveries(site)[len(answered):] == [409], f"replay: the app answered {deliveries(site)}"
+    assert again == [409], f"replay: the app answered {again}"
     return report
 
 

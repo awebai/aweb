@@ -36,6 +36,7 @@ from pathlib import Path
 import pytest
 from protected_round_trip import (
     AnswerDrop,
+    AnswerWitness,
     Site,
     connect_requester,
     designate_holding,
@@ -238,9 +239,13 @@ def protected_site(lane: ProtectedLane) -> Site:
         return AnswerDrop(caddyfile, "signer.svc.test", "POST", "/protected-operations", "protected:8080",
                           lambda: reload_front(lane))
 
+    def witness_owner_act_answers() -> AnswerWitness:
+        return AnswerWitness(caddyfile, "console.secrets.svc.test", "POST", "/.well-known/aweb-owner-act",
+                             "secrets:8770", lambda: reload_front(lane))
+
     def drop_owner_act_answers() -> AnswerDrop:
         return AnswerDrop(caddyfile, "console.secrets.svc.test", "POST", "/.well-known/aweb-owner-act",
-                          "secrets:8770", lambda: reload_front(lane))
+                          witness_owner_act_answers().listener, lambda: reload_front(lane))
 
     def signatures() -> int:
         return int(secrets_query(lane)("SELECT count(*) FROM protected_signer.protected_signer_operations"
@@ -257,7 +262,8 @@ def protected_site(lane: ProtectedLane) -> Site:
         signer_access_log=lambda: lane.protected("logs", "--no-color", "--no-log-prefix", "protected").stdout,
         chromium=lane.chromium, drop_prepare_answers=drop_prepare_answers, signatures=signatures,
         drop_owner_act_answers=drop_owner_act_answers, secrets_query=secrets_query(lane),
-        app_log=lambda: lane.compose("logs", "--no-color", "--no-log-prefix", "secrets").stdout,
+        witness_owner_act_answers=witness_owner_act_answers,
+        front_log=lambda: lane.compose("logs", "--no-color", "--no-log-prefix", "front").stdout,
     )
 
 
