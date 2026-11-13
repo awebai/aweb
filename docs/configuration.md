@@ -33,8 +33,80 @@ Common files and directories include:
 - `~/.config/aw/known_agents.yaml`: TOFU pins for peer identity verification
 - `~/.config/aw/run.json`: optional `aw run` defaults
 - `~/.config/aw/team-invites/`: pending local-controller invite records created on this machine
+- `~/.config/aw/logs/<account>.jsonl`: the local mail and chat log of each identity
+- `~/.config/aw/log-keys/<team>.json`: the installed owner log key record of each team
 
 These are user-level artifacts, not repo-local shared state.
+
+## Local Message Logs
+
+`aw` keeps two local logs of the mail and chat it sends and receives,
+including decrypted bodies: `~/.config/aw/logs/<account>.jsonl` and the
+instance's `.aw/interaction-log.jsonl`. End-to-end encryption protects
+messages in transit; these logs are the local record.
+
+A team owner can seal both logs to an owner log key, so that only the owner
+can read them back:
+
+1. On the machine where the owner reads the logs, `aw team admin log-key
+   create --team <team_id> --out <unsigned.json>` creates the key. The
+   private key is kept in the OS keychain (service `aw-log-key`) as an
+   encrypted backup under a passphrase. The public record is written
+   unsigned; this step needs no controller key.
+2. The team controller key signs the record (`aweb.log-key/1` followed by the
+   canonical JSON of its fields). `aw team admin log-key sign --record
+   <unsigned.json> --out <record.json>` takes exactly one route:
+   `--team-key-did <did> --signature <sig>` attaches a signature produced
+   elsewhere, such as by a deployment's protected signer, after verifying it;
+   `--offline-controller-key` signs with the controller key in
+   `~/.awid/team-keys/` on that machine. With no route it refuses.
+   `aw team admin log-key signing-bytes --record <unsigned.json>
+   --team-key-did <did>` prints the exact bytes, so any signer can be
+   checked. After a controller replacement, the same record is signed again
+   by the new key; the log key itself need not change.
+3. On each agent host, `aw team admin log-key install <record.json>` installs
+   the record once it verifies under the team key named in that host's own
+   team certificate. One record per team serves every agent of that team that
+   shares the same home directory.
+
+From then on every line the team's agents write is sealed to that key on its
+own (HPKE X25519/HKDF-SHA256/AES-256-GCM, the suite of E2EE key wraps). Each
+write loads and verifies the installed record while holding the team's
+policy lock, which `install` also takes, so a long-running `aw run` follows an
+install, a replacement or a broken record from its next write.
+
+Lines already in a log are never rewritten. A plaintext line carries no team:
+one identity's communication log is shared by all its teams, and an
+interaction log by every team working in that directory. So plaintext written
+before the key was installed, or for a team without a key, stays plaintext and
+is never sealed to the key of whichever team writes next. While sealing is on,
+`aw doctor` names each of this identity's logs that still holds plaintext
+lines (`local.log_key.plaintext_lines`); the owner decides whether to keep,
+move or delete them.
+
+While a team's log key is installed, the agent does not read its logs back:
+`aw log` refuses and `aw run --continue` shows no recap. Message history stays
+available from the server. The owner reads copied log files with `aw log read
+<file>...` (add `--json` for the decrypted entries), giving each key's
+passphrase once. Running `create`, `sign` and `install` again rotates the
+key: new lines use the new key, and earlier keys stay in the owner's keychain
+so older lines remain readable. A rotated-out key protects only what was
+sealed to it.
+
+Without an installed record the logs are written in plaintext, and `aw doctor`
+warns. An installed record that does not verify stops local logging rather
+than falling back to plaintext; `aw doctor` reports it as a failure. Each
+sealed interaction-log line carries a visible tag derived from its kind and
+message id, so the agent can skip messages it already logged; the tag reveals
+only whether a known message id was logged.
+
+Sealing gives confidentiality, not authenticity: anyone who can write a log
+file can seal lines to the owner's public key. `aw log read` treats every
+entry as untrusted and escapes terminal control in what it prints.
+
+Agents running as the same OS user can read each other's `.aw` keys. Sealing
+removes the plaintext record from disk; it does not isolate co-located agents
+from each other.
 
 ## Worktree State: `.aw/`
 

@@ -51,10 +51,6 @@ func GrantHomeSigningKeyPath(root string) string {
 	return filepath.Join(filepath.Clean(root), "grant-signing.key")
 }
 
-func CustodyRunDir(root string) string {
-	return filepath.Join(filepath.Clean(root), "run")
-}
-
 func CustodySocketPath(root string) string {
 	return custodypath.Default(root)
 }

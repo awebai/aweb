@@ -1,10 +1,10 @@
 # Member attribution v1
 
-Status: **SUPERSEDED by [identity certificates](id-certificates.md)**.
+Status: **SUPERSEDED by [identity certificates](../id-certificates.md)**.
 The email/fingerprint record and email-claim implementation described here must
 not be built. This document and its frozen vectors remain historical evidence;
 existing member_person/member_custody contracts are unaffected. The public
-fixtures are [`vectors/member-attribution-v1.json`](vectors/member-attribution-v1.json).
+fixtures are [`vectors/member-attribution-v1.json`](../vectors/member-attribution-v1.json).
 This adds a controller statement about the human behind a member. It changes
 neither v1 certificate bytes nor existing membership, message, custody or grant
 signatures. A human needs no signing key. A verifier trusts the controller's
@@ -58,7 +58,7 @@ digits, seconds, `Z`, with `since <= issued_at`. Parent creation does not
 pretend that the human freshly authenticated for each descendant.
 
 The signature and canonicalization match the
-[principal signed-record family](principal-attestation.md#signed-bytes):
+[principal signed-record family](../principal-attestation.md#signed-bytes):
 
 ```text
 signing_bytes = UTF8("aweb.member-attribution/1\n") || canonical_json(record)

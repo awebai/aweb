@@ -181,12 +181,6 @@ def normalize_app_version(value: str) -> str:
     return version
 
 
-def normalize_manifest_version(value: int) -> int:
-    if value <= 0:
-        raise ValidationError("manifest_version must be positive")
-    return value
-
-
 def normalize_scopes(values: list[str]) -> list[str]:
     normalized: list[str] = []
     seen: set[str] = set()

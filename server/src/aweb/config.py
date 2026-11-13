@@ -16,6 +16,7 @@ from awid.team_ids import build_team_id, parse_team_id
 from awid.signing import load_signing_key_pem
 from aweb_naapp.egress import EgressRefused, InternalDestinations
 from aweb_naapp.egress.addresses import check_internal_cidr
+from aweb_naapp.key_file import read_key_file
 
 
 def _env_bool(*names: str, default: bool = False) -> bool:
@@ -125,7 +126,9 @@ def get_awid_member_signing_keys() -> dict[str, bytes]:
     """Load existing aw Ed25519 seed PEM keys, indexed by canonical team ID.
 
     The JSON manifest contains paths, never key material. Relative paths are
-    relative to that manifest. Only ordinary member keys belong here, not the
+    relative to that manifest. Each key file is read with
+    :func:`aweb_naapp.key_file.read_key_file`, so it passes the same file checks
+    as every other mounted key. Only ordinary member keys belong here, not the
     customer's team controller key. Certificates are registered at AWID.
     """
     filename = os.getenv("AWID_MEMBER_KEYS_FILE", "").strip()
@@ -145,7 +148,7 @@ def get_awid_member_signing_keys() -> dict[str, bytes]:
             path = Path(filename).expanduser()
             if not path.is_absolute():
                 path = manifest.parent / path
-            keys[team_id] = load_signing_key_pem(path.read_bytes())
+            keys[team_id] = load_signing_key_pem(read_key_file(path))
         return keys
     except (OSError, ValueError, TypeError):
         # Do not echo file contents or key-parser details into startup logs.

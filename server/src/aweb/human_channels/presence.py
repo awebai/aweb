@@ -9,7 +9,6 @@ from __future__ import annotations
 from dataclasses import dataclass
 from datetime import datetime, timezone
 import hashlib
-import json
 from typing import TYPE_CHECKING, Protocol
 
 from nacl.signing import SigningKey

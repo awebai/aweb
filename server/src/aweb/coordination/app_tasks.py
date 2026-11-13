@@ -21,7 +21,7 @@ from .tasks_service import (
 )
 
 from aweb_naapp.runtime.task_requests import (
-    AUTHORIZATION_PREFIX, TaskRequestRefused, task_body_sha256,
+    TaskRequestRefused, task_body_sha256,
     verify_task_authorization as shared_verify_task_authorization,
     verify_stage_receipt as shared_verify_stage_receipt,
 )

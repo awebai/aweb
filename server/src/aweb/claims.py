@@ -87,10 +87,6 @@ def claim_focus_task_ref(task_ref: str, apex_task_ref: Optional[str]) -> str:
     return apex_task_ref or task_ref
 
 
-def _claim_focus_task_ref(task_ref: str, apex_task_ref: Optional[str]) -> str:
-    return claim_focus_task_ref(task_ref, apex_task_ref)
-
-
 async def resolve_task_claim_apex(
     db_infra: DatabaseInfra,
     team_id: str,

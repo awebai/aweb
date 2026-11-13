@@ -18,7 +18,6 @@ from awid.a2a_publication import (
     A2A_AUTHORITY_SELF_DELEGATION,
     A2A_AUTHORITY_SELF_IDENTITY_KEY,
     A2A_CARD_DIGEST_ALG_SHA256,
-    A2A_CONFLICT_CODES,
     A2A_CUSTODY_DELEGATED_BRIDGE,
     A2A_CUSTODY_HOSTED_DELEGATED_BRIDGE,
     A2A_DELEGATION_OPERATION,
@@ -28,9 +27,7 @@ from awid.a2a_publication import (
     A2ADelegationFields,
     A2APublicationFields,
     a2a_delegation_canonical,
-    a2a_delegation_payload,
     a2a_publication_canonical,
-    a2a_publication_payload,
     canonical_address,
     decode_raw_standard_b64,
     normalize_a2a_delegation_fields,
@@ -896,15 +893,3 @@ async def get_a2a_publication(
             expires_at=row["expires_at_text"],
         )
     return A2AAddressDirectoryResponse(address=address, did_aw=validate_stable_id(row["address_did_aw"]), a2a=entry)
-
-
-def a2a_conflict_codes() -> tuple[str, ...]:
-    return A2A_CONFLICT_CODES
-
-
-def a2a_publication_wire_payload(body: A2APublicationRequest) -> dict:
-    return a2a_publication_payload(_body_to_publication_fields(body))
-
-
-def a2a_delegation_wire_payload(body: A2ADelegationRequest) -> dict:
-    return a2a_delegation_payload(_body_to_delegation_fields(body))

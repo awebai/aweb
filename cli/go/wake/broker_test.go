@@ -128,8 +128,11 @@ func TestReconcileRetainsRunnerWhenExistingRegistrationFileIsInvalid(t *testing.
 	if _, ok := broker.instanceRunner(home); !ok {
 		t.Fatal("invalid existing registration file removed runner")
 	}
-	if !strings.Contains(logs.all(), "reconcile failed") {
+	if !strings.Contains(logs.all(), "registration unreadable path="+store.registryPath(key)) {
 		t.Fatalf("list/validation failure was not logged: %s", logs.all())
+	}
+	if st := broker.Status().Instances[0]; !strings.Contains(st.LastError, "registration home is empty") {
+		t.Fatalf("status LastError=%q, want the registration fault", st.LastError)
 	}
 }
 
