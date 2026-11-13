@@ -832,6 +832,21 @@ admitted address, trying the answers in order until one accepts a connection,
 while TLS verification, SNI and `Host` name the origin; proxy
 settings in the environment are not read, redirects are not followed, each
 delivery resolves and checks again, and no connection outlives its response.
+Before the transport is used, `deliver_federated_message`, which every federated
+mail and chat send calls, applies the operator's `AWEB_FEDERATION_OUTBOUND`
+(`aweb.config.get_federation_outbound`):
+- unset or empty delivers wherever the transport admits, as before the setting
+  existed;
+- `off` delivers nowhere;
+- a comma-separated list of origins, canonicalised as delivery origins are and
+  compared for equality, delivers only to those.
+A refused send raises `FederatedDeliveryRefused`, which reaches the sender as
+`403` with `Federated delivery to <origin> is refused: AWEB_FEDERATION_OUTBOUND
+is off` (or `does not list this origin`), before any resolution or connection.
+An unreadable value refuses start-up through `get_settings` naming the entry,
+and refuses every send (`is not a valid setting`) where settings were never
+loaded.
+
 Routes and MCP tools both take the transport from the federation authority, which
 shares its resolver, origin policy and trust anchors with strict registry reads
 (`docs/vectors/federation-origin-ip-v1.json`). `http` origins, address literals
