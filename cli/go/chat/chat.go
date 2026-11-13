@@ -148,6 +148,9 @@ func parseSSEEvent(sseEvent *awid.SSEEvent) Event {
 	if v, ok := data["session_id"].(string); ok {
 		ev.SessionID = v
 	}
+	if v, ok := data["seq"].(float64); ok {
+		ev.Seq = int64(v)
+	}
 	if v, ok := data["message_id"].(string); ok {
 		ev.MessageID = v
 	}
@@ -1038,8 +1041,21 @@ func markPresentedRead(ctx context.Context, client *awid.Client, sessionID strin
 }
 
 // streamOpener opens an SSE stream for a chat session.
-// after controls replay: non-nil replays messages after that timestamp; nil skips replay.
-type streamOpener func(ctx context.Context, sessionID string, deadline time.Time, after *time.Time) (*awid.SSEStream, error)
+// afterSeq > 0 resumes after that session number. Otherwise after controls
+// replay: non-nil replays messages after that timestamp; nil skips replay.
+type streamOpener func(ctx context.Context, sessionID string, deadline time.Time, after *time.Time, afterSeq int64) (*awid.SSEStream, error)
+
+func clientStreamOpener(client *awid.Client) streamOpener {
+	return func(ctx context.Context, sessionID string, deadline time.Time, after *time.Time, afterSeq int64) (*awid.SSEStream, error) {
+		if afterSeq > 0 {
+			return client.ChatStreamAfterSeq(ctx, sessionID, deadline, afterSeq)
+		}
+		return client.ChatStream(ctx, sessionID, deadline, after)
+	}
+}
+
+// minStreamReopenInterval paces reopening a stream that ended early.
+const minStreamReopenInterval = time.Second
 
 // messageAcceptor decides how to handle a received message event during the wait loop.
 //
@@ -1051,6 +1067,11 @@ type messageAcceptor func(ev Event) (accept, skip bool)
 // waitForMessage opens an SSE stream and waits for a message matching the acceptor.
 // Handles read receipts, extend-wait messages, and wait extensions.
 // after controls SSE replay: non-nil replays messages after that timestamp; nil skips replay.
+//
+// The server ends a stream at its lifetime cap (300 s). While the wait runs,
+// an ended stream is reopened after the last session number seen, or, when
+// none was seen, replaying from after (or from when the wait began), so
+// nothing committed while it was closed is lost.
 func waitForMessage(ctx context.Context, client *awid.Client, openStream streamOpener, sessionID string, participants []awid.ChatParticipant, selfAlias string, waitSeconds int, after *time.Time, callback StatusCallback, accept messageAcceptor) (*SendResult, error) {
 	result := &SendResult{
 		SessionID: sessionID,
@@ -1062,10 +1083,18 @@ func waitForMessage(ctx context.Context, client *awid.Client, openStream streamO
 	waitDeadline := time.Now().Add(waitTimeout)
 	waitStart := time.Now()
 
-	// The server deadline is a safety net for orphaned connections —
-	// the local waitTimer manages actual wait semantics.
-	stream, err := openStream(ctx, sessionID, time.Now().Add(maxStreamDeadline), after)
-	if err != nil {
+	replayAfter := after
+	if replayAfter == nil {
+		replayAfter = &waitStart
+	}
+	var lastSeq int64
+	// A server without session numbers replays a reopened stream by
+	// timestamp; a message already seen is not presented again.
+	seenMessages := map[string]bool{}
+
+	// openErr reports whether a failed open ends the wait as a timeout (a
+	// clean EOF) or as an error.
+	openErr := func(err error, action string) (*SendResult, error) {
 		if ctx.Err() != nil {
 			return nil, ctx.Err()
 		}
@@ -1079,10 +1108,19 @@ func waitForMessage(ctx context.Context, client *awid.Client, openStream streamO
 			result.WaitedSeconds = int(time.Since(waitStart).Seconds())
 			return result, nil
 		}
-		return nil, fmt.Errorf("connecting to SSE: %w", err)
+		return nil, fmt.Errorf("%s SSE: %w", action, err)
 	}
+
+	// The server deadline is a safety net for orphaned connections —
+	// the local waitTimer manages actual wait semantics.
+	stream, err := openStream(ctx, sessionID, time.Now().Add(maxStreamDeadline), after, 0)
+	if err != nil {
+		return openErr(err, "connecting to")
+	}
+	streamOpenedAt := time.Now()
 	events, streamCleanup := streamToChannel(ctx, stream)
-	defer streamCleanup()
+	defer func() { streamCleanup() }()
+	var reopen <-chan time.Time
 
 	waitTimer := time.NewTimer(waitTimeout)
 	defer func() {
@@ -1128,13 +1166,39 @@ func waitForMessage(ctx context.Context, client *awid.Client, openStream streamO
 		case <-waitTimer.C:
 			result.WaitedSeconds = int(time.Since(waitStart).Seconds())
 			return result, nil
+		case <-reopen:
+			reopen = nil
+			resumeAfter := replayAfter
+			if lastSeq > 0 {
+				resumeAfter = nil
+			}
+			stream, err := openStream(ctx, sessionID, time.Now().Add(maxStreamDeadline), resumeAfter, lastSeq)
+			if err != nil {
+				return openErr(err, "reconnecting to")
+			}
+			streamOpenedAt = time.Now()
+			events, streamCleanup = streamToChannel(ctx, stream)
 		case sr, ok := <-events:
 			if !ok || sr.err != nil {
-				result.WaitedSeconds = int(time.Since(waitStart).Seconds())
-				return result, nil
+				// The stream ended while the wait runs: reopen it, at most
+				// once per minStreamReopenInterval.
+				streamCleanup()
+				streamCleanup = func() {}
+				events = nil
+				reopen = time.After(max(0, minStreamReopenInterval-time.Since(streamOpenedAt)))
+				continue
 			}
 
 			chatEvent := parseSSEEvent(sr.event)
+			if chatEvent.Seq > lastSeq {
+				lastSeq = chatEvent.Seq
+			}
+			if chatEvent.Type == "message" && chatEvent.MessageID != "" {
+				if seenMessages[chatEvent.MessageID] {
+					continue
+				}
+				seenMessages[chatEvent.MessageID] = true
+			}
 			if isGrantTerminalEvent(chatEvent.Type) {
 				detail := strings.TrimSpace(chatEvent.Reason)
 				if detail == "" {
@@ -1263,7 +1327,7 @@ func Send(ctx context.Context, client *awid.Client, myAlias string, targets []st
 			if err != nil {
 				return nil, fmt.Errorf("sending message: %w", err)
 			}
-			return sendCommon(ctx, client, client.ChatStream, sendResponse{
+			return sendCommon(ctx, client, clientStreamOpener(client), sendResponse{
 				SessionID: sessionID,
 				MessageID: msgResp.MessageID,
 			}, myAlias, targets, message, waitSeconds, opts, &sentAt, callback)
@@ -1277,7 +1341,7 @@ func Send(ctx context.Context, client *awid.Client, myAlias string, targets []st
 		return nil, fmt.Errorf("sending message: %w", err)
 	}
 
-	return sendCommon(ctx, client, client.ChatStream, sendResponse{
+	return sendCommon(ctx, client, clientStreamOpener(client), sendResponse{
 		SessionID:        createResp.SessionID,
 		MessageID:        createResp.MessageID,
 		Participants:     createResp.Participants,
@@ -1410,7 +1474,7 @@ func Listen(ctx context.Context, client *awid.Client, targetAlias string, waitSe
 
 	acceptAll := func(ev Event) (bool, bool) { return true, false }
 
-	result, err := waitForMessage(ctx, client, client.ChatStream, sessionID, nil, "", waitSeconds, nil, callback, acceptAll)
+	result, err := waitForMessage(ctx, client, clientStreamOpener(client), sessionID, nil, "", waitSeconds, nil, callback, acceptAll)
 	if err != nil {
 		return nil, err
 	}
