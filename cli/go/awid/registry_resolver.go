@@ -91,6 +91,12 @@ type registryTeamMemberCacheValue struct {
 }
 
 type RegistryResolver struct {
+	// trust holds the operator-configured registry origins; pinnedHTTPClient
+	// reaches every other origin. Tests in this package set pinnedHTTPClient.
+	trust            registryTrust
+	pinnedMu         sync.Mutex
+	pinnedHTTPClient *http.Client
+
 	// TeamReadSigningKey optionally authenticates team-member reads as a member
 	// or controller. Configure before first use; caches belong to this caller.
 	TeamReadSigningKey  ed25519.PrivateKey
@@ -671,7 +677,7 @@ func (r *RegistryResolver) getJSONWithHeaders(ctx context.Context, baseURL, path
 	for key, value := range headers {
 		req.Header.Set(key, value)
 	}
-	resp, err := DoNoRedirectWithTimeout(r.HTTPClient, req, APITimeout())
+	resp, err := DoNoRedirectWithTimeout(r.httpClientFor(baseURL), req, APITimeout())
 	if err != nil {
 		return err
 	}
