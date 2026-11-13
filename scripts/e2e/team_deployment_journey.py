@@ -320,7 +320,8 @@ class World:
             return error[-300:]
 
         connect = refused(as_outsider("workspace", "connect", "--service", origin("aweb")), "connect")
-        assert "/v1/connect returned" in connect, f"member mail: the outsider's connect never reached aweb: {connect}"
+        assert "/v1/connect returned 403" in connect and "is not served by this server" in connect, (
+            f"member mail: aweb did not refuse the outsider's connect as a team it does not serve: {connect}")
         outsider_subject = f"outsider-{secrets.token_hex(4)}"
         send = refused(as_outsider("mail", "send", "--to", SEATS[0], "--subject", outsider_subject,
                                    "--body", "a non-member's mail"), "mail")
