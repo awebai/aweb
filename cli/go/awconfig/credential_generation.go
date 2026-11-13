@@ -284,8 +284,10 @@ func LockCredentialsShared(home string) (*fileLock, error) {
 // credential lock. It starts only from a published home, or to recover an
 // update of exactly op that was interrupted; anything else refuses with
 // ErrCredentialUpdateUnpublished or ErrCredentialUpdateIncomplete before
-// write runs. write calls begin before its first change; a write that returns
-// without calling begin changes nothing and publishes nothing. Once begun, a
+// write runs. write calls begin before its first change, and begin refuses
+// with ErrCredentialUpdateUnpublished if the home changed since the update
+// started; a write that returns without calling begin changes nothing and
+// publishes nothing. Once begun, a
 // write that fails leaves the update for op to recover; one that succeeds
 // publishes the next generation with the projection it left.
 func UpdateCredentials(home string, op CredentialOperation, write func(begin func() error) error) error {
@@ -316,10 +318,20 @@ func UpdateCredentials(home string, op CredentialOperation, write func(begin fun
 	case state.Projection != state.Current:
 		return fmt.Errorf("%w: %s's credentials changed without a published generation", ErrCredentialUpdateUnpublished, home)
 	}
+	started := state.Current
 	begun := false
 	begin := func() error {
 		if begun {
 			return nil
+		}
+		// The home must still be what this update started from: an older aw
+		// that ignores this lock may have written while the update waited.
+		now, err := CaptureCredentials(home)
+		if err != nil {
+			return err
+		}
+		if now.Projection != started {
+			return fmt.Errorf("%w: %s's credentials changed while the %s update was prepared", ErrCredentialUpdateUnpublished, home, op.Command)
 		}
 		txid := make([]byte, 16)
 		if _, err := rand.Read(txid); err != nil {

@@ -2,6 +2,17 @@
 
 ## Unreleased
 
+- `aw custody serve` picks up a parent import, certificate install or connect
+  that changes its resident home while it runs, without a restart and
+  without a request mixing old and new credentials. Those commands now
+  commit their change as one credential generation of the home
+  (`credential-generation.json`, with `credential-update.json` marking an
+  update in progress). Custody serves each request from one published
+  snapshot, refuses requests with `credential_update_incomplete` while an
+  update is unfinished and `credential_update_unpublished` after a change
+  made without a generation (a restart re-validates and adopts it), and
+  with `identity_changed` until restart if the resident key changes.
+
 - `aw id endorse` installs the endorsed root's chain (the human's supporting
   chain and the signed certificate it registered) in the root's home once
   the registry read-back confirms it, so the root can issue children with

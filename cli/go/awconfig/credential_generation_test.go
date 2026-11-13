@@ -274,3 +274,31 @@ func TestAnInterruptedFirstUpdateIsRecoverable(t *testing.T) {
 	}
 	assertState(t, home, 1, false)
 }
+
+// A home that changes while an update waits (for example for the released
+// install lock an older aw holds) is rechecked before the first write.
+func TestAnUpdateRechecksItsBaseBeforeItsFirstWrite(t *testing.T) {
+	for name, published := range map[string]bool{"a published home": true, "a home that never published": false} {
+		home := credentialHome(t, "team-cert.pem")
+		if published {
+			if err := updateWith(home, installA, "team-cert.pem", "published\n"); err != nil {
+				t.Fatal(err)
+			}
+		}
+		before := projectionOf(t, home)
+		err := UpdateCredentials(home, importA, func(begin func() error) error {
+			writeFile(t, home, "team-cert.pem", "written by an older aw meanwhile\n")
+			if err := begin(); err != nil {
+				return err
+			}
+			t.Errorf("%s: the update wrote over a changed home", name)
+			return nil
+		})
+		if !errors.Is(err, ErrCredentialUpdateUnpublished) {
+			t.Errorf("%s: err %v", name, err)
+		}
+		if state, _ := ReadCredentialState(home); state.Marker != nil || projectionOf(t, home) == before {
+			t.Errorf("%s: state %+v", name, state)
+		}
+	}
+}

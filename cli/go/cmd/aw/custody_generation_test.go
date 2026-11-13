@@ -10,6 +10,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"sync"
 	"sync/atomic"
 	"testing"
 
@@ -242,5 +243,81 @@ func TestCustodyNeverReplacesANewerSnapshotWithAnOlderCapture(t *testing.T) {
 	c.clientMu.Unlock()
 	if deps.client != newer || len(c.builtOn) != builds || c.deps(t).client != newer {
 		t.Fatalf("an older capture replaced the snapshot (client %p, newer %p, %d builds)", deps.client, newer, len(c.builtOn))
+	}
+}
+
+// The real path: a custody service over a resident home whose certificate a
+// supported update replaces sends the new certificate on its next requests,
+// and a revoked grant stays refused across the reload.
+func TestCustodyServesTheReplacedCertificateAndKeepsTheGrantRefused(t *testing.T) {
+	resetCustodyClientGlobals(t)
+	var mu sync.Mutex
+	var sent []string
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if header := r.Header.Get("X-AWID-Team-Certificate"); header != "" {
+			if cert, err := awid.DecodeTeamCertificateHeader(header); err == nil {
+				mu.Lock()
+				sent = append(sent, cert.CertificateID)
+				mu.Unlock()
+			}
+		}
+		w.Header().Set("Content-Type", "application/json")
+		if strings.HasPrefix(r.URL.Path, "/v1/identity-grants/grant-1/status") {
+			_, _ = w.Write([]byte(`{"grant_id":"grant-1","status":"revoked","effective_status":"revoked","expires_at":"2026-12-01T00:00:00Z","last_checked_at":"2026-11-13T00:00:00Z"}`))
+			return
+		}
+		if strings.Contains(r.URL.Path, "heartbeat") {
+			_, _ = w.Write([]byte(`{"status":"ok"}`))
+			return
+		}
+		w.WriteHeader(http.StatusNotFound)
+		_, _ = w.Write([]byte(`{"code":"grant_not_found","contract":"identity-grant-status.v1"}`))
+	}))
+	defer server.Close()
+	t.Setenv("AWEB_URL", server.URL)
+	home := custodyFixtureHome(t)
+	teamID, didKey := custodyConstructorIdentityFixture(t, home, server.URL, true)
+	svc, err := newCustodyService(home)
+	if err != nil {
+		t.Fatal(err)
+	}
+	first, err := awconfig.LoadTeamCertificateForTeamFromIdentityHome(home.Root, teamID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	lastSent := func() string {
+		mu.Lock()
+		defer mu.Unlock()
+		if len(sent) == 0 {
+			return ""
+		}
+		return sent[len(sent)-1]
+	}
+	grant := func() custodyGrantStatus {
+		t.Helper()
+		deps := svc.clientDeps(context.Background())
+		if deps.grantStatus == nil {
+			t.Fatalf("no client: %s", svc.lastError)
+		}
+		status, err := deps.grantStatus(context.Background(), "grant-1")
+		if err != nil {
+			t.Fatal(err)
+		}
+		return status
+	}
+	if status := grant(); status.Active || lastSent() != first.CertificateID {
+		t.Fatalf("before the update: grant %+v sent with %q, want %q", status, lastSent(), first.CertificateID)
+	}
+	_, teamKey, _ := awid.GenerateKeypair()
+	replacement, err := awid.SignTeamCertificate(teamKey, awid.TeamCertificateFields{Team: teamID, MemberDIDKey: didKey, MemberDIDAW: svc.identity.StableID,
+		MemberAddress: first.MemberAddress, Alias: "alice", IdentityScope: awid.IdentityModeGlobal})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := commitTeamCertificate(t.TempDir(), home.Root, "fetch-cert", replacement, "", func() (string, error) { return "installed", nil }); err != nil {
+		t.Fatal(err)
+	}
+	if status := grant(); status.Active || lastSent() != replacement.CertificateID {
+		t.Fatalf("after the update: grant %+v sent with %q, want %q", status, lastSent(), replacement.CertificateID)
 	}
 }
