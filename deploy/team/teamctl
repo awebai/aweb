@@ -315,8 +315,9 @@ follower_live() {
 # own health checks log every 5 s): replayed history alone does not show the
 # follower streaming. The follower must still be running after that line, and
 # its receipt (this deployment's egress by image, project and service, and the
-# follower's own identity) must be written; otherwise it is stopped and the
-# agents are held.
+# follower's own identity) must be written, and it is checked again, by that
+# identity, immediately before the agent starts; otherwise it is stopped and
+# the agents are held.
 capture_egress() {
   local log="$TEAM_DEPLOYMENT_EGRESS_LOG" id attached follower deadline witness inspected started command path
   [[ "$log" == /* ]] || refuse "TEAM_DEPLOYMENT_EGRESS_LOG must be an absolute path"
@@ -392,7 +393,22 @@ PY
     echo "teamctl: egress capture: no receipt; the follower is stopped" >&2
     return 1
   fi
+  CAPTURE_PID="$follower" CAPTURE_ID="$id" CAPTURE_STARTED="$started"
   echo "egress capture: streaming into $log (follower $follower, attached $attached)"
+}
+
+# Immediately before the agent starts: the capture's own follower is still
+# live, with the start time recorded in its receipt. A follower that passed
+# capture_egress may have exited during the probes.
+capture_still_live() {
+  if follower_live "$CAPTURE_PID" "$CAPTURE_ID" \
+    && [[ "$(ps -o lstart= -p "$CAPTURE_PID" 2>/dev/null)" == "$CAPTURE_STARTED" ]]; then
+    echo "egress capture: still streaming before the agent starts (follower $CAPTURE_PID)"
+    return 0
+  fi
+  stop_follower "$CAPTURE_PID"
+  echo "teamctl: egress capture: the follower is no longer streaming" >&2
+  return 1
 }
 
 # The signer's human origin has one existing GET route that answers 200: its
@@ -806,6 +822,10 @@ sys.exit(status != 200)
     fi
     if ! boundary_probe; then
       echo "teamctl: agents held: the boundary probe did not pass" >&2
+      exit 1
+    fi
+    if [[ -n "${TEAM_DEPLOYMENT_EGRESS_LOG:-}" ]] && ! capture_still_live; then
+      echo "teamctl: agents held: egress's log is not being captured" >&2
       exit 1
     fi
     if ! start_agent; then

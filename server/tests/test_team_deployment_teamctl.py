@@ -216,6 +216,10 @@ def agents_deployment(tmp_path: Path, team: dict) -> str:
     for fragment in ("container/agent/compose.agent.yaml", "container/agent/egress/compose.egress.yaml"):
         (oats / fragment).parent.mkdir(parents=True, exist_ok=True)
         (oats / fragment).write_text("services: {}\n", encoding="utf-8")
+    # The agent's acceptance passes, as a stand-in for the image's own.
+    accept = oats / "container" / "agent" / "accept.sh"
+    accept.write_text("#!/bin/sh\necho '[live-lab] PASS'\n", encoding="utf-8")
+    accept.chmod(0o755)
     git = ["git", "-C", str(oats), "-c", "user.name=t", "-c", "user.email=t@example.com"]
     subprocess.run(["git", "init", "-q", str(oats)], check=True)
     subprocess.run([*git, "add", "."], check=True)
@@ -434,3 +438,41 @@ def test_a_capture_refuses_a_log_file_that_exists(tmp_path, monkeypatch):
 def test_without_a_capture_path_start_attaches_no_follower(tmp_path):
     start_with_agents(tmp_path, {"id": "devteam:example.com"}, BASE_SERVICES, PUBLIC_REGISTRY_ADDRESSES)
     assert not [call for call in calls(tmp_path) if "--timestamps --follow" in call]
+
+
+def fake_node(tmp_path: Path, probe_seconds: int) -> Path:
+    """A Node stand-in: its version check passes, and the boundary probe passes
+    after probe_seconds, as a slow real probe would."""
+    node = tmp_path / "bin" / "fake-node"
+    node.parent.mkdir(exist_ok=True)
+    node.write_text(
+        "#!/bin/sh\n"
+        'case "$1" in -e) exit 0;; esac\n'
+        f"sleep {probe_seconds}\n"
+        "echo OATS_EGRESS_BOUNDARY_PASS\n", encoding="utf-8")
+    node.chmod(0o755)
+    return node
+
+
+def agent_started(made: list[str]) -> bool:
+    return any("--no-deps --wait --wait-timeout 300 agent" in call for call in made)
+
+
+def test_a_capture_still_live_after_the_probes_lets_the_agent_start(tmp_path, monkeypatch):
+    monkeypatch.setenv("TEAM_DEPLOYMENT_NODE", str(fake_node(tmp_path, 0)))
+    result, _ = egress_capture(tmp_path, LATER_LINE, monkeypatch, follower_seconds=20)
+    assert "boundary probe: exit 0, OATS_EGRESS_BOUNDARY_PASS" in result.stdout, result.stdout + result.stderr
+    assert "egress capture: still streaming before the agent starts" in result.stdout, result.stdout + result.stderr
+    assert agent_started(calls(tmp_path))
+
+
+def test_a_capture_that_dies_during_the_probes_holds_the_agent(tmp_path, monkeypatch):
+    # Live when it attached, gone by the time the probes are done: the agent
+    # would otherwise start with nothing capturing its egress.
+    monkeypatch.setenv("TEAM_DEPLOYMENT_NODE", str(fake_node(tmp_path, 6)))
+    result, _ = egress_capture(tmp_path, LATER_LINE, monkeypatch, follower_seconds=3)
+    assert "boundary probe: exit 0, OATS_EGRESS_BOUNDARY_PASS" in result.stdout, result.stdout + result.stderr
+    assert result.returncode == 1
+    assert "egress capture: the follower is no longer streaming" in result.stderr, result.stderr
+    assert "agents held: egress's log is not being captured" in result.stderr
+    assert not agent_started(calls(tmp_path))
