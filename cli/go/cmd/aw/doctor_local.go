@@ -456,9 +456,11 @@ func (r *doctorRunner) reportOwnerLogKey(teamID string, teamKey func() (string, 
 	target := &doctorTarget{Type: "team", ID: teamID}
 	rec, err := awconfig.LoadLogKeyRecord(teamID)
 	if errors.Is(err, os.ErrNotExist) {
+		// Plaintext logs are the default until an owner installs a key, so a
+		// team without one is reported for information, not as degraded.
 		r.add(localCheck(
 			doctorCheckLocalLogKey,
-			doctorStatusWarn,
+			doctorStatusInfo,
 			target,
 			"No owner log key is installed for this team; local mail and chat logs are written in plaintext.",
 			"The team owner runs `aw team admin log-key create`, has the record signed with `aw team admin log-key sign`, then runs `aw team admin log-key install <record>` on this host.",

@@ -292,7 +292,10 @@ services:
     cap_add: [IPC_LOCK]
     environment:
       HOME: /work/home
+      # Isolated development: the CLI reaches awid-a and awid-b, single-label
+      # http registries no AWID_REGISTRY_URL names, as the servers do.
       APP_ENV: development
+      AWEB_FEDERATION_TEST: "1"
       AWEB_CROSS_REGISTRY_CSR: "${AWEB_CROSS_REGISTRY_CSR:-1}"
     volumes:
       - "$WORK_DIR:/work"

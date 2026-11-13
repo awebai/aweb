@@ -605,9 +605,14 @@ func TestAwDoctorLocalReportsTheOwnerLogKey(t *testing.T) {
 		return decodeDoctorOutput(t, out)
 	}
 
-	check := requireDoctorCheckStatus(t, doctor(), doctorCheckLocalLogKey, doctorStatusWarn)
+	// No installed key is the normal default: logs stay plaintext until an
+	// owner installs one. It is reported, and it does not degrade the verdict.
+	check := requireDoctorCheckStatus(t, doctor(), doctorCheckLocalLogKey, doctorStatusInfo)
 	if !strings.Contains(check.Message, "plaintext") {
 		t.Fatalf("missing key message: %q", check.Message)
+	}
+	if got := aggregateDoctorStatus([]doctorCheck{check}); got != doctorStatusOK {
+		t.Fatalf("a team with no owner log key degrades the verdict to %q", got)
 	}
 
 	_, stranger, err := ed25519.GenerateKey(rand.Reader)
