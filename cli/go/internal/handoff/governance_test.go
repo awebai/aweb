@@ -493,7 +493,7 @@ func TestAnApprovalWhosePreparedRequestTheCallerRefusesShowsNoLink(t *testing.T)
 	opts := stub.options(&opened)
 	opts.Notify = &notified
 	refuse := errors.New("the frozen policy is not the policy read")
-	opts.CheckPrepared = func(request map[string]any) error {
+	opts.CheckPrepared = func(_ context.Context, request map[string]any) error {
 		if request["operation_id"] != "11111111-1111-4111-8111-111111111111" {
 			t.Fatalf("request %v", request)
 		}
@@ -502,6 +502,58 @@ func TestAnApprovalWhosePreparedRequestTheCallerRefusesShowsNoLink(t *testing.T)
 	_, err := Approve(context.Background(), opts, "11111111-1111-4111-8111-111111111111", revokeIntent())
 	if !errors.Is(err, refuse) || opened != "" || strings.Contains(notified.String(), "/handoff/") || stub.reads != 0 {
 		t.Fatalf("err %v, opened %q, notified %q, %d receipt reads", err, opened, notified.String(), stub.reads)
+	}
+}
+
+func TestTheCallersCheckRunsUnderTheCallersContextUntilTheOperationExpires(t *testing.T) {
+	stub := newSignerStub(t, pendingReceipt, committedReceipt)
+	stub.expiresIn = 300 * time.Millisecond
+	var opened string
+	opts := stub.options(&opened)
+	type key struct{}
+	ctx := context.WithValue(context.Background(), key{}, "caller")
+	var deadline time.Time
+	opts.CheckPrepared = func(checkCtx context.Context, _ map[string]any) error {
+		if checkCtx.Value(key{}) != "caller" {
+			t.Fatal("the check does not run under the caller's context")
+		}
+		deadline, _ = checkCtx.Deadline()
+		select { // a policy read that never answers
+		case <-checkCtx.Done():
+			return checkCtx.Err()
+		case <-time.After(2 * time.Second):
+			return errors.New("the check was never bounded by the operation's expiry")
+		}
+	}
+	started := time.Now()
+	_, err := Approve(ctx, opts, "11111111-1111-4111-8111-111111111111", revokeIntent())
+	if !errors.Is(err, context.DeadlineExceeded) || opened != "" || deadline.IsZero() || deadline.After(started.Add(time.Second)) || stub.reads != 0 {
+		t.Fatalf("err %v, opened %q, deadline %v, %d reads", err, opened, deadline, stub.reads)
+	}
+
+	cancelled, cancel := context.WithCancel(context.Background())
+	opts = newSignerStub(t, pendingReceipt, committedReceipt).options(&opened)
+	opts.CheckPrepared = func(checkCtx context.Context, _ map[string]any) error {
+		cancel()
+		<-checkCtx.Done()
+		return checkCtx.Err()
+	}
+	if _, err := Approve(cancelled, opts, "11111111-1111-4111-8111-111111111111", revokeIntent()); !errors.Is(err, context.Canceled) || opened != "" {
+		t.Fatalf("cancelled: err %v opened %q", err, opened)
+	}
+}
+
+func TestAnOperationThatExpiresDuringTheCallersCheckShowsNoPage(t *testing.T) {
+	stub := newSignerStub(t, pendingReceipt, committedReceipt)
+	stub.expiresIn = 200 * time.Millisecond
+	var opened string
+	opts := stub.options(&opened)
+	opts.CheckPrepared = func(context.Context, map[string]any) error {
+		time.Sleep(300 * time.Millisecond) // a check that ignores its context and answers late
+		return nil
+	}
+	if _, err := Approve(context.Background(), opts, "11111111-1111-4111-8111-111111111111", revokeIntent()); ErrorCode(err) != "operation_expired" || opened != "" {
+		t.Fatalf("err %v opened %q", err, opened)
 	}
 }
 

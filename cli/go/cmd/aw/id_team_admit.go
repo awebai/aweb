@@ -9,6 +9,7 @@ import (
 	"errors"
 	"fmt"
 	"os"
+	"path/filepath"
 	"regexp"
 	"strings"
 
@@ -169,7 +170,7 @@ func admitMember(ctx context.Context, opts handoff.GovernanceOptions, profile *h
 	if err != nil {
 		return nil, err
 	}
-	pinnedKey := func(frozen map[string]any) error {
+	pinnedKey := func(_ context.Context, frozen map[string]any) error {
 		artifact, _ := frozen["artifact"].(map[string]any)
 		if artifact["team_did_key"] != binding.AuthorityKeyDID {
 			return withErrorCode("operation_mismatch", errors.New("the prepared certificate names another team key than the profile pins"))
@@ -261,19 +262,51 @@ func admittedCertificate(result []byte, prepared *handoff.Prepared, body map[str
 	return &cert, nil
 }
 
-// writeCertificateOnce writes cert to path, unless path already holds a file:
-// the same certificate is left as it is, and anything else is never replaced.
+// writeCertificateOnce publishes cert at path, which it never replaces: a
+// regular file already holding exactly cert is left as it is, and anything
+// else there, a link included, refuses certificate_out_exists.
 func writeCertificateOnce(path string, cert *awid.TeamCertificate) error {
-	if _, err := os.Stat(path); err == nil {
-		existing, loadErr := awid.LoadTeamCertificate(path)
-		if loadErr == nil && existing.CertificateID == cert.CertificateID && existing.Signature == cert.Signature {
-			return nil
-		}
-		return withErrorCode("certificate_out_exists", fmt.Errorf("%s already holds another file; its certificate is kept by the service, move the file and run again", path))
-	} else if !os.IsNotExist(err) {
+	err := publishCertificate(path, cert)
+	if !errors.Is(err, os.ErrExist) {
 		return err
 	}
-	return awid.SaveTeamCertificate(path, cert)
+	exists := withErrorCode("certificate_out_exists", fmt.Errorf("%s already holds another file; the service keeps the certificate, so move the file and run again", path))
+	info, err := os.Lstat(path)
+	if err != nil || !info.Mode().IsRegular() {
+		return exists
+	}
+	existing, err := os.ReadFile(path)
+	encoded, encodeErr := awid.EncodeTeamCertificateFile(cert)
+	if err != nil || encodeErr != nil || !bytes.Equal(existing, encoded) {
+		return exists
+	}
+	return nil
+}
+
+// publishCertificate writes cert to a private file beside path and links it
+// into place, which fails with os.ErrExist rather than replacing whatever
+// path holds, even a file created after any earlier check.
+func publishCertificate(path string, cert *awid.TeamCertificate) error {
+	data, err := awid.EncodeTeamCertificateFile(cert)
+	if err != nil {
+		return err
+	}
+	temp, err := os.CreateTemp(filepath.Dir(path), ".team-certificate-*")
+	if err != nil {
+		return err
+	}
+	defer os.Remove(temp.Name())
+	_, err = temp.Write(data)
+	if err == nil {
+		err = temp.Sync()
+	}
+	if closeErr := temp.Close(); err == nil {
+		err = closeErr
+	}
+	if err != nil {
+		return err
+	}
+	return os.Link(temp.Name(), path)
 }
 
 func runTeamAdmit(cmd *cobra.Command, _ []string) error {

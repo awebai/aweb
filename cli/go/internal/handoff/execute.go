@@ -43,7 +43,7 @@ func Execute(ctx context.Context, opts GovernanceOptions, raw []byte) (*Receipt,
 	if prepared.ExpiresAt.Before(until) {
 		until = prepared.ExpiresAt
 	}
-	if err := checkPrepared(opts, prepared); err != nil {
+	if err := checkPrepared(ctx, opts, prepared); err != nil {
 		return nil, prepared, err
 	}
 	var receipt *Receipt

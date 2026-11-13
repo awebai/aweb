@@ -42,8 +42,9 @@ type GovernanceOptions struct {
 	Forget func(operationID string) error
 	// CheckPrepared, when set, checks the frozen request after aw verified
 	// it is what was sent, before any page is shown or execution sent; an
-	// error stops the operation there.
-	CheckPrepared func(request map[string]any) error
+	// error stops the operation there. It runs under the caller's context,
+	// ending at the prepared operation's expiry.
+	CheckPrepared func(ctx context.Context, request map[string]any) error
 }
 
 // Prepared is a prepared protected operation: the frozen request the human
@@ -216,7 +217,7 @@ func approve(ctx context.Context, opts GovernanceOptions, operationID string, bo
 	if err != nil {
 		return nil, err
 	}
-	if err := checkPrepared(opts, prepared); err != nil {
+	if err := checkPrepared(ctx, opts, prepared); err != nil {
 		return nil, err
 	}
 	page := opts.Human + "/handoff/" + url.PathEscape(prepared.HandoffID)
@@ -241,14 +242,24 @@ func approve(ctx context.Context, opts GovernanceOptions, operationID string, bo
 	return awaitReceipt(ctx, opts, operationID, prepared.ExpiresAt, woken)
 }
 
-// checkPrepared runs the caller's check of prepared's frozen request.
-func checkPrepared(opts GovernanceOptions, prepared *Prepared) error {
+// checkPrepared runs the caller's check of prepared's frozen request under
+// ctx, ending at the operation's expiry, and refuses an operation that
+// expired while it ran: nothing about it is shown or sent after that.
+func checkPrepared(ctx context.Context, opts GovernanceOptions, prepared *Prepared) error {
 	if opts.CheckPrepared == nil {
 		return nil
 	}
 	payload, _ := decodeObject(prepared.Payload)
 	request, _ := payload["request"].(map[string]any)
-	return opts.CheckPrepared(request)
+	checkCtx, cancel := context.WithDeadline(ctx, prepared.ExpiresAt)
+	defer cancel()
+	if err := opts.CheckPrepared(checkCtx, request); err != nil {
+		return err
+	}
+	if !now().Before(prepared.ExpiresAt) {
+		return coded("operation_expired", fmt.Errorf("operation %s expired while its prepared request was checked", prepared.OperationID))
+	}
+	return nil
 }
 
 // awaitReceipt reads operationID's receipt until it is final or the operation

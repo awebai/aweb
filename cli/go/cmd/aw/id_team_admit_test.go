@@ -6,6 +6,7 @@ import (
 	"crypto/ed25519"
 	"encoding/base64"
 	"encoding/json"
+	"errors"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -422,5 +423,88 @@ func TestAnAdmissionWhoseFrozenCertificateNamesAnotherTeamKeyIsNeverExecuted(t *
 	}
 	if service.executes != 0 {
 		t.Fatalf("%d executes were sent", service.executes)
+	}
+}
+
+func TestAnExistingCertificateCountsOnlyIfItIsTheWholeVerifiedOne(t *testing.T) {
+	_, profile, service := admitTestSetup(t)
+	request := admitTestRequest(t)
+	if _, err := admitMember(context.Background(), service.options(), profile, request); err != nil {
+		t.Fatal(err)
+	}
+	original, _ := os.ReadFile(request.CertificateOut)
+	var altered map[string]any
+	_ = json.Unmarshal(original, &altered)
+	altered["alias"] = "impostor" // the certificate ID and signature unchanged
+	changed, _ := json.MarshalIndent(altered, "", "  ")
+	if err := os.WriteFile(request.CertificateOut, changed, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := admitMember(context.Background(), service.options(), profile, request); errorCodeOf(err) != "certificate_out_exists" {
+		t.Fatalf("err %v", err)
+	}
+	if now, _ := os.ReadFile(request.CertificateOut); !bytes.Equal(now, changed) {
+		t.Fatal("the altered file was replaced")
+	}
+	if saved, _ := awconfig.LoadPendingGovernanceOperation(admitTestOperation); saved == nil {
+		t.Fatal("the saved request was forgotten")
+	}
+}
+
+func TestALinkAtTheCertificatePathIsNeverFollowedOrReplaced(t *testing.T) {
+	_, profile, service := admitTestSetup(t)
+	request := admitTestRequest(t)
+	target := filepath.Join(t.TempDir(), "elsewhere.json")
+	if err := os.Symlink(target, request.CertificateOut); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := admitMember(context.Background(), service.options(), profile, request); errorCodeOf(err) != "certificate_out_exists" {
+		t.Fatalf("err %v", err)
+	}
+	if link, err := os.Readlink(request.CertificateOut); err != nil || link != target {
+		t.Fatalf("the link was replaced: %q %v", link, err)
+	}
+	if _, err := os.Stat(target); !os.IsNotExist(err) {
+		t.Fatal("the link's target was written")
+	}
+}
+
+func TestTheCertificateIsPublishedWithoutReplacingAFileCreatedMeanwhile(t *testing.T) {
+	_, teamKey, _ := ed25519.GenerateKey(nil)
+	cert, err := awid.SignTeamCertificate(teamKey, awid.TeamCertificateFields{Team: "engineering:customer.example", MemberDIDKey: admitTestChildKey, Alias: "worker", IdentityScope: "local"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	path := filepath.Join(t.TempDir(), "team-cert.json")
+	if err := os.WriteFile(path, []byte("{}"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := publishCertificate(path, cert); !errors.Is(err, os.ErrExist) {
+		t.Fatalf("err %v", err)
+	}
+	if data, _ := os.ReadFile(path); string(data) != "{}" {
+		t.Fatal("the file created meanwhile was replaced")
+	}
+	entries, _ := os.ReadDir(filepath.Dir(path))
+	if len(entries) != 1 {
+		t.Fatalf("a temporary file was left: %v", entries)
+	}
+}
+
+func TestALinkToTheSameCertificateIsStillNotTheCertificateFile(t *testing.T) {
+	_, profile, service := admitTestSetup(t)
+	request := admitTestRequest(t)
+	if _, err := admitMember(context.Background(), service.options(), profile, request); err != nil {
+		t.Fatal(err)
+	}
+	real := request.CertificateOut + ".real"
+	if err := os.Rename(request.CertificateOut, real); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink(real, request.CertificateOut); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := admitMember(context.Background(), service.options(), profile, request); errorCodeOf(err) != "certificate_out_exists" {
+		t.Fatalf("err %v", err)
 	}
 }

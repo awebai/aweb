@@ -8,9 +8,12 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"errors"
+	"net/http"
+	"net/http/httptest"
 	"strconv"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/awebai/aw/awconfig"
 	"github.com/awebai/aw/awid"
@@ -122,26 +125,42 @@ func TestTheLinkIsShownOnlyWhenEveryTeamsPolicyReadIsTheFrozenPolicy(t *testing.
 	same := map[string]*handoff.AdmissionPolicyRead{teams[0]: protectedRead(teams[0], frozen), teams[1]: protectedRead(teams[1], frozen)}
 	var kept map[string]any
 	check := endorsementCheck("did:key:zhuman", teams, policyReads(same, nil), &kept)
-	if err := check(request); err != nil || kept == nil {
+	if err := check(context.Background(), request); err != nil || kept == nil {
 		t.Fatalf("err %v kept %v", err, kept)
 	}
 	newer := map[string]*handoff.AdmissionPolicyRead{teams[0]: protectedRead(teams[0], frozen), teams[1]: protectedRead(teams[1], endorseTestPolicy(4))}
 	legacy := map[string]*handoff.AdmissionPolicyRead{teams[0]: protectedRead(teams[0], frozen), teams[1]: {Mode: "legacy"}}
 	for name, tc := range map[string]struct {
-		check func(map[string]any) error
+		check func(context.Context, map[string]any) error
 		code  string
 	}{
 		"changed policy":   {endorsementCheck("did:key:zhuman", teams, policyReads(newer, nil), new(map[string]any)), "policy_changed"},
 		"legacy team":      {endorsementCheck("did:key:zhuman", teams, policyReads(legacy, nil), new(map[string]any)), "admission_policy_missing"},
 		"other issuer key": {endorsementCheck("did:key:zother", teams, policyReads(same, nil), new(map[string]any)), "operation_mismatch"},
 	} {
-		if err := tc.check(request); errorCodeOf(err) != tc.code {
+		if err := tc.check(context.Background(), request); errorCodeOf(err) != tc.code {
 			t.Errorf("%s: err %v", name, err)
 		}
 	}
 	unavailable := errors.New("the read could not be answered")
-	if err := endorsementCheck("did:key:zhuman", teams, policyReads(nil, unavailable), new(map[string]any))(request); !errors.Is(err, unavailable) {
+	if err := endorsementCheck("did:key:zhuman", teams, policyReads(nil, unavailable), new(map[string]any))(context.Background(), request); !errors.Is(err, unavailable) {
 		t.Errorf("unavailable read: %v", err)
+	}
+	// A read that never answers ends with the caller's context, and is never
+	// taken as the policy.
+	ctx, cancel := context.WithCancel(context.Background())
+	blocked := func(readCtx context.Context, _ string) (*handoff.AdmissionPolicyRead, error) {
+		cancel()
+		select {
+		case <-readCtx.Done():
+			return nil, readCtx.Err()
+		case <-time.After(2 * time.Second):
+			return nil, errors.New("the read never saw the caller's cancellation")
+		}
+	}
+	kept = nil
+	if err := endorsementCheck("did:key:zhuman", teams, blocked, &kept)(ctx, request); !errors.Is(err, context.Canceled) || kept != nil {
+		t.Errorf("cancelled read: err %v kept %v", err, kept)
 	}
 }
 
@@ -280,5 +299,55 @@ func TestAChangedEndorsementUnderASavedOperationIDIsAConflict(t *testing.T) {
 	}
 	if body, err := savedEndorsement(profile, "88888888-8888-4888-8888-88888888abcd", intent); body != nil || err != nil {
 		t.Fatalf("no saved operation: body %s err %v", body, err)
+	}
+}
+
+// competingRegistry is a registry whose status names another current
+// certificate for the root, and that refuses the registration.
+func competingRegistry(t *testing.T, root, current string) *httptest.Server {
+	t.Helper()
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		switch r.URL.Path {
+		case "/v1/id-certificates/status":
+			_ = json.NewEncoder(w).Encode(map[string]any{"identities": []any{map[string]any{"id": root, "current_certificate_id": current}}})
+		default:
+			w.WriteHeader(http.StatusConflict)
+			_, _ = w.Write([]byte(`{"detail":"head_conflict"}`))
+		}
+	}))
+	t.Cleanup(server.Close)
+	return server
+}
+
+func TestTheRealReadBackReportsAnotherCurrentHeadAsAConflict(t *testing.T) {
+	humanPublic, humanKey, _ := ed25519.GenerateKey(nil)
+	humanDID := awid.ComputeDIDKey(humanPublic)
+	human := map[string]any{"v": json.Number("1"), "type": "aweb.id-certificate", "id": admitTestHuman, "domain": "customer.example",
+		"parent": map[string]any{"kind": "namespace", "id": "customer.example"}, "kind": "human", "issuer_key": humanDID, "issued_at": "2026-11-13T09:00:00Z"}
+	humanSigning, _ := awid.IDCertificateSigningBytes(human)
+	humanSigned := map[string]any{"certificate": human, "signature": base64.RawURLEncoding.EncodeToString(ed25519.Sign(humanKey, humanSigning))}
+	artifact := endorsedArtifact(humanDID)
+	signed, err := endorsedCertificate(signedEndorsement(t, humanKey, artifact), artifact, humanDID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	other := "sha256:" + strings.Repeat("cd", 32)
+	server := competingRegistry(t, artifact["id"].(string), other)
+	profile := endorseTestProfile(t, humanKey)
+	profile.RegistryOrigin = server.URL
+	registry, err := newConfiguredRegistryClient(nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := registry.TrustRegistryOrigin(server.URL); err != nil {
+		t.Fatal(err)
+	}
+	_, rootKey, _ := ed25519.GenerateKey(nil)
+	root := &pinnedRootRegistry{registry: registry, profile: profile, domain: "customer.example", signer: awid.KeySigner(rootKey),
+		root: awid.IDChainSubject{ID: artifact["id"].(string), DIDKey: awid.ComputeDIDKey(rootKey.Public().(ed25519.PublicKey))}}
+	err = registerEndorsement(context.Background(), root, []any{humanSigned}, signed, nil)
+	if errorCodeOf(err) != "registration_conflict" || !strings.Contains(err.Error(), other) {
+		t.Fatalf("err %v", err)
 	}
 }

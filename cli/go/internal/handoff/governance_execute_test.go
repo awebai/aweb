@@ -222,7 +222,7 @@ func TestTheCallersCheckOfThePreparedRequestPrecedesExecution(t *testing.T) {
 	stub.executes = []string{"200:" + admitCommitted}
 	refuse := errors.New("not this team key")
 	opts := stub.options(t)
-	opts.CheckPrepared = func(request map[string]any) error {
+	opts.CheckPrepared = func(_ context.Context, request map[string]any) error {
 		if request["artifact"].(map[string]any)["team_did_key"] != "did:key:zteam" {
 			t.Fatalf("request %v", request)
 		}

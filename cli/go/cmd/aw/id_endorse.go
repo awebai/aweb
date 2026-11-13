@@ -140,11 +140,12 @@ func savedEndorsement(profile *handoff.Profile, operationID string, intent map[s
 }
 
 // endorsementCheck checks a prepared endorsement before its page is shown: the
-// human's pinned key issues it, and for every team aw's own policy read is a
-// protected team whose policy is exactly the frozen one. It keeps the frozen
-// request it accepted in kept.
-func endorsementCheck(issuerKey string, teams []string, readPolicy func(context.Context, string) (*handoff.AdmissionPolicyRead, error), kept *map[string]any) func(map[string]any) error {
-	return func(request map[string]any) error {
+// human's pinned key issues it, and for every team aw's own policy read, under
+// the caller's context, is a protected team whose policy is exactly the frozen
+// one. A read that ends or fails is never taken as a policy. It keeps the
+// frozen request it accepted in kept.
+func endorsementCheck(issuerKey string, teams []string, readPolicy func(context.Context, string) (*handoff.AdmissionPolicyRead, error), kept *map[string]any) func(context.Context, map[string]any) error {
+	return func(ctx context.Context, request map[string]any) error {
 		artifact, _ := request["artifact"].(map[string]any)
 		if artifact["issuer_key"] != issuerKey {
 			return withErrorCode("operation_mismatch", errors.New("the prepared certificate is issued by another key than the profile pins for the human"))
@@ -154,7 +155,7 @@ func endorsementCheck(issuerKey string, teams []string, readPolicy func(context.
 			return withErrorCode("operation_mismatch", errors.New("the prepared admission policy is not canonical"))
 		}
 		for _, team := range teams {
-			read, err := readPolicy(context.Background(), team)
+			read, err := readPolicy(ctx, team)
 			if err != nil {
 				return err
 			}
@@ -205,8 +206,9 @@ func endorsedCertificate(result []byte, artifact map[string]any, issuerKey strin
 // rootRegistry is where an endorsed root registers its certificate.
 type rootRegistry interface {
 	register(ctx context.Context, bundle map[string]any, expectedHead *string) error
-	// currentHead verifies bundle against the registry's current status and
-	// answers the root's current certificate ID.
+	// currentHead answers the root's current certificate ID at the registry,
+	// having verified bundle as the root's whole chain when that ID is
+	// bundle's own leaf.
 	currentHead(ctx context.Context, bundle map[string]any) (string, error)
 }
 
@@ -282,18 +284,29 @@ func (r *pinnedRootRegistry) currentHead(ctx context.Context, bundle map[string]
 	// A fresh client: the read-back never answers from evidence read before
 	// the registration.
 	evidence := pinnedStatusClient(r.registry, r.profile).IDChainEvidence(ctx, bundle, r.root, r.domain)
-	if result := awid.VerifyIDChain(bundle, r.root, evidence, r.domain); result.Reason != "verified" {
-		return "", fmt.Errorf("the root's chain does not verify at the registry (%s)", result.Reason)
-	}
+	current := ""
 	rows, _ := evidence.Status["identities"].([]any)
 	for _, value := range rows {
 		row, _ := value.(map[string]any)
 		if row["id"] == r.root.ID {
-			current, _ := row["current_certificate_id"].(string)
-			return current, nil
+			current, _ = row["current_certificate_id"].(string)
 		}
 	}
-	return "", awid.ErrMalformedIDStatus
+	if current == "" {
+		return "", fmt.Errorf("the registry's status names no current certificate for %s", r.root.ID)
+	}
+	// Another current head is the registry's answer as it is; only the
+	// endorsed head must also verify as the root's whole chain.
+	certificates, _ := bundle["certificates"].([]any)
+	leaf, _ := certificates[len(certificates)-1].(map[string]any)
+	ours, err := awid.IDCertificateID(leaf["certificate"].(map[string]any))
+	if err != nil || current != ours {
+		return current, nil
+	}
+	if result := awid.VerifyIDChain(bundle, r.root, evidence, r.domain); result.Reason != "verified" {
+		return "", fmt.Errorf("the root's chain does not verify at the registry (%s)", result.Reason)
+	}
+	return current, nil
 }
 
 func runIDEndorse(cmd *cobra.Command, _ []string) error {
