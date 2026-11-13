@@ -41,7 +41,9 @@ async def _compatible(
     if not nodes:
         raise DerivedGrantRefused()
     parent = nodes[-1].secret.record
-    policy = await records.policy(tx, nodes[-1].installation_id, template.terms["policy_digest"])
+    policy = await records.policy(
+        tx, nodes[-1].installation_id, template.terms["policy_digest"], team_id=nodes[-1].team_id
+    )
     if policy is None:
         raise DerivedGrantRefused()
     if template.terms["capability"] == "run":
@@ -88,7 +90,9 @@ async def snapshot_grant_template(
     """
     if not nodes:
         raise DerivedGrantRefused()
-    template = await records.grant_template(tx, nodes[-1].installation_id, template_id)
+    template = await records.grant_template(
+        tx, nodes[-1].installation_id, template_id, team_id=nodes[-1].team_id
+    )
     if template is None or template.digest != expected_digest:
         raise DerivedGrantRefused()
     await _compatible(tx, nodes, template)
@@ -112,9 +116,10 @@ async def fence_grant_snapshot(
     frozen = snapshot.template
     body = await tx.fetch_value(
         "SELECT record FROM {{tables.grant_templates}}"
-        " WHERE installation_id=$1 AND grant_template_id=$2 FOR SHARE",
+        " WHERE installation_id=$1 AND grant_template_id=$2 AND team_id=$3 FOR SHARE",
         nodes[-1].installation_id,
         frozen.grant_template_id,
+        nodes[-1].team_id,
     )
     if body is None:
         raise DerivedGrantRefused()

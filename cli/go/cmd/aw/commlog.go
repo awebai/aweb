@@ -2,7 +2,6 @@ package main
 
 import (
 	"encoding/json"
-	"os"
 	"path/filepath"
 	"strings"
 
@@ -64,30 +63,16 @@ func defaultLogsDir() string {
 	return p
 }
 
-// appendCommLog writes a single entry to the account's communication log.
+// appendCommLog writes a single entry to the account's communication log,
+// sealed to the team's owner log key when one is installed.
 // Best-effort: errors go to debugLog, never block communication.
-func appendCommLog(logsDir, accountName string, entry *CommLogEntry) {
-	if err := os.MkdirAll(logsDir, 0o700); err != nil {
-		debugLog("commlog: mkdir %s: %v", logsDir, err)
-		return
-	}
-
+func appendCommLog(logsDir, accountName string, policy localLogPolicy, entry *CommLogEntry) {
 	line, err := json.Marshal(entry)
 	if err != nil {
 		debugLog("commlog: marshal: %v", err)
 		return
 	}
-	line = append(line, '\n')
-
-	path := commLogPath(logsDir, accountName)
-	f, err := os.OpenFile(path, os.O_WRONLY|os.O_CREATE|os.O_APPEND, 0o600)
-	if err != nil {
-		debugLog("commlog: open %s: %v", path, err)
-		return
-	}
-	defer f.Close()
-
-	if _, err := f.Write(line); err != nil {
-		debugLog("commlog: write: %v", err)
+	if err := appendLocalLogLine(commLogPath(logsDir, accountName), policy, line, nil); err != nil {
+		debugLog("commlog: %v", err)
 	}
 }

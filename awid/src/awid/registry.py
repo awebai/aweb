@@ -57,6 +57,7 @@ from awid.log import (
 )
 from awid.ratelimit import normalize_service_token
 from awid.registry_auth import RegistryRequestAuth, path_signature_headers
+from awid.registry_transport import RegistryOverrideTransport
 from awid.registry_types import (
     RegistryError as RegistryError,
     RegistryThrottled as RegistryThrottled,
@@ -77,6 +78,7 @@ logger = logging.getLogger(__name__)
 
 MAX_REGISTRY_RESPONSE_BYTES = 10 * 1024 * 1024
 MAX_REGISTRY_ERROR_BYTES = 64 * 1024
+MAX_REGISTRY_PAGES = 500
 
 
 # One original timeout covers network reads and waits. Keep these aliases
@@ -371,6 +373,7 @@ class RegistryClient:
     )
     _request_auth: RegistryRequestAuth = field(init=False, repr=False, compare=False)
     _http_client: httpx.AsyncClient = field(init=False, repr=False, compare=False)
+    _override_http_client: httpx.AsyncClient | None = field(init=False, repr=False, compare=False)
 
     def __post_init__(self, domain_verifier: DomainVerifier | None = None) -> None:
         object.__setattr__(self, "_domain_verifier", domain_verifier)
@@ -402,6 +405,17 @@ class RegistryClient:
                 transport=self.transport,
                 follow_redirects=False,
             ),
+        )
+
+        object.__setattr__(
+            self,
+            "_override_http_client",
+            httpx.AsyncClient(
+                timeout=self.timeout_seconds,
+                transport=RegistryOverrideTransport(),
+                follow_redirects=False,
+                trust_env=False,
+            ) if self.transport is None else None,
         )
 
     def _resolved_base_url(self, registry_url: str | None = None) -> str:
@@ -512,7 +526,7 @@ class RegistryClient:
         items: list[dict[str, Any]] = []
         cursor: str | None = None
         seen_cursors: set[str] = set()
-        while True:
+        for _page in range(MAX_REGISTRY_PAGES):
             query = "limit=200"
             if cursor is not None:
                 query += f"&cursor={quote(cursor, safe='')}"
@@ -533,6 +547,7 @@ class RegistryClient:
                 )
             seen_cursors.add(next_cursor)
             cursor = next_cursor
+        raise RegistryError(f"AWID {items_key} pagination exceeded {MAX_REGISTRY_PAGES} pages", status_code=502)
 
     async def _request_json(
         self,
@@ -578,7 +593,7 @@ class RegistryClient:
                         request_headers.update(self._request_auth.headers(
                             method, path, signed_by_caller=caller_proof,
                         ))
-                    async with self._http_client.stream(
+                    async with (self._http_client if home_registry or self._override_http_client is None else self._override_http_client).stream(
                         method,
                         f"{self._resolved_base_url(registry_url=registry_url)}{path}",
                         headers=request_headers,
@@ -669,6 +684,8 @@ class RegistryClient:
 
     async def aclose(self) -> None:
         await self._http_client.aclose()
+        if self._override_http_client is not None:
+            await self._override_http_client.aclose()
 
     async def health(self) -> dict[str, Any]:
         return await self._request_json("GET", "/health")
@@ -1345,7 +1362,7 @@ class RegistryClient:
         all_timestamped = True
         cursor: str | None = None
         legacy_since: str | None = since
-        while True:
+        for _page in range(MAX_REGISTRY_PAGES):
             query = "limit=200"
             if cursor is not None:
                 query += f"&cursor={quote(cursor, safe='')}"
@@ -1386,6 +1403,7 @@ class RegistryClient:
                 return _RevocationScan(revoked, newest, all_timestamped, False)
             legacy_since = page_newest.isoformat()
             cursor = None
+        raise RegistryError(f"AWID revocations pagination exceeded {MAX_REGISTRY_PAGES} pages", status_code=502)
 
     async def list_team_certificates(
         self,
@@ -1694,6 +1712,7 @@ class CachedRegistryClient(RegistryClient):
     _domain_verifier: DomainVerifier | None
     _id_status_refreshes: dict[str, asyncio.Task[_IDStatusRefresh]]
     _team_key_signature_refreshes: dict[str, asyncio.Task[str | None]]
+    _team_certificate_miss_refreshes: dict[str, asyncio.Task[list[TeamCertificate]]]
 
     def __init__(
         self,
@@ -1722,6 +1741,7 @@ class CachedRegistryClient(RegistryClient):
         object.__setattr__(self, "_refresh_tasks", {})
         object.__setattr__(self, "_id_status_refreshes", {})
         object.__setattr__(self, "_team_key_signature_refreshes", {})
+        object.__setattr__(self, "_team_certificate_miss_refreshes", {})
 
     async def id_chain_evidence(
         self, bundle: dict[str, Any] | None, subject: dict[str, Any], *, domain: str,
@@ -2173,6 +2193,56 @@ class CachedRegistryClient(RegistryClient):
             retention_seconds=retention_seconds,
         )
         return set(fresh_value)
+
+    async def refresh_team_certificates_after_miss(
+        self, domain: str, name: str,
+    ) -> list[TeamCertificate]:
+        """Recheck a verified certificate's omission, once per team per five seconds.
+
+        Call only after the presented certificate's signature and revocation
+        checks. Suppression is unavailable authority, never proof of absence.
+        Both a waiter and the shared producer retain the client's total bound;
+        cancelling a waiter does not cancel another waiter's bounded producer.
+        """
+        cache_key = self._team_certificates_cache_key(domain, name, active_only=False)
+        async with asyncio.timeout(self.timeout_seconds):
+            task = self._team_certificate_miss_refreshes.get(cache_key)
+            if task is None:
+                task = asyncio.create_task(self._refresh_missing_team_certificate(
+                    domain, name, cache_key=cache_key,
+                ))
+                self._team_certificate_miss_refreshes[cache_key] = task
+
+                def finished(done: asyncio.Task[list[TeamCertificate]]) -> None:
+                    self._team_certificate_miss_refreshes.pop(cache_key, None)
+                    if not done.cancelled():
+                        done.exception()  # Observe failures after every waiter was cancelled.
+
+                task.add_done_callback(finished)
+            try:
+                return await asyncio.shield(task)
+            except (RedisError, OSError) as exc:
+                raise RegistryError("AWID certificate existence refresh unavailable", status_code=503) from exc
+
+    async def _refresh_missing_team_certificate(
+        self, domain: str, name: str, *, cache_key: str,
+    ) -> list[TeamCertificate]:
+        async with asyncio.timeout(self.timeout_seconds):
+            # Forged certificates spend only the separate signature bucket.
+            admitted = await self.redis_client.set(
+                f"awid:team_certificates_miss_refresh:{self.registry_url}:{domain}/{name}",
+                "1", nx=True, ex=_TEAM_KEY_SIGNATURE_REFRESH_COOLDOWN_SECONDS,
+            )
+            if not admitted:
+                raise RegistryError("AWID certificate existence refresh suppressed", status_code=503)
+            certificates = await self.list_team_certificates_fresh(domain, name, active_only=False)
+            await self._write_cache_entry(
+                cache_key, value=certificates,
+                ttl_seconds=_TEAM_CERTIFICATES_CACHE_TTL_SECONDS,
+                encode=lambda value: [_team_certificate_to_json(item) for item in value],
+                require_write=True,
+            )
+            return certificates
 
     async def list_team_certificates(
         self,
@@ -2626,6 +2696,7 @@ class CachedRegistryClient(RegistryClient):
         encode: Callable[[Any], Any],
         retention_seconds: int | None = None,
         extra_from_value: Callable[[Any], dict[str, Any]] | None = None,
+        require_write: bool = False,
     ) -> None:
         now = _cache_now()
         entry: dict[str, Any] = {}
@@ -2643,7 +2714,11 @@ class CachedRegistryClient(RegistryClient):
         payload = json.dumps(entry, separators=(",", ":"), sort_keys=True)
         if retention_seconds is None:
             retention_seconds = ttl_seconds * _STALE_MULTIPLIER
-        await self._redis_set(cache_key, payload, ex=retention_seconds)
+        if require_write:
+            if not await self.redis_client.set(cache_key, payload, ex=retention_seconds):
+                raise RegistryError("AWID certificate existence cache write failed", status_code=503)
+        else:
+            await self._redis_set(cache_key, payload, ex=retention_seconds)
 
     def _schedule_refresh(
         self,

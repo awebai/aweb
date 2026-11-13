@@ -98,7 +98,7 @@ async def test_exact_member_only_replay_hash_and_canonical_receipt(uses, key_onl
     db, scope = uses.world.db, uses.world.admitted
     request = body(principal_key(selected).principal_did)
     before = await events(uses.world)
-    revision = await config_revision(db, scope.installation_id)
+    revision = await config_revision(db, scope.installation_id, team_id=TEAM)
     grant = await db.fetch_one("SELECT * FROM {{tables.grants}} WHERE grant_id='grt_shared_role'")
     first = await remove(uses, svc, request)
     assert first.action == request["action"] and first.target == ROLE
@@ -111,9 +111,9 @@ async def test_exact_member_only_replay_hash_and_canonical_receipt(uses, key_onl
         await db.fetch_one("SELECT * FROM {{tables.grants}} WHERE grant_id='grt_shared_role'")
         == grant
     )
-    assert await config_revision(db, scope.installation_id) == revision + 1
+    assert await config_revision(db, scope.installation_id, team_id=TEAM) == revision + 1
     assert await remove(uses, svc, request) == first
-    assert await config_revision(db, scope.installation_id) == revision + 1
+    assert await config_revision(db, scope.installation_id, team_id=TEAM) == revision + 1
     emitted = (await events(uses.world))[len(before) :]
     assert len(emitted) == 1
     [event] = emitted
@@ -134,7 +134,7 @@ async def test_exact_member_only_replay_hash_and_canonical_receipt(uses, key_onl
     # A fresh no-op keeps a receipt and invalidates old drafts, with no invented
     # role event for a membership that was already absent.
     await remove(uses, svc, {**request, "request_id": uuid4().hex})
-    assert await config_revision(db, scope.installation_id) == revision + 2
+    assert await config_revision(db, scope.installation_id, team_id=TEAM) == revision + 2
     assert await events(uses.world) == before + emitted
     assert await db.fetch_value("SELECT count(*) FROM {{tables.containment_receipts}}") == 2
 
@@ -143,7 +143,7 @@ async def test_final_f6_refusal_rolls_back_membership_revision_receipt_and_event
     svc, _ = await prepare(uses)
     db, scope = uses.world.db, uses.world.admitted
     before = await events(uses.world)
-    revision = await config_revision(db, scope.installation_id)
+    revision = await config_revision(db, scope.installation_id, team_id=TEAM)
     await db.execute(
         "CREATE FUNCTION expire_role_fence() RETURNS trigger LANGUAGE plpgsql AS $$ "
         "BEGIN UPDATE {{tables.installation_fences}} "
@@ -157,7 +157,7 @@ async def test_final_f6_refusal_rolls_back_membership_revision_receipt_and_event
     with pytest.raises(InstallationRefused):
         await remove(uses, svc, body())
     assert await has_role(db, principal_key(MEMBER_A), ROLE)
-    assert await config_revision(db, scope.installation_id) == revision
+    assert await config_revision(db, scope.installation_id, team_id=TEAM) == revision
     assert await events(uses.world) == before
     assert await db.fetch_value("SELECT count(*) FROM {{tables.idempotency_keys}}") == keys
     assert await db.fetch_value("SELECT count(*) FROM {{tables.containment_receipts}}") == 0

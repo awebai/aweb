@@ -50,7 +50,6 @@ from aweb.mcp.tools.federation import (
 )
 from aweb.mcp.tools.refusals import CONVERSATION_CHANGED_DURING_SEND, send_refusal
 from aweb.messaging.chat_send import (
-    SENDER_NOT_IN_SESSION,
     ChatSessionChanged,
     resolve_actor_agent,
     resolve_chat_targets,
@@ -471,9 +470,6 @@ async def chat_send(
         except ChatSessionChanged:
             continue
         except Exception as exc:
-            if continues_session and getattr(exc, "detail", None) == SENDER_NOT_IN_SESSION:
-                # A caller who is not in the session is answered as for a session that does not exist.
-                return json.dumps({"error": "Session not found"})
             return _send_refusal(exc, address=address_ref, hosted_envelope=encrypted is not None)
         break
     else:

@@ -12,6 +12,28 @@
   owner-act route authenticates before app reads and commits the single-use act,
   effect and governance together, rechecking original authority deadlines after
   effect waits. Existing exact v2 installation pins remain readable.
+- **An operator can stop the server delivering federated mail and chat to
+  other servers, or limit it to listed servers.** `AWEB_FEDERATION_OUTBOUND=off`
+  delivers to no other server, and a comma-separated list of origins delivers
+  only to those. A refused send answers `403` naming the setting, before the
+  server resolves or connects to the origin. Unset, delivery is unchanged. An
+  entry that is not an origin refuses start-up.
+
+- Chat sends return not-found when the sender leaves the session after target
+  resolution, matching the response for an absent session.
+
+- Secrets keeps installation-scoped state separate by team, even when two teams
+  report the same installation id. Upgrading existing state requires an
+  unambiguous retained team binding; missing or conflicting bindings stop the
+  migration for an explicit attribution decision.
+- Concurrent team instructions and roles version creation allocates distinct
+  version numbers under the same per-team lock as activation.
+
+- The Python registry client checks and pins the addresses of DNS-selected
+  registry overrides, retaining the original hostname for TLS. Registry list
+  scans stop after 500 pages with an explicit error instead of accumulating
+  unbounded results.
+
 - **`aw chat send-and-wait` and `aw chat listen` keep waiting when the server
   ends the chat stream at its 300-second lifetime cap.** A wait extended by a
   read receipt or a hang-on, or given with `--wait` above 300, used to end

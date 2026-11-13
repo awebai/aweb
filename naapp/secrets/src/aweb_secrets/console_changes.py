@@ -225,7 +225,9 @@ class ConsoleChanges:
                 "install_generation": admitted.generation,
                 "team_id": admitted.team_id,
                 "drafter": {"via": "console", "scope": current.scope, "subject": current.subject},
-                "base_revision": await config_revision(tx, admitted.installation_id),
+                "base_revision": await config_revision(
+                    tx, admitted.installation_id, team_id=admitted.team_id
+                ),
                 "changes": body["changes"],
                 "reason": body["reason"],
                 "issued_at": issued.strftime("%Y-%m-%dT%H:%M:%SZ"),

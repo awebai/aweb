@@ -18,9 +18,9 @@ _VECTOR_NAMES = (
 )
 _VECTOR_PINS = {
     "federation-origin-ip-v1.json": (
-        12746,
-        "6d6ec789c4d994913ae84a26021a8e8fe0c7eb3aaf008ee10ce623db7a87cb18",
-        "7d0bc9ce293d551fdf60cc1b744dce919d36fba17b3733475ec6926ebfd5b79c",
+        15231,
+        "503136cce893f63f0b7fe21525e0de03b873dae2d043debe1b80756c0fe66e43",
+        "7877a59e05aad2be86ef74735d3cfb8d8bf094d103efdafa9b01d88dd748a522",
     ),
     "federation-discovery-v1.json": (
         18774,

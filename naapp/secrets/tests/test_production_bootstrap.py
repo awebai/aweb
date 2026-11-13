@@ -423,7 +423,7 @@ async def approval_request(root, kind):
     runner_encryption_key = X25519PrivateKey.generate()
     credential = uuid4().hex
     async with db.transaction() as tx:
-        await records.create_policy(tx, installation_id, policy)
+        await records.create_policy(tx, installation_id, policy, team_id=member.team_id)
         await records.create_secret(
             tx, installation_id, member.team_id, SecretRecord.from_after(SECRET)
         )
