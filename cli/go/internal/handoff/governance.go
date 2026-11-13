@@ -13,6 +13,7 @@ import (
 	"net/http"
 	"net/url"
 	"regexp"
+	"strings"
 	"time"
 
 	"github.com/awebai/aw/awid"
@@ -536,6 +537,8 @@ func preparedShapeOf(sent map[string]any) preparedShape {
 		return preparedShape{added: []string{"request_id", "admission_policy_version"}, check: admissionArtifactDiffers}
 	case "identity.root.endorse":
 		return preparedShape{added: []string{"registry", "expected_head", "responsibility_statement", "admission_policy"}, check: endorsementDiffers}
+	case "team.agent.remove":
+		return preparedShape{added: []string{"requester_key"}, check: removalArtifactDiffers}
 	}
 	return preparedShape{check: ownerActArtifactDiffers}
 }
@@ -588,6 +591,40 @@ func endorsementDiffers(sent, request, artifact map[string]any) string {
 	parent := map[string]any{"kind": "identity", "id": authority["id"]}
 	if !sameJSON(artifact["id"], subject["root_id"]) || !sameJSON(artifact["domain"], subject["domain"]) || !sameJSON(artifact["parent"], parent) {
 		return "its certificate names another root, domain or parent"
+	}
+	return ""
+}
+
+// removalArtifactDiffers checks a membership removal's frozen request: it
+// names the key that authenticated it, and its artifact is a controller and
+// the covering-v2 registry request revoking exactly the certificate aw named,
+// of its team, at the audience registry (docs/protected-team-removal.md).
+func removalArtifactDiffers(sent, request, artifact map[string]any) string {
+	if key, _ := request["requester_key"].(string); key == "" {
+		return "it names no requester key"
+	}
+	if !exactMembers(artifact, []string{"controller_did", "request"}) {
+		return "its artifact is not a controller and a registry request"
+	}
+	frozen, _ := artifact["request"].(map[string]any)
+	timestamp, _ := frozen["timestamp"].(string)
+	if controller, _ := artifact["controller_did"].(string); controller == "" || timestamp == "" {
+		return "its artifact names no controller or request time"
+	}
+	subject, _ := sent["subject"].(map[string]any)
+	team, _ := subject["team_id"].(string)
+	certificateID, _ := subject["certificate_id"].(string)
+	audience, _ := sent["audience"].(string)
+	name, domain, _ := strings.Cut(team, ":")
+	body, err := awid.CanonicalJSONValue(map[string]any{"certificate_id": certificateID})
+	if err != nil {
+		return "its certificate cannot be named"
+	}
+	revoke, err := awid.ControllerRequestPayload(audience, http.MethodPost, "/v1/namespaces/"+domain+"/teams/"+name+"/certificates/revoke",
+		[]byte(body), timestamp, domain, "revoke_certificate", map[string]any{"team_name": name, "certificate_id": certificateID})
+	expected, ok := decodeObject(revoke)
+	if err != nil || !ok || !sameJSON(frozen, expected) {
+		return "its registry request does not revoke exactly this certificate at this registry"
 	}
 	return ""
 }

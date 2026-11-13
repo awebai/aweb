@@ -128,10 +128,11 @@ func admissionBody(profile *handoff.Profile, binding *handoff.ProfileBinding, re
 	}
 }
 
-// admissionBytes is the body to send under request's operation id: the saved
-// bytes when that id already holds exactly this body, or body saved now,
-// before anything is sent. Another body under the id is operation_conflict.
-func admissionBytes(profile *handoff.Profile, operationID string, body map[string]any) ([]byte, error) {
+// operationBytes is the body to send under a protected operation's id: the
+// saved bytes when that id already holds exactly this body, or body saved
+// now, before anything is sent. Another body under the id is
+// operation_conflict.
+func operationBytes(profile *handoff.Profile, operationID string, body map[string]any) ([]byte, error) {
 	raw, err := json.Marshal(body)
 	if err != nil {
 		return nil, err
@@ -154,7 +155,7 @@ func admissionBytes(profile *handoff.Profile, operationID string, body map[strin
 		same = okSaved && okNew && errSaved == nil && errNew == nil && bytes.Equal(savedCanonical, newCanonical)
 	}
 	if !same {
-		return nil, withErrorCode("operation_conflict", fmt.Errorf("operation %s was requested with other inputs or at another service; a changed admission needs a new operation id", operationID))
+		return nil, withErrorCode("operation_conflict", fmt.Errorf("operation %s was requested with other inputs or at another service; changed inputs need a new operation id", operationID))
 	}
 	return saved.Body, nil
 }
@@ -166,7 +167,7 @@ func admitMember(ctx context.Context, opts handoff.GovernanceOptions, profile *h
 		return nil, err
 	}
 	body := admissionBody(profile, binding, request)
-	raw, err := admissionBytes(profile, request.OperationID, body)
+	raw, err := operationBytes(profile, request.OperationID, body)
 	if err != nil {
 		return nil, err
 	}
@@ -214,16 +215,9 @@ func admittedCertificate(result []byte, prepared *handoff.Prepared, body map[str
 	invalid := func(format string, args ...any) error {
 		return withErrorCode("signed_certificate_invalid", fmt.Errorf("the signed certificate is not the one aw requested: "+format, args...))
 	}
-	fields, ok := handoff.DecodeObject(result)
-	signingText, _ := fields["signing"].(string)
-	signatureText, _ := fields["signature"].(string)
-	if !ok || len(fields) != 2 || signingText == "" || signatureText == "" || strings.ContainsAny(signingText+signatureText, "\r\n") {
-		return nil, invalid("the result is not exactly a signing and a signature")
-	}
-	signing, errSigning := base64.StdEncoding.Strict().DecodeString(signingText)
-	signature, errSignature := base64.StdEncoding.Strict().DecodeString(signatureText)
-	if errSigning != nil || errSignature != nil || len(signature) != ed25519.SignatureSize {
-		return nil, invalid("its signing or signature is not padded base64 of the right size")
+	signing, signature, reason := signedResult(result)
+	if reason != "" {
+		return nil, invalid("%s", reason)
 	}
 	signed, ok := handoff.DecodeObject(signing)
 	canonical, err := awid.StrictCanonicalJSON(signed)
@@ -260,6 +254,24 @@ func admittedCertificate(result []byte, prepared *handoff.Prepared, body map[str
 		return nil, invalid("it names another team, member, alias or scope")
 	}
 	return &cert, nil
+}
+
+// signedResult is a committed result's signing and signature: exactly those
+// two members, each padded standard base64, the signature of Ed25519 size.
+// Otherwise it names what is wrong.
+func signedResult(result []byte) ([]byte, []byte, string) {
+	fields, ok := handoff.DecodeObject(result)
+	signingText, _ := fields["signing"].(string)
+	signatureText, _ := fields["signature"].(string)
+	if !ok || len(fields) != 2 || signingText == "" || signatureText == "" || strings.ContainsAny(signingText+signatureText, "\r\n") {
+		return nil, nil, "the result is not exactly a signing and a signature"
+	}
+	signing, errSigning := base64.StdEncoding.Strict().DecodeString(signingText)
+	signature, errSignature := base64.StdEncoding.Strict().DecodeString(signatureText)
+	if errSigning != nil || errSignature != nil || len(signature) != ed25519.SignatureSize {
+		return nil, nil, "its signing or signature is not padded base64 of the right size"
+	}
+	return signing, signature, ""
 }
 
 // writeCertificateOnce publishes cert at path, which it never replaces: a

@@ -2,6 +2,14 @@
 
 ## Unreleased
 
+- `aw id team remove-agent --protected-profile P --certificate F --operation-id U`
+  removes, as the deployment's endorsed root, the agent membership that
+  certificate file names, through the protected service's bounded
+  `team.agent.remove`. aw checks that the service signs exactly the registry's
+  revocation of that certificate under the profile's pinned controller key,
+  and changes nothing in the agent's home. The same `--operation-id` resumes
+  the removal; changed inputs refuse `operation_conflict`.
+
 - `aw id endorse --no-wait` shows the approval page and exits instead of
   waiting for the human: `--json` reports `operation_id`, `state`, `page`,
   `digest`, `fingerprint` and `expires_at`. Running the same command again
