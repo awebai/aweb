@@ -410,3 +410,86 @@ async def test_new_team_uuid_does_not_reset_canonical_protection(
             )
             == 0
         )
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("protected", [False, True], ids=["legacy", "protected"])
+async def test_private_public_status_negotiates_protection_without_changing_released_shape(
+    controller_app, protected
+):
+    from awid.registry import RegistryClient
+    from awid.protected_membership import (
+        observe_team_protection,
+        verify_registered_membership,
+    )
+    from awid.team_certificate import TeamCertificateError
+    import base64
+    import json
+
+    env = controller_app
+    cert = certificate_body(env)
+    await send(
+        env,
+        "POST",
+        TEAM_PATH + "/certificates",
+        {
+            "domain": "local",
+            "operation": "register_certificate",
+            "team_name": "base",
+            "certificate_id": cert["certificate_id"],
+        },
+        cert,
+        signer=env.team,
+    )
+    hidden = await send(
+        env,
+        "POST",
+        TEAM_PATH + "/visibility",
+        {
+            "domain": "local",
+            "operation": "set_team_visibility",
+            "team_name": "base",
+            "visibility": "private",
+        },
+        {"visibility": "private"},
+        signer=env.team,
+    )
+    assert hidden.status_code == 200, hidden.text
+    if protected:
+        await protect_team(env)
+    assert (await env.client.get(TEAM_PATH)).status_code == 403
+    path = TEAM_PATH + "/certificates/" + cert["certificate_id"] + "/status"
+    old = await env.client.get(path)
+    assert old.status_code == 200, old.text
+    assert set(old.json()) == {"team_id", "team_did_key", "status", "revoked_at"}
+    current = await env.client.get(path + "?protection=1")
+    assert current.status_code == 200, current.text
+    assert current.json()["protection"]["mode"] == (
+        "protected" if protected else "legacy"
+    )
+    assert current.json()["certificate_sha256"]
+    registry = RegistryClient(
+        registry_url="http://registry.test", transport=env.client._transport
+    )
+    try:
+        observation = await observe_team_protection(
+            registry, "base:local", certificate_id=cert["certificate_id"]
+        )
+        decoded = json.loads(base64.b64decode(cert["certificate"]))
+        await verify_registered_membership(registry, observation, decoded)
+        changed = {**decoded, "alias": "different-member"}
+        from awid.signing import canonical_json_bytes
+
+        changed["signature"] = sign_message(
+            env.team[0],
+            canonical_json_bytes(
+                {k: v for k, v in changed.items() if k != "signature"}
+            ),
+        )
+        if protected:
+            with pytest.raises(
+                TeamCertificateError, match="certificate_binding_mismatch"
+            ):
+                await verify_registered_membership(registry, observation, changed)
+    finally:
+        await registry.aclose()
