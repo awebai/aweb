@@ -379,3 +379,62 @@ func TestAwMailSendSealsTheCommLogAfterLogKeyInstall(t *testing.T) {
 		t.Fatalf("agent-side aw log must refuse while sealing is on: %v\n%s", err, out)
 	}
 }
+
+// installRecordFileForTest writes a log-key record signed by signer straight
+// into the agent host's installed records under home.
+func installRecordFileForTest(t *testing.T, home, teamID string, signer ed25519.PrivateKey) {
+	t.Helper()
+	pair, err := awid.GenerateLogKeyPair()
+	if err != nil {
+		t.Fatal(err)
+	}
+	rec, err := awid.NewLogKeyRecord(teamID, pair.Public, time.Now())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := awid.SignLogKeyRecord(rec, signer); err != nil {
+		t.Fatal(err)
+	}
+	data, err := json.Marshal(rec)
+	if err != nil {
+		t.Fatal(err)
+	}
+	dir := filepath.Join(home, ".config", "aw", "log-keys")
+	if err := os.MkdirAll(dir, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(dir, awconfig.EncodeTeamIDForCertificatePath(teamID)+".json"), data, 0o600); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func TestAwDoctorLocalReportsTheOwnerLogKey(t *testing.T) {
+	t.Parallel()
+
+	bin, tmp := buildDoctorBinary(t)
+	writeDoctorGlobalFixture(t, tmp, "https://app.example.com/api")
+	teamID := resolvedTeamIDForTest("backend:example.com")
+	doctor := func() doctorOutput {
+		out, err := runDoctorCLI(t, bin, tmp, "doctor", "local", "--json")
+		if err != nil && !strings.Contains(string(out), `"checks"`) {
+			t.Fatalf("doctor: %v\n%s", err, out)
+		}
+		return decodeDoctorOutput(t, out)
+	}
+
+	check := requireDoctorCheckStatus(t, doctor(), doctorCheckLocalLogKey, doctorStatusWarn)
+	if !strings.Contains(check.Message, "plaintext") {
+		t.Fatalf("missing key message: %q", check.Message)
+	}
+
+	_, stranger, err := ed25519.GenerateKey(rand.Reader)
+	if err != nil {
+		t.Fatal(err)
+	}
+	installRecordFileForTest(t, tmp, teamID, stranger)
+	requireDoctorCheckStatus(t, doctor(), doctorCheckLocalLogKey, doctorStatusFail)
+
+	teamKey := resignTeamCertificateForTest(t, tmp, teamID)
+	installRecordFileForTest(t, tmp, teamID, teamKey)
+	requireDoctorCheckStatus(t, doctor(), doctorCheckLocalLogKey, doctorStatusOK)
+}

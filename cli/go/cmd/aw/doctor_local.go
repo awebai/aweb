@@ -42,6 +42,7 @@ const (
 	doctorCheckIdentityCustody          = "local.identity_yaml.custody_present"
 	doctorCheckIdentityRegistryURL      = "local.identity_yaml.registry_url_syntax"
 	doctorCheckRegistryCoherence        = "local.registry_url.local_coherence"
+	doctorCheckLocalLogKey              = "local.log_key.owner_key_installed"
 )
 
 type doctorLocalState struct {
@@ -178,6 +179,7 @@ func (r *doctorRunner) runLocalChecks() {
 	r.runCertificateChecks(&state)
 	r.runSigningKeyChecks(&state)
 	r.runIdentityChecks(&state)
+	r.runLogKeyChecks(&state)
 }
 
 func (r *doctorRunner) runWorkspaceChecks(state *doctorLocalState) {
@@ -418,6 +420,43 @@ func (r *doctorRunner) runCertificateChecks(state *doctorLocalState) {
 	} else {
 		r.add(localCheck(doctorCheckCertificateSignature, doctorStatusOK, &doctorTarget{Type: "did", ID: teamDID}, "Team certificate verifies with its team_did_key.", "", nil))
 	}
+}
+
+// runLogKeyChecks reports whether this host seals the team's local mail and
+// chat logs to an owner log key the team controller key signed.
+func (r *doctorRunner) runLogKeyChecks(state *doctorLocalState) {
+	if state.membership == nil || state.cert == nil {
+		return
+	}
+	teamID := strings.TrimSpace(state.membership.TeamID)
+	target := &doctorTarget{Type: "team", ID: teamID}
+	rec, err := awconfig.LoadLogKeyRecord(teamID)
+	if errors.Is(err, os.ErrNotExist) {
+		r.add(localCheck(
+			doctorCheckLocalLogKey,
+			doctorStatusWarn,
+			target,
+			"No owner log key is installed for this team; local mail and chat logs are written in plaintext.",
+			"The team owner runs `aw team admin log-key create`, then `aw team admin log-key install <record>` on this host.",
+			nil,
+		))
+		return
+	}
+	if err == nil {
+		err = awid.VerifyLogKeyRecord(rec, teamID, state.cert.TeamDIDKey)
+	}
+	if err != nil {
+		r.add(localCheck(
+			doctorCheckLocalLogKey,
+			doctorStatusFail,
+			target,
+			"The installed owner log key does not verify under the team key; local mail and chat logging is stopped.",
+			"Install a record signed by the team controller key with `aw team admin log-key install <record>`.",
+			map[string]any{"error": err.Error()},
+		))
+		return
+	}
+	r.add(localCheck(doctorCheckLocalLogKey, doctorStatusOK, target, "Local mail and chat logs are sealed to the team's owner log key.", "", map[string]any{"key_id": rec.KeyID}))
 }
 
 func (r *doctorRunner) runSigningKeyFileChecks(state *doctorLocalState) {
