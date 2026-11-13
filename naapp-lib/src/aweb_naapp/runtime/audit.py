@@ -23,6 +23,7 @@ class AuditKind(StrEnum):
     PROTECTED_OPERATION_SIGNED = "protected_operation_signed"
     PROTECTED_OPERATION_REFUSED = "protected_operation_refused"
     PROTECTED_MEMBER_REMOVED = "protected_member_removed"
+    PROTECTED_ROOT_REQUESTER_BOUND = "protected_root_requester_bound"
     APPROVER_DESIGNATED = "approver_designated"
     APPROVER_REDESIGNATED = "approver_redesignated"
     APPROVER_ENROLLED = "approver_enrolled"

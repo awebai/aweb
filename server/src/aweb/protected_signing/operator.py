@@ -4,8 +4,9 @@ Use the host's AWEB_PROTECTED_* file settings and run as its service uid:
   python -m aweb.protected_signing.operator bootstrap --requester DID_AW --contact EMAIL
   python -m aweb.protected_signing.operator check
   python -m aweb.protected_signing.operator install-controller --source-pem FILE
+  python -m aweb.protected_signing.operator bind-root --human H --root ROOT --team TEAM
 
-The last command converts an EXISTING controller seed; it never generates,
+The install command converts an EXISTING controller seed; it never generates,
 registers, rotates or overwrites a key. No secret is printed or accepted in argv.
 """
 
@@ -81,6 +82,11 @@ async def run(args, settings, *, profile, scope, mailer=None, registry_transport
         if args.command == "bootstrap":
             return await initialise(c, requester=args.requester, contact=args.contact)
         await validate_provisioning(c)
+        if args.command == "bind-root":
+            from .root_binding import bind_root
+
+            return await bind_root(c, human_id=args.human, root_id=args.root,
+                teams=args.team, replace_root=args.replace_root)
         if args.command == "policy-init":
             from .admission import provision_policy
 
@@ -102,6 +108,11 @@ def parser():
     )
     policy = sub.add_parser("policy-init", help="Provision one initial bounded policy; never replace it")
     policy.add_argument("--file", type=Path, required=True)
+    binding = sub.add_parser("bind-root", help="Bind a registered root to completed H and named controller scopes; no new approval")
+    binding.add_argument("--human", required=True)
+    binding.add_argument("--root", required=True)
+    binding.add_argument("--team", action="append", required=True)
+    binding.add_argument("--replace-root")
     key = sub.add_parser(
         "install-controller",
         help="Install the existing controller PEM as a private hex-seed file, without overwrite",

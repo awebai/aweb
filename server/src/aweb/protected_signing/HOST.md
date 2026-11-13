@@ -325,3 +325,50 @@ authorizer. LOGIN and per-act UV use the same exact context resolution. The
 host mounts one shared operations HTTP surface, dispatching only exact trusted
 contexts to instances of the same shared executor. No additional signing or
 WebAuthn engine, wildcard key selector or worker key import/export is added.
+
+### Bind a later, replacement or second-deployment root
+
+After the human-identity and named controller bindings have completed first
+enrollment, run as the signer's local service uid with its normal settings:
+
+```sh
+python -m aweb.protected_signing.operator bind-root \
+  --human did:aw:H --root did:aw:NEW_ROOT --team engineering:example.org
+```
+
+Repeat `--team` for every intended team. The existing key manifest must load
+the actual H custody and each named controller under that same H/domain and
+service. Every named team must already be in the provisioned policy. The root
+must already be registered and eligible: a local `did:key`, a human, a revoked
+identity or an enrolled agent under another H refuses. Nothing creates an ID,
+imports a worker key, widens the policy or chooses another H on a miss.
+
+This command adds an active requester grant in H's endorsement binding and a
+separate grant in each named controller binding. One row does not cover both
+B3 scopes. The bootstrap records must already be consumed and their current
+authorizers must retain usable credentials. Actual custody, registry authority,
+association generation, policy and current B3 checks bind the same transaction
+as the grants and audit, under the original evidence deadline. Pending bootstrap
+or an unavailable authority cannot grant a requester. This is an OS-authorized
+operator action, never a worker HTTP endpoint or a synthetic human approval.
+
+The new root then runs `aw id endorse` with its own key and caller-persisted
+operation UUID. H approves that root's exact endorsement with the existing
+passkey path. Only the retained, now-registered service endorsement permits
+unattended admission. Binding alone grants no child certificate. A second
+deployment of the same H/service follows this same command and its own
+endorsement; the first root remains usable. This independent-host path is
+covered by `human-assurance-contract.md:201-215`, not deferred to hosted .6.
+
+To replace a root, add `--replace-root did:aw:OLD_ROOT`. The old ID need not
+remain available: its grants in precisely these H/controller scopes are
+deactivated atomically with the new grants. Other roots/scopes are unchanged.
+Exact repeat is idempotent, while an inactive grant is never silently
+reactivated. No bootstrap, credential, endorsement, admission history or
+quota bucket is deleted. Rotating a root's key retains its stable-ID grant
+and bucket; replacing its ID is a distinct, explicit operator choice.
+
+The command returns the public service/H/root/key/team/scope selection and
+replacement ID. It emits no private key or enrollment link. It does not
+implement the separate backup/restore anti-rollback or controller-rotation
+work tracked under the queued restore/catalog operations.
