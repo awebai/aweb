@@ -41,6 +41,7 @@ import shutil
 import subprocess
 import sys
 import time
+from collections.abc import Callable
 from pathlib import Path
 
 import pexpect
@@ -184,6 +185,41 @@ def hooks_ready_at(listed: list[dict], selected: list[dict],
             raise SystemExit(f"FAILED: hook binding {binding_id} is no longer the one selected: {binding}")
         starts.append(datetime.datetime.fromisoformat(binding["active_from"].replace("Z", "+00:00")))
     return max(starts) + margin
+
+
+class PrepareDrop:
+    """The front drops the signer's answer to a committed prepare: every 2xx
+    answer to POST /protected-operations on the signer's host is aborted.
+
+    enable() reads the front's Caddyfile as it is rendered now, after the
+    signer's own render, and refuses, changing nothing, unless it holds
+    exactly one site for the signer's host; disable() puts back exactly the
+    text enable() replaced. Each change is reloaded."""
+
+    def __init__(self, rendered: Path, host: str, upstream: str, reload: Callable[[], None]):
+        self.rendered, self.host, self.upstream, self.reload = rendered, host, upstream, reload
+        self.replaced: str | None = None
+
+    def enable(self) -> None:
+        current = self.rendered.read_text()
+        site = f"{self.host}:443 {{\n"
+        if current.count(site) != 1:
+            raise SystemExit(f"FAILED: the front holds {current.count(site)} sites for {self.host}, not one;"
+                             " the prepare answers cannot be dropped")
+        self.rendered.write_text(current.replace(
+            site,
+            f"{site}  @prepare {{\n    method POST\n    path /protected-operations\n  }}\n"
+            f"  reverse_proxy @prepare {self.upstream} {{\n    @answered status 2xx\n"
+            "    handle_response @answered {\n      abort\n    }\n  }\n", 1))
+        self.replaced = current
+        self.reload()
+
+    def disable(self) -> None:
+        if self.replaced is None:
+            return
+        self.rendered.write_text(self.replaced)
+        self.replaced = None
+        self.reload()
 
 
 def designate_command(app_id: str, role: str, principal: str, credential: str, contact: str) -> list[str]:
@@ -1058,20 +1094,16 @@ class World:
                       self.images["chromium"], *args, "--ca", "/world/tls/ca.pem", timeout=300).strip()
             return first_json(out) if "{" in out else {}
 
-        rendered = self.run_dir / "front" / "Caddyfile"
-        original = rendered.read_text()
+        drop = PrepareDrop(
+            self.run_dir / "front" / "Caddyfile", HOSTS["signer"], UPSTREAMS["signer"],
+            lambda: self.compose("exec", "-T", "front", "caddy", "reload", "--config", "/etc/caddy/Caddyfile",
+                                 "--adapter", "caddyfile"))
 
         def drop_prepare_answers(on: bool) -> None:
-            caddyfile = original
             if on:
-                caddyfile = caddyfile.replace(
-                    f"{HOSTS['signer']}:443 {{\n",
-                    f"{HOSTS['signer']}:443 {{\n  @prepare {{\n    method POST\n    path /protected-operations\n  }}\n"
-                    "  reverse_proxy @prepare signer:8080 {\n    @answered status 2xx\n"
-                    "    handle_response @answered {\n      abort\n    }\n  }\n", 1)
-            rendered.write_text(caddyfile)
-            self.compose("exec", "-T", "front", "caddy", "reload", "--config", "/etc/caddy/Caddyfile",
-                         "--adapter", "caddyfile")
+                drop.enable()
+            else:
+                drop.disable()
 
         return Site(
             runtime=self.world, mounted="/world", domain=DOMAIN, team=TEAM, registry=origin("registry"),

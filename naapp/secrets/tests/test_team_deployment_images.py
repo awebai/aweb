@@ -6,6 +6,8 @@ import re
 import sys
 from pathlib import Path
 
+import pytest
+
 REPO = Path(__file__).resolve().parents[3]
 BUILDER = REPO / "scripts" / "e2e" / "team-deployment-images.sh"
 
@@ -199,3 +201,57 @@ def test_logs_purge_ledger_is_a_database_and_role_of_its_own_with_its_dsn_in_log
     assert "*[!a-z]*)" in roles
     assert all(re.fullmatch(r"[a-z]+", role) and role != "postgres" for role in databases)
     assert len(set(databases.values())) == len(databases)
+
+
+FIVE_SITES = "".join(f"{host}:443 {{\n  reverse_proxy {host}:80\n}}\n" for host in (
+    "aweb.lf.test", "api.secrets.lf.test", "console.secrets.lf.test", "api.logs.lf.test", "console.logs.lf.test"))
+WITH_SIGNER = FIVE_SITES + "signer.lf.test:443 {\n  reverse_proxy signer:8080\n}\n"
+
+
+def prepare_drop(tmp_path, text):
+    rendered = tmp_path / "Caddyfile"
+    rendered.write_text(text)
+    reloads = []
+    drop = journey().PrepareDrop(rendered, "signer.lf.test", "signer:8080", lambda: reloads.append(rendered.read_text()))
+    return rendered, reloads, drop
+
+
+def test_the_prepare_drop_uses_the_front_as_rendered_when_enabled_not_when_built(tmp_path):
+    # Built while the front had no signer site; the signer's start renders it later.
+    rendered, reloads, drop = prepare_drop(tmp_path, FIVE_SITES)
+    rendered.write_text(WITH_SIGNER)
+    drop.enable()
+    enabled = rendered.read_text()
+    # One matcher, defined in the signer's site and used by its one abort.
+    assert enabled.count("@prepare {") == 1 and "signer.lf.test:443 {\n  @prepare {" in enabled
+    assert enabled.count("abort") == 1 and "reverse_proxy signer:8080" in enabled
+    assert all(f"{host}:443 {{" in enabled for host in ("aweb.lf.test", "api.logs.lf.test"))
+    assert reloads == [enabled]
+    drop.disable()
+    assert rendered.read_text() == WITH_SIGNER
+    assert reloads == [enabled, WITH_SIGNER]
+
+
+def test_the_prepare_drop_restores_the_front_it_replaced_when_the_step_fails(tmp_path):
+    import pytest
+
+    rendered, reloads, drop = prepare_drop(tmp_path, WITH_SIGNER)
+    with pytest.raises(RuntimeError):
+        drop.enable()
+        try:
+            raise RuntimeError("the step under the drop failed")
+        finally:
+            drop.disable()
+    assert rendered.read_text() == WITH_SIGNER and reloads[-1] == WITH_SIGNER
+
+
+@pytest.mark.parametrize("text", [FIVE_SITES, WITH_SIGNER + "signer.lf.test:443 {\n  respond 200\n}\n"])
+def test_the_prepare_drop_refuses_a_front_without_exactly_one_signer_site_and_changes_nothing(tmp_path, text):
+    import pytest
+
+    rendered, reloads, drop = prepare_drop(tmp_path, text)
+    with pytest.raises(SystemExit, match="signer.lf.test"):
+        drop.enable()
+    assert rendered.read_text() == text and reloads == []
+    drop.disable()
+    assert rendered.read_text() == text and reloads == []
