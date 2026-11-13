@@ -32,3 +32,11 @@ and the column buys nothing.
 Member-mediated invites entering scope. At that point the seam is three-lane:
 self-hosted local signer, hosted server-side mint, and add-member as a register
 entry point. Do not re-propose the column as a standalone improvement.
+
+# Refined by
+
+[Protected execution is an additional verifier fact](/aweb-protocol-expert/decisions/protected-execution-is-an-additional-verifier-fact.md):
+a team explicitly cut over to protected execution still needs this controller
+authorization and additionally a detached attestation from an isolated
+protected executor. The controller stays the only issuer; possession of the
+controller key does not prove protected execution.
