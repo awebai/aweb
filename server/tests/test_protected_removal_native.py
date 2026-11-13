@@ -345,20 +345,49 @@ async def test_removal_confirmation_audit_failure_rolls_back_quota_and_receipt_t
     operation = removal(a, certificate)
     assert (await prepare(a, operation)).status_code == 200
     audit, original = a.w.app.audit, a.w.app.audit.emit
+    injected, releases = [], []
+    custody = a.w.app.authority.custody
+    release = custody.remove_member
+    frozen = await a.w.db.fetch_one(
+        "SELECT intent,expires_at FROM {{tables.protected_signer_operations}} WHERE operation_id=$1", operation.operation_id)
+
+    async def deliver(registry, selected, artifact, result):
+        releases.append(selected.operation_id)
+        return await release(registry, selected, artifact, result)
 
     async def unavailable(event, transaction):
         if event.kind.value == "protected_member_removed":
+            injected.append(event.subject)
             raise RuntimeError("audit unavailable")
         return await original(event, transaction)
 
+    monkeypatch.setattr(custody, "remove_member", deliver)
     monkeypatch.setattr(audit, "emit", unavailable)
-    with pytest.raises(RuntimeError, match="audit unavailable"):
-        await execute(a, operation)
-    assert await a.w.db.fetch_value("SELECT result FROM {{tables.protected_signer_operations}} WHERE operation_id=$1", operation.operation_id) is None
+    # The actual mounted route maps this exception to its fixed unavailable
+    # response. Prove the intended hook ran before inspecting the rollback.
+    response = await execute(a, operation)
+    assert response.status_code == 503 and response.json() == {"detail": "receipt_unavailable"}, response.text
+    assert injected == [operation.operation_id]
+    assert releases == [operation.operation_id]
+    retained = await a.w.db.fetch_one(
+        "SELECT result,signed_result,delivery_claim FROM {{tables.protected_signer_operations}} WHERE operation_id=$1", operation.operation_id)
+    assert retained["result"] is None and retained["signed_result"] is not None and retained["delivery_claim"] is not None
     assert await a.w.db.fetch_value("SELECT state FROM {{tables.protected_root_admissions}} WHERE certificate_id=$1", certificate["certificate_id"]) == "active"
+    assert await a.w.db.fetch_value("SELECT count(*) FROM {{tables.protected_local_audit}} WHERE kind='protected_member_removed' AND subject=$1", operation.operation_id) == 0
+    assert await a.w.db.fetch_one(
+        "SELECT intent,expires_at FROM {{tables.protected_signer_operations}} WHERE operation_id=$1", operation.operation_id) == frozen
+    records = await a.w.registry.list_team_certificates_fresh(DOMAIN, "engineering", active_only=False)
+    assert next(r for r in records if r.certificate_id == certificate["certificate_id"]).revoked_at is not None
     monkeypatch.setattr(audit, "emit", original)
     path = "/protected-operations/" + operation.operation_id
     response = await a.client.get(path, headers=headers(a, path=path, method="GET", label="protected_operation_receipt"))
     assert response.status_code == 200 and response.json()["state"] == "committed", response.text
     assert await signature_count(a, operation) == 1
+    assert releases == [operation.operation_id] and injected == [operation.operation_id]
+    recovered = await a.w.db.fetch_one(
+        "SELECT result,signed_result FROM {{tables.protected_signer_operations}} WHERE operation_id=$1", operation.operation_id)
+    assert recovered["result"] == recovered["signed_result"] == retained["signed_result"]
+    assert await a.w.db.fetch_one(
+        "SELECT intent,expires_at FROM {{tables.protected_signer_operations}} WHERE operation_id=$1", operation.operation_id) == frozen
+    assert await a.w.db.fetch_value("SELECT count(*) FROM {{tables.protected_local_audit}} WHERE kind='protected_member_removed' AND subject=$1", operation.operation_id) == 1
     assert await a.w.db.fetch_value("SELECT state FROM {{tables.protected_root_admissions}} WHERE certificate_id=$1", certificate["certificate_id"]) == "removed"
