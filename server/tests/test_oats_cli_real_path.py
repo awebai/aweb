@@ -262,3 +262,32 @@ async def test_an_endorse_whose_aw_ends_before_its_page_is_reported_and_stopped(
     with pytest.raises(AssertionError, match="Preparing operation x"):
         await _endorse(None, tmp_path / "profile.json", (tmp_path, dict(os.environ)), str(uuid4()), page_timeout=5)
     assert _gone(pid_file)
+
+
+@pytest.mark.usefixtures("source_cli_binary")
+@pytest.mark.asyncio
+async def test_a_root_is_created_with_no_address_at_the_real_registry_and_only_once(test_db_factory, tmp_path):
+    registry_sock, registry_origin = _listener()
+    request_sock, request_origin = _listener()
+    async with signer_world(test_db_factory, tmp_path, registry_origin=registry_origin, request_origin=request_origin) as w:
+        async with _serving(w.host.app, registry_sock):
+            request_sock.close()
+            root = (tmp_path / "new-root").resolve()
+            no_opener = tmp_path / "no-browser-opener"
+            no_opener.mkdir()
+            env = {k: v for k, v in os.environ.items() if not k.startswith(("AW", "XDG_"))}
+            env.update(HOME=str(tmp_path), XDG_CONFIG_HOME=str(tmp_path / ".config"), XDG_STATE_HOME=str(tmp_path / ".state"),
+                AW_NO_UPDATE_CHECK="1", PATH=str(no_opener))
+            create = ("--identity-home", str(root), "id", "create", "--no-address", "--registry", registry_origin)
+            status, created, progress = await _aw((tmp_path, env), *create)
+            assert status == 0, progress
+            assert created["status"] == "created" and created["registry_url"] == registry_origin
+            # The registry itself maps the new did:aw to the key aw holds.
+            async with httpx.AsyncClient(base_url=registry_origin) as client:
+                key = (await client.get(f"/v1/did/{created['did_aw']}/key")).json()
+            assert key["current_did_key"] == created["did_key"]
+            assert (root / "signing.key").stat().st_mode & 0o777 == 0o600
+            assert "address" not in (root / "identity.yaml").read_text()
+            # A rerun on the complete identity creates nothing.
+            status, refused, progress = await _aw((tmp_path, env), *create)
+            assert status != 0 and refused["error"]["code"] == "identity_exists", progress

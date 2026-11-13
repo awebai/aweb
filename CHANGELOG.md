@@ -2,6 +2,15 @@
 
 ## Unreleased
 
+- `aw id create --no-address --registry R --identity-home H` creates a
+  registered identity with no address: a fresh self-custodial key registers
+  its own did:aw at R and is read back, with no namespace controller key
+  involved. It is how a deployment root is created before a human endorses
+  it. Creation is resumable: the key is kept privately before anything is
+  sent, so a rerun completes an interrupted creation with the same key. A
+  home that already holds an identity, or anything else, refuses
+  `identity_exists`. `--json` carries `did_aw` and `did_key`.
+
 - `aw id team admission-policy --team T --protected-profile P` reads a
   protected team's agent admission policy from its protected service, proving
   this identity's key. `--json` carries the mode and the complete policy,
