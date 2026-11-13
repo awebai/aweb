@@ -144,6 +144,8 @@ class ProtectedEffectCustody:
         name = self.team_id.partition(":")[0]
         await _invalidate(client, operation, self.domain, name)
         try:
+            if self._effect_clock() >= retained.expires_at:
+                raise SignerRefused("operation_expired")
             await self._request_effect(retained.delivery)
         finally:
             await _invalidate(client, operation, self.domain, name)

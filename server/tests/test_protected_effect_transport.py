@@ -94,3 +94,36 @@ async def test_confirmation_is_pinned_exact_and_original_deadline(case):
             with pytest.raises(SignerRefused, match="evidence_unavailable"):
                 await custody.confirm_retained(SimpleNamespace(operation_id=ID), effect)
     assert len(requests) == 1
+
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("membership", [False, True])
+async def test_cache_await_cannot_extend_original_release_deadline(membership):
+    now = datetime(2026, 11, 13, tzinfo=UTC)
+    events = []
+    async def invalidate(*args):
+        nonlocal now
+        events.append("invalidate")
+        now += timedelta(seconds=2)
+    async def send(request):
+        events.append("send")
+        return httpx.Response(200)
+    operation = SimpleNamespace(operation_id=ID, spec=SimpleNamespace(effect=SimpleNamespace(
+        invalidates_membership=membership, cache_tolerates_unavailable=False)))
+    retained = RetainedEffect(ID, b"artifact", b"s" * 64, "a" * 64, now + timedelta(seconds=1),
+        FrozenDelivery("https://consumer.example", "POST", "/effect", {HEADER: "retained-proof"}, b"exact"), "retained-proof")
+    before = retained.fields()
+    custody = ProtectedEffectCustody()
+    custody.team_id, custody.domain = "team:example.test", "example.test"
+    async with httpx.AsyncClient(transport=httpx.MockTransport(send)) as client:
+        custody.configure_effects(registry=SimpleNamespace(invalidate_team_certificate_cache=invalidate),
+            clients={"https://consumer.example": client}, clock=lambda: now)
+        if membership:
+            with pytest.raises(SignerRefused, match="operation_expired"):
+                await custody.deliver_retained(operation, retained)
+            assert events == ["invalidate", "invalidate"]
+        else:
+            await custody.deliver_retained(operation, retained)
+            assert events == ["send"]
+    assert retained.fields() == before
