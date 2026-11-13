@@ -331,6 +331,17 @@ def test_the_agent_and_its_egress_are_the_oats_sources_own_services():
 def test_the_agent_starts_only_once_its_egress_is_healthy_and_adds_no_route_or_mount():
     agent = AGENTS_FILE["agent"]
     assert agent["depends_on"] == {"egress": {"condition": "service_healthy"}}
-    # Its networks, mounts and limits are the OATS service's: the deployment adds none.
-    assert set(agent) == {"extends", "depends_on"}
+    # Its networks, mounts and limits are the OATS service's: the deployment
+    # adds none, only the registry its operator configured.
+    assert set(agent) == {"extends", "depends_on", "environment"}
     assert set(AGENTS_FILE) == {"egress", "agent"}
+
+
+def test_the_agents_aw_is_told_the_registry_the_operator_configured():
+    # aw reaches a registry with its own client only when the operator names
+    # it (aweb-aczi); a private team registry is named by team.registryUrl,
+    # which the renderer writes as AWID_REGISTRY_URL.
+    environment = AGENTS_FILE["agent"]["environment"]
+    assert environment == {
+        "AWID_REGISTRY_URL": "${AWID_REGISTRY_URL:?AWID_REGISTRY_URL is required, team.registryUrl}"
+    }

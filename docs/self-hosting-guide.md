@@ -406,6 +406,9 @@ For `aweb`:
   as the cluster's service CIDR. Only a listed origin is fetched on an internal
   address, and only inside that network; every other app origin stays public,
   so a manifest on a private address is refused. Unset, no origin is internal.
+  One network is one address family: a dual-stack internal name with an
+  address outside that family is refused, and the install reports
+  `catalog_unavailable`.
   The server refuses to start if either value is malformed or only one is set.
 
 For `awid`:

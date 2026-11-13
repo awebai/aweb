@@ -8,6 +8,7 @@ One team trust group in one container: the agents, their wake broker and
 | Key | Becomes | Constraint | Default | Purpose |
 | --- | --- | --- | --- | --- |
 | `agents.image` | `AGENT_IMAGE`; StatefulSet image | `repository@sha256:<64 lowercase hex>` | none | The same reviewed agent image digest in both wrappers. |
+| `team.registryUrl` | agent environment `AWID_REGISTRY_URL` | exact HTTPS origin | `https://api.awid.ai` | `aw` in the container reaches a registry with its own client only when the operator names it (aweb-aczi); a private team registry is named here. |
 | `agents.uid` | `AGENT_UID`; pod runAsUser | integer1..2147483647; must satisfy signer.workerUids cross-validation | 20001 | Runtime owner of the team state and processes. |
 | `agents.gid` | `AGENT_GID`; pod runAsGroup | integer1..2147483647 | 20001 | Runtime primary group; Compose login files must be readable by it. |
 | `agents.secrets` | read-only `/etc/agent-login/`; Compose `TEAM_LOGIN_DIR` resolves below compose.secretsDir | dedicated existing Secret/directory reference; only the harness login file | `agents` | D1 login source; its path is the accepted exception to/run/secrets. Never service/provider/tool/DB credentials. |
