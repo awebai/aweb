@@ -193,7 +193,8 @@ async def test_unavailable_exact_membership_refuses(registry, fault):
 
 @pytest.mark.parametrize("private", [False, True], ids=["public", "private"])
 @pytest.mark.parametrize("original_subject", ["genuine", "different"])
-async def test_retained_subject_is_original_evidence(registry, private, original_subject):
+@pytest.mark.parametrize("original_alias", ["genuine", "different"])
+async def test_retained_subject_is_original_evidence(registry, private, original_subject, original_alias):
     from awid_service.testing import SERVICE_TOKEN
     from fastapi import HTTPException
 
@@ -208,8 +209,9 @@ async def test_retained_subject_is_original_evidence(registry, private, original
                           transport=registry.transport, service_token=SERVICE_TOKEN)
     async def check():
         return await cache.check_current_member(TEAM, certificate_id=member.certificate_id,
-                                               team_did_key=member.team_did_key, principal=principal)
-    if original_subject == "genuine":
+                                               team_did_key=member.team_did_key, principal=principal,
+                                               member_alias=member.alias if original_alias == "genuine" else "impostor")
+    if original_subject == original_alias == "genuine":
         proof = await check()
         assert proof.principal == principal
         assert proof.is_fresh_at(proof.checked_at)
