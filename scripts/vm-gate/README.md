@@ -138,6 +138,19 @@ failure rows survive. Remote gate logs are copied to the same absolute canonical
 paths. Existing source failed-tree/reuse rules apply equally to VM and Mac rows.
 A run never clears a failure row to retry it.
 
+On TERM/INT the gate records only completed PASS rows with this invocation's
+matching run-id, summary entry and nonempty stage log. It retains exit 143/130
+and appends a `run INTERRUPTED` summary entry; an unfinished stage gets no
+invented pass or code-failure verdict. Cleanup receipts remain separate.
+An `artifacts` PASS certifies that the artifact build/validation targets passed
+for the ledger's tree and effective inputs. It does **not** promise retained
+wheels, archives, images or node modules in a later disposable runner.
+`candidate-suite.sh` prepares node dependencies and the CLI build before a
+resumed integration stage, even when artifacts is reused. The OSS journey
+(including its controller-key mutation) builds its CLI and Compose images;
+the exact-publish self-tests construct their own fixture outputs. Publication
+of particular staged bytes still requires those bytes and their own receipts.
+
 SQLite `registry.sqlite3` serializes registry/spend changes. Reservations count
 historical seed, settled charges and all outstanding runs. They use live EUR
 server and IPv4 pricing rounded conservatively for the completion budget.

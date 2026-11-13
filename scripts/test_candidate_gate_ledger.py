@@ -73,7 +73,7 @@ def main() -> None:
     print(f"Ledger integration evidence: {evidence}", flush=True)
     with tempfile.TemporaryDirectory(prefix="aweb-ledger-proof.") as temporary:
         repo = Path(temporary)
-        for name in ("candidate-docker-gate.sh", "candidate-suite.sh", "candidate-cleanup.sh",
+        for name in ("candidate-docker-gate.sh", "candidate-suite.sh", "candidate-cleanup.sh", "candidate-record.sh",
                      "candidate-host-pressure.py", "candidate-network.py", "fetch_released_aw.py", "next_tag_version.py", "release_candidate.py", "release_versions.py"):
             destination = repo / "scripts" / name
             destination.parent.mkdir(exist_ok=True)
