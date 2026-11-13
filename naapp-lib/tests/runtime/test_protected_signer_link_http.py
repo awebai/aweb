@@ -178,11 +178,16 @@ async def test_a_refused_token_never_reaches_a_log_or_an_answer(link_http, caplo
 
 
 def test_the_canary_capture_sees_a_logged_token(caplog):
+    """Control for the canary tests: the same capture sees a token the
+    signer's own loggers write. Their scope is every logger whose records
+    reach the root, which includes all of aweb_naapp; the link routes run
+    here in-process, with no server of their own logging requests. A
+    server's loggers configured not to propagate (uvicorn's, once a test
+    starts uvicorn) are outside this capture."""
     import logging
 
-    # Control for the test above: the same capture does see a token that is logged.
     caplog.set_level(logging.DEBUG)
-    logging.getLogger("uvicorn.error").debug("body %s", CANARY)
+    logging.getLogger("aweb_naapp.runtime.protected_signer").debug("body %s", CANARY)
     assert CANARY in caplog.text
 
 
