@@ -19,6 +19,8 @@ This directory holds what both layers share.
 | `teamctl` | The operator command on one machine: `teamctl start` renders `deployment.yaml`, starts the bundle and checks it is ready; with agents it derives egress's policy and holds the agent until the ingress and boundary probes pass. `teamctl connect` prints the origins and the deployment's `docker compose` command. It needs `uv` and this repository's checkout. |
 | `egress_policy.py` | Derives the agents' egress policy from the deployment once its services are up. |
 | `compose.test.yaml` | The journey's test world: its own registry, DNS, SMTP, TLS front and aw. Never in a production deployment. |
+| `access/` | Who can read what, one page per party: the operator, the team, the agents of a container, the registry's operator and the model provider. |
+| `OPERATIONS.md` | What each `teamctl` command keeps and deletes, backup, and the restore, rotation and removal gaps with their owners. |
 | `postgres-roles.sh` | Run by the bundled PostgreSQL at its first start: one role and one database per component. |
 | `descriptors/<component>.md` | What one component needs from an operator, written by its owner. |
 
