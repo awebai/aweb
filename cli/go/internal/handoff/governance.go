@@ -148,11 +148,16 @@ var (
 	}
 )
 
+// DefaultRetryWithin is how long aw keeps waiting out a protected service's
+// explicit throttle hints within one invocation's step, unless the options
+// set another bound.
+const DefaultRetryWithin = 2 * time.Minute
+
 func retryWithin(opts GovernanceOptions) time.Duration {
 	if opts.RetryWithin > 0 {
 		return opts.RetryWithin
 	}
-	return 2 * time.Minute
+	return DefaultRetryWithin
 }
 
 func pollInterval(opts GovernanceOptions) time.Duration {

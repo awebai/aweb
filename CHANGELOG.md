@@ -11,6 +11,23 @@
   home that already holds an identity, or anything else, refuses
   `identity_exists`. `--json` carries `did_aw` and `did_key`.
 
+- aw no longer blind-retries a `503` that carries `Retry-After`: the request
+  returns at once with the service's hint, since a retry before it cannot
+  succeed and repeats what the service asked to wait for. A bare `503` keeps
+  its three brief retries. A protected `aw app role revoke` waits out an
+  explicit delta-seconds hint on its installation lookup within that step's
+  own two-minute bound, then reads again; the prepare that follows has a
+  fresh two-minute bound of its own, so the act can wait up to about four
+  minutes on hints, and the command's own earlier deadline or cancellation
+  always ends it first. An inactive, mismatched or otherwise refused
+  installation still refuses at once, and nothing is prepared until the
+  lookup succeeds.
+
+- aweb server keeps a registry throttling hint on `503 identity_binding_unavailable`
+  responses as `Retry-After`, including authenticated installation lookups.
+  Identity mismatches and ordinary dependency failures retain their existing
+  refusal behavior; the server adds no wait or retry.
+
 - `aw id team admission-policy --team T --protected-profile P` reads a
   protected team's agent admission policy from its protected service, proving
   this identity's key. `--json` carries the mode and the complete policy,

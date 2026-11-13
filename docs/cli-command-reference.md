@@ -410,6 +410,7 @@ Subcommands:
 - `child` Invite, receive and approve requests from children you issue
 - `create` Create a global identity by claiming a namespace address
 - `encryption-key` Manage local E2E encryption keys for this self-custodial identity
+- `endorse` Have a human endorse this agent as the deployment's root, through the protected service
 - `grant` Scoped, revocable session grants derived from this identity
 - `human` Human identities in a namespace's identity tree
 - `log` Show a global AWID DID log
@@ -658,6 +659,29 @@ Show local E2E encryption key state
 
 Flags:
 - `-h, --help help for show`
+
+## `id endorse`
+
+### `id endorse`
+
+Ask the protected service named by --protected-profile to have --human endorse
+this registered agent as the deployment's root for --team. The human approves the
+exact act on the service's page; nothing is signed here. Before the page is shown,
+aw checks the admission policy the service froze against its own read of every
+team's policy. Endorsement grants no resource permissions and creates no policy.
+
+--operation-id is the caller's UUID, kept before anything is sent. Running again
+with the same id and inputs resumes that operation; changed inputs refuse
+operation_conflict. Once the endorsement commits, aw registers the root's new
+certificate at the pinned registry and reads it back.
+
+Flags:
+- `--deployment-label string The deployment's name, shown to the human`
+- `-h, --help help for endorse`
+- `--human string The did:aw of the human who endorses this root`
+- `--operation-id string The caller's UUID for this endorsement; the same id resumes it`
+- `--protected-profile string The operator-provisioned protected-service profile`
+- `--team stringArray A team (name:domain) the root will admit agents to; repeat for each`
 
 ## `id grant`
 
@@ -1097,6 +1121,8 @@ holders, service projection, or diagnostics.
 Subcommands:
 - `accept-invite` Accept a team invite and receive a membership certificate
 - `add-member` Protocol/admin: add a member by signing a team certificate
+- `admission-policy` Read a protected team's agent admission policy from its protected service
+- `admit` Admit an agent to a protected team through its protected service, as the endorsed root
 - `cleanup-cloud` Protocol/admin: delete aweb Cloud's BYOT projection after registry team deletion
 - `create` Create a hosted sibling team or a customer-controlled AWID team
 - `delete` Protocol/admin: delete an AWID team using the namespace controller key
@@ -1180,6 +1206,51 @@ Flags:
 - `--name string Member name to use with --did`
 - `--namespace string Namespace domain`
 - `--team string Team name`
+
+## `id team admission-policy`
+
+### `id team admission-policy`
+
+Read a team's agent admission policy from the protected service named by
+--protected-profile, proving this identity's current key.
+
+The answer says whether the team is protected or legacy and, for a protected
+team, the immutable policy version and digest an admission binds. A protected
+team without a policy refuses admission_policy_missing: the operator provisions
+or approves one; aw never creates it. A read that cannot be answered refuses
+receipt_unavailable and never means the team has no policy.
+
+Flags:
+- `-h, --help help for admission-policy`
+- `--protected-profile string The operator-provisioned protected-service profile to read the policy from`
+- `--team string The team (name:domain) whose policy to read; the profile must bind its controller`
+
+## `id team admit`
+
+### `id team admit`
+
+Admit one agent to a protected team as an ordinary member, through the protected
+service named by --protected-profile, proving this identity's key as the
+deployment's endorsed root. No human approves it: the service admits only within
+the team's admission policy, whose version and digest the caller names as read
+from aw id team admission-policy.
+
+--operation-id is the caller's UUID, kept before anything is sent. Running again
+with the same id and the same inputs resumes that operation and returns its
+original certificate; changed inputs under the id refuse operation_conflict. The
+verified membership certificate is written to --certificate-out.
+
+Flags:
+- `--alias string The agent's member alias`
+- `--certificate-out string Where to write the agent's membership certificate`
+- `-h, --help help for admit`
+- `--member-id string The agent's did:aw, when it is a registered identity; omit for a local agent`
+- `--member-key string The agent's did:key`
+- `--operation-id string The caller's UUID for this admission; the same id resumes it`
+- `--policy-digest string The admission policy digest the caller read (sha256:<hex>)`
+- `--policy-version int The admission policy version the caller read`
+- `--protected-profile string The operator-provisioned protected-service profile`
+- `--team string The protected team (name:domain)`
 
 ## `id team cleanup-cloud`
 
