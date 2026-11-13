@@ -1,7 +1,12 @@
 package main
 
 import (
+	"context"
 	"encoding/json"
+	"errors"
+	"net/http"
+	"net/http/httptest"
+	"net/url"
 	"os"
 	"path/filepath"
 	"strings"
@@ -111,4 +116,50 @@ func TestAnAdmissionSavedBeforeSendingIsFoundAgainFromTheSameInputs(t *testing.T
 	if got, resumed, _ := protectedOperationID("", profile, admissionBody(profile, binding, again)); resumed || got == request.OperationID {
 		t.Fatal("a different admission resumed the saved one")
 	}
+}
+
+func TestAnAdmissionLimitRefusalSaysHowManyAgentsTheRootHas(t *testing.T) {
+	refused := serviceRefusal(t, "admission_limit_reached")
+	counts := &handoff.AdmissionCounts{Active: 5, MaxActive: 5, InWindow: 1, MaxPerWindow: 10, WindowSeconds: 3600}
+	told := withAdmissionCounts(context.Background(), refused, "engineering:customer.example",
+		func(context.Context) (*handoff.AdmissionCounts, error) { return counts, nil })
+	if handoff.ErrorCode(told) != "admission_limit_reached" || !strings.Contains(told.Error(), "5 of 5") ||
+		!strings.Contains(told.Error(), "engineering:customer.example") {
+		t.Fatalf("%q %q", handoff.ErrorCode(told), told.Error())
+	}
+	// Counts that cannot be read leave the plain sentence, never another error.
+	plain := withAdmissionCounts(context.Background(), refused, "engineering:customer.example",
+		func(context.Context) (*handoff.AdmissionCounts, error) { return nil, errors.New("older service") })
+	if plain.Error() != refused.Error() || handoff.ErrorCode(plain) != "admission_limit_reached" {
+		t.Fatalf("%q", plain.Error())
+	}
+	// Any other refusal is left as it is, without a read.
+	other := serviceRefusal(t, "policy_changed")
+	if got := withAdmissionCounts(context.Background(), other, "t", func(context.Context) (*handoff.AdmissionCounts, error) {
+		t.Fatal("read counts for another refusal")
+		return nil, nil
+	}); got != other {
+		t.Fatalf("%v", got)
+	}
+}
+
+// serviceRefusal is the error aw reads from a service that refuses with code.
+func serviceRefusal(t *testing.T, code string) error {
+	t.Helper()
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.WriteHeader(http.StatusForbidden)
+		_, _ = w.Write([]byte(`{"detail":"` + code + `"}`))
+	}))
+	defer server.Close()
+	_, err := handoff.ReadAdmissionPolicy(context.Background(), handoff.GovernanceOptions{
+		Request: server.URL,
+		Sign: func(ctx context.Context, method string, target *url.URL, body []byte) (*http.Response, error) {
+			req, _ := http.NewRequestWithContext(ctx, method, target.String(), nil)
+			return http.DefaultClient.Do(req)
+		},
+	}, "customer-signer", "engineering:customer.example")
+	if handoff.ErrorCode(err) != code {
+		t.Fatalf("stub refusal %v", err)
+	}
+	return err
 }

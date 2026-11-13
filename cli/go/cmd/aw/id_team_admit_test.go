@@ -86,6 +86,10 @@ func newAdmitService(t *testing.T, signKey ed25519.PrivateKey) *admitService {
 			_, _ = w.Write(s.prepared())
 		case r.Method == http.MethodPost && strings.HasSuffix(r.URL.Path, "/execute"):
 			s.executes++
+			if s.tamper == "limit" {
+				_, _ = w.Write([]byte(`{"state":"refused","code":"admission_limit_reached"}`))
+				return
+			}
 			_, _ = w.Write(s.committed())
 		default:
 			http.NotFound(w, r)
@@ -506,5 +510,23 @@ func TestALinkToTheSameCertificateIsStillNotTheCertificateFile(t *testing.T) {
 	}
 	if _, err := admitMember(context.Background(), service.options(), profile, request); errorCodeOf(err) != "certificate_out_exists" {
 		t.Fatalf("err %v", err)
+	}
+}
+
+func TestAnAdmissionOverTheLimitSaysHowManyAgentsTheRootHas(t *testing.T) {
+	_, profile, service := admitTestSetup(t)
+	service.tamper = "limit"
+	request := admitTestRequest(t)
+	request.Counts = func(context.Context) (*handoff.AdmissionCounts, error) {
+		return &handoff.AdmissionCounts{Active: 5, MaxActive: 5, InWindow: 1, MaxPerWindow: 10, WindowSeconds: 3600}, nil
+	}
+	_, err := admitMember(context.Background(), service.options(), profile, request)
+	if errorCodeOf(err) != "admission_limit_reached" {
+		t.Fatalf("code %q: %v", errorCodeOf(err), err)
+	}
+	for _, want := range []string{"5 of 5", request.Team, "aw id team remove-agent", admitTestOperation} {
+		if !strings.Contains(err.Error(), want) {
+			t.Errorf("%q lacks %q", err.Error(), want)
+		}
 	}
 }

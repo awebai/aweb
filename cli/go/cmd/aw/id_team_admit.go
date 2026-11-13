@@ -81,6 +81,9 @@ type admissionRequest struct {
 	PolicyVersion  int64
 	PolicyDigest   string
 	CertificateOut string
+	// Counts reads the root's own admissions, to tell a limit refusal with
+	// numbers; nil reads none.
+	Counts func(context.Context) (*handoff.AdmissionCounts, error)
 }
 
 var operationIDPattern = regexp.MustCompile(`^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$`)
@@ -185,6 +188,7 @@ func admitMember(ctx context.Context, opts handoff.GovernanceOptions, profile *h
 		forgetProtectedOperationQuietly(request.OperationID)
 	}
 	if err != nil {
+		err = withAdmissionCounts(ctx, err, request.Team, request.Counts)
 		if code := handoff.ErrorCode(err); code != "" {
 			return nil, withErrorCode(code, fmt.Errorf("%w (operation %s)", err, request.OperationID))
 		}
@@ -360,6 +364,10 @@ func runTeamAdmit(cmd *cobra.Command, _ []string) error {
 	opts := handoff.GovernanceOptions{
 		Request: profile.RequestOrigin, Human: profile.HumanOrigin,
 		Sign: protectedRequesterSigner(profile, binding.Scope, identity), Notify: cmd.ErrOrStderr(),
+	}
+	request.Counts = func(ctx context.Context) (*handoff.AdmissionCounts, error) {
+		read := handoff.GovernanceOptions{Request: profile.RequestOrigin, Sign: protectedRequesterSigner(profile, admissionPolicyScope(profile, request.Team), identity)}
+		return handoff.ReadAdmissionCounts(ctx, read, profile.ServiceID, request.Team)
 	}
 	fmt.Fprintf(cmd.ErrOrStderr(), "Admitting %s to %s through %s, operation %s\n", request.Alias, request.Team, profile.ServiceID, request.OperationID)
 	report, err := admitMember(cmd.Context(), opts, profile, request)

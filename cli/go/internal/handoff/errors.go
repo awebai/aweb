@@ -33,6 +33,18 @@ func (e *Error) Error() string {
 	return e.Code + ": " + e.Err.Error()
 }
 
+// Retell is err told again with more facts: a sentence-telling refusal
+// keeps its code and gains what add sets. Any other error is err.
+func Retell(err error, add func(*Facts)) error {
+	var e *Error
+	if !errors.As(err, &e) || e.Facts == nil {
+		return err
+	}
+	facts := *e.Facts
+	add(&facts)
+	return &Error{Code: e.Code, Err: err, RetryAfter: e.RetryAfter, Hinted: e.Hinted, Facts: &facts}
+}
+
 // told is err as code's sentence, told with facts.
 func told(code string, err error, facts Facts) error {
 	return &Error{Code: code, Err: err, Facts: &facts}

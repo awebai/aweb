@@ -2,6 +2,7 @@ package main
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -106,4 +107,18 @@ func announceOperationID(cmd *cobra.Command, id *string, profile *handoff.Profil
 	}
 	*id = chosen
 	return nil
+}
+
+// withAdmissionCounts tells an admission_limit_reached refusal with the
+// root's own counts, read by counts. Counts that cannot be read leave the
+// refusal as it was; any other error is returned without a read.
+func withAdmissionCounts(ctx context.Context, err error, team string, counts func(context.Context) (*handoff.AdmissionCounts, error)) error {
+	if handoff.ErrorCode(err) != "admission_limit_reached" || counts == nil {
+		return err
+	}
+	read, readErr := counts(ctx)
+	if readErr != nil || read == nil {
+		return err
+	}
+	return handoff.Retell(err, func(f *handoff.Facts) { f.Team, f.Admission = team, read })
 }
