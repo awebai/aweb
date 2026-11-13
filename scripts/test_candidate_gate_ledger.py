@@ -37,18 +37,26 @@ REAL_RECIPES = frozenset({
 })
 
 
+# Git recreates the checkout under the operator's umask. Stage only the public
+# init scripts in the host-visible bind root with modes the PostgreSQL UID can
+# read; chmod inside the Docker-owned checkout would not repair the host mount.
 CLI_E2E_RECIPE = '''cli-e2e:
-\t@set -eu; cleanup() { status=$$?; set +e; \
+\t@set -eu; initdb="$${AWEB_DOCKER_BIND_ROOT:?}/ledger-initdb"; \
+\t  mkdir -p "$$initdb"; cp -R scripts/e2e/initdb/. "$$initdb/"; chmod -R u=rwX,go=rX "$$initdb"; \
+\t  overlay="$$AWEB_DOCKER_BIND_ROOT/ledger-initdb.yml"; \
+\t  printf 'services:\\n  postgres:\\n    volumes:\\n      - "%s:/docker-entrypoint-initdb.d:ro"\\n' "$$initdb" > "$$overlay"; \
+\t  compose() { docker compose -p "$$LIBRARY_E2E_PROJECT" -f docker-compose.e2e.yml -f "$$overlay" "$$@"; }; \
+\t  cleanup() { status=$$?; set +e; \
 \t  if [ "$$status" -ne 0 ]; then \
-\t    docker compose -p "$$LIBRARY_E2E_PROJECT" -f docker-compose.e2e.yml logs --no-color postgres; \
-\t    ids="$$(docker compose -p "$$LIBRARY_E2E_PROJECT" -f docker-compose.e2e.yml ps -aq postgres)"; \
+\t    compose logs --no-color postgres; \
+\t    ids="$$(compose ps -aq postgres)"; \
 \t    if [ -n "$$ids" ]; then docker inspect $$ids; fi; \
 \t  fi; \
-\t  docker compose -p "$$LIBRARY_E2E_PROJECT" -f docker-compose.e2e.yml down -v --remove-orphans; \
+\t  compose down -v --remove-orphans; \
 \t  cleanup_status=$$?; [ "$$status" -ne 0 ] || status=$$cleanup_status; exit "$$status"; \
 \t}; trap cleanup EXIT; \
-\t  docker compose -p "$$LIBRARY_E2E_PROJECT" -f docker-compose.e2e.yml up -d --wait postgres; \
-\t  docker compose -p "$$LIBRARY_E2E_PROJECT" -f docker-compose.e2e.yml exec -T postgres pg_isready -U aweb
+\t  compose up -d --wait postgres; \
+\t  compose exec -T postgres pg_isready -U aweb
 '''
 
 
