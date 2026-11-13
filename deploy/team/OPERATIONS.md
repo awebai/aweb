@@ -183,6 +183,13 @@ erased events back. The first start of a Logs with its ledger is on the live
 `logs` database, not a restored one, so that the purges made before the ledger
 existed are recorded.
 
+In the bundled PostgreSQL the ledger shares the server and the `postgres_data`
+volume with Logs' content: it protects a restore of the content, not the loss
+of the host. Losing the host loses both, and recovering the ledger from a
+backup rolls it back to that backup, so the events purged after it are erased
+only from the content restored with it, not fenced. A ledger that must outlive
+the host needs its own server, with its own durability.
+
 `teamctl restore --lab-rehearsal <deployment.yaml> <backup>` restores a backup
 of **disposable lab data** to rehearse the mechanics, never a team's. It checks
 every part against the manifest's digests and takes every target path from the
