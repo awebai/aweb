@@ -259,7 +259,9 @@ func TestAnExecuteIsSignedAsAnExecuteOverItsOperationsScope(t *testing.T) {
 	headers, err := ProtectedRequestHeaders(ProtectedRequest{
 		Profile: profile, Scope: profile.Bindings[0].Scope, RequesterID: vectors.RequesterID,
 		Method: "POST", Path: "/protected-operations/11111111-1111-4111-8111-111111111111/execute", Timestamp: "2026-11-11T00:00:00Z",
-		Sign: func(payload []byte) (string, []byte, error) { return awid.ComputeDIDKey(public), ed25519.Sign(private, payload), nil },
+		Sign: func(payload []byte) (string, []byte, error) {
+			return awid.ComputeDIDKey(public), ed25519.Sign(private, payload), nil
+		},
 	})
 	if err != nil {
 		t.Fatal(err)

@@ -230,10 +230,18 @@ func approve(ctx context.Context, opts GovernanceOptions, operationID string, bo
 			}
 		}()
 	}
+	return awaitReceipt(ctx, opts, operationID, prepared.ExpiresAt, woken)
+}
+
+// awaitReceipt reads operationID's receipt until it is final or the operation
+// expires, every poll interval or sooner when woken (a nil woken never wakes).
+// No read outlasts the operation; a pending operation at its expiry is
+// operation_expired, and an unreadable receipt leaves the outcome unknown.
+func awaitReceipt(ctx context.Context, opts GovernanceOptions, operationID string, expiresAt time.Time, woken <-chan struct{}) (*Receipt, error) {
 	interval := pollInterval(opts)
 	for {
 		// No read outlasts the operation.
-		readCtx, cancelRead := context.WithDeadline(ctx, prepared.ExpiresAt)
+		readCtx, cancelRead := context.WithDeadline(ctx, expiresAt)
 		receipt, err := ReadReceipt(readCtx, opts, operationID)
 		cancelRead()
 		switch {
@@ -242,7 +250,7 @@ func approve(ctx context.Context, opts GovernanceOptions, operationID string, bo
 			// wait ends before the operation expires; the outcome stays unknown.
 			hint, ok := retryHint(err)
 			wait := max(interval, hint)
-			if wait >= prepared.ExpiresAt.Sub(now()) {
+			if wait >= expiresAt.Sub(now()) {
 				return unresolvedReceipt(operationID, "receipt_unavailable"), err
 			}
 			if ok {
@@ -254,7 +262,7 @@ func approve(ctx context.Context, opts GovernanceOptions, operationID string, bo
 			return unresolvedReceipt(operationID, ErrorCode(err)), err
 		case receipt.State != "pending":
 			return settled(opts, receipt)
-		case now().After(prepared.ExpiresAt):
+		case now().After(expiresAt):
 			return receipt, coded("operation_expired", fmt.Errorf("operation %s was still pending at its expiry", operationID))
 		}
 		if _, hintedWait := retryHint(err); !hintedWait {
@@ -266,7 +274,7 @@ func approve(ctx context.Context, opts GovernanceOptions, operationID string, bo
 			}
 		}
 		// A wait that ran past the expiry sends no further read.
-		if !now().Before(prepared.ExpiresAt) {
+		if !now().Before(expiresAt) {
 			if err != nil {
 				return unresolvedReceipt(operationID, "receipt_unavailable"), err
 			}
@@ -407,7 +415,8 @@ func verifyPrepared(sent map[string]any, digest string, payload map[string]any) 
 	if err != nil || recomputed != digest {
 		return mismatch("its digest does not match its payload")
 	}
-	expected := append([]string{}, serverAddedMembers...)
+	shape := preparedShapeOf(sent)
+	expected := append(append([]string{}, serverAddedMembers...), shape.added...)
 	for name, value := range sent {
 		if !sameJSON(request[name], value) {
 			return mismatch("its " + name + " differs")
@@ -423,21 +432,81 @@ func verifyPrepared(sent map[string]any, digest string, payload map[string]any) 
 	if !sameJSON(request["policy_ref"], policy["ref"]) || !sameJSON(request["policy_version"], policy["version"]) {
 		return mismatch("its policy differs from its request")
 	}
-	// The artifact is what gets signed: its act, team, subject and audience
-	// are exactly what aw asked for.
+	// The artifact is what gets signed: what it binds is exactly what aw
+	// asked for.
 	artifact, _ := request["artifact"].(map[string]any)
-	if artifact == nil || !exactMembers(artifact, artifactMembers) || artifact["type"] != "aweb.owner-act" {
-		return mismatch("its artifact is not an owner act")
+	if artifact == nil {
+		return mismatch("it freezes no artifact")
+	}
+	if reason := shape.check(sent, request, artifact); reason != "" {
+		return mismatch(reason)
+	}
+	return nil
+}
+
+// preparedShape is what one operation's frozen request adds beside the
+// common server members, and how its artifact must match what aw sent.
+type preparedShape struct {
+	added []string
+	// check names how request or artifact differs from sent, or is "".
+	check func(sent, request, artifact map[string]any) string
+}
+
+// preparedShapeOf is sent's operation's shape; every operation not named
+// here is an owner act.
+func preparedShapeOf(sent map[string]any) preparedShape {
+	if sent["operation"] == "team.agent.admit" {
+		return preparedShape{added: []string{"request_id", "admission_policy_version"}, check: admissionArtifactDiffers}
+	}
+	return preparedShape{check: ownerActArtifactDiffers}
+}
+
+func ownerActArtifactDiffers(sent, _, artifact map[string]any) string {
+	if !exactMembers(artifact, artifactMembers) || artifact["type"] != "aweb.owner-act" {
+		return "its artifact is not an owner act"
 	}
 	scope, _ := sent["scope"].(map[string]any)
 	authority, _ := scope["authority"].(map[string]any)
 	if !sameJSON(artifact["act"], sent["operation"]) || !sameJSON(artifact["team_id"], authority["id"]) {
-		return mismatch("its artifact is for another act or team")
+		return "its artifact is for another act or team"
 	}
 	if !sameJSON(artifact["subject"], sent["subject"]) || !sameJSON(artifact["aud"], sent["audience"]) {
-		return mismatch("its artifact names another subject or audience")
+		return "its artifact names another subject or audience"
 	}
-	return nil
+	return ""
+}
+
+// admissionArtifactDiffers checks an admission's frozen request: it is
+// requested under its own operation id and the policy version aw expects,
+// and its artifact is the unsigned team certificate of exactly the member aw
+// named, in the existing certificate encoding.
+func admissionArtifactDiffers(sent, request, artifact map[string]any) string {
+	subject, _ := sent["subject"].(map[string]any)
+	if !sameJSON(request["request_id"], sent["operation_id"]) || !sameJSON(request["admission_policy_version"], subject["expected_policy_version"]) {
+		return "it is requested under another id or policy version"
+	}
+	members := []string{"version", "certificate_id", "team_id", "team_did_key", "member_did_key", "alias", "identity_scope", "issued_at"}
+	scope := "local"
+	if subject["child_id"] != nil {
+		members = append(members, "member_did_aw")
+		scope = "global"
+		if !sameJSON(artifact["member_did_aw"], subject["child_id"]) {
+			return "its certificate names another member"
+		}
+	}
+	if !exactMembers(artifact, members) || !sameJSON(artifact["version"], 1) {
+		return "its artifact is not an unsigned team certificate"
+	}
+	for _, text := range []string{"certificate_id", "team_did_key", "issued_at"} {
+		if value, _ := artifact[text].(string); value == "" {
+			return "its certificate has no " + text
+		}
+	}
+	if !sameJSON(artifact["team_id"], subject["team_id"]) || !sameJSON(artifact["member_did_key"], subject["child_key"]) ||
+		!sameJSON(artifact["alias"], subject["member_alias"]) || artifact["identity_scope"] != scope {
+		return "its certificate names another team, member, alias or scope"
+	}
+	return ""
 }
 
 // exactMembers reports whether object has exactly the named members.
