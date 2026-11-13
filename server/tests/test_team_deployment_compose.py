@@ -200,6 +200,12 @@ def test_the_bundled_postgres_creates_a_database_and_role_per_component_at_first
     # argument and no environment.
     assert "\\set password `cat :'file'`" in script
     assert "-v password" not in script and "PGPASSWORD" not in script
+    # A refused CREATE ROLE logs no statement, so no password reaches the
+    # server's log; the server's own role is no component's. Measured on
+    # postgres:16-alpine with a pre-created role: the earlier script logged
+    # the password, this one logs only the error.
+    assert script.index("SET log_min_error_statement = panic;") < script.index('CREATE ROLE :"role"')
+    assert "postgres) echo" in script
 
 
 def settings_of(section: dict) -> set[str]:
