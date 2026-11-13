@@ -408,10 +408,13 @@ async def _get_team_identity_with_grant_scope(
 
     aweb_db = _aweb_db(db)
     try:
-        identity = await resolve_team_identity(aweb_db, cert_info, request=request)
+        # Resolution can update projections. Keep those writes uncommitted
+        # until the dependency's last authentication await has been fenced.
+        async with aweb_db.transaction() as tx:
+            identity = await resolve_team_identity(tx, cert_info, request=request)
+            identity.require_fresh()
     except ValueError as e:
         raise HTTPException(status_code=403, detail=str(e))
-    identity.require_fresh()
     return identity
 
 
