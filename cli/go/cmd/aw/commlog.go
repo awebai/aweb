@@ -66,13 +66,13 @@ func defaultLogsDir() string {
 // appendCommLog writes a single entry to the account's communication log,
 // sealed to the team's owner log key when one is installed.
 // Best-effort: errors go to debugLog, never block communication.
-func appendCommLog(logsDir, accountName string, key localLogKey, entry *CommLogEntry) {
+func appendCommLog(logsDir, accountName string, policy localLogPolicy, entry *CommLogEntry) {
 	line, err := json.Marshal(entry)
 	if err != nil {
 		debugLog("commlog: marshal: %v", err)
 		return
 	}
-	if err := appendLocalLogLine(commLogPath(logsDir, accountName), key, line, nil); err != nil {
+	if err := appendLocalLogLine(commLogPath(logsDir, accountName), policy, line, nil); err != nil {
 		debugLog("commlog: %v", err)
 	}
 }

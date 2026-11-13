@@ -137,7 +137,7 @@ func TestLogKeyInstallAcceptsOnlyTheTeamsOwnerKey(t *testing.T) {
 	if err := installLogKeyRecord(f.sel, rec); err != nil {
 		t.Fatal(err)
 	}
-	if key := localLogKeyForSelection(f.sel); key.record == nil || key.record.KeyID != rec.KeyID {
+	if key := localLogPolicyForSelection(f.sel).resolve(); key.record == nil || key.record.KeyID != rec.KeyID {
 		t.Fatalf("installed key not in use: %+v", key)
 	}
 }
@@ -149,7 +149,7 @@ func TestLogReadOpensEveryRotatedKeyAndPlaintextLines(t *testing.T) {
 	name := commLogNameForSelection(f.sel)
 	keychain := awconfig.LogKeychain{}
 
-	appendCommLog(f.logsDir, name, localLogKeyForSelection(f.sel), &CommLogEntry{Timestamp: "2026-11-13T09:00:00Z", Dir: "recv", Channel: "mail", From: "alice", Body: "plain before any key"})
+	appendCommLog(f.logsDir, name, localLogPolicyForSelection(f.sel), &CommLogEntry{Timestamp: "2026-11-13T09:00:00Z", Dir: "recv", Channel: "mail", From: "alice", Body: "plain before any key"})
 	for i, body := range []string{"sealed under the first key", "sealed under the second key"} {
 		prompt := &scriptedPassphrases{answers: []string{testLogPassphrase, testLogPassphrase}}
 		rec, err := createLogKey(logKeyCreateOptions{TeamID: localLogTestTeamID, Keychain: keychain, Prompt: prompt.prompt, Now: time.Now()})
@@ -159,7 +159,7 @@ func TestLogReadOpensEveryRotatedKeyAndPlaintextLines(t *testing.T) {
 		if err := installLogKeyRecord(f.sel, rec); err != nil {
 			t.Fatal(err)
 		}
-		appendCommLog(f.logsDir, name, localLogKeyForSelection(f.sel), &CommLogEntry{Timestamp: "2026-11-13T09:00:00Z", Dir: "recv", Channel: "mail", From: "alice", Body: body})
+		appendCommLog(f.logsDir, name, localLogPolicyForSelection(f.sel), &CommLogEntry{Timestamp: "2026-11-13T09:00:00Z", Dir: "recv", Channel: "mail", From: "alice", Body: body})
 	}
 
 	var out bytes.Buffer
@@ -189,7 +189,7 @@ func TestLogReadPrintsInteractionEntriesAndJSON(t *testing.T) {
 	if err := installLogKeyRecord(f.sel, rec); err != nil {
 		t.Fatal(err)
 	}
-	appendInteractionLogForDir(f.sel.WorkingDir, localLogKeyForSelection(f.sel), &InteractionEntry{Kind: interactionKindChatIn, MessageID: "c-1", From: "bob", Text: "chat body"})
+	appendInteractionLogForDir(f.sel.WorkingDir, localLogPolicyForSelection(f.sel), &InteractionEntry{Kind: interactionKindChatIn, MessageID: "c-1", From: "bob", Text: "chat body"})
 	path := interactionLogPath(f.sel.WorkingDir)
 
 	var text bytes.Buffer
@@ -221,7 +221,7 @@ func TestLogReadRefusesAWrongPassphrase(t *testing.T) {
 	if err := installLogKeyRecord(f.sel, rec); err != nil {
 		t.Fatal(err)
 	}
-	appendCommLog(f.logsDir, commLogNameForSelection(f.sel), localLogKeyForSelection(f.sel), &CommLogEntry{Dir: "recv", Channel: "mail", Body: "secret"})
+	appendCommLog(f.logsDir, commLogNameForSelection(f.sel), localLogPolicyForSelection(f.sel), &CommLogEntry{Dir: "recv", Channel: "mail", Body: "secret"})
 
 	var out bytes.Buffer
 	err = readOwnerLogs(logReadOptions{Files: []string{f.commLogPath()}, Keychain: awconfig.LogKeychain{}, Prompt: (&scriptedPassphrases{answers: []string{"not the passphrase"}}).prompt, Out: &out})
@@ -234,7 +234,7 @@ func TestLogReadNamesAKeyTheKeychainDoesNotHold(t *testing.T) {
 	keyring.MockInit()
 	f := newLocalLogFixture(t)
 	f.installOwnerKey(t, f.teamKey)
-	appendCommLog(f.logsDir, commLogNameForSelection(f.sel), localLogKeyForSelection(f.sel), &CommLogEntry{Dir: "recv", Channel: "mail", Body: "secret"})
+	appendCommLog(f.logsDir, commLogNameForSelection(f.sel), localLogPolicyForSelection(f.sel), &CommLogEntry{Dir: "recv", Channel: "mail", Body: "secret"})
 
 	err := readOwnerLogs(logReadOptions{Files: []string{filepath.Clean(f.commLogPath())}, Keychain: awconfig.LogKeychain{}, Prompt: (&scriptedPassphrases{}).prompt, Out: &bytes.Buffer{}})
 	if err == nil || !strings.Contains(err.Error(), "not in this machine's keychain") {
@@ -258,16 +258,16 @@ func TestLogReadNeutralizesTerminalControlInForgedLines(t *testing.T) {
 	}
 	path := filepath.Join(t.TempDir(), "forged.jsonl")
 	forged := []string{
-		"not json \x1b]0;owned\x07 \x1b[2J",
+		"not json \x1b]0;owned\x07 \x1b[2J \u009b[2J \u202eowned",
 		"{\"kind\":\"chat_in\",\"from\":\"\x1b[31mmallory\",\"text\":\"hi\"}",
 		`{"ts":"\u001b[2J","dir":"recv","ch":"\u001b]0;owned\u0007","from":"eve","body":"hi"}`,
 	}
 	for _, plaintext := range forged {
-		if err := appendLocalLogLine(path, localLogKey{record: rec}, []byte(plaintext), nil); err != nil {
+		if err := appendLocalLogLine(path, localLogPolicyForSelection(f.sel), []byte(plaintext), nil); err != nil {
 			t.Fatal(err)
 		}
 	}
-	if err := appendLocalLogLine(path, localLogKey{record: rec}, []byte(`{"kind":"chat_in","from":"bob","text":"esc \u001b[2J inside a valid string"}`), nil); err != nil {
+	if err := appendLocalLogLine(path, localLogPolicyForSelection(f.sel), []byte(`{"kind":"chat_in","from":"bob","text":"esc \u001b[2J inside a valid string"}`), nil); err != nil {
 		t.Fatal(err)
 	}
 	for _, asJSON := range []bool{false, true} {
@@ -275,7 +275,7 @@ func TestLogReadNeutralizesTerminalControlInForgedLines(t *testing.T) {
 		if err := readOwnerLogs(logReadOptions{Files: []string{path}, Keychain: awconfig.LogKeychain{}, Prompt: (&scriptedPassphrases{answers: []string{testLogPassphrase}}).prompt, Out: &out, JSON: asJSON}); err != nil {
 			t.Fatal(err)
 		}
-		if strings.ContainsAny(out.String(), "\x1b\x07") {
+		if strings.ContainsAny(out.String(), "\x1b\x07\u009b\u202e") {
 			t.Fatalf("json=%v: terminal control reached the owner: %q", asJSON, out.String())
 		}
 		if strings.Count(out.String(), "\n") != 4 {

@@ -58,11 +58,20 @@ can read them back:
    team certificate. One record per team serves every agent of that team that
    shares the same home directory.
 
-From then on every log line is sealed to that key on its own (HPKE
-X25519/HKDF-SHA256/AES-256-GCM, the suite of E2EE key wraps). Plaintext lines
-already in a log are sealed in place on the first sealed write. The replaced
-plaintext is not securely erased: it can survive in free disk blocks,
-snapshots and backups.
+From then on every line the team's agents write is sealed to that key on its
+own (HPKE X25519/HKDF-SHA256/AES-256-GCM, the suite of E2EE key wraps). Each
+write loads and verifies the installed record while holding the team's
+policy lock, which `install` also takes, so a long-running `aw run` follows an
+install, a replacement or a broken record from its next write.
+
+Lines already in a log are never rewritten. A plaintext line carries no team:
+one identity's communication log is shared by all its teams, and an
+interaction log by every team working in that directory. So plaintext written
+before the key was installed, or for a team without a key, stays plaintext and
+is never sealed to the key of whichever team writes next. While sealing is on,
+`aw doctor` names each of this identity's logs that still holds plaintext
+lines (`local.log_key.plaintext_lines`); the owner decides whether to keep,
+move or delete them.
 
 While a team's log key is installed, the agent does not read its logs back:
 `aw log` refuses and `aw run --continue` shows no recap. Message history stays

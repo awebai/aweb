@@ -43,6 +43,7 @@ const (
 	doctorCheckIdentityRegistryURL      = "local.identity_yaml.registry_url_syntax"
 	doctorCheckRegistryCoherence        = "local.registry_url.local_coherence"
 	doctorCheckLocalLogKey              = "local.log_key.owner_key_installed"
+	doctorCheckLocalLogPlaintext        = "local.log_key.plaintext_lines"
 )
 
 type doctorLocalState struct {
@@ -457,6 +458,46 @@ func (r *doctorRunner) runLogKeyChecks(state *doctorLocalState) {
 		return
 	}
 	r.add(localCheck(doctorCheckLocalLogKey, doctorStatusOK, target, "Local mail and chat logs are sealed to the team's owner log key.", "", map[string]any{"key_id": rec.KeyID}))
+	r.runLogPlaintextLineChecks(target)
+}
+
+// runLogPlaintextLineChecks names the logs of this identity that still hold
+// plaintext lines while sealing is on. Such lines were written before the
+// owner log key was installed, or for another team of the same identity or
+// directory; they carry no team, so they are never sealed to this team's key.
+func (r *doctorRunner) runLogPlaintextLineChecks(target *doctorTarget) {
+	paths := []string{interactionLogPath(r.workingDir)}
+	if sel, err := resolveSelectionForDir(r.workingDir); err == nil {
+		paths = append([]string{commLogPath(defaultLogsDir(), commLogNameForSelection(sel))}, paths...)
+	}
+	plaintext := map[string]any{}
+	for _, path := range paths {
+		lines, err := readLocalLogLines(path, 0)
+		if err != nil {
+			continue
+		}
+		count := 0
+		for _, line := range lines {
+			if !isSealedLogLine(line) {
+				count++
+			}
+		}
+		if count > 0 {
+			plaintext[path] = count
+		}
+	}
+	if len(plaintext) == 0 {
+		r.add(localCheck(doctorCheckLocalLogPlaintext, doctorStatusOK, target, "This identity's local logs hold no plaintext lines.", "", nil))
+		return
+	}
+	r.add(localCheck(
+		doctorCheckLocalLogPlaintext,
+		doctorStatusWarn,
+		target,
+		"Local logs hold plaintext lines written before the owner log key was installed or for another team; they are not sealed.",
+		"The owner decides whether to keep, move or delete them; aw never seals them to this team's key.",
+		map[string]any{"plaintext_lines": plaintext},
+	))
 }
 
 func (r *doctorRunner) runSigningKeyFileChecks(state *doctorLocalState) {

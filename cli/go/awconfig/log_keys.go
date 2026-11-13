@@ -82,3 +82,14 @@ func (LogKeychain) SaveLogKey(keyID string, blob []byte) error {
 	}
 	return nil
 }
+
+// LockLogKeyPolicy serializes installing a team's log-key record with every
+// local log write that resolves it, so no write can act on a decision made
+// before an install completed.
+func LockLogKeyPolicy(teamID string) (*fileLock, error) {
+	path, err := LogKeyRecordPath(teamID)
+	if err != nil {
+		return nil, err
+	}
+	return LockExclusive(path + ".lock")
+}

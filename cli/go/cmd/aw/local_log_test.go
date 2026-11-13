@@ -7,6 +7,7 @@ import (
 	"crypto/ed25519"
 	"crypto/rand"
 	"encoding/json"
+	"fmt"
 	"net/http"
 	"os"
 	"os/exec"
@@ -122,7 +123,7 @@ func openAllLines(t *testing.T, path string, owner *ecdh.PrivateKey) []string {
 
 func TestCommLogStaysPlaintextWithoutAnOwnerKey(t *testing.T) {
 	f := newLocalLogFixture(t)
-	appendCommLog(f.logsDir, commLogNameForSelection(f.sel), localLogKeyForSelection(f.sel), &CommLogEntry{Dir: "recv", Channel: "mail", Body: "hello"})
+	appendCommLog(f.logsDir, commLogNameForSelection(f.sel), localLogPolicyForSelection(f.sel), &CommLogEntry{Dir: "recv", Channel: "mail", Body: "hello"})
 
 	entries, err := readCommLog(f.commLogPath(), 0)
 	if err != nil {
@@ -136,7 +137,7 @@ func TestCommLogStaysPlaintextWithoutAnOwnerKey(t *testing.T) {
 func TestCommLogSealsToTheOwnerKey(t *testing.T) {
 	f := newLocalLogFixture(t)
 	f.installOwnerKey(t, f.teamKey)
-	appendCommLog(f.logsDir, commLogNameForSelection(f.sel), localLogKeyForSelection(f.sel), &CommLogEntry{Dir: "recv", Channel: "mail", From: "alice", Body: "the secret"})
+	appendCommLog(f.logsDir, commLogNameForSelection(f.sel), localLogPolicyForSelection(f.sel), &CommLogEntry{Dir: "recv", Channel: "mail", From: "alice", Body: "the secret"})
 
 	raw, err := os.ReadFile(f.commLogPath())
 	if err != nil {
@@ -173,55 +174,47 @@ func TestCommLogWritesNothingUnderAnUnverifiedOwnerKey(t *testing.T) {
 		t.Fatal(err)
 	}
 	f.installOwnerKey(t, stranger)
-	appendCommLog(f.logsDir, commLogNameForSelection(f.sel), localLogKeyForSelection(f.sel), &CommLogEntry{Dir: "recv", Channel: "mail", Body: "the secret"})
+	appendCommLog(f.logsDir, commLogNameForSelection(f.sel), localLogPolicyForSelection(f.sel), &CommLogEntry{Dir: "recv", Channel: "mail", Body: "the secret"})
 
 	if _, err := os.Stat(f.commLogPath()); !os.IsNotExist(err) {
 		t.Fatalf("a record not signed by the team key must stop logging, not fall back to plaintext: %v", err)
 	}
 }
 
-func TestFirstSealedWriteSealsExistingPlaintextInPlace(t *testing.T) {
+// Plaintext lines already in a log carry no team: they may have been written
+// for another team of the same principal or before any key. A sealed write
+// never seals them to its own team's owner; it leaves them exactly as they are.
+func TestSealedWritesLeaveExistingPlaintextLinesAlone(t *testing.T) {
 	f := newLocalLogFixture(t)
 	name := commLogNameForSelection(f.sel)
-	appendCommLog(f.logsDir, name, localLogKeyForSelection(f.sel), &CommLogEntry{Dir: "recv", Channel: "mail", Body: "first"})
-	appendCommLog(f.logsDir, name, localLogKeyForSelection(f.sel), &CommLogEntry{Dir: "send", Channel: "chat", Body: "second"})
+	appendCommLog(f.logsDir, name, localLogPolicyForSelection(f.sel), &CommLogEntry{Dir: "recv", Channel: "mail", Body: "first"})
+	appendCommLog(f.logsDir, name, localLogPolicyForSelection(f.sel), &CommLogEntry{Dir: "send", Channel: "chat", Body: "second"})
+	before := readRawLines(t, f.commLogPath())
 
 	f.installOwnerKey(t, f.teamKey)
-	appendCommLog(f.logsDir, name, localLogKeyForSelection(f.sel), &CommLogEntry{Dir: "recv", Channel: "mail", Body: "third"})
+	appendCommLog(f.logsDir, name, localLogPolicyForSelection(f.sel), &CommLogEntry{Dir: "recv", Channel: "mail", Body: "third"})
 
-	raw, err := os.ReadFile(f.commLogPath())
-	if err != nil {
-		t.Fatal(err)
+	after := readRawLines(t, f.commLogPath())
+	if len(after) != 3 || after[0] != before[0] || after[1] != before[1] {
+		t.Fatalf("existing plaintext lines changed:\nbefore %q\nafter  %q", before, after)
 	}
-	for _, body := range []string{"first", "second", "third"} {
-		if strings.Contains(string(raw), body) {
-			t.Fatalf("plaintext %q survived: %s", body, raw)
-		}
+	if isSealedLogLine([]byte(after[0])) || isSealedLogLine([]byte(after[1])) {
+		t.Fatal("existing plaintext lines were sealed")
 	}
-	info, err := os.Stat(f.commLogPath())
-	if err != nil {
-		t.Fatal(err)
+	var sealed awid.SealedLogLine
+	if err := json.Unmarshal([]byte(after[2]), &sealed); err != nil || sealed.Sealed == "" {
+		t.Fatalf("the new line is not sealed: %s", after[2])
 	}
-	if info.Mode().Perm() != 0o600 {
-		t.Fatalf("log mode %v", info.Mode().Perm())
-	}
-	var bodies []string
-	for _, line := range openAllLines(t, f.commLogPath(), f.ownerKey) {
-		var entry CommLogEntry
-		if err := json.Unmarshal([]byte(line), &entry); err != nil {
-			t.Fatal(err)
-		}
-		bodies = append(bodies, entry.Body)
-	}
-	if strings.Join(bodies, ",") != "first,second,third" {
-		t.Fatalf("owner reads %v", bodies)
+	opened, err := awid.OpenLogLine(&sealed, f.ownerKey)
+	if err != nil || !strings.Contains(string(opened), `"body":"third"`) {
+		t.Fatalf("owner opens %q, %v", opened, err)
 	}
 }
 
 func TestSealedInteractionLogDedupsAndGivesNoRecap(t *testing.T) {
 	f := newLocalLogFixture(t)
 	f.installOwnerKey(t, f.teamKey)
-	key := localLogKeyForSelection(f.sel)
+	key := localLogPolicyForSelection(f.sel)
 	root := f.sel.WorkingDir
 	for i := 0; i < 2; i++ {
 		appendInteractionLogForDir(root, key, &InteractionEntry{Kind: interactionKindMailIn, MessageID: "m-1", From: "alice", Text: "the secret"})
@@ -244,19 +237,136 @@ func TestSealedInteractionLogDedupsAndGivesNoRecap(t *testing.T) {
 	}
 }
 
-func TestInteractionLogSealsExistingPlaintextKeepingDedup(t *testing.T) {
+func TestInteractionLogKeepsPlaintextLinesAndDedupsAcrossThem(t *testing.T) {
 	f := newLocalLogFixture(t)
 	root := f.sel.WorkingDir
-	appendInteractionLogForDir(root, localLogKeyForSelection(f.sel), &InteractionEntry{Kind: interactionKindMailIn, MessageID: "m-1", Text: "before"})
+	appendInteractionLogForDir(root, localLogPolicyForSelection(f.sel), &InteractionEntry{Kind: interactionKindMailIn, MessageID: "m-1", Text: "before"})
 
 	f.installOwnerKey(t, f.teamKey)
-	key := localLogKeyForSelection(f.sel)
+	key := localLogPolicyForSelection(f.sel)
 	appendInteractionLogForDir(root, key, &InteractionEntry{Kind: interactionKindMailIn, MessageID: "m-1", Text: "before"})
 	appendInteractionLogForDir(root, key, &InteractionEntry{Kind: interactionKindMailIn, MessageID: "m-2", Text: "after"})
 
-	opened := openAllLines(t, interactionLogPath(root), f.ownerKey)
-	if len(opened) != 2 || !strings.Contains(opened[0], "before") || !strings.Contains(opened[1], "after") {
-		t.Fatalf("owner reads %v", opened)
+	lines := readRawLines(t, interactionLogPath(root))
+	if len(lines) != 2 || isSealedLogLine([]byte(lines[0])) || !strings.Contains(lines[0], `"text":"before"`) {
+		t.Fatalf("lines = %q", lines)
+	}
+	var sealed awid.SealedLogLine
+	if err := json.Unmarshal([]byte(lines[1]), &sealed); err != nil {
+		t.Fatal(err)
+	}
+	opened, err := awid.OpenLogLine(&sealed, f.ownerKey)
+	if err != nil || !strings.Contains(string(opened), `"text":"after"`) {
+		t.Fatalf("owner opens %q, %v", opened, err)
+	}
+}
+
+// Installing a key and writing are serialized on the team's policy lock, and
+// a write resolves the policy only once it holds that lock: a write that was
+// waiting while a key was installed is sealed to it.
+func TestWriteWaitingOnTheTeamPolicyLockSealsToAKeyInstalledMeanwhile(t *testing.T) {
+	f := newLocalLogFixture(t)
+	policy := localLogPolicyForSelection(f.sel)
+	lock, err := awconfig.LockLogKeyPolicy(localLogTestTeamID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	done := make(chan struct{})
+	go func() {
+		appendCommLog(f.logsDir, commLogNameForSelection(f.sel), policy, &CommLogEntry{Dir: "recv", Channel: "mail", Body: "racing-secret"})
+		close(done)
+	}()
+	select {
+	case <-done:
+		t.Fatal("the write did not wait for the policy lock")
+	case <-time.After(200 * time.Millisecond):
+	}
+	f.installOwnerKey(t, f.teamKey)
+	if err := lock.Close(); err != nil {
+		t.Fatal(err)
+	}
+	<-done
+	raw, err := os.ReadFile(f.commLogPath())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(string(raw), "racing-secret") {
+		t.Fatalf("a write decided before the install appended plaintext: %s", raw)
+	}
+	if opened := openAllLines(t, f.commLogPath(), f.ownerKey); len(opened) != 1 {
+		t.Fatalf("owner opens %d lines", len(opened))
+	}
+}
+
+func TestInstallWaitsOnTheTeamPolicyLock(t *testing.T) {
+	f := newLocalLogFixture(t)
+	pair, err := awid.GenerateLogKeyPair()
+	if err != nil {
+		t.Fatal(err)
+	}
+	rec, err := awid.NewLogKeyRecord(localLogTestTeamID, pair.Public, time.Now())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := awid.SignLogKeyRecord(rec, f.teamKey); err != nil {
+		t.Fatal(err)
+	}
+	lock, err := awconfig.LockLogKeyPolicy(localLogTestTeamID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	done := make(chan error, 1)
+	go func() { done <- installLogKeyRecord(f.sel, rec) }()
+	select {
+	case err := <-done:
+		t.Fatalf("install did not wait for the policy lock: %v", err)
+	case <-time.After(200 * time.Millisecond):
+	}
+	if err := lock.Close(); err != nil {
+		t.Fatal(err)
+	}
+	if err := <-done; err != nil {
+		t.Fatal(err)
+	}
+}
+
+// A long-lived policy follows the installed record: a replaced key is used
+// from the next write, and a record that stops verifying stops logging.
+func TestLongLivedPolicyFollowsReplacementAndCorruption(t *testing.T) {
+	f := newLocalLogFixture(t)
+	policy := localLogPolicyForSelection(f.sel)
+	name := commLogNameForSelection(f.sel)
+	f.installOwnerKey(t, f.teamKey)
+	first := f.ownerKey
+	appendCommLog(f.logsDir, name, policy, &CommLogEntry{Dir: "recv", Channel: "mail", Body: "one"})
+	f.installOwnerKey(t, f.teamKey)
+	appendCommLog(f.logsDir, name, policy, &CommLogEntry{Dir: "recv", Channel: "mail", Body: "two"})
+
+	lines := readRawLines(t, f.commLogPath())
+	if len(lines) != 2 {
+		t.Fatalf("lines = %d", len(lines))
+	}
+	var second awid.SealedLogLine
+	if err := json.Unmarshal([]byte(lines[1]), &second); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := awid.OpenLogLine(&second, first); err == nil {
+		t.Fatal("the write after replacement still used the replaced key")
+	}
+	if opened, err := awid.OpenLogLine(&second, f.ownerKey); err != nil || !strings.Contains(string(opened), `"body":"two"`) {
+		t.Fatalf("the replacing key does not open the next line: %q %v", opened, err)
+	}
+
+	path, err := awconfig.LogKeyRecordPath(localLogTestTeamID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(path, []byte("{not json"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	appendCommLog(f.logsDir, name, policy, &CommLogEntry{Dir: "recv", Channel: "mail", Body: "three-secret"})
+	if got := readRawLines(t, f.commLogPath()); len(got) != 2 {
+		t.Fatalf("a corrupted record must stop logging, got %d lines", len(got))
 	}
 }
 
@@ -437,4 +547,22 @@ func TestAwDoctorLocalReportsTheOwnerLogKey(t *testing.T) {
 	teamKey := resignTeamCertificateForTest(t, tmp, teamID)
 	installRecordFileForTest(t, tmp, teamID, teamKey)
 	requireDoctorCheckStatus(t, doctor(), doctorCheckLocalLogKey, doctorStatusOK)
+	requireDoctorCheckStatus(t, doctor(), doctorCheckLocalLogPlaintext, doctorStatusOK)
+
+	// A plaintext line left in a log while sealing is on is named, not sealed.
+	interactionLog := interactionLogPath(tmp)
+	if err := os.MkdirAll(filepath.Dir(interactionLog), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(interactionLog, []byte(`{"ts":"2026-11-13T09:00:00Z","kind":"mail_in","text":"legacy"}`+"\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	plaintext := requireDoctorCheckStatus(t, doctor(), doctorCheckLocalLogPlaintext, doctorStatusWarn)
+	resolvedLog, err := filepath.EvalSymlinks(interactionLog)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if detail := fmt.Sprint(plaintext.Detail); !strings.Contains(detail, interactionLog) && !strings.Contains(detail, resolvedLog) {
+		t.Fatalf("the check must name the log holding plaintext: %#v", plaintext.Detail)
+	}
 }

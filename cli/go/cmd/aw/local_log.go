@@ -12,38 +12,59 @@ import (
 
 	"github.com/awebai/aw/awconfig"
 	"github.com/awebai/aw/awid"
-	"github.com/awebai/aw/internal/atomicfile"
 )
 
-// localLogKey is the owner log key a local log write seals to. With no
-// record installed for the team the logs stay plaintext. An installed record
-// that cannot be verified stops logging instead of falling back to plaintext.
-type localLogKey struct {
+// localLogPolicy names the team whose owner log key, if any, a local log
+// write seals to. It holds no decision: the installed record is resolved and
+// verified at each write, under the team's policy lock, so a long-lived
+// caller never acts on a record, or the absence of one, that has changed.
+type localLogPolicy struct {
+	sel *awconfig.Selection
+}
+
+func localLogPolicyForSelection(sel *awconfig.Selection) localLogPolicy {
+	return localLogPolicy{sel: sel}
+}
+
+func (p localLogPolicy) teamID() string {
+	if p.sel == nil {
+		return ""
+	}
+	return strings.TrimSpace(p.sel.TeamID)
+}
+
+// resolvedLogKey is the policy's outcome now. With no record installed for
+// the team the logs stay plaintext. An installed record that cannot be
+// verified stops logging instead of falling back to plaintext.
+type resolvedLogKey struct {
 	record *awid.LogKeyRecord
 	err    error
 }
 
-// sealing reports whether the team has an owner log key installed, usable or
-// not; while it does, the agent does not read its logs back.
-func (k localLogKey) sealing() bool {
-	return k.record != nil || k.err != nil
-}
-
-func localLogKeyForSelection(sel *awconfig.Selection) localLogKey {
-	if sel == nil || strings.TrimSpace(sel.TeamID) == "" {
-		return localLogKey{}
+// resolve loads and verifies the team's installed record now.
+func (p localLogPolicy) resolve() resolvedLogKey {
+	teamID := p.teamID()
+	if teamID == "" {
+		return resolvedLogKey{}
 	}
-	rec, err := awconfig.LoadLogKeyRecord(sel.TeamID)
+	rec, err := awconfig.LoadLogKeyRecord(teamID)
 	if errors.Is(err, os.ErrNotExist) {
-		return localLogKey{}
+		return resolvedLogKey{}
 	}
 	if err != nil {
-		return localLogKey{err: err}
+		return resolvedLogKey{err: err}
 	}
-	if err := verifyLogKeyRecordForSelection(sel, rec); err != nil {
-		return localLogKey{err: err}
+	if err := verifyLogKeyRecordForSelection(p.sel, rec); err != nil {
+		return resolvedLogKey{err: err}
 	}
-	return localLogKey{record: rec}
+	return resolvedLogKey{record: rec}
+}
+
+// sealing reports whether the team has an owner log key installed now,
+// usable or not; while it does, the agent does not read its logs back.
+func (p localLogPolicy) sealing() bool {
+	key := p.resolve()
+	return key.record != nil || key.err != nil
 }
 
 // verifyLogKeyRecordForSelection accepts rec only when the team key named by
@@ -60,12 +81,30 @@ func verifyLogKeyRecordForSelection(sel *awconfig.Selection, rec *awid.LogKeyRec
 }
 
 // appendLocalLogLine appends entry, one JSON object, to path: sealed to the
-// owner log key when key holds one, plaintext when the team has none. Before
-// the first sealed line, plaintext lines already in the file are sealed in
-// place. tagOf, when set, names the visible tag each sealed line carries.
-func appendLocalLogLine(path string, key localLogKey, entry []byte, tagOf func([]byte) string) error {
+// team's owner log key when one is installed, plaintext when the team has
+// none. The policy is resolved while holding the team's policy lock, which
+// installing a record also takes. Lines already in the file are never
+// rewritten: a plaintext line carries no team, so it is not sealed to
+// whichever team writes next. tagOf, when set, names the visible tag each
+// sealed line carries.
+func appendLocalLogLine(path string, policy localLogPolicy, entry []byte, tagOf func([]byte) string) error {
+	if teamID := policy.teamID(); teamID != "" {
+		policyLock, err := awconfig.LockLogKeyPolicy(teamID)
+		if err != nil {
+			return err
+		}
+		defer policyLock.Close()
+	}
+	key := policy.resolve()
 	if key.err != nil {
 		return fmt.Errorf("owner log key is unusable, not logging: %w", key.err)
+	}
+	line := entry
+	if key.record != nil {
+		var err error
+		if line, err = sealLocalLogLine(key.record, entry, tagOf); err != nil {
+			return err
+		}
 	}
 	if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
 		return err
@@ -75,16 +114,6 @@ func appendLocalLogLine(path string, key localLogKey, entry []byte, tagOf func([
 		return err
 	}
 	defer lock.Close()
-
-	line := entry
-	if key.record != nil {
-		if err := sealPlaintextLogLines(path, key.record, tagOf); err != nil {
-			return err
-		}
-		if line, err = sealLocalLogLine(key.record, entry, tagOf); err != nil {
-			return err
-		}
-	}
 	f, err := os.OpenFile(path, os.O_WRONLY|os.O_CREATE|os.O_APPEND, 0o600)
 	if err != nil {
 		return err
@@ -104,38 +133,6 @@ func sealLocalLogLine(rec *awid.LogKeyRecord, plaintext []byte, tagOf func([]byt
 		return nil, err
 	}
 	return json.Marshal(sealed)
-}
-
-// sealPlaintextLogLines rewrites path with every plaintext line sealed, in
-// order, through a temporary file and a rename. The plaintext it replaces is
-// not securely erased from the disk.
-func sealPlaintextLogLines(path string, rec *awid.LogKeyRecord, tagOf func([]byte) string) error {
-	data, err := os.ReadFile(path)
-	if errors.Is(err, os.ErrNotExist) {
-		return nil
-	}
-	if err != nil {
-		return err
-	}
-	var out bytes.Buffer
-	changed := false
-	for _, line := range bytes.Split(data, []byte("\n")) {
-		if len(bytes.TrimSpace(line)) == 0 {
-			continue
-		}
-		if !isSealedLogLine(line) {
-			if line, err = sealLocalLogLine(rec, line, tagOf); err != nil {
-				return err
-			}
-			changed = true
-		}
-		out.Write(line)
-		out.WriteByte('\n')
-	}
-	if !changed {
-		return nil
-	}
-	return atomicfile.Write(path, out.Bytes(), 0o600)
 }
 
 // sealedLogLineOf returns line as a sealed log line, or nil when it is not one.

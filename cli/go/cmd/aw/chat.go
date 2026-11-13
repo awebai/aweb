@@ -63,7 +63,7 @@ func chatSend(ctx context.Context, toAlias, message string, opts chat.SendOption
 }
 
 // logChatEvent logs a single chat event to the communication log.
-func logChatEvent(logsDir, logName string, logKey localLogKey, myAddress string, ev chat.Event, selfDIDs ...string) {
+func logChatEvent(logsDir, logName string, logPolicy localLogPolicy, myAddress string, ev chat.Event, selfDIDs ...string) {
 	dir := "recv"
 	kind := interactionKindChatIn
 	from := preferredIdentityDisplayLabel(ev.FromAgent, ev.FromAddress, ev.FromStableID, ev.FromDID, "")
@@ -72,7 +72,7 @@ func logChatEvent(logsDir, logName string, logKey localLogKey, myAddress string,
 		dir = "send"
 		kind = interactionKindChatOut
 	}
-	appendCommLog(logsDir, logName, logKey, &CommLogEntry{
+	appendCommLog(logsDir, logName, logPolicy, &CommLogEntry{
 		Timestamp:    ev.Timestamp,
 		Dir:          dir,
 		Channel:      "chat",
@@ -89,7 +89,7 @@ func logChatEvent(logsDir, logName string, logKey localLogKey, myAddress string,
 		SigningKeyID: ev.SigningKeyID,
 		Verification: string(ev.VerificationStatus),
 	})
-	appendInteractionLogForCWD(logKey, &InteractionEntry{
+	appendInteractionLogForCWD(logPolicy, &InteractionEntry{
 		Timestamp: ev.Timestamp,
 		Kind:      kind,
 		MessageID: ev.MessageID,
@@ -113,12 +113,12 @@ func chatEventIsFromSelf(ev chat.Event, myAddress string, selfDIDs ...string) bo
 }
 
 // logChatEvents logs all message events from a list.
-func logChatEvents(logsDir, logName string, logKey localLogKey, myAddress string, events []chat.Event, selfDIDs ...string) {
+func logChatEvents(logsDir, logName string, logPolicy localLogPolicy, myAddress string, events []chat.Event, selfDIDs ...string) {
 	for _, ev := range events {
 		if ev.Type != "message" {
 			continue
 		}
-		logChatEvent(logsDir, logName, logKey, myAddress, ev, selfDIDs...)
+		logChatEvent(logsDir, logName, logPolicy, myAddress, ev, selfDIDs...)
 	}
 }
 
@@ -186,11 +186,11 @@ var chatSendAndWaitCmd = &cobra.Command{
 			return networkError(err, args[0])
 		}
 		logsDir := defaultLogsDir()
-		logKey := localLogKeyForSelection(sel)
+		logPolicy := localLogPolicyForSelection(sel)
 		myAddr := selectionAddress(sel)
 		logName := commLogNameForSelection(sel)
 		// Log the sent message.
-		appendCommLog(logsDir, logName, logKey, &CommLogEntry{
+		appendCommLog(logsDir, logName, logPolicy, &CommLogEntry{
 			Timestamp: time.Now().UTC().Format(time.RFC3339),
 			Dir:       "send",
 			Channel:   "chat",
@@ -199,7 +199,7 @@ var chatSendAndWaitCmd = &cobra.Command{
 			To:        args[0],
 			Body:      message,
 		})
-		appendInteractionLogForCWD(logKey, &InteractionEntry{
+		appendInteractionLogForCWD(logPolicy, &InteractionEntry{
 			Timestamp: time.Now().UTC().Format(time.RFC3339),
 			Kind:      interactionKindChatOut,
 			SessionID: result.SessionID,
@@ -207,7 +207,7 @@ var chatSendAndWaitCmd = &cobra.Command{
 			Text:      message,
 		})
 		// Log any reply events.
-		logChatEvents(logsDir, logName, logKey, myAddr, result.Events, selectionIdentityDIDs(sel)...)
+		logChatEvents(logsDir, logName, logPolicy, myAddr, result.Events, selectionIdentityDIDs(sel)...)
 		printOutput(result, formatChatSend)
 		return nil
 	},
@@ -242,8 +242,8 @@ var chatSendAndLeaveCmd = &cobra.Command{
 			return networkError(err, args[0])
 		}
 		logsDir := defaultLogsDir()
-		logKey := localLogKeyForSelection(sel)
-		appendCommLog(logsDir, commLogNameForSelection(sel), logKey, &CommLogEntry{
+		logPolicy := localLogPolicyForSelection(sel)
+		appendCommLog(logsDir, commLogNameForSelection(sel), logPolicy, &CommLogEntry{
 			Timestamp: time.Now().UTC().Format(time.RFC3339),
 			Dir:       "send",
 			Channel:   "chat",
@@ -252,7 +252,7 @@ var chatSendAndLeaveCmd = &cobra.Command{
 			To:        args[0],
 			Body:      message,
 		})
-		appendInteractionLogForCWD(logKey, &InteractionEntry{
+		appendInteractionLogForCWD(logPolicy, &InteractionEntry{
 			Timestamp: time.Now().UTC().Format(time.RFC3339),
 			Kind:      interactionKindChatOut,
 			SessionID: result.SessionID,
@@ -307,10 +307,10 @@ var chatOpenCmd = &cobra.Command{
 			return err
 		}
 		logsDir := defaultLogsDir()
-		logKey := localLogKeyForSelection(sel)
+		logPolicy := localLogPolicyForSelection(sel)
 		myAddr := selectionAddress(sel)
 		for _, m := range result.Messages {
-			logChatEvent(logsDir, commLogNameForSelection(sel), logKey, myAddr, m, selectionIdentityDIDs(sel)...)
+			logChatEvent(logsDir, commLogNameForSelection(sel), logPolicy, myAddr, m, selectionIdentityDIDs(sel)...)
 		}
 		printOutput(result, formatChatOpen)
 		return nil
@@ -413,8 +413,8 @@ var chatSendCmd = &cobra.Command{
 			return humanMailOnlyRefusal(err)
 		}
 		logsDir := defaultLogsDir()
-		logKey := localLogKeyForSelection(sel)
-		appendCommLog(logsDir, commLogNameForSelection(sel), logKey, &CommLogEntry{
+		logPolicy := localLogPolicyForSelection(sel)
+		appendCommLog(logsDir, commLogNameForSelection(sel), logPolicy, &CommLogEntry{
 			Timestamp: time.Now().UTC().Format(time.RFC3339),
 			Dir:       "send",
 			Channel:   "chat",
@@ -500,8 +500,8 @@ var chatExtendWaitCmd = &cobra.Command{
 			return humanMailOnlyRefusal(err)
 		}
 		logsDir := defaultLogsDir()
-		logKey := localLogKeyForSelection(sel)
-		appendCommLog(logsDir, commLogNameForSelection(sel), logKey, &CommLogEntry{
+		logPolicy := localLogPolicyForSelection(sel)
+		appendCommLog(logsDir, commLogNameForSelection(sel), logPolicy, &CommLogEntry{
 			Timestamp: time.Now().UTC().Format(time.RFC3339),
 			Dir:       "send",
 			Channel:   "chat",
@@ -510,7 +510,7 @@ var chatExtendWaitCmd = &cobra.Command{
 			To:        result.TargetAgent,
 			Body:      message,
 		})
-		appendInteractionLogForCWD(logKey, &InteractionEntry{
+		appendInteractionLogForCWD(logPolicy, &InteractionEntry{
 			Timestamp: time.Now().UTC().Format(time.RFC3339),
 			Kind:      interactionKindChatOut,
 			SessionID: result.SessionID,
@@ -544,9 +544,9 @@ var chatListenCmd = &cobra.Command{
 			return err
 		}
 		logsDir := defaultLogsDir()
-		logKey := localLogKeyForSelection(sel)
+		logPolicy := localLogPolicyForSelection(sel)
 		myAddr := selectionAddress(sel)
-		logChatEvents(logsDir, commLogNameForSelection(sel), logKey, myAddr, result.Events, selectionIdentityDIDs(sel)...)
+		logChatEvents(logsDir, commLogNameForSelection(sel), logPolicy, myAddr, result.Events, selectionIdentityDIDs(sel)...)
 		printOutput(result, formatChatSend)
 		return nil
 	},
@@ -572,9 +572,9 @@ var chatShowPendingCmd = &cobra.Command{
 			return err
 		}
 		logsDir := defaultLogsDir()
-		logKey := localLogKeyForSelection(sel)
+		logPolicy := localLogPolicyForSelection(sel)
 		myAddr := selectionAddress(sel)
-		logChatEvents(logsDir, commLogNameForSelection(sel), logKey, myAddr, result.Events, selectionIdentityDIDs(sel)...)
+		logChatEvents(logsDir, commLogNameForSelection(sel), logPolicy, myAddr, result.Events, selectionIdentityDIDs(sel)...)
 		printOutput(result, formatChatSend)
 		return nil
 	},

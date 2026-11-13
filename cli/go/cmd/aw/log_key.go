@@ -88,6 +88,11 @@ func installLogKeyRecord(sel *awconfig.Selection, rec *awid.LogKeyRecord) error 
 	if sel == nil || strings.TrimSpace(sel.TeamID) == "" {
 		return errors.New("no active team to install the log key for")
 	}
+	policyLock, err := awconfig.LockLogKeyPolicy(sel.TeamID)
+	if err != nil {
+		return err
+	}
+	defer policyLock.Close()
 	if err := verifyLogKeyRecordForSelection(sel, rec); err != nil {
 		return err
 	}
@@ -157,8 +162,9 @@ func ownerLogKey(keys map[string]*ecdh.PrivateKey, keyID string, opts logReadOpt
 // printOwnerLogLine prints one entry of either local log: an interaction
 // entry carries a kind, a communication-log entry does not. Whoever can write
 // a log can seal lines to the owner's public key, so every entry is untrusted
-// and is printed with terminal control escaped; a line that is not a JSON
-// object is printed as text, or under --json as {"raw": <line>}.
+// and is printed with terminal control escaped: as text through termtext, or
+// under --json as JSON whose unsafe runes are \u escapes. A line that is not
+// a JSON object is printed as text, or under --json as {"raw": <line>}.
 func printOwnerLogLine(out io.Writer, plaintext []byte, asJSON bool) error {
 	var probe struct {
 		Kind string `json:"kind"`
@@ -169,7 +175,7 @@ func printOwnerLogLine(out io.Writer, plaintext []byte, asJSON bool) error {
 			if err != nil {
 				return err
 			}
-			_, err = fmt.Fprintln(out, string(raw))
+			_, err = fmt.Fprintln(out, string(termtext.JSON(raw)))
 			return err
 		}
 		_, err := fmt.Fprintln(out, termtext.Line(string(plaintext)))
@@ -180,7 +186,7 @@ func printOwnerLogLine(out io.Writer, plaintext []byte, asJSON bool) error {
 		if err := json.Compact(&compact, plaintext); err != nil {
 			return err
 		}
-		_, err := fmt.Fprintln(out, compact.String())
+		_, err := fmt.Fprintln(out, string(termtext.JSON(compact.Bytes())))
 		return err
 	}
 	if probe.Kind != "" {

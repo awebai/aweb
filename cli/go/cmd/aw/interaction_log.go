@@ -59,7 +59,7 @@ func interactionLogPath(startDir string) string {
 	return filepath.Join(root, ".aw", interactionLogFileName)
 }
 
-func appendInteractionLogForDir(startDir string, key localLogKey, entry *InteractionEntry) {
+func appendInteractionLogForDir(startDir string, policy localLogPolicy, entry *InteractionEntry) {
 	if entry == nil {
 		return
 	}
@@ -79,18 +79,18 @@ func appendInteractionLogForDir(startDir string, key localLogKey, entry *Interac
 		debugLog("interaction-log: marshal: %v", err)
 		return
 	}
-	if err := appendLocalLogLine(path, key, line, interactionLogLineTag); err != nil {
+	if err := appendLocalLogLine(path, policy, line, interactionLogLineTag); err != nil {
 		debugLog("interaction-log: %v", err)
 	}
 }
 
-func appendInteractionLogForCWD(key localLogKey, entry *InteractionEntry) {
+func appendInteractionLogForCWD(policy localLogPolicy, entry *InteractionEntry) {
 	wd, err := os.Getwd()
 	if err != nil {
 		debugLog("interaction-log: getwd: %v", err)
 		return
 	}
-	appendInteractionLogForDir(wd, key, entry)
+	appendInteractionLogForDir(wd, policy, entry)
 }
 
 // interactionLogTag is the visible tag of a sealed interaction-log line: it

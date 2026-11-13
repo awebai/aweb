@@ -28,7 +28,7 @@ var logCmd = &cobra.Command{
 		}
 		logsDir := defaultLogsDir()
 		path := commLogPath(logsDir, commLogNameForSelection(sel))
-		if localLogKeyForSelection(sel).sealing() {
+		if localLogPolicyForSelection(sel).sealing() {
 			return withErrorCode("local_log_sealed", fmt.Errorf("the local log of team %s is sealed to the team's owner log key; the owner reads it with `aw log read %s` on the machine that holds that key", sel.TeamID, path))
 		}
 
