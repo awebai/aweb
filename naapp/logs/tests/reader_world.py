@@ -28,9 +28,8 @@ from aweb_naapp.runtime.credential_audit import CredentialAudit
 from aweb_naapp.runtime.installation import InstallationFence, apply_installation_migrations
 from aweb_naapp.runtime.passkeys import Passkeys, RelyingParty
 from aweb_naapp_testing.owner_acts import APP_ID, INSTALLATION_ID, TEAM_ID, TeamOwner, team_owner
-from aweb_naapp_testing.webauthn import SoftAuthenticator, SoftCredential, b64url
-from awid_service.testing import running_registry
-from cryptography.hazmat.primitives.asymmetric import ec
+from aweb_naapp_testing.webauthn import SoftAuthenticator
+from awid_service.testing import Registry, running_registry
 from nacl.signing import SigningKey
 from pgdbm import AsyncDatabaseManager, AsyncMigrationManager
 
@@ -125,6 +124,8 @@ class World:
     registered: list[bool]
     grant: Grant
     fence: InstallationFence
+    # The running AWID the owner's team is registered in.
+    registry: Registry = field(init=False)
     governance: LogsGovernance = field(init=False)
     removals: ReaderRemovals = field(init=False)
     recorder: CredentialAudit = field(init=False)
@@ -171,6 +172,7 @@ async def world_fixture(test_db_factory) -> AsyncIterator[World]:
         owner = await team_owner(registry, team_id=TEAM_ID, acts=APP_ACTS + LOGS_ACTS)
         directory = ReaderDirectory(db, app_id=APP_ID, passkeys=lambda: state.passkeys)
         state = World(db, owner, signer, directory, Inbox(), registered, installations.grant, fence)
+        state.registry = registry
         append_own = directory.appender(signer)
 
         async def append(tx, event_id) -> None:
@@ -261,16 +263,8 @@ def reader_scope(principal: str = READER) -> str:
 def _credential(world: World) -> tuple[SoftAuthenticator, dict[str, str]]:
     """A new authenticator with a credential for logs' relying party."""
     rp = world.passkeys.rp
-    soft = SoftCredential(
-        os.urandom(32), ec.generate_private_key(ec.SECP256R1()), rp.rp_id, os.urandom(16)
-    )
     device = SoftAuthenticator(rp.origin)
-    device.credentials[soft.credential_id] = soft
-    return device, {
-        "credential_id": b64url(soft.credential_id),
-        "public_key": b64url(soft.cose_public_key()),
-        "rp_id": rp.rp_id,
-    }
+    return device, device.bind(rp.rp_id)
 
 
 def _holding_subject(principal: str, credential: dict[str, str] | None) -> dict:

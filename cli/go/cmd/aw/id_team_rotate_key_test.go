@@ -40,6 +40,7 @@ func newRotateKeyFixture(t *testing.T, domain string) rotateKeyFixture {
 // already running AWID.
 func newRotateKeyFixtureAt(t *testing.T, domain, registryURL string, storage realAWIDStorage) rotateKeyFixture {
 	t.Helper()
+	t.Setenv("AWID_REGISTRY_URL", registryURL)
 	registry := awid.NewAWIDRegistryClient(nil, nil)
 	ctx := context.Background()
 
@@ -494,6 +495,12 @@ func TestRateLimitedFixturesCountIndependently(t *testing.T) {
 	first, _ := realAWIDFixtureRateLimited(t)
 	second, _ := realAWIDFixtureRateLimited(t)
 	registry := awid.NewAWIDRegistryClient(nil, nil)
+	// Each fixture is a registry the operator named, as a --registry flag would.
+	for _, registryURL := range []string{first, second} {
+		if err := registry.TrustRegistryOrigin(registryURL); err != nil {
+			t.Fatal(err)
+		}
+	}
 	read := func(registryURL string) int {
 		_, err := registry.GetTeamCustodianRecord(context.Background(), registryURL, "independent.example", "ops", "none")
 		code, _ := registryStatusCode(err)

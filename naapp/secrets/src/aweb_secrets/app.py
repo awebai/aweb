@@ -12,6 +12,8 @@ accepts team-auth. It serves no tool.
 
 from __future__ import annotations
 
+import json
+import logging
 from collections.abc import Awaitable, Callable, Mapping, Sequence
 from contextlib import AbstractAsyncContextManager, AsyncExitStack, asynccontextmanager
 from enum import StrEnum
@@ -33,9 +35,11 @@ from aweb_naapp.runtime.installation import (
     apply_installation_migrations,
 )
 from aweb_naapp.runtime.origins import OriginApps
+from awid.dns_verify import DomainVerifier
 from fastapi import APIRouter, Depends, FastAPI, HTTPException
 from fastapi.routing import APIRoute
 from pgdbm import AsyncDatabaseManager
+from starlette.types import Message, Receive, Scope, Send
 
 from aweb_secrets.config import SecretsSettings
 from aweb_secrets.manifest import MANIFEST_PATH, OWNER_ACTS
@@ -45,6 +49,7 @@ from aweb_secrets.surfaces import mount_public_surfaces
 
 MIGRATIONS_PATH = Path(__file__).resolve().parent / "migrations"
 MODULE_NAME = "aweb_secrets"
+_PROBE_LOGGER = logging.getLogger("uvicorn.error")
 
 Authorized = Callable[..., Awaitable[Authorization]]
 ToolRouter = Callable[[NaappRuntime, Authorized], APIRouter]
@@ -66,6 +71,34 @@ class SecretsService(OriginApps):
             human_origin=settings.console_origin,
         )
         self.runtime = runtime
+
+    async def __call__(self, scope: Scope, receive: Receive, send: Send) -> None:
+        if scope["type"] != "http" or scope["path"] not in {"/ready", "/live"}:
+            await super().__call__(scope, receive, send)
+            return
+
+        async def probe_send(message: Message) -> None:
+            await send(message)
+            if message["type"] == "http.response.start":
+                # Uvicorn's configured error logger reaches container logs while
+                # its global access log remains off. JSON escapes untrusted query
+                # bytes into one line; headers and bodies never enter the record.
+                _PROBE_LOGGER.info(
+                    "probe_request %s",
+                    json.dumps(
+                        {
+                            "method": scope["method"],
+                            "path": scope["path"],
+                            "query": scope.get("query_string", b"").decode(
+                                "ascii", errors="backslashreplace"
+                            ),
+                            "status": message["status"],
+                        },
+                        ensure_ascii=True,
+                    ),
+                )
+
+        await super().__call__(scope, receive, probe_send)
 
 
 async def not_implemented() -> None:
@@ -108,6 +141,7 @@ def create_app(
     kms: HealthCheck,
     health_labels: Mapping[str, StrEnum] | None = None,
     awid_transport: httpx.AsyncBaseTransport | None = None,
+    awid_domain_verifier: DomainVerifier | None = None,
     team_server_transport: httpx.AsyncBaseTransport | None = None,
     hook_egress: Egress | None = None,
     hook_internal_cidr: IPv4Network | IPv6Network | None = None,
@@ -140,6 +174,7 @@ def create_app(
         owner_acts=OWNER_ACTS,
         owner_acts_origin=settings.console_origin,
         awid_transport=awid_transport,
+        awid_domain_verifier=awid_domain_verifier,
         team_server_transport=team_server_transport,
         hook_egress=hook_egress,
         hook_internal_cidr=hook_internal_cidr,

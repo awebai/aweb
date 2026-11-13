@@ -73,6 +73,19 @@ class SoftAuthenticator:
     def _sign(self, key: ec.EllipticCurvePrivateKey, auth_data: bytes, client_data: bytes) -> bytes:
         return key.sign(auth_data + hashlib.sha256(client_data).digest(), ec.ECDSA(hashes.SHA256()))
 
+    def bind(self, rp_id: str) -> dict[str, str]:
+        """A new credential for ``rp_id``, held by this authenticator, as the
+        human credential an owner act binds: its id, public key and RP ID."""
+        credential = SoftCredential(
+            os.urandom(32), ec.generate_private_key(ec.SECP256R1()), rp_id, os.urandom(16)
+        )
+        self.credentials[credential.credential_id] = credential
+        return {
+            "credential_id": b64url(credential.credential_id),
+            "public_key": b64url(credential.cose_public_key()),
+            "rp_id": rp_id,
+        }
+
     def create(
         self,
         options: dict,

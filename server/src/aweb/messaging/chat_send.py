@@ -95,7 +95,7 @@ class ChatSessionChanged(Exception):
 
 
 # What a send answers when the sender is not a participant of the session it wrote to.
-SENDER_NOT_IN_SESSION = "Failed to send message"
+SENDER_NOT_IN_SESSION = "Session not found"
 LOCAL_DID_KEY_RECIPIENT_UNREACHABLE = "Local did:key recipient requires local resolution or learned return route"
 
 
@@ -1544,7 +1544,7 @@ async def _send_to_named_recipients(
                 message_id=pre_message_id,
             )
         if msg_row is None:
-            raise HTTPException(status_code=500, detail=SENDER_NOT_IN_SESSION)
+            raise HTTPException(status_code=404, detail=SENDER_NOT_IN_SESSION)
         await _record_successful_chat_contacts(
             db,
             owner_did=(auth.did_aw or actor_did).strip(),
@@ -1671,7 +1671,7 @@ async def _send_to_named_recipients(
             raise HTTPException(status_code=409, detail="message_id already exists")
         raise
     if msg_row is None:
-        raise HTTPException(status_code=500, detail=SENDER_NOT_IN_SESSION)
+        raise HTTPException(status_code=404, detail=SENDER_NOT_IN_SESSION)
 
     await _record_successful_chat_contacts(
         db,
@@ -1849,7 +1849,7 @@ async def _send_in_continued_session(
             raise HTTPException(status_code=409, detail="message_id already exists")
         raise
     if msg_row is None:
-        raise HTTPException(status_code=500, detail=SENDER_NOT_IN_SESSION)
+        raise HTTPException(status_code=404, detail=SENDER_NOT_IN_SESSION)
     if remote_recipients:
         await _record_successful_chat_contacts(
             db,

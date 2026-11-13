@@ -133,8 +133,7 @@ of an empty epoch has `team_seq` 0 and the epoch's `genesis_hash`.
 epoch's previous checkpoint; the first checkpoint of an epoch has none. Logs
 issues checkpoints periodically while events arrive
 (`naapp/logs/src/aweb_logs/app.py`, `run_checkpoints`), and an export carries
-them. **Open (aweb-acgh.16.22, aweb-acgh.16.23):** checkpoints on demand and
-the route that serves an export.
+them. **Open (aweb-acgh.16.22):** checkpoints on demand.
 
 The receipt and checkpoint prefixes are unique to logs, so neither verifies as
 any other signed aweb object, and no other object verifies as either.
@@ -244,9 +243,12 @@ which explains a gap left by a revoked binding.
 ## Exporting a team's log: `aweb.logs-export/1`
 
 Logs writes an export with `export_bundle`
-(`naapp/logs/src/aweb_logs/export.py`). **Open (aweb-acgh.16.23):** the route
-that serves it. This section specifies what an export holds and how a holder
-verifies it, with no server. Its vector is `docs/vectors/logs-export-v1.json`.
+(`naapp/logs/src/aweb_logs/export.py`). A designated reader downloads it from
+logs' console origin as `GET /v1/export` (`application/jsonl`, streamed), in
+its passkey session, where the viewer links to it from its integrity page, or
+in the key-bound session its aw collects through the handoff. This section
+specifies what an export holds and how a holder verifies it, with no server.
+Its vector is `docs/vectors/logs-export-v1.json`.
 
 An export holds one team's whole log: every epoch from 1, each with its
 genesis, its stored events (skeleton, retained content or purge act, and key

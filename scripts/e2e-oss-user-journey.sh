@@ -469,26 +469,34 @@ assert_who_legacy_local() {
 # Like run_aw_in but strips AWID_REGISTRY_URL from the env so the CLI must
 # fall back to identity.yaml's registry_url. Used by the aako-pattern
 # reproducer to exercise the env-unset-with-identity-fallback code path
-# (the aweb-aalg / aweb-aale bug-trigger condition).
+# (the aweb-aalg / aweb-aale bug-trigger condition). A registry the operator
+# did not name is reached only at public https addresses; this stack's
+# loopback http registry is reachable in the isolated-development mode
+# (APP_ENV=development with AWEB_FEDERATION_TEST=1), as on the servers.
 run_aw_no_env_registry_in() {
   local workdir="$1"
   shift
   HOME="$E2E_HOME" \
   AW_CONFIG_PATH="$E2E_HOME/.config/aw/config.yaml" \
   AWID_SKIP_DNS_VERIFY=1 \
+  APP_ENV=development \
+  AWEB_FEDERATION_TEST=1 \
   bash -c 'cd "$1" && shift && exec "$@"' _ "$workdir" "$CLI_DIR/aw" "$@"
 }
 
 # Run a specific aw binary (not necessarily the one built at Phase 0) in
 # the isolated environment, with AWID_REGISTRY_URL stripped. Used for the
 # aako-pattern reproducer's BASELINE mode where the sender CLI must come
-# from a pre-aalg-fix worktree.
+# from a pre-aalg-fix worktree. It runs in isolated development, as
+# run_aw_no_env_registry_in does.
 run_aw_bin_no_env_registry_in() {
   local aw_bin="$1" workdir="$2"
   shift 2
   HOME="$E2E_HOME" \
   AW_CONFIG_PATH="$E2E_HOME/.config/aw/config.yaml" \
   AWID_SKIP_DNS_VERIFY=1 \
+  APP_ENV=development \
+  AWEB_FEDERATION_TEST=1 \
   bash -c 'cd "$1" && shift && exec "$@"' _ "$workdir" "$aw_bin" "$@"
 }
 

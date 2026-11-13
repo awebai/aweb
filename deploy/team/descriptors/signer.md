@@ -1,6 +1,6 @@
 # Independent protected signer
 
-This is the code-owned descriptor for the existing aweb protected host. The LF
+This is the code-owned descriptor for the existing aweb protected host. The team
 bundle maps these inputs into its **one `config.schema.json`**, reused as Helm
 `values.schema.json`; it does not add a second DSN parser, secret transport or
 signer configuration format. The existing public protected-service profile
@@ -67,7 +67,7 @@ discovery/default. Environment entries carry only paths or nonsecret metadata.
 | --- | --- | --- | --- |
 | `AWEB_PROTECTED_PROFILE_FILE` → `/etc/aweb/signer/profile.json:ro` | path to existing public profile JSON | required | Exact origins/RP and public registry/key/policy references; no URL from a response. |
 | `AWEB_PROTECTED_SCOPE_FILE` → `/etc/aweb/signer/scope.json:ro` | path to one complete profile binding scope | required | Explicit selected team-controller/H association and generation. |
-| `AWEB_PROTECTED_DATABASE_URL_FILE` → `/run/secrets/signer/database-url:ro` | path; whole UTF-8 DSN, optional final LF, at most 1 KiB | required in LF | Existing shared file reader; existing pgdbm/asyncpg adapter parses the DSN. No split password/user transport. |
+| `AWEB_PROTECTED_DATABASE_URL_FILE` → `/run/secrets/signer/database-url:ro` | path; whole UTF-8 DSN, optional final LF, at most 1 KiB | required in the team bundle | Existing shared file reader; existing pgdbm/asyncpg adapter parses the DSN. No split password/user transport. |
 | `AWEB_PROTECTED_DATABASE_SCHEMA` | lowercase schema identifier | `protected_signer` | Tables within the dedicated signer database. |
 | `AWEB_PROTECTED_DATABASE_USES_TRANSACTION_POOLER` | boolean | `false` | Existing database adapter's transaction-pooler settings. |
 | `AWEB_PROTECTED_CONTROLLER_KEY_FILE` → `/run/secrets/signer/private-controller/controller.key:ro` | private real file, 64-hex-character seed with optional LF | required | Actual team-controller custody, matching profile and current registry. |
@@ -83,7 +83,7 @@ discovery/default. Environment entries carry only paths or nonsecret metadata.
 | `AWEB_PROTECTED_EMAIL_CA_FILE` → platform CA bundle `:ro` | optional path to public trust roots | system roots | Custom SMTP CA when needed. |
 
 The existing `AWEB_PROTECTED_DATABASE_URL` value input remains compatible with
-the current test lane, but LF **omits it**. Setting it together with
+the current test lane, but the team bundle **omits it**. Setting it together with
 `DATABASE_URL_FILE` refuses ambiguous configuration. File resolution preserves
 the existing `HostSettings.database_url` SecretStr port for fixture/bootstrap
 callers; DSN bytes do not enter environment values, argv or startup errors.

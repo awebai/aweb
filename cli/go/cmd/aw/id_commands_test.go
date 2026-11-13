@@ -230,8 +230,6 @@ func TestAwIDCommandsHappyPath(t *testing.T) {
 }
 
 func TestIDLogReportsBrokenUnverifiedRegistryLog(t *testing.T) {
-	t.Parallel()
-
 	pub, priv, err := awid.GenerateKeypair()
 	if err != nil {
 		t.Fatal(err)
@@ -250,6 +248,7 @@ func TestIDLogReportsBrokenUnverifiedRegistryLog(t *testing.T) {
 		}
 	}))
 
+	t.Setenv("AWID_REGISTRY_URL", server.URL)
 	tmp := t.TempDir()
 	writeSelfCustodyConfig(t, tmp, server.URL, "myteam.aweb.ai/alice", "myteam.aweb.ai", "alice", did, stableID, priv)
 	out, err := loadDIDLog(context.Background(), tmp, nil)
@@ -650,7 +649,7 @@ func TestAwIDEncryptionKeySetupAndRotatePublishesGlobalAssertion(t *testing.T) {
 	runJSON := func(args ...string) map[string]any {
 		t.Helper()
 		run := exec.CommandContext(ctx, bin, args...)
-		run.Env = testCommandEnv(tmp)
+		run.Env = append(testCommandEnv(tmp), "AWID_REGISTRY_URL="+server.URL)
 		run.Dir = tmp
 		out, err := run.CombinedOutput()
 		if err != nil {
@@ -713,7 +712,7 @@ func TestAwIDEncryptionKeySetupAndRotatePublishesGlobalAssertion(t *testing.T) {
 		t.Fatalf("save mismatched assertion: %v", err)
 	}
 	run := exec.CommandContext(ctx, bin, "id", "encryption-key", "setup", "--json")
-	run.Env = testCommandEnv(tmp)
+	run.Env = append(testCommandEnv(tmp), "AWID_REGISTRY_URL="+server.URL)
 	run.Dir = tmp
 	out, err := run.CombinedOutput()
 	if err == nil {
@@ -735,7 +734,7 @@ func TestAwIDEncryptionKeySetupAndRotatePublishesGlobalAssertion(t *testing.T) {
 		t.Fatalf("remove private key: %v", err)
 	}
 	run = exec.CommandContext(ctx, bin, "id", "encryption-key", "setup", "--json")
-	run.Env = testCommandEnv(tmp)
+	run.Env = append(testCommandEnv(tmp), "AWID_REGISTRY_URL="+server.URL)
 	run.Dir = tmp
 	out, err = run.CombinedOutput()
 	if err == nil {
@@ -1763,7 +1762,7 @@ func TestAwIDRotateKeyRotatesStandaloneIdentityAndUpdatesLocalState(t *testing.T
 	writeStandaloneSelfCustodyIdentity(t, tmp, address, oldDID, stableID, registryURL, oldPriv)
 
 	run := exec.CommandContext(ctx, bin, "id", "rotate-key", "--json")
-	run.Env = testCommandEnv(tmp)
+	run.Env = append(testCommandEnv(tmp), "AWID_REGISTRY_URL="+registryURL)
 	run.Dir = tmp
 	out, err := run.CombinedOutput()
 	if err != nil {
@@ -1923,7 +1922,7 @@ func TestAwIDShowWorksWithStandaloneIdentity(t *testing.T) {
 	}
 
 	run := exec.CommandContext(ctx, bin, "id", "show", "--json")
-	run.Env = idCreateCommandEnv(tmp)
+	run.Env = append(idCreateCommandEnv(tmp), "AWID_REGISTRY_URL="+registryServer.URL)
 	run.Dir = tmp
 	out, err := run.CombinedOutput()
 	if err != nil {
@@ -2041,6 +2040,8 @@ func TestAwIDVerifyUsesIdentityRegistryURLWithoutWorkspace(t *testing.T) {
 
 	run := exec.CommandContext(ctx, bin, "id", "verify", stableID, "--json")
 	run.Env = append(testCommandEnv(tmp), "AWEB_URL=https://should-not-be-used.example")
+	// The identity registry is an isolated host reached in isolated development.
+	run.Env = append(run.Env, "APP_ENV=development", "AWEB_FEDERATION_TEST=1")
 	run.Dir = tmp
 	out, err := run.CombinedOutput()
 	if err != nil {
@@ -2159,6 +2160,8 @@ func TestAwIDResolveWorksWithoutSigningKeyWhenIdentityRegistryURLPresent(t *test
 
 	run := exec.CommandContext(ctx, bin, "id", "resolve", stableID, "--json")
 	run.Env = testCommandEnv(tmp)
+	// The identity registry is an isolated host reached in isolated development.
+	run.Env = append(run.Env, "APP_ENV=development", "AWEB_FEDERATION_TEST=1")
 	run.Dir = tmp
 	out, err := run.CombinedOutput()
 	if err != nil {
@@ -2209,6 +2212,7 @@ func TestResolveRegistryClientForLookupRejectsAWIDRegistryURLLocal(t *testing.T)
 func TestExecuteIDNamespaceRotateControllerDiscoversRegistryAndReverifies(t *testing.T) {
 	home := t.TempDir()
 	t.Setenv("HOME", home)
+	t.Setenv("AWID_REGISTRY_URL", "https://registry.example.com")
 
 	domain := "acme.com"
 	oldPub, _, err := awid.GenerateKeypair()
@@ -2671,7 +2675,7 @@ func TestAwIDRegisterWorksWithStandaloneIdentity(t *testing.T) {
 	writeStandaloneSelfCustodyIdentity(t, tmp, address, did, stableID, registryServer.URL, priv)
 
 	run := exec.CommandContext(ctx, bin, "id", "register", "--json")
-	run.Env = idCreateCommandEnv(tmp)
+	run.Env = append(idCreateCommandEnv(tmp), "AWID_REGISTRY_URL="+registryServer.URL)
 	run.Dir = tmp
 	out, err := run.CombinedOutput()
 	if err != nil {

@@ -30,6 +30,8 @@ No credential is printed. Each one is a file the service that owns it mounts.
 from __future__ import annotations
 
 import argparse
+import datetime
+import hashlib
 import ipaddress
 import json
 import os
@@ -41,24 +43,33 @@ import sys
 import time
 from pathlib import Path
 
+import pexpect
 import yaml
 from aweb_naapp_testing.network import make_certificates
 
 REPO = Path(__file__).resolve().parents[2]
 TEAM_DIR = REPO / "deploy" / "team"
 ADAPTER = REPO / "scripts" / "e2e-team-deployment.sh"
+TEAMCTL = REPO / "deploy" / "team" / "teamctl"
 EVIDENCE = REPO / "naapp" / "secrets" / "e2e" / "protected" / "evidence.py"
 sys.path.insert(0, str(REPO / "naapp" / "secrets" / "e2e"))
 
 from protected_round_trip import (  # noqa: E402
+    Founded,
     Holder,
     Site,
+    approve,
+    changed_act,
     connect_requester,
+    did_key_window,
+    docker,
+    finish,
     first_json,
     found_team,
     provision_signer,
     refusals,
     round_trip,
+    start_revoke,
 )
 
 DOMAIN = "lf.test"
@@ -87,6 +98,8 @@ UPSTREAMS = {
     "human": "signer:8080",
 }
 MAIL = f"mail.{DOMAIN}"
+# The deployment's front and the world's registry front run this Caddy.
+FRONT_IMAGE = "caddy:2.10-alpine"
 # The role the round trip revokes, of this deployment's Secrets app.
 ROLE = "secrets.owner"
 # The agents' uid: the signer refuses custody a worker could read.
@@ -97,11 +110,25 @@ def origin(name: str) -> str:
     return f"https://{HOSTS[name]}"
 
 
+def designate_command(app_id: str, role: str, principal: str, credential: str, contact: str) -> list[str]:
+    """The owner's designation of a holding of an app role. A role that
+    declares a notice contact, as secrets.owner does, takes the holder's."""
+    return ["aw", "app", "role", "designate", app_id, "--role", role, "--principal", principal,
+            "--credential", credential, "--notice-contact", contact, "--yes"]
+
+
 def run(*args: str, env: dict[str, str] | None = None, input: str | None = None, timeout: int = 600) -> str:
     result = subprocess.run(args, env=env, input=input, text=True, capture_output=True, timeout=timeout, check=False)
     if result.returncode != 0:
         raise SystemExit(f"FAILED: {' '.join(args[:6])} ...\n{result.stdout[-3000:]}\n{result.stderr[-3000:]}")
     return result.stdout
+
+
+def front_image() -> str:
+    """The front's Caddy image, by the digest it was pulled at."""
+    if subprocess.run(["docker", "image", "inspect", FRONT_IMAGE], capture_output=True, check=False).returncode != 0:
+        run("docker", "pull", "-q", FRONT_IMAGE)
+    return run("docker", "image", "inspect", "--format", "{{index .RepoDigests 0}}", FRONT_IMAGE).strip()
 
 
 def image_user(image: str) -> str:
@@ -122,7 +149,12 @@ class World:
         network = ipaddress.ip_network(cidr)
         self.cidr = cidr
         top = network.broadcast_address
-        self.front_ip, self.dns_ip, self.smtp_ip = (str(top - 5), str(top - 4), str(top - 3))
+        # The world's front serves the registry alone, as the operator's
+        # registry is served apart from the team's deployment; the bundle's
+        # own front (deploy/team/compose.front.yaml) serves every origin of
+        # the deployment at ingress_ip.
+        self.registry_front_ip, self.dns_ip, self.smtp_ip = (str(top - 5), str(top - 4), str(top - 3))
+        self.ingress_ip = str(top - 6)
         self.env = {
             **os.environ,
             "TEAM_DEPLOYMENT_PROJECT": project,
@@ -130,7 +162,7 @@ class World:
             "TEAM_DEPLOYMENT_COMPOSE_FILES": f"{TEAM_DIR / 'compose.test.yaml'}:{self.world / 'compose.trust.yaml'}",
             "TEST_WORLD_DIR": str(self.world),
             "TEST_DNS_IP": self.dns_ip,
-            "TEST_FRONT_IP": self.front_ip,
+            "TEST_FRONT_IP": self.registry_front_ip,
             "TEST_SMTP_IP": self.smtp_ip,
             "TEST_AWID_IMAGE": images["awid"],
             "TEST_CLI_IMAGE": images["cli"],
@@ -148,6 +180,7 @@ class World:
     def write_world(self) -> None:
         (self.world / "dns").mkdir(parents=True)
         (self.world / "tls").mkdir()
+        (self.world / "tls-renewal").mkdir()
         (self.world / "front").mkdir()
         (self.world / "signer").mkdir()
         (self.world / "dns" / "Corefile").write_text(
@@ -156,22 +189,21 @@ class World:
         )
         self.publish_controller("did:key:z6MkpendingpendingpendingpendingpendingpendingpendingP")
         tls = make_certificates(self.world / "tls", [*HOSTS.values(), MAIL], [])
-        self.caddyfile = (
-            # A request whose Host its TLS SNI does not name is refused: the
-            # signer's request host must never reach its human host. Caddy
-            # compares hostnames alone, so each site also refuses, itself,
-            # any authority but its own host on port 443.
+        # The certificate the deployment's front is renewed to, from an
+        # authority every client of this world trusts from the start beside
+        # the first.
+        renewal = make_certificates(self.world / "tls-renewal", [HOSTS[name] for name in HOSTS if name != "registry"], [])
+        tls.ca_file.write_bytes(tls.ca_file.read_bytes() + renewal.ca_file.read_bytes())
+        (self.world / "front" / "Caddyfile").write_text(
+            # As the deployment's front has it (render_env.py --front).
             "{\n  auto_https off\n  servers {\n    strict_sni_host on\n  }\n}\n"
-            + "".join(
-                f"{HOSTS[name]}:443 {{\n  tls /tls/{tls.cert_file.name} /tls/{tls.key_file.name}\n"
-                f"  @misdirected not header_regexp Host ^{re.escape(HOSTS[name])}(:443)?$\n"
-                "  respond @misdirected 421\n"
-                f"  reverse_proxy {UPSTREAMS[name]}\n}}\n"
-                for name in HOSTS
-            )
+            f"{HOSTS['registry']}:443 {{\n  tls /tls/{tls.cert_file.name} /tls/{tls.key_file.name}\n"
+            f"  @misdirected not header_regexp Host ^{re.escape(HOSTS['registry'])}(:443)?$\n"
+            "  respond @misdirected 421\n"
+            f"  reverse_proxy {UPSTREAMS['registry']}\n}}\n"
         )
-        (self.world / "front" / "Caddyfile").write_text(self.caddyfile)
-        for path in [*(self.world / "tls").iterdir(), *(self.world / "front").iterdir(), *(self.world / "dns").iterdir()]:
+        for path in [*(self.world / "tls").iterdir(), *(self.world / "tls-renewal").iterdir(),
+                     *(self.world / "front").iterdir(), *(self.world / "dns").iterdir()]:
             path.chmod(0o644)
 
     def write_trust(self, services: list[str]) -> None:
@@ -185,11 +217,17 @@ class World:
             }
             for name in services
         }
+        # The deployment's front at the address this world's DNS gives every
+        # origin of the deployment.
+        trust["front"] = {"networks": {"services": {"ipv4_address": self.ingress_ip}}}
         (self.world / "compose.trust.yaml").write_text(yaml.safe_dump({"services": trust}))
 
     def publish_controller(self, controller_did: str) -> None:
         zone = self.world / "dns" / f"{DOMAIN}.zone"
-        records = "".join(f"{host.removesuffix('.' + DOMAIN)} IN A {self.front_ip}\n" for host in HOSTS.values())
+        records = "".join(
+            f"{host.removesuffix('.' + DOMAIN)} IN A {self.registry_front_ip if name == 'registry' else self.ingress_ip}\n"
+            for name, host in HOSTS.items()
+        )
         tmp = zone.with_suffix(".tmp")
         tmp.write_text(
             f"$ORIGIN {DOMAIN}.\n$TTL 1\n"
@@ -215,6 +253,184 @@ class World:
             (self.secrets / component / "database-url").write_text(
                 f"postgresql://{component}:{password}@postgres:5432/{component}\n"
             )
+
+    def write_redis_files(self) -> None:
+        """Redis holds the password's SHA-256 in its ACL file; aweb holds the
+        password in its whole Redis URL."""
+        password = secrets.token_hex(24)
+        (self.secrets / "redis").mkdir()
+        (self.secrets / "redis" / "users.acl").write_text(
+            f"user default on #{hashlib.sha256(password.encode()).hexdigest()} ~* &* +@all\n"
+        )
+        (self.secrets / "aweb").mkdir(exist_ok=True)
+        (self.secrets / "aweb" / "redis-url").write_text(f"redis://default:{password}@redis:6379/0\n")
+
+    def local_members(self) -> dict:
+        """Every service and seat member holds a local certificate: it names
+        no did:aw and no address, so no registry address routes to it."""
+        certificates = [*self.world.glob("*-member/identity/.aw/team-certs/*.pem"),
+                        *self.world.glob("seat-*/.aw/team-certs/*.pem")]
+        scopes = {}
+        for certificate in certificates:
+            body = json.loads(certificate.read_text())
+            assert not body.get("member_did_aw") and not body.get("member_address"), (
+                f"member scope: {body['alias']} names a did:aw or an address")
+            scopes[body["alias"]] = body["identity_scope"]
+        expected = {f"{name}-service" for name in ("aweb", "secrets", "logs")} | set(SEATS)
+        assert scopes == {alias: "local" for alias in expected}, f"member scope: {scopes}"
+        return scopes
+
+    def member_mail(self, holder: str) -> dict:
+        """A seat's mail reaches the other seat; a non-member's does not. The
+        non-member is a member of another team of the namespace, with its own
+        certificate, so the real aw takes its requests to the team's aweb: the
+        server refuses its session, and with none it has nothing to send
+        from. No registry address names a seat, so no route from another
+        server leads to one. The positive controls: a member's mail arrives,
+        and the owner's address resolves."""
+        first, second = (f"{self.project}-seat-{alias}" for alias in SEATS)
+        for alias in SEATS:
+            self.aw(f"{self.project}-seat-{alias}", "workspace", "connect", "--service", origin("aweb"))
+        member_subject = f"member-{secrets.token_hex(4)}"
+        self.aw(second, "mail", "send", "--to", SEATS[0], "--subject", member_subject, "--body", "a member's mail")
+
+        def resolved(name: str) -> dict:
+            return self.aw(holder, "id", "namespace", "resolve", f"{DOMAIN}/{name}")["payload"]
+
+        owner = resolved("owner")
+        assert owner.get("address", {}).get("name") == "owner", f"member mail: the owner's address: {owner}"
+        seat = resolved(SEATS[0])
+        assert seat["status"] == "fail" and seat["error"]["code"] == "target.not_found", (
+            f"member mail: a seat's address resolves: {seat}")
+
+        # The outsider: a local member of another team, admitted by the same owner.
+        self.aw(holder, "id", "team", "create", "--name", "outside", "--namespace", DOMAIN,
+                "--registry", origin("registry"))
+        (self.world / "outsider").mkdir(mode=0o700)
+
+        def as_outsider(*args: str) -> subprocess.CompletedProcess:
+            return subprocess.run(["docker", "exec", "-w", "/world/outsider", holder, "aw", "--json", *args],
+                                  capture_output=True, text=True, timeout=300, check=False)
+
+        requested = first_json(as_outsider("id", "team", "request", "--create-local-key", "--team",
+                                           f"outside:{DOMAIN}", "--name", "outsider").stdout)
+        added = self.aw(holder, "id", "team", "add-member", "--team", "outside", "--namespace", DOMAIN,
+                        "--did", requested["did_key"], "--name", "outsider", "--local")
+        fetched = as_outsider("id", "team", "fetch-cert", "--namespace", DOMAIN, "--team", "outside",
+                              "--cert-id", added["certificate_id"], "--registry", origin("registry"))
+        assert fetched.returncode == 0, fetched.stdout + fetched.stderr
+
+        def refused(result: subprocess.CompletedProcess, what: str) -> str:
+            output = result.stdout + result.stderr
+            assert result.returncode != 0, f"member mail: the outsider's {what} was not refused: {output[-500:]}"
+            error = first_json(output).get("error", {}).get("message", "") if "{" in output else output.strip()
+            return error[-300:]
+
+        connect = refused(as_outsider("workspace", "connect", "--service", origin("aweb")), "connect")
+        assert "/v1/connect returned 403" in connect and "is not served by this server" in connect, (
+            f"member mail: aweb did not refuse the outsider's connect as a team it does not serve: {connect}")
+        outsider_subject = f"outsider-{secrets.token_hex(4)}"
+        send = refused(as_outsider("mail", "send", "--to", SEATS[0], "--subject", outsider_subject,
+                                   "--body", "a non-member's mail"), "mail")
+        inbox = json.dumps(self.aw(first, "mail", "inbox", "--show-all"))
+        assert member_subject in inbox, "member mail: the member's mail did not arrive"
+        assert outsider_subject not in inbox, "member mail: the non-member's mail arrived"
+        whoami = self.aw(first, "whoami")
+        return {"member_delivered": True, "owner_address": owner["address"]["name"],
+                "seat_address": seat["error"]["code"], "outsider_team": f"outside:{DOMAIN}",
+                "outsider_connect": connect, "outsider_send": send, "outsider_delivered": False,
+                "seat_scope": whoami.get("identity_scope"), "seat_inbound": whoami.get("inbound_mode"),
+                "seat_inbound_configurable": whoami.get("inbound_configurable")}
+
+    def served_front_certificate(self, host: str) -> str:
+        """The SHA-256 of the certificate the deployment's front serves for
+        host, asked over TLS with that SNI from the services network."""
+        return run("docker", "run", "--rm", "--network", f"{self.project}_services", "--entrypoint", "python",
+                   self.images["aweb"], "-c",
+                   "import hashlib, socket, ssl, sys\n"
+                   "context = ssl.create_default_context()\n"
+                   "context.check_hostname = False\n"
+                   "context.verify_mode = ssl.CERT_NONE\n"
+                   "with socket.create_connection(('front', 443), timeout=10) as raw,"
+                   " context.wrap_socket(raw, server_hostname=sys.argv[1]) as tls:\n"
+                   "    print(hashlib.sha256(tls.getpeercert(binary_form=True)).hexdigest())\n",
+                   host).strip()
+
+    def front_renewal(self) -> dict:
+        """The operator renews the front's certificate: with a key that is not
+        the new certificate's, teamctl reload-tls refuses and the front keeps
+        serving the old one; with both new files, it reloads and every host
+        serves the new certificate."""
+        host = HOSTS["aweb"]
+        before = self.served_front_certificate(host)
+
+        def install(certificate: Path, key: Path) -> None:
+            run("docker", "run", "--rm", "-v", f"{self.secrets / 'front'}:/front", "-v", f"{certificate}:/new.pem:ro",
+                "-v", f"{key}:/new.key:ro", "alpine:3.22", "sh", "-c",
+                "cat /new.pem > /front/certificate.pem && cat /new.key > /front/key.pem"
+                " && chown 0:0 /front/certificate.pem /front/key.pem && chmod 0400 /front/certificate.pem /front/key.pem")
+
+        def reload() -> subprocess.CompletedProcess:
+            return subprocess.run([str(TEAMCTL), "reload-tls", str(self.deployment_path)], env=self.env,
+                                  capture_output=True, text=True, timeout=300, check=False)
+
+        renewal = self.world / "tls-renewal"
+        install(renewal / "server.pem", self.world / "tls" / "server.key")
+        mismatched = reload()
+        assert mismatched.returncode != 0 and "not the certificate key" in mismatched.stderr, (
+            mismatched.stdout + mismatched.stderr)
+        kept = self.served_front_certificate(host)
+        assert kept == before, "front renewal: a refused reload changed the served certificate"
+        install(renewal / "server.pem", renewal / "server.key")
+        renewed = reload()
+        assert renewed.returncode == 0, renewed.stdout + renewed.stderr
+        after = self.served_front_certificate(host)
+        assert after != before, "front renewal: the front still serves the old certificate"
+        return {"before": before[:16], "refused": mismatched.stderr.strip().splitlines()[-1],
+                "kept": kept == before, "after": after[:16], "reload": renewed.stdout.strip().splitlines()[-1]}
+
+    def redis_isolation(self, required: set[str]) -> dict:
+        """aweb reaches Redis with its password; from aweb's own network a
+        client without it, or with a wrong one, is refused, which shows Redis
+        is up and reachable there; and from every other running service of
+        the deployment, the required ones among them, Redis's address does
+        not answer at all."""
+        containers = dict(
+            line.split()
+            for line in run("docker", "ps", "--filter", f"label=com.docker.compose.project={self.project}",
+                            "--format", '{{.Label "com.docker.compose.service"}} {{.ID}}').splitlines()
+        )
+        missing = required - set(containers)
+        assert not missing, f"redis isolation: not running: {sorted(missing)}"
+        address = run("docker", "inspect", "--format", "{{range .NetworkSettings.Networks}}{{.IPAddress}} {{end}}",
+                      containers["redis"]).split()
+        assert len(address) == 1, f"redis isolation: Redis is on {len(address)} networks"
+
+        def ask(service: str, commands: str) -> subprocess.CompletedProcess:
+            return subprocess.run(
+                # --init: without it redis-cli is the container's PID 1, which
+                # the timeout's TERM cannot stop (seen on run32).
+                ["docker", "run", "--rm", "-i", "--init", "--network", f"container:{containers[service]}",
+                 "redis:7-alpine", "timeout", "5", "redis-cli", "-h", address[0], "-p", "6379"],
+                input=commands, text=True, capture_output=True, timeout=60, check=False)
+
+        ready = json.loads(self.compose("exec", "-T", "aweb", "curl", "-fsS", "http://localhost:8000/ready"))
+        assert ready["checks"]["redis"] == "ok", f"redis isolation: aweb's /ready: {ready}"
+        anonymous = ask("aweb", "PING\r\n")
+        assert anonymous.stdout.startswith("NOAUTH"), (
+            f"redis isolation: no password from aweb's network: {anonymous.stdout!r} {anonymous.stderr[-300:]!r}")
+        wrong = ask("aweb", f"AUTH default {secrets.token_hex(24)}\r\nPING\r\n")
+        assert wrong.stdout.startswith("WRONGPASS") and "NOAUTH" in wrong.stdout, (
+            f"redis isolation: a wrong password from aweb's network: {wrong.stdout!r} {wrong.stderr[-300:]!r}")
+        unreachable = {}
+        for service in sorted(set(containers) - {"aweb", "redis"}):
+            answer = ask(service, "PING\r\n")
+            assert answer.returncode != 0 and not answer.stdout.strip(), (
+                f"redis isolation: {service} reaches Redis: {answer.stdout!r}")
+            unreachable[service] = {"exit": answer.returncode, "error": answer.stderr.strip()[-120:]}
+        return {"redis": address[0], "aweb_ready": ready["checks"]["redis"],
+                "aweb_network_without_password": anonymous.stdout.split()[0],
+                "aweb_network_wrong_password": wrong.stdout.split()[0], "unreachable_from": unreachable}
 
     def deployment(self) -> Path:
         config: dict = {
@@ -261,6 +477,8 @@ class World:
                 "gid": AGENT_UID,
                 "resolverIp": "172.30.0.2",
                 "network": {"address": "172.30.0.10"},
+                # The world's public CA, copied outside every protected root.
+                "caFile": str(self.run_dir / "agent-ca.pem"),
                 "compose": {
                     "stateDir": str(self.world / "agent-state"),
                     "authorizedKeysFile": str(self.world / "agent-authorized-keys"),
@@ -269,7 +487,11 @@ class World:
                     "oatsSource": str(self.oats_source),
                 },
             }
-            config["egress"] = {"image": self.images["egress"], "privateIngressAddresses": [self.front_ip]}
+            config["egress"] = {"image": self.images["egress"],
+                                "privateIngressAddresses": [self.ingress_ip, self.registry_front_ip]}
+        # Published on the lab machine's loopback alone: its clients are on
+        # the services network.
+        config["front"] = {"image": front_image(), "compose": {"bindAddress": "127.0.0.1", "port": 18443}}
         path = self.run_dir / "deployment.yaml"
         path.write_text(yaml.safe_dump(config, sort_keys=False))
         self.write_trust(["aweb", *(name for name in ("secrets", "logs", "signer") if name in config)])
@@ -286,8 +508,8 @@ class World:
         return run(*self.connect()["compose"], *args, env=self.env, input=input)
 
     def render(self, deployment: Path) -> None:
-        rendered = run(sys.executable, str(TEAM_DIR / "render_env.py"), str(deployment))
-        (self.run_dir / ".env").write_text(rendered)
+        """What Compose reads, written the operator's way (teamctl render)."""
+        run(str(TEAMCTL), "render", str(deployment), env=self.env)
         self.deployment_path = deployment
 
     def up(self) -> int:
@@ -306,6 +528,8 @@ class World:
         (self.world / "agent-state").mkdir()
         (self.world / "agent-authorized-keys").write_text("")
         (self.run_dir / "operator").mkdir(mode=0o700)
+        shutil.copyfile(self.world / "tls" / "ca.pem", self.run_dir / "agent-ca.pem")
+        (self.run_dir / "agent-ca.pem").chmod(0o644)
         (self.secrets / "agents").mkdir()
         run("docker", "run", "--rm", "-v", f"{self.world / 'agent-state'}:/state",
             "-v", f"{self.secrets / 'agents'}:/login", "alpine:3.22", "sh", "-c",
@@ -375,6 +599,161 @@ class World:
                 f" && find /state/seats/{alias}/.aw -type d -exec chmod 0700 {{}} +"
                 f" && find /state/seats/{alias}/.aw -type f -exec chmod 0600 {{}} +")
 
+    def designate_holding(self, site: Site, holder: Holder, founded: Founded) -> dict:
+        """The approver's holding of the app role the round trip revokes, made
+        the supported way while the owner still holds the team's key: the
+        owner adds the human to the team; the human, with its own key, fetches
+        its certificate, connects to the team's aweb and registers a passkey on
+        the app's own human origin in the browser, for the app the owner installed on this machine; the owner
+        designates that exact credential. Checked in the app's own tables."""
+        machine, human = holder.container, founded.approver
+        # --global for this human holder only (services and seats stay --local):
+        # aw binds a holder only if its team certificate names its did:aw
+        # (verifyHolderEvidence), and a did:aw on a member certificate is a
+        # global identity's.
+        added = self.aw(machine, "id", "team", "add-member", "--team", TEAM, "--namespace", DOMAIN,
+                        "--did", founded.approver_did_key, "--did-aw", human, "--name", "approver", "--global")
+
+        def as_human(*args: str, until: str | None = None) -> tuple[pexpect.spawn, str]:
+            child = holder.act(human, *args)
+            return child, holder.answer_passphrases(child, until=until)
+
+        for args in (("--json", "id", "team", "fetch-cert", "--namespace", DOMAIN, "--team", TEAM, "--cert-id",
+                      added["certificate_id"], "--registry", origin("registry")),
+                     # The human's own connection to the team's aweb: the
+                     # requester's does not serve this separate identity.
+                     ("--json", "init", "--url", origin("aweb"), "--human-name", "approver")):
+            child, output = as_human(*args)
+            child.close()
+            assert child.exitstatus == 0, output
+        # The app is already installed on this machine: the owner installed it
+        # here, in the same aw plugin directory. aw takes no --human install.
+        export = f"{site.mounted}/holder/app-export.json"
+        child, output = as_human("app", "credential", "register", site.app_id, "--role", site.role, "--out", export,
+                                 until=r"Open this page to continue: (\S+)")
+        linked = re.search(r"Open this page to continue: (\S+)", output)
+        if not linked:
+            child.close()
+            raise SystemExit(f"FAILED: the holder's credential registration showed no page (exit {child.exitstatus}):\n{output}")
+        page = linked.group(1)
+        report = site.chromium(machine, "credential", "--url", page, "--device",
+                               f"{site.mounted}/holder-app-device.json")
+        assert report["states"] == ["ready", "navigated"] and report["credentials"] == 1, report
+        child.expect(pexpect.EOF)
+        rest = child.before
+        child.close()
+        assert child.exitstatus == 0, rest
+        printed = re.search(r"Fingerprint: ([0-9a-f]{4}(?: [0-9a-f]{4}){3})", output + rest)
+        assert printed, output + rest
+        fingerprint = printed.group(1)
+        # The owner signs only for that exact credential: aw shows its fingerprint.
+        designated = docker("exec", machine, *designate_command(site.app_id, site.role, human, export, site.contact),
+                            timeout=300)
+        assert designated.returncode == 0, designated.stdout + designated.stderr
+        assert fingerprint in designated.stderr, designated.stderr
+        held = self.compose("exec", "-T", "postgres", "psql", "-U", "postgres", "-d", "secrets", "-At", "-c",
+                            "select count(*) from public.role_assignments where role = '" + site.role
+                            + "' and principal_did = '" + human + "'").strip()
+        assert held == "1", held
+        # The holding keeps the notice contact the owner signed, byte for byte.
+        contact = self.compose("exec", "-T", "postgres", "psql", "-U", "postgres", "-d", "secrets", "-At", "-c",
+                               "select contact from public.passkey_approvers where principal = '" + human
+                               + "' and superseded_at is null").strip()
+        assert contact == site.contact, contact
+        return {"role": site.role, "principal": human, "fingerprint": fingerprint, "contact": contact}
+
+    # --- the registry's real limiter, for the throttle legs -----------------
+
+    def fill_did_key_window(self) -> dict:
+        """Fill AWID's did_key window for the front's address to its limit, in
+        this run's own registry Redis, with the limiter's own key, limit and
+        expiry: every later read from that address in the window is refused 429
+        with the limiter's own Retry-After. Waits first for a fresh window when
+        too little of this one is left. Returns what it wrote and when."""
+        def now() -> float:
+            seconds, micros = self.compose("exec", "-T", "registry-redis", "redis-cli", "TIME").split()
+            return int(seconds) + int(micros) / 1e6
+        seed = did_key_window(now(), self.registry_front_ip)
+        if seed["wait"]:
+            time.sleep(seed["wait"] + 0.5)
+            seed = did_key_window(now(), self.registry_front_ip)
+        self.compose("exec", "-T", "registry-redis", "redis-cli", "SET", seed["key"], str(seed["limit"]),
+                     "EX", str(seed["ttl"]))
+        return {**seed, "seeded_at": now()}
+
+    def since(self) -> str:
+        return datetime.datetime.now(datetime.UTC).strftime("%Y-%m-%dT%H:%M:%S.%fZ")
+
+    def service_log(self, service: str, since: str) -> str:
+        return self.compose("logs", "--no-color", "--no-log-prefix", "--since", since, service)
+
+    def signer_table(self) -> dict:
+        """The signer's own record: each operation's id, whether it holds a
+        signature, and its expiry."""
+        rows = self.compose("exec", "-T", "postgres", "psql", "-U", "postgres", "-d", "signer", "-At", "-F", " ", "-c",
+                            "select operation_id, result is not null, expires_at from "
+                            "protected_signer.protected_signer_operations")
+        table = {}
+        for line in rows.splitlines():
+            operation, signed, expires = line.split(" ", 2)
+            table[operation] = {"signed": signed == "t", "expires_at": expires}
+        return table
+
+    def control_aw(self, machine: str) -> str:
+        """The aw of the control CLI image (the caller without its throttle
+        retry), copied into the machine beside its own aw. Returns its path."""
+        created = run("docker", "create", self.images["cli-control"]).strip()
+        try:
+            run("docker", "cp", f"{created}:/usr/local/bin/aw", str(self.run_dir / "aw-control"))
+        finally:
+            run("docker", "rm", created)
+        run("docker", "cp", str(self.run_dir / "aw-control"), f"{machine}:/tmp/aw-control")
+        return "/tmp/aw-control"
+
+    def requalify_agent(self, founded: Founded, seat: str) -> dict:
+        """The real agent, over the operator's SSH, as a staged seat: aw's own
+        application answer from aweb (an Inbound mode, not unknown), aw (Go)
+        reading the registry, and Node reaching the registry and aweb, all over
+        verified HTTPS with the agents' public CA and nothing relaxed."""
+        config = str(self.run_dir / "operator" / "ssh_config")
+        home = f"/state/seats/{seat}/.aw"
+
+        def ssh(command: str) -> subprocess.CompletedProcess:
+            return subprocess.run(["ssh", "-F", config, "team-agent", command], capture_output=True, text=True,
+                                  timeout=120, check=False)
+
+        trust = ssh('printf "%s %s" "$SSL_CERT_FILE" "$NODE_EXTRA_CA_CERTS"').stdout.split()
+        assert trust == ["/etc/agent-trust/ca.pem", "/etc/agent-trust/ca.pem"], trust
+        whoami = ssh(f"aw --identity-home {home} whoami")
+        inbound = re.search(r"^Inbound:\s+(\S.*)$", whoami.stdout, re.MULTILINE)
+        assert whoami.returncode == 0 and inbound and not inbound.group(1).startswith("unknown"), (
+            whoami.stdout + whoami.stderr)
+        resolved = ssh(f"aw --identity-home {home} --json id resolve {founded.approver}")
+        assert resolved.returncode == 0, resolved.stdout + resolved.stderr
+        reach = ("const https=require('node:https');const get=u=>new Promise((ok,no)=>https.get(u,r=>{r.resume();"
+                 "ok(r.statusCode)}).on('error',no));"
+                 f"Promise.all([get('{origin('registry')}/health'),get('{origin('aweb')}/ready')])"
+                 ".then(s=>{console.log(s.join(' '))},e=>{console.error(e.code||e.message);process.exit(1)})")
+        node = ssh(f'node -e "{reach}"')
+        assert node.returncode == 0 and node.stdout.split() == ["200", "200"], node.stdout + node.stderr
+        # The same calls with trust that leaves the agents' CA out fail
+        # certificate verification: the positives above rest on that CA. The
+        # trust is changed for these processes only; the session's files stay.
+        system = ssh("test -s /etc/ssl/certs/ca-certificates.crt")
+        assert system.returncode == 0, "the agent image has no system CA bundle to stand for trust without the agents' CA"
+        go = ssh(f"SSL_CERT_FILE=/etc/ssl/certs/ca-certificates.crt SSL_CERT_DIR=/nonexistent "
+                 f"aw --identity-home {home} --json id resolve {founded.approver}")
+        go_output = go.stdout + go.stderr
+        assert go.returncode != 0 and "x509: certificate signed by unknown authority" in go_output, go_output
+        untrusted = ssh(f'env -u NODE_EXTRA_CA_CERTS -u SSL_CERT_FILE node -e "{reach}"')
+        node_refusal = untrusted.stderr.strip()
+        assert untrusted.returncode != 0 and node_refusal in {
+            "UNABLE_TO_VERIFY_LEAF_SIGNATURE", "UNABLE_TO_GET_ISSUER_CERT_LOCALLY", "SELF_SIGNED_CERT_IN_CHAIN",
+        }, untrusted.stdout + untrusted.stderr
+        return {"seat": seat, "trust": trust, "inbound": inbound.group(1), "resolved": first_json(resolved.stdout),
+                "node": node.stdout.split(),
+                "without_the_agents_ca": {"go": "x509: certificate signed by unknown authority", "node": node_refusal}}
+
     def machine(self, name: str) -> str:
         """A cli container as one machine; its HOME is /world/<name>."""
         container = f"{self.project}-{name}"
@@ -417,6 +796,13 @@ class World:
         keys = self.world / f"{name}-member" / "identity" / ".aw"
         return (keys / "signing.key").read_text(), keys / fetched["cert_path"]
 
+    def write_front_files(self) -> None:
+        """The deployment's front holds this world's certificate for every
+        origin, as an operator's front holds theirs."""
+        (self.secrets / "front").mkdir()
+        shutil.copyfile(self.world / "tls" / "server.pem", self.secrets / "front" / "certificate.pem")
+        shutil.copyfile(self.world / "tls" / "server.key", self.secrets / "front" / "key.pem")
+
     def write_service_files(self, machine: str) -> None:
         pem, _ = self.admit_service(machine, "aweb")
         (self.secrets / "aweb" / f"{TEAM}.key").write_text(pem)
@@ -453,6 +839,9 @@ class World:
     def own_service_files(self) -> dict[str, str]:
         owners = {
             "postgres": run("docker", "run", "--rm", "postgres:16-alpine", "id", "-u", "postgres").strip(),
+            "redis": run("docker", "run", "--rm", "redis:7-alpine", "id", "-u", "redis").strip(),
+            # Caddy runs as root.
+            "front": "0",
             "aweb": image_user(self.images["aweb"]),
             "secrets": image_user(self.images["secrets"]),
             "logs": image_user(self.images["logs"]),
@@ -461,9 +850,17 @@ class World:
         return owners
 
     def install_apps(self, machine: str, owner_did_key: str) -> None:
-        """The operator's explicit install-owner grant, then the owner installs
+        """The owner publishes the team's coordination server at the registry,
+        signed by the team's key, which installed apps read to reach it; the
+        operator's explicit install-owner grant; then the owner installs
         Secrets and Logs from their internal origins. Membership alone grants
         no install authority."""
+        self.aw(machine, "id", "team", "set-server", "--team", TEAM, "--namespace", DOMAIN,
+                "--url", origin("aweb"), "--registry", origin("registry"))
+        published = self.aw(machine, "id", "team", "show-server", "--team", TEAM, "--namespace", DOMAIN,
+                            "--registry", origin("registry"))
+        assert published.get("server_url", "").rstrip("/") == origin("aweb"), published
+        print("TEAM SERVER:", json.dumps(published, sort_keys=True))
         self.compose("exec", "-T", "aweb", "aweb", "install-admin", "grant", "--team-id", TEAM_ID,
                      "--principal-did", owner_did_key, "--role", "owner")
         for app in ("secrets", "logs"):
@@ -541,15 +938,18 @@ class World:
                       self.images["chromium"], *args, "--ca", "/world/tls/ca.pem", timeout=300).strip()
             return first_json(out) if "{" in out else {}
 
+        rendered = self.run_dir / "front" / "Caddyfile"
+        original = rendered.read_text()
+
         def drop_prepare_answers(on: bool) -> None:
-            caddyfile = self.caddyfile
+            caddyfile = original
             if on:
                 caddyfile = caddyfile.replace(
                     f"{HOSTS['signer']}:443 {{\n",
                     f"{HOSTS['signer']}:443 {{\n  @prepare {{\n    method POST\n    path /protected-operations\n  }}\n"
                     "  reverse_proxy @prepare signer:8080 {\n    @answered status 2xx\n"
                     "    handle_response @answered {\n      abort\n    }\n  }\n", 1)
-            (self.world / "front" / "Caddyfile").write_text(caddyfile)
+            rendered.write_text(caddyfile)
             self.compose("exec", "-T", "front", "caddy", "reload", "--config", "/etc/caddy/Caddyfile",
                          "--adapter", "caddyfile")
 
@@ -565,13 +965,142 @@ class World:
         )
 
 
+# --- critical calls under the registry's real limiter ------------------------
+
+THROTTLED = re.compile(r"RegistryThrottled: .*retry_after_seconds=([0-9.]+)")
+PREPARES = re.compile(r'"POST /protected-operations HTTP/[\d.]+" (\d{3})')
+
+
+def throttle_evidence(world: World, since: str) -> dict:
+    """What the registry and the signer recorded since: the registry's 429s,
+    the hints the signer was given, and the signer's answers to prepares."""
+    registry = world.service_log("registry", since)
+    signer = world.service_log("signer", since)
+    return {
+        "registry_429": registry.count(" 429 "),
+        "hints": [float(h) for h in THROTTLED.findall(signer)],
+        "prepares": [int(code) for code in PREPARES.findall(signer)],
+    }
+
+
+def resume(machine: str, aw_bin: str, operation: str, site: Site) -> subprocess.CompletedProcess:
+    return docker("exec", machine, aw_bin, "--json", "app", "role", "resume", operation,
+                  "--protected-profile", site.profile_in_machine, timeout=300)
+
+
+def changed_act_leg(world: World, site: Site, holder: Holder, founded: Founded, aw_bin: str) -> dict:
+    """Run 22's failure, made certain: a changed act resent from aw's saved
+    request while the registry refuses the signer's key lookups. The signer
+    answers 503 with the registry's Retry-After; aw waits it and resends the
+    same changed bytes, which the signer refuses operation_conflict, signing
+    nothing."""
+    machine, approver = holder.container, founded.approver
+    saved = site.runtime / "holder" / ".config" / "aw" / "governance"
+    child, page, operation, _ = start_revoke(site, machine, approver)
+    report = approve(site, machine, page, "--approve-uv", "no")
+    assert report["states"][-1] == "ready", report
+    child.sendintr()
+    finish(child)
+    written = json.dumps(changed_act(json.loads((saved / f"{operation}.json").read_text()), site.role + "-other"))
+    (saved / f"{operation}.json").write_text(written)
+    expires = world.signer_table()[operation]["expires_at"]
+    seed = world.fill_did_key_window()
+    since, started = world.since(), time.monotonic()
+    result = resume(machine, aw_bin, operation, site)
+    elapsed = time.monotonic() - started
+    after = world.signer_table()[operation]
+    return {
+        "operation": operation, "seed": seed, "elapsed": round(elapsed, 1), **throttle_evidence(world, since),
+        "code": first_json(result.stdout).get("error", {}).get("code") if result.returncode else "ok",
+        "signed": after["signed"], "expires_unchanged": after["expires_at"] == expires,
+        "saved_unchanged": (saved / f"{operation}.json").read_text() == written,
+    }
+
+
+def lost_prepare_leg(world: World, site: Site, holder: Holder, founded: Founded, aw_bin: str) -> dict:
+    """A lost prepare answer resumed while the registry refuses the signer's
+    key lookups: aw waits the hint, resends the saved bytes, and once
+    approved the original operation completes with one signature."""
+    machine, approver = holder.container, founded.approver
+    saved = site.runtime / "holder" / ".config" / "aw" / "governance"
+    site.drop_prepare_answers(True)
+    try:
+        lost = docker("exec", machine, "aw", "--json", "app", "role", "revoke", site.app_id, "--role", site.role,
+                      "--principal", approver, "--protected-profile", site.profile_in_machine, "--approver", approver,
+                      timeout=240)
+    finally:
+        site.drop_prepare_answers(False)
+    assert first_json(lost.stdout)["error"]["code"] == "prepare_unconfirmed", lost.stdout
+    operation = re.search(r"Preparing operation (\S+)", lost.stderr).group(1)
+    request = (saved / f"{operation}.json").read_text()
+    before = world.signer_table()
+    signed_before = sum(row["signed"] for row in before.values())
+    seed = world.fill_did_key_window()
+    since, started = world.since(), time.monotonic()
+    child = pexpect.spawn("docker", ["exec", "-it", machine, aw_bin, "--json", "app", "role", "resume", operation,
+                                     "--protected-profile", site.profile_in_machine],
+                          encoding="utf-8", timeout=300, echo=False)
+    evidence = {"operation": operation, "seed": seed}
+    index = child.expect([r"Approve it on this page: (\S+)", pexpect.EOF])
+    evidence["waited"] = round(time.monotonic() - started, 1)
+    if index == 0:
+        report = approve(site, machine, child.match.group(1))
+        assert report["states"] == ["login-required", "ready", "navigated"], report
+        status, output = finish(child)
+        receipt = first_json(output)
+        evidence["state"] = receipt.get("state") if status == 0 else first_json(output)["error"]["code"]
+    else:
+        child.close()
+        evidence["state"] = first_json(child.before)["error"]["code"]
+    after = world.signer_table()
+    evidence.update(throttle_evidence(world, since))
+    evidence.update({
+        "rows_for_operation": sum(1 for op in after if op == operation),
+        "signed": after[operation]["signed"],
+        "new_signatures": sum(row["signed"] for row in after.values()) - signed_before,
+        "expires_unchanged": after[operation]["expires_at"] == before[operation]["expires_at"],
+        "request_was_saved": bool(request),
+    })
+    return evidence
+
+
+def throttled_calls(world: World, site: Site, holder: Holder, founded: Founded) -> None:
+    """Both legs with the candidate's aw, then with the control aw, whose
+    caller does not wait out the hint and so must not recover."""
+    for name, aw_bin in (("candidate", "aw"), ("control", world.control_aw(holder.container))):
+        changed = changed_act_leg(world, site, holder, founded, aw_bin)
+        lost = lost_prepare_leg(world, site, holder, founded, aw_bin)
+        (world.run_dir / f"throttle-{name}.json").write_text(json.dumps({"changed_act": changed, "lost_prepare": lost},
+                                                                       indent=2))
+        print(f"throttle {name}:", json.dumps({"changed_act": changed, "lost_prepare": lost}, sort_keys=True))
+        for leg in (changed, lost):
+            # The fixture worked only if the registry really refused, past the SDK's budget.
+            assert leg["registry_429"] >= 1 and leg["hints"] and min(leg["hints"]) > 5, leg
+            assert leg["prepares"][0] == 503, leg
+            assert leg["expires_unchanged"], leg
+        if name == "candidate":
+            assert changed["code"] == "operation_conflict" and changed["prepares"][-1] == 409, changed
+            assert changed["elapsed"] >= min(changed["hints"]) - 1, changed
+            assert changed["signed"] is False and changed["saved_unchanged"], changed
+            assert lost["state"] == "committed" and lost["waited"] >= min(lost["hints"]) - 1, lost
+            assert lost["signed"] and lost["rows_for_operation"] == 1 and lost["new_signatures"] == 1, lost
+        else:
+            assert changed["code"] != "operation_conflict" and changed["signed"] is False, changed
+            assert lost["state"] != "committed" and lost["new_signatures"] == 0, lost
+
+
+# Every image scripts/e2e/team-deployment-images.sh builds for the journey;
+# cli-control is the CLI the throttle legs expect not to recover (no caller retry).
+REQUIRED_IMAGES = {"aweb", "aweb-protected", "secrets", "logs", "awid", "cli", "cli-control", "chromium"}
+
+
 def load_images(path: Path) -> dict[str, str]:
     images = {}
     for line in path.read_text().splitlines():
         name, _, reference = line.partition(" ")
         if "@sha256:" in reference:
             images[name] = reference
-    missing = {"aweb", "aweb-protected", "secrets", "logs", "awid", "cli", "chromium"} - set(images)
+    missing = REQUIRED_IMAGES - set(images)
     if missing:
         raise SystemExit(f"FAILED: no pinned image for {', '.join(sorted(missing))} in {path}")
     return images
@@ -585,6 +1114,11 @@ def main() -> int:
     parser.add_argument("--services-cidr", default="172.31.0.0/24")
     parser.add_argument("--oats-source", type=Path, help="checkout of the pinned OATS source, for the agents")
     parser.add_argument("--keep", action="store_true", help="leave the deployment running for inspection")
+    parser.add_argument("--agents-only", action="store_true",
+                        help="provision the signer, then go straight to the agents stage: no holding, protected"
+                             " round trip, refusals or throttle legs")
+    parser.add_argument("--stop-after", choices=["holding"],
+                        help="end the journey after this setup step: holding, the approver's app holding")
     args = parser.parse_args()
     run_dir = args.run_dir.resolve()
     if run_dir.exists():
@@ -600,7 +1134,7 @@ def main() -> int:
         "".join(f"{name}={world.env[name]}\n" for name in sorted(world.env) if name.startswith(("TEAM_DEPLOYMENT_", "TEST_")))
     )
     try:
-        return journey(world)
+        return journey(world, stop_after=args.stop_after, agents_only=args.agents_only)
     finally:
         if not args.keep:
             print("=== Teardown")
@@ -609,12 +1143,14 @@ def main() -> int:
             print("DOWN: nothing of the project is left" if down.returncode == 0 else "DOWN FAILED: see above")
 
 
-def journey(world: World) -> int:
+def journey(world: World, stop_after: str | None = None, agents_only: bool = False) -> int:
     print("=== Setup: the test world")
     world.write_world()
     world.write_database_files()
+    world.write_redis_files()
+    world.write_front_files()
     world.deployment()
-    world.compose("up", "-d", "--wait", "dns", "registry", "front", "smtp")
+    world.compose("up", "-d", "--wait", "dns", "registry", "world-front", "smtp")
     site = world.site()
     holder = Holder(world.machine("holder"), DOMAIN)
 
@@ -633,32 +1169,63 @@ def journey(world: World) -> int:
         print("BOUNDARY: the deployment did not come up; see compose.log in the run directory")
         return 1
     print("UP: aweb, secrets and logs are ready")
+    print("FRONT RENEWED:", json.dumps(world.front_renewal(), sort_keys=True))
     connect_requester(site, holder)
+    print("LOCAL MEMBERS:", json.dumps(world.local_members(), sort_keys=True))
+    print("MEMBER MAIL:", json.dumps(world.member_mail(holder.container), sort_keys=True))
     print("=== Setup: the team owner installs Secrets and Logs from their internal origins")
     world.install_apps(holder.container, founded.requester_did_key)
+    if not agents_only:
+        print("=== Setup: the owner designates the approver's holding of the app role, before the signer holds the key")
+        designated = world.designate_holding(site, holder, founded)
+        print("HOLDING:", json.dumps({k: designated[k] for k in ("role", "principal", "contact")}))
+        if stop_after == "holding":
+            print("STOPPED: after the approver's holding, as asked")
+            return 0
 
     print("=== Step 5: the protected act")
     provision_signer(site, holder, founded)
+    isolated = world.redis_isolation({"aweb", "redis", "secrets", "logs", "signer"})
+    print("REDIS ISOLATED:", json.dumps(isolated, sort_keys=True))
+    if agents_only:
+        print("AGENTS ONLY: the signer is provisioned; no round trip, refusals or throttle legs in this run")
+    else:
+        protected_act(world, site, holder, founded)
+    if "agent" not in world.images:
+        print("AGENTS: not in this run (no agent or egress image)")
+        return 0
+    return agents_stage(world, founded)
+
+
+def protected_act(world: World, site: Site, holder: Holder, founded: Founded) -> None:
     operation = round_trip(site, holder, founded)
     print(f"SIGNED: {operation} committed, approved in the browser, receipt read by aw")
     refusals(site, holder, founded)
     print("REFUSED: no UV signs nothing; a changed act is operation_conflict; a lost prepare completes once")
 
-    if "agent" not in world.images:
-        print("AGENTS: not in this run (no agent or egress image)")
-        return 0
+    print("=== Step 6: critical calls under the registry's real limiter")
+    throttled_calls(world, site, holder, founded)
+    print("THROTTLED: a changed act waits out the registry's Retry-After and is operation_conflict; a lost prepare"
+          " waits it out and completes once; the control aw recovers from neither")
+
+
+def agents_stage(world: World, founded: Founded) -> int:
     print("=== Step 2: the agents, behind egress")
     world.configure_agents()
     status = world.up()
-    if status == 3:
-        world.operator_ssh()
-        world.stage_seats(SEATS)
-        print("AGENTS HELD: the ingress refusal and boundary probes passed, the agent container passed its"
-              " acceptance, the operator reaches it over pinned SSH and two member seats are staged; it has no"
-              " harness login, deployment or session")
-        return 0
-    print("BOUNDARY: the agents stage did not come up; see the adapter's output")
-    return 1
+    if status != 3:
+        print("BOUNDARY: the agents stage did not come up; see the adapter's output")
+        return 1
+    world.operator_ssh()
+    world.stage_seats(SEATS)
+    print("AGENTS: the ingress and boundary probes passed, the agent container passed its acceptance, the operator"
+          " reaches it over pinned SSH and two member seats are staged")
+    requalified = world.requalify_agent(founded, SEATS[0])
+    print("REQUALIFIED:", json.dumps(requalified, sort_keys=True))
+    isolated = world.redis_isolation({"aweb", "redis", "secrets", "logs", "signer", "egress", "agent"})
+    print("REDIS ISOLATED:", json.dumps(isolated, sort_keys=True))
+    print("AGENTS HELD: no harness login, deployment or session; wake and model are not run")
+    return 0
 
 
 if __name__ == "__main__":

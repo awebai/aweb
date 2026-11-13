@@ -220,7 +220,7 @@ def main() -> None:
         authority = checkout / "cli" / "go" / "awid" / "federation_authority.go"
         replace_exact(
             authority,
-            '\tnetip.MustParsePrefix("100.64.0.0/10"),\n',
+            '"100.64.0.0/10", ',
             "",
         )
         require_killed(

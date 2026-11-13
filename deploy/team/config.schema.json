@@ -123,6 +123,15 @@
           },
           "x-env": "AWEB_APP_INTERNAL_ORIGINS"
         },
+        "federationOutbound": {
+          "description": "The other aweb servers this one delivers federated mail and chat to, as exact origins. Left out, it delivers to none.",
+          "type": "array",
+          "minItems": 1,
+          "uniqueItems": true,
+          "items": {
+            "$ref": "#/$defs/origin"
+          }
+        },
         "secrets": {
           "$ref": "#/$defs/secrets",
           "default": "aweb",
@@ -558,7 +567,7 @@
       ]
     },
     "egress": {
-      "description": "The agents' only way out: authoritative DNS and a TLS forwarder to the deployment's own origins (descriptors/egress.md).",
+      "description": "The agents' only way out: authoritative DNS and a TLS forwarder to the deployment's own origins and, when turned on, two fixed internet origins (descriptors/egress.md).",
       "type": "object",
       "additionalProperties": false,
       "required": [
@@ -577,6 +586,33 @@
             "$ref": "#/$defs/ipv4"
           },
           "default": []
+        },
+        "external": {
+          "description": "The internet roles agents may reach, each at one fixed origin: source (https://github.com) and model (https://api.anthropic.com). Off by default; the public DNS resolvers egress alone asks for their addresses are required with either role.",
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "source": {
+              "description": "Git fetches of the OATS workspace and its sources from https://github.com.",
+              "type": "boolean",
+              "default": false
+            },
+            "model": {
+              "description": "The harness's model requests to https://api.anthropic.com.",
+              "type": "boolean",
+              "default": false
+            },
+            "resolvers": {
+              "description": "One to four distinct public IPv4 DNS resolvers, port 53, that egress alone uses to resolve the external origins.",
+              "type": "array",
+              "uniqueItems": true,
+              "maxItems": 4,
+              "items": {
+                "$ref": "#/$defs/ipv4"
+              },
+              "default": []
+            }
+          }
         }
       }
     },
@@ -855,6 +891,43 @@
           "description": "Trust anchors for hook receivers, when a private authority signed their certificates.",
           "$ref": "#/$defs/file",
           "x-env": "LOGS_HOOK_CA_FILE"
+        }
+      }
+    },
+    "front": {
+      "description": "The deployment's TLS front: the reverse proxy for every public origin, with the operator's certificate and key (descriptors/front.md).",
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "image"
+      ],
+      "properties": {
+        "image": {
+          "$ref": "#/$defs/image",
+          "x-env": "FRONT_IMAGE"
+        },
+        "secrets": {
+          "$ref": "#/$defs/secrets",
+          "default": "front",
+          "x-env": "FRONT_SECRETS"
+        },
+        "compose": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "bindAddress": {
+              "type": "string",
+              "default": "0.0.0.0",
+              "x-env": "FRONT_BIND_ADDRESS"
+            },
+            "port": {
+              "type": "integer",
+              "minimum": 1,
+              "maximum": 65535,
+              "default": 443,
+              "x-env": "FRONT_PORT"
+            }
+          }
         }
       }
     }

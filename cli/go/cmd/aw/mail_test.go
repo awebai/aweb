@@ -647,7 +647,7 @@ func TestAwMailSendBodyFilePreservesBackticksOnTheWire(t *testing.T) {
 		"--to-address", "otherco.com/monitor",
 		"--body-file", bodyFile,
 	)
-	run.Env = append(testCommandEnv(tmp), "AWEB_URL="+server.URL)
+	run.Env = append(testCommandEnv(tmp), "AWEB_URL="+server.URL, "AWID_REGISTRY_URL="+server.URL)
 	run.Dir = tmp
 	if out, err := run.CombinedOutput(); err != nil {
 		t.Fatalf("run failed: %v\n%s", err, string(out))

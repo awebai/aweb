@@ -2,7 +2,10 @@ package main
 
 import (
 	"bytes"
+	"cmp"
 	"context"
+	"crypto/ed25519"
+	"encoding/base64"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -130,7 +133,8 @@ func governanceOptions(cmd *cobra.Command, profile *handoff.Profile, scope map[s
 				OperationID: operationID, RequestOrigin: profile.RequestOrigin, HumanOrigin: profile.HumanOrigin, Body: body,
 			})
 		},
-		Forget: awconfig.RemovePendingGovernanceOperation,
+		// The saved request is removed by settleProtectedAct, not on a
+		// committed receipt: a signed act not yet delivered stays resumable.
 	}
 }
 
@@ -156,8 +160,9 @@ func runProtectedHumanRoleAct(cmd *cobra.Command, act, teamID string, audience s
 	fmt.Fprintf(cmd.ErrOrStderr(), "%s for %s on %s, approved by %s through %s\n", act, subject["principal"], subject["app_id"], appApproverFlag, profile.ServiceID)
 	ctx, cancel := context.WithCancel(cmd.Context())
 	defer cancel()
-	receipt, err := handoff.Approve(ctx, governanceOptions(cmd, profile, binding.Scope, identity), operationID, protectedRoleIntent(act, binding.Scope, audience, subject))
-	return reportProtectedReceipt(operationID, receipt, err)
+	intent := protectedRoleIntent(act, binding.Scope, audience, subject)
+	receipt, err := handoff.Approve(ctx, governanceOptions(cmd, profile, binding.Scope, identity), operationID, intent)
+	return settleProtectedAct(cmd, operationID, intent, binding, receipt, err)
 }
 
 // pendingOperationFor is the saved operation operationID, if profile pins the
@@ -207,21 +212,114 @@ func runProtectedResume(cmd *cobra.Command, operationID string) error {
 	if err != nil {
 		return err
 	}
+	binding, err := profile.BindingFor(scope)
+	if err != nil {
+		return err
+	}
+	intent, _ := handoff.DecodeObject(saved.Body)
 	ctx, cancel := context.WithCancel(cmd.Context())
 	defer cancel()
 	receipt, err := handoff.Resume(ctx, governanceOptions(cmd, profile, scope, identity), saved.Body)
-	return reportProtectedReceipt(operationID, receipt, err)
+	return settleProtectedAct(cmd, operationID, intent, binding, receipt, err)
 }
 
-func reportProtectedReceipt(operationID string, receipt *handoff.Receipt, err error) error {
+// settleProtectedAct ends a protected operation. A refused one is forgotten.
+// A committed one carries the act the service signed: aw checks it is exactly
+// the act it requested, under the authority key the profile pins, and
+// delivers it to the app's owner-act route. The saved request is forgotten
+// only once the app has applied the act, now or on an earlier delivery whose
+// answer was lost; otherwise the same signed act is resumed and delivered
+// again, never re-signed.
+func settleProtectedAct(cmd *cobra.Command, operationID string, intent map[string]any, binding *handoff.ProfileBinding, receipt *handoff.Receipt, err error) error {
+	if receipt != nil && receipt.State == "refused" {
+		forgetProtectedOperation(cmd, operationID)
+	}
 	if err != nil {
 		if code := handoff.ErrorCode(err); code != "" {
 			return withErrorCode(code, fmt.Errorf("operation %s: %w", operationID, err))
 		}
 		return err
 	}
-	printOutput(map[string]any{"operation_id": receipt.OperationID, "state": receipt.State, "result": json.RawMessage(receipt.Result)}, func(value any) string {
-		return fmt.Sprintf("Operation %s committed.\n", operationID)
+	signed, err := signedActFor(intent, binding.AuthorityKeyDID, receipt.Result, time.Now())
+	if err != nil {
+		return fmt.Errorf("operation %s: %w", operationID, err)
+	}
+	report := map[string]any{"operation_id": operationID, "state": receipt.State, "result": json.RawMessage(receipt.Result)}
+	applied, err := deliverOwnerAct(cmd, signed.Audience, humanRoleActRequest{Act: signed.Act}.deliveryBody(signed.Signing, signed.Signature))
+	switch {
+	case errors.Is(err, errOwnerActAppliedEarlier):
+		// The app found this exact act (by its signing hash) already applied:
+		// an earlier delivery took effect and its answer was lost.
+		report["applied"] = "earlier"
+	case err != nil:
+		return withErrorCode(cmp.Or(errorCodeOf(err), "owner_act_undelivered"), fmt.Errorf(
+			"operation %s is signed but the app did not apply it: %w; its request is kept, and aw app role resume %s --protected-profile <profile> delivers the same act again", operationID, err, operationID))
+	default:
+		report["applied"] = applied
+	}
+	forgetProtectedOperation(cmd, operationID)
+	printOutput(report, func(any) string {
+		if report["applied"] == "earlier" {
+			return fmt.Sprintf("Operation %s committed; %s had already taken effect.\n", operationID, signed.Act)
+		}
+		return fmt.Sprintf("Operation %s committed; %s for %s took effect at %s.\n", operationID, applied["act"], applied["principal"], applied["effective_at"])
 	})
 	return nil
+}
+
+func forgetProtectedOperation(cmd *cobra.Command, operationID string) {
+	if err := awconfig.RemovePendingGovernanceOperation(operationID); err != nil {
+		fmt.Fprintf(cmd.ErrOrStderr(), "Operation %s is settled, but its saved request could not be removed: %v\n", operationID, err)
+	}
+}
+
+// signedAct is the owner act a committed protected operation carries.
+type signedAct struct {
+	Act, Audience string
+	Signing       []byte
+	Signature     string
+}
+
+// signedActFor is the act in a committed receipt's result, if it is exactly
+// the act aw requested in intent (act, team, audience and subject), signed
+// by authorityKeyDID, the controller key the operator's profile pins, and
+// still valid at now. Anything else is signed_act_invalid and is not sent.
+func signedActFor(intent map[string]any, authorityKeyDID string, result []byte, now time.Time) (*signedAct, error) {
+	invalid := func(format string, args ...any) error {
+		return withErrorCode("signed_act_invalid", fmt.Errorf("the signed act is not the act aw requested: "+format, args...))
+	}
+	fields, ok := handoff.DecodeObject(result)
+	signingText, _ := fields["signing"].(string)
+	signature, _ := fields["signature"].(string)
+	if !ok || len(fields) != 2 || signingText == "" || signature == "" {
+		return nil, invalid("the receipt's result is not exactly a signing and a signature")
+	}
+	// Go's strict base64 still skips CR and LF; one spelling is accepted.
+	if strings.ContainsAny(signingText+signature, "\r\n") {
+		return nil, invalid("its signing or signature has a line break")
+	}
+	signing, err := base64.StdEncoding.Strict().DecodeString(signingText)
+	if err != nil {
+		return nil, invalid("its signing bytes are not base64")
+	}
+	// The service writes the 64-byte signature in padded base64; the owner-act
+	// contract spells it unpadded, and that canonical spelling is verified and sent.
+	raw, err := base64.StdEncoding.Strict().DecodeString(signature)
+	if err != nil || len(raw) != ed25519.SignatureSize {
+		return nil, invalid("its signature is not 64 bytes of padded base64")
+	}
+	signature = base64.RawStdEncoding.EncodeToString(raw)
+	act, _ := intent["operation"].(string)
+	audience, _ := intent["audience"].(string)
+	subject, _ := intent["subject"].(map[string]any)
+	scope, _ := intent["scope"].(map[string]any)
+	authority, _ := scope["authority"].(map[string]any)
+	teamID, _ := authority["id"].(string)
+	if _, err := awid.VerifyOwnerAct(signing, signature, awid.OwnerActVerifyOptions{
+		TeamID: teamID, CurrentTeamKeyDID: authorityKeyDID, Audience: audience, Acts: []string{act},
+		Now: now, ExpectedSubject: subject, NonceUsed: func(string) bool { return false },
+	}); err != nil {
+		return nil, invalid("%v", err)
+	}
+	return &signedAct{Act: act, Audience: audience, Signing: signing, Signature: signature}, nil
 }

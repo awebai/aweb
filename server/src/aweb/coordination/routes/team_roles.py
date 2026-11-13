@@ -143,39 +143,44 @@ async def create_team_roles_version(
 ) -> TeamRolesVersion:
     """Create a versioned team roles record for a team."""
     serialized = serialized_team_document(bundle)
-    result = await db.fetch_one(
-        """
-        WITH active_check AS (
-            SELECT id
-            FROM {{tables.team_roles}}
-            WHERE team_id = $1 AND is_active = true
-        ),
-        base_check AS (
-            SELECT 1 AS ok
-            WHERE $4::TEXT IS NULL
-               OR EXISTS (SELECT 1 FROM active_check WHERE id::text = $4)
-        ),
-        next_version AS (
-            SELECT COALESCE(MAX(version), 0) + 1 AS version
-            FROM {{tables.team_roles}}
-            WHERE team_id = $1
+    async with db.transaction() as tx:
+        await tx.fetch_value(
+            "SELECT pg_advisory_xact_lock(hashtextextended($1, 0))",
+            f"team-roles-activation:{team_id}",
         )
-        INSERT INTO {{tables.team_roles}} (
+        result = await tx.fetch_one(
+            """
+            WITH active_check AS (
+                SELECT id
+                FROM {{tables.team_roles}}
+                WHERE team_id = $1 AND is_active = true
+            ),
+            base_check AS (
+                SELECT 1 AS ok
+                WHERE $4::TEXT IS NULL
+                   OR EXISTS (SELECT 1 FROM active_check WHERE id::text = $4)
+            ),
+            next_version AS (
+                SELECT COALESCE(MAX(version), 0) + 1 AS version
+                FROM {{tables.team_roles}}
+                WHERE team_id = $1
+            )
+            INSERT INTO {{tables.team_roles}} (
+                team_id,
+                version,
+                bundle_json,
+                created_by_alias
+            )
+            SELECT $1, nv.version, $2::jsonb, $3
+            FROM next_version nv, base_check bc
+            RETURNING id, team_id, version, bundle_json,
+                      created_by_alias, created_at, updated_at
+            """,
             team_id,
-            version,
-            bundle_json,
-            created_by_alias
+            serialized,
+            created_by_alias,
+            base_roles_id,
         )
-        SELECT $1, nv.version, $2::jsonb, $3
-        FROM next_version nv, base_check bc
-        RETURNING id, team_id, version, bundle_json,
-                  created_by_alias, created_at, updated_at
-        """,
-        team_id,
-        serialized,
-        created_by_alias,
-        base_roles_id,
-    )
 
     if not result:
         active = await db.fetch_one(

@@ -44,6 +44,7 @@ func TestIDCreateDelegatedControllerPreflight(t *testing.T) {
 				_ = json.NewEncoder(w).Encode(ns)
 			}))
 			defer srv.Close()
+			t.Setenv("AWID_REGISTRY_URL", srv.URL)
 			resolver := staticTXTResolver{"_awid.example.com": {idCreateDNSRecordValue(parentKey, "")}}
 			err := verifyIDCreateDomainAuthority(context.Background(), resolver, "child.example.com", childKey, srv.URL)
 			if (err == nil) != (mutation == "valid") {

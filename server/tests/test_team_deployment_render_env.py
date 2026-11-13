@@ -26,6 +26,13 @@ def test_each_input_becomes_the_setting_its_service_reads_with_defaults_filled()
         # A team deployment's members all hold registered certificates: an
         # unregistered one is one the registry could never revoke.
         "AWEB_REQUIRE_REGISTERED_CERTIFICATES": "true",
+        # aweb reaches the bundled Redis with the password in its own file;
+        # the URL without one is not set.
+        "AWEB_REDIS_URL": "",
+        "AWEB_REDIS_URL_FILE": "/run/secrets/aweb/redis-url",
+        # aweb delivers federated mail and chat to no other server unless
+        # the operator lists one.
+        "AWEB_FEDERATION_OUTBOUND": "off",
         "AWID_REGISTRY_URL": "https://api.awid.ai",
         "COMPOSE_FILE": "compose.yaml",
         "COMPOSE_PROFILES": "postgres",
@@ -226,6 +233,7 @@ def test_the_agents_section_renders_limits_in_bytes_and_the_address_plan(signer)
         "SERVICES_CIDR": "172.31.0.0/24",
         "TEAM_LOGIN_DIR": "/etc/aweb-secrets/agents",
         "AGENTS_NETWORK": "agents",
+        "AGENTS_GATEWAY": "172.30.0.1",
     }
 
 
@@ -360,6 +368,22 @@ def test_aweb_refuses_internal_app_origins_that_are_not_exact_https_origins(valu
         render_env.render(config)
 
 
+def test_aweb_delivers_federated_messages_only_to_the_servers_the_operator_lists():
+    config = copy.deepcopy(EXAMPLE)
+    config["aweb"]["federationOutbound"] = ["https://aweb.partner.example", "https://mail.other.example:8443"]
+    rendered = render_env.render(config)
+    assert rendered["AWEB_FEDERATION_OUTBOUND"] == "https://aweb.partner.example,https://mail.other.example:8443"
+
+
+@pytest.mark.parametrize("value", [[], ["http://aweb.partner.example"], ["https://aweb.partner.example/v1"], ["off"]])
+def test_aweb_refuses_federation_entries_that_are_not_exact_https_origins(value):
+    # Delivery to no other server is the default, not a list entry.
+    config = copy.deepcopy(EXAMPLE)
+    config["aweb"]["federationOutbound"] = value
+    with pytest.raises(render_env.Refused, match="aweb.federationOutbound"):
+        render_env.render(config)
+
+
 def test_a_kms_key_takes_the_place_of_the_mounted_custody_key():
     secrets = {**app("secrets"), "kmsKeyId": "alias/custody", "kmsRegion": "eu-central-1"}
     rendered = render_env.render({**EXAMPLE, "secrets": secrets})
@@ -465,3 +489,57 @@ def test_a_mirrors_claim_is_a_kubernetes_name(signer, claim):
         render_env.normalize(
             {**EXAMPLE, "agents": kubernetes_agents(mirrorsClaim=claim), "signer": signer, "egress": EGRESS, **APPS}
         )
+
+
+def test_the_agents_network_gateway_is_the_first_address_of_its_subnet(signer):
+    rendered = render_env.render({**EXAMPLE, "agents": AGENTS, "signer": signer, "egress": EGRESS, **APPS})
+    assert rendered["AGENTS_GATEWAY"] == "172.30.0.1"
+    agents = {**AGENTS, "resolverIp": "10.9.0.2", "network": {"subnet": "10.9.0.0/24", "address": "10.9.0.10"}}
+    rendered = render_env.render({**EXAMPLE, "agents": agents, "signer": signer, "egress": EGRESS, **APPS})
+    assert rendered["AGENTS_GATEWAY"] == "10.9.0.1"
+
+
+@pytest.mark.parametrize("taken", ["resolverIp", "address"])
+def test_neither_egress_nor_the_agent_may_take_the_gateway_address(signer, taken):
+    agents = copy.deepcopy(AGENTS)
+    if taken == "resolverIp":
+        agents["resolverIp"] = "172.30.0.1"
+    else:
+        agents["network"]["address"] = "172.30.0.1"
+    with pytest.raises(render_env.Refused, match="gateway"):
+        render_env.render({**EXAMPLE, "agents": agents, "signer": signer, "egress": EGRESS, **APPS})
+
+
+def test_the_agents_public_ca_and_mirrors_add_the_agent_images_own_fragments_only_when_given(signer):
+    base = {**EXAMPLE, "signer": signer, "egress": EGRESS, **APPS}
+    plain = render_env.render({**base, "agents": AGENTS})["COMPOSE_FILE"].split(":")
+    assert not any("compose.agent." in name for name in plain)
+    agents = {**AGENTS, "caFile": "/srv/team/agent-ca.pem", "mirrorsDir": "/srv/team/mirrors"}
+    files = render_env.render({**base, "agents": agents})["COMPOSE_FILE"].split(":")
+    oats = AGENTS["compose"]["oatsSource"]
+    assert files[-2:] == [f"{oats}/container/agent/compose.agent.trust.yaml",
+                          f"{oats}/container/agent/compose.agent.mirrors.yaml"]
+
+
+EGRESS_IMAGE = "registry.example/egress@sha256:" + "e" * 64
+
+
+@pytest.mark.parametrize(
+    ("external", "key"),
+    [
+        ({"knowledge": True}, "knowledge"),
+        ({"source": "https://github.com"}, "source"),
+        ({"model": True, "resolvers": "9.9.9.9"}, "resolvers"),
+        ({"model": True, "resolvers": [53]}, "resolvers"),
+    ],
+)
+def test_egress_external_takes_only_the_two_roles_as_switches_and_a_resolver_list(external, key):
+    config = {**copy.deepcopy(EXAMPLE), "egress": {"image": EGRESS_IMAGE, "external": external}}
+    with pytest.raises(render_env.Refused) as refused:
+        render_env.normalize(config)
+    assert "egress.external" in str(refused.value) and key in str(refused.value)
+
+
+def test_egress_external_defaults_every_role_off():
+    config = {**copy.deepcopy(EXAMPLE), "egress": {"image": EGRESS_IMAGE, "external": {}}}
+    assert render_env.normalize(config)["egress"]["external"] == {"source": False, "model": False, "resolvers": []}

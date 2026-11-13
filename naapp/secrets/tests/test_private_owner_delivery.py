@@ -49,11 +49,11 @@ async def test_tokenless_unknown_team_returns_key_unavailable_before_any_app_eff
     body["signature"] = (
         base64.b64encode(member.team_key.sign(signing).signature).decode().rstrip("=")
     )
-    before = await effects(service, installed["installation_id"])
+    before = await effects(service, installed["installation_id"], member.team_id)
     before_app_reads = len(coordination.calls)
     response = await client.post(settings.console_origin + PATH, json=body)
     assert (response.status_code, response.json()["detail"]) == (503, "team_key_unavailable")
-    assert await effects(service, installed["installation_id"]) == before
+    assert await effects(service, installed["installation_id"], member.team_id) == before
     assert len(coordination.calls) == before_app_reads
     # A missing team must reach real AWID, rather than failing locally because
     # a tokenless client incorrectly insists on a caller certificate ID.

@@ -11,13 +11,18 @@ from datetime import UTC, datetime
 from urllib.parse import parse_qs, urlsplit
 
 import dns.asyncresolver as dns_api
+import httpx
 import pytest
 from aweb_naapp.hooks.owner_act import HumanCredential
 from aweb_naapp_testing import Member, did_key
 from aweb_naapp_testing.network import DnsServer
 from aweb_naapp_testing.webauthn import SoftAuthenticator
 from awid.dns_verify import awid_txt_value
-from awid.id_certificates import encode_id_chain_header, id_certificate_signing_bytes
+from awid.id_certificates import (
+    encode_id_chain_header,
+    id_certificate_signing_bytes,
+    verify_id_chain,
+)
 from nacl.signing import SigningKey
 
 from tests.human_owner import b64, fixture_principal, human
@@ -26,29 +31,34 @@ from tests.test_owner_delivery import PATH, delivery, effects
 from tests.test_production_bootstrap import root as root
 from tests.test_production_handoffs import start_request
 
-pytestmark = pytest.mark.parametrize("root", [{"manifest_version": 3}], indirect=True)
+pytestmark = pytest.mark.parametrize(
+    "root", [{"manifest_version": 3, "real_identity_dns": True}], indirect=True
+)
 
 
 async def collect_credential(root, holder, principal):
     """Use the real H-signed start, browser ceremony and key-bound result."""
-    _, client, settings, *_ = root
+    service, client, settings, *_ = root
     key, verifier, raw, headers = start_request(root, holder, principal)
     started = await client.post(settings.public_origin + "/handoffs", content=raw, headers=headers)
     assert started.status_code == 201, started.text
     handoff = started.json()["handoff_id"]
     prefix = settings.console_origin + f"/handoff/{handoff}/credential"
-    state = await client.get(prefix)
-    assert state.status_code == 200, state.text
-    browser = {"Origin": settings.console_origin, "X-CSRF-Token": state.json()["csrf_token"]}
-    options = await client.post(prefix + "/options", json={}, headers=browser)
-    assert options.status_code == 200, options.text
-    device = SoftAuthenticator(settings.console_origin)
-    completed = await client.post(
-        prefix + "/complete",
-        json={"credential": device.create(options.json())},
-        headers=browser,
-    )
-    assert completed.status_code == 200, completed.text
+    # The ceremony runs in the holder's browser, which keeps its own cookies;
+    # the controller's later delivery must not carry them.
+    async with httpx.AsyncClient(transport=httpx.ASGITransport(service)) as browser_client:
+        state = await browser_client.get(prefix)
+        assert state.status_code == 200, state.text
+        browser = {"Origin": settings.console_origin, "X-CSRF-Token": state.json()["csrf_token"]}
+        options = await browser_client.post(prefix + "/options", json={}, headers=browser)
+        assert options.status_code == 200, options.text
+        device = SoftAuthenticator(settings.console_origin)
+        completed = await browser_client.post(
+            prefix + "/complete",
+            json={"credential": device.create(options.json())},
+            headers=browser,
+        )
+        assert completed.status_code == 200, completed.text
     code = parse_qs(urlsplit(completed.json()["redirect_uri"]).query)["code"][0]
     path = f"/handoffs/{handoff}/result"
     raw = json.dumps({"v": 1, "code": code, "verifier": verifier}).encode()
@@ -156,18 +166,33 @@ async def test_first_session_start_resolves_the_requester_from_runtime_evidence(
             # A legacy holding without retained evidence cannot borrow the
             # requester's certificate to establish the human's membership.
             await db.execute("UPDATE role_holdings SET certificate=NULL")
-        before = await effects(service, installed["installation_id"])
+        before = await effects(service, installed["installation_id"], member.team_id)
         handoffs_before = await db.fetch_value("SELECT count(*) FROM console_handoffs")
         _, _, raw, headers = start_request(root, signer, principal.principal_did, purpose="session")
         if requester not in {"holder", "no_chain"}:
             headers["X-AWID-ID-Chain"] = encode_id_chain_header(
                 {"v": 1, "type": "aweb.id-chain", "certificates": chain}
             )
+        if requester in {"child", "missing_certificate"}:
+            # The direct child's chain must hold under the runtime's own
+            # evidence; otherwise any refusal below says nothing about the
+            # holding. The result carries only outcome codes.
+            bundle = {"v": 1, "type": "aweb.id-chain", "certificates": chain}
+            subject = {"id": signer.extra_cert_fields["member_did_aw"], "did_key": signer.did_key}
+            evidence = await service.runtime.registry_client().id_chain_evidence(
+                bundle, subject, domain="example.com"
+            )
+            verified = verify_id_chain(
+                bundle, subject=subject, evidence=evidence, domain="example.com"
+            )
+            assert (verified.get("identity_valid"), verified.get("kind")) == (True, "agent"), {
+                key: verified.get(key) for key in ("outcome", "reason", "identity_valid", "kind")
+            }
         started = await client.post(
             settings.public_origin + "/handoffs", content=raw, headers=headers
         )
         assert started.status_code == status, started.text
-        assert await effects(service, installed["installation_id"]) == before
+        assert await effects(service, installed["installation_id"], member.team_id) == before
         assert await db.fetch_value("SELECT count(*) FROM console_sessions") == 0
         if code:
             assert started.json()["detail"] == code

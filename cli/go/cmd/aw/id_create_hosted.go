@@ -129,7 +129,7 @@ func runHostedIdentityCreate(cmd *cobra.Command) error {
 	if err != nil {
 		return err
 	}
-	registry, err := newConfiguredRegistryClient(nil, "")
+	registry, err := newConfiguredRegistryClient(nil)
 	if err != nil {
 		return err
 	}

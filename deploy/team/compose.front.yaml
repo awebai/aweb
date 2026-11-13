@@ -1,0 +1,19 @@
+# The deployment's TLS front, in the model only when deployment.yaml has a
+# front section: the rendered COMPOSE_FILE names it. It terminates TLS for
+# every public origin with the operator's certificate and key, and refuses a
+# request whose Host its SNI does not name. teamctl renders its Caddyfile
+# into FRONT_CONFIG_DIR from deployment.yaml (render_env.py --front).
+services:
+  front:
+    image: ${FRONT_IMAGE:?FRONT_IMAGE is required, front.image}
+    restart: unless-stopped
+    read_only: true
+    tmpfs:
+      - /data
+      - /config
+    networks: [services]
+    ports:
+      - "${FRONT_BIND_ADDRESS:-0.0.0.0}:${FRONT_PORT:-443}:443"
+    volumes:
+      - "${SECRETS_DIR:?SECRETS_DIR is required, compose.secretsDir}/${FRONT_SECRETS:-front}:/run/secrets/front:ro"
+      - "${FRONT_CONFIG_DIR:?FRONT_CONFIG_DIR is required; teamctl writes it}:/etc/caddy:ro"

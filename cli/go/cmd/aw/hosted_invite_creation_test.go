@@ -143,6 +143,7 @@ func TestHostedInviteLocalChainVerifiesAndResumesWithoutSecondAccept(t *testing.
 				return (&net.Dialer{}).DialContext(ctx, network, statusServer.Listener.Addr().String())
 			}
 			resolver := staticTXTResolver{"_awid.example.com": {idCreateDNSRecordValue(v.Keys["root"].DIDKey, "https://registry.example.test")}}
+			t.Setenv("AWID_REGISTRY_URL", "https://registry.example.test")
 			registry := awid.NewAWIDRegistryClient(&http.Client{Transport: transport}, resolver)
 			previews, accepts := 0, 0
 			var origin string
@@ -361,6 +362,7 @@ func TestHostedInviteGlobalRegistrationRetainsPerChildInvitation(t *testing.T) {
 				return (&net.Dialer{}).DialContext(ctx, network, registryServer.Listener.Addr().String())
 			}
 			resolver := staticTXTResolver{"_awid.example.com": {idCreateDNSRecordValue(v.Keys["root_rotated"].DIDKey, "https://registry.example.test")}}
+			t.Setenv("AWID_REGISTRY_URL", "https://registry.example.test")
 			registry := awid.NewAWIDRegistryClient(&http.Client{Transport: transport}, resolver)
 			dir := t.TempDir()
 			writeIdentityForTest(t, dir, awconfig.WorktreeIdentity{DID: subject.DIDKey, StableID: subject.DIDAW, Custody: "self", IdentityScope: "global", RegistryStatus: "registered", CreatedAt: "2026-10-26T00:00:00Z"})

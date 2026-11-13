@@ -212,6 +212,7 @@ func testProvisionHostedIdentityForwardsInboundMode(t *testing.T, mode string) {
 		}
 	}))
 
+	t.Setenv("AWID_REGISTRY_URL", server.URL)
 	_, err = provisionHostedIdentity(server.URL, server.URL, "alice", "laptop", true, mode)
 	if err != nil {
 		t.Fatalf("provisionHostedIdentity: %v", err)
@@ -285,6 +286,7 @@ func TestProvisionHostedIdentityOmitsInboundModeWhenUnset(t *testing.T) {
 	}))
 
 	// Pass "" for inboundMode → field must be omitted from the wire body.
+	t.Setenv("AWID_REGISTRY_URL", server.URL)
 	_, err = provisionHostedIdentity(server.URL, server.URL, "bob", "laptop", true, "")
 	if err != nil {
 		t.Fatalf("provisionHostedIdentity: %v", err)
@@ -409,6 +411,7 @@ func testAPIKeyExplicitModeReadback(t *testing.T, mode, actual string, wantFailu
 	})
 
 	tmp := t.TempDir()
+	setInitAWIDRegistryFlagForTest(t, server.URL)
 	_, err = runAPIKeyBootstrapInit(apiKeyInitRequest{
 		WorkingDir:  tmp,
 		AwebURL:     externalLikeTestURL(t, server.URL),
@@ -527,6 +530,7 @@ func TestRunAPIKeyBootstrapInitOmitsInboundModeWhenUnset(t *testing.T) {
 	})
 
 	tmp := t.TempDir()
+	setInitAWIDRegistryFlagForTest(t, server.URL)
 	_, err = runAPIKeyBootstrapInit(apiKeyInitRequest{
 		WorkingDir:  tmp,
 		AwebURL:     externalLikeTestURL(t, server.URL),

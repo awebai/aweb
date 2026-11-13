@@ -67,17 +67,44 @@ func (p localLogPolicy) sealing() bool {
 	return key.record != nil || key.err != nil
 }
 
-// verifyLogKeyRecordForSelection accepts rec only when the team key named by
-// the selection's own team certificate signed it.
+// verifyLogKeyRecordForSelection accepts rec only when the selection's team
+// key signed it: the key its own team certificate names, or for a grant seat,
+// which holds no certificate, the key its grant recorded at mint.
 func verifyLogKeyRecordForSelection(sel *awconfig.Selection, rec *awid.LogKeyRecord) error {
-	cert, err := loadTeamCertificateAt(sel.WorkingDir, sel.IdentityHome, sel.TeamID)
+	teamDIDKey, err := logKeyVerificationTeamKey(sel)
 	if err != nil {
-		return fmt.Errorf("load the team certificate to verify the log key: %w", err)
+		return err
 	}
-	if err := awid.VerifyLogKeyRecord(rec, sel.TeamID, cert.TeamDIDKey); err != nil {
+	if err := awid.VerifyLogKeyRecord(rec, sel.TeamID, teamDIDKey); err != nil {
 		return fmt.Errorf("log key for team %s: %w", sel.TeamID, err)
 	}
 	return nil
+}
+
+func logKeyVerificationTeamKey(sel *awconfig.Selection) (string, error) {
+	if awconfig.IsGrantHome(sel.IdentityHome) {
+		grant, err := awconfig.LoadGrantHome(sel.IdentityHome)
+		if err != nil {
+			return "", fmt.Errorf("load the grant to verify the log key: %w", err)
+		}
+		return grantLogKeyTeamKey(grant, sel.TeamID)
+	}
+	cert, err := loadSelectedTeamCertificate(sel)
+	if err != nil {
+		return "", fmt.Errorf("load the team certificate to verify the log key: %w", err)
+	}
+	return cert.TeamDIDKey, nil
+}
+
+// grantLogKeyTeamKey is the team key a grant of teamID recorded at mint.
+func grantLogKeyTeamKey(grant *awconfig.GrantHome, teamID string) (string, error) {
+	if strings.TrimSpace(grant.TeamID) != strings.TrimSpace(teamID) {
+		return "", fmt.Errorf("grant %s is for team %s, not %s", grant.GrantID, grant.TeamID, teamID)
+	}
+	if strings.TrimSpace(grant.TeamDIDKey) == "" {
+		return "", fmt.Errorf("grant %s records no team key, so it cannot verify the team's owner log key; re-mint it with `aw id grant mint`", grant.GrantID)
+	}
+	return strings.TrimSpace(grant.TeamDIDKey), nil
 }
 
 // appendLocalLogLine appends entry, one JSON object, to path: sealed to the

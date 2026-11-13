@@ -58,9 +58,16 @@ def trust(ca: str) -> None:
     nssdb.mkdir(parents=True, exist_ok=True)
     if not (nssdb / "cert9.db").exists():
         subprocess.run(["certutil", "-d", f"sql:{nssdb}", "-N", "--empty-password"], check=True)
-    subprocess.run(
-        ["certutil", "-d", f"sql:{nssdb}", "-A", "-t", "C,,", "-n", "lane-ca", "-i", ca], check=True
-    )
+    # certutil -A reads one certificate from a file: each authority the file
+    # holds is added under its own name.
+    end = "-----END CERTIFICATE-----"
+    for number, block in enumerate(Path(ca).read_text().split(end)[:-1]):
+        one = nssdb / f"lane-ca-{number}.pem"
+        one.write_text(block.strip() + "\n" + end + "\n")
+        subprocess.run(
+            ["certutil", "-d", f"sql:{nssdb}", "-A", "-t", "C,,", "-n", f"lane-ca-{number}", "-i", str(one)],
+            check=True,
+        )
 
 
 def authenticator(page, user_verified: bool):
@@ -208,6 +215,30 @@ def approve(args, browser) -> None:
     print(json.dumps(report))
 
 
+def credential(args, browser) -> None:
+    """A holder's credential handoff on an app's human origin: the page shows
+    the scope, the passkey is created on the action, and the page hands back to
+    aw's loopback. The new credential is written to --device."""
+    page = browser.new_context().new_page()
+    cdp, authenticator_id = authenticator(page, True)
+    report: dict[str, Any] = {"states": []}
+    page.goto(args.url)
+    report["states"].append(wait_state(page, ("ready", "refused")))
+    if report["states"][-1] == "ready":
+        report["principal"] = page.text_content("#handoff-principal")
+        report["role"] = page.text_content("#handoff-role")
+        page.click("#handoff-action")
+        report["states"].append(wait_state(page, TERMINAL + ("ready",)))
+    credentials = cdp.send("WebAuthn.getCredentials", {"authenticatorId": authenticator_id})["credentials"]
+    device = Path(args.device)
+    device.write_text(json.dumps(credentials))
+    device.chmod(0o600)
+    report["credentials"] = len(credentials)
+    if report["states"][-1] != "navigated":
+        report["status"] = page.text_content("#handoff-status")
+    print(json.dumps(report))
+
+
 def main() -> None:
     parser = argparse.ArgumentParser(
         description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter
@@ -216,6 +247,9 @@ def main() -> None:
     p = commands.add_parser("enrol-page")
     for name in ("--url", "--device", "--ca"):
         p.add_argument(name, required=True)
+    c = commands.add_parser("credential")
+    for name in ("--url", "--device", "--ca"):
+        c.add_argument(name, required=True)
     a = commands.add_parser("approve")
     for name in ("--url", "--device", "--ca"):
         a.add_argument(name, required=True)
@@ -231,7 +265,7 @@ def main() -> None:
     with sync_playwright() as playwright:
         browser = playwright.chromium.launch()
         try:
-            {"enrol-page": enrol_page, "approve": approve}[args.command](args, browser)
+            {"enrol-page": enrol_page, "credential": credential, "approve": approve}[args.command](args, browser)
         finally:
             browser.close()
 

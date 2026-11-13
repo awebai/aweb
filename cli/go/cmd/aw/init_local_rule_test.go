@@ -77,6 +77,7 @@ func TestImplicitLocalInitRefusesALocalNamespaceHeldByAnotherController(t *testi
 			"verification_status": "verified", "created_at": "2026-04-12T00:00:00Z",
 		})
 	}))
+	t.Setenv("AWID_REGISTRY_URL", registry.URL)
 	_, err := runImplicitLocalInit(implicitLocalInitRequest{
 		WorkingDir:  t.TempDir(),
 		AwebURL:     "http://localhost:8100",
@@ -128,6 +129,7 @@ func TestImplicitLocalInitRefusesATeamThatAlreadyExists(t *testing.T) {
 				http.NotFound(w, r)
 			}
 		}))
+		t.Setenv("AWID_REGISTRY_URL", registry.URL)
 		_, err := runImplicitLocalInit(implicitLocalInitRequest{
 			WorkingDir:  t.TempDir(),
 			AwebURL:     "http://localhost:8100",
@@ -274,6 +276,7 @@ func TestImplicitLocalInitRecordsTheRegistryItUsesNow(t *testing.T) {
 			http.Error(w, "stop", http.StatusTeapot)
 		}
 	}))
+	t.Setenv("AWID_REGISTRY_URL", registry.URL)
 	_, _ = runImplicitLocalInit(implicitLocalInitRequest{
 		WorkingDir:  t.TempDir(),
 		AwebURL:     "http://localhost:8100",

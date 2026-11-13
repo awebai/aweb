@@ -272,7 +272,7 @@ func TestBeadsMailSendAndReplyAgainstLocalServer(t *testing.T) {
 
 	run := func(args ...string) (string, error) {
 		cmd := exec.CommandContext(ctx, bin, append([]string{"beads-mail"}, args...)...)
-		cmd.Env = append(testCommandEnv(tmp), "AWEB_URL="+server.URL)
+		cmd.Env = append(testCommandEnv(tmp), "AWEB_URL="+server.URL, "AWID_REGISTRY_URL="+server.URL)
 		cmd.Dir = tmp
 		out, err := cmd.CombinedOutput()
 		return string(out), err
@@ -406,7 +406,7 @@ func TestBeadsMailSendAndReplyAgainstLocalServer(t *testing.T) {
 	principalSendCount := len(sendFromDIDs)
 	cmdExternal := exec.CommandContext(ctx, bin, "--identity-home", filepath.Join(principalRoot, ".aw"),
 		"beads-mail", "send", "mayor/", "-s", "principal speaks", "-m", "hello")
-	cmdExternal.Env = append(testCommandEnv(tmp), "AWEB_URL="+server.URL)
+	cmdExternal.Env = append(testCommandEnv(tmp), "AWEB_URL="+server.URL, "AWID_REGISTRY_URL="+server.URL)
 	cmdExternal.Dir = tmp
 	if out, err := cmdExternal.CombinedOutput(); err != nil {
 		t.Fatalf("external-principal send failed: %v\n%s", err, out)

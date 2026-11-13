@@ -8,16 +8,17 @@ import pytest
 from aweb_naapp.hooks.envelope import verify
 from aweb_naapp.hooks.producer import HookProducer, ServerProducer
 from aweb_naapp.outbox import apply_outbox_migrations
-from aweb_naapp.roles import assign, principal_key
+from aweb_naapp.roles import principal_key
 from aweb_naapp.runtime.clock import seconds_to_ns
 from aweb_naapp_testing.owner_acts import INSTALLATION_ID
 
 from aweb_secrets.containment import Containment, ContainmentRefused
-from aweb_secrets.owners import OWNER_ROLE
+from aweb_secrets.owners import OWNER_ROLE, has_owner
 from aweb_secrets.tokens import ProcessTokenCache, TokenKey
-from tests.test_change_sets import TEAM, world  # noqa: F401
+from tests.human_owner import canonical_actor
+from tests.test_change_sets import ALICE, TEAM, world  # noqa: F401
 from tests.test_use_approval_lineage import child, seed
-from tests.test_use_approvals import REQUESTER, SECRET_ID
+from tests.test_use_approvals import SECRET_ID
 from tests.test_use_approvals import uses as _uses
 
 uses = _uses
@@ -26,8 +27,8 @@ uses = _uses
 async def service(uses):  # noqa: F811
     w = uses.world
     await apply_outbox_migrations(w.db)
-    async with w.db.transaction() as tx:
-        await assign(tx, principal_key(REQUESTER), OWNER_ROLE)
+    # uses already designated ALICE through the canonical reviewed holder path.
+    assert await has_owner(w.db, ALICE, installation_id=w.admitted.installation_id)
     producer = HookProducer(
         ServerProducer.app(
             origin="https://api.secrets.example.com",
@@ -55,7 +56,7 @@ async def service(uses):  # noqa: F811
 async def act(svc, uses, action="disable-secret", target=SECRET_ID, request_id="contain-1"):  # noqa: F811
     return await svc.by_member(
         grant=uses.grant,
-        principal=REQUESTER,
+        principal=canonical_actor(uses.world, ALICE),
         request_id=request_id,
         action=action,
         target=target,
@@ -99,14 +100,14 @@ async def test_role_and_team_are_checked_before_containment(uses):  # noqa: F811
     svc = await service(uses)
     before = await uses.world.db.fetch_value("SELECT count(*) FROM {{tables.outbox_events}}")
     async with uses.world.db.transaction() as tx:
-        await unassign(tx, principal_key(REQUESTER), OWNER_ROLE)
+        await unassign(tx, ALICE, OWNER_ROLE)
     with pytest.raises(ContainmentRefused) as refused:
         await act(svc, uses)
     assert refused.value.code == "owner_required"
     with pytest.raises(ContainmentRefused) as refused:
         await svc.by_member(
             grant=uses.grant,
-            principal=replace(REQUESTER, team_id="other:example.com"),
+            principal=replace(canonical_actor(uses.world, ALICE), team_id="other:example.com"),
             request_id="bad-team",
             action="disable-secret",
             target=SECRET_ID,
@@ -233,7 +234,7 @@ async def test_team_auth_refuses_last_enrolled_owner_contact_or_key(uses, passke
     with pytest.raises(ContainmentRefused) as refused:
         await svc.by_member(
             grant=uses.grant,
-            principal=REQUESTER,
+            principal=canonical_actor(uses.world, ALICE),
             request_id="last-owner",
             action="revoke-approver",
             target=scope,
@@ -260,7 +261,7 @@ async def test_another_enrolled_owner_allows_team_auth_credential_containment(us
     )
     await svc.by_member(
         grant=uses.grant,
-        principal=REQUESTER,
+        principal=canonical_actor(uses.world, ALICE),
         request_id="contain-owner",
         action="revoke-approver",
         target=scope,
@@ -355,7 +356,7 @@ async def test_last_owner_can_revoke_one_key_when_another_survives(uses):  # noq
     lost = next(iter(uses.world.devices["alice@acme.com"].credentials))
     await svc.by_member(
         grant=uses.grant,
-        principal=REQUESTER,
+        principal=canonical_actor(uses.world, ALICE),
         request_id="lost-device",
         action="revoke-approver",
         target=scope,

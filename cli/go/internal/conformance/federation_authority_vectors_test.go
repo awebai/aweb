@@ -99,8 +99,8 @@ type federationVectorPin struct {
 
 var federationVectorPins = map[string]federationVectorPin{
 	"federation-origin-ip-v1.json": {
-		bytes:  12746,
-		sha256: "6d6ec789c4d994913ae84a26021a8e8fe0c7eb3aaf008ee10ce623db7a87cb18",
+		bytes:  15231,
+		sha256: "503136cce893f63f0b7fe21525e0de03b873dae2d043debe1b80756c0fe66e43",
 	},
 	"federation-discovery-v1.json": {
 		bytes:  18774,

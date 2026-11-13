@@ -143,6 +143,7 @@ func TestWhoAsksTheKeyRouteAboutAChainlessGlobalID(t *testing.T) {
 				_ = json.NewEncoder(w).Encode(response)
 			}))
 			defer server.Close()
+			t.Setenv("AWID_REGISTRY_URL", server.URL)
 			path := filepath.Join(dir, ".aw", "identity.yaml")
 			identity, err := awconfig.LoadWorktreeIdentityFrom(path)
 			if err != nil {

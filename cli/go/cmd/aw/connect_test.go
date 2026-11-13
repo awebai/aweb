@@ -140,7 +140,7 @@ func TestConnectBootstrapGlobal(t *testing.T) {
 	buildAwBinary(t, ctx, bin)
 
 	run := exec.CommandContext(ctx, bin, "connect", "--bootstrap-token", "tok-123", "--address", "juanre.aweb.ai/laptop-agent", "--mock-url", server.URL)
-	run.Env = idCreateCommandEnv(tmp)
+	run.Env = append(idCreateCommandEnv(tmp), "AWID_REGISTRY_URL="+server.URL)
 	run.Dir = tmp
 	out, err := run.CombinedOutput()
 	if err != nil {
@@ -220,8 +220,6 @@ func TestConnectBootstrapGlobal(t *testing.T) {
 }
 
 func TestRegisterBootstrapDIDTreatsSameKeyAlreadyRegisteredAsSuccess(t *testing.T) {
-	t.Parallel()
-
 	pub, priv, err := awid.GenerateKeypair()
 	if err != nil {
 		t.Fatal(err)
@@ -252,6 +250,7 @@ func TestRegisterBootstrapDIDTreatsSameKeyAlreadyRegisteredAsSuccess(t *testing.
 		}
 	}))
 
+	t.Setenv("AWID_REGISTRY_URL", server.URL)
 	dns := &countingTXTResolver{}
 	registry := awid.NewAWIDRegistryClient(server.Client(), dns)
 	if err := registry.SetFallbackRegistryURL(server.URL); err != nil {
@@ -531,7 +530,7 @@ func TestConnectBootstrapUsesDiscoveryAwebURLForConnect(t *testing.T) {
 	buildAwBinary(t, ctx, bin)
 
 	run := exec.CommandContext(ctx, bin, "connect", "--bootstrap-token", "tok-123", "--address", "juanre.aweb.ai/laptop-agent", "--mock-url", onboardingServer.URL)
-	run.Env = idCreateCommandEnv(tmp)
+	run.Env = append(idCreateCommandEnv(tmp), "AWID_REGISTRY_URL="+onboardingServer.URL)
 	run.Dir = tmp
 	out, err := run.CombinedOutput()
 	if err != nil {

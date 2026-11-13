@@ -9,9 +9,11 @@ schema has no key that could hold one.
 """
 
 import copy
+import ipaddress
 import json
 import sys
 from pathlib import Path
+from urllib.parse import urlsplit
 
 import jsonschema
 import yaml
@@ -108,7 +110,7 @@ def _collect(schema: dict, value: object, out: dict[str, str]) -> None:
 
 
 # The components an operator can leave out, each in its own Compose file.
-OPTIONAL_COMPONENTS = ("secrets", "logs", "signer", "agents")
+OPTIONAL_COMPONENTS = ("secrets", "logs", "signer", "agents", "front")
 
 # Where the signer's public configuration is mounted, outside its secrets.
 SIGNER_CONFIG = "/etc/aweb/signer"
@@ -163,6 +165,14 @@ def render(config: object) -> dict[str, str]:
             out["AWEB_PROTECTED_EMAIL_CA_FILE"] = f"{SIGNER_CONFIG}/email-ca.pem"
     if "agents" in config:
         out["EGRESS_ADDRESS"] = config["agents"]["resolverIp"]
+        # The agents network's gateway is its subnet's first address; neither
+        # egress nor the agent may hold it.
+        gateway = str(next(ipaddress.ip_network(out["AGENTS_SUBNET"]).hosts()))
+        for key, address in (("agents.resolverIp", config["agents"]["resolverIp"]),
+                             ("agents.network.address", config["agents"]["network"]["address"])):
+            if address == gateway:
+                raise Refused(f"{key}: is the agents network's gateway address")
+        out["AGENTS_GATEWAY"] = gateway
         # The name the agent's own Compose file gives the network; the
         # deployment's agents network takes its place.
         out["AGENTS_NETWORK"] = "agents"
@@ -174,6 +184,13 @@ def render(config: object) -> dict[str, str]:
     # aw id team add-member, so aweb refuses one the registry does not hold:
     # an unregistered certificate is one no revocation could ever name.
     out["AWEB_REQUIRE_REGISTERED_CERTIFICATES"] = "true"
+    # The bundled Redis refuses a client without its password, which aweb
+    # reads with the whole URL from its own file.
+    out["AWEB_REDIS_URL"] = ""
+    out["AWEB_REDIS_URL_FILE"] = "/run/secrets/aweb/redis-url"
+    # aweb delivers federated mail and chat only to the servers the operator
+    # lists, and to none unless it lists one.
+    out["AWEB_FEDERATION_OUTBOUND"] = ",".join(config["aweb"].get("federationOutbound", [])) or "off"
     # aweb fetches app manifests from internal addresses only inside the services range.
     if "appInternalOrigins" in config["aweb"]:
         out["AWEB_APP_INTERNAL_CIDR"] = config["network"]["servicesCidr"]
@@ -183,11 +200,56 @@ def render(config: object) -> dict[str, str]:
             out[f"{app.upper()}_HOOK_INTERNAL_DESTINATIONS"] = "allowed"
             out[f"{app.upper()}_HOOK_INTERNAL_CIDR"] = config["network"]["servicesCidr"]
     # A component the operator leaves out has no file in the model.
-    out["COMPOSE_FILE"] = ":".join(
-        ["compose.yaml", *(f"compose.{name}.yaml" for name in OPTIONAL_COMPONENTS if name in config)]
-    )
+    files = ["compose.yaml", *(f"compose.{name}.yaml" for name in OPTIONAL_COMPONENTS if name in config)]
+    # The agent image's own fragments for the agents' optional inputs, from its
+    # pinned source: the public CA they trust and the operator's Git mirrors.
+    for key, fragment in (("caFile", "trust"), ("mirrorsDir", "mirrors")):
+        if key in config.get("agents", {}):
+            files.append(f"{config['agents']['compose']['oatsSource']}/container/agent/compose.agent.{fragment}.yaml")
+    out["COMPOSE_FILE"] = ":".join(files)
     if config["postgres"].get("bundled", True):
         out["COMPOSE_PROFILES"] = "postgres"
+    return out
+
+
+# Each public origin the front serves, and the service behind it.
+FRONT_SITES = (
+    ("aweb", "publicOrigin", "aweb:8000"),
+    ("secrets", "publicOrigin", "secrets:8770"),
+    ("secrets", "consoleOrigin", "secrets:8770"),
+    ("logs", "publicOrigin", "logs:8765"),
+    ("logs", "consoleOrigin", "logs:8765"),
+    ("signer", "requestOrigin", "signer:8080"),
+    ("signer", "humanOrigin", "signer:8080"),
+)
+
+# Where the front's certificate chain and key are mounted.
+FRONT_SECRETS = "/run/secrets/front"
+
+
+def render_front(config: object) -> str:
+    """The front's Caddyfile: one site per public origin, each with the
+    operator's certificate. A request whose Host its TLS SNI does not name is
+    refused (strict_sni_host); Caddy compares hostnames alone, so each site
+    also refuses, itself, any authority but its own host on port 443: the
+    signer's request host must never reach its human host."""
+    config = normalize(config)
+    if "front" not in config:
+        raise Refused("front: missing; the deployment has no front to render")
+    out = "{\n  auto_https off\n  servers {\n    strict_sni_host on\n  }\n}\n"
+    for component, key, upstream in FRONT_SITES:
+        if component not in config:
+            continue
+        origin = urlsplit(config[component][key])
+        if origin.port not in (None, 443):
+            raise Refused(f"{component}.{key}: the front serves origins on port 443 only")
+        host = origin.hostname
+        out += (
+            f"{host}:443 {{\n  tls {FRONT_SECRETS}/certificate.pem {FRONT_SECRETS}/key.pem\n"
+            f"  @misdirected not header_regexp Host ^{host.replace('.', '[.]')}(:443)?$\n"
+            "  respond @misdirected 421\n"
+            f"  reverse_proxy {upstream}\n}}\n"
+        )
     return out
 
 
@@ -199,14 +261,16 @@ def env_file(settings: dict[str, str]) -> str:
 
 
 def main(argv: list[str]) -> int:
-    if len(argv) != 2:
-        print("usage: render_env.py deployment.yaml", file=sys.stderr)
+    front = len(argv) == 3 and argv[1] == "--front"
+    if len(argv) != 2 and not front:
+        print("usage: render_env.py [--front] deployment.yaml", file=sys.stderr)
         return 2
+    path = argv[-1]
     try:
-        config = yaml.safe_load(Path(argv[1]).read_text(encoding="utf-8"))
-        sys.stdout.write(env_file(render(config)))
+        config = yaml.safe_load(Path(path).read_text(encoding="utf-8"))
+        sys.stdout.write(render_front(config) if front else env_file(render(config)))
     except (OSError, yaml.YAMLError) as exc:
-        print(f"render_env: {argv[1]} cannot be read: {type(exc).__name__}", file=sys.stderr)
+        print(f"render_env: {path} cannot be read: {type(exc).__name__}", file=sys.stderr)
         return 1
     except Refused as refused:
         print(f"render_env: {refused}", file=sys.stderr)

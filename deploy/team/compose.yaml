@@ -12,15 +12,20 @@
 # compose.signer.yaml). A component it leaves out is not in the model at all,
 # so none of its settings is required.
 services:
-  # aweb's cache, reachable by aweb alone.
+  # aweb's cache, reachable by aweb alone and only with the password. The
+  # ACL file holds the password's SHA-256; aweb's redis-url holds the
+  # password itself.
   redis:
     image: redis:7-alpine
     restart: unless-stopped
+    command: ["redis-server", "--aclfile", "/run/secrets/redis/users.acl"]
     networks: [backend]
     volumes:
       - redis_data:/data
+      - "${SECRETS_DIR:?SECRETS_DIR is required, compose.secretsDir}/redis:/run/secrets/redis:ro"
     healthcheck:
-      test: ["CMD", "redis-cli", "ping"]
+      # Up, and refusing a client that has not authenticated.
+      test: ["CMD-SHELL", "redis-cli ping | grep -q '^NOAUTH'"]
       interval: 10s
       timeout: 5s
       retries: 5
@@ -78,6 +83,9 @@ networks:
     ipam:
       config:
         - subnet: ${AGENTS_SUBNET:-172.30.0.0/24}
+          # Explicit: the boundary probe reads this network's own IPv4 gateway,
+          # which Docker leaves unreported for an isolated bridge it allocates.
+          gateway: ${AGENTS_GATEWAY:-172.30.0.1}
 
   # aweb and Redis: no app, signer or agent reaches Redis.
   backend:

@@ -9,7 +9,7 @@ import yaml
 REPO_ROOT = Path(__file__).resolve().parents[2]
 TEAM = REPO_ROOT / "deploy" / "team"
 COMPOSE = yaml.safe_load((TEAM / "compose.yaml").read_text(encoding="utf-8"))
-OPTIONAL = ("secrets", "logs", "signer")
+OPTIONAL = ("secrets", "logs", "signer", "front")
 COMPONENT_FILES = {name: (TEAM / f"compose.{name}.yaml").read_text(encoding="utf-8") for name in OPTIONAL}
 SERVICES = {
     **COMPOSE["services"],
@@ -52,7 +52,7 @@ def test_an_optional_component_is_its_own_file_and_the_core_file_needs_none_of_i
 
 
 def test_the_services_are_on_the_services_network_and_none_is_on_the_agents_network():
-    for name in ("secrets", "logs", "signer", "postgres"):
+    for name in ("secrets", "logs", "signer", "postgres", "front"):
         assert SERVICES[name]["networks"] == ["services"], name
     assert SERVICES["aweb"]["networks"] == ["services", "backend"]
 
@@ -71,7 +71,11 @@ def test_the_agents_network_has_no_route_out():
     # bridge's gateway address; isolated removes that address's route.
     assert networks["agents"]["driver_opts"] == {"com.docker.network.bridge.gateway_mode_ipv4": "isolated"}
     assert networks["agents"]["enable_ipv6"] is False
-    assert networks["agents"]["ipam"]["config"] == [{"subnet": "${AGENTS_SUBNET:-172.30.0.0/24}"}]
+    # An explicit gateway: the boundary probe reads the agents network's own
+    # IPv4 gateway, which Docker leaves unreported for an isolated bridge it allocates.
+    assert networks["agents"]["ipam"]["config"] == [
+        {"subnet": "${AGENTS_SUBNET:-172.30.0.0/24}", "gateway": "${AGENTS_GATEWAY:-172.30.0.1}"}
+    ]
     assert "internal" not in networks["services"]
     assert networks["services"]["ipam"]["config"] == [
         {"subnet": "${SERVICES_CIDR:?SERVICES_CIDR is required, network.servicesCidr}"}
@@ -108,17 +112,38 @@ def test_each_service_mounts_only_its_own_secrets_read_only():
         "logs": [f"{secrets_dir}/${{LOGS_SECRETS:-logs}}:/run/secrets/logs:ro"],
         "signer": [f"{secrets_dir}/${{SIGNER_SECRETS:-signer}}:/run/secrets/signer:ro"],
         "postgres": [f"{secrets_dir}/${{POSTGRES_SECRETS:-postgres}}:/run/secrets/postgres:ro"],
-        "redis": [],
+        "front": [f"{secrets_dir}/${{FRONT_SECRETS:-front}}:/run/secrets/front:ro"],
+        "redis": [f"{secrets_dir}/redis:/run/secrets/redis:ro"],
     }
 
 
-def test_only_aweb_and_the_apps_are_published_and_on_the_address_the_operator_gave():
+def test_redis_refuses_a_client_without_the_password_in_its_acl_file():
+    # The ACL file holds the password's SHA-256 alone; the password is in
+    # aweb's redis-url and in no argument or environment.
+    redis = SERVICES["redis"]
+    assert redis["command"] == ["redis-server", "--aclfile", "/run/secrets/redis/users.acl"]
+    assert "environment" not in redis
+    # Healthy is up and refusing a client that has not authenticated.
+    assert redis["healthcheck"]["test"] == ["CMD-SHELL", "redis-cli ping | grep -q '^NOAUTH'"]
+
+
+def test_aweb_takes_its_redis_url_from_the_env_file_or_the_bundled_default():
+    # The team deployment's env file sets the URL empty and names the file;
+    # the customer file's env sets neither and keeps the default.
+    assert environment(AWEB)["AWEB_REDIS_URL"] == "${AWEB_REDIS_URL-redis://redis:6379/0}"
+    assert environment(AWEB)["AWEB_REDIS_URL_FILE"] is None
+
+
+def test_only_the_front_aweb_and_the_apps_are_published_and_on_the_address_the_operator_gave():
+    # The front is the public TLS ingress; the others are its upstreams, on
+    # the address an operator's own reverse proxy reaches when there is no front.
     published = {name: service["ports"] for name, service in SERVICES.items() if "ports" in service}
     assert published == {
         "aweb": ["${AWEB_BIND_ADDRESS:-127.0.0.1}:${AWEB_PORT:-8000}:8000"],
         "secrets": ["${SECRETS_BIND_ADDRESS:-127.0.0.1}:${SECRETS_PORT:-8770}:8770"],
         "logs": ["${LOGS_BIND_ADDRESS:-127.0.0.1}:${LOGS_PORT:-8765}:8765"],
         "signer": ["${SIGNER_BIND_ADDRESS:-127.0.0.1}:${SIGNER_PORT:-8080}:8080"],
+        "front": ["${FRONT_BIND_ADDRESS:-0.0.0.0}:${FRONT_PORT:-443}:443"],
     }
 
 
@@ -138,6 +163,11 @@ def test_the_team_and_the_customer_file_run_the_same_aweb_service():
 def test_aweb_requires_registered_certificates_only_where_the_env_file_says_so():
     # The team deployment's renderer always says so; the customer file's env does not.
     assert environment(AWEB)["AWEB_REQUIRE_REGISTERED_CERTIFICATES"] is None
+
+
+def test_aweb_is_given_its_federation_outbound_setting_only_when_the_env_file_has_it():
+    # The team deployment's renderer always renders it; unset, aweb delivers anywhere.
+    assert environment(AWEB)["AWEB_FEDERATION_OUTBOUND"] is None
 
 
 def test_aweb_is_given_its_internal_app_origins_only_when_the_env_file_has_them():
@@ -170,6 +200,12 @@ def test_the_bundled_postgres_creates_a_database_and_role_per_component_at_first
     # argument and no environment.
     assert "\\set password `cat :'file'`" in script
     assert "-v password" not in script and "PGPASSWORD" not in script
+    # A refused CREATE ROLE logs no statement, so no password reaches the
+    # server's log; the server's own role is no component's. Measured on
+    # postgres:16-alpine with a pre-created role: the earlier script logged
+    # the password, this one logs only the error.
+    assert script.index("SET log_min_error_statement = panic;") < script.index('CREATE ROLE :"role"')
+    assert "postgres) echo" in script
 
 
 def settings_of(section: dict) -> set[str]:
@@ -295,6 +331,13 @@ def test_the_agent_and_its_egress_are_the_oats_sources_own_services():
 def test_the_agent_starts_only_once_its_egress_is_healthy_and_adds_no_route_or_mount():
     agent = AGENTS_FILE["agent"]
     assert agent["depends_on"] == {"egress": {"condition": "service_healthy"}}
-    # Its networks, mounts and limits are the OATS service's: the deployment adds none.
+    # Its networks, mounts and limits are the OATS service's: the deployment
+    # adds none.
     assert set(agent) == {"extends", "depends_on"}
     assert set(AGENTS_FILE) == {"egress", "agent"}
+
+
+def test_the_agent_passes_no_environment_the_image_does_not_accept():
+    # The OATS agent image accepts only its own environment and its CA
+    # variables; any other variable the deployment sets refuses the container.
+    assert "environment" not in AGENTS_FILE["agent"]

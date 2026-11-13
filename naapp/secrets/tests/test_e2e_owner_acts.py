@@ -285,9 +285,14 @@ def test_the_owner_designates_a_human_holder_registered_on_another_machine(lane:
     grant_install_owner(lane, owner["did_key"])
     installed = aw(controller, "plugin", "install", API)
     assert installed["approved"], installed
-    child = holder.act(principal, "plugin", "install", API)
-    holder.answer_passphrases(child)
+    # The holder's machine installs the app host-only: plugin install is not a
+    # human act, and with no agent identity here nothing is registered. Then
+    # the human connects to this server, so its --human commands reach it.
+    aw(holder.container, "plugin", "install", API)
+    child = holder.act(principal, "init", "--url", AWEB)
+    output = holder.answer_passphrases(child)
     child.close()
+    assert child.exitstatus == 0, output
 
     # The holder registers a passkey on their own machine and exports it.
     child = holder.act(principal, "app", "credential", "register",

@@ -25,6 +25,7 @@ func TestReceivedIDTreeReusesTheSameKeySnapshotAndExpiresAt61Seconds(t *testing.
 		}
 		return &http.Response{StatusCode: 200, Header: http.Header{}, Body: io.NopCloser(strings.NewReader(`{"did_aw":"did:aw:sender","current_did_key":"did:key:sender","id_tree":{"enrolled":false}}`))}, nil
 	})}, nil)
+	routeUntrustedResolverRegistriesToInjectedClient(registry)
 	registry.Now = func() time.Time { return now }
 	if err := registry.SetFallbackRegistryURL("http://127.0.0.1:1"); err != nil {
 		t.Fatal(err)
@@ -101,6 +102,7 @@ func TestReceivedAddressIDTreeReadsTheSenderRegistryAndBindsTheFreshKey(t *testi
 				}
 				return &http.Response{StatusCode: status, Header: http.Header{}, Body: io.NopCloser(strings.NewReader(body))}, nil
 			})}, staticTXTResolver{})
+			routeUntrustedResolverRegistriesToInjectedClient(registry)
 			if err := registry.SetIdentityRegistryURL("https://home.registry.test", "observer.example.com"); err != nil {
 				t.Fatal(err)
 			}

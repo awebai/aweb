@@ -216,6 +216,18 @@ every dependent record and retained backup. Replacing the configured local
 key file, changing provider mode or changing a KMS identifier is not a data
 migration. Do not recommend those actions as rotation commands.
 
+For local custody, `/ready` and `/health` also check that every retained sealed
+version names the key loaded by the process. A restart with a different valid
+key therefore reports the `kms` check as an error even when a fresh canary
+round-trips. Inert candidates and private backend credentials count too.
+Restore the original key and restart; do not delete or reseal stored rows to
+make the check pass. Replacing the mounted file alone does not change the key
+already held by a running process. An empty live ciphertext store can pass
+with a new local key; this does not prove that retained backups can be opened.
+Switching to KMS also refuses readiness while retained local-key ciphertext
+exists. A local provider still refuses retained KMS rows. This check does not
+compare KMS identifiers to each other or implement provider migration.
+
 Qualify KMS and local-key operations separately with actual pre-rotation
 ciphertext, fresh writes, restart and backup compatibility. Record the provider
 and the key/version metadata without key material. Provider-managed KMS key
