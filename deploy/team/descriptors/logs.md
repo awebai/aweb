@@ -1,13 +1,14 @@
 Image: `logs.image`, built from `naapp/logs/Dockerfile` at one SOURCE_COMMIT, user `10001:10001`; same artifact and settings on both platforms.
 Port: `8765` HTTP at `logs:8765`; external API and console HTTPS Hosts both route here; no serving TLS key in this container.
 Health endpoint: API Host `GET /live` for liveness; `GET /ready` for readiness (database, outbox); `/health` adds build/check detail. Readiness is not owner/hook-activation acceptance.
-Depends on: provision mounted files and dedicated PostgreSQL database/role first; DNS/customer registry/team-server and SMTP reachable; startup applies package migrations/stores before serving. Start before Secrets hook activation; receiver installation, reader designation and passkey enrolment use supported APIs, never seeded rows.
+Depends on: provision mounted files, the dedicated PostgreSQL database/role and the purge ledger's own database/role first; DNS/customer registry/team-server and SMTP reachable; startup applies package migrations/stores before serving. Start before Secrets hook activation; receiver installation, reader designation and passkey enrolment use supported APIs, never seeded rows.
 
 | Schema key | Existing env name or mount | Type/constraint | Default | Purpose |
 | --- | --- | --- | --- | --- |
 | logs.image | wrapper image reference | Immutable image digest; same in Helm and Compose | required | Build with SOURCE_COMMIT; no credentials in layers |
 | logs.secrets | /run/secrets/logs/ | Existing Kubernetes Secret reference or Compose directory reference; read-only | required | Reference only; never credential values in deployment.yaml/env/argv |
-| logs.databaseUrlFile | LOGS_DATABASE_URL_FILE | Path to whole UTF-8 DSN, including role password; <=1 KiB, one optional LF | /run/secrets/logs/database-url | Secret file; dedicated logs database and role; replaces env-valued DATABASE_URL |
+| fixed | LOGS_DATABASE_URL_FILE | The file `database-url` under `logs.secrets`: whole UTF-8 DSN, including role password; <=1 KiB, one optional LF | /run/secrets/logs/database-url | No schema input: the path is fixed; dedicated logs database and role; replaces env-valued DATABASE_URL |
+| fixed | LOGS_PURGE_LEDGER_DATABASE_URL_FILE | The file `purge-ledger-database-url` under `logs.secrets`: whole UTF-8 DSN, including role password; <=1 KiB, one optional LF | /run/secrets/logs/purge-ledger-database-url | No schema input: the path is fixed; the purge ledger's own database and role (`logsledger` in the bundled PostgreSQL); Logs refuses to start without it, with the variable and the file both set, or when it reaches the content database |
 | logs.dbSchema | LOGS_DB_SCHEMA | PostgreSQL schema identifier | public | Plain config; startup migrations use this schema |
 | logs.appId | LOGS_APP_ID | Stable installed app ID | required | Plain config; choose before installing served manifest |
 | logs.publicOrigin | LOGS_PUBLIC_ORIGIN | Plain HTTPS API origin | required | Plain config; proxy/Ingress preserves external Host; DNS/TLS must match |
@@ -37,6 +38,7 @@ Depends on: provision mounted files and dedicated PostgreSQL database/role first
 | File name under `/run/secrets/logs/` | Owner/mode | Who provisions it |
 | --- | --- | --- |
 | `database-url` | `10001:10001` mode `0400`, or `0:10001` mode `0440`; read-only | Operator/approved provisioner; whole DSN for dedicated role; never chart values/env/argv |
+| `purge-ledger-database-url` | `10001:10001` mode `0400`, or `0:10001` mode `0440`; read-only | Operator/approved provisioner; whole DSN for the purge ledger's own role and database; never chart values/env/argv |
 | `smtp-username` | `10001:10001` mode `0400`, or `0:10001` mode `0440`; read-only | Operator/approved provisioner; credential payload; never chart values/env/argv |
 | `smtp-password` | `10001:10001` mode `0400`, or `0:10001` mode `0440`; read-only | Operator/approved provisioner; credential payload; never chart values/env/argv |
 | `awid-member-key` | `10001:10001` mode `0400`, or `0:10001` mode `0440`; read-only | Operator/approved provisioner; independent K0 key material (64 lowercase hex), except AWID member key uses aw-compatible PEM; never chart values/env/argv |

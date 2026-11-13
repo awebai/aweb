@@ -97,7 +97,7 @@ func protectedRequesterSigner(profile *handoff.Profile, scope map[string]any, id
 	return func(ctx context.Context, method string, target *url.URL, body []byte) (*http.Response, error) {
 		headers, err := handoff.ProtectedRequestHeaders(handoff.ProtectedRequest{
 			Profile: profile, Scope: scope, RequesterID: identity.StableID,
-			Method: method, Path: target.EscapedPath(), Body: body,
+			Method: method, Path: target.RequestURI(), Body: body,
 			Timestamp: time.Now().UTC().Format("2006-01-02T15:04:05Z"),
 			Sign:      handoff.RequestKeySigner(awid.KeySigner(identity.SigningKey)),
 		})

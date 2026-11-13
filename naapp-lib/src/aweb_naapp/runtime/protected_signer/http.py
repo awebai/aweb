@@ -25,38 +25,37 @@ from aweb_naapp.runtime.approvals import ApprovalRefused, RequestNotCanonical, p
 from aweb_naapp.runtime.origins import _host, _origin_hosts
 from aweb_naapp.runtime.passkeys import ProofContextUnavailable
 
+from .catalog import operation_spec
 from .service import ProtectedSigner
 from .types import (
     AdmittedHuman,
     OperationReceipt,
+    OwnerActOperation,
     ProtectedKeyContext,
     ReceiptReader,
     RestrictedRequester,
     RevokeHumanRole,
     SignerRefused,
+    owner_act_operation,
 )
 
-Requester = Callable[[Request, RevokeHumanRole], Awaitable[RestrictedRequester]]
+Requester = Callable[[Request, RevokeHumanRole | OwnerActOperation], Awaitable[RestrictedRequester]]
 Reader = Callable[[Request, str], Awaitable[ReceiptReader]]
 _FIELDS = {"operation_id", "operation", "variant", "scope", "audience", "subject"}
 _SCOPE = {"v", "kind", "service_id", "authority", "human", "generation"}
 _SUBJECT = {"app_id", "installation_id", "role", "principal"}
 
 
-def parse_operation(body: Any) -> RevokeHumanRole:
-    """One closed operation. Envelope possession is not effect authority."""
+def parse_operation(body: Any) -> RevokeHumanRole | OwnerActOperation:
+    """The closed catalog selects the typed codec; possession is not authority."""
     try:
         if not isinstance(body, dict) or not _FIELDS <= set(body) <= _FIELDS | {"redirect_uri"}:
             raise ValueError()
-        if body["operation"] != "human-role.revoke" or body["variant"] != "default":
+        spec = operation_spec(body["operation"], body["variant"])
+        if not spec.consumer_available:
             raise SignerRefused("operation_refused")
         scope, subject = body["scope"], body["subject"]
-        if (
-            not isinstance(scope, dict)
-            or set(scope) != _SCOPE
-            or not isinstance(subject, dict)
-            or set(subject) != _SUBJECT
-        ):
+        if not isinstance(scope, dict) or set(scope) != _SCOPE or not isinstance(subject, dict):
             raise ValueError()
         authority, human = scope["authority"], scope["human"]
         if type(scope["v"]) is not int or scope["v"] != 1 or scope["kind"] != "protected_key":
@@ -68,10 +67,7 @@ def parse_operation(body: Any) -> RevokeHumanRole:
             or set(human) != {"id", "domain"}
         ):
             raise ValueError()
-        if not all(
-            isinstance(v, str) and v
-            for v in [body["operation_id"], body["audience"], *subject.values()]
-        ):
+        if not all(isinstance(v, str) and v for v in [body["operation_id"], body["audience"]]):
             raise ValueError()
         context = ProtectedKeyContext(
             scope["service_id"],
@@ -83,7 +79,17 @@ def parse_operation(body: Any) -> RevokeHumanRole:
             scope["generation"],
         )
         redirect = loopback_redirect(body["redirect_uri"]) if "redirect_uri" in body else None
-        return RevokeHumanRole(
+        if body["operation"] != "human-role.revoke":
+            return OwnerActOperation(
+                body["operation_id"],
+                context,
+                body["audience"],
+                body["operation"],
+                body["variant"],
+                subject,
+                redirect,
+            )
+        legacy = RevokeHumanRole(
             body["operation_id"],
             context,
             body["audience"],
@@ -93,6 +99,8 @@ def parse_operation(body: Any) -> RevokeHumanRole:
             subject["principal"],
             redirect,
         )
+        owner_act_operation(legacy)  # Same closed subject grammar as every sibling.
+        return legacy
     except HandoffWireRefused:
         raise SignerRefused("redirect_uri_refused") from None
     except (ValueError, TypeError, KeyError, ProofContextUnavailable) as exc:
@@ -144,6 +152,10 @@ def _http(error: Exception) -> HTTPException:
             "scope_refused": (403, "scope_refused"),
             "authority_changed": (403, "authority_changed"),
             "policy_changed": (403, "policy_changed"),
+            "live_approval_required": (403, "live_approval_required"),
+            "admission_policy_missing": (403, "admission_policy_missing"),
+            "admission_limit_reached": (403, "admission_limit_reached"),
+            "subject_ineligible": (403, "subject_ineligible"),
             "operation_not_found": (404, "operation_not_found"),
             "operation_conflict": (409, "operation_conflict"),
             "evidence_unavailable": (503, "receipt_unavailable"),
@@ -177,11 +189,14 @@ class ProtectedOperationsHTTP:
         requester: Requester,
         reader: Reader,
         limiter: LoginLimiter,
+        executor: Callable[[Request, str], Awaitable[RestrictedRequester]] | None = None,
+        policy_reader: Callable[[Request, str], Awaitable[dict[str, Any]]] | None = None,
         human_sessions: ConsoleSessions | None = None,
         human_csrf_key: str | None = None,
     ):
         require_canonical_server_origin(request_origin)
         self.signer, self.requester, self.reader, self.limiter = signer, requester, reader, limiter
+        self.policy_reader, self.executor = policy_reader, executor
         self.hosts = _origin_hosts(request_origin)
         if (human_sessions is None) != (human_csrf_key is None):
             raise ValueError("human sessions and CSRF storage key must be configured together")
@@ -208,6 +223,22 @@ class ProtectedOperationsHTTP:
 
     def api_router(self) -> APIRouter:
         router = APIRouter(route_class=ConsoleRoute)
+
+        if self.policy_reader is not None:
+            @router.get("/protected-admission-policies")
+            async def admission_policy(request: Request):
+                try:
+                    await self._guard(request)
+                    if set(request.query_params) != {"team_id"} or len(request.query_params.getlist("team_id")) != 1:
+                        raise SignerRefused("request_invalid")
+                    async for chunk in request.stream():
+                        if chunk:
+                            raise SignerRefused("request_invalid")
+                    request._body = b""
+                    assert self.policy_reader is not None
+                    return await self.policy_reader(request, request.query_params["team_id"])
+                except Exception as error:
+                    raise _http(error) from None
 
         @router.post("/protected-operations")
         async def prepare(request: Request):
@@ -236,6 +267,23 @@ class ProtectedOperationsHTTP:
                 return result
             except Exception as error:
                 raise _http(error) from None
+
+        if self.executor is not None:
+            @router.post("/protected-operations/{operation_id}/execute")
+            async def execute_request(operation_id: str, request: Request):
+                try:
+                    await self._guard(request)
+                    async for chunk in request.stream():
+                        if chunk:
+                            raise SignerRefused("request_invalid")
+                    request._body = b""
+                    assert self.executor is not None
+                    requester = await self.executor(request, operation_id)
+                    if type(requester) is not RestrictedRequester:
+                        raise SignerRefused("requester_invalid")
+                    return receipt_json(await self.signer.execute_request(operation_id, requester=requester))
+                except Exception as error:
+                    raise _http(error) from None
 
         @router.get("/protected-operations/{operation_id}")
         async def receipt(operation_id: str, request: Request):

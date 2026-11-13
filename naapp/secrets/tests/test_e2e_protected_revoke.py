@@ -1,19 +1,24 @@
 """The protected round trip: aw prepares, the human approves in a real browser.
 
-One human-role.revoke goes through the independent protected server
-(aweb.protected_signing.host, HOST.md): the requester's aw prepares it with
-its covering-v2 proof, the approving human logs in on the console page in a
-fresh Chromium tab with a passkey and approves the exact act with a separate
-user verification, the server signs with the team controller key only it
-holds, and aw reports the exact committed receipt. The signed act is retained
-in the receipt and local audit; it is NOT applied to the app (acxy.9).
+First the approver's holding of the app role, made the supported way while
+the owner still holds the team's key: the owner publishes the team's server,
+installs Secrets and Logs, and designates the approver's passkey once the
+hook bindings the designation's governance needs are in effect. Then the
+signer is provisioned with the team controller key, and the shared body runs:
+the refusals, then one human-role.revoke through the independent protected
+server (aweb.protected_signing.host, HOST.md) whose prepare answer and first
+delivery answer are lost; aw resumes it, the approving human approves the
+exact act in a fresh Chromium tab, the server signs it once, aw delivers it
+and the app applies it; the exact replay is answered applied earlier, and the
+app's own records show one effect.
 
 Real: AWID with DNS verification, aweb, the secrets app installed as a
-disposable fixture app, the protected server image with ProtectedControllerCustody,
-the aw binary, Chromium running the console page's own script. Substituted:
-the outbound notification transport (a TLS mailpit read by this test), and the
-person (a CDP virtual authenticator). Provisioning follows HOST.md through
-B3's own enrolment APIs; nothing inserts a credential, session or success row.
+disposable fixture app, the Logs app as a team deployment runs it, the
+protected server image with ProtectedControllerCustody, the aw binary,
+Chromium running the console page's own script. Substituted: the outbound
+notification transport (a TLS mailpit read by this test), and the person (a
+CDP virtual authenticator). Provisioning follows HOST.md through B3's own
+enrolment APIs; nothing inserts a credential, session or success row.
 
 make e2e only, in an aweb-placed exclusive window.
 """
@@ -29,34 +34,42 @@ from collections.abc import Iterator
 from pathlib import Path
 
 import pytest
-from aweb_naapp_testing.network import make_certificates
 from protected_round_trip import (
+    AnswerDrop,
+    AnswerWitness,
     Site,
-    aw,
     connect_requester,
+    designate_holding,
     first_json,
     found_team,
     provision_signer,
     refusals,
-    round_trip,
+    revoke_once,
+    secrets_holding,
 )
 
 from tests.test_e2e_owner_acts import (
-    API,
     APP_ID,
     AWEB,
     DOMAIN,
+    LOGS_APP_ID,
+    LOGS_COMPOSE_ENV,
     REGISTRY,
     REPO,
     ROLE,
+    SECRETS_SCHEMA,
     TEAM,
     TEAM_ID,
+    UPSTREAMS,
     Holder,
     Lane,
     _docker,
-    grant_install_owner,
+    front_caddyfile,
+    install_apps,
     publish_awid_txt,
-    write_service_member,
+    secrets_query,
+    start_apps,
+    write_tls,
 )
 
 pytestmark = pytest.mark.e2e
@@ -66,6 +79,8 @@ HUMAN = "https://human.svc.test"
 SERVICE_ID = "e2e-protected"
 PROFILE = "/runtime/protected/config/profile.json"
 CONTACT = "approver@h.test"
+# The lane's front, with the protected server on its request and human hosts.
+PROTECTED_UPSTREAMS = {**UPSTREAMS, "signer.svc.test": "protected:8080", "human.svc.test": "protected:8080"}
 
 
 class ProtectedLane(Lane):
@@ -105,7 +120,7 @@ def lane(tmp_path_factory: pytest.TempPathFactory) -> Iterator[ProtectedLane]:
     runtime.chmod(0o755)
     commit = subprocess.run(["git", "rev-parse", "HEAD"], cwd=REPO, text=True, capture_output=True, check=True).stdout.strip()
     lane = ProtectedLane(project, runtime, {**os.environ, "SECRETS_E2E_RUNTIME": str(runtime), "SECRETS_E2E_SOURCE_COMMIT": commit,
-                                       "SECRETS_E2E_AWID_SERVICE_TOKEN": secrets.token_hex(32)})
+                                       "SECRETS_E2E_AWID_SERVICE_TOKEN": secrets.token_hex(32), **LOGS_COMPOSE_ENV})
 
     (runtime / "dns").mkdir()
     (runtime / "dns" / "Corefile").write_text(
@@ -113,23 +128,9 @@ def lane(tmp_path_factory: pytest.TempPathFactory) -> Iterator[ProtectedLane]:
         ".:53 {\n  errors\n  forward . 127.0.0.11\n}\n"
     )
     publish_awid_txt(lane, "did:key:z6MkpendingpendingpendingpendingpendingpendingpendingP")
-    hosts = ["api.secrets.svc.test", "console.secrets.svc.test", "signer.svc.test", "human.svc.test", "mail.svc.test"]
-    (runtime / "tls").mkdir()
-    tls = make_certificates(runtime / "tls", hosts, [])
-    shutil.copyfile(tls.cert_file, runtime / "tls" / "smtp.pem")
-    shutil.copyfile(tls.key_file, runtime / "tls" / "smtp-key.pem")
-    for path in (runtime / "tls").iterdir():
-        path.chmod(0o644)
+    cert, key = write_tls(runtime, [*PROTECTED_UPSTREAMS, "mail.svc.test"])
     (runtime / "front").mkdir()
-    upstream = {"api.secrets.svc.test": "secrets:8770", "console.secrets.svc.test": "secrets:8770",
-                "signer.svc.test": "protected:8080", "human.svc.test": "protected:8080"}
-    (runtime / "front" / "Caddyfile").write_text(
-        "{\n  auto_https off\n}\n"
-        + "".join(
-            f"{host}:443 {{\n  tls /tls/{tls.cert_file.name} /tls/{tls.key_file.name}\n  reverse_proxy {target}\n}}\n"
-            for host, target in upstream.items()
-        )
-    )
+    (runtime / "front" / "Caddyfile").write_text(front_caddyfile(PROTECTED_UPSTREAMS, cert, key))
     try:
         lane.up("dns")
         dns = lane.compose("ps", "-q", "dns").stdout.strip()
@@ -233,29 +234,36 @@ def protected_site(lane: ProtectedLane) -> Site:
         assert started.returncode == 0, started.stdout + started.stderr
 
     caddyfile = lane.runtime / "front" / "Caddyfile"
-    original: list[str] = []
 
-    def drop_prepare_answers(on: bool) -> None:
-        if on:
-            original.append(caddyfile.read_text())
-            caddyfile.write_text(original[0].replace(
-                "signer.svc.test:443 {\n",
-                "signer.svc.test:443 {\n  @prepare {\n    method POST\n    path /protected-operations\n  }\n"
-                "  reverse_proxy @prepare protected:8080 {\n    @answered status 2xx\n"
-                "    handle_response @answered {\n      abort\n    }\n  }\n", 1))
-        else:
-            caddyfile.write_text(original.pop())
-        reload_front(lane)
+    def drop_prepare_answers() -> AnswerDrop:
+        return AnswerDrop(caddyfile, "signer.svc.test", "POST", "/protected-operations", "protected:8080",
+                          lambda: reload_front(lane))
+
+    def witness_owner_act_answers() -> AnswerWitness:
+        return AnswerWitness(caddyfile, "console.secrets.svc.test", "POST", "/.well-known/aweb-owner-act",
+                             "secrets:8770", lambda: reload_front(lane))
+
+    def drop_owner_act_answers() -> AnswerDrop:
+        return AnswerDrop(caddyfile, "console.secrets.svc.test", "POST", "/.well-known/aweb-owner-act",
+                          witness_owner_act_answers().listener, lambda: reload_front(lane))
+
+    def signatures() -> int:
+        return int(secrets_query(lane)("SELECT count(*) FROM protected_signer.protected_signer_operations"
+                                       " WHERE result IS NOT NULL"))
 
     return Site(
         runtime=lane.runtime, mounted="/runtime", domain=DOMAIN, team=TEAM, registry=REGISTRY, aweb=AWEB,
-        signer=SIGNER, human=HUMAN, service_id=SERVICE_ID, app_id=APP_ID, role=ROLE, contact=CONTACT,
+        signer=SIGNER, human=HUMAN, service_id=SERVICE_ID, app_id=APP_ID, logs_app_id=LOGS_APP_ID,
+        secrets_schema=SECRETS_SCHEMA, role=ROLE, contact=CONTACT,
         mail_api="http://mail.svc.test:8025", profile_in_machine=PROFILE,
         publish_controller=lambda did: publish_awid_txt(lane, did), store_member=store_member,
         configure_signer=configure_signer, install_controller=install_controller, operator=operator,
         start_signer=start_signer, signer_evidence=signer_evidence,
         signer_access_log=lambda: lane.protected("logs", "--no-color", "--no-log-prefix", "protected").stdout,
-        chromium=lane.chromium, drop_prepare_answers=drop_prepare_answers,
+        chromium=lane.chromium, drop_prepare_answers=drop_prepare_answers, signatures=signatures,
+        drop_owner_act_answers=drop_owner_act_answers, secrets_query=secrets_query(lane),
+        witness_owner_act_answers=witness_owner_act_answers,
+        front_log=lambda: lane.compose("logs", "--no-color", "--no-log-prefix", "front").stdout,
     )
 
 
@@ -266,15 +274,15 @@ def test_a_human_approves_a_protected_revoke_in_a_real_browser(lane: ProtectedLa
     connect_requester(site, holder)
     owner = holder.container
 
-    # The fixture app, installed as its owner installs it.
-    write_service_member(lane, owner)
-    lane.up("secrets", "front")
-    grant_install_owner(lane, founded.requester_did_key)
-    assert aw(owner, "plugin", "install", API)["approved"]
+    # The apps, as their owner installs them, and the approver's holding,
+    # designated before the signer holds the team's key.
+    start_apps(lane, owner)
+    install_apps(lane, owner, founded.requester_did_key)
+    designated = designate_holding(site, holder, founded)
 
     provision_signer(site, holder, founded)
-    round_trip(site, holder, founded)
     refusals(site, holder, founded)
+    revoke_once(site, holder, founded, secrets_holding(site, designated["hooks"], founded.approver))
 
 
 def reload_front(lane: ProtectedLane) -> None:

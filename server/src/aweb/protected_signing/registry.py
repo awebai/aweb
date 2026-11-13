@@ -93,6 +93,19 @@ class PinnedRegistryView:
     async def resolve_key_fresh(self, principal):
         return await self.client.resolve_key_fresh(principal)
 
+    async def get_namespace_fresh(self, domain):
+        self._domain(domain)
+        value = await self.client.get_namespace_fresh(
+            domain, registry_origin=self.registry_url
+        )
+        if (
+            value is None
+            or value.domain != domain
+            or value.controller_did != self.namespace_keys[domain]
+        ):
+            raise SignerRefused("authority_changed")
+        return value
+
     async def get_team_public_key_fresh(self, domain, name):
         self._domain(domain)
         return await self.client.get_team_public_key_fresh(

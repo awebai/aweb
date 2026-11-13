@@ -17,10 +17,14 @@ through the Compose adapter (scripts/e2e-team-deployment.sh), and the team's
 owner installs Secrets and Logs after the operator's install-owner grant.
 
 Then the protected round trip (naapp/secrets/e2e/protected_round_trip.py, the
-same body the secrets e2e lane runs): the signer is configured, provisioned
-and started, the approver's passkey is enrolled with Chromium, aw prepares a
-human-role revoke, the approver approves it in the browser, aw reads the
-committed receipt, and the refusals sign nothing they must not.
+same body the secrets e2e lane runs): the owner activates the apps' hook
+bindings and designates the approver's holding, the signer is configured,
+provisioned and started, the approver's passkey is enrolled with Chromium, and
+the refusals sign nothing they must not. Under the registry's real limiter the
+journey's one revoke follows: a lost prepare, resumed, approved in the browser
+and signed once; its first delivery applied with the app's answer withheld;
+and its exact replay answered applied earlier, with one effect in the app's own
+records.
 
 The agents wait for the egress boundary.
 
@@ -55,20 +59,33 @@ EVIDENCE = REPO / "naapp" / "secrets" / "e2e" / "protected" / "evidence.py"
 sys.path.insert(0, str(REPO / "naapp" / "secrets" / "e2e"))
 
 from protected_round_trip import (  # noqa: E402
+    AnswerDrop,
+    AnswerWitness,
     Founded,
     Holder,
     Site,
+    activate_hooks,
     approve,
+    assert_one_effect,
     changed_act,
     connect_requester,
+    deliver_once_lost,
+    designate_holding,
     did_key_window,
     docker,
     finish,
     first_json,
     found_team,
+    hook_app_ids,
+    install_app,
+    lost_prepare,
     provision_signer,
+    publish_team_server,
+    read_only_psql,
+    receiver_snapshot,
     refusals,
-    round_trip,
+    replay_delivery,
+    secrets_holding,
     start_revoke,
 )
 
@@ -102,6 +119,8 @@ MAIL = f"mail.{DOMAIN}"
 FRONT_IMAGE = "caddy:2.10-alpine"
 # The role the round trip revokes, of this deployment's Secrets app.
 ROLE = "secrets.owner"
+# The time the journey allows a human to approve on the page.
+APPROVAL_MARGIN = datetime.timedelta(seconds=60)
 # The agents' uid: the signer refuses custody a worker could read.
 AGENT_UID = 20001
 
@@ -109,6 +128,18 @@ AGENT_UID = 20001
 def origin(name: str) -> str:
     return f"https://{HOSTS[name]}"
 
+
+# One role and database per name, created at the bundled server's first start,
+# and the file under the secrets directory that holds its whole DSN. Logs'
+# purge ledger is a database of its own: Logs refuses a ledger DSN that
+# reaches its content database.
+DATABASES = {
+    "aweb": "aweb/database-url",
+    "secrets": "secrets/database-url",
+    "logs": "logs/database-url",
+    "logsledger": "logs/purge-ledger-database-url",
+    "signer": "signer/database-url",
+}
 
 def run(*args: str, env: dict[str, str] | None = None, input: str | None = None, timeout: int = 600) -> str:
     result = subprocess.run(args, env=env, input=input, text=True, capture_output=True, timeout=timeout, check=False)
@@ -233,19 +264,17 @@ class World:
         tmp.replace(zone)
 
     def write_database_files(self) -> None:
-        """One role and database per component; the password is in the role's
-        file for the bundled server and in the component's whole URL. The
-        roles exist only from the bundled server's first start."""
+        """One role and database per name in DATABASES; the password is in the
+        role's file for the bundled server and in the whole URL its component
+        reads. The roles exist only from the bundled server's first start."""
         roles = self.secrets / "postgres" / "roles"
         roles.mkdir(parents=True)
         (self.secrets / "postgres" / "password").write_text(secrets.token_hex(24))
-        for component in ("aweb", "secrets", "logs", "signer"):
+        for role, dsn_file in DATABASES.items():
             password = secrets.token_hex(24)
-            (roles / component).write_text(password)
-            (self.secrets / component).mkdir(exist_ok=True)
-            (self.secrets / component / "database-url").write_text(
-                f"postgresql://{component}:{password}@postgres:5432/{component}\n"
-            )
+            (roles / role).write_text(password)
+            (self.secrets / dsn_file).parent.mkdir(exist_ok=True)
+            (self.secrets / dsn_file).write_text(f"postgresql://{role}:{password}@postgres:5432/{role}\n")
 
     def write_redis_files(self) -> None:
         """Redis holds the password's SHA-256 in its ACL file; aweb holds the
@@ -592,63 +621,14 @@ class World:
                 f" && find /state/seats/{alias}/.aw -type d -exec chmod 0700 {{}} +"
                 f" && find /state/seats/{alias}/.aw -type f -exec chmod 0600 {{}} +")
 
-    def designate_holding(self, site: Site, holder: Holder, founded: Founded) -> dict:
-        """The approver's holding of the app role the round trip revokes, made
-        the supported way while the owner still holds the team's key: the
-        owner adds the human to the team; the human, with its own key, fetches
-        its certificate, connects to the team's aweb and registers a passkey on
-        the app's own human origin in the browser, for the app the owner installed on this machine; the owner
-        designates that exact credential. Checked in the app's own tables."""
-        machine, human = holder.container, founded.approver
-        # --global for this human holder only (services and seats stay --local):
-        # aw binds a holder only if its team certificate names its did:aw
-        # (verifyHolderEvidence), and a did:aw on a member certificate is a
-        # global identity's.
-        added = self.aw(machine, "id", "team", "add-member", "--team", TEAM, "--namespace", DOMAIN,
-                        "--did", founded.approver_did_key, "--did-aw", human, "--name", "approver", "--global")
-
-        def as_human(*args: str, until: str | None = None) -> tuple[pexpect.spawn, str]:
-            child = holder.act(human, *args)
-            return child, holder.answer_passphrases(child, until=until)
-
-        for args in (("--json", "id", "team", "fetch-cert", "--namespace", DOMAIN, "--team", TEAM, "--cert-id",
-                      added["certificate_id"], "--registry", origin("registry")),
-                     # The human's own connection to the team's aweb: the
-                     # requester's does not serve this separate identity.
-                     ("--json", "init", "--url", origin("aweb"), "--human-name", "approver")):
-            child, output = as_human(*args)
-            child.close()
-            assert child.exitstatus == 0, output
-        # The app is already installed on this machine: the owner installed it
-        # here, in the same aw plugin directory. aw takes no --human install.
-        export = f"{site.mounted}/holder/app-export.json"
-        child, output = as_human("app", "credential", "register", site.app_id, "--role", site.role, "--out", export,
-                                 until=r"Open this page to continue: (\S+)")
-        linked = re.search(r"Open this page to continue: (\S+)", output)
-        if not linked:
-            child.close()
-            raise SystemExit(f"FAILED: the holder's credential registration showed no page (exit {child.exitstatus}):\n{output}")
-        page = linked.group(1)
-        report = site.chromium(machine, "credential", "--url", page, "--device",
-                               f"{site.mounted}/holder-app-device.json")
-        assert report["states"] == ["ready", "navigated"] and report["credentials"] == 1, report
-        child.expect(pexpect.EOF)
-        rest = child.before
-        child.close()
-        assert child.exitstatus == 0, rest
-        printed = re.search(r"Fingerprint: ([0-9a-f]{4}(?: [0-9a-f]{4}){3})", output + rest)
-        assert printed, output + rest
-        fingerprint = printed.group(1)
-        # The owner signs only for that exact credential: aw shows its fingerprint.
-        designated = docker("exec", machine, "aw", "app", "role", "designate", site.app_id, "--role", site.role,
-                            "--principal", human, "--credential", export, "--yes", timeout=300)
-        assert designated.returncode == 0, designated.stdout + designated.stderr
-        assert fingerprint in designated.stderr, designated.stderr
-        held = self.compose("exec", "-T", "postgres", "psql", "-U", "postgres", "-d", "secrets", "-At", "-c",
-                            "select count(*) from public.role_assignments where role = '" + site.role
-                            + "' and principal_did = '" + human + "'").strip()
-        assert held == "1", held
-        return {"role": site.role, "principal": human, "fingerprint": fingerprint}
+    def await_window_end(self, seed: dict) -> None:
+        """Until the filled did_key window is over, by the registry Redis's own clock."""
+        def now() -> float:
+            seconds, micros = self.compose("exec", "-T", "registry-redis", "redis-cli", "TIME").split()
+            return int(seconds) + int(micros) / 1e6
+        ends = seed["seeded_at"] + seed["remaining"] + 1
+        while (left := ends - now()) > 0:
+            time.sleep(min(left, 5))
 
     # --- the registry's real limiter, for the throttle legs -----------------
 
@@ -843,18 +823,12 @@ class World:
         operator's explicit install-owner grant; then the owner installs
         Secrets and Logs from their internal origins. Membership alone grants
         no install authority."""
-        self.aw(machine, "id", "team", "set-server", "--team", TEAM, "--namespace", DOMAIN,
-                "--url", origin("aweb"), "--registry", origin("registry"))
-        published = self.aw(machine, "id", "team", "show-server", "--team", TEAM, "--namespace", DOMAIN,
-                            "--registry", origin("registry"))
-        assert published.get("server_url", "").rstrip("/") == origin("aweb"), published
-        print("TEAM SERVER:", json.dumps(published, sort_keys=True))
+        print("TEAM SERVER:", json.dumps(publish_team_server(machine, TEAM, DOMAIN, origin("aweb"), origin("registry")),
+                                           sort_keys=True))
         self.compose("exec", "-T", "aweb", "aweb", "install-admin", "grant", "--team-id", TEAM_ID,
                      "--principal-did", owner_did_key, "--role", "owner")
         for app in ("secrets", "logs"):
-            installed = self.aw(machine, "plugin", "install", origin(f"{app}-api"))
-            if not installed.get("approved"):
-                raise SystemExit(f"BOUNDARY: {app} was not installed: {json.dumps(installed)}")
+            install_app(machine, origin(f"{app}-api"))
             print(f"INSTALLED: {app} from {origin(app + '-api')}")
 
     # --- the protected round trip's Site --------------------------------
@@ -926,30 +900,41 @@ class World:
                       self.images["chromium"], *args, "--ca", "/world/tls/ca.pem", timeout=300).strip()
             return first_json(out) if "{" in out else {}
 
-        rendered = self.run_dir / "front" / "Caddyfile"
-        original = rendered.read_text()
+        front = self.run_dir / "front" / "Caddyfile"
 
-        def drop_prepare_answers(on: bool) -> None:
-            caddyfile = original
-            if on:
-                caddyfile = caddyfile.replace(
-                    f"{HOSTS['signer']}:443 {{\n",
-                    f"{HOSTS['signer']}:443 {{\n  @prepare {{\n    method POST\n    path /protected-operations\n  }}\n"
-                    "  reverse_proxy @prepare signer:8080 {\n    @answered status 2xx\n"
-                    "    handle_response @answered {\n      abort\n    }\n  }\n", 1)
-            rendered.write_text(caddyfile)
+        def reload_front() -> None:
             self.compose("exec", "-T", "front", "caddy", "reload", "--config", "/etc/caddy/Caddyfile",
                          "--adapter", "caddyfile")
+
+        def drop_prepare_answers() -> AnswerDrop:
+            return AnswerDrop(front, HOSTS["signer"], "POST", "/protected-operations", UPSTREAMS["signer"],
+                              reload_front)
+
+        def witness_owner_act_answers() -> AnswerWitness:
+            return AnswerWitness(front, HOSTS["secrets-console"], "POST", "/.well-known/aweb-owner-act",
+                                 UPSTREAMS["secrets-console"], reload_front)
+
+        def drop_owner_act_answers() -> AnswerDrop:
+            return AnswerDrop(front, HOSTS["secrets-console"], "POST", "/.well-known/aweb-owner-act",
+                              witness_owner_act_answers().listener, reload_front)
+
+        def secrets_query(select: str) -> str:
+            return self.compose("exec", "-T", "postgres", *read_only_psql("postgres", "secrets", select)).strip()
 
         return Site(
             runtime=self.world, mounted="/world", domain=DOMAIN, team=TEAM, registry=origin("registry"),
             aweb=origin("aweb"), signer=origin("signer"), human=origin("human"), service_id=f"{TEAM}-signer",
-            app_id=f"{TEAM}-secrets", role=ROLE, contact=f"approver@{DOMAIN}", mail_api=f"http://{MAIL}:8025",
+            app_id=f"{TEAM}-secrets", logs_app_id=f"{TEAM}-logs", secrets_schema="public", role=ROLE,
+            contact=f"approver@{DOMAIN}", mail_api=f"http://{MAIL}:8025",
             profile_in_machine="/world/signer/profile.json", publish_controller=self.publish_controller,
             store_member=store_member, configure_signer=configure_signer, install_controller=install_controller,
             operator=operator_command, start_signer=start_signer, signer_evidence=signer_evidence,
             signer_access_log=lambda: self.compose("logs", "--no-color", "--no-log-prefix", "signer"),
             chromium=chromium, drop_prepare_answers=drop_prepare_answers,
+            signatures=lambda: sum(row["signed"] for row in self.signer_table().values()),
+            drop_owner_act_answers=drop_owner_act_answers, secrets_query=secrets_query,
+            witness_owner_act_answers=witness_owner_act_answers,
+            front_log=lambda: self.compose("logs", "--no-color", "--no-log-prefix", "front"),
         )
 
 
@@ -1006,21 +991,12 @@ def changed_act_leg(world: World, site: Site, holder: Holder, founded: Founded, 
 
 
 def lost_prepare_leg(world: World, site: Site, holder: Holder, founded: Founded, aw_bin: str) -> dict:
-    """A lost prepare answer resumed while the registry refuses the signer's
-    key lookups: aw waits the hint, resends the saved bytes, and once
-    approved the original operation completes with one signature."""
-    machine, approver = holder.container, founded.approver
-    saved = site.runtime / "holder" / ".config" / "aw" / "governance"
-    site.drop_prepare_answers(True)
-    try:
-        lost = docker("exec", machine, "aw", "--json", "app", "role", "revoke", site.app_id, "--role", site.role,
-                      "--principal", approver, "--protected-profile", site.profile_in_machine, "--approver", approver,
-                      timeout=240)
-    finally:
-        site.drop_prepare_answers(False)
-    assert first_json(lost.stdout)["error"]["code"] == "prepare_unconfirmed", lost.stdout
-    operation = re.search(r"Preparing operation (\S+)", lost.stderr).group(1)
-    request = (saved / f"{operation}.json").read_text()
+    """The control aw's lost prepare, resumed while the registry refuses the
+    signer's key lookups: its caller does not wait out the hint, so it must not
+    recover. Nothing is approved here even if a page appears, so this leg can
+    never sign or apply the revoke the journey makes once, later."""
+    machine = holder.container
+    operation = lost_prepare(site, holder, founded)
     before = world.signer_table()
     signed_before = sum(row["signed"] for row in before.values())
     seed = world.fill_did_key_window()
@@ -1031,12 +1007,11 @@ def lost_prepare_leg(world: World, site: Site, holder: Holder, founded: Founded,
     evidence = {"operation": operation, "seed": seed}
     index = child.expect([r"Approve it on this page: (\S+)", pexpect.EOF])
     evidence["waited"] = round(time.monotonic() - started, 1)
+    evidence["page_shown"] = index == 0
     if index == 0:
-        report = approve(site, machine, child.match.group(1))
-        assert report["states"] == ["login-required", "ready", "navigated"], report
-        status, output = finish(child)
-        receipt = first_json(output)
-        evidence["state"] = receipt.get("state") if status == 0 else first_json(output)["error"]["code"]
+        child.sendintr()
+        finish(child)
+        evidence["state"] = "page_shown"
     else:
         child.close()
         evidence["state"] = first_json(child.before)["error"]["code"]
@@ -1047,34 +1022,96 @@ def lost_prepare_leg(world: World, site: Site, holder: Holder, founded: Founded,
         "signed": after[operation]["signed"],
         "new_signatures": sum(row["signed"] for row in after.values()) - signed_before,
         "expires_unchanged": after[operation]["expires_at"] == before[operation]["expires_at"],
-        "request_was_saved": bool(request),
     })
     return evidence
 
 
+def the_revoke(world: World, site: Site, holder: Holder, founded: Founded) -> dict:
+    """The journey's one revoke, under the registry's real limiter. A lost
+    prepare leaves the operation pending; with the registry refusing the
+    signer's key lookups, aw resumes it, waits out the registry's Retry-After
+    and resends the same bytes; once approved the original operation is signed
+    once, delivered and applied, and the app's answer is withheld. With the
+    limiter's window over, the exact replay is answered applied earlier. The
+    app's own records show one effect."""
+    operation = lost_prepare(site, holder, founded)
+    pending = site.signer_evidence(operation)
+    nonce = pending["frozen_nonce"]
+    before = world.signer_table()
+    signed_before = sum(row["signed"] for row in before.values())
+    holding = secrets_holding(site, world.activated_hooks, founded.approver)
+    baseline = receiver_snapshot(site.secrets_query, holding, nonce, schema=site.secrets_schema)
+    seed = world.fill_did_key_window()
+    # The pending operation's lifetime runs from its prepare and is never
+    # extended: it must outlast the window's Retry-After and the approval.
+    left = (datetime.datetime.fromisoformat(pending["expires_at"]) - datetime.datetime.now(datetime.UTC))
+    if left.total_seconds() <= seed["remaining"] + APPROVAL_MARGIN.total_seconds():
+        raise SystemExit(f"BOUNDARY: the pending operation has {left.total_seconds():.0f}s left, not more than the"
+                         f" window's {seed['remaining']:.0f}s and {APPROVAL_MARGIN.total_seconds():.0f}s to approve;"
+                         " the fixture cannot qualify the throttle leg")
+    since = world.since()
+    delivered = deliver_once_lost(site, holder, operation)
+    after = world.signer_table()
+    act = delivered["act"]
+    assert act.nonce == nonce, f"approval: the signed act's nonce {act.nonce} is not the frozen {nonce}"
+    evidence = {
+        "operation": operation, "seed": seed, "waited": delivered["paged"], **throttle_evidence(world, since),
+        "rows_for_operation": sum(1 for op in after if op == operation), "signed": after[operation]["signed"],
+        "new_signatures": sum(row["signed"] for row in after.values()) - signed_before,
+        "expires_unchanged": after[operation]["expires_at"] == before[operation]["expires_at"],
+        "act_sha256": act.sha256,
+    }
+    subject = baseline["holding"]["subject"]
+    first = receiver_snapshot(site.secrets_query, holding, nonce, subject, act.sha256,
+                               schema=site.secrets_schema)
+    # The replay comes after the filled window, so the limiter cannot stand in
+    # for the app's answer, and inside the signed act's own validity.
+    world.await_window_end(seed)
+    if datetime.datetime.now(datetime.UTC) >= datetime.datetime.fromisoformat(act.expires_at.replace("Z", "+00:00")):
+        raise SystemExit(f"BOUNDARY: the signed act expired at {act.expires_at} before its replay could be sent")
+    report = replay_delivery(site, holder, operation, act)
+    replayed = world.signer_table()
+    evidence["replay_new_signatures"] = sum(row["signed"] for row in replayed.values()) - signed_before - 1
+    evidence["replay_rows_for_operation"] = sum(1 for op in replayed if op == operation)
+    replay = receiver_snapshot(site.secrets_query, holding, nonce, subject, act.sha256,
+                               schema=site.secrets_schema)
+    assert_one_effect(baseline, first, replay, act)
+    evidence["applied"] = report["applied"]
+    return evidence
+
+
+def record_leg(world: World, name: str, leg: dict) -> None:
+    (world.run_dir / f"throttle-{name}.json").write_text(json.dumps(leg, indent=2))
+    print(f"throttle {name}:", json.dumps(leg, sort_keys=True))
+    for each in leg.values():
+        # The fixture worked only if the registry really refused, past the SDK's budget.
+        assert each["registry_429"] >= 1 and each["hints"] and min(each["hints"]) > 5, each
+        assert each["prepares"][0] == 503, each
+        assert each["expires_unchanged"], each
+
+
 def throttled_calls(world: World, site: Site, holder: Holder, founded: Founded) -> None:
-    """Both legs with the candidate's aw, then with the control aw, whose
-    caller does not wait out the hint and so must not recover."""
-    for name, aw_bin in (("candidate", "aw"), ("control", world.control_aw(holder.container))):
-        changed = changed_act_leg(world, site, holder, founded, aw_bin)
-        lost = lost_prepare_leg(world, site, holder, founded, aw_bin)
-        (world.run_dir / f"throttle-{name}.json").write_text(json.dumps({"changed_act": changed, "lost_prepare": lost},
-                                                                       indent=2))
-        print(f"throttle {name}:", json.dumps({"changed_act": changed, "lost_prepare": lost}, sort_keys=True))
-        for leg in (changed, lost):
-            # The fixture worked only if the registry really refused, past the SDK's budget.
-            assert leg["registry_429"] >= 1 and leg["hints"] and min(leg["hints"]) > 5, leg
-            assert leg["prepares"][0] == 503, leg
-            assert leg["expires_unchanged"], leg
-        if name == "candidate":
-            assert changed["code"] == "operation_conflict" and changed["prepares"][-1] == 409, changed
-            assert changed["elapsed"] >= min(changed["hints"]) - 1, changed
-            assert changed["signed"] is False and changed["saved_unchanged"], changed
-            assert lost["state"] == "committed" and lost["waited"] >= min(lost["hints"]) - 1, lost
-            assert lost["signed"] and lost["rows_for_operation"] == 1 and lost["new_signatures"] == 1, lost
-        else:
-            assert changed["code"] != "operation_conflict" and changed["signed"] is False, changed
-            assert lost["state"] != "committed" and lost["new_signatures"] == 0, lost
+    """The control aw's legs and the candidate's changed act first, while the
+    holding exists, each checked as it ends: none signs or applies anything.
+    The candidate's lost prepare is last, and is the journey's one revoke."""
+    control = {"changed_act": changed_act_leg(world, site, holder, founded, world.control_aw(holder.container))}
+    control["lost_prepare"] = lost_prepare_leg(world, site, holder, founded, world.control_aw(holder.container))
+    record_leg(world, "control", control)
+    assert control["changed_act"]["code"] != "operation_conflict" and control["changed_act"]["signed"] is False, control
+    assert control["lost_prepare"]["page_shown"] is False, control
+    assert control["lost_prepare"]["state"] != "committed" and control["lost_prepare"]["new_signatures"] == 0, control
+
+    changed = changed_act_leg(world, site, holder, founded, "aw")
+    assert changed["code"] == "operation_conflict" and changed["prepares"][-1] == 409, changed
+    assert changed["elapsed"] >= min(changed["hints"]) - 1, changed
+    assert changed["signed"] is False and changed["saved_unchanged"], changed
+
+    lost = the_revoke(world, site, holder, founded)
+    record_leg(world, "candidate", {"changed_act": changed, "lost_prepare": lost})
+    assert lost["waited"] >= min(lost["hints"]) - 1, lost
+    assert lost["signed"] and lost["rows_for_operation"] == 1 and lost["new_signatures"] == 1, lost
+    assert lost["replay_new_signatures"] == 0 and lost["replay_rows_for_operation"] == 1, lost
+    assert lost["applied"] == "earlier", lost
 
 
 # Every image scripts/e2e/team-deployment-images.sh builds for the journey;
@@ -1163,10 +1200,17 @@ def journey(world: World, stop_after: str | None = None, agents_only: bool = Fal
     print("MEMBER MAIL:", json.dumps(world.member_mail(holder.container), sort_keys=True))
     print("=== Setup: the team owner installs Secrets and Logs from their internal origins")
     world.install_apps(holder.container, founded.requester_did_key)
-    if not agents_only:
+    if agents_only:
+        print("=== Setup: the owner activates the apps' hook bindings")
+        world.activated_hooks = activate_hooks(holder.container, hook_app_ids(site))
+        print("HOOKS ACTIVE:", json.dumps(world.activated_hooks, sort_keys=True))
+    else:
         print("=== Setup: the owner designates the approver's holding of the app role, before the signer holds the key")
-        designated = world.designate_holding(site, holder, founded)
-        print("HOLDING:", json.dumps({k: designated[k] for k in ("role", "principal")}))
+        designated = designate_holding(site, holder, founded)
+        world.activated_hooks = designated["hooks"]
+        print("REFUSED BEFORE ACTIVATION:", designated["refused_before_activation"])
+        print("HOOKS ACTIVE:", json.dumps(designated["hooks"], sort_keys=True))
+        print("HOLDING:", json.dumps({k: designated[k] for k in ("role", "principal", "contact")}))
         if stop_after == "holding":
             print("STOPPED: after the approver's holding, as asked")
             return 0
@@ -1186,15 +1230,16 @@ def journey(world: World, stop_after: str | None = None, agents_only: bool = Fal
 
 
 def protected_act(world: World, site: Site, holder: Holder, founded: Founded) -> None:
-    operation = round_trip(site, holder, founded)
-    print(f"SIGNED: {operation} committed, approved in the browser, receipt read by aw")
     refusals(site, holder, founded)
-    print("REFUSED: no UV signs nothing; a changed act is operation_conflict; a lost prepare completes once")
+    print("REFUSED: no UV and a cancelled LOGIN sign nothing; a changed act is operation_conflict")
 
-    print("=== Step 6: critical calls under the registry's real limiter")
+    print("=== Step 6: critical calls under the registry's real limiter, and the one revoke")
     throttled_calls(world, site, holder, founded)
-    print("THROTTLED: a changed act waits out the registry's Retry-After and is operation_conflict; a lost prepare"
-          " waits it out and completes once; the control aw recovers from neither")
+    print("THROTTLED: a changed act waits out the registry's Retry-After and is operation_conflict; the control aw"
+          " recovers from neither of its legs")
+    print("SIGNED: the lost prepare, resumed under the limiter, was approved in the browser and signed once;"
+          " its first delivery was applied with its answer withheld, and its exact replay was answered applied"
+          " earlier, with one effect in the app's own records")
 
 
 def agents_stage(world: World, founded: Founded) -> int:

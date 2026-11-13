@@ -95,12 +95,20 @@ func SignTeamCertificate(teamKey ed25519.PrivateKey, fields TeamCertificateField
 
 // SaveTeamCertificate writes a certificate to disk as JSON with 0600 permissions.
 func SaveTeamCertificate(path string, cert *TeamCertificate) error {
+	data, err := EncodeTeamCertificateFile(cert)
+	if err != nil {
+		return err
+	}
+	return atomicWriteFile(path, data)
+}
+
+// EncodeTeamCertificateFile is cert as a certificate file holds it.
+func EncodeTeamCertificateFile(cert *TeamCertificate) ([]byte, error) {
 	data, err := json.MarshalIndent(cert, "", "  ")
 	if err != nil {
-		return fmt.Errorf("marshal certificate: %w", err)
+		return nil, fmt.Errorf("marshal certificate: %w", err)
 	}
-	data = append(data, '\n')
-	return atomicWriteFile(path, data)
+	return append(data, '\n'), nil
 }
 
 // LoadTeamCertificate reads a certificate from disk.

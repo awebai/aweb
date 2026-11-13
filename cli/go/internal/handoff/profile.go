@@ -21,7 +21,10 @@ type Profile struct {
 	HumanOrigin    string
 	RPID           string
 	RegistryOrigin string
-	Bindings       []ProfileBinding
+	// NamespaceAuthorities pins each configured namespace's controller key,
+	// by domain: the authority an ID chain in that namespace is verified from.
+	NamespaceAuthorities map[string]string
+	Bindings             []ProfileBinding
 }
 
 // ProfileBinding is one configured protected scope with its authority's
@@ -79,6 +82,7 @@ func ParseProfile(raw []byte) (*Profile, error) {
 	if !ok {
 		return nil, errProfileInvalid
 	}
+	profile.NamespaceAuthorities = namespaces
 	rows, _ := object["bindings"].([]any)
 	if len(rows) == 0 {
 		return nil, errProfileInvalid
@@ -111,24 +115,37 @@ func (p *Profile) BindingFor(scope map[string]any) (*ProfileBinding, error) {
 	return nil, coded("profile_scope_refused", errors.New("the profile configures no binding for this scope"))
 }
 
-func namespaceAuthorities(value any) (map[string]bool, bool) {
+// teamDomain is the authority domain of team's controller bindings, when the
+// profile binds that team's controller at all.
+func (p *Profile) teamDomain(team string) (string, bool) {
+	for _, binding := range p.Bindings {
+		authority, _ := binding.Scope["authority"].(map[string]any)
+		if authority["kind"] == "team_controller" && authority["id"] == team {
+			domain, _ := authority["domain"].(string)
+			return domain, true
+		}
+	}
+	return "", false
+}
+
+func namespaceAuthorities(value any) (map[string]string, bool) {
 	rows, _ := value.([]any)
 	if len(rows) == 0 {
 		return nil, false
 	}
-	domains := map[string]bool{}
+	controllers := map[string]string{}
 	for _, row := range rows {
 		object, _ := row.(map[string]any)
 		domain, _ := object["domain"].(string)
-		if !exactMembers(object, []string{"domain", "controller_did"}) || !profileDomain.MatchString(domain) || !validDIDKey(object["controller_did"]) || domains[domain] {
+		if _, seen := controllers[domain]; !exactMembers(object, []string{"domain", "controller_did"}) || !profileDomain.MatchString(domain) || !validDIDKey(object["controller_did"]) || seen {
 			return nil, false
 		}
-		domains[domain] = true
+		controllers[domain] = object["controller_did"].(string)
 	}
-	return domains, true
+	return controllers, true
 }
 
-func profileBinding(value any, serviceID string, namespaces map[string]bool) (ProfileBinding, string, string, bool) {
+func profileBinding(value any, serviceID string, namespaces map[string]string) (ProfileBinding, string, string, bool) {
 	object, _ := value.(map[string]any)
 	scope, _ := object["scope"].(map[string]any)
 	policy, _ := object["policy"].(map[string]any)
@@ -155,7 +172,7 @@ func profileBinding(value any, serviceID string, namespaces map[string]bool) (Pr
 	domain, _ := authority["domain"].(string)
 	humanID, _ := human["id"].(string)
 	humanDomain, _ := human["domain"].(string)
-	if !exactMembers(authority, []string{"kind", "id", "domain"}) || !exactMembers(human, []string{"id", "domain"}) || !namespaces[domain] || !namespaces[humanDomain] || !canonicalStableID(humanID) || !canonicalAuthority(kind, id, domain) {
+	if !exactMembers(authority, []string{"kind", "id", "domain"}) || !exactMembers(human, []string{"id", "domain"}) || namespaces[domain] == "" || namespaces[humanDomain] == "" || !canonicalStableID(humanID) || !canonicalAuthority(kind, id, domain) {
 		return ProfileBinding{}, "", "", false
 	}
 	authorityKey := kind + "\x00" + id + "\x00" + domain

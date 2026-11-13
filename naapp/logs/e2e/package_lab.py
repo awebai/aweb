@@ -17,6 +17,9 @@ def environment(lab: Lab) -> dict[str, str]:
     keys = lab.keys
     return {
         "LOGS_DATABASE_URL": lab.database_url,
+        # The probe composes the runtime, which never opens the purge ledger;
+        # the setting is required, and names a database other than the content one.
+        "LOGS_PURGE_LEDGER_DATABASE_URL": lab.database_url.rsplit("/", 1)[0] + "/lab_purges",
         "LOGS_APP_ID": "lab-logs",
         "LOGS_PUBLIC_ORIGIN": "https://logs.lab.test",
         "LOGS_CONSOLE_ORIGIN": "https://console.lab.test",
