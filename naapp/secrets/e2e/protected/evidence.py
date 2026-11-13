@@ -3,9 +3,10 @@
 Runs inside the signer's container, as its process uid, with the host's own
 AWEB_PROTECTED_* settings. Read only: each operation's stored outcome,
 whether it holds a signed result, and its refusal code. The round trip uses it
-as evidence that nothing it must not sign was signed. For a signed operation
-it also names the act it signed, by H, the SHA-256 of the exact signing bytes,
-and by the act's nonce; it prints neither the signing bytes nor the signature.
+as evidence that nothing it must not sign was signed. Each operation also
+names its expiry and the nonce its request froze at prepare; a signed one names
+the act it signed, by H, the SHA-256 of the exact signing bytes, and by that
+act's nonce. It prints neither the signing bytes nor the signature.
 
   evidence.py --operation-id ID [--operation-id ID ...]
 """
@@ -51,7 +52,7 @@ async def evidence(operation_ids: list[str]) -> dict:
     await db.connect()
     try:
         rows = await db.fetch_all(
-            "SELECT operation_id, result IS NOT NULL AS signed, refusal_code, result "
+            "SELECT operation_id, result IS NOT NULL AS signed, refusal_code, result, request, expires_at "
             "FROM {{tables.protected_signer_operations}} WHERE operation_id = ANY($1::text[])",
             operation_ids,
         )
@@ -61,6 +62,8 @@ async def evidence(operation_ids: list[str]) -> dict:
         row["operation_id"]: {
             "signed": row["signed"],
             "refusal_code": row["refusal_code"],
+            "expires_at": row["expires_at"].isoformat(),
+            "frozen_nonce": json.loads(bytes(row["request"]))["artifact"]["nonce"],
             **(signed_act(row["result"]) if row["signed"] else {}),
         }
         for row in rows

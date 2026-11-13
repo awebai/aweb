@@ -6,7 +6,15 @@ import hashlib
 import json
 
 import pytest
-from protected_round_trip import AnswerDrop, SignedAct, assert_one_effect, signed_act
+from protected_round_trip import (
+    AnswerDrop,
+    Holding,
+    SignedAct,
+    assert_one_effect,
+    read_only_psql,
+    receiver_snapshot,
+    signed_act,
+)
 
 SITES = {
     "aweb.lf.test": "aweb:8000",
@@ -149,3 +157,61 @@ def test_a_missing_first_effect_or_a_second_effect_is_named_by_its_seam(first, r
 def test_a_baseline_taken_after_the_effect_is_refused():
     with pytest.raises(AssertionError, match="baseline"):
         assert_one_effect(FIRST, FIRST, FIRST, ACT_SIGNED)
+
+
+# --- the receiver snapshot: what it reads, and how
+
+
+HOLDING = Holding(app_id="lfteam-secrets", installation_id="4fead199-b779", generation=1, team_id="lfteam:lf.test",
+                  role="secrets.owner", principal="did:aw:approver")
+
+
+def snapshot_of(rows: dict):
+    queries = []
+
+    def query(select: str) -> str:
+        queries.append(select)
+        return json.dumps(rows)
+    return queries, query
+
+
+def test_the_snapshot_reads_one_holding_scoped_by_installation_team_role_and_principal():
+    queries, query = snapshot_of({"assignments": 1, "holdings": [{"subject": "s", "ended": False}], "revision": 3,
+                                  "nonces": 0, "nonce_rows": [], "authorities": 0, "authority_rows": []})
+    snapshot = receiver_snapshot(query, HOLDING, "n0nce")
+    assert snapshot["holding"] == {"subject": "s", "ended": False} and "holdings" not in snapshot
+    (select,) = queries
+    for literal in ("'lfteam-secrets'", "'4fead199-b779'", "'1'", "'lfteam:lf.test'", "'secrets.owner'",
+                    "'did:aw:approver'", "'n0nce'"):
+        assert literal in select, literal
+    assert "h.ended_in IS NULL AND p.superseded_at IS NULL" in select and "a.commitment = NULL" in select
+    assert "BEGIN" not in select and "COMMIT" not in select
+
+
+def test_a_later_snapshot_reads_the_captured_subject_and_this_acts_rows():
+    queries, query = snapshot_of({"holdings": [{"subject": "s"}]})
+    receiver_snapshot(query, HOLDING, "n0nce", subject="s", act_sha256="a" * 64)
+    (select,) = queries
+    assert "p.subject = 's'" in select and "ended_in IS NULL" not in select
+    assert f"a.commitment = '{'a' * 64}'" in select
+
+
+@pytest.mark.parametrize("holdings", [[], [{"subject": "s"}, {"subject": "t"}]])
+def test_a_snapshot_finding_no_holding_or_several_is_refused(holdings):
+    _, query = snapshot_of({"holdings": holdings})
+    with pytest.raises(SystemExit, match="holdings"):
+        receiver_snapshot(query, HOLDING, "n0nce")
+
+
+@pytest.mark.parametrize("value", ["it's", "a b", "x;DROP", ""])
+def test_a_value_that_is_not_a_plain_identifier_is_never_quoted_into_the_query(value):
+    _, query = snapshot_of({"holdings": [{"subject": "s"}]})
+    with pytest.raises(SystemExit, match="receiver snapshot"):
+        receiver_snapshot(query, HOLDING, value)
+
+
+def test_the_snapshot_runs_read_only_in_one_session():
+    args = read_only_psql("secrets", "SELECT 1")
+    assert args[:5] == ["psql", "-U", "postgres", "-d", "secrets"] and "-q" in args and "-At" in args
+    commands = [args[i + 1] for i, arg in enumerate(args) if arg == "-c"]
+    assert commands == ["BEGIN TRANSACTION ISOLATION LEVEL REPEATABLE READ READ ONLY", "SELECT 1", "COMMIT"]

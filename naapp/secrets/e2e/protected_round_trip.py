@@ -302,6 +302,91 @@ def assert_one_effect(baseline: dict, first: dict, replay: dict, act: SignedAct)
         (r["event_id"], r["commitment"]) for r in rows], f"replay: authority rows {replay['authority_rows']}"
 
 
+@dataclass(frozen=True)
+class Holding:
+    """What names one holding at the app: its installation and generation, the
+    team, the role and the principal."""
+
+    app_id: str
+    installation_id: str
+    generation: int
+    team_id: str
+    role: str
+    principal: str
+
+
+def read_only_psql(database: str, select: str) -> list[str]:
+    """The psql arguments that run one SELECT in a repeatable-read, read-only
+    transaction and print only its rows: separate commands in one session."""
+    return ["psql", "-U", "postgres", "-d", database, "-At", "-q", "-v", "ON_ERROR_STOP=1",
+            "-c", "BEGIN TRANSACTION ISOLATION LEVEL REPEATABLE READ READ ONLY", "-c", select, "-c", "COMMIT"]
+
+
+SNAPSHOT_LITERAL = re.compile(r"[A-Za-z0-9:._@/+=-]+")
+
+
+def sql_literal(value: str | int) -> str:
+    text = str(value)
+    if not SNAPSHOT_LITERAL.fullmatch(text):
+        raise SystemExit(f"FAILED: {text!r} is not a value the receiver snapshot quotes")
+    return f"'{text}'"
+
+
+def receiver_snapshot(query: Callable[[str], str], holding: Holding, nonce: str, subject: str | None = None,
+                      act_sha256: str | None = None) -> dict:
+    """The app's own records of one holding, read in one repeatable-read,
+    read-only transaction: the scoped role assignments; the holding (its B3
+    subject, whether it ended, whether that subject is superseded, its usable
+    passkeys), the current one when `subject` is None, else that subject's;
+    the configuration revision; the installation's owner-act nonce rows and
+    narrowing-authority rows, counted; and the rows for `nonce` and, once the
+    act is signed, for `act_sha256`. `query` runs one SELECT against the app's
+    database, as read_only_psql wraps it, and returns its one output line."""
+    team, role, principal = sql_literal(holding.team_id), sql_literal(holding.role), sql_literal(holding.principal)
+    installation, app = sql_literal(holding.installation_id), sql_literal(holding.app_id)
+    generation = sql_literal(holding.generation)
+    which = ("h.ended_in IS NULL AND p.superseded_at IS NULL" if subject is None
+             else f"p.subject = {sql_literal(subject)}")
+    commitment = sql_literal(act_sha256) if act_sha256 else "NULL"
+    text = query(
+        "SELECT json_build_object("
+        f"'assignments', (SELECT count(*) FROM public.role_assignments WHERE team_id = {team} AND role = {role}"
+        f" AND principal_did = {principal}),"
+        "'holdings', (SELECT coalesce(json_agg(json_build_object('subject', p.subject,"
+        " 'ended', h.ended_in IS NOT NULL, 'superseded', p.superseded_at IS NOT NULL,"
+        " 'usable_keys', (SELECT count(*) FROM public.passkey_credentials k"
+        "  WHERE k.subject = p.subject AND k.revoked_at IS NULL))), '[]'::json)"
+        " FROM public.role_holdings h JOIN public.passkey_approvers p ON p.scope = h.b3_scope"
+        f" WHERE h.installation_id = {installation} AND h.team_id = {team} AND h.role = {role}"
+        f" AND h.principal_did = {principal} AND {which}),"
+        "'revision', coalesce((SELECT revision FROM public.config_revisions"
+        f" WHERE installation_id = {installation} AND team_id = {team}), 0),"
+        f"'nonces', (SELECT count(*) FROM public.owner_act_nonces WHERE scope = {app} AND team_id = {team}),"
+        "'nonce_rows', (SELECT coalesce(json_agg(json_build_object('nonce', nonce, 'act_sha256', act_sha256)),"
+        f" '[]'::json) FROM public.owner_act_nonces WHERE scope = {app} AND team_id = {team}"
+        f" AND nonce = {sql_literal(nonce)}),"
+        "'authorities', (SELECT count(*) FROM public.credential_narrowing_authority"
+        f" WHERE app_id = {app} AND team_id = {team} AND installation_id = {installation}"
+        f" AND generation = {generation}::bigint AND authority = 'owner_act'),"
+        "'authority_rows', (SELECT coalesce(json_agg(json_build_object('event_id', a.event_id,"
+        " 'subject', a.subject, 'authority', a.authority, 'commitment', a.commitment,"
+        " 'signing_sha256', encode(sha256(a.signing), 'hex'), 'kind', e.kind,"
+        " 'act', CASE WHEN e.payload IS NOT NULL THEN"
+        "  (convert_from(e.payload, 'UTF8')::jsonb)->'payload'->>'act' END,"
+        " 'event_act_sha256', CASE WHEN e.payload IS NOT NULL THEN"
+        "  (convert_from(e.payload, 'UTF8')::jsonb)->'payload'->>'owner_act_sha256' END)), '[]'::json)"
+        " FROM public.credential_narrowing_authority a LEFT JOIN public.outbox_events e USING (event_id)"
+        f" WHERE a.app_id = {app} AND a.team_id = {team} AND a.installation_id = {installation}"
+        f" AND a.generation = {generation}::bigint AND a.authority = 'owner_act' AND a.commitment = {commitment})"
+        ")")
+    snapshot = json.loads(text)
+    holdings = snapshot.pop("holdings")
+    if len(holdings) != 1:
+        raise SystemExit(f"FAILED: the app holds {len(holdings)} holdings for {holding} (subject {subject}), not one")
+    snapshot["holding"] = holdings[0]
+    return snapshot
+
+
 class AnswerDrop:
     """The front withholds the answer to one request: while it is in effect,
     every 2xx answer to `method` `path` on `host` is aborted, so the caller
