@@ -110,6 +110,13 @@ def origin(name: str) -> str:
     return f"https://{HOSTS[name]}"
 
 
+def designate_command(app_id: str, role: str, principal: str, credential: str, contact: str) -> list[str]:
+    """The owner's designation of a holding of an app role. A role that
+    declares a notice contact, as secrets.owner does, takes the holder's."""
+    return ["aw", "app", "role", "designate", app_id, "--role", role, "--principal", principal,
+            "--credential", credential, "--notice-contact", contact, "--yes"]
+
+
 def run(*args: str, env: dict[str, str] | None = None, input: str | None = None, timeout: int = 600) -> str:
     result = subprocess.run(args, env=env, input=input, text=True, capture_output=True, timeout=timeout, check=False)
     if result.returncode != 0:
@@ -640,15 +647,20 @@ class World:
         assert printed, output + rest
         fingerprint = printed.group(1)
         # The owner signs only for that exact credential: aw shows its fingerprint.
-        designated = docker("exec", machine, "aw", "app", "role", "designate", site.app_id, "--role", site.role,
-                            "--principal", human, "--credential", export, "--yes", timeout=300)
+        designated = docker("exec", machine, *designate_command(site.app_id, site.role, human, export, site.contact),
+                            timeout=300)
         assert designated.returncode == 0, designated.stdout + designated.stderr
         assert fingerprint in designated.stderr, designated.stderr
         held = self.compose("exec", "-T", "postgres", "psql", "-U", "postgres", "-d", "secrets", "-At", "-c",
                             "select count(*) from public.role_assignments where role = '" + site.role
                             + "' and principal_did = '" + human + "'").strip()
         assert held == "1", held
-        return {"role": site.role, "principal": human, "fingerprint": fingerprint}
+        # The holding keeps the notice contact the owner signed, byte for byte.
+        contact = self.compose("exec", "-T", "postgres", "psql", "-U", "postgres", "-d", "secrets", "-At", "-c",
+                               "select contact from public.passkey_approvers where principal = '" + human
+                               + "' and superseded_at is null").strip()
+        assert contact == site.contact, contact
+        return {"role": site.role, "principal": human, "fingerprint": fingerprint, "contact": contact}
 
     # --- the registry's real limiter, for the throttle legs -----------------
 
@@ -1166,7 +1178,7 @@ def journey(world: World, stop_after: str | None = None, agents_only: bool = Fal
     if not agents_only:
         print("=== Setup: the owner designates the approver's holding of the app role, before the signer holds the key")
         designated = world.designate_holding(site, holder, founded)
-        print("HOLDING:", json.dumps({k: designated[k] for k in ("role", "principal")}))
+        print("HOLDING:", json.dumps({k: designated[k] for k in ("role", "principal", "contact")}))
         if stop_after == "holding":
             print("STOPPED: after the approver's holding, as asked")
             return 0

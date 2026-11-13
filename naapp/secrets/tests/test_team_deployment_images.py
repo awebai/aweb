@@ -86,3 +86,14 @@ def test_a_full_commit_id_is_accepted_and_reaches_the_builds(tmp_path):
     result = builder(tmp_path, head)
     # Past the control check: the next refusal is the clean-checkout check or Docker itself.
     assert "full commit id" not in result.stderr and "not a commit in this checkout" not in result.stderr, result.stderr
+
+
+def test_the_owner_names_the_approvers_lab_mailbox_as_the_holdings_notice_contact():
+    # secrets.owner declares a notice contact, so aw refuses a designate
+    # without one; the approver's mailbox at the lab's SMTP receives the
+    # holding's later notices.
+    command = journey().designate_command("lfteam-secrets", "secrets.owner", "did:aw:approver",
+                                          "/world/holder-app.json", "approver@lf.test")
+    assert command == ["aw", "app", "role", "designate", "lfteam-secrets", "--role", "secrets.owner",
+                       "--principal", "did:aw:approver", "--credential", "/world/holder-app.json",
+                       "--notice-contact", "approver@lf.test", "--yes"]
