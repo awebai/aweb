@@ -20,6 +20,7 @@ success row.
 from __future__ import annotations
 
 import base64
+import hashlib
 import json
 import re
 import secrets
@@ -164,6 +165,69 @@ class Holder:
                     seen.append(child.match.group(0))
                 return "".join(seen)
             child.sendline(self.passphrase)
+
+
+# The prefix of the bytes a team's controller key signs for an owner act
+# (naapp-lib hooks/owner_act.py PREFIX; awid OwnerActPrefix).
+OWNER_ACT_PREFIX = b"aweb.owner-act/1\n"
+
+
+@dataclass(frozen=True)
+class SignedAct:
+    """The act a committed operation's signature covers, named by its nonce
+    and by H, the SHA-256 of the exact signing bytes delivered to the app."""
+
+    nonce: str
+    sha256: str
+    act: str
+
+
+def signed_act(signing: str) -> SignedAct:
+    """The act in a committed receipt's result.signing: padded standard base64
+    with no line break, of the owner-act prefix and the act's canonical JSON."""
+    if "\n" in signing or "\r" in signing:
+        raise SystemExit("FAILED: the signing bytes have a line break")
+    try:
+        decoded = base64.b64decode(signing, validate=True)
+    except ValueError as error:
+        raise SystemExit(f"FAILED: the signing bytes are not standard base64: {error}") from None
+    if not decoded.startswith(OWNER_ACT_PREFIX):
+        raise SystemExit("FAILED: the signing bytes are not an owner act's")
+    act = json.loads(decoded[len(OWNER_ACT_PREFIX):])
+    return SignedAct(nonce=act["nonce"], sha256=hashlib.sha256(decoded).hexdigest(), act=act["act"])
+
+
+def assert_one_effect(baseline: dict, first: dict, replay: dict, act: SignedAct) -> None:
+    """The app's own records show that the first delivery of `act` took
+    exactly one effect, and that its replay took none.
+
+    Each snapshot holds the scoped role assignments, the holding (ended, its
+    B3 subject, superseded, usable keys), the configuration revision, the
+    counts of owner-act nonce rows and narrowing-authority rows for the
+    installation, and the rows for this act's nonce and H."""
+    assert baseline["assignments"] == 1 and not baseline["holding"]["ended"], f"baseline: not before the effect {baseline}"
+    assert not baseline["nonce_rows"] and not baseline["authority_rows"], f"baseline: this act already applied {baseline}"
+    expected_rows = ([{"nonce": act.nonce, "act_sha256": act.sha256}], 1)
+    assert first["assignments"] == 0, f"first application: still assigned {first}"
+    holding = first["holding"]
+    assert holding["ended"] and holding["superseded"] and holding["usable_keys"] == 0, f"first application: {holding}"
+    assert holding["subject"] == baseline["holding"]["subject"], f"first application: another holder {holding}"
+    assert first["revision"] == baseline["revision"] + 1, f"first application: revision {first['revision']}"
+    assert first["nonces"] == baseline["nonces"] + 1, f"first application: nonce rows {first['nonces']}"
+    assert (first["nonce_rows"], len(first["nonce_rows"])) == expected_rows, f"first application: {first['nonce_rows']}"
+    assert first["authorities"] == baseline["authorities"] + 1, f"first application: authorities {first['authorities']}"
+    rows = first["authority_rows"]
+    assert len(rows) == 1, f"first application: authority rows {rows}"
+    row = rows[0]
+    assert (row["subject"], row["authority"], row["commitment"], row["signing_sha256"]) == (
+        holding["subject"], "owner_act", act.sha256, act.sha256), f"first application: {row}"
+    assert row["event_id"] and row["act"] in (None, "role.revoked") and row["event_act_sha256"] in (None, act.sha256), (
+        f"first application: governance event {row}")
+    # The replay: every record as the first delivery left it.
+    for key in ("assignments", "holding", "revision", "nonces", "nonce_rows", "authorities"):
+        assert replay[key] == first[key], f"replay: {key} changed {first[key]} -> {replay[key]}"
+    assert [(r["event_id"], r["commitment"]) for r in replay["authority_rows"]] == [
+        (r["event_id"], r["commitment"]) for r in rows], f"replay: authority rows {replay['authority_rows']}"
 
 
 class AnswerDrop:

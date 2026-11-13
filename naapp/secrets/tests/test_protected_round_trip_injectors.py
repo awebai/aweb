@@ -1,8 +1,12 @@
 """The protected round trip's fault injector: the front withholds the 2xx
 answer to one request (a signer's prepare, an app's owner-act delivery)."""
 
+import base64
+import hashlib
+import json
+
 import pytest
-from protected_round_trip import AnswerDrop
+from protected_round_trip import AnswerDrop, SignedAct, assert_one_effect, signed_act
 
 SITES = {
     "aweb.lf.test": "aweb:8000",
@@ -74,3 +78,74 @@ def test_a_drop_cannot_start_twice(tmp_path):
         with pytest.raises(SystemExit, match="already"):
             answer.__enter__()
     assert rendered.read_text() == WITH_SIGNER
+
+
+# --- the signed act a committed operation names, and one effect at the app
+
+
+ACT = {"v": 1, "type": "aweb.owner-act/1", "act": "human-role.revoke", "team_id": "lfteam:lf.test",
+       "aud": "https://console.secrets.lf.test", "team_key_did": "did:key:z6Mk", "subject": {"role": "secrets.owner"},
+       "issued_at": "2026-11-13T12:00:00Z", "expires_at": "2026-11-13T12:05:00Z", "nonce": "n0nce"}
+SIGNING = b"aweb.owner-act/1\n" + json.dumps(ACT, separators=(",", ":"), sort_keys=True).encode()
+
+
+def test_the_signed_act_is_named_by_the_hash_of_its_exact_signing_bytes_and_its_nonce():
+    act = signed_act(base64.b64encode(SIGNING).decode())
+    assert act == SignedAct(nonce="n0nce", sha256=hashlib.sha256(SIGNING).hexdigest(), act="human-role.revoke")
+
+
+@pytest.mark.parametrize("signing", [
+    base64.b64encode(b"aweb.human-credential/1\n{}").decode(),
+    base64.b64encode(SIGNING).decode().rstrip("="),
+    base64.b64encode(SIGNING).decode()[:20] + "\n" + base64.b64encode(SIGNING).decode()[20:],
+])
+def test_signing_bytes_not_an_owner_act_or_not_strict_base64_are_refused(signing):
+    with pytest.raises(SystemExit):
+        signed_act(signing)
+
+
+H = hashlib.sha256(SIGNING).hexdigest()
+SUBJECT = "b3-subject"
+BASELINE = {"assignments": 1, "holding": {"ended": False, "subject": SUBJECT, "superseded": False, "usable_keys": 1},
+            "revision": 7, "nonces": 3, "authorities": 2, "nonce_rows": [], "authority_rows": []}
+FIRST = {"assignments": 0, "holding": {"ended": True, "subject": SUBJECT, "superseded": True, "usable_keys": 0},
+         "revision": 8, "nonces": 4, "authorities": 3,
+         "nonce_rows": [{"nonce": "n0nce", "act_sha256": H}],
+         "authority_rows": [{"subject": SUBJECT, "authority": "owner_act", "commitment": H, "signing_sha256": H,
+                             "event_id": "e1", "kind": "post-governance-hook", "act": "role.revoked",
+                             "event_act_sha256": H}]}
+ACT_SIGNED = SignedAct(nonce="n0nce", sha256=H, act="human-role.revoke")
+
+
+def test_one_revoke_and_its_exact_replay_are_one_effect():
+    assert_one_effect(BASELINE, FIRST, dict(FIRST), ACT_SIGNED)
+
+
+def mutated(snapshot, **changes):
+    out = json.loads(json.dumps(snapshot))
+    out.update(changes)
+    return out
+
+
+@pytest.mark.parametrize("first, replay, seam", [
+    # The first delivery took no effect.
+    (mutated(FIRST, assignments=1), FIRST, "first application"),
+    (mutated(FIRST, revision=7), FIRST, "first application"),
+    (mutated(FIRST, nonce_rows=[], nonces=3), FIRST, "first application"),
+    (mutated(FIRST, authority_rows=[], authorities=2), FIRST, "first application"),
+    # Another act's row, not this one's.
+    (mutated(FIRST, nonce_rows=[{"nonce": "n0nce", "act_sha256": "0" * 64}]), FIRST, "first application"),
+    # The replay took a second effect: a fresh act, not this one again.
+    (FIRST, mutated(FIRST, revision=9), "replay"),
+    (FIRST, mutated(FIRST, nonces=5), "replay"),
+    (FIRST, mutated(FIRST, authorities=4), "replay"),
+    (FIRST, mutated(FIRST, authority_rows=FIRST["authority_rows"] * 2), "replay"),
+])
+def test_a_missing_first_effect_or_a_second_effect_is_named_by_its_seam(first, replay, seam):
+    with pytest.raises(AssertionError, match=seam):
+        assert_one_effect(BASELINE, first, replay, ACT_SIGNED)
+
+
+def test_a_baseline_taken_after_the_effect_is_refused():
+    with pytest.raises(AssertionError, match="baseline"):
+        assert_one_effect(FIRST, FIRST, FIRST, ACT_SIGNED)
