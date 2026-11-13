@@ -20,6 +20,7 @@ success row.
 from __future__ import annotations
 
 import base64
+import datetime
 import hashlib
 import json
 import re
@@ -165,6 +166,77 @@ class Holder:
                     seen.append(child.match.group(0))
                 return "".join(seen)
             child.sendline(self.passphrase)
+
+
+# The hook bindings a team deployment activates before any owner act: the
+# audit-critical pairs that Secrets' governance acts and secret use need, and
+# Logs' own governance production, which its reader designation needs. The
+# other bindings the manifests declare (Logs' post-command,
+# post-manifest-command and post-mutation registrations) have no producer in
+# this bundle and stay pending.
+REQUIRED_HOOK_BINDINGS = (
+    ("secrets", "production", "post-governance-hook"),
+    ("secrets", "production", "post-secret-use-hook"),
+    ("logs", "registration", "post-governance-hook"),
+    ("logs", "registration", "post-secret-use-hook"),
+    ("logs", "production", "post-governance-hook"),
+)
+# The wait past the latest active_from: the producers allow five seconds of
+# skew between their clock and the database's that set active_from.
+HOOK_READINESS_MARGIN = datetime.timedelta(seconds=10)
+# The longest the journey waits for the bindings to come into effect: the
+# server's sixty seconds after activation, plus the margin, with room.
+HOOK_READINESS_DEADLINE = datetime.timedelta(minutes=3)
+
+
+# What names a binding: the app's installation, generation and manifest, and
+# the binding's kind and hook.
+HOOK_BINDING_IDENTITY = ("app_id", "installation_id", "generation", "digest", "kind", "hook")
+
+
+def select_hook_bindings(listed: dict[str, list[dict]]) -> dict[tuple[str, str, str], dict]:
+    """The listed row of each required binding, from each app's listing, named
+    by its kind and hook. A required binding listed none or several times is
+    refused, and so is an app whose rows are not one installation, generation
+    and manifest."""
+    for app, rows in listed.items():
+        installs = {(r["installation_id"], r["generation"], r["digest"]) for r in rows}
+        if len(installs) != 1:
+            raise SystemExit(f"FAILED: {app}'s hook bindings are not one installation, generation and manifest: "
+                             f"{sorted(map(str, installs))}")
+    selected = {}
+    for app, kind, hook in REQUIRED_HOOK_BINDINGS:
+        matches = [b for b in listed.get(app, []) if (b["kind"], b["hook"]) == (kind, hook)]
+        if len(matches) != 1:
+            raise SystemExit(f"FAILED: {app} lists {len(matches)} {kind} bindings for {hook}, not one")
+        selected[(app, kind, hook)] = matches[0]
+    return selected
+
+
+def hooks_ready_at(listed: list[dict], selected: list[dict],
+                   margin: datetime.timedelta = HOOK_READINESS_MARGIN) -> datetime.datetime:
+    """When the selected bindings are in effect: the latest of their
+    active_from, plus the margin. A selected binding that is not active, has
+    no active_from, or is no longer the installation, generation, manifest,
+    kind and hook selected, is refused."""
+    by_id = {b["binding_id"]: b for b in listed}
+    starts = []
+    for chosen in selected:
+        binding_id = chosen["binding_id"]
+        binding = by_id.get(binding_id)
+        if binding is None or binding.get("state") != "active" or not binding.get("active_from"):
+            raise SystemExit(f"FAILED: hook binding {binding_id} is not active with an active_from: {binding}")
+        if any(binding.get(field) != chosen[field] for field in HOOK_BINDING_IDENTITY):
+            raise SystemExit(f"FAILED: hook binding {binding_id} is no longer the one selected: {binding}")
+        starts.append(datetime.datetime.fromisoformat(binding["active_from"].replace("Z", "+00:00")))
+    return max(starts) + margin
+
+
+def designate_command(app_id: str, role: str, principal: str, credential: str, contact: str) -> list[str]:
+    """The owner's designation of a holding of an app role. A role that
+    declares a notice contact, as secrets.owner does, takes the holder's."""
+    return ["aw", "app", "role", "designate", app_id, "--role", role, "--principal", principal,
+            "--credential", credential, "--notice-contact", contact, "--yes"]
 
 
 # The prefix of the bytes a team's controller key signs for an owner act
