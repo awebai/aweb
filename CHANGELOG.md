@@ -2,6 +2,84 @@
 
 ## Unreleased
 
+- The team deployment bundle's `team.registryRoute` (`local` or `external`,
+  default `external`) says where the AWID registry runs for the agents'
+  ingress probe. An external registry, such as the public one at the default
+  `team.registryUrl`, gets a positive control with no backend log, and
+  `teamctl start` no longer requires a `registry` Compose service for it. A
+  local registry keeps its log witness and must be reached at one of
+  `egress.privateIngressAddresses`. Either declaration that does not match
+  the deployment is refused.
+
+  Upgrade: a deployment with agents that runs its own `registry` service
+  must set `team.registryRoute: local`; without it, `teamctl start` refuses
+  and names that setting.
+
+- `aw id endorse` installs the endorsed root's chain (the human's supporting
+  chain and the signed certificate it registered) in the root's home once
+  the registry read-back confirms it, so the root can issue children with
+  `aw id child invite`. A rerun of the committed endorsement installs it when
+  it is missing; `--json` reports `chain_installed`.
+
+- `aw id team remove-agent --protected-profile P --certificate F --operation-id U`
+  removes, as the deployment's endorsed root, the agent membership that
+  certificate file names, through the protected service's bounded
+  `team.agent.remove`. aw checks that the service signs exactly the registry's
+  revocation of that certificate under the profile's pinned controller key,
+  and changes nothing in the agent's home. The same `--operation-id` resumes
+  the removal; changed inputs refuse `operation_conflict`.
+
+- `aw id team install-cert --identity-home H --certificate F` installs a team
+  certificate file, such as the one `aw id team admit --certificate-out`
+  wrote, into the home whose identity it names, after checking it at the
+  registry: signed by the team's current key, registered and not revoked. It
+  reads the certificate's public status, which needs no member authority, so
+  a revoked member of a private team is refused `certificate_revoked`. A local identity takes certificates of one team only. Then
+  `aw service init` connects the home. A rerun reports `already_installed`
+  and completes an interrupted install. Refusals carry
+  the codes listed in `--help`; only `registry_unavailable` is worth retrying.
+
+- `aw id create --local --identity-home H` creates a key-only local identity
+  (a did:key registered nowhere, with no address or membership) in a fresh
+  home, for an agent a parent issues and a team admits. `--json` reports
+  `status` and `did_key`. A killed run resumes with the same key, and a rerun
+  on the finished home returns `already_exists` with the same `did_key`;
+  any other home is refused with `identity_exists` and left unchanged.
+
+- `aw id endorse --no-wait` shows the approval page and exits instead of
+  waiting for the human: `--json` reports `operation_id`, `state`, `page`,
+  `digest`, `fingerprint` and `expires_at`. Running the same command again
+  with the same `--operation-id` resumes it, and once the human has approved,
+  finishes the endorsement, registering and reading back the certificate.
+  `--no-browser` reports the page without opening a browser, for setup an
+  agent drives.
+
+- `aw id create --no-address --registry R --identity-home H` creates a
+  registered identity with no address: a fresh self-custodial key registers
+  its own did:aw at R and is read back, with no namespace controller key
+  involved. It is how a deployment root is created before a human endorses
+  it. Creation is resumable: the key is kept privately before anything is
+  sent, so a rerun completes an interrupted creation with the same key. A
+  home that already holds an identity, or anything else, refuses
+  `identity_exists`. `--json` carries `did_aw` and `did_key`.
+
+- aw no longer blind-retries a `503` that carries `Retry-After`: the request
+  returns at once with the service's hint, since a retry before it cannot
+  succeed and repeats what the service asked to wait for. A bare `503` keeps
+  its three brief retries. A protected `aw app role revoke` waits out an
+  explicit delta-seconds hint on its installation lookup within that step's
+  own two-minute bound, then reads again; the prepare that follows has a
+  fresh two-minute bound of its own, so the act can wait up to about four
+  minutes on hints, and the command's own earlier deadline or cancellation
+  always ends it first. An inactive, mismatched or otherwise refused
+  installation still refuses at once, and nothing is prepared until the
+  lookup succeeds.
+
+- aweb server keeps a registry throttling hint on `503 identity_binding_unavailable`
+  responses as `Retry-After`, including authenticated installation lookups.
+  Identity mismatches and ordinary dependency failures retain their existing
+  refusal behavior; the server adds no wait or retry.
+
 - `aw id team admission-policy --team T --protected-profile P` reads a
   protected team's agent admission policy from its protected service, proving
   this identity's key. `--json` carries the mode and the complete policy,

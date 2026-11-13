@@ -13,7 +13,7 @@ from aweb_naapp.runtime.clock import seconds_to_ns
 from aweb_naapp_testing.owner_acts import INSTALLATION_ID
 
 from aweb_secrets.containment import Containment, ContainmentRefused
-from aweb_secrets.owners import OWNER_ROLE, has_owner
+from aweb_secrets.owners import OWNER_ROLE
 from aweb_secrets.tokens import ProcessTokenCache, TokenKey
 from tests.human_owner import canonical_actor
 from tests.test_change_sets import ALICE, TEAM, world  # noqa: F401
@@ -27,8 +27,8 @@ uses = _uses
 async def service(uses):  # noqa: F811
     w = uses.world
     await apply_outbox_migrations(w.db)
-    # uses already designated ALICE through the canonical reviewed holder path.
-    assert await has_owner(w.db, ALICE, installation_id=w.admitted.installation_id)
+    # Browser applications compose their services before the human designates
+    # a holder. Each action checks its caller's actual holding at effect time.
     producer = HookProducer(
         ServerProducer.app(
             origin="https://api.secrets.example.com",

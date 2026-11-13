@@ -410,6 +410,7 @@ Subcommands:
 - `child` Invite, receive and approve requests from children you issue
 - `create` Create a global identity by claiming a namespace address
 - `encryption-key` Manage local E2E encryption keys for this self-custodial identity
+- `endorse` Have a human endorse this agent as the deployment's root, through the protected service
 - `grant` Scoped, revocable session grants derived from this identity
 - `human` Human identities in a namespace's identity tree
 - `log` Show a global AWID DID log
@@ -610,7 +611,9 @@ Flags:
 - `-h, --help help for create`
 - `--human-parent string did:aw of the issuing human (local key, or a registered account human with --org)`
 - `--inbound-mode string Hosted inbound delivery mode (default team-and-contacts; requires --org)`
+- `--local Create a key-only local identity (a did:key registered nowhere) in an explicit fresh --identity-home; resumable, and a rerun returns it`
 - `--name string Global identity name (address name under --domain)`
+- `--no-address Create a registered identity with no address in an explicit fresh --identity-home, registering its own did:aw at --registry; resumable`
 - `--org string Hosted organization slug or ID (human CLI login or explicit owner principal)`
 - `--owner-identity-home string Authorize --org creation with this owner's absolute native credential directory`
 - `--registry string Registry origin override (default: api.awid.ai)`
@@ -658,6 +661,31 @@ Show local E2E encryption key state
 
 Flags:
 - `-h, --help help for show`
+
+## `id endorse`
+
+### `id endorse`
+
+Ask the protected service named by --protected-profile to have --human endorse
+this registered agent as the deployment's root for --team. The human approves the
+exact act on the service's page; nothing is signed here. Before the page is shown,
+aw checks the admission policy the service froze against its own read of every
+team's policy. Endorsement grants no resource permissions and creates no policy.
+
+--operation-id is the caller's UUID, kept before anything is sent. Running again
+with the same id and inputs resumes that operation; changed inputs refuse
+operation_conflict. Once the endorsement commits, aw registers the root's new
+certificate at the pinned registry and reads it back.
+
+Flags:
+- `--deployment-label string The deployment's name, shown to the human`
+- `-h, --help help for endorse`
+- `--human string The did:aw of the human who endorses this root`
+- `--no-browser Do not open a browser; the page is only reported`
+- `--no-wait Show the approval page and exit without waiting for the human; rerun with the same --operation-id to finish`
+- `--operation-id string The caller's UUID for this endorsement; the same id resumes it`
+- `--protected-profile string The operator-provisioned protected-service profile`
+- `--team stringArray A team (name:domain) the root will admit agents to; repeat for each`
 
 ## `id grant`
 
@@ -1097,17 +1125,21 @@ holders, service projection, or diagnostics.
 Subcommands:
 - `accept-invite` Accept a team invite and receive a membership certificate
 - `add-member` Protocol/admin: add a member by signing a team certificate
+- `admission-policy` Read a protected team's agent admission policy from its protected service
+- `admit` Admit an agent to a protected team through its protected service, as the endorsed root
 - `cleanup-cloud` Protocol/admin: delete aweb Cloud's BYOT projection after registry team deletion
 - `create` Create a hosted sibling team or a customer-controlled AWID team
 - `delete` Protocol/admin: delete an AWID team using the namespace controller key
 - `fetch-cert` Protocol/admin bridge: fetch and install an approved team certificate
 - `import-request` Protocol/admin: create a signed BYOT import request for aweb cloud
+- `install-cert` Install an issued team certificate file into an identity home
 - `invite` Generate an invite token for a team
 - `leave` Remove a team membership from this identity
 - `list` List team memberships for this identity
 - `members` List a team's members from AWID certificates
 - `register` Protocol/admin: register or sync a customer-controlled team with a service
 - `reissue-cert` Protocol/admin: mint and register a fresh certificate for the same member key
+- `remove-agent` Remove an admitted agent from a protected team through its protected service, as the endorsed root
 - `remove-member` Protocol/admin: remove a member by revoking a team certificate
 - `request` Protocol/admin bridge: print the add-member command the team owner should run
 - `rotate-key` Rotate the team controller key, re-signing the team's AWID records with it
@@ -1180,6 +1212,51 @@ Flags:
 - `--name string Member name to use with --did`
 - `--namespace string Namespace domain`
 - `--team string Team name`
+
+## `id team admission-policy`
+
+### `id team admission-policy`
+
+Read a team's agent admission policy from the protected service named by
+--protected-profile, proving this identity's current key.
+
+The answer says whether the team is protected or legacy and, for a protected
+team, the immutable policy version and digest an admission binds. A protected
+team without a policy refuses admission_policy_missing: the operator provisions
+or approves one; aw never creates it. A read that cannot be answered refuses
+receipt_unavailable and never means the team has no policy.
+
+Flags:
+- `-h, --help help for admission-policy`
+- `--protected-profile string The operator-provisioned protected-service profile to read the policy from`
+- `--team string The team (name:domain) whose policy to read; the profile must bind its controller`
+
+## `id team admit`
+
+### `id team admit`
+
+Admit one agent to a protected team as an ordinary member, through the protected
+service named by --protected-profile, proving this identity's key as the
+deployment's endorsed root. No human approves it: the service admits only within
+the team's admission policy, whose version and digest the caller names as read
+from aw id team admission-policy.
+
+--operation-id is the caller's UUID, kept before anything is sent. Running again
+with the same id and the same inputs resumes that operation and returns its
+original certificate; changed inputs under the id refuse operation_conflict. The
+verified membership certificate is written to --certificate-out.
+
+Flags:
+- `--alias string The agent's member alias`
+- `--certificate-out string Where to write the agent's membership certificate`
+- `-h, --help help for admit`
+- `--member-id string The agent's did:aw, when it is a registered identity; omit for a local agent`
+- `--member-key string The agent's did:key`
+- `--operation-id string The caller's UUID for this admission; the same id resumes it`
+- `--policy-digest string The admission policy digest the caller read (sha256:<hex>)`
+- `--policy-version int The admission policy version the caller read`
+- `--protected-profile string The operator-provisioned protected-service profile`
+- `--team string The protected team (name:domain)`
 
 ## `id team cleanup-cloud`
 
@@ -1289,6 +1366,33 @@ Flags:
 - `--organization-id string AC organization id for a new imported team`
 - `--team string Team name`
 - `--timestamp string RFC3339 timestamp to sign (defaults to now; accepted for five minutes by cloud)`
+
+## `id team install-cert`
+
+### `id team install-cert`
+
+Install a team membership certificate file, such as the one `aw id team admit`
+wrote with --certificate-out, into the explicit --identity-home whose identity it
+names. The certificate is checked against the registry before anything is
+written; then `aw service init` connects the home's workspace.
+
+Running it again with the same certificate reports already_installed and
+completes an install that was interrupted. Refusals, with their --json codes:
+  certificate_invalid        the file is not a team certificate, or the registry reports
+                             a status for it that aw does not know
+  member_mismatch            it names another key, did:aw or scope than the home's identity
+  team_key_not_current       it is signed by a key that is not the team's current key
+  certificate_bad_signature  its signature does not verify under that key
+  certificate_revoked        the registry has revoked it
+  certificate_unregistered   the registry does not hold it for this member
+  certificate_conflict       the home holds another certificate for the team, or, for a
+                             local identity, any membership of another team
+  registry_unavailable       the registry could not be read; retrying may succeed
+
+Flags:
+- `--certificate string Certificate file to install`
+- `-h, --help help for install-cert`
+- `--registry string Registry origin the team is read from (default: the configured registry)`
 
 ## `id team invite`
 
@@ -1411,6 +1515,26 @@ Flags:
 - `--namespace string Namespace domain`
 - `--registry string Registry origin override`
 - `--team string Team name`
+
+## `id team remove-agent`
+
+### `id team remove-agent`
+
+Remove one agent's membership of a protected team, through the protected service
+named by --protected-profile, proving this identity's key as the deployment's
+endorsed root that admitted it. The membership is the one --certificate names:
+the certificate file aw id team admit wrote, or the agent home's installed copy.
+No human approves it, and nothing in the agent's home is changed.
+
+--operation-id is the caller's UUID, kept before anything is sent. Running again
+with the same id and the same inputs resumes that operation and returns its
+receipt; changed inputs under the id refuse operation_conflict.
+
+Flags:
+- `--certificate string The agent's team certificate file`
+- `-h, --help help for remove-agent`
+- `--operation-id string The caller's UUID for this removal; the same id resumes it`
+- `--protected-profile string The operator-provisioned protected-service profile`
 
 ## `id team remove-member`
 

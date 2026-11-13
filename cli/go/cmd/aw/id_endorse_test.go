@@ -12,6 +12,8 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"os"
+	"os/exec"
+	"path/filepath"
 	"strconv"
 	"strings"
 	"testing"
@@ -246,7 +248,7 @@ func TestARegisteredEndorsementIsConfirmedOnlyByItsReadBack(t *testing.T) {
 	artifact := endorsedArtifact(humanDID)
 	signed, _ := endorsedCertificate(signedEndorsement(t, humanKey, artifact), artifact, humanDID)
 	ours, _ := awid.IDCertificateID(signed["certificate"].(map[string]any))
-	chain := []any{map[string]any{"certificate": "human"}}
+	chain := []any{signedHumanCertificate(t, humanKey)}
 	refused := errors.New("already registered")
 	for name, tc := range map[string]struct {
 		registry *fakeRootRegistry
@@ -258,7 +260,8 @@ func TestARegisteredEndorsementIsConfirmedOnlyByItsReadBack(t *testing.T) {
 		"read-back unavailable": {&fakeRootRegistry{currentErr: errors.New("no answer")}, "registration_unconfirmed"},
 		"refused and not ours":  {&fakeRootRegistry{registerErr: refused, current: "sha256:" + strings.Repeat("cd", 32)}, "registration_conflict"},
 	} {
-		err := registerEndorsement(context.Background(), tc.registry, chain, signed, nil)
+		home := t.TempDir()
+		err := registerEndorsement(context.Background(), tc.registry, chain, signed, nil, home)
 		if errorCodeOf(err) != tc.code || (tc.code == "" && err != nil) {
 			t.Errorf("%s: err %v", name, err)
 		}
@@ -266,12 +269,79 @@ func TestARegisteredEndorsementIsConfirmedOnlyByItsReadBack(t *testing.T) {
 		if len(certificates) != 2 || certificates[1].(map[string]any)["signature"] != signed["signature"] {
 			t.Errorf("%s: registered %v", name, tc.registry.registered)
 		}
+		// Only a confirmed endorsement installs the chain it registered.
+		installed, loadErr := awconfig.LoadInstalledIDChain(home)
+		if loadErr != nil {
+			t.Fatalf("%s: %v", name, loadErr)
+		}
+		if tc.code == "" && (installed == nil || !sameJSONForTest(installed.Bundle, tc.registry.registered)) {
+			t.Errorf("%s: installed %v, registered %v", name, installed, tc.registry.registered)
+		}
+		if tc.code != "" && installed != nil {
+			t.Errorf("%s: an unconfirmed endorsement installed a chain", name)
+		}
 	}
 	head := "sha256:" + strings.Repeat("ab", 32)
 	registry := &fakeRootRegistry{current: ours}
-	if err := registerEndorsement(context.Background(), registry, chain, signed, &head); err != nil || registry.head != head {
+	if err := registerEndorsement(context.Background(), registry, chain, signed, &head, t.TempDir()); err != nil || registry.head != head {
 		t.Fatalf("expected head %v err %v", registry.head, err)
 	}
+}
+
+// A rerun of a committed endorsement installs its chain when it is missing,
+// and leaves an installed one exactly as it is.
+func TestARerunOfAConfirmedEndorsementInstallsItsChainOnce(t *testing.T) {
+	_, humanKey, _ := ed25519.GenerateKey(nil)
+	humanDID := awid.ComputeDIDKey(humanKey.Public().(ed25519.PublicKey))
+	artifact := endorsedArtifact(humanDID)
+	signed, _ := endorsedCertificate(signedEndorsement(t, humanKey, artifact), artifact, humanDID)
+	ours, _ := awid.IDCertificateID(signed["certificate"].(map[string]any))
+	chain := []any{signedHumanCertificate(t, humanKey)}
+	home := t.TempDir()
+	path := filepath.Join(home, "id-chain.json")
+	if err := registerEndorsement(context.Background(), &fakeRootRegistry{current: ours}, chain, signed, nil, home); err != nil {
+		t.Fatal(err)
+	}
+	first, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	refused := errors.New("already registered")
+	if err := registerEndorsement(context.Background(), &fakeRootRegistry{registerErr: refused, current: ours}, chain, signed, nil, home); err != nil {
+		t.Fatal(err)
+	}
+	if again, _ := os.ReadFile(path); !bytes.Equal(first, again) {
+		t.Fatal("the rerun changed the installed chain")
+	}
+	if err := os.Remove(path); err != nil {
+		t.Fatal(err)
+	}
+	if err := registerEndorsement(context.Background(), &fakeRootRegistry{registerErr: refused, current: ours}, chain, signed, nil, home); err != nil {
+		t.Fatal(err)
+	}
+	if again, _ := os.ReadFile(path); !bytes.Equal(first, again) {
+		t.Fatal("the rerun did not install the missing chain")
+	}
+}
+
+// signedHumanCertificate is example.com's human certificate signed by
+// humanKey, the supporting chain an endorsement registers above the root.
+func signedHumanCertificate(t *testing.T, humanKey ed25519.PrivateKey) map[string]any {
+	t.Helper()
+	human := map[string]any{"v": json.Number("1"), "type": "aweb.id-certificate", "id": admitTestHuman, "domain": "example.com",
+		"parent": map[string]any{"kind": "namespace", "id": "example.com"}, "kind": "human",
+		"issuer_key": awid.ComputeDIDKey(humanKey.Public().(ed25519.PublicKey)), "issued_at": "2026-11-13T09:00:00Z"}
+	signing, err := awid.IDCertificateSigningBytes(human)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return map[string]any{"certificate": human, "signature": base64.RawURLEncoding.EncodeToString(ed25519.Sign(humanKey, signing))}
+}
+
+func sameJSONForTest(a, b any) bool {
+	left, errLeft := awid.StrictCanonicalJSON(a)
+	right, errRight := awid.StrictCanonicalJSON(b)
+	return errLeft == nil && errRight == nil && bytes.Equal(left, right)
 }
 
 func TestAChangedEndorsementUnderASavedOperationIDIsAConflict(t *testing.T) {
@@ -382,7 +452,7 @@ func readBackAt(t *testing.T, status any, controller string) error {
 	_, rootKey, _ := ed25519.GenerateKey(nil)
 	adapter := &pinnedRootRegistry{registry: registry, profile: profile, domain: "example.com", signer: awid.KeySigner(rootKey),
 		root: awid.IDChainSubject{ID: root, DIDKey: awid.ComputeDIDKey(rootKey.Public().(ed25519.PublicKey))}}
-	return registerEndorsement(context.Background(), adapter, []any{humanSigned}, signed, nil)
+	return registerEndorsement(context.Background(), adapter, []any{humanSigned}, signed, nil, t.TempDir())
 }
 
 // openEpochController is the controller key of status's open namespace epoch.
@@ -434,5 +504,70 @@ func TestTheRealReadBackNeverTakesUnverifiedStatusAsAHead(t *testing.T) {
 		if err := readBackAt(t, tc.status, tc.controller); errorCodeOf(err) != "registration_unconfirmed" {
 			t.Errorf("%s: err %v", name, err)
 		}
+	}
+}
+
+func TestAPendingEndorsementReportsWhatTheCallerShowsTheHuman(t *testing.T) {
+	expires := time.Date(2026, 11, 13, 12, 0, 0, 0, time.UTC)
+	prepared := &handoff.Prepared{OperationID: endorseTestOperation, HandoffID: "h1",
+		Digest: "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef", ExpiresAt: expires}
+	report := pendingEndorsementReport(prepared, "https://human.customer.example/handoff/h1", &handoff.Receipt{State: "pending", Reason: "awaiting_human"})
+	raw, _ := json.Marshal(report)
+	want := `{"digest":"0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef","expires_at":"2026-11-13T12:00:00Z",` +
+		`"fingerprint":"0123 4567 89ab cdef","operation_id":"` + endorseTestOperation + `","page":"https://human.customer.example/handoff/h1",` +
+		`"reason":"awaiting_human","state":"pending"}`
+	if string(raw) != want {
+		t.Fatalf("report %s\nwant   %s", raw, want)
+	}
+}
+
+// The real command invites an agent child as a root whose chain endorsement
+// installed, and refuses it as the same root without one.
+func TestAnEndorsedRootInvitesAnAgentChildWithItsInstalledChain(t *testing.T) {
+	ctx, cancel := context.WithTimeout(context.Background(), time.Minute)
+	defer cancel()
+	bin := filepath.Join(t.TempDir(), "aw")
+	buildAwBinary(t, ctx, bin)
+	_, humanKey, _ := ed25519.GenerateKey(nil)
+	humanDID := awid.ComputeDIDKey(humanKey.Public().(ed25519.PublicKey))
+	artifact := endorsedArtifact(humanDID)
+	signed, _ := endorsedCertificate(signedEndorsement(t, humanKey, artifact), artifact, humanDID)
+	ours, _ := awid.IDCertificateID(signed["certificate"].(map[string]any))
+	root, err := filepath.EvalSymlinks(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	home := filepath.Join(root, "root-home")
+	_, rootKey, _ := ed25519.GenerateKey(nil)
+	if err := awconfig.SaveWorktreeIdentityTo(filepath.Join(home, "identity.yaml"), &awconfig.WorktreeIdentity{
+		DID: awid.ComputeDIDKey(rootKey.Public().(ed25519.PublicKey)), StableID: artifact["id"].(string), Custody: awid.CustodySelf,
+		IdentityScope: awid.IdentityModeGlobal, RegistryURL: "https://registry.customer.example", RegistryStatus: "registered",
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if err := awid.SaveSigningKey(filepath.Join(home, "signing.key"), rootKey); err != nil {
+		t.Fatal(err)
+	}
+	invite := func() (map[string]any, string, error) {
+		command := exec.CommandContext(ctx, bin, "--json", "--identity-home", home, "id", "child", "invite", "--kind", "agent",
+			"--recipient", "spawned agent", "--registry", "https://registry.customer.example")
+		command.Dir, command.Env = root, testCommandEnv(root)
+		out, err := command.CombinedOutput()
+		var result map[string]any
+		_ = json.Unmarshal(out, &result)
+		return result, string(out), err
+	}
+	if _, out, err := invite(); err == nil || !strings.Contains(out, "no installed chain") {
+		t.Fatalf("a root with no installed chain invited: %v %s", err, out)
+	}
+	if err := registerEndorsement(ctx, &fakeRootRegistry{current: ours}, []any{signedHumanCertificate(t, humanKey)}, signed, nil, home); err != nil {
+		t.Fatal(err)
+	}
+	invited, out, err := invite()
+	if err != nil || invited["kind"] != "agent" || invited["invitation_id"] == "" {
+		t.Fatalf("invite: %v %s", err, out)
+	}
+	if parent, _ := invited["parent"].(map[string]any); parent["kind"] != "identity" || parent["id"] != artifact["id"] {
+		t.Fatalf("parent %v", invited["parent"])
 	}
 }

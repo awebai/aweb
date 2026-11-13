@@ -234,6 +234,26 @@ def canonical_actor(world, principal):
     )
 
 
+async def register_holder_member(world, registry, principal, *, team_key):
+    """Certify the existing holder's key on a route fixture's separate registry.
+
+    This creates no app role or holding. The HTTP owner action still resolves
+    the holding designated in the shared world; the use requester stays separate.
+    """
+    holder = world.human_members[principal]
+    member = Member(
+        team_id=principal.team_id,
+        team_key=team_key,
+        member_key=holder.member_key,
+        certificate_id="route-" + holder.certificate_id,
+        alias="route-" + holder.alias,
+        extra_cert_fields={"member_did_aw": principal.principal_did},
+    )
+    assert await registry.register_did(member.member_key) == principal.principal_did
+    await registry.add_certificate(member.certificate())
+    return member
+
+
 async def bind_owner(db, fence, registry, *, team_id):
     """Give a metadata-only DB fixture a real controller-designated holder.
 

@@ -20,10 +20,11 @@ from aweb_secrets.secret import SecretRecord
 from aweb_secrets.tokens import TokenKey
 from aweb_secrets.use_routes import UseServices, use_router
 from tests.harness import running_upstream
+from tests.human_owner import register_holder_member
 from tests.test_admission import POLICY_BODY
 from tests.test_app import _settings, allow_all, kms_check
 from tests.test_broker_approved_service import setup
-from tests.test_change_sets import Installations
+from tests.test_change_sets import ALICE, Installations
 from tests.test_containment_service import service as containment_service
 from tests.test_use_approvals import REQUESTER, SECRET, TEAM
 from tests.test_use_approvals import uses as uses
@@ -130,6 +131,8 @@ async def test_disable_worker_a_stops_worker_b_while_its_actual_token_remains_ca
         assert await registry.register_did(member.member_key) == REQUESTER.did_aw
         await registry.add_team(TEAM, member.team_did_key)
         await registry.add_certificate(member.certificate())
+        owner = await register_holder_member(uses.world, registry, ALICE, team_key=member.team_key)
+        assert owner.did_key != member.did_key
 
         def broker_routes(runtime, authorized):
             return use_router(
@@ -209,12 +212,20 @@ async def test_disable_worker_a_stops_worker_b_while_its_actual_token_remains_ca
                         "target": record.secret_id,
                     }
                 ).encode()
-                disabled = await client.post(
+                denied = await client.post(
                     "/v1/containment",
                     content=body,
                     headers=member.headers(
                         aud=API, method="POST", path="/v1/containment", body=body
                     )
+                    | {"Content-Type": "application/json"},
+                )
+                assert denied.status_code == 403, denied.text
+                assert denied.json() == {"detail": "owner_required"}
+                disabled = await client.post(
+                    "/v1/containment",
+                    content=body,
+                    headers=owner.headers(aud=API, method="POST", path="/v1/containment", body=body)
                     | {"Content-Type": "application/json"},
                 )
                 assert disabled.status_code == 200

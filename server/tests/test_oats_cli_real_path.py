@@ -174,6 +174,13 @@ async def test_an_endorsed_root_admits_an_agent_once_under_its_own_operation_id(
         # aw registered the root's certificate with its own proof; the
         # registry's current head is exactly that certificate.
         assert await _current_head(w, w.root_id) == endorsed["certificate_id"]
+        # The endorsed chain is installed in the root's home, so the root
+        # issues children.
+        assert endorsed["chain_installed"] is True
+        status, invited, progress = await _aw(home, "id", "child", "invite", "--kind", "agent", "--recipient", "spawned agent",
+            "--registry", w.registry_origin)
+        assert status == 0, progress
+        assert invited["parent"] == {"kind": "identity", "id": w.root_id} and invited["kind"] == "agent"
 
         _, child_public = generate_keypair()
         child_key = did_from_public_key(child_public)
@@ -262,3 +269,139 @@ async def test_an_endorse_whose_aw_ends_before_its_page_is_reported_and_stopped(
     with pytest.raises(AssertionError, match="Preparing operation x"):
         await _endorse(None, tmp_path / "profile.json", (tmp_path, dict(os.environ)), str(uuid4()), page_timeout=5)
     assert _gone(pid_file)
+
+
+@pytest.mark.usefixtures("source_cli_binary")
+@pytest.mark.asyncio
+async def test_a_root_is_created_with_no_address_at_the_real_registry_and_only_once(test_db_factory, tmp_path):
+    registry_sock, registry_origin = _listener()
+    request_sock, request_origin = _listener()
+    async with signer_world(test_db_factory, tmp_path, registry_origin=registry_origin, request_origin=request_origin) as w:
+        async with _serving(w.host.app, registry_sock):
+            request_sock.close()
+            root = (tmp_path / "new-root").resolve()
+            no_opener = tmp_path / "no-browser-opener"
+            no_opener.mkdir()
+            env = {k: v for k, v in os.environ.items() if not k.startswith(("AW", "XDG_"))}
+            env.update(HOME=str(tmp_path), XDG_CONFIG_HOME=str(tmp_path / ".config"), XDG_STATE_HOME=str(tmp_path / ".state"),
+                AW_NO_UPDATE_CHECK="1", PATH=str(no_opener))
+            create = ("--identity-home", str(root), "id", "create", "--no-address", "--registry", registry_origin)
+            status, created, progress = await _aw((tmp_path, env), *create)
+            assert status == 0, progress
+            assert created["status"] == "created" and created["registry_url"] == registry_origin
+            # The registry itself maps the new did:aw to the key aw holds.
+            async with httpx.AsyncClient(base_url=registry_origin) as client:
+                key = (await client.get(f"/v1/did/{created['did_aw']}/key")).json()
+            assert key["current_did_key"] == created["did_key"]
+            assert (root / "signing.key").stat().st_mode & 0o777 == 0o600
+            assert "address" not in (root / "identity.yaml").read_text()
+            # A rerun on the complete identity creates nothing.
+            status, refused, progress = await _aw((tmp_path, env), *create)
+            assert status != 0 and refused["error"]["code"] == "identity_exists", progress
+
+
+@pytest.mark.usefixtures("source_cli_binary")
+@pytest.mark.asyncio
+async def test_an_endorsement_that_is_not_waited_for_is_finished_by_a_rerun(test_db_factory, tmp_path):
+    async with oats_world(test_db_factory, tmp_path) as (a, profile, home):
+        w = a.w
+        operation = str(uuid4())
+        endorse = ("id", "endorse", "--protected-profile", str(profile), "--human", a.human.context.authority_id, "--team", TEAM,
+            "--deployment-label", "oats-root", "--operation-id", operation, "--no-wait", "--no-browser")
+        # Not waited for: aw reports the pending operation and its page, and exits.
+        status, pending, progress = await _aw(home, *endorse)
+        assert status == 0, progress
+        assert pending["operation_id"] == operation and pending["state"] == "pending"
+        assert pending["page"].startswith(a.w.human_origin + "/handoff/") and pending["reason"] == "awaiting_human"
+        assert len(pending["digest"]) == 64 and pending["fingerprint"] == " ".join(
+            pending["digest"][i:i + 4] for i in range(0, 16, 4))
+        # The human approves on the service.
+        options = await a.human.signer.approval_options(operation, human=a.actor)
+        approved = await a.human.signer.execute(operation, a.device.get(dict(options)), human=a.actor)
+        assert approved.state == "committed"
+        # The same command again finishes: no wait, registration and read-back.
+        status, endorsed, progress = await _aw(home, *endorse)
+        assert status == 0, progress
+        assert endorsed["operation_id"] == operation and endorsed["state"] == "committed" and endorsed["registered"] is True
+        assert await _current_head(w, w.root_id) == endorsed["certificate_id"]
+
+
+@pytest.mark.usefixtures("source_cli_binary")
+@pytest.mark.asyncio
+async def test_a_spawned_key_only_agent_is_admitted_and_its_certificate_installed_in_its_home(test_db_factory, tmp_path):
+    async with oats_world(test_db_factory, tmp_path) as (a, profile, home):
+        w = a.w
+        status, endorsed, progress = await _endorse(a, profile, home, str(uuid4()))
+        assert status == 0 and endorsed["state"] == "committed", progress
+
+        # OATS's spawn: a key-only home for the agent, registered nowhere.
+        child = home[0] / "worker-home"
+        create = ("--identity-home", str(child), "id", "create", "--local")
+        status, created, progress = await _aw(home, *create)
+        assert status == 0 and created["status"] == "created", progress
+        assert "did_aw" not in created
+        status, again, progress = await _aw(home, *create)
+        assert status == 0 and again == {**created, "status": "already_exists"}, progress
+
+        # The root admits that key; the certificate file is installed into the
+        # agent's home after aw checks it at the real registry.
+        certificate_out = home[0] / "worker-team-certificate.json"
+        status, admitted, progress = await _aw(home, "id", "team", "admit", "--protected-profile", str(profile), "--team", TEAM,
+            "--member-key", created["did_key"], "--alias", "worker", "--policy-version", str(a.policy["version"]),
+            "--policy-digest", a.policy["digest"], "--operation-id", str(uuid4()), "--certificate-out", str(certificate_out))
+        assert status == 0 and admitted["state"] == "committed", progress
+        certificate = json.loads(certificate_out.read_text())
+        install = ("--identity-home", str(child), "id", "team", "install-cert", "--certificate", str(certificate_out),
+            "--registry", w.registry_origin)
+        status, installed, progress = await _aw(home, *install)
+        assert status == 0, progress
+        assert installed["status"] == "installed" and installed["team_id"] == TEAM and installed["alias"] == "worker"
+        assert installed["certificate_id"] == certificate["certificate_id"] and installed["did_key"] == created["did_key"]
+        status, again, progress = await _aw(home, *install)
+        assert status == 0 and again["status"] == "already_installed", progress
+
+        # Once the registry revokes it, the same file is refused.
+        await w.registry.revoke_team_certificate(DOMAIN, "engineering", team_controller_signing_key=bytes(w.controller),
+            certificate_id=certificate["certificate_id"])
+        status, refused, progress = await _aw(home, *install)
+        assert status != 0 and refused["error"]["code"] == "certificate_revoked", progress
+
+
+@pytest.mark.usefixtures("source_cli_binary")
+@pytest.mark.asyncio
+async def test_the_endorsed_root_removes_the_agent_it_admitted_once_under_its_own_operation_id(test_db_factory, tmp_path):
+    async with oats_world(test_db_factory, tmp_path) as (a, profile, home):
+        w = a.w
+        status, endorsed, progress = await _endorse(a, profile, home, str(uuid4()))
+        assert status == 0 and endorsed["state"] == "committed", progress
+        _, child_public = generate_keypair()
+        certificate_out = home[0] / "worker-team-certificate.json"
+        status, admitted, progress = await _aw(home, "id", "team", "admit", "--protected-profile", str(profile), "--team", TEAM,
+            "--member-key", did_from_public_key(child_public), "--alias", "worker", "--policy-version", str(a.policy["version"]),
+            "--policy-digest", a.policy["digest"], "--operation-id", str(uuid4()), "--certificate-out", str(certificate_out))
+        assert status == 0 and admitted["state"] == "committed", progress
+        certificate = json.loads(certificate_out.read_text())
+        before = certificate_out.read_bytes()
+
+        # The root removes the membership the certificate file names; the
+        # registry revokes it and the admission no longer counts.
+        removal = str(uuid4())
+        remove = ("id", "team", "remove-agent", "--protected-profile", str(profile), "--certificate", str(certificate_out),
+            "--operation-id", removal)
+        status, removed, progress = await _aw(home, *remove)
+        assert status == 0, progress
+        assert removed == {"operation_id": removal, "state": "committed", "certificate_id": certificate["certificate_id"]}
+        records = await w.registry.list_team_certificates_fresh(DOMAIN, "engineering", active_only=False)
+        revoked = [r for r in records if r.certificate_id == certificate["certificate_id"]]
+        assert len(revoked) == 1 and revoked[0].revoked_at
+        assert await w.db.fetch_value(
+            "SELECT state FROM {{tables.protected_root_admissions}} WHERE certificate_id=$1", certificate["certificate_id"]) == "removed"
+        assert certificate_out.read_bytes() == before
+
+        # The same id and inputs return the retained receipt: no second
+        # signature or revocation.
+        status, again, progress = await _aw(home, *remove)
+        assert status == 0 and again == removed, progress
+        assert await w.db.fetch_value(
+            "SELECT count(*) FROM {{tables.protected_local_audit}} WHERE kind='protected_operation_signed' AND subject=$1",
+            removal) == 1

@@ -8,8 +8,10 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"path/filepath"
 	"slices"
 	"strings"
+	"time"
 
 	"github.com/awebai/aw/awconfig"
 	"github.com/awebai/aw/awid"
@@ -31,6 +33,8 @@ var (
 	idEndorseTeamsFlag     []string
 	idEndorseLabelFlag     string
 	idEndorseOperationFlag string
+	idEndorseNoWaitFlag    bool
+	idEndorseNoBrowserFlag bool
 )
 
 var idEndorseCmd = &cobra.Command{
@@ -56,6 +60,8 @@ func init() {
 	flags.StringVar(&idEndorseLabelFlag, "deployment-label", "", "The deployment's name, shown to the human")
 	flags.StringVar(&idEndorseOperationFlag, "operation-id", "", "The caller's UUID for this endorsement; the same id resumes it")
 	flags.StringVar(&appProtectedProfileFlag, "protected-profile", "", "The operator-provisioned protected-service profile")
+	flags.BoolVar(&idEndorseNoWaitFlag, "no-wait", false, "Show the approval page and exit without waiting for the human; rerun with the same --operation-id to finish")
+	flags.BoolVar(&idEndorseNoBrowserFlag, "no-browser", false, "Do not open a browser; the page is only reported")
 	identityCmd.AddCommand(idEndorseCmd)
 }
 
@@ -173,6 +179,16 @@ func endorsementCheck(issuerKey string, teams []string, readPolicy func(context.
 	}
 }
 
+// pendingEndorsementReport is what a caller that does not wait shows the
+// human: the page to approve on and what it must show, until when.
+func pendingEndorsementReport(prepared *handoff.Prepared, page string, receipt *handoff.Receipt) map[string]any {
+	return map[string]any{
+		"operation_id": prepared.OperationID, "state": receipt.State, "reason": receipt.Reason, "page": page,
+		"digest": prepared.Digest, "fingerprint": handoff.Fingerprint(prepared.Digest),
+		"expires_at": prepared.ExpiresAt.UTC().Format(time.RFC3339Nano),
+	}
+}
+
 // endorsedCertificate is the root's signed ID certificate in a committed
 // result, in the standard {certificate, signature} wrapper, if it is exactly
 // the frozen artifact signed by the human's pinned key. Anything else,
@@ -212,11 +228,13 @@ type rootRegistry interface {
 	currentHead(ctx context.Context, bundle map[string]any) (string, error)
 }
 
-// registerEndorsement registers signed with its supporting chain and confirms
-// it by reading the root's current certificate back. A registration whose
-// answer failed is confirmed by that read-back too; another current head is a
-// conflict, and no read-back leaves it unconfirmed.
-func registerEndorsement(ctx context.Context, registry rootRegistry, chain []any, signed map[string]any, expectedHead *string) error {
+// registerEndorsement registers signed with its supporting chain, confirms it
+// by reading the root's current certificate back, and installs that confirmed
+// chain in home so the root can issue children. A registration whose answer
+// failed is confirmed by that read-back too; another current head is a
+// conflict, and no read-back leaves it unconfirmed; neither installs anything.
+// Installing again writes the same chain.
+func registerEndorsement(ctx context.Context, registry rootRegistry, chain []any, signed map[string]any, expectedHead *string, home string) error {
 	bundle := map[string]any{"v": 1, "type": "aweb.id-chain", "certificates": append(slices.Clone(chain), signed)}
 	ours, err := awid.IDCertificateID(signed["certificate"].(map[string]any))
 	if err != nil {
@@ -229,6 +247,9 @@ func registerEndorsement(ctx context.Context, registry rootRegistry, chain []any
 		return withErrorCode("registration_unconfirmed", fmt.Errorf("the endorsed certificate %s could not be read back (%v; registration: %v); run again with the same operation id", ours, err, registerErr))
 	case current != ours:
 		return withErrorCode("registration_conflict", fmt.Errorf("the registry's current certificate for the root is %s, not the endorsed %s (registration: %v)", current, ours, registerErr))
+	}
+	if err := awconfig.SaveInstalledIDChain(home, bundle); err != nil {
+		return fmt.Errorf("the endorsed certificate %s is registered, but its chain could not be installed in %s: %w; run again with the same operation id", ours, home, err)
 	}
 	return nil
 }
@@ -343,6 +364,13 @@ func runIDEndorse(cmd *cobra.Command, _ []string) error {
 	var frozen map[string]any
 	opts := governanceOptions(cmd, profile, binding.Scope, identity)
 	opts.CheckPrepared = endorsementCheck(binding.AuthorityKeyDID, teams, readPolicy, &frozen)
+	if idEndorseNoBrowserFlag {
+		opts.Open = nil
+	}
+	var presented *handoff.Prepared
+	var page string
+	opts.NoWait = idEndorseNoWaitFlag
+	opts.OnPresented = func(prepared *handoff.Prepared, shown string) { presented, page = prepared, shown }
 	ctx, cancel := context.WithCancel(cmd.Context())
 	defer cancel()
 	fmt.Fprintf(cmd.ErrOrStderr(), "Endorsement of %s as the root for %s, approved by %s through %s\n", request.RootID, strings.Join(teams, ", "), request.Human, profile.ServiceID)
@@ -360,6 +388,16 @@ func runIDEndorse(cmd *cobra.Command, _ []string) error {
 			return withErrorCode(code, fmt.Errorf("operation %s: %w", request.OperationID, err))
 		}
 		return fmt.Errorf("operation %s: %w", request.OperationID, err)
+	}
+	if receipt.State == "pending" && presented != nil {
+		// Not waited for: the human approves on the page, and a rerun with
+		// the same operation id finishes.
+		report := pendingEndorsementReport(presented, page, receipt)
+		printOutput(report, func(any) string {
+			return fmt.Sprintf("Operation %s is pending (%s) until %s; approve it on %s, then run this command again with the same --operation-id.\n",
+				request.OperationID, receipt.Reason, report["expires_at"], page)
+		})
+		return nil
 	}
 	artifact, _ := frozen["artifact"].(map[string]any)
 	signed, err := endorsedCertificate(receipt.Result, artifact, binding.AuthorityKeyDID)
@@ -384,12 +422,12 @@ func runIDEndorse(cmd *cobra.Command, _ []string) error {
 	}
 	root := &pinnedRootRegistry{registry: registry, profile: profile, domain: domain, signer: awid.KeySigner(identity.SigningKey),
 		root: awid.IDChainSubject{ID: request.RootID, DIDKey: request.RootKey}}
-	if err := registerEndorsement(ctx, root, chain, signed, expectedHead); err != nil {
+	if err := registerEndorsement(ctx, root, chain, signed, expectedHead, filepath.Dir(identity.SigningKeyPath)); err != nil {
 		return fmt.Errorf("operation %s committed; %w", request.OperationID, err)
 	}
 	certificateID, _ := awid.IDCertificateID(artifact)
 	forgetProtectedOperationQuietly(request.OperationID)
-	report := map[string]any{"operation_id": request.OperationID, "state": receipt.State, "certificate_id": certificateID, "registered": true}
+	report := map[string]any{"operation_id": request.OperationID, "state": receipt.State, "certificate_id": certificateID, "registered": true, "chain_installed": true}
 	printOutput(report, func(any) string {
 		return fmt.Sprintf("Operation %s committed; %s is endorsed by %s and registered as certificate %s.\n", request.OperationID, request.RootID, request.Human, certificateID)
 	})

@@ -88,7 +88,7 @@ async def independent_run(root, original):
                     "v": 1,
                     "grant_id": "grt_other_runner",
                     "secret_id": SECRET["secret_id"],
-                    "subject": {"principal": member.did_key},
+                    "subject": {"principal": member.extra_cert_fields["member_did_aw"]},
                     "capability": "run",
                     "operations": [],
                     "open_request": False,
