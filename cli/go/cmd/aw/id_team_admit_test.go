@@ -106,6 +106,10 @@ func (s *admitService) prepared() []byte {
 			s.artifact["identity_scope"] = "global"
 		}
 	}
+	if s.tamper == "artifact-key" {
+		other, _, _ := ed25519.GenerateKey(nil)
+		s.artifact["team_did_key"] = awid.ComputeDIDKey(other)
+	}
 	request := map[string]any{}
 	for k, v := range s.sent {
 		request[k] = v
@@ -331,7 +335,27 @@ func committedResult(t *testing.T, key ed25519.PrivateKey, artifact map[string]a
 	return raw
 }
 
-func TestWithoutItsPreparedAnswerACertificateMustStillNameExactlyTheRequestedMember(t *testing.T) {
+// frozenAs is a prepared operation that froze artifact.
+func frozenAs(artifact map[string]any) *handoff.Prepared {
+	raw, _ := json.Marshal(map[string]any{"request": map[string]any{"artifact": artifact}})
+	return &handoff.Prepared{Payload: raw}
+}
+
+func TestACertificateWithoutItsVerifiedPreparedOperationIsNeverTaken(t *testing.T) {
+	_, teamKey, _ := ed25519.GenerateKey(nil)
+	teamDID := awid.ComputeDIDKey(teamKey.Public().(ed25519.PublicKey))
+	profile := admitTestProfile(t, teamKey, admitTestHuman)
+	request := admitTestRequest(t)
+	body := admissionBody(profile, mustAdmissionBinding(t, profile, request.Team), request)
+	artifact := map[string]any{"version": 1, "certificate_id": "66666666-6666-4666-8666-666666666666", "team_id": request.Team,
+		"team_did_key": teamDID, "member_did_key": request.ChildKey, "alias": request.Alias, "identity_scope": "local",
+		"issued_at": "2026-11-13T10:00:00Z"}
+	if _, err := admittedCertificate(committedResult(t, teamKey, artifact), nil, body, teamDID); errorCodeOf(err) != "signed_certificate_invalid" {
+		t.Fatalf("err %v", err)
+	}
+}
+
+func TestACertificateMustNameExactlyTheRequestedMemberEvenAsFrozen(t *testing.T) {
 	_, teamKey, _ := ed25519.GenerateKey(nil)
 	teamDID := awid.ComputeDIDKey(teamKey.Public().(ed25519.PublicKey))
 	profile := admitTestProfile(t, teamKey, admitTestHuman)
@@ -342,7 +366,7 @@ func TestWithoutItsPreparedAnswerACertificateMustStillNameExactlyTheRequestedMem
 			"team_did_key": teamDID, "member_did_key": request.ChildKey, "alias": request.Alias, "identity_scope": "local",
 			"issued_at": "2026-11-13T10:00:00Z"}
 	}
-	if _, err := admittedCertificate(committedResult(t, teamKey, artifact()), nil, body, teamDID); err != nil {
+	if _, err := admittedCertificate(committedResult(t, teamKey, artifact()), frozenAs(artifact()), body, teamDID); err != nil {
 		t.Fatalf("the requested member: %v", err)
 	}
 	for name, change := range map[string]func(map[string]any){
@@ -357,13 +381,13 @@ func TestWithoutItsPreparedAnswerACertificateMustStillNameExactlyTheRequestedMem
 	} {
 		changed := artifact()
 		change(changed)
-		if _, err := admittedCertificate(committedResult(t, teamKey, changed), nil, body, teamDID); errorCodeOf(err) != "signed_certificate_invalid" {
+		if _, err := admittedCertificate(committedResult(t, teamKey, changed), frozenAs(changed), body, teamDID); errorCodeOf(err) != "signed_certificate_invalid" {
 			t.Errorf("%s: err %v", name, err)
 		}
 	}
 }
 
-func TestARegisteredMembersCertificateMustNameItsIDAndGlobalScope(t *testing.T) {
+func TestARegisteredMembersCertificateMustNameItsIDAndGlobalScopeEvenAsFrozen(t *testing.T) {
 	_, teamKey, _ := ed25519.GenerateKey(nil)
 	teamDID := awid.ComputeDIDKey(teamKey.Public().(ed25519.PublicKey))
 	profile := admitTestProfile(t, teamKey, admitTestHuman)
@@ -375,7 +399,7 @@ func TestARegisteredMembersCertificateMustNameItsIDAndGlobalScope(t *testing.T) 
 			"team_did_key": teamDID, "member_did_key": request.ChildKey, "member_did_aw": request.ChildID, "alias": request.Alias,
 			"identity_scope": "global", "issued_at": "2026-11-13T10:00:00Z"}
 	}
-	if _, err := admittedCertificate(committedResult(t, teamKey, artifact()), nil, body, teamDID); err != nil {
+	if _, err := admittedCertificate(committedResult(t, teamKey, artifact()), frozenAs(artifact()), body, teamDID); err != nil {
 		t.Fatalf("the requested member: %v", err)
 	}
 	for name, change := range map[string]func(map[string]any){
@@ -384,8 +408,19 @@ func TestARegisteredMembersCertificateMustNameItsIDAndGlobalScope(t *testing.T) 
 	} {
 		changed := artifact()
 		change(changed)
-		if _, err := admittedCertificate(committedResult(t, teamKey, changed), nil, body, teamDID); errorCodeOf(err) != "signed_certificate_invalid" {
+		if _, err := admittedCertificate(committedResult(t, teamKey, changed), frozenAs(changed), body, teamDID); errorCodeOf(err) != "signed_certificate_invalid" {
 			t.Errorf("%s: err %v", name, err)
 		}
+	}
+}
+
+func TestAnAdmissionWhoseFrozenCertificateNamesAnotherTeamKeyIsNeverExecuted(t *testing.T) {
+	_, profile, service := admitTestSetup(t)
+	service.tamper = "artifact-key"
+	if _, err := admitMember(context.Background(), service.options(), profile, admitTestRequest(t)); errorCodeOf(err) != "operation_mismatch" {
+		t.Fatalf("err %v", err)
+	}
+	if service.executes != 0 {
+		t.Fatalf("%d executes were sent", service.executes)
 	}
 }

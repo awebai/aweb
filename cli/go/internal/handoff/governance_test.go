@@ -486,6 +486,25 @@ func TestAnApprovalPreparesWithItsOwnIDAndOpensThePinnedPage(t *testing.T) {
 	}
 }
 
+func TestAnApprovalWhosePreparedRequestTheCallerRefusesShowsNoLink(t *testing.T) {
+	stub := newSignerStub(t, pendingReceipt, committedReceipt)
+	var opened string
+	var notified bytes.Buffer
+	opts := stub.options(&opened)
+	opts.Notify = &notified
+	refuse := errors.New("the frozen policy is not the policy read")
+	opts.CheckPrepared = func(request map[string]any) error {
+		if request["operation_id"] != "11111111-1111-4111-8111-111111111111" {
+			t.Fatalf("request %v", request)
+		}
+		return refuse
+	}
+	_, err := Approve(context.Background(), opts, "11111111-1111-4111-8111-111111111111", revokeIntent())
+	if !errors.Is(err, refuse) || opened != "" || strings.Contains(notified.String(), "/handoff/") || stub.reads != 0 {
+		t.Fatalf("err %v, opened %q, notified %q, %d receipt reads", err, opened, notified.String(), stub.reads)
+	}
+}
+
 func TestAWakeIsOnlyAHintTheReceiptDecides(t *testing.T) {
 	stub := newSignerStub(t, refusedReceipt)
 	stub.wake = true

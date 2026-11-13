@@ -39,6 +39,10 @@ type GovernanceOptions struct {
 	// Forget drops what Save kept once a receipt is final: committed or
 	// refused. A pending, unknown, lost or expired operation stays saved.
 	Forget func(operationID string) error
+	// CheckPrepared, when set, checks the frozen request after aw verified
+	// it is what was sent, before any page is shown or execution sent; an
+	// error stops the operation there.
+	CheckPrepared func(request map[string]any) error
 }
 
 // Prepared is a prepared protected operation: the frozen request the human
@@ -211,6 +215,9 @@ func approve(ctx context.Context, opts GovernanceOptions, operationID string, bo
 	if err != nil {
 		return nil, err
 	}
+	if err := checkPrepared(opts, prepared); err != nil {
+		return nil, err
+	}
 	page := opts.Human + "/handoff/" + url.PathEscape(prepared.HandoffID)
 	fmt.Fprintf(opts.Notify, "Operation %s\n  digest:      %s\n  fingerprint: %s\nApprove it on this page: %s\n",
 		prepared.OperationID, prepared.Digest, Fingerprint(prepared.Digest), page)
@@ -231,6 +238,16 @@ func approve(ctx context.Context, opts GovernanceOptions, operationID string, bo
 		}()
 	}
 	return awaitReceipt(ctx, opts, operationID, prepared.ExpiresAt, woken)
+}
+
+// checkPrepared runs the caller's check of prepared's frozen request.
+func checkPrepared(opts GovernanceOptions, prepared *Prepared) error {
+	if opts.CheckPrepared == nil {
+		return nil
+	}
+	payload, _ := decodeObject(prepared.Payload)
+	request, _ := payload["request"].(map[string]any)
+	return opts.CheckPrepared(request)
 }
 
 // awaitReceipt reads operationID's receipt until it is final or the operation

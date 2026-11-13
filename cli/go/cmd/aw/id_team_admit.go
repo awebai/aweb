@@ -176,7 +176,8 @@ func admitMember(ctx context.Context, opts handoff.GovernanceOptions, profile *h
 		}
 		return nil
 	}
-	receipt, prepared, err := handoff.Execute(ctx, opts, raw, pinnedKey)
+	opts.CheckPrepared = pinnedKey
+	receipt, prepared, err := handoff.Execute(ctx, opts, raw)
 	if receipt != nil && receipt.State == "refused" {
 		forgetProtectedOperationQuietly(request.OperationID)
 	}
@@ -205,8 +206,8 @@ func forgetProtectedOperationQuietly(operationID string) {
 }
 
 // admittedCertificate is the membership certificate in a committed result,
-// if it is signed by teamKeyDID, is exactly the certificate the operation
-// froze, and names exactly the member body asked for. Anything else is
+// if it is signed by teamKeyDID, is exactly the certificate prepared, the
+// verified operation, froze, and names exactly the member body asked for. Anything else is
 // signed_certificate_invalid and is not written.
 func admittedCertificate(result []byte, prepared *handoff.Prepared, body map[string]any, teamKeyDID string) (*awid.TeamCertificate, error) {
 	invalid := func(format string, args ...any) error {
@@ -228,13 +229,14 @@ func admittedCertificate(result []byte, prepared *handoff.Prepared, body map[str
 	if !ok || err != nil || !bytes.Equal(canonical, signing) {
 		return nil, invalid("its signing bytes are not a canonical certificate")
 	}
-	if prepared != nil {
-		payload, _ := handoff.DecodeObject(prepared.Payload)
-		request, _ := payload["request"].(map[string]any)
-		frozen, err := awid.StrictCanonicalJSON(request["artifact"])
-		if err != nil || !bytes.Equal(frozen, signing) {
-			return nil, invalid("it is not the certificate the operation froze")
-		}
+	if prepared == nil {
+		return nil, invalid("its prepared operation was never verified")
+	}
+	payload, _ := handoff.DecodeObject(prepared.Payload)
+	request, _ := payload["request"].(map[string]any)
+	frozen, err := awid.StrictCanonicalJSON(request["artifact"])
+	if err != nil || !bytes.Equal(frozen, signing) {
+		return nil, invalid("it is not the certificate the operation froze")
 	}
 	var cert awid.TeamCertificate
 	if err := json.Unmarshal(signing, &cert); err != nil {

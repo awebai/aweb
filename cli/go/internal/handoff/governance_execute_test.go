@@ -1,6 +1,7 @@
 package handoff
 
 import (
+	"cmp"
 	"context"
 	"encoding/json"
 	"errors"
@@ -56,6 +57,8 @@ type admitStub struct {
 	reads    int
 	bodies   [][]byte
 	dropPrep bool
+	// expiresIn is the prepared operation's lifetime (default a minute).
+	expiresIn time.Duration
 }
 
 func newAdmitStub(t *testing.T) *admitStub {
@@ -104,6 +107,9 @@ func (s *admitStub) reply(w http.ResponseWriter, script []string, count *int) {
 		code = http.StatusForbidden
 	case "503":
 		w.Header().Set("Retry-After", "0")
+		code = http.StatusServiceUnavailable
+	case "503h1":
+		w.Header().Set("Retry-After", "1")
 		code = http.StatusServiceUnavailable
 	}
 	w.WriteHeader(code)
@@ -161,7 +167,7 @@ func (s *admitStub) answer() string {
 	payload := map[string]any{"policy": map[string]any{"ref": "aweb.human-assurance/1", "version": 1}, "request": request}
 	raw, _ := json.Marshal(map[string]any{
 		"operation_id": s.sent["operation_id"], "handoff_id": "h1", "digest": coveredDigestOf(payload), "payload": payload,
-		"expires_at": time.Now().Add(time.Minute).UTC().Format(time.RFC3339Nano),
+		"expires_at": time.Now().Add(cmp.Or(s.expiresIn, time.Minute)).UTC().Format(time.RFC3339Nano),
 	})
 	return string(raw)
 }
@@ -188,7 +194,7 @@ func TestABoundedAdmissionIsPreparedThenExecutedOnceWithoutAPage(t *testing.T) {
 	for _, child := range []any{nil, "did:aw:child"} {
 		stub := newAdmitStub(t)
 		stub.executes = []string{"200:" + admitCommitted}
-		receipt, prepared, err := Execute(context.Background(), stub.options(t), admitRaw(t, admitBody(child)), nil)
+		receipt, prepared, err := Execute(context.Background(), stub.options(t), admitRaw(t, admitBody(child)))
 		if err != nil || receipt.State != "committed" || string(receipt.Result) != `{"signature":"c2ln","signing":"c2lnbmluZw=="}` {
 			t.Fatalf("child %v: receipt %+v err %v", child, receipt, err)
 		}
@@ -204,7 +210,7 @@ func TestAPreparedAdmissionThatIsNotWhatAwSentIsNeverExecuted(t *testing.T) {
 		stub := newAdmitStub(t)
 		stub.tamper = tamper
 		stub.executes = []string{"200:" + admitCommitted}
-		_, _, err := Execute(context.Background(), stub.options(t), admitRaw(t, admitBody(nil)), nil)
+		_, _, err := Execute(context.Background(), stub.options(t), admitRaw(t, admitBody(nil)))
 		if ErrorCode(err) != "operation_mismatch" || stub.execs != 0 {
 			t.Errorf("%s: err %v after %d executes", tamper, err, stub.execs)
 		}
@@ -215,12 +221,14 @@ func TestTheCallersCheckOfThePreparedRequestPrecedesExecution(t *testing.T) {
 	stub := newAdmitStub(t)
 	stub.executes = []string{"200:" + admitCommitted}
 	refuse := errors.New("not this team key")
-	_, _, err := Execute(context.Background(), stub.options(t), admitRaw(t, admitBody(nil)), func(request map[string]any) error {
+	opts := stub.options(t)
+	opts.CheckPrepared = func(request map[string]any) error {
 		if request["artifact"].(map[string]any)["team_did_key"] != "did:key:zteam" {
 			t.Fatalf("request %v", request)
 		}
 		return refuse
-	})
+	}
+	_, _, err := Execute(context.Background(), opts, admitRaw(t, admitBody(nil)))
 	if !errors.Is(err, refuse) || stub.execs != 0 {
 		t.Fatalf("err %v after %d executes", err, stub.execs)
 	}
@@ -230,7 +238,7 @@ func TestALostExecuteAnswerIsSettledByTheReceiptWithoutExecutingAgain(t *testing
 	stub := newAdmitStub(t)
 	stub.executes = []string{"drop"}
 	stub.receipts = []string{"200:" + admitCommitted}
-	receipt, _, err := Execute(context.Background(), stub.options(t), admitRaw(t, admitBody(nil)), nil)
+	receipt, _, err := Execute(context.Background(), stub.options(t), admitRaw(t, admitBody(nil)))
 	if err != nil || receipt.State != "committed" || stub.execs != 1 {
 		t.Fatalf("receipt %+v err %v after %d executes", receipt, err, stub.execs)
 	}
@@ -238,7 +246,7 @@ func TestALostExecuteAnswerIsSettledByTheReceiptWithoutExecutingAgain(t *testing
 	stub = newAdmitStub(t)
 	stub.executes = []string{"drop"}
 	stub.receipts = []string{"200:" + admitPending}
-	receipt, _, err = Execute(context.Background(), stub.options(t), admitRaw(t, admitBody(nil)), nil)
+	receipt, _, err = Execute(context.Background(), stub.options(t), admitRaw(t, admitBody(nil)))
 	if ErrorCode(err) != "receipt_unavailable" || receipt.State != "unknown" || receipt.OperationID != admitOperationID || stub.execs != 1 {
 		t.Fatalf("pending: receipt %+v err %v after %d executes", receipt, err, stub.execs)
 	}
@@ -248,7 +256,7 @@ func TestAnAdmissionStillInProgressIsReadUntilItIsFinal(t *testing.T) {
 	stub := newAdmitStub(t)
 	stub.executes = []string{"200:" + admitPending}
 	stub.receipts = []string{"200:" + admitPending, "200:" + admitCommitted}
-	receipt, _, err := Execute(context.Background(), stub.options(t), admitRaw(t, admitBody(nil)), nil)
+	receipt, _, err := Execute(context.Background(), stub.options(t), admitRaw(t, admitBody(nil)))
 	if err != nil || receipt.State != "committed" || stub.execs != 1 || stub.reads != 2 {
 		t.Fatalf("receipt %+v err %v after %d executes, %d reads", receipt, err, stub.execs, stub.reads)
 	}
@@ -257,7 +265,7 @@ func TestAnAdmissionStillInProgressIsReadUntilItIsFinal(t *testing.T) {
 func TestAThrottledExecuteIsSentAgainAfterItsHint(t *testing.T) {
 	stub := newAdmitStub(t)
 	stub.executes = []string{`503:{"detail":"receipt_unavailable"}`, "200:" + admitCommitted}
-	receipt, _, err := Execute(context.Background(), stub.options(t), admitRaw(t, admitBody(nil)), nil)
+	receipt, _, err := Execute(context.Background(), stub.options(t), admitRaw(t, admitBody(nil)))
 	if err != nil || receipt.State != "committed" || stub.execs != 2 {
 		t.Fatalf("receipt %+v err %v after %d executes", receipt, err, stub.execs)
 	}
@@ -270,7 +278,7 @@ func TestAnExecuteRefusalOrRefusedReceiptKeepsItsCode(t *testing.T) {
 	} {
 		stub := newAdmitStub(t)
 		stub.executes = []string{answer}
-		_, _, err := Execute(context.Background(), stub.options(t), admitRaw(t, admitBody(nil)), nil)
+		_, _, err := Execute(context.Background(), stub.options(t), admitRaw(t, admitBody(nil)))
 		if ErrorCode(err) != code || stub.execs != 1 {
 			t.Errorf("%s: err %v after %d executes", answer, err, stub.execs)
 		}
@@ -281,8 +289,31 @@ func TestALostAdmissionPrepareIsReconciledByItsReceiptAndNotExecuted(t *testing.
 	stub := newAdmitStub(t)
 	stub.dropPrep = true
 	stub.receipts = []string{"200:" + `{"state":"pending","reason":"awaiting_execute","expires_at":"2099-01-01T00:00:00Z"}`}
-	receipt, prepared, err := Execute(context.Background(), stub.options(t), admitRaw(t, admitBody(nil)), nil)
+	receipt, prepared, err := Execute(context.Background(), stub.options(t), admitRaw(t, admitBody(nil)))
 	if ErrorCode(err) != "prepare_unconfirmed" || receipt.OperationID != admitOperationID || prepared != nil || stub.execs != 0 || stub.prepares != 1 {
 		t.Fatalf("receipt %+v prepared %+v err %v after %d prepares, %d executes", receipt, prepared, err, stub.prepares, stub.execs)
+	}
+}
+
+func TestACommittedReceiptAfterALostPrepareIsNotTakenWithoutItsPreparedRequest(t *testing.T) {
+	stub := newAdmitStub(t)
+	stub.dropPrep = true
+	stub.receipts = []string{"200:" + admitCommitted}
+	opts := stub.options(t)
+	opts.Forget = func(string) error { t.Fatal("the saved request was forgotten"); return nil }
+	receipt, prepared, err := Execute(context.Background(), opts, admitRaw(t, admitBody(nil)))
+	if ErrorCode(err) != "prepare_unconfirmed" || prepared != nil || receipt.State == "committed" || stub.execs != 0 {
+		t.Fatalf("receipt %+v prepared %+v err %v after %d executes", receipt, prepared, err, stub.execs)
+	}
+}
+
+func TestAnExecuteIsNeverRetriedPastThePreparedOperationsExpiry(t *testing.T) {
+	stub := newAdmitStub(t)
+	stub.expiresIn = 500 * time.Millisecond
+	stub.executes = []string{`503h1:{"detail":"receipt_unavailable"}`, "200:" + admitCommitted}
+	started := time.Now()
+	receipt, _, err := Execute(context.Background(), stub.options(t), admitRaw(t, admitBody(nil)))
+	if ErrorCode(err) != "receipt_unavailable" || receipt.State != "unknown" || stub.execs != 1 || time.Since(started) > 400*time.Millisecond {
+		t.Fatalf("receipt %+v err %v after %d executes in %s", receipt, err, stub.execs, time.Since(started))
 	}
 }

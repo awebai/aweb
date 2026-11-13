@@ -12,15 +12,18 @@ import (
 // Execute runs a bounded unattended operation (human-assurance-contract.md
 // section 5) whose exact prepare body is raw, saved by the caller under its
 // operation id before this call: it prepares the operation, verifies the
-// frozen request is what was sent and passes check, then executes it as the
+// frozen request is what was sent and passes opts.CheckPrepared, then
+// executes it as the
 // requester, with no human page. A repeat with the same bytes is answered
 // with the original operation and receipt; nothing is re-signed.
 //
-// A lost prepare answer is reconciled by its receipt (prepare_unconfirmed
-// while pending, to be resumed with the same bytes); a lost execute answer
-// likewise, unknown with receipt_unavailable while pending. The prepared
-// operation is returned once its answer arrived.
-func Execute(ctx context.Context, opts GovernanceOptions, raw []byte, check func(request map[string]any) error) (*Receipt, *Prepared, error) {
+// A lost prepare answer is reconciled by its receipt: prepare_unconfirmed
+// while pending or even committed, since its frozen request was never
+// verified, to be resumed with the same bytes. A lost execute answer is
+// likewise unknown with receipt_unavailable while pending. Nothing is sent
+// after the prepared operation's own expiry. The prepared operation is
+// returned once its answer arrived.
+func Execute(ctx context.Context, opts GovernanceOptions, raw []byte) (*Receipt, *Prepared, error) {
 	body, ok := decodeObject(raw)
 	operationID, _ := body["operation_id"].(string)
 	if !ok || operationID == "" {
@@ -31,18 +34,17 @@ func Execute(ctx context.Context, opts GovernanceOptions, raw []byte, check func
 	until := now().Add(retryWithin(opts))
 	prepared, err := prepareRetrying(ctx, opts, operationID, body, raw, until)
 	if ErrorCode(err) == "prepare_answer_lost" {
-		receipt, err := reconcileLostPrepare(ctx, opts, operationID, err, until)
-		return receipt, nil, err
+		return reconcileLostBoundedPrepare(ctx, opts, operationID, err, until)
 	}
 	if err != nil {
 		return nil, nil, err
 	}
-	if check != nil {
-		payload, _ := decodeObject(prepared.Payload)
-		request, _ := payload["request"].(map[string]any)
-		if err := check(request); err != nil {
-			return nil, prepared, err
-		}
+	// Nothing about this operation is sent after it expires.
+	if prepared.ExpiresAt.Before(until) {
+		until = prepared.ExpiresAt
+	}
+	if err := checkPrepared(opts, prepared); err != nil {
+		return nil, prepared, err
 	}
 	var receipt *Receipt
 	err, exhausted := withinBound(ctx, opts, until, func(ctx context.Context) error {
@@ -65,6 +67,24 @@ func Execute(ctx context.Context, opts GovernanceOptions, raw []byte, check func
 	}
 	receipt, err = settled(opts, receipt)
 	return receipt, prepared, err
+}
+
+// reconcileLostBoundedPrepare reads the receipt of an operation whose prepare
+// answer never arrived. Its frozen request was never verified, so even a
+// committed outcome is not taken: the operation stays saved, unconfirmed, until
+// a same-id resume receives and verifies the original prepared operation.
+func reconcileLostBoundedPrepare(ctx context.Context, opts GovernanceOptions, operationID string, lost error, until time.Time) (*Receipt, *Prepared, error) {
+	keep := opts
+	keep.Forget = nil
+	receipt, err := reconcileLostPrepare(ctx, keep, operationID, lost, until)
+	switch {
+	case receipt != nil && receipt.State == "committed":
+		return unresolvedReceipt(operationID, "prepare_unconfirmed"), nil, coded("prepare_unconfirmed",
+			fmt.Errorf("operation %s committed but its prepare answer was lost; run again with the same operation id to verify and take its result", operationID))
+	case receipt != nil && receipt.State == "refused":
+		receipt, err = settled(opts, receipt)
+	}
+	return receipt, nil, err
 }
 
 // execute posts the empty execute request and reads the receipt it answers.
