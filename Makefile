@@ -145,6 +145,7 @@ test-shipping:
 	$(MAKE) test-vm-gate
 	python3 scripts/test_fixture_repo.py
 	python3 scripts/test_shipping.py
+	python3 scripts/test_server_image_publish.py
 	python3 scripts/test_aw_npm_publication.py
 	python3 scripts/test_candidate_cleanup.py
 	python3 scripts/test_candidate_disk_floor.py
@@ -154,6 +155,10 @@ test-shipping:
 	python3 scripts/test_folio_wakes_gate.py
 	python3 scripts/test_user_paths_gate.py
 	python3 scripts/test_fetch_released_aw.py
+
+.PHONY: test-server-image-build
+test-server-image-build:
+	AWEB_TEST_SERVER_IMAGE_BUILD=1 python3 scripts/test_server_image_publish.py ServerPlatformBuildTests -v
 
 .PHONY: test-vm-gate
 test-vm-gate:
