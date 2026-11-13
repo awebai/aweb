@@ -97,7 +97,7 @@ func installTeamCertificateFile(ctx context.Context, c teamCertificateInstall) (
 	if _, err := homeInstallStatus(c.Home, cert, local); err != nil {
 		return nil, err
 	}
-	if err := checkCurrentTeamCertificate(ctx, c, cert, key); err != nil {
+	if err := checkCurrentTeamCertificate(ctx, c, cert); err != nil {
 		return nil, err
 	}
 	lock, err := awconfig.LockExclusive(filepath.Join(c.Home, teamCertificateInstallLock))
@@ -178,57 +178,55 @@ func localHomeOfOtherTeam(home, team string) error {
 	return nil
 }
 
-// checkCurrentTeamCertificate refuses cert unless the registry's current key
-// for its team signed it and the registry holds it, unrevoked, for its member.
-func checkCurrentTeamCertificate(ctx context.Context, c teamCertificateInstall, cert *awid.TeamCertificate, key ed25519.PrivateKey) error {
+// checkCurrentTeamCertificate refuses cert unless the registry holds it,
+// unrevoked, in its team, and the team's current key signed it. It reads the
+// certificate's public status, which needs no member authority: a private
+// team's other reads refuse a member whose certificate is revoked, and that
+// refusal must not read as an unavailable registry. The team key's signature
+// binds the certificate's id to its member.
+func checkCurrentTeamCertificate(ctx context.Context, c teamCertificateInstall, cert *awid.TeamCertificate) error {
 	domain, name, err := awid.ParseTeamID(cert.Team)
 	if err != nil {
 		return installRefusal("certificate_invalid", "the certificate's team %q: %v", cert.Team, err)
 	}
-	unavailable := func(err error) error {
+	status, err := c.Registry.GetTeamCertificateStatus(ctx, c.RegistryURL, domain, name, cert.CertificateID)
+	if err != nil {
 		var registryErr *awid.RegistryError
 		if errors.As(err, &registryErr) && registryErr.StatusCode == http.StatusNotFound {
-			return installRefusal("certificate_unregistered", "the registry at %s holds no team %s", c.RegistryURL, cert.Team)
+			return installRefusal("certificate_unregistered", "the registry at %s holds no certificate %s of %s", c.RegistryURL, cert.CertificateID, cert.Team)
 		}
-		return installRefusal("registry_unavailable", "read team %s at %s: %v", cert.Team, c.RegistryURL, err)
+		return installRefusal("registry_unavailable", "read certificate %s of %s at %s: %v", cert.CertificateID, cert.Team, c.RegistryURL, err)
 	}
-	team, err := c.Registry.GetTeam(ctx, c.RegistryURL, domain, name, key)
-	if err != nil {
-		return unavailable(err)
+	if status.TeamID != cert.Team {
+		return installRefusal("certificate_unregistered", "the registry holds certificate %s for %s, not %s", cert.CertificateID, status.TeamID, cert.Team)
 	}
-	if cert.TeamDIDKey != team.TeamDIDKey {
-		return installRefusal("team_key_not_current", "the certificate is signed by %s, not %s's current key %s", cert.TeamDIDKey, cert.Team, team.TeamDIDKey)
+	if cert.TeamDIDKey != status.TeamDIDKey {
+		return installRefusal("team_key_not_current", "the certificate is signed by %s, not %s's current key %s", cert.TeamDIDKey, cert.Team, status.TeamDIDKey)
 	}
 	header, err := awid.EncodeTeamCertificateHeader(cert)
 	if err != nil {
 		return installRefusal("certificate_invalid", "encode the certificate: %v", err)
 	}
 	if _, err := awid.CheckTeamCertificate(header, awid.TeamCertificateFacts{
-		SubjectDIDKey: cert.MemberDIDKey, TeamDIDKey: team.TeamDIDKey, Registered: awid.RegistrationNotRequired(),
+		SubjectDIDKey: cert.MemberDIDKey, TeamDIDKey: status.TeamDIDKey, Registered: awid.RegistrationNotRequired(),
 	}); err != nil {
 		var refused *awid.TeamCertificateError
 		if errors.As(err, &refused) && refused.Reason == "bad_signature" {
-			return installRefusal("certificate_bad_signature", "the certificate's signature does not verify under %s", team.TeamDIDKey)
+			return installRefusal("certificate_bad_signature", "the certificate's signature does not verify under %s", status.TeamDIDKey)
 		}
 		return installRefusal("certificate_invalid", "the certificate does not check: %v", err)
 	}
-	rows, err := c.Registry.ListCertificates(ctx, c.RegistryURL, domain, name, false, key)
-	if err != nil {
-		return unavailable(err)
-	}
-	for _, row := range rows {
-		if row.CertificateID != cert.CertificateID {
-			continue
-		}
-		if row.MemberDIDKey != cert.MemberDIDKey || row.MemberDIDAW != cert.MemberDIDAW || row.Alias != cert.Alias {
-			break
-		}
-		if strings.TrimSpace(row.RevokedAt) != "" {
-			return installRefusal("certificate_revoked", "certificate %s of %s was revoked at %s", cert.CertificateID, cert.Team, row.RevokedAt)
-		}
+	switch status.Status {
+	case "active":
 		return nil
+	case "revoked":
+		revokedAt := ""
+		if status.RevokedAt != nil {
+			revokedAt = " at " + *status.RevokedAt
+		}
+		return installRefusal("certificate_revoked", "certificate %s of %s was revoked%s", cert.CertificateID, cert.Team, revokedAt)
 	}
-	return installRefusal("certificate_unregistered", "the registry holds no certificate %s of %s for %s", cert.CertificateID, cert.Team, cert.MemberDIDKey)
+	return installRefusal("registry_unavailable", "the registry answered status %q for certificate %s", status.Status, cert.CertificateID)
 }
 
 // sameTeamCertificate reports whether a and b are the same signed
