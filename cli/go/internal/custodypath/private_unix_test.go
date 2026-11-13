@@ -10,14 +10,27 @@ import (
 	"testing"
 )
 
+// shortCanonicalDir is a private directory whose path fits a Unix socket
+// (104 bytes on macOS) whatever TMPDIR is, with no symlinked component: prepareAt
+// refuses a symlinked parent, and macOS's /tmp and /var are symlinks.
+func shortCanonicalDir(t *testing.T) string {
+	t.Helper()
+	base, err := filepath.EvalSymlinks("/tmp")
+	if err != nil {
+		t.Fatal(err)
+	}
+	dir, err := os.MkdirTemp(base, "cp")
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = os.RemoveAll(dir) })
+	return dir
+}
+
 func TestPrivateRuntimeDirectory(t *testing.T) {
 	for _, scenario := range []string{"new", "unsafe-mode", "symlink-dir", "symlink-socket", "regular-file", "socket"} {
 		t.Run(scenario, func(t *testing.T) {
-			// prepareAt refuses a symlinked parent, and macOS's /tmp and /var are symlinks.
-			base, err := filepath.EvalSymlinks(t.TempDir())
-			if err != nil {
-				t.Fatal(err)
-			}
+			base := shortCanonicalDir(t)
 			dir := filepath.Join(base, "runtime")
 			socket := filepath.Join(dir, "c.sock")
 			if scenario == "symlink-dir" {
@@ -56,7 +69,7 @@ func TestPrivateRuntimeDirectory(t *testing.T) {
 					}
 				}
 			}
-			err = prepareAt(dir, socket)
+			err := prepareAt(dir, socket)
 			valid := scenario == "new" || scenario == "socket"
 			if (err == nil) != valid {
 				t.Fatalf("prepare %s: %v", scenario, err)
