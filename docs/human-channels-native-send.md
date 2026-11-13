@@ -123,38 +123,10 @@ Set `app.state.human_channels_service` to the configured native service to use
 the configured transactional facade. Missing custody/access configuration
 refuses the facade rather than inferring authority.
 
-Existing native mail and pair-chat HTTP sends opt into the facade with all
-three headers: `X-AWEB-Ingress-Namespace`, `X-AWEB-Ingress-Key`, and
-`X-AWEB-Ingress-Input-Hash`. Partial sets refuse before effects. These calls need
-fixed message/conversation IDs and the original signed native envelope. The
-issuer comes from authentication. Replays compare the protected ID, kind and
-envelope hash before returning the original acceptance. This is remote stable-ID
-recovery, not atomicity with a caller's remote database. The caller persists its
-own remote intent first and reconciles a timeout through the result read.
-
-Opted-in MCP chat requires exactly one recipient selector, or a session ID
-without a recipient selector, before discovery or signing. Encrypted MCP
-supports normal priority and the default non-waiting controls; non-normal
-priority, leaving, hang-on, waiting or a non-default wait duration refuse before
-custody signing/encryption or persistence.
-
-For encrypted HTTP ingress the outer timestamp and reply ID, when supplied,
-must match the preserved envelope. Non-default priority, wait, leaving and
-hang-on controls are unsupported on this path and refuse before effects;
-plaintext controls must match the signed payload. Legacy attachment descriptors
-also refuse here; use the immutable attachment references and configured backend.
-
-For hosted MCP ingress, pass `human_channels_service` to `create_mcp_app` and
-supply the same headers. Ordinary `send_mail`/`chat_send` then use this UoW before
-session or message insertion. The authenticated ingress namespace/key determines
-stable message UUIDs. A new mail intent gets a fresh conversation UUID, retained
-in its committed ingress result for original-result recovery. Chat selection is
-unchanged: use the explicit session or the existing active pair session; if
-neither exists, the authenticated ingress namespace/key determines the stable
-initial chat conversation UUID. Original-result recovery also compares the
-canonical logical tool input before signing again. Changed tool input refuses.
-Explicit encryption requires the hosted encryptor; no plaintext fallback is
-available. Legacy calls without ingress headers keep their existing behavior.
+The ordinary mail and chat send routes (`POST /v1/messages`, `POST /v1/chat/sessions`,
+`POST /v1/chat/sessions/{session_id}/messages`) and the MCP send tools do not
+enter the native service. A request to them is an ordinary send, whatever
+headers it carries.
 
 Committed mutation intents are published only after commit. Supply an async
 `publisher(mutation_id, event_type, context)` which raises on delivery failure;
