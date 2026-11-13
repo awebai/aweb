@@ -162,6 +162,16 @@ def secrets_env() -> dict[str, str]:
     }
 
 
+def machine_dir(name: str) -> str:
+    """A machine's HOME and working directory, as the machine sees it."""
+    return f"/runtime/{name}"
+
+
+def identity_folder(name: str) -> str:
+    """The identity folder aw selects in a machine: its working directory's .aw."""
+    return f"{machine_dir(name)}/.aw"
+
+
 @dataclass
 class Lane:
     project: str
@@ -200,7 +210,7 @@ class Lane:
         result = self.compose(
             "run", "-d", "--name", container, "--user", f"{uid}:{gid}",
             "-v", f"{accounts / 'passwd'}:/etc/passwd:ro", "-v", f"{accounts / 'group'}:/etc/group:ro",
-            "-e", f"HOME=/runtime/{name}", "-w", f"/runtime/{name}", "cli",
+            "-e", f"HOME={machine_dir(name)}", "-w", machine_dir(name), "cli",
         )
         assert result.returncode == 0, result.stdout + result.stderr
         return container
@@ -408,8 +418,14 @@ def test_the_owner_designates_a_human_holder_registered_on_another_machine(lane:
     owner_keys.mkdir(parents=True)
     shutil.move(str(team_key), owner_keys / f"{TEAM}.key")
 
-    # The owner's own agent identity and membership, then the holder's.
-    owner = aw(controller, "id", "create", "--name", "owner", "--domain", DOMAIN, "--root-parent", "--registry", REGISTRY)
+    # The owner's own agent identity: the namespace root issues it on the
+    # holder's machine, where its controller key is, straight into the
+    # owner's machine's identity folder (a fresh explicit target). Only the
+    # owner's own key and certificate land there; the namespace controller key
+    # stays where it is.
+    owner = aw(holder.container, "--identity-home", identity_folder("controller"), "id", "create", "--name", "owner",
+               "--domain", DOMAIN, "--root-parent", "--registry", REGISTRY)
+    # Then the owner's membership, and the holder's.
     invite = aw(controller, "id", "team", "invite", "--team", TEAM, "--namespace", DOMAIN, "--member-global")
     aw(controller, "id", "team", "accept-invite", invite["token"], "--name", "owner", "--global")
     aw(controller, "init", "--url", AWEB, "--name", "owner", "--do-not-touch-agents-md")
