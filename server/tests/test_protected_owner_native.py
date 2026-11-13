@@ -48,6 +48,8 @@ async def test_the_team_owner_sees_admitted_agents_counts_bounds_and_approvers(a
     assert (await execute(a, added)).json()["state"] == "committed"
     view = await owner_view(a.group, scope=await scope_of(a.w.app))
     assert view["authority"]["kind"] == "team_controller"
+    # An admission nobody approved is an added agent, not a decision.
+    assert added.operation_id not in [h["operation_id"] for h in view["history"]]
     [agent] = view["admitted"]
     assert agent["root_id"] == a.w.root_id and agent["alias"] == added.intent()["subject"]["member_alias"]
     assert agent["state"] == "active" and agent["child_key"] == added.intent()["subject"]["child_key"]
@@ -144,3 +146,11 @@ def test_the_owner_page_has_its_own_layout_not_an_empty_stylesheet():
     css = protected_shell("aweb.protected.console.csrf").brand.stylesheet
     for rule in ("max-width", "padding", ".owner-list", "overflow-wrap"):
         assert rule in css
+
+
+def test_the_sign_in_page_title_does_not_repeat_itself():
+    from aweb.protected_signing.bootstrap import protected_shell
+
+    page = protected_shell("aweb.protected.console.csrf").page("Sign in", "<h1>Sign in</h1>")
+    assert "<title>Sign in · Protected signing</title>" in page.body.decode()
+    assert protected_shell("aweb.protected.console.csrf").brand.sign_in.title == "Sign in"

@@ -25,6 +25,8 @@ if TYPE_CHECKING:
 
 def _unavailable(error: HTTPException) -> HTMLResponse:
     # Fixed copy only: do not echo an id, scope, exception detail or redirect.
+    # A refusal is final; a rate limit is not, so it says only when to retry.
+    lead = "" if error.status_code == 429 else '<p role="status">This request cannot be completed.</p>'
     # The page cannot tell yet whether a terminal or a mailed link opened it.
     guidance = (
         "Too many attempts from this browser. Wait a minute, then open the page again."
@@ -40,8 +42,7 @@ def _unavailable(error: HTTPException) -> HTMLResponse:
         '<link rel="stylesheet" href="/handoff-assets/handoff.css"></head>'
         '<body><main class="handoff" aria-labelledby="handoff-unavailable">'
         '<h1 id="handoff-unavailable">Request unavailable</h1>'
-        '<p role="status">This request cannot be completed.</p>'
-        f"<p>{guidance}</p></main></body></html>",
+        f"{lead}<p>{guidance}</p></main></body></html>",
         status_code=error.status_code,
         headers=error.headers,
     )

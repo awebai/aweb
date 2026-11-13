@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import re
+from contextlib import contextmanager
 from collections.abc import Awaitable, Callable
 from dataclasses import asdict
 from math import ceil
@@ -132,6 +133,17 @@ def _retry_after_headers(error: SignerRefused) -> dict[str, str] | None:
     if value is None or type(value) not in (int, float) or not 0 <= value <= 2**31 - 1:
         return None
     return {"Retry-After": str(ceil(value))}
+
+
+@contextmanager
+def _gone_when_expired():
+    """A link's own approver learns their request expired: 410, not a refusal."""
+    try:
+        yield
+    except SignerRefused as error:
+        if error.code != "operation_expired":
+            raise
+        raise HTTPException(410, "operation_expired") from None
 
 
 def _http(error: Exception) -> HTTPException:
@@ -445,12 +457,8 @@ class ProtectedOperationsHTTP:
         async def link_view(handoff_id: str, request: Request):
             try:
                 body = await self._link_request(request, {"token"})
-                try:
+                with _gone_when_expired():
                     prepared = await self.signer.link_view(handoff_id, body["token"])
-                except SignerRefused as expired:
-                    if expired.code != "operation_expired":
-                        raise
-                    raise HTTPException(410, "operation_expired") from None
                 frozen = prepared.payload
                 result = asdict(prepared)
                 result["payload"] = {
@@ -465,7 +473,8 @@ class ProtectedOperationsHTTP:
         async def link_options(handoff_id: str, request: Request):
             try:
                 body = await self._link_request(request, {"token", "decision"})
-                options = await self.signer.link_options(handoff_id, body["token"], body["decision"])
+                with _gone_when_expired():
+                    options = await self.signer.link_options(handoff_id, body["token"], body["decision"])
                 return dict(options)
             except Exception as error:
                 raise self._human_error(error) from None

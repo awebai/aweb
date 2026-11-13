@@ -38,7 +38,11 @@ import { operationTable } from "/handoff-assets/operations.mjs";
       credentials: "same-origin", cache: "no-store", redirect: "error", headers,
       body: body === undefined ? undefined : JSON.stringify(body),
     });
-    if (!response.ok) throw new Error("handoff_refused");
+    if (!response.ok) {
+      const error = new Error("handoff_refused");
+      error.status = response.status;
+      throw error;
+    }
     return response.json();
   }
 
@@ -103,6 +107,7 @@ import { operationTable } from "/handoff-assets/operations.mjs";
       `Requested by ${request.requester}` + (nonempty(asked) ? ` · asked ${when(asked)}` : "");
     document.getElementById("handoff-expires").textContent = `Expires ${when(state.expires_at)}`;
     document.getElementById("handoff-governance").hidden = false;
+    document.getElementById("handoff-explanation").hidden = true;
     action.textContent = "Approve";
     deny.hidden = false;
     deny.disabled = false;
@@ -141,9 +146,8 @@ import { operationTable } from "/handoff-assets/operations.mjs";
     if (result.state === "pending") {
       if (result.redirect_uri !== undefined || !nonempty(result.expires_at) ||
           !Number.isFinite(Date.parse(result.expires_at))) throw new Error("handoff_refused");
-      action.disabled = true;
       document.body.dataset.handoffState = "pending";
-      status.textContent = "The operation is still processing. Check your terminal for its outcome.";
+      outcome("Approved", "It is still being carried out. Your owner page shows the outcome under History.");
       return;
     }
     if (result.state !== "committed" || !result.result ||
@@ -155,7 +159,7 @@ import { operationTable } from "/handoff-assets/operations.mjs";
       if (result.redirect_uri !== undefined) throw new Error("handoff_refused");
       csrf = undefined;
       document.body.dataset.handoffState = "complete";
-      status.textContent = "Complete. Return to your terminal to read the receipt.";
+      outcome("Approved", "Done. There is nothing else to do here.");
       return;
     }
     if (!nonempty(result.redirect_uri)) throw new Error("handoff_refused");
@@ -304,7 +308,7 @@ import { operationTable } from "/handoff-assets/operations.mjs";
       } else if (sent) {
         document.body.dataset.handoffState = "unconfirmed";
         outcome(...unconfirmed);
-      } else if (Date.now() >= expiresAtMs) {
+      } else if (error.status === 410 || Date.now() >= expiresAtMs) {
         linkExpired(expiresAt);
       } else {
         linkUnavailable();
@@ -334,7 +338,8 @@ import { operationTable } from "/handoff-assets/operations.mjs";
         if (!nonempty(loginScope) || !nonempty(csrfKey)) throw new Error("handoff_refused");
         // A new tab shares cookies but not the console token. Always use the
         // existing LOGIN in place; never guess a token or navigate to root.
-        status.textContent = "Sign in before reviewing this protected operation.";
+        // The explanation already says to sign in; the status stays quiet.
+        status.textContent = "";
         document.body.dataset.handoffState = "login-required";
         action.disabled = false;
         return;
@@ -379,6 +384,22 @@ import { operationTable } from "/handoff-assets/operations.mjs";
 
   deny.addEventListener("click", () => (linked ? decide("reject") : sessionDeny()));
 
+  // The session ended before anything was sent: nothing was decided, and
+  // the next step is to sign in again in place.
+  function signedOut() {
+    loggedIn = false;
+    csrf = undefined;
+    sessionStorage.removeItem(csrfKey);
+    deny.hidden = true;
+    note.hidden = true;
+    action.hidden = false;
+    action.textContent = "Sign in with passkey";
+    action.disabled = false;
+    document.body.dataset.handoffState = "login-required";
+    status.textContent = "You were signed out. Sign in again to decide.";
+    action.focus();
+  }
+
   // A signed-in approver's Deny: the same single exact-act passkey touch.
   async function sessionDeny() {
     action.disabled = true;
@@ -403,6 +424,8 @@ import { operationTable } from "/handoff-assets/operations.mjs";
         deny.disabled = false;
         document.body.dataset.handoffState = "ready";
         deny.focus();
+      } else if (!sent && error.status === 401) {
+        signedOut();
       } else {
         submitted = sent;
         failed();
@@ -476,6 +499,8 @@ import { operationTable } from "/handoff-assets/operations.mjs";
         deny.disabled = false;
         document.body.dataset.handoffState = governance && !loggedIn ? "login-required" : "ready";
         action.focus();
+      } else if (governance && loggedIn && !submitted && error.status === 401) {
+        signedOut();
       } else {
         failed();
       }

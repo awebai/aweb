@@ -163,7 +163,11 @@ async def signed_in_service(world, tmp_path):
 
 async def sign_in(page, s):
     await page.goto(f"{s.origin}/handoff/{s.prepared.handoff_id}")
+    # One instruction before sign-in, gone once the request shows.
+    await expect(page.locator("#handoff-explanation")).to_have_text("Sign in with your passkey to see the request.")
+    await expect(page.locator("#handoff-status")).to_have_text("")
     await page.locator("#handoff-action").click()
+    await expect(page.locator("#handoff-explanation")).to_be_hidden()
     await expect(page.locator("#handoff-deny")).to_be_enabled()
 
 
@@ -179,7 +183,11 @@ async def test_a_tab_that_signed_in_approves_with_one_touch(signed_in_service):
         await page.goto(f"{s.origin}/handoff/{s.prepared.handoff_id}")
         await expect(page.locator("#handoff-action")).to_have_text("Approve")
         await page.locator("#handoff-action").click()
-        await expect(page.locator("#handoff-status")).to_contain_text("Complete")
+        await expect(page.locator("#handoff-title")).to_have_text("Approved")
+        await expect(page.locator("#handoff-title")).to_be_focused()
+        await expect(page.locator("#handoff-outcome-text")).to_have_text("Done. There is nothing else to do here.")
+        await expect(page.locator("#handoff-action")).to_be_hidden()
+        await expect(page.locator("#handoff-deny")).to_be_hidden()
         assert posts == [f"/handoff/{s.prepared.handoff_id}/governance/options",
             f"/handoff/{s.prepared.handoff_id}/governance/execute"]
         receipt = await s.world.signer.receipt(s.prepared.operation_id, reader=s.world.reader)
@@ -209,4 +217,34 @@ def test_a_refused_page_says_what_to_do_for_email_and_terminal_alike(status, sen
     page = _unavailable(HTTPException(status, "handoff_refused"))
     assert page.status_code == status
     assert sentence in page.body.decode()
-    assert "This request cannot be completed." in page.body.decode()
+    # A rate limit is not final, so it does not say the request cannot be completed.
+    assert ("This request cannot be completed." in page.body.decode()) == (status == 403)
+
+
+async def test_a_session_that_ends_mid_page_asks_to_sign_in_again(signed_in_service):
+    s = signed_in_service
+    context, page, _, _ = await open_page(s, 390)
+    async with context:
+        await sign_in(page, s)
+        await context.clear_cookies()
+        await page.locator("#handoff-action").click()
+        await expect(page.locator("#handoff-status")).to_have_text("You were signed out. Sign in again to decide.")
+        await expect(page.locator("#handoff-action")).to_have_text("Sign in with passkey")
+        await expect(page.locator("#handoff-action")).to_be_enabled()
+        await expect(page.locator("#handoff-action")).to_be_focused()
+        await expect(page.locator("#handoff-deny")).to_be_hidden()
+        receipt = await s.world.signer.receipt(s.prepared.operation_id, reader=s.world.reader)
+        assert receipt.state == "pending"
+
+
+async def test_a_click_after_the_server_expired_the_request_says_expired(link_service):
+    from datetime import timedelta
+
+    s = link_service
+    context, page, _, _ = await open_page(s, 390)
+    async with context:
+        await page.goto(s.link)
+        await expect(page.locator("#handoff-action")).to_be_enabled()
+        s.world.clock.advance(timedelta(hours=25))
+        await page.locator("#handoff-action").click()
+        await expect(page.locator("#handoff-title")).to_have_text("Request expired")

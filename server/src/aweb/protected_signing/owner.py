@@ -57,13 +57,16 @@ async def owner_view(composition, *, scope: str, now: datetime | None = None) ->
         entry = {"operation_id": row["operation_id"], "operation": request["operation"],
             "requester": row["requester"], "digest": row["digest"],
             "asked_at": request.get("artifact", {}).get("issued_at")}
+        if row["approval_id"] is None:
+            # Bounded unattended work (admissions) is listed under added agents.
+            continue
         if row["committed"]:
             history.append({**entry, "state": "committed", "at": _stamp(row["committed_at"])})
         elif row["refusal_code"] is not None:
             history.append({**entry, "state": "refused", "code": row["refusal_code"], "at": _stamp(row["expires_at"])})
         elif row["expires_at"] <= now:
             history.append({**entry, "state": "expired", "at": _stamp(row["expires_at"])})
-        elif row["approval_id"] is not None:
+        else:
             pending.append({**entry, "handoff_id": row["handoff_id"], "expires_at": _stamp(row["expires_at"])})
     view = {
         "authority": {"kind": context.authority_kind, "id": context.authority_id, "domain": context.authority_domain,

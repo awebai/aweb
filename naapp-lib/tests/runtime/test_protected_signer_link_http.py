@@ -136,3 +136,11 @@ async def test_an_expired_request_answers_its_approver_gone(link_http):
     response = await client.post(f"/handoff/{prepared.handoff_id}/link", json={"token": token}, headers=BROWSER)
     assert (response.status_code, response.json()) == (410, {"detail": "operation_expired"})
     assert prepared.digest not in response.text
+
+
+async def test_options_after_expiry_also_answer_gone(link_http):
+    world, client, prepared, token = link_http
+    world.clock.advance(timedelta(hours=25))
+    response = await client.post(f"/handoff/{prepared.handoff_id}/link/options",
+        json={"token": token, "decision": "approve"}, headers=BROWSER)
+    assert (response.status_code, response.json()) == (410, {"detail": "operation_expired"})

@@ -303,7 +303,7 @@ main dd { margin: 0; overflow-wrap: anywhere; font-family: var(--font-mono); fon
 def protected_shell(csrf_key):
     """The protected host's console pages, in its own words."""
     sign_in = SignInCopy(
-        title="Protected signing",
+        title="Sign in",
         heading="Sign in",
         scoped_hint="Use your passkey.",
         unscoped_hint="Open your approval link.",
