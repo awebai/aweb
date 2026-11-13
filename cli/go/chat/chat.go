@@ -1092,9 +1092,10 @@ func waitForMessage(ctx context.Context, client *awid.Client, openStream streamO
 	// timestamp; a message already seen is not presented again.
 	seenMessages := map[string]bool{}
 
-	// openErr reports whether a failed open ends the wait as a timeout (a
-	// clean EOF) or as an error.
-	openErr := func(err error, action string) (*SendResult, error) {
+	// The server deadline is a safety net for orphaned connections —
+	// the local waitTimer manages actual wait semantics.
+	stream, err := openStream(ctx, sessionID, time.Now().Add(maxStreamDeadline), after, 0)
+	if err != nil {
 		if ctx.Err() != nil {
 			return nil, ctx.Err()
 		}
@@ -1108,14 +1109,7 @@ func waitForMessage(ctx context.Context, client *awid.Client, openStream streamO
 			result.WaitedSeconds = int(time.Since(waitStart).Seconds())
 			return result, nil
 		}
-		return nil, fmt.Errorf("%s SSE: %w", action, err)
-	}
-
-	// The server deadline is a safety net for orphaned connections —
-	// the local waitTimer manages actual wait semantics.
-	stream, err := openStream(ctx, sessionID, time.Now().Add(maxStreamDeadline), after, 0)
-	if err != nil {
-		return openErr(err, "connecting to")
+		return nil, fmt.Errorf("connecting to SSE: %w", err)
 	}
 	streamOpenedAt := time.Now()
 	events, streamCleanup := streamToChannel(ctx, stream)
@@ -1174,7 +1168,12 @@ func waitForMessage(ctx context.Context, client *awid.Client, openStream streamO
 			}
 			stream, err := openStream(ctx, sessionID, time.Now().Add(maxStreamDeadline), resumeAfter, lastSeq)
 			if err != nil {
-				return openErr(err, "reconnecting to")
+				// The wait is still running, so a failed reopen, EOF
+				// included, is an error rather than a timeout.
+				if ctx.Err() != nil {
+					return nil, ctx.Err()
+				}
+				return nil, fmt.Errorf("reconnecting to SSE: %w", err)
 			}
 			streamOpenedAt = time.Now()
 			events, streamCleanup = streamToChannel(ctx, stream)
