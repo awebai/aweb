@@ -321,17 +321,20 @@ func LockCredentialsShared(home string) (*fileLock, error) {
 // UpdateCredentials runs write as op's update of home, under home's
 // credential lock. Another operation's interrupted update refuses with
 // ErrCredentialUpdateIncomplete; an interrupted update of exactly op is
-// recovered. While a reader serves home, an update starts only from a
-// published home, and a change made without a generation refuses with
+// recovered, and published even when write has nothing left to change. While
+// a reader serves home, an update starts only from a published home, and a
+// change made without a generation refuses with
 // ErrCredentialUpdateUnpublished; with no reader there is nothing to keep
-// coherent, and the update publishes over the home as it finds it, holding
-// the reader lock so no reader starts meanwhile. Refusals come before write
-// runs. write calls begin before its first change, and begin refuses
-// with ErrCredentialUpdateUnpublished if the home changed since the update
-// started; a write that returns without calling begin changes nothing and
-// publishes nothing. Once begun, a
-// write that fails leaves the update for op to recover; one that succeeds
-// publishes the next generation with the projection it left.
+// coherent, and the update publishes over the home as it finds it, once it
+// validates, holding the reader lock so no reader starts meanwhile. Refusals
+// come before write runs.
+//
+// write calls begin before its first change; begin refuses with
+// ErrCredentialUpdateUnpublished if the home changed since the update
+// started. A write that returns without calling begin changes nothing and,
+// unless it recovers op, publishes nothing. Once begun, a write that fails
+// leaves the update for op to recover; one that succeeds publishes the next
+// generation with the projection it left.
 func UpdateCredentials(home string, op CredentialOperation, write func(begin func() error) error) error {
 	// Lock order: the reader lease, then the update lock. A writer that takes
 	// the lease has no reader to keep coherent and keeps it for the whole
@@ -365,6 +368,7 @@ func UpdateCredentials(home string, op CredentialOperation, write func(begin fun
 		state.Marker = nil
 	}
 	base := CredentialBase{Generation: state.Generation, Projection: state.Projection}
+	recovering := state.Marker != nil
 	switch {
 	case state.Marker != nil:
 		if state.Marker.Operation != op || state.Marker.Base != base {
@@ -410,8 +414,14 @@ func UpdateCredentials(home string, op CredentialOperation, write func(begin fun
 		begun = true
 		return nil
 	}
-	if err := write(begin); err != nil || !begun {
+	if err := write(begin); err != nil {
 		return err
+	}
+	// Recovering an interrupted update of op publishes it even when nothing
+	// was left to write; otherwise an update that never began publishes
+	// nothing.
+	if !begun && !recovering {
+		return nil
 	}
 	after, err := CaptureCredentials(home)
 	if err != nil {

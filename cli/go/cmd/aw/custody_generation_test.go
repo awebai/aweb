@@ -247,8 +247,8 @@ func TestCustodyLatchesAChangedKeyUntilRestart(t *testing.T) {
 	}
 }
 
-// A request admitted on generation N after N+1 was published is served by
-// N+1's snapshot; it never replaces it.
+// A request whose capture of generation N is admitted after N+1 was
+// published is refused, and never replaces N+1's snapshot.
 func TestCustodyNeverReplacesANewerSnapshotWithAnOlderCapture(t *testing.T) {
 	c := newCaptureService(t)
 	older, err := c.captureCredentials()
@@ -258,10 +258,8 @@ func TestCustodyNeverReplacesANewerSnapshotWithAnOlderCapture(t *testing.T) {
 	commitTeams(t, c.home, "second")
 	newer := c.deps(t).client
 	builds := len(c.builtOn)
-	c.clientMu.Lock()
-	deps := c.admitCaptureLocked(context.Background(), older, nil)
-	c.clientMu.Unlock()
-	if deps.client != newer || len(c.builtOn) != builds || c.deps(t).client != newer {
+	deps := c.admitCapture(context.Background(), older, nil)
+	if deps.client != nil || len(c.builtOn) != builds || c.deps(t).client != newer {
 		t.Fatalf("an older capture replaced the snapshot (client %p, newer %p, %d builds)", deps.client, newer, len(c.builtOn))
 	}
 }
@@ -426,9 +424,7 @@ func TestCustodyNeverBuildsAnOlderCaptureAfterTheSnapshotWasDropped(t *testing.T
 		t.Fatal("an unpublished change was served")
 	}
 	builds := len(c.builtOn)
-	c.clientMu.Lock()
-	deps := c.admitCaptureLocked(context.Background(), older, nil)
-	c.clientMu.Unlock()
+	deps := c.admitCapture(context.Background(), older, nil)
 	if deps.client != nil || len(c.builtOn) != builds {
 		t.Fatalf("an older capture was built and served after a newer generation: client %p, %d builds", deps.client, len(c.builtOn)-builds)
 	}
@@ -465,4 +461,53 @@ func TestCustodyReportsABusyHomeAsBusy(t *testing.T) {
 		}
 		return nil
 	})
+}
+
+// A build runs outside the service's lock; a refusal another request makes
+// while it runs is never published over when it finishes.
+func TestCustodyNeverPublishesABuildOverARefusalMadeWhileItRan(t *testing.T) {
+	c := newCaptureService(t)
+	commitTeams(t, c.home, "second")
+	var during custodyClientDeps
+	c.during = func() {
+		writeTeams(t, c.home, "written by an older aw")
+		during = c.deps(t)
+	}
+	built := c.deps(t)
+	if during.client != nil || c.lastError != "credential_update_unpublished" {
+		t.Fatalf("the request during the build was served: client %p, last error %q", during.client, c.lastError)
+	}
+	c.clientMu.Lock()
+	published := c.client
+	c.clientMu.Unlock()
+	if built.client != nil || published != nil {
+		t.Fatalf("the build published over the refusal: returned %p, published %p", built.client, published)
+	}
+}
+
+// A capture root that is a symlink is refused before anything follows it:
+// neither key bytes nor a mode change reach the directory it names.
+func TestCustodyNeverFollowsACaptureRootSymlink(t *testing.T) {
+	c := newCaptureService(t)
+	outside := t.TempDir()
+	if err := os.Chmod(outside, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	root := filepath.Join(c.home, custodyCaptureDir)
+	_ = os.RemoveAll(root)
+	if err := os.Symlink(outside, root); err != nil {
+		t.Fatal(err)
+	}
+	capture, err := c.captureCredentials()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := c.writeCapture(capture); err == nil {
+		t.Fatal("a capture was written through a symlinked root")
+	}
+	info, err := os.Stat(outside)
+	entries, _ := os.ReadDir(outside)
+	if err != nil || info.Mode().Perm() != 0o755 || len(entries) != 0 {
+		t.Fatalf("the symlinked root's target was changed: %v %v %v", info.Mode().Perm(), entries, err)
+	}
 }

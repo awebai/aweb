@@ -382,3 +382,20 @@ func TestAWriterWithNoReaderHoldsTheReaderLockWhileItWrites(t *testing.T) {
 	}
 	_ = reader.Close()
 }
+
+// An interrupted update whose writes all landed is published by its retry,
+// even though the retry has nothing left to write.
+func TestARetryOfAnUpdateThatWroteEverythingPublishesIt(t *testing.T) {
+	home := credentialHome(t, "team-cert.pem")
+	_ = UpdateCredentials(home, installA, func(begin func() error) error {
+		if err := begin(); err != nil {
+			return err
+		}
+		writeFile(t, home, "team-cert.pem", "whole\n")
+		return errors.New("died before publishing")
+	})
+	if err := UpdateCredentials(home, installA, func(func() error) error { return nil }); err != nil {
+		t.Fatal(err)
+	}
+	assertState(t, home, 1, false)
+}

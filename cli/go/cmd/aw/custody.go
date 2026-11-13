@@ -22,6 +22,7 @@ import (
 	aweb "github.com/awebai/aw"
 	"github.com/awebai/aw/awconfig"
 	"github.com/awebai/aw/awid"
+	"github.com/awebai/aw/internal/pathpreflight"
 	"github.com/spf13/cobra"
 	"gopkg.in/yaml.v3"
 )
@@ -125,10 +126,17 @@ type custodyService struct {
 	// certificates that capture held. identityChanged is set, until restart,
 	// once the resident home holds another identity than this service started
 	// with.
-	snapshotGeneration int64
-	snapshotProjection string
-	snapshotTeams      []awconfig.StoredTeamCertificate
-	identityChanged    bool
+	snapshotGeneration  int64
+	snapshotProjection  string
+	snapshotTeams       []awconfig.StoredTeamCertificate
+	snapshotCertificate *awid.TeamCertificate
+	identityChanged     bool
+	// observedGeneration is the newest generation any admission observed,
+	// built or not; decisions orders admissions, and lastRefusal is the order
+	// of the latest one that refused, so nothing older publishes over it.
+	observedGeneration int64
+	decisions          int64
+	lastRefusal        int64
 	// clientMu serializes building the client and guards the client, the
 	// functions derived from it, the selection-derived fields and the last
 	// failure.
@@ -227,6 +235,9 @@ type custodyClientDeps struct {
 	readStoredMailReply func(context.Context, string) (*awid.InboxMessage, error)
 	resolveRecipient    func(context.Context, string) (*awid.ResolvedIdentity, error)
 	appDeniedOrigins    []string
+	// certificate is the selected team certificate the snapshot was built
+	// with; requests that sign as the team member use it.
+	certificate *awid.TeamCertificate
 }
 
 // admittedDepsKey carries a request's admitted client-derived functions.
@@ -270,51 +281,104 @@ func (s *custodyService) clientDeps(ctx context.Context) custodyClientDeps {
 		return s.depsLocked()
 	}
 	capture, captureErr := s.captureCredentials()
-	s.clientMu.Lock()
-	defer s.clientMu.Unlock()
-	return s.admitCaptureLocked(ctx, capture, captureErr)
+	return s.admitCapture(ctx, capture, captureErr)
 }
 
-// admitCaptureLocked admits a request on capture, the resident home's
-// credentials as its admission read them.
-func (s *custodyService) admitCaptureLocked(ctx context.Context, capture *awconfig.CredentialCapture, captureErr error) custodyClientDeps {
+// admitCapture admits a request on capture, the resident home's credentials
+// as its admission read them. The decision is taken under clientMu; a build
+// it needs runs outside it, and its result is published only if nothing the
+// service observed meanwhile supersedes it.
+func (s *custodyService) admitCapture(ctx context.Context, capture *awconfig.CredentialCapture, captureErr error) custodyClientDeps {
+	s.clientMu.Lock()
+	deps, decision, build := s.decideLocked(capture, captureErr)
+	s.clientMu.Unlock()
+	if !build {
+		return deps
+	}
+	built, err := s.buildSnapshot(ctx, capture)
+	s.clientMu.Lock()
+	defer s.clientMu.Unlock()
+	return s.publishLocked(capture, decision, built, err)
+}
+
+// decideLocked decides what capture admits. Observations are fenced: a
+// capture of a generation older than one already observed changes nothing
+// and admits no client, and each decision that refuses is ordered, so a build
+// decided before it never publishes. It reports the decision's order and
+// whether a build is needed.
+func (s *custodyService) decideLocked(capture *awconfig.CredentialCapture, captureErr error) (custodyClientDeps, int64, bool) {
 	switch {
 	case s.identityChanged:
-		return custodyClientDeps{}
+		return custodyClientDeps{}, 0, false
 	case captureErr != nil:
 		code := "credential_update_incomplete"
 		if errors.Is(captureErr, awconfig.ErrLockUnavailable) {
 			code = "credential_update_busy"
 		}
 		s.reportFailureLocked("load credentials", code, captureErr)
-		return custodyClientDeps{}
+		return custodyClientDeps{}, 0, false
 	}
+	s.decisions++
+	decision := s.decisions
 	if err := s.checkPinLocked(capture); err != nil {
 		s.identityChanged = true
+		s.lastRefusal = decision
 		s.detachClientLocked()
 		s.reportFailureLocked("load credentials", "identity_changed", err)
-		return custodyClientDeps{}
+		return custodyClientDeps{}, 0, false
 	}
+	if capture.State.Generation < s.observedGeneration {
+		return custodyClientDeps{}, 0, false
+	}
+	s.observedGeneration = capture.State.Generation
 	if !capture.State.Published() {
 		code := awconfig.ErrCredentialUpdateUnpublished.Error()
 		if capture.State.Marker != nil && !capture.State.Committed() {
 			code = awconfig.ErrCredentialUpdateIncomplete.Error()
 		}
+		s.lastRefusal = decision
 		s.detachClientLocked()
 		s.reportFailureLocked("load credentials", code, fmt.Errorf("the resident home's credentials are not a published generation"))
-		return custodyClientDeps{}
+		return custodyClientDeps{}, 0, false
 	}
-	if s.client == nil || capture.Projection != s.snapshotProjection {
-		// A capture older than the generation this service last served is
-		// never built, attached or not.
-		if capture.State.Generation < s.snapshotGeneration {
+	if s.client != nil && capture.Projection == s.snapshotProjection {
+		return s.depsLocked(), 0, false
+	}
+	// The superseded snapshot is dropped before the build, so a failed build
+	// serves nothing rather than credentials known to be replaced.
+	s.detachClientLocked()
+	return custodyClientDeps{}, decision, true
+}
+
+// builtSnapshot is a client built from one capture, with what the capture's
+// selection held.
+type builtSnapshot struct {
+	selection   *awconfig.Selection
+	client      *aweb.Client
+	teams       []awconfig.StoredTeamCertificate
+	certificate *awid.TeamCertificate
+}
+
+// publishLocked publishes built, the result of the build decision ordered as
+// decision, unless the service has since observed a newer generation or
+// refused, or a concurrent build already published this generation.
+func (s *custodyService) publishLocked(capture *awconfig.CredentialCapture, decision int64, built *builtSnapshot, err error) custodyClientDeps {
+	switch {
+	case s.identityChanged || decision < s.lastRefusal || capture.State.Generation < s.observedGeneration:
+		return custodyClientDeps{}
+	case err != nil:
+		s.reportFailureLocked("connect to aweb", custodyClientInitializationErrorCode(err), err)
+		return custodyClientDeps{}
+	case s.client != nil && s.snapshotGeneration >= capture.State.Generation:
+		if s.snapshotProjection == capture.Projection {
 			return s.depsLocked()
 		}
-		// The superseded snapshot is dropped before the build, so a failed
-		// build serves nothing rather than credentials known to be replaced.
-		s.detachClientLocked()
-		s.buildLocked(ctx, capture)
+		return custodyClientDeps{}
 	}
+	s.applySelectionLocked(built.selection)
+	s.attachClientLocked(built.client)
+	s.snapshotGeneration, s.snapshotProjection = capture.State.Generation, capture.Projection
+	s.snapshotTeams, s.snapshotCertificate = built.teams, built.certificate
 	return s.depsLocked()
 }
 
@@ -362,17 +426,17 @@ func (s *custodyService) checkPinLocked(capture *awconfig.CredentialCapture) err
 	return nil
 }
 
-// buildLocked builds the client from capture, written to a private directory
-// in the resident home that is removed as soon as the client is built: the
-// built client keeps no path into it.
-func (s *custodyService) buildLocked(ctx context.Context, capture *awconfig.CredentialCapture) {
-	dir, err := s.writeCaptureLocked(capture)
+// buildSnapshot builds the client from capture, written to a private
+// directory in the resident home that is removed as soon as the client is
+// built: the built client keeps no path into it. It reads the selected team
+// certificate from the capture too, so signing uses the admitted one.
+func (s *custodyService) buildSnapshot(ctx context.Context, capture *awconfig.CredentialCapture) (*builtSnapshot, error) {
+	dir, err := s.writeCapture(capture)
 	if dir != "" {
 		defer os.RemoveAll(dir)
 	}
 	if err != nil {
-		s.reportFailureLocked("load credentials", "credential_update_incomplete", err)
-		return
+		return nil, err
 	}
 	captured := awconfig.IdentityHome{Root: dir, Source: awconfig.IdentityHomeFlag}
 	sel, client, err := s.connectClient(ctx, captured)
@@ -380,25 +444,40 @@ func (s *custodyService) buildLocked(ctx context.Context, capture *awconfig.Cred
 		err = errors.New("no aweb client for the selected team")
 	}
 	if err != nil {
-		s.reportFailureLocked("connect to aweb", custodyClientInitializationErrorCode(err), err)
-		return
+		return nil, err
 	}
-	teams, _ := awconfig.ListTeamCertificatesFromIdentityHome(dir)
-	s.applySelectionLocked(sel)
-	s.attachClientLocked(client)
-	s.snapshotGeneration, s.snapshotProjection, s.snapshotTeams = capture.State.Generation, capture.Projection, teams
+	built := &builtSnapshot{selection: sel, client: client}
+	built.teams, _ = awconfig.ListTeamCertificatesFromIdentityHome(dir)
+	if sel != nil && strings.TrimSpace(sel.WorkspacePath) != "" {
+		built.certificate, _ = loadSelectedTeamCertificate(sel)
+	}
+	return built, nil
 }
 
 // custodyCaptureDir holds the resident home's private credential captures
 // while a client is built from one.
 const custodyCaptureDir = ".custody-captures"
 
-func (s *custodyService) writeCaptureLocked(capture *awconfig.CredentialCapture) (string, error) {
+// writeCapture writes capture into a fresh directory under the resident
+// home's capture root. The root must be a real directory of this user's in
+// the resident home: a symlink, a symlinked parent or anything but a
+// directory is refused before any key bytes are written, and changing its
+// mode fails for a directory this user does not own.
+func (s *custodyService) writeCapture(capture *awconfig.CredentialCapture) (string, error) {
 	root := filepath.Join(s.residentHome, custodyCaptureDir)
-	if err := os.MkdirAll(root, 0o700); err != nil {
+	check := func() error {
+		return pathpreflight.PreflightDir(root, "custody capture directory", pathpreflight.AllowTempAmbientSymlinkPrefix())
+	}
+	if err := check(); err != nil {
+		return "", err
+	}
+	if err := os.Mkdir(root, 0o700); err != nil && !errors.Is(err, os.ErrExist) {
 		return "", err
 	}
 	if err := os.Chmod(root, 0o700); err != nil {
+		return "", err
+	}
+	if err := check(); err != nil {
 		return "", err
 	}
 	dir, err := os.MkdirTemp(root, "capture-")
@@ -417,7 +496,7 @@ func removeCaptures(residentHome string) error {
 }
 
 func (s *custodyService) depsLocked() custodyClientDeps {
-	return custodyClientDeps{
+	return custodyClientDeps{certificate: s.snapshotCertificate,
 		client: s.client, grantStatus: s.grantStatus, readinessCheck: s.readinessCheck,
 		readStoredEnvelope: s.readStoredEnvelope, readStoredMailReply: s.readStoredMailReply,
 		resolveRecipient: s.resolveRecipient, appDeniedOrigins: s.appDeniedOrigins,
@@ -427,7 +506,7 @@ func (s *custodyService) depsLocked() custodyClientDeps {
 // detachClientLocked drops the client and every function derived from it.
 func (s *custodyService) detachClientLocked() {
 	s.client, s.grantStatus, s.readStoredEnvelope, s.readStoredMailReply, s.resolveRecipient, s.readinessCheck = nil, nil, nil, nil, nil, nil
-	s.snapshotProjection = ""
+	s.snapshotProjection, s.snapshotCertificate = "", nil
 }
 
 func (s *custodyService) attachClientLocked(client *aweb.Client) {
@@ -558,7 +637,7 @@ func (s *custodyService) validateCapture(capture *awconfig.CredentialCapture) er
 	if err := s.checkPinLocked(capture); err != nil {
 		return err
 	}
-	dir, err := s.writeCaptureLocked(capture)
+	dir, err := s.writeCapture(capture)
 	if dir != "" {
 		defer os.RemoveAll(dir)
 	}
