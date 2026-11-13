@@ -75,7 +75,7 @@ def interrupted_docker_proof(repo: Path, evidence: Path, env: dict[str, str]) ->
                     PYTHONPATH=str(ROOT / "scripts/vm-gate"))
     command = ["timeout", "--signal=TERM", "--kill-after=130s", "600",
                sys.executable, "-m", "vm_gate.supervisor", "run", str(supervised),
-               "120", "bash", "scripts/candidate-docker-gate.sh"]
+               "120", "bash", str(repo / "scripts/candidate-docker-gate.sh")]
     sha = checked(repo, "git", "rev-parse", "HEAD")
     with (evidence / "deadline-output.log").open("w") as output:
         process = subprocess.Popen(command, cwd=repo, env=settings, stdout=output,
