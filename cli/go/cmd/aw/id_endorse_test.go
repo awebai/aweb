@@ -12,6 +12,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"strconv"
 	"strings"
@@ -517,5 +518,56 @@ func TestAPendingEndorsementReportsWhatTheCallerShowsTheHuman(t *testing.T) {
 		`"reason":"awaiting_human","state":"pending"}`
 	if string(raw) != want {
 		t.Fatalf("report %s\nwant   %s", raw, want)
+	}
+}
+
+// The real command invites an agent child as a root whose chain endorsement
+// installed, and refuses it as the same root without one.
+func TestAnEndorsedRootInvitesAnAgentChildWithItsInstalledChain(t *testing.T) {
+	ctx, cancel := context.WithTimeout(context.Background(), time.Minute)
+	defer cancel()
+	bin := filepath.Join(t.TempDir(), "aw")
+	buildAwBinary(t, ctx, bin)
+	_, humanKey, _ := ed25519.GenerateKey(nil)
+	humanDID := awid.ComputeDIDKey(humanKey.Public().(ed25519.PublicKey))
+	artifact := endorsedArtifact(humanDID)
+	signed, _ := endorsedCertificate(signedEndorsement(t, humanKey, artifact), artifact, humanDID)
+	ours, _ := awid.IDCertificateID(signed["certificate"].(map[string]any))
+	root, err := filepath.EvalSymlinks(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	home := filepath.Join(root, "root-home")
+	_, rootKey, _ := ed25519.GenerateKey(nil)
+	if err := awconfig.SaveWorktreeIdentityTo(filepath.Join(home, "identity.yaml"), &awconfig.WorktreeIdentity{
+		DID: awid.ComputeDIDKey(rootKey.Public().(ed25519.PublicKey)), StableID: artifact["id"].(string), Custody: awid.CustodySelf,
+		IdentityScope: awid.IdentityModeGlobal, RegistryURL: "https://registry.customer.example", RegistryStatus: "registered",
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if err := awid.SaveSigningKey(filepath.Join(home, "signing.key"), rootKey); err != nil {
+		t.Fatal(err)
+	}
+	invite := func() (map[string]any, string, error) {
+		command := exec.CommandContext(ctx, bin, "--json", "--identity-home", home, "id", "child", "invite", "--kind", "agent",
+			"--recipient", "spawned agent", "--registry", "https://registry.customer.example")
+		command.Dir, command.Env = root, testCommandEnv(root)
+		out, err := command.CombinedOutput()
+		var result map[string]any
+		_ = json.Unmarshal(out, &result)
+		return result, string(out), err
+	}
+	if _, out, err := invite(); err == nil || !strings.Contains(out, "no installed chain") {
+		t.Fatalf("a root with no installed chain invited: %v %s", err, out)
+	}
+	if err := registerEndorsement(ctx, &fakeRootRegistry{current: ours}, []any{signedHumanCertificate(t, humanKey)}, signed, nil, home); err != nil {
+		t.Fatal(err)
+	}
+	invited, out, err := invite()
+	if err != nil || invited["kind"] != "agent" || invited["invitation_id"] == "" {
+		t.Fatalf("invite: %v %s", err, out)
+	}
+	if parent, _ := invited["parent"].(map[string]any); parent["kind"] != "identity" || parent["id"] != artifact["id"] {
+		t.Fatalf("parent %v", invited["parent"])
 	}
 }

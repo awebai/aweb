@@ -177,7 +177,8 @@ async def test_an_endorsed_root_admits_an_agent_once_under_its_own_operation_id(
         # The endorsed chain is installed in the root's home, so the root
         # issues children.
         assert endorsed["chain_installed"] is True
-        status, invited, progress = await _aw(home, "id", "child", "invite", "--kind", "agent")
+        status, invited, progress = await _aw(home, "id", "child", "invite", "--kind", "agent", "--recipient", "spawned agent",
+            "--registry", w.registry_origin)
         assert status == 0, progress
         assert invited["parent"] == {"kind": "identity", "id": w.root_id} and invited["kind"] == "agent"
 
