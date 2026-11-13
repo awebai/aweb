@@ -220,3 +220,37 @@ async def test_prepare_bounds_the_handoff_without_inventing_an_artifact_expiry(
     with pytest.raises(MintReached):
         await signer.prepare(operation, requester=actor)
     signer.custody.sign_operation.assert_not_called()
+
+
+@pytest.mark.parametrize("source", ["constructor", "retained-request", "catalog-bridge"])
+def test_authority_key_lookup_accepts_the_released_revoke_type_and_retained_parser(source):
+    from awid.did import did_from_public_key, generate_keypair
+
+    from aweb_naapp.runtime.protected_signer import RevokeHumanRole
+    from aweb_naapp.runtime.protected_signer.codecs import artifact_for, authority_key
+    from aweb_naapp.runtime.protected_signer.http import parse_operation
+    from aweb_naapp.runtime.protected_signer.types import owner_act_operation
+    from tests.runtime.test_protected_log_key import operation
+
+    context = operation().context
+    legacy = RevokeHumanRole(
+        operation().operation_id,
+        context,
+        "https://console.example.org",
+        "logs",
+        "00000000-0000-4000-8000-000000000003",
+        "logs.reader",
+        context.human_id,
+    )
+    value = legacy
+    if source == "retained-request":
+        value = parse_operation(legacy.intent())
+        assert type(value) is RevokeHumanRole
+    elif source == "catalog-bridge":
+        value = owner_act_operation(legacy)
+    _, public = generate_keypair()
+    key = did_from_public_key(public)
+    artifact = artifact_for(owner_act_operation(legacy), key, datetime.now(UTC))
+    # execute calls this immediately after its current-authority fence, before
+    # custody/signing. Preserve the released type, normalize only codec lookup.
+    assert authority_key(value, artifact) == key

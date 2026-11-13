@@ -25,7 +25,7 @@ from aweb_naapp.hooks.owner_act import owner_act_signing_bytes, validate_owner_a
 from aweb_naapp.hooks.strictjson import Refused
 
 from .catalog import operation_spec
-from .types import SignerRefused
+from .types import SignerRefused, owner_act_operation
 
 
 def validate_subject(operation, variant, subject):
@@ -126,6 +126,9 @@ def signing_bytes(operation, artifact):
 
 
 def authority_key(operation, artifact):
+    # Retained requests preserve the released RevokeHumanRole constructor.
+    # Normalize codec selection through its existing bridge, not custody input.
+    operation = owner_act_operation(operation)
     family = operation_spec(operation.operation, operation.variant).family
     if family in {"owner_act", "log_key_record"}:
         return artifact.get("team_key_did")
