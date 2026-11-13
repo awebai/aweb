@@ -13,6 +13,7 @@ from uuid import uuid4
 
 import httpx
 import pytest
+import pytest_asyncio
 from aweb_naapp_testing import Member, did_key
 from awid.registry import RegistryClient
 from awid.signing import canonical_json_bytes, sign_message
@@ -32,7 +33,7 @@ TEAM = "backend:beta.example"
 ORIGIN = "http://test"
 
 
-@pytest.fixture
+@pytest_asyncio.fixture
 async def membership_env(real_stack):
     member = Member(team_id=TEAM, extra_cert_fields={"identity_scope": "local"})
     cert = member.certificate()
