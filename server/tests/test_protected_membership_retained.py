@@ -65,7 +65,7 @@ async def membership_env(real_stack):
 
 
 @pytest.mark.asyncio
-@pytest.mark.parametrize("surface", ["identity", "grant", "stream", "status", "room", "task", "projection"])
+@pytest.mark.parametrize("surface", ["identity", "grant", "stream", "status", "room", "task", "projection", "live-stream"])
 @pytest.mark.parametrize("protected", [False, True], ids=["legacy", "protected"])
 @pytest.mark.parametrize("change", ["genuine", "key", "alias", "null-blob", "unknown-protection", "down"])
 async def test_exact_retained_and_presented_membership(membership_env, surface, protected, change):
@@ -131,6 +131,11 @@ async def test_exact_retained_and_presented_membership(membership_env, surface, 
         if surface in {"identity", "grant"}:
             auth = await get_messaging_auth(request, app.state.db)
             return {"team_id": auth.team_id}
+        if surface == "live-stream":
+            from aweb.grant_streams import NeverGrantStreamGuard
+            guard = NeverGrantStreamGuard(request, app.state.db, replace(identity, grant=replace(grant, never_expires=True)))
+            guard.checked_at -= 31
+            return {"reason": await guard.reason()}
         if surface == "stream":
             reason = await grant_terminal_reason(request, app.state.db, replace(identity, grant=grant))
             return {"reason": reason}
@@ -174,6 +179,10 @@ async def test_exact_retained_and_presented_membership(membership_env, surface, 
         response = await client.get("/v1/messages", headers=headers)
     rejected = (protected and change in {"key", "alias"}) or (surface == "task" and change == "key")
     unavailable = change in {"unknown-protection", "down"} or (protected and change == "null-blob")
+    if surface == "live-stream":
+        assert response.status_code == 200, response.text
+        assert response.json()["reason"] == ("verification_unavailable" if unavailable else "grant_issuer_revoked" if rejected else None)
+        return
     if surface == "projection":
         assert response.status_code == 200, response.text
         assert response.json()["state"] == ("unknown" if unavailable else "inactive" if rejected else "active")
