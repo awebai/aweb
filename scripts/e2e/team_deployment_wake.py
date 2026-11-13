@@ -215,8 +215,11 @@ def bind_sent_mail(shown: dict, *, message_id: str, sender_did: str, receiver_di
         raise WakeCheckFailed("sent", "the mail has no conversation_id")
     if _instant(message["created_at"]).timestamp() * 1000 < session_created_ms:
         raise WakeCheckFailed("sent", f"the mail was created at {message['created_at']}, before the session")
+    # channel-core's senderDisplayAddress names the sender in the event: the
+    # qualified address when there is one, else the alias.
+    sender = (message.get("from_address") or "").strip() or (message.get("from_alias") or "").strip()
     return BoundMail(message_id=message_id, conversation_id=message["conversation_id"],
-                     sender=message.get("from_alias", ""), sender_did=sender_did, receiver=receiver_alias,
+                     sender=sender, sender_did=sender_did, receiver=receiver_alias,
                      receiver_did=message["to_did"], subject=message.get("subject", ""),
                      body=message.get("body", ""), created_at=message["created_at"])
 
@@ -464,14 +467,18 @@ def correlate_mail_wake(
     Sends nothing and acknowledges nothing: the sender's mail is read with aw
     mail show, which leaves read state alone."""
     preflight = _preflight(container, receiver_instance_home, signed_in_wait, poll)
-    sender_did = _did(container, sender_home, "the sender")
-    receiver_dids = {_did(container, home, "the receiver") for home in preflight["streaming_identities"]}
-    shown = _json("sent", _call(container, "sent", _sender_aw(sender_home, "mail show --message-id "
-                                                                              + shlex.quote(message_id)),
-                                "aw mail show for the sent mail").stdout, "aw mail show")
-    sent = bind_sent_mail(shown, message_id=message_id, sender_did=sender_did, receiver_dids=receiver_dids,
-                          receiver_alias=receiver_alias, session_created_ms=preflight["created_ms"])
-    observed: dict = {"sent": asdict(sent), "preflight": _screened(preflight)}
+    observed: dict = {"preflight": _screened(preflight)}
+    try:
+        sender_did = _did(container, sender_home, "the sender")
+        receiver_dids = {_did(container, home, "the receiver") for home in preflight["streaming_identities"]}
+        shown = _json("sent", _call(container, "sent", _sender_aw(sender_home, "mail show --message-id "
+                                                                                  + shlex.quote(message_id)),
+                                    "aw mail show for the sent mail").stdout, "aw mail show")
+        sent = bind_sent_mail(shown, message_id=message_id, sender_did=sender_did, receiver_dids=receiver_dids,
+                              receiver_alias=receiver_alias, session_created_ms=preflight["created_ms"])
+    except WakeCheckFailed as failed:
+        raise WakeCheckFailed(failed.stage, failed.detail, observed) from None
+    observed = {"sent": asdict(sent), **observed}
     try:
         presented, evidence = _await_presented(container, receiver_instance_home, preflight, sent, timeout, poll)
     except WakeCheckFailed as failed:
@@ -480,11 +487,11 @@ def correlate_mail_wake(
 
     deadline = time.monotonic() + reply_timeout
     while True:
-        conversation = _json("reply", _call(
-            container, "reply", _sender_aw(sender_home, "mail show --conversation-id "
-                                           + shlex.quote(sent.conversation_id) + " --limit 500"),
-            "aw mail show for the conversation").stdout, "aw mail show")
         try:
+            conversation = _json("reply", _call(
+                container, "reply", _sender_aw(sender_home, "mail show --conversation-id "
+                                               + shlex.quote(sent.conversation_id) + " --limit 500"),
+                "aw mail show for the conversation").stdout, "aw mail show")
             reply = find_reply(conversation, sent)
         except WakeCheckFailed as failed:
             raise WakeCheckFailed(failed.stage, failed.detail, observed) from None

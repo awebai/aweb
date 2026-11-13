@@ -279,6 +279,15 @@ class BindSentMail(unittest.TestCase):
         self.assertEqual((sent.conversation_id, sent.sender_did, sent.receiver_did),
                          (CONVERSATION, SENDER_DID, RECEIVER_DID))
 
+    def test_a_qualified_sender_is_named_as_channel_core_presents_it(self):
+        # channel-core's senderDisplayAddress: from_address when present, else from_alias.
+        sent = bind({**SENT_JSON, "from_address": "example.com/alice"})
+        self.assertEqual(sent.sender, "example.com/alice")
+        presented = wake.require_presented(
+            wake.parse_mail_events(VERIFIED.replace("- from: alice", "- from: example.com/alice")), sent)
+        self.assertEqual(presented["from"], "example.com/alice")
+        self.assertEqual(bind({**SENT_JSON, "from_address": "  "}).sender, "alice")
+
     def test_another_sender_recipient_or_a_mail_older_than_the_session_is_refused(self):
         cases = {
             "another sender": {**SENT_JSON, "from_did": "did:key:z6MkMallory"},
@@ -375,6 +384,27 @@ class Correlation(ScriptedContainer):
         self.assertEqual(partial["sent"]["message_id"], MESSAGE_ID)
         self.assertEqual(partial["presented"]["message_id"], MESSAGE_ID)
         self.assertNotIn("reply", partial)
+
+    def test_a_mail_that_does_not_bind_keeps_the_preflight_and_nothing_else(self):
+        answers = self.answers([SENT_JSON, REPLY_JSON], [VERIFIED])
+        answers["mail show --message-id"] = Done(json.dumps({"messages": [{**SENT_JSON, "to_alias": "c"}]}))
+        run, _ = self.container(answers)
+        with self.assertRaises(wake.WakeCheckFailed) as failed:
+            self.correlate(run)
+        self.assertEqual(failed.exception.stage, "sent")
+        self.assertEqual(set(failed.exception.partial), {"preflight"})
+
+    def test_a_failed_or_unreadable_conversation_read_keeps_the_proved_wake(self):
+        for name, answer in {"exit 1": Done(returncode=1, stderr="server error"), "not JSON": Done("<html>")}.items():
+            answers = self.answers([], [VERIFIED])
+            answers["mail show --conversation-id"] = answer
+            run, _ = self.container(answers)
+            with self.subTest(name), self.assertRaises(wake.WakeCheckFailed) as failed:
+                self.correlate(run)
+            self.assertEqual(failed.exception.stage, "reply")
+            self.assertEqual(failed.exception.partial["presented"]["message_id"], MESSAGE_ID)
+            self.assertIn("evidence", failed.exception.partial)
+            self.assertNotIn("reply", failed.exception.partial)
 
     def test_no_wake_by_the_deadline_keeps_the_bound_mail_and_invents_no_wake(self):
         run, _ = self.container(self.answers([SENT_JSON, REPLY_JSON], []))
