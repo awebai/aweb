@@ -413,20 +413,6 @@ async def get_mail_conversation(
     raise HTTPException(status_code=404, detail=RESOURCE_NOT_FOUND_DETAIL)
 
 
-def _recipient_transport_hint(payload: SendMessageRequest) -> str:
-    if payload.to_address is not None:
-        return "to_address"
-    if payload.to_stable_id is not None:
-        return "to_stable_id"
-    if payload.to_did is not None:
-        return "to_did"
-    if payload.to_agent_id is not None:
-        return "to_agent_id"
-    if payload.to_alias is not None:
-        return "to_alias"
-    return "mail"
-
-
 def _send_response(sent: SentMail) -> SendMessageResponse:
     return SendMessageResponse(**asdict(sent))
 

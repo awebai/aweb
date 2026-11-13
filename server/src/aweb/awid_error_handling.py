@@ -33,11 +33,6 @@ def awid_dependency_http_exception(exc: Exception, *, operation: str = "AWID reg
     return HTTPException(status_code=status_code, detail=detail)
 
 
-def awid_dependency_error_detail(exc: Exception, *, operation: str = "AWID registry") -> str:
-    _, detail = classify_awid_dependency_error(exc, operation=operation)
-    return detail
-
-
 def _classify_upstream_status(status_code: int) -> tuple[int, str]:
     if not status_code:
         return 503, "upstream status error"

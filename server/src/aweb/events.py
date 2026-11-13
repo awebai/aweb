@@ -373,27 +373,6 @@ async def publish_chat_session_signal(
     logger.debug("Published %s to %s, %s subscribers", signal_type, channel, count)
     return count
 
-async def stream_events(
-    redis: Redis,
-    workspace_id: str,
-    event_types: Optional[set[str]] = None,
-    keepalive_seconds: int = 30,
-) -> AsyncIterator[str]:
-    """Stream events for a workspace as SSE-formatted strings.
-
-    Args:
-        redis: Redis client
-        workspace_id: Workspace to stream events for
-        event_types: Optional set of event categories to filter (e.g., {'message', 'task'})
-                     If None, all events are streamed.
-        keepalive_seconds: Seconds between keepalive comments
-
-    Yields:
-        SSE-formatted event strings (e.g., "data: {...}\\n\\n")
-    """
-    async for event in stream_events_multi(redis, [workspace_id], event_types, keepalive_seconds):
-        yield event
-
 
 async def stream_events_multi(
     redis: Redis,
