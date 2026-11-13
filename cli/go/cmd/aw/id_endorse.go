@@ -10,6 +10,7 @@ import (
 	"fmt"
 	"slices"
 	"strings"
+	"time"
 
 	"github.com/awebai/aw/awconfig"
 	"github.com/awebai/aw/awid"
@@ -31,6 +32,8 @@ var (
 	idEndorseTeamsFlag     []string
 	idEndorseLabelFlag     string
 	idEndorseOperationFlag string
+	idEndorseNoWaitFlag    bool
+	idEndorseNoBrowserFlag bool
 )
 
 var idEndorseCmd = &cobra.Command{
@@ -56,6 +59,8 @@ func init() {
 	flags.StringVar(&idEndorseLabelFlag, "deployment-label", "", "The deployment's name, shown to the human")
 	flags.StringVar(&idEndorseOperationFlag, "operation-id", "", "The caller's UUID for this endorsement; the same id resumes it")
 	flags.StringVar(&appProtectedProfileFlag, "protected-profile", "", "The operator-provisioned protected-service profile")
+	flags.BoolVar(&idEndorseNoWaitFlag, "no-wait", false, "Show the approval page and exit without waiting for the human; rerun with the same --operation-id to finish")
+	flags.BoolVar(&idEndorseNoBrowserFlag, "no-browser", false, "Do not open a browser; the page is only reported")
 	identityCmd.AddCommand(idEndorseCmd)
 }
 
@@ -170,6 +175,16 @@ func endorsementCheck(issuerKey string, teams []string, readPolicy func(context.
 		}
 		*kept = request
 		return nil
+	}
+}
+
+// pendingEndorsementReport is what a caller that does not wait shows the
+// human: the page to approve on and what it must show, until when.
+func pendingEndorsementReport(prepared *handoff.Prepared, page string, receipt *handoff.Receipt) map[string]any {
+	return map[string]any{
+		"operation_id": prepared.OperationID, "state": receipt.State, "reason": receipt.Reason, "page": page,
+		"digest": prepared.Digest, "fingerprint": handoff.Fingerprint(prepared.Digest),
+		"expires_at": prepared.ExpiresAt.UTC().Format(time.RFC3339Nano),
 	}
 }
 
@@ -343,6 +358,13 @@ func runIDEndorse(cmd *cobra.Command, _ []string) error {
 	var frozen map[string]any
 	opts := governanceOptions(cmd, profile, binding.Scope, identity)
 	opts.CheckPrepared = endorsementCheck(binding.AuthorityKeyDID, teams, readPolicy, &frozen)
+	if idEndorseNoBrowserFlag {
+		opts.Open = nil
+	}
+	var presented *handoff.Prepared
+	var page string
+	opts.NoWait = idEndorseNoWaitFlag
+	opts.OnPresented = func(prepared *handoff.Prepared, shown string) { presented, page = prepared, shown }
 	ctx, cancel := context.WithCancel(cmd.Context())
 	defer cancel()
 	fmt.Fprintf(cmd.ErrOrStderr(), "Endorsement of %s as the root for %s, approved by %s through %s\n", request.RootID, strings.Join(teams, ", "), request.Human, profile.ServiceID)
@@ -360,6 +382,16 @@ func runIDEndorse(cmd *cobra.Command, _ []string) error {
 			return withErrorCode(code, fmt.Errorf("operation %s: %w", request.OperationID, err))
 		}
 		return fmt.Errorf("operation %s: %w", request.OperationID, err)
+	}
+	if receipt.State == "pending" && presented != nil {
+		// Not waited for: the human approves on the page, and a rerun with
+		// the same operation id finishes.
+		report := pendingEndorsementReport(presented, page, receipt)
+		printOutput(report, func(any) string {
+			return fmt.Sprintf("Operation %s is pending (%s) until %s; approve it on %s, then run this command again with the same --operation-id.\n",
+				request.OperationID, receipt.Reason, report["expires_at"], page)
+		})
+		return nil
 	}
 	artifact, _ := frozen["artifact"].(map[string]any)
 	signed, err := endorsedCertificate(receipt.Result, artifact, binding.AuthorityKeyDID)

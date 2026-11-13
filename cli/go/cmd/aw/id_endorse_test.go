@@ -436,3 +436,17 @@ func TestTheRealReadBackNeverTakesUnverifiedStatusAsAHead(t *testing.T) {
 		}
 	}
 }
+
+func TestAPendingEndorsementReportsWhatTheCallerShowsTheHuman(t *testing.T) {
+	expires := time.Date(2026, 11, 13, 12, 0, 0, 0, time.UTC)
+	prepared := &handoff.Prepared{OperationID: endorseTestOperation, HandoffID: "h1",
+		Digest: "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef", ExpiresAt: expires}
+	report := pendingEndorsementReport(prepared, "https://human.customer.example/handoff/h1", &handoff.Receipt{State: "pending", Reason: "awaiting_human"})
+	raw, _ := json.Marshal(report)
+	want := `{"digest":"0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef","expires_at":"2026-11-13T12:00:00Z",` +
+		`"fingerprint":"0123 4567 89ab cdef","operation_id":"` + endorseTestOperation + `","page":"https://human.customer.example/handoff/h1",` +
+		`"reason":"awaiting_human","state":"pending"}`
+	if string(raw) != want {
+		t.Fatalf("report %s\nwant   %s", raw, want)
+	}
+}

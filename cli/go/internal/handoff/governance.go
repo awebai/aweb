@@ -2,6 +2,7 @@ package handoff
 
 import (
 	"bytes"
+	"cmp"
 	"context"
 	"crypto/sha256"
 	"encoding/hex"
@@ -45,6 +46,13 @@ type GovernanceOptions struct {
 	// error stops the operation there. It runs under the caller's context,
 	// ending at the prepared operation's expiry.
 	CheckPrepared func(ctx context.Context, request map[string]any) error
+	// NoWait shows an approval's page and reads its receipt once instead of
+	// waiting for the human: a pending operation returns pending, for a later
+	// Resume of its saved body. It sends no browser callback.
+	NoWait bool
+	// OnPresented, when set, receives the prepared operation and its page
+	// once they are shown for approval.
+	OnPresented func(prepared *Prepared, page string)
 }
 
 // Prepared is a prepared protected operation: the frozen request the human
@@ -90,17 +98,21 @@ func Approve(ctx context.Context, opts GovernanceOptions, operationID string, in
 			return nil, coded("intent_invalid", fmt.Errorf("the intent names %s, which aw sets", reserved))
 		}
 	}
-	wake, err := ListenWake()
-	if err != nil {
-		return nil, err
-	}
-	defer wake.Close()
 	members := map[string]any{}
 	for k, v := range intent {
 		members[k] = v
 	}
 	members["operation_id"] = operationID
-	members["redirect_uri"] = wake.RedirectURI()
+	// A caller that does not wait has no callback to receive.
+	var wake *Loopback
+	if !opts.NoWait {
+		var err error
+		if wake, err = ListenWake(); err != nil {
+			return nil, err
+		}
+		defer wake.Close()
+		members["redirect_uri"] = wake.RedirectURI()
+	}
 	raw, err := json.Marshal(members)
 	if err != nil {
 		return nil, coded("intent_invalid", err)
@@ -148,11 +160,16 @@ var (
 	}
 )
 
+// DefaultRetryWithin is how long aw keeps waiting out a protected service's
+// explicit throttle hints within one invocation's step, unless the options
+// set another bound.
+const DefaultRetryWithin = 2 * time.Minute
+
 func retryWithin(opts GovernanceOptions) time.Duration {
 	if opts.RetryWithin > 0 {
 		return opts.RetryWithin
 	}
-	return 2 * time.Minute
+	return DefaultRetryWithin
 }
 
 func pollInterval(opts GovernanceOptions) time.Duration {
@@ -228,6 +245,12 @@ func approve(ctx context.Context, opts GovernanceOptions, operationID string, bo
 			fmt.Fprintf(opts.Notify, "Could not open a browser (%v); open the page above yourself.\n", err)
 		}
 	}
+	if opts.OnPresented != nil {
+		opts.OnPresented(prepared, page)
+	}
+	if opts.NoWait {
+		return readOnce(ctx, opts, prepared)
+	}
 	woken := make(chan struct{}, 1)
 	waitCtx, stop := context.WithCancel(ctx)
 	defer stop()
@@ -240,6 +263,21 @@ func approve(ctx context.Context, opts GovernanceOptions, operationID string, bo
 		}()
 	}
 	return awaitReceipt(ctx, opts, operationID, prepared.ExpiresAt, woken)
+}
+
+// readOnce reads a presented operation's receipt once: pending stays
+// pending, a final receipt settles, and an unreadable one is unknown.
+func readOnce(ctx context.Context, opts GovernanceOptions, prepared *Prepared) (*Receipt, error) {
+	readCtx, cancel := context.WithDeadline(ctx, prepared.ExpiresAt)
+	defer cancel()
+	receipt, err := ReadReceipt(readCtx, opts, prepared.OperationID)
+	switch {
+	case err != nil:
+		return unresolvedReceipt(prepared.OperationID, cmp.Or(ErrorCode(err), "receipt_unavailable")), err
+	case receipt.State == "pending":
+		return receipt, nil
+	}
+	return settled(opts, receipt)
 }
 
 // checkPrepared runs the caller's check of prepared's frozen request under
