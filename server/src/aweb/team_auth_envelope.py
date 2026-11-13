@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import base64
-import hashlib
 import json
 from dataclasses import dataclass
 from typing import Any, Iterable
@@ -154,7 +153,3 @@ def _request_auth_signature_payload(
         raise ValueError("signed request payload audience is not allowed")
 
     return TeamAuthEnvelope(version=TEAM_AUTH_ENVELOPE_V2, canonical_payload=canonical, payload=payload)
-
-
-def body_sha256_for_bytes(body: bytes | None) -> str:
-    return hashlib.sha256(body or b"").hexdigest()

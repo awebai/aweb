@@ -62,7 +62,7 @@ func TestPreparedWorkerControllerFetchAndConnect(t *testing.T) {
 				w.WriteHeader(400)
 				return
 			}
-			if err := awid.VerifyTeamCertificate(cert, pub); err != nil {
+			if err := awid.CheckDecodedTeamCertificate(cert, awid.ComputeDIDKey(pub)); err != nil {
 				t.Error(err)
 				w.WriteHeader(403)
 				return
@@ -91,7 +91,7 @@ func TestPreparedWorkerControllerFetchAndConnect(t *testing.T) {
 		case r.Method == "POST" && r.URL.Path == "/v1/connect":
 			cert := requireCertificateAuthForTest(t, r)
 			registered := stored.get()
-			if registered == nil || cert.CertificateID != registered.CertificateID || awid.VerifyTeamCertificate(cert, pub) != nil {
+			if registered == nil || cert.CertificateID != registered.CertificateID || awid.CheckDecodedTeamCertificate(cert, awid.ComputeDIDKey(pub)) != nil {
 				t.Error("connect did not carry the controller-issued certificate")
 				w.WriteHeader(403)
 				return

@@ -7,7 +7,7 @@ from uuid import UUID
 
 from awid.federation_errors import FederationAuthorityError
 from aweb.identity_auth_deps import participant_dids
-from aweb.mcp.auth import auth_dids, get_auth, primary_auth_did
+from aweb.mcp.auth import get_auth, primary_auth_did
 from aweb.mcp.signing import HostedMessageEncryptor, HostedMessageSigner
 from aweb.mcp.tools.chat import chat_send
 from aweb.mcp.tools.federation import registry_delivery_origin

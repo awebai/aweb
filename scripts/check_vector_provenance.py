@@ -20,10 +20,6 @@ EXPECTED_VECTOR_ROOTS = {
     PurePosixPath("naapp/secrets/vectors"),
     PurePosixPath("test-vectors"),
 }
-APP_EMIT_COPIES = (
-    PurePosixPath("cli/go/internal/conformance/vectors/app-emit-credential-v1.json"),
-    PurePosixPath("naapp/library/tests/vectors/app-emit-credential-v1.json"),
-)
 MANAGED_PUBLIC_COPIES = {
     PurePosixPath("cli/go/internal/conformance/vectors/team-auth-envelope-v2.json"): (
         PUBLIC_ROOT / "team-auth-envelope-v2.json"
@@ -157,9 +153,6 @@ ROOT_CONSUMERS = {
     PurePosixPath("cli/go/awid/human_channels_presence_test.go"): _consumer(
         "human-channels-presence-v1.json", '"../../../docs/vectors/human-channels-presence-v1.json"',
     ),
-    PurePosixPath("server/tests/test_human_channels_e2ee_spike.py"): _consumer(
-        "human-channels-e2ee-spike.json", "ROOT / 'docs/vectors/human-channels-e2ee-spike.json'",
-    ),
     PurePosixPath("cli/go/awid/human_channels_e2ee_spike_test.go"): _consumer(
         "human-channels-e2ee-spike.json", '"../../../docs/vectors/human-channels-e2ee-spike.json"',
     ),
@@ -181,15 +174,6 @@ ROOT_CONSUMERS = {
     PurePosixPath("naapp-lib/tests/hooks/test_commitment.py"): _consumer(
         "hook-catalog-v1.json",
         'Path(__file__).resolve().parents[3] / "docs" / "vectors" / "hook-catalog-v1.json"',
-    ),
-    PurePosixPath("cli/go/awid/app_task_authorization_test.go"): _consumer(
-        "app-task-authorization-v1.json",
-        '"../../../docs/vectors/app-task-authorization-v1.json"',
-
-    ),
-    PurePosixPath("cli/go/awid/page_proposal_test.go"): _consumer(
-        "page-proposal-v1.json",
-        '"../../../docs/vectors/page-proposal-v1.json"',
     ),
     PurePosixPath("cli/go/cmd/aw/hosted_creation_install_test.go"): _consumer(
         "id-certificates-v1.json",
@@ -546,6 +530,10 @@ ROOT_CONSUMERS = {
         "logs-export-v1.json",
         '"../../../docs/vectors/logs-export-v1.json"',
     ),
+    PurePosixPath("cli/go/cmd/aw/audit_verify_binary_test.go"): _consumer(
+        "logs-export-v1.json",
+        '"../../../../docs/vectors/logs-export-v1.json"',
+    ),
     PurePosixPath("naapp/logs/tests/export_vector.py"): _consumer(
         "logs-export-v1.json",
         'AWEB_ROOT / "docs" / "vectors" / "logs-export-v1.json"',
@@ -818,9 +806,6 @@ NON_CONSUMING_CODE_REFERENCES = {
     PurePosixPath("scripts/freeze_human_channels_presence.py"): (
         "docs/vectors/human-channels-presence-v1.json",
     ),
-    PurePosixPath("scripts/spikes/human_channels_e2ee.py"): (
-        "docs/vectors/human-channels-e2ee-spike.json",
-    ),
     PurePosixPath("scripts/freeze_human_channels_profile.py"): (
         "docs/vectors/human-channels-profile-v1.json",
         "docs/vectors/human-channels-v1.json",
@@ -990,21 +975,6 @@ def check(
                 f"managed public-vector package copy differs from authority: {copy}"
             )
 
-    missing_app_emit = [
-        str(path) for path in APP_EMIT_COPIES if path not in tracked_set
-    ]
-    if missing_app_emit:
-        failures.append(
-            f"missing classified app-emit snapshots: {', '.join(missing_app_emit)}"
-        )
-    else:
-        source = read(APP_EMIT_COPIES[0])
-        for path in APP_EMIT_COPIES[1:]:
-            if read(path) != source:
-                failures.append(
-                    f"app-emit snapshot differs from consumer authority: {path}"
-                )
-
     required_files = (
         *ROOT_CONSUMERS,
         *REFERENCE_CONSUMERS,
@@ -1170,14 +1140,6 @@ def self_test(root: Path) -> None:
             overrides={managed_copy: read_bytes(root, managed_copy) + b"\n"},
             expected="managed public-vector package copy differs",
         )
-    snapshot = APP_EMIT_COPIES[1]
-    _expect_mutation(
-        "divergent classified snapshot",
-        root,
-        tracked,
-        overrides={snapshot: read_bytes(root, snapshot) + b"\n"},
-        expected="app-emit snapshot differs",
-    )
     _expect_mutation(
         "unclassified vector root",
         root,

@@ -275,8 +275,8 @@ func TestManagedDeregisterNoDaemonAndReceiptValidation(t *testing.T) {
 	}
 	reg, _, _ = store.LoadRegistration(home)
 	expected := ManagedReceiver{Registration: reg, Generation: 0, OwnerID: "offline-expectation"}
-	if receipt, err := CallManagedStop(store.SocketPath(), expected); err == nil || receipt != nil {
-		t.Fatal("absent daemon certified completion")
+	if receipt, err := CallManagedStop(store.SocketPath(), expected); err == nil || receipt != nil || !strings.Contains(err.Error(), "control transport") {
+		t.Fatalf("absent daemon: receipt=%v err=%v, want a control transport failure", receipt, err)
 	}
 	if _, ok, _ := store.LoadRegistration(home); !ok {
 		t.Fatal("absent daemon deleted registration")
@@ -292,7 +292,12 @@ func TestManagedDeregisterNoDaemonAndReceiptValidation(t *testing.T) {
 				t.Fatal(err)
 			}
 			defer ln.Close()
+			// The real daemon's socket is owner-only (StartControl).
+			if err := os.Chmod(store.SocketPath(), 0o600); err != nil {
+				t.Fatal(err)
+			}
 			done := make(chan struct{})
+			reached := false
 			go func() {
 				defer close(done)
 				conn, err := ln.Accept()
@@ -301,7 +306,9 @@ func TestManagedDeregisterNoDaemonAndReceiptValidation(t *testing.T) {
 				}
 				defer conn.Close()
 				var req ControlRequest
-				json.NewDecoder(conn).Decode(&req)
+				if json.NewDecoder(conn).Decode(&req) == nil {
+					reached = true
+				}
 				if req.Op != OpDeregisterManaged {
 					t.Errorf("wrong control op: %s", req.Op)
 				}
@@ -331,10 +338,16 @@ func TestManagedDeregisterNoDaemonAndReceiptValidation(t *testing.T) {
 				}
 				json.NewEncoder(conn).Encode(reply)
 			}()
-			if receipt, err := callManagedStop(store.SocketPath(), expected, time.Second); err == nil || receipt != nil {
+			receipt, err := callManagedStop(store.SocketPath(), expected, time.Second)
+			// A client that failed before connecting leaves Accept waiting.
+			ln.Close()
+			<-done
+			if !reached {
+				t.Fatalf("%s: the client never reached the daemon: %v", name, err)
+			}
+			if err == nil || receipt != nil {
 				t.Fatalf("%s accepted", name)
 			}
-			<-done
 			if _, ok, _ := store.LoadRegistration(home); !ok {
 				t.Fatal("bad receipt invoked fallback")
 			}

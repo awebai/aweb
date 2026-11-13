@@ -2509,12 +2509,11 @@ func validateHostedTeamInviteAcceptResponse(resp *awid.SpawnAcceptInviteResponse
 	if err != nil {
 		return nil, "", fmt.Errorf("decode hosted team invite certificate: %w", err)
 	}
-	teamPub, err := awid.ExtractPublicKey(strings.TrimSpace(cert.TeamDIDKey))
-	if err != nil {
+	if _, err := awid.ExtractPublicKey(strings.TrimSpace(cert.TeamDIDKey)); err != nil {
 		return nil, "", fmt.Errorf("hosted team invite certificate has invalid team_did_key %q: %w", cert.TeamDIDKey, err)
 	}
-	if err := awid.VerifyTeamCertificate(cert, teamPub); err != nil {
-		return nil, "", fmt.Errorf("hosted team invite certificate signature verification failed: %w", err)
+	if err := awid.CheckDecodedTeamCertificate(cert, strings.TrimSpace(cert.TeamDIDKey)); err != nil {
+		return nil, "", fmt.Errorf("hosted team invite certificate is invalid: %w", err)
 	}
 	if strings.TrimSpace(cert.MemberDIDKey) != strings.TrimSpace(didKey) {
 		return nil, "", fmt.Errorf("hosted team invite certificate member_did_key %q does not match generated did:key %q", cert.MemberDIDKey, didKey)

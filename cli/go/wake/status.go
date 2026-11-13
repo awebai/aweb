@@ -27,6 +27,16 @@ type Status struct {
 	MaxStreams         int              `json:"max_streams"`
 	Streams            []StreamStatus   `json:"streams"`
 	Instances          []InstanceStatus `json:"instances"`
+	// RegistrationFaults lists registry files the broker could not use. Each
+	// is skipped; every other registration is still served.
+	RegistrationFaults []RegistrationFault `json:"registration_faults,omitempty"`
+}
+
+// RegistrationFault is one registry file that does not parse or names no
+// usable home.
+type RegistrationFault struct {
+	Path  string `json:"path"`
+	Error string `json:"error"`
 }
 
 // Daemon version states for Status.DaemonVersionState.

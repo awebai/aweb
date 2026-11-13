@@ -981,7 +981,7 @@ func TestRunAPIKeyBootstrapInitRejectsTamperedTeamCertificate(t *testing.T) {
 		AwebURL:    externalLikeTestURL(t, server.URL),
 		APIKey:     "aw_sk_test",
 	})
-	if err == nil || !strings.Contains(err.Error(), "signature verification failed") {
+	if err == nil || !strings.Contains(err.Error(), "team cert is invalid: bad_signature") {
 		t.Fatalf("unexpected error: %v", err)
 	}
 }

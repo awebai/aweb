@@ -19,7 +19,7 @@ to refresh it.
 | Identity | `auth`, `custody`, `id`, `mcp-config`, `org`, `team`, `whoami` |
 | Messaging & Network | `a2a`, `beads-mail`, `chat`, `contacts`, `control`, `directory`, `events`, `gc-mail`, `heartbeat`, `inbound-mode`, `log`, `mail`, `room`, `wake` |
 | Coordination & Runtime | `activity`, `agent`, `instructions`, `lock`, `notify`, `role-name`, `roles`, `run`, `status`, `status-host`, `task`, `work` |
-| Utility | `completion`, `doctor`, `help`, `hooks`, `plugin`, `upgrade`, `version` |
+| Utility | `audit`, `completion`, `doctor`, `help`, `hooks`, `plugin`, `upgrade`, `version` |
 | Additional Commands | `blueprint`, `session`, `who` |
 
 ## Global Flags
@@ -4016,6 +4016,40 @@ List ready tasks that are not already claimed by other workspaces
 
 Flags:
 - `-h, --help help for ready`
+
+## `audit`
+
+### `audit`
+
+A team's audit log
+
+Subcommands:
+- `verify` Verify an exported team log offline
+
+Flags:
+- `-h, --help help for audit`
+
+## `audit verify`
+
+### `audit verify`
+
+Verify an exported team log (aweb.logs-export/1) offline, against the receipt and
+checkpoint keys you accept and the receipts and checkpoints you hold yourself.
+
+It reads only the files it is given: no workspace, identity or server.
+Give each key you accept, for receipts and for checkpoints; a key that signs
+both is given to both. Each --witness file holds one receipt or checkpoint per
+line, in an export's own line shape. --bundle - reads the export from stdin.
+
+Exits 0 when the bundle is intact, 1 when it is verified and not intact, and 2
+when it could not be verified.
+
+Flags:
+- `--bundle string The export to verify, or - for stdin`
+- `--checkpoint-key stringArray A did:key you accept for checkpoints (repeatable)`
+- `-h, --help help for verify`
+- `--receipt-key stringArray A did:key you accept for receipts (repeatable)`
+- `--witness stringArray A file of receipts and checkpoints you hold (repeatable)`
 
 ## `completion`
 
