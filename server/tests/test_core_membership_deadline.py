@@ -25,8 +25,9 @@ pytest_plugins = ("tests.test_protected_membership_retained",)
 class DelayedDB:
     """Advance only the original observation clock after a real SQL await."""
 
-    def __init__(self, db, ticks, phase):
+    def __init__(self, db, ticks, phase, *, root=True):
         self.db, self.ticks, self.phase = db, ticks, phase
+        self.root = root
 
     def __getattr__(self, name):
         return getattr(self.db, name)
@@ -50,7 +51,9 @@ class DelayedDB:
     @asynccontextmanager
     async def transaction(self):
         async with self.db.transaction() as tx:
-            yield DelayedDB(tx, self.ticks, self.phase)
+            yield DelayedDB(tx, self.ticks, self.phase, root=False)
+        if self.root and self.phase == "auth-commit":
+            self.ticks[0] = 61.0
 
 
 async def native_app(env, ticks, monkeypatch, phase="none"):
@@ -188,6 +191,20 @@ async def test_grant_final_insert_await_rolls_back(membership_env, monkeypatch):
         response = await client.post("/v1/identity-grants", content=body, headers={**headers, "Content-Type": "application/json"})
     assert response.status_code == 503, response.text
     assert await env.stack.aweb_db.fetch_value("SELECT count(*) FROM {{tables.identity_session_grants}}") == 0
+
+
+@pytest.mark.asyncio
+async def test_auth_transaction_completion_cannot_return_expired_evidence(membership_env, monkeypatch):
+    env, ticks = membership_env, [0.0]
+    app, agent_id, observed = await native_app(env, ticks, monkeypatch, "auth-commit")
+    # The projection is already current; this control isolates the final auth
+    # return after its transaction has finished, without a projection effect.
+    await env.stack.aweb_db.execute("UPDATE {{tables.agents}} SET certificate_id=$2 WHERE agent_id=$1", agent_id, env.member.certificate_id)
+    async with httpx.AsyncClient(transport=httpx.ASGITransport(app), base_url=ORIGIN) as client:
+        response = await client.get("/verify", headers=env.member.headers(aud=ORIGIN, method="GET", path="/verify"))
+    assert response.status_code == 503, response.text
+    assert response.json() == {"detail": {"code": "protected_state_unavailable"}}
+    assert len(observed) == 1 and observed[0].deadline == 60.0
 
 
 @pytest.mark.asyncio
