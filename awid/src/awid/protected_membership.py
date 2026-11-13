@@ -12,6 +12,8 @@ import hashlib
 import json
 import logging
 from dataclasses import dataclass
+from collections.abc import Mapping
+from typing import Any
 from time import monotonic
 from types import MappingProxyType
 
@@ -42,12 +44,12 @@ def registered_certificate_digest(blob):
 class TeamProtectionObservation:
     team_id: str
     controller_did_key: str
-    binding: object
+    binding: Mapping[str, Any]
     deadline: float
 
     def __post_init__(self):
         object.__setattr__(
-            self, "binding", MappingProxyType(validate_binding(self.binding))
+            self, "binding", MappingProxyType(validate_binding(dict(self.binding)))
         )
 
     @property

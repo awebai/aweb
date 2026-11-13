@@ -8,6 +8,8 @@ scopes which bindings the request can name.
 
 from __future__ import annotations
 
+from awid.protected_effect import EffectRefused
+
 import base64
 import binascii
 import logging
@@ -136,7 +138,12 @@ async def _owner_act_route(request: Request, db_infra: DatabaseInfra, binding_id
         registry_client = getattr(request.app.state, "awid_registry_client", None)
         if registry_client is None:
             raise awid_registry_not_configured_exception(operation="AWID owner-act team key")
-        verifier = core_owner_act_verifier(audience=request.app.state.public_origin, registry_client=registry_client)
+        from awid.controller_request import raw_controller_request_target
+        from awid.protected_effect import HEADER, http_consumer
+        consumer = http_consumer(audience=request.app.state.public_origin,
+            method=request.method, path=raw_controller_request_target(request), body=await request.body())
+        verifier = core_owner_act_verifier(audience=request.app.state.public_origin, registry_client=registry_client,
+            protected_delivery=(request.headers.get(HEADER), consumer))
         binding = await change(
             db_infra.get_manager("aweb"), verifier, team_id=identity.team_id, binding_id=binding_id,
             signing=signing, signature=payload.signature,
@@ -145,6 +152,8 @@ async def _owner_act_route(request: Request, db_infra: DatabaseInfra, binding_id
         if exc.status_code >= 500:
             logger.error("Hook-binding owner act failed: %s", exc.detail, exc_info=True)
         raise HTTPException(status_code=exc.status_code, detail=exc.detail) from exc
+    except EffectRefused as exc:
+        raise HTTPException(status_code=503, detail={"code": exc.code}) from exc
     except OwnerActTeamKeyUnavailable as exc:
         # The team key is read before any transaction, so nothing was written.
         logger.warning("AWID registry dependency failed reading the owner-act team key", exc_info=True)

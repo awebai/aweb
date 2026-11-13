@@ -277,6 +277,10 @@ async def _compose(
         audit=audit,
     )
 
+    async def team_authority(team_id):
+        from awid.protected_membership import observe_team_protection
+        return await observe_team_protection(runtime.registry_client(), team_id)
+
     async def team_key(team_id):
         return (await runtime.team_cache().get(team_id)).team_did_key
 
@@ -305,7 +309,7 @@ async def _compose(
             scope=settings.app_id,
             audience=settings.console_origin,
             acts=HUMAN_ROLE_ACTS,
-            team_key_for=team_key,
+            team_key_for=team_key, team_authority_for=team_authority,
         ),
         limiter=OwnerActLimiter(
             client_identity=ClientIdentity(trusted_header=settings.client_address_header),
@@ -339,7 +343,7 @@ async def _compose(
             scope=settings.app_id,
             audience=settings.public_origin,
             acts=APP_ACTS,
-            team_key_for=team_key,
+            team_key_for=team_key, team_authority_for=team_authority,
         ),
         installation=InstallationLookup(fence),
         credential_audit=credentials,
