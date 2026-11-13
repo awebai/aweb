@@ -85,10 +85,12 @@ class ProtectedSigner:
         audit: AuditSink,
         authority: AuthorityProvider,
         custody: ControllerCustody,
+        admission=None,
         clock: Callable[[], datetime] = lambda: datetime.now(UTC),
     ) -> None:
         self.db, self.passkeys, self.policies, self.audit = db, passkeys, policies, audit
         self.authority, self.custody, self.clock = authority, custody, clock
+        self.admission = admission
         if passkeys.db is not db:
             raise ValueError("signer and B3 need the same original database")
         self.store = PgApprovalStore(db)
@@ -241,6 +243,8 @@ class ProtectedSigner:
         self, operation: RevokeHumanRole | OwnerActOperation, *, requester: RestrictedRequester
     ) -> PreparedOperation:
         typed = owner_act_operation(operation)
+        if typed.operation in {"identity.root.endorse", "team.agent.admit"} and self.admission is None:
+            raise SignerRefused("operation_refused")
         # Existing owner-act-only embeddings retain their released port. A
         # missing adapter for a new family refuses before creating B2 state.
         if typed.spec.family != "owner_act" and not callable(

@@ -185,11 +185,13 @@ class ProtectedOperationsHTTP:
         requester: Requester,
         reader: Reader,
         limiter: LoginLimiter,
+        policy_reader: Callable[[Request, str], Awaitable[dict[str, Any]]] | None = None,
         human_sessions: ConsoleSessions | None = None,
         human_csrf_key: str | None = None,
     ):
         require_canonical_server_origin(request_origin)
         self.signer, self.requester, self.reader, self.limiter = signer, requester, reader, limiter
+        self.policy_reader = policy_reader
         self.hosts = _origin_hosts(request_origin)
         if (human_sessions is None) != (human_csrf_key is None):
             raise ValueError("human sessions and CSRF storage key must be configured together")
@@ -216,6 +218,22 @@ class ProtectedOperationsHTTP:
 
     def api_router(self) -> APIRouter:
         router = APIRouter(route_class=ConsoleRoute)
+
+        if self.policy_reader is not None:
+            @router.get("/protected-admission-policies")
+            async def admission_policy(request: Request):
+                try:
+                    await self._guard(request)
+                    if set(request.query_params) != {"team_id"} or len(request.query_params.getlist("team_id")) != 1:
+                        raise SignerRefused("request_invalid")
+                    async for chunk in request.stream():
+                        if chunk:
+                            raise SignerRefused("request_invalid")
+                    request._body = b""
+                    assert self.policy_reader is not None
+                    return await self.policy_reader(request, request.query_params["team_id"])
+                except Exception as error:
+                    raise _http(error) from None
 
         @router.post("/protected-operations")
         async def prepare(request: Request):

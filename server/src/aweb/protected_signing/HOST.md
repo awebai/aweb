@@ -269,3 +269,43 @@ retains the signed owner act and local transactional audit. It does not apply
 the act to the remote app. Deployment isolation, final console dependency
 review, native/browser evidence, published pins and the covering release gate
 remain separate acceptance evidence; the factory does not establish them.
+
+### Initial bounded admission policy
+
+After the selected team-controller binding and its authorizer are provisioned,
+run as the protected service uid with its existing file settings:
+
+```sh
+python -m aweb.protected_signing.operator policy-init --file /run/secrets/signer/admission-policy.json
+```
+
+This is an explicit local operator action. The file contains the public policy
+without `digest`: positive `version`, sorted distinct `teams`,
+`root_selector: {"kind":"service_endorsed_root","service_id":"<configured service>"}`,
+nonempty sorted `subject_kinds` from `local_agent` and `registered_agent`, literal
+`member_role: "member"`, and positive finite integer bounds `max_active`,
+`rate_window_seconds`, `max_per_window`. All bounds live inside `bounds`.
+The current single-controller host requires `teams` to contain exactly its own
+team; a namespace pin or another profile reference is not another team's
+controller custody. No wildcard, admin role or implicit bound is accepted.
+
+The service computes `sha256:` plus the lowercase SHA-256 of
+`aweb.admission-policy/1` followed by LF and the canonical unsigned policy.
+Repeating the exact initial policy returns it without another write. Changing
+it, including its version or any bound, refuses `policy_changed`; this command
+cannot substitute for the separately approved policy-change operation.
+
+`GET /protected-admission-policies?team_id=<team>` is configuration only. It
+requires the current registered key of a requester explicitly admitted for the
+selected protected binding. It uses covering-v2 label
+`protected_admission_policy_read`, the team's namespace domain, and the exact
+scope `{service_id,team_id}`. It returns only `service_id`, `team_id`, `mode`, and
+`policy`; the policy includes its immutable version and digest. A known bound
+team without a policy returns `policy:null`. Unknown authority, a missing
+requester grant, stale proof or unavailable registry evidence refuses; none is
+reported as an absent policy. Reading or preparing never creates a policy.
+
+The policy-read/provisioning and artifact codecs do not by themselves implement
+root endorsement or bounded admission. Those operations remain closed until
+the embedding supplies their current-authority and effect adapter; recognizing
+a catalog selector does not grant signing or admission.

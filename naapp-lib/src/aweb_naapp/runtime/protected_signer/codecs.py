@@ -33,6 +33,10 @@ def validate_subject(operation, variant, subject):
     if not spec.consumer_available:
         raise SignerRefused("operation_refused")
     try:
+        if operation in {"identity.root.endorse", "team.agent.admit"}:
+            from .identity_artifacts import validate_identity_subject
+
+            return validate_identity_subject(operation, variant, subject)
         if spec.family == "owner_act":
             return validate_owner_act_subject(operation, subject)
         if spec.family == "log_key_record":
@@ -55,6 +59,10 @@ def artifact_for(operation, key, now):
         operation.operation, operation.variant, operation.intent()["subject"]
     )
     public_key_from_did(key)
+    if operation.operation in {"identity.root.endorse", "team.agent.admit"}:
+        from .identity_artifacts import identity_artifact
+
+        return identity_artifact(operation, key, _stamp(now))
     if spec.family == "owner_act":
         return {
             "v": 1,
@@ -84,6 +92,10 @@ def signing_bytes(operation, artifact):
     subject = validate_subject(
         operation.operation, operation.variant, operation.intent()["subject"]
     )
+    if operation.operation in {"identity.root.endorse", "team.agent.admit"}:
+        from .identity_artifacts import identity_signing_bytes
+
+        return identity_signing_bytes(operation, artifact)
     if spec.family == "owner_act":
         if (
             artifact.get("act") != operation.operation
@@ -130,6 +142,10 @@ def authority_key(operation, artifact):
     # Normalize codec selection through its existing bridge, not custody input.
     operation = owner_act_operation(operation)
     family = operation_spec(operation.operation, operation.variant).family
+    if operation.operation == "identity.root.endorse":
+        return artifact.get("issuer_key")
+    if family == "member_certificate" and operation.operation == "team.agent.admit":
+        return artifact.get("team_did_key")
     if family in {"owner_act", "log_key_record"}:
         return artifact.get("team_key_did")
     if family == "server_record":

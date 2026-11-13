@@ -97,6 +97,10 @@ async def run(args, settings, *, profile, scope, mailer=None, registry_transport
         if args.command == "bootstrap":
             return await initialise(c, requester=args.requester, contact=args.contact)
         await validate_provisioning(c)
+        if args.command == "policy-init":
+            from .admission import provision_policy
+
+            return await provision_policy(c, parse_strict(args.file.read_bytes()))
         return {"provisioned": True, "service_id": c.context.service_id}
 
 
@@ -112,6 +116,10 @@ def parser():
     sub.add_parser(
         "check", help="Check current custody/registry/provisioning; create no grants"
     )
+    policy = sub.add_parser(
+        "policy-init", help="Provision one initial bounded policy under this controller; never replace it"
+    )
+    policy.add_argument("--file", type=Path, required=True)
     sub.add_parser(
         "create-controller",
         help="Create a new private key once; register, replace or rotate no authority",

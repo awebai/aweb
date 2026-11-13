@@ -22,6 +22,8 @@ from aweb_naapp.runtime.protected_signer import (
     SignerRefused,
 )
 from awid.did import validate_stable_id
+from awid.dns_auth import enforce_timestamp_skew, require_timestamp
+from aweb_naapp.runtime.protected_signer.admission_policy import AdmissionPolicy, PolicyInvalid
 from awid.protected_request import verify_protected_request
 from awid.registry_types import RegistryError, RegistryThrottled
 from awid.request_body_limit import RequestBodyTooLarge
@@ -203,9 +205,47 @@ class IndependentProtectedSigner:
             requester=self.authenticate_prepare,
             reader=self.authenticate_receipt,
             limiter=limiter,
+            policy_reader=self.read_admission_policy,
             human_sessions=human_sessions,
             human_csrf_key=human_csrf_key,
         )
+
+    async def read_admission_policy(self, request, team_id):
+        """Configuration only, under a named requester's current registered key.
+
+        The explicit operator requester grant is held with this profile binding;
+        an arbitrary valid registry key is not a prospective root grant. The
+        current controller/H checks remain independent of policy contents.
+        """
+        c = self.context
+        if c.authority_kind != "team_controller" or team_id != c.authority_id:
+            raise SignerRefused("scope_refused")
+        principal = request.headers.get("X-AWEB-DID-AW", "")
+        await self._request_key(request, principal=principal,
+            operation="protected_admission_policy_read",
+            scope={"service_id": c.service_id, "team_id": team_id}, domain=c.authority_domain)
+        actor = RestrictedRequester(principal, c)
+        fence = await self.authority.observe(c, purpose="receipt")
+        async with self.db.transaction() as tx:
+            await fence.prepare(tx, actor)
+            row = await tx.fetch_one(
+                "SELECT policy FROM {{tables.protected_admission_policies}} WHERE service_id=$1 FOR SHARE",
+                c.service_id,
+            )
+            policy = None
+            if row is not None:
+                try:
+                    raw = json.loads(row["policy"]) if isinstance(row["policy"], str) else row["policy"]
+                    policy = AdmissionPolicy.from_fields(raw, service_id=c.service_id)
+                    if team_id not in policy.fields()["teams"]:
+                        raise PolicyInvalid()
+                except (ValueError, TypeError):
+                    raise SignerRefused("evidence_unavailable") from None
+            await fence.check(tx, actor)
+            fence.require_fresh()
+            enforce_timestamp_skew(require_timestamp(request))
+        return {"service_id": c.service_id, "team_id": team_id, "mode": "protected",
+                "policy": policy.fields() if policy is not None else None}
 
     async def migrate(self):
         await AsyncMigrationManager(
@@ -234,6 +274,13 @@ class IndependentProtectedSigner:
             selected.pop("generation")
         if expected != selected:
             raise SignerRefused("scope_refused")
+        await self._request_key(request, principal=principal, operation=operation,
+                                scope=context.fields(), domain=context.authority_domain)
+        if operation == "protected_operation_receipt":
+            return ReceiptReader(principal, context)
+        return RestrictedRequester(principal, context)
+
+    async def _request_key(self, request, *, principal, operation, scope, domain):
         try:
             if (
                 not isinstance(principal, str)
@@ -257,9 +304,9 @@ class IndependentProtectedSigner:
             Request(request.scope, receive),
             operation=operation,
             request_origin=self.request_origin,
-            service_id=context.service_id,
-            domain=context.authority_domain,
-            scope=context.fields(),
+            service_id=self.context.service_id,
+            domain=domain,
+            scope=scope,
         )
         try:
             resolution = await self.registry.resolve_key_fresh(principal)
@@ -280,6 +327,5 @@ class IndependentProtectedSigner:
             raise SignerRefused("evidence_unavailable") from None
         if resolution.did_aw != principal or resolution.current_did_key != did:
             raise SignerRefused("requester_invalid")
-        if operation == "protected_operation_receipt":
-            return ReceiptReader(principal, context)
-        return RestrictedRequester(principal, context)
+        enforce_timestamp_skew(require_timestamp(request))
+        return did
