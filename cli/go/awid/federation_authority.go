@@ -354,6 +354,13 @@ var forbiddenFederationPrefixes = []netip.Prefix{
 	netip.MustParsePrefix("203.0.113.0/24"),
 	netip.MustParsePrefix("240.0.0.0/4"),
 	netip.MustParsePrefix("2001:db8::/32"),
+	// IPv6 transition prefixes that embed an IPv4 address: NAT64 (well-known
+	// and local-use), 6to4 and Teredo. Behind such a gateway they reach the
+	// embedded IPv4, which may be private.
+	netip.MustParsePrefix("64:ff9b::/96"),
+	netip.MustParsePrefix("64:ff9b:1::/48"),
+	netip.MustParsePrefix("2002::/16"),
+	netip.MustParsePrefix("2001::/32"),
 }
 
 func federationIPAllowed(addr netip.Addr) bool {
