@@ -167,3 +167,31 @@ def test_proof_encoding_is_closed_and_portable(mutation):
         fields["expires_at"] = fields["issued_at"]
     with pytest.raises(EffectRefused):
         issue_proof(fields, key)
+
+
+@pytest.mark.parametrize("evidence", [None, {}, {"mode": "unsupported"}])
+def test_unknown_protection_evidence_never_becomes_legacy(evidence):
+    from awid.protected_effect import validate_binding
+
+    with pytest.raises(EffectRefused) as error:
+        validate_binding(evidence)
+    assert error.value.code == "protected_state_unavailable"
+
+
+def test_original_observation_deadline_is_not_extended_by_read_or_legacy_check(
+    monkeypatch,
+):
+    from awid import protected_membership
+
+    observation = protected_membership.TeamProtectionObservation(
+        "team:example.test",
+        "unused-in-this-clock-control",
+        {"mode": "legacy"},
+        100.0,
+    )
+    monkeypatch.setattr(protected_membership, "monotonic", lambda: 99.0)
+    observation.require_legacy_admission()
+    assert observation.deadline == 100.0
+    monkeypatch.setattr(protected_membership, "monotonic", lambda: 100.0)
+    with pytest.raises(EffectRefused, match="protected_state_unavailable"):
+        observation.require_legacy_admission()

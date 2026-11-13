@@ -115,3 +115,54 @@ async def verify_registered_membership(registry, observation, certificate):
         raise TeamCertificateError("certificate_binding_mismatch")
     observation.require_fresh()
     return checked
+
+
+async def resolve_registered_membership(registry, observation, certificate_id):
+    """Resolve a full-artifact-backed row for a retained certificate reference.
+
+    This alone is NOT authorization of a retained grant/agent projection. Its
+    original subject and exact artifact digest must match, and that surface's
+    independent grant/rights checks still apply. Pre-cutover ID-only evidence
+    needs .8's explicitly inventoried baseline; do not manufacture its digest.
+    """
+    observation.require_fresh()
+    domain, name = parse_team_id(observation.team_id)
+    try:
+        records = await registry.list_team_certificates_fresh(
+            domain, name, active_only=False
+        )
+    except Exception:
+        logger.exception("Retained protected membership evidence unavailable")
+        raise EffectRefused("protected_state_unavailable") from None
+    record = next((r for r in records if r.certificate_id == certificate_id), None)
+    if record is None:
+        raise TeamCertificateError("unregistered")
+    if record.revoked_at:
+        raise TeamCertificateError("revoked")
+    if getattr(record, "certificate_sha256", None) is None:
+        raise EffectRefused("protected_state_unavailable")
+    observation.require_fresh()
+    return record
+
+
+async def verify_retained_membership(
+    registry, observation, *, certificate_id, member_did_key, certificate_sha256
+):
+    """Match a retained exact-artifact reference; an ID-only reference refuses.
+
+    Persist the digest when full-certificate admission is verified, in the
+    same local effect transaction. Existing protected candidates require .8's
+    exact baseline/re-endorsement; absence never acquires a guessed digest.
+    """
+    observation.require_fresh()
+    if not observation.protected:
+        return None
+    if not certificate_sha256:
+        raise TeamCertificateError("certificate_binding_mismatch")
+    record = await resolve_registered_membership(registry, observation, certificate_id)
+    if (
+        record.member_did_key != member_did_key
+        or record.certificate_sha256 != certificate_sha256
+    ):
+        raise TeamCertificateError("certificate_binding_mismatch")
+    return record

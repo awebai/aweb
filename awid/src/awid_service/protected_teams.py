@@ -102,8 +102,13 @@ async def protection(tx, domain, name):
         raise refusal("protected_state_unavailable") from None
 
 
+async def _request_body(request):
+    retained = getattr(request.state, "protected_effect_body", None)
+    return retained if retained is not None else await request.body()
+
+
 async def _artifact(request, operation):
-    body = await request.body()
+    body = await _request_body(request)
     payload = json.loads(body) if body else {}
     if operation == "register_certificate":
         cert = json.loads(base64.b64decode(payload["certificate"], validate=True))
@@ -177,7 +182,7 @@ async def require_effect(request, tx, *, domain, name, operation):
             audience=audience,
             method=request.method,
             path=raw_controller_request_target(request),
-            body=await request.body(),
+            body=await _request_body(request),
             controller_envelope=envelope,
         )
         proofs = decode_proofs(request.headers.get(HEADER))
