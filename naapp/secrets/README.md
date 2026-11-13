@@ -36,6 +36,18 @@ fails nothing. `/live` checks nothing and is what the image's `HEALTHCHECK`
 probes. The database is the app's own pgdbm schema: the shared runtime's
 migrations first, then `src/aweb_secrets/migrations/` (module `aweb_secrets`).
 
+Installation-scoped configuration revisions, change-set settings, policies,
+grant templates and secret references are keyed by both team and installation.
+Two teams reporting the same installation id keep separate state. Policy
+references from grants, intents and derived secrets must name that same team.
+
+The ordered `008_team_installation_keys.sql` records migration and the `002`
+revision/settings migrations retain legacy state only when the installation has
+one team in retained scoped records or installation fences. They stop with a
+count if attribution is missing or ambiguous and roll back that migration;
+they never choose a team from a request or the first matching record. A populated
+deployment must resolve such attribution explicitly before it can upgrade.
+
 The manifest's authoring source is `src/aweb_secrets/manifest.py`. The committed
 `aweb-app.json` is a canonical v2 template. The shared runtime fills the served
 `app.id` from `SECRETS_APP_ID`, the origin from `SECRETS_PUBLIC_ORIGIN`, and each

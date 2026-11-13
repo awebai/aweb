@@ -721,14 +721,21 @@ func resolveLiveTeamMemberAliasTarget(ctx context.Context, sel *awconfig.Selecti
 // resolveCertificateClient attempts to create a certificate-authenticated client.
 // Returns (nil, nil) if no team certificate exists. Returns an error only if the
 // certificate exists but is invalid.
-func resolveCertificateClient(sel *awconfig.Selection, baseURL string) (*aweb.Client, error) {
+// loadSelectedTeamCertificate loads the selection's team certificate the way
+// certificate authentication does: through the workspace membership's stored
+// cert_path, which may name a legacy location.
+func loadSelectedTeamCertificate(sel *awconfig.Selection) (*awid.TeamCertificate, error) {
 	if sel == nil {
-		return nil, nil
+		return nil, fmt.Errorf("no selected identity")
 	}
 	workspace, err := awconfig.LoadWorktreeWorkspaceFrom(sel.WorkspacePath)
 	if err != nil {
-		return nil, nil
+		return nil, err
 	}
+	return loadWorkspaceTeamCertificate(sel, workspace)
+}
+
+func loadWorkspaceTeamCertificate(sel *awconfig.Selection, workspace *awconfig.WorktreeWorkspace) (*awid.TeamCertificate, error) {
 	teamID := strings.TrimSpace(sel.TeamID)
 	selectedMembership := workspace.Membership(teamID)
 	if selectedMembership == nil {
@@ -748,6 +755,21 @@ func resolveCertificateClient(sel *awconfig.Selection, baseURL string) (*aweb.Cl
 	cert, err := awid.LoadTeamCertificate(certPath)
 	if err != nil {
 		return nil, fmt.Errorf("load team certificate for %s: %w", selectedMembership.TeamID, err)
+	}
+	return cert, nil
+}
+
+func resolveCertificateClient(sel *awconfig.Selection, baseURL string) (*aweb.Client, error) {
+	if sel == nil {
+		return nil, nil
+	}
+	workspace, err := awconfig.LoadWorktreeWorkspaceFrom(sel.WorkspacePath)
+	if err != nil {
+		return nil, nil
+	}
+	cert, err := loadWorkspaceTeamCertificate(sel, workspace)
+	if err != nil {
+		return nil, err
 	}
 	signingKeyPath := sel.SigningKey
 	if strings.TrimSpace(sel.IdentityHome) != "" {

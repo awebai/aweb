@@ -275,6 +275,35 @@ followed. The setting applies to federated mail and chat delivery only;
 registry reads keep requiring public addresses. Unset or empty, no private
 delivery origin is admitted.
 
+Whether this server delivers federated mail and chat to other servers at all
+is a separate switch, `AWEB_FEDERATION_OUTBOUND`:
+
+```bash
+AWEB_FEDERATION_OUTBOUND=off
+AWEB_FEDERATION_OUTBOUND=https://aweb.partner.example,https://aweb.acme.internal
+```
+
+- Unset or empty: the server delivers to any delivery origin the checks above
+  admit. This is the default, and the behaviour of servers that predate the
+  setting.
+- `off`: it delivers to no other server.
+- A comma-separated list of origins: it delivers only to those, each compared
+  after the same canonicalisation (lowercase scheme and host, the default port
+  dropped). A different port is a different origin.
+
+A send the setting refuses answers the sender `403` with
+`Federated delivery to <origin> is refused: AWEB_FEDERATION_OUTBOUND is off`
+or `... does not list this origin`. The server refuses before it resolves or
+connects to the origin, and stores nothing. An entry that is not an origin
+(a path, user information, a scheme other than `http` or `https`, or `off`
+beside origins) refuses start-up naming the entry. A server that is never
+started with that value still refuses every send rather than guessing.
+
+The switch governs only what this server sends. Mail and chat that other
+servers deliver here are governed by your inbound federation settings, and
+listing an origin here does not admit private addresses: that remains
+`AWEB_FEDERATION_PRIVATE_DELIVERY_ORIGINS`.
+
 For federation between servers on one development machine or compose network,
 set `APP_ENV=development` and `AWEB_FEDERATION_TEST=1` on each aweb server. With
 both set, a server whose own `AWEB_PUBLIC_ORIGIN` host is isolated (a

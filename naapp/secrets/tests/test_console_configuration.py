@@ -116,7 +116,7 @@ async def test_configuration_refusal_keeps_revision_activation_and_decision_iner
         assert refused.json()["detail"] == (
             "audit_target_unavailable" if proof_available else "passkey_proof_unavailable"
         )
-    assert await config_revision(w.db, INSTALLATION_ID) == 0
+    assert await config_revision(w.db, INSTALLATION_ID, team_id=TEAM) == 0
     assert await w.db.fetch_value("SELECT count(*) FROM {{tables.secrets}}") == 0
     assert (await w.approvals.get(drafted["approval_id"])).state is ApprovalState.APPROVED
     await w.custody.backend_credential_preview.open(token)
@@ -160,7 +160,7 @@ async def test_owner_configuration_records_share_the_single_proof_bound_writer(w
         assert await w.db.fetch_value("SELECT count(*) FROM {{tables.secrets}}") == 0
         path = await approve(w, human, headers, drafted)
         assert (await human.post(path + "/confirm", json={}, headers=headers)).status_code == 200
-    assert await config_revision(w.db, INSTALLATION_ID) == 1
+    assert await config_revision(w.db, INSTALLATION_ID, team_id=TEAM) == 1
     assert await w.db.fetch_value("SELECT count(*) FROM {{tables.destinations}}") == 1
     assert await w.db.fetch_value("SELECT count(*) FROM {{tables.grants}}") == 1
     rows = await w.db.fetch_all(
