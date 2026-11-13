@@ -1,5 +1,10 @@
 # Knowledge log
 
+## 2026-11-13
+* **Harvest**: OKF proposal from aweb-expert/aweb-expert-deploy-team (task aweb-acwd.24.10).
+* **Creation**: decision [an ingress probe claims refusal only for the deployment's own ingress](/aweb-expert/decisions/an-ingress-probe-claims-only-its-own-ingress.md).
+* **Creation**: lesson [a rename-replaced credential mounts by directory, and the receiver decides where secrets live](/aweb-expert/lessons/a-rename-replaced-credential-mounts-by-directory.md).
+
 ## 2026-11-04
 * **Harvest**: OKF proposal from aweb-expert/aweb-expert-fresh-eyes (tasks aweb-acst and aweb-actf).
 * **Update**: [identity and routing review needs the real client](/aweb-expert/lessons/identity-and-routing-review-needs-the-real-client.md) gains that the real client includes the last released binary and that a skipped released-client case is not evidence.
