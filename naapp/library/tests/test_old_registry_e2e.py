@@ -15,6 +15,7 @@ from test_e2e_smoke import (
     _require_e2e_enabled,
     _running_library,
     _wait_http_ok,
+    candidate_hostname,
 )
 
 pytestmark = pytest.mark.e2e
@@ -22,10 +23,14 @@ pytestmark = pytest.mark.e2e
 
 def test_private_certificate_refused_by_real_pre_status_registry(aw_workspace):
     _require_e2e_enabled()
-    binding = _compose("port", "awid-pre-status", "8010").stdout.strip().splitlines()[0]
-    port = int(binding.rsplit(":", 1)[1])
-    host = os.environ.get("NAAPP_E2E_HOST", "127.0.0.1")
-    old_registry = f"http://{host}:{port}"
+    if os.environ.get("NAAPP_E2E_CONTAINER_NETWORK") == "1":
+        project = os.environ["NAAPP_E2E_PROJECT"]
+        old_registry = f"http://{candidate_hostname(project, 'awid-pre-status')}:8010"
+    else:
+        binding = _compose("port", "awid-pre-status", "8010").stdout.strip().splitlines()[0]
+        port = int(binding.rsplit(":", 1)[1])
+        host = os.environ.get("NAAPP_E2E_HOST", "127.0.0.1")
+        old_registry = f"http://{host}:{port}"
     _wait_http_ok(f"{old_registry}/health")
     team = _provision_team(aw_workspace)
     team_path = f"/v1/namespaces/{team.namespace}/teams/{team.team}"

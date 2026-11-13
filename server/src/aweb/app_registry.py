@@ -15,6 +15,7 @@ from urllib.parse import urlparse
 
 from aweb_naapp.egress import canonical_url
 from aweb_naapp.manifest import ManifestError, load_manifest
+from aweb_naapp.manifest_keys import check_manifest_keys
 from awid.team_ids import parse_team_id
 
 from aweb.service_errors import BadRequestError, ConflictError, ValidationError
@@ -178,12 +179,6 @@ def normalize_app_version(value: str) -> str:
     if len(version) > 128:
         raise ValidationError("app_version is too long")
     return version
-
-
-def normalize_manifest_version(value: int) -> int:
-    if value <= 0:
-        raise ValidationError("manifest_version must be positive")
-    return value
 
 
 def normalize_scopes(values: list[str]) -> list[str]:
@@ -429,7 +424,8 @@ def manifest_registration(manifest: bytes, *, app_id: str, origin: str, digest: 
     """Read an install's event declarations and keys from its pinned bytes.
 
     The bytes must hash to the pinned digest, be valid to the one manifest
-    reader (``aweb_naapp.manifest``), and name the installed app id and origin;
+    reader (``aweb_naapp.manifest``) with every declared key an Ed25519 did:key
+    (``aweb_naapp.manifest_keys``), and name the installed app id and origin;
     nothing is taken from anywhere else. Version 1 ``event_emitters`` are emit
     keys; version 2 ``app_keys`` are app keys with their declared purposes.
     """
@@ -441,6 +437,7 @@ def manifest_registration(manifest: bytes, *, app_id: str, origin: str, digest: 
         raise ValidationError("manifest bytes do not match the pinned digest")
     try:
         resolved = load_manifest(manifest, reserved_names=reserved_app_ids())
+        check_manifest_keys(resolved)
     except ManifestError as exc:
         raise ValidationError({"code": exc.code, "message": str(exc)}) from exc
     app = resolved.document["app"]

@@ -319,11 +319,6 @@ def _get_team_slug(team_id: str) -> str:
     return team_slug(team_id)
 
 
-async def allocate_task_number(db, *, team_id: str) -> int:
-    aweb_db = db.get_manager("aweb")
-    return await _allocate_task_number_on(aweb_db, team_id=team_id)
-
-
 async def _log_resolution_miss(
     aweb_db,
     *,

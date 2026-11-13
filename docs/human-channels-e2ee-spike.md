@@ -13,7 +13,10 @@ rule](human-channels-contract-proposal.md) remain authoritative.
 
 ## What ran
 
-The [reproducer](../server/tests/test_human_channels_e2ee_spike.py) starts real
+The Python reproducer (server/tests/test_human_channels_e2ee_spike.py), its
+fixture generator (scripts/spikes/human_channels_e2ee.py) and the Go live-input
+test it drove are kept at commit f591d34e8, where the Python names in the table
+below are defined; the Go fixture reader and the fixture remain in the tree. The reproducer started real
 local OSS HTTP, AWID application and PostgreSQL/Redis through the existing
 `privacy_app` fixture. AWID executes its real registration/authority routes over
 ASGI; OSS uses a listening HTTP server. Both Python and Go make authenticated
@@ -23,19 +26,15 @@ cryptography, authority response or membership-table insertion supplies the
 result. Disposable identity provisioning is separate from membership changes.
 
 ```sh
-SUITE_LOCK_FOCUSED=1 uv run --project server python -m pytest \
-  server/tests/test_human_channels_e2ee_spike.py -q
 go -C cli/go test ./awid -run '^TestHumanChannelsE2EESpikeVector$' -count=1
 make test-vector-provenance check-a2a-copy-guardrails
 ```
 
-The Python test invokes the Go HTTP reader with a temporary, private fixture.
-The standalone Go command consumes the same public [experimental
-fixture](vectors/human-channels-e2ee-spike.json) as the Python fixture reader.
-It contains only explicitly public synthetic test key material. Generate a new
-candidate deliberately with `uv run --project server python
-scripts/spikes/human_channels_e2ee.py --write-fixture`; do not auto-regenerate it
-as a test repair. Random ciphertext/UUIDs change, while assertions stay stable.
+The Python test invoked the Go HTTP reader with a temporary, private fixture.
+The standalone Go command consumes the public [experimental
+fixture](vectors/human-channels-e2ee-spike.json), which the Python fixture reader
+also read. It contains only explicitly public synthetic test key material and is
+not regenerated as a test repair.
 
 | Boundary | Observed result | Location |
 | --- | --- | --- |

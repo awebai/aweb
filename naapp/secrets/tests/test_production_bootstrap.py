@@ -6,11 +6,13 @@ Owner setup is a shared-writer component; the old HTTP binding path refuses.
 import asyncio
 import base64
 import json
+import secrets
 from dataclasses import dataclass, replace
 from datetime import UTC, datetime, timedelta
 from urllib.parse import parse_qs, urlsplit
 from uuid import uuid4
 
+import dns.asyncresolver as dns_api
 import httpx
 import pytest
 from aweb_naapp.egress import DnsResolver, InternalDestinations
@@ -24,6 +26,8 @@ from aweb_naapp_testing.owner_acts import AUDIENCE, TeamOwner
 from aweb_naapp_testing.smtp import SmtpServer
 from aweb_naapp_testing.webauthn import SoftAuthenticator
 from awid.did import did_from_public_key
+from awid.dns_verify import DnsVerificationError
+from awid_service.deps import get_domain_verifier
 from awid_service.testing import SERVICE_TOKEN
 from cryptography.hazmat.primitives.asymmetric.x25519 import X25519PrivateKey
 from nacl.signing import SigningKey
@@ -58,9 +62,18 @@ async def envelopes(db, team_id):
 
 
 @pytest.fixture
-async def root(test_db_factory, registry, tmp_path, request):
+async def root(test_db_factory, registry, tmp_path, request, monkeypatch):
     member = Member(team_id="root:example.com", member_key=member_key("alice"))
     options = getattr(request, "param", {})
+
+    async def domain_authority(domain):
+        # Forward the test registry's actual namespace authority, never a
+        # fabricated record or fallback to the public example.com DNS.
+        configured = registry.app.dependency_overrides.get(get_domain_verifier)
+        if configured is None:
+            raise DnsVerificationError("the test registry has no namespace verifier")
+        return await configured()(domain)
+
     private = options.get("private_team", False)
     async with authority(
         test_db_factory, registry, member, visibility="private" if private else "public"
@@ -107,6 +120,7 @@ async def root(test_db_factory, registry, tmp_path, request):
             service = create_service(
                 configured,
                 awid_transport=registry.transport,
+                awid_domain_verifier=None if options.get("real_identity_dns") else domain_authority,
                 team_server_transport=transport,
             )
             service.runtime.team_server_directory()._registry_override = no_dns_override
@@ -115,6 +129,12 @@ async def root(test_db_factory, registry, tmp_path, request):
             # a real local NXDOMAIN answer instead of querying public DNS.
             dns = DnsServer()
             await dns.start()
+            # The SDK's AWID authority lookups read TXT through dnspython's
+            # default resolver. Point it at the same private server, so a test
+            # publishes the TXT evidence it needs and nothing reaches public DNS.
+            resolver = dns_api.Resolver(configure=False)
+            resolver.nameservers, resolver.port = ["127.0.0.1"], dns.port
+            monkeypatch.setattr(dns_api, "default_resolver", resolver)
             hook_transport = service.runtime._hooks.transport
             assert hook_transport is not None
             hook_transport._egress = replace(
@@ -262,7 +282,7 @@ async def signed_in_owner(root):
 async def test_a_canonical_component_holder_logs_into_the_production_console(root):
     service, client, configured, member, installed, smtp, transport, dns = root
     human = configured.console_origin
-    scope, body, token = await signed_in_owner(root)
+    scope, body, _ = await signed_in_owner(root)
     home = await client.get(human + "/")
     assert home.status_code == 200 and "Secrets console" in home.text
     assert (await client.get(AUDIENCE + "/enrolment")).status_code == 404
@@ -284,9 +304,17 @@ async def test_a_canonical_component_holder_logs_into_the_production_console(roo
     assert listed.status_code == 200, listed.text
     assert listed.json()["result"]["secrets"] == []
     assert (await client.get(AUDIENCE + "/v1/secrets")).status_code == 401
-    assert (
-        await client.post(human + "/enrolment/options", json={"link_token": token})
-    ).status_code == 403
+    # No enrolment link exists after the cutover: none is stored, a
+    # well-formed token B3 never issued is refused, and governance records
+    # nothing.
+    assert await db.fetch_value("SELECT count(*) FROM passkey_enrolments") == 0
+    refused = await client.post(
+        human + "/enrolment/options", json={"link_token": secrets.token_urlsafe(32)}
+    )
+    assert (refused.status_code, refused.json()["detail"]) == (403, "enrolment_refused")
+    assert [event["payload"]["act"] for event in await envelopes(db, member.team_id)] == [
+        "role.designated",
+    ]
     async with asyncio.timeout(5):
         while dns.queries[("logs.example", "A")] == 0:
             await asyncio.sleep(0.01)
@@ -423,7 +451,7 @@ async def approval_request(root, kind):
     runner_encryption_key = X25519PrivateKey.generate()
     credential = uuid4().hex
     async with db.transaction() as tx:
-        await records.create_policy(tx, installation_id, policy)
+        await records.create_policy(tx, installation_id, policy, team_id=member.team_id)
         await records.create_secret(
             tx, installation_id, member.team_id, SecretRecord.from_after(SECRET)
         )

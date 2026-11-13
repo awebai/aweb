@@ -18,13 +18,14 @@ from aweb_secrets.grant import GrantRecord
 from aweb_secrets.owners import OWNER_ROLE, owner_scope
 from aweb_secrets.revisions import config_revision
 from tests.harness import running_upstream
+from tests.human_owner import canonical_actor
 from tests.test_broker_approved_service import setup as broker_setup
 from tests.test_change_sets import ALICE, TEAM
 from tests.test_console import login
 from tests.test_containment_credential_audit import caller, human_client
 from tests.test_containment_routes import API, PATH, running
 from tests.test_credential_audit import audit_for, events
-from tests.test_use_approvals import REQUESTER, SECRET, SECRET_ID, _member, install
+from tests.test_use_approvals import SECRET, SECRET_ID, _member, install
 from tests.test_use_approvals import uses as uses
 from tests.test_use_approvals import world as world
 
@@ -80,7 +81,9 @@ async def prepare(uses, *, key_only=False):
     return svc, selected
 
 
-async def remove(uses, svc, request, *, actor=REQUESTER):
+async def remove(uses, svc, request, *, actor=None):
+    if actor is None:
+        actor = canonical_actor(uses.world, ALICE)
     return await svc.by_member(
         grant=uses.grant,
         principal=actor,
@@ -98,7 +101,7 @@ async def test_exact_member_only_replay_hash_and_canonical_receipt(uses, key_onl
     db, scope = uses.world.db, uses.world.admitted
     request = body(principal_key(selected).principal_did)
     before = await events(uses.world)
-    revision = await config_revision(db, scope.installation_id)
+    revision = await config_revision(db, scope.installation_id, team_id=TEAM)
     grant = await db.fetch_one("SELECT * FROM {{tables.grants}} WHERE grant_id='grt_shared_role'")
     first = await remove(uses, svc, request)
     assert first.action == request["action"] and first.target == ROLE
@@ -111,9 +114,9 @@ async def test_exact_member_only_replay_hash_and_canonical_receipt(uses, key_onl
         await db.fetch_one("SELECT * FROM {{tables.grants}} WHERE grant_id='grt_shared_role'")
         == grant
     )
-    assert await config_revision(db, scope.installation_id) == revision + 1
+    assert await config_revision(db, scope.installation_id, team_id=TEAM) == revision + 1
     assert await remove(uses, svc, request) == first
-    assert await config_revision(db, scope.installation_id) == revision + 1
+    assert await config_revision(db, scope.installation_id, team_id=TEAM) == revision + 1
     emitted = (await events(uses.world))[len(before) :]
     assert len(emitted) == 1
     [event] = emitted
@@ -124,7 +127,7 @@ async def test_exact_member_only_replay_hash_and_canonical_receipt(uses, key_onl
         "role": ROLE,
         "subject_ref": "member:" + request["principal"],
     }
-    assert event["actor"]["did_aw"] == REQUESTER.did_aw
+    assert event["actor"]["did_aw"] == ALICE.principal_did
     assert event["trace"] == {"id": SIGNED_TRACE, "origin": "signed_request"}
     assert (
         await db.fetch_value("SELECT count(*) FROM {{tables.credential_narrowing_authority}}") == 1
@@ -134,7 +137,7 @@ async def test_exact_member_only_replay_hash_and_canonical_receipt(uses, key_onl
     # A fresh no-op keeps a receipt and invalidates old drafts, with no invented
     # role event for a membership that was already absent.
     await remove(uses, svc, {**request, "request_id": uuid4().hex})
-    assert await config_revision(db, scope.installation_id) == revision + 2
+    assert await config_revision(db, scope.installation_id, team_id=TEAM) == revision + 2
     assert await events(uses.world) == before + emitted
     assert await db.fetch_value("SELECT count(*) FROM {{tables.containment_receipts}}") == 2
 
@@ -143,7 +146,7 @@ async def test_final_f6_refusal_rolls_back_membership_revision_receipt_and_event
     svc, _ = await prepare(uses)
     db, scope = uses.world.db, uses.world.admitted
     before = await events(uses.world)
-    revision = await config_revision(db, scope.installation_id)
+    revision = await config_revision(db, scope.installation_id, team_id=TEAM)
     await db.execute(
         "CREATE FUNCTION expire_role_fence() RETURNS trigger LANGUAGE plpgsql AS $$ "
         "BEGIN UPDATE {{tables.installation_fences}} "
@@ -157,7 +160,7 @@ async def test_final_f6_refusal_rolls_back_membership_revision_receipt_and_event
     with pytest.raises(InstallationRefused):
         await remove(uses, svc, body())
     assert await has_role(db, principal_key(MEMBER_A), ROLE)
-    assert await config_revision(db, scope.installation_id) == revision
+    assert await config_revision(db, scope.installation_id, team_id=TEAM) == revision
     assert await events(uses.world) == before
     assert await db.fetch_value("SELECT count(*) FROM {{tables.idempotency_keys}}") == keys
     assert await db.fetch_value("SELECT count(*) FROM {{tables.containment_receipts}}") == 0
@@ -186,8 +189,10 @@ async def test_shared_recorder_requires_original_context_and_nonempty_targets(us
     before = await events(w)
     async with w.db.transaction() as tx:
         await w.fence.check(tx, w.admitted)
-        assert await hold_role(tx, principal_key(REQUESTER), OWNER_ROLE)
-        prepared = await audit.prepare_containment(tx, admitted=w.admitted, principal=REQUESTER)
+        assert await hold_role(tx, ALICE, OWNER_ROLE)
+        prepared = await audit.prepare_containment(
+            tx, admitted=w.admitted, principal=canonical_actor(w, ALICE)
+        )
         if problem == "app":
             prepared = replace(prepared, admitted=replace(prepared.admitted, app_id="other-app"))
         elif problem == "authorizer":
@@ -249,17 +254,14 @@ async def test_owner_console_csrf_and_retained_login_without_new_ceremony(uses):
     assert row["retained_proof"] is not None
 
 
-async def test_signed_api_owner_only_and_strict_action_fields(uses, registry):
+async def test_signed_api_owner_only_and_strict_action_fields(uses):
     await prepare(uses)
-    owner = Member(team_id=TEAM, certificate_id="role-owner", alias="role-owner")
+    registry = uses.world.registry
+    owner = uses.world.human_members[ALICE]
     outsider = Member(
         team_id=TEAM, team_key=owner.team_key, certificate_id="role-outsider", alias="role-outsider"
     )
-    await registry.add_team(TEAM, owner.team_did_key)
-    for member in (owner, outsider):
-        await registry.add_certificate(member.certificate())
-    async with uses.world.db.transaction() as tx:
-        await assign(tx, PrincipalKey(TEAM, owner.did_key), OWNER_ROLE)
+    await registry.add_certificate(outsider.certificate())
 
     async with running(uses, registry) as api:
 

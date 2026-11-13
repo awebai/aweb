@@ -123,6 +123,8 @@ async def owner_holding(
 async def has_owner(
     db: AsyncDatabaseManager | TransactionManager, principal: PrincipalKey, *, installation_id: str
 ) -> bool:
+    if not roles.is_holding_principal(principal.principal_did):
+        return False
     return (
         await roles.read_holding(
             db,
@@ -139,6 +141,8 @@ async def hold_owner(
     tx: TransactionManager, principal: PrincipalKey, *, installation_id: str
 ) -> bool:
     """Hold the complete canonical holding in the caller's original transaction."""
+    if not roles.is_holding_principal(principal.principal_did):
+        return False
     return (
         await roles.hold_holding(
             tx,

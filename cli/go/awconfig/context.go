@@ -43,18 +43,6 @@ func LoadWorktreeContextFrom(path string) (*WorktreeContext, error) {
 	return &ctx, nil
 }
 
-func LoadWorktreeContextFromDir(startDir string) (*WorktreeContext, string, error) {
-	p, err := FindWorktreeContextPath(startDir)
-	if err != nil {
-		return nil, "", err
-	}
-	ctx, err := LoadWorktreeContextFrom(p)
-	if err != nil {
-		return nil, "", err
-	}
-	return ctx, p, nil
-}
-
 func SaveWorktreeContextTo(path string, ctx *WorktreeContext) error {
 	if err := preflightIdentityFile(path, "identity context file"); err != nil {
 		return err

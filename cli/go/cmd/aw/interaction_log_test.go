@@ -22,8 +22,8 @@ func TestAppendInteractionLogForDirDedupesByMessageID(t *testing.T) {
 		From:      "rose",
 		Text:      "please review the patch",
 	}
-	appendInteractionLogForDir(tmp, entry)
-	appendInteractionLogForDir(tmp, entry)
+	appendInteractionLogForDir(tmp, localLogPolicy{}, entry)
+	appendInteractionLogForDir(tmp, localLogPolicy{}, entry)
 
 	entries, err := readInteractionLog(interactionLogPath(tmp), 0)
 	if err != nil {

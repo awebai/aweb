@@ -30,14 +30,18 @@ func TestInjectedHTTPClientCannotFollowTrustRedirects(t *testing.T) {
 		{
 			name: "registry client request",
 			invoke: func(httpClient *http.Client, baseURL string) error {
-				_, err := NewAWIDRegistryClient(httpClient, nil).GetDIDLog(context.Background(), baseURL, "did:aw:test")
+				client := NewAWIDRegistryClient(httpClient, nil)
+				routeUntrustedRegistriesToInjectedClient(client)
+				_, err := client.GetDIDLog(context.Background(), baseURL, "did:aw:test")
 				return err
 			},
 		},
 		{
 			name: "registry resolver request",
 			invoke: func(httpClient *http.Client, baseURL string) error {
-				_, err := NewRegistryResolver(httpClient, nil).resolveKeyFresh(context.Background(), baseURL, "did:aw:test", true)
+				resolver := NewRegistryResolver(httpClient, nil)
+				routeUntrustedResolverRegistriesToInjectedClient(resolver)
+				_, err := resolver.resolveKeyFresh(context.Background(), baseURL, "did:aw:test", true)
 				return err
 			},
 		},
@@ -205,6 +209,7 @@ func TestTrustRequestsDoNotFollowRedirects(t *testing.T) {
 			expectsAuthority: true,
 			invoke: func(baseURL string) error {
 				client := NewAWIDRegistryClient(nil, nil)
+				routeUntrustedRegistriesToInjectedClient(client)
 				_, err := client.GetDIDFull(context.Background(), baseURL, "did:aw:test", signingKey)
 				return err
 			},
@@ -213,6 +218,7 @@ func TestTrustRequestsDoNotFollowRedirects(t *testing.T) {
 			name: "registry resolver request",
 			invoke: func(baseURL string) error {
 				resolver := NewRegistryResolver(nil, nil)
+				routeUntrustedResolverRegistriesToInjectedClient(resolver)
 				_, err := resolver.resolveKeyFresh(context.Background(), baseURL, "did:aw:test", true)
 				return err
 			},

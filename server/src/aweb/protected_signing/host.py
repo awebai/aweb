@@ -1,4 +1,4 @@
-"""Runnable independent protected server; no controller or authorizer bootstrap.
+"""Runnable independent protected server; no automatic authority bootstrap.
 
 Run ``uvicorn aweb.protected_signing.host:create_app --factory`` with explicit
 AWEB_PROTECTED_* operator settings. TLS terminates at the configured human
@@ -19,18 +19,19 @@ from aweb_naapp.console import (
 from aweb_naapp.console.handoff_store import HandoffStore
 from aweb_naapp.email import EmailSettings, Mailer
 from aweb_naapp.hooks.strictjson import parse_strict
+from aweb_naapp.key_file import read_key_file
 from aweb_naapp.runtime.origins import OriginApps
 from aweb_naapp.runtime.protected_signer import SignerRefused
 from awid.db_config import build_database_config
 from awid.did import did_key_from_signing_key
 from awid.registry import RegistryClient
-from awid.signing import load_signing_key_pem
-from awid.team_ids import build_team_id, parse_team_id
 from fastapi import FastAPI
+from fastapi.responses import JSONResponse
 from pgdbm import AsyncDatabaseManager
-from pydantic import Field, SecretStr, StrictInt
+from pydantic import Field, SecretStr, StrictInt, model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
+from ..config import load_member_signing_keys
 from .composition import IndependentProtectedSigner
 from .custody import ProtectedControllerCustody
 from .notifications import ProtectedNotifications
@@ -47,7 +48,8 @@ class HostSettings(BaseSettings):
     controller_key_file: Path
     member_keys_file: Path
     worker_uids: list[Annotated[StrictInt, Field(gt=0)]] = Field(min_length=1)
-    database_url: SecretStr = Field(repr=False)
+    database_url: SecretStr = Field(default_factory=lambda: SecretStr(""), repr=False)
+    database_url_file: Path | None = None
     database_schema: str = Field(
         default="protected_signer", pattern=r"^[a-z][a-z0-9_]{0,62}$"
     )
@@ -62,24 +64,35 @@ class HostSettings(BaseSettings):
     def client_identity(self):
         return ClientIdentity(trusted_header=self.trusted_client_header)
 
+    @model_validator(mode="after")
+    def database_source(self):
+        if self.database_url_file is not None:
+            if "database_url" in self.model_fields_set:
+                raise ValueError("protected_database_url_sources_conflict")
+            try:
+                value = (
+                    read_key_file(self.database_url_file)
+                    .decode("utf-8")
+                    .removesuffix("\n")
+                )
+                if not value or any(char in value for char in ("\n", "\r", "\x00")):
+                    raise ValueError()
+            except (OSError, ValueError):
+                # Configuration failures never expose DSN contents. The
+                # existing pgdbm/asyncpg adapter remains the only DSN parser.
+                raise ValueError("protected_database_url_file_invalid") from None
+            # Preserve declared input provenance on instance revalidation:
+            # this compatibility value is derived, not a second DSN source.
+            object.__setattr__(self, "database_url", SecretStr(value))
+        if not self.database_url.get_secret_value():
+            raise ValueError("protected_database_url_required")
+        return self
+
 
 def _member_keys(path):
-    """Same canonical-team/Ed25519-PEM manifest format as aweb configuration."""
+    """The server's own member-key loader, with the signer's error code."""
     try:
-        entries = parse_strict(path.read_bytes())
-        if not isinstance(entries, dict) or not entries:
-            raise ValueError()
-        keys = {}
-        for team_id, filename in entries.items():
-            if build_team_id(*parse_team_id(team_id)) != team_id:
-                raise ValueError()
-            if not isinstance(filename, str) or not filename:
-                raise ValueError()
-            key_file = Path(filename)
-            if not key_file.is_absolute():
-                key_file = path.parent / key_file
-            keys[team_id] = load_signing_key_pem(key_file.read_bytes())
-        return keys
+        return load_member_signing_keys(path)
     except (OSError, ValueError, TypeError):
         raise ValueError("protected_member_keys_invalid") from None
 
@@ -109,6 +122,60 @@ async def validate_provisioning(composition):
         observation.require_fresh()
 
 
+@asynccontextmanager
+async def open_composition(
+    settings, *, profile, scope, mailer, registry_transport=None
+):
+    """The same isolated custody and owned DB/client for host and local admin."""
+    binding = profile.binding_for(scope)
+    context = binding.context()
+    if context.authority_kind != "team_controller":
+        raise SignerRefused("operation_refused")
+    custody = ProtectedControllerCustody(
+        service_id=context.service_id,
+        team_id=context.authority_id,
+        domain=context.authority_domain,
+        key_file=settings.controller_key_file,
+        worker_uids=frozenset(settings.worker_uids),
+    )
+    if custody.team_key_did != binding.authority_key_did:
+        raise SignerRefused("authority_changed")
+    keys = _member_keys(settings.member_keys_file)
+    if context.authority_id not in keys or any(
+        did_key_from_signing_key(key) == custody.team_key_did for key in keys.values()
+    ):
+        raise SignerRefused("custody_not_isolated")
+    async with AsyncExitStack() as resources:
+        db = AsyncDatabaseManager(
+            build_database_config(
+                connection_string=settings.database_url.get_secret_value(),
+                schema=settings.database_schema,
+                min_connections=1,
+                max_connections=5,
+                uses_transaction_pooler=settings.database_uses_transaction_pooler,
+            )
+        )
+        resources.push_async_callback(db.disconnect)
+        await db.connect()
+        registry = RegistryClient(
+            registry_url=profile.registry_origin,
+            transport=registry_transport,
+            member_signing_keys=keys,
+        )
+        resources.push_async_callback(registry.aclose)
+        composition = IndependentProtectedSigner.from_profile(
+            db,
+            profile=profile,
+            scope=scope,
+            registry_client=registry,
+            custody=custody,
+            delivery=ProtectedNotifications(
+                db=db, mailer=mailer, human_origin=profile.human_origin
+            ),
+        )
+        yield composition
+
+
 def create_app(settings=None, *, mailer=None, registry_transport=None):
     """Own one DB/registry lifetime and mount the sole shared human page.
 
@@ -129,51 +196,23 @@ def create_app(settings=None, *, mailer=None, registry_transport=None):
 
     @asynccontextmanager
     async def lifespan(api):
-        custody = ProtectedControllerCustody(
-            service_id=context.service_id,
-            team_id=context.authority_id,
-            domain=context.authority_domain,
-            key_file=settings.controller_key_file,
-            worker_uids=frozenset(settings.worker_uids),
-        )
-        if custody.team_key_did != binding.authority_key_did:
-            raise SignerRefused("authority_changed")
-        keys = _member_keys(settings.member_keys_file)
-        if context.authority_id not in keys or any(
-            did_key_from_signing_key(key) == custody.team_key_did
-            for key in keys.values()
-        ):
-            raise SignerRefused("custody_not_isolated")
         async with AsyncExitStack() as resources:
-            resources.callback(api.router.routes.clear)
-            resources.callback(human.router.routes.clear)
-            db = AsyncDatabaseManager(
-                build_database_config(
-                    connection_string=settings.database_url.get_secret_value(),
-                    schema=settings.database_schema,
-                    min_connections=1,
-                    max_connections=5,
-                    uses_transaction_pooler=settings.database_uses_transaction_pooler,
+            resources.callback(
+                api.router.routes.__setitem__, slice(None), list(api.router.routes)
+            )
+            resources.callback(
+                human.router.routes.__setitem__, slice(None), list(human.router.routes)
+            )
+            composition = await resources.enter_async_context(
+                open_composition(
+                    settings,
+                    profile=profile,
+                    scope=scope,
+                    mailer=configured_mailer,
+                    registry_transport=registry_transport,
                 )
             )
-            resources.push_async_callback(db.disconnect)
-            await db.connect()
-            registry = RegistryClient(
-                registry_url=profile.registry_origin,
-                transport=registry_transport,
-                member_signing_keys=keys,
-            )
-            resources.push_async_callback(registry.aclose)
-            composition = IndependentProtectedSigner.from_profile(
-                db,
-                profile=profile,
-                scope=scope,
-                registry_client=registry,
-                custody=custody,
-                delivery=ProtectedNotifications(
-                    db=db, mailer=configured_mailer, human_origin=profile.human_origin
-                ),
-            )
+            db = composition.db
             await composition.migrate()
             await apply_console_migrations(db)
             await validate_provisioning(composition)
@@ -181,12 +220,21 @@ def create_app(settings=None, *, mailer=None, registry_transport=None):
             # mounting the complete host, not for local settings validation.
             from aweb_naapp.console.handoff_page import handoff_page_router
 
+            from .bootstrap import bootstrap_router
+
             sessions = composition.protected_sessions()
             limiter = LoginLimiter(
                 db,
                 client_identity=settings.client_identity(),
                 limit=30,
                 window=timedelta(minutes=1),
+            )
+            human.include_router(
+                bootstrap_router(
+                    composition,
+                    csrf_key=settings.human_csrf_key,
+                    limiter=limiter,
+                )
             )
             mount = composition.operations_http(
                 limiter=limiter,
@@ -204,15 +252,26 @@ def create_app(settings=None, *, mailer=None, registry_transport=None):
                 )
             )
             api.state.composition = human.state.composition = composition
+            api.state.protected_ready = True
             try:
                 yield
             finally:
-                api.router.routes.clear()
-                human.router.routes.clear()
+                api.state.protected_ready = False
                 del api.state.composition
                 del human.state.composition
 
     api = FastAPI(lifespan=lifespan, docs_url=None, redoc_url=None, openapi_url=None)
+    api.state.protected_ready = False
+
+    @api.get("/readyz")
+    async def readiness():
+        ready = api.state.protected_ready
+        return JSONResponse(
+            {"ready": ready},
+            status_code=200 if ready else 503,
+            headers={"Cache-Control": "no-store"},
+        )
+
     host = OriginApps(
         api,
         human,

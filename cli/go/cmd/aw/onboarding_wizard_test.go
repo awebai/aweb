@@ -654,6 +654,7 @@ func TestExecuteBYODPathProvisionsLocalTeamWithoutIdentityRegistrationAgainstSer
 			t.Fatalf("unexpected registry %s %s", r.Method, r.URL.Path)
 		}
 	}))
+	t.Setenv("AWID_REGISTRY_URL", registryServer.URL)
 
 	awebServer := newLocalHTTPServer(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch {
@@ -765,6 +766,7 @@ func TestExecuteHostedPathConnectsAndClaimsHumanAgainstServers(t *testing.T) {
 			t.Fatalf("unexpected %s %s", r.Method, r.URL.Path)
 		}
 	}))
+	t.Setenv("AWID_REGISTRY_URL", registryServer.URL)
 
 	var checkBodies []map[string]any
 	var signupBody map[string]any
@@ -1325,6 +1327,7 @@ func testHostedGuidedExplicitModeReadback(t *testing.T, mode, actual string, wan
 			t.Fatalf("unexpected registry %s %s", r.Method, r.URL.Path)
 		}
 	}))
+	t.Setenv("AWID_REGISTRY_URL", registryServer.URL)
 
 	readSeen := false
 	var signupBody map[string]any
@@ -1654,6 +1657,7 @@ func TestExecuteHostedPathGlobalDoesNotSuggestUserAsAlias(t *testing.T) {
 			t.Fatalf("unexpected registry %s %s", r.Method, r.URL.Path)
 		}
 	}))
+	t.Setenv("AWID_REGISTRY_URL", registryServer.URL)
 
 	var signupBody map[string]any
 	var onboardingURL string
@@ -2074,6 +2078,7 @@ func TestExecuteBYODPathUsesSplitOriginServiceDiscovery(t *testing.T) {
 			t.Fatalf("unexpected registry %s %s", r.Method, r.URL.Path)
 		}
 	}))
+	t.Setenv("AWID_REGISTRY_URL", registryServer.URL)
 
 	if err := awconfig.SaveControllerKey(domain, controllerKey); err != nil {
 		t.Fatal(err)

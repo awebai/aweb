@@ -21,7 +21,8 @@ from pgdbm.core import TransactionManager
 
 from aweb_naapp import roles
 from aweb_naapp.hooks.owner_act import HumanCredential, VerifiedOwnerAct
-from aweb_naapp.runtime.credential_audit import CredentialAudit
+from aweb_naapp.hooks.strictjson import Refused
+from aweb_naapp.runtime.credential_audit import CredentialAudit, GovernanceUnavailable
 from aweb_naapp.runtime.installation import AdmittedInstallation
 from aweb_naapp.runtime.owner_act_delivery import (
     CheckedHumanRoleMember,
@@ -54,6 +55,10 @@ type AppliedHook = Callable[
 
 # The acts that hold a role with a credential, and so carry a certificate.
 _HOLDING_ACTS = frozenset({HOLDER_DESIGNATE_ACT, HOLDER_REPLACE_ACT})
+
+# The producer's refusals of a widening governance event for want of a current
+# audit target: the delivery contract's release_context_unavailable.
+_AUDIT_UNAVAILABLE = frozenset({"audit_target_unavailable", "audit_delivery_stalled"})
 
 
 def _utcnow() -> datetime:
@@ -248,6 +253,11 @@ class PreparedHumanRoleAct:
                     effective_at = designation.effective_at
             except DesignationRefused:
                 raise OwnerActDeliveryRefused("owner_required") from None
+            except Refused as refusal:
+                # The act is valid; its governance event has no current target.
+                if refusal.code in _AUDIT_UNAVAILABLE:
+                    raise GovernanceUnavailable() from None
+                raise
         result = OwnerActEffectResult(self.act, self.role, self.principal, effective_at)
         if self._acts._on_applied is not None:
             await self._acts._on_applied(tx, installation, result)

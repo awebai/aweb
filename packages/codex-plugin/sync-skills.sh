@@ -7,4 +7,4 @@
 # stay inside the plugin root — so we copy rather than symlink.
 set -euo pipefail
 cd "$(dirname "$0")"
-node ../../scripts/skill-packaging.mjs sync skills
+node ../../scripts/skill-packaging.mjs sync "${CODEX_SKILL_COPY_DIR:-skills}"

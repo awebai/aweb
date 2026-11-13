@@ -255,7 +255,11 @@ class ConsoleAccess:
                 await hold_owner(self.console, tx, current, admitted, installation_id)
                 # The canonical signed authority requires READ COMMITTED.
                 # Detect configuration commits across its multi-query view.
-                before_revision = await config_revision(tx, installation_id) if signed else None
+                before_revision = (
+                    await config_revision(tx, installation_id, team_id=admitted.team_id)
+                    if signed
+                    else None
+                )
                 secret_id = None
                 if secret_ref is not None:
                     stored = await records.secret_by_ref(
@@ -265,7 +269,7 @@ class ConsoleAccess:
                         raise HTTPException(404, "secret_not_found")
                     secret_id = stored.record.secret_id
                 agents = await self._agents(tx, admitted, secret_id)
-                revision = await config_revision(tx, installation_id)
+                revision = await config_revision(tx, installation_id, team_id=admitted.team_id)
                 if before_revision is not None and revision != before_revision:
                     raise HTTPException(409, "access_changed", headers={"Retry-After": "0"})
                 await self.console.fence.check(tx, admitted)

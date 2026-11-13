@@ -1,0 +1,56 @@
+# Owned protected-host service body. The deployment layer adds the image,
+# read-only secret/public-config mounts, networks, published ports and startup
+# dependencies. Build the existing server image with AWEB_EXTRA=protected.
+# Secret paths follow deploy/team/descriptors/signer.md; the controller is a
+# real uid1001-owned private-volume file, never a projected Secret symlink.
+services:
+  signer:
+    restart: unless-stopped
+    user: "1001:1001"
+    command:
+      - uvicorn
+      - aweb.protected_signing.host:create_app
+      - --factory
+      - --host
+      - 0.0.0.0
+      - --port
+      - "8080"
+      - --no-proxy-headers
+    environment:
+      AWEB_PROTECTED_PROFILE_FILE: ${SIGNER_PROFILE_FILE:?SIGNER_PROFILE_FILE is required, signer.profileFile}
+      AWEB_PROTECTED_SCOPE_FILE: ${SIGNER_SCOPE_FILE:?SIGNER_SCOPE_FILE is required, signer.scopeFile}
+      AWEB_PROTECTED_DATABASE_URL_FILE: /run/secrets/signer/database-url
+      AWEB_PROTECTED_DATABASE_SCHEMA: ${AWEB_PROTECTED_DATABASE_SCHEMA:-protected_signer}
+      AWEB_PROTECTED_DATABASE_USES_TRANSACTION_POOLER: ${AWEB_PROTECTED_DATABASE_USES_TRANSACTION_POOLER:-false}
+      AWEB_PROTECTED_CONTROLLER_KEY_FILE: /run/secrets/signer/private-controller/controller.key
+      AWEB_PROTECTED_MEMBER_KEYS_FILE: /run/secrets/signer/members.json
+      AWEB_PROTECTED_WORKER_UIDS: ${AWEB_PROTECTED_WORKER_UIDS:?AWEB_PROTECTED_WORKER_UIDS is required, signer.workerUids}
+      AWEB_PROTECTED_HUMAN_CSRF_KEY: ${AWEB_PROTECTED_HUMAN_CSRF_KEY:-aweb.protected.console.csrf}
+      # No value means Compose passes this only when x-env rendered it.
+      # An absent optional header must stay absent, not become an empty name.
+      AWEB_PROTECTED_TRUSTED_CLIENT_HEADER:
+      AWEB_PROTECTED_EMAIL_SMTP_HOST: ${AWEB_PROTECTED_EMAIL_SMTP_HOST:?AWEB_PROTECTED_EMAIL_SMTP_HOST is required, signer.emailSmtpHost}
+      AWEB_PROTECTED_EMAIL_SMTP_PORT: ${AWEB_PROTECTED_EMAIL_SMTP_PORT:?AWEB_PROTECTED_EMAIL_SMTP_PORT is required, signer.emailSmtpPort}
+      AWEB_PROTECTED_EMAIL_USERNAME: ${AWEB_PROTECTED_EMAIL_USERNAME:?AWEB_PROTECTED_EMAIL_USERNAME is required, signer.emailUsername}
+      AWEB_PROTECTED_EMAIL_FROM: ${AWEB_PROTECTED_EMAIL_FROM:?AWEB_PROTECTED_EMAIL_FROM is required, signer.emailFrom}
+      AWEB_PROTECTED_EMAIL_TLS: ${AWEB_PROTECTED_EMAIL_TLS:-starttls}
+      AWEB_PROTECTED_EMAIL_PASSWORD_FILE: /run/secrets/signer/smtp-password
+      AWEB_PROTECTED_EMAIL_CA_FILE: ${SIGNER_EMAIL_CA_FILE:-}
+    healthcheck:
+      test:
+        - CMD
+        - python
+        - -c
+        - |
+          import sys
+          from urllib.parse import urlsplit
+          from urllib.request import ProxyHandler, Request, build_opener
+          probe = Request("http://127.0.0.1:8080/readyz", headers={"Host": urlsplit(sys.argv[1]).netloc})
+          with build_opener(ProxyHandler({})).open(probe, timeout=2) as response:
+              if response.status != 200:
+                  raise SystemExit(1)
+        - ${SIGNER_REQUEST_ORIGIN:?SIGNER_REQUEST_ORIGIN is required, signer.requestOrigin}
+      interval: 30s
+      timeout: 5s
+      start_period: 30s
+      retries: 3

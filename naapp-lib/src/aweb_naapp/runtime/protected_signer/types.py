@@ -17,8 +17,9 @@ from aweb_naapp.runtime.passkeys.proof import ProtectedKeyContext
 
 
 class SignerRefused(ValueError):
-    def __init__(self, code: str):
+    def __init__(self, code: str, *, retry_after_seconds: float | None = None):
         self.code = code
+        self.retry_after_seconds = retry_after_seconds
         super().__init__(code)
 
 

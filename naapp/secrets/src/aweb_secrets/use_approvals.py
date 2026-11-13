@@ -95,7 +95,7 @@ async def _granted_policy(
         team_id,
         digest,
     )
-    return await records.policy(tx, installation_id, digest) if current else None
+    return await records.policy(tx, installation_id, digest, team_id=team_id) if current else None
 
 
 async def _action_policy(tx: TransactionManager, policy_ref: str) -> ActionPolicy | None:

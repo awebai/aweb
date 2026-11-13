@@ -25,6 +25,7 @@ from pgdbm.core import TransactionManager
 from aweb_naapp.console import apply_console_migrations
 from aweb_naapp.hooks.owner_act_nonces import Refused
 from aweb_naapp.roles import holding_scope
+from aweb_naapp.runtime.credential_audit import GovernanceUnavailable
 from aweb_naapp.runtime.human_role_acts import HumanRoleActs, PreparedHumanRoleAct
 from aweb_naapp.runtime.human_roles import HumanRoleHoldings
 from aweb_naapp.runtime.installation import AdmittedInstallation
@@ -308,6 +309,19 @@ async def test_a_designation_of_a_held_role_rolls_back_with_its_nonce(fx):
     assert not await consumed(fx, again)
     assert await read(fx) == first
     assert len(fx.applied) == 1
+
+
+async def test_a_designation_without_a_governance_target_is_unavailable_and_rolls_back(fx):
+    sent = delivery(fx, DESIGNATE, holder())
+    fx.world.target_registered[0] = False
+    with pytest.raises(GovernanceUnavailable):
+        await deliver(fx, sent)
+    assert not await consumed(fx, sent)
+    assert await read(fx) is None
+    assert fx.applied == []
+    fx.world.target_registered[0] = True
+    await deliver(fx, sent)
+    assert await read(fx) is not None
 
 
 async def test_a_designation_prepared_before_another_lands_is_refused_under_its_lock(fx):

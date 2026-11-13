@@ -5,7 +5,6 @@ import uuid
 from dataclasses import replace
 
 import pytest
-from aweb.protected_signing.custody import ProtectedControllerCustody
 from aweb_naapp.hooks.owner_act import owner_act_signing_bytes
 from aweb_naapp.runtime.protected_signer import (
     ProtectedKeyContext,
@@ -14,6 +13,8 @@ from aweb_naapp.runtime.protected_signer import (
 )
 from awid.did import did_from_public_key, stable_id_from_did_key
 from nacl.signing import SigningKey
+
+from aweb.protected_signing.custody import ProtectedControllerCustody
 
 
 @pytest.fixture

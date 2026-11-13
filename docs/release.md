@@ -6,7 +6,7 @@ commit.
 
 | Tag | Published artifact |
 |---|---|
-| `server-vX.Y.Z` | PyPI `aweb` |
+| `server-vX.Y.Z` | PyPI `aweb` and `ghcr.io/awebai/aweb-server` image |
 | `awid-service-vX.Y.Z` | PyPI `awid-service` |
 | `aweb-naapp-vX.Y.Z` | PyPI `aweb-naapp`, the shared naapp toolkit in `naapp-lib/`, then its dev-only test support `aweb-naapp-testing` (`naapp-lib/testing/`) at the same version |
 | `awid-vX.Y.Z` | `ghcr.io/awebai/awid` image |
@@ -41,7 +41,8 @@ values package, must equal the tag. The aw spelling is SemVer:
 
 The coordinator publishes these RCs first. The Cloud candidate pins the exact
 RC versions and must pass its ordinary pin gate against real services before
-OSS final publication and Cloud deployment. Python RCs publish to PyPI. Every
+OSS final publication and Cloud deployment. Python RCs publish to PyPI; server RCs also publish the immutable RC image tag
+without moving `latest`. Final server images update `latest`. Every
 aw RC npm package publishes with `--tag next`; final packages use `latest`
 unless the release explicitly stages the final on `next` as described below.
 The downstream `awebai/aw` workflow accepts `v*`, uses the synced
@@ -107,8 +108,10 @@ shared build commands in `scripts/publish_release.py`, root checkout filters
 Python's root `pyproject.toml`, `uv.toml`, `uv.lock`, `.python-version` and PyPI
 workflow; Go's root `go.work`, `go.work.sum`, aw release workflow and shared
 `scripts/npm-exact-publish.sh` packing recipe.
-Unrelated files elsewhere, including the root Makefile and another package's
-source, do not force a new RC of this package.
+The server image also bundles `awid/` and `naapp-lib/`, so those trees, the
+root `.dockerignore`, service image workflow and `scripts/oci-exact-publish.sh`
+are server RC inputs. Unbundled package source and unrelated files such as the
+root Makefile do not force a new RC.
 
 Within that scope, only manifest versions and exact dependency pins or
 lower-bound floors on promoted packages may move to the same final base.
@@ -207,7 +210,7 @@ absence, and removes the temporary root and buildx configuration. It never
 prunes or restarts shared Docker. The suite's existing 10GB prune applies only
 to its own builder during the run; that builder is removed at the end.
 
-Evidence stays in `/tmp/aweb-candidate-gate-<SHA>/`: `owned-resources.tsv`, raw
+Evidence stays in `/tmp/aweb-candidate-gate-<SHA>-<run-id>/`: `owned-resources.tsv`, raw
 host snapshots, `host-before.json`, `host-after.json`, and
 `host-recovery.json`. On macOS, cleanup passes only if Docker VM total `lsof`
 rows return to at most their baseline plus 5,000. The host-wide `kern.num_files`
@@ -325,3 +328,141 @@ publish the version-only OSS finals and deploy the paired Cloud/Folio release.
 
 There are no release-intent tags, done tags, release branches, workflow
 monitors, or cross-repository release transactions.
+
+### Candidate journey networks
+
+Candidate Compose services do not publish host ports. The candidate Docker
+wrapper adds project-scoped service aliases, creates
+run-labelled networks and attaches the runner before `compose up`, `create` or
+`run`. Compose adopts these networks using their project/network labels and
+unchanged nonexternal definitions; creation options and existing service aliases
+are preserved. The wrapper detaches the runner before `compose down`. Service
+clients use those names and the service's container port. Both producers and
+consumers call `scripts/candidate-network.py hostname PROJECT SERVICE`: it uses
+at most 30 readable ASCII characters and a 128-bit SHA-256 prefix of the JSON
+project/service pair, followed by `.test`. The first label is at most 63 bytes,
+the whole hostname at most 68; truncation, normalization and ambiguous hyphen
+joins cannot erase the pair's hash. Container and network resource names are
+unchanged. Temporary A2A clients
+also join their journey network. Existing federation DNS/TLS aliases remain.
+Services using `network_mode: service:aweb` retain that shared namespace and
+its signed loopback audience; the overlay adds no separate networks to them.
+The local quickstart test's loopback bridge stays inside the runner and forwards
+to the direct service endpoints; it does not use a host-published port.
+Standalone host journeys retain their existing host endpoint configuration.
+
+Every wrapped Compose command ends with `exec`, so exit statuses and the
+caller's timeout/kill target remain the Docker CLI. A failed startup can leave
+the runner attached to its network without a running service. Compose removes
+the networks on `down` after runner detachment, so sequential journeys release
+address pools. Gate cleanup removes any remaining run-labelled networks and
+checks for leaks. Compose overlays likewise live under the run-owned bind root and are removed by gate cleanup, including after a CLI timeout. Cleanup
+fails if that root survives; the focused tests exercise this check with an
+overlay-retention mutation.
+
+The runner pins `docker-compose-plugin` to `5.7.1-1~debian.12~bookworm` and
+verifies the installed package against that pin during the image build. The
+checks stage runs `ComposeAdoptionTests`: pre-created default/internal network
+IDs must stay unchanged, the runner must reach a service alias, and `down` must
+remove both networks before fallback cleanup. Keep this guard when upgrading
+Compose. Caller-declared external networks are refused before Docker access.
+
+The only candidate publication controls are
+`HostPublishedPortTests.test_docker_assigned_published_port_is_reserved_by_its_service`
+and `ComposeNetworkTests.test_real_services_start_despite_competing_host_port_and_stay_isolated`.
+Docker chooses and holds the actual published binding in both. The first runs
+on the Docker host from the exact candidate checkout when checks is pending,
+before the bridge runner starts. It requires the original mapping and distinct
+HTTP response to survive a competitor's attempt: Linux refuses that attempt;
+Desktop may start the competitor with no host mapping. Either outcome must
+leave the original response reachable through the host's real loopback socket.
+The probe pins a multi-architecture index; its diagnostics and failures remain
+in checks evidence. The remaining Docker boundaries run inside the runner.
+The latter holds
+a competing host port while two intended services start successfully without
+publishing, serves distinct responses over their scoped aliases, exercises a
+sibling client, and checks that one journey cannot resolve the other's service.
+Run its focused proof in an approved Docker slot:
+
+```sh
+AWEB_TEST_DOCKER_NETWORK=1 python3 scripts/test_candidate_network.py ComposeAdoptionTests ComposeNetworkTests ComposeExitStatusTests ComposeTimeoutTests -v
+```
+
+The diagnostic commits preceding this change demonstrated a possible socket and
+journey-container reservation gap. They did not establish the historical
+forwarding incident's cause. Those candidate paths no longer allocate host
+ports; their failing diagnostics are replaced by the positive network regression
+and endpoint controls. Reachability errors report the service, address, network
+path and underlying curl error separately from an application health response.
+
+Each gate invocation retains distinct logs even at the same SHA. The ordinary
+ledger still serializes/reuses proof for a tree. An explicitly authorized
+concurrency proof uses separate `AWEB_GATE_LEDGER` directories for its two runs;
+it must not share either ledger or retained artifact directory. Resource labels,
+Compose project names, networks, workspaces and logs remain unique per run.
+
+## Server OCI image
+
+A `server-v*` tag dispatches both the Python and image publishers. The PyPI
+workflow selects `--only pypi`; the service image workflow selects `--only oci`,
+so each needs only its own registry credentials. Runnerless publication without
+`--only` publishes both. Both selectors still validate the tagged manifest and
+RC-to-final source identity before checking out that exact commit.
+
+The image uses `server/Dockerfile` with the repository root context and builds
+`linux/amd64` and `linux/arm64` into one OCI archive. The shared exact OCI helper
+checks the complete archive and each platform's version/source labels before
+publication. Version tags are immutable: a different existing digest refuses;
+an identical one is adopted. The publisher reads back the published index and
+prints `release-index` with its digest, source SHA and version. Deployments pin
+`ghcr.io/awebai/aweb-server@sha256:...` using that receipt. This is the ordinary
+server image; it adds no protected signer variant.
+
+`python3 scripts/test_server_image_publish.py` runs the dispatch, identity,
+immutability, readback and archive-handoff controls without Docker.
+`make test-server-image-build` builds both platforms through the same publisher
+function, validates the archive with the exact helper, and runs the packaged
+imports and server CLI as the image's non-root user on the Docker daemon's
+**native** platform only. Both runtime probes have a 120-second bound.
+A one-host PASS qualifies only the platform printed in its receipt.
+
+Complete platform qualification requires the same archive, index and source SHA
+on native Linux amd64 and native Linux arm64 hosts. On the authorized x86 build
+host (Docker buildx, skopeo and build support for both architectures):
+
+```sh
+AWEB_SERVER_IMAGE_ARCHIVE_OUT=/evidence/server.oci.tar make test-server-image-build
+```
+
+The output path must not already exist. Preserve the archive and its printed
+SHA-256/size/index/source receipt. Transfer it to the authorized ARM host and
+verify its file hash. From the **same source checkout SHA** on that host (Docker
+and skopeo; no build or emulated execution needed):
+
+```sh
+AWEB_SERVER_IMAGE_ARCHIVE_IN=/evidence/server.oci.tar make test-server-image-build
+```
+
+An input archive must exist: the ARM run never silently rebuilds it. Each host
+validates both platforms and their version/source labels before loading its
+native variant, and prints the same archive identity with its actual native
+platform. The external input/output archive survives test cleanup for transfer
+and audit; the operator owns its final removal. Probe containers and loaded
+image tags are removed by the test. With neither variable, the archive is
+temporary and removed after the one-host run. Input and output are exclusive.
+
+These tests do not publish to a registry. The tag publisher's authenticated
+readback establishes registry digest and source identity, not public pullability.
+
+Before the first server image release, the coordinator must arrange package
+provisioning and the release identity's access, including any separately authorized
+first-publication bootstrap, so authenticated tag listing succeeds. An unavailable
+listing remains a refusal; a 403 or 404 is not permission to assume absence.
+
+The coordinator must also arrange public package visibility and verify
+anonymous retrieval in an environment with no registry credentials. Read the
+immutable version tag, require its index digest to equal the publication receipt,
+and fetch both platform manifests, configs and layers by digest. Record that
+anonymous-read result alongside the source and digest receipt before declaring
+the server image publicly pullable. Authenticated publication success alone does
+not complete this acceptance step.

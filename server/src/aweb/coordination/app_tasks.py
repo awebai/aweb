@@ -13,14 +13,15 @@ from aweb.app_credentials import APP_REQUEST, PURPOSES, AppCredential, verify_ap
 from aweb.claims import release_task_claims_on
 from aweb.service_errors import ConflictError, ForbiddenError, NotFoundError, ValidationError
 from aweb.task_contracts import validate_app_task
-from aweb.team_auth import parse_and_verify_certificate
+from awid.team_certificate import TeamCertificateError
+from aweb.team_auth import certificate_refusal, parse_and_verify_certificate
 from .tasks_service import (
     _allocate_root_task_seq_on, _allocate_task_number_on, _answer_receipt,
     _encode_alpha_component, _get_team_slug, format_task_ref,
 )
 
 from aweb_naapp.runtime.task_requests import (
-    AUTHORIZATION_PREFIX, TaskRequestRefused, task_body_sha256,
+    TaskRequestRefused, task_body_sha256,
     verify_task_authorization as shared_verify_task_authorization,
     verify_stage_receipt as shared_verify_stage_receipt,
 )
@@ -81,18 +82,18 @@ async def verify_authorization_certificate(request, authorization):
         revoked = await registry.get_team_revocations_fresh(domain, name)
     except Exception as exc:
         raise HTTPException(status_code=503, detail="authority_unavailable") from exc
-    if payload["certificate_id"] in revoked:
-        raise HTTPException(status_code=401, detail="certificate_revoked")
+    certificates = await _current_certificates(request, payload["team_id"])
     try:
         info = parse_and_verify_certificate(authorization["certificate"],
             request_did_key=payload["actor_did_key"],
-            team_public_key_resolver=lambda _: team_key,
-            revocation_checker=lambda team, cert: cert in revoked)
-    except ValueError as exc:
-        raise HTTPException(status_code=401, detail="signature_invalid") from exc
+            team_did_key=team_key,
+            revoked_certificate_ids=revoked,
+            registered_certificate_ids={c.certificate_id for c in certificates})
+    except TeamCertificateError as exc:
+        raise certificate_refusal(exc) from exc
+    # The team key is the payload's team's: the certificate must name that team.
     if info["team_id"] != payload["team_id"] or info["certificate_id"] != payload["certificate_id"]:
         raise HTTPException(status_code=401, detail="signature_invalid")
-    certificates = await _current_certificates(request, payload["team_id"])
     matches = [c for c in certificates if c.certificate_id == info["certificate_id"]
                and c.member_did_key == info["did_key"]
                and (c.member_did_aw or "") == info["member_did_aw"] and not c.revoked_at]

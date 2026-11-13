@@ -6,13 +6,14 @@ from types import SimpleNamespace
 
 import httpx
 import pytest
-from aweb.protected_signing.host import HostSettings, create_app
-from aweb.protected_signing.notifications import ProtectedNotifications
 from aweb_naapp.email import EmailNotSent
 from aweb_naapp.runtime.approvals import DeliveryStatus
 from aweb_naapp.runtime.protected_signer import SignerRefused
 from pydantic import SecretStr, ValidationError
 from starlette.requests import Request
+
+from aweb.protected_signing.host import HostSettings, create_app
+from aweb.protected_signing.notifications import ProtectedNotifications
 from tests.test_protected_service_profile import FIXTURE
 
 
@@ -59,6 +60,101 @@ def test_incomplete_environment_error_does_not_echo_database_password(monkeypatc
         HostSettings(_env_file=None)
     assert secret not in str(caught.value)
     assert "input_value" not in str(caught.value)
+
+
+def file_settings(tmp_path, content=b"postgresql://signer:SYNTH@db/protected\n"):
+    fields = settings(tmp_path).model_dump()
+    fields.pop("database_url")
+    filename = tmp_path / "database-url"
+    filename.write_bytes(content)
+    filename.chmod(0o400)
+    fields["database_url_file"] = filename
+    return fields
+
+
+def test_database_url_file_reuses_whole_dsn_and_keeps_existing_settings_port(tmp_path):
+    fields = file_settings(tmp_path)
+    config = HostSettings(**fields)
+    assert (
+        config.database_url.get_secret_value()
+        == "postgresql://signer:SYNTH@db/protected"
+    )
+    assert "SYNTH" not in repr(config)
+    assert HostSettings.model_validate(config).database_url == config.database_url
+
+
+def test_database_url_file_accepts_readonly_projected_file_symlink(tmp_path):
+    fields = file_settings(tmp_path)
+    projected = tmp_path / "projected-url"
+    projected.symlink_to(fields["database_url_file"])
+    fields["database_url_file"] = projected
+    assert (
+        HostSettings(**fields).database_url.get_secret_value().endswith("@db/protected")
+    )
+
+
+@pytest.mark.parametrize(
+    "content", [b"", b"\n", b"SYNTH\nsecond", b"\xffSYNTH", b"SYNTH\x00", b"x" * 1025]
+)
+def test_invalid_database_file_refuses_without_echoing_contents(tmp_path, content):
+    with pytest.raises(ValidationError) as caught:
+        HostSettings(**file_settings(tmp_path, content))
+    assert "SYNTH" not in str(caught.value)
+    assert "input_value" not in str(caught.value)
+    assert "protected_database_url_file_invalid" in str(caught.value)
+
+
+@pytest.mark.parametrize("mode", [0o620, 0o602])
+def test_writable_database_file_refuses(tmp_path, mode):
+    fields = file_settings(tmp_path)
+    fields["database_url_file"].chmod(mode)
+    with pytest.raises(ValidationError, match="protected_database_url_file_invalid"):
+        HostSettings(**fields)
+
+
+def test_missing_database_file_refuses_without_exposing_the_input(tmp_path):
+    fields = file_settings(tmp_path)
+    fields["database_url_file"].unlink()
+    with pytest.raises(
+        ValidationError, match="protected_database_url_file_invalid"
+    ) as caught:
+        HostSettings(**fields)
+    assert "SYNTH" not in str(caught.value)
+
+
+def test_database_file_and_value_refuse_ambiguous_configuration(tmp_path):
+    fields = file_settings(tmp_path)
+    fields["database_url"] = SecretStr("postgresql://other:SYNTH@db/other")
+    with pytest.raises(
+        ValidationError, match="protected_database_url_sources_conflict"
+    ) as caught:
+        HostSettings(**fields)
+    assert "SYNTH" not in str(caught.value)
+
+
+def test_database_url_file_environment_input(tmp_path, monkeypatch):
+    fields = file_settings(tmp_path)
+    filename = fields.pop("database_url_file")
+    monkeypatch.delenv("AWEB_PROTECTED_DATABASE_URL", raising=False)
+    monkeypatch.setenv("AWEB_PROTECTED_DATABASE_URL_FILE", str(filename))
+    assert (
+        HostSettings(**fields).database_url.get_secret_value().endswith("@db/protected")
+    )
+
+
+@pytest.mark.asyncio
+async def test_readiness_is_unavailable_before_startup_and_only_on_request_origin(
+    tmp_path,
+):
+    host = create_app(settings(tmp_path), mailer=CapturedMail())
+    async with httpx.AsyncClient(transport=httpx.ASGITransport(app=host)) as client:
+        response = await client.get("https://signer.customer.example/readyz")
+        assert response.status_code == 503
+        assert response.json() == {"ready": False}
+        assert response.headers["cache-control"] == "no-store"
+        assert (
+            await client.get("https://human.customer.example/readyz")
+        ).status_code == 404
 
 
 def test_limiter_ignores_spoofed_header_by_default_and_separates_trusted_clients(

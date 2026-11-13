@@ -3,18 +3,17 @@ from __future__ import annotations
 
 import base64
 import hashlib
-from datetime import datetime, timedelta, timezone
+from datetime import UTC, datetime, timedelta
 
 import pytest
 from fastapi import FastAPI, HTTPException
 from starlette.requests import Request
 
-from awid.did import did_from_public_key, generate_keypair
-from awid.controller_request import verify_controller_json_request
 from awid import dns_auth
+from awid.controller_request import verify_controller_json_request
+from awid.did import did_from_public_key, generate_keypair
 from awid.protected_request import verify_protected_request
 from awid.signing import canonical_json_bytes, sign_message
-
 
 ORIGIN = 'https://signer.customer.example'
 SERVICE = 'customer-signer'
@@ -33,7 +32,7 @@ def signed_request(*, operation=OPERATIONS[0][0], method='POST', body=b'{}',
                    overrides=None, raw_payload=None, timestamp=None):
     private, public = generate_keypair()
     did = did_from_public_key(public)
-    timestamp = timestamp or datetime.now(timezone.utc).isoformat()
+    timestamp = timestamp or datetime.now(UTC).isoformat()
     fields = {
         'v': 2, 'type': 'aweb.awid-controller-request',
         'aud': ORIGIN, 'domain': DOMAIN, 'operation': operation,
@@ -127,7 +126,7 @@ async def test_missing_or_malformed_covering_headers_never_fall_back(field, valu
 @pytest.mark.asyncio
 @pytest.mark.parametrize('seconds', [-301, 301])
 async def test_stale_or_future_proofs_refuse(seconds):
-    timestamp = (datetime.now(timezone.utc) + timedelta(seconds=seconds)).isoformat()
+    timestamp = (datetime.now(UTC) + timedelta(seconds=seconds)).isoformat()
     _, headers, body = signed_request(timestamp=timestamp)
     with pytest.raises(HTTPException) as exc:
         await verify(request(headers, body))
@@ -206,7 +205,7 @@ async def test_protected_proof_cannot_authorize_an_awid_controller_operation(reg
 async def test_awid_controller_proof_cannot_prepare_a_protected_operation(registry_origin):
     private, public = generate_keypair()
     did = did_from_public_key(public)
-    timestamp = datetime.now(timezone.utc).isoformat()
+    timestamp = datetime.now(UTC).isoformat()
     body = b'{}'
     raw = canonical_json_bytes({
         'v': 2, 'type': 'aweb.awid-controller-request', 'aud': registry_origin,
@@ -236,7 +235,7 @@ async def test_awid_controller_proof_cannot_prepare_a_protected_operation(regist
 @pytest.mark.asyncio
 @pytest.mark.parametrize('elapsed,allowed', [(299, True), (300, True), (301, False)])
 async def test_body_wait_does_not_extend_the_original_timestamp_window(monkeypatch, elapsed, allowed):
-    started = datetime(2026, 11, 11, tzinfo=timezone.utc)
+    started = datetime(2026, 11, 11, tzinfo=UTC)
     current = started
     monkeypatch.setattr(dns_auth, '_utc_now', lambda: current)
     did, headers, body = signed_request(timestamp=started.isoformat())

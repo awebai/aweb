@@ -35,32 +35,37 @@ async def apply_change_policy_migrations(db: AsyncDatabaseManager) -> None:
     ).apply_pending_migrations()
 
 
-async def four_eyes(db: AsyncDatabaseManager | TransactionManager, installation_id: str) -> str:
+async def four_eyes(
+    db: AsyncDatabaseManager | TransactionManager, installation_id: str, *, team_id: str
+) -> str:
     """The installation's setting: ``required`` or ``not_required``."""
     value = await db.fetch_value(
-        "SELECT distinct_approver FROM {{tables.change_set_settings}} WHERE installation_id = $1",
+        "SELECT distinct_approver FROM {{tables.change_set_settings}} WHERE installation_id = $1 AND team_id = $2",
         installation_id,
+        team_id,
     )
     return str(value or "not_required")
 
 
-async def lock_four_eyes(tx: TransactionManager, installation_id: str) -> str:
+async def lock_four_eyes(tx: TransactionManager, installation_id: str, *, team_id: str) -> str:
     """The installation's setting, read under its row lock. Every writer that
     also claims or bumps the configuration revision takes this lock first."""
-    return await _locked_setting(tx, installation_id)
+    return await _locked_setting(tx, installation_id, team_id=team_id)
 
 
-async def _locked_setting(tx: TransactionManager, installation_id: str) -> str:
+async def _locked_setting(tx: TransactionManager, installation_id: str, *, team_id: str) -> str:
     await tx.execute(
-        "INSERT INTO {{tables.change_set_settings}} (installation_id) VALUES ($1)"
-        " ON CONFLICT (installation_id) DO NOTHING",
+        "INSERT INTO {{tables.change_set_settings}} (installation_id, team_id) VALUES ($1, $2)"
+        " ON CONFLICT (installation_id, team_id) DO NOTHING",
         installation_id,
+        team_id,
     )
     return str(
         await tx.fetch_value(
             "SELECT distinct_approver FROM {{tables.change_set_settings}}"
-            " WHERE installation_id = $1 FOR UPDATE",
+            " WHERE installation_id = $1 AND team_id = $2 FOR UPDATE",
             installation_id,
+            team_id,
         )
     )
 
@@ -87,26 +92,28 @@ async def require_four_eyes(
 ) -> None:
     """Require four eyes, as an owner's direct narrowing act. Refused unless
     the installation has at least two enrolled owners."""
-    await _locked_setting(tx, installation_id)
+    await _locked_setting(tx, installation_id, team_id=team_id)
     await _require_owners(tx, installation_id=installation_id, team_id=team_id, directory=directory)
-    revision = await bump_config_revision(tx, installation_id)
+    revision = await bump_config_revision(tx, installation_id, team_id=team_id)
     await tx.execute(
         "UPDATE {{tables.change_set_settings}} SET distinct_approver = 'required',"
-        " revision = $2, updated_at = NOW() WHERE installation_id = $1",
+        " revision = $3, updated_at = NOW() WHERE installation_id = $1 AND team_id = $2",
         installation_id,
+        team_id,
         revision,
     )
 
 
-async def relax_four_eyes(tx: TransactionManager, *, installation_id: str) -> None:
+async def relax_four_eyes(tx: TransactionManager, *, installation_id: str, team_id: str) -> None:
     """Relax four eyes, as the effect of a confirmed change set, which has
     already claimed the configuration revision in this transaction."""
-    await _locked_setting(tx, installation_id)
+    await _locked_setting(tx, installation_id, team_id=team_id)
     await tx.execute(
         "UPDATE {{tables.change_set_settings}} SET distinct_approver = 'not_required',"
-        " revision = $2, updated_at = NOW() WHERE installation_id = $1",
+        " revision = $3, updated_at = NOW() WHERE installation_id = $1 AND team_id = $2",
         installation_id,
-        await config_revision(tx, installation_id),
+        team_id,
+        await config_revision(tx, installation_id, team_id=team_id),
     )
 
 
@@ -124,7 +131,7 @@ async def keep_four_eyes_owners(
     passkey is unavailable throughout the mandatory cooling-off period. B3's
     directory reader uses its own connection, so the explicit exclusion also
     accounts for a recovery designation not yet committed by this transaction."""
-    if await _locked_setting(tx, installation_id) == "required":
+    if await _locked_setting(tx, installation_id, team_id=team_id) == "required":
         await _require_owners(
             tx,
             installation_id=installation_id,

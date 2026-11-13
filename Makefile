@@ -2,7 +2,7 @@
 # the proxy; the hard runner instead preserves DNS/connection error semantics.
 TEST_EGRESS_RUNNER ?= python3 $(abspath scripts/test-egress/native.py) --
 
-.PHONY: help clean test test-shipping test-server naapp-sync lint-naapp test-naapp test-awid test-awid-pooler test-cli test-cli-auth-v2 test-node-deps test-channel test-channel-name-live-contract test-channel-core test-wake-channel-core-bundle test-channel-core-process-guard test-pi-extension candidate-gate test-candidate-ledger release-candidate release-publish test-sot-source-inventories test-vector-provenance test-federation-error-reference regenerate-federation-error-reference test-cli-reference regenerate-cli-reference test-mcp-tools-reference prepare-oats-test-root check-oats-launch-environment-contract check-oats-pi-launch-order test-oats test-oats-proof-helpers test-tmux-guard test-a2a test-e2e test-federation-harness test-federation-e2e test-a2a-gateway-e2e check-a2a-copy-guardrails check-extension-docs build \
+.PHONY: help clean test test-shipping test-server naapp-sync lint-naapp test-naapp test-awid test-awid-pooler test-cli test-cli-auth-v2 test-node-deps test-channel test-channel-name-live-contract test-channel-core test-wake-channel-core-bundle test-channel-core-process-guard test-pi-extension candidate-gate test-candidate-ledger release-candidate release-publish test-sot-source-inventories test-vector-provenance test-federation-error-reference regenerate-federation-error-reference test-cli-reference regenerate-cli-reference test-mcp-tools-reference prepare-oats-test-root check-oats-launch-environment-contract check-oats-pi-launch-order test-oats test-oats-proof-helpers test-tmux-guard test-a2a test-e2e test-federation-harness test-federation-e2e test-a2a-gateway-e2e test-team-deployment-e2e check-a2a-copy-guardrails check-extension-docs build \
 	freshness check-go-vulnerability-audit check-node-audit check-exception-deadlines test-go-vulnerability-audit \
 	selfhost-up selfhost-down selfhost-logs awid-up awid-down awid-logs \
 	e2e-library-stack e2e-library-stack-up e2e-library-stack-seed e2e-library-stack-down \
@@ -13,7 +13,7 @@ TEST_EGRESS_RUNNER ?= python3 $(abspath scripts/test-egress/native.py) --
 	test-channel-integration \
 	sync-doc-copies sync-skill-copies list-awid-site-docs sync-awid-site-docs check-awid-site-docs verify-site deploy-site \
 	test-npm-exact-publish test-pypi-exact-publish test-oci-exact-publish \
-	cli-e2e _candidate-gate-docker-boundaries _candidate-channel-version _candidate-node-deps \
+	cli-e2e _candidate-gate-docker-boundaries _candidate-gate-compose-adoption _candidate-channel-version _candidate-node-deps \
 	_candidate-unit-channel _candidate-unit-channel-core _candidate-unit-pi _candidate-oats _candidate-oats-proof-helpers \
 	_candidate-artifact-server _candidate-artifact-awid-package _candidate-artifact-awid-image \
 	_candidate-artifact-naapp-package check-naapp-lib-package \
@@ -42,6 +42,8 @@ OATS_TEST_ROOT ?= $(OATS_PINNED_ROOT)
 AWID_SITE_DOC_NAMES := identity-guide.md trust-model.md hosted-global-bootstrap.md
 AWID_SITE_DOC_SOURCE_DIR ?= docs
 AWID_SITE_DOC_MIRROR_DIR ?= awid/site/static
+CODEX_SKILL_COPY_DIR ?= packages/codex-plugin/skills
+OATS_TASK_SKILL_COPY_DIR ?= oats/.agents/capabilities/owned/aweb-tasks/skills
 AWID_SITE_DOC_MIRRORS := $(addprefix $(AWID_SITE_DOC_MIRROR_DIR)/,$(AWID_SITE_DOC_NAMES))
 SITE_DEPLOY_BRANCH ?= deploy-awid-landing
 
@@ -140,15 +142,27 @@ build: sync-doc-copies
 test: test-egress-controls check-aw-commit-repo-stamp check-cli-go-tidy test-identity-primitives test-python-locks test-sot-source-inventories test-vector-provenance test-federation-error-reference test-federation-authority-mutations test-federation-harness test-cli-reference test-mcp-tools-reference test-server test-awid test-cli test-channel test-channel-name-live-contract test-channel-core test-wake-channel-core-bundle test-pi-extension test-oats test-oats-proof-helpers test-tmux-guard test-release-cli-version test-npm-exact-publish test-pypi-exact-publish test-oci-exact-publish test-go-vulnerability-audit
 
 test-shipping:
+	$(MAKE) test-vm-gate
 	python3 scripts/test_fixture_repo.py
 	python3 scripts/test_shipping.py
+	python3 scripts/test_server_image_publish.py
 	python3 scripts/test_aw_npm_publication.py
 	python3 scripts/test_candidate_cleanup.py
 	python3 scripts/test_candidate_disk_floor.py
-	python3 scripts/test_candidate_ports.py
+	python3 scripts/test_candidate_network.py
+	python3 scripts/test_candidate_bind_ownership.py
+	python3 scripts/test_candidate_published_port.py
 	python3 scripts/test_folio_wakes_gate.py
 	python3 scripts/test_user_paths_gate.py
 	python3 scripts/test_fetch_released_aw.py
+
+.PHONY: test-server-image-build
+test-server-image-build:
+	AWEB_TEST_SERVER_IMAGE_BUILD=1 python3 scripts/test_server_image_publish.py ServerPlatformBuildTests -v
+
+.PHONY: test-vm-gate
+test-vm-gate:
+	PYTHONPATH=scripts/vm-gate uv run --no-project --python 3.12 --with-requirements scripts/vm-gate/requirements.txt python -m unittest discover -s scripts/vm-gate/tests -v
 
 # AWID metadata is repeated in every committed Python lock that takes the in-repo
 # awid (awid, server, naapp-lib and each naapp). Check them all without repair,
@@ -268,10 +282,21 @@ check-node-audit:
 
 # Runtime copies ship in Git for source-based plugin/capability installs. Edit
 # skills/ and docs/, then sync; normal builds regenerate these copies too.
+.PHONY: check-generated-copies test-generated-copies
+# All sync-* generators belong under sync-doc-copies. Check the regenerated
+# tracked and untracked outputs before link checks/builds can repair stale copies.
+check-generated-copies: sync-doc-copies
+	@set -e; status=$$(git status --porcelain=v1 -uall -- "$(CODEX_SKILL_COPY_DIR)" "$(OATS_TASK_SKILL_COPY_DIR)" "$(AWID_SITE_DOC_MIRROR_DIR)"); \
+	if [ -n "$$status" ]; then printf '%s\n' "Generated copies differ from committed files:" "$$status"; exit 1; fi
+
+test-generated-copies:
+	python3 scripts/test_generated_copies.py
+
 sync-doc-copies: sync-skill-copies sync-awid-site-docs
 
 sync-skill-copies:
-	bash scripts/sync-skill-copies.sh
+	CODEX_SKILL_COPY_DIR="$(abspath $(CODEX_SKILL_COPY_DIR))" \
+	OATS_TASK_SKILL_COPY_DIR="$(abspath $(OATS_TASK_SKILL_COPY_DIR))" bash scripts/sync-skill-copies.sh
 
 list-awid-site-docs:
 	@for name in $(AWID_SITE_DOC_NAMES); do printf '%s\n' "$$name"; done
@@ -441,7 +466,8 @@ test-a2a:
 
 test-e2e:
 	python3 scripts/test_controller_key_absence_guard.py
-	AWEB_TEST_DOCKER_PORTS=1 python3 scripts/test_oss_user_journey.py
+	python3 scripts/test_oss_user_journey.py
+	AWEB_TEST_DOCKER_NETWORK=1 python3 scripts/test_candidate_network.py ComposeNetworkTests ComposeExitStatusTests ComposeTimeoutTests
 	./scripts/e2e-oss-user-journey.sh
 	./scripts/test-e2e-controller-key-absence-guard.sh
 
@@ -452,6 +478,21 @@ test-federation-e2e:
 
 test-a2a-gateway-e2e:
 	./scripts/e2e-a2a-gateway-docker.sh
+
+# The team deployment journey (deploy/team) on this Docker host: every image
+# from this clean checkout into TEAM_DEPLOYMENT_REGISTRY (a disposable local
+# registry), then the journey in a run directory of its own. With
+# OATS_SOURCE, a clean OATS checkout at its pinned commit, the agents and
+# their egress too.
+TEAM_DEPLOYMENT_REGISTRY ?= localhost:5000
+TEAM_DEPLOYMENT_PROJECT ?= teamcompose
+test-team-deployment-e2e:
+	@test -n "$(TEAM_DEPLOYMENT_RUN_DIR)" || { echo "TEAM_DEPLOYMENT_RUN_DIR is required: a new directory for this run" >&2; exit 2; }
+	mkdir -p "$(TEAM_DEPLOYMENT_RUN_DIR)"
+	./scripts/e2e/team-deployment-images.sh "$(TEAM_DEPLOYMENT_REGISTRY)" "$(TEAM_DEPLOYMENT_RUN_DIR)/images.txt" $(OATS_SOURCE)
+	uv run --project naapp/secrets python scripts/e2e/team_deployment_journey.py \
+		--run-dir "$(TEAM_DEPLOYMENT_RUN_DIR)/journey" --project "$(TEAM_DEPLOYMENT_PROJECT)" \
+		--images "$(TEAM_DEPLOYMENT_RUN_DIR)/images.txt" $(if $(OATS_SOURCE),--oats-source "$(OATS_SOURCE)")
 
 check-a2a-copy-guardrails:
 	./scripts/check-a2a-copy-guardrails.sh
@@ -608,6 +649,9 @@ test-release-cli-version:
 # ── Unified release ──────────────────────────────────────────────────
 
 # Internal steps consumed only by the complete local candidate map.
+_candidate-gate-compose-adoption:
+	AWEB_TEST_DOCKER_NETWORK=1 python3 scripts/test_candidate_network.py ComposeAdoptionTests -v
+
 _candidate-gate-docker-boundaries:
 	@test -n "$(CANDIDATE_GATE_IMAGE)" || (echo "CANDIDATE_GATE_IMAGE is required"; exit 2)
 	python3 scripts/e2e/test_candidate_gate_docker_boundaries.py --image "$(CANDIDATE_GATE_IMAGE)"
@@ -726,6 +770,7 @@ test-isolated:
 
 .PHONY: test-egress-controls
 test-egress-controls:
+	python3 scripts/test-egress/test_dns.py -v
 	python3 -m unittest discover -s scripts/test-egress -p test_native.py -v
 
 # The shared page renderer is packaged in the Python wheel. Rebuild from its

@@ -13,7 +13,8 @@ from aweb.identity_binding import verify_identity_binding
 from aweb.id_chain_auth import authenticate_id_chain
 from aweb.messaging.room import _active_member, _post_dict, _uuid
 from aweb.service_errors import ServiceError
-from aweb.team_auth import parse_and_verify_certificate
+from awid.team_certificate import TeamCertificateError
+from aweb.team_auth import certificate_refusal, parse_and_verify_certificate
 from aweb.team_auth_deps import (
     TeamIdentity,
     _aweb_db,
@@ -81,31 +82,32 @@ async def _refresh_room_authority(request, db, identity):
             raise HTTPException(status_code=403, detail="Room grant out of scope")
     else:
         team_key = await _resolve_team_key(authority_request, identity.team_id)
+        if not team_key:
+            raise HTTPException(status_code=401, detail="unknown_team")
         revoked = await _get_revoked_certificates(authority_request, identity.team_id)
+        # None while the registered-certificate requirement is off (aweb-acya.9).
+        registered = (
+            await _get_registered_certificates(authority_request, identity.team_id)
+            if require_registered_certificates()
+            else None
+        )
         try:
             cert = parse_and_verify_certificate(
                 request.headers.get("X-AWID-Team-Certificate", ""),
                 request_did_key=identity.did_key,
-                team_public_key_resolver=lambda team: (
-                    team_key if team == identity.team_id else ""
-                ),
-                revocation_checker=lambda team, certificate: certificate in revoked,
+                team_did_key=team_key,
+                revoked_certificate_ids=revoked,
+                registered_certificate_ids=registered,
             )
-        except ValueError as exc:
-            raise HTTPException(status_code=403, detail=str(exc)) from exc
+        except TeamCertificateError as exc:
+            raise certificate_refusal(exc) from exc
+        # The team key is the identity's team's: the certificate must name
+        # that team, and be the one the session was admitted with.
         if (
             cert["team_id"] != identity.team_id
             or cert["certificate_id"] != identity.certificate_id
         ):
             raise HTTPException(status_code=403, detail="Room membership changed")
-        if require_registered_certificates():
-            registered = await _get_registered_certificates(
-                authority_request, identity.team_id
-            )
-            if identity.certificate_id not in registered:
-                raise HTTPException(
-                    status_code=403, detail="Room certificate not registered"
-                )
     binding = await verify_identity_binding(
         authority_request,
         did_key=identity.did_key,

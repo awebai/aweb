@@ -6,9 +6,9 @@ import os
 
 import httpx
 import pytest
-from aweb.protected_signing.host import HostSettings, create_app
 from aweb_naapp.runtime.protected_signer import SignerRefused
-from pydantic import SecretStr
+
+from aweb.protected_signing.host import HostSettings, create_app
 from tests.test_independent_protected_http import headers, profile_for
 from tests.test_independent_protected_signer import HUMAN_ORIGIN, ORIGIN
 from tests.test_protected_signer_host import CapturedMail
@@ -16,7 +16,7 @@ from tests.test_protected_signer_host import CapturedMail
 pytest_plugins = ("tests.test_independent_protected_signer",)
 
 
-def host_for(w, tmp_path):
+def host_settings_for(w, tmp_path):
     profile = profile_for(w)
     private = tmp_path / "host-controller"
     private.mkdir(mode=0o700)
@@ -34,15 +34,23 @@ def host_for(w, tmp_path):
     )
     manifest = tmp_path / "members.json"
     manifest.write_text(json.dumps({w.context.authority_id: member_file.name}))
+    database_url_file = private / "database-url"
+    database_url_file.write_text(w.db.config.get_dsn() + "\n")
+    database_url_file.chmod(0o400)
     settings = HostSettings(
         profile_file=profile_file,
         scope_file=scope_file,
         controller_key_file=controller_file,
         member_keys_file=manifest,
         worker_uids=[65534 if os.geteuid() != 65534 else 65533],
-        database_url=SecretStr(w.db.config.get_dsn()),
+        database_url_file=database_url_file,
         database_schema=w.db.schema,
     )
+    return settings
+
+
+def host_for(w, tmp_path):
+    settings = host_settings_for(w, tmp_path)
     # Capture only notification transport. Custody, registry, SQL bindings,
     # original B2/B3, LOGIN and exact-act assertions are the real adapters.
     return create_app(
@@ -62,6 +70,9 @@ async def test_factory_real_custody_shared_page_login_act_uv_and_exact_receipt(
         assert c.authority.custody is not w.app.authority.custody
         assert c.authority.custody.team_key_did == w.app.authority.custody.team_key_did
         async with httpx.AsyncClient(transport=httpx.ASGITransport(app=host)) as client:
+            ready = await client.get(ORIGIN + "/readyz")
+            assert ready.status_code == 200
+            assert ready.json() == {"ready": True}
             body = json.dumps(w.operation.intent(), separators=(",", ":")).encode()
             prepared = await client.post(
                 ORIGIN + "/protected-operations",
@@ -106,6 +117,8 @@ async def test_factory_real_custody_shared_page_login_act_uv_and_exact_receipt(
             assert receipt.json()["state"] == "committed"
             assert "set-cookie" not in receipt.headers
     assert not hasattr(host.api_app.state, "composition")
+    async with httpx.AsyncClient(transport=httpx.ASGITransport(app=host)) as client:
+        assert (await client.get(ORIGIN + "/readyz")).status_code == 503
 
 
 @pytest.mark.asyncio
@@ -128,5 +141,7 @@ async def test_factory_refuses_current_provisioning_misses(world, tmp_path, chan
     with pytest.raises(SignerRefused):
         async with host.api_app.router.lifespan_context(host.api_app):
             pytest.fail("missing provisioned authority started")
-    assert not host.api_app.router.routes
+    assert [route.path for route in host.api_app.router.routes] == ["/readyz"]
     assert not host.console_app.router.routes
+    async with httpx.AsyncClient(transport=httpx.ASGITransport(app=host)) as client:
+        assert (await client.get(ORIGIN + "/readyz")).status_code == 503

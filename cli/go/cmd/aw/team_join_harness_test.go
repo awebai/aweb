@@ -155,7 +155,7 @@ func TestTeamJoinHarnessCommand(t *testing.T) {
 				t.Helper()
 				command := exec.CommandContext(ctx, bin, args...)
 				command.Dir = wd
-				command.Env = append(testCommandEnv(home), "PATH="+toolDir, "AWEB_IDENTITY_HOME=", "AWEB_URL=", "AWID_REGISTRY_URL=", "AW_NO_UPDATE_CHECK=1", "AW_TRACE=")
+				command.Env = append(testCommandEnv(home), "PATH="+toolDir, "AWEB_IDENTITY_HOME=", "AWEB_URL=", "AWID_REGISTRY_URL="+server.URL, "AW_NO_UPDATE_CHECK=1", "AW_TRACE=")
 				command.Env = append(command.Env, extraEnv...)
 				var stdout, stderr bytes.Buffer
 				command.Stdout = &stdout

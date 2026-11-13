@@ -12,13 +12,6 @@ from types import SimpleNamespace
 
 import pytest
 import pytest_asyncio
-from aweb.protected_signing.authority import IndependentAuthority
-from aweb.protected_signing.composition import (
-    MAX_PREPARE_BYTES,
-    IndependentProtectedSigner,
-)
-from aweb.protected_signing.custody import ProtectedControllerCustody
-from aweb.protected_signing.registry import CustomerRegistry
 from aweb_naapp.runtime.approvals import DeliveryStatus
 from aweb_naapp.runtime.protected_signer import (
     AdmittedHuman,
@@ -36,6 +29,14 @@ from awid_service.deps import get_domain_verifier
 from awid_service.testing import REGISTRY_URL, running_registry
 from nacl.signing import SigningKey
 from starlette.requests import Request
+
+from aweb.protected_signing.authority import IndependentAuthority
+from aweb.protected_signing.composition import (
+    MAX_PREPARE_BYTES,
+    IndependentProtectedSigner,
+)
+from aweb.protected_signing.custody import ProtectedControllerCustody
+from aweb.protected_signing.registry import CustomerRegistry
 
 DOMAIN, TEAM, SERVICE = (
     "customer.example",

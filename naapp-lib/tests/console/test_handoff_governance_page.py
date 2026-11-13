@@ -3,6 +3,8 @@
 import asyncio
 import base64
 import json
+import os
+import re
 import socket
 from dataclasses import replace
 from datetime import UTC, datetime, timedelta
@@ -11,6 +13,7 @@ from urllib.parse import parse_qs
 
 import pytest
 import uvicorn
+from aweb_naapp_testing.browser_capture import capture_enabled_control
 from aweb_naapp_testing.network import make_certificates
 from cryptography.hazmat.primitives.serialization import Encoding, NoEncryption, PrivateFormat
 from fastapi import FastAPI, HTTPException, Request
@@ -32,6 +35,38 @@ from tests.runtime.test_protected_signer import SCOPE
 from tests.runtime.test_protected_signer import world as world
 
 CSRF_KEY = "aweb.protected.console.csrf"
+
+
+def governance_browser_options():
+    args = ["--host-resolver-rules=MAP signer.example.com 127.0.0.1"]
+    if proxy := os.environ.get("HTTPS_PROXY"):
+        # Route.fetch runs in Playwright's driver, outside Chromium's resolver
+        # map. An explicit proxy reaches both request paths; the native guard
+        # forwards this exact RP host to loopback without public DNS.
+        return {
+            "args": args,
+            "proxy": {"server": proxy, "bypass": "localhost,127.0.0.1,[::1]"},
+        }
+    # The isolated runner has an exact hosts entry for driver DNS and no
+    # external route. Keep direct routing when no native guard was selected.
+    return {"args": [*args, "--no-proxy-server"]}
+
+
+def test_governance_browser_selects_the_native_guard_for_browser_and_route_fetch(monkeypatch):
+    monkeypatch.setenv("HTTPS_PROXY", "http://127.0.0.1:43210")
+    options = governance_browser_options()
+    assert options["proxy"]["server"] == "http://127.0.0.1:43210"
+    assert "signer.example.com" not in options["proxy"]["bypass"]
+    assert "--no-proxy-server" not in options["args"]
+    assert "--host-resolver-rules=MAP signer.example.com 127.0.0.1" in options["args"]
+
+
+def test_governance_browser_keeps_direct_routing_inside_the_isolated_runner(monkeypatch):
+    monkeypatch.delenv("HTTPS_PROXY", raising=False)
+    options = governance_browser_options()
+    assert "proxy" not in options
+    assert "--no-proxy-server" in options["args"]
+    assert "--host-resolver-rules=MAP signer.example.com 127.0.0.1" in options["args"]
 
 
 @pytest.fixture
@@ -126,12 +161,7 @@ async def governance_service(world, tmp_path, request):
                             raise RuntimeError("governance server stopped before startup")
                         await asyncio.sleep(0.01)
             async with async_playwright() as playwright:
-                browser = await playwright.chromium.launch(
-                    args=[
-                        "--host-resolver-rules=MAP signer.example.com 127.0.0.1",
-                        "--no-proxy-server",
-                    ]
-                )
+                browser = await playwright.chromium.launch(**governance_browser_options())
                 try:
                     yield SimpleNamespace(
                         world=w,
@@ -210,7 +240,7 @@ async def test_fresh_tab_logs_in_then_approves_the_frozen_act_with_two_real_uv_g
         await expect(action).to_be_enabled()
         assert not s.callback.done()
         assert await page.evaluate("document.documentElement.scrollWidth <= innerWidth")
-        await page.screenshot(path=tmp_path / f"governance-login-{width}.png", full_page=True)
+        await capture_enabled_control(page, action, tmp_path / f"governance-login-{width}.png")
         await action.click()
         await expect(page.locator("#handoff-digest")).to_have_text(s.prepared.digest)
         await expect(page.locator("#handoff-fingerprint")).to_have_text(
@@ -219,12 +249,20 @@ async def test_fresh_tab_logs_in_then_approves_the_frozen_act_with_two_real_uv_g
         await expect(page.locator("#handoff-act")).to_have_text("human-role.revoke")
         await expect(page.locator("#handoff-target")).to_contain_text(s.world.operation.principal)
         await expect(page.locator("#handoff-governance-title")).to_be_focused()
+        await expect(page.locator("body")).to_have_attribute("data-handoff-state", "ready")
+        await expect(action).to_have_text("Approve operation with passkey")
         assert page.url == s.origin + "/handoff/" + s.prepared.handoff_id
         assert await page.evaluate("key => !!sessionStorage.getItem(key)", CSRF_KEY)
         assert not any(url.endswith("/execute") for url in posts)
         assert not s.callback.done()
         assert await page.evaluate("document.documentElement.scrollWidth <= innerWidth")
-        await page.screenshot(path=tmp_path / f"governance-ready-{width}.png", full_page=True)
+        await capture_enabled_control(page, action, tmp_path / f"governance-ready-{width}.png")
+        summary = page.get_by_text("View the frozen operation", exact=True)
+        await summary.click()
+        await expect(page.locator("#handoff-payload")).to_be_visible()
+        assert await page.evaluate("document.documentElement.scrollWidth <= innerWidth")
+        await capture_enabled_control(page, action, tmp_path / f"governance-expanded-{width}.png")
+        await summary.click()
         await action.click()
         async with asyncio.timeout(10):
             assert await s.callback == {"handoff_id": [s.prepared.handoff_id]}
@@ -240,26 +278,144 @@ async def test_fresh_tab_logs_in_then_approves_the_frozen_act_with_two_real_uv_g
 
 
 @pytest.mark.parametrize("stage", ["login", "approval"])
-async def test_non_uv_never_executes_or_calls_back(governance_service, stage):
+async def test_cancelled_login_or_non_uv_approval_never_executes_or_calls_back(
+    governance_service, stage, tmp_path
+):
     s = governance_service
     context, page, cdp, device = await open_page(s, 375)
     async with context:
+        posts, responses = [], []
+        page.on("request", lambda r: posts.append(r.url) if r.method == "POST" else None)
+        page.on(
+            "response",
+            lambda r: (
+                responses.append((r.url.removeprefix(s.origin), r.status))
+                if r.request.method == "POST"
+                else None
+            ),
+        )
         await page.goto(s.origin + "/handoff/" + s.prepared.handoff_id)
         action = page.locator("#handoff-action")
+        timeouts = []
+
+        async def short_client_timeout(route):
+            response = await route.fetch()
+            options = await response.json()
+            assert response.status == 200 and options["userVerification"] == "required"
+            timeouts.append(options.get("timeout"))
+            # Only a browser hint changes. The real server's challenge,
+            # required UV, RP and nonce/freshness policy remain intact.
+            options["timeout"] = 1000
+            await route.fulfill(response=response, body=json.dumps(options))
+
+        if stage == "login":
+            await cdp.send(
+                "WebAuthn.setAutomaticPresenceSimulation",
+                {"authenticatorId": device, "enabled": False},
+            )
+            await page.route("**/login/options", short_client_timeout)
         if stage == "approval":
             await action.click()
             await expect(page.locator("#handoff-digest")).to_have_text(s.prepared.digest)
-        await cdp.send(
-            "WebAuthn.setUserVerified", {"authenticatorId": device, "isUserVerified": False}
-        )
-        await action.click()
-        await page.wait_for_function(
-            "['refused', 'ready'].includes(document.body.dataset.handoffState)"
-        )
+            await cdp.send(
+                "WebAuthn.setUserVerified", {"authenticatorId": device, "isUserVerified": False}
+            )
+        started = asyncio.get_running_loop().time()
+        try:
+            await action.click()
+            await expect(page.locator("body")).to_have_attribute(
+                "data-handoff-state",
+                "login-required" if stage == "login" else re.compile(r"^(refused|ready)$"),
+                timeout=120_000 if stage == "login" else 5000,
+            )
+        finally:
+            if stage == "login":
+                await page.unroute("**/login/options", short_client_timeout)
+            # Each case owns a fresh context/authenticator; closing it also
+            # resets presence, timeout hints and credentials for the next case.
+        if stage == "login":
+            elapsed = asyncio.get_running_loop().time() - started
+            # This unchanged production status is set only by the
+            # NotAllowedError branch. Exception identity is inferred from
+            # that exercised branch, not captured by a CDP exception event.
+            status_text = "The passkey prompt was cancelled. You can try again."
+            await expect(page.locator("#handoff-status")).to_have_text(status_text)
+            assert len(timeouts) == 1
+            assert responses == [("/login/options", 200)]
+            assert [url.removeprefix(s.origin) for url in posts] == ["/login/options"]
+            assert elapsed >= 0.9  # Supports the timeout input, not the sole proof.
+            await expect(action).to_be_enabled()
+            await expect(action).to_have_text("Sign in with passkey")
+            await expect(page.locator("#handoff-governance")).to_be_hidden()
+            for field in ("act", "digest", "fingerprint"):
+                await expect(page.locator(f"#handoff-{field}")).to_be_empty()
+            await expect(
+                page.get_by_role("button", name="Approve operation with passkey")
+            ).to_be_hidden()
+            assert not any("/governance/" in url for url in posts)
+            (tmp_path / "governance-cancel-375.json").write_text(
+                json.dumps(
+                    {
+                        "exception_name_inferred": "NotAllowedError",
+                        "exception_identity_source": "exercised production status branch",
+                        "status_text": status_text,
+                        "http": responses,
+                        "client_timeout_ms": 1000,
+                        "elapsed_seconds": elapsed,
+                        "state": await page.locator("body").get_attribute("data-handoff-state"),
+                    },
+                    indent=2,
+                )
+                + "\n"
+            )
+            await page.screenshot(path=tmp_path / "governance-cancel-375.png", full_page=True)
         assert not s.callback.done()
         assert (
             await s.world.signer.receipt(s.prepared.operation_id, reader=s.world.reader)
         ).state != "committed"
+        assert "protected_operation_signed" not in await s.world.audit.kinds()
+
+
+async def test_login_401_cannot_expose_approval_or_send_governance_requests(governance_service):
+    s = governance_service
+    context, page, _, _ = await open_page(s, 375)
+    async with context:
+        options, login_statuses, posts = [], [], []
+        page.on("request", lambda r: posts.append(r.url) if r.method == "POST" else None)
+
+        async def retain_options(route):
+            response = await route.fetch()
+            assert response.status == 200
+            options.append(await response.json())
+            await route.fulfill(response=response)
+
+        async def without_uv(route):
+            # Same enrolled holder and real challenge/signature, but no UV.
+            # The actual LOGIN service decides; no refusal response is faked.
+            body = route.request.post_data_json
+            body["assertion"] = s.world.device.get(
+                options[-1], origin=s.origin, user_verified=False
+            )
+            response = await route.fetch(post_data=json.dumps(body))
+            login_statuses.append(response.status)
+            await route.fulfill(response=response)
+
+        await page.route("**/login/options", retain_options)
+        await page.route("**/login", without_uv)
+        await page.goto(s.origin + "/handoff/" + s.prepared.handoff_id)
+        await page.locator("#handoff-action").click()
+        await expect(page.locator("body")).to_have_attribute("data-handoff-state", "refused")
+        assert login_statuses == [401]
+        assert [url.removeprefix(s.origin) for url in posts] == ["/login/options", "/login"]
+        await expect(page.locator("#handoff-action")).to_be_disabled()
+        await expect(page.locator("#handoff-governance")).to_be_hidden()
+        for field in ("act", "digest", "fingerprint"):
+            await expect(page.locator(f"#handoff-{field}")).to_be_empty()
+        assert not s.callback.done()
+        assert (
+            await s.world.signer.receipt(s.prepared.operation_id, reader=s.world.reader)
+        ).state != "committed"
+        assert "protected_operation_signed" not in await s.world.audit.kinds()
 
 
 @pytest.mark.parametrize("width", [375, 1440])
@@ -274,7 +430,7 @@ async def test_current_authority_refusal_never_executes_or_calls_back(
         await expect(page.locator("#handoff-digest")).to_have_text(s.prepared.digest)
         await s.world.passkeys.db.execute("UPDATE {{tables.signer_authority}} SET active=false")
         await page.locator("#handoff-action").click()
-        await page.wait_for_function("document.body.dataset.handoffState === 'refused'")
+        await expect(page.locator("body")).to_have_attribute("data-handoff-state", "refused")
         assert await page.evaluate("document.documentElement.scrollWidth <= innerWidth")
         await page.screenshot(path=tmp_path / f"governance-refused-{width}.png", full_page=True)
         assert not s.callback.done()
@@ -324,7 +480,7 @@ async def test_malformed_real_authenticated_state_disables_approval(governance_s
         await page.route("**/handoff/*/governance", corrupt)
         await page.goto(s.origin + "/handoff/" + s.prepared.handoff_id)
         await page.locator("#handoff-action").click()
-        await page.wait_for_function("document.body.dataset.handoffState === 'refused'")
+        await expect(page.locator("body")).to_have_attribute("data-handoff-state", "refused")
         assert observed == [(200, s.prepared.digest)]
         await expect(page.locator("#handoff-action")).to_be_disabled()
         await expect(page.locator("#handoff-scope")).to_be_hidden()
@@ -366,7 +522,7 @@ async def test_committed_operation_with_damaged_or_lost_response_is_unconfirmed(
         await page.locator("#handoff-action").click()
         await expect(page.locator("#handoff-digest")).to_have_text(s.prepared.digest)
         await page.locator("#handoff-action").click()
-        await page.wait_for_function("document.body.dataset.handoffState === 'unconfirmed'")
+        await expect(page.locator("body")).to_have_attribute("data-handoff-state", "unconfirmed")
         assert observed == [(200, "committed")]
         await expect(page.locator("#handoff-action")).to_be_disabled()
         await expect(page.get_by_role("status")).to_contain_text("cannot confirm")
@@ -399,7 +555,7 @@ async def test_unconfigured_callback_completes_in_place_with_a_real_receipt(
         await page.locator("#handoff-action").click()
         await expect(page.locator("#handoff-digest")).to_have_text(s.prepared.digest)
         await page.locator("#handoff-action").click()
-        await page.wait_for_function("document.body.dataset.handoffState === 'complete'")
+        await expect(page.locator("body")).to_have_attribute("data-handoff-state", "complete")
         assert page.url == s.origin + "/handoff/" + s.prepared.handoff_id
         assert not s.callback.done()
         assert (

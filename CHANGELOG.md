@@ -12,6 +12,52 @@
   owner-act route authenticates before app reads and commits the single-use act,
   effect and governance together, rechecking original authority deadlines after
   effect waits. Existing exact v2 installation pins remain readable.
+- **An operator can stop the server delivering federated mail and chat to
+  other servers, or limit it to listed servers.** `AWEB_FEDERATION_OUTBOUND=off`
+  delivers to no other server, and a comma-separated list of origins delivers
+  only to those. A refused send answers `403` naming the setting, before the
+  server resolves or connects to the origin. Unset, delivery is unchanged. An
+  entry that is not an origin refuses start-up.
+
+- Chat sends return not-found when the sender leaves the session after target
+  resolution, matching the response for an absent session.
+
+- Secrets keeps installation-scoped state separate by team, even when two teams
+  report the same installation id. Upgrading existing state requires an
+  unambiguous retained team binding; missing or conflicting bindings stop the
+  migration for an explicit attribution decision.
+- Concurrent team instructions and roles version creation allocates distinct
+  version numbers under the same per-team lock as activation.
+
+- The Python registry client checks and pins the addresses of DNS-selected
+  registry overrides, retaining the original hostname for TLS. Registry list
+  scans stop after 500 pages with an explicit error instead of accumulating
+  unbounded results.
+
+- **`aw chat send-and-wait` and `aw chat listen` keep waiting when the server
+  ends the chat stream at its 300-second lifetime cap.** A wait extended by a
+  read receipt or a hang-on, or given with `--wait` above 300, used to end
+  then as a timeout while the other agent was still writing. The client now
+  reopens the stream after the last message or read receipt it saw, so nothing
+  is lost or presented twice, until its own wait ends. The server cap is
+  unchanged.
+
+- **One unreadable file in the `aw wake` registry no longer stops waking for
+  every other registered home.** A registry file that does not parse, or names
+  an empty or relative home, is skipped and logged; `aw wake status` (text and
+  `--json` as `registration_faults`) lists it, with the daemon running or down,
+  and `aw wake register` for another home succeeds beside it. A home whose own
+  file became unreadable keeps its last-good delivery and shows the error.
+
+- **A team deployment answers a member of a private team it does not serve
+  with 403 "team <id> is not served by this server".** A server that reads the
+  registry with member keys, and holds no registry service token, used to
+  answer such a connect with 503 and tell the operator to install
+  `AWID_SERVICE_TOKEN`, which a team deployment must never hold because it
+  reads every private team's roster. When the registry refuses a member key
+  for a team the server does serve, the 503 now names that team and the
+  current member certificate its controller must issue. Only a server
+  configured with the service token is still told to fix that token.
 
 - Human handoffs retain their authenticated team for credential collection and
   console session requests. Existing key-bound console sessions without retained
@@ -94,6 +140,79 @@
   the setting and the limit. The shipped `.env.example` set
   `LIBRARY_AUTH_CACHE_TTL_SECONDS=600`; a deployment made from it must lower
   it to 60 or remove the line before upgrading.
+- **The server reads its database URL from a file.** `AWEB_DATABASE_URL_FILE`
+  names a file that holds the URL, so the database password need not be in
+  the environment. Setting it together with `AWEB_DATABASE_URL` or
+  `DATABASE_URL` is refused at startup.
+- **A Compose file for a customer's own server.**
+  `server/docker-compose.customer.yml` runs aweb with PostgreSQL and Redis
+  against the public AWID registry, with ordinary member keys mounted
+  read-only and no service token or registry of its own. The self-hosting
+  guide's customer-server section shows how to start it.
+- **A hook delivery from a client is checked with the one team-certificate
+  check, in Python and in Go.** The receiver (`aweb_naapp.hooks.delivery`,
+  `cli/go/hookevent`) takes the team's revoked and registered certificate ids
+  beside its current key, and refuses a revoked or unregistered certificate
+  itself as `certificate_invalid`. The `team_did_key` a certificate carries is
+  no longer compared with the registry's key: the signature under the
+  registry's key is the check. The delivery vectors are
+  `hook-delivery-credential-v2.json`; version 1 is removed. Logs' ingest
+  answers a revoked or unregistered client certificate with 401
+  `transport_certificate_invalid`, where it answered
+  `provenance_client_certificate`. A team id that is not one is 401
+  `invalid_field: team_id` in the naapp runtime.
+- **The team-certificate check refuses what two encoders could write
+  differently, in Python and in Go.** `check_team_certificate` and the new
+  Go `awid.CheckTeamCertificate` give every case of
+  `docs/vectors/team-certificate-verification-v1.json` the same verdict. A
+  certificate is `malformed` when its signature is not unpadded standard
+  base64, when a string in it holds a control character below U+0020, when a
+  number in it is not an integer or is -0, or when it holds NaN or Infinity. No issuer
+  writes any of these.
+- **Changed: the naapp runtime verifier (`aweb_naapp.runtime.team_auth`)
+  checks a team certificate with awid's one check.** Apps built on naapp-lib
+  now refuse a certificate whose `version` is not the integer 1 and one whose
+  `alias` is not a string, which they accepted. A certificate that fails is
+  401 with the check's reason as the detail (`malformed`,
+  `unsupported_version`, `invalid_field: <field>`, `member_key_mismatch`,
+  `bad_signature`, `revoked`, `unregistered`) where the detail was a
+  sentence; a registry key that does not decode is 503
+  `authority_unavailable`. The reason-to-status table is awid's
+  (`awid.team_certificate.refusal_answer`), shared with the server.
+  `AWIDTeamCache` refuses a lifetime above 60 seconds at construction, where
+  it read a larger one as 60; the settings already refused it.
+- **Changed: the server checks a team certificate with awid's one check, and
+  its refusals change.** Every team-authenticated request, app task
+  authorization and room read now calls
+  `awid.team_certificate.check_team_certificate`.
+  - **Newly refused:** a certificate whose `version` is `true`, and one whose
+    `alias` is absent, empty or not a string. Production holds no such
+    certificate.
+  - **One answer per reason.** A certificate that fails is 401 with the
+    reason as the detail: `malformed`, `unsupported_version`,
+    `invalid_field: <field>`, `member_key_mismatch`, `bad_signature`,
+    `revoked`, `unregistered`; an unknown team is 401 `unknown_team`. The
+    details no longer carry the team id, the certificate id or the version
+    presented. A registry key that does not decode is 503
+    `authority_unavailable`.
+  - **Status changes:** a certificate that is not registered, with
+    `AWEB_REQUIRE_REGISTERED_CERTIFICATES` on, was 403 and is 401; a room
+    read with a certificate that fails was 403 and is 401 ("Room membership
+    changed" stays 403); app task requests answer `revoked` where they
+    answered `certificate_revoked`, and the certificate's own reason where
+    they answered `signature_invalid` for it.
+  - With the registered-certificate requirement on, the registered set is
+    read with the revoked set, before the check, where it was read after.
+- **awid-service has one check for a team certificate,
+  `awid.team_certificate.check_team_certificate`.** It takes the header, the
+  key the certificate must name, the team's current key, and the team's
+  revoked and registered certificate ids, all required, and refuses with one
+  of seven reasons: `malformed`, `unsupported_version`, `invalid_field` (with
+  the field), `member_key_mismatch`, `bad_signature`, `revoked`,
+  `unregistered`. `docs/vectors/team-certificate-verification-v1.json` holds
+  the cases it answers. No verifier calls it yet; the server, the naapp
+  runtime, the hook receiver and the library each still run their own check,
+  and the vector file records what each answers today.
 - **A customer-run aweb server can read its private team at the public
   registry without the registry-wide `AWID_SERVICE_TOKEN`.** Give the server
   an ordinary member certificate in each team it serves
@@ -379,6 +498,17 @@
   sets to the client address it saw, and keeps the console login limit per that
   address. Unset, the limit is kept per TCP peer, which behind a proxy is one
   limit for every reader.
+- App manifest did:keys: `aweb_naapp.manifest.load_manifest` checks a declared
+  v1 `event_emitters[].did_key` or v2 `app_keys[].did_key` for its shape only
+  (the `did:key:z` prefix, at most 47 base58 characters, the base58 alphabet)
+  and decodes nothing, so an over-long key is refused unread. Each key is
+  validated as a canonical prime-order Ed25519 key with awid by
+  `aweb_naapp.manifest_keys.check_manifest_keys` where it is used: the
+  server's manifest fetch and its install, update and reseed registration.
+  The refusal codes are unchanged (`manifest_invalid` for v1,
+  `app_keys_invalid` for v2); a small-order key is now refused there too.
+  naapp-lib's `runtime` and `hooks` extras and the server require
+  `awid-service>=0.5.38`.
 
 - `aw` writes U+2028 (line separator) and U+2029 (paragraph separator) as UTF-8
   in the canonical JSON it signs, as the Python reference

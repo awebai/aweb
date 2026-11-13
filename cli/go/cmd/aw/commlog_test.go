@@ -27,7 +27,7 @@ func TestAppendCommLog(t *testing.T) {
 		Body:      "test body",
 	}
 
-	appendCommLog(logDir, "acct-test", entry)
+	appendCommLog(logDir, "acct-test", localLogPolicy{}, entry)
 
 	logFile := filepath.Join(logDir, "acct-test.jsonl")
 
@@ -87,7 +87,7 @@ func TestAppendCommLogMultipleEntries(t *testing.T) {
 	logDir := filepath.Join(tmp, "logs")
 
 	for i := 0; i < 3; i++ {
-		appendCommLog(logDir, "acct-multi", &CommLogEntry{
+		appendCommLog(logDir, "acct-multi", localLogPolicy{}, &CommLogEntry{
 			Timestamp: "2026-02-26T10:30:00Z",
 			Dir:       "send",
 			Channel:   "chat",
@@ -126,7 +126,7 @@ func TestReadCommLog(t *testing.T) {
 		{Timestamp: "2026-02-26T10:02:00Z", Dir: "send", Channel: "chat", MessageID: "m3", From: "demo/rose", To: "demo/eve", Body: "chat msg"},
 	}
 	for _, e := range entries {
-		appendCommLog(logDir, "acct-test", e)
+		appendCommLog(logDir, "acct-test", localLogPolicy{}, e)
 	}
 
 	// Read all.
@@ -167,7 +167,7 @@ func TestReadCommLogFilters(t *testing.T) {
 		{Timestamp: "2026-02-26T10:02:00Z", Dir: "send", Channel: "chat", From: "demo/rose", To: "demo/sam"},
 	}
 	for _, e := range entries {
-		appendCommLog(logDir, "acct-test", e)
+		appendCommLog(logDir, "acct-test", localLogPolicy{}, e)
 	}
 
 	all, _ := readCommLog(filepath.Join(logDir, "acct-test.jsonl"), 0)
@@ -226,7 +226,7 @@ func TestLogChatEventTreatsSelfAliasAsSentWhenAddressMissing(t *testing.T) {
 	tmp := t.TempDir()
 	logDir := filepath.Join(tmp, "logs")
 
-	logChatEvent(logDir, "acct-test", "acme.com/wendy", chat.Event{
+	logChatEvent(logDir, "acct-test", localLogPolicy{}, "acme.com/wendy", chat.Event{
 		Type:      "message",
 		MessageID: "msg-self-1",
 		FromAgent: "wendy",
@@ -251,7 +251,7 @@ func TestLogChatEventTreatsSelfStableIDAsSentWhenAddressMissing(t *testing.T) {
 	tmp := t.TempDir()
 	logDir := filepath.Join(tmp, "logs")
 
-	logChatEvent(logDir, "acct-test", "acme.com/wendy", chat.Event{
+	logChatEvent(logDir, "acct-test", localLogPolicy{}, "acme.com/wendy", chat.Event{
 		Type:         "message",
 		MessageID:    "msg-self-stable",
 		FromStableID: "did:aw:self-wendy",
@@ -277,7 +277,7 @@ func TestLogChatEventPreservesStableIdentityLabelsWhenAddressesMissing(t *testin
 	tmp := t.TempDir()
 	logDir := filepath.Join(tmp, "logs")
 
-	logChatEvent(logDir, "acct-test", "acme.com/wendy", chat.Event{
+	logChatEvent(logDir, "acct-test", localLogPolicy{}, "acme.com/wendy", chat.Event{
 		Type:         "message",
 		MessageID:    "msg-stable-only",
 		FromStableID: "did:aw:carol",

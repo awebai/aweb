@@ -96,6 +96,7 @@ func TestLiveRosterAliasFallbackReadsExternalTeamState(t *testing.T) {
 			TeamID: "backend:demo", MemberDIDKey: "did:key:grace", Alias: "grace", IdentityScope: awid.IdentityModeLocal,
 		})
 	}))
+	t.Setenv("AWID_REGISTRY_URL", registryServer.URL)
 	if err := awconfig.SaveTeamStateToIdentityHome(identityHome, &awconfig.TeamState{
 		ActiveTeam:  "backend:demo",
 		Memberships: []awconfig.TeamMembership{{TeamID: "backend:demo", Alias: "principal", CertPath: awconfig.TeamCertificateRelativePath("backend:demo"), RegistryURL: registryServer.URL}},
@@ -158,6 +159,7 @@ func TestMailSendBareAliasFallsBackToLiveTeamRoster(t *testing.T) {
 			IssuedAt:      "2026-06-22T00:00:00Z",
 		})
 	}))
+	t.Setenv("AWID_REGISTRY_URL", registryServer.URL)
 	writeSelectionFixtureForTest(t, root, testSelectionFixture{
 		AwebURL:       apiServer.URL,
 		TeamID:        "backend:demo",
@@ -230,6 +232,7 @@ func TestChatSendBareAliasFallsBackToLiveTeamRoster(t *testing.T) {
 			IssuedAt:      "2026-06-22T00:00:00Z",
 		})
 	}))
+	t.Setenv("AWID_REGISTRY_URL", registryServer.URL)
 	writeSelectionFixtureForTest(t, root, testSelectionFixture{
 		AwebURL:       apiServer.URL,
 		TeamID:        "backend:demo",
@@ -278,6 +281,7 @@ func TestLiveTeamRosterFallbackUsesDIDWhenMemberHasNoAddress(t *testing.T) {
 			IssuedAt:      "2026-06-22T00:00:00Z",
 		})
 	}))
+	t.Setenv("AWID_REGISTRY_URL", registryServer.URL)
 	writeSelectionFixtureForTest(t, root, testSelectionFixture{
 		AwebURL:       "https://aweb.invalid",
 		TeamID:        "backend:demo",
@@ -331,6 +335,7 @@ func TestLiveTeamRosterFallbackPrefersMembershipRegistryOverIdentityRegistry(t *
 			IssuedAt:      "2026-06-22T00:00:00Z",
 		})
 	}))
+	t.Setenv("AWID_REGISTRY_URL", registryServer.URL)
 	writeSelectionFixtureForTest(t, root, testSelectionFixture{
 		AwebURL:       "https://aweb.invalid",
 		TeamID:        "backend:demo",
@@ -449,6 +454,7 @@ func TestMailSendAliasReachesActiveTeamMembers(t *testing.T) {
 				rosterReads++
 				_ = json.NewEncoder(w).Encode(awid.TeamMemberReference{TeamID: "backend:demo", CertificateID: "juan-membership", Alias: "juan", MemberDIDKey: memberDID, MemberDIDAW: memberStable, MemberAddress: tc.address, IdentityScope: tc.scope})
 			}))
+			t.Setenv("AWID_REGISTRY_URL", registry.URL)
 			writeSelectionFixtureForTest(t, root, testSelectionFixture{AwebURL: api.URL, TeamID: "backend:demo", Alias: "ada", WorkspaceID: "ada-workspace", DID: selfDID, StableID: awid.ComputeStableID(selfPub), Address: "demo/ada", Custody: awid.CustodySelf, IdentityScope: awid.IdentityModeGlobal, RegistryURL: registry.URL, SigningKey: selfKey})
 			mailSendTo, mailSendSubject, mailSendBody = "juan", "team mail", "hello human or agent"
 			cmd := &cobra.Command{}

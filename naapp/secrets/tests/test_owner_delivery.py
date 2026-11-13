@@ -15,7 +15,9 @@ from asyncpg import PostgresError
 from aweb_naapp import roles
 from aweb_naapp.hooks.owner_act import HUMAN_ROLE_ACTS
 from aweb_naapp.hooks.owner_act_nonces import OwnerActVerifier
+from aweb_naapp_testing import did_key
 from aweb_naapp_testing.owner_acts import TeamOwner
+from awid.dns_verify import awid_txt_value
 
 from aweb_secrets.owners import OWNER_ROLE, owner_scope
 from aweb_secrets.revisions import config_revision
@@ -29,7 +31,7 @@ CONTACT = "owner@example.com"
 
 
 async def delivery(root, registry, *, act="human-role.designate", alias="alice", kind="human"):
-    service, client, settings, member, installed, *_ = root
+    service, client, settings, member, installed, *_, dns = root
     world = getattr(client, "owner_delivery_fixture", None)
     if world is None:
         console = mounted_owner_console(service)
@@ -57,6 +59,11 @@ async def delivery(root, registry, *, act="human-role.designate", alias="alice",
             body["certificate"] = base64.b64encode(
                 json.dumps(holder.certificate()).encode()
             ).decode()
+        # The holder's ID chain is checked against its namespace's live DNS
+        # authority, which this world publishes on the root's private server.
+        dns.records[("_awid.example.com", "TXT")] = [
+            '"' + awid_txt_value(did_key(world.human_root)) + '"'
+        ]
         from aweb_naapp.runtime.passkeys import contact_sha256
 
         subject.update(
@@ -75,10 +82,10 @@ async def delivery(root, registry, *, act="human-role.designate", alias="alice",
     return body, principal, device
 
 
-async def effects(service, installation_id):
+async def effects(service, installation_id, team_id):
     db = service.runtime.db()
     return (
-        await config_revision(db, installation_id),
+        await config_revision(db, installation_id, team_id=team_id),
         *[
             await db.fetch_value("SELECT count(*) FROM " + table)
             for table in (
@@ -98,7 +105,7 @@ async def assert_first_owner_and_login(root, registry):
     body, principal, device = await delivery(root, registry)
     db = service.runtime.db()
     assert await db.fetch_value("SELECT count(*) FROM role_holdings") == 0
-    assert await config_revision(db, installed["installation_id"]) == 0
+    assert await config_revision(db, installed["installation_id"], team_id=member.team_id) == 0
     response = await client.post(settings.console_origin + PATH, json=body)
     assert response.status_code == 200, response.text
     assert response.json()["principal"] == principal.principal_did
@@ -115,7 +122,7 @@ async def assert_first_owner_and_login(root, registry):
     assert held.b3_scope == owner_scope(
         installed["installation_id"], member.team_id, principal.principal_did
     )
-    assert await config_revision(db, installed["installation_id"]) == 1
+    assert await config_revision(db, installed["installation_id"], team_id=member.team_id) == 1
     assert await db.fetch_value("SELECT count(*) FROM owner_principals") == 0
     assert await db.fetch_value("SELECT count(*) FROM passkey_enrolments") == 0
     assert [event["payload"]["act"] for event in await envelopes(db, member.team_id)] == [
@@ -143,7 +150,7 @@ async def test_first_owner_is_designated_by_controller_act_and_can_log_in(root, 
 async def test_refused_delivery_changes_no_owner_revision_nonce_or_audit(root, registry, fault):
     service, client, settings, member, installed, *_ = root
     body, _, _ = await delivery(root, registry)
-    before = await effects(service, installed["installation_id"])
+    before = await effects(service, installed["installation_id"], member.team_id)
     origin = settings.console_origin
     headers = {}
     if fault == "member-signature":
@@ -165,35 +172,35 @@ async def test_refused_delivery_changes_no_owner_revision_nonce_or_audit(root, r
     assert response.status_code == (404 if fault == "api-origin" else 403)
     if fault == "missing-certificate":
         assert response.json()["detail"] == "principal_not_member"
-    assert await effects(service, installed["installation_id"]) == before
+    assert await effects(service, installed["installation_id"], member.team_id) == before
 
 
 async def test_replay_does_not_repeat_the_revision_or_governance_effect(root, registry):
-    service, client, settings, _, installed, *_ = root
+    service, client, settings, member, installed, *_ = root
     body, _, _ = await delivery(root, registry)
     first = await client.post(settings.console_origin + PATH, json=body)
     assert first.status_code == 200, first.text
-    before = await effects(service, installed["installation_id"])
+    before = await effects(service, installed["installation_id"], member.team_id)
     repeated = await client.post(settings.console_origin + PATH, json=body)
     assert repeated.status_code == 403
-    assert await effects(service, installed["installation_id"]) == before
+    assert await effects(service, installed["installation_id"], member.team_id) == before
 
 
 async def test_a_current_agent_member_cannot_become_the_first_owner(root, registry):
-    service, client, settings, _, installed, *_ = root
+    service, client, settings, member, installed, *_ = root
     body, _, _ = await delivery(root, registry, kind="agent")
-    before = await effects(service, installed["installation_id"])
+    before = await effects(service, installed["installation_id"], member.team_id)
     response = await client.post(settings.console_origin + PATH, json=body)
     assert response.status_code == 403
     assert response.json()["detail"] == "principal_not_human"
-    assert await effects(service, installed["installation_id"]) == before
+    assert await effects(service, installed["installation_id"], member.team_id) == before
 
 
 async def test_revision_write_failure_rolls_back_owner_nonce_and_governance(root, registry):
-    service, client, settings, _, installed, *_ = root
+    service, client, settings, member, installed, *_ = root
     body, _, _ = await delivery(root, registry)
     db = service.runtime.db()
-    before = await effects(service, installed["installation_id"])
+    before = await effects(service, installed["installation_id"], member.team_id)
     # A real database failure at the app's final SQL hook, after the shared
     # writer/audit. The route must not commit a holder without its revision.
     await db.execute(
@@ -208,14 +215,14 @@ async def test_revision_write_failure_rolls_back_owner_nonce_and_governance(root
         with pytest.raises(PostgresError) as failure:
             await client.post(settings.console_origin + PATH, json=body)
         assert failure.value.sqlstate == "P7501"
-        assert await effects(service, installed["installation_id"]) == before
+        assert await effects(service, installed["installation_id"], member.team_id) == before
     finally:
         await db.execute("DROP TRIGGER refuse_owner_revision ON {{tables.config_revisions}}")
         await db.execute("DROP FUNCTION refuse_owner_revision()")
     # The exact same nonce remains usable after the failed transaction.
     response = await client.post(settings.console_origin + PATH, json=body)
     assert response.status_code == 200, response.text
-    assert await config_revision(db, installed["installation_id"]) == 1
+    assert await config_revision(db, installed["installation_id"], team_id=member.team_id) == 1
 
 
 async def test_replace_retains_the_holding_and_freezes_its_credential_for_72_hours(root, registry):
@@ -238,7 +245,7 @@ async def test_replace_retains_the_holding_and_freezes_its_credential_for_72_hou
     assert started + timedelta(hours=72) <= effective <= datetime.now(UTC) + timedelta(hours=72)
     held = await roles.read_holding(db, **key)
     assert held.held_since == before.held_since
-    assert await config_revision(db, installed["installation_id"]) == 2
+    assert await config_revision(db, installed["installation_id"], team_id=member.team_id) == 2
     assert await mounted_owner_console(service).passkeys.designated_approver(held.b3_scope) is None
 
 
@@ -260,7 +267,7 @@ async def test_controller_revoke_ends_the_holding_and_moves_the_revision(root, r
         )
         is None
     )
-    assert await config_revision(db, installed["installation_id"]) == 2
+    assert await config_revision(db, installed["installation_id"], team_id=member.team_id) == 2
     assert [event["payload"]["act"] for event in await envelopes(db, member.team_id)] == [
         "role.designated",
         "role.revoked",

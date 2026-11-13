@@ -1,0 +1,57 @@
+# A customer's own aweb server, using the public AWID registry.
+#
+# The server is an ordinary member of each team it serves: it holds that
+# member's key and nothing wider. It runs no registry and has no
+# AWID_SERVICE_TOKEN. Every credential is a file under SECRETS_DIR, mounted
+# read-only at /run/secrets/<service>; none is in the environment. See "Customer server using the public AWID registry" in
+# docs/self-hosting-guide.md for how the team owner issues the membership.
+#
+#   docker compose -f docker-compose.customer.yml up --build -d
+services:
+  redis:
+    image: redis:7-alpine
+    restart: unless-stopped
+    volumes:
+      - redis_data:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  postgres:
+    image: postgres:16-alpine
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER:-aweb}
+      POSTGRES_PASSWORD_FILE: /run/secrets/postgres/password
+      POSTGRES_DB: ${POSTGRES_DB:-aweb}
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+      - "${SECRETS_DIR:?SECRETS_DIR is required, the directory that holds aweb/ and postgres/}/postgres:/run/secrets/postgres:ro"
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-aweb} -d ${POSTGRES_DB:-aweb}"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  aweb:
+    extends:
+      file: compose.aweb.yaml
+      service: aweb
+    build:
+      context: ..
+      dockerfile: server/Dockerfile
+    ports:
+      - "${AWEB_BIND_ADDRESS:-127.0.0.1}:${AWEB_PORT:-8000}:8000"
+    volumes:
+      - "${SECRETS_DIR:?SECRETS_DIR is required, the directory that holds aweb/ and postgres/}/aweb:/run/secrets/aweb:ro"
+    depends_on:
+      redis:
+        condition: service_healthy
+      postgres:
+        condition: service_healthy
+
+volumes:
+  postgres_data:
+  redis_data:

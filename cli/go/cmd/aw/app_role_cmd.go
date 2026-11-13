@@ -331,7 +331,7 @@ func verifyHolderEvidence(ctx context.Context, e *holderCredentialExport, select
 	if err != nil {
 		return nil, err
 	}
-	registry, err := newConfiguredRegistryClient(nil, selection.RegistryURL)
+	registry, err := newConfiguredRegistryClient(nil)
 	if err != nil {
 		return nil, err
 	}
@@ -340,11 +340,13 @@ func verifyHolderEvidence(ctx context.Context, e *holderCredentialExport, select
 	if err != nil {
 		return nil, withErrorCode("principal_status_unavailable", fmt.Errorf("read team %s from the registry: %w", selection.TeamID, err))
 	}
-	teamPub, err := awid.ExtractPublicKey(team.TeamDIDKey)
-	if err != nil {
-		return nil, err
-	}
-	if err := awid.VerifyTeamCertificate(cert, teamPub); err != nil {
+	// The registry's list of active certificates, read next, stands for
+	// registration.
+	if _, err := awid.CheckTeamCertificate(e.Certificate, awid.TeamCertificateFacts{
+		SubjectDIDKey: cert.MemberDIDKey,
+		TeamDIDKey:    team.TeamDIDKey,
+		Registered:    awid.RegistrationNotRequired(),
+	}); err != nil {
 		return nil, notMember("the certificate does not verify under the team's current key")
 	}
 	active, err := registry.ListCertificates(ctx, registryURL, domain, name, true, teamKey)

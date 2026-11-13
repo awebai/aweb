@@ -134,3 +134,21 @@ def test_the_console_may_be_under_the_public_host(monkeypatch: pytest.MonkeyPatc
     monkeypatch.setenv("LOGS_PUBLIC_ORIGIN", "https://logs.example.test")
     monkeypatch.setenv("LOGS_CONSOLE_ORIGIN", "https://console.logs.example.test")
     assert LogsSettings(_env_file=None).console_origin == "https://console.logs.example.test"
+
+
+def test_file_mounted_database_uses_existing_logs_settings(tmp_path, monkeypatch):
+    import secrets
+
+    dsn = "postgresql://logs:" + secrets.token_urlsafe(24) + "@postgres/logs"
+    path = tmp_path / "database-url"
+    path.write_text(dsn + "\n")
+    path.chmod(0o400)
+    monkeypatch.delenv("LOGS_DATABASE_URL", raising=False)
+    monkeypatch.setenv("LOGS_DATABASE_URL_FILE", str(path))
+    settings = LogsSettings(
+        _env_file=None,
+        public_origin="https://logs.example",
+        console_origin="https://console.logs.example",
+    )
+    if settings.database_url != dsn:
+        raise AssertionError("mounted database URL did not reach Logs settings")

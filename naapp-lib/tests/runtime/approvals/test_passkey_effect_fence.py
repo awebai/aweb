@@ -279,3 +279,36 @@ async def test_an_app_failure_in_the_fence_is_not_turned_into_a_refusal(pw, kind
     assert fence.calls == ["prepare", "audit", "check"]
     assert await effect_rows(db, kind) == before
     assert delivered(pw) == sent
+
+
+class LockWait:
+    """A fence whose prepare waits on the app's locks until `until`."""
+
+    def __init__(self, pw, until):
+        self.pw, self.until = pw, until
+
+    async def prepare(self, tx):
+        self.pw.clock.now = self.until
+
+    async def check(self, tx):
+        pass
+
+
+@pytest.mark.parametrize("deadline", ["challenge", "link"])
+async def test_enrolment_refuses_once_a_lock_wait_outlasts_its_deadline(pw, deadline):
+    contact = "human@example.com"
+    await designate(pw, contact)
+    token = pw.contacts.last(contact)
+    db = pw.passkeys.db
+    link_expiry = await db.fetch_value("SELECT expires_at FROM {{tables.passkey_enrolments}}")
+    if deadline == "link":
+        pw.clock.now = link_expiry - timedelta(seconds=1)
+    credential = SoftAuthenticator(ORIGIN).create(await pw.passkeys.enrolment_options(token))
+    challenge_expiry = await db.fetch_value(
+        "SELECT expires_at FROM {{tables.passkey_challenges}} WHERE purpose = 'enrolment'"
+    )
+    before = await effect_rows(db, "enrolment")
+    wait = LockWait(pw, challenge_expiry if deadline == "challenge" else link_expiry)
+    with pytest.raises(EnrolmentRefused):
+        await pw.passkeys.complete_enrolment(token, credential, fence=wait)
+    assert await effect_rows(db, "enrolment") == before

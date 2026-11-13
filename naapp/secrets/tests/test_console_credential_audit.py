@@ -16,6 +16,7 @@ from aweb_secrets.console_changes import ConsoleChanges, console_changes_router
 from tests.test_change_sets import (
     ALICE,
     ORIGIN,
+    TEAM,
     by_member,
     change_approver_contact,
     change_set,
@@ -244,7 +245,7 @@ async def test_confirm_http_audit_refusal_rolls_back_b2_revision_and_designation
         assert refused.status_code == 503, refused.text
         assert refused.json() == {"detail": "audit_target_unavailable"}
         assert (await world.approvals.get(draft["approval_id"])).state is ApprovalState.APPROVED
-        assert await config_revision(world.db, INSTALLATION_ID) == 0
+        assert await config_revision(world.db, INSTALLATION_ID, team_id=TEAM) == 0
         assert await world.db.fetch_value("SELECT count(*) FROM {{tables.approvers}}") == 0
         assert "finance@example.com" not in world.inbox.enrolments
         assert await events(world) == []

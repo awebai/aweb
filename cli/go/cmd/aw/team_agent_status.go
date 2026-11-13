@@ -187,7 +187,7 @@ func (out *teamAgentStatusOutput) deriveState() {
 // team, in precedence order (see teamReadSigners); an empty slice reads
 // anonymously, which is what a public team has always done.
 func readAgentCertificateState(ctx context.Context, out *teamAgentStatusOutput, domain, team string, hosted bool, signers []ed25519.PrivateKey) {
-	registry, err := newConfiguredRegistryClient(nil, "")
+	registry, err := newConfiguredRegistryClient(nil)
 	if err != nil {
 		out.Certificate = agentCertificateUnknown
 		out.Unreadable = append(out.Unreadable, fmt.Sprintf("certificate store: %v", err))

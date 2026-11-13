@@ -275,6 +275,35 @@ followed. The setting applies to federated mail and chat delivery only;
 registry reads keep requiring public addresses. Unset or empty, no private
 delivery origin is admitted.
 
+Whether this server delivers federated mail and chat to other servers at all
+is a separate switch, `AWEB_FEDERATION_OUTBOUND`:
+
+```bash
+AWEB_FEDERATION_OUTBOUND=off
+AWEB_FEDERATION_OUTBOUND=https://aweb.partner.example,https://aweb.acme.internal
+```
+
+- Unset or empty: the server delivers to any delivery origin the checks above
+  admit. This is the default, and the behaviour of servers that predate the
+  setting.
+- `off`: it delivers to no other server.
+- A comma-separated list of origins: it delivers only to those, each compared
+  after the same canonicalisation (lowercase scheme and host, the default port
+  dropped). A different port is a different origin.
+
+A send the setting refuses answers the sender `403` with
+`Federated delivery to <origin> is refused: AWEB_FEDERATION_OUTBOUND is off`
+or `... does not list this origin`. The server refuses before it resolves or
+connects to the origin, and stores nothing. An entry that is not an origin
+(a path, user information, a scheme other than `http` or `https`, or `off`
+beside origins) refuses start-up naming the entry. A server that is never
+started with that value still refuses every send rather than guessing.
+
+The switch governs only what this server sends. Mail and chat that other
+servers deliver here are governed by your inbound federation settings, and
+listing an origin here does not admit private addresses: that remains
+`AWEB_FEDERATION_PRIVATE_DELIVERY_ORIGINS`.
+
 For federation between servers on one development machine or compose network,
 set `APP_ENV=development` and `AWEB_FEDERATION_TEST=1` on each aweb server. With
 both set, a server whose own `AWEB_PUBLIC_ORIGIN` host is isolated (a
@@ -362,8 +391,10 @@ audit directory, writable) by uid `1001`.
 
 For `aweb`:
 
-- `AWEB_DATABASE_URL` or `DATABASE_URL`
-- `AWEB_REDIS_URL` or `REDIS_URL`
+- `AWEB_DATABASE_URL` or `DATABASE_URL`, or `AWEB_DATABASE_URL_FILE`: a file
+  that holds the URL, so the database password is in no environment
+- `AWEB_REDIS_URL` or `REDIS_URL`, or `AWEB_REDIS_URL_FILE`: a file that
+  holds the URL, so a Redis password is in no environment
 - `AWID_REGISTRY_URL`
 - `AWEB_PUBLIC_ORIGIN` for federated mail/chat delivery
 - `APP_ENV=development` when using an internal `http://awid:8010` registry
@@ -397,6 +428,32 @@ If request volume warrants a future cache, it must have an explicit freshness
 bound measured in seconds and fail closed at expiry, with no stale fallback.
 The general registry outage-grace cache cannot serve this path. See the
 [app task request contract](app-task-requests.md#verification-in-order).
+
+### Private Registries and the aw CLI
+
+The `aw` CLI and the A2A gateway reach a registry with their own HTTP client
+only when the operator chose it explicitly: the built-in default
+(`https://api.awid.ai`), `AWID_REGISTRY_URL`, or a registry flag on the
+current command line (`--registry`, `--registry-url`, `--awid-registry`).
+Every other registry origin is reached only at public addresses, over
+`https`, without proxies: a `registry_url` stored in `identity.yaml`,
+`teams.yaml`, controller metadata or a human record, the gateway's configured
+`registry_url`, a registry carried by an invite or returned by service
+discovery, and any registry an `_awid` TXT record names. The CLI resolves such
+a host once per connection and refuses it if any answer is a private,
+loopback, link-local or otherwise non-public address.
+
+The one exception is the isolated-development mode of the federation
+contract: with both `APP_ENV=development` and `AWEB_FEDERATION_TEST=1` set, an
+isolated host (a loopback address, `localhost`, `*.localhost`, `*.test`,
+`*.test.local` or a single-label name) may also be reached over `http` or at a
+non-public address. No other host gains anything in that mode.
+
+So wherever `aw` or the gateway uses a private self-hosted registry, set
+`AWID_REGISTRY_URL` to it in that process's environment, as in the examples
+above. `aw doctor identity` reports `identity.local.registry_url_pinned`: it
+warns when the stored registry is plainly private and `AWID_REGISTRY_URL`
+does not name it.
 
 ### Cross-Registry Authority and Migration
 
@@ -537,8 +594,37 @@ unset AWID_SERVICE_TOKEN
 aweb serve
 ```
 
-This configures standalone aweb; the bundled Compose stack still operates its
-own AWID service and uses its shared token. Startup refuses missing credentials,
+To run the same thing under Docker Compose, use
+[`server/docker-compose.customer.yml`](../server/docker-compose.customer.yml).
+It runs aweb, PostgreSQL and Redis, no registry, and has no service token.
+Every credential is a file under one directory, and none is in the
+environment or in `.env`:
+
+```text
+/etc/aweb-secrets/
+  aweb/member-keys.json    team id -> key file, relative paths
+  aweb/<name>.key          the member key files it names
+  aweb/database-url        postgresql://aweb:<password>@postgres:5432/aweb
+  postgres/password        the same password, alone
+```
+
+The files under `aweb/` must be readable by uid `1001` and by no one else:
+owner `1001` with mode `0400`, or `root:1001` with mode `0440`.
+`postgres/password` is read by root in the database container.
+
+```bash
+cd server
+cat > .env <<'ENV'
+AWEB_PUBLIC_ORIGIN=https://aweb.example.com
+SECRETS_DIR=/etc/aweb-secrets
+ENV
+docker compose -f docker-compose.customer.yml up --build -d
+curl http://localhost:8000/ready
+```
+
+Each subdirectory is mounted read-only at `/run/secrets/<service>`. The default
+`server/docker-compose.yml` is the other shape: it operates its own AWID
+service and uses the shared token. Startup refuses missing credentials,
 an empty key map, unreadable keys or non-Ed25519 PEM keys. Restart after changing
 the key map. If a service token is also configured, it takes precedence.
 

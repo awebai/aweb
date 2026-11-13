@@ -50,6 +50,9 @@ func readHolderExport(path string) (*holderCredentialExport, error) {
 	}
 	decoder := json.NewDecoder(bytes.NewReader(data))
 	decoder.DisallowUnknownFields()
+	// The ID chain's integers must stay json.Number: its canonical check
+	// refuses a float64 as invalid_shape.
+	decoder.UseNumber()
 	var e holderCredentialExport
 	if err := decoder.Decode(&e); err != nil {
 		return nil, invalid(err.Error())

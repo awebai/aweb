@@ -145,7 +145,7 @@ async def disable_secret_tree(
         team_id=team_id,
         secret_ids=ids,
     )
-    await bump_config_revision(tx, installation_id)
+    await bump_config_revision(tx, installation_id, team_id=team_id)
     return ids
 
 
@@ -228,7 +228,7 @@ async def disable_installation(
         installation_id,
         team_id,
     )
-    await bump_config_revision(tx, installation_id)
+    await bump_config_revision(tx, installation_id, team_id=team_id)
     return ids
 
 
@@ -560,7 +560,7 @@ class Containment:
                 await unassign(tx, PrincipalKey(team_id, member_principal), target)
             # Every fresh narrowing act invalidates drafts, including an
             # observed no-op. Exact receipt replays returned above.
-            await bump_config_revision(tx, installation_id)
+            await bump_config_revision(tx, installation_id, team_id=team_id)
             if role_present:
                 await self.credential_audit.record_role_revoked(
                     tx,
@@ -975,7 +975,7 @@ class Containment:
                 await self.passkeys.revoke_passkey_in(tx, credential_id=credential_id, **kwargs)
         except RetirementRefused as refused:
             raise ContainmentRefused(refused.reason) from None
-        await bump_config_revision(tx, installation_id)
+        await bump_config_revision(tx, installation_id, team_id=team_id)
 
     async def authorize_console(
         self,

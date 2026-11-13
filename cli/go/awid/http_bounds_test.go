@@ -94,7 +94,9 @@ func TestTrustResponsesRequireOneJSONDocument(t *testing.T) {
 			name:     "registry resolver allows trailing whitespace",
 			response: "{\"did_aw\":\"did:aw:test\",\"current_did_key\":\"did:key:test\"} \r\n\t",
 			invoke: func(baseURL string) error {
-				_, err := NewRegistryResolver(nil, nil).resolveKeyFresh(context.Background(), baseURL, "did:aw:test", true)
+				resolver := NewRegistryResolver(nil, nil)
+				routeUntrustedResolverRegistriesToInjectedClient(resolver)
+				_, err := resolver.resolveKeyFresh(context.Background(), baseURL, "did:aw:test", true)
 				return err
 			},
 		},
@@ -103,7 +105,9 @@ func TestTrustResponsesRequireOneJSONDocument(t *testing.T) {
 			response:  "{\"did_aw\":\"did:aw:test\",\"current_did_key\":\"did:key:test\"}\n{}",
 			wantError: true,
 			invoke: func(baseURL string) error {
-				_, err := NewRegistryResolver(nil, nil).resolveKeyFresh(context.Background(), baseURL, "did:aw:test", true)
+				resolver := NewRegistryResolver(nil, nil)
+				routeUntrustedResolverRegistriesToInjectedClient(resolver)
+				_, err := resolver.resolveKeyFresh(context.Background(), baseURL, "did:aw:test", true)
 				return err
 			},
 		},
@@ -167,11 +171,15 @@ func TestTrustEntryPointsRejectOversizeResponses(t *testing.T) {
 			return err
 		}},
 		{name: "registry client", invoke: func(baseURL string) error {
-			_, err := NewAWIDRegistryClient(nil, nil).GetDIDFull(context.Background(), baseURL, "did:aw:test", signingKey)
+			client := NewAWIDRegistryClient(nil, nil)
+			routeUntrustedRegistriesToInjectedClient(client)
+			_, err := client.GetDIDFull(context.Background(), baseURL, "did:aw:test", signingKey)
 			return err
 		}},
 		{name: "registry resolver", invoke: func(baseURL string) error {
-			_, err := NewRegistryResolver(nil, nil).resolveKeyFresh(context.Background(), baseURL, "did:aw:test", true)
+			resolver := NewRegistryResolver(nil, nil)
+			routeUntrustedResolverRegistriesToInjectedClient(resolver)
+			_, err := resolver.resolveKeyFresh(context.Background(), baseURL, "did:aw:test", true)
 			return err
 		}},
 	}
@@ -254,14 +262,18 @@ func TestRegistryErrorsSanitizeEscapedControlsAfterJSONDecode(t *testing.T) {
 		{
 			name: "registry client",
 			invoke: func(httpClient *http.Client, baseURL string) error {
-				_, err := NewAWIDRegistryClient(httpClient, nil).ResolveKeyAt(context.Background(), baseURL, "did:aw:test")
+				client := NewAWIDRegistryClient(httpClient, nil)
+				routeUntrustedRegistriesToInjectedClient(client)
+				_, err := client.ResolveKeyAt(context.Background(), baseURL, "did:aw:test")
 				return err
 			},
 		},
 		{
 			name: "registry resolver",
 			invoke: func(httpClient *http.Client, baseURL string) error {
-				_, err := NewRegistryResolver(httpClient, nil).resolveKeyFresh(context.Background(), baseURL, "did:aw:test", true)
+				resolver := NewRegistryResolver(httpClient, nil)
+				routeUntrustedResolverRegistriesToInjectedClient(resolver)
+				_, err := resolver.resolveKeyFresh(context.Background(), baseURL, "did:aw:test", true)
 				return err
 			},
 		},
@@ -294,7 +306,9 @@ func TestRegistryErrorSanitizesEscapedStructuredMessage(t *testing.T) {
 	}))
 	t.Cleanup(server.Close)
 
-	_, err := NewAWIDRegistryClient(server.Client(), nil).ResolveKeyAt(context.Background(), server.URL, "did:aw:test")
+	client := NewAWIDRegistryClient(server.Client(), nil)
+	routeUntrustedRegistriesToInjectedClient(client)
+	_, err := client.ResolveKeyAt(context.Background(), server.URL, "did:aw:test")
 	var registryErr *RegistryError
 	if !errors.As(err, &registryErr) {
 		t.Fatalf("error=%v, want RegistryError", err)
@@ -361,7 +375,9 @@ func TestTrustClientsCloseBodiesAfterRepeatedResponses(t *testing.T) {
 				return strings.NewReader("{\"did_aw\":\"did:aw:test\",\"current_did_key\":\"did:key:test\"}\n{}")
 			},
 			invoke: func(httpClient *http.Client) error {
-				_, err := NewAWIDRegistryClient(httpClient, nil).ResolveKeyAt(context.Background(), "https://trust.example", "did:aw:test")
+				client := NewAWIDRegistryClient(httpClient, nil)
+				routeUntrustedRegistriesToInjectedClient(client)
+				_, err := client.ResolveKeyAt(context.Background(), "https://trust.example", "did:aw:test")
 				return err
 			},
 			wantError: true,
@@ -373,7 +389,9 @@ func TestTrustClientsCloseBodiesAfterRepeatedResponses(t *testing.T) {
 				return strings.NewReader("{\"did_aw\":\"did:aw:test\",\"current_did_key\":\"did:key:test\"}\n{}")
 			},
 			invoke: func(httpClient *http.Client) error {
-				_, err := NewRegistryResolver(httpClient, nil).resolveKeyFresh(context.Background(), "https://trust.example", "did:aw:test", true)
+				resolver := NewRegistryResolver(httpClient, nil)
+				routeUntrustedResolverRegistriesToInjectedClient(resolver)
+				_, err := resolver.resolveKeyFresh(context.Background(), "https://trust.example", "did:aw:test", true)
 				return err
 			},
 			wantError: true,

@@ -17,6 +17,7 @@ import tempfile
 import textwrap
 import unittest
 import zipfile
+from unittest.mock import patch
 from email.message import Message
 from pathlib import Path
 
@@ -446,6 +447,59 @@ class NaappPackageRcContractTest(unittest.TestCase):
                     NAAPP_PACKAGE._check_requirements(Path("fixture.whl"), metadata, aweb_naapp_version=None)
 
 
+class MatchedRcSiblingInstallTest(unittest.TestCase):
+    """Real wheels and uv: a matched RC set is explicit, its floors still bind."""
+
+    @classmethod
+    def setUpClass(cls):
+        temporary = tempfile.TemporaryDirectory()
+        cls.addClassCleanup(temporary.cleanup)
+        root = Path(temporary.name)
+
+        def build(label, name, version, module, dependencies, body):
+            project = root / label
+            source = project / 'src' / module
+            source.mkdir(parents=True)
+            (source / '__init__.py').write_text(body)
+            (project / 'pyproject.toml').write_text(
+                f'[project]\nname = "{name}"\nversion = "{version}"\n'
+                f'dependencies = {json.dumps(dependencies)}\n'
+                '[build-system]\nrequires = ["hatchling"]\nbuild-backend = "hatchling.build"\n'
+                f'[tool.hatch.build.targets.wheel]\npackages = ["src/{module}"]\n')
+            wheel = NAAPP_PACKAGE._build(project, root / 'dist' / label)
+            return project, wheel, NAAPP_PACKAGE._metadata(wheel)
+
+        cls.awid = build('awid', 'awid-service', '0.5.40rc1', 'awid', [], 'LOCAL_RC = True\n')
+        stable = build('stable', 'awid-service', '0.5.39', 'awid', [], 'LOCAL_RC = False\n')
+        cls.naapp = build('naapp', 'aweb-naapp', '0.5.2rc1', 'aweb_naapp',
+                          ['awid-service>=0.5.40rc1'], 'from awid import LOCAL_RC\nassert LOCAL_RC\n')
+        cls.server = build('server', 'aweb', '1.27.51rc1', 'aweb',
+                           ['awid-service>=0.5.40rc1'], 'from awid import LOCAL_RC\nassert LOCAL_RC\n')
+        cls.testing = build('testing', 'aweb-naapp-testing', '0.5.2rc1', 'aweb_naapp_testing',
+                            ['aweb-naapp==0.5.2rc1', 'aweb>=1.27.51rc1'],
+                            'import aweb_naapp\nimport aweb\n')
+        cls.newer = build('newer', 'aweb-naapp', '0.5.2rc1', 'aweb_naapp',
+                          ['awid-service>=0.5.40rc2'], 'import awid\n')
+        cls.links = [row[1].parent for row in (cls.awid, cls.naapp, cls.server)]
+        # The older stable neighbor models the index without network access.
+        # Its presence prevents uv's only-prereleases-available exception.
+        index = root / 'index' / 'awid-service'
+        index.mkdir(parents=True)
+        (index / 'index.html').write_text(f'<a href="{stable[1].as_uri()}">{stable[1].name}</a>')
+        cls.environment = dict(UV_NO_INDEX='0', UV_INDEX_URL=(root / 'index').as_uri())
+
+    def test_matched_rc_siblings_install_and_import(self):
+        with patch.dict(os.environ, self.environment):
+            for row in (self.naapp, self.testing):
+                with self.subTest(package=row[2]['Name']):
+                    NAAPP_PACKAGE._check_install(*row, self.links)
+
+    def test_floor_newer_than_local_rc_still_refuses(self):
+        with patch.dict(os.environ, self.environment):
+            with self.assertRaisesRegex(NAAPP_PACKAGE.PackageRefusal, '0.5.40rc2'):
+                NAAPP_PACKAGE._check_install(*self.newer, self.links)
+
+
 class CandidateBrowserImageContractTest(unittest.TestCase):
     def test_integration_image_installs_the_locked_headless_shell(self):
         dockerfile = (ROOT / "candidate-gate/Dockerfile").read_text()
@@ -474,6 +528,18 @@ class CandidateBrowserImageContractTest(unittest.TestCase):
 
 
 class FinalPromotionContractTest(unittest.TestCase):
+    def test_server_image_build_inputs_require_a_new_rc(self):
+        for relative in ("awid/implementation.py", "naapp-lib/implementation.py",
+                         "scripts/oci-exact-publish.sh", ".dockerignore",
+                         ".github/workflows/service-image-release.yml"):
+            with self.subTest(path=relative):
+                root = self.repository()
+                self.promote(root)
+                path = root / relative
+                path.parent.mkdir(parents=True, exist_ok=True)
+                path.write_text("changed image input\n")
+                self.assert_both_refuse(root, "non-version file|additions", "server-v1.27.34")
+
     def repository(self):
         temporary, root = TagContractTest.repository(self)
         self.addCleanup(temporary.cleanup)
@@ -658,18 +724,15 @@ sdist = { url = "https://files.example/unrelated.tar.gz", hash = "sha256:unchang
                 # The reported failure: a root Makefile change or another
                 # package moving on must not demand another RC of this package.
                 (root / "Makefile").write_text("unrelated-target:\n\t@true\n")
-                other = "server" if directory != "server" else "awid"
-                (root / other / "implementation.py").unlink()
-                manifest = root / other / "pyproject.toml"
-                manifest.write_text(manifest.read_text().replace('version = "', 'version = "9'))
-                # Leave dependency floors on their RC versions: no promotion
-                # of the unrelated target is being asserted by this test.
                 if directory == "server":
-                    for relative in ("server/pyproject.toml", "server/uv.lock"):
-                        path = root / relative
-                        path.write_text(command(root, "git", "show", "HEAD:" + relative)
-                                        .replace("1.27.34rc1", "1.27.34")
-                                        .replace("0.4.1rc1", "0.4.1") + "\n")
+                    # AWID/naapp-lib are bundled in the server image now.
+                    # An unbundled npm package remains outside its RC scope.
+                    manifest = root / "channel/package.json"
+                    manifest.write_text(manifest.read_text().replace("3.4.5", "9.9.9"))
+                else:
+                    (root / "server/implementation.py").unlink()
+                    manifest = root / "server/pyproject.toml"
+                    manifest.write_text(manifest.read_text().replace('version = "', 'version = "9'))
                 self.assert_both_accept(root, tag)
 
     def test_each_package_source_change_refuses_candidate_and_publisher(self):

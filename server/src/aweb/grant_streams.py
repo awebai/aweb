@@ -9,7 +9,6 @@ from typing import Any
 from fastapi import HTTPException, Request
 
 from aweb.grant_expiry import never_expires
-from aweb.auth_context import GrantContext
 from aweb.config import require_registered_certificates
 from aweb.team_auth_deps import TeamIdentity, _aweb_db, _get_registered_certificates, _get_revoked_certificates
 

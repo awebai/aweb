@@ -20,7 +20,6 @@ from awid.id_tree_requests import CONTROLLER_REQUEST_TYPE
 from awid.log import require_canonical_server_origin
 from awid.signing import canonical_json_bytes, verify_did_key_signature
 
-
 _METHODS = {
     'protected_operation_prepare': 'POST',
     'protected_operation_receipt': 'GET',
