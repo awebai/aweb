@@ -6,12 +6,13 @@ authority, protected local controller custody, B3, B2 and transactional local
 audit. The embedding process installs `aweb-naapp[runtime]` from the compatible
 release. The ordinary aweb server imports none of this module by default.
 
-This slice supports `human-role.revoke` only. It produces a signed owner-act
-receipt; it does not deliver or apply that act at the target app. Shared HTTP
-mounts, browser pages, bootstrap and the other catalog operations remain with
-their shared implementations. No alternative parser, ceremony or receipt
-store is provided here. In-process actor objects are trusted adapter ports,
-never request JSON credentials.
+The closed runtime table supports `human-role.revoke`, `identity.root.endorse`,
+`team.agent.admit/default` and `team.agent.remove/default`. The existing owner
+act is delivered by its CLI adapter; endorsement registration is subject-owned,
+and admission/removal require registry confirmation before committed receipts.
+See `docs/protected-oats-root-admission.md` and `docs/protected-team-removal.md`.
+Shared HTTP, browser, bootstrap and receipt implementations are reused.
+In-process actor objects are trusted adapter ports, never request JSON credentials.
 
 ```python
 from aweb.protected_signing.composition import IndependentProtectedSigner
@@ -99,8 +100,10 @@ exact-act UV after real LOGIN. The CLI uses its own cookie-free receipt proof.
 The provisioned `ProtectedKeyContext` selects one exact service, team-controller
 authority, human/domain and association generation. Its authoritative row in
 `protected_authorizer_bindings` binds the B3 subject/scope and policy version.
-`protected_requester_bindings` grants prepare/receipt scope only. These rows
-contain no private keys. This composition exposes no writer for them: changing
+`protected_requester_bindings` grants requester scope for this exact binding;
+live-floor operations still require separate human approval. Exact self-removal
+uses a member proof confined to its own operation instead of a root grant.
+These rows contain no private keys. Beyond first bootstrap, changing
 an authorizer set or policy must use its separately classified live approval;
 missing operations refuse. Initial provisioning and existing-key import require
 their separately approved operator procedure. Migration creates empty tables;

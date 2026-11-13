@@ -476,6 +476,37 @@ func (c *RegistryClient) ListCertificates(
 		teamID, len(certificates), certificateListPageCap)
 }
 
+// TeamCertificateStatus is the registry's public status of one team
+// certificate: its team, the team's current key, and whether the certificate
+// is revoked.
+type TeamCertificateStatus struct {
+	TeamID     string  `json:"team_id"`
+	TeamDIDKey string  `json:"team_did_key"`
+	Status     string  `json:"status"`
+	RevokedAt  *string `json:"revoked_at"`
+}
+
+// GetTeamCertificateStatus reads certificateID's status in the team. The read
+// is anonymous for public and private teams alike and needs no member
+// authority; an unknown team or certificate answers 404.
+func (c *RegistryClient) GetTeamCertificateStatus(
+	ctx context.Context,
+	registryURL string,
+	domain string,
+	name string,
+	certificateID string,
+) (*TeamCertificateStatus, error) {
+	domain = canonicalizeDomain(domain)
+	name = strings.TrimSpace(name)
+	path := "/v1/namespaces/" + urlPathEscape(domain) + "/teams/" + urlPathEscape(name) +
+		"/certificates/" + urlPathEscape(strings.TrimSpace(certificateID)) + "/status"
+	var out TeamCertificateStatus
+	if err := c.requestJSON(ctx, http.MethodGet, registryURL, path, nil, nil, &out); err != nil {
+		return nil, err
+	}
+	return &out, nil
+}
+
 // ResolveTeamMember resolves an active (team_id, alias) team-member reference.
 //
 // signingKey is optional; see GetTeam.

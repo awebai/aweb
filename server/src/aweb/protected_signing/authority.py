@@ -12,6 +12,7 @@ from aweb_naapp.runtime.protected_signer import (
     RestrictedRequester,
     SignerRefused,
 )
+from aweb_naapp.runtime.protected_signer.types import _checked_self_removal
 from awid.identity_observation import (
     IdentityObservationRefused,
     observe_identity_binding,
@@ -152,6 +153,7 @@ class _Current:
             deadline,
         )
         self.team_key_did = authority.custody.team_key_did
+        self.self_deadline = None
 
     async def _check(self, tx, actor, *, hold):
         if type(actor) not in {AdmittedHuman, RestrictedRequester, ReceiptReader}:
@@ -169,6 +171,10 @@ class _Current:
             ):
                 raise SignerRefused("scope_refused")
         else:
+            cap = _checked_self_removal(actor)
+            if cap is not None:
+                self.self_deadline = cap.deadline
+                return
             requester = await tx.fetch_one(
                 "SELECT active FROM {{tables.protected_requester_bindings}} "
                 "WHERE b3_scope=$1 AND principal=$2" + (" FOR SHARE" if hold else ""),
@@ -187,5 +193,6 @@ class _Current:
         await self._check(tx, actor, hold=False)
 
     def require_fresh(self):
-        if self.authority.timer() > self.deadline:
+        now = self.authority.timer()
+        if now > self.deadline or (self.self_deadline is not None and now >= self.self_deadline):
             raise SignerRefused("evidence_unavailable")
