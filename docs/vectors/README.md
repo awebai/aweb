@@ -1107,3 +1107,8 @@ vectors. It freezes an exact admitted-member positive, controller-signed key,
 alias and rights replacements under an active ID, unsigned alteration, unknown
 ID and unavailable historical-blob controls. Its baseline and authority are
 synthetic; it does not establish protected executor issuance or activation.
+
+
+`protected-effect-receipt-v1.json` freezes the proof-gated consumer confirmation
+route, complete header channel, minimal exact response, no-store policy and
+404/503 distinction. Historical receipt reads grant no renewed effect authority.
