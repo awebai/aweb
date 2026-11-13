@@ -5,6 +5,7 @@ import (
 	"context"
 	"crypto/ed25519"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"net/http"
 	"net/url"
@@ -416,6 +417,14 @@ func formatHumanRoleAct(fields map[string]any, r humanRoleActRequest, app *holde
 	return b.String()
 }
 
+// ownerActTransport carries owner-act deliveries to an app.
+var ownerActTransport = func() http.RoundTripper { return awid.NewAPITransport() }
+
+// errOwnerActAppliedEarlier is the receiver's 409 applied_earlier: this
+// exact act took effect on an earlier delivery. No other answer means that,
+// whatever its body says.
+var errOwnerActAppliedEarlier = errors.New("the app already applied this act")
+
 // deliverOwnerAct posts a signed act to the app's human origin, with no
 // team-auth and no redirect, and returns the app's answer.
 func deliverOwnerAct(cmd *cobra.Command, humanOrigin string, body map[string]any) (map[string]any, error) {
@@ -435,7 +444,7 @@ func deliverOwnerAct(cmd *cobra.Command, humanOrigin string, body map[string]any
 	}
 	req.Header.Set("Content-Type", "application/json")
 	client := &http.Client{
-		Timeout: awid.APITimeout(), Transport: awid.NewAPITransport(),
+		Timeout: awid.APITimeout(), Transport: ownerActTransport(),
 		CheckRedirect: func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse },
 	}
 	resp, err := client.Do(req)
@@ -451,6 +460,9 @@ func deliverOwnerAct(cmd *cobra.Command, humanOrigin string, body map[string]any
 		code := handoff.RefusalCode(reply)
 		if code == "" {
 			code = fmt.Sprintf("owner_act_http_%d", resp.StatusCode)
+		}
+		if resp.StatusCode == http.StatusConflict && code == "applied_earlier" {
+			return nil, withErrorCode(code, errOwnerActAppliedEarlier)
 		}
 		return nil, withErrorCode(code, fmt.Errorf("%s refused the act (%d %s)", humanOrigin, resp.StatusCode, code))
 	}
