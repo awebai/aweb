@@ -492,8 +492,13 @@ docker run --rm --init \
   -w "$checkout" \
   "$IMAGE" \
   bash scripts/candidate-suite.sh "$pending" \
-  2>&1 | tee "$LOG_DIR/gate.log"
-status="${PIPESTATUS[0]}"
+  2>&1 | tee "$LOG_DIR/gate.log" &
+# Bash defers traps while a foreground pipeline runs. Waiting on its async
+# job lets TERM enter scoped cleanup immediately; cleanup stops the runner
+# before removing resources that its still-running suite could recreate.
+runner_job=$!
+wait "$runner_job"
+status=$?
 set -e
 
 if [[ "$status" -ne 0 ]]; then

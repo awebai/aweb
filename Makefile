@@ -155,6 +155,8 @@ test-shipping:
 	python3 scripts/test_server_image_publish.py
 	python3 scripts/test_aw_npm_publication.py
 	python3 scripts/test_candidate_cleanup.py
+	python3 scripts/test_candidate_processes.py
+	python3 scripts/test_candidate_cancellation.py
 	python3 scripts/test_candidate_disk_floor.py
 	python3 scripts/test_candidate_network.py
 	python3 scripts/test_candidate_bind_ownership.py
