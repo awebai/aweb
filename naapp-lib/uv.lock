@@ -201,6 +201,7 @@ dependencies = [
 [package.metadata]
 requires-dist = [
     { name = "aweb-naapp", extras = ["egress", "hooks"], editable = "." },
+    { name = "aweb-naapp", extras = ["runtime"], marker = "extra == 'protected'", editable = "." },
     { name = "awid-service", editable = "../awid" },
     { name = "base58", specifier = ">=2.1.1" },
     { name = "cryptography", specifier = ">=45.0.6" },
@@ -219,6 +220,7 @@ requires-dist = [
     { name = "typer", specifier = ">=0.16.1" },
     { name = "uvicorn", extras = ["standard"], specifier = ">=0.35.0" },
 ]
+provides-extras = ["protected"]
 
 [package.metadata.requires-dev]
 dev = [

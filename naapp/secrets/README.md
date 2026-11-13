@@ -36,6 +36,20 @@ fails nothing. `/live` checks nothing and is what the image's `HEALTHCHECK`
 probes. The database is the app's own pgdbm schema: the shared runtime's
 migrations first, then `src/aweb_secrets/migrations/` (module `aweb_secrets`).
 
+Owner migration `002_shared_holdings.sql` moves existing owner scope records to
+`aweb_naapp.roles` in one transaction. It preserves B3 scopes, subjects,
+credentials and role-assignment timestamps, with a NULL retained certificate
+until the owner refreshes through the authenticated handoff. A legacy non-did:aw
+owner or an inconsistent scope refuses the entire migration; the migration never
+guesses an identity. Owner authorization and holds then use only that shared
+store. The former owner contact-binding and recovery endpoint refuses all scopes.
+
+This read cutover (16.43a) and the shared human-role delivery/effect mount
+(16.43b) form one deployment boundary: do not install between them. Canonical
+holder setup in component tests does not provide a replacement bootstrap route.
+Captured migration history and its deliberate generator live in
+`tests/fixtures/owner_holding_cutover/`.
+
 Installation-scoped configuration revisions, change-set settings, policies,
 grant templates and secret references are keyed by both team and installation.
 Two teams reporting the same installation id keep separate state. Policy

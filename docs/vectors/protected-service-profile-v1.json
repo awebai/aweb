@@ -1,0 +1,38 @@
+{
+  "v": 1,
+  "service_id": "customer-signer",
+  "request_origin": "https://signer.customer.example",
+  "human_origin": "https://human.customer.example",
+  "rp_id": "human.customer.example",
+  "registry_origin": "https://registry.customer.example",
+  "namespace_authorities": [
+    {
+      "domain": "customer.example",
+      "controller_did": "did:key:z6Mkon3Necd6NkkyfoGoHxid2znGc59LU3K7mubaRcFbLfLX"
+    }
+  ],
+  "bindings": [
+    {
+      "scope": {
+        "v": 1,
+        "kind": "protected_key",
+        "service_id": "customer-signer",
+        "authority": {
+          "kind": "team_controller",
+          "id": "engineering:customer.example",
+          "domain": "customer.example"
+        },
+        "human": {
+          "id": "did:aw:3YDAM5ZLRKg7eHH1Zs6sSMwkga8w",
+          "domain": "customer.example"
+        },
+        "generation": 1
+      },
+      "authority_key_did": "did:key:z6MkmtWtY63GQVBrpMyRJWEzsnxfsGkemu6CtMDwGTv4RYj2",
+      "policy": {
+        "ref": "aweb.human-assurance/1",
+        "version": 1
+      }
+    }
+  ]
+}

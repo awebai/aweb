@@ -45,6 +45,11 @@ def _consumer(names: str | Iterable[str], *root_markers: str) -> ConsumerSpec:
 SERVER_CONSUMER = PurePosixPath("server/tests/test_identity_conformance_vectors.py")
 GO_CONSUMER = PurePosixPath("cli/go/internal/conformance/conformance_test.go")
 ROOT_CONSUMERS = {
+    PurePosixPath("server/tests/test_protected_service_profile.py"): _consumer(
+        ("protected-service-profile-v1.json", "protected-service-request-v1.json"),
+        'Path(__file__).resolve().parents[2]',
+        'FIXTURE.with_name("protected-service-request-v1.json")',
+    ),
     PurePosixPath("server/tests/test_human_chat_policy.py"): _consumer(
         "id-certificates-v1.json",
         "Path(__file__).resolve().parents[2] / 'docs/vectors/id-certificates-v1.json'",
@@ -398,6 +403,10 @@ ROOT_CONSUMERS = {
         "principal-attestation-v1.json",
         '(Path(__file__).parents[3] / "docs" / "vectors" / "principal-attestation-v1.json")',
     ),
+    PurePosixPath("naapp-lib/tests/console/test_human_role_holding_identity.py"): _consumer(
+        "human-role-holding-v1.json",
+        '"docs/vectors/human-role-holding-v1.json"',
+    ),
     PurePosixPath("naapp-lib/renderer/tests/decision-display.test.mjs"): _consumer(
         "decision-display-v1.json",
         '"../../../docs/vectors/decision-display-v1.json"',
@@ -569,6 +578,43 @@ ROOT_CONSUMERS = {
     PurePosixPath("cli/go/awid/owneract_test.go"): _consumer(
         "owner-act-v1.json",
         '"../../../docs/vectors/owner-act-v1.json"',
+    ),
+    PurePosixPath("cli/go/awid/human_credential_test.go"): _consumer(
+        "owner-act-delivery-v1.json",
+        '"../../../docs/vectors/owner-act-delivery-v1.json"',
+    ),
+    PurePosixPath("cli/go/cmd/aw/app_holder_test.go"): _consumer(
+        "owner-act-delivery-v1.json",
+        '"../../../../docs/vectors/owner-act-delivery-v1.json"',
+    ),
+    PurePosixPath("cli/go/cmd/aw/app_human_test.go"): _consumer(
+        "owner-act-delivery-v1.json",
+        '"../../../../docs/vectors/owner-act-delivery-v1.json"',
+    ),
+    PurePosixPath("cli/go/internal/handoff/covered_request_test.go"): _consumer(
+        "approval-request-v1.json",
+        '"../../../../docs/vectors/approval-request-v1.json"',
+    ),
+    PurePosixPath("cli/go/cmd/aw/app_role_protected_test.go"): _consumer(
+        "protected-service-profile-v1.json",
+        '"../../../../docs/vectors/protected-service-profile-v1.json"',
+    ),
+    PurePosixPath("cli/go/internal/handoff/protected_request_test.go"): _consumer(
+        ("protected-service-profile-v1.json", "protected-service-request-v1.json"),
+        '"../../../../docs/vectors/protected-service-profile-v1.json"',
+        '"../../../../docs/vectors/protected-service-request-v1.json"',
+    ),
+    PurePosixPath("cli/go/cmd/aw/app_requester_test.go"): _consumer(
+        "id-certificates-v1.json",
+        '"../../../../docs/vectors/id-certificates-v1.json"',
+    ),
+    PurePosixPath("cli/go/cmd/aw/app_role_test.go"): _consumer(
+        "owner-act-delivery-v1.json",
+        '"../../../../docs/vectors/owner-act-delivery-v1.json"',
+    ),
+    PurePosixPath("naapp-lib/tests/console/test_human_role_holding_identity.py"): _consumer(
+        "human-role-holding-v1.json",
+        'Path(__file__).resolve().parents[3] / "docs/vectors/human-role-holding-v1.json"',
     ),
     PurePosixPath("cli/go/hookevent/vectors_test.go"): _consumer(
         {"hook-catalog-v1.json", "hook-delivery-credential-v2.json", "hook-event-envelope-v1.json"},

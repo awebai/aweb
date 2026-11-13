@@ -15,6 +15,7 @@ from aweb_secrets.jobs import JobDefinition, apply_job_migrations, create_job
 from aweb_secrets.operation import OperationTemplate
 from aweb_secrets.policy import Policy
 from aweb_secrets.secret import SecretRecord
+from tests.human_owner import bind_owner
 from tests.test_admission import (
     ALICE,
     BOB,
@@ -107,12 +108,12 @@ async def test_missing_and_ungranted_refs_are_indistinguishable(catalog, db):  #
         assert refused.value.code == "secret_not_found"
 
 
-async def test_an_owner_sees_all_metadata_without_a_use_grant(catalog, db):  # noqa: F811
+async def test_an_owner_sees_all_metadata_without_a_use_grant(catalog, db, fence, registry):  # noqa: F811
     await seed(db)
+    owner = await bind_owner(db, fence, registry, team_id=TEAM)
     async with db.transaction() as tx:
-        await assign(tx, principal_key(BOB), "secrets.owner")
         await records.revoke_grant(tx, INSTALLATION, "grt_catalog1")
-    assert [item["ref"] for item in await catalog.list(grant=authority(), principal=BOB)] == [
+    assert [item["ref"] for item in await catalog.list(grant=authority(), principal=owner)] == [
         SECRET["ref"]
     ]
 

@@ -21,7 +21,7 @@ from pgdbm import AsyncDatabaseManager, AsyncMigrationManager
 from pgdbm.core import TransactionManager
 
 from aweb_secrets.approval_evidence import record_approval_proof
-from aweb_secrets.owners import OWNER_ROLE, owner_scope
+from aweb_secrets.owners import has_owner, owner_binding, owner_scope
 from aweb_secrets.reconciliation_policy import (
     POLICY_PREFIX,
     POLICY_VERSION,
@@ -108,14 +108,11 @@ class ReconciliationAudit:
             )
             owner = request["owner"]
             candidates = approval.candidates
-            principal = await tx.fetch_value(
-                "SELECT principal_did FROM {{tables.owner_principals}}"
-                " WHERE scope=$1 AND installation_id=$2 AND team_id=$3",
-                owner["scope"],
-                scope.installation_id,
-                scope.team_id,
+            _owner_binding = await owner_binding(
+                tx, owner["scope"], installation_id=scope.installation_id, team_id=scope.team_id
             )
-            from aweb_naapp.roles import PrincipalKey, has_role
+            principal = None if _owner_binding is None else _owner_binding["principal_did"]
+            from aweb_naapp.roles import PrincipalKey
 
             if (
                 view is None
@@ -123,8 +120,10 @@ class ReconciliationAudit:
                 or principal is None
                 or principal != approval.requested_by
                 or owner_scope(scope.installation_id, scope.team_id, principal) != owner["scope"]
-                or not await has_role(
-                    tx, PrincipalKey(team_id=scope.team_id, principal_did=principal), OWNER_ROLE
+                or not await has_owner(
+                    tx,
+                    PrincipalKey(team_id=scope.team_id, principal_did=principal),
+                    installation_id=scope.installation_id,
                 )
                 or len(candidates) != 1
                 or (candidates[0].scope, candidates[0].subject)

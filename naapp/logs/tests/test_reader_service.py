@@ -2,35 +2,40 @@
 coordination server and AWID, real PostgreSQL, a real TLS SMTP server and a
 software passkey.
 
-A member granted ``logs.readers`` asks for a reader slot, the team owner
-designates a contact for it, the reader enrols from the link it receives by
-mail, logs in on the console origin and reads its team's log."""
+The team owner designates a human member of the team as a reader by a
+human-role act delivered to logs' console origin, binding the reader's
+passkey; the reader logs in on the console origin with it and reads its team's
+log. A reinstalled logs is a new installation: the old one's readers end with
+it, and the owner designates them afresh."""
 
 from __future__ import annotations
 
-import email
-import email.policy
+import asyncio
+import base64
 import hashlib
 import json
 from collections.abc import AsyncIterator
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from datetime import UTC, datetime, timedelta
 from html.parser import HTMLParser
 from pathlib import Path
 from typing import Any
-from urllib.parse import parse_qs, urlsplit
+from urllib.parse import urlsplit
 from uuid import uuid4
 
 import httpx
 import pytest
 from aweb.app_manifests import FetchedManifest
-from aweb.installations import install_verified_manifest_on
+from aweb.installations import install_verified_manifest_on, uninstall_installation_on
 from aweb_naapp.css import CSS_SHA256
 from aweb_naapp.egress.send import EgressNotSent
 from aweb_naapp.email import EmailSettings
+from aweb_naapp.hooks.owner_act import HumanCredential
 from aweb_naapp.manifest import load_manifest
-from aweb_naapp.runtime.passkeys import contact_sha256
+from aweb_naapp.roles import holding_scope, read_holding
+from aweb_naapp.runtime.owner_act_router import OWNER_ACT_PATH
 from aweb_naapp_testing import Member
+from aweb_naapp_testing.human_members import HumanMember, HumanNamespace, human_namespace
 from aweb_naapp_testing.owner_acts import AUDIENCE, TeamOwner
 from aweb_naapp_testing.smtp import SmtpServer
 from aweb_naapp_testing.webauthn import SoftAuthenticator
@@ -38,16 +43,14 @@ from awid_service.testing import REGISTRY_URL, SERVICE_TOKEN
 
 from aweb_logs.app import create_app
 from aweb_logs.config import LogsSettings
-from aweb_logs.readers import ReaderDirectory
+from aweb_logs.readers import READER_ROLE
 
-from .deployment import TEST_APP_ID, served_manifest, template, write_key_file
-from .reader_world import act_body
-from .test_reader_routes import READER_SLOT_TOOL, REMOVE_READER_TOOL, blocked_dns
+from .deployment import TEST_APP_ID, template, write_key_file
+from .test_reader_routes import REMOVE_READER_TOOL, blocked_dns
 
 # The deployment answers at the audience the owner's acts name.
 ORIGIN = AUDIENCE
 CONSOLE = "https://console.app.example.com"
-CONTACT = "reader@example.com"
 
 
 class Unresolved:
@@ -94,34 +97,51 @@ class Deployment:
     member: Member
     owner: TeamOwner
     installation_id: str
-    directory: ReaderDirectory
     smtp: SmtpServer
     agent: httpx.AsyncClient
     console: httpx.AsyncClient
+    # The owner's own client on the console origin: it delivers owner acts and
+    # never carries a reader's session cookie, which the delivery refuses.
+    owner_console: httpx.AsyncClient
     looked_up: list[str]
+    # The installed manifest: logs' version 3, which declares its reader role.
+    manifest: bytes
+    server_db: Any
+    db: Any
+    humans: HumanNamespace
+    devices: dict[str, SoftAuthenticator] = field(default_factory=dict)
 
 
-async def install(server_db, team_id: str, data: bytes) -> dict:
+async def install(
+    server_db, team_id: str, data: bytes, *, expected_generation: int | None = None
+) -> dict:
+    """Install ``data`` for the team; over a retained installation row, the
+    caller names that row's current generation, as the server requires."""
     manifest = load_manifest(data)
     fetched = FetchedManifest(
         origin=ORIGIN,
-        url=ORIGIN + "/.well-known/aweb-app.json",
+        url=ORIGIN + f"/manifests/v{manifest.manifest_version}.json",
         digest="sha256:" + hashlib.sha256(data).hexdigest(),
         data=data,
         manifest=manifest,
     )
     async with server_db.transaction() as tx:
         installation = await install_verified_manifest_on(
-            tx, team_id=team_id, fetched=fetched, granted_scopes=["logs.readers"]
+            tx,
+            team_id=team_id,
+            fetched=fetched,
+            granted_scopes=["logs.readers"],
+            expected_generation=expected_generation,
         )
     now = datetime.now(UTC)
     await server_db.execute(
         "UPDATE {{tables.app_hook_bindings}} SET state='active',"
         " activated_at=$2::timestamptz - INTERVAL '60 seconds', active_from=$2,"
-        " activation_act_sha256=$3 WHERE team_id=$1",
+        " activation_act_sha256=$3 WHERE team_id=$1 AND installation_id=$4 AND ended_by IS NULL",
         team_id,
         now - timedelta(minutes=1),
         "ab" * 32,
+        installation["installation_id"],
     )
     return installation
 
@@ -156,11 +176,7 @@ async def deployment(
         entry["kid"]: write_key_file(tmp_path / f"key-{index}")
         for index, entry in enumerate(template()["app_keys"])
     }
-    installation = await install(
-        coordination.server.db.get_manager("aweb"),
-        member.team_id,
-        served_manifest(key_files, origin=ORIGIN),
-    )
+    server_db = coordination.server.db.get_manager("aweb")
     settings = LogsSettings(
         _env_file=None,
         database_url=db.config.get_dsn(),
@@ -174,36 +190,55 @@ async def deployment(
         **getattr(request, "param", {}),
     )
     with blocked_dns() as looked_up, SmtpServer(tmp_path / "smtp") as smtp:
-        service = create_app(
-            settings,
-            email=email_settings(smtp, tmp_path),
-            awid_transport=coordination.registry.transport,
-            team_server_transport=coordination.server.transport,
-            resolver=Unresolved(),
-        )
-        async with service.api_app.router.lifespan_context(service.api_app):
-            async with (
-                httpx.AsyncClient(
-                    transport=httpx.ASGITransport(app=service), base_url=ORIGIN
-                ) as agent,
-                httpx.AsyncClient(
-                    transport=httpx.ASGITransport(app=service), base_url=CONSOLE
-                ) as human,
-            ):
-                yield Deployment(
-                    member=member,
-                    owner=TeamOwner(
-                        team_key=member.team_key,
-                        verifier=None,  # type: ignore[arg-type]
-                        team_id=member.team_id,
-                    ),
-                    installation_id=installation["installation_id"],
-                    directory=ReaderDirectory(db),
-                    smtp=smtp,
-                    agent=agent,
-                    console=human,
-                    looked_up=looked_up,
-                )
+        async with human_namespace(
+            coordination.registry, member.team_id.split(":", 1)[1]
+        ) as humans:
+            # logs reads AWID with the namespace's authority, where production
+            # checks it in DNS.
+            service = create_app(
+                settings,
+                email=email_settings(smtp, tmp_path),
+                awid_transport=coordination.registry.transport,
+                team_server_transport=coordination.server.transport,
+                resolver=Unresolved(),
+                awid_domain_verifier=humans.authority,
+            )
+            # Installed at the version 3 logs publishes, as an owner who
+            # designates readers pins it.
+            manifest = service.api_app.state.runtime.manifest_bytes
+            installation = await install(server_db, member.team_id, manifest)
+            async with service.api_app.router.lifespan_context(service.api_app):
+                async with (
+                    httpx.AsyncClient(
+                        transport=httpx.ASGITransport(app=service), base_url=ORIGIN
+                    ) as agent,
+                    httpx.AsyncClient(
+                        transport=httpx.ASGITransport(app=service), base_url=CONSOLE
+                    ) as human,
+                    httpx.AsyncClient(
+                        transport=httpx.ASGITransport(app=service), base_url=CONSOLE
+                    ) as owner_console,
+                ):
+                    yield Deployment(
+                        member=member,
+                        # The owner addresses its human-role acts to the console origin.
+                        owner=TeamOwner(
+                            team_key=member.team_key,
+                            verifier=None,  # type: ignore[arg-type]
+                            team_id=member.team_id,
+                            audience=CONSOLE,
+                        ),
+                        installation_id=installation["installation_id"],
+                        smtp=smtp,
+                        agent=agent,
+                        console=human,
+                        owner_console=owner_console,
+                        looked_up=looked_up,
+                        manifest=manifest,
+                        server_db=server_db,
+                        db=db,
+                        humans=humans,
+                    )
 
 
 async def member_post(deployment: Deployment, path: str, value: dict) -> httpx.Response:
@@ -214,79 +249,86 @@ async def member_post(deployment: Deployment, path: str, value: dict) -> httpx.R
     )
 
 
-async def reader_slot(deployment: Deployment, contact: str = CONTACT) -> str:
-    response = await member_post(
-        deployment, READER_SLOT_TOOL["path"], {"contact_sha256": contact_sha256(contact)}
+async def human(deployment: Deployment, alias: str) -> HumanMember:
+    """A human member of the deployment's team, registered on AWID."""
+    return await deployment.humans.register(
+        Member(
+            team_id=deployment.member.team_id,
+            team_key=deployment.member.team_key,
+            alias=alias,
+            certificate_id=f"cert-{alias}",
+        )
     )
-    assert response.status_code == 200, response.text
-    return response.json()["scope"]
 
 
-async def designated_reader(deployment: Deployment, contact: str) -> str:
-    """A reader the owner designated at ``contact``, by the deployment's routes."""
-    scope = await reader_slot(deployment, contact)
+def designation(
+    deployment: Deployment, reader: HumanMember, *, installation_id: str | None = None
+) -> dict:
+    """The body of the owner's act designating ``reader`` as a reader of the
+    installation, binding a new passkey the deployment keeps for its scope."""
+    installation_id = installation_id or deployment.installation_id
+    device = SoftAuthenticator(CONSOLE)
+    credential = device.bind(urlsplit(CONSOLE).hostname or "")
     signing, signature = deployment.owner.sign(
-        "app-role.designate",
+        "human-role.designate",
         {
             "app_id": TEST_APP_ID,
-            "installation_id": deployment.installation_id,
-            "role": scope,
-            "contact_sha256": contact_sha256(contact),
+            "installation_id": installation_id,
+            "role": READER_ROLE,
+            "principal": reader.principal,
+            "credential_sha256": HumanCredential.parse(credential).sha256,
         },
     )
-    designated = await deployment.console.post(
-        "/readers/designations",
-        json=act_body(signing, signature, scope=scope, contact=contact),
+    certificate = json.dumps(reader.member.certificate()).encode()
+    scope = holding_scope(installation_id, deployment.member.team_id, READER_ROLE, reader.principal)
+    deployment.devices[scope] = device
+    return {
+        "signing": base64.b64encode(signing).decode(),
+        "signature": signature,
+        "credential": credential,
+        "certificate": base64.b64encode(certificate).decode(),
+    }
+
+
+async def deliver(deployment: Deployment, body: dict) -> httpx.Response:
+    """The owner's act delivered to the console origin from the owner's own client."""
+    return await deployment.owner_console.post(OWNER_ACT_PATH, json=body)
+
+
+async def designate(
+    deployment: Deployment, reader: HumanMember, *, installation_id: str | None = None
+) -> httpx.Response:
+    """The owner designates ``reader`` as a reader of the installation, binding a
+    new passkey, by a human-role act delivered to the console origin."""
+    return await deliver(
+        deployment, designation(deployment, reader, installation_id=installation_id)
     )
+
+
+async def designated_reader(deployment: Deployment, alias: str = "reader") -> str:
+    """A human member the owner designated as a reader: its holding's scope."""
+    reader = await human(deployment, alias)
+    designated = await designate(deployment, reader)
     assert designated.status_code == 200, designated.text
-    return scope
+    return holding_scope(
+        deployment.installation_id, deployment.member.team_id, READER_ROLE, reader.principal
+    )
 
 
-def enrolment_token(deployment: Deployment, contact: str = CONTACT) -> str:
-    [received] = [mail for mail in deployment.smtp.received if mail.rcpt_tos == [contact]]
-    message = email.message_from_bytes(received.content, policy=email.policy.default)
-    body = message.get_body(("html",))
-    assert body is not None
-    [url] = Links(body.get_content()).urls
-    parts = urlsplit(url)
-    assert parts._replace(fragment="").geturl() == CONSOLE + "/enrolment"
-    [token] = parse_qs(parts.fragment)["token"]
-    return token
+async def log_in(deployment: Deployment, scope: str) -> httpx.Response:
+    """The reader's passkey login on the console origin, for its holding's scope."""
+    options = await deployment.console.post("/login/options", json={"scope": scope})
+    assert options.status_code == 200, options.text
+    return await deployment.console.post(
+        "/login", json={"scope": scope, "assertion": deployment.devices[scope].get(options.json())}
+    )
 
 
-async def test_a_designated_reader_enrols_from_its_mail_logs_in_and_reads(
+async def test_an_owner_designated_reader_logs_in_with_its_bound_passkey_and_reads(
     deployment: Deployment,
 ):
-    scope = await reader_slot(deployment)
-    signing, signature = deployment.owner.sign(
-        "app-role.designate",
-        {
-            "app_id": TEST_APP_ID,
-            "installation_id": deployment.installation_id,
-            "role": scope,
-            "contact_sha256": contact_sha256(CONTACT),
-        },
-    )
-    designated = await deployment.console.post(
-        "/readers/designations",
-        json=act_body(signing, signature, scope=scope, contact=CONTACT),
-    )
-    assert designated.status_code == 200, designated.text
-
-    token = enrolment_token(deployment)
-    device = SoftAuthenticator(CONSOLE)
-    options = await deployment.console.post("/enrolment/options", json={"link_token": token})
-    assert options.status_code == 200, options.text
-    enrolled = await deployment.console.post(
-        "/enrolment", json={"link_token": token, "credential": device.create(options.json())}
-    )
-    assert enrolled.json() == {"scope": scope}
-
-    login = await deployment.console.post("/login/options", json={"scope": scope})
-    assert login.status_code == 200, login.text
-    session = await deployment.console.post(
-        "/login", json={"scope": scope, "assertion": device.get(login.json())}
-    )
+    scope = await designated_reader(deployment)
+    session = await log_in(deployment, scope)
     assert session.status_code == 200, session.text
 
     home = await deployment.console.get("/")
@@ -301,24 +343,21 @@ async def test_a_designated_reader_enrols_from_its_mail_logs_in_and_reads(
     events = await deployment.console.get("/v1/events")
     verified = await deployment.console.get("/v1/verify")
     assert events.status_code == 200, events.text
-    assert [e["event_type"] for e in events.json()["events"]] == [
-        "credential.enrolled",
-        "role.designated",
-    ]
+    # The owner's act bound the credential: no enrolment follows it.
+    assert [e["event_type"] for e in events.json()["events"]] == ["role.designated"]
     assert verified.json()["intact"] is True
     assert deployment.looked_up == []
 
 
-async def test_the_agent_origin_serves_no_console_route_and_the_console_no_reader_slot(
+async def test_the_agent_origin_serves_no_console_route_and_no_owner_act_delivery(
     deployment: Deployment,
 ):
-    for path in ("/readers/designations", "/enrolment/options", "/login/options"):
+    for path in (OWNER_ACT_PATH, "/enrolment/options", "/login/options"):
         assert (await deployment.agent.post(path, json={})).status_code == 404, path
     for path in ("/v1/events", "/v1/verify"):
         assert (await deployment.agent.get(path)).status_code == 404, path
-    response = await deployment.console.post(
-        READER_SLOT_TOOL["path"], json={"contact_sha256": contact_sha256(CONTACT)}
-    )
+    # A reader is designated only through the owner-act delivery.
+    response = await deployment.console.post("/readers/designations", json={})
     assert response.status_code == 404
 
 
@@ -347,22 +386,9 @@ async def test_the_console_origin_serves_logs_pages_and_the_shell_assets_only_th
         assert (await deployment.agent.get(path)).status_code == 404, path
 
 
-async def enrolled_reader(deployment: Deployment, contact: str) -> str:
-    """A designated reader that enrolled its passkey from the link it was mailed."""
-    scope = await designated_reader(deployment, contact)
-    token = enrolment_token(deployment, contact)
-    device = SoftAuthenticator(CONSOLE)
-    options = await deployment.console.post("/enrolment/options", json={"link_token": token})
-    enrolled = await deployment.console.post(
-        "/enrolment", json={"link_token": token, "credential": device.create(options.json())}
-    )
-    assert enrolled.json() == {"scope": scope}
-    return scope
-
-
 @pytest.mark.parametrize("deployment", [{"client_address_header": "X-Real-IP"}], indirect=True)
 async def test_the_login_limit_is_kept_per_address_the_proxy_reports(deployment: Deployment):
-    scope = await enrolled_reader(deployment, CONTACT)
+    scope = await designated_reader(deployment)
 
     async def login_options(address: str) -> int:
         response = await deployment.console.post(
@@ -377,20 +403,18 @@ async def test_the_login_limit_is_kept_per_address_the_proxy_reports(deployment:
 
 
 async def test_a_member_removes_a_reader_but_never_the_last(deployment: Deployment):
-    kept = await enrolled_reader(deployment, CONTACT)
-    removed = await enrolled_reader(deployment, "second-reader@example.com")
+    kept = await designated_reader(deployment, "reader")
+    removed = await designated_reader(deployment, "second-reader")
     path = REMOVE_READER_TOOL["path"]
 
     response = await member_post(deployment, path, {"scope": removed})
     assert response.status_code == 200, response.text
     assert response.json() == {"scope": removed}
-    current = await deployment.directory.current_readers(
-        installation_id=deployment.installation_id, team_id=deployment.member.team_id
-    )
-    assert [reader.scope for reader in current] == [kept]
 
+    # The removed reader no longer counts: the one kept is the last.
     last = await member_post(deployment, path, {"scope": kept})
     assert (last.status_code, last.json()["detail"]) == (409, "last_reader_protected")
+    assert (await log_in(deployment, kept)).status_code == 200
     gone = await member_post(deployment, path, {"scope": removed})
     assert (gone.status_code, gone.json()["detail"]) == (404, "reader_unknown")
     assert deployment.looked_up == []
@@ -407,3 +431,152 @@ async def test_a_malformed_removal_is_refused_without_echo(deployment: Deploymen
 async def test_the_console_origin_serves_no_reader_removal(deployment: Deployment):
     response = await deployment.console.post(REMOVE_READER_TOOL["path"], json={"scope": "x"})
     assert response.status_code == 404
+
+
+@pytest.fixture
+def prompt_installation_status(monkeypatch: pytest.MonkeyPatch) -> float:
+    """The coordination server lets logs reuse an installation status for one
+    second, so logs sees a reinstall promptly; the seconds to wait past it."""
+    monkeypatch.setenv("AWEB_APP_GRANT_MAX_AGE_SECONDS", "1")
+    return 1.1
+
+
+async def reinstall(deployment: Deployment) -> str:
+    """The team uninstalls logs and installs it again: a new installation, whose id it returns."""
+    team_id = deployment.member.team_id
+    async with deployment.server_db.transaction() as tx:
+        current = await tx.fetch_one(
+            "SELECT generation FROM {{tables.team_app_installs}} WHERE team_id=$1 AND app_id=$2",
+            team_id,
+            TEST_APP_ID,
+        )
+        retired = await uninstall_installation_on(
+            tx, team_id=team_id, app_id=TEST_APP_ID, expected_generation=current["generation"]
+        )
+    installed = await install(
+        deployment.server_db,
+        team_id,
+        deployment.manifest,
+        expected_generation=retired["generation"],
+    )
+    return installed["installation_id"]
+
+
+async def live_credentials(deployment: Deployment, scope: str) -> int:
+    return await deployment.db.fetch_value(
+        "SELECT count(*) FROM {{tables.passkey_credentials}} c"
+        " JOIN {{tables.passkey_approvers}} a USING (subject)"
+        " WHERE a.scope = $1 AND c.revoked_at IS NULL",
+        scope,
+    )
+
+
+async def test_a_reinstalled_logs_ends_the_old_readers_and_the_owner_designates_them_afresh(
+    prompt_installation_status: float, deployment: Deployment
+):
+    reader = await human(deployment, "reader")
+    assert (await designate(deployment, reader)).status_code == 200
+    old = holding_scope(
+        deployment.installation_id, deployment.member.team_id, READER_ROLE, reader.principal
+    )
+    assert (await log_in(deployment, old)).status_code == 200
+    assert await live_credentials(deployment, old) == 1
+
+    reinstalled = await reinstall(deployment)
+    assert reinstalled != deployment.installation_id
+    await asyncio.sleep(prompt_installation_status)
+
+    # Admitting the new installation retires the old one, and its readers end
+    # with it, in the same transaction, before the owner's act takes effect.
+    designated = await designate(deployment, reader, installation_id=reinstalled)
+    assert designated.status_code == 200, designated.text
+    assert (
+        await read_holding(
+            deployment.db,
+            installation_id=deployment.installation_id,
+            team_id=deployment.member.team_id,
+            role=READER_ROLE,
+            principal=reader.principal,
+        )
+        is None
+    )
+    assert await live_credentials(deployment, old) == 0
+    assert (await deployment.console.get("/v1/events")).status_code == 401
+
+    new = holding_scope(reinstalled, deployment.member.team_id, READER_ROLE, reader.principal)
+    assert (await log_in(deployment, new)).status_code == 200
+    assert (await deployment.console.get("/v1/events")).status_code == 200
+
+
+async def set_governance_target(deployment: Deployment, *, active: bool) -> None:
+    """Take logs' post-governance-hook binding in the team back to pending, so
+    logs has no governance target, or activate it again."""
+    team_id = deployment.member.team_id
+    if active:
+        now = datetime.now(UTC)
+        await deployment.server_db.execute(
+            "UPDATE {{tables.app_hook_bindings}} SET state='active',"
+            " activated_at=$2::timestamptz - INTERVAL '60 seconds', active_from=$2,"
+            " activation_act_sha256=$3 WHERE team_id=$1 AND hook='post-governance-hook'"
+            " AND ended_by IS NULL",
+            team_id,
+            now - timedelta(minutes=1),
+            "ab" * 32,
+        )
+    else:
+        await deployment.server_db.execute(
+            "UPDATE {{tables.app_hook_bindings}} SET state='pending', activated_at=NULL,"
+            " active_from=NULL, activation_act_sha256=NULL"
+            " WHERE team_id=$1 AND hook='post-governance-hook' AND ended_by IS NULL",
+            team_id,
+        )
+
+
+async def governed_state(deployment: Deployment) -> tuple[int, ...]:
+    """The counts a designation would change: holdings, credentials, consumed
+    nonces, outbox events and chain events."""
+    return tuple(
+        [
+            await deployment.db.fetch_value(f"SELECT count(*) FROM {{{{tables.{table}}}}}")
+            for table in (
+                "role_holdings",
+                "passkey_credentials",
+                "owner_act_nonces",
+                "outbox_events",
+                "chain_events",
+            )
+        ]
+    )
+
+
+async def test_a_designation_without_logs_governance_target_changes_nothing_until_it_returns(
+    prompt_installation_status: float, deployment: Deployment
+):
+    reader = await human(deployment, "reader")
+    body = designation(deployment, reader)
+    before = await governed_state(deployment)
+
+    await set_governance_target(deployment, active=False)
+    await asyncio.sleep(prompt_installation_status)
+    refused = await deliver(deployment, body)
+    assert (refused.status_code, refused.json()["detail"]) == (
+        503,
+        "release_context_unavailable",
+    )
+    assert await governed_state(deployment) == before
+
+    # The same unexpired act is admitted once the target is back.
+    await set_governance_target(deployment, active=True)
+    await asyncio.sleep(prompt_installation_status)
+    admitted = await deliver(deployment, body)
+    assert admitted.status_code == 200, admitted.text
+    assert (
+        await read_holding(
+            deployment.db,
+            installation_id=deployment.installation_id,
+            team_id=deployment.member.team_id,
+            role=READER_ROLE,
+            principal=reader.principal,
+        )
+        is not None
+    )

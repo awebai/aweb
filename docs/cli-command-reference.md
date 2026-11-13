@@ -19,7 +19,7 @@ to refresh it.
 | Identity | `auth`, `custody`, `id`, `mcp-config`, `org`, `team`, `whoami` |
 | Messaging & Network | `a2a`, `beads-mail`, `chat`, `contacts`, `control`, `directory`, `events`, `gc-mail`, `heartbeat`, `inbound-mode`, `log`, `mail`, `room`, `wake` |
 | Coordination & Runtime | `activity`, `agent`, `instructions`, `lock`, `notify`, `role-name`, `roles`, `run`, `status`, `status-host`, `task`, `work` |
-| Utility | `audit`, `completion`, `doctor`, `help`, `hooks`, `plugin`, `upgrade`, `version` |
+| Utility | `app`, `audit`, `completion`, `doctor`, `help`, `hooks`, `plugin`, `upgrade`, `version` |
 | Additional Commands | `blueprint`, `session`, `who` |
 
 ## Global Flags
@@ -4100,6 +4100,129 @@ List ready tasks that are not already claimed by other workspaces
 
 Flags:
 - `-h, --help help for ready`
+
+## `app`
+
+### `app`
+
+Roles that an app's manifest declares under owner_acts are held by human members of the team.
+The team owner binds and unbinds holders with signed acts; a holder registers a passkey
+at the app's human origin in a browser that aw opens.
+
+Subcommands:
+- `credential` Register or replace a holder's passkey for an app role
+- `human` Run an action an app declares for its role holders, in a passkey session
+- `role` Designate or revoke a holder of an app role, as the team owner
+
+Flags:
+- `-h, --help help for app`
+
+## `app credential`
+
+### `app credential`
+
+Register or replace a holder's passkey for an app role
+
+Subcommands:
+- `register` Register a passkey for an app role, as the holder, and export it for the team owner
+- `replace` Replace a holder's passkey, as the team owner
+
+Flags:
+- `-h, --help help for credential`
+
+## `app credential register`
+
+### `app credential register`
+
+Opens the app's human origin in a browser, where you create a passkey, and writes the public
+credential with your team certificate to --out (or stdout). Read its fingerprint to the team
+owner over a channel your custodian does not control, such as in person or a call.
+
+Flags:
+- `-h, --help help for register`
+- `--out string Write the export to this file instead of stdout`
+- `--role string The app role, as its manifest names it`
+
+## `app credential replace`
+
+### `app credential replace`
+
+Signs human-credential.replace with the team's controller key. The current passkey is retired
+at once and the replacement takes effect after the app's cooling-off period.
+
+Flags:
+- `--credential string The holder's export from aw app credential register`
+- `-h, --help help for replace`
+- `--notice-contact string The notice contact, for a role that declares one`
+- `--principal string The holder's did:aw`
+- `--role string The app role, as its manifest names it`
+- `--yes Sign what is shown without asking`
+
+## `app human`
+
+### `app human`
+
+Runs one of the session actions an app's manifest declares under owner_acts.session_actions,
+in a console session that a browser passkey login opens for your holding of the action's role.
+`aw app human <app> --help` lists the declared actions. A protected field is typed at the
+terminal with echo off and has no flag; a one-time output is written only to the terminal.
+
+Flags:
+- `-h, --help help for human`
+
+## `app role`
+
+### `app role`
+
+Designate or revoke a holder of an app role, as the team owner
+
+Subcommands:
+- `designate` Designate a human member as a holder of an app role
+- `resume` Resume a protected role act whose prepare answer was lost, from its saved request
+- `revoke` End a holder's holding of an app role
+
+Flags:
+- `-h, --help help for role`
+
+## `app role designate`
+
+### `app role designate`
+
+Signs human-role.designate with the team's controller key. Pass the holder's export with
+--credential and sign only after both clients show the same fingerprint. Without --credential,
+you are the holder: aw registers your passkey first, then signs.
+
+Flags:
+- `--credential string The holder's export from aw app credential register`
+- `-h, --help help for designate`
+- `--notice-contact string The notice contact, for a role that declares one`
+- `--principal string The holder's did:aw`
+- `--role string The app role, as its manifest names it`
+- `--yes Sign what is shown without asking`
+
+## `app role resume`
+
+### `app role resume`
+
+Resume a protected role act whose prepare answer was lost, from its saved request
+
+Flags:
+- `-h, --help help for resume`
+- `--protected-profile string The profile the operation was prepared through`
+
+## `app role revoke`
+
+### `app role revoke`
+
+End a holder's holding of an app role
+
+Flags:
+- `--approver string With --protected-profile, the did:aw of the human who approves the act`
+- `-h, --help help for revoke`
+- `--principal string The holder's did:aw`
+- `--protected-profile string Prepare the act at the protected service this operator-provisioned profile names; the controlling human approves it there`
+- `--role string The app role, as its manifest names it`
+- `--yes Sign what is shown without asking`
 
 ## `audit`
 

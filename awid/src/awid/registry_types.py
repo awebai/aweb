@@ -42,6 +42,32 @@ class RegistryError(Exception):
         self.body_is_json = body_is_json
 
 
+class RegistryThrottled(RegistryError):
+    """A bounded read could not proceed, or its proof cannot be refreshed.
+
+    Fixed text and machine fields only: upstream bodies/identities never enter
+    this refusal. A caller may expose an appropriate transient response without
+    treating throttling as absence, stale evidence or an operation conflict.
+    """
+
+    def __init__(self, *, retry_after_seconds: float | None, attempts: int, reason: str):
+        super().__init__(
+            "AWID registry rate limit exceeded", status_code=429, code="rate_limited"
+        )
+        self.retry_after_seconds = retry_after_seconds
+        self.attempts = attempts
+        self.reason = reason
+
+    def __str__(self) -> str:
+        # Existing operator exception logging calls str(error). Keep the
+        # bounded retry facts there as well as on the typed object; no path,
+        # identity, header text or upstream body is included.
+        return (
+            f"AWID registry rate limit exceeded (reason={self.reason}, "
+            f"attempts={self.attempts}, retry_after_seconds={self.retry_after_seconds})"
+        )
+
+
 class DIDKeyNotFoundError(RegistryError):
     """The registry has no key for the did:aw; id_tree says whether it is enrolled.
 

@@ -15,19 +15,22 @@ from typing import Any
 
 import httpx
 from aweb_naapp.console import (
+    ClientIdentity,
     ConsoleSession,
     KeyBoundConsoleSession,
     apply_console_migrations,
 )
 from aweb_naapp.console.handoff_authority import HandoffAuthority, PreparedSessionTarget
+from aweb_naapp.console.handoff_requester import requester_parent
 from aweb_naapp.console.handoff_sessions import ConsoleHandoffs
 from aweb_naapp.dispatch import apply_dispatch_migrations
 from aweb_naapp.egress import AddressPolicy, DnsResolver, Egress
 from aweb_naapp.email import EmailSettings, Mailer
-from aweb_naapp.hooks.owner_act import APP_ACTS
+from aweb_naapp.hooks.owner_act import APP_ACTS, HUMAN_ROLE_ACTS
 from aweb_naapp.hooks.owner_act_nonces import OwnerActVerifier, apply_owner_act_migrations
 from aweb_naapp.key_file import read_key_file
 from aweb_naapp.nonces import apply_nonce_migrations
+from aweb_naapp.roles import is_holding_scope
 from aweb_naapp.runtime.app import NaappRuntime
 from aweb_naapp.runtime.approvals import (
     ActionPolicy,
@@ -39,8 +42,13 @@ from aweb_naapp.runtime.approvals import (
 )
 from aweb_naapp.runtime.credential_audit import CredentialAudit, GovernanceUnavailable
 from aweb_naapp.runtime.health import CheckResult
+from aweb_naapp.runtime.human_role_acts import HumanRoleActs
+from aweb_naapp.runtime.installation import AdmittedInstallation
+from aweb_naapp.runtime.owner_act_delivery import OwnerActEffectResult
+from aweb_naapp.runtime.owner_act_router import OwnerActLimiter, mount_owner_act_routes
 from aweb_naapp.runtime.passkeys import Passkeys, RelyingParty
 from aweb_naapp.signing_key import read_signing_key_file
+from awid.dns_verify import DomainVerifier
 from fastapi import APIRouter, Request
 from pgdbm.core import TransactionManager
 
@@ -98,11 +106,12 @@ from aweb_secrets.human_holding_identity import owner_holding_identity
 from aweb_secrets.installation_lookup import InstallationLookup
 from aweb_secrets.jobs import apply_job_migrations
 from aweb_secrets.metadata_routes import MetadataServices, metadata_router
-from aweb_secrets.owners import OwnerDirectory, apply_owner_migrations, is_owner_scope
+from aweb_secrets.owners import OWNER_ROLE, OwnerDirectory, apply_owner_migrations, is_owner_scope
 from aweb_secrets.passkey_context import PasskeyContexts
 from aweb_secrets.passkey_email import PasskeyEmailDelivery
 from aweb_secrets.response_audit import ResponseKey
 from aweb_secrets.retirement import retire_team
+from aweb_secrets.revisions import bump_config_revision
 from aweb_secrets.run_context import apply_run_dispatch_migrations
 from aweb_secrets.run_service import RunDispatch
 from aweb_secrets.runner_routes import runner_dispatch_router, runner_registration_router
@@ -157,6 +166,7 @@ class _Approvers:
 @dataclass
 class _Services:
     console: OwnerConsole
+    owner_delivery: APIRouter
     handoffs: ConsoleHandoffs
     changes: ConsoleChanges
     containment: Containment
@@ -226,6 +236,7 @@ async def _compose(
         producer=runtime.hook_producer,
         passkeys=shared_passkeys,
         role_of=credential_role,
+        human_roles=frozenset({OWNER_ROLE}),
         approvals=ChangeApprovals(approval),
         registration_view=governance_view,
         max_backlog_age=timedelta(seconds=settings.hook_events_stalled_after_seconds),
@@ -249,6 +260,7 @@ async def _compose(
         enrolment_ttl=timedelta(hours=1),
         challenge_ttl=timedelta(minutes=5),
         owner_scopes=is_owner_scope,
+        holding_scopes=is_holding_scope,
         proof_context=contexts,
     )
     await passkeys.migrate()
@@ -267,6 +279,40 @@ async def _compose(
 
     async def team_key(team_id):
         return (await runtime.team_cache().get(team_id)).team_did_key
+
+    async def owner_revision(
+        tx: TransactionManager,
+        installation: AdmittedInstallation,
+        result: OwnerActEffectResult,
+    ) -> None:
+        # HumanRoleActs calls this after its role/B3 writer. Revision is the
+        # last SQL lock, in the original nonce/effect/governance transaction.
+        await bump_config_revision(tx, installation.installation_id, team_id=installation.team_id)
+
+    owner_delivery = APIRouter()
+    mount_owner_act_routes(
+        owner_delivery,
+        runtime=runtime,
+        effect=HumanRoleActs(
+            roles=frozenset({OWNER_ROLE}),
+            notice_roles=frozenset({OWNER_ROLE}),
+            passkeys=passkeys,
+            recorder=credentials,
+            check_member=runtime.check_human_role_member,
+            on_applied=owner_revision,
+        ),
+        verifier=OwnerActVerifier(
+            scope=settings.app_id,
+            audience=settings.console_origin,
+            acts=HUMAN_ROLE_ACTS,
+            team_key_for=team_key,
+        ),
+        limiter=OwnerActLimiter(
+            client_identity=ClientIdentity(trusted_header=settings.client_address_header),
+            limit=12,
+            window=timedelta(minutes=1),
+        ),
+    )
 
     # These callbacks close the construction cycle without replacing the
     # console's original sessions, database or passkeys. They are called only
@@ -315,6 +361,7 @@ async def _compose(
         principal=runtime.principal,
         human_member=runtime.check_human_member,
         limiter=console.limiter,
+        requester_parent=requester_parent(runtime.registry_client()),
     )
     custody = Custody(provider, db)
     tokens = ProcessTokenCache()
@@ -426,6 +473,7 @@ async def _compose(
     containment.deregister_runner = runs.deregister_runner
     return _Services(
         console,
+        owner_delivery,
         handoffs,
         changes,
         containment,
@@ -465,6 +513,7 @@ def create_service(
     settings: ServiceSettings,
     *,
     awid_transport: httpx.AsyncBaseTransport | None = None,
+    awid_domain_verifier: DomainVerifier | None = None,
     team_server_transport: httpx.AsyncBaseTransport | None = None,
     hook_egress: Egress | None = None,
     hook_internal_cidr: IPv4Network | IPv6Network | None = None,
@@ -598,6 +647,7 @@ def create_service(
         kms=kms,
         health_labels={"custody_mode": custody_mode},
         awid_transport=awid_transport,
+        awid_domain_verifier=awid_domain_verifier,
         team_server_transport=team_server_transport,
         hook_egress=hook_egress,
         hook_internal_cidr=hook_internal_cidr,
@@ -606,6 +656,7 @@ def create_service(
         tool_routers=(metadata, uses, contain),
         handoff_router=lambda rt: current().handoffs.api_router(),
         console_routers=(
+            human(lambda s: s.owner_delivery),
             human(lambda s: s.handoffs.human_router()),
             human(lambda s: owner_console_router(s.console)),
             human(

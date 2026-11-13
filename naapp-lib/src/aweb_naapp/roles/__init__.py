@@ -71,6 +71,11 @@ def is_role_name(role: str) -> bool:
     return len(role) <= MAX_ROLE_NAME_LENGTH and _ROLE_NAME.fullmatch(role) is not None
 
 
+def is_holding_principal(principal: str) -> bool:
+    """Whether a principal can name a human holding; this grants no authority."""
+    return principal.startswith("did:aw:") and principal != "did:aw:"
+
+
 def holding_scope(installation_id: str, team_id: str, role: str, principal: str) -> str:
     """The B3 scope of ``principal``'s holding of ``role`` in the installation.
 
@@ -79,7 +84,7 @@ def holding_scope(installation_id: str, team_id: str, role: str, principal: str)
     always given its owners. A holding is never named from a contact.
     """
     _require_role_name(role)
-    if not principal.startswith("did:aw:") or principal == "did:aw:":
+    if not is_holding_principal(principal):
         raise ValueError("a human role is held by a did:aw principal")
     named = f"{installation_id}\n{team_id}\n{principal}"
     return f"{role}.{hashlib.sha256(named.encode()).hexdigest()[:40]}"
@@ -391,6 +396,22 @@ async def refresh_holding_certificate(
         certificate,
     )
     return True
+
+
+async def holding_scopes_of_team(db: Executor, team_id: str) -> dict[str, list[str]]:
+    """The B3 scope of every holding the team's installations recorded, current
+    or ended, by installation. It grants nothing: it names the scopes whose
+    credentials go with the team's installation, read before purge_team
+    deletes the records."""
+    rows = await db.fetch_all(
+        "SELECT installation_id, b3_scope FROM {{tables.role_holdings}}"
+        " WHERE team_id = $1 ORDER BY installation_id, b3_scope",
+        team_id,
+    )
+    scopes: dict[str, list[str]] = {}
+    for row in rows:
+        scopes.setdefault(row["installation_id"], []).append(row["b3_scope"])
+    return scopes
 
 
 async def purge_team(tx: TransactionManager, team_id: str) -> None:
