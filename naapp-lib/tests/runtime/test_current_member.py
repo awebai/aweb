@@ -11,6 +11,7 @@ import httpx
 import pytest
 import uvicorn
 from aweb_naapp_testing import REGISTRY_URL, SERVICE_TOKEN, Member, did_key
+from awid_service.testing import dns_naming
 from fastapi import FastAPI, HTTPException, Request
 from nacl.signing import SigningKey
 
@@ -22,6 +23,7 @@ from aweb_naapp.runtime.team_auth import AWIDTeamCache
 
 TEAM = "backend:example.com"
 ORIGIN = "https://example.test"
+NAMESPACE_KEY = SigningKey.generate()
 
 
 @pytest.fixture(params=[None, SERVICE_TOKEN], ids=["certificate-status", "history"])
@@ -29,6 +31,7 @@ def cache(registry, request):
     return AWIDTeamCache(
         registry_url=REGISTRY_URL, ttl_seconds=60,
         service_token=request.param, transport=registry.transport,
+        txt_resolver=dns_naming("example.com", NAMESPACE_KEY),
     )
 
 
@@ -103,7 +106,7 @@ async def test_lost_authority_refuses_on_refresh(registry, cache, member, change
             "DELETE FROM {{tables.team_certificates}} WHERE certificate_id = $1", member.certificate_id
         )
     else:
-        await registry.rotate_team_key(TEAM, did_key(SigningKey.generate()))
+        await registry.rotate_team_key_by_controller(TEAM, did_key(SigningKey.generate()), NAMESPACE_KEY)
     expire(cache)
     with pytest.raises(HTTPException) as refused:
         await require(cache, member)

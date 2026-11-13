@@ -99,6 +99,7 @@ from aweb_naapp.runtime.human_member import (
     check_human_member as observe_human_member,
 )
 from aweb_naapp.runtime.installation import InstallationFence
+from aweb_naapp.runtime.team_key_pins import DatabaseTeamKeyPins
 from aweb_naapp.runtime.manifest_hooks import ManifestEvidence, bounded_body, prepare
 from aweb_naapp.runtime.settings import NaappSettings
 from aweb_naapp.runtime.team_auth import (
@@ -196,6 +197,7 @@ class NaappRuntime:
             service_token=settings.awid_service_token,
             member_credentials=read_member_credentials(settings.awid_member_credentials),
             transport=awid_transport,
+            team_key_pins=DatabaseTeamKeyPins(self.db),
         )
         self._team_server_directory = TeamServerDirectory(
             team_cache=self._team_cache, transport=awid_transport,

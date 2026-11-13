@@ -19,7 +19,7 @@ from awid.identity_observation import (
 from awid.registry import CachedRegistryClient, RegistryClient
 from awid_service.deps import get_domain_verifier
 from awid_service.testing import REGISTRY_URL, SERVICE_TOKEN
-from fastapi import HTTPException
+from fastapi import FastAPI, HTTPException
 from nacl.signing import SigningKey
 from redis.asyncio import Redis
 from redis.asyncio.client import Pipeline
@@ -189,9 +189,11 @@ async def test_runtime_exposes_the_same_exact_human_member_admission(human, regi
 
     member, identity, client, _, _ = human
     runtime = _runtime(tmp_path, registry=registry, database_url=registry.db.config.get_dsn())
-    proof = await runtime.check_human_member(
-        TEAM, principal=identity, certificate=member.certificate(), identity_client=client
-    )
+    # Team authentication reads the app's team-key pins, so it runs in the lifespan.
+    async with runtime.lifespan(FastAPI()):
+        proof = await runtime.check_human_member(
+            TEAM, principal=identity, certificate=member.certificate(), identity_client=client
+        )
     assert proof.principal == identity and proof.did_key == member.did_key
     assert proof.membership.team_id == TEAM
 

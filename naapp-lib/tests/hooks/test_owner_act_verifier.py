@@ -18,7 +18,9 @@ from datetime import UTC, datetime, timedelta
 import pytest
 import pytest_asyncio
 from aweb_naapp_testing import did_key
-from awid_service.testing import REGISTRY_URL, SERVICE_TOKEN
+from awid.team_ids import parse_team_id
+from awid_service.testing import REGISTRY_URL, SERVICE_TOKEN, dns_naming
+from fastapi import HTTPException
 from nacl.signing import SigningKey
 from pgdbm import AsyncDatabaseManager
 
@@ -85,12 +87,16 @@ async def team_key(registry) -> SigningKey:
     return key
 
 
+NAMESPACE_KEY = SigningKey.generate()
+
+
 def verifier(registry, *, clock=None) -> OwnerActVerifier:
     cache = AWIDTeamCache(
         registry_url=REGISTRY_URL,
         ttl_seconds=0,
         service_token=SERVICE_TOKEN,
         transport=registry.transport,
+        txt_resolver=dns_naming(parse_team_id(TEAM_ID)[0], NAMESPACE_KEY),
     )
 
     async def current_team_key(team_id: str) -> str:
@@ -199,12 +205,23 @@ async def test_a_rotated_team_key_stops_verifying(db, registry, team_key) -> Non
     verify = verifier(registry)
     await apply_effect(db, verify, *owner_act(team_key, issued=datetime.now(UTC)))
     new_key = SigningKey.generate()
-    await registry.rotate_team_key(TEAM_ID, did_key(new_key))
+    await registry.rotate_team_key_by_controller(TEAM_ID, did_key(new_key), NAMESPACE_KEY)
     with pytest.raises(Refused) as refused:
         await apply_effect(db, verify, *owner_act(team_key, issued=datetime.now(UTC)))
     assert refused.value.code == "owner_required"
     await apply_effect(db, verify, *owner_act(new_key, issued=datetime.now(UTC)))
     assert await effects(db) == 2
+
+
+async def test_a_registry_substituted_team_key_cannot_sign_owner_acts(db, registry, team_key) -> None:
+    verify = verifier(registry)
+    await apply_effect(db, verify, *owner_act(team_key, issued=datetime.now(UTC)))
+    substituted = SigningKey.generate()
+    await registry.rotate_team_key(TEAM_ID, did_key(substituted))
+    with pytest.raises(HTTPException) as refused:
+        await apply_effect(db, verify, *owner_act(substituted, issued=datetime.now(UTC)))
+    assert (refused.value.status_code, refused.value.detail) == (401, "team_key_unverified")
+    assert await effects(db) == 1
 
 
 async def test_nonce_rows_outlive_the_act_and_are_then_pruned(db, registry, team_key) -> None:

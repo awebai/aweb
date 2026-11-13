@@ -46,7 +46,9 @@ from awid.team_certificate import (
     decode_team_certificate,
     refusal_answer,
 )
+from awid.external_authority import SystemTXTOutcomeResolver, TXTOutcomeResolver
 from awid.team_ids import parse_team_id
+from awid.team_key_acts import MemoryTeamKeyPins, TeamKeyPinStore, TeamKeyUnverified, pinned_team_key
 from fastapi import HTTPException, Request
 from pgdbm import AsyncDatabaseManager
 
@@ -209,10 +211,17 @@ class AWIDTeamCache:
         service_token: str | None = None,
         member_credentials: Mapping[str, AWIDMemberCredential] | None = None,
         transport: httpx.AsyncBaseTransport | None = None,
+        team_key_pins: TeamKeyPinStore | None = None,
+        txt_resolver: TXTOutcomeResolver | None = None,
     ) -> None:
         """Gated reads of a private team use the service token when there is
         one (a hosted deployment), else that team's member credential; any
-        other read is a plain one."""
+        other read is a plain one.
+
+        A team's key is held to its pin (``team_key_pins``; pins held for the
+        process when none is given): the registry alone cannot change it, only
+        the namespace controller's act, checked against the controller
+        ``txt_resolver`` (system DNS by default) names."""
         self.registry_url = registry_url.rstrip("/")
         self.registry_origin = canonical_server_origin(self.registry_url)
         if ttl_seconds > MAX_TEAM_FACTS_TTL_SECONDS:
@@ -239,6 +248,37 @@ class AWIDTeamCache:
         self._certificate_cache: dict[tuple[str, str], CachedTeamFacts] = {}
         self._did_keys: dict[tuple[str, str], CachedDidKey] = {}
         self._transport = transport
+        self._team_key_pins = team_key_pins if team_key_pins is not None else MemoryTeamKeyPins()
+        self._txt_resolver = txt_resolver if txt_resolver is not None else SystemTXTOutcomeResolver()
+
+    async def _pinned_team_key(self, team_id: str, served_key: str) -> str:
+        """``served_key`` held to the team's pin (awid.team_key_acts); 401
+        team_key_unverified when no namespace-controller act establishes it."""
+        domain, team_name = parse_team_id(team_id)
+
+        async def fetch_act() -> Any:
+            url = f"{self.registry_url}/v1/namespaces/{domain}/teams/{team_name}/key-act"
+            try:
+                async with self._client() as client:
+                    response = await client.get(url, headers=self._read_headers(url))
+            except httpx.HTTPError as exc:
+                raise HTTPException(status_code=503, detail="AWID registry unavailable") from exc
+            if response.status_code == 404:
+                return None
+            if response.status_code >= 400:
+                logger.warning("AWID team key act read for %s answered %s", team_id, response.status_code)
+                raise HTTPException(status_code=503, detail="AWID registry unavailable")
+            try:
+                return response.json()
+            except ValueError:
+                return None
+
+        try:
+            return await pinned_team_key(
+                team_id, served_key, pins=self._team_key_pins, fetch_act=fetch_act, resolver=self._txt_resolver,
+            )
+        except TeamKeyUnverified:
+            raise HTTPException(status_code=401, detail="team_key_unverified") from None
 
     def _read_headers(self, url: str) -> dict[str, str]:
         """The authentication of one AWID read."""
@@ -382,7 +422,7 @@ class AWIDTeamCache:
             raise HTTPException(status_code=503, detail="AWID registry unavailable") from exc
         if not team_did_key:
             raise HTTPException(status_code=503, detail="AWID team response missing team_did_key")
-        return team_did_key
+        return await self._pinned_team_key(team_id, team_did_key)
 
     async def check_member_credentials(self) -> None:
         """Read each configured member credential's team with that credential,
@@ -478,6 +518,9 @@ class AWIDTeamCache:
             logger.exception("AWID team facts refresh failed")
             raise HTTPException(status_code=503, detail="AWID registry unavailable") from exc
 
+        if store:
+            # A check (store=False) reads without changing pins.
+            team_did_key = await self._pinned_team_key(team_id, team_did_key)
         facts = CachedTeamFacts(
             team_did_key=team_did_key,
             published_certificate_ids=frozenset(published),
@@ -539,7 +582,7 @@ class AWIDTeamCache:
                 status_code=503, detail="AWID certificate status unavailable"
             ) from exc
         facts = CachedTeamFacts(
-            team_did_key=payload["team_did_key"],
+            team_did_key=await self._pinned_team_key(team_id, payload["team_did_key"]),
             published_certificate_ids=frozenset({certificate_id}),
             revoked_certificate_ids=revoked,
             fetched_at=now,
