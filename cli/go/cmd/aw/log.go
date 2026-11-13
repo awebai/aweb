@@ -118,7 +118,7 @@ func formatLogTimestamp(ts string) string {
 
 // formatLogLine formats one log entry for human display.
 func formatLogLine(e *CommLogEntry) string {
-	ts := formatLogTimestamp(e.Timestamp)
+	ts := termtext.Line(formatLogTimestamp(e.Timestamp))
 
 	arrow := "←"
 	peer := e.From
@@ -130,7 +130,7 @@ func formatLogLine(e *CommLogEntry) string {
 	// Chat is the most common channel; only tag mail/dm to reduce noise.
 	chTag := ""
 	if e.Channel != "" && e.Channel != "chat" {
-		chTag = " (" + e.Channel + ")"
+		chTag = " (" + termtext.Line(e.Channel) + ")"
 	}
 
 	subj := ""

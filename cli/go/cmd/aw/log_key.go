@@ -15,6 +15,7 @@ import (
 
 	"github.com/awebai/aw/awconfig"
 	"github.com/awebai/aw/awid"
+	"github.com/awebai/aw/internal/termtext"
 )
 
 // The owner's side of sealed local logs: creating a team's log key on the
@@ -154,17 +155,32 @@ func ownerLogKey(keys map[string]*ecdh.PrivateKey, keyID string, opts logReadOpt
 }
 
 // printOwnerLogLine prints one entry of either local log: an interaction
-// entry carries a kind, a communication-log entry does not.
+// entry carries a kind, a communication-log entry does not. Whoever can write
+// a log can seal lines to the owner's public key, so every entry is untrusted
+// and is printed with terminal control escaped; a line that is not a JSON
+// object is printed as text, or under --json as {"raw": <line>}.
 func printOwnerLogLine(out io.Writer, plaintext []byte, asJSON bool) error {
-	if asJSON {
-		_, err := fmt.Fprintln(out, string(plaintext))
-		return err
-	}
 	var probe struct {
 		Kind string `json:"kind"`
 	}
 	if err := json.Unmarshal(plaintext, &probe); err != nil {
-		_, err := fmt.Fprintln(out, string(plaintext))
+		if asJSON {
+			raw, err := json.Marshal(map[string]string{"raw": string(plaintext)})
+			if err != nil {
+				return err
+			}
+			_, err = fmt.Fprintln(out, string(raw))
+			return err
+		}
+		_, err := fmt.Fprintln(out, termtext.Line(string(plaintext)))
+		return err
+	}
+	if asJSON {
+		var compact bytes.Buffer
+		if err := json.Compact(&compact, plaintext); err != nil {
+			return err
+		}
+		_, err := fmt.Fprintln(out, compact.String())
 		return err
 	}
 	if probe.Kind != "" {
@@ -172,7 +188,7 @@ func printOwnerLogLine(out io.Writer, plaintext []byte, asJSON bool) error {
 		if err := json.Unmarshal(plaintext, &entry); err != nil {
 			return err
 		}
-		_, err := fmt.Fprintf(out, "[%s] %s\n", formatLogTimestamp(entry.Timestamp), formatInteractionEntry(entry))
+		_, err := fmt.Fprintln(out, termtext.Line(fmt.Sprintf("[%s] %s", formatLogTimestamp(entry.Timestamp), formatInteractionEntry(entry))))
 		return err
 	}
 	var entry CommLogEntry

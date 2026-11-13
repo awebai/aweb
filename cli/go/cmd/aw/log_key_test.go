@@ -241,3 +241,45 @@ func TestLogReadNamesAKeyTheKeychainDoesNotHold(t *testing.T) {
 		t.Fatalf("err = %v", err)
 	}
 }
+
+// Anyone who can write the log can seal a line to the owner's public key, so
+// what aw log read prints is untrusted: no terminal control reaches the owner.
+func TestLogReadNeutralizesTerminalControlInForgedLines(t *testing.T) {
+	keyring.MockInit()
+	f := newLocalLogFixture(t)
+	ownerWithTeamKey(t, f)
+	prompt := &scriptedPassphrases{answers: []string{testLogPassphrase, testLogPassphrase}}
+	rec, err := createLogKey(logKeyCreateOptions{TeamID: localLogTestTeamID, Keychain: awconfig.LogKeychain{}, Prompt: prompt.prompt, Now: time.Now()})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := installLogKeyRecord(f.sel, rec); err != nil {
+		t.Fatal(err)
+	}
+	path := filepath.Join(t.TempDir(), "forged.jsonl")
+	forged := []string{
+		"not json \x1b]0;owned\x07 \x1b[2J",
+		"{\"kind\":\"chat_in\",\"from\":\"\x1b[31mmallory\",\"text\":\"hi\"}",
+		`{"ts":"\u001b[2J","dir":"recv","ch":"\u001b]0;owned\u0007","from":"eve","body":"hi"}`,
+	}
+	for _, plaintext := range forged {
+		if err := appendLocalLogLine(path, localLogKey{record: rec}, []byte(plaintext), nil); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err := appendLocalLogLine(path, localLogKey{record: rec}, []byte(`{"kind":"chat_in","from":"bob","text":"esc \u001b[2J inside a valid string"}`), nil); err != nil {
+		t.Fatal(err)
+	}
+	for _, asJSON := range []bool{false, true} {
+		var out bytes.Buffer
+		if err := readOwnerLogs(logReadOptions{Files: []string{path}, Keychain: awconfig.LogKeychain{}, Prompt: (&scriptedPassphrases{answers: []string{testLogPassphrase}}).prompt, Out: &out, JSON: asJSON}); err != nil {
+			t.Fatal(err)
+		}
+		if strings.ContainsAny(out.String(), "\x1b\x07") {
+			t.Fatalf("json=%v: terminal control reached the owner: %q", asJSON, out.String())
+		}
+		if strings.Count(out.String(), "\n") != 4 {
+			t.Fatalf("json=%v: want one output line per log line: %q", asJSON, out.String())
+		}
+	}
+}
