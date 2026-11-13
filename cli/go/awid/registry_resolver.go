@@ -91,7 +91,8 @@ type registryTeamMemberCacheValue struct {
 }
 
 type RegistryResolver struct {
-	// trust holds the registry origins named on the current command line;
+	// trust holds the registry origins the operator named on the current
+	// command line or in the program's own configuration;
 	// pinnedHTTPClient reaches every origin that is neither those, the
 	// built-in default nor AWID_REGISTRY_URL. Tests in this package set pinnedHTTPClient.
 	trust            registryTrust
