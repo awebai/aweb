@@ -9,7 +9,10 @@ from awid.protected_receipts import PATH, read_receipt, record_receipt, header_d
 from test_controller_request_v2_http import controller_app as controller_app
 
 VECTOR = json.loads(
-    (Path(__file__).resolve().parents[2] / "docs/vectors/protected-effect-receipt-v1.json").read_text()
+    (
+        Path(__file__).resolve().parents[2]
+        / "docs/vectors/protected-effect-receipt-v1.json"
+    ).read_text()
 )
 
 
@@ -34,7 +37,9 @@ async def test_exact_historical_receipt_is_immutable_and_rolls_back(controller_a
             await record_receipt(tx, {**f, "artifact_sha256": "0" * 64}, h)
     assert await read_receipt(env.db, f["operation_id"], h) == VECTOR["response"]
     for bad in (None, "", "malformed", header_digest(h), h + "x"):
-        response = await env.client.get(VECTOR["path"], headers={} if bad is None else {HEADER: bad})
+        response = await env.client.get(
+            VECTOR["path"], headers={} if bad is None else {HEADER: bad}
+        )
         assert response.status_code == 404
         assert response.headers["cache-control"] == VECTOR["cache_control"]
     response = await env.client.get(VECTOR["path"], headers={HEADER: h})
@@ -45,8 +50,10 @@ async def test_exact_historical_receipt_is_immutable_and_rolls_back(controller_a
 @pytest.mark.asyncio
 async def test_receipt_storage_failure_is_unavailable(controller_app, monkeypatch):
     env = controller_app
+
     async def unavailable(*args, **kwargs):
         raise RuntimeError("unavailable")
+
     monkeypatch.setattr(env.db, "fetch_all", unavailable)
     response = await env.client.get(VECTOR["path"], headers={HEADER: VECTOR["header"]})
     assert response.status_code == 503
