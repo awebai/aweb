@@ -22,13 +22,14 @@ from test_controller_request_v2_http import (
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize("expire_after_write", [False, True])
 @pytest.mark.parametrize(
     "audience,accepted",
     [(ORIGIN, True), ("https://second.registry.test", True),
      ("https://unpinned.registry.test", False)],
 )
 async def test_artifact_delivery_accepts_each_pinned_origin_only(
-    controller_app, audience, accepted
+    controller_app, audience, accepted, monkeypatch, expire_after_write
 ):
     env = controller_app
     env.app.state.awid_public_origins = (ORIGIN, "https://second.registry.test")
@@ -41,6 +42,29 @@ async def test_artifact_delivery_accepts_each_pinned_origin_only(
         service_did, history_id,
     )
     now = datetime.now(timezone.utc).replace(microsecond=0)
+    current = now
+    wrote = False
+    from awid_service import protected_teams
+    from pgdbm.core import TransactionManager
+
+    class Clock(datetime):
+        @classmethod
+        def now(cls, tz=None):
+            return current.astimezone(tz)
+
+    original_execute = TransactionManager.execute
+
+    async def execute(tx, query, *args, **kwargs):
+        nonlocal current, wrote
+        result = await original_execute(tx, query, *args, **kwargs)
+        if "INSERT INTO {{tables.team_server_records}}" in query:
+            wrote = True
+            if expire_after_write:
+                current += timedelta(seconds=121)
+        return result
+
+    monkeypatch.setattr(protected_teams, "datetime", Clock)
+    monkeypatch.setattr(TransactionManager, "execute", execute)
     record = {
         "v": 1, "type": "aweb.team-server", "team_id": "base:local",
         "team_did_key": env.team[1], "server_url": "https://coord.example/api",
@@ -65,9 +89,11 @@ async def test_artifact_delivery_accepts_each_pinned_origin_only(
         path, content=body,
         headers={HEADER: encode_proofs([proof]), "Content-Type": "application/json"},
     )
-    assert response.status_code == (200 if accepted else 403), response.text
-    if not accepted:
+    applied = accepted and not expire_after_write
+    assert response.status_code == (200 if applied else 403), response.text
+    assert wrote == accepted
+    if not applied:
         assert response.json()["detail"]["code"] == "protected_controller_required"
     assert await env.db.fetch_value(
         "SELECT count(*) FROM {{tables.team_server_records}}"
-    ) == int(accepted)
+    ) == int(applied)
