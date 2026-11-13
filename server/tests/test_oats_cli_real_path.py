@@ -174,6 +174,12 @@ async def test_an_endorsed_root_admits_an_agent_once_under_its_own_operation_id(
         # aw registered the root's certificate with its own proof; the
         # registry's current head is exactly that certificate.
         assert await _current_head(w, w.root_id) == endorsed["certificate_id"]
+        # The endorsed chain is installed in the root's home, so the root
+        # issues children.
+        assert endorsed["chain_installed"] is True
+        status, invited, progress = await _aw(home, "id", "child", "invite", "--kind", "agent")
+        assert status == 0, progress
+        assert invited["parent"] == {"kind": "identity", "id": w.root_id} and invited["kind"] == "agent"
 
         _, child_public = generate_keypair()
         child_key = did_from_public_key(child_public)
