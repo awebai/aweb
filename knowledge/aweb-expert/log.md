@@ -1,5 +1,10 @@
 # Knowledge log
 
+## 2026-11-13
+* **Harvest**: OKF proposal from aweb-expert/aweb-expert-owner-acts (non-waiting protected operations, refusal tests, OATS-spawned children).
+* **Creation**: decisions [a non-waiting protected operation sends no callback and reads its receipt once](/aweb-expert/decisions/a-non-waiting-protected-operation-sends-no-callback.md) and [OATS-spawned children are key-only local identities that aw creates](/aweb-expert/decisions/oats-spawned-children-are-key-only-local.md) (acceptance source-reported).
+* **Creation**: lesson [a refusal test snapshots the home, not only outbound requests](/aweb-expert/lessons/a-refusal-test-snapshots-the-home.md).
+
 ## 2026-11-04
 * **Harvest**: OKF proposal from aweb-expert/aweb-expert-fresh-eyes (tasks aweb-acst and aweb-actf).
 * **Update**: [identity and routing review needs the real client](/aweb-expert/lessons/identity-and-routing-review-needs-the-real-client.md) gains that the real client includes the last released binary and that a skipped released-client case is not evidence.
