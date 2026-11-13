@@ -16,15 +16,19 @@ EXAMPLE = yaml.safe_load((REPO_ROOT / "deploy" / "team" / "deployment.example.ya
 
 
 def run(
-    tmp_path: Path, *args: str, project: str | None = "teamrun", extra_files: str | None = None, docker_ok: bool = False
+    tmp_path: Path, *args: str, project: str | None = "teamrun", extra_files: str | None = None, docker_ok: bool = False,
+    command: Path = RUNNER, answers: dict[str, str] | None = None,
 ) -> subprocess.CompletedProcess:
     # A docker that records being called. By default it fails: these commands
     # must not start anything. With docker_ok it succeeds and, like the real
-    # one, docker compose exec reads its standard input.
+    # one, docker compose exec reads its standard input. answers maps a
+    # pattern of its arguments to what it prints.
     bin_dir = tmp_path / "bin"
     bin_dir.mkdir(exist_ok=True)
     docker = bin_dir / "docker"
-    succeed = 'case "$*" in *" exec "*) cat >/dev/null;; esac\nexit 0' if docker_ok else "exit 1"
+    printed = "".join(f'case "$*" in *"{pattern}"*) printf "%s" \'{text}\';; esac\n'
+                      for pattern, text in (answers or {}).items())
+    succeed = printed + 'case "$*" in *" exec "*) cat >/dev/null;; esac\nexit 0' if docker_ok else "exit 1"
     # One line per call, whatever newlines its arguments hold.
     log = f'printf "%s " "$@" | tr "\\n" " " >> {tmp_path / "docker-calls"}; echo >> {tmp_path / "docker-calls"}'
     docker.write_text(f"#!/bin/sh\n{log}\n{succeed}\n", encoding="utf-8")
@@ -36,7 +40,7 @@ def run(
         env["TEAM_DEPLOYMENT_COMPOSE_FILES"] = extra_files
     if project is not None:
         env["TEAM_DEPLOYMENT_PROJECT"] = project
-    return subprocess.run([str(RUNNER), *args], env=env, capture_output=True, text=True, timeout=120)
+    return subprocess.run([str(command), *args], env=env, capture_output=True, text=True, timeout=120)
 
 
 def deployment(tmp_path: Path, config: dict) -> str:

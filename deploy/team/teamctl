@@ -2,7 +2,12 @@
 # The operator command of one team's deployment on one machine.
 #
 #   TEAM_DEPLOYMENT_PROJECT=<compose project> TEAM_DEPLOYMENT_RUN_DIR=<dir> \
-#     deploy/team/teamctl <start|connect> <deployment.yaml>
+#     deploy/team/teamctl start|connect|stop <deployment.yaml>
+#     deploy/team/teamctl destroy <deployment.yaml> --confirm <project>
+#     deploy/team/teamctl backup <deployment.yaml> <new directory>
+#     deploy/team/teamctl restore --lab-rehearsal <deployment.yaml> <backup directory>
+#
+# OPERATIONS.md beside this file says what each command keeps and deletes.
 #
 # start    renders deployment.yaml to RUN_DIR/.env, starts deploy/team/compose.yaml
 #          and waits until every service is healthy, then checks from inside
@@ -15,6 +20,19 @@
 #          the agents are held, with no seat, deployment or session admitted.
 # connect  prints, as JSON, the origins, the team and registry, the agent
 #          container and the deployment's docker compose command.
+# stop     stops every service of the bundle. Containers, networks, volumes,
+#          the secrets directory and the agents' state all stay.
+# destroy  removes the bundle's own containers and its named volumes, and
+#          nothing else of the project: the databases are gone. The secrets
+#          directory and the agents' state stay. The project must be named.
+# backup   with every service but the bundled PostgreSQL stopped: a dump of
+#          each database, the secrets directory, the agents' state and every
+#          file deployment.yaml names, with a manifest of digests and
+#          versions. The directory holds credentials; it is made 0700.
+# restore  fails closed: no component can yet restore a deployment that
+#          serves a team. --lab-rehearsal restores a backup of disposable lab
+#          data onto fresh volumes, to the paths deployment.yaml names, and
+#          leaves the bundle stopped.
 #
 # TEAM_DEPLOYMENT_COMPOSE_FILES names further Compose files, separated by
 # colons, that a test world adds (the journey's registry, DNS and mail).
@@ -27,15 +45,46 @@ REPO_ROOT="$(cd "$TEAM_DIR/../.." && pwd)"
 SELF="$TEAM_DIR/teamctl"
 
 usage() {
-  echo "usage: TEAM_DEPLOYMENT_PROJECT=<name> TEAM_DEPLOYMENT_RUN_DIR=<dir> $0 <start|connect> <deployment.yaml>" >&2
+  {
+    echo "usage: TEAM_DEPLOYMENT_PROJECT=<name> TEAM_DEPLOYMENT_RUN_DIR=<dir> $0 start|connect|stop <deployment.yaml>"
+    echo "       $0 destroy <deployment.yaml> --confirm <project>"
+    echo "       $0 backup <deployment.yaml> <new directory>"
+    echo "       $0 restore --lab-rehearsal <deployment.yaml> <backup directory>"
+  } >&2
   exit 2
 }
 
-[[ $# -eq 2 ]] || usage
+refuse() {
+  echo "teamctl: $*" >&2
+  exit 1
+}
+
+[[ $# -ge 2 ]] || usage
 action="$1"
-case "$action" in start | connect) ;; *) usage ;; esac
+shift
+lab_rehearsal=0 confirm="" target=""
+case "$action" in
+  start | connect | stop) [[ $# -eq 1 ]] || usage ;;
+  destroy)
+    [[ $# -eq 1 || ($# -eq 3 && "$2" == --confirm) ]] || usage
+    confirm="${3:-}"
+    ;;
+  backup)
+    [[ $# -eq 2 ]] || usage
+    target="$2"
+    ;;
+  restore)
+    if [[ "$1" == --lab-rehearsal ]]; then
+      lab_rehearsal=1
+      shift
+    fi
+    [[ $# -eq 2 ]] || usage
+    target="$2"
+    ;;
+  *) usage ;;
+esac
 [[ -n "${TEAM_DEPLOYMENT_PROJECT:-}" && -n "${TEAM_DEPLOYMENT_RUN_DIR:-}" ]] || usage
-deployment="$(cd "$(dirname "$2")" && pwd)/$(basename "$2")"
+deployment="$(cd "$(dirname "$1")" && pwd)/$(basename "$1")"
 project="$TEAM_DEPLOYMENT_PROJECT"
 run_dir="$TEAM_DEPLOYMENT_RUN_DIR"
 env_file="$run_dir/.env"
@@ -333,6 +382,12 @@ boundary_probe() {
     fi
   done
   sources+=("$(realpath /var/run/docker.sock)")
+  local backup
+  if [[ -f "$run_dir/backups" ]]; then
+    while IFS= read -r backup; do
+      [[ ! -e "$backup" ]] || sources+=("$(realpath "$backup")")
+    done <"$run_dir/backups"
+  fi
   local extra
   while IFS= read -r extra; do
     [[ -z "$extra" ]] || sources+=("$(realpath "$extra")")
@@ -398,10 +453,23 @@ start_agent() {
   [[ "$status" -eq 0 ]]
 }
 
-start() {
+render() {
   mkdir -p "$run_dir"
   python_in_server "$TEAM_DIR/render_env.py" "$deployment" >"$env_file.tmp"
   mv "$env_file.tmp" "$env_file"
+}
+
+# The deployment's Compose model, for a command that does not start it: the
+# env file, and with agents what their services' files name.
+model() {
+  render
+  if [[ -n "$(env_value EGRESS_ADDRESS)" ]]; then
+    prepare_agents
+  fi
+}
+
+start() {
+  render
   local with_agents=0 services=()
   if [[ -n "$(env_value EGRESS_ADDRESS)" ]]; then
     with_agents=1
@@ -521,6 +589,262 @@ print(json.dumps({
     "start": [runner, "start", path],
 }))
 PY
+}
+
+stop() {
+  model
+  dc stop
+}
+
+# The bundle's own containers and named volumes, never the project as a
+# whole: a project-wide down would also remove what a test world runs beside
+# it. Networks carry no data and stay.
+destroy() {
+  if [[ "$confirm" != "$project" ]]; then
+    echo "teamctl: destroy removes $project's containers and its volumes, and every database with them; name the project to do it: --confirm $project" >&2
+    exit 2
+  fi
+  model
+  dc --profile '*' rm --stop --force
+  local key
+  while read -r key; do
+    [[ -n "$key" ]] || continue
+    if docker volume inspect "${project}_$key" >/dev/null 2>&1; then
+      docker volume rm "${project}_$key" >/dev/null
+    fi
+  done < <(dc config --volumes)
+}
+
+# What deployment.yaml names on the host, one line each: kind (archive, file
+# or kept), the key, the path. Archives and files are what a backup holds;
+# kept paths are the operator's own and are recorded only.
+host_paths() {
+  python_in_server - "$deployment" <<'PY'
+import sys
+
+import yaml
+
+config = yaml.safe_load(open(sys.argv[1], encoding="utf-8"))
+archives = {"compose.secretsDir", "agents.compose.stateDir", "agents.compose.workDir"}
+kept = {"agents.mirrorsDir", "agents.compose.oatsSource"}
+
+
+def walk(value, key=""):
+    if isinstance(value, dict):
+        for name, child in value.items():
+            yield from walk(child, f"{key}.{name}" if key else name)
+    elif isinstance(value, str) and (key in archives or key in kept or key.endswith("File")):
+        kind = "archive" if key in archives else "kept" if key in kept else "file"
+        yield kind, key, value
+
+
+for kind, key, value in walk(config):
+    print(kind, key, value)
+PY
+}
+
+# A directory as a tar archive with numeric owners and modes, read as root by
+# the server image's Python with no network; anything but a regular file or
+# a directory is refused. The archive belongs to the operator, mode 0400.
+archive() {
+  local source="$1" out="$2"
+  docker run --rm --user 0 --network none -v "$source:/source:ro" -v "$(dirname "$out"):/out" \
+    --entrypoint python "$(env_value AWEB_IMAGE)" -c '
+import os, sys, tarfile
+out, uid, gid = sys.argv[1:]
+
+def regular(info):
+    if not (info.isreg() or info.isdir()):
+        raise SystemExit(f"teamctl: {info.name} is not a regular file or a directory")
+    return info
+
+with tarfile.open(out, "w") as tar:
+    tar.add("/source", arcname=".", filter=regular)
+os.chown(out, int(uid), int(gid))
+os.chmod(out, 0o400)
+' "/out/$(basename "$out")" "$(id -u)" "$(id -g)" </dev/null
+}
+
+# An archive back into a directory that does not exist yet, owners and modes
+# kept; a member that is not a regular file or a directory, or whose name is
+# absolute or climbs out, refuses the whole archive before anything is written.
+unarchive() {
+  local archive="$1" destination="$2"
+  docker run --rm --user 0 --network none -v "$archive:/archive.tar:ro" -v "$(dirname "$destination"):/parent" \
+    --entrypoint python "$(env_value AWEB_IMAGE)" -c '
+import os, sys, tarfile
+from pathlib import PurePosixPath
+destination = sys.argv[1]
+with tarfile.open("/archive.tar") as tar:
+    members = tar.getmembers()
+    for member in members:
+        parts = PurePosixPath(member.name).parts
+        if not (member.isreg() or member.isdir()) or member.name.startswith("/") or ".." in parts:
+            raise SystemExit(f"teamctl: the archive holds {member.name!r}, which is not restored")
+    os.mkdir(destination, 0o700)
+    tar.extractall(destination, members=members, numeric_owner=True, filter="tar")
+' "/parent/$(basename "$destination")" </dev/null
+}
+
+psql_postgres() {
+  dc exec -T postgres psql -U postgres -AtX -v ON_ERROR_STOP=1 -c "$1" </dev/null
+}
+
+backup() {
+  [[ ! -e "$target" && ! -L "$target" ]] || refuse "the backup directory $target exists; a backup goes into a new one"
+  model
+  [[ "$(env_value POSTGRES_BUNDLED)" == true ]] ||
+    refuse "teamctl backs up the bundled PostgreSQL only; with your own server (postgres.bundled: false) back up its databases with its own tools"
+  local writers
+  writers="$(dc ps --status running --services | grep -vx postgres || true)"
+  [[ -z "$writers" ]] || refuse "stop the deployment first (teamctl stop); still running: $(tr '\n' ' ' <<<"$writers")"
+  mkdir -m 0700 "$target"
+  target="$(cd "$target" && pwd)"
+  mkdir -m 0700 "$target/databases" "$target/archives" "$target/files"
+  local was_running=0
+  [[ -z "$(dc ps --status running --services postgres)" ]] || was_running=1
+  dc up -d --wait postgres
+  local database
+  while read -r database; do
+    [[ -n "$database" ]] || continue
+    dc exec -T postgres pg_dump -U postgres -Fc -d "$database" </dev/null >"$target/databases/$database.dump"
+  done < <(psql_postgres "select datname from pg_database where not datistemplate and datname <> 'postgres' order by 1")
+  psql_postgres "show server_version" >"$target/databases/server-version"
+  [[ "$was_running" -eq 1 ]] || dc stop postgres
+  host_paths >"$run_dir/host-paths"
+  local kind key path
+  while read -r kind key path; do
+    case "$kind" in
+      archive) [[ ! -d "$path" ]] || archive "$path" "$target/archives/$key.tar" ;;
+      file) install -m 0400 "$path" "$target/files/$key" ;;
+    esac
+  done <"$run_dir/host-paths"
+  python_in_server - "$target" "$project" "$env_file" "$REPO_ROOT" "$run_dir/host-paths" <<'PY'
+import datetime, hashlib, json, subprocess, sys
+from pathlib import Path
+
+target, project, env_file, repo, host_paths = sys.argv[1:]
+target = Path(target)
+paths = {key: (kind, path) for kind, key, path in (line.split(" ", 2) for line in Path(host_paths).read_text().splitlines())}
+
+
+def digest(path):
+    return hashlib.sha256(path.read_bytes()).hexdigest()
+
+
+env = dict(line.split("=", 1) for line in Path(env_file).read_text().splitlines() if "=" in line)
+revision = subprocess.run(["git", "-C", repo, "rev-parse", "HEAD"], capture_output=True, text=True).stdout.strip()
+clean = not subprocess.run(["git", "-C", repo, "status", "--porcelain"], capture_output=True, text=True).stdout.strip()
+manifest = {
+    "format": 1,
+    "createdAt": datetime.datetime.now(datetime.timezone.utc).isoformat(timespec="seconds"),
+    "project": project,
+    "source": {"revision": revision, "clean": clean},
+    "images": {key: value for key, value in sorted(env.items()) if key.endswith("_IMAGE")},
+    "postgres": {"serverVersion": (target / "databases" / "server-version").read_text().strip()},
+    "databases": [{"name": dump.stem, "sha256": digest(dump)} for dump in sorted((target / "databases").glob("*.dump"))],
+    "archives": [{"key": archive.stem, "path": paths[archive.stem][1], "sha256": digest(archive)}
+                 for archive in sorted((target / "archives").glob("*.tar"))],
+    "files": [{"key": file.name, "path": paths[file.name][1], "sha256": digest(file),
+               "mode": oct(Path(paths[file.name][1]).stat().st_mode & 0o7777)}
+              for file in sorted((target / "files").iterdir())],
+    "notBackedUp": [{"key": key, "path": path} for key, (kind, path) in sorted(paths.items()) if kind == "kept"],
+}
+(target / "manifest.json").write_text(json.dumps(manifest, indent=2, sort_keys=True) + "\n")
+(target / "manifest.json").chmod(0o400)
+PY
+  # The backup holds credentials: it is a protected source the agent's
+  # boundary probe checks, while it is present.
+  echo "$target" >>"$run_dir/backups"
+  echo "teamctl: backup in $target; it holds the deployment's credentials and custody key"
+}
+
+restore() {
+  if [[ "$lab_rehearsal" -ne 1 ]]; then
+    refuse "restore is not supported for a deployment that serves a team: Secrets must reapply its destroyed-version" \
+      "tombstones before a restored database serves (aweb-acyp), Logs its purge tombstones (aweb-acgh.16.23), and" \
+      "the signer must refuse a pending bootstrap restored over a completed enrollment (aweb-acyw); none does yet." \
+      "Controller rotation is aweb-acxy.4. --lab-rehearsal restores a backup of disposable lab data, never a team's."
+  fi
+  [[ -d "$target" && ! -L "$target" && -f "$target/manifest.json" ]] || refuse "$target is not a teamctl backup"
+  target="$(cd "$target" && pwd)"
+  model
+  host_paths >"$run_dir/host-paths"
+  # Every part checked against the manifest's digests, and every target taken
+  # from this deployment.yaml, not from the backup: the plan is printed only
+  # once all of it holds, and nothing is written before.
+  local plan
+  plan="$(python_in_server - "$target" "$run_dir/host-paths" <<'PY'
+import hashlib, json, os, re, sys
+from pathlib import Path
+
+target, host_paths = Path(sys.argv[1]), Path(sys.argv[2])
+paths = {key: (kind, path) for kind, key, path in (line.split(" ", 2) for line in host_paths.read_text().splitlines())}
+manifest = json.loads((target / "manifest.json").read_text())
+if manifest.get("format") != 1:
+    sys.exit("teamctl: the manifest's format is not 1")
+
+
+def part(relative, sha256):
+    path = target / relative
+    if path.is_symlink() or not path.is_file() or path.resolve().parent != (target / relative).parent.resolve():
+        sys.exit(f"teamctl: {relative} is not a regular file of the backup")
+    if hashlib.sha256(path.read_bytes()).hexdigest() != sha256:
+        sys.exit(f"teamctl: {relative} does not match the manifest's digest")
+
+
+def free(path):
+    path = Path(path)
+    if not path.is_absolute() or os.path.lexists(path):
+        sys.exit(f"teamctl: {path} exists or is not absolute; a restore writes only where nothing is")
+    if not path.parent.is_dir() or os.path.realpath(path.parent) != str(path.parent):
+        sys.exit(f"teamctl: {path.parent} is not a directory reached without a symbolic link")
+
+
+plan = []
+for database in manifest["databases"]:
+    if not re.fullmatch(r"[a-z_][a-z0-9_]{0,62}", database["name"]):
+        sys.exit(f"teamctl: {database['name']!r} is not a database this bundle makes")
+    part(f"databases/{database['name']}.dump", database["sha256"])
+    plan.append(f"database {database['name']} -")
+wanted = {key for key, (kind, _) in paths.items() if kind == "file"}
+if {file["key"] for file in manifest["files"]} != wanted:
+    sys.exit("teamctl: the backup's files are not the ones this deployment.yaml names")
+for kind, entries in (("archive", manifest["archives"]), ("file", manifest["files"])):
+    for entry in entries:
+        named = paths.get(entry["key"])
+        if named is None or named[0] != kind or named[1] != entry["path"]:
+            sys.exit(f"teamctl: the backup's {entry['key']} is not where this deployment.yaml puts it")
+        part(f"{kind}s/{entry['key']}" + (".tar" if kind == "archive" else ""), entry["sha256"])
+        free(entry["path"])
+        mode = entry.get("mode", "-")
+        if kind == "file" and not re.fullmatch(r"0o[0-7]{1,4}", mode):
+            sys.exit(f"teamctl: the backup's {entry['key']} has no mode")
+        plan.append(f"{kind} {entry['key']} {mode}")
+print("\n".join(plan))
+PY
+)" || exit 1
+  [[ -z "$(dc --profile '*' ps -a -q)" ]] || refuse "the bundle's containers exist; a restore starts from none (teamctl destroy)"
+  local key
+  while read -r key; do
+    [[ -z "$key" ]] || ! docker volume inspect "${project}_$key" >/dev/null 2>&1 ||
+      refuse "the volume ${project}_$key exists; a restore starts from none (teamctl destroy)"
+  done < <(dc config --volumes)
+  local kind name mode path
+  while read -r kind name mode; do
+    path="$(sed -n "s/^$kind $name //p" "$run_dir/host-paths")"
+    case "$kind" in
+      archive) unarchive "$target/archives/$name.tar" "$path" ;;
+      file) install -m "${mode#0o}" "$target/files/$name" "$path" ;;
+    esac
+  done < <(grep -v '^database ' <<<"$plan")
+  dc up -d --wait postgres
+  while read -r kind name mode; do
+    dc exec -T postgres pg_restore -U postgres --exit-on-error -d "$name" <"$target/databases/$name.dump"
+  done < <(grep '^database ' <<<"$plan")
+  dc stop postgres
+  echo "teamctl: restored for a lab rehearsal of the mechanics, onto fresh volumes; not a recovery of a team's deployment."
+  echo "teamctl: the bundle is stopped; teamctl start starts it."
 }
 
 "$action"
