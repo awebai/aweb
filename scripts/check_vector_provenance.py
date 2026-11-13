@@ -591,6 +591,10 @@ ROOT_CONSUMERS = {
         "owner-act-delivery-v1.json",
         '"../../../../docs/vectors/owner-act-delivery-v1.json"',
     ),
+    PurePosixPath("naapp/secrets/tests/test_protected_round_trip_injectors.py"): _consumer(
+        "owner-act-delivery-v1.json",
+        'Path(__file__).resolve().parents[3] / "docs/vectors/owner-act-delivery-v1.json"',
+    ),
     PurePosixPath("cli/go/internal/handoff/covered_request_test.go"): _consumer(
         "approval-request-v1.json",
         '"../../../../docs/vectors/approval-request-v1.json"',
