@@ -361,6 +361,14 @@ func runGrantMint(cmd *cobra.Command, _ []string) error {
 		residentHome = residentIdentityHome.Root
 	}
 
+	// The grant home holds no team certificate, so it records the team key the
+	// resident's certificate names; it is read only to verify the team's owner
+	// log-key record. Read before minting, so a failure leaves no grant behind.
+	residentCert, err := loadTeamCertificateAt(sel.WorkingDir, sel.IdentityHome, sel.TeamID)
+	if err != nil {
+		return fmt.Errorf("load the team certificate of team %s: %w", sel.TeamID, err)
+	}
+
 	pub, sessionKey, err := awid.GenerateKeypair()
 	if err != nil {
 		return err
@@ -432,6 +440,9 @@ func runGrantMint(cmd *cobra.Command, _ []string) error {
 	}
 	if custodySocketPath != "" {
 		state.Custody.SocketPath = custodySocketPath
+	}
+	if state.TeamID == strings.TrimSpace(sel.TeamID) {
+		state.TeamDIDKey = strings.TrimSpace(residentCert.TeamDIDKey)
 	}
 	// The session key lands first: a directory only becomes a detectable grant
 	// home (grant.yaml present) once its credential is already on disk.

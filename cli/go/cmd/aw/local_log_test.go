@@ -640,3 +640,131 @@ func TestAwLogKeySignAttachesASignatureMadeElsewhere(t *testing.T) {
 		t.Fatalf("record not installed: %v", err)
 	}
 }
+
+// newGrantLogFixture is a grant seat of the fixture's team: a grant home with
+// no team certificate, whose grant.yaml records teamDIDKey (empty for a grant
+// minted before the field existed).
+func newGrantLogFixture(t *testing.T, f *localLogFixture, teamDIDKey string) *awconfig.Selection {
+	t.Helper()
+	grantHome := filepath.Join(filepath.Dir(f.sel.WorkingDir), "grant-home")
+	if err := os.MkdirAll(grantHome, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	_, sessionKey, err := awid.GenerateKeypair()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := awid.SaveSigningKeyExclusive(awconfig.GrantHomeSigningKeyPath(grantHome), sessionKey); err != nil {
+		t.Fatal(err)
+	}
+	if err := awconfig.SaveGrantHomeTo(awconfig.GrantHomeStatePath(grantHome), &awconfig.GrantHome{
+		Version: awconfig.GrantHomeSchemaVersion, GrantID: "grant-1", TeamID: localLogTestTeamID,
+		Subject: awconfig.GrantSubject{DIDAW: "did:aw:agent", DIDKey: "did:key:zAgent", Alias: "agent"},
+		Scopes:  []string{"mail.read"}, ExpiresAt: "2099-01-01T00:00:00Z", AwebURL: "https://app.aweb.ai",
+		TeamDIDKey: teamDIDKey,
+	}); err != nil {
+		t.Fatal(err)
+	}
+	return &awconfig.Selection{WorkingDir: filepath.Join(filepath.Dir(f.sel.WorkingDir), "grant-work"), IdentityHome: grantHome, ExternalIdentityHome: true, TeamID: localLogTestTeamID, Alias: "agent"}
+}
+
+func TestGrantSeatSealsToTheRecordItsGrantNamesTheTeamKeyFor(t *testing.T) {
+	f := newLocalLogFixture(t)
+	sel := newGrantLogFixture(t, f, awid.ComputeDIDKey(f.teamKey.Public().(ed25519.PublicKey)))
+	f.installOwnerKey(t, f.teamKey)
+	appendCommLog(f.logsDir, commLogNameForSelection(sel), localLogPolicyForSelection(sel), &CommLogEntry{Dir: "recv", Channel: "mail", Body: "grant-secret"})
+
+	path := commLogPath(f.logsDir, commLogNameForSelection(sel))
+	opened := openAllLines(t, path, f.ownerKey)
+	if len(opened) != 1 || !strings.Contains(opened[0], "grant-secret") {
+		t.Fatalf("owner reads %v", opened)
+	}
+}
+
+// A grant minted before grants recorded the team key cannot verify the
+// record: it stops logging rather than write plaintext.
+func TestGrantSeatWithoutARecordedTeamKeyWritesNothing(t *testing.T) {
+	f := newLocalLogFixture(t)
+	sel := newGrantLogFixture(t, f, "")
+	f.installOwnerKey(t, f.teamKey)
+	appendCommLog(f.logsDir, commLogNameForSelection(sel), localLogPolicyForSelection(sel), &CommLogEntry{Dir: "recv", Channel: "mail", Body: "grant-secret"})
+
+	if _, err := os.Stat(commLogPath(f.logsDir, commLogNameForSelection(sel))); !os.IsNotExist(err) {
+		t.Fatalf("an old grant must stop logging, not write: %v", err)
+	}
+	key := localLogPolicyForSelection(sel).resolve()
+	if key.err == nil || !strings.Contains(key.err.Error(), "aw id grant mint") {
+		t.Fatalf("the refusal must say to re-mint the grant: %v", key.err)
+	}
+}
+
+func TestGrantSeatRefusesARecordSignedByAnotherTeamKey(t *testing.T) {
+	f := newLocalLogFixture(t)
+	_, other, err := ed25519.GenerateKey(rand.Reader)
+	if err != nil {
+		t.Fatal(err)
+	}
+	sel := newGrantLogFixture(t, f, awid.ComputeDIDKey(f.teamKey.Public().(ed25519.PublicKey)))
+	f.installOwnerKey(t, other)
+	appendCommLog(f.logsDir, commLogNameForSelection(sel), localLogPolicyForSelection(sel), &CommLogEntry{Dir: "recv", Channel: "mail", Body: "grant-secret"})
+	if _, err := os.Stat(commLogPath(f.logsDir, commLogNameForSelection(sel))); !os.IsNotExist(err) {
+		t.Fatalf("a record not signed by the grant's team key must stop logging: %v", err)
+	}
+}
+
+// A grant whose grant.yaml names another team than the selection is not
+// evidence for the selection's team.
+func TestGrantSeatOfAnotherTeamDoesNotVouchForTheRecord(t *testing.T) {
+	f := newLocalLogFixture(t)
+	sel := newGrantLogFixture(t, f, awid.ComputeDIDKey(f.teamKey.Public().(ed25519.PublicKey)))
+	f.installOwnerKey(t, f.teamKey)
+	grant, err := awconfig.LoadGrantHome(sel.IdentityHome)
+	if err != nil {
+		t.Fatal(err)
+	}
+	grant.TeamID = "other:example.com"
+	if err := awconfig.SaveGrantHomeTo(awconfig.GrantHomeStatePath(sel.IdentityHome), grant); err != nil {
+		t.Fatal(err)
+	}
+	if key := localLogPolicyForSelection(sel).resolve(); key.err == nil {
+		t.Fatal("a grant of another team verified the record")
+	}
+}
+
+// Doctor run as a grant seat reports the owner log key from the grant's
+// recorded team key, and names re-minting for a grant that records none.
+func TestAwDoctorLocalReportsTheOwnerLogKeyForAGrantSeat(t *testing.T) {
+	t.Parallel()
+
+	bin, tmp := buildDoctorBinary(t)
+	_, teamKey, err := ed25519.GenerateKey(rand.Reader)
+	if err != nil {
+		t.Fatal(err)
+	}
+	teamDID := awid.ComputeDIDKey(teamKey.Public().(ed25519.PublicKey))
+	const teamID = "backend:acme.com"
+	grantHome := filepath.Join(tmp, "grant-home")
+	_, grant := writeGrantHomeForTest(t, grantHome, "https://app.aweb.ai")
+	if grant.TeamID != teamID {
+		t.Fatalf("fixture team %q", grant.TeamID)
+	}
+	installRecordFileForTest(t, tmp, teamID, teamKey)
+	doctor := func() doctorOutput {
+		out, err := runDoctorCLI(t, bin, tmp, "--identity-home", grantHome, "doctor", "local", "--json")
+		if err != nil && !strings.Contains(string(out), `"checks"`) {
+			t.Fatalf("doctor: %v\n%s", err, out)
+		}
+		return decodeDoctorOutput(t, out)
+	}
+
+	check := requireDoctorCheckStatus(t, doctor(), doctorCheckLocalLogKey, doctorStatusFail)
+	if !strings.Contains(check.NextStep+check.Message, "aw id grant mint") {
+		t.Fatalf("an old grant must be told to re-mint: %#v", check)
+	}
+
+	grant.TeamDIDKey = teamDID
+	if err := awconfig.SaveGrantHomeTo(awconfig.GrantHomeStatePath(grantHome), grant); err != nil {
+		t.Fatal(err)
+	}
+	requireDoctorCheckStatus(t, doctor(), doctorCheckLocalLogKey, doctorStatusOK)
+}
