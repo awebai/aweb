@@ -12,6 +12,7 @@ from urllib.parse import urlencode
 
 from awid.log import require_canonical_server_origin
 from fastapi import APIRouter, HTTPException, Request
+from fastapi.responses import JSONResponse
 
 from aweb_naapp.console import (
     ConsoleRoute,
@@ -457,8 +458,14 @@ class ProtectedOperationsHTTP:
         async def link_view(handoff_id: str, request: Request):
             try:
                 body = await self._link_request(request, {"token"})
-                with _gone_when_expired():
+                try:
                     prepared = await self.signer.link_view(handoff_id, body["token"])
+                except SignerRefused as expired:
+                    if expired.code != "operation_expired":
+                        raise
+                    # Only the link's own approver gets here: they learn when.
+                    return JSONResponse({"detail": "operation_expired",
+                        "expires_at": getattr(expired, "expires_at", None)}, 410)
                 frozen = prepared.payload
                 result = asdict(prepared)
                 result["payload"] = {

@@ -137,7 +137,8 @@ async def test_a_link_opened_after_its_request_expired_says_so(link_service):
     async with context:
         await page.goto(s.link)
         await expect(page.locator("#handoff-title")).to_have_text("Request expired")
-        await expect(page.locator("#handoff-status")).to_have_text("This request expired without a decision. Nothing was signed.")
+        await expect(page.locator("#handoff-status")).to_have_text(
+            re.compile(r"^This request expired at .+ without a decision\. Nothing was signed\.$"))
         await expect(page.locator("#handoff-action")).to_be_hidden()
         assert s.prepared.digest not in await page.content()
 
@@ -256,5 +257,5 @@ async def test_times_read_in_the_readers_own_zone(link_service):
     async with context:
         await page.goto(s.link)
         expires = page.locator("#handoff-expires")
-        await expect(expires).to_have_text(re.compile(r"^Expires .+ E[SD]T$"))
+        await expect(expires).to_have_text(re.compile(r"^Expires [A-Z][a-z]{2} \d{1,2}, \d{4}, [1-9]\d?:\d\d [AP]M E[SD]T$"))
         assert "UTC" not in await expires.inner_text()

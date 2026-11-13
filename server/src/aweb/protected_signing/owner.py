@@ -149,10 +149,12 @@ def _when(stamp):
     return datetime.fromisoformat(stamp.replace("Z", "+00:00")).strftime("%Y-%m-%d %H:%M UTC")
 
 
-def _time(stamp):
+def _time(stamp, *, date_only=False):
     """A time marked for the console script to show in the viewer's zone;
     without script it reads as UTC."""
-    return f'<time datetime="{escape(stamp, quote=True)}" data-local>{escape(_when(stamp))}</time>'
+    text = _when(stamp)[:10] if date_only else _when(stamp)
+    mark = 'data-local="date"' if date_only else "data-local"
+    return f'<time datetime="{escape(stamp, quote=True)}" {mark}>{escape(text)}</time>'
 
 
 def _window(seconds):
@@ -250,7 +252,7 @@ def owner_page_html(view: dict) -> str:
     parts.append('<h2>Who can approve</h2><ul class="owner-list">')
     for approver in view["approvers"]:
         keys = "".join(
-            f'<p>Passkey added {e(_when(p["added_at"])[:10])}</p>' + _technical([("Passkey", p["key_id"])])
+            f'<p>Passkey added {_time(p["added_at"], date_only=True)}</p>' + _technical([("Passkey", p["key_id"])])
             for p in approver["passkeys"]
         ) or "<p>No passkey yet</p>"
         parts.append(f'<li>{e(approver["contact"] or "no notice address")}{keys}</li>')

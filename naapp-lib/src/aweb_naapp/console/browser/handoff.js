@@ -127,7 +127,7 @@ import { operationTable } from "/handoff-assets/operations.mjs";
   // A stored time in the reader's own zone, with the zone named.
   function when(stamp) {
     return new Date(stamp).toLocaleString(undefined, {
-      year: "numeric", month: "short", day: "numeric", hour: "2-digit", minute: "2-digit",
+      year: "numeric", month: "short", day: "numeric", hour: "numeric", minute: "2-digit",
       timeZoneName: "short",
     });
   }
@@ -188,6 +188,7 @@ import { operationTable } from "/handoff-assets/operations.mjs";
     if (!response.ok) {
       const error = new Error("handoff_refused");
       error.status = response.status;
+      if (response.status === 410) error.expiresAt = (await response.json().catch(() => ({}))).expires_at;
       throw error;
     }
     return response.json();
@@ -237,7 +238,7 @@ import { operationTable } from "/handoff-assets/operations.mjs";
       const left = expiresAtMs - Date.now();
       setTimeout(() => linkExpired(state.expires_at), Math.max(0, Math.min(left, 2 ** 31 - 1)));
     } catch (error) {
-      if (error.status === 410) linkExpired();
+      if (error.status === 410) linkExpired(nonempty(error.expiresAt) ? error.expiresAt : undefined);
       else linkUnavailable();
     }
   }

@@ -15,12 +15,16 @@ async def test_a_marked_time_reads_in_the_viewers_zone_and_keeps_utc_without_scr
     await page.set_content(
         '<body data-console-csrf-key="k"><main>'
         '<p>Expires <time id="marked" datetime="2026-11-13T15:30:00Z" data-local>2026-11-13 15:30 UTC</time></p>'
+        '<p><time id="morning" datetime="2026-11-13T14:05:00Z" data-local>2026-11-13 14:05 UTC</time></p>'
+        '<p><time id="day" datetime="2026-11-13T14:05:00Z" data-local="date">2026-11-13</time></p>'
         '<p><time id="plain" datetime="2026-11-13T15:30:00Z">2026-11-13 15:30 UTC</time></p>'
         "</main></body>"
     )
     await expect(page.locator("#marked")).to_have_text("2026-11-13 15:30 UTC")
     await page.add_script_tag(content=SCRIPT)
     await expect(page.locator("#marked")).to_have_text("Nov 13, 2026, 10:30 AM EST")
+    await expect(page.locator("#morning")).to_have_text("Nov 13, 2026, 9:05 AM EST")
+    await expect(page.locator("#day")).to_have_text("Nov 13, 2026")
     # Only marked times change; a page without script keeps its UTC text.
     await expect(page.locator("#plain")).to_have_text("2026-11-13 15:30 UTC")
     await context.close()

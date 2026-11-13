@@ -134,7 +134,8 @@ async def test_an_expired_request_answers_its_approver_gone(link_http):
     world, client, prepared, token = link_http
     world.clock.advance(timedelta(hours=25))
     response = await client.post(f"/handoff/{prepared.handoff_id}/link", json={"token": token}, headers=BROWSER)
-    assert (response.status_code, response.json()) == (410, {"detail": "operation_expired"})
+    assert (response.status_code, response.json()) == (
+        410, {"detail": "operation_expired", "expires_at": prepared.expires_at})
     assert prepared.digest not in response.text
 
 

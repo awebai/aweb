@@ -115,8 +115,9 @@ def test_the_owner_page_names_what_it_governs_and_reads_as_sentences():
     assert "The root agent: 3 of 5 at a time, 2 of 10 in the last hour." in html
     assert "in engineering" in html and "in engineering:customer.example" not in html
     assert "needs its own approval" not in html
-    assert "Passkey added 2026-11-12" in html and "passkey 0a1b2c3d" not in html
-    assert "0a1b2c3d" in html.split("Passkey added 2026-11-12", 1)[1]
+    passkey = 'Passkey added <time datetime="2026-11-12T08:00:00Z" data-local="date">2026-11-12</time>'
+    assert passkey in html and "passkey 0a1b2c3d" not in html
+    assert "0a1b2c3d" in html.split(passkey, 1)[1]
     assert "build-&lt;1&gt;" in html and "build-<1>" not in html
     human = owner_page_html({**view, "authority": {**view["authority"], "kind": "human_identity", "id": "did:aw:HUMAN"}})
     assert "<h1>Your own approvals</h1>" in human and "Agents added without asking you" not in human

@@ -3,13 +3,14 @@
 (() => {
   // A time the server wrote in UTC and marked data-local reads in the
   // viewer's own zone; without script it keeps its UTC text.
+  // data-local="date" shows the date alone.
   for (const time of document.querySelectorAll("time[datetime][data-local]")) {
     const at = new Date(time.dateTime);
     if (Number.isFinite(at.getTime())) {
-      time.textContent = at.toLocaleString(undefined, {
-        year: "numeric", month: "short", day: "numeric", hour: "2-digit", minute: "2-digit",
-        timeZoneName: "short",
-      });
+      const day = {year: "numeric", month: "short", day: "numeric"};
+      time.textContent = time.dataset.local === "date"
+        ? at.toLocaleDateString(undefined, day)
+        : at.toLocaleString(undefined, {...day, hour: "numeric", minute: "2-digit", timeZoneName: "short"});
     }
   }
 
