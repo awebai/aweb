@@ -51,11 +51,16 @@ def _chain_kid() -> str:
 
 
 def _deployment(
-    tmp_path: Path, database_url: str, *, db_schema: str = "public"
+    tmp_path: Path,
+    database_url: str,
+    purge_ledger_database_url: str = "postgresql://localhost/logs_purges",
+    *,
+    db_schema: str = "public",
 ) -> LogsSettings:
     return LogsSettings(
         _env_file=None,
         database_url=database_url,
+        purge_ledger_database_url=purge_ledger_database_url,
         db_schema=db_schema,
         public_origin=ORIGIN,
         console_origin=CONSOLE,
@@ -64,9 +69,16 @@ def _deployment(
     )
 
 
-def _deployment_on(tmp_path: Path, database: AsyncDatabaseManager) -> LogsSettings:
-    """A deployment on the test database, in the schema the test database gives."""
-    return _deployment(tmp_path, database.config.get_dsn(), db_schema=database.schema or "public")
+def _deployment_on(
+    tmp_path: Path, database: AsyncDatabaseManager, ledger: AsyncDatabaseManager
+) -> LogsSettings:
+    """A deployment on the test databases, in the schema the content database gives."""
+    return _deployment(
+        tmp_path,
+        database.config.get_dsn(),
+        ledger.config.get_dsn(),
+        db_schema=database.schema or "public",
+    )
 
 
 @pytest.fixture
@@ -87,8 +99,10 @@ async def running(service: OriginApps, origin: str = ORIGIN) -> AsyncIterator[ht
             yield client
 
 
-async def test_the_catalog_lists_the_served_manifest(tmp_path: Path, database) -> None:
-    settings = _deployment_on(tmp_path, database)
+async def test_the_catalog_lists_the_served_manifest(
+    tmp_path: Path, database, purge_ledger_database
+) -> None:
+    settings = _deployment_on(tmp_path, database, purge_ledger_database)
     async with running(_app(settings)) as client:
         catalog = (await client.get("/.well-known/aweb-app-versions.json")).json()
         served = {}
@@ -110,15 +124,17 @@ async def test_the_catalog_lists_the_served_manifest(tmp_path: Path, database) -
         assert (await client.get("/.well-known/aweb-app.json")).status_code == 404
 
 
-async def test_logs_serves_no_docs_surface(tmp_path: Path, database) -> None:
-    settings = _deployment_on(tmp_path, database)
+async def test_logs_serves_no_docs_surface(tmp_path: Path, database, purge_ledger_database) -> None:
+    settings = _deployment_on(tmp_path, database, purge_ledger_database)
     async with running(_app(settings)) as client:
         for path in ("/docs", "/redoc", "/openapi.json", "/"):
             assert (await client.get(path)).status_code == 404, path
 
 
-async def test_logs_is_ready_with_its_chain_tables(tmp_path: Path, database) -> None:
-    settings = _deployment_on(tmp_path, database)
+async def test_logs_is_ready_with_its_chain_tables(
+    tmp_path: Path, database, purge_ledger_database
+) -> None:
+    settings = _deployment_on(tmp_path, database, purge_ledger_database)
     async with running(_app(settings)) as client:
         ready = await client.get("/ready")
         assert ready.status_code == 200, ready.text
@@ -131,8 +147,10 @@ async def test_logs_is_ready_with_its_chain_tables(tmp_path: Path, database) -> 
         }
 
 
-async def test_a_running_logs_checkpoints_each_team_whose_chain_moved(tmp_path: Path, database) -> None:
-    settings = _deployment_on(tmp_path, database)
+async def test_a_running_logs_checkpoints_each_team_whose_chain_moved(
+    tmp_path: Path, database, purge_ledger_database
+) -> None:
+    settings = _deployment_on(tmp_path, database, purge_ledger_database)
     settings = settings.model_copy(update={"checkpoint_interval_seconds": 0.05})
     signer = chain_signer(
         settings, load_manifest(served_manifest(settings.app_key_files, origin=ORIGIN))
@@ -163,9 +181,9 @@ async def test_a_running_logs_checkpoints_each_team_whose_chain_moved(tmp_path: 
 
 
 async def test_a_running_logs_purges_what_a_teams_retention_has_expired(
-    tmp_path: Path, database
+    tmp_path: Path, database, purge_ledger_database
 ) -> None:
-    settings = _deployment_on(tmp_path, database)
+    settings = _deployment_on(tmp_path, database, purge_ledger_database)
     settings = settings.model_copy(update={"retention_interval_seconds": 0.05})
     signer = chain_signer(
         settings, load_manifest(served_manifest(settings.app_key_files, origin=ORIGIN))
@@ -277,9 +295,7 @@ def test_logs_does_not_start_without_its_mail_settings(
     monkeypatch.setenv("LOGS_CONSOLE_ORIGIN", CONSOLE)
     monkeypatch.setenv("LOGS_APP_ID", TEST_APP_ID)
     key_files = write_key_files(tmp_path)
-    monkeypatch.setenv(
-        "LOGS_APP_KEY_FILES", json.dumps({kid: str(path) for kid, path in key_files.items()})
-    )
+    monkeypatch.setenv("LOGS_APP_KEY_FILES", json.dumps({kid: str(path) for kid, path in key_files.items()}))
     _mail_environment(tmp_path, monkeypatch)
     monkeypatch.delenv("LOGS_EMAIL_SMTP_HOST")
     with pytest.raises(ValueError, match="LOGS_EMAIL_SMTP_HOST"):
@@ -293,9 +309,7 @@ def test_logs_reads_its_configuration_from_the_environment_only(
     monkeypatch.setenv("LOGS_PUBLIC_ORIGIN", ORIGIN)
     monkeypatch.setenv("LOGS_APP_ID", TEST_APP_ID)
     key_files = write_key_files(tmp_path)
-    monkeypatch.setenv(
-        "LOGS_APP_KEY_FILES", json.dumps({kid: str(path) for kid, path in key_files.items()})
-    )
+    monkeypatch.setenv("LOGS_APP_KEY_FILES", json.dumps({kid: str(path) for kid, path in key_files.items()}))
     _mail_environment(tmp_path, monkeypatch)
     monkeypatch.delenv("LOGS_CONSOLE_ORIGIN", raising=False)
     # A .env in the working directory is not configuration.
@@ -306,8 +320,10 @@ def test_logs_reads_its_configuration_from_the_environment_only(
     assert [error["loc"] for error in refused.value.errors()] == [("console_origin",)]
 
 
-async def test_each_origin_serves_only_its_own_routes(tmp_path: Path, database) -> None:
-    service = _app(_deployment_on(tmp_path, database))
+async def test_each_origin_serves_only_its_own_routes(
+    tmp_path: Path, database, purge_ledger_database
+) -> None:
+    service = _app(_deployment_on(tmp_path, database, purge_ledger_database))
     async with running(service) as public:
         async with httpx.AsyncClient(
             transport=httpx.ASGITransport(app=service), base_url=CONSOLE
@@ -329,8 +345,10 @@ async def test_each_origin_serves_only_its_own_routes(tmp_path: Path, database) 
             assert refused.status_code == 403
 
 
-async def test_a_stopped_logs_starts_again_with_the_same_routes(tmp_path: Path, database) -> None:
-    service = _app(_deployment_on(tmp_path, database))
+async def test_a_stopped_logs_starts_again_with_the_same_routes(
+    tmp_path: Path, database, purge_ledger_database
+) -> None:
+    service = _app(_deployment_on(tmp_path, database, purge_ledger_database))
     for _ in range(2):
         async with running(service) as public:
             assert (await public.post("/v1/reader-removals", json={})).status_code == 401

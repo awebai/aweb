@@ -34,18 +34,28 @@ from aweb_naapp.runtime.passkeys.email import PasskeyEmailDelivery
 from aweb_naapp.runtime.team_auth import Principal
 from awid.dns_verify import DomainVerifier
 from fastapi import FastAPI, HTTPException, Request
-from pgdbm import AsyncDatabaseManager
+from pgdbm import AsyncDatabaseManager, DatabaseConfig
 
 from aweb_logs import MANIFEST_PATH, MIGRATIONS_MODULE, MIGRATIONS_PATH
 from aweb_logs.chain import CHECKPOINT_PURPOSE, RECEIPT_PURPOSE
 from aweb_logs.config import LogsSettings
 from aweb_logs.ingest import Ingestor, IngestRefused
 from aweb_logs.ledger import LogsSigner, checkpoint_moved_heads
+from aweb_logs.purge_ledger import PurgeLedger, apply_purge_ledger_migrations
 from aweb_logs.reader_acts import OWNER_ACTS
 from aweb_logs.reader_service import reader_service
-from aweb_logs.retention import run_retention
+from aweb_logs.retention import reapply_purges, run_retention
 
 logger = logging.getLogger(__name__)
+
+
+@asynccontextmanager
+async def connected(db: AsyncDatabaseManager) -> AsyncIterator[AsyncDatabaseManager]:
+    await db.connect()
+    try:
+        yield db
+    finally:
+        await db.disconnect()
 
 
 def chain_signer(settings: LogsSettings, manifest: Manifest) -> LogsSigner:
@@ -144,7 +154,18 @@ def create_app(
         link_text="Open Logs",
     )
 
-    ingestor = Ingestor(runtime, signer, packaged_catalog(), settings.client_quota)
+    purges = PurgeLedger(
+        AsyncDatabaseManager(
+            DatabaseConfig(
+                connection_string=settings.purge_ledger_database_url,
+                schema=settings.db_schema,
+                min_connections=settings.db_pool_min_connections,
+                max_connections=settings.db_pool_max_connections,
+                statement_cache_size=settings.db_statement_cache_size,
+            )
+        )
+    )
+    ingestor = Ingestor(runtime, signer, packaged_catalog(), settings.client_quota, purges)
     console = FastAPI(docs_url=None, redoc_url=None, openapi_url=None)
 
     @asynccontextmanager
@@ -152,7 +173,11 @@ def create_app(
         api_routes, console_routes = list(api.routes), list(console.routes)
         try:
             await hooks.preflight()
-            async with runtime.lifespan(api):
+            async with runtime.lifespan(api), connected(purges.db):
+                # Before anything is served: a restored content database
+                # holds no content purged after its backup.
+                await apply_purge_ledger_migrations(runtime.db(), purges.db)
+                await reapply_purges(runtime.db(), purges)
                 readers = await reader_service(
                     runtime,
                     signer=signer,
@@ -160,6 +185,7 @@ def create_app(
                     client_address_header=settings.client_address_header,
                     delivery=delivery,
                     backlog_age=timedelta(seconds=settings.hook_events_stalled_after_seconds),
+                    purges=purges,
                 )
                 api.include_router(readers.agent_router(authorized))
                 api.include_router(readers.handoff_router)
@@ -177,6 +203,7 @@ def create_app(
                 retention = asyncio.create_task(
                     run_retention(
                         runtime.db(),
+                        purges,
                         interval_seconds=settings.retention_interval_seconds,
                         logs_origin=settings.public_origin,
                         stop=stop,

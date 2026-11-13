@@ -36,7 +36,10 @@ from pgdbm import AsyncDatabaseManager, AsyncMigrationManager
 from aweb_logs import MIGRATIONS_MODULE, MIGRATIONS_PATH
 from aweb_logs.governance import SELF_RECORDED_ACTS, LogsGovernance
 from aweb_logs.ledger import LogsSigner
+from aweb_logs.purge_ledger import PurgeLedger
 from aweb_logs.readers import READER_ROLE, ReaderDirectory, ReaderRemovals
+
+from .fixtures import purge_ledger
 
 LOGS = "https://logs.example.test"
 
@@ -126,6 +129,7 @@ class World:
     fence: InstallationFence
     # The running AWID the owner's team is registered in.
     registry: Registry = field(init=False)
+    purges: PurgeLedger = field(init=False)
     governance: LogsGovernance = field(init=False)
     removals: ReaderRemovals = field(init=False)
     recorder: CredentialAudit = field(init=False)
@@ -208,8 +212,14 @@ async def world_fixture(test_db_factory) -> AsyncIterator[World]:
             holding_scopes=is_holding_scope,
         )
         await state.passkeys.migrate()
+        state.purges = await purge_ledger(test_db_factory, db)
         state.governance = LogsGovernance(
-            db, fence=fence, verifier=owner.verifier, recorder=state.recorder, logs_origin=LOGS
+            db,
+            purges=state.purges,
+            fence=fence,
+            verifier=owner.verifier,
+            recorder=state.recorder,
+            logs_origin=LOGS,
         )
         state.removals = ReaderRemovals(
             directory, fence=fence, passkeys=state.passkeys, recorder=state.recorder

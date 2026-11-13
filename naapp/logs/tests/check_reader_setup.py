@@ -41,6 +41,7 @@ def main() -> None:
         settings = LogsSettings(
             _env_file=None,
             database_url="postgresql://unconnected/logs",
+            purge_ledger_database_url="postgresql://unconnected/logs_purges",
             public_origin="https://logs.example.test",
             console_origin="https://console.logs.example.test",
             app_id=TEST_APP_ID,
