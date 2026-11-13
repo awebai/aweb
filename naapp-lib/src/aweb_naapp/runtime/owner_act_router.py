@@ -44,6 +44,7 @@ from aweb_naapp.runtime.owner_act_delivery import (
     OwnerActDeliveryRefused,
     OwnerActEffect,
 )
+from aweb_naapp.runtime.passkeys import contact_sha256
 from aweb_naapp.runtime.passkeys.proof import is_public_cose_key
 
 __all__ = ["OWNER_ACT_PATH", "OwnerActLimiter", "mount_owner_act_routes"]
@@ -272,6 +273,25 @@ def mount_owner_act_routes(
                     and not (allow_security_key and rp_id == "aweb:")
                 ):
                     raise _refuse()
+                if delivery.credential.sha256 != delivery.subject["credential_sha256"] or (
+                    delivery.notice_contact is not None
+                    and contact_sha256(delivery.notice_contact)
+                    != delivery.subject.get("notice_contact_sha256")
+                ):
+                    raise _refuse()
+            # Reconciliation precedes effect preparation: an earlier revoke
+            # removed the holding that a fresh effect would require. The same
+            # current installation and original act proof still gate this read.
+            replay_fence = permit.store.for_installation(permit.admitted)
+            async with runtime.db().transaction() as tx:
+                await replay_fence.prepare(tx)
+                await replay_fence.check(tx, None)
+                if await verifier.applied_in(tx, prepared_act):
+                    await replay_fence.check(tx, None)
+                    prepared_act.require_fresh()
+                    return JSONResponse(
+                        {"detail": "applied_earlier"}, status_code=409, headers=CONSOLE_HEADERS
+                    )
             prepared_effect = await effect.prepare(installation=permit.admitted, delivery=delivery)
             fence = permit.store.for_installation(permit.admitted)
             async with runtime.db().transaction() as tx:

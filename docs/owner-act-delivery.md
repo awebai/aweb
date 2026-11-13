@@ -198,10 +198,17 @@ whether a holding or installation exists. It checks in three stages:
       parameters, by B3's retention check, and an `rp_id` that is the hostname
       of the act's `aud` or, where the app enables the optional security key,
       exactly `aweb:`;
-   3. the holding of (installation, role, principal): designate requires that
+   3. before preparing the effect, the retained nonce for `(scope, team_id,
+      nonce)`, under the installation fence. An existing row with the SHA-256
+      of these exact authenticated signing bytes answers `409 applied_earlier`.
+      This records no new effect, prepares no holding and sends no notice. A
+      different signed act under that nonce refuses. The original controller
+      proof and act deadlines and the held installation fence are checked
+      after the final awaited read; they are never renewed for this answer;
+   4. the holding of (installation, role, principal): designate requires that
       none is current, and replace and revoke require that one is. Cap-set
       names a role, not a holder, and reads no holding;
-   4. for designate and replace, the principal: it holds a current certificate
+   5. for designate and replace, the principal: it holds a current certificate
       of that team, and its own registered ID kind is `human`. The kind is the
       subject's own, never the kind of its nearest human ancestor or a label.
       These reads reuse the 60-second team-facts cache where it applies. The
@@ -211,7 +218,7 @@ whether a holding or installation exists. It checks in three stages:
       ([membership evidence](design/human-confirmation-from-aw.md#membership-evidence)).
       An absent or failing certificate is `principal_not_member`. The app
       retains a verified certificate with the holding;
-   5. in the transaction that applies the effect, the act against the expected
+   6. in the transaction that applies the effect, the act against the expected
       subject, and its nonce, consumed. The expected subject is the app's own
       `app_id`, the installation, the act's `role`, its `principal` or, for
       cap-set, its `cap`, and, for
@@ -251,7 +258,8 @@ cooling-off period. A cap-set response names `cap` in place of `principal`:
 | --- | --- | --- |
 | 415 | `json_required` | The content type is not `application/json`. |
 | 400 | `request_invalid` | The body has a field outside the five above, a `certificate` for revoke, `signing` is not base64, a credential field is not in its encoding, the bytes yield no act, installation id and role to look up, or, for a declared role and act, the body does not carry `credential` and `notice_contact` exactly as they require. |
-| 403 | `owner_required` | Every other fault of the act, its credential or its holding: any owner-act verification code, an undeclared role or act, a credential refused in stage 3, a holding in the wrong state, a credential or notice contact that does not match the act, a reused nonce. |
+| 403 | `owner_required` | Every other fault of the act, its credential or its holding: any owner-act verification code, an undeclared role or act, a credential refused in stage 3, a holding in the wrong state, a credential or notice contact that does not match the act, or a reused nonce carrying different signing bytes. |
+| 409 | `applied_earlier` | The current controller still verifies the unexpired act, the installation is admitted and its fence remains fresh, and the retained nonce row matches the exact signing hash. No new effect or notice. |
 | 503 | `team_key_unavailable` | Stage 2 cannot read the team's current key. Nothing took effect. |
 | as given | the installation's code | An authenticated act names an installation that is not admitted. |
 | 403 | `principal_not_member` | Designate or replace names a principal that holds no current certificate of the team. |
@@ -267,7 +275,9 @@ holdings or installations exist. The principal is public, so
 `principal_not_member` and `principal_not_human` reveal nothing, and they tell
 the owner what to fix. The two `503`s are retryable; the `403`s are final for
 that act. A failed effect rolls back the nonce, so the owner may deliver the
-same act again until it expires.
+same act again until it expires. If the committed response was lost, an exact
+replay returns `409` with `{"detail":"applied_earlier"}`. A later distinct
+revoke of an absent holding still returns `owner_required`.
 
 **Effects:**
 
