@@ -1,7 +1,6 @@
 package main
 
 import (
-	"bufio"
 	"encoding/json"
 	"fmt"
 	"os"
@@ -61,31 +60,25 @@ var logCmd = &cobra.Command{
 	},
 }
 
-// readCommLog reads JSONL entries from a log file.
+// readCommLog reads the plaintext JSONL entries of a log file; sealed lines
+// are for the owner and are skipped.
 // If limit > 0, returns only the last `limit` entries.
 func readCommLog(path string, limit int) ([]CommLogEntry, error) {
-	f, err := os.Open(path)
+	lines, err := readLocalLogLines(path, 0)
 	if err != nil {
 		return nil, err
 	}
-	defer f.Close()
 
 	var entries []CommLogEntry
-	scanner := bufio.NewScanner(f)
-	scanner.Buffer(make([]byte, 1024*1024), 1024*1024)
-	for scanner.Scan() {
-		line := scanner.Text()
-		if strings.TrimSpace(line) == "" {
+	for _, line := range lines {
+		if isSealedLogLine(line) {
 			continue
 		}
 		var e CommLogEntry
-		if err := json.Unmarshal([]byte(line), &e); err != nil {
+		if err := json.Unmarshal(line, &e); err != nil {
 			continue
 		}
 		entries = append(entries, e)
-	}
-	if err := scanner.Err(); err != nil {
-		return nil, err
 	}
 
 	if limit > 0 && len(entries) > limit {
