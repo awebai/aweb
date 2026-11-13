@@ -1921,6 +1921,18 @@ func acceptTeamInviteWithDetails(workingDir, token string, opts teamAcceptInvite
 	ctx, cancel := commandAPIContext(nil)
 	defer cancel()
 
+	// Resolve protection before any subject key, address, child or invite effect.
+	currentTeam, err := registry.GetTeam(ctx, registryURL, invite.Domain, invite.TeamName, teamKey)
+	if err != nil {
+		return nil, err
+	}
+	if currentTeam == nil || currentTeam.TeamID != teamID {
+		return nil, withErrorCode("protected_state_unavailable", fmt.Errorf("the selected registry returned no current protection authority for %s", teamID))
+	}
+	if err := requireLegacyInviteTeam(currentTeam); err != nil {
+		return nil, err
+	}
+
 	issueID := false
 	if scope == awid.IdentityModeLocal && invite.IDChild != nil {
 		home := opts.IdentityHome
