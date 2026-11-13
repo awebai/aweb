@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import re
 from collections.abc import Awaitable, Callable
+from contextlib import contextmanager
 from dataclasses import asdict
 from math import ceil
 from typing import Any
@@ -11,6 +12,7 @@ from urllib.parse import urlencode
 
 from awid.log import require_canonical_server_origin
 from fastapi import APIRouter, HTTPException, Request
+from fastapi.responses import JSONResponse
 
 from aweb_naapp.console import (
     ConsoleRoute,
@@ -21,18 +23,24 @@ from aweb_naapp.console import (
 )
 from aweb_naapp.console.handoff_wire import HandoffWireRefused, loopback_redirect
 from aweb_naapp.hooks.strictjson import Refused
-from aweb_naapp.runtime.approvals import ApprovalRefused, RequestNotCanonical, parse_request_json
+from aweb_naapp.runtime.approvals import (
+    ApprovalRefused,
+    Decision,
+    RequestNotCanonical,
+    parse_request_json,
+)
 from aweb_naapp.runtime.origins import _host, _origin_hosts
 from aweb_naapp.runtime.passkeys import ProofContextUnavailable
 
 from .catalog import operation_spec
-from .service import ProtectedSigner
+from .service import ProtectedSigner, decision_named
 from .types import (
     AdmittedHuman,
     OperationReceipt,
     OwnerActOperation,
     ProtectedKeyContext,
     ReceiptReader,
+    RequestExpired,
     RestrictedRequester,
     RevokeHumanRole,
     SignerRefused,
@@ -104,6 +112,17 @@ def _retry_after_headers(error: SignerRefused) -> dict[str, str] | None:
     if value is None or type(value) not in (int, float) or not 0 <= value <= 2**31 - 1:
         return None
     return {"Retry-After": str(ceil(value))}
+
+
+@contextmanager
+def _gone_when_expired():
+    """A link's own approver learns their request expired: 410, not a refusal."""
+    try:
+        yield
+    except SignerRefused as error:
+        if error.code != "operation_expired":
+            raise
+        raise HTTPException(410, "operation_expired") from None
 
 
 def _http(error: Exception) -> HTTPException:
@@ -207,7 +226,12 @@ class ProtectedOperationsHTTP:
             async def admission_policy(request: Request):
                 try:
                     await self._guard(request)
-                    if set(request.query_params) != {"team_id"} or len(request.query_params.getlist("team_id")) != 1:
+                    # Released clients send team_id alone and get the exact
+                    # configuration answer; include=admissions opts in to the
+                    # root's own counts (human-assurance-contract.md s5).
+                    params = request.query_params
+                    if (set(params) - {"include"} != {"team_id"} or len(params.getlist("team_id")) != 1
+                            or params.getlist("include") not in ([], ["admissions"])):
                         raise SignerRefused("request_invalid")
                     async for chunk in request.stream():
                         if chunk:
@@ -331,13 +355,30 @@ class ProtectedOperationsHTTP:
             "scope_refused",
             "human_admission_unavailable",
             "json_required",
+            "operation_expired",
         }:
             return error
         if isinstance(error, SignerRefused) and error.code == "console_session_required":
             return HTTPException(401, "console_session_required")
         return _http(error)
 
-    async def _human_body(self, request, fields):
+    async def _link_request(self, request, fields):
+        """A personal mailed link's POST: pinned human Host and Origin, the
+        token in the body, and no console or agent credential. The token
+        authenticates nothing but its own candidate's view and ceremony."""
+        await self.limiter.admit(request, "protected-human-link", bucket="protected.human.client")
+        if _host(request.scope) not in self.human_hosts or request.headers.get("Origin") != self.human_origin:
+            raise HTTPException(403, "scope_refused")
+        if request.headers.get("authorization") or any(
+            name.lower().startswith("x-console-") for name in request.headers
+        ):
+            raise HTTPException(401, "scope_refused")
+        body = await self._human_body(request, fields)
+        if not isinstance(body["token"], str):
+            raise SignerRefused("request_invalid")
+        return body
+
+    async def _human_body(self, request, fields, optional=frozenset()):
         await require_json(request)
         raw = bytearray()
         async for chunk in request.stream():
@@ -345,7 +386,7 @@ class ProtectedOperationsHTTP:
             if len(raw) > 64 * 1024:
                 raise SignerRefused("request_invalid")
         body = parse_request_json(bytes(raw))
-        if not isinstance(body, dict) or set(body) != fields:
+        if not isinstance(body, dict) or set(body) - set(optional) != fields:
             raise SignerRefused("request_invalid")
         return body
 
@@ -377,12 +418,60 @@ class ProtectedOperationsHTTP:
         async def options(handoff_id: str, request: Request):
             try:
                 operation_id, human, session = await self._human(handoff_id, request)
-                await self._human_body(request, set())
+                body = await self._human_body(request, set(), {"decision"})
                 return dict(
                     await self.signer.approval_options(
-                        operation_id, human=human, human_session=session
+                        operation_id, human=human, human_session=session,
+                        decision=decision_named(body.get("decision", "approve")),
                     )
                 )
+            except Exception as error:
+                raise self._human_error(error) from None
+
+        # Mailed approval links: POST only. ConsoleRoute's headers make every
+        # answer, refusals included, no-store and no-referrer; no CORS header
+        # is ever sent. A GET or a passive preview has no route here, so it
+        # reveals and spends nothing.
+
+        @router.post("/handoff/{handoff_id}/link")
+        async def link_view(handoff_id: str, request: Request):
+            try:
+                body = await self._link_request(request, {"token"})
+                try:
+                    prepared = await self.signer.link_view(handoff_id, body["token"])
+                except RequestExpired as expired:
+                    # Only the link's own approver gets here: they learn when.
+                    return JSONResponse({"detail": "operation_expired", "expires_at": expired.expires_at}, 410)
+                frozen = prepared.payload
+                result = asdict(prepared)
+                result["payload"] = {
+                    "policy": {"ref": frozen["policy_ref"], "version": frozen["policy_version"]},
+                    "request": frozen,
+                }
+                return {"mode": "governance-link", **result, "state": "pending"}
+            except Exception as error:
+                raise self._human_error(error) from None
+
+        @router.post("/handoff/{handoff_id}/link/options")
+        async def link_options(handoff_id: str, request: Request):
+            try:
+                body = await self._link_request(request, {"token", "decision"})
+                with _gone_when_expired():
+                    options = await self.signer.link_options(handoff_id, body["token"], body["decision"])
+                return dict(options)
+            except Exception as error:
+                raise self._human_error(error) from None
+
+        @router.post("/handoff/{handoff_id}/link/decide")
+        async def link_decide(handoff_id: str, request: Request):
+            try:
+                body = await self._link_request(request, {"token", "decision", "assertion"})
+                if not isinstance(body["assertion"], dict):
+                    raise SignerRefused("request_invalid")
+                receipt = await self.signer.link_decide(
+                    handoff_id, body["token"], body["decision"], body["assertion"]
+                )
+                return receipt_json(receipt)
             except Exception as error:
                 raise self._human_error(error) from None
 
@@ -390,12 +479,16 @@ class ProtectedOperationsHTTP:
         async def execute(handoff_id: str, request: Request):
             try:
                 operation_id, human, session = await self._human(handoff_id, request)
-                body = await self._human_body(request, {"assertion"})
+                body = await self._human_body(request, {"assertion"}, {"decision"})
                 if not isinstance(body["assertion"], dict):
                     raise SignerRefused("request_invalid")
                 prepared = await self.signer.inspect(
                     operation_id, human=human, human_session=session
                 )
+                if decision_named(body.get("decision", "approve")) is Decision.REJECT:
+                    return receipt_json(await self.signer.reject(
+                        operation_id, body["assertion"], human=human, human_session=session
+                    ))
                 receipt = await self.signer.execute(
                     operation_id, body["assertion"], human=human, human_session=session
                 )

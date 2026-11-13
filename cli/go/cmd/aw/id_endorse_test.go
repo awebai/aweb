@@ -521,6 +521,24 @@ func TestAPendingEndorsementReportsWhatTheCallerShowsTheHuman(t *testing.T) {
 	}
 }
 
+func TestAPendingEndorsementSaysWhoDecidesWhereAndHowToContinue(t *testing.T) {
+	prepared := &handoff.Prepared{OperationID: endorseTestOperation, Digest: strings.Repeat("ab", 32),
+		ExpiresAt: time.Date(2026, 11, 14, 9, 30, 0, 0, time.UTC)}
+	report := pendingEndorsementReport(prepared, "https://human.customer.example/handoff/h1", &handoff.Receipt{State: "pending", Reason: "awaiting_human"})
+	text := pendingEndorsementText(report)
+	for _, want := range []string{"approver", "https://human.customer.example/handoff/h1", "2026-11-14 09:30 UTC",
+		"Run the same command again", endorseTestOperation} {
+		if !strings.Contains(text, want) {
+			t.Errorf("%q lacks %q", text, want)
+		}
+	}
+	for _, unwanted := range []string{"emailed", "--operation-id", "awaiting_human"} {
+		if strings.Contains(text, unwanted) {
+			t.Errorf("%q shows %q", text, unwanted)
+		}
+	}
+}
+
 // The real command invites an agent child as a root whose chain endorsement
 // installed, and refuses it as the same root without one.
 func TestAnEndorsedRootInvitesAnAgentChildWithItsInstalledChain(t *testing.T) {

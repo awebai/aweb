@@ -45,6 +45,9 @@ class OperationDefinition:
     display: OperationDisplay
     binding_paths: tuple[tuple[str, str], ...] = ()
     consumer_available: bool = True
+    # A whole frozen request is revealable only after its definition's fields
+    # have been reviewed as public. A deployment policy cannot widen this.
+    link_revealable: bool = False
     prepared_fields: frozenset[str] = frozenset()
     signing_port: str = "sign_operation"
     finalize_execution_refusal: bool = False
@@ -172,6 +175,7 @@ _ROWS = (
         prepared_fields=frozenset({"registry", "expected_head", "responsibility_statement", "admission_policy"}),
         finalize_execution_refusal=True,
         receipt_uv_expiry=True,
+        link_revealable=True,
     ),
     OperationDefinition(
         "team.agent.admit",
@@ -245,6 +249,7 @@ _ROWS = (
             (("subject_ineligible", "The selected role holding cannot be revoked by this operation."),
              ("issuer_kind_forbidden", "This controller cannot revoke the selected role holding."))),
         signing_port="sign_owner_act",
+        link_revealable=True,
     ),
 )
 

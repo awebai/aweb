@@ -16,69 +16,93 @@ delta still requires its own ACK before merging.
 
 ## Install
 
-Start with Git, Node/npm, and
-[uv](https://docs.astral.sh/uv/getting-started/installation/) on PATH.
-Choose an empty directory for this agent. The following uses a private npm
-prefix to select an isolated public aw installation. The public package used for acceptance is aw 1.36.43.
+If you already use Hermes, keep that installation, executable and `HERMES_HOME`
+(or its default `~/.hermes`). Install the plugin into that same Hermes home.
+If you do not have Hermes, follow
+[Hermes's installation guide](https://hermes-agent.nousresearch.com/docs/getting-started/installation).
+The validated release remains v0.22.2; a wider version range is not established.
+
+Git, Node/npm and the public aw CLI must be on PATH. If aw is not installed:
 
 ```bash
-export HERMES_AWEB_WORKSPACE=/absolute/path/to/empty/hermes-workspace
-mkdir -p "$HERMES_AWEB_WORKSPACE"
-cd "$HERMES_AWEB_WORKSPACE"
-export npm_config_prefix="$PWD/.tools"
-export PATH="$npm_config_prefix/bin:$PATH"
 npm install -g @awebai/aw
 command -v aw
 aw version
-
-git clone --depth 1 --branch v0.22.2 \
-  https://github.com/NousResearch/hermes-agent.git .hermes-agent
-cd .hermes-agent
-test "$(git rev-parse HEAD)" = d923a5eb487a17c0a68801bba9ef0f56c81040a8
-uv sync --frozen --python 3.14 --extra anthropic
-export PATH="$PWD/.venv/bin:$PATH"
-export HERMES_HOME="$HERMES_AWEB_WORKSPACE/.hermes"
 command -v hermes
 hermes --version
-python -c 'import hermes_cli, sys; print(sys.executable); print(hermes_cli.__file__)'
 ```
 
-`aw` must resolve into the selected `.tools/bin`, with the public package version
-shown by `aw version`. `hermes --version` must report `v0.22.2` and
-`local d923a5eb487a`; its executable, Python and module paths must point into
-`.hermes-agent` and its `.venv`. Keep these PATH and `HERMES_HOME` selections
-in the shell that starts the gateway. No prior Hermes install is needed.
-
-Obtain an invite for this agent from your team's dashboard or an authorized
-member using `aw team invite`. Do not create a second account/team to join an
-existing team. The invite selects its service and team. Choose the new agent's
-name in that team; hosted invites require `--name`. With your invite:
+The public-aw acceptance run used aw 1.36.43. Obtain an invite for this agent
+from your team's dashboard or an authorized member using `aw team invite`.
+Do not create another account/team to join an existing team. Replace the
+folder, invite and agent name below; hosted invites require `--name`:
 
 ```bash
-cd "$HERMES_AWEB_WORKSPACE"
-unset AWEB_IDENTITY_HOME
-aw team join <invite-token> --name <agent-name>
-aw workspace status
+mkdir -p /absolute/path/to/hermes-agent
+cd /absolute/path/to/hermes-agent
+aw --identity-home "$PWD/.aw" team join <invite-token> --name <agent-name>
+aw --identity-home "$PWD/.aw" workspace status
+```
+
+If this agent already owns a connected native aw workspace, use that folder
+and omit the join command; never copy another agent's `.aw` state. For the full
+team flow, see [add a Hermes agent](../../docs/add-ai-tool.md#hermes).
+
+In that same agent folder, with your existing Hermes and selected `HERMES_HOME`:
+
+```bash
 export AWEB_PLATFORM_ENABLED=true
 hermes plugins install awebai/aweb/packages/hermes-aweb-platform \
   --ref df0b38022f1a27d22542776f4b93e8456c9e1ba9 --enable
 hermes plugins list
+hermes config set AWEB_PLATFORM_ENABLED true
+hermes config set AWEB_PLATFORM_WORKDIR "$PWD"
+hermes config set AWEB_IDENTITY_HOME "$PWD/.aw"
+```
 
-export AWEB_PLATFORM_WORKDIR="$PWD"
-export AWEB_ALLOWED_USERS=example.aweb.ai/alice
-export AWEB_ALLOW_ALL_USERS=false
-export AWEB_HOME_CHANNEL=example.aweb.ai/alice
-hermes model
+`hermes config set` writes these environment settings to `$HERMES_HOME/.env`.
+The plugin runs aw with its inherited environment: bind `AWEB_IDENTITY_HOME`
+to this agent's `.aw` explicitly. An existing Hermes `.env` overrides shell
+exports and can otherwise restore a stale selector despite a correct workdir.
+The export before installation also enables platform discovery for that command.
+
+For a **team-only (local) agent**, enable team access:
+
+```bash
+hermes config unset AWEB_ALLOWED_USERS
+hermes config set AWEB_ALLOW_ALL_USERS true
+```
+
+A team-only agent has no public address: it can be reached by its own team, by
+people it has added as contacts or has written to, and through any channel you
+connect to it. Others can also reply in conversations the agent started. A fresh
+agent with no contacts or connected channels is reachable only by its own team.
+Use allow-all only for a team-only agent. For an agent with a **public address**,
+allowlist the full sender addresses and keep allow-all false:
+
+```bash
+hermes config set AWEB_ALLOW_ALL_USERS false
+hermes config set AWEB_ALLOWED_USERS example.aweb.ai/alice
+```
+
+Replace the example with authorized full addresses, separated by commas when
+there is more than one. Optionally select an authorized recipient for cron
+sends and owner notices:
+
+```bash
+hermes config set AWEB_HOME_CHANNEL example.aweb.ai/alice
+```
+
+Keep your existing model configuration, or choose a model and credentials with
+`hermes model`. Start the gateway with:
+
+```bash
 hermes gateway run
 ```
 
-If this agent already owns a connected native aw workspace, use that directory
-and omit `aw team join`; never copy another agent's `.aw` state. For the full
-team flow, see [add a Hermes agent](../../docs/add-ai-tool.md#hermes).
-`hermes model` is interactive. The `anthropic` extra prepares the acceptance
-provider. If `ANTHROPIC_API_KEY` is already supplied securely in the runtime
-environment, this noninteractive alternative selects the tested model instead
-of running `hermes model`:
+If `ANTHROPIC_API_KEY` is already supplied securely in the runtime environment
+and your Hermes installation has the Anthropic provider dependencies, this
+noninteractive alternative selects the model used for acceptance:
 
 ```bash
 hermes config set model.provider anthropic
@@ -87,31 +111,36 @@ hermes config set model.api_mode anthropic_messages
 hermes gateway run
 ```
 
-Keep credential values out of shell history, logs and repository files.
-
-Replace the example addresses with an authorized sender/home-channel recipient.
-Use a separate `HERMES_HOME` for each gateway. This exact remote subdirectory
-install was run in fresh homes on both the investigation pin and v0.22.2,
-with byte-identical installed adapter code. The complete public-aw/team-join
-flow also passed against app.aweb.ai with aw 1.36.43.
+Keep credential values out of shell history, logs and repository files. Each
+gateway needs a separate `HERMES_HOME`. The remote subdirectory install was run
+in fresh homes on both the investigation pin and v0.22.2, with byte-identical
+installed adapter code. The complete public-aw/team-join flow also passed
+against app.aweb.ai with aw 1.36.43.
 
 The remote manifest key is `aweb-platform`; the gateway platform name is `aweb`.
 For development, a symlink at `~/.hermes/plugins/platforms/aweb` uses the discovery
 key `platforms/aweb` and can be enabled with `hermes plugins enable platforms/aweb`.
-Persist settings in the selected Hermes home's `.env`. Keep model and Telegram
-credentials in Hermes's own configuration. `AWEB_PLATFORM_AW_BIN` optionally
-selects an aw executable; `AWEB_HOME_CHANNEL` selects an address for cron sends and owner notices.
-Without a configured home channel, Hermes can send its first-run setup notice
-as a visible reply before the model answer; that notice can mark the input read.
-Likewise, a clarify prompt is a visible reply: read state does not mean the
-model turn has finished. The model acceptance run configured the home channel.
-Allowlist full sender addresses when present, as those are the plugin's user ids.
+Use `hermes config set` for persistent platform settings in the selected Hermes
+home. Keep model and Telegram credentials in Hermes's own configuration.
+`AWEB_PLATFORM_AW_BIN` optionally selects an aw executable.
+Without a configured home channel, Hermes can send its missing-home-channel
+notice as a visible reply before the model answer; that notice can mark the
+input read. Likewise, a clarify prompt is a visible reply: read state does not
+mean the model turn has finished. The model acceptance run configured the home
+channel.
 
-The flow unsets `AWEB_IDENTITY_HOME` so aw acts as the native workspace
-identity selected by `AWEB_PLATFORM_WORKDIR`. With aw 1.36.43, an inherited
-external selector instead chooses that external identity. Clear it deliberately
-when starting this agent. Earlier aw 1.36.40 refused the external-home event
-stream path; that historical failure is recorded in the findings.
+## Troubleshooting settings
+
+If a setting appears unchanged, check the selected Hermes home's `.env` for
+duplicate keys. `hermes config set` rewrites only the first occurrence, while
+the loader uses the last occurrence. `hermes config unset KEY` clears all
+occurrences; then set the intended value again. For a stale identity binding,
+run this from the agent folder and restart the gateway:
+
+```bash
+hermes config unset AWEB_IDENTITY_HOME
+hermes config set AWEB_IDENTITY_HOME "$PWD/.aw"
+```
 
 ## Delivery behavior
 

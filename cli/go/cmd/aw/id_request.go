@@ -43,6 +43,9 @@ type localSigningIdentity struct {
 	IdentityHome      string
 	TeamID            string
 	Custody           string
+	// TeamCertificate, when set, is the team certificate to sign with, in
+	// place of the one stored in the home.
+	TeamCertificate *awid.TeamCertificate
 }
 
 var (
@@ -328,7 +331,9 @@ func teamRequestCertificate(identity *localSigningIdentity) (*awid.TeamCertifica
 	}
 	var cert *awid.TeamCertificate
 	var err error
-	if strings.TrimSpace(identity.IdentityHome) != "" {
+	if identity.TeamCertificate != nil {
+		cert = identity.TeamCertificate
+	} else if strings.TrimSpace(identity.IdentityHome) != "" {
 		certPath, pathErr := awconfig.IdentityHomeStoredPath(awconfig.IdentityHome{Root: identity.IdentityHome}, awconfig.TeamCertificateRelativePath(identity.TeamID))
 		if pathErr != nil {
 			return nil, pathErr

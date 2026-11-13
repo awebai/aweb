@@ -65,13 +65,21 @@ class BindingPolicy:
             and row["policy_version"] != self.expected_version
         ):
             raise SignerRefused("policy_changed")
+        # Juan 2026-11-13, via coordinator: the approver's mailed personal link
+        # reveals the request, and a mailed approval may wait up to 24 hours,
+        # still capped by every frozen artifact deadline. Deciding still needs
+        # the approver's own fresh exact-act passkey assertion.
         return ActionPolicy(
             policy_ref,
             row["policy_version"],
             Assurance.PASSKEY,
-            timedelta(seconds=600),
+            MAILED_APPROVAL_WAIT,
             (row["b3_scope"],),
+            link_reveals_request=True,
         )
+
+
+MAILED_APPROVAL_WAIT = timedelta(hours=24)
 
 
 class IndependentProtectedSigner:
@@ -133,6 +141,7 @@ class IndependentProtectedSigner:
             audit=self.audit,
             authority=self.authority,
             custody=custody,
+            mailed_approval_wait=MAILED_APPROVAL_WAIT,
         )
 
         from .admission import AdmissionEffects
@@ -243,6 +252,8 @@ class IndependentProtectedSigner:
         an arbitrary valid registry key is not a prospective root grant. The
         current controller/H checks remain independent of policy contents.
         """
+        from .admission import admission_counts
+
         c = self.context
         if c.authority_kind != "team_controller" or team_id != c.authority_id:
             raise SignerRefused("scope_refused")
@@ -267,11 +278,26 @@ class IndependentProtectedSigner:
                         policy = None
                 except (ValueError, TypeError):
                     raise SignerRefused("evidence_unavailable") from None
+            admissions = None
+            counted = request.query_params.get("include") == "admissions"
+            if counted and policy is not None and await tx.fetch_value(
+                "SELECT 1 FROM {{tables.protected_root_endorsements}} WHERE service_id=$1 AND root_id=$2",
+                c.service_id, principal,
+            ):
+                # The endorsed root's own bucket only, as the bounds count it:
+                # a snapshot for its refusal sentence, never a reservation.
+                admissions = await admission_counts(tx, service_id=c.service_id, team_id=team_id, root_id=principal,
+                    window_seconds=policy.fields()["bounds"]["rate_window_seconds"], now=self.signer.clock())
+                if admissions["next_at"] is not None:
+                    admissions["next_at"] = admissions["next_at"].isoformat().replace("+00:00", "Z")
             await fence.check(tx, actor)
             fence.require_fresh()
             enforce_timestamp_skew(require_timestamp(request))
-        return {"service_id": c.service_id, "team_id": team_id, "mode": "protected",
+        answer = {"service_id": c.service_id, "team_id": team_id, "mode": "protected",
                 "policy": policy.fields() if policy is not None else None}
+        if counted:
+            answer["admissions"] = admissions
+        return answer
 
     async def migrate(self):
         await AsyncMigrationManager(
