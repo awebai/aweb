@@ -540,6 +540,34 @@ async def test_missing_or_failing_membership_certificate_refuses_without_effect(
     assert await world.counts() == (0, 0, 0)
 
 
+@pytest.mark.parametrize("expire", [False, True])
+async def test_original_protection_expiry_at_final_effect_await_is_unavailable(world, monkeypatch, expire):
+    from awid import protected_membership
+
+    clock = 1000.0
+    monkeypatch.setattr(protected_membership, "monotonic", lambda: clock)
+    # The trusted prepared effect performs real SQL writes before this final
+    # synchronous clock advance; H2 and installation clocks remain unchanged.
+    original = SqlPreparedEffect.apply
+
+    async def apply(prepared, tx, **kwargs):
+        nonlocal clock
+        result = await original(prepared, tx, **kwargs)
+        if expire:
+            clock += 61
+        return result
+
+    monkeypatch.setattr(SqlPreparedEffect, "apply", apply)
+    response = await world.post(world.body())
+    assert response.status_code == (503 if expire else 200), response.text
+    if expire:
+        assert response.json()["detail"] == "protected_state_unavailable"
+        assert await world.counts() == (0, 0, 0)
+        assert world.effect.committed == 0
+    else:
+        assert await world.counts() == (1, 1, 1)
+
+
 async def test_revoke_needs_no_principal_membership_and_refuses_a_carried_certificate(world):
     assert (await world.post(world.body())).status_code == 200
     await world.coordination.registry.revoke(world.member.certificate_id)
