@@ -280,6 +280,26 @@ async def prepare_completion(c, token):
     return BootstrapCompletion(c, observed, enrolment)
 
 
+# The protected host's pages share the approval page's measure and spacing.
+PROTECTED_STYLESHEET = """
+header, main { max-width: 44rem; margin: 0 auto; padding: 0 clamp(1rem, 5vw, 3rem); }
+header { padding-top: var(--s2); padding-bottom: var(--s2); border-bottom: 1px solid var(--line); }
+main { padding-top: var(--s3); padding-bottom: var(--s3); }
+main h1 { font-size: var(--step-3); line-height: 1.15; margin: 0 0 var(--s2); }
+main h2 { font-size: var(--step-1); margin: var(--s3) 0 var(--s2); padding-top: var(--s2); border-top: 1px solid var(--line); }
+main p { margin: var(--s2) 0; }
+.owner-list { list-style: none; padding: 0; margin: 0; }
+.owner-list > li { padding: var(--s2) 0; border-bottom: 1px solid var(--line); }
+.owner-list > li:last-child { border-bottom: 0; }
+.owner-list a { font-weight: 600; }
+main details { margin-top: 0.25rem; }
+main dl { margin: 0.25rem 0 0; }
+main dt { font-weight: 600; margin-top: 0.25rem; }
+main dd { margin: 0; overflow-wrap: anywhere; font-family: var(--font-mono); font-size: var(--step--1); }
+#logout .btn { min-height: 44px; }
+"""
+
+
 def protected_shell(csrf_key):
     """The protected host's console pages, in its own words."""
     sign_in = SignInCopy(
@@ -295,7 +315,7 @@ def protected_shell(csrf_key):
         reauth_text="Use your passkey.",
         reauth_link="Sign in",
     )
-    return ConsoleShell(ConsoleBrand("Protected signing", csrf_key, "", sign_in))
+    return ConsoleShell(ConsoleBrand("Protected signing", csrf_key, PROTECTED_STYLESHEET, sign_in))
 
 
 def bootstrap_router(c, *, csrf_key, limiter=None):

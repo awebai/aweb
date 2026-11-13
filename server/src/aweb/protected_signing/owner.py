@@ -55,7 +55,8 @@ async def owner_view(composition, *, scope: str, now: datetime | None = None) ->
         if request.get("scope") != fields:
             continue
         entry = {"operation_id": row["operation_id"], "operation": request["operation"],
-            "requester": row["requester"], "digest": row["digest"]}
+            "requester": row["requester"], "digest": row["digest"],
+            "asked_at": request.get("artifact", {}).get("issued_at")}
         if row["committed"]:
             history.append({**entry, "state": "committed", "at": _stamp(row["committed_at"])})
         elif row["refusal_code"] is not None:
@@ -68,7 +69,7 @@ async def owner_view(composition, *, scope: str, now: datetime | None = None) ->
         "authority": {"kind": context.authority_kind, "id": context.authority_id, "domain": context.authority_domain,
             "human": context.human_id},
         "pending": pending,
-        "history": history[:HISTORY_LIMIT],
+        "history": await _deciders(c, history[:HISTORY_LIMIT]),
         "admitted": [],
         "roots": [],
         "policy": None,
@@ -108,6 +109,20 @@ async def _admissions(c, view, requests, now):
                 "next_at": _stamp(counts["next_at"])})
 
 
+async def _deciders(c, history):
+    """Mark each decision the signed-in person made: the signer audits the
+    approving human as the actor of a signed or refused operation."""
+    human = c.context.human_id
+    for item in history:
+        actor = await c.db.fetch_value(
+            "SELECT actor FROM {{tables.protected_local_audit}} WHERE subject=$1 "
+            "AND kind IN ('protected_operation_signed','protected_operation_refused') ORDER BY sequence DESC LIMIT 1",
+            item["operation_id"],
+        )
+        item["decided_by_you"] = actor == human
+    return history
+
+
 async def _approvers(c, scope):
     approvers = []
     for row in await c.db.fetch_all(
@@ -139,44 +154,60 @@ _OUTCOMES = {"committed": "Approved", "expired": "Expired, nobody decided"}
 _REFUSALS = {"human_refused": "Denied"}
 
 
+def _technical(rows):
+    """Identifiers, one step away from the sentences."""
+    cells = "".join(f"<dt>{escape(label)}</dt><dd>{escape(str(value))}</dd>" for label, value in rows)
+    return f"<details><summary>Technical details</summary><dl>{cells}</dl></details>"
+
+
+def _team_name(team_id):
+    return team_id.partition(":")[0]
+
+
 def owner_page_html(view: dict) -> str:
-    """The owner page's HTML from owner_view. Every value is escaped; the
-    request wording comes from each operation's display definition once it
-    exists, so until then a request names who asked and when it expires."""
+    """The owner page's HTML from owner_view. Every value is escaped. What a
+    request asks for comes from each operation's display definition once it
+    exists; until then a request names who asked and when."""
     e = lambda value: escape(str(value), quote=True)  # noqa: E731
-    parts = ["<h1>Protected signing</h1>", "<h2>Waiting for you</h2>"]
+    authority = view["authority"]
+    team = authority["kind"] == "team_controller"
+    title = f"Approvals for team {_team_name(authority['id'])}" if team else "Your own approvals"
+    contacts = [a["contact"] for a in view["approvers"] if a["contact"]]
+    parts = [f"<h1>{e(title)}</h1>"]
+    if contacts:
+        parts.append(f"<p>Signed in as {e(contacts[0])}</p>")
+    parts.append('<form id="logout"><button class="btn secondary" type="submit">Sign out</button></form>')
+    parts.append("<h2>Waiting for you</h2>")
     if view["pending"]:
-        parts.append("<ul class=\"owner-list\">")
+        parts.append('<ul class="owner-list">')
         for item in view["pending"]:
+            asked = f", asked {_when(item['asked_at'])}" if item.get("asked_at") else ""
             parts.append(
-                f'<li><a href="/handoff/{e(item["handoff_id"])}">Review this request</a> '
-                f'<span>expires {e(_when(item["expires_at"]))}</span>'
-                f'<details><summary>Technical details</summary><dl><dt>Operation</dt><dd>{e(item["operation"])}</dd>'
-                f'<dt>Requested by</dt><dd>{e(item["requester"])}</dd>'
-                f'<dt>Digest</dt><dd>{e(item["digest"])}</dd></dl></details></li>'
+                f'<li><a href="/handoff/{e(item["handoff_id"])}">Review the request from {e(item["requester"])}{e(asked)}</a>'
+                f'<p>Expires {e(_when(item["expires_at"]))}</p>'
+                + _technical([("Operation", item["operation"]), ("Digest", item["digest"])]) + "</li>"
             )
         parts.append("</ul>")
     else:
         parts.append("<p>Nothing is waiting for you.</p>")
-    if view["authority"]["kind"] == "team_controller":
-        parts.append("<h2>Agents added without asking you</h2>")
+    if team:
         bounds = (view["policy"] or {}).get("bounds")
+        parts.append("<h2>Agents added without asking you</h2>")
         for number, root in enumerate(view["roots"], start=1):
             if bounds:
+                name = "The root agent" if len(view["roots"]) == 1 else f"Root agent {number}"
                 parts.append(
-                    f'<p>Root agent {number}: {root["active"]} of {bounds["max_active"]} at a time, '
+                    f'<p>{name}: {root["active"]} of {bounds["max_active"]} at a time, '
                     f'{root["in_window"]} of {bounds["max_per_window"]} in the last {_window(bounds["rate_window_seconds"])}.</p>'
-                    f'<details><summary>Technical details</summary><dl><dt>Root agent {number}</dt>'
-                    f'<dd>{e(root["root_id"])}</dd></dl></details>'
+                    + _technical([(name, root["root_id"])])
                 )
         if view["admitted"]:
-            parts.append("<ul class=\"owner-list\">")
+            parts.append('<ul class="owner-list">')
             for agent in view["admitted"]:
                 state = {"active": "member", "reserved": "being added", "removed": "removed"}.get(agent["state"], agent["state"])
                 parts.append(
                     f'<li>{e(agent["alias"] or "unnamed agent")}: {e(state)}, added {e(_when(agent["admitted_at"]))}'
-                    f'<details><summary>Technical details</summary><dl><dt>Added by</dt><dd>{e(agent["root_id"])}</dd>'
-                    f'<dt>Agent key</dt><dd>{e(agent["child_key"])}</dd></dl></details></li>'
+                    + _technical([("Added by", agent["root_id"]), ("Agent key", agent["child_key"])]) + "</li>"
                 )
             parts.append("</ul>")
         else:
@@ -184,33 +215,36 @@ def owner_page_html(view: dict) -> str:
         parts.append("<h2>Current limits</h2>")
         if bounds:
             policy = view["policy"]
+            teams = ", ".join(_team_name(t) for t in policy["teams"])
             parts.append(
-                f'<p>A root may have {bounds["max_active"]} agents at a time in {e(", ".join(policy["teams"]))}, '
+                f'<p>A root agent may have {bounds["max_active"]} agents at a time in {e(teams)}, '
                 f'and add at most {bounds["max_per_window"]} per {_window(bounds["rate_window_seconds"])}. '
-                "They join as ordinary members. Changing these limits needs its own approval.</p>"
-                f'<details><summary>Technical details</summary><dl><dt>Policy</dt><dd>version {e(policy["version"])}, '
-                f'{e(policy["digest"])}</dd></dl></details>'
+                "They join as ordinary members.</p>"
+                + _technical([("Policy", f'version {policy["version"]}, {policy["digest"]}')])
             )
         else:
             parts.append("<p>This team has no admission policy on this signer.</p>")
     parts.append("<h2>History</h2>")
     if view["history"]:
-        parts.append("<ul class=\"owner-list\">")
+        parts.append('<ul class="owner-list">')
         for item in view["history"]:
             outcome = _OUTCOMES.get(item["state"]) or _REFUSALS.get(item.get("code"), "Not completed")
+            if item.get("decided_by_you") and item["state"] != "expired":
+                outcome += " by you"
             parts.append(
-                f'<li>{e(outcome)}, {e(_when(item["at"]))}'
-                f'<details><summary>Technical details</summary><dl><dt>Operation</dt><dd>{e(item["operation"])}</dd>'
-                f'<dt>Requested by</dt><dd>{e(item["requester"])}</dd>'
-                f'<dt>Digest</dt><dd>{e(item["digest"])}</dd></dl></details></li>'
+                f'<li>{e(outcome)}, {e(_when(item["at"]))}: a request from {e(item["requester"])}'
+                + _technical([("Operation", item["operation"]), ("Digest", item["digest"])]) + "</li>"
             )
         parts.append("</ul>")
     else:
         parts.append("<p>Nothing has happened yet.</p>")
-    parts.append("<h2>Who can approve</h2><ul class=\"owner-list\">")
+    parts.append('<h2>Who can approve</h2><ul class="owner-list">')
     for approver in view["approvers"]:
-        keys = ", ".join(f'passkey {e(p["key_id"])} added {e(_when(p["added_at"])[:10])}' for p in approver["passkeys"])
-        parts.append(f'<li>{e(approver["contact"] or "no notice address")}: {keys or "no passkey yet"}</li>')
+        keys = "".join(
+            f'<p>Passkey added {e(_when(p["added_at"])[:10])}</p>' + _technical([("Passkey", p["key_id"])])
+            for p in approver["passkeys"]
+        ) or "<p>No passkey yet</p>"
+        parts.append(f'<li>{e(approver["contact"] or "no notice address")}{keys}</li>')
     parts.append("</ul>")
     return "".join(parts)
 
@@ -222,4 +256,4 @@ def owner_router(composition, *, sessions, csrf_key):
     async def home(session):
         return owner_page_html(await owner_view(composition, scope=session.scope))
 
-    return protected_shell(csrf_key).router(sessions=sessions, home_title="Protected signing", home=home)
+    return protected_shell(csrf_key).router(sessions=sessions, home_title="Approvals", home=home)
