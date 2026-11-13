@@ -103,6 +103,16 @@ This is the accepted single-tenant VM trade-off. See the
 [cloud-init SSH schema](https://docs.cloud-init.io/en/latest/reference/modules.html#ssh). The gate user belongs to the Docker group; UID admission
 is not a privilege-separation claim.
 
+The executor starts a detached, HUP-resistant `runuser` session. GNU timeout
+runs inside that UID-1000 session and signals a small supervisor; the supervisor
+forwards to the command's separate process group. It permits 120 seconds for
+finalization, then kills that owned group. GNU timeout has a 130-second fallback,
+and SSH/completion budgeting reserves 150 seconds. Actual command return codes,
+forwarded signals, escalation times and completion receipts are retained.
+A controller stop requests that same supervisor before collecting evidence.
+Missing/late completion is inconclusive: bounded stop failure never prevents
+the subsequent partial-evidence pull or provider cleanup.
+
 Expiry includes setup, full command timeout, TERM/KILL grace, evidence pull,
 cleanup and margin. No phase starts if its remaining budget cannot fit.
 Deletion runs independently of log transfer, ignores repeated termination

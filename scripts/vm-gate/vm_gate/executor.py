@@ -14,6 +14,7 @@ from .errors import Infrastructure, Refused
 from .admission import validate_command
 from .evidence import collect_archive
 from .transport import Transport
+from .supervisor import GRACE, TIMEOUT_KILL_GRACE, SSH_GRACE
 
 Q = shlex.quote
 REMOTE = "/opt/vm-gate"
@@ -42,6 +43,7 @@ class Executor:
         result = self.transport.run(command, timeout=self.remaining(), check=False)
         (self.directory / (name + ".stdout")).write_text(result.stdout)
         (self.directory / (name + ".stderr")).write_text(result.stderr)
+        (self.directory / (name + ".exit")).write_text(str(result.returncode) + "\n")
         if check and result.returncode:
             raise Infrastructure(f"remote {name} failed (exit {result.returncode})")
         return result
@@ -189,7 +191,7 @@ exit "$status"
             raise Infrastructure("UID 0 admission negative control failed")
         if self.verify_host:
             result = self.run(
-                f"cd {REMOTE}/source && runuser -u gateuser -- " + self.host_check(),
+                f"cd {REMOTE}/source && setsid --wait nohup runuser -u gateuser -- " + self.host_check(),
                 "host-contract",
                 check=False,
             )
@@ -199,7 +201,7 @@ exit "$status"
                 raise Infrastructure("remote host contract failed")
 
     def execute(self, server, timeout):
-        self.deadline = time.monotonic() + timeout + 45
+        self.deadline = time.monotonic() + timeout + SSH_GRACE
         self.run(
             f"nohup python3 {REMOTE}/operator/vm_gate/memory.py {LOGS}/memory.jsonl >{LOGS}/sampler.log 2>&1 </dev/null & echo $! >{LOGS}/sampler.pid",
             "sampler-start",
@@ -207,9 +209,12 @@ exit "$status"
         ledger = Q(self.config["ledger"])
         logs = Q(str(Path(self.config["ledger"]).parent / "gate-logs"))
         command = (
-            f"cd {REMOTE}/source && timeout --signal=TERM --kill-after=30s {timeout} runuser -u gateuser -- "
+            f"cd {REMOTE}/source && setsid --wait nohup runuser -u gateuser -- "
             + self.env()
-            + f"AWEB_GATE_LEDGER={ledger} AWEB_GATE_LOG_DIR={logs} GATE_OWNER={Q(self.config['owner'])} bash {REMOTE}/launch.sh"
+            + f"AWEB_GATE_LEDGER={ledger} AWEB_GATE_LOG_DIR={logs} GATE_OWNER={Q(self.config['owner'])} "
+            + f"timeout --signal=TERM --kill-after={TIMEOUT_KILL_GRACE}s {timeout} "
+            + f"python3 -m vm_gate.supervisor run {LOGS} {GRACE} bash {REMOTE}/launch.sh "
+            + f">{LOGS}/execution-command.log 2>&1"
         )
         result = self.run(command, "execution", check=False)
         if result.returncode == 255:
@@ -219,7 +224,29 @@ exit "$status"
             raise Infrastructure(
                 "gate timed out or stopped without its completed exit receipt"
             )
+        completed = self.run(f"cat {LOGS}/supervisor-receipt.json", "supervisor-receipt", check=False)
+        try:
+            observation = json.loads(completed.stdout)
+        except ValueError:
+            raise Infrastructure("missing supervisor completion receipt") from None
+        if (completed.returncode or not isinstance(observation, dict)
+                or observation.get("raw_exit") != int(receipt.stdout.strip())
+                or type(observation.get("grace_expired")) is not bool):
+            raise Infrastructure("inconsistent supervisor completion receipt")
+        if observation["grace_expired"]:
+            raise Infrastructure("gate finalization exceeded grace; partial evidence retained")
         return int(receipt.stdout.strip())
+
+    def stop(self, server, timeout):
+        """Bound the owned remote stop independently of subsequent evidence pull."""
+        self.deadline = time.monotonic() + timeout
+        result = self.run(
+            self.env(root=True) + f"python3 -m vm_gate.supervisor stop {LOGS} {max(.1, timeout - 2)}",
+            "operator-stop", check=False,
+        )
+        if result.returncode:
+            raise Infrastructure("remote stop did not report; collect partial evidence")
+        return json.loads(result.stdout)
 
     def collect(self, server, timeout):
         self.deadline = time.monotonic() + timeout

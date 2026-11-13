@@ -153,6 +153,15 @@ def run_session(
     finally:
         with handling(cleanup=True):
             if prepared and not pull_attempted:
+                # A first stop unwinds the SSH call. Let the owned remote group
+                # finalize before pulling, but never spend the pull/cleanup reserve.
+                if hasattr(remote, "stop"):
+                    try:
+                        summary["remote_stop"] = remote.stop(
+                            server, timeout=budget.require("grace", now=clock())
+                        )
+                    except BaseException as exc:  # noqa: BLE001 -- still collect after any stop failure
+                        summary["remote_stop"] = {"finalized": False, "error": str(exc)}
                 try:
                     partial = remote.collect(
                         server, timeout=budget.require("pull", now=clock())

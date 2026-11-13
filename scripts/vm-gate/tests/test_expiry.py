@@ -8,7 +8,7 @@ class ExpiryTests(unittest.TestCase):
         budget = CompletionBudget(
             100, 7200, setup=900, pull=600, cleanup=300, margin=300
         )
-        self.assertEqual(budget.expires, 9445)
+        self.assertEqual(budget.expires, 9550)
         budget.require("gate", now=1000)
         self.assertGreater(budget.expires, 1000 + 7200)
 
@@ -21,9 +21,16 @@ class ExpiryTests(unittest.TestCase):
 
     def test_pull_cannot_consume_teardown_or_margin(self):
         budget = CompletionBudget(100, 60, setup=10, pull=20, cleanup=30, margin=40)
-        budget.require("pull", now=215)
+        budget.require("pull", now=320)
         with self.assertRaises(Infrastructure):
-            budget.require("pull", now=216)
+            budget.require("pull", now=321)
+
+    def test_stop_grace_shrinks_without_spending_evidence_reserve(self):
+        budget = CompletionBudget(100, 60, setup=10, pull=20, cleanup=30, margin=40)
+        self.assertEqual(budget.require("grace", now=300), 20)
+        with self.assertRaises(Infrastructure):
+            budget.require("grace", now=320)
+        self.assertEqual(budget.require("pull", now=320), 20)
 
     def test_timeout_zero_is_refused_locally(self):
         with self.assertRaises(Refused):

@@ -14,7 +14,7 @@ class CompletionBudget:
         pull=600,
         cleanup=300,
         margin=300,
-        grace=45,
+        grace=150,
     ):
         self.steps = {
             "setup": setup,
@@ -36,10 +36,10 @@ class CompletionBudget:
     def require(self, step, *, now):
         names = list(self.steps)
         remaining = sum(self.steps[name] for name in names[names.index(step) :])
-        if step == "setup" and math.isfinite(now):
-            available = self.expires - (remaining - self.steps["setup"]) - now
+        if step in {"setup", "grace"} and math.isfinite(now):
+            available = self.expires - (remaining - self.steps[step]) - now
             if available > 0:
-                return min(self.steps["setup"], available)
+                return min(self.steps[step], available)
         if not math.isfinite(now) or now + remaining > self.expires:
             raise Infrastructure(
                 f"{step} cannot finish before completion expiry {self.expires}"
