@@ -235,6 +235,9 @@ func approve(ctx context.Context, opts GovernanceOptions, operationID string, bo
 	if err != nil {
 		return nil, err
 	}
+	if receipt, err, handled := reconcileExpired(ctx, opts, prepared); handled {
+		return receipt, err
+	}
 	if err := checkPrepared(ctx, opts, prepared); err != nil {
 		return nil, err
 	}
@@ -290,6 +293,46 @@ func readOnce(ctx context.Context, opts GovernanceOptions, prepared *Prepared) (
 // ctx, ending at the operation's expiry, and stops a caller that was
 // cancelled, or an operation that expired, before or while it ran: nothing
 // about it is shown or sent after that.
+// reconcileExpired settles a prepared operation whose expiry has already
+// passed, as a rerun under its saved id finds it, by one fresh bounded read
+// of its receipt. A committed result is taken, once its frozen request passes
+// the caller's check under a fresh bound; a refusal is final and forgotten,
+// so the next run starts a new operation; an unreadable or unknown outcome
+// keeps the operation. A receipt still pending at the service (the clocks
+// differ) is not settled here (settled=false). Nothing is prepared, executed
+// or signed again.
+func reconcileExpired(ctx context.Context, opts GovernanceOptions, prepared *Prepared) (receipt *Receipt, err error, handled bool) {
+	if now().Before(prepared.ExpiresAt) {
+		return nil, nil, false
+	}
+	readCtx, cancel := context.WithTimeout(ctx, retryWithin(opts))
+	defer cancel()
+	receipt, err = ReadReceipt(readCtx, opts, prepared.OperationID)
+	if err != nil {
+		code := ErrorCode(err)
+		if code == "" {
+			code = "receipt_unavailable"
+		}
+		return unresolvedReceipt(prepared.OperationID, code), err, true
+	}
+	switch receipt.State {
+	case "pending":
+		return nil, nil, false
+	case "committed":
+		if opts.CheckPrepared != nil {
+			payload, _ := decodeObject(prepared.Payload)
+			request, _ := payload["request"].(map[string]any)
+			checkCtx, cancelCheck := context.WithTimeout(ctx, retryWithin(opts))
+			defer cancelCheck()
+			if err := opts.CheckPrepared(checkCtx, request); err != nil {
+				return nil, err, true
+			}
+		}
+	}
+	receipt, err = settled(opts, receipt)
+	return receipt, err, true
+}
+
 func checkPrepared(ctx context.Context, opts GovernanceOptions, prepared *Prepared) error {
 	if err := ctx.Err(); err != nil {
 		return err

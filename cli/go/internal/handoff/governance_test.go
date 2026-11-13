@@ -631,3 +631,43 @@ func TestAnApprovalNamesThePageAndOnlyTheFingerprint(t *testing.T) {
 		}
 	}
 }
+
+// expiredApproval reruns a saved approval whose operation has already
+// expired, recording what it forgets and opens.
+func expiredApproval(t *testing.T, receipt string) (*Receipt, error, string, []string, *signerStub) {
+	t.Helper()
+	stub := newSignerStub(t, receipt)
+	stub.expiresIn = -time.Minute
+	var opened string
+	var forgotten []string
+	opts := stub.options(&opened)
+	opts.Forget = func(id string) error { forgotten = append(forgotten, id); return nil }
+	got, err := Approve(context.Background(), opts, "11111111-1111-4111-8111-111111111111", revokeIntent())
+	return got, err, opened, forgotten, stub
+}
+
+func TestAnExpiredApprovalWhoseResultCommittedIsTakenWithoutAPage(t *testing.T) {
+	receipt, err, opened, forgotten, stub := expiredApproval(t, committedReceipt)
+	if err != nil || receipt.State != "committed" || opened != "" || stub.reads != 1 {
+		t.Fatalf("%+v %v, opened %q, %d reads", receipt, err, opened, stub.reads)
+	}
+	if len(forgotten) != 1 {
+		t.Fatalf("forgotten %v", forgotten)
+	}
+}
+
+func TestAnExpiredUndecidedApprovalIsSettledAndForgotten(t *testing.T) {
+	receipt, err, opened, forgotten, _ := expiredApproval(t, `{"state":"refused","code":"operation_expired"}`)
+	if ErrorCode(err) != "operation_expired" || receipt == nil || receipt.State != "refused" || opened != "" || len(forgotten) != 1 {
+		t.Fatalf("%+v %v, opened %q, forgotten %v", receipt, err, opened, forgotten)
+	}
+}
+
+// The service's own receipt, not this machine's clock, says the operation is
+// still open: it is not settled, and its id is kept for the next run.
+func TestAnApprovalTheServiceStillHoldsPendingIsKept(t *testing.T) {
+	_, err, _, forgotten, _ := expiredApproval(t, pendingReceipt)
+	if err == nil || len(forgotten) != 0 {
+		t.Fatalf("%v, forgotten %v", err, forgotten)
+	}
+}

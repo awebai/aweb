@@ -158,7 +158,10 @@ CANARY = "canary-token-5f1c2a9e-never-logged"
     ("/decide", {"token": CANARY, "decision": "approve", "assertion": "not-an-object"}),
     ("/decide", {"token": CANARY, "decision": "reject", "assertion": {"id": CANARY}}),
 ])
-async def test_a_token_never_reaches_a_log_or_an_answer(link_http, caplog, suffix, body):
+async def test_a_refused_token_never_reaches_a_log_or_an_answer(link_http, caplog, suffix, body):
+    """These refuse before any verifier runs: the canary is not the
+    candidate's token, so each case stops at the body checks or at the
+    candidate lookup."""
     import json
     import logging
 
@@ -181,3 +184,24 @@ def test_the_canary_capture_sees_a_logged_token(caplog):
     caplog.set_level(logging.DEBUG)
     logging.getLogger("uvicorn.error").debug("body %s", CANARY)
     assert CANARY in caplog.text
+
+
+async def test_an_assertion_the_verifier_refuses_reaches_no_log_or_answer(link_http, caplog):
+    """The candidate's real token, so the canary-bearing assertion reaches
+    the B3 verifier, which refuses it: the operation ends proof_invalid."""
+    import logging
+
+    world, client, prepared, token = link_http
+    caplog.set_level(logging.DEBUG)
+    path = f"/handoff/{prepared.handoff_id}/link"
+    options = await client.post(path + "/options", json={"token": token, "decision": "approve"}, headers=BROWSER)
+    assert options.status_code == 200, options.text
+    forged = {"id": CANARY, "rawId": CANARY, "type": "public-key",
+        "response": {"clientDataJSON": CANARY, "authenticatorData": CANARY, "signature": CANARY}}
+    response = await client.post(path + "/decide", json={"token": token, "decision": "approve", "assertion": forged},
+        headers=BROWSER)
+    assert response.status_code in (400, 403), response.text
+    receipt = await world.signer.receipt(prepared.operation_id, reader=world.reader)
+    assert (receipt.state, receipt.code) == ("refused", "proof_invalid")
+    assert CANARY not in response.text and CANARY not in caplog.text
+    assert all(CANARY not in str(record.__dict__) for record in caplog.records)
