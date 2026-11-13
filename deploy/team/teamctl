@@ -2,13 +2,15 @@
 # The operator command of one team's deployment on one machine.
 #
 #   TEAM_DEPLOYMENT_PROJECT=<compose project> TEAM_DEPLOYMENT_RUN_DIR=<dir> \
-#     deploy/team/teamctl start|connect|stop|reload-tls <deployment.yaml>
+#     deploy/team/teamctl render|start|connect|stop|reload-tls <deployment.yaml>
 #     deploy/team/teamctl destroy <deployment.yaml> --confirm <project>
 #     deploy/team/teamctl backup <deployment.yaml> <new directory>
 #     deploy/team/teamctl restore --lab-rehearsal <deployment.yaml> <backup directory>
 #
 # OPERATIONS.md beside this file says what each command keeps and deletes.
 #
+# render   checks deployment.yaml and writes what Compose reads: RUN_DIR/.env and,
+#          with a front, RUN_DIR/front/Caddyfile. Nothing starts.
 # start    renders deployment.yaml to RUN_DIR/.env, starts deploy/team/compose.yaml
 #          and waits until every service is healthy, then checks from inside
 #          aweb and each app that its internal origins resolve inside
@@ -52,7 +54,7 @@ SELF="$TEAM_DIR/teamctl"
 
 usage() {
   {
-    echo "usage: TEAM_DEPLOYMENT_PROJECT=<name> TEAM_DEPLOYMENT_RUN_DIR=<dir> $0 start|connect|stop|reload-tls <deployment.yaml>"
+    echo "usage: TEAM_DEPLOYMENT_PROJECT=<name> TEAM_DEPLOYMENT_RUN_DIR=<dir> $0 render|start|connect|stop|reload-tls <deployment.yaml>"
     echo "       $0 destroy <deployment.yaml> --confirm <project>"
     echo "       $0 backup <deployment.yaml> <new directory>"
     echo "       $0 restore --lab-rehearsal <deployment.yaml> <backup directory>"
@@ -70,7 +72,7 @@ action="$1"
 shift
 lab_rehearsal=0 confirm="" target=""
 case "$action" in
-  start | connect | stop | reload-tls) [[ $# -eq 1 ]] || usage ;;
+  render | start | connect | stop | reload-tls) [[ $# -eq 1 ]] || usage ;;
   destroy)
     [[ $# -eq 1 || ($# -eq 3 && "$2" == --confirm) ]] || usage
     confirm="${3:-}"

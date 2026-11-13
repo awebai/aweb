@@ -500,8 +500,8 @@ class World:
         return run(*self.connect()["compose"], *args, env=self.env, input=input)
 
     def render(self, deployment: Path) -> None:
-        rendered = run(sys.executable, str(TEAM_DIR / "render_env.py"), str(deployment))
-        (self.run_dir / ".env").write_text(rendered)
+        """What Compose reads, written the operator's way (teamctl render)."""
+        run(str(TEAMCTL), "render", str(deployment), env=self.env)
         self.deployment_path = deployment
 
     def up(self) -> int:

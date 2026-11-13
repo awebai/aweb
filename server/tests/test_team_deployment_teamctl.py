@@ -95,3 +95,13 @@ def test_reload_tls_refuses_a_deployment_without_a_front(tmp_path):
     result = run(tmp_path, "reload-tls", path, command=TEAMCTL, docker_ok=True)
     assert result.returncode == 1 and "no front" in result.stderr
     assert calls(tmp_path) == []
+
+
+def test_render_writes_the_env_file_and_the_fronts_configuration_and_starts_nothing(tmp_path):
+    path = deployment(tmp_path, {**EXAMPLE, "front": FRONT})
+    result = run(tmp_path, "render", path, command=TEAMCTL)
+    assert result.returncode == 0, result.stderr
+    env = (tmp_path / "run" / ".env").read_text()
+    assert f"FRONT_CONFIG_DIR={tmp_path / 'run' / 'front'}\n" in env
+    assert (tmp_path / "run" / "front" / "Caddyfile").read_text().startswith("{\n  auto_https off\n")
+    assert calls(tmp_path) == []
