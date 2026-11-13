@@ -519,3 +519,27 @@ def test_the_agents_public_ca_and_mirrors_add_the_agent_images_own_fragments_onl
     oats = AGENTS["compose"]["oatsSource"]
     assert files[-2:] == [f"{oats}/container/agent/compose.agent.trust.yaml",
                           f"{oats}/container/agent/compose.agent.mirrors.yaml"]
+
+
+EGRESS_IMAGE = "registry.example/egress@sha256:" + "e" * 64
+
+
+@pytest.mark.parametrize(
+    ("external", "key"),
+    [
+        ({"knowledge": True}, "knowledge"),
+        ({"source": "https://github.com"}, "source"),
+        ({"model": True, "resolvers": "9.9.9.9"}, "resolvers"),
+        ({"model": True, "resolvers": [53]}, "resolvers"),
+    ],
+)
+def test_egress_external_takes_only_the_two_roles_as_switches_and_a_resolver_list(external, key):
+    config = {**copy.deepcopy(EXAMPLE), "egress": {"image": EGRESS_IMAGE, "external": external}}
+    with pytest.raises(render_env.Refused) as refused:
+        render_env.normalize(config)
+    assert "egress.external" in str(refused.value) and key in str(refused.value)
+
+
+def test_egress_external_defaults_every_role_off():
+    config = {**copy.deepcopy(EXAMPLE), "egress": {"image": EGRESS_IMAGE, "external": {}}}
+    assert render_env.normalize(config)["egress"]["external"] == {"source": False, "model": False, "resolvers": []}

@@ -25,7 +25,7 @@ readable by every agent like the login above.
 | --- | --- | --- |
 | Any service's credential | No secrets directory is mounted in the agent; the boundary probe checks that the service-private sources, the database and Redis volumes, the Docker socket, and the backup paths declared in its plan (the backups `teamctl` recorded in this run directory, and `TEAM_DEPLOYMENT_PROTECTED_SOURCES`) are out of reach. It cannot find a backup made or copied elsewhere. | `teamctl` boundary probe |
 | PostgreSQL and Redis | The agent is on the agents network alone; egress denies both backends; Redis is on a network aweb alone shares, and needs its password. | Boundary probe; the journey's Redis isolation check |
-| The internet | Egress forwards to five origins only: aweb, Secrets, Logs, the signer's request origin and the registry. | `descriptors/egress.md`; the ingress probe |
+| The rest of the internet | Egress forwards to the deployment's five origins (aweb, Secrets, Logs, the signer's request origin and the registry) and, only where the operator turns them on, to `https://github.com` (`egress.external.source`) and `https://api.anthropic.com` (`egress.external.model`). Nothing else. | `descriptors/egress.md`; the ingress probe |
 | A direct export of a stored value | No agent-facing route exports a stored value; Secrets' errors are fixed codes and its receipts have no body. Broker results are filtered and redacted, but an arbitrary transformation by the upstream is covered by no confidentiality guarantee: a credential an upstream returns is withheld only when redaction recognises it. | `naapp/secrets/values/src/aweb_secrets_values/redaction.py`; `naapp/secrets/src/aweb_secrets/member_types.py` |
 | A signature from the signer | The signer signs only after a person approves in the browser. | `server/src/aweb/protected_signing/README.md` |
 
@@ -34,3 +34,12 @@ chat to the other servers the operator lists (`aweb.federationOutbound`; none by
 default, `deploy/team/OPERATIONS.md`), and the Secrets broker sends requests
 the agent chooses under an `open_request` grant, where both the grant and
 Secrets' policy allow it: both carry data out through allowed origins.
+
+With `egress.external.source` on, an agent reaches all of `github.com`, not
+only the OATS repositories: egress forwards by SNI and cannot see the path,
+method or repository inside TLS. Without any credential, an agent can still
+send data to GitHub in request paths, query strings and request bodies, and
+fetch any public repository, each file of which can carry instructions aimed
+at it. The rule bounds the host, nothing more. No credential that can publish
+to GitHub is provisioned. With `egress.external.model` on, the harness's
+requests go to the model provider (`deploy/team/access/registry-and-provider.md`).

@@ -159,3 +159,69 @@ def test_without_an_agent_ca_the_controls_use_the_public_roots():
     assert [m["Destination"] for m in result["approvedProbeMounts"]] == [
         "/state", "/etc/agent-login", "/etc/agent-ssh/authorized_keys", "/etc/resolv.conf",
     ]
+
+
+EXTERNAL = {"source": True, "model": True, "resolvers": ["9.9.9.9", "149.112.112.112"]}
+
+
+def with_external(external: dict) -> dict:
+    return {**CONFIG, "egress": {**CONFIG["egress"], "external": external}}
+
+
+def test_the_external_roles_name_only_their_fixed_origins_and_the_operator_s_resolvers():
+    policy = egress_policy.derive(with_external(EXTERNAL), PROFILE, INGRESS, [])
+    assert policy["externalTargets"] == {
+        "model": {"origin": "https://api.anthropic.com"},
+        "source": {"origin": "https://github.com"},
+    }
+    assert policy["externalResolverAddresses"] == ["9.9.9.9", "149.112.112.112"]
+    assert set(policy["targets"]) == {"aweb", "secrets", "logs", "signer", "registry"}
+
+
+def test_a_role_left_off_is_not_an_external_target():
+    policy = egress_policy.derive(with_external({"model": True, "source": False, "resolvers": ["9.9.9.9"]}),
+                                  PROFILE, INGRESS, [])
+    assert policy["externalTargets"] == {"model": {"origin": "https://api.anthropic.com"}}
+
+
+def test_without_external_roles_the_policy_has_no_external_fields():
+    for config in (CONFIG, with_external({"source": False, "model": False})):
+        policy = egress_policy.derive(config, PROFILE, INGRESS, [])
+        assert "externalTargets" not in policy and "externalResolverAddresses" not in policy
+
+
+@pytest.mark.parametrize(
+    ("external", "match"),
+    [
+        ({"source": True}, "egress.external.resolvers: required"),
+        ({"source": True, "resolvers": []}, "egress.external.resolvers: required"),
+        ({"resolvers": ["9.9.9.9"]}, "egress.external.resolvers: given without an external role"),
+        ({"model": True, "resolvers": ["9.9.9.9", "9.9.9.9"]}, "distinct"),
+        ({"model": True, "resolvers": ["1.1.1.1", "1.0.0.1", "8.8.8.8", "8.8.4.4", "9.9.9.9"]}, "one to four"),
+        ({"model": True, "resolvers": ["dns.example.com"]}, "not an IPv4 address"),
+        ({"model": True, "resolvers": ["2620:fe::fe"]}, "not an IPv4 address"),
+        ({"model": True, "resolvers": ["10.0.0.53"]}, "not a public address"),
+        ({"model": True, "resolvers": ["192.168.1.1"]}, "not a public address"),
+        ({"model": True, "resolvers": ["127.0.0.53"]}, "not a public address"),
+        ({"model": True, "resolvers": ["169.254.169.254"]}, "not a public address"),
+        ({"model": True, "resolvers": ["224.0.0.251"]}, "not a public address"),
+        ({"model": True, "resolvers": ["240.0.0.1"]}, "not a public address"),
+        ({"model": True, "resolvers": ["0.0.0.0"]}, "not a public address"),
+        ({"model": True, "resolvers": ["100.64.0.1"]}, "not a public address"),
+    ],
+)
+def test_external_resolvers_are_one_to_four_distinct_public_ipv4_addresses_given_with_a_role(external, match):
+    with pytest.raises(egress_policy.Refused, match=match):
+        egress_policy.derive(with_external(external), PROFILE, INGRESS, [])
+
+
+def test_a_resolver_cannot_be_one_of_the_deployment_s_own_addresses():
+    # Public test-world addresses can stand for the deployment's own: none of
+    # them is a resolver, whatever range it is in.
+    ingress = {role: ["198.51.100.7"] for role in INGRESS}
+    for config, denied in (
+        (with_external({"model": True, "resolvers": ["198.51.100.7"]}), []),
+        (with_external({"model": True, "resolvers": ["203.0.113.9"]}), ["203.0.113.9"]),
+    ):
+        with pytest.raises(egress_policy.Refused, match="egress.external.resolvers: .* is one of the deployment's"):
+            egress_policy.derive(config, PROFILE, ingress, denied)

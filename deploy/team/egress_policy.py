@@ -14,6 +14,9 @@ import ipaddress
 from awid.dns_verify import _parse_awid_record, awid_txt_name, awid_txt_value
 
 ROLES = ("aweb", "secrets", "logs", "signer", "registry")
+# The roles agents may reach on the internet, each at one fixed origin: the
+# operator turns a role on and never names a host.
+EXTERNAL_ROLES = {"source": "https://github.com", "model": "https://api.anthropic.com"}
 
 
 class Refused(Exception):
@@ -41,6 +44,37 @@ def _pinned(role: str, addresses: list[str]) -> list[str]:
     return list(addresses)
 
 
+def _external(config: dict, own: set[str]) -> dict:
+    """The external roles the operator turned on and the public resolvers
+    egress alone asks for their addresses; nothing when no role is on."""
+    external = config["egress"].get("external", {})
+    roles = sorted(role for role in EXTERNAL_ROLES if external.get(role))
+    resolvers = list(external.get("resolvers", []))
+    if not roles:
+        if resolvers:
+            raise Refused("egress.external.resolvers: given without an external role")
+        return {}
+    if not resolvers:
+        raise Refused("egress.external.resolvers: required when an external role is on")
+    if len(set(resolvers)) != len(resolvers):
+        raise Refused("egress.external.resolvers: must be distinct")
+    if len(resolvers) > 4:
+        raise Refused("egress.external.resolvers: needs one to four addresses")
+    for resolver in resolvers:
+        try:
+            address = ipaddress.IPv4Address(resolver)
+        except ValueError:
+            raise Refused(f"egress.external.resolvers: {resolver!r} is not an IPv4 address") from None
+        if resolver in own:
+            raise Refused(f"egress.external.resolvers: {resolver} is one of the deployment's own addresses")
+        if not address.is_global or address.is_multicast or address.is_reserved:
+            raise Refused(f"egress.external.resolvers: {resolver} is not a public address")
+    return {
+        "externalTargets": {role: {"origin": EXTERNAL_ROLES[role]} for role in roles},
+        "externalResolverAddresses": resolvers,
+    }
+
+
 def derive(config: dict, profile: dict, addresses: dict[str, list[str]], denied: list[str]) -> dict:
     """The policy for this deployment, its signer's profile, the addresses
     each role's origin resolves to and the protected backends' addresses."""
@@ -56,7 +90,7 @@ def derive(config: dict, profile: dict, addresses: dict[str, list[str]], denied:
         # The record agents will be answered is one AWID itself accepts.
         _parse_awid_record(text, dns_name=name)
         records.append({"name": name, "text": text})
-    return {
+    policy = {
         "frontAddress": config["agents"]["resolverIp"],
         "privateIngressAddresses": list(config["egress"].get("privateIngressAddresses", [])),
         "deniedAddresses": [_pinned("denied", [address])[0] for address in denied],
@@ -64,6 +98,9 @@ def derive(config: dict, profile: dict, addresses: dict[str, list[str]], denied:
         "authorityRecords": records,
         "targets": {role: {"origin": origins[role], "addresses": _pinned(role, addresses[role])} for role in ROLES},
     }
+    own = {config["agents"]["resolverIp"], *policy["privateIngressAddresses"], *policy["deniedAddresses"],
+           *(address for target in policy["targets"].values() for address in target["addresses"])}
+    return {**policy, **_external(config, own)}
 
 
 # The probe's credential-free stand-ins for the agent's state, login and
