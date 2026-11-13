@@ -134,8 +134,8 @@ func registryOriginKey(raw string) string {
 	return scheme + "://" + host
 }
 
-// registryTrust is the set of operator-configured registry origins and the
-// pinned client for every other origin.
+// registryTrust is the set of registry origins the operator named on the
+// current command line (TrustRegistryOrigin).
 type registryTrust struct {
 	mu      sync.Mutex
 	origins map[string]bool
@@ -165,9 +165,12 @@ func (t *registryTrust) trusted(raw string) bool {
 	return t.origins[key]
 }
 
-// TrustRegistryOrigin marks raw, an origin the operator configured (an
-// identity's registry_url, AWID_REGISTRY_URL or a flag), as reachable with
-// the resolver's own HTTP client. Never pass an origin learned from DNS.
+// TrustRegistryOrigin marks raw, a registry the operator named on the
+// current command line, as reachable with the resolver's own HTTP client.
+// The built-in default and AWID_REGISTRY_URL are trusted without it. Never
+// pass an origin that is stored or supplied by someone else (identity.yaml,
+// teams.yaml, an invite, controller metadata, service discovery or DNS):
+// those stay pinned to public addresses.
 func (r *RegistryResolver) TrustRegistryOrigin(raw string) error {
 	return r.trust.trust(raw)
 }
@@ -204,8 +207,8 @@ func (r *RegistryResolver) httpClientFor(registryURL string) *http.Client {
 	return r.pinnedClient()
 }
 
-// TrustRegistryOrigin marks raw, an origin the operator configured, as
-// reachable with the client's own HTTP client; see
+// TrustRegistryOrigin marks raw, a registry the operator named on the
+// current command line, as reachable with the client's own HTTP client; see
 // RegistryResolver.TrustRegistryOrigin.
 func (c *RegistryClient) TrustRegistryOrigin(raw string) error {
 	if c == nil || c.Resolver == nil {
