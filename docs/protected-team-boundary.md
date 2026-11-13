@@ -162,3 +162,42 @@ The CLI verifies its original signed intent and structural/lifetime bounds as
 history, so receipt recovery after artifact expiry creates no new authority.
 It never POSTs an applied result. The legacy pair still requires current artifact
 freshness before its local POST; unknown versions/modes/references refuse.
+
+
+## Exact consumer confirmation
+
+A protected consumer records an immutable historical reference in its actual
+business-effect transaction, after the effect and its audit/nonce fences:
+`operation_id`, canonical `team_id`, `service_id`, typed `operation` and
+`variant`, `artifact_sha256`, and SHA256 of the complete retained detached
+header bytes. Failure rolls back both effect and reference. Nonce consumption
+alone is never application confirmation. An exact duplicate may recover the
+same reference; another artifact/header under the same team/operation ID must
+refuse rather than overwrite it. Cascade references cover every protected team
+in that same transaction and match the complete per-team proof association.
+
+The signer reads only
+`GET /.well-known/aweb-protected-effect-receipts/{operation_id}` on the retained
+pinned consumer origin, with the complete original `X-AWEB-Protected-Effect`
+header. Neither the operation ID alone nor a supplied header digest permits a
+read. This is a proof-gated historical read, distinct from the signer's full
+receipt API and its unchanged current reader authority. No proof bytes belong
+in URLs, access/error logs or tracing. Every response has `Cache-Control:
+no-store`. There is no discovery, response-selected URL or redirect forwarding.
+
+An exact match returns only
+`{"v":1,"operation_id":UUID,"artifact_sha256":DIGEST}`. The adapter strictly
+checks all three fields and refuses duplicate/unknown fields. Unknown ID and
+header mismatch both return 404; unavailable storage returns 503. A 404,
+including one racing an effect commit or following purge/restore, leaves the
+outcome unresolved. It never permits re-signing, refreshed deadlines or a blind
+retry. The original confirmation observation deadline remains bounded by 60
+seconds from read start and is checked after the final await.
+
+The retained header may match an already committed reference after proof expiry,
+controller/service-key replacement or a new protection generation. The read does
+not reauthorize an effect, consume a nonce or extend any lifetime. Only that exact
+historical match can produce the negotiated applied result. Admission/removal
+clients verify the same closed v2 reference as owner-act clients, then verify the
+unchanged artifact against the saved prepared operation. Legacy public pairs
+remain unchanged. Wire controls are in `vectors/protected-effect-receipt-v1.json`.

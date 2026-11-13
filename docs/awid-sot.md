@@ -1436,6 +1436,7 @@ full ordered SQL, not a copied `001` snapshot.
 - `id_certificates`
 - `id_namespace_epochs`
 - `team_protection`
+- `protected_effect_receipts`
 <!-- END SOURCE INVENTORY: awid-tables -->
 
 ---

@@ -27,6 +27,7 @@ from awid.protected_effect import (
     verify_proof,
 )
 from awid.signing import canonical_json_bytes
+from awid.protected_receipts import record_receipt
 from awid.team_ids import build_team_id
 
 logger = logging.getLogger(__name__)
@@ -208,7 +209,7 @@ async def require_effect(request, tx, *, domain, name, operation, deadlines=None
                         now=datetime.now(timezone.utc),
                     )
                     if deadlines is not None:
-                        deadlines.append((datetime.fromisoformat(fields["expires_at"]), code))
+                        deadlines.append((datetime.fromisoformat(fields["expires_at"]), code, fields))
                     return binding
                 except EffectRefused:
                     continue
@@ -247,8 +248,15 @@ async def effect_transaction(request, db, *, domain, operation, name=None):
         else:
             await require_effect(request, tx, domain=domain, name=name, operation=operation, deadlines=deadlines)
         yield tx
+        if len({fields["operation_id"] for _, _, fields in deadlines}) > 1:
+            raise refusal("protected_controller_required")
+        for _, _, fields in deadlines:
+            try:
+                await record_receipt(tx, fields, request.headers.get(HEADER))
+            except EffectRefused as exc:
+                raise refusal(exc.code) from None
         now = datetime.now(timezone.utc)
-        for expiry, code in deadlines:
+        for expiry, code, _ in deadlines:
             if now >= expiry:
                 logger.warning("Protected effect expired before commit: operation=%s code=%s", operation, code)
                 raise refusal(code)

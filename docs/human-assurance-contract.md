@@ -1036,7 +1036,11 @@ controller effect requires a detached attestation from a separate isolated
 service key. The original signature alone still cannot distinguish custody.
 The binding, exact-certificate checks, replay/deadline rules, controller route
 inventory and coordinated cutover are specified in
-[Protected team boundary](protected-team-boundary.md). Package .8 must name every affected BYOT team/client and its explicit
+[Protected team boundary](protected-team-boundary.md), including its fixed proof-gated
+consumer confirmation read. That read matches immutable history in the actual
+effect transaction; a missing receipt leaves application unresolved and permits
+no blind retry. Historical confirmation after expiry grants no new effect
+authority, and the signer receipt reader authority is unchanged. Package .8 must name every affected BYOT team/client and its explicit
 transition before activation; a documentation change does not perform cutover.
 Protecting an existing team is an operator-approved .8 migration, announced to
 all affected deployment owners before it takes effect. Inventory even clients

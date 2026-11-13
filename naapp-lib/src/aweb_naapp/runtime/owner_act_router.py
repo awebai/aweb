@@ -239,6 +239,9 @@ def mount_owner_act_routes(
     ):
         raise ValueError("owner-act delivery requires the declared human-role verifier")
     origin = declaration["origin"]
+    from aweb_naapp.runtime.protected_effect_receipts import receipt_router
+
+    app.include_router(receipt_router(lambda request: runtime.db()))
     human_hosts = _origin_hosts(origin)
 
     @app.post(OWNER_ACT_PATH)
@@ -314,6 +317,7 @@ def mount_owner_act_routes(
                     tx, prepared_act, expected_subject=prepared_effect.expected_subject
                 )
                 result = await prepared_effect.apply(tx, installation=permit.admitted, act=act)
+                await prepared_act.record_applied(tx)
                 # This is the final await: no refresh or lock upgrade follows it.
                 await fence.check(tx, None)
                 prepared_effect.require_fresh()
