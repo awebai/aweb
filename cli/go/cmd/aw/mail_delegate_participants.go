@@ -123,7 +123,7 @@ func delegateMailAppendSendLogs(sel *awconfig.Selection, resp *awid.SendMessageR
 		strings.TrimSpace(sel.DID),
 		"",
 	)
-	appendCommLog(defaultLogsDir(), commLogNameForSelection(sel), &CommLogEntry{
+	appendCommLog(defaultLogsDir(), commLogNameForSelection(sel), localLogPolicyForSelection(sel), &CommLogEntry{
 		Timestamp:      time.Now().UTC().Format(time.RFC3339),
 		Dir:            "send",
 		Channel:        "mail",
@@ -134,7 +134,7 @@ func delegateMailAppendSendLogs(sel *awconfig.Selection, resp *awid.SendMessageR
 		Subject:        subject,
 		Body:           body,
 	})
-	appendInteractionLogForCWD(&InteractionEntry{
+	appendInteractionLogForCWD(localLogPolicyForSelection(sel), &InteractionEntry{
 		Timestamp:      time.Now().UTC().Format(time.RFC3339),
 		Kind:           interactionKindMailOut,
 		MessageID:      resp.MessageID,
@@ -151,7 +151,7 @@ func delegateMailLogReceived(sel *awconfig.Selection, msg *awid.InboxMessage) {
 	}
 	from := preferredIdentityDisplayLabel(msg.FromAlias, msg.FromAddress, msg.FromStableID, msg.FromDID, "")
 	to := preferredIdentityDisplayLabel(msg.ToAlias, msg.ToAddress, msg.ToStableID, msg.ToDID, "")
-	appendCommLog(defaultLogsDir(), commLogNameForSelection(sel), &CommLogEntry{
+	appendCommLog(defaultLogsDir(), commLogNameForSelection(sel), localLogPolicyForSelection(sel), &CommLogEntry{
 		Timestamp:      msg.CreatedAt,
 		Dir:            "recv",
 		Channel:        "mail",
