@@ -84,6 +84,10 @@ compose_with_limits() {
     exec "$real" compose "${prefix[@]}" "${rest[@]}"
   fi
   case "${rest[0]}" in
+    up|create|run)
+      # Recreate/renew may discard an old anonymous mount before teardown.
+      remember_volumes
+      ;;
     down|rm)
       remember_volumes
       rest=("${rest[0]}" --volumes "${rest[@]:1}")
