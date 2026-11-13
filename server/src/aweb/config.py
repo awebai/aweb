@@ -191,7 +191,7 @@ def get_awid_service_token() -> str | None:
     return normalize_service_token(os.getenv("AWID_SERVICE_TOKEN"))
 
 
-def load_member_signing_keys(manifest: Path) -> dict[str, bytes]:
+def load_member_signing_keys(manifest: Path, *, allow_empty: bool = False) -> dict[str, bytes]:
     """The member keys a team-to-key-file manifest names, by canonical team ID.
 
     The manifest is strict JSON and holds paths, never key material; a
@@ -202,7 +202,7 @@ def load_member_signing_keys(manifest: Path) -> dict[str, bytes]:
     """
     manifest = manifest.expanduser()
     entries = parse_strict(manifest.read_bytes())
-    if not isinstance(entries, dict) or not entries:
+    if not isinstance(entries, dict) or (not entries and not allow_empty):
         raise ValueError("expected a nonempty team-to-key-file object")
     keys = {}
     for team_id, filename in entries.items():
