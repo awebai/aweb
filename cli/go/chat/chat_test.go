@@ -1946,7 +1946,7 @@ func TestSendWithExtendWaitPrefersStableIDOverParticipantDIDInCallbacks(t *testi
 
 			hangOnData, _ := json.Marshal(map[string]any{
 				"type": "message", "message_id": "msg-hangon", "from_did": senderDID, "from_stable_id": stableID,
-				"body": "thinking...", "hang_on": true, "extends_wait_seconds": 300,
+				"body": "thinking...", "hang_on": true, "extends_wait_seconds": 1,
 			})
 			fmt.Fprintf(w, "event: message\ndata: %s\n\n", hangOnData)
 			if flusher != nil {
@@ -4423,7 +4423,7 @@ func TestWaitForMessageTreatsInitialEOFAsTimeout(t *testing.T) {
 	result, err := waitForMessage(
 		context.Background(),
 		mustClient(t, server.URL),
-		func(context.Context, string, time.Time, *time.Time) (*awid.SSEStream, error) {
+		func(context.Context, string, time.Time, *time.Time, int64) (*awid.SSEStream, error) {
 			return nil, io.EOF
 		},
 		"s1",
@@ -4455,7 +4455,7 @@ func TestWaitForMessageTreatsWrappedEOFAsTimeout(t *testing.T) {
 	result, err := waitForMessage(
 		context.Background(),
 		mustClient(t, server.URL),
-		func(context.Context, string, time.Time, *time.Time) (*awid.SSEStream, error) {
+		func(context.Context, string, time.Time, *time.Time, int64) (*awid.SSEStream, error) {
 			return nil, &url.Error{Op: "Get", URL: server.URL + "/v1/chat/sessions/s1/stream", Err: io.EOF}
 		},
 		"s1",
@@ -4486,7 +4486,7 @@ func TestWaitForMessagePropagatesContextCancellationOnOpen(t *testing.T) {
 	_, err := waitForMessage(
 		ctx,
 		mustClient(t, server.URL),
-		func(context.Context, string, time.Time, *time.Time) (*awid.SSEStream, error) {
+		func(context.Context, string, time.Time, *time.Time, int64) (*awid.SSEStream, error) {
 			return nil, context.Canceled
 		},
 		"s1",
@@ -4511,7 +4511,7 @@ func TestWaitForMessageDoesNotTreatUnexpectedEOFAsTimeout(t *testing.T) {
 	_, err := waitForMessage(
 		context.Background(),
 		mustClient(t, server.URL),
-		func(context.Context, string, time.Time, *time.Time) (*awid.SSEStream, error) {
+		func(context.Context, string, time.Time, *time.Time, int64) (*awid.SSEStream, error) {
 			return nil, &url.Error{Op: "Get", URL: server.URL + "/v1/chat/sessions/s1/stream", Err: io.ErrUnexpectedEOF}
 		},
 		"s1",

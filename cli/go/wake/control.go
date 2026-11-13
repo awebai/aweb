@@ -271,16 +271,17 @@ func callWithTimeout(socketPath string, req ControlRequest, timeout time.Duratio
 // registrations and the per-instance state files, plus whatever the daemon
 // last mirrored into status.json.
 func StatusFromStore(store *Store, maxStreams int) (Status, error) {
-	registrations, err := store.ListRegistrations()
+	registrations, faults, err := store.ListRegistrations()
 	if err != nil {
 		return Status{}, err
 	}
 	status := Status{
-		UpdatedAt:  time.Now().UTC(),
-		StateDir:   store.Dir(),
-		MaxStreams: maxStreams,
-		Streams:    []StreamStatus{},
-		Instances:  []InstanceStatus{},
+		UpdatedAt:          time.Now().UTC(),
+		StateDir:           store.Dir(),
+		MaxStreams:         maxStreams,
+		Streams:            []StreamStatus{},
+		Instances:          []InstanceStatus{},
+		RegistrationFaults: faults,
 	}
 	if pid, alive := LockOwner(store.LockPath()); alive {
 		status.DaemonRunning = true

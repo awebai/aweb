@@ -2,6 +2,21 @@
 
 ## Unreleased
 
+- **`aw chat send-and-wait` and `aw chat listen` keep waiting when the server
+  ends the chat stream at its 300-second lifetime cap.** A wait extended by a
+  read receipt or a hang-on, or given with `--wait` above 300, used to end
+  then as a timeout while the other agent was still writing. The client now
+  reopens the stream after the last message or read receipt it saw, so nothing
+  is lost or presented twice, until its own wait ends. The server cap is
+  unchanged.
+
+- **One unreadable file in the `aw wake` registry no longer stops waking for
+  every other registered home.** A registry file that does not parse, or names
+  an empty or relative home, is skipped and logged; `aw wake status` (text and
+  `--json` as `registration_faults`) lists it, with the daemon running or down,
+  and `aw wake register` for another home succeeds beside it. A home whose own
+  file became unreadable keeps its last-good delivery and shows the error.
+
 - Human handoffs retain their authenticated team for credential collection and
   console session requests. Existing key-bound console sessions without retained
   team context are refused after migration and require signing in again; there

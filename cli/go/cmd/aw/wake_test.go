@@ -798,3 +798,13 @@ func TestIdentityHomePreScanStopsAtABuiltinCommand(t *testing.T) {
 		})
 	}
 }
+
+func TestWakeStatusTextNamesUnreadableRegistrations(t *testing.T) {
+	text := formatWakeStatus(wake.Status{
+		RegistrationFaults: []wake.RegistrationFault{{Path: "/state/wake/registry.d/bad.json", Error: "registration home is empty"}},
+	})
+	want := "\nUnreadable registrations (skipped):\n  /state/wake/registry.d/bad.json  error=registration home is empty\n"
+	if !strings.Contains(text, want) {
+		t.Fatalf("status text does not name the unreadable registration as %q:\n%s", want, text)
+	}
+}
