@@ -7,7 +7,6 @@ import json
 from pathlib import Path
 
 import pytest
-
 from tests.test_team_deployment_runner import EXAMPLE, TEAMCTL, deployment, run
 
 
