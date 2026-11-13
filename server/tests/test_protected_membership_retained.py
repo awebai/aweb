@@ -67,7 +67,7 @@ async def membership_env(real_stack):
 @pytest.mark.asyncio
 @pytest.mark.parametrize("surface", ["identity", "grant", "stream", "status", "room", "task"])
 @pytest.mark.parametrize("protected", [False, True], ids=["legacy", "protected"])
-@pytest.mark.parametrize("change", ["genuine", "key", "alias"])
+@pytest.mark.parametrize("change", ["genuine", "key", "alias", "null-blob", "unknown-protection", "down"])
 async def test_exact_retained_and_presented_membership(membership_env, surface, protected, change):
     env = membership_env
     registered = env.member
@@ -99,6 +99,18 @@ async def test_exact_retained_and_presented_membership(membership_env, surface, 
             "(domain,name,service_id,service_did_key,generation) VALUES ('beta.example','backend','test-signer',$1,1)",
             did_key(SigningKey.generate()),
         )
+    if change == "null-blob":
+        await env.stack.awid_db.execute("UPDATE {{tables.team_certificates}} SET certificate=NULL")
+    elif change == "unknown-protection":
+        def old_registry(request, response):
+            if response.status_code == 200:
+                payload = response.json()
+                if isinstance(payload, dict):
+                    payload.pop("protection", None)
+                    return httpx.Response(200, json=payload)
+        env.stack.awid.fault = old_registry
+    elif change == "down":
+        env.stack.awid.down = True
     app = FastAPI()
     app.state.db = SimpleNamespace(get_manager=lambda name="aweb": db)
     app.state.awid_registry_client = env.registry
@@ -156,7 +168,8 @@ async def test_exact_retained_and_presented_membership(membership_env, surface, 
         headers = claimed.headers(aud=ORIGIN, method="GET", path="/v1/messages")
     async with httpx.AsyncClient(transport=httpx.ASGITransport(app), base_url=ORIGIN) as client:
         response = await client.get("/v1/messages", headers=headers)
-    rejected = (protected and change != "genuine") or (surface == "task" and change == "key")
-    assert response.status_code == (401 if rejected else 200), response.text
-    if protected and change != "genuine":
+    rejected = (protected and change in {"key", "alias"}) or (surface == "task" and change == "key")
+    unavailable = change in {"unknown-protection", "down"} or (protected and change == "null-blob")
+    assert response.status_code == (503 if unavailable else 401 if rejected else 200), response.text
+    if protected and change in {"key", "alias"}:
         assert "certificate_binding_mismatch" in response.text
