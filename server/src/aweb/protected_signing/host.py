@@ -46,6 +46,7 @@ class HostSettings(BaseSettings):
     profile_file: Path
     scope_file: Path
     controller_key_file: Path
+    service_key_file: Path | None = None
     controller_keys_file: Path | None = None
     member_keys_file: Path
     worker_uids: list[Annotated[StrictInt, Field(gt=0)]] = Field(min_length=1)
@@ -155,7 +156,7 @@ def load_custodies(settings, *, profile, scope):
         context = binding.context()
         custody = ProtectedControllerCustody(
             service_id=context.service_id, team_id=context.authority_id, domain=context.authority_domain,
-            key_file=paths[binding.authority_key_did], worker_uids=frozenset(settings.worker_uids), authority_kind=context.authority_kind,
+            key_file=paths[binding.authority_key_did], service_key_file=settings.service_key_file, worker_uids=frozenset(settings.worker_uids), authority_kind=context.authority_kind,
         )
         if custody.team_key_did != binding.authority_key_did:
             raise SignerRefused("authority_changed")
@@ -166,6 +167,10 @@ def load_custodies(settings, *, profile, scope):
     private_keys = ({custody.team_key_did for _, custody in custodians}
                     | {binding.authority_key_did for binding in profile.bindings}
                     | set(profile.namespace_keys().values()))
+    service_keys = {custody.service_did_key for _,custody in custodians if custody.service_did_key is not None}
+    if service_keys & private_keys:
+        raise SignerRefused("custody_not_isolated")
+    private_keys |= service_keys
     if any(did_key_from_signing_key(key) in private_keys for key in keys.values()):
         raise SignerRefused("custody_not_isolated")
     return selected, keys, custodians
