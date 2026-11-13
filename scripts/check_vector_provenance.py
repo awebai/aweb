@@ -49,6 +49,10 @@ ROOT_CONSUMERS = {
         "protected-operation-availability-v1.json",
         'Path(__file__).resolve().parents[3] / "docs/vectors/protected-operation-availability-v1.json"',
     ),
+    PurePosixPath("awid/tests/test_protected_receipts.py"): _consumer(
+        "protected-effect-receipt-v1.json",
+        'Path(__file__).resolve().parents[2] / "docs/vectors/protected-effect-receipt-v1.json"',
+    ),
     PurePosixPath("awid/tests/test_protected_membership_vector.py"): _consumer(
         "protected-membership-v1.json",
         'Path(__file__).resolve().parents[2] / "docs/vectors/protected-membership-v1.json"',
