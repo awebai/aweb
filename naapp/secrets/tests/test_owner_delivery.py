@@ -15,7 +15,9 @@ from asyncpg import PostgresError
 from aweb_naapp import roles
 from aweb_naapp.hooks.owner_act import HUMAN_ROLE_ACTS
 from aweb_naapp.hooks.owner_act_nonces import OwnerActVerifier
+from aweb_naapp_testing import did_key
 from aweb_naapp_testing.owner_acts import TeamOwner
+from awid.dns_verify import awid_txt_value
 
 from aweb_secrets.owners import OWNER_ROLE, owner_scope
 from aweb_secrets.revisions import config_revision
@@ -29,7 +31,7 @@ CONTACT = "owner@example.com"
 
 
 async def delivery(root, registry, *, act="human-role.designate", alias="alice", kind="human"):
-    service, client, settings, member, installed, *_ = root
+    service, client, settings, member, installed, *_, dns = root
     world = getattr(client, "owner_delivery_fixture", None)
     if world is None:
         console = mounted_owner_console(service)
@@ -57,6 +59,11 @@ async def delivery(root, registry, *, act="human-role.designate", alias="alice",
             body["certificate"] = base64.b64encode(
                 json.dumps(holder.certificate()).encode()
             ).decode()
+        # The holder's ID chain is checked against its namespace's live DNS
+        # authority, which this world publishes on the root's private server.
+        dns.records[("_awid.example.com", "TXT")] = [
+            '"' + awid_txt_value(did_key(world.human_root)) + '"'
+        ]
         from aweb_naapp.runtime.passkeys import contact_sha256
 
         subject.update(
