@@ -221,8 +221,12 @@ async def _verify_identity_grant_row(request: Request, db, *, required_scope=_US
         address=row.get("address") or "",
     )
     await authenticate_id_chain(request, binding)
-    await refresh_projection_binding(aweb_db, agent_id=row["agent_id"], did_key=row["subject_did_key"], binding=binding)
-    row = {**dict(row), "did_aw": binding.did_aw, "address": binding.address}
+    require_fresh(membership_observation)
+    async with aweb_db.transaction() as tx:
+        await refresh_projection_binding(tx, agent_id=row["agent_id"], did_key=row["subject_did_key"], binding=binding)
+        require_fresh(membership_observation)
+    row = {**dict(row), "did_aw": binding.did_aw, "address": binding.address,
+           "protection_observation": membership_observation}
     grant = GrantContext(
         grant_id=grant_id,
         session_did_key=did_key,
@@ -264,4 +268,5 @@ async def verify_identity_grant_team_identity(request: Request, db, *, required_
         identity_scope=row["identity_scope"],
         certificate_id="",
         grant=grant,
+        protection_observation=row["protection_observation"],
     )

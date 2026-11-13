@@ -157,6 +157,7 @@ async def mint_identity_grant(
             now,
             expires_at,
         )
+        identity.require_fresh()
     return GrantView(
         grant_id=str(row["grant_id"]),
         team_id=identity.team_id,
@@ -187,6 +188,7 @@ async def list_identity_grants(
         identity.agent_id,
     )
     now = datetime.now(timezone.utc)
+    identity.require_fresh()
     return {
         "grants": [
             GrantListItem(
@@ -244,6 +246,7 @@ async def identity_grant_status(
         return _grant_status_not_found()
     now = datetime.now(timezone.utc)
     effective, detail = await effective_grant_status(request, row, now)
+    identity.require_fresh()
     return GrantStatusView(
         grant_id=str(row["grant_id"]),
         team_id=row["team_id"],
@@ -289,6 +292,7 @@ async def revoke_identity_grant(
         if not row:
             raise HTTPException(status_code=404, detail="grant not found")
         if row["revoked_at"] is not None:
+            identity.require_fresh()
             return {
                 "grant_id": grant_id,
                 "status": "revoked",
@@ -310,4 +314,5 @@ async def revoke_identity_grant(
             grant_id,
             json.dumps({"grant_id": grant_id, "subject_agent_id": identity.agent_id}),
         )
+        identity.require_fresh()
     return {"grant_id": grant_id, "status": "revoked", "revoked_at": now.isoformat()}
