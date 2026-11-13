@@ -166,3 +166,112 @@ async def test_key_file_team_server_publication_obeys_authoritative_protection(
         )
     else:
         assert response.status_code == 200, response.text
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("protected", [False, True], ids=["legacy", "protected"])
+@pytest.mark.parametrize(
+    "covering", [False, True], ids=["legacy-envelope", "covering-envelope"]
+)
+async def test_namespace_delete_cannot_cascade_a_protected_team_with_revoked_members(
+    controller_app,
+    protected,
+    covering,
+):
+    env = controller_app
+    cert = certificate_body(env)
+    claims = {
+        "domain": "local",
+        "team_name": "base",
+        "certificate_id": cert["certificate_id"],
+    }
+    admitted = await send(
+        env,
+        "POST",
+        TEAM_PATH + "/certificates",
+        {**claims, "operation": "register_certificate"},
+        cert,
+        signer=env.team,
+    )
+    assert admitted.status_code == 200, admitted.text
+    revoked = await send(
+        env,
+        "POST",
+        TEAM_PATH + "/certificates/revoke",
+        {**claims, "operation": "revoke_certificate"},
+        {"certificate_id": cert["certificate_id"]},
+        signer=env.team,
+    )
+    assert revoked.status_code == 200, revoked.text
+    if protected:
+        await protect_team(env)
+    response = await send(
+        env,
+        "DELETE",
+        "/v1/namespaces/local",
+        {"domain": "local", "operation": "delete_namespace"},
+        covering=covering,
+    )
+    if not protected:
+        assert response.status_code == 200, response.text
+        return
+    assert response.status_code == 403, response.text
+    assert response.json()["detail"]["code"] == "protected_controller_required"
+    assert (
+        await env.db.fetch_value(
+            "SELECT deleted_at FROM {{tables.teams}} WHERE name='base'"
+        )
+        is None
+    )
+    assert (
+        await env.db.fetch_value(
+            "SELECT deleted_at FROM {{tables.dns_namespaces}} WHERE domain='local'"
+        )
+        is None
+    )
+    assert (
+        await env.db.fetch_value(
+            "SELECT count(*) FROM {{tables.team_certificates}} WHERE revoked_at IS NOT NULL"
+        )
+        == 1
+    )
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("protected", [False, True], ids=["legacy", "protected"])
+@pytest.mark.parametrize("kind", ["custodian", "custody", "person"])
+async def test_attestation_publication_needs_protected_controller_authority(
+    controller_app, protected, kind
+):
+    from test_attestation_record_routes import (
+        _custodian,
+        _custody,
+        _person,
+        publish_custodian,
+        publish_custody,
+        publish_person,
+        register_certificate,
+    )
+
+    env = controller_app
+    cert = await register_certificate(env)
+    if kind == "custody":
+        setup = await publish_custodian(env, _custodian(env))
+        assert setup.status_code == 200, setup.text
+    if protected:
+        await protect_team(env)
+    if kind == "custodian":
+        response = await publish_custodian(env, _custodian(env))
+        table = "team_custodians"
+    elif kind == "custody":
+        response = await publish_custody(env, _custody(env, cert))
+        table = "member_custody"
+    else:
+        response = await publish_person(env, _person(env, cert))
+        table = "member_person"
+    if not protected:
+        assert response.status_code == 200, response.text
+        return
+    assert response.status_code == 403, response.text
+    assert response.json()["detail"]["code"] == "protected_controller_required"
+    assert await env.db.fetch_value(f"SELECT count(*) FROM {{{{tables.{table}}}}}") == 0
