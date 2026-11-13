@@ -36,10 +36,10 @@ def require_fresh(observation):
         raise refuse(exc) from exc
 
 
-async def observe(registry, team_id):
+async def observe(registry, team_id, *, certificate_id=None):
     try:
-        return await observe_team_protection(registry, team_id)
-    except EffectRefused as exc:
+        return await observe_team_protection(registry, team_id, certificate_id=certificate_id)
+    except (EffectRefused, TeamCertificateError) as exc:
         raise refuse(exc) from exc
 
 

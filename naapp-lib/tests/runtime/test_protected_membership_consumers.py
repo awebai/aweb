@@ -233,3 +233,25 @@ async def test_private_protected_presenter_needs_no_private_history_access(regis
     assert response.status_code == 200, response.text
     # Only public per-certificate status is needed, never private metadata/history.
     assert all("/status" in request.url.path for request in registry.transport.calls)
+
+
+async def test_configured_member_observes_its_exact_public_certificate_status(registry):
+    from aweb_naapp.runtime.team_auth import AWIDMemberCredential, AWIDTeamCache
+
+    member = Member(team_id=TEAM)
+    await publish(registry, member, protected=True)
+
+    def metadata_without_projection(request, response):
+        if request.url.path == "/v1/namespaces/example.com/teams/backend" and response.status_code == 200:
+            payload = response.json()
+            payload.pop("protection", None)
+            return httpx.Response(200, json=payload)
+
+    registry.transport.fault = metadata_without_projection
+    cache = AWIDTeamCache(registry_url="https://registry.example", ttl_seconds=60,
+                          transport=registry.transport, member_credentials={
+                              TEAM: AWIDMemberCredential(signing_key=bytes(member.member_key),
+                                                         certificate=member.certificate()),
+                          })
+    await cache.check_member_credentials()
+    assert any(r.url.params.get("protection") == "1" for r in registry.transport.calls)

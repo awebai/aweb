@@ -190,3 +190,73 @@ async def test_exact_retained_and_presented_membership(membership_env, surface, 
     assert response.status_code == (503 if unavailable else 401 if rejected else 200), response.text
     if protected and change in {"key", "alias"}:
         assert "certificate_binding_mismatch" in response.text
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("protected", [False, True], ids=["legacy", "protected"])
+async def test_app_task_presenter_uses_negotiated_public_protection(membership_env, protected):
+    env = membership_env
+    if protected:
+        await env.stack.awid_db.execute(
+            "INSERT INTO {{tables.team_protection}} "
+            "(domain,name,service_id,service_did_key,generation) VALUES ('beta.example','backend','test-signer',$1,1)",
+            did_key(SigningKey.generate()),
+        )
+
+    def metadata_without_projection(request, response):
+        if request.url.path == "/v1/namespaces/beta.example/teams/backend" and response.status_code == 200:
+            payload = response.json()
+            payload.pop("protection", None)
+            return httpx.Response(200, json=payload)
+
+    # Only the ordinary metadata read lacks the additive projection. The
+    # negotiated public status still answers from the real registry's state.
+    env.stack.awid.fault = metadata_without_projection
+    app = FastAPI()
+    app.state.awid_registry_client = env.registry
+
+    @app.get("/verify")
+    async def verify(request: Request):
+        info, _ = await verify_authorization_certificate(request, {
+            "certificate": env.encoded,
+            "payload": {"team_id": TEAM, "actor_did_key": env.member.did_key,
+                        "certificate_id": env.member.certificate_id},
+        })
+        observation = info["protection_observation"]
+        return {"protected": observation.protected, "certificate_id": observation.certificate_id}
+
+    async with httpx.AsyncClient(transport=httpx.ASGITransport(app), base_url=ORIGIN) as client:
+        response = await client.get("/verify")
+    assert response.status_code == 200, response.text
+    assert response.json() == {"protected": protected, "certificate_id": env.member.certificate_id}
+    assert any(r.url.params.get("protection") == "1" for r in env.stack.awid.calls)
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("protected", [False, True], ids=["legacy", "protected"])
+async def test_room_preserves_flag_off_unregistered_legacy_neighbor(membership_env, monkeypatch, protected):
+    env = membership_env
+    monkeypatch.setenv("AWEB_REQUIRE_REGISTERED_CERTIFICATES", "0")
+    if protected:
+        await env.stack.awid_db.execute(
+            "INSERT INTO {{tables.team_protection}} "
+            "(domain,name,service_id,service_did_key,generation) VALUES ('beta.example','backend','test-signer',$1,1)",
+            did_key(SigningKey.generate()),
+        )
+    presented = replace(env.member, certificate_id="valid-but-unregistered")
+    identity = TeamIdentity(
+        team_id=TEAM, alias=presented.alias, did_key=presented.did_key,
+        did_aw="", address="", agent_id=str(uuid4()), identity_scope="local",
+        certificate_id=presented.certificate_id,
+    )
+    app = FastAPI()
+    app.state.awid_registry_client = env.registry
+
+    @app.get("/verify")
+    async def verify(request: Request):
+        await _refresh_room_authority(request, None, identity)
+        return {"accepted": True}
+
+    async with httpx.AsyncClient(transport=httpx.ASGITransport(app), base_url=ORIGIN) as client:
+        response = await client.get("/verify", headers=presented.headers(aud=ORIGIN, method="GET", path="/verify"))
+    assert response.status_code == (401 if protected else 200), response.text

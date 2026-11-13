@@ -76,7 +76,14 @@ def validate_task_authorization(payload, signature, *, expected, now):
 async def verify_authorization_certificate(request, authorization):
     payload = authorization["payload"]
     registry = getattr(request.app.state, "awid_registry_client", None)
-    observation = await observe(registry, payload["team_id"])
+    try:
+        complete = decode_team_certificate(authorization["certificate"])
+        certificate_id = complete.get("certificate_id")
+        if not isinstance(certificate_id, str) or not certificate_id.strip():
+            raise TeamCertificateError("invalid_field", "certificate_id")
+    except TeamCertificateError as exc:
+        raise certificate_refusal(exc) from exc
+    observation = await observe(registry, payload["team_id"], certificate_id=certificate_id)
     try:
         domain, name = parse_team_id(payload["team_id"])
         registry = request.app.state.awid_registry_client
@@ -98,10 +105,6 @@ async def verify_authorization_certificate(request, authorization):
     # The team key is the payload's team's: the certificate must name that team.
     if info["team_id"] != payload["team_id"] or info["certificate_id"] != payload["certificate_id"]:
         raise HTTPException(status_code=401, detail="signature_invalid")
-    try:
-        complete = decode_team_certificate(authorization["certificate"])
-    except TeamCertificateError as exc:
-        raise certificate_refusal(exc) from exc
     await verify_presented(registry, observation, complete)
     matches = [c for c in certificates if c.certificate_id == info["certificate_id"]
                and c.member_did_key == info["did_key"]
