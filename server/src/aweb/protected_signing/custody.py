@@ -37,6 +37,7 @@ class ProtectedControllerCustody:
         key_file: Path,
         worker_uids: frozenset[int],
         authority_kind: str = "team_controller",
+        service_key_file: Path | None = None,
     ):
         if (
             os.name != "posix"
@@ -67,6 +68,10 @@ class ProtectedControllerCustody:
         self.authority_kind = authority_kind
         self._key = self._read_private_key(key_file)
         self.team_key_did = did_from_public_key(bytes(self._key.verify_key))
+        self._service_key = self._read_private_key(service_key_file) if service_key_file is not None else None
+        self.service_did_key = did_from_public_key(bytes(self._service_key.verify_key)) if self._service_key is not None else None
+        if self.service_did_key == self.team_key_did:
+            raise SignerRefused("custody_not_isolated")
 
     @staticmethod
     def _read_private_key(path: Path):

@@ -372,3 +372,18 @@ The command returns the public service/H/root/key/team/scope selection and
 replacement ID. It emits no private key or enrollment link. It does not
 implement the separate backup/restore anti-rollback or controller-rotation
 work tracked under the queued restore/catalog operations.
+
+For an explicitly cut-over team, provision a distinct attestation key in the
+same protected OS/custody volume and configure `AWEB_PROTECTED_SERVICE_KEY_FILE`.
+It uses the controller key reader's strict ownership/mode/symlink checks. The
+host refuses reuse of any configured controller, namespace, human or ordinary
+member key for this role. Omitting it preserves legacy composition; it cannot
+produce a protected-team service attestation or authorize cutover.
+
+The registry host's local administrator transition is
+`awid_service.protected_teams.provision_team_protection` inside a database
+transaction, with the expected current generation and explicit approval/cutover
+reference. It has no worker HTTP route. Package .8 must establish authorization,
+real custody isolation, consumer drains/invalidation, exact historical baseline
+and rollback limits before invoking it. Build/install/test authorization never
+invokes that transition automatically.

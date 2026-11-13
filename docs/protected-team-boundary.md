@@ -150,3 +150,12 @@ a safe application status/reference alongside the public signed artifact; it
 never exposes private delivery authentication. aw skips its old local POST in
 that mode, and an older client refuses an unknown mode. Legacy sign-only results
 retain their existing format and cannot claim service-owned application.
+
+The negotiated applied result is closed JSON:
+`{"v":2,"type":"aweb.protected-delivery","artifact":{"signing":BASE64,"signature":BASE64},"delivery":{"mode":"service_owned","state":"applied","reference":{"operation_id":UUID,"artifact_sha256":DIGEST}}}`.
+The reference binds the saved operation and the digest above; it contains no URL
+or private authentication. Only actual effect confirmation permits `applied`.
+The CLI verifies its original signed intent and structural/lifetime bounds as
+history, so receipt recovery after artifact expiry creates no new authority.
+It never POSTs an applied result. The legacy pair still requires current artifact
+freshness before its local POST; unknown versions/modes/references refuse.
