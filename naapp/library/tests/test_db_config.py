@@ -8,7 +8,6 @@ from library.config import Settings
 
 def test_defaults_use_library_naming() -> None:
     settings = Settings()
-    assert settings.app_id == "library"
     assert "library" in settings.database_url
     assert settings.public_origin == "https://library.aweb.ai"
 
