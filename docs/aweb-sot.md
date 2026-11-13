@@ -827,12 +827,18 @@ a stored participant route, so the transport admits it before any connection:
 the origin is `https` and named by host, the host is resolved once, and every
 answer is a public address (loopback, private, link-local, shared CGNAT,
 unique-local, multicast, reserved, unspecified and IPv4-mapped forms of those
-are refused, as is every other block of the IANA special-purpose address
-registries that is not globally reachable, including the IPv6 transition
-prefixes that embed an IPv4 address (NAT64 `64:ff9b::/96` and
-`64:ff9b:1::/48`, 6to4 `2002::/16`, Teredo `2001::/32`), any IPv6 address
-outside `2000::/3`, and deprecated site-local `fec0::/10`; one refused answer
-refuses the name). The connection goes to an
+are refused; one refused answer refuses the name). Both readers apply the same
+explicit tables, which are conservative rather than a restatement of the IANA
+classification. An IPv4 answer is refused in `0.0.0.0/8`, `10.0.0.0/8`,
+`100.64.0.0/10`, `127.0.0.0/8`, `169.254.0.0/16`, `172.16.0.0/12`,
+`192.0.0.0/24` (except `192.0.0.9` and `192.0.0.10`), `192.0.2.0/24`,
+`192.168.0.0/16`, `198.18.0.0/15`, `198.51.100.0/24`, `203.0.113.0/24`,
+`224.0.0.0/4` and `240.0.0.0/4`. An IPv6 answer is admitted only inside
+`2000::/3`, and refused there in `2001::/23` (except `2001:1::1`,
+`2001:1::2`, `2001:3::/32`, `2001:4:112::/48`, `2001:20::/28` and
+`2001:30::/28`), `2001:db8::/32`, `2002::/16` and `3fff::/20`; so the
+transition prefixes that embed an IPv4 address (NAT64 `64:ff9b::/96` and
+`64:ff9b:1::/48`, 6to4, Teredo) and site-local `fec0::/10` are refused. The connection goes to an
 admitted address, trying the answers in order until one accepts a connection,
 while TLS verification, SNI and `Host` name the origin; proxy
 settings in the environment are not read, redirects are not followed, each
