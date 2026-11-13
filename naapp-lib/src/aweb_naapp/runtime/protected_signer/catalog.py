@@ -6,15 +6,23 @@ its existing wire codec/effect adapter, not another approval implementation.
 The cross-contract test pins every row to the public frozen catalog.
 """
 
+from copy import deepcopy
 from dataclasses import dataclass
 from types import MappingProxyType
 from typing import Literal
 
+from .operation_codecs import (
+    ADMISSION_CODEC,
+    REMOVAL_CODEC,
+    REVOKE_CODEC,
+    ROOT_CODEC,
+    OperationCodec,
+)
 from .types import SignerRefused
 
 
 @dataclass(frozen=True)
-class OperationSpec:
+class OperationDefinition:
     operation: str
     variant: str
     key_role: Literal["team_controller", "namespace_controller", "human_identity", "protected_key"]
@@ -23,6 +31,7 @@ class OperationSpec:
     payload_binding: tuple[str, ...]
     bounds: tuple[str, ...]
 
+    codec: OperationCodec
     consumer_available: bool = True
 
     @property
@@ -30,8 +39,12 @@ class OperationSpec:
         return self.rule == "live_floor"
 
 
+# Source-compatible metadata type; the object also owns its consumer codec.
+OperationSpec = OperationDefinition
+
+
 _ROWS = (
-    OperationSpec(
+    OperationDefinition(
         "team.agent.remove",
         "default",
         "team_controller",
@@ -49,8 +62,9 @@ _ROWS = (
             "Root same permitted team/scope; self only own membership",
             "Membership removal distinct from ID revocation",
         ),
+        codec=REMOVAL_CODEC,
     ),
-    OperationSpec(
+    OperationDefinition(
         "identity.root.endorse",
         "default",
         "human_identity",
@@ -82,8 +96,9 @@ _ROWS = (
             "Client checks frozen policy against authorized read before displaying link",
             "Execute refuses policy_changed on changed current policy; retry never rebinds",
         ),
+        codec=ROOT_CODEC,
     ),
-    OperationSpec(
+    OperationDefinition(
         "team.agent.admit",
         "default",
         "team_controller",
@@ -117,8 +132,9 @@ _ROWS = (
             "Select exact authenticated requesting root, not global unique root",
             "Counters per policy/team/root ID; key rotation retains bucket; aggregate ceiling only if explicit",
         ),
+        codec=ADMISSION_CODEC,
     ),
-    OperationSpec(
+    OperationDefinition(
         "human-role.revoke",
         "default",
         "team_controller",
@@ -131,6 +147,7 @@ _ROWS = (
             "Revoke: stored holding, no H2 admission check",
             "Last-owner safeguards",
         ),
+        codec=REVOKE_CODEC,
     ),
 )
 
@@ -150,15 +167,13 @@ def presentation_catalog() -> dict[str, dict]:
     Wire field grammars come from their existing shared codecs, so neither a
     browser allowlist nor a second per-operation schema needs maintaining.
     """
-    from .codecs import presentation_schema
-
     return {
         f"{spec.operation}|{spec.variant}": {
             "family": spec.family,
             "key_role": spec.key_role,
             "rule": spec.rule,
             "consumer_available": spec.consumer_available,
-            "subject_schema": presentation_schema(spec.operation, spec.variant),
+            "subject_schema": deepcopy(spec.codec.subject_schema),
         }
         for spec in OPERATIONS.values()
     }
