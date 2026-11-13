@@ -240,10 +240,15 @@ async def verify_request_certificate(request: Request, db, *, fresh: bool = Fals
     except ValueError:
         raise HTTPException(status_code=401, detail="Invalid DIDKey signature")
 
-    # -- Step 4: Resolve team public key from awid --
-    team_did_key = await _resolve_team_key(request, cert_team_id)
-    if not team_did_key:
-        raise HTTPException(status_code=401, detail="unknown_team")
+    from awid.protected_effect import EffectRefused
+    from awid.protected_membership import observe_team_protection, verify_registered_membership
+
+    registry = getattr(request.app.state, "awid_registry_client", None)
+    try:
+        protection_observation = await observe_team_protection(registry, cert_team_id)
+    except EffectRefused as exc:
+        raise HTTPException(status_code=503, detail={"code": exc.code}) from exc
+    team_did_key = protection_observation.controller_did_key
 
     # -- Step 5: The team's revoked and registered certificates --
     revoked_certs = await _get_revoked_certificates(request, cert_team_id)
@@ -322,6 +327,14 @@ async def verify_request_certificate(request: Request, db, *, fresh: bool = Fals
                 cert_team_id,
             )
         raise certificate_refusal(e) from None
+
+    try:
+        await verify_registered_membership(registry, protection_observation, cert_data)
+    except TeamCertificateError as exc:
+        raise certificate_refusal(exc) from None
+    except EffectRefused as exc:
+        raise HTTPException(status_code=503, detail={"code": exc.code}) from exc
+    cert_info["protection_observation"] = protection_observation
 
     # Team authority does not establish the member's stable identity/address.
     binding = await verify_identity_binding(

@@ -50,6 +50,7 @@ REASONS = (
     "bad_signature",
     "revoked",
     "unregistered",
+    "certificate_binding_mismatch",
 )
 
 CERTIFICATE_VERSION = 1
