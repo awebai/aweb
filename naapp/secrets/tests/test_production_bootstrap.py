@@ -6,6 +6,7 @@ Owner setup is a shared-writer component; the old HTTP binding path refuses.
 import asyncio
 import base64
 import json
+import secrets
 from dataclasses import dataclass, replace
 from datetime import UTC, datetime, timedelta
 from urllib.parse import parse_qs, urlsplit
@@ -269,7 +270,7 @@ async def signed_in_owner(root):
 async def test_a_canonical_component_holder_logs_into_the_production_console(root):
     service, client, configured, member, installed, smtp, transport, dns = root
     human = configured.console_origin
-    scope, body, token = await signed_in_owner(root)
+    scope, body, _ = await signed_in_owner(root)
     home = await client.get(human + "/")
     assert home.status_code == 200 and "Secrets console" in home.text
     assert (await client.get(AUDIENCE + "/enrolment")).status_code == 404
@@ -291,9 +292,15 @@ async def test_a_canonical_component_holder_logs_into_the_production_console(roo
     assert listed.status_code == 200, listed.text
     assert listed.json()["result"]["secrets"] == []
     assert (await client.get(AUDIENCE + "/v1/secrets")).status_code == 401
-    assert (
-        await client.post(human + "/enrolment/options", json={"link_token": token})
-    ).status_code == 403
+    # No enrolment link exists after the cutover: a well-formed token B3 never
+    # issued is refused, and governance records nothing.
+    refused = await client.post(
+        human + "/enrolment/options", json={"link_token": secrets.token_urlsafe(32)}
+    )
+    assert (refused.status_code, refused.json()["detail"]) == (403, "enrolment_refused")
+    assert [event["payload"]["act"] for event in await envelopes(db, member.team_id)] == [
+        "role.designated",
+    ]
     async with asyncio.timeout(5):
         while dns.queries[("logs.example", "A")] == 0:
             await asyncio.sleep(0.01)

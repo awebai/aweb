@@ -11,6 +11,7 @@ from datetime import UTC, datetime
 from urllib.parse import parse_qs, urlsplit
 
 import dns.asyncresolver as dns_api
+import httpx
 import pytest
 from aweb_naapp.hooks.owner_act import HumanCredential
 from aweb_naapp_testing import Member, did_key
@@ -31,24 +32,27 @@ pytestmark = pytest.mark.parametrize("root", [{"manifest_version": 3}], indirect
 
 async def collect_credential(root, holder, principal):
     """Use the real H-signed start, browser ceremony and key-bound result."""
-    _, client, settings, *_ = root
+    service, client, settings, *_ = root
     key, verifier, raw, headers = start_request(root, holder, principal)
     started = await client.post(settings.public_origin + "/handoffs", content=raw, headers=headers)
     assert started.status_code == 201, started.text
     handoff = started.json()["handoff_id"]
     prefix = settings.console_origin + f"/handoff/{handoff}/credential"
-    state = await client.get(prefix)
-    assert state.status_code == 200, state.text
-    browser = {"Origin": settings.console_origin, "X-CSRF-Token": state.json()["csrf_token"]}
-    options = await client.post(prefix + "/options", json={}, headers=browser)
-    assert options.status_code == 200, options.text
-    device = SoftAuthenticator(settings.console_origin)
-    completed = await client.post(
-        prefix + "/complete",
-        json={"credential": device.create(options.json())},
-        headers=browser,
-    )
-    assert completed.status_code == 200, completed.text
+    # The ceremony runs in the holder's browser, which keeps its own cookies;
+    # the controller's later delivery must not carry them.
+    async with httpx.AsyncClient(transport=httpx.ASGITransport(service)) as browser_client:
+        state = await browser_client.get(prefix)
+        assert state.status_code == 200, state.text
+        browser = {"Origin": settings.console_origin, "X-CSRF-Token": state.json()["csrf_token"]}
+        options = await browser_client.post(prefix + "/options", json={}, headers=browser)
+        assert options.status_code == 200, options.text
+        device = SoftAuthenticator(settings.console_origin)
+        completed = await browser_client.post(
+            prefix + "/complete",
+            json={"credential": device.create(options.json())},
+            headers=browser,
+        )
+        assert completed.status_code == 200, completed.text
     code = parse_qs(urlsplit(completed.json()["redirect_uri"]).query)["code"][0]
     path = f"/handoffs/{handoff}/result"
     raw = json.dumps({"v": 1, "code": code, "verifier": verifier}).encode()
