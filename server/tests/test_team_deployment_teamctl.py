@@ -118,3 +118,13 @@ def test_backup_leaves_the_signers_live_controller_key_out_of_the_secrets_archiv
     assert result.returncode == 0, result.stderr
     archived = [call for call in calls(tmp_path) if "tarfile" in call and "/source:ro" in call]
     assert len(archived) == 1 and archived[0].rstrip().endswith("./signer/private-controller"), archived
+
+
+def test_reload_tls_forces_the_reload_though_the_configuration_is_unchanged(tmp_path):
+    # Caddy skips a reload whose configuration is unchanged, and with it the
+    # replaced certificate files (seen on run35).
+    path = deployment(tmp_path, {**EXAMPLE, "front": FRONT})
+    result = run(tmp_path, "reload-tls", path, command=TEAMCTL, docker_ok=True)
+    assert result.returncode == 0, result.stderr
+    reloads = [call for call in calls(tmp_path) if "caddy reload" in call]
+    assert len(reloads) == 1 and "--force" in reloads[0].split(), reloads

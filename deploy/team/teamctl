@@ -564,7 +564,9 @@ reload-tls() {
   model
   [[ -n "$(env_value FRONT_IMAGE)" ]] || refuse "the deployment has no front"
   check_front || exit 1
-  dc exec -T front caddy reload --config /etc/caddy/Caddyfile --adapter caddyfile </dev/null
+  # --force: Caddy skips a reload whose configuration is unchanged, and with
+  # it the replaced certificate files.
+  dc exec -T front caddy reload --config /etc/caddy/Caddyfile --adapter caddyfile --force </dev/null
   served_certificates
 }
 
