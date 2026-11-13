@@ -234,7 +234,8 @@ BASE_SERVICES = ["postgres", "redis", "aweb", "secrets", "logs", "signer", "egre
 PUBLIC_REGISTRY_ADDRESSES = ["104.21.0.10", "172.67.0.10"]
 
 
-def start_with_agents(tmp_path: Path, team: dict, services: list[str], registry: list[str]):
+def start_with_agents(tmp_path: Path, team: dict, services: list[str], registry: list[str],
+                      egress_log: str | None = None):
     # The stub docker answers what start asks before the ingress probe: the
     # services, the origins' addresses seen from aweb, the agents network's
     # isolation, a first line from each followed log, and the probe's pass.
@@ -249,7 +250,10 @@ def start_with_agents(tmp_path: Path, team: dict, services: list[str], registry:
         "gateway_mode_ipv4": "true false isolated",
         "logs --follow": "attached\n",
         "probe-ingress.mjs": "OATS_EGRESS_INGRESS_PASS",
+        "ps -q egress": "egress-container-id\n",
     }
+    if egress_log is not None:
+        answers["--timestamps --follow"] = egress_log
     path = agents_deployment(tmp_path, team)
     return run(tmp_path, "start", path, command=TEAMCTL, docker_ok=True, answers=answers)
 
@@ -314,3 +318,64 @@ def test_start_holds_the_agents_when_a_declared_route_does_not_match_the_deploym
     assert "agents held: the ingress refusal probe did not pass" in result.stderr
     made = calls(tmp_path)
     assert followed(tmp_path) == [] and probes(made) == []
+
+
+LATER_LINE = "2099-01-01T00:00:00.000000000Z [INFO] 172.30.0.10:4000 - 1 \"A IN denied-x.invalid. udp 40 false 512\" NXDOMAIN"
+EARLIER_LINE = "2000-01-01T00:00:00.000000000Z [INFO] replayed history"
+
+
+def egress_capture(tmp_path: Path, line: str, monkeypatch):
+    log = tmp_path / "capture" / "agent-egress-refusals.log"
+    log.parent.mkdir()
+    monkeypatch.setenv("TEAM_DEPLOYMENT_EGRESS_LOG", str(log))
+    monkeypatch.setenv("TEAM_DEPLOYMENT_CAPTURE_SECONDS", "2")
+    result = start_with_agents(tmp_path, {"id": "devteam:example.com"}, BASE_SERVICES, PUBLIC_REGISTRY_ADDRESSES,
+                               egress_log=line + "\n")
+    return result, log
+
+
+def index_of(made: list[str], fragment: str) -> int:
+    return next(i for i, call in enumerate(made) if fragment in call)
+
+
+def test_the_egress_capture_starts_after_egress_and_before_any_probe_or_the_agent(tmp_path, monkeypatch):
+    # The agent's first lookup cannot precede the capture: its follower is
+    # attached, and seen streaming, before the agent container exists.
+    result, log = egress_capture(tmp_path, LATER_LINE, monkeypatch)
+    assert "egress capture: streaming" in result.stdout, result.stdout + result.stderr
+    made = calls(tmp_path)
+    egress_up = index_of(made, "--wait-timeout 300 egress")
+    follower = index_of(made, "logs --timestamps --follow egress-container-id")
+    # teamctl starts the agent only after both probes; this stub world stops
+    # at the boundary probe, so the agent is checked never to precede them.
+    assert egress_up < follower < index_of(made, "probe-ingress.mjs")
+    assert all(i > follower for i, call in enumerate(made) if call.rstrip().endswith(" agent"))
+    assert log.read_text() == LATER_LINE + "\n"
+    receipt = json.loads(log.with_name(log.name + ".receipt.json").read_text())
+    assert receipt["container"] == "egress-container-id" and receipt["follower_pid"] > 0
+    assert receipt["attached_at"] < receipt["witness_at"]
+
+
+def test_a_capture_that_shows_no_new_line_holds_the_agent(tmp_path, monkeypatch):
+    # Replayed history alone does not show the follower streaming.
+    result, log = egress_capture(tmp_path, EARLIER_LINE, monkeypatch)
+    assert result.returncode == 1
+    assert "egress capture: no line after the follower attached" in result.stderr, result.stderr
+    made = calls(tmp_path)
+    assert not [call for call in made if "probe-ingress.mjs" in call]
+    assert not [call for call in made if call.rstrip().endswith(" agent")]
+
+
+def test_a_capture_refuses_a_log_file_that_exists(tmp_path, monkeypatch):
+    log = tmp_path / "capture" / "agent-egress-refusals.log"
+    log.parent.mkdir()
+    log.write_text("earlier\n")
+    monkeypatch.setenv("TEAM_DEPLOYMENT_EGRESS_LOG", str(log))
+    result = start_with_agents(tmp_path, {"id": "devteam:example.com"}, BASE_SERVICES, PUBLIC_REGISTRY_ADDRESSES)
+    assert result.returncode == 1 and "already exists" in result.stderr
+    assert log.read_text() == "earlier\n"
+
+
+def test_without_a_capture_path_start_attaches_no_follower(tmp_path):
+    start_with_agents(tmp_path, {"id": "devteam:example.com"}, BASE_SERVICES, PUBLIC_REGISTRY_ADDRESSES)
+    assert not [call for call in calls(tmp_path) if "--timestamps --follow" in call]

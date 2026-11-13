@@ -285,6 +285,66 @@ start_egress() {
   fi
 }
 
+# With TEAM_DEPLOYMENT_EGRESS_LOG (an absolute path not yet there), egress's
+# own log (both streams, Docker timestamps, kept verbatim) is followed into
+# that file from once egress is healthy, before any probe or the agent, so no
+# lookup or connection of the agent can precede the capture. The follower is
+# left running for the caller, which owns it by the PID in the receipt and
+# stops it when it collects. Agents are held unless a line timestamped after
+# the follower attached arrives within TEAM_DEPLOYMENT_CAPTURE_SECONDS (egress's
+# own health checks log every 5 s): replayed history alone does not show the
+# follower streaming.
+# The time now, UTC, to the microsecond (date's %N is not portable).
+utc_now() {
+  python_in_server -c 'import datetime; print(datetime.datetime.now(datetime.timezone.utc).strftime("%Y-%m-%dT%H:%M:%S.%fZ"))'
+}
+
+capture_egress() {
+  local log="$TEAM_DEPLOYMENT_EGRESS_LOG" id attached follower deadline
+  [[ "$log" == /* ]] || refuse "TEAM_DEPLOYMENT_EGRESS_LOG must be an absolute path"
+  [[ ! -e "$log" && ! -e "$log.receipt.json" ]] || refuse "the egress capture $log already exists; each capture has its own file"
+  id="$(dc ps -q egress)" || refuse "could not find the egress container"
+  [[ "$(grep -c . <<<"$id")" -eq 1 ]] || refuse "egress is not exactly one container"
+  attached="$(utc_now)"
+  nohup docker logs --timestamps --follow "$id" >"$log" 2>&1 </dev/null &
+  follower=$!
+  deadline=$((SECONDS + ${TEAM_DEPLOYMENT_CAPTURE_SECONDS:-30}))
+  until python_in_server - "$log" "$attached" <<'PY'
+import sys
+
+log, attached = sys.argv[1:]
+# Docker's RFC3339Nano stamps sort as text once their fractions have the same
+# width; both sides are cut to whole microseconds.
+def stamp(text):
+    head, _, frac = text.rstrip("Z").partition(".")
+    return head + "." + (frac + "000000")[:6]
+after = stamp(attached)
+lines = open(log, encoding="utf-8", errors="replace").read().splitlines()
+sys.exit(0 if any(stamp(line.split(" ", 1)[0]) > after for line in lines if line[:1].isdigit()) else 1)
+PY
+  do
+    if ((SECONDS >= deadline)); then
+      kill "$follower" 2>/dev/null || true
+      wait "$follower" 2>/dev/null || true
+      echo "teamctl: egress capture: no line after the follower attached at $attached" >&2
+      return 1
+    fi
+    sleep 0.5
+  done
+  python_in_server - "$log.receipt.json" "$id" "$follower" "$attached" "$(utc_now)" \
+    "$(docker inspect --format '{{.Image}}|{{index .Config.Labels "com.docker.compose.project"}}|{{index .Config.Labels "com.docker.compose.service"}}|{{.HostConfig.LogConfig.Type}}|{{.State.StartedAt}}' "$id")" <<'PY'
+import json
+import sys
+
+out, container, pid, attached, witness, inspected = sys.argv[1:]
+image, project, service, driver, started = (inspected.split("|") + [""] * 5)[:5]
+json.dump({"container": container, "image": image, "project": project, "service": service, "logDriver": driver,
+           "startedAt": started, "follower_pid": int(pid), "attached_at": attached, "witness_at": witness},
+          open(out, "w", encoding="utf-8"), indent=2)
+PY
+  echo "egress capture: streaming into $log (follower $follower, attached $attached)"
+}
+
 # The signer's human origin has one existing GET route that answers 200: its
 # page stylesheet. The ingress probe's human controls use it.
 SIGNER_HUMAN_PATH=/handoff-assets/handoff.css
@@ -682,6 +742,10 @@ sys.exit(status != 200)
   fi
   if [[ "$with_agents" -eq 1 ]]; then
     start_egress
+    if [[ -n "${TEAM_DEPLOYMENT_EGRESS_LOG:-}" ]] && ! capture_egress; then
+      echo "teamctl: agents held: egress's log is not being captured" >&2
+      exit 1
+    fi
     dc ps --format '{{.Service}} {{.Status}}'
     # The signer's request origin is one of egress's five routes. Until the
     # ingress is shown to refuse that origin's SNI carrying the human origin's
