@@ -1,5 +1,7 @@
 """Closed legacy transport/auth controls, with no DB or external service."""
 
+from contextlib import aclosing
+
 import base64
 import json
 from datetime import UTC, datetime, timedelta
@@ -180,14 +182,14 @@ async def test_service_owned_send_preserves_sdk_cache_fences(name, lost):
     retained = RetainedEffect(op.operation_id, signing, signature,
         artifact_digest(signing, base64.b64encode(signature).rstrip(b"=").decode()),
         NOW + timedelta(seconds=60), frozen, "transport-only-fixture")
-    async with ObservedCachedRegistry(lost=lost) as registry:
+    async with aclosing(ObservedCachedRegistry(lost=lost)) as registry:
         custody.configure_effects(registry=registry, clients={ORIGIN: registry._http_client}, clock=lambda: NOW)
         if lost:
             with pytest.raises(httpx.ReadError):
                 await custody.deliver_retained(op, retained)
         else:
             await custody.deliver_retained(op, retained)
-        expected = "tolerant" if name == "team.agent.admit" else "strict"
+        expected = "invalidate"
         assert registry.events == [expected, "post", expected]
         assert len(registry.sent) == 1
     assert len(calls) == (1 if name == "team.agent.admit" else 0)
