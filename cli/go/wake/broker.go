@@ -261,6 +261,7 @@ func (b *Broker) Reconcile() {
 	b.registrationFaults = faults
 	b.mu.Unlock()
 	seen := map[string]bool{}
+	bindingOwners := map[string]string{}
 	for _, fault := range faults {
 		b.cfg.Log("registration unreadable path=%s err=%s (skipped)", fault.Path, fault.Error)
 		// A home whose own file became unreadable keeps its last-good runner.
@@ -270,9 +271,9 @@ func (b *Broker) Reconcile() {
 		if ok {
 			seen[runner.home()] = true
 			runner.recordRegistrationError(errors.New(fault.Error))
+			claimRetainedBindings(bindingOwners, runner)
 		}
 	}
-	bindingOwners := map[string]string{}
 	for _, reg := range registrations {
 		canonical, err := CanonicalHome(reg.Home)
 		if err != nil {
@@ -291,6 +292,7 @@ func (b *Broker) Reconcile() {
 			// A failed read/validation retains the last-good running home.
 			if runner, ok := b.instanceRunner(canonical); ok {
 				runner.recordRegistrationError(validationErr)
+				claimRetainedBindings(bindingOwners, runner)
 			}
 			b.cfg.Log("registration refused home=%s err=%v (retained for retry)", canonical, validationErr)
 			b.reconcileMu.Unlock()
@@ -352,6 +354,25 @@ func (b *Broker) Reconcile() {
 		b.reconcileMu.Unlock()
 	}
 	b.pruneStreams()
+}
+
+// claimRetainedBindings records the bindings of a runner kept on its last-good
+// registration as owned by it, so a later registration of the same binding is
+// still refused. A runner that is itself refused claims nothing.
+func claimRetainedBindings(bindingOwners map[string]string, runner *instanceRunner) {
+	if runner.currentConflictHome() != "" {
+		return
+	}
+	bindings := append(runner.registrationSnapshot().ReceiveBindings(), runner.pendingReceiveBindings()...)
+	for _, binding := range bindings {
+		key, err := bindingKey(binding.IdentityHome, binding.TeamID)
+		if err != nil {
+			continue
+		}
+		if _, owned := bindingOwners[key]; !owned {
+			bindingOwners[key] = runner.home()
+		}
+	}
 }
 
 // applyRegistrationLocked applies just one accepted home, never a disk sweep.
