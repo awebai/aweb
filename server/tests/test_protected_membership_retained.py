@@ -65,7 +65,7 @@ async def membership_env(real_stack):
 
 
 @pytest.mark.asyncio
-@pytest.mark.parametrize("surface", ["identity", "grant", "stream", "status", "room", "task"])
+@pytest.mark.parametrize("surface", ["identity", "grant", "stream", "status", "room", "task", "projection"])
 @pytest.mark.parametrize("protected", [False, True], ids=["legacy", "protected"])
 @pytest.mark.parametrize("change", ["genuine", "key", "alias", "null-blob", "unknown-protection", "down"])
 async def test_exact_retained_and_presented_membership(membership_env, surface, protected, change):
@@ -143,6 +143,10 @@ async def test_exact_retained_and_presented_membership(membership_env, surface, 
             )
             status, _ = await effective_grant_status(request, row, issued)
             return {"status": status}
+        if surface == "projection":
+            from aweb.messaging.sender_membership import sender_memberships
+            projections = await sender_memberships(request, app.state.db, [{"team_id": TEAM, "from_agent_id": str(agent_id)}])
+            return {"state": projections[(TEAM, str(agent_id))].state}
         if surface == "room":
             await _refresh_room_authority(request, app.state.db, identity)
         else:
@@ -170,6 +174,10 @@ async def test_exact_retained_and_presented_membership(membership_env, surface, 
         response = await client.get("/v1/messages", headers=headers)
     rejected = (protected and change in {"key", "alias"}) or (surface == "task" and change == "key")
     unavailable = change in {"unknown-protection", "down"} or (protected and change == "null-blob")
+    if surface == "projection":
+        assert response.status_code == 200, response.text
+        assert response.json()["state"] == ("unknown" if unavailable else "inactive" if rejected else "active")
+        return
     assert response.status_code == (503 if unavailable else 401 if rejected else 200), response.text
     if protected and change in {"key", "alias"}:
         assert "certificate_binding_mismatch" in response.text
