@@ -451,5 +451,18 @@ and audit; the operator owns its final removal. Probe containers and loaded
 image tags are removed by the test. With neither variable, the archive is
 temporary and removed after the one-host run. Input and output are exclusive.
 
-These tests do not publish to a registry. Public pullability is established by
-the tag publisher's registry readback at release time.
+These tests do not publish to a registry. The tag publisher's authenticated
+readback establishes registry digest and source identity, not public pullability.
+
+Before the first server image release, the coordinator must arrange package
+provisioning and the release identity's access, including any separately authorized
+first-publication bootstrap, so authenticated tag listing succeeds. An unavailable
+listing remains a refusal; a 403 or 404 is not permission to assume absence.
+
+The coordinator must also arrange public package visibility and verify
+anonymous retrieval in an environment with no registry credentials. Read the
+immutable version tag, require its index digest to equal the publication receipt,
+and fetch both platform manifests, configs and layers by digest. Record that
+anonymous-read result alongside the source and digest receipt before declaring
+the server image publicly pullable. Authenticated publication success alone does
+not complete this acceptance step.
