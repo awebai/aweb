@@ -84,14 +84,23 @@ import { operationTable } from "/handoff-assets/operations.mjs";
     document.getElementById("handoff-target").textContent =
       [subject.principal, subject.role, subject.app_id, subject.installation_id,
         subject.event_class, subject.binding_id, subject.hold_id, subject.team_id,
-        subject.server_url, subject.key_id, subject.public_key, subject.created_at]
+        subject.server_url, subject.key_id, subject.public_key, subject.created_at,
+        subject.deployment_label, subject.root_id, subject.root_key, subject.domain]
         .filter(value => value !== undefined).join(" · ");
     document.getElementById("handoff-digest").textContent = digest;
     document.getElementById("handoff-fingerprint").textContent = digest.slice(0, 16).match(/.{4}/g).join(" ");
     document.getElementById("handoff-payload").textContent = JSON.stringify(payload, null, 2);
     document.getElementById("handoff-governance").hidden = false;
     action.textContent = "Approve operation with passkey";
-    status.textContent = "Compare the act, target and fingerprint with your terminal before approving.";
+    const compare = "Compare the act, target and fingerprint with your terminal before approving.";
+    if (request.operation === "identity.root.endorse") {
+      const policy = request.admission_policy;
+      status.textContent = `${request.responsibility_statement} Agent admissions for ${policy.teams.join(", ")}: ` +
+        `at most ${policy.bounds.max_active} active per root and ${policy.bounds.max_per_window} per ${policy.bounds.rate_window_seconds} seconds. ${compare}`;
+      action.textContent = "Endorse root with passkey";
+    } else {
+      status.textContent = compare;
+    }
     document.body.dataset.handoffState = "ready";
     action.disabled = false;
     document.getElementById("handoff-governance-title").focus();
