@@ -140,8 +140,11 @@ async def _owner_act_route(request: Request, db_infra: DatabaseInfra, binding_id
             raise awid_registry_not_configured_exception(operation="AWID owner-act team key")
         from awid.controller_request import raw_controller_request_target
         from awid.protected_effect import HEADER, http_consumer
-        consumer = http_consumer(audience=request.app.state.public_origin,
-            method=request.method, path=raw_controller_request_target(request), body=await request.body())
+        try:
+            consumer = http_consumer(audience=request.app.state.public_origin,
+                method=request.method, path=raw_controller_request_target(request), body=await request.body())
+        except ValueError as exc:
+            raise ServiceError("verifier_misconfigured: invalid protected consumer configuration") from exc
         verifier = core_owner_act_verifier(audience=request.app.state.public_origin, registry_client=registry_client,
             protected_delivery=(request.headers.get(HEADER), consumer))
         binding = await change(
