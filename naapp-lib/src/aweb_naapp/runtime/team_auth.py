@@ -515,7 +515,7 @@ class AWIDTeamCache:
                     registered_certificate_ids=facts.published_certificate_ids,
                 )
                 async with self.registry_reader() as registry:
-                    observation = await observe_team_protection(registry, team_id)
+                    observation = await observe_team_protection(registry, team_id, certificate_id=certificate_id)
                     await verify_registered_membership(registry, observation, checked)
             except (HTTPException, TeamCertificateError, EffectRefused) as exc:
                 detail = exc.detail if isinstance(exc, HTTPException) else str(exc)
