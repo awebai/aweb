@@ -844,6 +844,10 @@ async def delete_namespace(
 
         now = datetime.now(timezone.utc)
         await tx.execute(
+            "UPDATE {{tables.team_protection}} SET generation=generation+1,approval_ref='controller-effect:delete_namespace' WHERE domain=$1",
+            domain,
+        )
+        await tx.execute(
             """
             DELETE FROM {{tables.team_certificates}} tc
             USING {{tables.teams}} t
