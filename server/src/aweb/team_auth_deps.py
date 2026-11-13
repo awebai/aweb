@@ -172,6 +172,7 @@ async def resolve_team_identity(
                 row["agent_id"], presented_certificate_id,
             )
         identity.require_fresh()
+    identity.require_fresh()
     return identity
 
 
@@ -415,6 +416,7 @@ async def _get_team_identity_with_grant_scope(
             identity.require_fresh()
     except ValueError as e:
         raise HTTPException(status_code=403, detail=str(e))
+    identity.require_fresh()
     return identity
 
 
