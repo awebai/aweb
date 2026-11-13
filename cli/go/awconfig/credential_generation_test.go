@@ -2,11 +2,14 @@ package awconfig
 
 import (
 	"bytes"
+	"crypto/ed25519"
 	"encoding/json"
 	"errors"
 	"os"
 	"path/filepath"
 	"testing"
+
+	"github.com/awebai/aw/awid"
 )
 
 var (
@@ -29,8 +32,14 @@ func credentialHome(t *testing.T, certPath string) string {
 			t.Fatal(err)
 		}
 	}
-	write("identity.yaml", "did: did:key:z6Mkresident\n")
-	write("signing.key", "key-bytes\n")
+	_, key, err := awid.GenerateKeypair()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := awid.SaveSigningKey(filepath.Join(home, "signing.key"), key); err != nil {
+		t.Fatal(err)
+	}
+	write("identity.yaml", "did: "+awid.ComputeDIDKey(key.Public().(ed25519.PublicKey))+"\n")
 	write("teams.yaml", "active_team: backend:example.com\nmemberships:\n  - team_id: backend:example.com\n    cert_path: "+certPath+
 		"\n  - team_id: frontend:example.com\n    cert_path: team-certs/frontend__example.com.pem\n")
 	write("workspace.yaml", "aweb_url: https://app.example.com\nmemberships:\n  - team_id: backend:example.com\n    cert_path: "+certPath+
@@ -187,13 +196,19 @@ func TestAnInterruptedUpdateIsRecoveredOnlyByTheSameOperation(t *testing.T) {
 	assertState(t, home, 1, false)
 }
 
-// A home changed without publishing is never blessed by a later update.
+// While a reader serves the home, a change made without publishing is never
+// blessed by a later update.
 func TestAnUnpublishedChangeIsRefusedByEverySupportedWriter(t *testing.T) {
 	home := credentialHome(t, "team-cert.pem")
+	reader, err := LockCredentialReader(home)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer reader.Close()
 	if err := updateWith(home, installA, "team-cert.pem", "published\n"); err != nil {
 		t.Fatal(err)
 	}
-	writeFile(t, home, "signing.key", "changed elsewhere\n")
+	writeFile(t, home, "team-cert.pem", "changed elsewhere\n")
 	before := projectionOf(t, home)
 	if err := updateWith(home, importA, "id-chain.json", "{}"); !errors.Is(err, ErrCredentialUpdateUnpublished) {
 		t.Fatalf("err %v", err)
@@ -232,9 +247,14 @@ func TestARestartAdoptsAValidatedHomeButNeverAnInterruptedUpdate(t *testing.T) {
 		t.Fatal(err)
 	}
 	writeFile(t, home, "team-cert.pem", "changed by an older writer\n")
+	serving, err := LockCredentialReader(home)
+	if err != nil {
+		t.Fatal(err)
+	}
 	if err := updateWith(home, importA, "id-chain.json", "{}"); !errors.Is(err, ErrCredentialUpdateUnpublished) {
 		t.Fatalf("err %v", err)
 	}
+	_ = serving.Close() // the serving reader stops; the restart adopts
 	refused := errors.New("not valid")
 	if adopted, err := AdoptCredentials(home, func(*CredentialCapture) error { return refused }); adopted || !errors.Is(err, refused) {
 		t.Fatalf("an invalid home was adopted: %v %v", adopted, err)
@@ -301,4 +321,64 @@ func TestAnUpdateRechecksItsBaseBeforeItsFirstWrite(t *testing.T) {
 			t.Errorf("%s: state %+v", name, state)
 		}
 	}
+}
+
+// With no reader serving the home there is nothing to keep coherent: a
+// supported update publishes over a change made without a generation, but
+// never over another operation's interrupted update.
+func TestWithNoReaderASupportedUpdatePublishesOverAnUnpublishedChange(t *testing.T) {
+	home := credentialHome(t, "team-cert.pem")
+	if err := updateWith(home, installA, "team-cert.pem", "published\n"); err != nil {
+		t.Fatal(err)
+	}
+	writeFile(t, home, "team-cert.pem", "changed by an older aw\n")
+	if err := updateWith(home, importA, "id-chain.json", "{}"); err != nil {
+		t.Fatalf("err %v", err)
+	}
+	assertState(t, home, 2, false)
+	_, other, _ := awid.GenerateKeypair()
+	_ = os.Remove(filepath.Join(home, "signing.key"))
+	if err := awid.SaveSigningKey(filepath.Join(home, "signing.key"), other); err != nil {
+		t.Fatal(err)
+	}
+	if err := updateWith(home, importA, "id-chain.json", "[]"); !errors.Is(err, ErrCredentialUpdateUnpublished) {
+		t.Fatalf("a home whose identity no longer names its key was adopted: %v", err)
+	}
+	if err := os.Remove(filepath.Join(home, "signing.key")); err != nil {
+		t.Fatal(err)
+	}
+	_ = UpdateCredentials(home, installB, func(begin func() error) error {
+		if err := begin(); err != nil {
+			return err
+		}
+		return errors.New("interrupted")
+	})
+	if err := updateWith(home, importA, "id-chain.json", "[]"); !errors.Is(err, ErrCredentialUpdateIncomplete) {
+		t.Fatalf("another operation's interrupted update: err %v", err)
+	}
+}
+
+// A writer with no reader holds the reader lock for its whole update, so a
+// reader cannot start while it writes.
+func TestAWriterWithNoReaderHoldsTheReaderLockWhileItWrites(t *testing.T) {
+	home := credentialHome(t, "team-cert.pem")
+	err := UpdateCredentials(home, installA, func(begin func() error) error {
+		if err := begin(); err != nil {
+			return err
+		}
+		if lock, err := LockCredentialReader(home); !errors.Is(err, ErrLockUnavailable) {
+			_ = lock.Close()
+			t.Fatalf("a reader started while the update wrote: %v", err)
+		}
+		writeFile(t, home, "team-cert.pem", "written\n")
+		return nil
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	reader, err := LockCredentialReader(home)
+	if err != nil {
+		t.Fatalf("no reader after the update: %v", err)
+	}
+	_ = reader.Close()
 }

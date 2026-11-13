@@ -117,6 +117,9 @@ type custodyService struct {
 	connectClient func(ctx context.Context, home awconfig.IdentityHome) (*awconfig.Selection, *aweb.Client, error)
 	// workingDir is the directory the service was started from.
 	workingDir string
+	// readerLock marks the resident home as served for the service's
+	// lifetime: supported writers then keep it coherent for this reader.
+	readerLock io.Closer
 	// The published snapshot: the credential generation and projection the
 	// client and its derived functions were built from, and the team
 	// certificates that capture held. identityChanged is set, until restart,
@@ -201,7 +204,9 @@ func newCustodyService(home awconfig.IdentityHome) (*custodyService, error) {
 	} else {
 		svc.applySelectionLocked(sel)
 	}
-	svc.bootstrapCredentials()
+	if err := svc.bootstrapCredentials(); err != nil {
+		return nil, err
+	}
 	return svc, nil
 }
 
@@ -498,12 +503,31 @@ func runCustodyServe(ctx context.Context) error {
 	return svc.serve(ctx)
 }
 
-// bootstrapCredentials runs once as the service starts: it removes captures a stopped
-// service left behind, and adopts the resident home's current credentials as
-// its next generation when they are valid and not already the published ones.
-// An interrupted update or an invalid home is not adopted; requests then fail
-// closed until a supported update or a restart resolves it.
-func (s *custodyService) bootstrapCredentials() {
+// custodyReaderWait bounds how long a starting service waits for a supported
+// credential update of its resident home to finish.
+const custodyReaderWait = 30 * time.Second
+
+// bootstrapCredentials runs once as the service starts. It marks the resident
+// home as served, waiting for a supported update that is writing it, so it
+// never starts on a half-written home; it holds that mark for its lifetime.
+// It removes captures a stopped service left behind, and adopts the resident
+// home's current credentials as its next generation when they are valid and
+// not already the published ones. An interrupted update or an invalid home is
+// not adopted; requests then fail closed until a supported update or a
+// restart resolves it.
+func (s *custodyService) bootstrapCredentials() error {
+	deadline := time.Now().Add(custodyReaderWait)
+	for {
+		reader, err := awconfig.LockCredentialReader(s.residentHome)
+		if err == nil {
+			s.readerLock = reader
+			break
+		}
+		if !errors.Is(err, awconfig.ErrLockUnavailable) || time.Now().After(deadline) {
+			return fmt.Errorf("a credential update of %s is still running: %w", s.residentHome, err)
+		}
+		time.Sleep(50 * time.Millisecond)
+	}
 	if err := removeCaptures(s.residentHome); err != nil {
 		s.reportFailure("remove credential captures", "credential_update_incomplete", err)
 	}
@@ -514,6 +538,7 @@ func (s *custodyService) bootstrapCredentials() {
 		}
 		s.reportFailure("adopt credentials", code, err)
 	}
+	return nil
 }
 
 // validateCapture accepts a capture whose identity and signing key are this

@@ -13,6 +13,7 @@ import (
 	"sync"
 	"sync/atomic"
 	"testing"
+	"time"
 
 	aweb "github.com/awebai/aw"
 	"github.com/awebai/aw/awconfig"
@@ -35,6 +36,17 @@ type captureService struct {
 var teamsOp = awconfig.CredentialOperation{Command: "test-writer", Intent: "teams"}
 
 func newCaptureService(t *testing.T) *captureService {
+	t.Helper()
+	c := newUnstartedCaptureService(t)
+	if err := c.bootstrapCredentials(); err != nil {
+		t.Fatal(err)
+	}
+	return c
+}
+
+// newUnstartedCaptureService is a capture service over its own resident home
+// that has not started.
+func newUnstartedCaptureService(t *testing.T) *captureService {
 	t.Helper()
 	home := t.TempDir()
 	_, key, err := awid.GenerateKeypair()
@@ -72,7 +84,11 @@ func newCaptureService(t *testing.T) *captureService {
 		client, err := aweb.New(c.servers[len(c.builtOn)-1].URL)
 		return &awconfig.Selection{TeamID: "engineering:example.com"}, client, err
 	}
-	c.bootstrapCredentials()
+	t.Cleanup(func() {
+		if c.readerLock != nil {
+			_ = c.readerLock.Close()
+		}
+	})
 	return c
 }
 
@@ -194,8 +210,12 @@ func TestCustodyRecoversAnUnpublishedChangeOnlyByARestart(t *testing.T) {
 	if deps := c.deps(t); deps.client != nil || c.lastError != "credential_update_unpublished" {
 		t.Fatalf("client %p, last error %q", deps.client, c.lastError)
 	}
+	_ = c.readerLock.Close() // the first service stops
 	restarted := &custodyService{residentHome: c.home, logOut: io.Discard, identity: c.identity, connectClient: c.connectClient}
-	restarted.bootstrapCredentials()
+	if err := restarted.bootstrapCredentials(); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = restarted.readerLock.Close() })
 	if deps := restarted.clientDeps(context.Background()); deps.client == nil {
 		t.Fatalf("the restart did not adopt the home: %s", restarted.lastError)
 	}
@@ -319,5 +339,72 @@ func TestCustodyServesTheReplacedCertificateAndKeepsTheGrantRefused(t *testing.T
 	}
 	if status := grant(); status.Active || lastSent() != replacement.CertificateID {
 		t.Fatalf("after the update: grant %+v sent with %q, want %q", status, lastSent(), replacement.CertificateID)
+	}
+}
+
+// A service starting while a supported writer updates its resident home with
+// no reader waits for the update, and serves only what it completed.
+func TestCustodyStartingDuringAnUpdateWaitsForItToComplete(t *testing.T) {
+	c := newUnstartedCaptureService(t)
+	started := make(chan error, 1)
+	op := awconfig.CredentialOperation{Command: "test-writer", Intent: "complete"}
+	if err := awconfig.UpdateCredentials(c.home, op, func(begin func() error) error {
+		if err := begin(); err != nil {
+			return err
+		}
+		writeTeams(t, c.home, "half")
+		go func() { started <- c.bootstrapCredentials() }()
+		select {
+		case err := <-started:
+			t.Fatalf("the service started on a half-written home: %v", err)
+		case <-time.After(300 * time.Millisecond):
+		}
+		writeTeams(t, c.home, "complete")
+		return nil
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if err := <-started; err != nil {
+		t.Fatal(err)
+	}
+	if deps := c.deps(t); deps.client == nil || !strings.Contains(c.builtOn[len(c.builtOn)-1], "complete") {
+		t.Fatalf("client %p built on %v (%s)", deps.client, c.builtOn, c.lastError)
+	}
+}
+
+// A service starting while an update that then crashes is writing never
+// adopts the half-written home; it fails closed.
+func TestCustodyStartingDuringAnUpdateThatCrashesFailsClosed(t *testing.T) {
+	c := newUnstartedCaptureService(t)
+	started := make(chan error, 1)
+	op := awconfig.CredentialOperation{Command: "test-writer", Intent: "crashes"}
+	_ = awconfig.UpdateCredentials(c.home, op, func(begin func() error) error {
+		if err := begin(); err != nil {
+			return err
+		}
+		writeTeams(t, c.home, "half")
+		go func() { started <- c.bootstrapCredentials() }()
+		time.Sleep(100 * time.Millisecond)
+		return errors.New("crashed")
+	})
+	if err := <-started; err != nil {
+		t.Fatal(err)
+	}
+	if deps := c.deps(t); deps.client != nil || c.lastError != "credential_update_incomplete" || len(c.builtOn) != 0 {
+		t.Fatalf("client %p after %d builds, last error %q", deps.client, len(c.builtOn), c.lastError)
+	}
+	// The same operation completes it while the service serves; the next
+	// request is served from it.
+	if err := awconfig.UpdateCredentials(c.home, op, func(begin func() error) error {
+		if err := begin(); err != nil {
+			return err
+		}
+		writeTeams(t, c.home, "recovered")
+		return nil
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if deps := c.deps(t); deps.client == nil || !strings.Contains(c.builtOn[len(c.builtOn)-1], "recovered") {
+		t.Fatalf("client %p built on %v (%s)", deps.client, c.builtOn, c.lastError)
 	}
 }

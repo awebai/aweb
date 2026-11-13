@@ -625,26 +625,41 @@ func TestANewInstallWaitingOnAnOlderInstallOfAnotherTeamRefuses(t *testing.T) {
 	}
 }
 
-// A home changed without publishing a generation is not installed into: the
-// change would otherwise be published with the install.
-func TestAnInstallIntoAHomeChangedWithoutPublishingRefuses(t *testing.T) {
-	_, teamKey, _ := awid.GenerateKeypair()
-	registry := newCertificateRegistry(t, teamKey)
-	home, didKey := keyOnlyHome(t)
-	first := signedMemberCertificate(t, teamKey, didKey, "", awid.IdentityModeLocal)
-	registry.register(first, false)
-	if _, err := installTeamCertificateFile(context.Background(), installRequest(t, registry, home, certificateFile(t, first))); err != nil {
-		t.Fatal(err)
-	}
-	if err := os.WriteFile(filepath.Join(home, "id-chain.json"), []byte("{}"), 0o600); err != nil {
-		t.Fatal(err)
-	}
-	contents := homeContents(t, home)
-	_, err := installTeamCertificateFile(context.Background(), installRequest(t, registry, home, certificateFile(t, first)))
-	if errorCodeOf(err) != "credential_update_unpublished" {
-		t.Fatalf("err %v", err)
-	}
-	if !maps.Equal(contents, homeContents(t, home)) {
-		t.Fatal("the refused install changed the home")
+// While custody serves the home, a home changed without publishing a
+// generation is not installed into: the change would otherwise be published
+// with the install. With no reader, the install publishes over it, as
+// ordinary setup (accept, then connect or install) needs.
+func TestAnInstallIntoAHomeChangedWithoutPublishingRefusesOnlyWhileServed(t *testing.T) {
+	for name, served := range map[string]bool{"served by custody": true, "with no reader": false} {
+		_, teamKey, _ := awid.GenerateKeypair()
+		registry := newCertificateRegistry(t, teamKey)
+		home, didKey := keyOnlyHome(t)
+		first := signedMemberCertificate(t, teamKey, didKey, "", awid.IdentityModeLocal)
+		registry.register(first, false)
+		if _, err := installTeamCertificateFile(context.Background(), installRequest(t, registry, home, certificateFile(t, first))); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(filepath.Join(home, "id-chain.json"), []byte("{}"), 0o600); err != nil {
+			t.Fatal(err)
+		}
+		if served {
+			reader, err := awconfig.LockCredentialReader(home)
+			if err != nil {
+				t.Fatal(err)
+			}
+			contents := homeContents(t, home)
+			_, err = installTeamCertificateFile(context.Background(), installRequest(t, registry, home, certificateFile(t, first)))
+			_ = reader.Close()
+			if errorCodeOf(err) != "credential_update_unpublished" {
+				t.Errorf("%s: err %v", name, err)
+			}
+			if !maps.Equal(contents, homeContents(t, home)) {
+				t.Errorf("%s: the refused install changed the home", name)
+			}
+			continue
+		}
+		if _, err := installTeamCertificateFile(context.Background(), installRequest(t, registry, home, certificateFile(t, first))); err != nil {
+			t.Errorf("%s: err %v", name, err)
+		}
 	}
 }

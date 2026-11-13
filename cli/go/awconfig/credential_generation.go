@@ -1,6 +1,7 @@
 package awconfig
 
 import (
+	"crypto/ed25519"
 	"crypto/rand"
 	"crypto/sha256"
 	"encoding/hex"
@@ -13,6 +14,7 @@ import (
 	"sort"
 	"strings"
 
+	"github.com/awebai/aw/awid"
 	"gopkg.in/yaml.v3"
 )
 
@@ -33,6 +35,10 @@ const (
 	credentialManifestFile = "credential-generation.json"
 	credentialMarkerFile   = "credential-update.json"
 	credentialLockFile     = "credential-update.lock"
+	// credentialReaderLockFile is held shared by a reader serving the home
+	// (aw custody serve) for its lifetime, and exclusively by a supported
+	// writer while no reader serves it.
+	credentialReaderLockFile = "credential-reader.lock"
 )
 
 var (
@@ -224,6 +230,31 @@ func (c *CredentialCapture) WriteTo(dir string) error {
 	return nil
 }
 
+// validateCredentialBaseline accepts a home whose identity names the key it
+// holds, when it holds both.
+func validateCredentialBaseline(home string) error {
+	capture, err := CaptureCredentials(home)
+	if err != nil {
+		return err
+	}
+	identityData, key := capture.Files["identity.yaml"], capture.Files["signing.key"]
+	if identityData == nil || key == nil {
+		return nil
+	}
+	var identity WorktreeIdentity
+	if err := yaml.Unmarshal(identityData, &identity); err != nil {
+		return err
+	}
+	signingKey, err := awid.ParseSigningKey(key)
+	if err != nil {
+		return err
+	}
+	if did := awid.ComputeDIDKey(signingKey.Public().(ed25519.PublicKey)); strings.TrimSpace(identity.DID) != "" && strings.TrimSpace(identity.DID) != did {
+		return fmt.Errorf("the identity names %s but the signing key is %s", identity.DID, did)
+	}
+	return nil
+}
+
 func digestOrAbsent(data []byte) any {
 	if data == nil {
 		return nil
@@ -274,6 +305,13 @@ func readCredentialRecords(home string) (*credentialManifest, *CredentialMarker,
 	return manifest, marker, nil
 }
 
+// LockCredentialReader marks home as served by a reader, without waiting. The
+// reader holds it for as long as it serves; ErrLockUnavailable means a
+// supported writer is updating the home.
+func LockCredentialReader(home string) (*fileLock, error) {
+	return TryLockShared(filepath.Join(home, credentialReaderLockFile))
+}
+
 // LockCredentialsShared takes home's credential lock shared, without
 // waiting: a reader holds it while it captures the home's credentials.
 func LockCredentialsShared(home string) (*fileLock, error) {
@@ -281,16 +319,36 @@ func LockCredentialsShared(home string) (*fileLock, error) {
 }
 
 // UpdateCredentials runs write as op's update of home, under home's
-// credential lock. It starts only from a published home, or to recover an
-// update of exactly op that was interrupted; anything else refuses with
-// ErrCredentialUpdateUnpublished or ErrCredentialUpdateIncomplete before
-// write runs. write calls begin before its first change, and begin refuses
+// credential lock. Another operation's interrupted update refuses with
+// ErrCredentialUpdateIncomplete; an interrupted update of exactly op is
+// recovered. While a reader serves home, an update starts only from a
+// published home, and a change made without a generation refuses with
+// ErrCredentialUpdateUnpublished; with no reader there is nothing to keep
+// coherent, and the update publishes over the home as it finds it, holding
+// the reader lock so no reader starts meanwhile. Refusals come before write
+// runs. write calls begin before its first change, and begin refuses
 // with ErrCredentialUpdateUnpublished if the home changed since the update
 // started; a write that returns without calling begin changes nothing and
 // publishes nothing. Once begun, a
 // write that fails leaves the update for op to recover; one that succeeds
 // publishes the next generation with the projection it left.
 func UpdateCredentials(home string, op CredentialOperation, write func(begin func() error) error) error {
+	// Lock order: the reader lease, then the update lock. A writer that takes
+	// the lease has no reader to keep coherent and keeps it for the whole
+	// update, so none starts meanwhile; only a real conflict means the home is
+	// served (or another such writer holds it). It never waits for the lease,
+	// since a starting reader holds the lease while it waits for the update
+	// lock.
+	served := false
+	reader, err := TryLockExclusive(filepath.Join(home, credentialReaderLockFile))
+	switch {
+	case err == nil:
+		defer reader.Close()
+	case errors.Is(err, ErrLockUnavailable):
+		served = true
+	default:
+		return err
+	}
 	lock, err := LockExclusive(filepath.Join(home, credentialLockFile))
 	if err != nil {
 		return err
@@ -315,8 +373,13 @@ func UpdateCredentials(home string, op CredentialOperation, write func(begin fun
 	case state.Generation == 0:
 		// A home that never published has no committed claim to protect: its
 		// first supported update starts from what it holds.
-	case state.Projection != state.Current:
-		return fmt.Errorf("%w: %s's credentials changed without a published generation", ErrCredentialUpdateUnpublished, home)
+	case state.Projection == state.Current:
+	case served:
+		return fmt.Errorf("%w: %s's credentials changed without a published generation while it is served", ErrCredentialUpdateUnpublished, home)
+	default:
+		if err := validateCredentialBaseline(home); err != nil {
+			return fmt.Errorf("%w: %s's credentials changed without a published generation and cannot be adopted: %v", ErrCredentialUpdateUnpublished, home, err)
+		}
 	}
 	started := state.Current
 	begun := false
