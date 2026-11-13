@@ -1,5 +1,9 @@
 # Knowledge log
 
+## 2026-11-13
+* **Harvest**: OKF proposal from aweb-expert/aweb-expert-wake-fixes (task aweb-aczd).
+* **Creation**: lesson [statement statistics keep role passwords](/aweb-expert/lessons/statement-statistics-keep-role-passwords.md). It refines [secret history sweeps define their coverage](/aweb-expert/lessons/secret-history-sweeps-define-their-coverage.md), which gains a link to it.
+
 ## 2026-11-04
 * **Harvest**: OKF proposal from aweb-expert/aweb-expert-fresh-eyes (tasks aweb-acst and aweb-actf).
 * **Update**: [identity and routing review needs the real client](/aweb-expert/lessons/identity-and-routing-review-needs-the-real-client.md) gains that the real client includes the last released binary and that a skipped released-client case is not evidence.
