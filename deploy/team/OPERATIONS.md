@@ -179,7 +179,8 @@ copy:
 
 After a controller replacement the agents' local logging **stops**, and does
 not fall back to plaintext, until the record is signed again by the new
-controller key (step 2, with the same `unsigned.json`) and installed again
+controller key (step 2, with the same `unsigned.json` or the previously
+signed `log-key.json`) and installed again
 (step 3). The log key itself does not change, so step 1 is not repeated. A new
 log key is step 1 again, then steps 2 and 3. Lines already sealed stay readable
 on the owner's machine with the keys in its keychain. While sealing is on, an
