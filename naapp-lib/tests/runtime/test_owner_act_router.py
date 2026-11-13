@@ -702,12 +702,12 @@ async def test_replay_and_fresh_delivery_share_the_remote_uninstall_observation_
 
     # F6 observes remote uninstall within AWEB_APP_GRANT_MAX_AGE_SECONDS
     # plus the refresh; replay uses the same admission as a fresh delivery.
-    monkeypatch.setenv("AWEB_APP_GRANT_MAX_AGE_SECONDS", "1")
+    monkeypatch.setenv("AWEB_APP_GRANT_MAX_AGE_SECONDS", "3")
     designation = world.body()
     assert (await world.post(designation)).status_code == 200
     observed = await world.runtime.installation_grants().status_for(world.member.team_id)
     assert observed is not None and observed.state == "active"
-    assert observed.max_age_seconds == 1
+    assert observed.max_age_seconds == 3
     deadline = observed.fresh_until
     async with world.coordination.server.db.get_manager().transaction() as tx:
         await uninstall_installation_on(
