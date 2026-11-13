@@ -254,49 +254,64 @@ class World:
 
     def member_mail(self, holder: str) -> dict:
         """A seat's mail reaches the other seat; a non-member's does not. The
-        non-member is an identity of the namespace that the team never
-        admitted, made the way the owner was: neither the seat's registry
-        address nor the team's aweb gives it a way in. The positive controls:
-        a member's mail arrives, and the owner's own address resolves."""
+        non-member is a member of another team of the namespace, with its own
+        certificate, so the real aw takes its requests to the team's aweb: the
+        server refuses its session, and with none it has nothing to send
+        from. No registry address names a seat, so no route from another
+        server leads to one. The positive controls: a member's mail arrives,
+        and the owner's address resolves."""
         first, second = (f"{self.project}-seat-{alias}" for alias in SEATS)
         for alias in SEATS:
             self.aw(f"{self.project}-seat-{alias}", "workspace", "connect", "--service", origin("aweb"))
         member_subject = f"member-{secrets.token_hex(4)}"
         self.aw(second, "mail", "send", "--to", SEATS[0], "--subject", member_subject, "--body", "a member's mail")
 
-        def refused(*args: str, where: str) -> dict:
-            result = subprocess.run(["docker", "exec", "-w", where, holder, "aw", "--json", *args],
-                                    capture_output=True, text=True, timeout=300, check=False)
-            assert result.returncode != 0, f"member mail: {args[:3]} was not refused: {result.stdout[-500:]}"
-            output = result.stdout + result.stderr
-            error = first_json(output).get("error", {}).get("message", "") if "{" in output else output.strip()
-            return {"exit": result.returncode, "error": error[-200:]}
+        def resolved(name: str) -> dict:
+            return self.aw(holder, "id", "namespace", "resolve", f"{DOMAIN}/{name}")["payload"]
 
-        owner = self.aw(holder, "id", "namespace", "resolve", f"{DOMAIN}/owner")
-        seat_address = refused("id", "namespace", "resolve", f"{DOMAIN}/{SEATS[0]}", where="/world/holder")
-        # Outside the owner's HOME, so aw finds no member's .aw above it; the
-        # HOME stays the owner's, where the namespace controller is.
-        outsider = "/world/outsider"
+        owner = resolved("owner")
+        assert owner.get("address", {}).get("name") == "owner", f"member mail: the owner's address: {owner}"
+        seat = resolved(SEATS[0])
+        assert seat["status"] == "fail" and seat["error"]["code"] == "target.not_found", (
+            f"member mail: a seat's address resolves: {seat}")
+
+        # The outsider: a local member of another team, admitted by the same owner.
+        self.aw(holder, "id", "team", "create", "--name", "outside", "--namespace", DOMAIN,
+                "--registry", origin("registry"))
         (self.world / "outsider").mkdir(mode=0o700)
-        created = first_json(run("docker", "exec", "-w", outsider, holder, "aw", "--json", "id", "create",
-                                 "--name", "outsider", "--domain", DOMAIN, "--root-parent",
-                                 "--registry", origin("registry")))
+
+        def as_outsider(*args: str) -> subprocess.CompletedProcess:
+            return subprocess.run(["docker", "exec", "-w", "/world/outsider", holder, "aw", "--json", *args],
+                                  capture_output=True, text=True, timeout=300, check=False)
+
+        requested = first_json(as_outsider("id", "team", "request", "--create-local-key", "--team",
+                                           f"outside:{DOMAIN}", "--name", "outsider").stdout)
+        added = self.aw(holder, "id", "team", "add-member", "--team", "outside", "--namespace", DOMAIN,
+                        "--did", requested["did_key"], "--name", "outsider", "--local")
+        fetched = as_outsider("id", "team", "fetch-cert", "--namespace", DOMAIN, "--team", "outside",
+                              "--cert-id", added["certificate_id"], "--registry", origin("registry"))
+        assert fetched.returncode == 0, fetched.stdout + fetched.stderr
+
+        def refused(result: subprocess.CompletedProcess, what: str) -> str:
+            output = result.stdout + result.stderr
+            assert result.returncode != 0, f"member mail: the outsider's {what} was not refused: {output[-500:]}"
+            error = first_json(output).get("error", {}).get("message", "") if "{" in output else output.strip()
+            return error[-300:]
+
+        connect = refused(as_outsider("workspace", "connect", "--service", origin("aweb")), "connect")
+        assert "/v1/connect returned" in connect, f"member mail: the outsider's connect never reached aweb: {connect}"
         outsider_subject = f"outsider-{secrets.token_hex(4)}"
-        attempts = {
-            "connect": refused("init", "--url", origin("aweb"), "--name", "outsider", "--do-not-touch-agents-md",
-                               where=outsider),
-            "by_address": refused("mail", "send", "--to-address", f"{DOMAIN}/{SEATS[0]}", "--subject",
-                                  outsider_subject, "--body", "a non-member's mail", where=outsider),
-            "by_name": refused("mail", "send", "--to", SEATS[0], "--subject", outsider_subject, "--body",
-                               "a non-member's mail", where=outsider),
-        }
+        send = refused(as_outsider("mail", "send", "--to", SEATS[0], "--subject", outsider_subject,
+                                   "--body", "a non-member's mail"), "mail")
         inbox = json.dumps(self.aw(first, "mail", "inbox", "--show-all"))
         assert member_subject in inbox, "member mail: the member's mail did not arrive"
         assert outsider_subject not in inbox, "member mail: the non-member's mail arrived"
         whoami = self.aw(first, "whoami")
-        return {"member_delivered": True, "owner_address": bool(owner), "seat_address": seat_address,
-                "outsider": created.get("did_aw", ""), "outsider_refused": attempts, "outsider_delivered": False,
-                "seat_scope": whoami.get("identity_scope"), "seat_inbound": whoami.get("inbound_mode")}
+        return {"member_delivered": True, "owner_address": owner["address"]["name"],
+                "seat_address": seat["error"]["code"], "outsider_team": f"outside:{DOMAIN}",
+                "outsider_connect": connect, "outsider_send": send, "outsider_delivered": False,
+                "seat_scope": whoami.get("identity_scope"), "seat_inbound": whoami.get("inbound_mode"),
+                "seat_inbound_configurable": whoami.get("inbound_configurable")}
 
     def redis_isolation(self, required: set[str]) -> dict:
         """aweb reaches Redis with its password; from aweb's own network a
