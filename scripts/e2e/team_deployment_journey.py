@@ -173,6 +173,7 @@ class World:
     def write_world(self) -> None:
         (self.world / "dns").mkdir(parents=True)
         (self.world / "tls").mkdir()
+        (self.world / "tls-renewal").mkdir()
         (self.world / "front").mkdir()
         (self.world / "signer").mkdir()
         (self.world / "dns" / "Corefile").write_text(
