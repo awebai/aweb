@@ -11,6 +11,7 @@ import (
 	"io"
 	"net/http"
 	"net/url"
+	"regexp"
 	"time"
 
 	"github.com/awebai/aw/awid"
@@ -472,10 +473,65 @@ type preparedShape struct {
 // preparedShapeOf is sent's operation's shape; every operation not named
 // here is an owner act.
 func preparedShapeOf(sent map[string]any) preparedShape {
-	if sent["operation"] == "team.agent.admit" {
+	switch sent["operation"] {
+	case "team.agent.admit":
 		return preparedShape{added: []string{"request_id", "admission_policy_version"}, check: admissionArtifactDiffers}
+	case "identity.root.endorse":
+		return preparedShape{added: []string{"registry", "expected_head", "responsibility_statement", "admission_policy"}, check: endorsementDiffers}
 	}
 	return preparedShape{check: ownerActArtifactDiffers}
+}
+
+// RootResponsibilityStatement is the fixed text an endorsement freezes: what
+// endorsing a root means for the human, and what it does not grant.
+const RootResponsibilityStatement = "Everything this root spawns counts as yours for human responsibility; this grants no resource permissions."
+
+var certificateHead = regexp.MustCompile(`^sha256:[0-9a-f]{64}$`)
+
+// endorsementDiffers checks a root endorsement's frozen request: the pinned
+// registry, a well-formed expected head, the fixed responsibility statement,
+// a valid admission policy of this service listing every intended team, and
+// as artifact the unsigned agent ID certificate of exactly the root aw named,
+// parented by the human whose authority the scope selects.
+func endorsementDiffers(sent, request, artifact map[string]any) string {
+	subject, _ := sent["subject"].(map[string]any)
+	scope, _ := sent["scope"].(map[string]any)
+	authority, _ := scope["authority"].(map[string]any)
+	serviceID, _ := scope["service_id"].(string)
+	if !sameJSON(request["registry"], sent["audience"]) {
+		return "it registers at another registry"
+	}
+	if head, isText := request["expected_head"].(string); request["expected_head"] != nil && (!isText || !certificateHead.MatchString(head)) {
+		return "its expected head is not a certificate ID"
+	}
+	if request["responsibility_statement"] != RootResponsibilityStatement {
+		return "its responsibility statement is not the fixed one"
+	}
+	policy, _ := request["admission_policy"].(map[string]any)
+	teams, _ := subject["teams"].([]any)
+	if policy == nil || len(teams) == 0 {
+		return "it freezes no admission policy"
+	}
+	for _, team := range teams {
+		name, _ := team.(string)
+		if _, ok := decodeAdmissionPolicy(policy, serviceID, name); !ok {
+			return "its admission policy is not a valid policy listing every intended team"
+		}
+	}
+	if !exactMembers(artifact, []string{"v", "type", "id", "domain", "parent", "kind", "issuer_key", "issued_at"}) ||
+		!sameJSON(artifact["v"], 1) || artifact["type"] != "aweb.id-certificate" || artifact["kind"] != "agent" {
+		return "its artifact is not an unsigned agent ID certificate"
+	}
+	for _, text := range []string{"issuer_key", "issued_at"} {
+		if value, _ := artifact[text].(string); value == "" {
+			return "its certificate has no " + text
+		}
+	}
+	parent := map[string]any{"kind": "identity", "id": authority["id"]}
+	if !sameJSON(artifact["id"], subject["root_id"]) || !sameJSON(artifact["domain"], subject["domain"]) || !sameJSON(artifact["parent"], parent) {
+		return "its certificate names another root, domain or parent"
+	}
+	return ""
 }
 
 func ownerActArtifactDiffers(sent, _, artifact map[string]any) string {
