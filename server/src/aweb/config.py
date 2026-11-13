@@ -14,6 +14,8 @@ from awid.ratelimit import normalize_service_token
 from awid.utc_timestamps import parse_utc_seconds
 from awid.team_ids import build_team_id, parse_team_id
 from awid.signing import load_signing_key_pem
+from aweb_naapp.hooks.strictjson import parse_strict
+from aweb_naapp.key_file import read_key_file
 from aweb_naapp.egress import EgressRefused, InternalDestinations
 from aweb_naapp.egress.addresses import check_internal_cidr
 
@@ -121,6 +123,32 @@ def get_awid_service_token() -> str | None:
     return normalize_service_token(os.getenv("AWID_SERVICE_TOKEN"))
 
 
+def load_member_signing_keys(manifest: Path) -> dict[str, bytes]:
+    """The member keys a team-to-key-file manifest names, by canonical team ID.
+
+    The manifest is strict JSON and holds paths, never key material; a
+    relative path is relative to the manifest. Each key file passes the
+    shared key-file checks. Raises OSError, ValueError or TypeError, whose
+    messages the callers replace with their own: none repeats a file's
+    content.
+    """
+    manifest = manifest.expanduser()
+    entries = parse_strict(manifest.read_bytes())
+    if not isinstance(entries, dict) or not entries:
+        raise ValueError("expected a nonempty team-to-key-file object")
+    keys = {}
+    for team_id, filename in entries.items():
+        if build_team_id(*parse_team_id(team_id)) != team_id:
+            raise ValueError("team IDs must be canonical name:domain values")
+        if not isinstance(filename, str) or not filename.strip():
+            raise ValueError("each team must name a PEM key file")
+        path = Path(filename).expanduser()
+        if not path.is_absolute():
+            path = manifest.parent / path
+        keys[team_id] = load_signing_key_pem(read_key_file(path))
+    return keys
+
+
 def get_awid_member_signing_keys() -> dict[str, bytes]:
     """Load existing aw Ed25519 seed PEM keys, indexed by canonical team ID.
 
@@ -132,21 +160,7 @@ def get_awid_member_signing_keys() -> dict[str, bytes]:
     if not filename:
         return {}
     try:
-        manifest = Path(filename).expanduser()
-        entries = json.loads(manifest.read_text())
-        if not isinstance(entries, dict) or not entries:
-            raise ValueError("expected a nonempty team-to-key-file object")
-        keys = {}
-        for team_id, filename in entries.items():
-            if build_team_id(*parse_team_id(team_id)) != team_id:
-                raise ValueError("team IDs must be canonical name:domain values")
-            if not isinstance(filename, str) or not filename.strip():
-                raise ValueError("each team must name a PEM key file")
-            path = Path(filename).expanduser()
-            if not path.is_absolute():
-                path = manifest.parent / path
-            keys[team_id] = load_signing_key_pem(path.read_bytes())
-        return keys
+        return load_member_signing_keys(Path(filename))
     except (OSError, ValueError, TypeError):
         # Do not echo file contents or key-parser details into startup logs.
         raise ValueError("AWID_MEMBER_KEYS_FILE must name a nonempty JSON map of canonical team IDs to readable Ed25519 PEM key files") from None
@@ -287,8 +301,8 @@ def _key_time(kid: str, name: str, value: object) -> datetime:
 
 def _url_from_environment_or_file(variable: str, fallback: str, file_variable: str, what: str) -> str:
     """The URL from its environment variable, or the whole content of the file
-    the file variable names. The file holds a password, so no error repeats
-    its content."""
+    the file variable names, read with the shared key-file checks. The file
+    holds a password, so no error repeats its content."""
     url = os.getenv(variable) or os.getenv(fallback) or ""
     path = os.getenv(file_variable, "").strip()
     if not path:
@@ -296,8 +310,8 @@ def _url_from_environment_or_file(variable: str, fallback: str, file_variable: s
     if url:
         raise ValueError(f"{file_variable} is set together with {variable} or {fallback}; set one")
     try:
-        url = Path(path).read_text().strip()
-    except OSError:
+        url = read_key_file(Path(path)).decode("utf-8").strip()
+    except (OSError, ValueError):
         url = ""
     if not url:
         raise ValueError(f"{file_variable} must name a readable file that holds the {what}")

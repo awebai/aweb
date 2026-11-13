@@ -25,14 +25,13 @@ from aweb_naapp.runtime.protected_signer import SignerRefused
 from awid.db_config import build_database_config
 from awid.did import did_key_from_signing_key
 from awid.registry import RegistryClient
-from awid.signing import load_signing_key_pem
-from awid.team_ids import build_team_id, parse_team_id
 from fastapi import FastAPI
 from fastapi.responses import JSONResponse
 from pgdbm import AsyncDatabaseManager
 from pydantic import Field, SecretStr, StrictInt, model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
+from ..config import load_member_signing_keys
 from .composition import IndependentProtectedSigner
 from .custody import ProtectedControllerCustody
 from .notifications import ProtectedNotifications
@@ -91,22 +90,9 @@ class HostSettings(BaseSettings):
 
 
 def _member_keys(path):
-    """Same canonical-team/Ed25519-PEM manifest format as aweb configuration."""
+    """The server's own member-key loader, with the signer's error code."""
     try:
-        entries = parse_strict(path.read_bytes())
-        if not isinstance(entries, dict) or not entries:
-            raise ValueError()
-        keys = {}
-        for team_id, filename in entries.items():
-            if build_team_id(*parse_team_id(team_id)) != team_id:
-                raise ValueError()
-            if not isinstance(filename, str) or not filename:
-                raise ValueError()
-            key_file = Path(filename)
-            if not key_file.is_absolute():
-                key_file = path.parent / key_file
-            keys[team_id] = load_signing_key_pem(key_file.read_bytes())
-        return keys
+        return load_member_signing_keys(path)
     except (OSError, ValueError, TypeError):
         raise ValueError("protected_member_keys_invalid") from None
 
