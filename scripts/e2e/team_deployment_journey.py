@@ -42,6 +42,7 @@ import os
 import re
 import secrets
 import shutil
+import stat
 import subprocess
 import sys
 import time
@@ -123,6 +124,58 @@ ROLE = "secrets.owner"
 APPROVAL_MARGIN = datetime.timedelta(seconds=60)
 # The agents' uid: the signer refuses custody a worker could read.
 AGENT_UID = 20001
+# The component directories an operator-provided secrets directory holds,
+# pre-created by root for the staging user, who cannot create them in a
+# root-owned parent. agents/ is the OATS credential receiver's.
+OPERATOR_COMPONENTS = ("postgres", "redis", "aweb", "secrets", "logs", "signer", "front")
+
+
+def check_operator_secrets(secrets: Path, *, root_uid: int = 0, staging_uid: int | None = None,
+                           agents_gid: int = AGENT_UID) -> None:
+    """An operator-provided secrets directory (--secrets-dir), checked before
+    anything is staged: root-owned and writable by root alone, as the OATS
+    credential receiver requires of its login directory's ancestors; each
+    component directory pre-created, empty, the staging user's and private (0700); and
+    agents/ the receiver's (root:<agents' gid> 0750), whose contents are never
+    read. The parent is checked first, so the children of a directory that is
+    not root's (a kept run's own secrets, say) are never examined."""
+    staging_uid = os.getuid() if staging_uid is None else staging_uid
+    if not secrets.is_absolute():
+        raise SystemExit(f"FAILED: --secrets-dir {secrets} must be absolute")
+    try:
+        parent = os.lstat(secrets)
+    except FileNotFoundError:
+        raise SystemExit(f"FAILED: the secrets directory {secrets} does not exist") from None
+    if stat.S_ISLNK(parent.st_mode) or not stat.S_ISDIR(parent.st_mode):
+        raise SystemExit(f"FAILED: the secrets directory {secrets} is a symlink or not a directory")
+    if parent.st_uid != root_uid:
+        raise SystemExit(f"FAILED: the secrets directory {secrets} is not root-owned")
+    if parent.st_mode & 0o022:
+        raise SystemExit(f"FAILED: the secrets directory {secrets} is group- or other-writable")
+    for component in OPERATOR_COMPONENTS:
+        try:
+            child = os.lstat(secrets / component)
+        except FileNotFoundError:
+            raise SystemExit(f"FAILED: {component}: not pre-created in {secrets}") from None
+        if stat.S_ISLNK(child.st_mode) or not stat.S_ISDIR(child.st_mode):
+            raise SystemExit(f"FAILED: {component}: not a directory")
+        if child.st_uid != staging_uid:
+            raise SystemExit(f"FAILED: {component}: not owned by the staging user")
+        # Credentials are written with the caller's umask before own()
+        # chowns and chmods them: only a private directory keeps them out of
+        # reach meanwhile.
+        if child.st_mode & 0o077:
+            raise SystemExit(f"FAILED: {component}: must be private to the staging user (0700)")
+        if any((secrets / component).iterdir()):
+            raise SystemExit(f"FAILED: {component}: not empty")
+    try:
+        login = os.lstat(secrets / "agents")
+    except FileNotFoundError:
+        login = None
+    if (login is None or stat.S_ISLNK(login.st_mode) or not stat.S_ISDIR(login.st_mode)
+            or login.st_uid != root_uid or login.st_gid != agents_gid or stat.S_IMODE(login.st_mode) != 0o750):
+        raise SystemExit(f"FAILED: agents: must be root-owned, group {agents_gid}, mode 0750: the credential"
+                         " receiver's login directory")
 
 
 def origin(name: str) -> str:
@@ -162,11 +215,16 @@ def image_user(image: str) -> str:
 
 
 class World:
-    def __init__(self, run_dir: Path, project: str, images: dict[str, str], cidr: str):
+    def __init__(self, run_dir: Path, project: str, images: dict[str, str], cidr: str,
+                 secrets_dir: Path | None = None):
         self.run_dir, self.project, self.images = run_dir, project, images
         self.world = run_dir / "world"
         self.deployment_path = run_dir / "deployment.yaml"
-        self.secrets = run_dir / "secrets"
+        # The run's own secrets directory, or an operator-provided one
+        # (check_operator_secrets) whose component directories already exist
+        # and whose agents/ login directory is the credential receiver's.
+        self.operator_secrets = secrets_dir is not None
+        self.secrets = secrets_dir if secrets_dir is not None else run_dir / "secrets"
         self.signer_configured = False
         self.agents_configured = False
         self.oats_source: Path | None = None
@@ -280,7 +338,7 @@ class World:
         """Redis holds the password's SHA-256 in its ACL file; aweb holds the
         password in its whole Redis URL."""
         password = secrets.token_hex(24)
-        (self.secrets / "redis").mkdir()
+        self.component("redis")
         (self.secrets / "redis" / "users.acl").write_text(
             f"user default on #{hashlib.sha256(password.encode()).hexdigest()} ~* &* +@all\n"
         )
@@ -543,6 +601,14 @@ class World:
         (self.run_dir / "connect.json").write_text(connect)
         return result.returncode
 
+    def component(self, name: str) -> Path:
+        """A component's secrets directory: made here for the run's own
+        secrets directory, pre-created by root in an operator's."""
+        path = self.secrets / name
+        if not self.operator_secrets:
+            path.mkdir()
+        return path
+
     def configure_agents(self) -> None:
         """The team container's state, SSH keys and login directory: state
         owned by the agents' uid, the login directory readable only by their
@@ -552,10 +618,15 @@ class World:
         (self.run_dir / "operator").mkdir(mode=0o700)
         shutil.copyfile(self.world / "tls" / "ca.pem", self.run_dir / "agent-ca.pem")
         (self.run_dir / "agent-ca.pem").chmod(0o644)
-        (self.secrets / "agents").mkdir()
-        run("docker", "run", "--rm", "-v", f"{self.world / 'agent-state'}:/state",
-            "-v", f"{self.secrets / 'agents'}:/login", "alpine:3.22", "sh", "-c",
-            f"chown {AGENT_UID}:{AGENT_UID} /state && chown 0:{AGENT_UID} /login && chmod 0750 /login")
+        if self.operator_secrets:
+            # The receiver owns the login directory and its token.
+            run("docker", "run", "--rm", "-v", f"{self.world / 'agent-state'}:/state", "alpine:3.22", "sh", "-c",
+                f"chown {AGENT_UID}:{AGENT_UID} /state")
+        else:
+            (self.secrets / "agents").mkdir()
+            run("docker", "run", "--rm", "-v", f"{self.world / 'agent-state'}:/state",
+                "-v", f"{self.secrets / 'agents'}:/login", "alpine:3.22", "sh", "-c",
+                f"chown {AGENT_UID}:{AGENT_UID} /state && chown 0:{AGENT_UID} /login && chmod 0750 /login")
         self.agents_configured = True
         self.deployment()
 
@@ -767,7 +838,7 @@ class World:
     def write_front_files(self) -> None:
         """The deployment's front holds this world's certificate for every
         origin, as an operator's front holds theirs."""
-        (self.secrets / "front").mkdir()
+        self.component("front")
         shutil.copyfile(self.world / "tls" / "server.pem", self.secrets / "front" / "certificate.pem")
         shutil.copyfile(self.world / "tls" / "server.key", self.secrets / "front" / "key.pem")
 
@@ -1138,6 +1209,9 @@ def main() -> int:
     parser.add_argument("--images", type=Path, required=True)
     parser.add_argument("--services-cidr", default="172.31.0.0/24")
     parser.add_argument("--oats-source", type=Path, help="checkout of the pinned OATS source, for the agents")
+    parser.add_argument("--secrets-dir", type=Path,
+                        help="an operator-provided, root-owned secrets directory whose component directories root"
+                             " pre-created and whose agents/ the OATS credential receiver owns; default: the run's own")
     parser.add_argument("--keep", action="store_true", help="leave the deployment running for inspection")
     parser.add_argument("--agents-only", action="store_true",
                         help="provision the signer, then go straight to the agents stage: no holding, protected"
@@ -1148,8 +1222,10 @@ def main() -> int:
     run_dir = args.run_dir.resolve()
     if run_dir.exists():
         raise SystemExit(f"FAILED: {run_dir} exists; each run has its own directory")
+    if args.secrets_dir is not None:
+        check_operator_secrets(args.secrets_dir)
     run_dir.mkdir(parents=True)
-    world = World(run_dir, args.project, load_images(args.images), args.services_cidr)
+    world = World(run_dir, args.project, load_images(args.images), args.services_cidr, secrets_dir=args.secrets_dir)
     world.oats_source = args.oats_source.resolve() if args.oats_source else None
     if ("agent" in world.images) != (world.oats_source is not None):
         raise SystemExit("FAILED: the agents need both their images and --oats-source")

@@ -15,6 +15,12 @@
   must set `team.registryRoute: local`; without it, `teamctl start` refuses
   and names that setting.
 
+- `aw id endorse` installs the endorsed root's chain (the human's supporting
+  chain and the signed certificate it registered) in the root's home once
+  the registry read-back confirms it, so the root can issue children with
+  `aw id child invite`. A rerun of the committed endorsement installs it when
+  it is missing; `--json` reports `chain_installed`.
+
 - `aw id team remove-agent --protected-profile P --certificate F --operation-id U`
   removes, as the deployment's endorsed root, the agent membership that
   certificate file names, through the protected service's bounded
