@@ -26,6 +26,7 @@ from tests.test_protected_admission_native import (
     execute,
     headers,
     prepare,
+    registered_identity,
 )
 
 pytest_plugins = ("tests.test_protected_admission_native",)
@@ -44,7 +45,7 @@ def removal(a, certificate, *, self_remove=False, **changes):
 
 async def admitted(a, *, registered=False):
     key = SigningKey.generate()
-    child = (await a.w.registry.register_did(did(key), bytes(key))).did_aw if registered else None
+    child = await registered_identity(a, key) if registered else None
     operation = admit_operation(a, child_id=child, child_key=did(key))
     assert (await prepare(a, operation)).status_code == 200
     response = await execute(a, operation)
@@ -83,6 +84,36 @@ async def self_call(a, key, certificate, operation, *, purpose="prepare", envelo
 async def signature_count(a, operation):
     return await a.w.db.fetch_value("SELECT count(*) FROM {{tables.protected_local_audit}} "
         "WHERE kind='protected_operation_signed' AND subject=$1", operation.operation_id)
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("self_remove", [False, True])
+@pytest.mark.parametrize("enrolled_human", [False, True])
+async def test_unknown_or_human_global_member_cannot_leave_as_an_agent(admissions, self_remove, enrolled_human):
+    a = admissions
+    await endorse(a)
+    key = SigningKey.generate()
+    member = (await registered_identity(a, key, kind="human") if enrolled_human
+        else (await a.w.registry.register_did(did(key), bytes(key))).did_aw)
+    # An unrelated verified human and a legacy unknown global membership both
+    # refuse. Neither is one of the explicitly excluded custody keys.
+    assert (await a.w.registry.resolve_key_fresh(member)).id_tree.enrolled is enrolled_human
+    certificate = {"version": 1, "certificate_id": str(uuid4()), "team_id": TEAM,
+        "team_did_key": did(a.w.controller), "member_did_key": did(key), "member_did_aw": member,
+        "alias": "legacy", "identity_scope": "global",
+        "issued_at": datetime.now(UTC).strftime("%Y-%m-%dT%H:%M:%SZ")}
+    certificate["signature"] = sign_message(bytes(a.w.controller), canonical_json_bytes(certificate))
+    await a.w.registry.register_team_certificate(DOMAIN, "engineering",
+        team_controller_signing_key=bytes(a.w.controller), certificate_id=certificate["certificate_id"],
+        member_did_key=did(key), member_did_aw=member, member_address=None, alias="legacy",
+        identity_scope="global", certificate=base64.b64encode(canonical_json_bytes(certificate)).decode())
+    operation = removal(a, certificate, self_remove=self_remove)
+    response = await self_call(a, key, certificate, operation) if self_remove else await prepare(a, operation)
+    assert response.status_code == 403 and response.json() == {"detail": "subject_ineligible"}, response.text
+    assert await a.w.app.signer.lookup_context(operation.operation_id) is None
+    assert await signature_count(a, operation) == 0
+    records = await a.w.registry.list_team_certificates_fresh(DOMAIN, "engineering", active_only=False)
+    assert next(r for r in records if r.certificate_id == certificate["certificate_id"]).revoked_at is None
 
 
 @pytest.mark.asyncio
