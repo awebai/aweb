@@ -73,8 +73,13 @@ async def test_real_operator_binds_a_later_root_to_both_scopes_and_both_deployme
     settings.controller_keys_file = manifest
     args = SimpleNamespace(command="bind-root", human=a.w.context.human_id,
         root=second.w.root_id, team=[TEAM], replace_root=None)
+    credentials = await a.w.db.fetch_value("SELECT count(*) FROM {{tables.passkey_credentials}}")
+    mailer = CapturedMail()
     result = await run(args, settings, profile=profile, scope=a.w.context.fields(),
-        mailer=CapturedMail(), registry_transport=a.w.host.transport)
+        mailer=mailer, registry_transport=a.w.host.transport)
+    assert mailer.messages == []
+    assert await a.w.db.fetch_value("SELECT count(*) FROM {{tables.passkey_credentials}}") == credentials
+    assert await a.w.db.fetch_value("SELECT count(*) FROM {{tables.protected_signer_operations}}") == 0
     assert result["root_id"] == second.w.root_id and result["root_key"] == did(second.w.root)
     assert len(result["scopes"]) == 2 and {scope["authority"]["kind"] for scope in result["scopes"]} == {"human_identity", "team_controller"}
     assert await grant_count(a, second.w.root_id) == 2
