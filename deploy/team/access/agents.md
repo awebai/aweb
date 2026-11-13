@@ -25,9 +25,10 @@ readable by every agent like the login above.
 | Any service's credential | No secrets directory is mounted in the agent; the boundary probe checks every secrets directory, the database and Redis volumes, the Docker socket and every backup is out of reach. | `teamctl` boundary probe |
 | PostgreSQL and Redis | The agent is on the agents network alone; egress denies both backends; Redis is on a network aweb alone shares, and needs its password. | Boundary probe; the journey's Redis isolation check |
 | The internet | Egress forwards to five origins only: aweb, Secrets, Logs, the signer's request origin and the registry. | `descriptors/egress.md`; the ingress probe |
-| A stored secret's value | No route of Secrets returns one; its errors are fixed codes and its receipts have no body. A credential an upstream returns is withheld only when its redaction recognises it. | `naapp/secrets/deploy/OPERATIONS.md` |
+| A direct export of a stored value | No agent-facing route exports a stored value; Secrets' errors are fixed codes and its receipts have no body. Broker results are filtered and redacted, but an arbitrary transformation by the upstream is covered by no confidentiality guarantee: a credential an upstream returns is withheld only when redaction recognises it. | `naapp/secrets/values/src/aweb_secrets_values/redaction.py`; `naapp/secrets/src/aweb_secrets/member_types.py` |
 | A signature from the signer | The signer signs only after a person approves in the browser. | `server/src/aweb/protected_signing/README.md` |
 
 Egress bounds where packets go, not where data goes. aweb delivers mail to other
 servers, and the Secrets broker sends requests the agent chooses under an
-`open_request` grant: both carry data out through allowed origins.
+`open_request` grant, where both the grant and Secrets' policy allow it: both
+carry data out through allowed origins.

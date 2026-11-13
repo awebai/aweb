@@ -34,9 +34,10 @@
 #          nothing else of the project: the databases are gone. The secrets
 #          directory and the agents' state stay. The project must be named.
 # backup   with every service but the bundled PostgreSQL stopped: a dump of
-#          each database, the secrets directory, the agents' state and every
-#          file deployment.yaml names, with a manifest of digests and
-#          versions. The directory holds credentials; it is made 0700.
+#          each database, the secrets directory without the signer's live
+#          controller custody, the agents' state and every file
+#          deployment.yaml names, with a manifest of digests and versions.
+#          The directory holds credentials; it is made 0700.
 # restore  fails closed: no component can yet restore a deployment that
 #          serves a team. --lab-rehearsal restores a backup of disposable lab
 #          data onto fresh volumes, to the paths deployment.yaml names, and
@@ -756,15 +757,19 @@ PY
 
 # A directory as a tar archive with numeric owners and modes, read as root by
 # the server image's Python with no network; anything but a regular file or
-# a directory is refused. The archive belongs to the operator, mode 0400.
+# a directory is refused. A member named after the archive's path ("./x/y")
+# is left out with everything under it. The archive belongs to the operator,
+# mode 0400.
 archive() {
-  local source="$1" out="$2"
+  local source="$1" out="$2" left_out="${3:-}"
   docker run --rm --user 0 --network none -v "$source:/source:ro" -v "$(dirname "$out"):/out" \
     --entrypoint python "$(env_value AWEB_IMAGE)" -c '
 import os, sys, tarfile
-out, uid, gid = sys.argv[1:]
+out, uid, gid, left_out = sys.argv[1:]
 
 def regular(info):
+    if left_out and (info.name == left_out or info.name.startswith(left_out + "/")):
+        return None
     if not (info.isreg() or info.isdir()):
         raise SystemExit(f"teamctl: {info.name} is not a regular file or a directory")
     return info
@@ -773,7 +778,7 @@ with tarfile.open(out, "w") as tar:
     tar.add("/source", arcname=".", filter=regular)
 os.chown(out, int(uid), int(gid))
 os.chmod(out, 0o400)
-' "/out/$(basename "$out")" "$(id -u)" "$(id -g)" </dev/null
+' "/out/$(basename "$out")" "$(id -u)" "$(id -g)" "$left_out" </dev/null
 }
 
 # An archive back into a directory that does not exist yet, owners and modes
@@ -823,10 +828,19 @@ backup() {
   psql_postgres "show server_version" >"$target/databases/server-version"
   [[ "$was_running" -eq 1 ]] || dc stop postgres
   host_paths >"$run_dir/host-paths"
-  local kind key path
+  local kind key path left_out signer_secrets
   while read -r kind key path; do
     case "$kind" in
-      archive) [[ ! -d "$path" ]] || archive "$path" "$target/archives/$key.tar" ;;
+      # The signer's live controller key stays out: its backup is the
+      # owner's separately protected offline copy (protected_signing/HOST.md).
+      archive)
+        left_out=""
+        if [[ "$key" == compose.secretsDir ]]; then
+          signer_secrets="$(env_value SIGNER_SECRETS)"
+          left_out="./${signer_secrets:-signer}/private-controller"
+        fi
+        [[ ! -d "$path" ]] || archive "$path" "$target/archives/$key.tar" "$left_out"
+        ;;
       file) install -m 0400 "$path" "$target/files/$key" ;;
     esac
   done <"$run_dir/host-paths"

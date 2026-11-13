@@ -34,28 +34,32 @@ project, the test world's included, and the deployment's data with them.
 | Artifact | Where | Holds | In `teamctl backup` |
 | --- | --- | --- | --- |
 | aweb's database | `postgres_data` volume, database `aweb` | Teams' messages, chats, tasks, workspaces, app installations | Yes, `pg_dump` |
-| Secrets' database | `postgres_data`, database `secrets` | Every stored secret value, encrypted under the custody key; grants, receipts | Yes |
+| Secrets' database | `postgres_data`, database `secrets` | Every retained secret value, sealed under the custody key (references for values kept in 1Password); grants, receipts | Yes |
 | Logs' database | `postgres_data`, database `logs` | Every retained event's content and its chain | Yes |
 | The signer's database | `postgres_data`, database `signer` | Bootstrap consumption, credential and public-key records, bindings, receipts | Yes |
 | Redis | `redis_data` volume | aweb's presence, wake and event fan-out and cached registry reads | **No.** Whether aweb keeps anything in Redis that it needs after a restore is not established; it is the aweb server owner's to confirm. |
-| The secrets directory | `compose.secretsDir` | Each component's credentials: database URLs, aweb's Redis URL, member keys, Secrets' **custody key** and service keys, Logs' app keys, the signer's controller custody, SMTP passwords, Redis's ACL, the agents' harness login | Yes, as an archive with numeric owners and modes |
+| The secrets directory | `compose.secretsDir` | Each component's credentials: database URLs, aweb's Redis URL, member keys, Secrets' **custody key** and service keys, Logs' app keys, the signer's controller custody, SMTP passwords, Redis's ACL, the agents' harness login | Yes, as an archive with numeric owners and modes, **without** the signer's live controller custody (`signer/private-controller`) |
 | The agents' state and work | `agents.compose.stateDir`, `agents.compose.workDir` | Each seat's `.aw` (its member key), the harness's sessions and transcripts, checkouts | Yes, as archives |
 | Files `deployment.yaml` names | `signer.profileFile`, `signer.scopeFile`, the CA files | Public configuration and trust anchors | Yes, with their modes |
 | The operator's Git mirrors and the OATS source | `agents.mirrorsDir`, `agents.compose.oatsSource` | Operator-provided inputs | No: recorded in the manifest only |
 
-**Losing the custody key makes every stored secret unrecoverable.** Secrets
-encrypts each value under the key in `secrets/custody-key` (or the KMS key
-`secrets.kmsKeyId` names). A database backup without that key is ciphertext no
-one can read. Keep the key's backup at least as protected as the live key
-(`naapp/secrets/deploy/OPERATIONS.md`). Whoever holds both that key and the
-database reads every stored value.
+**Permanently losing every usable copy of the local custody key, or the ability
+to decrypt with the KMS key, prevents recovering the values sealed under it.**
+Secrets seals each retained value under the key in `secrets/custody-key` (or the
+KMS key `secrets.kmsKeyId` names); a database backup without that key is
+ciphertext no one can read. Keep compatible key backups, or the KMS access, at
+least as protected as the live key (`naapp/secrets/deploy/OPERATIONS.md`). A
+running Secrets reads its key once: a missing or replaced file takes effect when
+it restarts. Whoever holds both the key and the database reads every value it
+seals.
 
-**The signer's controller key has its own backup: the team owner's offline
-copy.** The live custody file is in the backup set because it is under the
-secrets directory, but the owner's encrypted offline copy is the controller's
-backup (`server/src/aweb/protected_signing/HOST.md`, "Controller key
-installation, backup and cutover"). Never restore an older signer database
-whose bootstrap is still pending over a completed enrollment.
+**The signer's controller key has its own backup: the team owner's separately
+protected offline copy.** `teamctl backup` leaves the live custody volume
+(`signer/private-controller`) out, as the signer's custody instructions require
+(`server/src/aweb/protected_signing/HOST.md`, "Controller key installation,
+backup and cutover"). The signer's database is in the backup set; never restore
+an older one whose bootstrap is still pending over a completed enrollment. That
+is a procedure, not an enforced fence (`aweb-acyw`).
 
 ## Backup
 
@@ -70,14 +74,16 @@ stopped, and stops it again afterwards. The set holds:
 
 - `databases/<name>.dump`: `pg_dump -Fc` of every database, and
   `databases/server-version`;
-- `archives/<key>.tar`: the secrets directory and the agents' state and work,
-  regular files and directories only, owners and modes kept;
+- `archives/<key>.tar`: the secrets directory, without the signer's live
+  controller custody, and the agents' state and work, regular files and
+  directories only, owners and modes kept;
 - `files/<key>`: every file `deployment.yaml` names;
 - `manifest.json`: the source revision, every image digest, the PostgreSQL
   version, and the SHA-256 and recorded path of every part. It holds no value.
 
 The directory is created `0700` and must not exist before. **It holds every
-credential of the deployment, the custody key included.** Keep it where only
+credential of the deployment but the signer's controller key, Secrets' custody
+key included.** Keep it where only
 the operator reaches it: never under a directory an agent mounts, never in a
 repository or a published artifact. While it is present, the boundary probe
 counts it as a protected source the agent must not reach.
@@ -128,7 +134,7 @@ restore is not supported. The Secrets procedure is pending
 
 | Credential | Supported path | What it ends | What stays |
 | --- | --- | --- | --- |
-| Secrets custody key | None. Replacing the key file is not a rotation: values under the old key become unreadable. | | `aweb-acyp`, OPEN |
+| Secrets custody key | None. Replacing the key file is not a rotation: after a restart with the new key, values sealed under the old one cannot be read. | | `aweb-acyp`, OPEN |
 | Team controller key (held by the signer) | None. `aw id team rotate-key` exists, but once the signer holds the team key, rotation is the protected `team.controller.rotate`; no raw-key command may bypass it (`HOST.md`). | | `aweb-acxy.4`, OPEN |
 | A member's key (a service or a seat) | While the owner still holds the team key: remove the member (below), then admit it again with a new key (`aw id team add-member --local`). Once the signer holds the team key, none: see removal below. | The old certificate, once revoked | Anything the old key signed |
 | Database passwords, Redis's password | Not exercised for this bundle: the role's password, the component's URL file and `postgres/roles/<name>` (or Redis's `users.acl` and aweb's `redis-url`) change together, then the services restart. | | Not qualified |
@@ -137,12 +143,15 @@ restore is not supported. The Secrets procedure is pending
 ## Removing an agent, a service or an owner
 
 A member is removed by revoking its certificate, which the team key signs.
-While the team owner holds that key, `aw id team remove-member` does it. Once
-the protected act has moved the key into the signer's custody, no one else
-holds it, and the signer supports one operation, `human-role.revoke`
-(`server/src/aweb/protected_signing/README.md`): **no member can then be
-removed or added.** The journey admits its seats before that move for this
-reason. Member revocation through the signer belongs to the catalog
+While the team owner holds that key, `aw id team remove-member` does it. After
+the cutover, the supported online path for the owner and the agents has no
+controller key file and goes through the protected signer, which exposes one
+operation, `human-role.revoke` (`server/src/aweb/protected_signing/README.md`):
+**member admission and removal through that protected path is not yet
+implemented.** The journey admits its seats before the cutover for this reason.
+The owner's separately protected offline backup and the host operator's ability
+to read the custody file remain; whoever uses the raw key bypasses the signer's
+browser approval, outside the supported workflow. Member revocation through the signer belongs to the catalog
 implementation, `aweb-acxy.4`, OPEN.
 
 | Remove | Supported path | Effective authority afterwards | Stored state that remains |

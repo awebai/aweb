@@ -105,3 +105,16 @@ def test_render_writes_the_env_file_and_the_fronts_configuration_and_starts_noth
     assert f"FRONT_CONFIG_DIR={tmp_path / 'run' / 'front'}\n" in env
     assert (tmp_path / "run" / "front" / "Caddyfile").read_text().startswith("{\n  auto_https off\n")
     assert calls(tmp_path) == []
+
+
+def test_backup_leaves_the_signers_live_controller_key_out_of_the_secrets_archive(tmp_path):
+    # The controller's backup is the owner's separately protected offline copy
+    # (HOST.md); the generic backup never holds the live private volume.
+    secrets = tmp_path / "secrets"
+    (secrets / "signer" / "private-controller").mkdir(parents=True)
+    config = {**EXAMPLE, "compose": {**EXAMPLE["compose"], "secretsDir": str(secrets)}}
+    path = deployment(tmp_path, config)
+    result = run(tmp_path, "backup", path, str(tmp_path / "backup"), command=TEAMCTL, docker_ok=True)
+    assert result.returncode == 0, result.stderr
+    archived = [call for call in calls(tmp_path) if "tarfile" in call and "/source:ro" in call]
+    assert len(archived) == 1 and archived[0].rstrip().endswith("./signer/private-controller"), archived

@@ -8,8 +8,8 @@ Whoever operates the machine the deployment runs on can read:
 
 - **your mail and chat**, in aweb's database, unless the sender used `--e2ee`
   between self-custodial identities;
-- **every secret value stored in Secrets**, with Secrets' database and the
-  custody key, which the operator holds;
+- **every secret value Secrets retains**, with Secrets' database and the local
+  custody key (or KMS Decrypt access), which the operator holds;
 - **every event Logs keeps**, and, holding Logs' chain key as well, rewrite
   that history so that it verifies;
 - **every agent's session transcripts and seat keys**, on the agents' volume.
@@ -37,12 +37,14 @@ observed facts.
 
 ## Your owner authority
 
-Once the protected act has moved the team's controller key into the signer, no
-person or agent holds it. The signer then performs one operation,
-`human-role.revoke`, approved by a person in the browser. Admitting or removing
-a member needs the controller key, so it is not possible until the signer's
-catalog implements it (`OPERATIONS.md`, "Removing an agent, a service or an
-owner").
+After the cutover, the supported online path for the owner and the agents has
+no controller key file and goes through the protected signer. The signer
+exposes one operation, `human-role.revoke`, approved by a person in the browser,
+so admitting or removing a member through that protected path is not yet
+implemented (`OPERATIONS.md`, "Removing an agent, a service or an owner"). The
+owner's separately protected offline backup of the key, and the operator's
+ability to read the signer's custody file, remain: whoever uses the raw key
+bypasses the signer's browser approval.
 
 ## The registry and the model provider
 
