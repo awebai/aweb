@@ -1378,7 +1378,8 @@ written; then `aw service init` connects the home's workspace.
 
 Running it again with the same certificate reports already_installed and
 completes an install that was interrupted. Refusals, with their --json codes:
-  certificate_invalid        the file is not a team certificate
+  certificate_invalid        the file is not a team certificate, or the registry reports
+                             a status for it that aw does not know
   member_mismatch            it names another key, did:aw or scope than the home's identity
   team_key_not_current       it is signed by a key that is not the team's current key
   certificate_bad_signature  its signature does not verify under that key

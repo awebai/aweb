@@ -19,6 +19,7 @@ from email.utils import parsedate_to_datetime
 from types import MappingProxyType
 from typing import Any, Awaitable, Callable
 from urllib.parse import quote, urlparse
+from uuid import UUID
 
 import httpx
 from nacl.signing import SigningKey
@@ -64,7 +65,8 @@ from awid.registry_types import (
     DIDKeyNotFoundError as DIDKeyNotFoundError,
     IDTreeEnrollment as IDTreeEnrollment,
 )
-from awid.signing import canonical_json_bytes, sign_message
+from awid.signing import canonical_json_bytes, sign_message, verify_did_key_signature
+from awid.utc_timestamps import parse_utc_seconds
 from awid.team_ids import build_team_id
 
 
@@ -1528,6 +1530,49 @@ class RegistryClient:
             json={"certificate_id": certificate_id},
             registry_url=registry_url,
         )
+
+    async def revoke_team_certificate_with_proof(
+        self, domain: str, name: str, *, certificate_id: str,
+        controller_did: str, signing: bytes, signature: bytes,
+    ) -> None:
+        """Deliver one already-prepared, exact covering-v2 certificate revoke.
+
+        No key is accepted, signing is not repeated, and mutations remain one
+        attempt. A caller reconciles an ambiguous answer through fresh registry
+        reads. This cannot select another route, operation, target or body.
+        """
+        if (type(domain) is not str or type(name) is not str
+            or build_team_id(domain, name) != f"{name}:{domain}"
+            or any(char in domain + name for char in "/%?#\\")
+            or type(certificate_id) is not str or str(UUID(certificate_id)) != certificate_id
+            or type(signing) is not bytes or type(signature) is not bytes or len(signature) != 64):
+            raise ValueError("invalid prepared certificate revocation")
+        fields = json_loads(signing)
+        if not isinstance(fields, dict):
+            raise ValueError("invalid prepared certificate revocation")
+        timestamp = fields.get("timestamp")
+        parse_utc_seconds(timestamp)
+        registry_url = await self._registry_url_for_domain(domain)
+        path = f"/v1/namespaces/{domain}/teams/{name}/certificates/revoke"
+        body = canonical_json_bytes({"certificate_id": certificate_id})
+        expected = covering_payload(aud=registry_url, path=path, domain=domain,
+            operation="revoke_certificate", body=body, timestamp=timestamp,
+            claims={"team_name": name, "certificate_id": certificate_id})
+        if signing != expected:
+            raise ValueError("invalid prepared certificate revocation")
+        signature_b64 = base64.b64encode(signature).rstrip(b"=").decode()
+        verify_did_key_signature(did_key=controller_did, payload=expected, signature_b64=signature_b64)
+        headers = {"Authorization": f"DIDKey {controller_did} {signature_b64}",
+            "X-AWEB-Timestamp": timestamp,
+            "X-AWEB-Signed-Payload": base64.urlsafe_b64encode(expected).rstrip(b"=").decode(),
+            "Content-Type": "application/json"}
+        await self.invalidate_team_certificate_cache(domain, name)
+        try:
+            await self._request_json("POST", path, headers=headers, content=body, registry_url=registry_url)
+        finally:
+            # Even a dropped answer can follow an applied revocation. Never
+            # retain a cached active membership after attempting the mutation.
+            await self.invalidate_team_certificate_cache(domain, name)
 
     async def invalidate_team_certificate_cache(self, domain: str, name: str) -> None:
         """Drop cached certificate/revocation reads for a team, if this client caches them."""
