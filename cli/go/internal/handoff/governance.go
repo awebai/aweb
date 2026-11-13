@@ -317,19 +317,11 @@ func verifyPrepared(sent map[string]any, digest string, payload map[string]any) 
 	if !sameJSON(request["policy_ref"], policy["ref"]) || !sameJSON(request["policy_version"], policy["version"]) {
 		return mismatch("its policy differs from its request")
 	}
-	// The artifact is what gets signed: its act, team, subject and audience
-	// are exactly what aw asked for.
+	// Every closed artifact family stays on this same digest/retained-request
+	// path, including retries and lost-answer reconciliation.
 	artifact, _ := request["artifact"].(map[string]any)
-	if artifact == nil || !exactMembers(artifact, artifactMembers) || artifact["type"] != "aweb.owner-act" {
-		return mismatch("its artifact is not an owner act")
-	}
-	scope, _ := sent["scope"].(map[string]any)
-	authority, _ := scope["authority"].(map[string]any)
-	if !sameJSON(artifact["act"], sent["operation"]) || !sameJSON(artifact["team_id"], authority["id"]) {
-		return mismatch("its artifact is for another act or team")
-	}
-	if !sameJSON(artifact["subject"], sent["subject"]) || !sameJSON(artifact["aud"], sent["audience"]) {
-		return mismatch("its artifact names another subject or audience")
+	if reason := preparedArtifactMismatch(sent, artifact); reason != "" {
+		return mismatch(reason)
 	}
 	return nil
 }
