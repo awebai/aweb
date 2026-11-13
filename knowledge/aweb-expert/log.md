@@ -1,5 +1,10 @@
 # Knowledge log
 
+## 2026-11-13
+* **Harvest**: OKF proposal from aweb-expert/aweb-expert-owner-acts.
+* **Creation**: decisions [a committed receipt is taken only with its verified prepared operation](/aweb-expert/decisions/a-committed-receipt-needs-its-verified-prepare.md) and [OATS supplies the operation id for admit and endorse](/aweb-expert/decisions/oats-supplies-the-operation-id-for-admit-and-endorse.md).
+* **Update**: [a harness must be shown to fail](/aweb-expert/lessons/a-harness-must-be-shown-to-fail.md) gains the fault-injector rule with the run44 case and the build-breaking-mutation rule.
+
 ## 2026-11-04
 * **Harvest**: OKF proposal from aweb-expert/aweb-expert-fresh-eyes (tasks aweb-acst and aweb-actf).
 * **Update**: [identity and routing review needs the real client](/aweb-expert/lessons/identity-and-routing-review-needs-the-real-client.md) gains that the real client includes the last released binary and that a skipped released-client case is not evidence.
