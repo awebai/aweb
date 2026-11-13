@@ -1,11 +1,9 @@
 """Anonymous mail locators complete the existing B3 ceremonies in Chromium."""
 
 import asyncio
-import base64
 import email
 import email.policy
 import secrets
-import socket
 from collections.abc import AsyncIterator
 from urllib.parse import parse_qs, urlsplit
 
@@ -14,7 +12,7 @@ import pytest
 import uvicorn
 from aweb_naapp.console import CONSOLE_HEADERS
 from aweb_naapp.runtime.origins import split_origins
-from aweb_naapp.runtime.passkeys import RelyingParty, contact_sha256
+from aweb_naapp.runtime.passkeys import RelyingParty
 from aweb_naapp_testing.owner_acts import INSTALLATION_ID
 from aweb_naapp_testing.smtp import SmtpServer
 from aweb_naapp_testing.webauthn import SoftAuthenticator
@@ -23,8 +21,8 @@ from playwright.async_api import expect
 
 from aweb_secrets.console import OwnerConsole, owner_console_router
 from aweb_secrets.console_bootstrap import console_bootstrap_router
-from aweb_secrets.owners import owner_scope
 from aweb_secrets.passkey_email import PasskeyEmailDelivery
+from tests.console_network import passkey_origin as passkey_origin
 from tests.test_approval_email import Links, mailer
 from tests.test_change_sets import ALICE, ORIGIN, TEAM, World
 from tests.test_change_sets import world as _world
@@ -84,14 +82,20 @@ async def test_bootstrap_pages_are_anonymous_private_and_human_origin_only(world
 
 
 @pytest.fixture
-async def service(world: World) -> AsyncIterator[str]:
-    sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-    sock.bind(("127.0.0.1", 0))
-    port = sock.getsockname()[1]
-    origin = f"http://localhost:{port}"
+async def service(world: World, console_tls, console_listener) -> AsyncIterator[str]:
+    sock = console_listener.socket
+    port, origin = console_listener.port, console_listener.origin
     world.passkeys.rp = RelyingParty(origin=origin, name="Secrets")
-    app = await application(world, human_origin=origin, agent_origin=f"http://127.0.0.1:{port}")
-    server = uvicorn.Server(uvicorn.Config(app, log_level="warning", lifespan="off"))
+    app = await application(world, human_origin=origin, agent_origin=f"https://127.0.0.1:{port}")
+    server = uvicorn.Server(
+        uvicorn.Config(
+            app,
+            log_level="warning",
+            lifespan="off",
+            ssl_certfile=str(console_tls.cert_file),
+            ssl_keyfile=str(console_tls.key_file),
+        )
+    )
     running = asyncio.create_task(server.serve(sockets=[sock]))
     try:
         async with asyncio.timeout(10):
@@ -107,28 +111,12 @@ async def service(world: World) -> AsyncIterator[str]:
         sock.close()
 
 
-async def designate_owner(world: World, service: str, contact: str):
-    scope = owner_scope(INSTALLATION_ID, TEAM, ALICE.principal_did)
-    subject = {
-        "app_id": world.admitted.app_id,
-        "installation_id": INSTALLATION_ID,
-        "role": scope,
-        "contact_sha256": contact_sha256(contact),
-    }
-    signing, signature = world.owner.sign("app-role.designate", subject)
-    async with httpx.AsyncClient(base_url=service) as client:
-        response = await client.post(
-            f"/installations/{INSTALLATION_ID}/owner-acts",
-            json={
-                "signing": base64.b64encode(signing).decode(),
-                "signature": signature,
-                "team_id": TEAM,
-                "principal": ALICE.principal_did,
-                "contact": contact,
-            },
-        )
-    assert response.status_code == 200
-    return scope
+async def designate_contact_fixture(world: World, service: str, contact: str):
+    # Mail registration belongs to contact approvers. Human owner credentials
+    # are bound by the shared writer and have no email enrollment link.
+    from tests.test_owner_directory import designate_contact
+
+    return await designate_contact(world, "browser-finance", contact, enrol=False)
 
 
 def delivered_url(messages, *, contact, path):
@@ -151,7 +139,7 @@ async def test_enrolment_page_uses_the_delivered_fragment_and_real_registration(
         world.passkeys._delivery = PasskeyEmailDelivery(
             mailer=mailer(smtp, tmp_path), console_origin=service
         )
-        scope = await designate_owner(world, service, contact)
+        scope = await designate_contact_fixture(world, service, contact)
         url = delivered_url(smtp.received, contact=contact, path="/enrolment")
     [token] = parse_qs(urlsplit(url).fragment)["token"]
     async with await browser.new_context() as context:
@@ -218,17 +206,9 @@ async def test_contact_page_confirms_only_the_delivered_candidate(
         "finance@example.com",
         "candidate@example.com",
     )
-    await designate_owner(world, service, owner_contact)
-    [enrolment] = world.inbox.enrolments[owner_contact]
-    device = SoftAuthenticator(service)
-    prepared = await world.credential_audit.prepare_enrolment(enrolment)
-    with world.credential_audit.prepared(prepared):
-        await world.passkeys.complete_enrolment(
-            enrolment,
-            device.create(await world.passkeys.enrolment_options(enrolment)),
-            fence=prepared,
-        )
-    world.devices[owner_contact] = device
+    from tests.test_change_sets import enrol_owner
+
+    await enrol_owner(world, ALICE, owner_contact)
 
     async def apply(items):
         request = change_set(

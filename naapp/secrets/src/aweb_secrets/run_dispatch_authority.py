@@ -10,7 +10,7 @@ from __future__ import annotations
 from collections.abc import Sequence
 from typing import TYPE_CHECKING
 
-from aweb_naapp.roles import PrincipalKey, has_role, hold_role, principal_key, roles_of
+from aweb_naapp.roles import PrincipalKey, hold_role, principal_key, roles_of
 from aweb_naapp.runtime.approvals import Approval
 from aweb_naapp.runtime.approvals.dispatch_fence import DispatchAuthorityState
 from aweb_naapp.runtime.authorization import Grant
@@ -20,7 +20,7 @@ from pgdbm.core import TransactionManager
 from aweb_secrets.approvers import approvers_for_secrets
 from aweb_secrets.containment_state import require_enabled
 from aweb_secrets.grant import is_secrets_role
-from aweb_secrets.owners import OWNER_ROLE, is_owner_scope
+from aweb_secrets.owners import OWNER_ROLE, has_owner, hold_owner, is_owner_scope, owner_binding
 from aweb_secrets.run_approvals import current_run_policy
 from aweb_secrets.run_context import OriginalRun
 from aweb_secrets.run_plan import PreparedRun
@@ -91,13 +91,10 @@ class RunDispatchAuthority:
         for approval in approvals:
             decider = approval.decided_by
             if decider is not None and is_owner_scope(decider.scope):
-                who = await tx.fetch_value(
-                    "SELECT principal_did FROM {{tables.owner_principals}}"
-                    " WHERE scope=$1 AND installation_id=$2 AND team_id=$3",
-                    decider.scope,
-                    scope.installation_id,
-                    scope.team_id,
+                _owner_binding = await owner_binding(
+                    tx, decider.scope, installation_id=scope.installation_id, team_id=scope.team_id
                 )
+                who = None if _owner_binding is None else _owner_binding["principal_did"]
                 if who is not None:
                     owners[decider.scope] = PrincipalKey(scope.team_id, who)
         key = principal_key(self._original.principal)
@@ -107,7 +104,13 @@ class RunDispatchAuthority:
         roles.update((owner.principal_did, OWNER_ROLE) for owner in owners.values())
         held = set()
         for principal_did, role in sorted(roles):
-            if await hold_role(tx, PrincipalKey(scope.team_id, principal_did), role):
+            principal = PrincipalKey(scope.team_id, principal_did)
+            retained = (
+                await hold_owner(tx, principal, installation_id=scope.installation_id)
+                if role == OWNER_ROLE
+                else await hold_role(tx, principal, role)
+            )
+            if retained:
                 held.add((principal_did, role))
         owners = {
             name: owner
@@ -140,7 +143,7 @@ class RunDispatchAuthority:
         for approval in approvals:
             await current_run_policy(tx, approval.policy_ref)
         for owner in owners.values():
-            await has_role(tx, owner, OWNER_ROLE)
+            await has_owner(tx, owner, installation_id=self._original.installation.installation_id)
         current = await self._passkeys.prepare_current_approvers(
             tx,
             [
@@ -166,7 +169,9 @@ class RunDispatchAuthority:
         if decider is not None:
             if is_owner_scope(decider.scope):
                 owner = self._owners.get(decider.scope)
-                eligible = owner is not None and await has_role(tx, owner, OWNER_ROLE)
+                eligible = owner is not None and await has_owner(
+                    tx, owner, installation_id=self._original.installation.installation_id
+                )
             else:
                 scope = self.prepared.installation
                 slot = self.prepared.slots[self._slot_for[approval.approval_id]]

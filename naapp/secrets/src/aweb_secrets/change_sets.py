@@ -47,7 +47,7 @@ from typing import TYPE_CHECKING, Any
 from aweb_naapp.egress import InternalDestinations
 from aweb_naapp.hooks.producer import RegistrationView
 from aweb_naapp.hooks.strictjson import Refused as HookRefused
-from aweb_naapp.roles import PrincipalKey, assign, hold_role
+from aweb_naapp.roles import PrincipalKey, assign
 from aweb_naapp.runtime.approvals import (
     ActionPolicy,
     ApprovalRefused,
@@ -92,6 +92,7 @@ from aweb_secrets.grant import GrantRecord, GrantTemplate
 from aweb_secrets.job_changes import apply_job_change, job_prelock_ids
 from aweb_secrets.operation import CAPTURE_FIELDS, OperationTemplate
 from aweb_secrets.owners import OWNER_ROLE, OwnerDirectory, approver_scope, owner_scope
+from aweb_secrets.owners import hold_owner as hold_owner_holding
 from aweb_secrets.policy import Policy
 from aweb_secrets.revisions import claim_config_revision, config_revision
 from aweb_secrets.runner_protocol import RunnerRefused
@@ -879,7 +880,9 @@ class ChangeSets:
         if decided_by is None:
             raise ChangeRefused("no owner has decided the change set", code="change_not_approved")
         confirmer = await self._directory.owner_of(tx, decided_by.scope)
-        if confirmer is None or not await hold_role(tx, confirmer, OWNER_ROLE):
+        if confirmer is None or not await hold_owner_holding(
+            tx, confirmer, installation_id=admitted.installation_id
+        ):
             raise ChangeRefused("the deciding owner is no longer an owner", code="owner_required")
         row = await tx.fetch_one(
             "SELECT * FROM {{tables.change_sets}} WHERE change_id = $1", change_id

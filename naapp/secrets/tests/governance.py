@@ -41,6 +41,7 @@ async def credential_audit(*, db, passkeys, owner, fence, admitted, origin, prod
         ChangeApprovals,
         credential_role,
     )
+    from aweb_secrets.owners import OWNER_ROLE
 
     await apply_outbox_migrations(db)
     store = PgApprovalStore(db)
@@ -72,6 +73,7 @@ async def credential_audit(*, db, passkeys, owner, fence, admitted, origin, prod
         producer=lambda **scope: producer,
         passkeys=lambda: passkeys,
         role_of=credential_role,
+        human_roles=frozenset({OWNER_ROLE}),
         approvals=ChangeApprovals(approval),
         registration_view=registration,
         max_backlog_age=timedelta(minutes=5),

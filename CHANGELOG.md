@@ -2,6 +2,16 @@
 
 ## Unreleased
 
+- aweb server: `AWEB_APP_INTERNAL_ORIGINS` (a JSON list of exact HTTPS app
+  origins) with `AWEB_APP_INTERNAL_CIDR` (their one network) lets a self-hosted
+  server install apps that run on internal addresses beside it. Only listed
+  origins, and only addresses inside that network, are fetched as internal;
+  every other app origin stays public. Unset, behaviour is unchanged.
+- Naapp runtime publishes compatible v2/v3 manifests from one v2 template and
+  an owner-role declaration with a configured human origin. Its shared anonymous
+  owner-act route authenticates before app reads and commits the single-use act,
+  effect and governance together, rechecking original authority deadlines after
+  effect waits. Existing exact v2 installation pins remain readable.
 - **An operator can stop the server delivering federated mail and chat to
   other servers, or limit it to listed servers.** `AWEB_FEDERATION_OUTBOUND=off`
   delivers to no other server, and a comma-separated list of origins delivers
@@ -130,6 +140,15 @@
   the setting and the limit. The shipped `.env.example` set
   `LIBRARY_AUTH_CACHE_TTL_SECONDS=600`; a deployment made from it must lower
   it to 60 or remove the line before upgrading.
+- **The server reads its database URL from a file.** `AWEB_DATABASE_URL_FILE`
+  names a file that holds the URL, so the database password need not be in
+  the environment. Setting it together with `AWEB_DATABASE_URL` or
+  `DATABASE_URL` is refused at startup.
+- **A Compose file for a customer's own server.**
+  `server/docker-compose.customer.yml` runs aweb with PostgreSQL and Redis
+  against the public AWID registry, with ordinary member keys mounted
+  read-only and no service token or registry of its own. The self-hosting
+  guide's customer-server section shows how to start it.
 - **A hook delivery from a client is checked with the one team-certificate
   check, in Python and in Go.** The receiver (`aweb_naapp.hooks.delivery`,
   `cli/go/hookevent`) takes the team's revoked and registered certificate ids

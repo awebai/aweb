@@ -4,17 +4,16 @@ import json
 from uuid import uuid4
 
 import pytest
-from aweb_naapp.roles import assign, hold_role, principal_key
 from aweb_naapp.runtime.credential_audit import GovernanceUnavailable
 from aweb_naapp.runtime.passkeys import PasskeyInstallationContext
 from aweb_naapp_testing.webauthn import SoftAuthenticator
 
-from aweb_secrets.owners import OWNER_ROLE, owner_scope
+from aweb_secrets.owners import hold_owner, owner_scope
+from tests.human_owner import canonical_actor
 from tests.test_change_sets import ALICE, APP_ID, ORIGIN, TEAM
 from tests.test_containment_console import login_session, sibling_session
 from tests.test_credential_audit import approved_designation, audit_for, events
 from tests.test_credential_audit import world as world
-from tests.test_use_approvals import REQUESTER
 
 
 async def enrolled_target(world):
@@ -31,8 +30,7 @@ async def enrolled_target(world):
 
 async def hold_member(world, tx):
     await world.fence.check(tx, world.admitted)
-    await assign(tx, principal_key(REQUESTER), OWNER_ROLE)
-    assert await hold_role(tx, principal_key(REQUESTER), OWNER_ROLE)
+    assert await hold_owner(tx, ALICE, installation_id=world.admitted.installation_id)
 
 
 async def test_designation_retirement_keeps_team_cert_and_signed_trace_without_target(world):
@@ -48,7 +46,10 @@ async def test_designation_retirement_keeps_team_cert_and_signed_trace_without_t
     async with world.db.transaction() as tx:
         await hold_member(world, tx)
         prepared = await audit.prepare_containment(
-            tx, admitted=world.admitted, principal=REQUESTER, signed_trace_id=trace
+            tx,
+            admitted=world.admitted,
+            principal=canonical_actor(world, ALICE),
+            signed_trace_id=trace,
         )
         with audit.prepared(prepared):
             # The real containment writer removes metadata before B3.
@@ -57,7 +58,7 @@ async def test_designation_retirement_keeps_team_cert_and_signed_trace_without_t
                 tx,
                 scope=approver.scope,
                 subject=approver.subject,
-                authorized_by=principal_key(REQUESTER).principal_did,
+                authorized_by=ALICE.principal_did,
             )
         await world.fence.check(tx, world.admitted)
     _, _, revoked = await events(world)
@@ -65,8 +66,8 @@ async def test_designation_retirement_keeps_team_cert_and_signed_trace_without_t
     assert revoked["payload"]["direction"] == "narrowing"
     assert revoked["payload"]["subject_ref"] == approver.subject
     assert revoked["payload"]["authority"] == "team_cert"
-    assert revoked["actor"]["did_key"] == REQUESTER.did_key
-    assert revoked["actor"]["certificate_id"] == REQUESTER.certificate_id
+    assert revoked["actor"]["did_key"] == canonical_actor(world, ALICE).did_key
+    assert revoked["actor"]["certificate_id"] == canonical_actor(world, ALICE).certificate_id
     assert revoked["trace"] == {"id": trace, "origin": "signed_request"}
 
 
@@ -79,14 +80,16 @@ async def test_key_revocation_distinguishes_partial_and_last_key_effects(world, 
     credential_id = next(iter(device.credentials))
     async with world.db.transaction() as tx:
         await hold_member(world, tx)
-        prepared = await audit.prepare_containment(tx, admitted=world.admitted, principal=REQUESTER)
+        prepared = await audit.prepare_containment(
+            tx, admitted=world.admitted, principal=canonical_actor(world, ALICE)
+        )
         with audit.prepared(prepared):
             await world.passkeys.revoke_passkey_in(
                 tx,
                 scope=approver.scope,
                 subject=approver.subject,
                 credential_id=credential_id,
-                authorized_by=principal_key(REQUESTER).principal_did,
+                authorized_by=ALICE.principal_did,
             )
         await world.fence.check(tx, world.admitted)
     recorded = await events(world)
@@ -141,14 +144,14 @@ async def test_rollback_restores_designation_and_clears_the_prepared_authority(w
         async with world.db.transaction() as tx:
             await hold_member(world, tx)
             prepared = await audit.prepare_containment(
-                tx, admitted=world.admitted, principal=REQUESTER
+                tx, admitted=world.admitted, principal=canonical_actor(world, ALICE)
             )
             with audit.prepared(prepared):
                 await world.passkeys.retire_in(
                     tx,
                     scope=approver.scope,
                     subject=approver.subject,
-                    authorized_by=principal_key(REQUESTER).principal_did,
+                    authorized_by=ALICE.principal_did,
                 )
                 raise RuntimeError("local effect aborted")
     assert await world.passkeys.designated_approver(approver.scope) is not None
@@ -160,7 +163,7 @@ async def test_rollback_restores_designation_and_clears_the_prepared_authority(w
                 tx,
                 scope=approver.scope,
                 subject=approver.subject,
-                authorized_by=principal_key(REQUESTER).principal_did,
+                authorized_by=ALICE.principal_did,
             )
     assert await world.passkeys.designated_approver(approver.scope) is not None
     assert len(await events(world)) == 2
@@ -170,7 +173,9 @@ async def test_preparation_cannot_authorize_another_sql_transaction(world):
     audit, approver, _ = await enrolled_target(world)
     async with world.db.transaction() as tx:
         await hold_member(world, tx)
-        prepared = await audit.prepare_containment(tx, admitted=world.admitted, principal=REQUESTER)
+        prepared = await audit.prepare_containment(
+            tx, admitted=world.admitted, principal=canonical_actor(world, ALICE)
+        )
     with pytest.raises(GovernanceUnavailable):
         async with world.db.transaction() as tx:
             await hold_member(world, tx)
@@ -179,7 +184,7 @@ async def test_preparation_cannot_authorize_another_sql_transaction(world):
                     tx,
                     scope=approver.scope,
                     subject=approver.subject,
-                    authorized_by=principal_key(REQUESTER).principal_did,
+                    authorized_by=ALICE.principal_did,
                 )
     assert await world.passkeys.designated_approver(approver.scope) is not None
     assert len(await events(world)) == 2

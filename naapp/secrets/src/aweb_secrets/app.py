@@ -35,13 +35,14 @@ from aweb_naapp.runtime.installation import (
     apply_installation_migrations,
 )
 from aweb_naapp.runtime.origins import OriginApps
+from awid.dns_verify import DomainVerifier
 from fastapi import APIRouter, Depends, FastAPI, HTTPException
 from fastapi.routing import APIRoute
 from pgdbm import AsyncDatabaseManager
 from starlette.types import Message, Receive, Scope, Send
 
 from aweb_secrets.config import SecretsSettings
-from aweb_secrets.manifest import MANIFEST_PATH
+from aweb_secrets.manifest import MANIFEST_PATH, OWNER_ACTS
 from aweb_secrets.retirement import retire_team
 from aweb_secrets.revisions import apply_revision_migrations
 from aweb_secrets.surfaces import mount_public_surfaces
@@ -140,6 +141,7 @@ def create_app(
     kms: HealthCheck,
     health_labels: Mapping[str, StrEnum] | None = None,
     awid_transport: httpx.AsyncBaseTransport | None = None,
+    awid_domain_verifier: DomainVerifier | None = None,
     team_server_transport: httpx.AsyncBaseTransport | None = None,
     hook_egress: Egress | None = None,
     hook_internal_cidr: IPv4Network | IPv6Network | None = None,
@@ -169,7 +171,10 @@ def create_app(
         module_name=MODULE_NAME,
         migrations_path=MIGRATIONS_PATH,
         manifest_path=MANIFEST_PATH,
+        owner_acts=OWNER_ACTS,
+        owner_acts_origin=settings.console_origin,
         awid_transport=awid_transport,
+        awid_domain_verifier=awid_domain_verifier,
         team_server_transport=team_server_transport,
         hook_egress=hook_egress,
         hook_internal_cidr=hook_internal_cidr,
