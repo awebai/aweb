@@ -1,6 +1,7 @@
 """Local protected-host administrator commands; no network provisioning API.
 
 Use the host's AWEB_PROTECTED_* file settings and run as its service uid:
+  python -m aweb.protected_signing.operator setup --config-dir DIR --team TEAM ...
   python -m aweb.protected_signing.operator bootstrap --requester DID_AW --contact EMAIL
   python -m aweb.protected_signing.operator check
   python -m aweb.protected_signing.operator install-controller --source-pem FILE
@@ -112,12 +113,57 @@ def parser():
         help="Install an existing pinned private key PEM (team controller or human identity) into its binding's private slot, without overwrite",
     )
     key.add_argument("--source-pem", type=Path, required=True)
+    whole = sub.add_parser(
+        "setup",
+        help="From a registered team to a ready signer: confirm the registry's keys, write the "
+        "configuration, install the controller key, mail the first approver and provision the policy",
+    )
+    whole.add_argument("--config-dir", type=Path, required=True, help="Private directory setup writes the host configuration into")
+    whole.add_argument("--team", required=True, help="The registered team (name:domain)")
+    whole.add_argument("--human", required=True, help="The did:aw of the person who approves")
+    whole.add_argument("--human-domain", help="The person's namespace (default: the team's)")
+    whole.add_argument("--requester", required=True, help="The did:aw of the agent that asks for approvals")
+    whole.add_argument("--contact", required=True, help="Where the approver's notices go")
+    whole.add_argument("--human-origin", required=True, help="The HTTPS origin people open")
+    whole.add_argument("--request-origin", required=True, help="The origin agents send requests to")
+    whole.add_argument("--registry-origin", required=True, help="The registry this signer pins")
+    whole.add_argument("--service-id", help="This signer's identifier (default: the human origin's host)")
+    whole.add_argument("--controller-pem", type=Path, required=True, help="The existing team controller key")
+    whole.add_argument("--member-pem", type=Path, required=True, help="An ordinary member key for private team reads")
+    whole.add_argument("--max-active", type=int, required=True, help="Most agents one root may have in the team at once")
+    whole.add_argument("--max-per-window", type=int, required=True, help="Most agents one root may add per window")
+    whole.add_argument("--rate-window-seconds", type=int, default=3600, help="The window's length (default 3600)")
+    whole.add_argument("--subject-kinds", default="local_agent,registered_agent", help="Agent kinds the policy admits")
+    whole.add_argument("--confirm-pins", help="The fingerprint of the registry keys you checked, as setup printed it")
     return result
+
+
+def setup_inputs(args):
+    from awid.team_ids import parse_team_id
+
+    from .setup import SetupInputs
+
+    domain, _ = parse_team_id(args.team)
+    return SetupInputs(
+        config_dir=args.config_dir, service_id=args.service_id or args.human_origin.removeprefix("https://").split("/")[0].split(":")[0],
+        team_id=args.team, human_id=args.human, human_domain=args.human_domain or domain,
+        requester=args.requester, contact=args.contact, human_origin=args.human_origin,
+        request_origin=args.request_origin, registry_origin=args.registry_origin,
+        controller_pem=args.controller_pem, member_pem=args.member_pem,
+        max_active=args.max_active, rate_window_seconds=args.rate_window_seconds, max_per_window=args.max_per_window,
+        subject_kinds=tuple(kind.strip() for kind in args.subject_kinds.split(",") if kind.strip()),
+        confirm_pins=args.confirm_pins,
+    )
 
 
 def main():
     args = parser().parse_args()
     try:
+        if args.command == "setup":
+            from .setup import setup
+
+            print(json.dumps(asyncio.run(setup(setup_inputs(args)))))
+            return
         settings = HostSettings()
         profile = ProtectedServiceProfile.from_json(settings.profile_file.read_bytes())
         scope = parse_strict(settings.scope_file.read_bytes())

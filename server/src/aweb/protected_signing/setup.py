@@ -130,10 +130,14 @@ def _env_file(settings: HostSettings) -> bytes:
 
 async def setup(inputs: SetupInputs, *, host: dict | None = None, mailer=None, registry_transport=None) -> dict:
     from .admission import provision_policy
-    from .bootstrap import initialise
+    from .bootstrap import bootstrap_record, initialise
     from .operator import install_controller
 
     host = {} if host is None else host
+    if mailer is None:
+        from aweb_naapp.email import EmailSettings, Mailer
+
+        mailer = Mailer(EmailSettings.from_env("AWEB_PROTECTED_"))
     member_key = load_signing_key_pem(read_key_file(inputs.member_pem))
     pins = await read_pins(inputs, member_key=member_key, registry_transport=registry_transport)
     fingerprint = pins_fingerprint(pins)
@@ -176,13 +180,15 @@ async def setup(inputs: SetupInputs, *, host: dict | None = None, mailer=None, r
 
         await c.migrate()
         await apply_console_migrations(c.db)
-        try:
-            await validate_provisioning(c)
-        except SignerRefused:
-            # No enrolled approver yet: record (or resend) the first one.
+        async with c.db.transaction() as tx:
+            record = await bootstrap_record(c, tx)
+        if record is None or record["consumed_at"] is None:
+            # The first approver has not created a passkey yet: record them,
+            # or send the same pending person their enrolment link again.
             delivery = await initialise(c, requester=inputs.requester, contact=inputs.contact)
             provisioned = await provision_policy(c, policy)
             return {"state": "awaiting_enrolment", "pins": pins, "admission_policy": provisioned,
-                "delivery": delivery.get("delivery"), "env_file": str(config / ENV)}
+                "delivery": delivery["delivery"], "env_file": str(config / ENV)}
+        await validate_provisioning(c)
         provisioned = await provision_policy(c, policy)
     return {"state": "ready", "pins": pins, "admission_policy": provisioned, "env_file": str(config / ENV)}
