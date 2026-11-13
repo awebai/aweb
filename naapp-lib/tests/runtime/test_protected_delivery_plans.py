@@ -47,7 +47,7 @@ def test_registration_plan_binds_full_existing_certificate_and_covering_auth(loc
         "domain": "customer.example", "operation": "register_certificate", "team_name": "engineering",
         "certificate_id": artifact["certificate_id"], "timestamp": STAMP,
         "body_sha256": hashlib.sha256(plan.body).hexdigest()}
-    assert plan.artifact_type == "aweb.team-certificate"
+    assert plan.artifact_type == "team-certificate"
     auth = base64.b64decode(sign_message(key, plan.controller_envelope) + "==")
     delivery = plan.authenticate(auth)
     assert delivery.body == plan.body and delivery.audience == op.audience and delivery.path == fields["path"]
@@ -66,7 +66,7 @@ def test_removal_reuses_exact_artifact_request_and_does_not_mint_new_auth():
     _, _, artifact, signing, signature = signed(op)
     plan = op.spec.effect.delivery_plan(op, artifact, signing, signature, "2026-11-13T12:01:00Z")
     assert plan.controller_envelope == signing
-    assert plan.artifact_type == "aweb.awid-controller-request"
+    assert plan.artifact_type == "controller-request"
     assert json.loads(plan.body) == {"certificate_id": op.subject["certificate_id"]}
     assert plan.authenticate(signature).headers["X-AWEB-Timestamp"] == STAMP
 
@@ -76,7 +76,7 @@ def test_owner_act_plan_preserves_consumer_bytes_without_a_second_controller_sig
     op = owner_act_operation(RevokeHumanRole(str(uuid4()), context, "https://app.customer.example", "app", str(uuid4()), "app.owner", context.human_id))
     _, _, artifact, signing, signature = signed(op)
     plan = op.spec.effect.delivery_plan(op, artifact, signing, signature, STAMP)
-    assert plan.artifact_type == "aweb.owner-act" and plan.controller_envelope is None
+    assert plan.artifact_type == "owner-act" and plan.controller_envelope is None
     assert plan.path == "/.well-known/aweb-owner-act"
     assert plan.body == canonical_json_bytes({"signing": base64.b64encode(signing).decode(),
         "signature": base64.b64encode(signature).rstrip(b"=").decode()})
