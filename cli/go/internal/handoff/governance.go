@@ -492,7 +492,10 @@ func verifyPrepared(sent map[string]any, digest string, payload map[string]any) 
 	if err != nil || recomputed != digest {
 		return mismatch("its digest does not match its payload")
 	}
-	shape := preparedShapeOf(sent)
+	shape, defined := preparedShapeOf(sent)
+	if !defined {
+		return mismatch("its operation or variant has no pinned definition")
+	}
 	expected := append(append([]string{}, serverAddedMembers...), shape.added...)
 	for name, value := range sent {
 		if !sameJSON(request[name], value) {
@@ -515,6 +518,19 @@ func verifyPrepared(sent map[string]any, digest string, payload map[string]any) 
 	if artifact == nil {
 		return mismatch("it freezes no artifact")
 	}
+	for _, path := range shape.bindings {
+		var value any = request
+		for _, name := range strings.Split(strings.TrimPrefix(path, "/"), "/") {
+			object, ok := value.(map[string]any)
+			if !ok {
+				return mismatch("a required bound field is absent")
+			}
+			value, ok = object[name]
+			if !ok {
+				return mismatch("a required bound field is absent")
+			}
+		}
+	}
 	if reason := shape.check(sent, request, artifact); reason != "" {
 		return mismatch(reason)
 	}
@@ -526,26 +542,18 @@ func verifyPrepared(sent map[string]any, digest string, payload map[string]any) 
 type preparedShape struct {
 	added []string
 	// check names how request or artifact differs from sent, or is "".
-	check func(sent, request, artifact map[string]any) string
+	check    func(sent, request, artifact map[string]any) string
+	bindings []string
 }
 
-// preparedShapeOf is sent's operation's shape; every operation not named
-// here is an owner act.
-func preparedShapeOf(sent map[string]any) preparedShape {
-	switch sent["operation"] {
-	case "team.agent.admit":
-		return preparedShape{added: []string{"request_id", "admission_policy_version"}, check: admissionArtifactDiffers}
-	case "identity.root.endorse":
-		return preparedShape{added: []string{"registry", "expected_head", "responsibility_statement", "admission_policy"}, check: endorsementDiffers}
-	case "team.agent.remove":
-		return preparedShape{added: []string{"requester_key"}, check: removalArtifactDiffers}
-	}
-	return preparedShape{check: ownerActArtifactDiffers}
+// preparedShapeOf selects only a generated, pinned definition. A response
+// cannot invent a schema or ask aw to use an owner-act fallback.
+func preparedShapeOf(sent map[string]any) (preparedShape, bool) {
+	operation, _ := sent["operation"].(string)
+	variant, _ := sent["variant"].(string)
+	shape, ok := generatedPreparedShapes[operation+"|"+variant]
+	return shape, ok
 }
-
-// RootResponsibilityStatement is the fixed text an endorsement freezes: what
-// endorsing a root means for the human, and what it does not grant.
-const RootResponsibilityStatement = "Everything this root spawns counts as yours for human responsibility; this grants no resource permissions."
 
 var certificateHead = regexp.MustCompile(`^sha256:[0-9a-f]{64}$`)
 

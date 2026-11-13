@@ -8,6 +8,7 @@ The cross-contract test pins every row to the public frozen catalog.
 
 from copy import deepcopy
 from dataclasses import dataclass
+from datetime import datetime, timedelta
 from types import MappingProxyType
 from typing import Literal
 
@@ -18,6 +19,7 @@ from .operation_codecs import (
     ROOT_CODEC,
     OperationCodec,
 )
+from .operation_display import OperationDisplay
 from .operation_effects import (
     ENDORSEMENT,
     LOCAL_SIGNATURE,
@@ -40,7 +42,43 @@ class OperationDefinition:
 
     codec: OperationCodec
     effect: OperationEffect
+    display: OperationDisplay
+    binding_paths: tuple[tuple[str, str], ...] = ()
     consumer_available: bool = True
+    prepared_fields: frozenset[str] = frozenset()
+    signing_port: str = "sign_operation"
+    finalize_execution_refusal: bool = False
+    receipt_uv_expiry: bool = False
+    supports_self_removal: bool = False
+    request_window: tuple[tuple[str, ...], int] | None = None
+
+    def effect_deadline(self, artifact, deadline):
+        if "expires_at" in artifact:
+            deadline = min(deadline, datetime.fromisoformat(artifact["expires_at"].replace("Z", "+00:00")))
+        if self.request_window is not None:
+            path, seconds = self.request_window
+            stamp = artifact
+            for field in path:
+                stamp = stamp[field]
+            deadline = min(deadline, datetime.fromisoformat(stamp.replace("Z", "+00:00")) + timedelta(seconds=seconds))
+        return deadline
+
+    def bindings(self):
+        overrides = dict(self.binding_paths)
+        return {name: overrides.get(name, "/subject/" + name) for name in self.payload_binding}
+
+    def bound_values(self, request):
+        """Make the frozen catalog bindings actual required request projections."""
+        result = {}
+        try:
+            for name, path in self.bindings().items():
+                value = request
+                for field in path.split("/")[1:]:
+                    value = value[field]
+                result[name] = deepcopy(value)
+        except (KeyError, TypeError):
+            raise SignerRefused("operation_mismatch") from None
+        return result
 
     @property
     def needs_human(self) -> bool:
@@ -72,6 +110,16 @@ _ROWS = (
         ),
         codec=REMOVAL_CODEC,
         effect=REVOKED_MEMBERSHIP,
+        display=OperationDisplay("Remove {/subject/expected_membership/alias} from {/subject/team_id}?",
+            ("This revokes the exact team membership certificate.", "Identity revocation is a separate operation."),
+            (("member", "/subject/expected_membership/alias"), ("team", "/subject/team_id")),
+            (("member", "/subject/member_id"), ("certificate", "/subject/certificate_id"), ("requester", "/requester")),
+            (("subject_ineligible", "This unattended path requires an eligible agent membership."),
+             ("issuer_kind_forbidden", "This signer cannot remove that kind of membership."))),
+        prepared_fields=frozenset({"requester_key"}),
+        finalize_execution_refusal=True,
+        supports_self_removal=True,
+        request_window=(("request", "timestamp"), 300),
     ),
     OperationDefinition(
         "identity.root.endorse",
@@ -107,6 +155,23 @@ _ROWS = (
         ),
         codec=ROOT_CODEC,
         effect=ENDORSEMENT,
+        binding_paths=(("parent", "/artifact/parent"), ("certificate", "/artifact"),
+            ("registry", "/registry"), ("responsibility_statement", "/responsibility_statement"),
+            ("expected_head", "/expected_head"), ("service_id", "/scope/service_id"),
+            ("default_admission_policy_digest", "/admission_policy/digest"),
+            ("default_admission_policy_version", "/admission_policy/version")),
+        display=OperationDisplay("Approve {/subject/deployment_label} as the root agent for {/subject/teams}?",
+            ("Admission remains limited by the provisioned policy and its active-count and rate bounds.",
+             "This endorsement grants no resource permissions."),
+            (("deployment", "/subject/deployment_label"), ("teams", "/subject/teams")),
+            (("root", "/subject/root_id"), ("root_key", "/subject/root_key"),
+             ("human", "/scope/human/id"), ("policy", "/admission_policy"), ("requester", "/requester")),
+            (("subject_ineligible", "This root is not an eligible registered agent of the selected human."),
+             ("issuer_kind_forbidden", "The selected protected identity cannot endorse this root.")),
+            responsibility_statement="Everything this root spawns counts as yours for human responsibility; this grants no resource permissions."),
+        prepared_fields=frozenset({"registry", "expected_head", "responsibility_statement", "admission_policy"}),
+        finalize_execution_refusal=True,
+        receipt_uv_expiry=True,
     ),
     OperationDefinition(
         "team.agent.admit",
@@ -144,6 +209,18 @@ _ROWS = (
         ),
         codec=ADMISSION_CODEC,
         effect=REGISTERED_MEMBERSHIP,
+        binding_paths=(("certificate_fields", "/artifact"), ("admission_policy_version", "/admission_policy_version"),
+            ("request_id", "/request_id"), ("service_id", "/scope/service_id")),
+        display=OperationDisplay("Admit {/subject/member_alias} to {/subject/team_id}?",
+            ("This creates one ordinary agent membership under the endorsed root's policy.",
+             "It grants no owner role or resource permissions."),
+            (("member", "/subject/member_alias"), ("team", "/subject/team_id")),
+            (("root", "/subject/root_id"), ("member_key", "/subject/child_key"),
+             ("policy_digest", "/subject/admission_policy_digest"), ("requester", "/requester")),
+            (("subject_ineligible", "This admission requires a positively verified eligible agent or permitted local agent."),
+             ("issuer_kind_forbidden", "The selected controller cannot admit this kind of member."))),
+        prepared_fields=frozenset({"request_id", "admission_policy_version"}),
+        finalize_execution_refusal=True,
     ),
     OperationDefinition(
         "human-role.revoke",
@@ -160,6 +237,14 @@ _ROWS = (
         ),
         codec=REVOKE_CODEC,
         effect=LOCAL_SIGNATURE,
+        display=OperationDisplay("Remove {/subject/principal} from {/subject/role}?",
+            ("This revokes the exact retained application role holding.", "Last-owner protection still applies."),
+            (("application", "/subject/app_id"), ("role", "/subject/role")),
+            (("principal", "/subject/principal"), ("installation", "/subject/installation_id"),
+             ("team", "/scope/authority/id"), ("requester", "/requester")),
+            (("subject_ineligible", "The selected role holding cannot be revoked by this operation."),
+             ("issuer_kind_forbidden", "This controller cannot revoke the selected role holding."))),
+        signing_port="sign_owner_act",
     ),
 )
 
@@ -191,6 +276,21 @@ def presentation_catalog() -> dict[str, dict]:
             "rule": spec.rule,
             "consumer_available": spec.consumer_available,
             "subject_schema": deepcopy(spec.codec.subject_schema),
+            "presentation": deepcopy(spec.codec.presentation),
+            "display": spec.display.fields(),
+            "responsibility_statement": spec.display.responsibility_statement,
         }
         for spec in OPERATIONS.values()
     }
+
+
+def operation_description():
+    """Published versioned description; Go pins generated data, never an HTTP response."""
+    return {"v": 1, "type": "aweb.protected-operations", "operations": [
+        {"operation": spec.operation, "variant": spec.variant, "family": spec.family,
+         "key_role": spec.key_role, "rule": spec.rule,
+         "subject_schema": deepcopy(spec.codec.subject_schema),
+         "prepared_fields": sorted(spec.prepared_fields), "bindings": spec.bindings(),
+         "display": spec.display.fields(), "responsibility_statement": spec.display.responsibility_statement,
+         "presentation": deepcopy(spec.codec.presentation)}
+        for _, spec in sorted(OPERATIONS.items())]}

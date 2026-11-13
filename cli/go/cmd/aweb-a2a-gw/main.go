@@ -1315,6 +1315,14 @@ func workspaceMailClient(workspaceDir, teamIDOverride, registryURLOverride, gate
 	client.SetRequireRecipientBindingForDirectAddresses(true)
 	resolver := awid.NewRegistryResolver(client.HTTPClient(), nil)
 	resolver.TeamReadSigningKey = client.SigningKey()
+	// The gateway operator names its registry in the gateway configuration
+	// (registry_url or AWEB_A2A_GW_REGISTRY_URL), as a command line names one
+	// for aw. A registry stored in the workspace's team files stays pinned.
+	if operatorRegistryURL := strings.TrimSpace(registryURLOverride); operatorRegistryURL != "" {
+		if err := resolver.TrustRegistryOrigin(operatorRegistryURL); err != nil {
+			return nil, "", fmt.Errorf("registry_url: %w", err)
+		}
+	}
 	if registryURL := firstNonEmpty(registryURLOverride, teamMembership.RegistryURL); registryURL != "" {
 		if err := resolver.SetFallbackRegistryURL(registryURL); err != nil {
 			return nil, "", fmt.Errorf("registry_url: %w", err)

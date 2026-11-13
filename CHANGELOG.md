@@ -2,6 +2,12 @@
 
 ## Unreleased
 
+- `aweb-a2a-gw` reaches the registry its own configuration names
+  (`registry_url`, or `AWEB_A2A_GW_REGISTRY_URL` without a config file) as the
+  operator's explicit choice, so a private or internal registry no longer has
+  to be named again in `AWID_REGISTRY_URL`. A `registry_url` stored in the
+  gateway workspace's `teams.yaml` stays pinned to public `https` addresses.
+
 - The team deployment bundle's `team.registryRoute` (`local` or `external`,
   default `external`) says where the AWID registry runs for the agents'
   ingress probe. An external registry, such as the public one at the default

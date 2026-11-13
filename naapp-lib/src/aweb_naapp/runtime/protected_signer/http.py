@@ -36,7 +36,6 @@ from .types import (
     RestrictedRequester,
     RevokeHumanRole,
     SignerRefused,
-    owner_act_operation,
 )
 
 Requester = Callable[[Request, RevokeHumanRole | OwnerActOperation], Awaitable[RestrictedRequester]]
@@ -50,7 +49,7 @@ def parse_operation(body: Any) -> RevokeHumanRole | OwnerActOperation:
     try:
         if not isinstance(body, dict) or not _FIELDS <= set(body) <= _FIELDS | {"redirect_uri"}:
             raise ValueError()
-        operation_spec(body["operation"], body["variant"])
+        definition = operation_spec(body["operation"], body["variant"])
         scope, subject = body["scope"], body["subject"]
         if not isinstance(scope, dict) or set(scope) != _SCOPE or not isinstance(subject, dict):
             raise ValueError()
@@ -76,28 +75,9 @@ def parse_operation(body: Any) -> RevokeHumanRole | OwnerActOperation:
             scope["generation"],
         )
         redirect = loopback_redirect(body["redirect_uri"]) if "redirect_uri" in body else None
-        if body["operation"] != "human-role.revoke":
-            return OwnerActOperation(
-                body["operation_id"],
-                context,
-                body["audience"],
-                body["operation"],
-                body["variant"],
-                subject,
-                redirect,
-            )
-        legacy = RevokeHumanRole(
-            body["operation_id"],
-            context,
-            body["audience"],
-            subject["app_id"],
-            subject["installation_id"],
-            subject["role"],
-            subject["principal"],
-            redirect,
-        )
-        owner_act_operation(legacy)  # Same closed subject grammar as every sibling.
-        return legacy
+        if definition.codec.decode_intent is None:
+            raise SignerRefused("operation_not_served")
+        return definition.codec.decode_intent(body, context, redirect)
     except HandoffWireRefused:
         raise SignerRefused("redirect_uri_refused") from None
     except (ValueError, TypeError, KeyError, ProofContextUnavailable) as exc:
