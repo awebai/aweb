@@ -293,6 +293,10 @@ func TestCustodyServesTheReplacedCertificateAndKeepsTheGrantRefused(t *testing.T
 	}))
 	defer server.Close()
 	t.Setenv("AWEB_URL", server.URL)
+	// Installing the replacement certificate publishes the identity's
+	// encryption key; the test server stands in for the registry so the
+	// publish never reaches DNS or the public registry.
+	t.Setenv("AWID_REGISTRY_URL", server.URL)
 	home := custodyFixtureHome(t)
 	teamID, didKey := custodyConstructorIdentityFixture(t, home, server.URL, true)
 	svc, err := newCustodyService(home)
