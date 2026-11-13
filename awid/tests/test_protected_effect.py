@@ -86,6 +86,12 @@ def test_exact_retained_service_proof_verifies_and_retries_unchanged():
     assert proof == issue_proof(fields, key)
 
 
+@pytest.mark.parametrize("signature", [None, 1, [], {}])
+def test_malformed_artifact_signature_is_a_defined_refusal(signature):
+    with pytest.raises(EffectRefused):
+        artifact_digest(b"exact artifact", signature)
+
+
 @pytest.mark.parametrize(
     "dimension",
     [
