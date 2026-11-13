@@ -114,7 +114,7 @@ func TestReadOnlyCommandsUseExternalIdentityHome(t *testing.T) {
 					before := fileDigestsForTest(t, identityHome)
 					shadowBefore := fileDigestsForTest(t, instance)
 					for _, args := range [][]string{{"instructions", "show"}, {"instructions", "show", "instructions-1"}, {"id", "team", "members"}} {
-						out, err := runReadOnlyBinary(ctx, bin, instance, filepath.Join(dir, "user"), identityHome, source, append(args, "--json")...)
+						out, err := runReadOnlyBinaryWithRegistry(ctx, bin, instance, filepath.Join(dir, "user"), identityHome, source, server.URL, append(args, "--json")...)
 						if err != nil {
 							t.Errorf("authorized %v failed: %v\n%s", args, err, out)
 							continue
@@ -164,7 +164,13 @@ func TestReadOnlyCommandsUseExternalIdentityHome(t *testing.T) {
 }
 
 func runReadOnlyBinary(ctx context.Context, bin, cwd, userHome, identityHome, source string, args ...string) (string, error) {
-	env := append(testCommandEnv(userHome), "AW_NO_UPDATE_CHECK=1", "AWEB_URL=", "AWID_REGISTRY_URL=", awconfig.IdentityHomeEnv+"=")
+	return runReadOnlyBinaryWithRegistry(ctx, bin, cwd, userHome, identityHome, source, "", args...)
+}
+
+// runReadOnlyBinaryWithRegistry is runReadOnlyBinary with registryURL as
+// AWID_REGISTRY_URL, the operator's explicit registry choice; "" names none.
+func runReadOnlyBinaryWithRegistry(ctx context.Context, bin, cwd, userHome, identityHome, source, registryURL string, args ...string) (string, error) {
+	env := append(testCommandEnv(userHome), "AW_NO_UPDATE_CHECK=1", "AWEB_URL=", "AWID_REGISTRY_URL="+registryURL, awconfig.IdentityHomeEnv+"=")
 	if source == "flag" {
 		args = append([]string{"--identity-home", identityHome}, args...)
 	} else {

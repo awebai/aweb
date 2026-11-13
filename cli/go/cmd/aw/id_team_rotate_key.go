@@ -239,7 +239,12 @@ func executeTeamRotateKey(ctx context.Context, opts teamRotateKeyOptions) (teamR
 		return teamRotateKeyOutput{}, err
 	}
 	if opts.HTTPClient != nil {
-		registry = awid.NewAWIDRegistryClient(opts.HTTPClient, nil)
+		// Swap only the transport: the target's registry, fallback and trusted
+		// origins stay as teamServerTarget configured them.
+		registry.HTTPClient = opts.HTTPClient
+		if registry.Resolver != nil {
+			registry.Resolver.HTTPClient = opts.HTTPClient
+		}
 	}
 	teamID := awid.BuildTeamID(domain, teamName)
 	now := time.Now().UTC()

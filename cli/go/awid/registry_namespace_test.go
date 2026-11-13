@@ -91,6 +91,7 @@ func TestRegisterAddressAtSignsWithControllerKey(t *testing.T) {
 	t.Cleanup(server.Close)
 
 	client := NewAWIDRegistryClient(server.Client(), nil)
+	routeUntrustedRegistriesToInjectedClient(client)
 	client.DefaultRegistryURL = server.URL
 
 	address, err := client.RegisterAddressAt(
@@ -212,6 +213,7 @@ func TestClaimIdentityAddressAtPostsAtomicSignedPayload(t *testing.T) {
 	t.Cleanup(server.Close)
 
 	client := NewAWIDRegistryClient(server.Client(), nil)
+	routeUntrustedRegistriesToInjectedClient(client)
 	// Pin the clock per-client; mutating a package global races every parallel
 	// test that reads it through production code (default-aajc.15).
 	client.Now = func() time.Time { return now }
@@ -254,6 +256,7 @@ func TestClaimIdentityAddressAtDecodesKnownAtomicConflictCode(t *testing.T) {
 	t.Cleanup(server.Close)
 
 	client := NewAWIDRegistryClient(server.Client(), nil)
+	routeUntrustedRegistriesToInjectedClient(client)
 	_, err := client.ClaimIdentityAddressAt(context.Background(), server.URL, params)
 	if err == nil {
 		t.Fatal("expected conflict error")
@@ -289,6 +292,7 @@ func TestClaimIdentityAddressAtLeavesUnknownAtomicConflictGeneric(t *testing.T) 
 	t.Cleanup(server.Close)
 
 	client := NewAWIDRegistryClient(server.Client(), nil)
+	routeUntrustedRegistriesToInjectedClient(client)
 	_, err := client.ClaimIdentityAddressAt(context.Background(), server.URL, params)
 	if err == nil {
 		t.Fatal("expected conflict error")
@@ -354,6 +358,7 @@ func TestListDIDAddressesAtReadsReverseAddressList(t *testing.T) {
 	t.Cleanup(server.Close)
 
 	client := NewAWIDRegistryClient(server.Client(), nil)
+	routeUntrustedRegistriesToInjectedClient(client)
 	addresses, err := client.ListDIDAddressesAt(context.Background(), server.URL, stableID)
 	if err != nil {
 		t.Fatal(err)
@@ -411,6 +416,7 @@ func TestRegistryNamespaceAndAddressDecodeDeliveryOrigin(t *testing.T) {
 	t.Cleanup(server.Close)
 
 	client := NewAWIDRegistryClient(server.Client(), nil)
+	routeUntrustedRegistriesToInjectedClient(client)
 	namespace, _, err := client.GetNamespaceAt(context.Background(), server.URL, "acme.com")
 	if err != nil {
 		t.Fatal(err)
@@ -486,6 +492,7 @@ func TestUpdateNamespaceDeliveryOriginAtSignsCanonicalPayload(t *testing.T) {
 	t.Cleanup(server.Close)
 
 	client := NewAWIDRegistryClient(server.Client(), nil)
+	routeUntrustedRegistriesToInjectedClient(client)
 	namespace, err := client.UpdateNamespaceDeliveryOriginAt(
 		context.Background(),
 		server.URL,
@@ -570,6 +577,7 @@ func TestDeleteNamespaceAtSignsWithControllerKey(t *testing.T) {
 	t.Cleanup(server.Close)
 
 	client := NewAWIDRegistryClient(server.Client(), nil)
+	routeUntrustedRegistriesToInjectedClient(client)
 	if err := client.DeleteNamespaceAt(
 		context.Background(),
 		server.URL,
@@ -637,6 +645,7 @@ func TestReverifyNamespaceAtPostsWithoutAuth(t *testing.T) {
 	t.Cleanup(server.Close)
 
 	client := NewAWIDRegistryClient(server.Client(), nil)
+	routeUntrustedRegistriesToInjectedClient(client)
 	result, err := client.ReverifyNamespaceAt(
 		context.Background(),
 		server.URL,
@@ -721,6 +730,7 @@ func TestDeleteAddressAtSignsWithControllerKey(t *testing.T) {
 	t.Cleanup(server.Close)
 
 	client := NewAWIDRegistryClient(server.Client(), nil)
+	routeUntrustedRegistriesToInjectedClient(client)
 	if err := client.DeleteAddressAt(
 		context.Background(),
 		server.URL,
@@ -775,6 +785,7 @@ func TestDeleteAddressIfMatchesAtSignsRollbackPreconditions(t *testing.T) {
 	t.Cleanup(server.Close)
 
 	client := NewAWIDRegistryClient(server.Client(), nil)
+	routeUntrustedRegistriesToInjectedClient(client)
 	if err := client.DeleteAddressIfMatchesAt(
 		context.Background(),
 		server.URL,

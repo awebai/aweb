@@ -668,7 +668,7 @@ func resolveLiveTeamMemberAliasTarget(ctx context.Context, sel *awconfig.Selecti
 	if err != nil {
 		return liveTeamMemberAliasTarget{}, false, err
 	}
-	registry, err := newConfiguredRegistryClient(nil, "")
+	registry, err := newConfiguredRegistryClient(nil)
 	if err != nil {
 		return liveTeamMemberAliasTarget{}, false, err
 	}
@@ -851,7 +851,7 @@ func configureResolvedClientWithRoster(c, rosterClient *aweb.Client, sel *awconf
 	registry.TeamReadSigningKey = c.SigningKey()
 	// Received addressless identities are verified at the selected TEAM's
 	// registry. Do not inherit a global identity's unrelated home registry.
-	teamRegistry := awid.NewRegistryResolver(c.Client.HTTPClient(), nil)
+	teamRegistry := newAWIDRegistryResolver(c.Client.HTTPClient(), nil)
 	teamRegistryURL := strings.TrimSpace(os.Getenv("AWID_REGISTRY_URL"))
 	if state, err := awconfig.LoadTeamStateFromIdentityHome(sel.IdentityHome); err == nil && state != nil {
 		if membership := state.Membership(sel.TeamID); membership != nil {
@@ -1101,7 +1101,7 @@ func configureAnsweringMountHint(c *aweb.Client, sel *awconfig.Selection, baseUR
 }
 
 func newSelectionRegistryResolver(httpClient *http.Client, selectionRegistryURL, identityAddress string) (*awid.RegistryResolver, error) {
-	registry := awid.NewRegistryResolver(httpClient, nil)
+	registry := newAWIDRegistryResolver(httpClient, nil)
 	registryURL := strings.TrimSpace(selectionRegistryURL)
 	if registryURL == "" {
 		registryURL = strings.TrimSpace(os.Getenv("AWID_REGISTRY_URL"))
@@ -1132,11 +1132,11 @@ func registryIdentityDomain(identityAddress string) (string, bool) {
 	return domain, ok
 }
 
-func newConfiguredRegistryClient(httpClient *http.Client, baseURL string) (*awid.RegistryClient, error) {
-	client := awid.NewAWIDRegistryClient(httpClient, nil)
+func newConfiguredRegistryClient(httpClient *http.Client) (*awid.RegistryClient, error) {
+	client := newAWIDRegistryClient(httpClient, nil)
 	// Admin and awid callers that need a specific registry URL set it after
 	// construction; otherwise AWID_REGISTRY_URL is global at this layer.
-	if err := configureEmbeddedRegistryBaseURL(baseURL, client.SetFallbackRegistryURL); err != nil {
+	if err := configureEmbeddedRegistryBaseURL(client.SetFallbackRegistryURL); err != nil {
 		return nil, err
 	}
 	return client, nil
@@ -1164,15 +1164,10 @@ func loadOptionalWorktreeSigningKey(workingDir string) (ed25519.PrivateKey, erro
 	return signingKey, nil
 }
 
-func configureEmbeddedRegistryBaseURL(baseURL string, setFallback func(string) error) error {
-	return configureEmbeddedRegistryBaseURLWithDefault(baseURL, "", setFallback)
-}
-
-func configureEmbeddedRegistryBaseURLWithDefault(baseURL, preferredRegistryURL string, setFallback func(string) error) error {
+// configureEmbeddedRegistryBaseURL applies AWID_REGISTRY_URL, the operator's
+// process-wide registry choice, as the client's fallback registry.
+func configureEmbeddedRegistryBaseURL(setFallback func(string) error) error {
 	registryValue := strings.TrimSpace(os.Getenv("AWID_REGISTRY_URL"))
-	if registryValue == "" {
-		registryValue = strings.TrimSpace(preferredRegistryURL)
-	}
 	if registryValue == "" {
 		return nil
 	}

@@ -76,7 +76,7 @@ func executeIDRevoke(ctx context.Context, opts idChildOptions, target, cutoff st
 	if err != nil {
 		return idRevokeOutput{}, err
 	}
-	registry := awid.NewAWIDRegistryClient(nil, opts.TXTResolver)
+	registry := newAWIDRegistryClient(nil, opts.TXTResolver)
 	registry.DefaultRegistryURL = issuer.registryURL
 	head, err := idRevokeHead(ctx, idStatusAt(registry, opts.TXTResolver, issuer.registryURL), issuer.domain, target)
 	if err != nil {

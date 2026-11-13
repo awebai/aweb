@@ -122,7 +122,7 @@ func (c *RegistryClient) coveringRequest(ctx context.Context, registryURL, path,
 		req.Header.Set(k, v)
 	}
 	setUserAgent(req, "")
-	resp, err := DoNoRedirectWithTimeout(c.httpClient(), req, APITimeout())
+	resp, err := DoNoRedirectWithTimeout(c.httpClientFor(aud), req, APITimeout())
 	if err != nil {
 		return nil, err
 	}

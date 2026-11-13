@@ -47,6 +47,7 @@ func TestHumanAliasScopedEncryptionDiscovery(t *testing.T) {
 				}
 				client.teamID = team
 				registry := NewRegistryResolver(server.Client(), nil)
+				routeUntrustedResolverRegistriesToInjectedClient(registry)
 				if err := registry.SetFallbackRegistryURL(server.URL); err != nil {
 					t.Fatal(err)
 				}

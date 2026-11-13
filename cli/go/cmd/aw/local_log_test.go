@@ -838,3 +838,40 @@ func TestAwDoctorLocalReportsTheOwnerLogKeyForAGrantSeat(t *testing.T) {
 	}
 	requireDoctorCheckStatus(t, doctor(), doctorCheckLocalLogKey, doctorStatusOK)
 }
+
+// Under registry pinning a registry named only in identity.yaml is reached at
+// public addresses; doctor names AWID_REGISTRY_URL as the fix when the stored
+// registry is plainly private, and is satisfied once the variable names it.
+func TestAwDoctorNamesAWIDRegistryURLForAPrivateStoredRegistry(t *testing.T) {
+	t.Parallel()
+
+	bin, tmp := buildDoctorBinary(t)
+	writeDoctorGlobalFixture(t, tmp, "https://app.example.com/api")
+	identityPath := filepath.Join(tmp, awconfig.DefaultWorktreeIdentityRelativePath())
+	identity, err := awconfig.LoadWorktreeIdentityFrom(identityPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	doctor := func(env ...string) doctorOutput {
+		run := exec.Command(bin, "doctor", "identity", "--offline", "--json")
+		run.Dir = tmp
+		run.Env = append(testCommandEnv(tmp), env...)
+		out, err := run.CombinedOutput()
+		if err != nil && !strings.Contains(string(out), `"checks"`) {
+			t.Fatalf("doctor: %v\n%s", err, out)
+		}
+		return decodeDoctorOutput(t, out)
+	}
+
+	requireDoctorCheckStatus(t, doctor(), doctorCheckIdentityLocalRegistryPinned, doctorStatusInfo)
+
+	identity.RegistryURL = "https://10.1.2.3:8443"
+	if err := awconfig.SaveWorktreeIdentityTo(identityPath, identity); err != nil {
+		t.Fatal(err)
+	}
+	check := requireDoctorCheckStatus(t, doctor(), doctorCheckIdentityLocalRegistryPinned, doctorStatusWarn)
+	if !strings.Contains(check.Message+check.NextStep, "AWID_REGISTRY_URL") {
+		t.Fatalf("the check must name AWID_REGISTRY_URL: %#v", check)
+	}
+	requireDoctorCheckStatus(t, doctor("AWID_REGISTRY_URL=https://10.1.2.3:8443"), doctorCheckIdentityLocalRegistryPinned, doctorStatusOK)
+}
