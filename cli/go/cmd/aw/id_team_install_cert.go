@@ -43,7 +43,8 @@ var teamInstallCertCmd = &cobra.Command{
 		"  certificate_bad_signature  its signature does not verify under that key\n" +
 		"  certificate_revoked        the registry has revoked it\n" +
 		"  certificate_unregistered   the registry does not hold it for this member\n" +
-		"  certificate_conflict       the home holds another certificate for the team\n" +
+		"  certificate_conflict       the home holds another certificate for the team, or, for a\n" +
+		"                             local identity, any membership of another team\n" +
 		"  registry_unavailable       the registry could not be read; retrying may succeed",
 	RunE: runTeamInstallCert,
 }
@@ -89,6 +90,11 @@ func installTeamCertificateFile(ctx context.Context, c teamCertificateInstall) (
 		return nil, installRefusal("member_mismatch", "the certificate names member %s %s (%s), not this home's identity %s %s (%s)",
 			cert.MemberDIDKey, cert.MemberDIDAW, cert.IdentityScope, didKey, identity.StableID, identity.IdentityScope)
 	}
+	if identity.IdentityScope == awid.IdentityModeLocal {
+		if err := localHomeOfOtherTeam(c.Home, cert.Team); err != nil {
+			return nil, err
+		}
+	}
 	if err := checkCurrentTeamCertificate(ctx, c, cert, key); err != nil {
 		return nil, err
 	}
@@ -116,6 +122,34 @@ func installTeamCertificateFile(ctx context.Context, c teamCertificateInstall) (
 		result["did_aw"] = identity.StableID
 	}
 	return result, nil
+}
+
+// localHomeOfOtherTeam refuses a local identity's home that holds any
+// membership or certificate file of a team other than team: a local identity
+// belongs to exactly one team (docs/identity.md).
+func localHomeOfOtherTeam(home, team string) error {
+	state, err := awconfig.LoadTeamStateFromIdentityHome(home)
+	if err != nil && !os.IsNotExist(err) {
+		return installRefusal("certificate_conflict", "%s holds team memberships that cannot be read: %v", home, err)
+	}
+	if state != nil {
+		for _, membership := range state.Memberships {
+			if membership.TeamID != team {
+				return installRefusal("certificate_conflict", "%s is a local identity of team %s; a local identity belongs to one team", home, membership.TeamID)
+			}
+		}
+	}
+	entries, err := os.ReadDir(filepath.Join(home, "team-certs"))
+	if err != nil && !os.IsNotExist(err) {
+		return installRefusal("certificate_conflict", "%s holds team certificates that cannot be read: %v", home, err)
+	}
+	own := filepath.Base(filepath.FromSlash(awconfig.TeamCertificateRelativePath(team)))
+	for _, entry := range entries {
+		if entry.Name() != own {
+			return installRefusal("certificate_conflict", "%s holds team certificate %s of another team; a local identity belongs to one team", home, entry.Name())
+		}
+	}
+	return nil
 }
 
 // checkCurrentTeamCertificate refuses cert unless the registry's current key
@@ -193,8 +227,6 @@ func recordTeamCertificate(workingDir, identityHome string, cert *awid.TeamCerti
 		if _, err := saveAcceptedTeamCertificate(workingDir, identityHome, cert.Team, cert); err != nil {
 			return err
 		}
-	} else {
-		registryURL = ""
 	}
 	if err := upsertAcceptedTeamMembershipState(workingDir, &teamAcceptInviteOutput{
 		Status:   status,

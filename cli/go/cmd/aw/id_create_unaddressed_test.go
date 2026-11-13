@@ -345,16 +345,20 @@ func TestADanglingIdentityEntryRefusesBeforeAnyRegistration(t *testing.T) {
 // The command refuses a home holding an identity before the pre-run renews
 // that identity's due encryption assertion or checks for updates.
 func TestNoAddressRefusesAnExistingIdentityWithoutRenewingIt(t *testing.T) {
-	assertCreationRefusesWithoutRenewing(t, func(registryURL string) []string { return []string{"--no-address", "--registry", registryURL} })
+	assertRefusalDoesNotRenew(t, "identity_exists", func(registryURL string) []string {
+		return []string{"id", "create", "--no-address", "--registry", registryURL}
+	})
 }
 
 func TestLocalRefusesAnExistingIdentityWithoutRenewingIt(t *testing.T) {
-	assertCreationRefusesWithoutRenewing(t, func(string) []string { return []string{"--local"} })
+	assertRefusalDoesNotRenew(t, "identity_exists", func(string) []string { return []string{"id", "create", "--local"} })
 }
 
-// assertCreationRefusesWithoutRenewing runs aw id create with modeArgs on a
-// home holding a messaging identity whose encryption assertion is due.
-func assertCreationRefusesWithoutRenewing(t *testing.T, modeArgs func(registryURL string) []string) {
+// assertRefusalDoesNotRenew runs aw with args on a home holding a messaging
+// identity whose encryption assertion is due, and wants the refusal code
+// before any request or change to the home; an ordinary command on the same
+// home then renews the assertion.
+func assertRefusalDoesNotRenew(t *testing.T, code string, args func(registryURL string) []string) {
 	t.Setenv(awconfig.IdentityHomeEnv, "")
 	root, err := filepath.EvalSymlinks(t.TempDir())
 	if err != nil {
@@ -413,14 +417,14 @@ func assertCreationRefusesWithoutRenewing(t *testing.T, modeArgs func(registryUR
 	bin := filepath.Join(t.TempDir(), "aw")
 	buildAwBinary(t, ctx, bin)
 	before := homeContents(t, home)
-	command := exec.CommandContext(ctx, bin, append([]string{"--json", "--identity-home", home, "id", "create"}, modeArgs(server.URL)...)...)
+	command := exec.CommandContext(ctx, bin, append([]string{"--json", "--identity-home", home}, args(server.URL)...)...)
 	command.Dir, command.Env = root, testCommandEnv(root)
 	out, runErr := command.CombinedOutput()
 	mu.Lock()
 	sent := append([]string(nil), requests...)
 	mu.Unlock()
-	if runErr == nil || !strings.Contains(string(out), "identity_exists") || len(sent) != 0 {
-		t.Fatalf("want identity_exists before any request: error=%v requests=%v output=%s", runErr, sent, out)
+	if runErr == nil || !strings.Contains(string(out), code) || len(sent) != 0 {
+		t.Fatalf("want %s before any request: error=%v requests=%v output=%s", code, runErr, sent, out)
 	}
 	if after := homeContents(t, home); !maps.Equal(before, after) {
 		t.Fatalf("the refused creation changed the home: before %v after %v", slices.Sorted(maps.Keys(before)), slices.Sorted(maps.Keys(after)))

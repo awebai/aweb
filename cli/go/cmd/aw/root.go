@@ -91,6 +91,11 @@ var rootCmd = &cobra.Command{
 			// Validate the original creation association before any key renewal or network work.
 			return nil
 		}
+		if cmd == teamInstallCertCmd {
+			// Check the certificate before any key renewal or network work; a
+			// verified install ensures the encryption key itself.
+			return nil
+		}
 		if isAgentStatusCommand(cmd) || isActivityCommand(cmd) {
 			return nil // Producer commands never renew encryption keys or check updates.
 		}

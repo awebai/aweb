@@ -1383,7 +1383,8 @@ completes an install that was interrupted. Refusals, with their --json codes:
   certificate_bad_signature  its signature does not verify under that key
   certificate_revoked        the registry has revoked it
   certificate_unregistered   the registry does not hold it for this member
-  certificate_conflict       the home holds another certificate for the team
+  certificate_conflict       the home holds another certificate for the team, or, for a
+                             local identity, any membership of another team
   registry_unavailable       the registry could not be read; retrying may succeed
 
 Flags:

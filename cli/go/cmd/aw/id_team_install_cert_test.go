@@ -329,3 +329,137 @@ func TestTheInstallCommandInstallsAnAdmittedCertificateIntoALocalHome(t *testing
 		t.Fatalf("workspace %+v, %v", workspace, err)
 	}
 }
+
+// A local identity belongs to exactly one team: a home holding any trace of
+// another team refuses, before anything is written.
+func TestALocalHomeOfAnotherTeamRefusesTheCertificateAndIsLeftUnchanged(t *testing.T) {
+	_, teamKey, _ := awid.GenerateKeypair()
+	const priorTeam = "frontend:example.com"
+	for name, prepare := range map[string]func(t *testing.T, registry *certificateRegistry, home, didKey string){
+		"a membership with its certificate": func(t *testing.T, registry *certificateRegistry, home, didKey string) {
+			saveOtherTeamCertificate(t, teamKey, home, didKey, priorTeam)
+			saveOtherTeamMembership(t, registry, home, priorTeam)
+		},
+		"only the other team's certificate file": func(t *testing.T, _ *certificateRegistry, home, didKey string) {
+			saveOtherTeamCertificate(t, teamKey, home, didKey, priorTeam)
+		},
+		"only the other team's membership": func(t *testing.T, registry *certificateRegistry, home, _ string) {
+			saveOtherTeamMembership(t, registry, home, priorTeam)
+		},
+	} {
+		registry := newCertificateRegistry(t, teamKey)
+		home, didKey := keyOnlyHome(t)
+		prepare(t, registry, home, didKey)
+		cert := signedMemberCertificate(t, teamKey, didKey, "", awid.IdentityModeLocal)
+		registry.register(cert, false)
+		contents := homeContents(t, home)
+		_, err := installTeamCertificateFile(context.Background(), installRequest(t, registry, home, certificateFile(t, cert)))
+		if errorCodeOf(err) != "certificate_conflict" {
+			t.Errorf("%s: err %v", name, err)
+		}
+		if !maps.Equal(contents, homeContents(t, home)) {
+			t.Errorf("%s: the refusal changed the home", name)
+		}
+	}
+}
+
+func TestAGlobalHomeInAnotherTeamInstallsTheCertificate(t *testing.T) {
+	_, teamKey, _ := awid.GenerateKeypair()
+	registry := newCertificateRegistry(t, teamKey)
+	home := t.TempDir()
+	created, err := createUnaddressedIdentity(context.Background(), unaddressedRequest(t, newMappingRegistry(t), home))
+	if err != nil {
+		t.Fatal(err)
+	}
+	didKey, didAW := created["did_key"].(string), created["did_aw"].(string)
+	const priorTeam = "frontend:example.com"
+	prior, err := awid.SignTeamCertificate(teamKey, awid.TeamCertificateFields{Team: priorTeam, MemberDIDKey: didKey, MemberDIDAW: didAW,
+		Alias: "first", IdentityScope: awid.IdentityModeGlobal})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := awconfig.SaveTeamCertificateForTeamToIdentityHome(home, priorTeam, prior); err != nil {
+		t.Fatal(err)
+	}
+	saveOtherTeamMembership(t, registry, home, priorTeam)
+	cert := signedMemberCertificate(t, teamKey, didKey, didAW, awid.IdentityModeGlobal)
+	registry.register(cert, false)
+	result, err := installTeamCertificateFile(context.Background(), installRequest(t, registry, home, certificateFile(t, cert)))
+	if err != nil || result["status"] != "installed" || result["did_aw"] != didAW {
+		t.Fatalf("result %v, %v", result, err)
+	}
+	state, err := awconfig.LoadTeamStateFromIdentityHome(home)
+	if err != nil || state.Membership(priorTeam) == nil || state.Membership(installTeamID) == nil {
+		t.Fatalf("memberships %+v, %v", state, err)
+	}
+}
+
+// The membership an interrupted install's rerun records names the registry
+// the certificate was checked at.
+func TestAnInterruptedInstallRecordsTheRegistryItChecked(t *testing.T) {
+	_, teamKey, _ := awid.GenerateKeypair()
+	registry := newCertificateRegistry(t, teamKey)
+	home, didKey := keyOnlyHome(t)
+	cert := signedMemberCertificate(t, teamKey, didKey, "", awid.IdentityModeLocal)
+	registry.register(cert, false)
+	if _, err := awconfig.SaveTeamCertificateForTeamToIdentityHome(home, installTeamID, cert); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := installTeamCertificateFile(context.Background(), installRequest(t, registry, home, certificateFile(t, cert))); err != nil {
+		t.Fatal(err)
+	}
+	state, err := awconfig.LoadTeamStateFromIdentityHome(home)
+	if err != nil || state.Membership(installTeamID) == nil || state.Membership(installTeamID).RegistryURL != registry.server.URL {
+		t.Fatalf("membership %+v, %v; want registry %s", state, err, registry.server.URL)
+	}
+}
+
+func saveOtherTeamCertificate(t *testing.T, teamKey ed25519.PrivateKey, home, didKey, team string) {
+	t.Helper()
+	prior, err := awid.SignTeamCertificate(teamKey, awid.TeamCertificateFields{Team: team, MemberDIDKey: didKey, Alias: "first",
+		IdentityScope: awid.IdentityModeLocal})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := awconfig.SaveTeamCertificateForTeamToIdentityHome(home, team, prior); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func saveOtherTeamMembership(t *testing.T, registry *certificateRegistry, home, team string) {
+	t.Helper()
+	if err := awconfig.SaveTeamStateToIdentityHome(home, &awconfig.TeamState{ActiveTeam: team, Memberships: []awconfig.TeamMembership{{
+		TeamID: team, Alias: "first", CertPath: awconfig.TeamCertificateRelativePath(team), RegistryURL: registry.server.URL}}}); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func TestARefusedInstallDoesNotRenewTheHomesIdentity(t *testing.T) {
+	certificate := filepath.Join(t.TempDir(), "invalid.cert")
+	if err := os.WriteFile(certificate, []byte("not a certificate\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	assertRefusalDoesNotRenew(t, "certificate_invalid", func(string) []string {
+		return []string{"id", "team", "install-cert", "--certificate", certificate}
+	})
+}
+
+// fetch-cert records an already-installed certificate with no registry,
+// which keeps the existing membership's own.
+func TestRecordingAnInstalledCertificateWithNoRegistryKeepsTheMembershipsRegistry(t *testing.T) {
+	_, teamKey, _ := awid.GenerateKeypair()
+	registry := newCertificateRegistry(t, teamKey)
+	home, didKey := keyOnlyHome(t)
+	cert := signedMemberCertificate(t, teamKey, didKey, "", awid.IdentityModeLocal)
+	registry.register(cert, false)
+	if _, err := installTeamCertificateFile(context.Background(), installRequest(t, registry, home, certificateFile(t, cert))); err != nil {
+		t.Fatal(err)
+	}
+	if err := recordTeamCertificate(t.TempDir(), home, cert, "", "already_installed"); err != nil {
+		t.Fatal(err)
+	}
+	state, err := awconfig.LoadTeamStateFromIdentityHome(home)
+	if err != nil || state.Membership(installTeamID) == nil || state.Membership(installTeamID).RegistryURL != registry.server.URL {
+		t.Fatalf("membership %+v, %v; want registry %s kept", state, err, registry.server.URL)
+	}
+}
