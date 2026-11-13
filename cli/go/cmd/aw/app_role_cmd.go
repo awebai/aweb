@@ -342,7 +342,11 @@ func verifyHolderEvidence(ctx context.Context, e *holderCredentialExport, select
 	if _, err := awid.ExtractPublicKey(team.TeamDIDKey); err != nil {
 		return nil, err
 	}
-	if err := awid.CheckDecodedTeamCertificate(cert, team.TeamDIDKey); err != nil {
+	if _, err := awid.CheckTeamCertificate(e.Certificate, awid.TeamCertificateFacts{
+		SubjectDIDKey: cert.MemberDIDKey,
+		TeamDIDKey:    team.TeamDIDKey,
+		Registered:    awid.RegistrationNotRequired(),
+	}); err != nil {
 		return nil, notMember("the certificate does not verify under the team's current key")
 	}
 	active, err := registry.ListCertificates(ctx, registryURL, domain, name, true, teamKey)
