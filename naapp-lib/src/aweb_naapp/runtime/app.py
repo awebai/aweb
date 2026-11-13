@@ -43,6 +43,7 @@ from urllib.parse import urlsplit
 from uuid import UUID
 
 import httpx
+from awid.external_authority import TXTOutcomeResolver
 from awid.registry import RegistryClient
 from fastapi import FastAPI, HTTPException, Request
 from fastapi.dependencies.models import Dependant
@@ -147,6 +148,9 @@ class NaappRuntime:
     hook-resolve key is also loaded at construction for the shared
     :meth:`hook_resolver`. Identity discovery objects are available without
     I/O before the lifespan, so grant sources can register route guards first.
+
+    Team keys are held to pins kept in the app's database; ``awid_txt_resolver``
+    (system DNS by default) answers which namespace controller may move one.
     """
 
     def __init__(
@@ -158,6 +162,7 @@ class NaappRuntime:
         manifest_path: Path,
         root_path: str = "",
         awid_transport: httpx.AsyncBaseTransport | None = None,
+        awid_txt_resolver: TXTOutcomeResolver | None = None,
         team_server_transport: httpx.AsyncBaseTransport | None = None,
         stores: Sequence[Store] = (),
         hook_egress: Egress | None = None,
@@ -198,6 +203,7 @@ class NaappRuntime:
             member_credentials=read_member_credentials(settings.awid_member_credentials),
             transport=awid_transport,
             team_key_pins=DatabaseTeamKeyPins(self.db),
+            txt_resolver=awid_txt_resolver,
         )
         self._team_server_directory = TeamServerDirectory(
             team_cache=self._team_cache, transport=awid_transport,

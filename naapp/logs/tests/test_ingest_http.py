@@ -24,7 +24,7 @@ from aweb_naapp.hooks.delivery import MAX_DELIVERY_BYTES, sign_delivery
 from aweb_naapp.hooks.strictjson import decode_base64url
 from aweb_naapp.manifest import load_manifest
 from aweb_naapp_testing import Member
-from awid_service.testing import REGISTRY_URL, SERVICE_TOKEN
+from awid_service.testing import REGISTRY_URL, SERVICE_TOKEN, dns_naming
 from nacl.signing import SigningKey
 
 from aweb_logs.app import create_app
@@ -48,6 +48,7 @@ CONSOLE = "https://console.logs.example.test"
 PATH = "/v1/hooks/ingest"
 APP_ID = "secrets-test"
 SEEDS = {"core": CORE_SEED, "app": SECRETS_SEED, "client": MEMBER_SEED}
+NAMESPACE_KEY = SigningKey.generate()
 
 
 async def _install(db, team_id, data):
@@ -201,6 +202,7 @@ async def world(coordination, test_db_factory, tmp_path, monkeypatch, request):
     )}
     service = create_app(
         settings, email=no_mail(), awid_transport=coordination.registry.transport,
+        awid_txt_resolver=dns_naming("ingest.example", NAMESPACE_KEY),
         team_server_transport=coordination.server.transport, now=lambda: now,
     )
     async with service.api_app.router.lifespan_context(service.api_app):
@@ -378,9 +380,18 @@ async def test_a_revoked_client_certificate_is_refused_by_the_certificate_check(
 
 async def test_client_certificate_verification_reads_the_controller_key_fresh(world):
     assert (await world.send(world.delivery("client"))).status_code == 200
-    await world.coordination.registry.rotate_team_key(world.member.team_id, did_key(bytes(SigningKey.generate())))
+    await world.coordination.registry.rotate_team_key_by_controller(
+        world.member.team_id, did_key(bytes(SigningKey.generate())), NAMESPACE_KEY,
+    )
     response = await world.send(world.delivery("client"))
     assert (response.status_code, _code(response)) == (401, "transport_certificate_invalid")
+
+
+async def test_a_registry_substituted_team_key_is_refused_by_name(world):
+    assert (await world.send(world.delivery("client"))).status_code == 200
+    await world.coordination.registry.rotate_team_key(world.member.team_id, did_key(bytes(SigningKey.generate())))
+    response = await world.send(world.delivery("client"))
+    assert (response.status_code, _code(response)) == (401, "team_key_unverified")
 
 
 async def test_a_client_cannot_use_a_warm_key_cache_during_a_registry_outage(world):
