@@ -48,12 +48,23 @@ messages in transit; these logs are the local record.
 A team owner can seal both logs to an owner log key, so that only the owner
 can read them back:
 
-1. On the owner's machine, which holds the team controller key under
-   `~/.awid/team-keys/`, `aw team admin log-key create --team <team_id> --out
-   <record.json>` creates the key. The private key is kept in the OS keychain
-   (service `aw-log-key`) as an encrypted backup under a passphrase; the
-   public record is signed by the team controller key.
-2. On each agent host, `aw team admin log-key install <record.json>` installs
+1. On the machine where the owner reads the logs, `aw team admin log-key
+   create --team <team_id> --out <unsigned.json>` creates the key. The
+   private key is kept in the OS keychain (service `aw-log-key`) as an
+   encrypted backup under a passphrase. The public record is written
+   unsigned; this step needs no controller key.
+2. The team controller key signs the record (`aweb.log-key/1` followed by the
+   canonical JSON of its fields). `aw team admin log-key sign --record
+   <unsigned.json> --out <record.json>` takes exactly one route:
+   `--team-key-did <did> --signature <sig>` attaches a signature produced
+   elsewhere, such as by a deployment's protected signer, after verifying it;
+   `--offline-controller-key` signs with the controller key in
+   `~/.awid/team-keys/` on that machine. With no route it refuses.
+   `aw team admin log-key signing-bytes --record <unsigned.json>
+   --team-key-did <did>` prints the exact bytes, so any signer can be
+   checked. After a controller replacement, the same record is signed again
+   by the new key; the log key itself need not change.
+3. On each agent host, `aw team admin log-key install <record.json>` installs
    the record once it verifies under the team key named in that host's own
    team certificate. One record per team serves every agent of that team that
    shares the same home directory.
@@ -77,9 +88,10 @@ While a team's log key is installed, the agent does not read its logs back:
 `aw log` refuses and `aw run --continue` shows no recap. Message history stays
 available from the server. The owner reads copied log files with `aw log read
 <file>...` (add `--json` for the decrypted entries), giving each key's
-passphrase once. Running `create` again rotates the key: new lines use the new
-key, and earlier keys stay in the owner's keychain so older lines remain
-readable. A rotated-out key protects only what was sealed to it.
+passphrase once. Running `create`, `sign` and `install` again rotates the
+key: new lines use the new key, and earlier keys stay in the owner's keychain
+so older lines remain readable. A rotated-out key protects only what was
+sealed to it.
 
 Without an installed record the logs are written in plaintext, and `aw doctor`
 warns. An installed record that does not verify stops local logging rather
