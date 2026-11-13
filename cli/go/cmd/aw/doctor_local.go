@@ -392,8 +392,7 @@ func (r *doctorRunner) runCertificateChecks(state *doctorLocalState) {
 	}
 
 	teamDID := strings.TrimSpace(cert.TeamDIDKey)
-	teamPub, err := awid.ExtractPublicKey(teamDID)
-	if err != nil {
+	if _, err := awid.ExtractPublicKey(teamDID); err != nil {
 		r.add(localCheck(
 			doctorCheckCertificateTeamDIDKey,
 			doctorStatusFail,
@@ -407,17 +406,17 @@ func (r *doctorRunner) runCertificateChecks(state *doctorLocalState) {
 	}
 	r.add(localCheck(doctorCheckCertificateTeamDIDKey, doctorStatusOK, &doctorTarget{Type: "did", ID: teamDID}, "Team certificate team_did_key is valid.", "", nil))
 
-	if err := awid.VerifyTeamCertificate(cert, teamPub); err != nil {
+	if err := awid.CheckDecodedTeamCertificate(cert, teamDID); err != nil {
 		r.add(localCheck(
 			doctorCheckCertificateSignature,
 			doctorStatusFail,
 			&doctorTarget{Type: "did", ID: teamDID},
-			"Team certificate signature is invalid.",
+			"Team certificate is invalid.",
 			"Restore a certificate signed by the team controller key.",
 			map[string]any{"error": err.Error()},
 		))
 	} else {
-		r.add(localCheck(doctorCheckCertificateSignature, doctorStatusOK, &doctorTarget{Type: "did", ID: teamDID}, "Team certificate signature verifies with its team_did_key.", "", nil))
+		r.add(localCheck(doctorCheckCertificateSignature, doctorStatusOK, &doctorTarget{Type: "did", ID: teamDID}, "Team certificate verifies with its team_did_key.", "", nil))
 	}
 }
 
