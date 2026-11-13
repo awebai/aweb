@@ -276,7 +276,12 @@ def _worker(argv, data, report, policy):
     try:
         _emit(report, _object(_line(identity_r, 128)))
         if data:
-            os.write(input_w, data)
+            try:
+                os.write(input_w, data)
+            except BrokenPipeError:
+                # The child may refuse launch and close stdin before this write.
+                # Its exec pipe and wait status still provide the full outcome.
+                pass
         os.close(input_w)
         input_w = -1
         failed = os.read(error_r, 16)
