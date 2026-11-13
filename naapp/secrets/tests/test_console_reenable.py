@@ -306,6 +306,10 @@ async def test_reenable_preserves_target_and_installation_scope_validation(uses,
             )
             assert await snapshot(w, drafted) == before
         else:
+            # forest() enrolled finance through a confirmed change set. Refusal
+            # must preserve that existing row, not assume an empty database.
+            before = await w.db.fetch_all("SELECT * FROM {{tables.change_sets}} ORDER BY change_id")
+            assert len(before) == 1 and before[0]["state"] == "applied"
             response = await human.post(
                 ROOT.replace(INSTALLATION_ID, "foreign-installation")
                 if target == "foreign_scope"
@@ -322,4 +326,7 @@ async def test_reenable_preserves_target_and_installation_scope_validation(uses,
                 headers=headers,
             )
             assert response.status_code == (403 if target == "foreign_scope" else 409)
-            assert await w.db.fetch_value("SELECT count(*) FROM {{tables.change_sets}}") == 0
+            assert (
+                await w.db.fetch_all("SELECT * FROM {{tables.change_sets}} ORDER BY change_id")
+                == before
+            )
