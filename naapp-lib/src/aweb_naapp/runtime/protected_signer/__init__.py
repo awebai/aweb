@@ -17,6 +17,7 @@ from .types import (
     RestrictedRequester,
     RevokeHumanRole,
     SignerRefused,
+    VerifiedProtectedEffect,
 )
 
 __all__ = [
@@ -36,4 +37,5 @@ __all__ = [
     "RestrictedRequester",
     "RevokeHumanRole",
     "SignerRefused",
+    "VerifiedProtectedEffect",
 ]

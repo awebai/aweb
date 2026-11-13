@@ -46,3 +46,24 @@ preserve the original deadlines through its last await, and commit state,
 single-use consumption, exact-result receipt and governance audit together.
 Bootstrap remains a distinct operator-authorized initial action; these changes
 must not create a record on a miss or reuse an installed-app administrator row.
+
+## Original-transaction consumer evidence
+
+The shared runtime reserves `VerifiedProtectedEffect` as an in-process consumer
+port. Bare fields, a stored receipt, a bootstrap marker or a public context
+cannot construct it. Its executor-only factory snapshots the full typed intent,
+including operation ID, operation/variant, audience, subject and protected scope,
+with the admitted human, original transaction ID, retained proof reference and
+original approval deadline. Returning its subject gives a separate snapshot.
+
+`require_in` checks that exact intent and `txid_current()` in the consumer's
+transaction, checking the original deadline again after the database await.
+It neither renews a gesture nor checks remote authority for the consumer. The
+consumer must still hold its current state, check eligible owner/controller
+facts and perform its final authority and deadline checks through commit.
+
+The evidence type and its binding tests do not enable governance. No current
+request route mints it yet; wiring its factory after real B2 single-use admission
+and retained exact-act B3 proof, and connecting the transactional state/effect,
+remain required. Pure constructor/transaction-identity tests are not live
+passkey or PostgreSQL execution evidence.

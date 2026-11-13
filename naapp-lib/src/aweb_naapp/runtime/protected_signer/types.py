@@ -9,6 +9,7 @@ from __future__ import annotations
 import json
 from collections.abc import Mapping
 from dataclasses import dataclass, field
+from datetime import datetime
 from typing import Any, Literal, Protocol
 from uuid import UUID
 
@@ -46,6 +47,138 @@ class ReceiptReader:
 
 Actor = RestrictedRequester | AdmittedHuman | ReceiptReader
 AuthorityUse = Literal["prepare", "approval", "execute", "receipt"]
+
+
+_EFFECT_ADMISSION = object()
+
+
+@dataclass(frozen=True, init=False)
+class VerifiedProtectedEffect:
+    """An exact B2/B3 admission in its original effect transaction.
+
+    The shared executor must construct this only after current authority,
+    retained exact-act UV and B2's single-use admission. This reserved
+    in-process consumer port is not yet minted by a request route. It is never
+    parsed from a worker request, receipt, bare context or browser callback.
+    """
+
+    operation_id: str
+    operation: str
+    variant: str
+    audience: str
+    context: ProtectedKeyContext
+    human: AdmittedHuman
+    transaction_id: int
+    evidence_ref: str
+    expires_at: datetime
+    _subject: bytes = field(repr=False)
+    _intent: bytes = field(repr=False)
+
+    def __init__(
+        self,
+        *,
+        operation_id,
+        operation,
+        variant,
+        audience,
+        context,
+        human,
+        transaction_id,
+        evidence_ref,
+        expires_at,
+        subject_bytes,
+        intent_bytes,
+        _admission=None,
+    ):
+        if _admission is not _EFFECT_ADMISSION:
+            raise SignerRefused("proof_invalid")
+        for name, value in (
+            ("operation_id", operation_id),
+            ("operation", operation),
+            ("variant", variant),
+            ("audience", audience),
+            ("context", context),
+            ("human", human),
+            ("transaction_id", transaction_id),
+            ("evidence_ref", evidence_ref),
+            ("expires_at", expires_at),
+            ("_subject", subject_bytes),
+            ("_intent", intent_bytes),
+        ):
+            object.__setattr__(self, name, value)
+
+    @property
+    def subject(self) -> dict[str, Any]:
+        return json.loads(self._subject)
+
+    async def require_in(self, tx, operation, *, clock):
+        """A consumer checks exact admission inside the original transaction.
+
+        This does not read remote authority, renew a gesture, or apply an
+        effect. The consumer still holds and checks its own current state and
+        final authority fence through commit. Recheck after every later await.
+        """
+        from awid.signing import canonical_json_bytes
+
+        if type(self) is not VerifiedProtectedEffect:
+            raise SignerRefused("proof_invalid")
+        intent = operation.intent()
+        if (
+            operation.operation_id != self.operation_id
+            or operation.context != self.context
+            or intent["operation"] != self.operation
+            or canonical_json_bytes(intent) != self._intent
+        ):
+            raise SignerRefused("operation_mismatch")
+        self._require_deadline(clock)
+        transaction_id = await tx.fetch_value("SELECT txid_current()")
+        if type(transaction_id) is not int or transaction_id != self.transaction_id:
+            raise SignerRefused("proof_invalid")
+        self._require_deadline(clock)
+
+    def _require_deadline(self, clock):
+        now = clock()
+        if not isinstance(now, datetime) or now.utcoffset() is None:
+            raise SignerRefused("proof_invalid")
+        if now >= self.expires_at:
+            raise SignerRefused("gesture_expired")
+
+
+def _verified_effect(operation, human, transaction_id, evidence_ref, expires_at):
+    from awid.signing import canonical_json_bytes
+
+    if (
+        type(human) is not AdmittedHuman
+        or human.context != operation.context
+        or human.principal != operation.context.human_id
+        or not human.subject
+        or not human.b3_scope
+    ):
+        raise SignerRefused("scope_refused")
+    if (
+        type(transaction_id) is not int
+        or transaction_id <= 0
+        or not isinstance(evidence_ref, str)
+        or not evidence_ref
+        or not isinstance(expires_at, datetime)
+        or expires_at.utcoffset() is None
+    ):
+        raise SignerRefused("proof_invalid")
+    intent = operation.intent()
+    return VerifiedProtectedEffect(
+        _admission=_EFFECT_ADMISSION,
+        operation_id=operation.operation_id,
+        operation=intent["operation"],
+        variant=intent["variant"],
+        audience=intent["audience"],
+        context=operation.context,
+        human=human,
+        transaction_id=transaction_id,
+        evidence_ref=evidence_ref,
+        expires_at=expires_at,
+        subject_bytes=canonical_json_bytes(intent["subject"]),
+        intent_bytes=canonical_json_bytes(intent),
+    )
 
 
 class CurrentAuthority(Protocol):
