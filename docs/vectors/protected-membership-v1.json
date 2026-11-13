@@ -1,0 +1,130 @@
+{
+  "schema_version": 1,
+  "contract": "docs/protected-team-boundary.md",
+  "status": "approved opt-in full-certificate binding; synthetic baseline, not executor issuance",
+  "team_id": "engineering:example.test",
+  "controller_did_key": "did:key:z6Mkon3Necd6NkkyfoGoHxid2znGc59LU3K7mubaRcFbLfLX",
+  "binding": {
+    "mode": "protected",
+    "service_id": "fixture-signer",
+    "service_did_key": "did:key:z6Mko9hTggMwjSTEaJaPUfE6tqcy2xvU6BnNq3e3o8qVBiyH",
+    "history_id": "22222222-2222-4222-8222-222222222222",
+    "generation": 7
+  },
+  "registered": {
+    "certificate_id": "11111111-1111-4111-8111-111111111111",
+    "certificate_sha256": "0f6d51976cbf495bf827b61e97d496e27bd496ac92a0053a7df8931adc9ff357",
+    "status": "active"
+  },
+  "cases": [
+    {
+      "name": "exact-admitted-member",
+      "certificate": {
+        "version": 1,
+        "certificate_id": "11111111-1111-4111-8111-111111111111",
+        "team_id": "engineering:example.test",
+        "member_did_key": "did:key:z6MkvRXNYcE7MMduynWTgeKbDaT1iijDSC8pZqXZc8rHPrf2",
+        "alias": "fixture-member",
+        "identity_scope": "local",
+        "member_did_aw": "",
+        "member_address": "",
+        "signature": "GHXiCEqLgIQ6cjWM21vQ6teUjf37bx6rWGOFDILELcz0B+Z22J/k4xla+zzyAXH41aHVp3+Ysz5mr48pHBkzCw"
+      },
+      "expected": "accepted"
+    },
+    {
+      "name": "reused-active-id-member-key",
+      "certificate": {
+        "version": 1,
+        "certificate_id": "11111111-1111-4111-8111-111111111111",
+        "team_id": "engineering:example.test",
+        "member_did_key": "did:key:z6Mkt6316e2PN3mZdB6N9CrzomJYUd1s5yBZi1XYHmwT9TUP",
+        "alias": "fixture-member",
+        "identity_scope": "local",
+        "member_did_aw": "",
+        "member_address": "",
+        "signature": "Ld8GzBDfyH10DJkdOPtrUrroXKjH7JlOO5I5jcwwxOVzN7fS0Y3z0JjhaoVHAyNkbfhvabC/tgx1NrdVpzhpDw"
+      },
+      "expected": "certificate_binding_mismatch"
+    },
+    {
+      "name": "reused-active-id-alias",
+      "certificate": {
+        "version": 1,
+        "certificate_id": "11111111-1111-4111-8111-111111111111",
+        "team_id": "engineering:example.test",
+        "member_did_key": "did:key:z6MkvRXNYcE7MMduynWTgeKbDaT1iijDSC8pZqXZc8rHPrf2",
+        "alias": "other-member",
+        "identity_scope": "local",
+        "member_did_aw": "",
+        "member_address": "",
+        "signature": "SsPFI958NLNT34NDiRUQyCRe73S9bJUBDFQ3n6/kLp9dmPDvXTiWW0BQNrIUmEO286qyNX+KltD0hk7H8i5NDg"
+      },
+      "expected": "certificate_binding_mismatch"
+    },
+    {
+      "name": "reused-active-id-rights",
+      "certificate": {
+        "version": 1,
+        "certificate_id": "11111111-1111-4111-8111-111111111111",
+        "team_id": "engineering:example.test",
+        "member_did_key": "did:key:z6MkvRXNYcE7MMduynWTgeKbDaT1iijDSC8pZqXZc8rHPrf2",
+        "alias": "fixture-member",
+        "identity_scope": "local",
+        "member_did_aw": "",
+        "member_address": "",
+        "application_rights": [
+          "admin"
+        ],
+        "signature": "1xMAKmN89oRXF6rMVBWAU17ALU3BfzBczXnFNnQjpIoBux6sxrOzBfe5T5rzXfOTP1zgFMR8leJLBtiVMtX9AQ"
+      },
+      "expected": "certificate_binding_mismatch"
+    },
+    {
+      "name": "unsigned-alteration",
+      "certificate": {
+        "version": 1,
+        "certificate_id": "11111111-1111-4111-8111-111111111111",
+        "team_id": "engineering:example.test",
+        "member_did_key": "did:key:z6MkvRXNYcE7MMduynWTgeKbDaT1iijDSC8pZqXZc8rHPrf2",
+        "alias": "unsigned",
+        "identity_scope": "local",
+        "member_did_aw": "",
+        "member_address": "",
+        "signature": "GHXiCEqLgIQ6cjWM21vQ6teUjf37bx6rWGOFDILELcz0B+Z22J/k4xla+zzyAXH41aHVp3+Ysz5mr48pHBkzCw"
+      },
+      "expected": "bad_signature"
+    },
+    {
+      "name": "unknown-id",
+      "certificate": {
+        "version": 1,
+        "certificate_id": "33333333-3333-4333-8333-333333333333",
+        "team_id": "engineering:example.test",
+        "member_did_key": "did:key:z6MkvRXNYcE7MMduynWTgeKbDaT1iijDSC8pZqXZc8rHPrf2",
+        "alias": "fixture-member",
+        "identity_scope": "local",
+        "member_did_aw": "",
+        "member_address": "",
+        "signature": "T47qVrz7Y4evaSUzKfXxVz4Nt889waA5hhhO+bmktwkF+3aonDTpB75aVVdKQlrr3b3Y1gww6DPS9um6GyyvCw"
+      },
+      "expected": "unregistered"
+    },
+    {
+      "name": "missing-historical-blob",
+      "certificate": {
+        "version": 1,
+        "certificate_id": "11111111-1111-4111-8111-111111111111",
+        "team_id": "engineering:example.test",
+        "member_did_key": "did:key:z6MkvRXNYcE7MMduynWTgeKbDaT1iijDSC8pZqXZc8rHPrf2",
+        "alias": "fixture-member",
+        "identity_scope": "local",
+        "member_did_aw": "",
+        "member_address": "",
+        "signature": "GHXiCEqLgIQ6cjWM21vQ6teUjf37bx6rWGOFDILELcz0B+Z22J/k4xla+zzyAXH41aHVp3+Ysz5mr48pHBkzCw"
+      },
+      "certificate_sha256": null,
+      "expected": "protected_state_unavailable"
+    }
+  ]
+}
