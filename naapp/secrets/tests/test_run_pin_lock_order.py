@@ -37,7 +37,7 @@ async def test_confirm_A_and_console_disable_B_share_assignment_without_revision
     root = SecretRecord.from_after(SECRET)
     secondary, _ = context.secondary
     async with db.transaction() as tx:
-        await bump_config_revision(tx, w.admitted.installation_id)
+        await bump_config_revision(tx, w.admitted.installation_id, team_id=TEAM)
     replacement = await seal(w, root)
     change, _ = await pending_change(w, [value_item(root, replacement.version)], [replacement])
     disposed, applying = (

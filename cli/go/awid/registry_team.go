@@ -410,11 +410,10 @@ func (c *RegistryClient) FetchTeamCertificateWithSigner(ctx context.Context, reg
 	if strings.TrimSpace(cert.MemberDIDKey) != did {
 		return nil, fmt.Errorf("fetched certificate member_did_key %q does not match local signing key %q", cert.MemberDIDKey, did)
 	}
-	teamPub, err := ExtractPublicKey(strings.TrimSpace(cert.TeamDIDKey))
-	if err != nil {
+	if _, err := ExtractPublicKey(strings.TrimSpace(cert.TeamDIDKey)); err != nil {
 		return nil, fmt.Errorf("decode fetched certificate team_did_key: %w", err)
 	}
-	if err := VerifyTeamCertificate(cert, teamPub); err != nil {
+	if err := CheckDecodedTeamCertificate(cert, strings.TrimSpace(cert.TeamDIDKey)); err != nil {
 		return nil, fmt.Errorf("verify fetched certificate: %w", err)
 	}
 	return cert, nil

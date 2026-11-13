@@ -668,7 +668,7 @@ func resolveLiveTeamMemberAliasTarget(ctx context.Context, sel *awconfig.Selecti
 	if err != nil {
 		return liveTeamMemberAliasTarget{}, false, err
 	}
-	registry, err := newConfiguredRegistryClient(nil, "")
+	registry, err := newConfiguredRegistryClient(nil)
 	if err != nil {
 		return liveTeamMemberAliasTarget{}, false, err
 	}
@@ -721,14 +721,21 @@ func resolveLiveTeamMemberAliasTarget(ctx context.Context, sel *awconfig.Selecti
 // resolveCertificateClient attempts to create a certificate-authenticated client.
 // Returns (nil, nil) if no team certificate exists. Returns an error only if the
 // certificate exists but is invalid.
-func resolveCertificateClient(sel *awconfig.Selection, baseURL string) (*aweb.Client, error) {
+// loadSelectedTeamCertificate loads the selection's team certificate the way
+// certificate authentication does: through the workspace membership's stored
+// cert_path, which may name a legacy location.
+func loadSelectedTeamCertificate(sel *awconfig.Selection) (*awid.TeamCertificate, error) {
 	if sel == nil {
-		return nil, nil
+		return nil, fmt.Errorf("no selected identity")
 	}
 	workspace, err := awconfig.LoadWorktreeWorkspaceFrom(sel.WorkspacePath)
 	if err != nil {
-		return nil, nil
+		return nil, err
 	}
+	return loadWorkspaceTeamCertificate(sel, workspace)
+}
+
+func loadWorkspaceTeamCertificate(sel *awconfig.Selection, workspace *awconfig.WorktreeWorkspace) (*awid.TeamCertificate, error) {
 	teamID := strings.TrimSpace(sel.TeamID)
 	selectedMembership := workspace.Membership(teamID)
 	if selectedMembership == nil {
@@ -748,6 +755,21 @@ func resolveCertificateClient(sel *awconfig.Selection, baseURL string) (*aweb.Cl
 	cert, err := awid.LoadTeamCertificate(certPath)
 	if err != nil {
 		return nil, fmt.Errorf("load team certificate for %s: %w", selectedMembership.TeamID, err)
+	}
+	return cert, nil
+}
+
+func resolveCertificateClient(sel *awconfig.Selection, baseURL string) (*aweb.Client, error) {
+	if sel == nil {
+		return nil, nil
+	}
+	workspace, err := awconfig.LoadWorktreeWorkspaceFrom(sel.WorkspacePath)
+	if err != nil {
+		return nil, nil
+	}
+	cert, err := loadWorkspaceTeamCertificate(sel, workspace)
+	if err != nil {
+		return nil, err
 	}
 	signingKeyPath := sel.SigningKey
 	if strings.TrimSpace(sel.IdentityHome) != "" {
@@ -829,7 +851,7 @@ func configureResolvedClientWithRoster(c, rosterClient *aweb.Client, sel *awconf
 	registry.TeamReadSigningKey = c.SigningKey()
 	// Received addressless identities are verified at the selected TEAM's
 	// registry. Do not inherit a global identity's unrelated home registry.
-	teamRegistry := awid.NewRegistryResolver(c.Client.HTTPClient(), nil)
+	teamRegistry := newAWIDRegistryResolver(c.Client.HTTPClient(), nil)
 	teamRegistryURL := strings.TrimSpace(os.Getenv("AWID_REGISTRY_URL"))
 	if state, err := awconfig.LoadTeamStateFromIdentityHome(sel.IdentityHome); err == nil && state != nil {
 		if membership := state.Membership(sel.TeamID); membership != nil {
@@ -1079,7 +1101,7 @@ func configureAnsweringMountHint(c *aweb.Client, sel *awconfig.Selection, baseUR
 }
 
 func newSelectionRegistryResolver(httpClient *http.Client, selectionRegistryURL, identityAddress string) (*awid.RegistryResolver, error) {
-	registry := awid.NewRegistryResolver(httpClient, nil)
+	registry := newAWIDRegistryResolver(httpClient, nil)
 	registryURL := strings.TrimSpace(selectionRegistryURL)
 	if registryURL == "" {
 		registryURL = strings.TrimSpace(os.Getenv("AWID_REGISTRY_URL"))
@@ -1110,11 +1132,11 @@ func registryIdentityDomain(identityAddress string) (string, bool) {
 	return domain, ok
 }
 
-func newConfiguredRegistryClient(httpClient *http.Client, baseURL string) (*awid.RegistryClient, error) {
-	client := awid.NewAWIDRegistryClient(httpClient, nil)
+func newConfiguredRegistryClient(httpClient *http.Client) (*awid.RegistryClient, error) {
+	client := newAWIDRegistryClient(httpClient, nil)
 	// Admin and awid callers that need a specific registry URL set it after
 	// construction; otherwise AWID_REGISTRY_URL is global at this layer.
-	if err := configureEmbeddedRegistryBaseURL(baseURL, client.SetFallbackRegistryURL); err != nil {
+	if err := configureEmbeddedRegistryBaseURL(client.SetFallbackRegistryURL); err != nil {
 		return nil, err
 	}
 	return client, nil
@@ -1142,15 +1164,10 @@ func loadOptionalWorktreeSigningKey(workingDir string) (ed25519.PrivateKey, erro
 	return signingKey, nil
 }
 
-func configureEmbeddedRegistryBaseURL(baseURL string, setFallback func(string) error) error {
-	return configureEmbeddedRegistryBaseURLWithDefault(baseURL, "", setFallback)
-}
-
-func configureEmbeddedRegistryBaseURLWithDefault(baseURL, preferredRegistryURL string, setFallback func(string) error) error {
+// configureEmbeddedRegistryBaseURL applies AWID_REGISTRY_URL, the operator's
+// process-wide registry choice, as the client's fallback registry.
+func configureEmbeddedRegistryBaseURL(setFallback func(string) error) error {
 	registryValue := strings.TrimSpace(os.Getenv("AWID_REGISTRY_URL"))
-	if registryValue == "" {
-		registryValue = strings.TrimSpace(preferredRegistryURL)
-	}
 	if registryValue == "" {
 		return nil
 	}

@@ -1,6 +1,12 @@
 package termtext
 
-import "testing"
+import (
+	"bytes"
+	"encoding/json"
+	"reflect"
+	"testing"
+	"unicode/utf8"
+)
 
 func TestLineEscapesEveryRuneThatCanDriveOrDisguiseATerminal(t *testing.T) {
 	cases := map[string]string{
@@ -73,5 +79,35 @@ func TestValidReplacementCharacterIsKept(t *testing.T) {
 	in := "ok \ufffd fine"
 	if got := Line(in); got != in {
 		t.Fatalf("Line(%q) = %q, want it unchanged", in, got)
+	}
+}
+
+func TestJSONEscapesTerminalUnsafeRunesKeepingValues(t *testing.T) {
+	in := []byte("{\"body\":\"a\u009b[2J b‮c \u007f d\",\"n\":1,\"ok\":\"café \U0001F600\"}")
+	out := JSON(in)
+	if !utf8.Valid(out) {
+		t.Fatalf("output is not valid UTF-8: %q", out)
+	}
+	for _, r := range string(out) {
+		if terminalUnsafeRune(r, false) {
+			t.Fatalf("unsafe rune %U survived: %q", r, out)
+		}
+	}
+	var want, got map[string]any
+	if err := json.Unmarshal(in, &want); err != nil {
+		t.Fatal(err)
+	}
+	if err := json.Unmarshal(out, &got); err != nil {
+		t.Fatalf("output is not JSON: %v: %q", err, out)
+	}
+	if !reflect.DeepEqual(want, got) {
+		t.Fatalf("values changed: %v != %v", got, want)
+	}
+}
+
+func TestJSONWritesInvalidUTF8AsReplacement(t *testing.T) {
+	out := JSON([]byte("{\"b\":\"x\x9by\"}"))
+	if !bytes.Equal(out, []byte(`{"b":"x�y"}`)) {
+		t.Fatalf("got %q", out)
 	}
 }

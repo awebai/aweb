@@ -308,7 +308,7 @@ func buildEnvelopeVector(t *testing.T) map[string]any {
 var teamSeed = seedFrom(0x80)
 
 // fixtureCertificate builds a team certificate deterministically: the
-// canonical JSON of its fields, signed by signer. VerifyTeamCertificate is
+// canonical JSON of its fields, signed by signer. CheckTeamCertificate is
 // the check that it is a real certificate.
 func fixtureCertificate(t *testing.T, signer ed25519.PrivateKey, team, certificateID, memberDIDKey string) *awid.TeamCertificate {
 	t.Helper()

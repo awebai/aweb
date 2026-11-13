@@ -6,7 +6,7 @@ release status and task id. This document is the source of truth for the bytes
 logs commits to and signs. Its vector is `docs/vectors/logs-chain-v1.json`. The
 Python implementation in `naapp/logs/src/aweb_logs/chain.py` and `verify.py`
 regenerates it byte for byte, and `naapp/logs/src/aweb_logs/ledger.py` stores
-the chain. The Go verifier in `cli/go/logschain`, which `aw logs verify
+the chain. The Go verifier in `cli/go/logschain`, which `aw audit verify
 --bundle` runs, passes it. **In flight (aweb-acgh.16.24):** `aw logs query`,
 `tail` and `export`. The design and its rationale are in
 [the audit substrate design](design/audit-substrate.md), §B3 and §B6.
@@ -390,7 +390,7 @@ a producer's receipt. Logs answers every delivery it accepts, `appended` or
 `duplicate`, with `{"event_id", "disposition", "receipt"}`, and its `receipt` is
 this artefact object, so `{"receipt": <the ack's receipt>}` is a witness line.
 
-`aw logs verify --bundle FILE|- --receipt-key DID_KEY --checkpoint-key DID_KEY
+`aw audit verify --bundle FILE|- --receipt-key DID_KEY --checkpoint-key DID_KEY
 [--witness FILE]... [--json]` verifies a bundle offline: it reads only the
 files it is given and reaches no workspace, identity or server. It requires at
 least one key of each kind, each an Ed25519 `did:key`, and never takes a key

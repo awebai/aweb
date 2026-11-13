@@ -634,7 +634,10 @@ class RunDispatch:
                 if node["policy_digest"] is None:
                     continue
                 policy = await records.policy(
-                    tx, prepared.installation.installation_id, node["policy_digest"]
+                    tx,
+                    prepared.installation.installation_id,
+                    node["policy_digest"],
+                    team_id=prepared.installation.team_id,
                 )
                 if policy is None:
                     raise AdmissionRefused("grant_revoked")

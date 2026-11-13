@@ -1527,12 +1527,12 @@ func TestRunContinuePrintsRecentInteractionRecap(t *testing.T) {
 	if err := os.MkdirAll(filepath.Join(tmp, ".aw"), 0o755); err != nil {
 		t.Fatalf("mkdir .aw: %v", err)
 	}
-	appendInteractionLogForDir(tmp, &InteractionEntry{
+	appendInteractionLogForDir(tmp, localLogPolicy{}, &InteractionEntry{
 		Timestamp: "2026-03-22T10:00:00Z",
 		Kind:      interactionKindUser,
 		Text:      "please fix the continue UX",
 	})
-	appendInteractionLogForDir(tmp, &InteractionEntry{
+	appendInteractionLogForDir(tmp, localLogPolicy{}, &InteractionEntry{
 		Timestamp: "2026-03-22T10:01:00Z",
 		Kind:      interactionKindAgent,
 		Text:      "I can add a compact recap without touching provider history.",

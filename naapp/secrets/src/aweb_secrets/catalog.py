@@ -74,7 +74,10 @@ class Catalog:
                 policies = {}
                 for candidate in grants:
                     policy = await records.policy(
-                        tx, installation.installation_id, candidate.policy_digest
+                        tx,
+                        installation.installation_id,
+                        candidate.policy_digest,
+                        team_id=installation.team_id,
                     )
                     if policy is not None:
                         policies[candidate.grant_id] = policy

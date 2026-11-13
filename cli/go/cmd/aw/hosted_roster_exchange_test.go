@@ -279,7 +279,7 @@ func serveRosterTXT(t *testing.T, record string) {
 				data := append([]byte{byte(len(record))}, []byte(record)...)
 				answer = append(answer, 0xc0, 0x0c, 0, 16, 0, 1, 0, 0, 0, 60, byte(len(data)>>8), byte(len(data)))
 				answer = append(answer, data...)
-			} else if typ == 1 && strings.Join(labels, ".") == "registry.example" {
+			} else if typ == 1 && (strings.Join(labels, ".") == "registry.example" || strings.Join(labels, ".") == "registry.test") {
 				binary.BigEndian.PutUint16(answer[6:8], 1)
 				answer = append(answer, 0xc0, 0x0c, 0, 1, 0, 1, 0, 0, 0, 60, 0, 4, 127, 0, 0, 1)
 			}

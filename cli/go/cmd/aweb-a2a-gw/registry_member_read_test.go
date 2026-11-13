@@ -37,6 +37,7 @@ func TestGatewaySignsPrivateTeamMemberRead(t *testing.T) {
 		_ = json.NewEncoder(w).Encode(map[string]string{"team_id": "default:a2a.aweb.ai", "member_did_key": caller, "alias": "worker", "identity_scope": "local"})
 	}))
 	defer server.Close()
+	t.Setenv("AWID_REGISTRY_URL", server.URL)
 	root := t.TempDir()
 	writeGatewayWorkspace(t, root, server.URL)
 	client, _, err := workspaceMailClient(root, "", server.URL, "")

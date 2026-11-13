@@ -1,0 +1,5 @@
+{"t": 1794544699.0756302, "event": "warmup_start", "seats": 10}
+{"t": 1794544705.141098, "event": "step_start", "seats": 10}
+{"t": 1794544721.292734, "event": "step_end", "seats": 10}
+{"t": 1794544723.312811, "event": "step_start", "seats": 20}
+{"t": 1794544742.202373, "event": "step_end", "seats": 20}

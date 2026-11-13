@@ -33,4 +33,4 @@ jobs:
       - name: Publish or adopt the tagged package
         env:
           UV_PUBLISH_TOKEN: ${{ secrets.PYPI_TOKEN }}
-        run: python3 scripts/publish_release.py "${GITHUB_REF_NAME}"
+        run: python3 scripts/publish_release.py --only pypi "${GITHUB_REF_NAME}"

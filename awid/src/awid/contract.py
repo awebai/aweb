@@ -97,13 +97,3 @@ def resolve_identity_contract(
         identity_scope=scope,
         stable_id=stable_id,
     )
-
-
-def assert_global_identity(*, identity_scope: str | None = None, lifetime: str | None = None) -> None:
-    if normalize_identity_scope(identity_scope if identity_scope is not None else lifetime) != "global":
-        raise ValueError("Only global identities support this operation")
-
-
-def assert_persistent_identity(*, lifetime: str | None = None, identity_scope: str | None = None) -> None:
-    """Deprecated compatibility wrapper for older callers."""
-    assert_global_identity(identity_scope=identity_scope, lifetime=lifetime)

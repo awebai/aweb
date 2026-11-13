@@ -415,6 +415,7 @@ func TestInitAPIKeyGlobalNameCreatesSelfCustodialGlobalCLIIdentity(t *testing.T)
 	})
 
 	tmp := t.TempDir()
+	setInitAWIDRegistryFlagForTest(t, server.URL)
 	result, err := runAPIKeyBootstrapInit(apiKeyInitRequest{
 		WorkingDir:  tmp,
 		AwebURL:     externalLikeTestURL(t, server.URL),
@@ -620,6 +621,7 @@ func TestRunAPIKeyBootstrapInitGlobalResumesPartialAfterWorkspaceInitFailure(t *
 			t.Fatalf("unexpected %s %s", r.Method, r.URL.Path)
 		}
 	})
+	t.Setenv("AWID_REGISTRY_URL", server.URL)
 
 	tmp := t.TempDir()
 	req := apiKeyInitRequest{
@@ -726,6 +728,7 @@ func TestRunAPIKeyBootstrapInitRegisterIdentityFailureShortCircuitsWorkspaceInit
 			t.Fatalf("unexpected %s %s", r.Method, r.URL.Path)
 		}
 	}))
+	t.Setenv("AWID_REGISTRY_URL", server.URL)
 
 	tmp := t.TempDir()
 	_, err := runAPIKeyBootstrapInit(apiKeyInitRequest{
@@ -981,7 +984,7 @@ func TestRunAPIKeyBootstrapInitRejectsTamperedTeamCertificate(t *testing.T) {
 		AwebURL:    externalLikeTestURL(t, server.URL),
 		APIKey:     "aw_sk_test",
 	})
-	if err == nil || !strings.Contains(err.Error(), "signature verification failed") {
+	if err == nil || !strings.Contains(err.Error(), "team cert is invalid: bad_signature") {
 		t.Fatalf("unexpected error: %v", err)
 	}
 }
@@ -1259,6 +1262,7 @@ func TestRunAPIKeyBootstrapInitDoesNotSendRepoOrigin(t *testing.T) {
 	runGitForTest(t, tmp, "init")
 	runGitForTest(t, tmp, "remote", "add", "origin", "github-co-aweb:awebai/co.aweb.git")
 
+	setInitAWIDRegistryFlagForTest(t, server.URL)
 	if _, err := runAPIKeyBootstrapInit(apiKeyInitRequest{
 		WorkingDir:  tmp,
 		AwebURL:     externalLikeTestURL(t, server.URL),
@@ -1382,6 +1386,7 @@ func TestRunAPIKeyBootstrapInitGlobalRollsBackOnConnectFailureAndResumes(t *test
 			t.Fatalf("unexpected %s %s", r.Method, r.URL.Path)
 		}
 	})
+	t.Setenv("AWID_REGISTRY_URL", server.URL)
 
 	tmp := t.TempDir()
 	preExisting := filepath.Join(tmp, ".aw", "pre-existing.txt")
@@ -1517,6 +1522,7 @@ func TestRunAPIKeyBootstrapInitGlobalRefusesAlreadyRegisteredName(t *testing.T) 
 			t.Fatalf("unexpected %s %s", r.Method, r.URL.Path)
 		}
 	})
+	t.Setenv("AWID_REGISTRY_URL", server.URL)
 
 	req := apiKeyInitRequest{
 		WorkingDir:  tmp,
@@ -1585,4 +1591,14 @@ func serveAPIKeyCreationTeamRead(w http.ResponseWriter, r *http.Request, canonic
 	}
 	json.NewEncoder(w).Encode(map[string]any{"team_id": "11111111-1111-4111-8111-111111111111", "canonical_team_id": canonical})
 	return true
+}
+
+// setInitAWIDRegistryFlagForTest names registryURL with aw init's
+// --awid-registry flag, the operator's explicit registry choice on the
+// command line, for the rest of the test.
+func setInitAWIDRegistryFlagForTest(t *testing.T, registryURL string) {
+	t.Helper()
+	old := initAWIDRegistry
+	initAWIDRegistry = registryURL
+	t.Cleanup(func() { initAWIDRegistry = old })
 }

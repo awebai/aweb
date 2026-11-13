@@ -69,6 +69,7 @@ func TestHostedLocalCreationVerifiesBeforeInstallWithoutPublishingLeaf(t *testin
 			transport.DialContext = func(ctx context.Context, network, address string) (net.Conn, error) {
 				return (&net.Dialer{}).DialContext(ctx, network, server.Listener.Addr().String())
 			}
+			t.Setenv("AWID_REGISTRY_URL", "https://registry.example.test")
 			registry := awid.NewAWIDRegistryClient(&http.Client{Transport: transport}, resolver)
 			tree := &hostedIDTreeRecovery{Domain: "example.com", Parent: map[string]any{"kind": "namespace", "id": tt.parent}}
 			chain := awid.ReceivedIDChain{"v": 1, "type": "aweb.id-chain", "certificates": []any{vectors.Certificates["root-agent"].Signed}}
@@ -138,6 +139,7 @@ func TestHostedRegisteredCreationUsesHistoricalIssuerAfterRotation(t *testing.T)
 		return (&net.Dialer{}).DialContext(ctx, network, server.Listener.Addr().String())
 	}
 	resolver := staticTXTResolver{"_awid.example.com": {idCreateDNSRecordValue(v.Keys["root_rotated"].DIDKey, "https://registry.example.test")}}
+	t.Setenv("AWID_REGISTRY_URL", "https://registry.example.test")
 	registry := awid.NewAWIDRegistryClient(&http.Client{Transport: transport}, resolver)
 	tree := &hostedIDTreeRecovery{Domain: "example.com", Parent: map[string]any{"kind": "namespace", "id": "example.com"}}
 	response := awid.IDTreeCreationResponse{FieldsPresent: true, IDChain: awid.ReceivedIDChain{"v": 1, "type": "aweb.id-chain", "certificates": []any{v.Certificates["registered-root-agent"].Signed}}}
@@ -217,6 +219,7 @@ func TestHostedGlobalCreationResumesSameCertificateAndRefreshesAfterRegistration
 		return (&net.Dialer{}).DialContext(ctx, network, server.Listener.Addr().String())
 	}
 	resolver := staticTXTResolver{"_awid.example.com": {idCreateDNSRecordValue(v.Keys["root"].DIDKey, "https://registry.example.test")}}
+	t.Setenv("AWID_REGISTRY_URL", "https://registry.example.test")
 	registry := awid.NewAWIDRegistryClient(&http.Client{Transport: transport}, resolver)
 	tree := &hostedIDTreeRecovery{Domain: "example.com", Parent: map[string]any{"kind": "namespace", "id": "example.com"}}
 	response := awid.IDTreeCreationResponse{FieldsPresent: true, IDChain: awid.ReceivedIDChain{"v": 1, "type": "aweb.id-chain", "certificates": []any{v.Certificates["registered-root-agent"].Signed}}, RegistrationRequest: &awid.IDTreeRegistrationRequest{}}

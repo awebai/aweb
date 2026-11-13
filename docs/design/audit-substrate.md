@@ -965,7 +965,7 @@ Per team and chain epoch, under a row lock on the team's chain head:
   act, per-producer and per-hook `seq` gaps inside binding intervals, and
   conflicts. It also accepts **producer receipts and exported checkpoints as
   input**, and reports any receipt or checkpoint that the current chain
-  contradicts. `aw logs verify --bundle` checks an export offline, with no
+  contradicts. `aw audit verify --bundle` checks an export offline, with no
   server. **In flight (aweb-acgh.16.24):** the Go chain verifier
   (`cli/go/logschain`) passes `logs-chain-v1.json`; the `aw logs` command is
   not on main.

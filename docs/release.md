@@ -6,7 +6,7 @@ commit.
 
 | Tag | Published artifact |
 |---|---|
-| `server-vX.Y.Z` | PyPI `aweb` |
+| `server-vX.Y.Z` | PyPI `aweb` and `ghcr.io/awebai/aweb-server` image |
 | `awid-service-vX.Y.Z` | PyPI `awid-service` |
 | `aweb-naapp-vX.Y.Z` | PyPI `aweb-naapp`, the shared naapp toolkit in `naapp-lib/`, then its dev-only test support `aweb-naapp-testing` (`naapp-lib/testing/`) at the same version |
 | `awid-vX.Y.Z` | `ghcr.io/awebai/awid` image |
@@ -41,7 +41,8 @@ values package, must equal the tag. The aw spelling is SemVer:
 
 The coordinator publishes these RCs first. The Cloud candidate pins the exact
 RC versions and must pass its ordinary pin gate against real services before
-OSS final publication and Cloud deployment. Python RCs publish to PyPI. Every
+OSS final publication and Cloud deployment. Python RCs publish to PyPI; server RCs also publish the immutable RC image tag
+without moving `latest`. Final server images update `latest`. Every
 aw RC npm package publishes with `--tag next`; final packages use `latest`
 unless the release explicitly stages the final on `next` as described below.
 The downstream `awebai/aw` workflow accepts `v*`, uses the synced
@@ -107,8 +108,10 @@ shared build commands in `scripts/publish_release.py`, root checkout filters
 Python's root `pyproject.toml`, `uv.toml`, `uv.lock`, `.python-version` and PyPI
 workflow; Go's root `go.work`, `go.work.sum`, aw release workflow and shared
 `scripts/npm-exact-publish.sh` packing recipe.
-Unrelated files elsewhere, including the root Makefile and another package's
-source, do not force a new RC of this package.
+The server image also bundles `awid/` and `naapp-lib/`, so those trees, the
+root `.dockerignore`, service image workflow and `scripts/oci-exact-publish.sh`
+are server RC inputs. Unbundled package source and unrelated files such as the
+root Makefile do not force a new RC.
 
 Within that scope, only manifest versions and exact dependency pins or
 lower-bound floors on promoted packages may move to the same final base.
@@ -397,3 +400,69 @@ ledger still serializes/reuses proof for a tree. An explicitly authorized
 concurrency proof uses separate `AWEB_GATE_LEDGER` directories for its two runs;
 it must not share either ledger or retained artifact directory. Resource labels,
 Compose project names, networks, workspaces and logs remain unique per run.
+
+## Server OCI image
+
+A `server-v*` tag dispatches both the Python and image publishers. The PyPI
+workflow selects `--only pypi`; the service image workflow selects `--only oci`,
+so each needs only its own registry credentials. Runnerless publication without
+`--only` publishes both. Both selectors still validate the tagged manifest and
+RC-to-final source identity before checking out that exact commit.
+
+The image uses `server/Dockerfile` with the repository root context and builds
+`linux/amd64` and `linux/arm64` into one OCI archive. The shared exact OCI helper
+checks the complete archive and each platform's version/source labels before
+publication. Version tags are immutable: a different existing digest refuses;
+an identical one is adopted. The publisher reads back the published index and
+prints `release-index` with its digest, source SHA and version. Deployments pin
+`ghcr.io/awebai/aweb-server@sha256:...` using that receipt. This is the ordinary
+server image; it adds no protected signer variant.
+
+`python3 scripts/test_server_image_publish.py` runs the dispatch, identity,
+immutability, readback and archive-handoff controls without Docker.
+`make test-server-image-build` builds both platforms through the same publisher
+function, validates the archive with the exact helper, and runs the packaged
+imports and server CLI as the image's non-root user on the Docker daemon's
+**native** platform only. Both runtime probes have a 120-second bound.
+A one-host PASS qualifies only the platform printed in its receipt.
+
+Complete platform qualification requires the same archive, index and source SHA
+on native Linux amd64 and native Linux arm64 hosts. On the authorized x86 build
+host (Docker buildx, skopeo and build support for both architectures):
+
+```sh
+AWEB_SERVER_IMAGE_ARCHIVE_OUT=/evidence/server.oci.tar make test-server-image-build
+```
+
+The output path must not already exist. Preserve the archive and its printed
+SHA-256/size/index/source receipt. Transfer it to the authorized ARM host and
+verify its file hash. From the **same source checkout SHA** on that host (Docker
+and skopeo; no build or emulated execution needed):
+
+```sh
+AWEB_SERVER_IMAGE_ARCHIVE_IN=/evidence/server.oci.tar make test-server-image-build
+```
+
+An input archive must exist: the ARM run never silently rebuilds it. Each host
+validates both platforms and their version/source labels before loading its
+native variant, and prints the same archive identity with its actual native
+platform. The external input/output archive survives test cleanup for transfer
+and audit; the operator owns its final removal. Probe containers and loaded
+image tags are removed by the test. With neither variable, the archive is
+temporary and removed after the one-host run. Input and output are exclusive.
+
+These tests do not publish to a registry. The tag publisher's authenticated
+readback establishes registry digest and source identity, not public pullability.
+
+Before the first server image release, the coordinator must arrange package
+provisioning and the release identity's access, including any separately authorized
+first-publication bootstrap, so authenticated tag listing succeeds. An unavailable
+listing remains a refusal; a 403 or 404 is not permission to assume absence.
+
+The coordinator must also arrange public package visibility and verify
+anonymous retrieval in an environment with no registry credentials. Read the
+immutable version tag, require its index digest to equal the publication receipt,
+and fetch both platform manifests, configs and layers by digest. Record that
+anonymous-read result alongside the source and digest receipt before declaring
+the server image publicly pullable. Authenticated publication success alone does
+not complete this acceptance step.

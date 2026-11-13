@@ -79,7 +79,7 @@ async def test_subjects_candidates_and_provenance_share_the_scoped_confirmed_rec
         await records.create_secret(
             tx, OTHER_INSTALLATION, TEAM, replace(SECRET, secret_id="sec_other1")
         )
-        await records.create_policy(tx, OTHER_INSTALLATION, POLICY)
+        await records.create_policy(tx, OTHER_INSTALLATION, POLICY, team_id=TEAM)
         await records.create_grant(
             tx,
             OTHER_INSTALLATION,

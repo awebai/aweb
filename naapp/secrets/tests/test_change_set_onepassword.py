@@ -85,7 +85,7 @@ async def pending(w, scope, items, contexts):
     change = change_set(
         drafter=on_console(scope),
         changes=items,
-        base_revision=await config_revision(w.db, INSTALLATION_ID),
+        base_revision=await config_revision(w.db, INSTALLATION_ID, team_id=TEAM),
     )
     approval = await draft(w, change, contexts)
     await decide(w, approval, "alice@acme.com")
@@ -189,7 +189,7 @@ async def test_unavailable_required_audit_rolls_back_activation_revision_and_con
         is None
     )
     assert await w.db.fetch_value("SELECT count(*) FROM {{tables.secrets}}") == 0
-    assert await config_revision(w.db, INSTALLATION_ID) == 0
+    assert await config_revision(w.db, INSTALLATION_ID, team_id=TEAM) == 0
     assert (await w.approvals.get(approval)).state is ApprovalState.APPROVED
     # The inert candidate survives a refused confirmation; no cleanup ran early.
     await w.custody.backend_credential_preview.open(token)
@@ -235,14 +235,14 @@ async def test_required_outbox_storage_failure_rolls_back_token_invalidation(wor
     await apply(w, first)
     _, new_token, _, _ = await staged(w, create=False)
     change, approval_id = await pending(w, scope, [token_item(new_token)], [new_token])
-    revision = await config_revision(w.db, INSTALLATION_ID)
+    revision = await config_revision(w.db, INSTALLATION_ID, team_id=TEAM)
     await w.db.execute(
         "ALTER TABLE {{tables.outbox_events}} ADD CONSTRAINT reject_new_governance"
         " CHECK(kind <> 'post-governance-hook') NOT VALID"
     )
     with pytest.raises(asyncpg.CheckViolationError):
         await apply(w, change)
-    assert await config_revision(w.db, INSTALLATION_ID) == revision
+    assert await config_revision(w.db, INSTALLATION_ID, team_id=TEAM) == revision
     assert (await w.approvals.get(approval_id)).state is ApprovalState.APPROVED
     assert (await active_binding(w.db, old.context)).credential_context == old_token
     await w.custody.backend_credential_opener.open(old_token)
