@@ -110,6 +110,18 @@ def origin(name: str) -> str:
     return f"https://{HOSTS[name]}"
 
 
+# One role and database per name, created at the bundled server's first start,
+# and the file under the secrets directory that holds its whole DSN. Logs'
+# purge ledger is a database of its own: Logs refuses a ledger DSN that
+# reaches its content database.
+DATABASES = {
+    "aweb": "aweb/database-url",
+    "secrets": "secrets/database-url",
+    "logs": "logs/database-url",
+    "logsledger": "logs/purge-ledger-database-url",
+    "signer": "signer/database-url",
+}
+
 # The hook bindings a team deployment activates before any owner act: the
 # audit-critical pairs that Secrets' governance acts and secret use need, and
 # Logs' own governance production, which its reader designation needs. The
@@ -304,19 +316,17 @@ class World:
         tmp.replace(zone)
 
     def write_database_files(self) -> None:
-        """One role and database per component; the password is in the role's
-        file for the bundled server and in the component's whole URL. The
-        roles exist only from the bundled server's first start."""
+        """One role and database per name in DATABASES; the password is in the
+        role's file for the bundled server and in the whole URL its component
+        reads. The roles exist only from the bundled server's first start."""
         roles = self.secrets / "postgres" / "roles"
         roles.mkdir(parents=True)
         (self.secrets / "postgres" / "password").write_text(secrets.token_hex(24))
-        for component in ("aweb", "secrets", "logs", "signer"):
+        for role, dsn_file in DATABASES.items():
             password = secrets.token_hex(24)
-            (roles / component).write_text(password)
-            (self.secrets / component).mkdir(exist_ok=True)
-            (self.secrets / component / "database-url").write_text(
-                f"postgresql://{component}:{password}@postgres:5432/{component}\n"
-            )
+            (roles / role).write_text(password)
+            (self.secrets / dsn_file).parent.mkdir(exist_ok=True)
+            (self.secrets / dsn_file).write_text(f"postgresql://{role}:{password}@postgres:5432/{role}\n")
 
     def write_redis_files(self) -> None:
         """Redis holds the password's SHA-256 in its ACL file; aweb holds the

@@ -186,3 +186,16 @@ def test_a_selected_binding_not_active_or_without_active_from_is_not_ready():
     with pytest.raises(SystemExit, match="b"):
         journey().hooks_ready_at([binding("secrets", "production", "post-governance-hook", "b", "active")],
                                  selected, margin=margin)
+
+
+def test_logs_purge_ledger_is_a_database_and_role_of_its_own_with_its_dsn_in_logs_secrets():
+    import re
+
+    databases = journey().DATABASES
+    assert databases["logs"] == "logs/database-url"
+    assert databases["logsledger"] == "logs/purge-ledger-database-url"
+    # postgres-roles.sh creates one role and database per name it accepts.
+    roles = (REPO / "deploy" / "team" / "postgres-roles.sh").read_text()
+    assert "*[!a-z]*)" in roles
+    assert all(re.fullmatch(r"[a-z]+", role) and role != "postgres" for role in databases)
+    assert len(set(databases.values())) == len(databases)

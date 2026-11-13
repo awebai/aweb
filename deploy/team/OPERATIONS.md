@@ -102,6 +102,7 @@ project, the test world's included, and the deployment's data with them.
 | aweb's database | `postgres_data` volume, database `aweb` | Teams' messages, chats, tasks, workspaces, app installations | Yes, `pg_dump` |
 | Secrets' database | `postgres_data`, database `secrets` | Every retained secret value, sealed under the custody key (references for values kept in 1Password); grants, receipts | Yes |
 | Logs' database | `postgres_data`, database `logs` | Every retained event's content and its chain | Yes |
+| Logs' purge ledger | `postgres_data`, database `logsledger` | The tombstone of every purged event, which Logs reapplies to its content at each start | Yes, for the loss of the ledger itself only: never restore it with Logs' content, or to any earlier state |
 | The signer's database | `postgres_data`, database `signer` | Bootstrap consumption, credential and public-key records, bindings, receipts | Yes |
 | Redis | `redis_data` volume | Rebuildable runtime state: presence and its indexes, active chat waits, current activity and listening hints, wake counters and pub/sub, registry-read caches, short-lived rate and cooldown state | **No.** Start with a fresh Redis and its restored credentials: clients reconnect and heartbeat, caches refill, and the previous transient hints and current rate and cooldown windows are lost. No durable aweb record needs this volume (federation state, work, leases and the lifecycle outbox are in PostgreSQL), and a cold registry cache reads fresh evidence upstream. aweb needs Redis reachable to start. This does not qualify the unsupported team restore. |
 | The secrets directory | `compose.secretsDir` | Each component's credentials: database URLs, aweb's Redis URL, member keys, Secrets' **custody key** and service keys, Logs' app keys, the signer's controller custody, SMTP passwords, Redis's ACL, the agents' harness login | Yes, as an archive with numeric owners and modes, **without** the signer's live controller custody (`signer/private-controller`) or the agents' harness login (`agents/`), which is minted again rather than restored |
@@ -166,15 +167,21 @@ each component can restore without bringing back what was destroyed:
 | Component | What a restore needs | Owner and task | State |
 | --- | --- | --- | --- |
 | Secrets | Reapply the externally retained destroyed-version tombstones before serving; never resurrect a destroyed value. Custody-key rotation. | aweb-expert-secrets-root, `aweb-acyp` (after `aweb-acwd.24`) | OPEN |
-| Logs | Reapply purge tombstones before serving, from a separate ledger database that is never restored from a content backup. | aweb-expert-logs, `aweb-acgh.16.23` (L5) | OPEN |
+| Logs | Restore `logs` alone and keep the live `logsledger`: Logs reapplies the ledger's tombstones before serving. A restore path that never rolls the ledger back. | aweb-expert-logs, `aweb-acgh.16.23` (L5) | OPEN |
 | Signer | An offline controller-key and database backup recipe; refuse a pending-bootstrap database restored over a completed enrollment. | aweb-protocol-expert-signer-embedding, `aweb-acyw` | OPEN |
 | Signer | `team.controller.rotate` | `aweb-acxy.4` | OPEN |
 
-Logs will need a second database for its tombstone ledger, with its own DSN
-and its own backups; the bundle adds it when that ships. Until Logs has
-reapplied its tombstones after a restore, it answers ingest, reads and export
-with `503 restore_not_ready`: a restore that still answers 503 is waiting on
-that, not broken.
+Logs' purge ledger is a database of its own, `logsledger`, with its own role
+and its whole DSN in `logs/purge-ledger-database-url`. Logs refuses to start
+without it, or when it reaches the content database. At each start, before it
+serves, Logs records in the ledger the events its content already holds purged
+and reapplies every tombstone, so a restored `logs` cannot serve what was
+purged after the backup was taken. That holds only while the ledger is never
+rolled back: restoring it with Logs' content, to any earlier state, or by a
+restore of the whole server (a volume snapshot of `postgres_data`) brings the
+erased events back. The first start of a Logs with its ledger is on the live
+`logs` database, not a restored one, so that the purges made before the ledger
+existed are recorded.
 
 `teamctl restore --lab-rehearsal <deployment.yaml> <backup>` restores a backup
 of **disposable lab data** to rehearse the mechanics, never a team's. It checks
@@ -185,7 +192,9 @@ archive holds anything but regular files and directories, or any of the
 bundle's containers or volumes exists. It restores the files and archives,
 starts PostgreSQL alone (whose first start creates the roles and databases from
 the restored secrets) and restores each dump, then leaves the bundle stopped.
-Restored files keep their modes and belong to the operator.
+Restored files keep their modes and belong to the operator. It restores
+`logsledger` with the rest, which rolls Logs' ledger back: acceptable only for
+disposable lab data.
 
 ## Upgrade
 
