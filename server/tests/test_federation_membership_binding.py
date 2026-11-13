@@ -3,6 +3,8 @@
 import base64
 import json
 from dataclasses import replace
+from fastapi import HTTPException
+from tests.test_protected_membership_retained import membership_env as membership_env
 from uuid import UUID
 
 import pytest
@@ -65,3 +67,54 @@ async def test_reused_certificate_metadata_cannot_manufacture_federation_members
         "SELECT count(*) FROM {{tables.messages}} WHERE message_id=$1", UUID(envelope.message_id)
     ) == 1
     assert await manager.fetch_value("SELECT count(*) FROM {{tables.agents}}") == 1
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("protected", [False, True], ids=["legacy", "protected"])
+@pytest.mark.parametrize("change", ["genuine", "key", "alias"])
+async def test_phase_b_rechecks_retained_same_team_membership(membership_env, protected, change):
+    env = membership_env
+    manager = env.stack.aweb_db
+    member = env.member
+    claimed = member
+    if change == "key":
+        claimed = replace(member, member_key=SigningKey.generate())
+    elif change == "alias":
+        claimed = replace(member, alias="impostor")
+    await manager.execute(
+        "INSERT INTO {{tables.agents}} "
+        "(team_id,alias,did_key,certificate_id,identity_scope,status) VALUES ($1,$2,$3,$4,'local','active')",
+        member.team_id, claimed.alias, claimed.did_key, member.certificate_id,
+    )
+    if protected:
+        await env.stack.awid_db.execute(
+            "INSERT INTO {{tables.team_protection}} "
+            "(domain,name,service_id,service_did_key,generation) VALUES ('beta.example','backend','test-signer',$1,1)",
+            Member(team_id=member.team_id).did_key,
+        )
+    # A local identity avoids unrelated global identity/route setup. Both
+    # participants still pass the actual Phase-B policy and transaction.
+    envelope = _envelope().model_copy(update={
+        "sender_did_aw": claimed.did_key,
+        "sender_current_did_key": claimed.did_key,
+    })
+    recipient = dict(await manager.fetch_one(
+        "INSERT INTO {{tables.agents}} "
+        "(team_id,alias,did_key,did_aw,did_aw_verified_key,address,identity_scope,inbound_mode) "
+        "VALUES ($1,'recipient',$2,$3,$2,$4,'global','team_and_contacts') RETURNING *",
+        member.team_id, envelope.target_current_did_key, envelope.target_did_aw, envelope.target_address,
+    ))
+    async def deliver():
+        return await deliver_federated_phase_b(
+            _DB(manager), envelope=envelope, signature="signed-message", recipient=recipient,
+            authority_token=None, registry_client=env.registry,
+        )
+    if protected and change != "genuine":
+        with pytest.raises(HTTPException) as refused:
+            await deliver()
+        assert refused.value.status_code == 401
+        assert "certificate_binding_mismatch" in str(refused.value.detail)
+        assert await manager.fetch_value("SELECT count(*) FROM {{tables.messages}}") == 0
+    else:
+        result = await deliver()
+        assert result["message_id"] == envelope.message_id
