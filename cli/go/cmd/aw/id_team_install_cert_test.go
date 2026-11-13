@@ -33,6 +33,8 @@ type certificateRegistry struct {
 	teamKey string
 	rows    []awid.RegistryCertificate
 	down    bool
+	// answer replaces the status the registry reports, when set.
+	answer string
 }
 
 func newCertificateRegistry(t *testing.T, teamKey ed25519.PrivateKey) *certificateRegistry {
@@ -54,6 +56,9 @@ func newCertificateRegistry(t *testing.T, teamKey ed25519.PrivateKey) *certifica
 					status, revokedAt := "active", any(nil)
 					if row.RevokedAt != "" {
 						status, revokedAt = "revoked", row.RevokedAt
+					}
+					if r.answer != "" {
+						status = r.answer
 					}
 					_ = json.NewEncoder(w).Encode(map[string]any{"team_id": installTeamID, "team_did_key": r.teamKey, "status": status, "revoked_at": revokedAt})
 					return
@@ -251,6 +256,12 @@ func TestACertificateThatIsNotThisHomesCurrentMembershipIsRefusedAndNothingInsta
 			second := signedMemberCertificate(t, teamKey, didKey, "", awid.IdentityModeLocal)
 			registry.register(second, false)
 			return certificateFile(t, second)
+		}},
+		"a status aw does not know": {"certificate_invalid", func(t *testing.T, registry *certificateRegistry, home, didKey string) string {
+			cert := signedMemberCertificate(t, teamKey, didKey, "", awid.IdentityModeLocal)
+			registry.register(cert, false)
+			registry.answer = "suspended"
+			return certificateFile(t, cert)
 		}},
 		"the registry is unavailable": {"registry_unavailable", func(t *testing.T, registry *certificateRegistry, home, didKey string) string {
 			cert := signedMemberCertificate(t, teamKey, didKey, "", awid.IdentityModeLocal)

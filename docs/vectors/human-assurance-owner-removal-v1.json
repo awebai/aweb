@@ -1,0 +1,31 @@
+{
+  "schema_version": 1,
+  "status": "additive policy contract; variant unimplemented; not runtime evidence",
+  "approval": "Juan 2026-11-13, via coordinator",
+  "base": "human-assurance-v1.json",
+  "operation": {
+    "operation": "team.agent.remove",
+    "variant": "owner_approved",
+    "key_role": "team_controller",
+    "rule": "live_floor",
+    "enforced_by": "signer",
+    "subject_members": ["team_id", "member_id", "certificate_id", "expected_membership"],
+    "membership_members": ["member_did_key", "member_did_aw", "member_address", "alias", "identity_scope"],
+    "effect": "exact current certificate revocation, independently confirmed"
+  },
+  "common": "All other current-authority, exact snapshot, live UV, policy and original-deadline checks succeed unless varied below.",
+  "scenarios": [
+    {"id": "owner-removes-pre-cutover-agent", "given": {"eligible_agent": true, "admission_record": false, "owner_uv": true}, "expected": {"outcome": "allow", "quota_record_created": false}},
+    {"id": "owner-removes-service-member", "given": {"eligible_service_member": true, "owner_uv": true}, "expected": {"outcome": "allow"}},
+    {"id": "owner-removes-replaced-roots-agent", "given": {"admitting_root_grants_active": false, "eligible_agent": true, "owner_uv": true}, "expected": {"outcome": "allow"}},
+    {"id": "owner-removes-another-roots-agent", "given": {"requester_owns_admission_bucket": false, "eligible_agent": true, "owner_uv": true}, "expected": {"outcome": "allow"}},
+    {"id": "owner-removal-still-needs-live-uv", "given": {"owner_uv": false, "valid_root_request": true}, "expected": {"outcome": "refuse", "reason": "live_approval_required"}},
+    {"id": "owner-removal-refuses-human", "given": {"target_kind": "human", "owner_uv": true}, "expected": {"outcome": "refuse", "reason": "subject_ineligible"}},
+    {"id": "owner-removal-refuses-unknown-global-kind", "given": {"identity_scope": "global", "target_kind": null, "id_tree_enrolled": false, "owner_uv": true}, "expected": {"outcome": "refuse", "reason": "subject_ineligible"}},
+    {"id": "owner-removal-refuses-stale-membership", "given": {"current_membership_matches_snapshot": false}, "expected": {"outcome": "refuse", "reason": "operation_conflict"}},
+    {"id": "owner-removal-refuses-former-owner", "given": {"approver_is_current_owner": false, "owner_uv": true}, "expected": {"outcome": "refuse"}},
+    {"id": "owner-removal-uncertain-answer", "given": {"registry_revoked": true, "delivery_answer_lost": true}, "expected": {"reconcile_owned_receipt": true, "signatures": 1, "mutation_attempts": 1, "capacity_releases": 1}},
+    {"id": "owner-removal-audit-rollback", "given": {"registry_revoked": true, "confirmation_audit_fails": true}, "expected": {"committed_receipt": false, "capacity_released": false, "recover_same_operation": true}},
+    {"id": "owner-removal-expired-uv", "given": {"uv_age_at_effect_seconds": 301}, "expected": {"outcome": "refuse", "signatures": 0}}
+  ]
+}

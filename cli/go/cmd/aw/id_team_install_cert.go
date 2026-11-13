@@ -39,7 +39,8 @@ var teamInstallCertCmd = &cobra.Command{
 		"written; then `aw service init` connects the home's workspace.\n\n" +
 		"Running it again with the same certificate reports already_installed and\n" +
 		"completes an install that was interrupted. Refusals, with their --json codes:\n" +
-		"  certificate_invalid        the file is not a team certificate\n" +
+		"  certificate_invalid        the file is not a team certificate, or the registry reports\n" +
+		"                             a status for it that aw does not know\n" +
 		"  member_mismatch            it names another key, did:aw or scope than the home's identity\n" +
 		"  team_key_not_current       it is signed by a key that is not the team's current key\n" +
 		"  certificate_bad_signature  its signature does not verify under that key\n" +
@@ -282,7 +283,9 @@ func checkCurrentTeamCertificate(ctx context.Context, c teamCertificateInstall, 
 		}
 		return installRefusal("certificate_revoked", "certificate %s of %s was revoked%s", cert.CertificateID, cert.Team, revokedAt)
 	}
-	return installRefusal("registry_unavailable", "the registry answered status %q for certificate %s", status.Status, cert.CertificateID)
+	// The registry answered; a status aw does not know will not change on a
+	// retry.
+	return installRefusal("certificate_invalid", "the registry reports status %q for certificate %s, which aw does not know", status.Status, cert.CertificateID)
 }
 
 // sameTeamCertificate reports whether a and b are the same signed
