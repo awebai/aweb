@@ -169,13 +169,9 @@ func (s *custodyService) signAppRequest(ctx context.Context, req *awid.AppReques
 	if canonicalOriginSet(s.clientDeps(ctx).appDeniedOrigins)[requestOrigin] {
 		return nil, fmt.Errorf("app_request_not_allowed")
 	}
-	identity := &localSigningIdentity{
-		DIDKey:       s.identity.DID,
-		StableID:     s.identity.StableID,
-		SigningKey:   s.signingKey,
-		WorkingDir:   s.residentHome,
-		IdentityHome: s.residentHome,
-		TeamID:       strings.TrimSpace(snap.TeamID),
+	identity, err := s.appSigningIdentity(ctx, strings.TrimSpace(snap.TeamID))
+	if err != nil {
+		return nil, fmt.Errorf("app_request_sign_failed")
 	}
 	headers := make(http.Header)
 	for k, v := range spec.Headers {
@@ -190,4 +186,28 @@ func (s *custodyService) signAppRequest(ctx context.Context, req *awid.AppReques
 	}
 	s.cacheCustodyReplayResult(key, out)
 	return out, nil
+}
+
+// appSigningIdentity is the resident's signing identity for one admitted
+// request, signing as a member of teamID with the team certificate the
+// request's snapshot was built with, never one read from the home later. A
+// service given fixed client functions has no snapshot and reads the home.
+func (s *custodyService) appSigningIdentity(ctx context.Context, teamID string) (*localSigningIdentity, error) {
+	identity := &localSigningIdentity{
+		DIDKey:       s.identity.DID,
+		StableID:     s.identity.StableID,
+		SigningKey:   s.signingKey,
+		WorkingDir:   s.residentHome,
+		IdentityHome: s.residentHome,
+		TeamID:       teamID,
+	}
+	if s.connectClient == nil {
+		return identity, nil
+	}
+	certificate := s.clientDeps(ctx).certificate
+	if certificate == nil {
+		return nil, errors.New("the admitted snapshot holds no team certificate")
+	}
+	identity.TeamCertificate = certificate
+	return identity, nil
 }

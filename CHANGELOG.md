@@ -2,6 +2,21 @@
 
 ## Unreleased
 
+- `aw custody serve` picks up a parent import, certificate install or connect
+  that changes its resident home while it runs, without a restart and
+  without a request mixing old and new credentials. Those commands now
+  commit their change as one credential generation of the home
+  (`credential-generation.json`, with `credential-update.json` marking an
+  update in progress). Custody serves each request from one published
+  snapshot, refuses requests with `credential_update_incomplete` while an
+  update is unfinished, `credential_update_busy` while one holds the home
+  past its wait, and `credential_update_unpublished` after a change
+  made without a generation (a restart re-validates and adopts it), and
+  with `identity_changed` until restart if the resident key changes. While
+  custody serves a home (it holds `credential-reader.lock`), a supported
+  command refuses to publish over such a change; in a home no custody
+  serves, it publishes over it as before.
+
 - `aweb-a2a-gw` reaches the registry its own configuration names
   (`registry_url`, or `AWEB_A2A_GW_REGISTRY_URL` without a config file) as the
   operator's explicit choice, so a private or internal registry no longer has

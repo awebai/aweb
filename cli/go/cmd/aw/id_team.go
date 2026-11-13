@@ -2889,7 +2889,7 @@ func runTeamFetchCert(cmd *cobra.Command, args []string) error {
 	existingCert, existingErr := loadTeamCertificateAt(workingDir, identityRoot, teamID)
 	if existingErr == nil && existingCert != nil {
 		if strings.TrimSpace(existingCert.CertificateID) == certificateID {
-			if err := recordTeamCertificate(workingDir, identityRoot, existingCert, "", "already_installed"); err != nil {
+			if _, err := commitTeamCertificate(workingDir, identityRoot, "fetch-cert", existingCert, "", func() (string, error) { return "already_installed", nil }); err != nil {
 				return err
 			}
 			printOutput(teamFetchCertOutput{
@@ -2942,7 +2942,7 @@ func runTeamFetchCert(cmd *cobra.Command, args []string) error {
 		return fmt.Errorf("fetched certificate team_id %q does not match requested %q", cert.Team, teamID)
 	}
 
-	if err := recordTeamCertificate(workingDir, identityRoot, cert, registryURL, "installed"); err != nil {
+	if _, err := commitTeamCertificate(workingDir, identityRoot, "fetch-cert", cert, registryURL, func() (string, error) { return "installed", nil }); err != nil {
 		return err
 	}
 
