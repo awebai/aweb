@@ -109,6 +109,17 @@ class AfterChildExit(bytes):
             signal.alarm(0)
             signal.signal(signal.SIGALRM, previous)
         return True
+real_write = os.write
+def observed_write(fd, data):
+    try:
+        return real_write(fd, data)
+    except BrokenPipeError:
+        if isinstance(data, AfterChildExit):
+            # Observe the real syscall failure without changing its control flow
+            # or writing the registration credential into fixture evidence.
+            (Path({str(state)!r}) / 'registration-broken-pipe').touch()
+        raise
+os.write = observed_write
 class ObservedPolicy(supervisor.Policy):
     def request(self, body):
         argv, data = super().request(body)
@@ -456,6 +467,7 @@ async def test_registration_reports_refusal_when_child_exits_before_input_write(
     )
     frames = [json.loads(line) for line in stdout.splitlines()]
     assert rc == 0 and stderr == b""
+    assert (policy.state / "registration-broken-pipe").exists(), "observe the real EPIPE"
     assert len(frames) == 3, "identity must be followed by the child's exec and exit results"
     assert frames[0]["uid"] == os.geteuid()
     assert frames[1:] == [{"exec": False}, {"exit": 127}]
