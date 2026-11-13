@@ -678,14 +678,28 @@ that Deny also asks for the passkey. This is the only way possession of a
 mailed link reveals a request. Its requirements:
 
 * The link carries B2's personal candidate token in the URL fragment. The page
-  strips it from history and sends it only in POST bodies; servers redact it
-  from logs. It is bound to that candidate, that approval and the pinned human
-  origin, and expires with the operation. The page loads no third-party asset.
-* No GET, prefetch or link-preview fetch reveals or decides anything. Reveal,
-  options and decide are POSTs under the existing browser protections.
-* The revealed request is the frozen operation as its display definition
-  classifies it: names, consequences and technical fields, never a secret,
-  credential, token or private key reference.
+  strips it from history and sends it only in POST bodies. It is bound to that
+  candidate, that approval and the pinned human origin, and expires with the
+  operation. The page and the reveal, options and decide responses are
+  `no-store` with a no-referrer policy, and none is exposed cross-origin. The
+  token is redacted from access, application and error logs and from any
+  tracing or body capture. The page loads no third-party asset.
+* GET and passive prefetch/preview requests return no frozen payload, consume
+  no token or approval, and make no decision. Reveal, options and decide use
+  POST only, under the pinned Host/Origin and the WebAuthn RP/origin checks of
+  these narrow routes, without a standing LOGIN session. Any holder of the
+  personal token, including an active mail scanner that executes the page and
+  sends its reveal POST, can read the request; token possession alone cannot
+  approve or reject. Reveal is read-only, so such a reader cannot spend the
+  token or prevent the person's later ceremony. Origin, RP and CSRF checks are
+  necessary but never replace the exact-act UV.
+* Reveal returns the complete frozen request the covered digest is computed
+  over, technical fields included, never a projection of it. The operation's
+  definition must classify that whole request as revealable: names and values
+  shown to the person are frozen into it at prepare, and it holds no secret,
+  credential, token or private key reference. A request not classified
+  revealable refuses reveal; fields are never redacted or substituted, so the
+  digest the person can check is the digest of what they saw.
 * Options and decide resolve the token to its candidate, map that candidate to
   the current authorized human and enrolled credential, and keep every fence:
   current authority and generation, policy version, B2 eligibility and
@@ -695,8 +709,11 @@ mailed link reveals a request. Its requirements:
 * No standing session is created. The link never authenticates a console
   session, an owner page, another operation or another candidate.
 
-Inbox access therefore discloses a pending request's display fields to whoever
-holds the inbox; it never supplies the approval.
+Inbox access therefore discloses the complete classified request to whoever
+holds the inbox or runs the page with its link; it never supplies the
+approval. The notice and the page show the operation's actual retained
+`expires_at`, never a nominal 24 hours. This is the narrow link-bound route,
+not a general anonymous human API.
 
 Governance prepare accepts an optional `redirect_uri` under the existing
 literal-loopback parser. Invalid input is HTTP 400 `redirect_uri_refused`.
