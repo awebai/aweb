@@ -1,9 +1,12 @@
 """A registry without protection evidence cannot opt a consumer into legacy."""
 
 import json
+from dataclasses import replace
 
 import httpx
+import pytest
 from aweb_naapp_testing import Member
+from nacl.signing import SigningKey
 
 from tests.runtime.conftest import relying_app
 
@@ -58,12 +61,6 @@ async def publish(registry, member, *, protected):
     return cert
 
 
-from dataclasses import replace
-
-import pytest
-from nacl.signing import SigningKey
-
-
 @pytest.mark.parametrize("protected", [False, True], ids=["legacy", "protected"])
 @pytest.mark.parametrize("change", ["genuine", "key", "alias", "rights", "unsigned", "unknown"])
 async def test_request_checks_exact_admitted_artifact(registry, protected, change):
@@ -89,3 +86,40 @@ async def test_request_checks_exact_admitted_artifact(registry, protected, chang
     assert response.status_code == (401 if rejected else 200), response.text
     if protected and change in {"key", "alias", "rights"}:
         assert "certificate_binding_mismatch" in response.text
+
+
+@pytest.mark.parametrize("change", ["genuine", "key", "alias", "rights"])
+async def test_hook_checks_full_registered_certificate(registry, change):
+    import base64
+    from datetime import UTC, datetime
+
+    from aweb_naapp.hooks.delivery import ReceiveOptions, _verify_client_certificate
+    from aweb_naapp.hooks.envelope import Envelope, Refused
+    from aweb_naapp.runtime.team_auth import AWIDTeamCache
+
+    member = Member(team_id=TEAM)
+    await publish(registry, member, protected=True)
+    presented = member
+    if change == "key":
+        presented = replace(member, member_key=SigningKey.generate())
+    elif change == "alias":
+        presented = replace(member, alias="impostor")
+    elif change == "rights":
+        presented = replace(member, extra_cert_fields={"rights": ["admin"]})
+    cache = AWIDTeamCache(registry_url="https://registry.example", ttl_seconds=60, transport=registry.transport)
+    facts = await cache.get(TEAM, member.certificate_id)
+    envelope = Envelope(fields={"producer": {"certificate_id": member.certificate_id}},
+                        hook="test.hook", event_id="event-1", team_id=TEAM,
+                        producer_kind="client", producer_did_key=presented.did_key,
+                        producer_kid="member", producer="client:"+member.certificate_id)
+    options = ReceiveOptions(audience=ORIGIN, binding_id="binding", now=datetime.now(UTC),
+                             team_key_did=facts.team_did_key,
+                             registered_certificate_ids=facts.published_certificate_ids,
+                             protection_observation=facts.protection_observation,
+                             registered_certificate=facts.registered_certificates[0])
+    encoded = base64.b64encode(json.dumps(presented.certificate()).encode()).decode()
+    if change == "genuine":
+        _verify_client_certificate(encoded, envelope, options)
+    else:
+        with pytest.raises(Refused, match="certificate_binding_mismatch"):
+            _verify_client_certificate(encoded, envelope, options)
