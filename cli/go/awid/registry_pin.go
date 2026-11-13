@@ -17,7 +17,8 @@ import (
 
 // Only the operator's explicit, live choices are reached with the caller's own
 // HTTP client: the built-in default registry, AWID_REGISTRY_URL, and an origin
-// the current command line named (TrustRegistryOrigin). Every other registry
+// the operator named on the current command line or in the running program's
+// own configuration (TrustRegistryOrigin). Every other registry
 // origin, whether stored in identity, team or controller files, carried by an
 // invite, returned by service discovery or learned from an _awid TXT record,
 // is reached only through the pinned client below, whatever client the caller
@@ -135,7 +136,8 @@ func registryOriginKey(raw string) string {
 }
 
 // registryTrust is the set of registry origins the operator named on the
-// current command line (TrustRegistryOrigin).
+// current command line or in the program's own configuration
+// (TrustRegistryOrigin).
 type registryTrust struct {
 	mu      sync.Mutex
 	origins map[string]bool
@@ -166,7 +168,8 @@ func (t *registryTrust) trusted(raw string) bool {
 }
 
 // TrustRegistryOrigin marks raw, a registry the operator named on the
-// current command line, as reachable with the resolver's own HTTP client.
+// current command line or in the program's own configuration (the gateway's
+// registry_url), as reachable with the resolver's own HTTP client.
 // The built-in default and AWID_REGISTRY_URL are trusted without it. Never
 // pass an origin that is stored or supplied by someone else (identity.yaml,
 // teams.yaml, an invite, controller metadata, service discovery or DNS):
@@ -208,7 +211,8 @@ func (r *RegistryResolver) httpClientFor(registryURL string) *http.Client {
 }
 
 // TrustRegistryOrigin marks raw, a registry the operator named on the
-// current command line, as reachable with the client's own HTTP client; see
+// current command line or in the program's own configuration, as reachable
+// with the client's own HTTP client; see
 // RegistryResolver.TrustRegistryOrigin.
 func (c *RegistryClient) TrustRegistryOrigin(raw string) error {
 	if c == nil || c.Resolver == nil {
