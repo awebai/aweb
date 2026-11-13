@@ -33,7 +33,10 @@ Two review findings in October 2026, both caught in review before release.
   certificate, never from unsigned registry rows, and policy is verified
   against the controller or team key, not a key carried in the same response.
 
-Related: [preserve capability boundaries through adapter changes](/coordinator/preserve-capability-boundaries-through-adapter-changes.md).
+Related: [preserve capability boundaries through adapter changes](/coordinator/preserve-capability-boundaries-through-adapter-changes.md);
+[team keys are pinned](/aweb-protocol-expert/decisions/team-keys-are-pinned.md)
+applies the last rule to team keys: a rotation is verified against the
+controller that DNS names, never the controller or key the registry serves.
 
 # Provenance
 
