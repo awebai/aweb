@@ -15,6 +15,7 @@ This directory holds what both layers share.
 | `render_env.py` | Checks a `deployment.yaml` against the schema and prints the env file the Compose layer reads: `python render_env.py deployment.yaml > .env`. It needs PyYAML and jsonschema, which the aweb server image has. |
 | `compose.yaml` | The Compose layer: the two networks, Redis, the bundled PostgreSQL and aweb. From this directory: `docker compose --env-file .env up -d`. |
 | `compose.secrets.yaml`, `compose.logs.yaml`, `compose.signer.yaml`, `compose.agents.yaml` | One optional component each; the agents' file holds the team container and its egress, extended from the pinned OATS source. The env file's `COMPOSE_FILE` names those `deployment.yaml` has; Compose never loads the others. |
+| `teamctl` | The operator command on one machine: `teamctl start` renders `deployment.yaml`, starts the bundle and checks it is ready; with agents it derives egress's policy and holds the agent until the ingress and boundary probes pass. `teamctl connect` prints the origins and the deployment's `docker compose` command. It needs `uv` and this repository's checkout. |
 | `egress_policy.py` | Derives the agents' egress policy from the deployment once its services are up. |
 | `compose.test.yaml` | The journey's test world: its own registry, DNS, SMTP, TLS front and aw. Never in a production deployment. |
 | `postgres-roles.sh` | Run by the bundled PostgreSQL at its first start: one role and one database per component. |

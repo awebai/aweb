@@ -1,4 +1,4 @@
-"""scripts/e2e-team-deployment.sh: the Compose adapter of the team deployment journey."""
+"""deploy/team/teamctl, the operator command, through scripts/e2e-team-deployment.sh, the journey's adapter over it."""
 
 import json
 import os
@@ -10,6 +10,7 @@ import yaml
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
 RUNNER = REPO_ROOT / "scripts" / "e2e-team-deployment.sh"
+TEAMCTL = REPO_ROOT / "deploy" / "team" / "teamctl"
 TEAM = REPO_ROOT / "deploy" / "team"
 EXAMPLE = yaml.safe_load((REPO_ROOT / "deploy" / "team" / "deployment.example.yaml").read_text(encoding="utf-8"))
 
@@ -75,7 +76,7 @@ def test_connect_hands_the_journey_the_origins_and_how_to_reach_and_remove_the_d
             "-f", str(TEAM / "compose.yaml"), "-f", str(TEAM / "compose.secrets.yaml"),
             "-f", "/srv/journey/compose.test.yaml",
         ],
-        "down": [str(RUNNER), "compose", "down", path],
+        "start": [str(TEAMCTL), "start", path],
     }
     assert not (tmp_path / "docker-calls").exists()
 
