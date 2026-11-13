@@ -16,6 +16,7 @@ from aweb_secrets.console_changes import ConsoleChanges, console_changes_router
 from tests.test_change_sets import (
     ALICE,
     ORIGIN,
+    TEAM,
     by_member,
     change_approver_contact,
     change_set,
