@@ -52,6 +52,8 @@ import { operationTable } from "/handoff-assets/operations.mjs";
     action.disabled = true;
     confirm.disabled = true;
     allow.hidden = true;
+    deny.hidden = true;
+    note.hidden = true;
     if (governance) {
       document.getElementById("handoff-governance").hidden = true;
       document.getElementById("handoff-scope").hidden = true;
@@ -97,7 +99,10 @@ import { operationTable } from "/handoff-assets/operations.mjs";
     document.getElementById("handoff-fingerprint").textContent = digest.slice(0, 16).match(/.{4}/g).join(" ");
     document.getElementById("handoff-payload").textContent = JSON.stringify(payload, null, 2);
     document.getElementById("handoff-governance").hidden = false;
-    action.textContent = "Approve with passkey";
+    action.textContent = "Approve";
+    deny.hidden = false;
+    deny.disabled = false;
+    note.hidden = false;
     if (request.operation === "identity.root.endorse") {
       const policy = request.admission_policy;
       status.textContent = `${request.responsibility_statement} Agent admissions for ${policy.teams.join(", ")}: ` +
@@ -171,10 +176,6 @@ import { operationTable } from "/handoff-assets/operations.mjs";
       if (state.mode !== "governance-link") throw new Error("handoff_refused");
       await governanceState({...state, mode: "governance"});
       document.getElementById("handoff-explanation").hidden = true;
-      action.textContent = "Approve";
-      deny.hidden = false;
-      deny.disabled = false;
-      note.hidden = false;
     } catch {
       linkUnavailable();
     }
@@ -254,6 +255,18 @@ import { operationTable } from "/handoff-assets/operations.mjs";
       return;
     }
     try {
+      if (governance && !loggedIn && nonempty(csrfKey) && nonempty(sessionStorage.getItem(csrfKey))) {
+        // This tab already signed in (for example from the owner page): its
+        // own token and the session cookie are checked by the server again.
+        csrf = sessionStorage.getItem(csrfKey);
+        try {
+          await governanceState(await request(""));
+          loggedIn = true;
+          return;
+        } catch {
+          csrf = undefined;
+        }
+      }
       if (governance && !loggedIn) {
         if (!nonempty(loginScope) || !nonempty(csrfKey)) throw new Error("handoff_refused");
         // A new tab shares cookies but not the console token. Always use the
@@ -301,7 +314,36 @@ import { operationTable } from "/handoff-assets/operations.mjs";
     }
   }
 
-  deny.addEventListener("click", () => decide("reject"));
+  deny.addEventListener("click", () => (linked ? decide("reject") : sessionDeny()));
+
+  // A signed-in approver's Deny: the same single exact-act passkey touch.
+  async function sessionDeny() {
+    action.disabled = true;
+    deny.disabled = true;
+    document.body.dataset.handoffState = "verifying";
+    status.textContent = "Waiting for your passkey…";
+    let sent = false;
+    try {
+      const options = await request("/options", {decision: "reject"});
+      if (options.userVerification !== "required") throw new Error("handoff_refused");
+      const credential = await navigator.credentials.get({
+        publicKey: PublicKeyCredential.parseRequestOptionsFromJSON(options),
+      });
+      if (!credential) throw new Error("handoff_refused");
+      sent = true;
+      linkOutcome(await request("/execute", {assertion: credential.toJSON(), decision: "reject"}));
+    } catch (error) {
+      if (!sent && error.name === "NotAllowedError") {
+        status.textContent = "Nothing was decided. Choose again.";
+        action.disabled = false;
+        deny.disabled = false;
+        document.body.dataset.handoffState = "ready";
+      } else {
+        submitted = sent;
+        failed();
+      }
+    }
+  }
 
   action.addEventListener("click", async () => {
     if (linked) {
@@ -309,6 +351,7 @@ import { operationTable } from "/handoff-assets/operations.mjs";
       return;
     }
     action.disabled = true;
+    deny.disabled = true;
     document.body.dataset.handoffState = "verifying";
     status.textContent = "Follow your browser’s passkey prompt.";
     try {
@@ -361,8 +404,11 @@ import { operationTable } from "/handoff-assets/operations.mjs";
     } catch (error) {
       if (error.name === "NotAllowedError") {
         // No completion was sent: an explicit retry obtains fresh options.
-        status.textContent = "The passkey prompt was cancelled. You can try again.";
+        status.textContent = governance && loggedIn
+          ? "Nothing was decided. Choose again."
+          : "The passkey prompt was cancelled. You can try again.";
         action.disabled = false;
+        deny.disabled = false;
         document.body.dataset.handoffState = governance && !loggedIn ? "login-required" : "ready";
       } else {
         failed();

@@ -283,6 +283,11 @@ def create_app(settings=None, *, mailer=None, registry_transport=None):
             human.include_router(
                 console_login_router(sessions=sessions, limiter=limiter)
             )
+            from .owner import owner_router
+
+            human.include_router(
+                owner_router(composition, sessions=sessions, csrf_key=settings.human_csrf_key)
+            )
             human.include_router(mount.human_router())
             human.include_router(
                 handoff_page_router(

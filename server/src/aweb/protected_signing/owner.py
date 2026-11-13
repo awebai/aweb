@@ -10,6 +10,7 @@ from __future__ import annotations
 import hashlib
 import json
 from datetime import UTC, datetime
+from html import escape
 
 from aweb_naapp.runtime.protected_signer import SignerRefused
 from aweb_naapp.runtime.protected_signer.admission_policy import AdmissionPolicy
@@ -121,3 +122,104 @@ async def _approvers(c, scope):
             {"key_id": hashlib.sha256(bytes(p["credential_id"])).hexdigest()[:8], "added_at": _stamp(p["created_at"])}
             for p in passkeys]})
     return approvers
+
+
+def _when(stamp):
+    """A stored UTC time as the page shows it: date, time and zone."""
+    if stamp is None:
+        return ""
+    return datetime.fromisoformat(stamp.replace("Z", "+00:00")).strftime("%Y-%m-%d %H:%M UTC")
+
+
+def _window(seconds):
+    return {3600: "hour", 86400: "day"}.get(seconds, f"{seconds} seconds")
+
+
+_OUTCOMES = {"committed": "Approved", "expired": "Expired, nobody decided"}
+_REFUSALS = {"human_refused": "Denied"}
+
+
+def owner_page_html(view: dict) -> str:
+    """The owner page's HTML from owner_view. Every value is escaped; the
+    request wording comes from each operation's display definition once it
+    exists, so until then a request names who asked and when it expires."""
+    e = lambda value: escape(str(value), quote=True)  # noqa: E731
+    parts = ["<h1>Protected signing</h1>", "<h2>Waiting for you</h2>"]
+    if view["pending"]:
+        parts.append("<ul class=\"owner-list\">")
+        for item in view["pending"]:
+            parts.append(
+                f'<li><a href="/handoff/{e(item["handoff_id"])}">Review this request</a> '
+                f'<span>expires {e(_when(item["expires_at"]))}</span>'
+                f'<details><summary>Technical details</summary><dl><dt>Operation</dt><dd>{e(item["operation"])}</dd>'
+                f'<dt>Requested by</dt><dd>{e(item["requester"])}</dd>'
+                f'<dt>Digest</dt><dd>{e(item["digest"])}</dd></dl></details></li>'
+            )
+        parts.append("</ul>")
+    else:
+        parts.append("<p>Nothing is waiting for you.</p>")
+    if view["authority"]["kind"] == "team_controller":
+        parts.append("<h2>Agents added without asking you</h2>")
+        bounds = (view["policy"] or {}).get("bounds")
+        for number, root in enumerate(view["roots"], start=1):
+            if bounds:
+                parts.append(
+                    f'<p>Root agent {number}: {root["active"]} of {bounds["max_active"]} at a time, '
+                    f'{root["in_window"]} of {bounds["max_per_window"]} in the last {_window(bounds["rate_window_seconds"])}.</p>'
+                    f'<details><summary>Technical details</summary><dl><dt>Root agent {number}</dt>'
+                    f'<dd>{e(root["root_id"])}</dd></dl></details>'
+                )
+        if view["admitted"]:
+            parts.append("<ul class=\"owner-list\">")
+            for agent in view["admitted"]:
+                state = {"active": "member", "reserved": "being added", "removed": "removed"}.get(agent["state"], agent["state"])
+                parts.append(
+                    f'<li>{e(agent["alias"] or "unnamed agent")}: {e(state)}, added {e(_when(agent["admitted_at"]))}'
+                    f'<details><summary>Technical details</summary><dl><dt>Added by</dt><dd>{e(agent["root_id"])}</dd>'
+                    f'<dt>Agent key</dt><dd>{e(agent["child_key"])}</dd></dl></details></li>'
+                )
+            parts.append("</ul>")
+        else:
+            parts.append("<p>No agents have been added yet.</p>")
+        parts.append("<h2>Current limits</h2>")
+        if bounds:
+            policy = view["policy"]
+            parts.append(
+                f'<p>A root may have {bounds["max_active"]} agents at a time in {e(", ".join(policy["teams"]))}, '
+                f'and add at most {bounds["max_per_window"]} per {_window(bounds["rate_window_seconds"])}. '
+                "They join as ordinary members. Changing these limits needs its own approval.</p>"
+                f'<details><summary>Technical details</summary><dl><dt>Policy</dt><dd>version {e(policy["version"])}, '
+                f'{e(policy["digest"])}</dd></dl></details>'
+            )
+        else:
+            parts.append("<p>This team has no admission policy on this signer.</p>")
+    parts.append("<h2>History</h2>")
+    if view["history"]:
+        parts.append("<ul class=\"owner-list\">")
+        for item in view["history"]:
+            outcome = _OUTCOMES.get(item["state"]) or _REFUSALS.get(item.get("code"), "Not completed")
+            parts.append(
+                f'<li>{e(outcome)}, {e(_when(item["at"]))}'
+                f'<details><summary>Technical details</summary><dl><dt>Operation</dt><dd>{e(item["operation"])}</dd>'
+                f'<dt>Requested by</dt><dd>{e(item["requester"])}</dd>'
+                f'<dt>Digest</dt><dd>{e(item["digest"])}</dd></dl></details></li>'
+            )
+        parts.append("</ul>")
+    else:
+        parts.append("<p>Nothing has happened yet.</p>")
+    parts.append("<h2>Who can approve</h2><ul class=\"owner-list\">")
+    for approver in view["approvers"]:
+        keys = ", ".join(f'passkey {e(p["key_id"])} added {e(_when(p["added_at"])[:10])}' for p in approver["passkeys"])
+        parts.append(f'<li>{e(approver["contact"] or "no notice address")}: {keys or "no passkey yet"}</li>')
+    parts.append("</ul>")
+    return "".join(parts)
+
+
+def owner_router(composition, *, sessions, csrf_key):
+    """GET / is the signed-in owner's page; GET /login?scope= signs them in."""
+    from .bootstrap import protected_shell
+
+    async def home(session):
+        return owner_page_html(await owner_view(composition, scope=session.scope))
+
+    return protected_shell(csrf_key).router(sessions=sessions, home_title="Protected signing", home=home)

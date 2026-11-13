@@ -113,3 +113,45 @@ async def test_a_link_that_no_longer_works_says_so_and_offers_nothing(link_servi
         await expect(page.locator("#handoff-action")).to_be_disabled()
         await expect(page.locator("#handoff-deny")).to_be_hidden()
         assert s.prepared.digest not in await page.content()
+
+
+@pytest.fixture
+async def signed_in_service(world, tmp_path):
+    async with governance_server(world, tmp_path, redirect=False) as service:
+        yield service
+
+
+async def sign_in(page, s):
+    await page.goto(f"{s.origin}/handoff/{s.prepared.handoff_id}")
+    await page.locator("#handoff-action").click()
+    await expect(page.locator("#handoff-deny")).to_be_enabled()
+
+
+async def test_a_tab_that_signed_in_approves_with_one_touch(signed_in_service):
+    s = signed_in_service
+    context, page, _, _ = await open_page(s, 375)
+    async with context:
+        await sign_in(page, s)
+        # Coming back to the request in the same tab (as from the owner page)
+        # needs no second sign-in: the next touch is the approval itself.
+        await page.goto("about:blank")
+        posts = watch_posts(page, s.origin)
+        await page.goto(f"{s.origin}/handoff/{s.prepared.handoff_id}")
+        await expect(page.locator("#handoff-action")).to_have_text("Approve")
+        await page.locator("#handoff-action").click()
+        await expect(page.locator("#handoff-status")).to_contain_text("Complete")
+        assert posts == [f"/handoff/{s.prepared.handoff_id}/governance/options",
+            f"/handoff/{s.prepared.handoff_id}/governance/execute"]
+        receipt = await s.world.signer.receipt(s.prepared.operation_id, reader=s.world.reader)
+        assert receipt.state == "committed"
+
+
+async def test_a_signed_in_approver_denies_with_one_touch(signed_in_service):
+    s = signed_in_service
+    context, page, _, _ = await open_page(s, 1440)
+    async with context:
+        await sign_in(page, s)
+        await page.locator("#handoff-deny").click()
+        await expect(page.locator("#handoff-outcome-title")).to_have_text("Denied")
+        receipt = await s.world.signer.receipt(s.prepared.operation_id, reader=s.world.reader)
+        assert (receipt.state, receipt.code) == ("refused", "human_refused")

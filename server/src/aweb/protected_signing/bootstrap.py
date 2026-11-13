@@ -280,6 +280,24 @@ async def prepare_completion(c, token):
     return BootstrapCompletion(c, observed, enrolment)
 
 
+def protected_shell(csrf_key):
+    """The protected host's console pages, in its own words."""
+    sign_in = SignInCopy(
+        title="Protected signing",
+        heading="Sign in",
+        scoped_hint="Use your passkey.",
+        unscoped_hint="Open your approval link.",
+        button="Sign in",
+        waiting="Waiting…",
+        failed="Sign-in failed.",
+        sign_out_failed="Sign-out failed.",
+        reauth_heading="Sign in again",
+        reauth_text="Use your passkey.",
+        reauth_link="Sign in",
+    )
+    return ConsoleShell(ConsoleBrand("Protected signing", csrf_key, "", sign_in))
+
+
 def bootstrap_router(c, *, csrf_key, limiter=None):
     """Existing packaged B3 page and POST bodies on the human origin only."""
     router = APIRouter(route_class=ConsoleRoute)
@@ -323,20 +341,7 @@ def bootstrap_router(c, *, csrf_key, limiter=None):
 
     # The shell owns fragment scrubbing, browser WebAuthn and its assets. No
     # app installation, replacement JS, token query parameter or session mint.
-    sign_in = SignInCopy(
-        title="Protected signing",
-        heading="Sign in",
-        scoped_hint="Use your passkey.",
-        unscoped_hint="Open your approval link.",
-        button="Sign in",
-        waiting="Waiting…",
-        failed="Sign-in failed.",
-        sign_out_failed="Sign-out failed.",
-        reauth_heading="Sign in again",
-        reauth_text="Use your passkey.",
-        reauth_link="Sign in",
-    )
-    shell = ConsoleShell(ConsoleBrand("Protected signing", csrf_key, "", sign_in))
+    shell = protected_shell(csrf_key)
     pages = shell.bootstrap_router(
         CeremonyCopy(
             enrolment=Ceremony(
