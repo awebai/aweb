@@ -439,10 +439,11 @@ async def test_private_public_status_negotiates_protection_without_changing_rele
 ):
     from awid.registry import RegistryClient
     from awid.protected_membership import (
+        check_presented_membership,
         observe_team_protection,
         verify_registered_membership,
     )
-    from awid.team_certificate import TeamCertificateError
+    from awid.team_certificate import TeamCertificateError, check_team_certificate
     import base64
     import json
 
@@ -511,6 +512,29 @@ async def test_private_public_status_negotiates_protection_without_changing_rele
                 TeamCertificateError, match="certificate_binding_mismatch"
             ):
                 await verify_registered_membership(registry, observation, changed)
+        # Earlier controller/revocation cache evidence remains syntactically
+        # valid after revocation. The fresh public status must override it in
+        # BOTH shared entry points, including legacy rows without a digest.
+        await env.db.execute(
+            "UPDATE {{tables.team_certificates}} SET revoked_at=NOW(), "
+            "certificate=CASE WHEN $2 THEN certificate ELSE NULL END WHERE certificate_id=$1",
+            cert["certificate_id"], protected,
+        )
+        assert check_team_certificate(
+            cert["certificate"], subject_did_key=cert["member_did_key"],
+            team_did_key=env.team[1], revoked_certificate_ids=set(),
+            registered_certificate_ids={cert["certificate_id"]},
+        ) == decoded
+        fresh = await observe_team_protection(
+            registry, "base:local", certificate_id=cert["certificate_id"]
+        )
+        assert fresh.certificate_status == "revoked"
+        if not protected:
+            assert fresh.certificate_sha256 is None
+        with pytest.raises(TeamCertificateError, match="revoked"):
+            check_presented_membership(fresh, decoded)
+        with pytest.raises(TeamCertificateError, match="revoked"):
+            await verify_registered_membership(registry, fresh, decoded)
     finally:
         await registry.aclose()
 
