@@ -2687,6 +2687,11 @@ func resolveTeamAddMemberScope(cmd *cobra.Command) (string, error) {
 	return requestedScope, nil
 }
 
+// teamAddMemberRegistryClient is the registry client add-member uses.
+var teamAddMemberRegistryClient = func() (*awid.RegistryClient, error) {
+	return newConfiguredRegistryClient(nil)
+}
+
 func runTeamAddMember(cmd *cobra.Command, args []string) error {
 	team := strings.ToLower(strings.TrimSpace(teamAddTeam))
 	domain := awconfig.NormalizeDomain(teamAddNamespace)
@@ -2736,9 +2741,15 @@ func runTeamAddMember(cmd *cobra.Command, args []string) error {
 	ctx, cancel := commandAPIContext(cmd)
 	defer cancel()
 
-	registry, err := newConfiguredRegistryClient(nil)
+	registry, err := teamAddMemberRegistryClient()
 	if err != nil {
 		return err
+	}
+	// The certificate belongs at the team namespace's own registry: the one
+	// AWID_REGISTRY_URL names, or the one its _awid record names.
+	teamRegistryURL, err := registry.DiscoverRegistry(ctx, domain)
+	if err != nil {
+		return fmt.Errorf("resolve the registry for namespace %s: %w", domain, err)
 	}
 
 	if member != "" {
@@ -2756,11 +2767,15 @@ func runTeamAddMember(cmd *cobra.Command, args []string) error {
 		if err != nil {
 			return err
 		}
+		memberRegistryURL, err := registry.DiscoverRegistry(ctx, memberDomain)
+		if err != nil {
+			return fmt.Errorf("resolve the registry for member namespace %s: %w", memberDomain, err)
+		}
 		var address *awid.RegistryAddress
 		if lookupSigningKey != nil {
-			address, _, err = registry.GetNamespaceAddressAtSigned(ctx, strings.TrimSpace(registry.DefaultRegistryURL), memberDomain, memberName, lookupSigningKey)
+			address, _, err = registry.GetNamespaceAddressAtSigned(ctx, memberRegistryURL, memberDomain, memberName, lookupSigningKey)
 		} else {
-			address, _, err = registry.GetNamespaceAddressAt(ctx, strings.TrimSpace(registry.DefaultRegistryURL), memberDomain, memberName)
+			address, _, err = registry.GetNamespaceAddressAt(ctx, memberRegistryURL, memberDomain, memberName)
 		}
 		if err != nil {
 			return fmt.Errorf("resolve member address %s: %w", member, err)
@@ -2783,7 +2798,15 @@ func runTeamAddMember(cmd *cobra.Command, args []string) error {
 		if err != nil {
 			return err
 		}
-		if err := validateMemberAddressForCertificate(ctx, registry, strings.TrimSpace(registry.DefaultRegistryURL), memberAddress, memberDIDAW, memberDID, lookupSigningKey); err != nil {
+		addressDomain, _, err := parseAddress(memberAddress)
+		if err != nil {
+			return err
+		}
+		addressRegistryURL, err := registry.DiscoverRegistry(ctx, addressDomain)
+		if err != nil {
+			return fmt.Errorf("resolve the registry for member namespace %s: %w", addressDomain, err)
+		}
+		if err := validateMemberAddressForCertificate(ctx, registry, addressRegistryURL, memberAddress, memberDIDAW, memberDID, lookupSigningKey); err != nil {
 			return err
 		}
 	}
@@ -2801,7 +2824,7 @@ func runTeamAddMember(cmd *cobra.Command, args []string) error {
 	}
 
 	// Register at awid
-	if err := registry.RegisterCertificate(ctx, strings.TrimSpace(registry.DefaultRegistryURL), domain, team, cert, teamKey); err != nil {
+	if err := registry.RegisterCertificate(ctx, teamRegistryURL, domain, team, cert, teamKey); err != nil {
 		return fmt.Errorf("register certificate: %w", err)
 	}
 

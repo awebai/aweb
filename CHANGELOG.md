@@ -2,6 +2,12 @@
 
 ## Unreleased
 
+- `aw id team add-member` registers the certificate at the team namespace's
+  own registry: the one `AWID_REGISTRY_URL` names, or else the one the
+  namespace's `_awid` record names, as the namespace commands do. A member
+  address is looked up at its own namespace's registry the same way. When DNS
+  cannot answer, nothing is sent. It previously used the default registry
+  whatever the team's namespace said.
 - aweb server: `AWEB_APP_INTERNAL_ORIGINS` (a JSON list of exact HTTPS app
   origins) with `AWEB_APP_INTERNAL_CIDR` (their one network) lets a self-hosted
   server install apps that run on internal addresses beside it. Only listed
