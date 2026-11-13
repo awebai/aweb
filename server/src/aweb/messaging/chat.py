@@ -19,7 +19,7 @@ from uuid import UUID
 import asyncpg
 from pgdbm.errors import QueryError
 
-from aweb.service_errors import ConflictError, NotFoundError, ServiceError, ValidationError
+from aweb.service_errors import ConflictError, NotFoundError, ServiceError
 from aweb.messaging.conversations import (
     find_active_one_to_one_conversation_between,
 )

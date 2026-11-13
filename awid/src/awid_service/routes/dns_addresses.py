@@ -568,7 +568,7 @@ async def register_address(
         if ns_locked is None:
             raise HTTPException(status_code=404, detail="Namespace not found")
 
-        did_row = await _require_registered_did(
+        await _require_registered_did(
             tx,
             did_aw=body.did_aw,
             current_did_key=body.current_did_key,
@@ -1218,7 +1218,7 @@ async def reassign_address(
         if row is None:
             raise HTTPException(status_code=404, detail="Address not found")
 
-        did_row = await _require_registered_did(
+        await _require_registered_did(
             tx,
             did_aw=body.did_aw,
             current_did_key=body.current_did_key,
