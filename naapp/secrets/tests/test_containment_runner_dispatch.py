@@ -76,7 +76,9 @@ async def independent_run(root, original):
     policy = Policy.from_body({**POLICY_BODY, "approval": "none", "approvers": []})
     async with db.transaction() as tx:
         await jobs.create_job(tx, installed["installation_id"], member.team_id, job)
-        await records.create_policy(tx, installed["installation_id"], policy)
+        await records.create_policy(
+            tx, installed["installation_id"], policy, team_id=member.team_id
+        )
         await records.create_grant(
             tx,
             installed["installation_id"],

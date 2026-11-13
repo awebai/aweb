@@ -234,7 +234,7 @@ async def test_contact_page_confirms_only_the_delivered_candidate(
         request = change_set(
             drafter=by_member(ALICE),
             changes=items,
-            base_revision=await config_revision(world.db, INSTALLATION_ID),
+            base_revision=await config_revision(world.db, INSTALLATION_ID, team_id=TEAM),
         )
         await decide(world, await draft(world, request), owner_contact)
         async with world.db.transaction() as tx:

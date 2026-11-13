@@ -166,7 +166,7 @@ async def _install(
                 await records.set_active_version(
                     tx, installation_id, TEAM, record.secret_id, active_version
                 )
-        await records.create_policy(tx, installation_id, policy)
+        await records.create_policy(tx, installation_id, policy, team_id=TEAM)
         await records.create_grant(tx, installation_id, TEAM, GrantRecord.from_after(after))
     return policy
 

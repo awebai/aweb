@@ -66,7 +66,7 @@ async def pending_change(w, changes, sealed=()):
     change = change_set(
         drafter=by_member(CAROL),
         changes=changes,
-        base_revision=await config_revision(w.db, INSTALLATION_ID),
+        base_revision=await config_revision(w.db, INSTALLATION_ID, team_id=TEAM),
     )
     approval_id = await draft(w, change, sealed)
     await decide(w, approval_id, "alice@acme.com")
@@ -350,11 +350,11 @@ async def test_later_ancestry_refusal_rolls_back_replacement_and_all_consequence
         ],
         [replacement],
     )
-    revision = await config_revision(w.db, INSTALLATION_ID)
+    revision = await config_revision(w.db, INSTALLATION_ID, team_id=TEAM)
     with pytest.raises(ChangeRefused):
         async with w.db.transaction() as tx:
             await confirm(w, tx, change)
-    assert await config_revision(w.db, INSTALLATION_ID) == revision
+    assert await config_revision(w.db, INSTALLATION_ID, team_id=TEAM) == revision
     assert (await w.approvals.get(approval_id)).state is ApprovalState.APPROVED
     assert (await uses.approvals.get(use_id)).state is ApprovalState.PENDING
     assert (

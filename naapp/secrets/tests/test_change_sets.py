@@ -473,7 +473,7 @@ async def test_four_eyes_console_draft_requires_another_current_owner(world: Wor
     change = change_set(
         drafter=on_console(alice),
         changes=[grant_role(CAROL)],
-        base_revision=await config_revision(world.db, INSTALLATION_ID),
+        base_revision=await config_revision(world.db, INSTALLATION_ID, team_id=TEAM),
     )
     approval_id = await draft(world, change)
     assert {
@@ -514,7 +514,7 @@ async def test_four_eyes_console_draft_has_no_candidate_after_other_owner_revoca
     change = change_set(
         drafter=on_console(alice),
         changes=[grant_role(CAROL)],
-        base_revision=await config_revision(world.db, INSTALLATION_ID),
+        base_revision=await config_revision(world.db, INSTALLATION_ID, team_id=TEAM),
     )
     with pytest.raises(ChangeRefused) as refused:
         await draft(world, change)
@@ -530,7 +530,7 @@ async def test_a_confirmed_change_set_applies_and_moves_the_revision_on(world: W
     await decide(world, approval_id, "alice@acme.com")
     await confirm(world, change)
     assert await has_role(world.db, CAROL, "secrets.role.deployers")
-    assert await config_revision(world.db, INSTALLATION_ID) == 1
+    assert await config_revision(world.db, INSTALLATION_ID, team_id=TEAM) == 1
     assert (await world.approvals.get(approval_id)).state is ApprovalState.CONSUMED
 
 
@@ -560,7 +560,7 @@ async def test_a_change_set_drafted_before_a_narrowing_act_is_stale(world: World
     approval_id = await draft(world, change)
     await decide(world, approval_id, "alice@acme.com")
     async with world.db.transaction() as tx:
-        await bump_config_revision(tx, INSTALLATION_ID)  # a revoke, disable or remove
+        await bump_config_revision(tx, INSTALLATION_ID, team_id=TEAM)  # a revoke, disable or remove
     with pytest.raises(ChangeRefused) as refused:
         await confirm(world, change)
     assert refused.value.code == "base_revision_stale"
@@ -570,7 +570,7 @@ async def test_a_change_set_drafted_before_a_narrowing_act_is_stale(world: World
 async def test_a_draft_against_a_past_revision_is_refused_at_once(world: World) -> None:
     await enrol_owner(world, ALICE, "alice@acme.com")
     async with world.db.transaction() as tx:
-        await bump_config_revision(tx, INSTALLATION_ID)
+        await bump_config_revision(tx, INSTALLATION_ID, team_id=TEAM)
     with pytest.raises(ChangeRefused) as refused:
         await draft(world, change_set(drafter=by_member(CAROL), changes=[grant_role(CAROL)]))
     assert refused.value.code == "base_revision_stale"
@@ -612,7 +612,7 @@ async def test_under_four_eyes_another_owner_confirms_relaxing_it(world: World) 
         await require_four_eyes(
             tx, installation_id=INSTALLATION_ID, team_id=TEAM, directory=world.directory
         )
-    revision = await config_revision(world.db, INSTALLATION_ID)
+    revision = await config_revision(world.db, INSTALLATION_ID, team_id=TEAM)
     change = change_set(drafter=by_member(ALICE), changes=[RELAX_FOUR_EYES], base_revision=revision)
     approval_id = await draft(world, change)
     assert "alice@acme.com" not in {
@@ -620,7 +620,7 @@ async def test_under_four_eyes_another_owner_confirms_relaxing_it(world: World) 
     }
     await decide(world, approval_id, "bob@acme.com")
     await confirm(world, change)
-    assert await four_eyes(world.db, INSTALLATION_ID) == "not_required"
+    assert await four_eyes(world.db, INSTALLATION_ID, team_id=TEAM) == "not_required"
 
 
 SECRET_ID = "sec_19ab42"
@@ -770,7 +770,7 @@ async def test_an_approver_change_set_that_fails_designates_nobody(world: World)
     )
     await decide(world, await draft(world, change), "alice@acme.com")
     async with world.db.transaction() as tx:
-        await bump_config_revision(tx, INSTALLATION_ID)
+        await bump_config_revision(tx, INSTALLATION_ID, team_id=TEAM)
     with pytest.raises(ChangeRefused):
         await confirm(world, change)
     async with world.db.transaction() as tx:
@@ -903,7 +903,7 @@ async def test_a_refused_designation_is_a_coded_refusal(world: World) -> None:
         await confirm(world, change)
     assert refused.value.code == "approver_designation_refused"
     assert await world.db.fetch_value("SELECT count(*) FROM {{tables.approvers}}") == 0
-    assert await config_revision(world.db, INSTALLATION_ID) == 0
+    assert await config_revision(world.db, INSTALLATION_ID, team_id=TEAM) == 0
     assert (await world.approvals.get(approval_id)).state is ApprovalState.APPROVED
 
 
@@ -930,7 +930,7 @@ async def test_relaxing_and_requiring_four_eyes_at_once_do_not_deadlock(world: W
         await require_four_eyes(
             tx, installation_id=INSTALLATION_ID, team_id=TEAM, directory=world.directory
         )
-    revision = await config_revision(world.db, INSTALLATION_ID)
+    revision = await config_revision(world.db, INSTALLATION_ID, team_id=TEAM)
     change = change_set(drafter=by_member(ALICE), changes=[RELAX_FOUR_EYES], base_revision=revision)
     await decide(world, await draft(world, change), "bob@acme.com")
 

@@ -71,7 +71,7 @@ async def seed(db, *, subject=None, capability="use", operation=None, job=None, 
     )
     async with db.transaction() as tx:
         await records.create_secret(tx, INSTALLATION, TEAM, secret)
-        await records.create_policy(tx, INSTALLATION, policy)
+        await records.create_policy(tx, INSTALLATION, policy, team_id=TEAM)
         if operation:
             await records.create_operation(tx, INSTALLATION, TEAM, operation)
         if job:

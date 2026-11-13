@@ -125,7 +125,7 @@ async def designate(uses: Uses, ref: str, contact: str, *, principal: str | None
     change = change_set(
         drafter=by_member(ALICE),
         changes=[designate_approver(ref, contact, [SECRET_ID], principal)],
-        base_revision=await config_revision(w.db, INSTALLATION_ID),
+        base_revision=await config_revision(w.db, INSTALLATION_ID, team_id=TEAM),
     )
     await decide(w, await draft(w, change), "alice@acme.com")
     async with w.db.transaction() as tx:
@@ -181,7 +181,7 @@ async def install(uses: Uses, **policy_changes) -> Policy:
         if await records.secret_by_ref(tx, INSTALLATION_ID, TEAM, record.ref) is None:
             await records.create_secret(tx, INSTALLATION_ID, TEAM, record)
             await records.set_active_version(tx, INSTALLATION_ID, TEAM, SECRET_ID, 4)
-        await records.create_policy(tx, INSTALLATION_ID, policy)
+        await records.create_policy(tx, INSTALLATION_ID, policy, team_id=TEAM)
         grant_id = f"grt_{policy.digest[:10]}"
         await records.create_grant(
             tx,

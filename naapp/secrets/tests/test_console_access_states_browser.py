@@ -60,7 +60,7 @@ async def jobs_on_terms(w):
     syncing = await job_using(w, [ORDERS_DB.ref, PAYMENTS.ref], job_id="orders-sync")
     archive = await job_using(w, [ORDERS_DB.ref, "retired-key"], job_id="orders-archive")
     async with w.db.transaction() as tx:
-        await records.create_policy(tx, INSTALLATION_ID, TERMS)
+        await records.create_policy(tx, INSTALLATION_ID, TERMS, team_id=TEAM)
         for grant_id, job in (("grt_runsync1", syncing), ("grt_runarch1", archive)):
             await records.create_grant(
                 tx, INSTALLATION_ID, TEAM, run_grant(grant_id, ORDERS_DB, READER, job, TERMS)
