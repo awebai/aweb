@@ -275,3 +275,23 @@ async def test_attestation_publication_needs_protected_controller_authority(
     assert response.status_code == 403, response.text
     assert response.json()["detail"]["code"] == "protected_controller_required"
     assert await env.db.fetch_value(f"SELECT count(*) FROM {{{{tables.{table}}}}}") == 0
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("protected", [False, True], ids=["legacy", "protected"])
+async def test_team_read_projects_authoritative_protection_explicitly(
+    controller_app, protected
+):
+    env = controller_app
+    if protected:
+        await protect_team(env)
+    response = await env.client.get(TEAM_PATH)
+    assert response.status_code == 200, response.text
+    binding = response.json()["protection"]
+    if protected:
+        assert binding["mode"] == "protected"
+        assert binding["service_id"] == "independent-signer"
+        assert binding["generation"] == 1
+        assert binding["history_id"]
+    else:
+        assert binding == {"mode": "legacy"}
