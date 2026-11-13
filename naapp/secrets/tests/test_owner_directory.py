@@ -155,7 +155,7 @@ async def designate_contact(world, ref, contact, *, enrol=True):
     change = change_set(
         drafter=by_member(ALICE),
         changes=[designate_approver(ref, contact, [SECRET_ID])],
-        base_revision=await config_revision(world.db, INSTALLATION_ID),
+        base_revision=await config_revision(world.db, INSTALLATION_ID, team_id=TEAM),
     )
     await decide(world, await draft(world, change), "alice@acme.com")
     async with world.db.transaction() as tx:
