@@ -428,6 +428,7 @@ func TestAwMailSendSealsTheCommLogAfterLogKeyInstall(t *testing.T) {
 		run.Dir = tmp
 		return run.CombinedOutput()
 	}
+	records := 0
 	writeRecord := func(signer ed25519.PrivateKey) (string, *awid.LogKeyPair) {
 		pair, err := awid.GenerateLogKeyPair()
 		if err != nil {
@@ -444,7 +445,8 @@ func TestAwMailSendSealsTheCommLogAfterLogKeyInstall(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		path := filepath.Join(tmp, "log-key-"+rec.KeyID[len(rec.KeyID)-6:]+".json")
+		records++
+		path := filepath.Join(tmp, fmt.Sprintf("log-key-%d.json", records))
 		if err := os.WriteFile(path, data, 0o644); err != nil {
 			t.Fatal(err)
 		}

@@ -104,7 +104,12 @@ func SignLogKeyRecord(rec *LogKeyRecord, teamKey ed25519.PrivateKey) error {
 	if err != nil {
 		return err
 	}
-	rec.Signature = encodeLogBytes(ed25519.Sign(teamKey, payload))
+	// The shared in-process signer; no raw primitive is called here.
+	_, signature, err := KeySigner(teamKey)(payload)
+	if err != nil {
+		return err
+	}
+	rec.Signature = encodeLogBytes(signature)
 	return nil
 }
 
@@ -123,10 +128,6 @@ func VerifyLogKeyRecord(rec *LogKeyRecord, teamID, teamDIDKey string) error {
 	if rec.TeamKeyDID != strings.TrimSpace(teamDIDKey) {
 		return errors.New("log key record is not signed by this team's key")
 	}
-	teamPub, err := ExtractPublicKey(teamDIDKey)
-	if err != nil {
-		return fmt.Errorf("team key: %w", err)
-	}
 	if _, err := rec.publicKey(); err != nil {
 		return err
 	}
@@ -134,12 +135,10 @@ func VerifyLogKeyRecord(rec *LogKeyRecord, teamID, teamDIDKey string) error {
 	if err != nil {
 		return fmt.Errorf("log key record signature: %w", err)
 	}
-	payload, err := logKeyRecordSignedPayload(rec)
-	if err != nil {
-		return err
-	}
-	if !ed25519.Verify(teamPub, payload, signature) {
-		return errors.New("log key record signature does not verify")
+	// The shared strict verifier: canonical point and scalar checks, then
+	// Ed25519 under the team did:key over exactly the prefixed payload.
+	if err := idStrictVerify(teamDIDKey, signature, func() ([]byte, error) { return logKeyRecordSignedPayload(rec) }); err != nil {
+		return fmt.Errorf("log key record signature does not verify: %w", err)
 	}
 	return nil
 }
