@@ -11,7 +11,23 @@
   snapshot, refuses requests with `credential_update_incomplete` while an
   update is unfinished and `credential_update_unpublished` after a change
   made without a generation (a restart re-validates and adopts it), and
-  with `identity_changed` until restart if the resident key changes.
+  with `identity_changed` until restart if the resident key changes. While
+  custody serves a home (it holds `credential-reader.lock`), a supported
+  command refuses to publish over such a change; in a home no custody
+  serves, it publishes over it as before.
+
+- The team deployment bundle's `team.registryRoute` (`local` or `external`,
+  default `external`) says where the AWID registry runs for the agents'
+  ingress probe. An external registry, such as the public one at the default
+  `team.registryUrl`, gets a positive control with no backend log, and
+  `teamctl start` no longer requires a `registry` Compose service for it. A
+  local registry keeps its log witness and must be reached at one of
+  `egress.privateIngressAddresses`. Either declaration that does not match
+  the deployment is refused.
+
+  Upgrade: a deployment with agents that runs its own `registry` service
+  must set `team.registryRoute: local`; without it, `teamctl start` refuses
+  and names that setting.
 
 - `aw id endorse` installs the endorsed root's chain (the human's supporting
   chain and the signed certificate it registered) in the root's home once

@@ -65,9 +65,11 @@ shared signer and adapters; static catalog validation is not runtime acceptance.
 
 ### `human-assurance-owner-removal-v1.json` — additive policy contract
 
-The current owner's live approval can revoke an exact agent/service membership
-outside a root's admission bucket, including pre-cutover and retired-root
-members. The unchanged base inventory remains in `human-assurance-v1.json`.
+The current owner's live approval can revoke an exact agent/service or
+unknown-kind membership outside a root's admission bucket, including
+pre-cutover and retired-root members. Unknown kind displays "kind not verified";
+verified humans use `team.human.remove` exclusively. The unchanged base
+inventory remains in `human-assurance-v1.json`.
 These additional scenarios specify the `owner_approved` variant before its
 implementation; they do not claim a served route or successful native run.
 

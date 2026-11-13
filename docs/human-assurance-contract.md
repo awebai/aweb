@@ -270,7 +270,7 @@ This specifies the next implementation; it does not claim the runtime serves
 the variant yet.
 
 The current team owner's fresh exact-act passkey approval may remove any
-eligible agent or service membership of that team, including one admitted
+agent/service membership or membership whose kind is not verified, including one admitted
 before cutover, one outside the requesting root's admission bucket, or one
 whose admitting root has been replaced or revoked. A working root, membership
 certificate or operator credential alone does not authorize this variant.
@@ -286,12 +286,23 @@ action policy into B2. Approval displays the target and consequence. A changed
 target or snapshot under the same operation UUID conflicts, never silently
 selects another certificate.
 
-This is agent/service membership removal, not human membership or human-role
-removal. A global target requires positive verified agent kind; unknown kind
-or an unenrolled legacy human label establishes no agent eligibility. Local
-subjects retain their separate local-member and protected-key exclusions.
+Every team certificate has exactly one owner-approved removal operation,
+selected by current verified kind. A verified human belongs exclusively to
+`team.human.remove/default`, which refuses unknown kind. A verified agent or
+an unknown kind belongs to `team.agent.remove/owner_approved`. For unknown
+kind, including a registered but unenrolled legacy member, the frozen approval
+display says plainly **"kind not verified"**. The server derives this
+classification from current authoritative facts, never a requester-supplied
+kind label. The owner's live exact-act approval authorizes removal in either
+operation; the unknown case does not assert verified agent kind.
+
+This exception is exclusive to the owner-approved variant. Root/self unattended
+removal and unattended admission still require positive verified agent kind
+for global subjects and retain their local-member and protected-key checks.
 Current human/controller/namespace authority and last-owner protections
-remain independent checks. An unavailable current fact refuses release.
+remain independent checks. Unavailable current evidence still refuses release;
+it is not converted into an unknown-kind approval. Human-role removal remains
+a separate operation.
 
 The existing certificate-revocation encoding and exact registry confirmation
 remain the effect boundary. Retain one signed effect and its release claim;
