@@ -195,3 +195,48 @@ def test_original_observation_deadline_is_not_extended_by_read_or_legacy_check(
     monkeypatch.setattr(protected_membership, "monotonic", lambda: 100.0)
     with pytest.raises(EffectRefused, match="protected_state_unavailable"):
         observation.require_legacy_admission()
+
+
+@pytest.mark.parametrize(
+    "changed",
+    [
+        None,
+        "member_did_key",
+        "alias",
+        "identity_scope",
+        "member_did_aw",
+        "member_address",
+        "certificate_sha256",
+    ],
+)
+def test_retained_membership_pure_check_matches_every_consumed_authoritative_field(
+    changed,
+):
+    from time import monotonic
+    from types import SimpleNamespace
+    from awid.protected_membership import (
+        TeamProtectionObservation,
+        check_retained_membership_record,
+    )
+    from awid.team_certificate import TeamCertificateError
+
+    _, binding, fields, _, _ = example()
+    observation = TeamProtectionObservation(
+        fields["team_id"], fields["controller_did_key"], binding, monotonic() + 60
+    )
+    values = dict(
+        certificate_id=str(uuid4()),
+        member_did_key="original-key",
+        alias="original-alias",
+        identity_scope="global",
+        member_did_aw="original-id",
+        member_address="example.test/original",
+        certificate_sha256="a" * 64,
+    )
+    record = SimpleNamespace(**values, revoked_at=None)
+    if changed is not None:
+        values[changed] = "changed"
+        with pytest.raises(TeamCertificateError, match="certificate_binding_mismatch"):
+            check_retained_membership_record(observation, record, **values)
+    else:
+        check_retained_membership_record(observation, record, **values)
