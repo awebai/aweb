@@ -364,6 +364,22 @@ class ProtectedOperationsHTTP:
             return HTTPException(401, "console_session_required")
         return _http(error)
 
+    async def _link_request(self, request, fields):
+        """A personal mailed link's POST: pinned human Host and Origin, the
+        token in the body, and no console or agent credential. The token
+        authenticates nothing but its own candidate's view and ceremony."""
+        await self.limiter.admit(request, "protected-human-link", bucket="protected.human.client")
+        if _host(request.scope) not in self.human_hosts or request.headers.get("Origin") != self.human_origin:
+            raise HTTPException(403, "scope_refused")
+        if request.headers.get("authorization") or any(
+            name.lower().startswith("x-console-") for name in request.headers
+        ):
+            raise HTTPException(401, "scope_refused")
+        body = await self._human_body(request, fields)
+        if not isinstance(body["token"], str):
+            raise SignerRefused("request_invalid")
+        return body
+
     async def _human_body(self, request, fields):
         await require_json(request)
         raw = bytearray()
@@ -410,6 +426,48 @@ class ProtectedOperationsHTTP:
                         operation_id, human=human, human_session=session
                     )
                 )
+            except Exception as error:
+                raise self._human_error(error) from None
+
+        # Mailed approval links: POST only. ConsoleRoute's headers make every
+        # answer, refusals included, no-store and no-referrer; no CORS header
+        # is ever sent. A GET or a passive preview has no route here, so it
+        # reveals and spends nothing.
+
+        @router.post("/handoff/{handoff_id}/link")
+        async def link_view(handoff_id: str, request: Request):
+            try:
+                body = await self._link_request(request, {"token"})
+                prepared = await self.signer.link_view(handoff_id, body["token"])
+                frozen = prepared.payload
+                result = asdict(prepared)
+                result["payload"] = {
+                    "policy": {"ref": frozen["policy_ref"], "version": frozen["policy_version"]},
+                    "request": frozen,
+                }
+                return {"mode": "governance-link", **result, "state": "pending"}
+            except Exception as error:
+                raise self._human_error(error) from None
+
+        @router.post("/handoff/{handoff_id}/link/options")
+        async def link_options(handoff_id: str, request: Request):
+            try:
+                body = await self._link_request(request, {"token", "decision"})
+                options = await self.signer.link_options(handoff_id, body["token"], body["decision"])
+                return dict(options)
+            except Exception as error:
+                raise self._human_error(error) from None
+
+        @router.post("/handoff/{handoff_id}/link/decide")
+        async def link_decide(handoff_id: str, request: Request):
+            try:
+                body = await self._link_request(request, {"token", "decision", "assertion"})
+                if not isinstance(body["assertion"], dict):
+                    raise SignerRefused("request_invalid")
+                receipt = await self.signer.link_decide(
+                    handoff_id, body["token"], body["decision"], body["assertion"]
+                )
+                return receipt_json(receipt)
             except Exception as error:
                 raise self._human_error(error) from None
 
