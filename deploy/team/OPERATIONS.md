@@ -38,7 +38,7 @@ project, the test world's included, and the deployment's data with them.
 | Logs' database | `postgres_data`, database `logs` | Every retained event's content and its chain | Yes |
 | The signer's database | `postgres_data`, database `signer` | Bootstrap consumption, credential and public-key records, bindings, receipts | Yes |
 | Redis | `redis_data` volume | Rebuildable runtime state: presence and its indexes, active chat waits, current activity and listening hints, wake counters and pub/sub, registry-read caches, short-lived rate and cooldown state | **No.** Start with a fresh Redis and its restored credentials: clients reconnect and heartbeat, caches refill, and the previous transient hints and current rate and cooldown windows are lost. No durable aweb record needs this volume (federation state, work, leases and the lifecycle outbox are in PostgreSQL), and a cold registry cache reads fresh evidence upstream. aweb needs Redis reachable to start. This does not qualify the unsupported team restore. |
-| The secrets directory | `compose.secretsDir` | Each component's credentials: database URLs, aweb's Redis URL, member keys, Secrets' **custody key** and service keys, Logs' app keys, the signer's controller custody, SMTP passwords, Redis's ACL, the agents' harness login | Yes, as an archive with numeric owners and modes, **without** the signer's live controller custody (`signer/private-controller`) |
+| The secrets directory | `compose.secretsDir` | Each component's credentials: database URLs, aweb's Redis URL, member keys, Secrets' **custody key** and service keys, Logs' app keys, the signer's controller custody, SMTP passwords, Redis's ACL, the agents' harness login | Yes, as an archive with numeric owners and modes, **without** the signer's live controller custody (`signer/private-controller`) or the agents' harness login (`agents/`), which is minted again rather than restored |
 | The agents' state and work | `agents.compose.stateDir`, `agents.compose.workDir` | Each seat's `.aw` (its member key), the harness's sessions and transcripts, checkouts | Yes, as archives |
 | Files `deployment.yaml` names | `signer.profileFile`, `signer.scopeFile`, the CA files | Public configuration and trust anchors | Yes, with their modes |
 | The operator's Git mirrors and the OATS source | `agents.mirrorsDir`, `agents.compose.oatsSource` | Operator-provided inputs | No: recorded in the manifest only |
@@ -75,7 +75,7 @@ stopped, and stops it again afterwards. The set holds:
 - `databases/<name>.dump`: `pg_dump -Fc` of every database, and
   `databases/server-version`;
 - `archives/<key>.tar`: the secrets directory, without the signer's live
-  controller custody, and the agents' state and work, regular files and
+  controller custody or the agents' harness login, and the agents' state and work, regular files and
   directories only, owners and modes kept;
 - `files/<key>`: every file `deployment.yaml` names;
 - `manifest.json`: the source revision, every image digest, the PostgreSQL

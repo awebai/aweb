@@ -37,7 +37,8 @@
 #          directory and the agents' state stay. The project must be named.
 # backup   with every service but the bundled PostgreSQL stopped: a dump of
 #          each database, the secrets directory without the signer's live
-#          controller custody, the agents' state and every file
+#          controller custody or the agents' harness login, the agents'
+#          state and every file
 #          deployment.yaml names, with a manifest of digests and versions.
 #          The directory holds credentials; it is made 0700.
 # restore  fails closed: no component can yet restore a deployment that
@@ -772,14 +773,15 @@ PY
 # is left out with everything under it. The archive belongs to the operator,
 # mode 0400.
 archive() {
-  local source="$1" out="$2" left_out="${3:-}"
+  local source="$1" out="$2"
+  shift 2
   docker run --rm --user 0 --network none -v "$source:/source:ro" -v "$(dirname "$out"):/out" \
     --entrypoint python "$(env_value AWEB_IMAGE)" -c '
 import os, sys, tarfile
-out, uid, gid, left_out = sys.argv[1:]
+out, uid, gid, *left_out = sys.argv[1:]
 
 def regular(info):
-    if left_out and (info.name == left_out or info.name.startswith(left_out + "/")):
+    if any(info.name == name or info.name.startswith(name + "/") for name in left_out):
         return None
     if not (info.isreg() or info.isdir()):
         raise SystemExit(f"teamctl: {info.name} is not a regular file or a directory")
@@ -789,7 +791,7 @@ with tarfile.open(out, "w") as tar:
     tar.add("/source", arcname=".", filter=regular)
 os.chown(out, int(uid), int(gid))
 os.chmod(out, 0o400)
-' "/out/$(basename "$out")" "$(id -u)" "$(id -g)" "$left_out" </dev/null
+' "/out/$(basename "$out")" "$(id -u)" "$(id -g)" "$@" </dev/null
 }
 
 # An archive back into a directory that does not exist yet, owners and modes
@@ -839,18 +841,21 @@ backup() {
   psql_postgres "show server_version" >"$target/databases/server-version"
   [[ "$was_running" -eq 1 ]] || dc stop postgres
   host_paths >"$run_dir/host-paths"
-  local kind key path left_out signer_secrets
+  local kind key path left_out signer_secrets agents_secrets
   while read -r kind key path; do
     case "$kind" in
       # The signer's live controller key stays out: its backup is the
       # owner's separately protected offline copy (protected_signing/HOST.md).
+      # So does the agents' harness login, a person's account credential that
+      # is minted again rather than restored.
       archive)
-        left_out=""
+        left_out=()
         if [[ "$key" == compose.secretsDir ]]; then
           signer_secrets="$(env_value SIGNER_SECRETS)"
-          left_out="./${signer_secrets:-signer}/private-controller"
+          agents_secrets="$(env_value AGENTS_SECRETS)"
+          left_out=("./${signer_secrets:-signer}/private-controller" "./${agents_secrets:-agents}")
         fi
-        [[ ! -d "$path" ]] || archive "$path" "$target/archives/$key.tar" "$left_out"
+        [[ ! -d "$path" ]] || archive "$path" "$target/archives/$key.tar" ${left_out[@]+"${left_out[@]}"}
         ;;
       file) install -m 0400 "$path" "$target/files/$key" ;;
     esac

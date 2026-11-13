@@ -117,7 +117,20 @@ def test_backup_leaves_the_signers_live_controller_key_out_of_the_secrets_archiv
     result = run(tmp_path, "backup", path, str(tmp_path / "backup"), command=TEAMCTL, docker_ok=True)
     assert result.returncode == 0, result.stderr
     archived = [call for call in calls(tmp_path) if "tarfile" in call and "/source:ro" in call]
-    assert len(archived) == 1 and archived[0].rstrip().endswith("./signer/private-controller"), archived
+    assert len(archived) == 1 and "./signer/private-controller" in archived[0].split(), archived
+
+
+def test_backup_leaves_the_agents_harness_login_out_of_the_secrets_archive(tmp_path):
+    # The login is a person's account credential: it is minted again, never
+    # restored, and a backup is no place for it.
+    secrets = tmp_path / "secrets"
+    (secrets / "agents").mkdir(parents=True)
+    config = {**EXAMPLE, "compose": {**EXAMPLE["compose"], "secretsDir": str(secrets)}}
+    path = deployment(tmp_path, config)
+    result = run(tmp_path, "backup", path, str(tmp_path / "backup"), command=TEAMCTL, docker_ok=True)
+    assert result.returncode == 0, result.stderr
+    archived = [call for call in calls(tmp_path) if "tarfile" in call and "/source:ro" in call]
+    assert len(archived) == 1 and "./agents" in archived[0].split(), archived
 
 
 def test_reload_tls_forces_the_reload_though_the_configuration_is_unchanged(tmp_path):
