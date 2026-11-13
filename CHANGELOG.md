@@ -2,6 +2,14 @@
 
 ## Unreleased
 
+- `aw id endorse --no-wait` shows the approval page and exits instead of
+  waiting for the human: `--json` reports `operation_id`, `state`, `page`,
+  `digest`, `fingerprint` and `expires_at`. Running the same command again
+  with the same `--operation-id` resumes it, and once the human has approved,
+  finishes the endorsement, registering and reading back the certificate.
+  `--no-browser` reports the page without opening a browser, for setup an
+  agent drives.
+
 - `aw id create --no-address --registry R --identity-home H` creates a
   registered identity with no address: a fresh self-custodial key registers
   its own did:aw at R and is read back, with no namespace controller key

@@ -291,3 +291,29 @@ async def test_a_root_is_created_with_no_address_at_the_real_registry_and_only_o
             # A rerun on the complete identity creates nothing.
             status, refused, progress = await _aw((tmp_path, env), *create)
             assert status != 0 and refused["error"]["code"] == "identity_exists", progress
+
+
+@pytest.mark.usefixtures("source_cli_binary")
+@pytest.mark.asyncio
+async def test_an_endorsement_that_is_not_waited_for_is_finished_by_a_rerun(test_db_factory, tmp_path):
+    async with oats_world(test_db_factory, tmp_path) as (a, profile, home):
+        w = a.w
+        operation = str(uuid4())
+        endorse = ("id", "endorse", "--protected-profile", str(profile), "--human", a.human.context.authority_id, "--team", TEAM,
+            "--deployment-label", "oats-root", "--operation-id", operation, "--no-wait", "--no-browser")
+        # Not waited for: aw reports the pending operation and its page, and exits.
+        status, pending, progress = await _aw(home, *endorse)
+        assert status == 0, progress
+        assert pending["operation_id"] == operation and pending["state"] == "pending"
+        assert pending["page"].startswith(a.w.human_origin + "/handoff/") and pending["reason"] == "awaiting_human"
+        assert len(pending["digest"]) == 64 and pending["fingerprint"] == " ".join(
+            pending["digest"][i:i + 4] for i in range(0, 16, 4))
+        # The human approves on the service.
+        options = await a.human.signer.approval_options(operation, human=a.actor)
+        approved = await a.human.signer.execute(operation, a.device.get(dict(options)), human=a.actor)
+        assert approved.state == "committed"
+        # The same command again finishes: no wait, registration and read-back.
+        status, endorsed, progress = await _aw(home, *endorse)
+        assert status == 0, progress
+        assert endorsed["operation_id"] == operation and endorsed["state"] == "committed" and endorsed["registered"] is True
+        assert await _current_head(w, w.root_id) == endorsed["certificate_id"]

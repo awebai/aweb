@@ -680,6 +680,8 @@ Flags:
 - `--deployment-label string The deployment's name, shown to the human`
 - `-h, --help help for endorse`
 - `--human string The did:aw of the human who endorses this root`
+- `--no-browser Do not open a browser; the page is only reported`
+- `--no-wait Show the approval page and exit without waiting for the human; rerun with the same --operation-id to finish`
 - `--operation-id string The caller's UUID for this endorsement; the same id resumes it`
 - `--protected-profile string The operator-provisioned protected-service profile`
 - `--team stringArray A team (name:domain) the root will admit agents to; repeat for each`
