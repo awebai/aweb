@@ -649,7 +649,7 @@ class ProtectedSigner:
         if type(requester) is not RestrictedRequester:
             raise SignerRefused("requester_invalid")
         row = await self._authorized(operation_id, requester, "execute")
-        operation = self._operation(_json(row["request"]))
+        operation = owner_act_operation(self._operation(_json(row["request"])))
         if operation.spec.needs_human:
             raise SignerRefused("live_approval_required")
         if operation.operation != "team.agent.admit" or self.admission is None:
@@ -672,6 +672,7 @@ class ProtectedSigner:
                 if row["requester"] != requester.principal or operation.context.fields() != request["scope"]:
                     raise SignerRefused("scope_refused")
                 await extra.check(tx, request)
+                await self._check_prepared_policy(tx, request)
                 if row["signed_result"] is None:
                     await extra.reserve(tx, request)
                     if fence.team_key_did != authority_key(operation, request["artifact"]):
@@ -691,6 +692,7 @@ class ProtectedSigner:
                 await extra.check(tx, request)
                 extra.require_fresh()
                 await fence.check(tx, requester)
+                await self._check_prepared_policy(tx, request)
                 fence.require_fresh()
                 extra.require_fresh()
                 if self.clock() >= row["expires_at"]:
@@ -713,6 +715,7 @@ class ProtectedSigner:
                 row = await self._lock(tx, operation_id)
                 await fence.prepare(tx, requester)
                 await extra.check(tx, request)
+                await self._check_prepared_policy(tx, request)
                 if row["delivery_claim"] is not None or row["result"] is not None:
                     claim = None
                 else:
@@ -723,6 +726,7 @@ class ProtectedSigner:
                 await extra.check(tx, request)
                 extra.require_fresh()
                 await fence.check(tx, requester)
+                await self._check_prepared_policy(tx, request)
                 fence.require_fresh()
                 extra.require_fresh()
                 if self.clock() >= row["expires_at"]:
@@ -749,6 +753,14 @@ class ProtectedSigner:
                 fence.require_fresh()
             return OperationReceipt(operation_id, "committed", result=signed)
         return self._receipt(row)
+
+    async def _check_prepared_policy(self, tx, request):
+        # The bounded admission policy and B2 action policy are independent.
+        # Holding current authority is not a comparison with the prepared B2
+        # version. Recheck it before signing/release and as the final await.
+        policy = await self.policies.current(POLICY_REF, tx=tx)
+        if policy is None or policy.version != request["policy_version"]:
+            raise SignerRefused("policy_changed")
 
     def _sign_artifact(self, operation, artifact):
         adapter = getattr(self.custody, "sign_operation", None)

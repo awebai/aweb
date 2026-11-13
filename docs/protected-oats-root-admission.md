@@ -135,3 +135,10 @@ its exact source/runtime receipts are supplied separately at handoff. The CLI
 commands and release pin are owned by acxy.5, and browser/deployment acceptance
 remains separately attributed. Backup restore fences, provider-move rotation,
 hosted adaptation and existing-deployment migration are separate assignments.
+
+The bounded executor also checks the independent B2 action-policy version
+retained by preparation, before signing/reserving and before claiming delivery.
+Its final policy read follows the last awaited authority check. A matching
+admission-policy digest or unchanged binding generation never substitutes for
+this version comparison; a stale unsigned operation refuses, and a retained
+unsent signature is kept without release.

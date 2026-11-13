@@ -197,11 +197,16 @@ async def test_unendorsed_root_cannot_use_unattended_admission_or_execute_a_live
     a = admissions
     response = await prepare(a, admit_operation(a))
     assert response.status_code == 403 and response.json()["detail"] == "subject_ineligible"
-    root = root_operation(a)
-    assert (await prepare(a, root)).status_code == 200
-    response = await execute(a, root)
-    assert response.status_code == 403 and response.json() == {"detail": "live_approval_required"}
-    assert await a.w.db.fetch_value("SELECT result FROM {{tables.protected_signer_operations}} WHERE operation_id=$1", root.operation_id) is None
+    for operation in (root_operation(a), a.w.operation):
+        assert (await prepare(a, operation)).status_code == 200
+        response = await execute(a, operation)
+        assert response.status_code == 403 and response.json() == {"detail": "live_approval_required"}
+        row = await a.w.db.fetch_one(
+            "SELECT result,signed_result,refusal_code,approval_id FROM {{tables.protected_signer_operations}} WHERE operation_id=$1",
+            operation.operation_id,
+        )
+        assert row["result"] is None and row["signed_result"] is None and row["refusal_code"] is None
+        assert row["approval_id"] is not None
 
 
 @pytest.mark.asyncio
@@ -408,3 +413,127 @@ async def test_two_pending_root_endorsements_do_not_create_two_committed_signatu
             assert receipt.code == "operation_mismatch"
     assert await a.w.db.fetch_value("SELECT count(*) FROM {{tables.protected_root_endorsements}}") == 1
     assert await a.w.db.fetch_value("SELECT count(*) FROM {{tables.protected_local_audit}} WHERE kind='protected_operation_signed'") == 1
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("change_at", ["before_signing", "final_authority_await"])
+async def test_bounded_admission_rechecks_the_original_b2_policy_version(admissions, monkeypatch, change_at):
+    a = admissions
+    await endorse(a)
+    operation = admit_operation(a)
+    assert (await prepare(a, operation)).status_code == 200
+
+    async def change(tx):
+        await tx.execute(
+            "UPDATE {{tables.protected_authorizer_bindings}} SET policy_version=policy_version+1 "
+            "WHERE service_id=$1 AND team_id=$2",
+            a.w.context.service_id, TEAM,
+        )
+
+    if change_at == "before_signing":
+        await change(a.w.db)
+    else:
+        original_observe = a.w.app.authority.observe
+
+        async def observe(context, *, purpose):
+            fence = await original_observe(context, purpose=purpose)
+            original_check = fence.check
+
+            async def check(tx, actor):
+                await original_check(tx, actor)
+                signed = await tx.fetch_value(
+                    "SELECT signed_result FROM {{tables.protected_signer_operations}} WHERE operation_id=$1",
+                    operation.operation_id,
+                )
+                if purpose == "execute" and signed is not None:
+                    # Mutate after the actual final authority read in its own
+                    # transaction: the following policy check must roll back
+                    # signature/reservation/audit together. Generation stays 1.
+                    await change(tx)
+
+            fence.check = check
+            return fence
+
+        monkeypatch.setattr(a.w.app.authority, "observe", observe)
+
+    result = await execute(a, operation)
+    assert result.status_code == 200 and result.json()["state"] == "refused", result.text
+    assert result.json()["code"] == "policy_changed"
+    row = await a.w.db.fetch_one(
+        "SELECT signed_result,result,delivery_claim FROM {{tables.protected_signer_operations}} WHERE operation_id=$1",
+        operation.operation_id,
+    )
+    assert row["signed_result"] is None and row["result"] is None and row["delivery_claim"] is None
+    assert await a.w.db.fetch_value("SELECT count(*) FROM {{tables.protected_root_admissions}}") == 0
+    assert await a.w.db.fetch_value(
+        "SELECT count(*) FROM {{tables.protected_local_audit}} WHERE kind='protected_operation_signed' AND subject=$1",
+        operation.operation_id,
+    ) == 0
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("change_at", ["before_claim", "claim_final_await"])
+async def test_b2_policy_change_cannot_release_a_retained_unsent_admission(admissions, monkeypatch, change_at):
+    a = admissions
+    await endorse(a)
+    operation = admit_operation(a)
+    assert (await prepare(a, operation)).status_code == 200
+    signer = a.w.app.signer
+    reconcile = signer._reconcile_admission
+
+    async def unavailable(*args, **kwargs):
+        raise SignerRefused("evidence_unavailable")
+
+    monkeypatch.setattr(signer, "_reconcile_admission", unavailable)
+    stopped = await execute(a, operation)
+    assert stopped.status_code == 503
+    retained = await a.w.db.fetch_one(
+        "SELECT signed_result,delivery_claim FROM {{tables.protected_signer_operations}} WHERE operation_id=$1",
+        operation.operation_id,
+    )
+    assert retained["signed_result"] is not None and retained["delivery_claim"] is None
+    monkeypatch.setattr(signer, "_reconcile_admission", reconcile)
+    async def change(tx):
+        await tx.execute(
+            "UPDATE {{tables.protected_authorizer_bindings}} SET policy_version=policy_version+1 "
+            "WHERE service_id=$1 AND team_id=$2", a.w.context.service_id, TEAM,
+        )
+
+    if change_at == "before_claim":
+        await change(a.w.db)
+    else:
+        original_observe = a.w.app.authority.observe
+
+        async def observe(context, *, purpose):
+            fence = await original_observe(context, purpose=purpose)
+            original_check = fence.check
+
+            async def check(tx, actor):
+                await original_check(tx, actor)
+                claim = await tx.fetch_value(
+                    "SELECT delivery_claim FROM {{tables.protected_signer_operations}} WHERE operation_id=$1",
+                    operation.operation_id,
+                )
+                if purpose == "execute" and claim is not None:
+                    await change(tx)
+
+            fence.check = check
+            return fence
+
+        monkeypatch.setattr(a.w.app.authority, "observe", observe)
+    registrations = []
+    original_register = signer.admission.register
+
+    async def register(*args, **kwargs):
+        registrations.append(args)
+        return await original_register(*args, **kwargs)
+
+    monkeypatch.setattr(signer.admission, "register", register)
+    result = await execute(a, operation)
+    assert result.status_code == 200 and result.json()["state"] == "pending", result.text
+    assert registrations == []
+    row = await a.w.db.fetch_one(
+        "SELECT signed_result,result,delivery_claim FROM {{tables.protected_signer_operations}} WHERE operation_id=$1",
+        operation.operation_id,
+    )
+    assert row["signed_result"] == retained["signed_result"] and row["result"] is None and row["delivery_claim"] is None

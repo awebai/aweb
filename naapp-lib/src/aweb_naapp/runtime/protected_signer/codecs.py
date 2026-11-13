@@ -79,6 +79,6 @@ def presentation_schema(operation, variant):
             "deployment_label": {"pattern": r"[^\x00-\x1f]{1,128}"},
         }, "required": ["domain", "root_id", "root_key", "teams", "deployment_label"]}
     if operation == "human-role.revoke":
-        return {"fields": {field: {"pattern": r"(?s).+"} for field in sorted(_REVOKE)}, "required": sorted(_REVOKE)}
+        return {"fields": {field: {"pattern": r"[\s\S]+"} for field in sorted(_REVOKE)}, "required": sorted(_REVOKE)}
     # Bounded admission has no approval page. The same table rule rejects one.
     return None

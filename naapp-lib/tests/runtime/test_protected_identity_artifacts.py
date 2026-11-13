@@ -145,3 +145,43 @@ await assert.rejects(validateProtectedPresentation(changed,'handoff',table));
         input=json.dumps({"request": request, "table": presentation_catalog()}), text=True,
         capture_output=True, cwd=Path(__file__).resolve().parents[2], timeout=20)
     assert result.returncode == 0, result.stdout + result.stderr
+
+
+def test_browser_accepts_the_existing_revoke_through_the_generated_catalog():
+    import json
+    import subprocess
+    from pathlib import Path
+
+    from aweb_naapp.runtime.protected_signer import RevokeHumanRole
+    from aweb_naapp.runtime.protected_signer.catalog import presentation_catalog
+    from aweb_naapp.runtime.protected_signer.types import owner_act_operation
+
+    context = ProtectedKeyContext(SERVICE, "team_controller", TEAM, DOMAIN, H, DOMAIN, 1)
+    legacy = RevokeHumanRole(str(uuid4()), context, "https://app.customer.example", "customer-app", str(uuid4()), "customer.owner", H)
+    op = owner_act_operation(legacy)
+    request = {**legacy.intent(), "artifact": artifact_for(op, HKEY, NOW)}
+    script = r'''
+import assert from 'node:assert/strict';
+import {readFileSync} from 'node:fs';
+import {validateProtectedPresentation} from './src/aweb_naapp/assets/protected-presentation.mjs';
+import {coveredRequestDigest} from './src/aweb_naapp/assets/canonical-json.mjs';
+const {request,table}=JSON.parse(readFileSync(0,'utf8'));
+const state={mode:'governance',handoff_id:'handoff',state:'pending',operation_id:request.operation_id,
+ expires_at:'2026-11-13T12:10:00Z',payload:{policy:{ref:'aweb.human-assurance/1',version:1},request}};
+state.digest=await coveredRequestDigest(state.payload);
+assert.deepEqual((await validateProtectedPresentation(state,'handoff',table)).artifact,request.artifact);
+for (const {pattern} of Object.values(table['human-role.revoke|default'].subject_schema.fields)) {
+ const regex=new RegExp(pattern);
+ for (const value of ['abc','a\nb','\n']) assert.equal(regex.exec(value)?.[0],value);
+ assert.equal(regex.exec(''),null);
+}
+const changed=structuredClone(state);
+changed.payload.request.subject.principal='';
+changed.payload.request.artifact.subject.principal='';
+changed.digest=await coveredRequestDigest(changed.payload);
+await assert.rejects(validateProtectedPresentation(changed,'handoff',table));
+'''
+    result = subprocess.run(["node", "--input-type=module", "-e", script],
+        input=json.dumps({"request": request, "table": presentation_catalog()}), text=True,
+        capture_output=True, cwd=Path(__file__).resolve().parents[2], timeout=20)
+    assert result.returncode == 0, result.stdout + result.stderr
