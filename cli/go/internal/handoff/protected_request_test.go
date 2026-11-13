@@ -128,6 +128,9 @@ func TestTheProfileVectorParsesAndRefusesItsNeighbours(t *testing.T) {
 	if profile.RequestOrigin != "https://signer.customer.example" || profile.HumanOrigin != "https://human.customer.example" || profile.ServiceID != "customer-signer" {
 		t.Fatalf("profile %+v", profile)
 	}
+	if len(profile.NamespaceAuthorities) != 1 || profile.NamespaceAuthorities["customer.example"] != "did:key:z6Mkon3Necd6NkkyfoGoHxid2znGc59LU3K7mubaRcFbLfLX" {
+		t.Fatalf("namespace authorities %v", profile.NamespaceAuthorities)
+	}
 	for name, mutate := range map[string]func(string) string{
 		"unknown member": func(s string) string { return strings.Replace(s, `"v": 1,`, `"v": 1, "extra": 1,`, 1) },
 		"duplicate":      func(s string) string { return strings.Replace(s, `"v": 1,`, `"v": 1, "v": 1,`, 1) },
