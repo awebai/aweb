@@ -35,8 +35,13 @@ async def test_use_requester_does_not_inherit_the_containment_owners_authority(u
             target=SECRET_ID,
         )
     assert refused.value.code == "owner_required"
-    assert await uses.world.db.fetch_value("SELECT count(*) FROM {{tables.outbox_events}}") == before
+    assert (
+        await uses.world.db.fetch_value("SELECT count(*) FROM {{tables.outbox_events}}") == before
+    )
     await act(svc, uses)
-    assert await uses.world.db.fetch_value(
-        "SELECT state FROM {{tables.secrets}} WHERE secret_id=$1", SECRET_ID
-    ) == "disabled"
+    assert (
+        await uses.world.db.fetch_value(
+            "SELECT state FROM {{tables.secrets}} WHERE secret_id=$1", SECRET_ID
+        )
+        == "disabled"
+    )
