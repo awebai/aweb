@@ -838,9 +838,17 @@ class World:
         return owners
 
     def install_apps(self, machine: str, owner_did_key: str) -> None:
-        """The operator's explicit install-owner grant, then the owner installs
+        """The owner publishes the team's coordination server at the registry,
+        signed by the team's key, which installed apps read to reach it; the
+        operator's explicit install-owner grant; then the owner installs
         Secrets and Logs from their internal origins. Membership alone grants
         no install authority."""
+        self.aw(machine, "id", "team", "set-server", "--team", TEAM, "--namespace", DOMAIN,
+                "--url", origin("aweb"), "--registry", origin("registry"))
+        published = self.aw(machine, "id", "team", "show-server", "--team", TEAM, "--namespace", DOMAIN,
+                            "--registry", origin("registry"))
+        assert published.get("server_url", "").rstrip("/") == origin("aweb"), published
+        print("TEAM SERVER:", json.dumps(published, sort_keys=True))
         self.compose("exec", "-T", "aweb", "aweb", "install-admin", "grant", "--team-id", TEAM_ID,
                      "--principal-did", owner_did_key, "--role", "owner")
         for app in ("secrets", "logs"):

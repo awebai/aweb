@@ -15,6 +15,23 @@ It needs `docker`, `uv` and this repository's checkout at the bundle's source
 revision. No command reads, prints or passes a credential: every credential is a
 file under `compose.secretsDir`, mounted by the one service that owns it.
 
+## The team's server record
+
+Installed apps find the team's aweb through the team's server record at the
+registry (`aweb.team-server/1`), signed by the team's key. Secrets refuses an
+installation whose team has none (`team_server_unpublished`). The team owner
+publishes it before installing the apps, while its machine still holds the
+team's key, that is, before the signer takes custody:
+
+```sh
+aw id team set-server --team <team> --namespace <domain> --url <aweb.publicOrigin>
+aw id team show-server --team <team> --namespace <domain>
+```
+
+A record signed by another key is refused, so a new controller key needs the
+record published again. Once the signer holds the key, that has no supported
+path (`aweb-acxy.4`, `team.controller.rotate`, OPEN).
+
 ## What each command keeps and deletes
 
 | Command | Does | Keeps | Deletes |
