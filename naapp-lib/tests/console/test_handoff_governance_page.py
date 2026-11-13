@@ -540,7 +540,7 @@ async def test_committed_operation_with_damaged_or_lost_response_is_unconfirmed(
         await expect(page.locator("#handoff-action")).to_be_disabled()
         await expect(page.get_by_role("status")).to_contain_text("could not confirm")
         await expect(page.get_by_role("status")).to_contain_text(
-            "The requester sees the outcome."
+            "Your owner page shows the outcome under History."
         )
         assert not s.callback.done()
         # The effect committed before its browser reply was damaged. Refusing
