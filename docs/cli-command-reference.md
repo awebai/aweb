@@ -1945,6 +1945,7 @@ Manage the owner key that agents' local message logs are sealed to
 Subcommands:
 - `create` Create (or rotate) the team's owner log key; prints its unsigned public record
 - `install` Install the team's owner log key record on this host; local logs are then sealed to it
+- `resume` Resume protected log key signing from its saved request
 - `sign` Sign a log key record, or attach a signature made elsewhere
 - `signing-bytes` Print the exact bytes a team key signs for a log key record
 
@@ -1975,21 +1976,35 @@ Install the team's owner log key record on this host; local logs are then sealed
 Flags:
 - `-h, --help help for install`
 
+## `team admin log-key resume`
+
+### `team admin log-key resume`
+
+Resume protected log key signing from its saved request
+
+Flags:
+- `-h, --help help for resume`
+- `--out string Write the signed public record to this file instead of stdout`
+- `--protected-profile string The original protected service profile`
+
 ## `team admin log-key sign`
 
 ### `team admin log-key sign`
 
 Complete a log key record through exactly one route:
+  --protected-profile and --approver request live approval through the protected signer;
   --team-key-did and --signature attach a signature produced elsewhere, such as by the
   deployment's protected signer, after verifying it over the record's signing bytes;
   --offline-controller-key signs with the team controller key in ~/.awid/team-keys/ on
   this machine, which is outside the route of a deployment whose signer holds that key.
-With no route, or both, it refuses. The signed record is written to --out (or stdout).
+With no route, or more than one, it refuses. The signed record is written to --out (or stdout).
 
 Flags:
+- `--approver string The did:aw of the configured approving human`
 - `-h, --help help for sign`
 - `--offline-controller-key Sign with the team controller key in ~/.awid/team-keys/ on this machine`
 - `--out string Write the signed record to this file instead of stdout`
+- `--protected-profile string Public operator profile for protected live approval`
 - `--record string The log key record to sign`
 - `--signature string A signature produced elsewhere: unpadded standard base64 of the 64 Ed25519 bytes`
 - `--team-key-did string The did:key of the team key that produced --signature`

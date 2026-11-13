@@ -104,6 +104,7 @@ func TestProtectedLogIntentRefusesAnUnboundOrMalformedRecord(t *testing.T) {
 	for _, mutate := range []func(*awid.LogKeyRecord){
 		func(r *awid.LogKeyRecord) { r.TeamID = "another:customer.example" },
 		func(r *awid.LogKeyRecord) { r.V = 2 },
+		func(r *awid.LogKeyRecord) { r.PublicKey += " " },
 		func(r *awid.LogKeyRecord) { r.CreatedAt = "2026-11-12T00:00:00+00:00" },
 		func(r *awid.LogKeyRecord) { r.KeyID = "sha256:wrong" },
 	} {

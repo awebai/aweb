@@ -40,6 +40,10 @@ func protectedLogIntent(profile *handoff.Profile, binding *handoff.ProfileBindin
 	if err != nil || instant.UTC().Format("2006-01-02T15:04:05Z") != rec.CreatedAt {
 		return nil, usageError("created_at must be canonical UTC seconds")
 	}
+	public, publicErr := base64.RawStdEncoding.Strict().DecodeString(rec.PublicKey)
+	if publicErr != nil || len(public) != 32 || base64.RawStdEncoding.EncodeToString(public) != rec.PublicKey {
+		return nil, usageError("public_key must be canonical unpadded standard base64 of 32 bytes")
+	}
 	candidate := *rec
 	candidate.TeamKeyDID = binding.AuthorityKeyDID
 	if _, err := awid.LogKeyRecordSigningBytes(&candidate); err != nil {

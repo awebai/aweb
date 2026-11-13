@@ -6,8 +6,21 @@ path as the other protected acts. A changed log key changes who can read future
 local logs; this act is never unattended. Re-signing after controller replacement
 is also a new live act. Exact receipt recovery does not make a new signature.
 
-The protected CLI integration and native qualification are still being built.
-The codec/table/presentation source alone is not a deployment acceptance claim.
+The protected CLI uses the same retained-request handoff as the other acts:
+
+```sh
+aw team admin log-key sign --record public-log-key.json --protected-profile signer.json --approver did:aw:<human> --out signed-log-key.json
+aw team admin log-key resume <operation-id> --protected-profile signer.json --out signed-log-key.json
+```
+
+The sign command reads only the public record, public profile and requester
+identity. It does not load a controller key. Resume uses the exact saved request
+instead of a replacement record file. The CLI verifies the committed bytes and
+signature against the profile pin using the shared AWID log-key helpers, writes
+the signed public record, then removes its saved request. A failed write or
+invalid receipt retains the request. Explicit offline and external-attachment
+routes remain separate and cannot be combined with the protected route.
+Native/browser and installation qualification of this addition are still pending.
 
 The ordinary protected envelope names the exact configured scope and uses the
 profile's request origin as `audience`. Its `subject` has exactly:
