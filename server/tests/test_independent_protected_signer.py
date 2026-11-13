@@ -59,7 +59,9 @@ class Delivery:
         self.enrolment = token
         return DeliveryStatus.DELIVERED
 
-    async def deliver_approval_link(self, *args):
+    async def deliver_approval_link(self, approver, token, approval):
+        # The approver's inbox: each personal link the signer mailed.
+        self.__dict__.setdefault("approval_links", []).append(token)
         return DeliveryStatus.DELIVERED
 
 

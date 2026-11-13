@@ -16,3 +16,9 @@ body { margin: 0; }
 #handoff-status { min-height: 3em; }
 #handoff-allow { border-top: 1px solid var(--line); margin-top: var(--s3); padding-top: var(--s3); }
 .handoff h2 { font-size: var(--step-2); }
+.handoff-choices { display: flex; flex-wrap: wrap; gap: var(--s2); margin: var(--s2) 0; }
+@media (max-width: 30rem) { .handoff-choices .btn { width: 100%; justify-content: center; } }
+#handoff-status:empty { min-height: 0; margin: 0; }
+/* Headings and the status line take focus from the page, not the user; they
+   are not controls and show no ring. */
+.handoff [tabindex="-1"]:focus { outline: none; }

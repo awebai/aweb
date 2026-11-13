@@ -6,6 +6,7 @@ from types import SimpleNamespace
 
 import httpx
 import pytest
+from datetime import UTC, datetime
 from aweb_naapp.email import EmailNotSent
 from aweb_naapp.runtime.approvals import DeliveryStatus
 from aweb_naapp.runtime.protected_signer import SignerRefused
@@ -250,14 +251,23 @@ async def test_notification_adapter_reuses_b3_and_b2_mail_boundary(mail_fails):
     assert (
         await delivery.deliver_enrolment_link(approver, "enrolment-secret") == expected
     )
+    expires = datetime(2026, 11, 14, 9, 30, tzinfo=UTC)
     assert (
         await delivery.deliver_approval_link(
-            approver, "candidate-secret", SimpleNamespace(approval_id="approval-id")
+            approver, "candidate-secret",
+            SimpleNamespace(approval_id="approval-id", expires_at=expires),
         )
         == expected
     )
     if not mail_fails:
         assert "enrolment#token=enrolment-secret" in mail.messages[0].text
-        assert "/handoff/00000000-0000-0000-0000-000000000001" in mail.messages[1].text
-        assert "candidate-secret" not in repr(mail.messages[1])
+        # The personal link (Juan 2026-11-13, via coordinator): the token rides
+        # in the fragment, which browsers never send to a server.
+        link = "https://human.customer.example/handoff/00000000-0000-0000-0000-000000000001#k=candidate-secret"
+        notice = mail.messages[1]
+        assert link in notice.text and link.replace("&", "&amp;") in notice.html
+        assert "?" not in link
+        # The actual retained expiry, and that Deny also asks for the passkey.
+        assert "2026-11-14 09:30 UTC" in notice.text
+        assert "Deny also asks for your passkey" in notice.text
         assert all(message.to == approver.contact for message in mail.messages)

@@ -7,6 +7,7 @@ read/prepare never creates a policy or widens its authority on a miss.
 import hashlib
 import json
 import logging
+from datetime import timedelta
 from time import monotonic
 
 from awid.registry_types import RegistryError, RegistryThrottled
@@ -28,6 +29,25 @@ async def _registry(awaitable, *, missing=None):
         raise SignerRefused("evidence_unavailable", retry_after_seconds=(
             error.retry_after_seconds if isinstance(error, RegistryThrottled) else None
         )) from None
+
+
+async def admission_counts(tx, *, service_id, team_id, root_id, window_seconds, now):
+    """One root's admissions to one team, as the bounds count them: active
+    (reserved or active), admitted inside the rate window, and when the
+    oldest of those leaves the window (None when the window is empty)."""
+    active = await tx.fetch_value(
+        "SELECT count(*) FROM {{tables.protected_root_admissions}} WHERE service_id=$1 AND team_id=$2 AND root_id=$3 AND state IN ('reserved','active')",
+        service_id, team_id, root_id,
+    )
+    window = await tx.fetch_one(
+        "SELECT count(*) AS in_window, min(admitted_at) AS oldest FROM {{tables.protected_root_admissions}} "
+        "WHERE service_id=$1 AND team_id=$2 AND root_id=$3 "
+        "AND EXTRACT(EPOCH FROM ($4::timestamptz-admitted_at)) < $5::numeric",
+        service_id, team_id, root_id, now, window_seconds,
+    )
+    oldest = window["oldest"]
+    return {"active": active, "in_window": window["in_window"],
+        "next_at": None if oldest is None else oldest + timedelta(seconds=window_seconds)}
 
 
 async def _lock_quota(tx, service_id, team_id, root_id):
@@ -341,16 +361,9 @@ class _AdmissionObservation:
         await _lock_quota(tx, c.service_id, subject["team_id"], subject["root_id"])
         fields = await self._current(tx)
         bounds = fields["bounds"]
-        active = await tx.fetch_value(
-            "SELECT count(*) FROM {{tables.protected_root_admissions}} WHERE service_id=$1 AND team_id=$2 AND root_id=$3 AND state IN ('reserved','active')",
-            c.service_id, subject["team_id"], subject["root_id"],
-        )
-        recent = await tx.fetch_value(
-            "SELECT count(*) FROM {{tables.protected_root_admissions}} WHERE service_id=$1 AND team_id=$2 AND root_id=$3 "
-            "AND EXTRACT(EPOCH FROM ($4::timestamptz-admitted_at)) < $5::numeric",
-            c.service_id, subject["team_id"], subject["root_id"], self.adapter.c.signer.clock(), bounds["rate_window_seconds"],
-        )
-        if active >= bounds["max_active"] or recent >= bounds["max_per_window"]:
+        counts = await admission_counts(tx, service_id=c.service_id, team_id=subject["team_id"], root_id=subject["root_id"],
+            window_seconds=bounds["rate_window_seconds"], now=self.adapter.c.signer.clock())
+        if counts["active"] >= bounds["max_active"] or counts["in_window"] >= bounds["max_per_window"]:
             raise SignerRefused("admission_limit_reached")
         await tx.execute(
             "INSERT INTO {{tables.protected_root_admissions}} "

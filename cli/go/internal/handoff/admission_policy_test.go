@@ -12,6 +12,7 @@ import (
 	"reflect"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/awebai/aw/awid"
 )
@@ -224,6 +225,60 @@ func TestOnlyAProtectedTeamWithoutAPolicyIsMissingOne(t *testing.T) {
 		policy, err := tc.read.RequireAdmissionPolicy()
 		if ErrorCode(err) != tc.code || (err == nil && policy != tc.read.Policy) {
 			t.Errorf("%+v: policy %+v err %v", tc.read, policy, err)
+		}
+	}
+}
+
+// countedAnswer is the service's read of testTeam with policy and the
+// root's own admissions.
+func countedAnswer(t *testing.T, policy, admissions any) string {
+	t.Helper()
+	raw, err := json.Marshal(map[string]any{"service_id": "customer-signer", "team_id": testTeam, "mode": "protected",
+		"policy": policy, "admissions": admissions})
+	if err != nil {
+		t.Fatal(err)
+	}
+	return string(raw)
+}
+
+func TestTheRootsCountsAreReadOnlyWhenAskedAndComeWithTheirBounds(t *testing.T) {
+	policy := testPolicy(t, nil)
+	stub := newPolicyStub(t, 200, countedAnswer(t, policy, map[string]any{
+		"active": 20, "in_window": 5, "next_at": "2026-11-13T14:40:00Z"}))
+	counts, err := ReadAdmissionCounts(context.Background(), stub.options(), "customer-signer", testTeam)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if stub.method != http.MethodGet || stub.query != "team_id=engineering%3Acustomer.example&include=admissions" {
+		t.Fatalf("asked %s ?%s", stub.method, stub.query)
+	}
+	want := AdmissionCounts{Active: 20, MaxActive: 20, InWindow: 5, MaxPerWindow: 5, WindowSeconds: 3600,
+		NextAt: time.Date(2026, 11, 13, 14, 40, 0, 0, time.UTC)}
+	if counts == nil || *counts != want {
+		t.Fatalf("counts %+v", counts)
+	}
+	// The plain read is unchanged: it never asks for counts.
+	plain := newPolicyStub(t, 200, policyAnswer(t, policy))
+	if _, err := ReadAdmissionPolicy(context.Background(), plain.options(), "customer-signer", testTeam); err != nil || strings.Contains(plain.query, "include") {
+		t.Fatalf("plain read asked %q: %v", plain.query, err)
+	}
+}
+
+func TestNoCountsIsAnAnswerAndAServerWithoutThemRefuses(t *testing.T) {
+	policy := testPolicy(t, nil)
+	none := newPolicyStub(t, 200, countedAnswer(t, policy, nil))
+	if counts, err := ReadAdmissionCounts(context.Background(), none.options(), "customer-signer", testTeam); err != nil || counts != nil {
+		t.Fatalf("a root not yet endorsed: %+v %v", counts, err)
+	}
+	older := newPolicyStub(t, 400, `{"detail":"request_invalid"}`)
+	if _, err := ReadAdmissionCounts(context.Background(), older.options(), "customer-signer", testTeam); ErrorCode(err) != "request_invalid" {
+		t.Fatalf("a server that predates counts: %v", err)
+	}
+	for _, bad := range []any{"5", map[string]any{"active": -1, "in_window": 0, "next_at": nil},
+		map[string]any{"active": 1, "in_window": 0}, map[string]any{"active": 1, "in_window": 0, "next_at": "yesterday"}} {
+		stub := newPolicyStub(t, 200, countedAnswer(t, policy, bad))
+		if _, err := ReadAdmissionCounts(context.Background(), stub.options(), "customer-signer", testTeam); ErrorCode(err) != "handoff_result_invalid" {
+			t.Errorf("%v: %v", bad, err)
 		}
 	}
 }

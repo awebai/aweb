@@ -45,8 +45,9 @@ var idEndorseCmd = &cobra.Command{
 		"exact act on the service's page; nothing is signed here. Before the page is shown,\n" +
 		"aw checks the admission policy the service froze against its own read of every\n" +
 		"team's policy. Endorsement grants no resource permissions and creates no policy.\n\n" +
-		"--operation-id is the caller's UUID, kept before anything is sent. Running again\n" +
-		"with the same id and inputs resumes that operation; changed inputs refuse\n" +
+		"Without --operation-id, aw keeps a new UUID before anything is sent, and running\n" +
+		"the same command again continues that request. With --operation-id, running\n" +
+		"again with the same id and inputs resumes that operation; changed inputs refuse\n" +
 		"operation_conflict. Once the endorsement commits, aw registers the root's new\n" +
 		"certificate at the pinned registry and reads it back.",
 	Args: cobra.NoArgs,
@@ -58,9 +59,9 @@ func init() {
 	flags.StringVar(&idEndorseHumanFlag, "human", "", "The did:aw of the human who endorses this root")
 	flags.StringArrayVar(&idEndorseTeamsFlag, "team", nil, "A team (name:domain) the root will admit agents to; repeat for each")
 	flags.StringVar(&idEndorseLabelFlag, "deployment-label", "", "The deployment's name, shown to the human")
-	flags.StringVar(&idEndorseOperationFlag, "operation-id", "", "The caller's UUID for this endorsement; the same id resumes it")
-	flags.StringVar(&appProtectedProfileFlag, "protected-profile", "", "The operator-provisioned protected-service profile")
-	flags.BoolVar(&idEndorseNoWaitFlag, "no-wait", false, "Show the approval page and exit without waiting for the human; rerun with the same --operation-id to finish")
+	flags.StringVar(&idEndorseOperationFlag, "operation-id", "", "The UUID for this endorsement; by default aw continues the same unfinished request or starts a new one")
+	flags.StringVar(&appProtectedProfileFlag, "protected-profile", "", "The operator-provisioned protected-service profile (default: AWEB_PROTECTED_PROFILE, else protected-profile.json in the identity home)")
+	flags.BoolVar(&idEndorseNoWaitFlag, "no-wait", false, "Exit without waiting for the approver; run the same command again to finish")
 	flags.BoolVar(&idEndorseNoBrowserFlag, "no-browser", false, "Do not open a browser; the page is only reported")
 	identityCmd.AddCommand(idEndorseCmd)
 }
@@ -187,6 +188,15 @@ func pendingEndorsementReport(prepared *handoff.Prepared, page string, receipt *
 		"digest": prepared.Digest, "fingerprint": handoff.Fingerprint(prepared.Digest),
 		"expires_at": prepared.ExpiresAt.UTC().Format(time.RFC3339Nano),
 	}
+}
+
+// pendingEndorsementText says, for people, who decides an endorsement that was
+// not waited for, the page they approve on and how to continue; --json keeps
+// the digest. It claims no notice, which the prepare answer cannot show.
+func pendingEndorsementText(report map[string]any) string {
+	expires, _ := time.Parse(time.RFC3339Nano, fmt.Sprint(report["expires_at"]))
+	return fmt.Sprintf("Waiting for the approver, who approves on %s; the request expires at %s. Run the same command again to continue (operation %s).\n",
+		report["page"], expires.UTC().Format("2006-01-02 15:04 UTC"), report["operation_id"])
 }
 
 // endorsedCertificate is the root's signed ID certificate in a committed
@@ -329,9 +339,6 @@ func runIDEndorse(cmd *cobra.Command, _ []string) error {
 	if request.Human == "" {
 		return usageError("--human is required: the did:aw of the human who endorses this root")
 	}
-	if err := validOperationID(request.OperationID); err != nil {
-		return err
-	}
 	profile, err := loadProtectedProfile()
 	if err != nil {
 		return err
@@ -350,6 +357,9 @@ func runIDEndorse(cmd *cobra.Command, _ []string) error {
 	request.RootID, request.RootKey = identity.StableID, identity.DIDKey
 	intent, err := endorsementIntent(profile, binding, request)
 	if err != nil {
+		return err
+	}
+	if err := announceOperationID(cmd, &request.OperationID, profile, intent); err != nil {
 		return err
 	}
 	saved, err := savedEndorsement(profile, request.OperationID, intent)
@@ -385,18 +395,15 @@ func runIDEndorse(cmd *cobra.Command, _ []string) error {
 	}
 	if err != nil {
 		if code := handoff.ErrorCode(err); code != "" {
-			return withErrorCode(code, fmt.Errorf("operation %s: %w", request.OperationID, err))
+			return withErrorCode(code, fmt.Errorf("%w (operation %s)", err, request.OperationID))
 		}
 		return fmt.Errorf("operation %s: %w", request.OperationID, err)
 	}
 	if receipt.State == "pending" && presented != nil {
-		// Not waited for: the human approves on the page, and a rerun with
-		// the same operation id finishes.
+		// Not waited for: the signer has emailed the approver, and running
+		// the same command again finds this operation and finishes it.
 		report := pendingEndorsementReport(presented, page, receipt)
-		printOutput(report, func(any) string {
-			return fmt.Sprintf("Operation %s is pending (%s) until %s; approve it on %s, then run this command again with the same --operation-id.\n",
-				request.OperationID, receipt.Reason, report["expires_at"], page)
-		})
+		printOutput(report, func(any) string { return pendingEndorsementText(report) })
 		return nil
 	}
 	artifact, _ := frozen["artifact"].(map[string]any)
