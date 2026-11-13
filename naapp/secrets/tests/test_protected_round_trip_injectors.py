@@ -179,7 +179,7 @@ def snapshot_of(rows: dict):
 def test_the_snapshot_reads_one_holding_scoped_by_installation_team_role_and_principal():
     queries, query = snapshot_of({"assignments": 1, "holdings": [{"subject": "s", "ended": False}], "revision": 3,
                                   "nonces": 0, "nonce_rows": [], "authorities": 0, "authority_rows": []})
-    snapshot = receiver_snapshot(query, HOLDING, "n0nce")
+    snapshot = receiver_snapshot(query, HOLDING, "n0nce", schema="public")
     assert snapshot["holding"] == {"subject": "s", "ended": False} and "holdings" not in snapshot
     (select,) = queries
     for literal in ("'lfteam-secrets'", "'4fead199-b779'", "'1'", "'lfteam:lf.test'", "'secrets.owner'",
@@ -191,7 +191,7 @@ def test_the_snapshot_reads_one_holding_scoped_by_installation_team_role_and_pri
 
 def test_a_later_snapshot_reads_the_captured_subject_and_this_acts_rows():
     queries, query = snapshot_of({"holdings": [{"subject": "s"}]})
-    receiver_snapshot(query, HOLDING, "n0nce", subject="s", act_sha256="a" * 64)
+    receiver_snapshot(query, HOLDING, "n0nce", subject="s", act_sha256="a" * 64, schema="public")
     (select,) = queries
     assert "p.subject = 's'" in select and "ended_in IS NULL" not in select
     assert f"a.commitment = '{'a' * 64}'" in select
@@ -201,18 +201,35 @@ def test_a_later_snapshot_reads_the_captured_subject_and_this_acts_rows():
 def test_a_snapshot_finding_no_holding_or_several_is_refused(holdings):
     _, query = snapshot_of({"holdings": holdings})
     with pytest.raises(SystemExit, match="holdings"):
-        receiver_snapshot(query, HOLDING, "n0nce")
+        receiver_snapshot(query, HOLDING, "n0nce", schema="public")
 
 
 @pytest.mark.parametrize("value", ["it's", "a b", "x;DROP", ""])
 def test_a_value_that_is_not_a_plain_identifier_is_never_quoted_into_the_query(value):
     _, query = snapshot_of({"holdings": [{"subject": "s"}]})
     with pytest.raises(SystemExit, match="receiver snapshot"):
-        receiver_snapshot(query, HOLDING, value)
+        receiver_snapshot(query, HOLDING, value, schema="public")
+
+
+def test_the_snapshot_reads_the_apps_own_schema():
+    queries, query = snapshot_of({"holdings": [{"subject": "s"}]})
+    receiver_snapshot(query, HOLDING, "n0nce", schema="secrets")
+    (select,) = queries
+    for table in ("role_assignments", "role_holdings", "passkey_approvers", "passkey_credentials", "config_revisions",
+                  "owner_act_nonces", "credential_narrowing_authority", "outbox_events"):
+        assert f"secrets.{table}" in select, table
+    assert "public." not in select
+
+
+@pytest.mark.parametrize("schema", ["Secrets", "a;b", "public.x", ""])
+def test_a_schema_that_is_not_a_plain_identifier_is_refused(schema):
+    _, query = snapshot_of({"holdings": [{"subject": "s"}]})
+    with pytest.raises(SystemExit, match="schema"):
+        receiver_snapshot(query, HOLDING, "n0nce", schema=schema)
 
 
 def test_the_snapshot_runs_read_only_in_one_session():
-    args = read_only_psql("secrets", "SELECT 1")
-    assert args[:5] == ["psql", "-U", "postgres", "-d", "secrets"] and "-q" in args and "-At" in args
+    args = read_only_psql("secrets", "secrets", "SELECT 1")
+    assert args[:5] == ["psql", "-U", "secrets", "-d", "secrets"] and "-q" in args and "-At" in args
     commands = [args[i + 1] for i, arg in enumerate(args) if arg == "-c"]
     assert commands == ["BEGIN TRANSACTION ISOLATION LEVEL REPEATABLE READ READ ONLY", "SELECT 1", "COMMIT"]

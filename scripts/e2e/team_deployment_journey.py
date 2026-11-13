@@ -59,32 +59,31 @@ EVIDENCE = REPO / "naapp" / "secrets" / "e2e" / "protected" / "evidence.py"
 sys.path.insert(0, str(REPO / "naapp" / "secrets" / "e2e"))
 
 from protected_round_trip import (  # noqa: E402
-    HOOK_BINDING_IDENTITY,
-    HOOK_READINESS_DEADLINE,
     AnswerDrop,
     Founded,
     Holder,
-    Holding,
     Site,
+    activate_hooks,
     approve,
     assert_one_effect,
     changed_act,
     connect_requester,
     deliver_once_lost,
-    designate_command,
+    designate_holding,
     did_key_window,
     docker,
     finish,
     first_json,
     found_team,
-    hooks_ready_at,
+    install_app,
     lost_prepare,
     provision_signer,
+    publish_team_server,
     read_only_psql,
     receiver_snapshot,
     refusals,
     replay_delivery,
-    select_hook_bindings,
+    secrets_holding,
     start_revoke,
 )
 
@@ -620,124 +619,6 @@ class World:
                 f" && find /state/seats/{alias}/.aw -type d -exec chmod 0700 {{}} +"
                 f" && find /state/seats/{alias}/.aw -type f -exec chmod 0600 {{}} +")
 
-    def designate_holding(self, site: Site, holder: Holder, founded: Founded) -> dict:
-        """The approver's holding of the app role the round trip revokes, made
-        the supported way while the owner still holds the team's key: the
-        owner adds the human to the team; the human, with its own key, fetches
-        its certificate, connects to the team's aweb and registers a passkey on
-        the app's own human origin in the browser, for the app the owner installed on this machine; the owner
-        designates that exact credential. Checked in the app's own tables."""
-        machine, human = holder.container, founded.approver
-        # --global for this human holder only (services and seats stay --local):
-        # aw binds a holder only if its team certificate names its did:aw
-        # (verifyHolderEvidence), and a did:aw on a member certificate is a
-        # global identity's.
-        added = self.aw(machine, "id", "team", "add-member", "--team", TEAM, "--namespace", DOMAIN,
-                        "--did", founded.approver_did_key, "--did-aw", human, "--name", "approver", "--global")
-
-        def as_human(*args: str, until: str | None = None) -> tuple[pexpect.spawn, str]:
-            child = holder.act(human, *args)
-            return child, holder.answer_passphrases(child, until=until)
-
-        for args in (("--json", "id", "team", "fetch-cert", "--namespace", DOMAIN, "--team", TEAM, "--cert-id",
-                      added["certificate_id"], "--registry", origin("registry")),
-                     # The human's own connection to the team's aweb: the
-                     # requester's does not serve this separate identity.
-                     ("--json", "init", "--url", origin("aweb"), "--human-name", "approver")):
-            child, output = as_human(*args)
-            child.close()
-            assert child.exitstatus == 0, output
-        # The app is already installed on this machine: the owner installed it
-        # here, in the same aw plugin directory. aw takes no --human install.
-        export = f"{site.mounted}/holder/app-export.json"
-        child, output = as_human("app", "credential", "register", site.app_id, "--role", site.role, "--out", export,
-                                 until=r"Open this page to continue: (\S+)")
-        linked = re.search(r"Open this page to continue: (\S+)", output)
-        if not linked:
-            child.close()
-            raise SystemExit(f"FAILED: the holder's credential registration showed no page (exit {child.exitstatus}):\n{output}")
-        page = linked.group(1)
-        report = site.chromium(machine, "credential", "--url", page, "--device",
-                               f"{site.mounted}/holder-app-device.json")
-        assert report["states"] == ["ready", "navigated"] and report["credentials"] == 1, report
-        child.expect(pexpect.EOF)
-        rest = child.before
-        child.close()
-        assert child.exitstatus == 0, rest
-        printed = re.search(r"Fingerprint: ([0-9a-f]{4}(?: [0-9a-f]{4}){3})", output + rest)
-        assert printed, output + rest
-        fingerprint = printed.group(1)
-        command = designate_command(site.app_id, site.role, human, export, site.contact)
-        # Before the hook bindings are in effect, the act's governance event has
-        # no audit target: the app refuses it, and nothing is held.
-        early = docker("exec", machine, *command, timeout=300)
-        assert early.returncode != 0 and "503 release_context_unavailable" in early.stdout + early.stderr, (
-            early.stdout + early.stderr)
-        assert self.holding(site, human) == ("0", ""), self.holding(site, human)
-        hooks = self.activate_hooks(machine)
-        # The owner signs only for that exact credential: aw shows its fingerprint.
-        designated = docker("exec", machine, *command, timeout=300)
-        assert designated.returncode == 0, designated.stdout + designated.stderr
-        assert fingerprint in designated.stderr, designated.stderr
-        # The holding keeps the notice contact the owner signed, byte for byte.
-        held, contact = self.holding(site, human)
-        assert held == "1", held
-        assert contact == site.contact, contact
-        return {"role": site.role, "principal": human, "fingerprint": fingerprint, "contact": contact,
-                "refused_before_activation": "503 release_context_unavailable", "hooks": hooks}
-
-    def holding(self, site: Site, human: str) -> tuple[str, str]:
-        """The human's holdings of the app role, and its current notice contact,
-        in the app's own tables."""
-        def query(sql: str) -> str:
-            return self.compose("exec", "-T", "postgres", "psql", "-U", "postgres", "-d", "secrets", "-At",
-                                "-c", sql).strip()
-        held = query("select count(*) from public.role_assignments where role = '" + site.role
-                     + "' and principal_did = '" + human + "'")
-        contact = query("select contact from public.passkey_approvers where principal = '" + human
-                        + "' and superseded_at is null")
-        return held, contact
-
-    def hook_bindings(self, machine: str, app: str) -> list[dict]:
-        return self.aw(machine, "hooks", "bindings", f"{TEAM}-{app}")["bindings"]
-
-    def activate_hooks(self, machine: str) -> dict:
-        """The owner activates the required hook bindings with its own
-        controller key, one supported owner act each, then waits until they are
-        in effect: every selected binding active, as the installation,
-        generation and manifest selected, and the latest active_from plus a
-        margin past. Binding readiness, not proof of delivery. The other
-        bindings stay pending."""
-        listed = {app: self.hook_bindings(machine, app) for app in ("secrets", "logs")}
-        selected = select_hook_bindings(listed)
-        for (app, _, _), row in selected.items():
-            activated = docker("exec", machine, "aw", "hooks", "activate", f"{TEAM}-{app}", row["binding_id"],
-                               "--yes", timeout=300)
-            assert activated.returncode == 0, activated.stdout + activated.stderr
-        after = [row for app in ("secrets", "logs") for row in self.hook_bindings(machine, app)]
-        ready = hooks_ready_at(after, list(selected.values()))
-        wait = (ready - datetime.datetime.now(datetime.UTC)).total_seconds()
-        if wait > HOOK_READINESS_DEADLINE.total_seconds():
-            raise SystemExit(f"FAILED: the hook bindings are in effect only at {ready.isoformat()}, past the deadline")
-        if wait > 0:
-            time.sleep(wait)
-        chosen = {row["binding_id"] for row in selected.values()}
-        pending = sorted(f"{row['app_id']}/{row['kind']}/{row['hook']}" for row in after
-                         if row["binding_id"] not in chosen)
-        assert all(row["state"] == "pending" for row in after if row["binding_id"] not in chosen), after
-        active = {f"{app}/{kind}/{hook}": {field: row[field] for field in HOOK_BINDING_IDENTITY + ("binding_id",)}
-                  for (app, kind, hook), row in selected.items()}
-        self.activated_hooks = active
-        return {"active": active, "left_pending": pending, "ready_at": ready.isoformat()}
-
-    def secrets_holding(self, founded: Founded) -> Holding:
-        """The approver's holding of the app role, named by the Secrets
-        installation and generation whose bindings were activated."""
-        secrets_binding = self.activated_hooks["secrets/production/post-governance-hook"]
-        return Holding(app_id=f"{TEAM}-secrets", installation_id=secrets_binding["installation_id"],
-                       generation=secrets_binding["generation"], team_id=TEAM_ID, role=ROLE,
-                       principal=founded.approver)
-
     def await_window_end(self, seed: dict) -> None:
         """Until the filled did_key window is over, by the registry Redis's own clock."""
         def now() -> float:
@@ -934,24 +815,17 @@ class World:
         self.own(owners)
         return owners
 
-    def install_apps(self, machine: str, owner_did_key: str) -> None:
+    def install_apps(self, site: Site, machine: str, owner_did_key: str) -> None:
         """The owner publishes the team's coordination server at the registry,
         signed by the team's key, which installed apps read to reach it; the
         operator's explicit install-owner grant; then the owner installs
         Secrets and Logs from their internal origins. Membership alone grants
         no install authority."""
-        self.aw(machine, "id", "team", "set-server", "--team", TEAM, "--namespace", DOMAIN,
-                "--url", origin("aweb"), "--registry", origin("registry"))
-        published = self.aw(machine, "id", "team", "show-server", "--team", TEAM, "--namespace", DOMAIN,
-                            "--registry", origin("registry"))
-        assert published.get("server_url", "").rstrip("/") == origin("aweb"), published
-        print("TEAM SERVER:", json.dumps(published, sort_keys=True))
+        print("TEAM SERVER:", json.dumps(publish_team_server(site, machine), sort_keys=True))
         self.compose("exec", "-T", "aweb", "aweb", "install-admin", "grant", "--team-id", TEAM_ID,
                      "--principal-did", owner_did_key, "--role", "owner")
         for app in ("secrets", "logs"):
-            installed = self.aw(machine, "plugin", "install", origin(f"{app}-api"))
-            if not installed.get("approved"):
-                raise SystemExit(f"BOUNDARY: {app} was not installed: {json.dumps(installed)}")
+            install_app(machine, origin(f"{app}-api"))
             print(f"INSTALLED: {app} from {origin(app + '-api')}")
 
     # --- the protected round trip's Site --------------------------------
@@ -1038,12 +912,13 @@ class World:
                               UPSTREAMS["secrets-console"], reload_front)
 
         def secrets_query(select: str) -> str:
-            return self.compose("exec", "-T", "postgres", *read_only_psql("secrets", select)).strip()
+            return self.compose("exec", "-T", "postgres", *read_only_psql("postgres", "secrets", select)).strip()
 
         return Site(
             runtime=self.world, mounted="/world", domain=DOMAIN, team=TEAM, registry=origin("registry"),
             aweb=origin("aweb"), signer=origin("signer"), human=origin("human"), service_id=f"{TEAM}-signer",
-            app_id=f"{TEAM}-secrets", role=ROLE, contact=f"approver@{DOMAIN}", mail_api=f"http://{MAIL}:8025",
+            app_id=f"{TEAM}-secrets", logs_app_id=f"{TEAM}-logs", secrets_schema="public", role=ROLE,
+            contact=f"approver@{DOMAIN}", mail_api=f"http://{MAIL}:8025",
             profile_in_machine="/world/signer/profile.json", publish_controller=self.publish_controller,
             store_member=store_member, configure_signer=configure_signer, install_controller=install_controller,
             operator=operator_command, start_signer=start_signer, signer_evidence=signer_evidence,
@@ -1156,8 +1031,8 @@ def the_revoke(world: World, site: Site, holder: Holder, founded: Founded) -> di
     nonce = pending["frozen_nonce"]
     before = world.signer_table()
     signed_before = sum(row["signed"] for row in before.values())
-    holding = world.secrets_holding(founded)
-    baseline = receiver_snapshot(site.secrets_query, holding, nonce)
+    holding = secrets_holding(site, world.activated_hooks, founded.approver)
+    baseline = receiver_snapshot(site.secrets_query, holding, nonce, schema=site.secrets_schema)
     seed = world.fill_did_key_window()
     # The pending operation's lifetime runs from its prepare and is never
     # extended: it must outlast the window's Retry-After and the approval.
@@ -1179,7 +1054,8 @@ def the_revoke(world: World, site: Site, holder: Holder, founded: Founded) -> di
         "act_sha256": act.sha256,
     }
     subject = baseline["holding"]["subject"]
-    first = receiver_snapshot(site.secrets_query, holding, nonce, subject, act.sha256)
+    first = receiver_snapshot(site.secrets_query, holding, nonce, subject, act.sha256,
+                               schema=site.secrets_schema)
     # The replay comes after the filled window, so the limiter cannot stand in
     # for the app's answer, and inside the signed act's own validity.
     world.await_window_end(seed)
@@ -1189,7 +1065,8 @@ def the_revoke(world: World, site: Site, holder: Holder, founded: Founded) -> di
     replayed = world.signer_table()
     evidence["replay_new_signatures"] = sum(row["signed"] for row in replayed.values()) - signed_before - 1
     evidence["replay_rows_for_operation"] = sum(1 for op in replayed if op == operation)
-    replay = receiver_snapshot(site.secrets_query, holding, nonce, subject, act.sha256)
+    replay = receiver_snapshot(site.secrets_query, holding, nonce, subject, act.sha256,
+                               schema=site.secrets_schema)
     assert_one_effect(baseline, first, replay, act)
     evidence["applied"] = report["applied"]
     return evidence
@@ -1314,13 +1191,15 @@ def journey(world: World, stop_after: str | None = None, agents_only: bool = Fal
     print("LOCAL MEMBERS:", json.dumps(world.local_members(), sort_keys=True))
     print("MEMBER MAIL:", json.dumps(world.member_mail(holder.container), sort_keys=True))
     print("=== Setup: the team owner installs Secrets and Logs from their internal origins")
-    world.install_apps(holder.container, founded.requester_did_key)
+    world.install_apps(site, holder.container, founded.requester_did_key)
     if agents_only:
         print("=== Setup: the owner activates the apps' hook bindings")
-        print("HOOKS ACTIVE:", json.dumps(world.activate_hooks(holder.container), sort_keys=True))
+        world.activated_hooks = activate_hooks(site, holder.container)
+        print("HOOKS ACTIVE:", json.dumps(world.activated_hooks, sort_keys=True))
     else:
         print("=== Setup: the owner designates the approver's holding of the app role, before the signer holds the key")
-        designated = world.designate_holding(site, holder, founded)
+        designated = designate_holding(site, holder, founded)
+        world.activated_hooks = designated["hooks"]
         print("REFUSED BEFORE ACTIVATION:", designated["refused_before_activation"])
         print("HOOKS ACTIVE:", json.dumps(designated["hooks"], sort_keys=True))
         print("HOLDING:", json.dumps({k: designated[k] for k in ("role", "principal", "contact")}))

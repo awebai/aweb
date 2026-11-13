@@ -320,10 +320,11 @@ class Holding:
     principal: str
 
 
-def read_only_psql(database: str, select: str) -> list[str]:
-    """The psql arguments that run one SELECT in a repeatable-read, read-only
-    transaction and print only its rows: separate commands in one session."""
-    return ["psql", "-U", "postgres", "-d", database, "-At", "-q", "-v", "ON_ERROR_STOP=1",
+def read_only_psql(user: str, database: str, select: str) -> list[str]:
+    """The psql arguments that run one SELECT, as `user`, in a repeatable-read,
+    read-only transaction and print only its rows: separate commands in one
+    session."""
+    return ["psql", "-U", user, "-d", database, "-At", "-q", "-v", "ON_ERROR_STOP=1",
             "-c", "BEGIN TRANSACTION ISOLATION LEVEL REPEATABLE READ READ ONLY", "-c", select, "-c", "COMMIT"]
 
 
@@ -337,16 +338,27 @@ def sql_literal(value: str | int) -> str:
     return f"'{text}'"
 
 
+SQL_SCHEMA = re.compile(r"[a-z_][a-z0-9_]*")
+
+
+def sql_schema(name: str) -> str:
+    if not SQL_SCHEMA.fullmatch(name):
+        raise SystemExit(f"FAILED: {name!r} is not a schema the receiver snapshot names")
+    return name
+
+
 def receiver_snapshot(query: Callable[[str], str], holding: Holding, nonce: str, subject: str | None = None,
-                      act_sha256: str | None = None) -> dict:
+                      act_sha256: str | None = None, *, schema: str) -> dict:
     """The app's own records of one holding, read in one repeatable-read,
     read-only transaction: the scoped role assignments; the holding (its B3
     subject, whether it ended, whether that subject is superseded, its usable
     passkeys), the current one when `subject` is None, else that subject's;
     the configuration revision; the installation's owner-act nonce rows and
     narrowing-authority rows, counted; and the rows for `nonce` and, once the
-    act is signed, for `act_sha256`. `query` runs one SELECT against the app's
-    database, as read_only_psql wraps it, and returns its one output line."""
+    act is signed, for `act_sha256`, all in the app's `schema`. `query` runs
+    one SELECT against the app's database, as read_only_psql wraps it, and
+    returns its one output line."""
+    s = sql_schema(schema)
     team, role, principal = sql_literal(holding.team_id), sql_literal(holding.role), sql_literal(holding.principal)
     installation, app = sql_literal(holding.installation_id), sql_literal(holding.app_id)
     generation = sql_literal(holding.generation)
@@ -355,22 +367,22 @@ def receiver_snapshot(query: Callable[[str], str], holding: Holding, nonce: str,
     commitment = sql_literal(act_sha256) if act_sha256 else "NULL"
     text = query(
         "SELECT json_build_object("
-        f"'assignments', (SELECT count(*) FROM public.role_assignments WHERE team_id = {team} AND role = {role}"
+        f"'assignments', (SELECT count(*) FROM {s}.role_assignments WHERE team_id = {team} AND role = {role}"
         f" AND principal_did = {principal}),"
         "'holdings', (SELECT coalesce(json_agg(json_build_object('subject', p.subject,"
         " 'ended', h.ended_in IS NOT NULL, 'superseded', p.superseded_at IS NOT NULL,"
-        " 'usable_keys', (SELECT count(*) FROM public.passkey_credentials k"
+        f" 'usable_keys', (SELECT count(*) FROM {s}.passkey_credentials k"
         "  WHERE k.subject = p.subject AND k.revoked_at IS NULL))), '[]'::json)"
-        " FROM public.role_holdings h JOIN public.passkey_approvers p ON p.scope = h.b3_scope"
+        f" FROM {s}.role_holdings h JOIN {s}.passkey_approvers p ON p.scope = h.b3_scope"
         f" WHERE h.installation_id = {installation} AND h.team_id = {team} AND h.role = {role}"
         f" AND h.principal_did = {principal} AND {which}),"
-        "'revision', coalesce((SELECT revision FROM public.config_revisions"
+        f"'revision', coalesce((SELECT revision FROM {s}.config_revisions"
         f" WHERE installation_id = {installation} AND team_id = {team}), 0),"
-        f"'nonces', (SELECT count(*) FROM public.owner_act_nonces WHERE scope = {app} AND team_id = {team}),"
+        f"'nonces', (SELECT count(*) FROM {s}.owner_act_nonces WHERE scope = {app} AND team_id = {team}),"
         "'nonce_rows', (SELECT coalesce(json_agg(json_build_object('nonce', nonce, 'act_sha256', act_sha256)),"
-        f" '[]'::json) FROM public.owner_act_nonces WHERE scope = {app} AND team_id = {team}"
+        f" '[]'::json) FROM {s}.owner_act_nonces WHERE scope = {app} AND team_id = {team}"
         f" AND nonce = {sql_literal(nonce)}),"
-        "'authorities', (SELECT count(*) FROM public.credential_narrowing_authority"
+        f"'authorities', (SELECT count(*) FROM {s}.credential_narrowing_authority"
         f" WHERE app_id = {app} AND team_id = {team} AND installation_id = {installation}"
         f" AND generation = {generation}::bigint AND authority = 'owner_act'),"
         "'authority_rows', (SELECT coalesce(json_agg(json_build_object('event_id', a.event_id,"
@@ -380,7 +392,7 @@ def receiver_snapshot(query: Callable[[str], str], holding: Holding, nonce: str,
         "  (convert_from(e.payload, 'UTF8')::jsonb)->'payload'->>'act' END,"
         " 'event_act_sha256', CASE WHEN e.payload IS NOT NULL THEN"
         "  (convert_from(e.payload, 'UTF8')::jsonb)->'payload'->>'owner_act_sha256' END)), '[]'::json)"
-        " FROM public.credential_narrowing_authority a LEFT JOIN public.outbox_events e USING (event_id)"
+        f" FROM {s}.credential_narrowing_authority a LEFT JOIN {s}.outbox_events e USING (event_id)"
         f" WHERE a.app_id = {app} AND a.team_id = {team} AND a.installation_id = {installation}"
         f" AND a.generation = {generation}::bigint AND a.authority = 'owner_act' AND a.commitment = {commitment})"
         ")")
@@ -448,7 +460,11 @@ class Site:
     signer: str
     human: str
     service_id: str
+    # The installed Secrets and Logs apps' ids, and the schema Secrets keeps
+    # its records in.
     app_id: str
+    logs_app_id: str
+    secrets_schema: str
     role: str
     contact: str
     # The captured notification transport's API, as a machine reaches it.
@@ -534,6 +550,148 @@ def found_team(site: Site, holder: Holder) -> Founded:
 def connect_requester(site: Site, holder: Holder) -> None:
     """The requester, a member of the team, connects to the team's aweb."""
     aw(holder.container, "init", "--url", site.aweb, "--name", "owner", "--do-not-touch-agents-md")
+
+
+def publish_team_server(site: Site, machine: str) -> dict:
+    """The owner publishes the team's coordination server at the registry,
+    signed by the team's key; installed apps read it there to reach aweb."""
+    aw(machine, "id", "team", "set-server", "--team", site.team, "--namespace", site.domain, "--url", site.aweb,
+       "--registry", site.registry)
+    published = aw(machine, "id", "team", "show-server", "--team", site.team, "--namespace", site.domain,
+                   "--registry", site.registry)
+    assert published.get("server_url", "").rstrip("/") == site.aweb, published
+    return published
+
+
+def install_app(machine: str, api_origin: str) -> None:
+    """The installation owner installs one app from its API origin."""
+    installed = aw(machine, "plugin", "install", api_origin)
+    if not installed.get("approved"):
+        raise SystemExit(f"BOUNDARY: {api_origin} was not installed: {json.dumps(installed)}")
+
+
+def hook_app_ids(site: Site) -> dict[str, str]:
+    return {"secrets": site.app_id, "logs": site.logs_app_id}
+
+
+def activate_hooks(site: Site, machine: str) -> dict:
+    """The owner activates the required hook bindings with its own
+    controller key, one supported owner act each, then waits until they are
+    in effect: every selected binding active, as the installation,
+    generation and manifest selected, and the latest active_from plus a
+    margin past. Binding readiness, not proof of delivery. The other
+    bindings stay pending."""
+    apps = hook_app_ids(site)
+
+    def bindings() -> dict[str, list[dict]]:
+        return {app: aw(machine, "hooks", "bindings", app_id)["bindings"] for app, app_id in apps.items()}
+
+    selected = select_hook_bindings(bindings())
+    for (app, _, _), row in selected.items():
+        activated = docker("exec", machine, "aw", "hooks", "activate", apps[app], row["binding_id"], "--yes",
+                           timeout=300)
+        assert activated.returncode == 0, activated.stdout + activated.stderr
+    after = [row for rows in bindings().values() for row in rows]
+    ready = hooks_ready_at(after, list(selected.values()))
+    wait = (ready - datetime.datetime.now(datetime.UTC)).total_seconds()
+    if wait > HOOK_READINESS_DEADLINE.total_seconds():
+        raise SystemExit(f"FAILED: the hook bindings are in effect only at {ready.isoformat()}, past the deadline")
+    if wait > 0:
+        time.sleep(wait)
+    chosen = {row["binding_id"] for row in selected.values()}
+    pending = sorted(f"{row['app_id']}/{row['kind']}/{row['hook']}" for row in after
+                     if row["binding_id"] not in chosen)
+    assert all(row["state"] == "pending" for row in after if row["binding_id"] not in chosen), after
+    active = {f"{app}/{kind}/{hook}": {field: row[field] for field in HOOK_BINDING_IDENTITY + ("binding_id",)}
+              for (app, kind, hook), row in selected.items()}
+    return {"active": active, "left_pending": pending, "ready_at": ready.isoformat()}
+
+
+def secrets_holding(site: Site, hooks: dict, principal: str) -> Holding:
+    """The principal's holding of the app role, named by the Secrets
+    installation and generation whose bindings were activated."""
+    binding = hooks["active"]["secrets/production/post-governance-hook"]
+    return Holding(app_id=site.app_id, installation_id=binding["installation_id"], generation=binding["generation"],
+                   team_id=site.team_id, role=site.role, principal=principal)
+
+
+def holding_of(site: Site, principal: str) -> tuple[str, str]:
+    """The principal's holdings of the app role, and its current notice
+    contact, in the app's own tables."""
+    schema, role, who = sql_schema(site.secrets_schema), sql_literal(site.role), sql_literal(principal)
+    held = site.secrets_query(f"SELECT count(*) FROM {schema}.role_assignments WHERE role = {role}"
+                              f" AND principal_did = {who}")
+    contact = site.secrets_query(f"SELECT contact FROM {schema}.passkey_approvers WHERE principal = {who}"
+                                 " AND superseded_at IS NULL")
+    return held, contact
+
+
+def designate_holding(site: Site, holder: Holder, founded: Founded) -> dict:
+    """The approver's holding of the app role the round trip revokes, made
+    the supported way while the owner still holds the team's key: the
+    owner adds the human to the team; the human, with its own key, fetches
+    its certificate, connects to the team's aweb and registers a passkey on
+    the app's own human origin in the browser, for the app the owner
+    installed on this machine; the owner designates that exact credential,
+    once the hook bindings its governance needs are in effect. Checked in
+    the app's own tables."""
+    machine, human = holder.container, founded.approver
+    # --global for this human holder only (services and seats stay --local):
+    # aw binds a holder only if its team certificate names its did:aw
+    # (verifyHolderEvidence), and a did:aw on a member certificate is a
+    # global identity's.
+    added = aw(machine, "id", "team", "add-member", "--team", site.team, "--namespace", site.domain,
+               "--did", founded.approver_did_key, "--did-aw", human, "--name", "approver", "--global")
+
+    def as_human(*args: str, until: str | None = None) -> tuple[pexpect.spawn, str]:
+        child = holder.act(human, *args)
+        return child, holder.answer_passphrases(child, until=until)
+
+    for args in (("--json", "id", "team", "fetch-cert", "--namespace", site.domain, "--team", site.team, "--cert-id",
+                  added["certificate_id"], "--registry", site.registry),
+                 # The human's own connection to the team's aweb: the
+                 # requester's does not serve this separate identity.
+                 ("--json", "init", "--url", site.aweb, "--human-name", "approver")):
+        child, output = as_human(*args)
+        child.close()
+        assert child.exitstatus == 0, output
+    # The app is already installed on this machine: the owner installed it
+    # here, in the same aw plugin directory. aw takes no --human install.
+    export = f"{site.mounted}/holder/app-export.json"
+    child, output = as_human("app", "credential", "register", site.app_id, "--role", site.role, "--out", export,
+                             until=r"Open this page to continue: (\S+)")
+    linked = re.search(r"Open this page to continue: (\S+)", output)
+    if not linked:
+        child.close()
+        raise SystemExit(f"FAILED: the holder's credential registration showed no page (exit {child.exitstatus}):\n{output}")
+    report = site.chromium(machine, "credential", "--url", linked.group(1), "--device",
+                           f"{site.mounted}/holder-app-device.json")
+    assert report["states"] == ["ready", "navigated"] and report["credentials"] == 1, report
+    child.expect(pexpect.EOF)
+    rest = child.before
+    child.close()
+    assert child.exitstatus == 0, rest
+    printed = re.search(r"Fingerprint: ([0-9a-f]{4}(?: [0-9a-f]{4}){3})", output + rest)
+    assert printed, output + rest
+    fingerprint = printed.group(1)
+    command = designate_command(site.app_id, site.role, human, export, site.contact)
+    # Before the hook bindings are in effect, the act's governance event has
+    # no audit target: the app refuses it, and nothing is held.
+    early = docker("exec", machine, *command, timeout=300)
+    assert early.returncode != 0 and "503 release_context_unavailable" in early.stdout + early.stderr, (
+        early.stdout + early.stderr)
+    assert holding_of(site, human) == ("0", ""), holding_of(site, human)
+    hooks = activate_hooks(site, machine)
+    # The owner signs only for that exact credential: aw shows its fingerprint.
+    designated = docker("exec", machine, *command, timeout=300)
+    assert designated.returncode == 0, designated.stdout + designated.stderr
+    assert fingerprint in designated.stderr, designated.stderr
+    # The holding keeps the notice contact the owner signed, byte for byte.
+    held, contact = holding_of(site, human)
+    assert held == "1", held
+    assert contact == site.contact, contact
+    return {"role": site.role, "principal": human, "fingerprint": fingerprint, "contact": contact,
+            "refused_before_activation": "503 release_context_unavailable", "hooks": hooks}
 
 
 def enrolment_link(site: Site, machine: str) -> str:
@@ -805,15 +963,17 @@ def revoke_once(site: Site, holder: Holder, founded: Founded, holding: Holding) 
     operation = lost_prepare(site, holder, founded)
     nonce = site.signer_evidence(operation)["frozen_nonce"]
     signatures = site.signatures()
-    baseline = receiver_snapshot(site.secrets_query, holding, nonce)
+    baseline = receiver_snapshot(site.secrets_query, holding, nonce, schema=site.secrets_schema)
     first_delivery = deliver_once_lost(site, holder, operation)
     act = first_delivery["act"]
     assert act.nonce == nonce, f"approval: the signed act's nonce {act.nonce} is not the frozen {nonce}"
     assert site.signatures() == signatures + 1, "approval: not exactly one new signature"
     subject = baseline["holding"]["subject"]
-    first = receiver_snapshot(site.secrets_query, holding, nonce, subject, act.sha256)
+    first = receiver_snapshot(site.secrets_query, holding, nonce, subject, act.sha256,
+                               schema=site.secrets_schema)
     replay_delivery(site, holder, operation, act)
     assert site.signatures() == signatures + 1, "replay: a new signature"
-    replay = receiver_snapshot(site.secrets_query, holding, nonce, subject, act.sha256)
+    replay = receiver_snapshot(site.secrets_query, holding, nonce, subject, act.sha256,
+                               schema=site.secrets_schema)
     assert_one_effect(baseline, first, replay, act)
     return act
