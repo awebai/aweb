@@ -1,4 +1,4 @@
-"""AWID rotation replaces controller authority even when OSS retains its hint.
+"""AWID rotation by the DNS-named namespace controller moves the OSS team-key pin.
 
 Only setup uses SQL. Rotation, controller signatures, OSS route authorization
 and mutations use the real apps with PostgreSQL, Redis and the AWID client.
@@ -18,6 +18,7 @@ from awid.registry import CachedRegistryClient
 from awid.signing import canonical_json_bytes, sign_message
 from test_dashboard_privacy import TEAM, TEAM_NAME, privacy_app  # noqa: F401
 from test_messages_http import _make_keypair
+from awid_service.testing import TXTAnswers
 
 
 def _headers(sk, did, payload):
@@ -91,6 +92,8 @@ async def test_awid_rotation_replaces_oss_controller_authority(rotation_app, mon
     monkeypatch.setattr(registry_module, "_cache_now", lambda: clock[0])
     namespace_sk, _, namespace_did = _make_keypair()
     next_sk, _, next_did = _make_keypair()
+    # DNS names the namespace controller whose rotation act moves the pin.
+    env.app.state.awid_txt_resolver = TXTAnswers({"_awid.example.test": namespace_did})
     await env.registry_db.execute(
         "INSERT INTO {{tables.dns_namespaces}} (domain, controller_did, verification_status) "
         "VALUES ('example.test', $1, 'verified')", namespace_did,
@@ -108,7 +111,7 @@ async def test_awid_rotation_replaces_oss_controller_authority(rotation_app, mon
     assert await env.app.state.awid_registry_client.get_team_public_key("example.test", TEAM_NAME) == env.team_did
 
     # Rotate through the actual namespace-controller-authorized AWID endpoint.
-    # The OSS database deliberately keeps its original, now stale key hint.
+    # The OSS database keeps its admitted key until a request meets the new one.
     async with httpx.AsyncClient(
         transport=httpx.ASGITransport(app=env.registry_app), base_url="http://registry.test",
     ) as registry_http:

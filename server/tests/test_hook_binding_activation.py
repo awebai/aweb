@@ -33,13 +33,16 @@ from aweb.hook_bindings import (
 from aweb.service_errors import ConflictError, ForbiddenError, NotFoundError
 from aweb_naapp.hooks.owner_act import PREFIX
 from aweb_naapp.hooks.strictjson import canonical
+from aweb.team_key_pins import TeamKeyUnverified, pinned_team_key
 from awid.did import did_from_public_key
 from awid.ratelimit import MemoryFixedWindowRateLimiter
 from awid.registry import RegistryClient
+from awid.signing import canonical_json_bytes, sign_message
 from awid_service.db import AwidDatabaseInfra
 from awid_service.main import create_app as create_registry_app
 from tests.installation_fixtures import seed_pending_installation
 from tests.test_app_events_http import _seed_team_and_agent
+from awid_service.testing import TXTAnswers
 
 TEAM = "backend:acme.com"
 OTHER_TEAM = "frontend:acme.com"
@@ -119,11 +122,20 @@ async def env(aweb_cloud_db, shared_test_pool, monkeypatch):
     registry_db = AwidDatabaseInfra(schema=f"hooks_registry_{uuid4().hex[:8]}")
     await registry_db.initialize(shared_pool=shared_test_pool)
     team_key = SigningKey.generate()
+    namespace_key = SigningKey.generate()
+    await registry_db.get_manager().execute(
+        "INSERT INTO {{tables.dns_namespaces}} (domain, controller_did, verification_status) "
+        "VALUES ('acme.com', $1, 'verified')", _did(namespace_key),
+    )
     for name in ("backend", "frontend"):
         await registry_db.get_manager().execute(
             "INSERT INTO {{tables.teams}} (domain, name, team_did_key, visibility) VALUES ('acme.com', $1, $2, 'private')",
             name, _did(team_key),
         )
+    # The server admitted both teams under the registry's key.
+    for team_id in (TEAM, OTHER_TEAM):
+        await db.execute("UPDATE {{tables.teams}} SET team_did_key = $2 WHERE team_id = $1", team_id, _did(team_key))
+    dns = TXTAnswers({"_awid.acme.com": _did(namespace_key)})
     async with Redis.from_url(os.environ.get("REDIS_URL", "redis://localhost:6379/0"), decode_responses=True) as redis:
         registry_app = create_registry_app(
             db_infra=registry_db, redis=redis, rate_limiter=MemoryFixedWindowRateLimiter(),
@@ -133,13 +145,23 @@ async def env(aweb_cloud_db, shared_test_pool, monkeypatch):
                 registry_url="http://registry.test", transport=httpx.ASGITransport(app=registry_app),
                 service_token=service_token,
             )
+
+            async def pin_team_key(team_id: str, served_key: str) -> str:
+                return await pinned_team_key(
+                    db=db, registry_client=registry, txt_resolver=dns, team_id=team_id, served_key=served_key,
+                )
+
             try:
                 yield type("Env", (), {
                     "db": db,
                     "registry_db": registry_db.get_manager(),
+                    "registry_app": registry_app,
                     "registry": registry,
+                    "namespace_key": namespace_key,
                     "owner": Owner(team_key),
-                    "verifier": core_owner_act_verifier(audience=AUDIENCE, registry_client=registry),
+                    "verifier": core_owner_act_verifier(
+                        audience=AUDIENCE, registry_client=registry, pin_team_key=pin_team_key,
+                    ),
                 })
             finally:
                 await registry.aclose()
@@ -249,18 +271,46 @@ async def test_a_key_other_than_the_teams_current_one_is_refused(env):
     assert (await list_app_bindings(env.db, team_id=TEAM, app_id="logs"))[0].state == "pending"
 
 
+async def _rotate_backend(env, new_key: SigningKey) -> None:
+    timestamp = datetime.now(UTC).isoformat()
+    claims = {"domain": "acme.com", "operation": "rotate_team_key", "name": "backend", "new_team_did_key": _did(new_key)}
+    signature = sign_message(bytes(env.namespace_key), canonical_json_bytes({**claims, "timestamp": timestamp}))
+    async with httpx.AsyncClient(
+        transport=httpx.ASGITransport(app=env.registry_app), base_url="http://registry.test",
+    ) as registry_http:
+        rotated = await registry_http.post(
+            "/v1/namespaces/acme.com/teams/backend/rotate",
+            json={"new_team_did_key": _did(new_key)},
+            headers={"Authorization": f"DIDKey {_did(env.namespace_key)} {signature}", "X-AWEB-Timestamp": timestamp},
+        )
+    assert rotated.status_code == 200, rotated.text
+
+
 @pytest.mark.asyncio
 async def test_a_rotated_out_team_key_stops_activating_at_once(env):
     await _install(env.db)
     registration, _ = await _bindings(env)
     rotated = SigningKey.generate()
-    await env.registry_db.execute(
-        "UPDATE {{tables.teams}} SET team_did_key = $1 WHERE domain = 'acme.com' AND name = 'backend'", _did(rotated),
-    )
+    await _rotate_backend(env, rotated)
 
     with pytest.raises(ForbiddenError, match="owner_required"):
         await _activate(env, registration)
     assert (await _activate(env, registration, owner=Owner(rotated))).state == "active"
+
+
+@pytest.mark.asyncio
+async def test_a_registry_substituted_team_key_cannot_sign_owner_acts(env, monkeypatch):
+    monkeypatch.setenv("AWEB_ENFORCE_TEAM_KEY_PINS", "true")
+    await _install(env.db)
+    registration, _ = await _bindings(env)
+    substituted = SigningKey.generate()
+    await env.registry_db.execute(
+        "UPDATE {{tables.teams}} SET team_did_key = $1 WHERE domain = 'acme.com' AND name = 'backend'", _did(substituted),
+    )
+
+    with pytest.raises(TeamKeyUnverified):
+        await _activate(env, registration, owner=Owner(substituted))
+    assert (await list_app_bindings(env.db, team_id=TEAM, app_id="logs"))[0].state == "pending"
 
 
 @pytest.mark.asyncio

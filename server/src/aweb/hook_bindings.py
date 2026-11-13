@@ -301,9 +301,13 @@ class OwnerActTeamKeyUnavailable(Exception):
         super().__init__(str(dependency_error))
 
 
-def core_owner_act_verifier(*, audience: str, registry_client: Any) -> OwnerActVerifier:
+def core_owner_act_verifier(
+    *, audience: str, registry_client: Any, pin_team_key: Callable[[str, str], Awaitable[str]],
+) -> OwnerActVerifier:
     """The server's owner-act verifier: core's closed vocabulary, its public
-    origin as audience, and the team's controller key read fresh from AWID."""
+    origin as audience, and the team's controller key read fresh from AWID
+    and held to the key this server admitted (``pin_team_key(team_id, key)``,
+    aweb.team_key_pins)."""
 
     async def team_key_for(team_id: str) -> str:
         domain, name = parse_team_id(team_id)
@@ -313,7 +317,10 @@ def core_owner_act_verifier(*, audience: str, registry_client: Any) -> OwnerActV
             raise OwnerActTeamKeyUnavailable(exc) from exc
         if team is None or not team.team_did_key:
             raise Refused("owner_required", "the team has no controller key at its registry")
-        return team.team_did_key
+        try:
+            return await pin_team_key(team_id, team.team_did_key)
+        except AWID_DEPENDENCY_ERRORS as exc:
+            raise OwnerActTeamKeyUnavailable(exc) from exc
 
     try:
         return OwnerActVerifier(scope=OWNER_ACT_SCOPE, audience=audience, acts=CORE_ACTS, team_key_for=team_key_for)

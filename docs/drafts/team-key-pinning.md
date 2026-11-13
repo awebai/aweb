@@ -1,8 +1,8 @@
 # Team-key pinning (V1 design, for review before build)
 
-Status: **proposal**. This changes a stated rule: `trust-model.md` calls the
-local `teams.team_did_key` "a hint, not authority". It is an identity-path
-change and needs Juan's explicit approval before it is built.
+Status: **approved by Juan 2026-11-12** (identity-path change). The rule as
+built is stated in [trust-model.md](../trust-model.md#team-key-pins-approved-2026-11-12),
+which is authoritative; this page records the design as reviewed.
 
 ## Problem
 

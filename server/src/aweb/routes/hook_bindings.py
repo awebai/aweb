@@ -32,6 +32,7 @@ from aweb.hook_times import format_hook_time
 from aweb.routes.apps import _caller
 from aweb.service_errors import ServiceError
 from aweb.team_auth_deps import get_team_identity
+from aweb.team_key_pins import TeamKeyUnverified, pinned_team_key, team_key_unverified_exception
 
 # The owner act's record is the binding row, which keeps the act's SHA-256.
 # The hook_binding.activated / .revoked events of §A3 are enqueued through the
@@ -136,7 +137,15 @@ async def _owner_act_route(request: Request, db_infra: DatabaseInfra, binding_id
         registry_client = getattr(request.app.state, "awid_registry_client", None)
         if registry_client is None:
             raise awid_registry_not_configured_exception(operation="AWID owner-act team key")
-        verifier = core_owner_act_verifier(audience=request.app.state.public_origin, registry_client=registry_client)
+        async def pin_team_key(team_id: str, served_key: str) -> str:
+            return await pinned_team_key(
+                db=db_infra.get_manager("aweb"), registry_client=registry_client,
+                txt_resolver=request.app.state.awid_txt_resolver, team_id=team_id, served_key=served_key,
+            )
+
+        verifier = core_owner_act_verifier(
+            audience=request.app.state.public_origin, registry_client=registry_client, pin_team_key=pin_team_key,
+        )
         binding = await change(
             db_infra.get_manager("aweb"), verifier, team_id=identity.team_id, binding_id=binding_id,
             signing=signing, signature=payload.signature,
@@ -145,6 +154,8 @@ async def _owner_act_route(request: Request, db_infra: DatabaseInfra, binding_id
         if exc.status_code >= 500:
             logger.error("Hook-binding owner act failed: %s", exc.detail, exc_info=True)
         raise HTTPException(status_code=exc.status_code, detail=exc.detail) from exc
+    except TeamKeyUnverified:
+        raise team_key_unverified_exception() from None
     except OwnerActTeamKeyUnavailable as exc:
         # The team key is read before any transaction, so nothing was written.
         logger.warning("AWID registry dependency failed reading the owner-act team key", exc_info=True)

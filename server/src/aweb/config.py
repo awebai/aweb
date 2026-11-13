@@ -130,6 +130,23 @@ def require_registered_certificates() -> bool:
     return _env_bool("AWEB_REQUIRE_REGISTERED_CERTIFICATES")
 
 
+def enforce_team_key_pins() -> bool:
+    """Staged enforcement of team-key pins (aweb.team_key_pins).
+
+    Controlled by ``AWEB_ENFORCE_TEAM_KEY_PINS`` (default OFF). Either way a
+    registry key that differs from the pinned key, with no namespace-controller
+    act moving the pin, is logged as ``team_key_pin_mismatch`` with
+    ``enforced=false`` or ``enforced=true``. OFF serves the registry's key and
+    keeps the pin, so the mismatches can be counted and re-attested; ON refuses
+    with 401 ``team_key_unverified``. Turning it ON while admitted teams still
+    have mismatched pins locks those teams out until their namespace controller
+    re-attests (rotates to the current key).
+
+    Read from the environment at call time so tests can toggle it per case.
+    """
+    return _env_bool("AWEB_ENFORCE_TEAM_KEY_PINS")
+
+
 def get_public_origin() -> str:
     """Resolve only the public endpoint, without loading infrastructure settings."""
     return canonical_server_origin(

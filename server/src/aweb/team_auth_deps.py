@@ -38,6 +38,7 @@ from aweb.identity_binding import (
 )
 from aweb.identity_scope import legacy_lifetime_for_scope, normalize_identity_scope
 from aweb.team_auth import certificate_refusal, parse_and_verify_certificate
+from aweb.team_key_pins import pinned_team_key_for_request
 from aweb.team_auth_envelope import team_auth_signature_payload
 
 logger = logging.getLogger(__name__)
@@ -287,6 +288,7 @@ async def verify_request_certificate(request: Request, db, *, fresh: bool = Fals
                 refreshed_key = await refresh(domain, team_name, rejected_key=team_did_key)
             if not refreshed_key or refreshed_key == team_did_key:
                 raise
+            refreshed_key = await pinned_team_key_for_request(request, cert_team_id, refreshed_key)
             team_did_key = refreshed_key
             cert_info = check_certificate(team_did_key)
             # Bad signatures under the refreshed key must not drive revocation
@@ -404,10 +406,13 @@ def _team_read_failure(exc: Exception, registry_client, team_id: str, *, operati
 
 
 async def _resolve_team_key(request: Request, team_id: str) -> str:
-    """Resolve team public key from awid registry.
+    """Resolve the team's public key: the registry's answer, held to the key
+    this server admitted (aweb.team_key_pins).
 
     Returns the team's did:key, or empty string if the team is unknown.
-    Raises HTTPException(503) if awid is unreachable.
+    Raises HTTPException(401 team_key_unverified) when the registry names a
+    key no namespace-controller act establishes, and HTTPException(503) if
+    awid is unreachable.
     """
     try:
         domain, team_name = parse_team_id(team_id)
@@ -420,7 +425,11 @@ async def _resolve_team_key(request: Request, team_id: str) -> str:
 
     try:
         key = await registry_client.get_team_public_key(domain, team_name)
-        return key or ""
+        if not key:
+            return ""
+        return await pinned_team_key_for_request(request, team_id, key)
+    except HTTPException:
+        raise
     except AWID_DEPENDENCY_ERRORS as exc:
         raise _team_read_failure(
             exc, registry_client, build_team_id(domain, team_name),
