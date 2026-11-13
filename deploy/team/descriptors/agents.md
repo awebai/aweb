@@ -47,5 +47,5 @@ One team trust group in one container: the agents, their wake broker and
 
 Image: pinned container/agent image, same digest across wrappers; no credentials or host keys baked in.
 Port:2222, SSH as agent; one replica and one approved team trust group.
-Health: TCP2222; supervisor separately requires its own live broker PID with daemon_running:true before SSH/host run;45s stop grace and agents-before-broker stop.
+Health: TCP2222; supervisor separately requires its own live broker PID with daemon_running:true before SSH/host run; 50s container stop grace (broker 6000 ms, sshd 3000 ms) and agents-before-broker stop.
 Depends on: enforced egress boundary/resolver before agent launch, persistent/state, read-only login/public-key sources, and operator-provisioned deployment/ordinary-member seats; no direct PostgreSQL, Redis, service-key, docker-socket, hostPID or privileged access.
