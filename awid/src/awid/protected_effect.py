@@ -147,7 +147,7 @@ def validate_binding(value):
 
 def artifact_digest(signing: bytes, signature: str) -> str:
     """SHA256(prefix + uint64-BE byte length + exact signing bytes + Ed25519 sig)."""
-    _require(type(signing) is bytes)
+    _require(type(signing) is bytes and isinstance(signature, str))
     decoded = _unbase(signature.rstrip("="))
     _require(len(decoded) == 64)
     return hashlib.sha256(

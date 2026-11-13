@@ -113,6 +113,8 @@ async def _artifact(request, operation):
     payload = json.loads(body) if body else {}
     if operation == "register_certificate":
         cert = json.loads(base64.b64decode(payload["certificate"], validate=True))
+        if not isinstance(cert, dict):
+            raise ValueError("certificate artifact must be an object")
         return (
             "team-certificate",
             canonical_json_bytes({k: v for k, v in cert.items() if k != "signature"}),
