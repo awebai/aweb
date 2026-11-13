@@ -294,3 +294,37 @@ async def test_a_prepared_act_older_than_the_key_bound_is_refused(db, registry, 
     moment[0] = issued + timedelta(seconds=60)
     async with db.transaction() as tx:
         await verify.consume_in(tx, prepared, expected_subject=SUBJECT)
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("protected", [False, True], ids=["legacy", "protected"])
+async def test_current_protection_refuses_a_controller_only_owner_act(registry, team_key, protected):
+    from awid.did import generate_keypair, did_from_public_key
+    from awid.protected_membership import observe_team_protection
+    from awid.registry import RegistryClient
+
+    if protected:
+        _, public = generate_keypair()
+        await registry.db.execute(
+            "INSERT INTO {{tables.team_protection}} "
+            "(domain,name,service_id,service_did_key,generation) VALUES ($1,$2,$3,$4,$5)",
+            "example.com", "demo", "test-service", did_from_public_key(public), 1,
+        )
+    client = RegistryClient(REGISTRY_URL, transport=registry.transport, service_token=SERVICE_TOKEN)
+    try:
+        async def authority(team_id):
+            return await observe_team_protection(client, team_id)
+        async def legacy_key(team_id):
+            return did_key(team_key)
+        checked = OwnerActVerifier(scope="core", audience=AUDIENCE, acts=CORE_ACTS,
+                                   team_key_for=legacy_key, team_authority_for=authority)
+        signing, signature = owner_act(team_key, issued=datetime.now(UTC))
+        if protected:
+            with pytest.raises(Refused) as refused:
+                await checked.prepare(signing, signature, team_id=TEAM_ID)
+            assert refused.value.code == "protected_controller_required"
+        else:
+            prepared = await checked.prepare(signing, signature, team_id=TEAM_ID)
+            assert prepared.act_name == "hook-binding.activate"
+    finally:
+        await client.aclose()
