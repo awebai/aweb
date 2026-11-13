@@ -240,8 +240,11 @@ async def test_an_aw_that_never_answers_is_stopped_when_its_wait_ends(tmp_path, 
 @pytest.mark.asyncio
 async def test_an_aw_that_ignores_termination_is_killed(tmp_path, monkeypatch):
     pid_file = _fake_aw(tmp_path, monkeypatch, "signal.signal(signal.SIGTERM, signal.SIG_IGN)\ntime.sleep(60)")
+    started = asyncio.get_running_loop().time()
     with pytest.raises(TimeoutError):
         await _aw((tmp_path, dict(os.environ)), "id", "team", "admission-policy", timeout=2, grace=0.5)
+    # Stopped by the kill after the grace, not by waiting out its sleep.
+    assert asyncio.get_running_loop().time() - started < 10
     assert _gone(pid_file)
 
 
