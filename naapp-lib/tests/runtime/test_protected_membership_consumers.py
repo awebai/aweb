@@ -123,3 +123,69 @@ async def test_hook_checks_full_registered_certificate(registry, change):
     else:
         with pytest.raises(Refused, match="certificate_binding_mismatch"):
             _verify_client_certificate(encoded, envelope, options)
+
+
+@pytest.mark.parametrize("surface", ["current-member", "startup"])
+@pytest.mark.parametrize("change", ["genuine", "key", "alias"])
+async def test_additional_member_checks_use_exact_artifact(registry, surface, change):
+    from fastapi import HTTPException
+
+    from aweb_naapp.runtime.team_auth import AWIDMemberCredential, AWIDTeamCache
+
+    member = Member(team_id=TEAM)
+    await publish(registry, member, protected=True)
+    presented = member
+    if change == "key":
+        presented = replace(member, member_key=SigningKey.generate())
+    elif change == "alias":
+        presented = replace(member, alias="impostor")
+    options = {}
+    if surface == "startup":
+        options["member_credentials"] = {TEAM: AWIDMemberCredential(
+            signing_key=bytes(presented.member_key), certificate=presented.certificate(),
+        )}
+    cache = AWIDTeamCache(registry_url="https://registry.example", ttl_seconds=60,
+                          transport=registry.transport, **options)
+    async def check():
+        if surface == "startup":
+            await cache.check_member_credentials()
+        else:
+            await cache.check_current_member(TEAM, certificate_id=member.certificate_id,
+                                            team_did_key=member.team_did_key,
+                                            certificate=presented.certificate())
+    if change == "genuine":
+        await check()
+    else:
+        with pytest.raises((HTTPException, RuntimeError)) as refused:
+            await check()
+        assert "certificate_binding_mismatch" in str(refused.value)
+
+
+async def test_id_only_evidence_cannot_authorize_protected_current_member(registry):
+    from fastapi import HTTPException
+
+    from aweb_naapp.runtime.team_auth import AWIDTeamCache
+
+    member = Member(team_id=TEAM)
+    await publish(registry, member, protected=True)
+    cache = AWIDTeamCache(registry_url="https://registry.example", ttl_seconds=60,
+                          transport=registry.transport)
+    with pytest.raises(HTTPException) as refused:
+        await cache.check_current_member(TEAM, certificate_id=member.certificate_id,
+                                        team_did_key=member.team_did_key)
+    assert refused.value.status_code == 503
+
+
+@pytest.mark.parametrize("fault", ["null-blob", "down"])
+async def test_unavailable_exact_membership_refuses(registry, fault):
+    member = Member(team_id=TEAM)
+    await publish(registry, member, protected=True)
+    if fault == "null-blob":
+        await registry.db.execute("UPDATE {{tables.team_certificates}} SET certificate=NULL")
+    else:
+        registry.transport.down = True
+    async with relying_app(registry, public_origin=ORIGIN) as (client, _):
+        response = await client.get(
+            "/v1/items", headers=member.headers(aud=ORIGIN, method="GET", path="/v1/items")
+        )
+    assert response.status_code == 503, response.text
