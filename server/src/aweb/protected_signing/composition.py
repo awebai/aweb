@@ -157,6 +157,11 @@ class IndependentProtectedSigner:
     async def authenticate_prepare(self, request, operation):
         if operation.context != self.context:
             raise SignerRefused("scope_refused")
+        if (
+            operation.intent()["operation"] == "team.log-key.sign"
+            and operation.audience != self.request_origin
+        ):
+            raise SignerRefused("scope_refused")
         return await self.requester(
             request,
             principal=request.headers.get("X-AWEB-DID-AW", ""),

@@ -126,6 +126,49 @@ def test_typed_log_key_record_uses_the_same_isolated_file_without_private_log_ma
             adapter.sign_operation(operation, changed)
 
 
+@pytest.mark.asyncio
+async def test_log_key_prepare_is_bound_to_the_configured_service_origin(case):
+    import base64
+    from types import SimpleNamespace
+    from unittest.mock import AsyncMock
+
+    from aweb_naapp.runtime.protected_signer import CatalogOperation
+    from awid.e2ee_keys import encryption_key_id
+
+    from aweb.protected_signing.composition import IndependentProtectedSigner
+
+    original = case[2]
+    public = base64.b64encode(bytes(range(32))).rstrip(b"=").decode()
+    operation = CatalogOperation(
+        original.operation_id,
+        original.context,
+        "https://signer.customer.example",
+        "team.log-key.sign",
+        "default",
+        {
+            "team_id": original.context.authority_id,
+            "key_id": encryption_key_id(public),
+            "public_key": public,
+            "created_at": "2026-11-12T00:00:00Z",
+        },
+    )
+    composition = IndependentProtectedSigner.__new__(IndependentProtectedSigner)
+    composition.context = operation.context
+    composition.request_origin = operation.audience
+    composition.requester = AsyncMock(return_value="requester-port-result")
+    request = SimpleNamespace(headers={"X-AWEB-DID-AW": original.context.human_id})
+    with pytest.raises(SignerRefused, match="scope_refused"):
+        await composition.authenticate_prepare(
+            request, replace(operation, audience="https://other.example.org")
+        )
+    composition.requester.assert_not_called()
+    assert (
+        await composition.authenticate_prepare(request, operation)
+        == "requester-port-result"
+    )
+    composition.requester.assert_awaited_once()
+
+
 @pytest.mark.parametrize(
     "field,value",
     [
