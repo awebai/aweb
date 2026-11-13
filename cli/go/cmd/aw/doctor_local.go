@@ -114,6 +114,10 @@ func (r *doctorRunner) runLocalChecks() {
 		identityPath:   doctorIdentityStatePath(r.workingDir, r.identityHome, "identity.yaml"),
 	}
 
+	if awconfig.IsGrantHome(r.identityHome) {
+		r.runGrantLogKeyChecks()
+	}
+
 	workspace, workspacePath, err := loadDoctorWorkspaceAt(r.workingDir, r.identityHome)
 	if err != nil {
 		if errors.Is(err, os.ErrNotExist) {
@@ -429,7 +433,26 @@ func (r *doctorRunner) runLogKeyChecks(state *doctorLocalState) {
 	if state.membership == nil || state.cert == nil {
 		return
 	}
-	teamID := strings.TrimSpace(state.membership.TeamID)
+	teamDIDKey := state.cert.TeamDIDKey
+	r.reportOwnerLogKey(strings.TrimSpace(state.membership.TeamID), func() (string, error) { return teamDIDKey, nil },
+		"Install a record signed by the team controller key with `aw team admin log-key install <record>`.")
+}
+
+// runGrantLogKeyChecks reports the owner log key for a grant seat, which
+// holds no team certificate: the record is verified against the team key its
+// grant recorded at mint.
+func (r *doctorRunner) runGrantLogKeyChecks() {
+	grant, err := awconfig.LoadGrantHome(r.identityHome)
+	if err != nil {
+		return
+	}
+	r.reportOwnerLogKey(strings.TrimSpace(grant.TeamID), func() (string, error) { return grantLogKeyTeamKey(grant, grant.TeamID) },
+		"A grant that records no team key must be re-minted with `aw id grant mint`; otherwise install a record signed by the team controller key with `aw team admin log-key install <record>`.")
+}
+
+// reportOwnerLogKey reports whether this host seals teamID's local logs to an
+// owner log key signed by the team key that teamKey returns.
+func (r *doctorRunner) reportOwnerLogKey(teamID string, teamKey func() (string, error), verifyNextStep string) {
 	target := &doctorTarget{Type: "team", ID: teamID}
 	rec, err := awconfig.LoadLogKeyRecord(teamID)
 	if errors.Is(err, os.ErrNotExist) {
@@ -444,15 +467,18 @@ func (r *doctorRunner) runLogKeyChecks(state *doctorLocalState) {
 		return
 	}
 	if err == nil {
-		err = awid.VerifyLogKeyRecord(rec, teamID, state.cert.TeamDIDKey)
+		var teamDIDKey string
+		if teamDIDKey, err = teamKey(); err == nil {
+			err = awid.VerifyLogKeyRecord(rec, teamID, teamDIDKey)
+		}
 	}
 	if err != nil {
 		r.add(localCheck(
 			doctorCheckLocalLogKey,
 			doctorStatusFail,
 			target,
-			"The installed owner log key does not verify under the team key; local mail and chat logging is stopped.",
-			"Install a record signed by the team controller key with `aw team admin log-key install <record>`.",
+			"The installed owner log key cannot be verified under the team key; local mail and chat logging is stopped.",
+			verifyNextStep,
 			map[string]any{"error": err.Error()},
 		))
 		return
