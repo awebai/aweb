@@ -221,3 +221,102 @@ async def require_namespace_effect(request, tx, *, domain, operation):
         await require_effect(
             request, tx, domain=domain, name=row["name"], operation=operation
         )
+
+
+async def provision_team_protection(
+    tx,
+    *,
+    domain,
+    name,
+    service_id,
+    service_did_key,
+    expected_generation,
+    approval_ref,
+    mode="protected",
+):
+    """Recorded registry-host administrator action; intentionally no HTTP route.
+
+    The operator's .8 procedure must prove custody, consumer drain/invalidation,
+    exact historical baseline and approval before invoking this function. A
+    worker signature/profile is never this provisioning authority.
+    """
+    from uuid import uuid4
+    from awid.did import public_key_from_did
+
+    if (
+        type(expected_generation) is not int
+        or expected_generation < 0
+        or not isinstance(approval_ref, str)
+        or not approval_ref.strip()
+        or len(approval_ref) > 1024
+        or mode not in {"legacy", "protected"}
+    ):
+        raise ValueError("protection_transition_invalid")
+    public_key_from_did(service_did_key)
+    await team_guard(tx, domain, name)
+    row = await tx.fetch_one(
+        "SELECT * FROM {{tables.team_protection}} WHERE domain=$1 AND name=$2 FOR UPDATE",
+        domain,
+        name,
+    )
+    generation = row["generation"] if row is not None else 0
+    if generation != expected_generation:
+        raise ValueError("protection_generation_changed")
+    if generation >= 9007199254740991:
+        raise ValueError("protection_generation_exhausted")
+    if row is None:
+        exists = await tx.fetch_value(
+            "SELECT 1 FROM {{tables.teams}} WHERE domain=$1 AND name=$2 AND deleted_at IS NULL",
+            domain,
+            name,
+        )
+        if not exists or mode != "protected":
+            raise ValueError("protection_team_required")
+    reused = await tx.fetch_value(
+        "SELECT EXISTS(SELECT 1 FROM {{tables.teams}} WHERE team_did_key=$1) "
+        "OR EXISTS(SELECT 1 FROM {{tables.dns_namespaces}} WHERE controller_did=$1) "
+        "OR EXISTS(SELECT 1 FROM {{tables.team_certificates}} WHERE member_did_key=$1) "
+        "OR EXISTS(SELECT 1 FROM {{tables.did_aw_mappings}} WHERE current_did_key=$1)",
+        service_did_key,
+    )
+    if reused:
+        raise ValueError("service_key_not_distinct")
+    history = str(row["history_id"]) if row is not None else str(uuid4())
+    binding = {
+        "mode": "protected",
+        "service_id": service_id,
+        "service_did_key": service_did_key,
+        "history_id": history,
+        "generation": generation + 1,
+    }
+    validate_binding(binding)
+    await tx.execute(
+        "INSERT INTO {{tables.team_protection}} (domain,name,mode,service_id,service_did_key,history_id,generation,approval_ref) "
+        "VALUES($1,$2,$3,$4,$5,$6::uuid,$7,$8) ON CONFLICT(domain,name) DO UPDATE SET "
+        "mode=EXCLUDED.mode,service_id=EXCLUDED.service_id,service_did_key=EXCLUDED.service_did_key,"
+        "generation=EXCLUDED.generation,approval_ref=EXCLUDED.approval_ref",
+        domain,
+        name,
+        mode,
+        service_id,
+        service_did_key,
+        history,
+        generation + 1,
+        approval_ref,
+    )
+    return binding if mode == "protected" else {"mode": "legacy"}
+
+
+async def advance_incarnation(tx, *, domain, name, operation):
+    """After the guarded controller effect, invalidate older retained proofs.
+
+    Caller holds canonical namespace/team guards for this entire transaction.
+    History remains fixed through retirement/recreation; generation never resets.
+    """
+    await tx.execute(
+        "UPDATE {{tables.team_protection}} SET generation=generation+1,approval_ref=$3 "
+        "WHERE domain=$1 AND name=$2",
+        domain,
+        name,
+        "controller-effect:" + operation,
+    )

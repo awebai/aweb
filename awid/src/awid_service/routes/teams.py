@@ -15,10 +15,11 @@ from pgdbm.errors import QueryError
 from fastapi.exceptions import RequestValidationError
 from pydantic import BaseModel, ConfigDict, Field, ValidationError, field_validator, model_validator
 
+from awid_service.protected_teams import advance_incarnation, require_effect, protection, team_guard
+
 _TEAM_NAME_PATTERN = re.compile(r"^[a-z0-9]([a-z0-9-]*[a-z0-9])?$")
 
 from awid_service.deps import get_db
-from awid_service.protected_teams import require_effect, protection, team_guard
 from awid.contract import normalize_identity_scope
 from awid.pagination import encode_cursor, validate_pagination_params
 from awid.ratelimit import AWID_SERVICE_TOKEN_HEADER, rate_limit_dep
@@ -580,12 +581,13 @@ async def create_team(
                 caller_did,
                 now,
             )
-        except QueryError as exc:
-            if not isinstance(exc.__cause__, asyncpg.UniqueViolationError):
+        except (QueryError, asyncpg.UniqueViolationError) as exc:
+            if not isinstance(exc if isinstance(exc, asyncpg.UniqueViolationError) else exc.__cause__, asyncpg.UniqueViolationError):
                 raise
             raise HTTPException(status_code=409, detail="Team already exists")
 
-        return await _team_response(db, row)
+        await advance_incarnation(tx, domain=domain, name=body.name, operation="create_team")
+        return await _team_response(tx, row)
 
 
 @router.get(
@@ -764,6 +766,8 @@ async def delete_team(
             now,
         )
 
+        await advance_incarnation(tx, domain=domain, name=name, operation="delete_team")
+
     return {"deleted": True, "team_id": build_team_id(domain, name), "domain": domain, "name": name}
 
 
@@ -839,7 +843,9 @@ async def rotate_team_key(
             body.new_team_did_key,
         )
 
-    resp = await _team_response(db, row)
+        if key_changed:
+            await advance_incarnation(tx, domain=domain, name=name, operation="rotate_team_key")
+        resp = await _team_response(tx, row)
     return TeamRotateResponse(
         **resp.model_dump(),
         key_changed=key_changed,
@@ -895,8 +901,8 @@ async def register_certificate(
                 body.identity_scope,
                 body.certificate,
             )
-        except QueryError as exc:
-            cause = exc.__cause__
+        except (QueryError, asyncpg.UniqueViolationError) as exc:
+            cause = exc if isinstance(exc, asyncpg.UniqueViolationError) else exc.__cause__
             if not isinstance(cause, asyncpg.UniqueViolationError):
                 raise
             constraint_name = getattr(cause, "constraint_name", "")
