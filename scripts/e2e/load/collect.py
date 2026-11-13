@@ -110,7 +110,7 @@ def _count(counts: dict[str, dict[str, int]], firsts: dict[str, float], key: str
     by_second = counts.setdefault(key, {})
     second = str(int(at))
     by_second[second] = by_second.get(second, 0) + 1
-    firsts.setdefault(key, at)
+    firsts[key] = min(firsts.get(key, at), at)
 
 
 def totals(counts: dict[str, dict[str, int]]) -> dict[str, int]:
@@ -241,18 +241,70 @@ SELECT json_build_object(
 
 POSTGRES_HAS_STATEMENTS_SQL = "SELECT count(*) FROM pg_extension WHERE extname = 'pg_stat_statements';\n"
 
-# The ten statements with the most execution time so far. Only reads, writes
-# and CTEs are kept: their constants are already replaced by parameters, while
-# a utility statement's text is kept verbatim and may hold a password.
+# Every statement's counters, and no text: comments survive normalisation,
+# constants can remain, and a utility statement is kept as written, so no text
+# leaves the database. pg_stat_statements(false) does not read the text file.
+# dealloc counts entries evicted since the statistics were last reset.
 POSTGRES_STATEMENTS_SQL = """\
-SELECT coalesce(json_agg(x), '[]'::json) FROM (
-  SELECT d.datname, s.queryid, s.calls, s.total_exec_time, s.rows, left(s.query, 160) AS query
-  FROM pg_stat_statements s JOIN pg_database d ON d.oid = s.dbid
-  WHERE s.query ~* '^\\s*(select|insert|update|delete|with)\\M'
-  ORDER BY s.total_exec_time DESC
-  LIMIT 10
-) x;
+SELECT json_build_object(
+  'dealloc', (SELECT dealloc FROM pg_stat_statements_info),
+  'rows', (
+    SELECT coalesce(json_agg(json_build_array(
+      s.userid, d.datname, s.queryid, s.toplevel, s.calls, s.total_exec_time, s.rows)), '[]'::json)
+    FROM pg_stat_statements(false) s JOIN pg_database d ON d.oid = s.dbid
+  )
+);
 """
+STATEMENTS_PER_TICK = 10
+
+Snapshot = dict[tuple, tuple[int, float, int]]
+
+
+def statement_snapshot(rows: list[list[Any]]) -> Snapshot:
+    """pg_stat_statements rows keyed by (user, database, query, top level)."""
+    return {(userid, datname, queryid, toplevel): (calls, exec_ms, n_rows)
+            for userid, datname, queryid, toplevel, calls, exec_ms, n_rows in rows}
+
+
+def statement_deltas(previous: Snapshot | None, current: Snapshot, limit: int = STATEMENTS_PER_TICK) -> dict:
+    """What each statement did since the previous tick: the `limit` with the
+    most execution time, by database and query ID, and the rest summed as
+    other. An entry absent before is new in the view since then, so it counts
+    from zero; an entry gone is evicted, and what it did before leaving is lost.
+    The first snapshot is only a baseline."""
+    if previous is None:
+        return {"baseline": True}
+    by_query: dict[tuple[str, int], list[float]] = {}
+    new_entries = 0
+    for key, (calls, exec_ms, n_rows) in current.items():
+        before = previous.get(key)
+        if before is None:
+            new_entries += 1
+            before = (0, 0.0, 0)
+        if calls < before[0]:
+            before = (0, 0.0, 0)
+        totals = by_query.setdefault((key[1], key[2]), [0, 0.0, 0])
+        totals[0] += calls - before[0]
+        totals[1] += exec_ms - before[1]
+        totals[2] += n_rows - before[2]
+    active = sorted(((query, t) for query, t in by_query.items() if t[0] > 0 or t[1] > 0),
+                    key=lambda item: item[1][1], reverse=True)
+    rest = active[limit:]
+    return {
+        "top": [{"datname": datname, "queryid": queryid, "calls": t[0], "exec_ms": t[1], "rows": t[2]}
+                for (datname, queryid), t in active[:limit]],
+        "other": {"calls": sum(t[0] for _, t in rest), "exec_ms": sum(t[1] for _, t in rest),
+                  "rows": sum(t[2] for _, t in rest)},
+        "new_entries": new_entries,
+        "evicted_entries": sum(1 for key in previous if key not in current),
+    }
+
+
+def next_slot(*, elapsed: float, interval: float, slot: int) -> tuple[int, list[int]]:
+    """The schedule slot to wait for after slot `slot` finished at `elapsed`
+    seconds, and the slots that passed while it ran."""
+    following = int(elapsed // interval) + 1
+    return following, list(range(slot + 1, following))
 
 
 def postgres_sample(query_json: str) -> dict[str, Any]:
@@ -289,6 +341,7 @@ class Collector:
         self.lock = threading.Lock()
         self.logs_until = time.time()
         self.statements_database: dict[str, str | None] = {}
+        self.statement_snapshots: dict[str, Snapshot] = {}
 
     def write(self, record: dict[str, Any]) -> None:
         line = json.dumps(record, sort_keys=True)
@@ -312,10 +365,11 @@ class Collector:
             found[service] = {"id": ident, "name": name}
         return found
 
-    def meta(self) -> None:
+    def meta(self, schedule_start: float) -> None:
         ncpu, memory = _run(["docker", "info", "--format", "{{.NCPU}}\t{{.MemTotal}}"]).strip().split("\t")
         self.write({"t": time.time(), "kind": "meta", "project": self.args.project,
-                    "interval_seconds": self.args.interval, "host_ncpu": int(ncpu), "host_mem_bytes": int(memory),
+                    "schedule_start": schedule_start, "interval_seconds": self.args.interval,
+                    "host_ncpu": int(ncpu), "host_mem_bytes": int(memory),
                     "services": {
                         "aweb": self.args.aweb_service, "redis": self.args.redis_service,
                         "postgres": self.args.postgres_service,
@@ -354,7 +408,11 @@ class Collector:
                 )
             database = self.statements_database[service]
             if database:
-                record["statements"] = json.loads(_run([*psql, "-d", database], POSTGRES_STATEMENTS_SQL))
+                result = json.loads(_run([*psql, "-d", database], POSTGRES_STATEMENTS_SQL))
+                current = statement_snapshot(result["rows"])
+                record["statements"] = {**statement_deltas(self.statement_snapshots.get(service), current),
+                                        "dealloc": result["dealloc"]}
+                self.statement_snapshots[service] = current
         self.write(record)
 
     def probe_aweb_redis(self, container: dict[str, str]) -> None:
@@ -380,15 +438,27 @@ class Collector:
         scan = scan_log(text.stdout + text.stderr, since=since, until=until)
         self.write({"t": until, "kind": "log", "service": service, "since": since, "until": until, **scan})
 
-    def tick(self, pool: ThreadPoolExecutor) -> None:
+    def tick(self, pool: ThreadPoolExecutor, slot: int | None, scheduled_t: float | None) -> None:
+        """One sample of everything, closed by a tick record naming each probe's
+        outcome. A final tick at shutdown has no slot."""
+        outcomes: dict[str, str] = {}
+        try:
+            self.sample_all(pool, outcomes)
+        finally:
+            self.write({"t": time.time(), "kind": "tick", "slot": slot, "scheduled_t": scheduled_t,
+                        "probes": outcomes})
+
+    def sample_all(self, pool: ThreadPoolExecutor, outcomes: dict[str, str]) -> None:
         try:
             found = self.containers()
         except Exception as failure:  # noqa: BLE001 - recorded, and the next tick retries
             self.error("containers", None, failure)
+            outcomes["containers"] = "failed"
             return
         if not found:
             # Without IDs, docker stats would sample every container on the host.
             self.error("containers", None, ProbeFailed(f"no running container in project {self.args.project}"))
+            outcomes["containers"] = "failed"
             return
         since, until = self.logs_until, time.time()
         self.logs_until = until
@@ -410,10 +480,13 @@ class Collector:
 
         def run(job: tuple[str, str | None, Callable[[], None]]) -> None:
             probe, service, call = job
+            key = probe if service is None else f"{probe}:{service}"
             try:
                 call()
+                outcomes[key] = "ok"
             except Exception as failure:  # noqa: BLE001 - recorded, and the next tick retries
                 self.error(probe, service, failure)
+                outcomes[key] = "failed"
 
         list(pool.map(run, jobs))
 
@@ -436,18 +509,23 @@ def main(argv: list[str]) -> int:
         signal.signal(signum, lambda *_: stop.set())
     with args.out.open("a", encoding="utf-8") as out, ThreadPoolExecutor(max_workers=16) as pool:
         collector = Collector(args, out)
-        collector.meta()
-        started = time.monotonic()
+        started, schedule_start = time.monotonic(), time.time()
+        collector.meta(schedule_start)
+        slot = 0
         while not stop.is_set():
-            collector.tick(pool)
+            collector.tick(pool, slot, schedule_start + slot * args.interval)
             elapsed = time.monotonic() - started
-            # The next tick on the fixed schedule: a slow tick skips one, never bunches them.
-            next_tick = (elapsed // args.interval + 1) * args.interval
-            if args.duration is not None and next_tick > args.duration:
+            # Slots stay on the fixed schedule: a slow tick skips the slots it
+            # overran, and says so, rather than bunching them.
+            slot, skipped = next_slot(elapsed=elapsed, interval=args.interval, slot=slot)
+            for missed in skipped:
+                collector.write({"t": time.time(), "kind": "tick_skipped", "slot": missed,
+                                 "scheduled_t": schedule_start + missed * args.interval})
+            if args.duration is not None and slot * args.interval > args.duration:
                 break
-            stop.wait(next_tick - elapsed)
+            stop.wait(slot * args.interval - elapsed)
         if stop.is_set():
-            collector.tick(pool)
+            collector.tick(pool, None, None)
     return 0
 
 

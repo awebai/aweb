@@ -23,6 +23,17 @@ A step is the window from its `step_start` to the `step_end` with the same
 seats. A step that is never ended is reported as open. It runs to the next
 `step_start` or to the last sample. Warmup is not summarised.
 
+A `step_end` may carry the driver's own operation totals, which the report
+shows as given:
+
+```json
+{"t": 1794542981.80, "event": "step_end", "seats": 20,
+ "operations": {"attempted": 400, "completed": 391, "failed": 9, "deadline_missed": 4}}
+```
+
+Without them, the report says that workload accounting is unavailable for that
+step. The collector cannot know what the driver attempted.
+
 ## Collecting
 
 ```sh
@@ -37,10 +48,12 @@ Every 5 s (`--interval`), it appends one JSON line per sample. Every line has
 |---|---|---|
 | `meta` | `docker info` | project, interval, host CPUs and memory, the service names used |
 | `container` | `docker stats`, `docker inspect` | CPU %, memory and limit, network and block I/O (cumulative), PIDs, restarts, OOM kill, CPU limit |
-| `postgres` | `psql` in the `postgres` and `registry-db` containers | `max_connections`, and per database: connections, active, idle in transaction, waiting on a lock, ungranted locks, longest lock wait, commits and rollbacks (cumulative), deadlocks. `statements` holds the top ten by time when `pg_stat_statements` is already loaded and installed |
+| `postgres` | `psql` in the `postgres` and `registry-db` containers | `max_connections`, and per database: connections, active, idle in transaction, waiting on a lock, ungranted locks, longest lock wait, commits and rollbacks (cumulative), deadlocks. When `pg_stat_statements` is already loaded and installed, `statements` holds what changed since the previous tick: the ten query IDs with the most execution time, the rest summed as `other`, entries new to or evicted from the view, and `dealloc`. The first reading is only a `baseline` |
 | `redis` | aweb's Redis through the aweb container; `redis-cli` in `registry-redis` | clients, maxclients, blocked clients, memory and maxmemory, commands (cumulative), rejected connections, evictions |
 | `log` | `docker logs` of every container | HTTP statuses from access lines; WARNING and higher levels from JSON, uvicorn and PostgreSQL lines; PostgreSQL errors by class (`too_many_clients`, `lock_timeout`, `statement_timeout`, `idle_in_transaction_timeout`, `deadlock`, `out_of_memory`, `other`). Counts are kept per whole second, together with each key's exact first time |
 | `probe_error` | the collector | a probe that failed, and why. The next tick retries it |
+| `tick` | the collector | one per schedule slot, after its probes: the slot, when it was due, and each probe's outcome (`ok` or `failed`). A tick at shutdown has no slot |
+| `tick_skipped` | the collector | a slot that passed while the previous tick overran. Slots stay on the fixed schedule and are never bunched |
 
 Service names default to the team deployment's (`aweb`, `redis`, `postgres`,
 `registry-db`, `registry-redis`). Override them with `--aweb-service`,
@@ -61,10 +74,10 @@ whose PostgreSQL is not bundled has no `postgres` samples.
     else `/run/secrets/aweb/redis-url`) with the image's own Python and redis
     client, and prints only counters, or an exception's class name.
 - It writes no message text from logs, only counts and times.
-- It keeps statement text only for SELECT, INSERT, UPDATE, DELETE and WITH
-  statements, whose constants `pg_stat_statements` has already replaced with
-  parameters. A utility statement's text is kept verbatim there, and
-  `CREATE ROLE ... PASSWORD` is a utility statement.
+- It reads no statement text. It calls `pg_stat_statements(false)`, which does
+  not even read the text, and identifies statements by query ID. Comments
+  survive normalisation, constants can remain, and a utility statement such as
+  `CREATE ROLE ... PASSWORD` is kept as written, so no text is safe to export.
 
 ### Cost
 
@@ -76,7 +89,9 @@ Each tick runs:
 - one `docker exec` per Redis.
 
 Its own statements appear in `statements`, and its connections in the counts,
-as one connection.
+as one connection. The statements reading returns every entry's counters,
+at most `pg_stat_statements.max` rows, but only the per-tick deltas are
+written.
 
 ## Summarising
 
@@ -85,12 +100,24 @@ python3 summarise.py --samples samples.jsonl --marks marks.jsonl              # 
 python3 summarise.py --samples samples.jsonl --marks marks.jsonl --seats 40 --json
 ```
 
-Each step gets six things:
+Each step gets eight things:
+
+- **Coverage:** the collector's slots in the step: expected, attempted,
+  completed with every probe, skipped because a tick overran, and missing
+  because the collector was not running. It also lists failed probes and any
+  stretch longer than 1.5 intervals without a complete sample. A step with
+  incomplete coverage says so, and one with no samples says that nothing in it
+  is evidence that nothing happened.
+- **Workload:** the driver's totals from the `step_end` mark, or "unavailable".
 
 - **Containers:** CPU mean and max, memory max, and network and block I/O over
   the step.
 - **PostgreSQL**, per database: connection, lock and transaction-rate figures,
-  plus the statements that took the most time in the step.
+  plus the query IDs that took the most time in the step. Times are the sum of
+  the ticks' deltas. A statement counts only in the ticks where it was among
+  that tick's ten slowest, and the rest is under `other`. The ranking says it
+  is partial when a baseline reading or an eviction fell in the step, or when a
+  reading had no statements.
 - **Redis:** clients, blocked clients, commands per second, memory, rejections
   and evictions.
 - **HTTP**, per service: status counts, the time of the first 429 and of the
@@ -110,12 +137,22 @@ Each step gets six things:
 
 The report names no cause. The first signals are evidence to correlate.
 
+Every first time states its precision:
+
+- **exact:** the logged line's timestamp, the earliest of the step whatever
+  order the lines were read in.
+- **to the second:** the record that counted the event began before the step,
+  so the time is the step's first whole second that counted it.
+- **at a sample:** when a sample first showed it; it began up to one interval
+  earlier.
+- **estimated:** a lock wait's start, from its duration at a sample.
+
 ### Precision and gaps
 
 - Counters are cut at the samples nearest the step's edges, so up to one
   interval of a neighbour's activity can be included.
 - Log counts are cut to the second.
-- First times are exact.
+- First times are as precise as each one says.
 - Access lines carry no latency, so the report has none: latency is the
   driver's to measure. Secrets runs with `--no-access-log` and the TLS front
   logs no requests, so neither appears under HTTP. Their failures show only in

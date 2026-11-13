@@ -1,5 +1,5 @@
-{"t": 1794543157.8122492, "event": "warmup_start", "seats": 10}
-{"t": 1794543163.838849, "event": "step_start", "seats": 10}
-{"t": 1794543179.993792, "event": "step_end", "seats": 10}
-{"t": 1794543182.019519, "event": "step_start", "seats": 20}
-{"t": 1794543201.769679, "event": "step_end", "seats": 20}
+{"t": 1794544005.041465, "event": "warmup_start", "seats": 10}
+{"t": 1794544011.076305, "event": "step_start", "seats": 10}
+{"t": 1794544027.283881, "event": "step_end", "seats": 10}
+{"t": 1794544029.306293, "event": "step_start", "seats": 20}
+{"t": 1794544048.277063, "event": "step_end", "seats": 20}

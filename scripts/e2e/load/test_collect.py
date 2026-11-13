@@ -109,6 +109,16 @@ class Logs(unittest.TestCase):
         self.assertEqual(scan["pg_first"]["too_many_clients"], ts("2026-11-13T04:01:55Z"))
         self.assertNotIn("nope", repr(scan))
 
+    def test_the_first_time_is_the_earliest_whatever_the_line_order(self):
+        # naapp-review's counterexample: stdout is read before stderr, so an
+        # ERROR at t=2 can precede one at t=1.
+        text = (
+            '1970-01-01T00:00:02Z {"level": "ERROR", "message": "m"}\n'
+            '1970-01-01T00:00:01Z {"level": "ERROR", "message": "m"}\n'
+        )
+        scan = collect.scan_log(text, since=0, until=10)
+        self.assertEqual(scan["levels_first"]["ERROR"], 1.0)
+
     def test_docker_timestamps_keep_their_fraction(self):
         self.assertAlmostEqual(ts("2026-11-13T04:01:54.5Z") - ts("2026-11-13T04:01:54Z"), 0.5)
 
@@ -146,9 +156,73 @@ class Postgres(unittest.TestCase):
         self.assertEqual(aweb["numbackends"], 10)
 
     def test_the_query_only_reads(self):
-        sql = collect.POSTGRES_SQL.upper()
-        for verb in ("INSERT", "UPDATE", "DELETE", "CREATE", "ALTER", "DROP", "SET ", "RESET", "PG_STAT_RESET"):
-            self.assertNotIn(verb, sql)
+        for sql in (collect.POSTGRES_SQL, collect.POSTGRES_HAS_STATEMENTS_SQL, collect.POSTGRES_STATEMENTS_SQL):
+            upper = sql.upper()
+            for verb in ("INSERT", "UPDATE", "DELETE", "CREATE", "ALTER", "DROP", "SET ", "RESET",
+                         "PG_STAT_RESET"):
+                self.assertNotIn(verb, upper)
+
+    def test_statements_are_read_without_their_text(self):
+        # Comments survive normalisation and constants can remain, so no text
+        # leaves the database: pg_stat_statements(false) does not even read it.
+        sql = collect.POSTGRES_STATEMENTS_SQL
+        self.assertIn("pg_stat_statements(false)", sql)
+        self.assertNotIn("query,", sql.replace("queryid", ""))
+        self.assertNotIn(".query", sql.replace("queryid", ""))
+
+
+def row(queryid, calls, exec_ms, *, datname="aweb", userid=10, toplevel=True, rows=0):
+    return [userid, datname, queryid, toplevel, calls, exec_ms, rows]
+
+
+class StatementDeltas(unittest.TestCase):
+    def test_the_first_snapshot_is_a_baseline(self):
+        snapshot = collect.statement_snapshot([row(1, 5, 50.0)])
+        self.assertEqual(collect.statement_deltas(None, snapshot), {"baseline": True})
+
+    def test_a_query_new_since_the_last_tick_is_ranked_from_zero(self):
+        # naapp-review's counterexample: a query absent from the earlier list
+        # that ran 100 times for 10 s must lead the ranking.
+        before = collect.statement_snapshot([row(i, 1000, 50_000.0 + i) for i in range(1, 11)])
+        after = collect.statement_snapshot([*(row(i, 1001, 50_001.0 + i) for i in range(1, 11)),
+                                            row(99, 100, 10_000.0)])
+        deltas = collect.statement_deltas(before, after)
+        self.assertEqual(deltas["top"][0], {"datname": "aweb", "queryid": 99, "calls": 100, "exec_ms": 10_000.0,
+                                            "rows": 0})
+        self.assertEqual(deltas["new_entries"], 1)
+        self.assertEqual(deltas["evicted_entries"], 0)
+
+    def test_beyond_the_limit_the_rest_is_summed_as_other(self):
+        before = collect.statement_snapshot([row(i, 0, 0.0) for i in range(1, 13)])
+        after = collect.statement_snapshot([row(i, 1, float(i)) for i in range(1, 13)])
+        deltas = collect.statement_deltas(before, after, limit=10)
+        self.assertEqual([s["queryid"] for s in deltas["top"]], list(range(12, 2, -1)))
+        self.assertEqual(deltas["other"], {"calls": 2, "exec_ms": 3.0, "rows": 0})
+
+    def test_entries_gone_from_the_view_are_counted_as_evicted(self):
+        before = collect.statement_snapshot([row(1, 5, 50.0), row(2, 5, 50.0)])
+        after = collect.statement_snapshot([row(1, 6, 60.0)])
+        deltas = collect.statement_deltas(before, after)
+        self.assertEqual(deltas["evicted_entries"], 1)
+        self.assertEqual(deltas["top"], [{"datname": "aweb", "queryid": 1, "calls": 1, "exec_ms": 10.0, "rows": 0}])
+
+    def test_a_reset_counter_counts_from_zero(self):
+        before = collect.statement_snapshot([row(1, 500, 5000.0)])
+        after = collect.statement_snapshot([row(1, 3, 30.0)])
+        self.assertEqual(collect.statement_deltas(before, after)["top"][0]["calls"], 3)
+
+    def test_users_and_nesting_levels_of_one_query_are_summed(self):
+        before = collect.statement_snapshot([row(1, 0, 0.0), row(1, 0, 0.0, userid=11, toplevel=False)])
+        after = collect.statement_snapshot([row(1, 2, 4.0), row(1, 3, 6.0, userid=11, toplevel=False)])
+        (only,) = collect.statement_deltas(before, after)["top"]
+        self.assertEqual((only["calls"], only["exec_ms"]), (5, 10.0))
+
+
+class Schedule(unittest.TestCase):
+    def test_a_slow_tick_names_the_slots_it_skipped(self):
+        self.assertEqual(collect.next_slot(elapsed=12.0, interval=5.0, slot=0), (3, [1, 2]))
+        self.assertEqual(collect.next_slot(elapsed=4.0, interval=5.0, slot=0), (1, []))
+        self.assertEqual(collect.next_slot(elapsed=5.0, interval=5.0, slot=0), (2, [1]))
 
 
 if __name__ == "__main__":
