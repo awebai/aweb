@@ -8,8 +8,9 @@ a TeamIdentity from the request's certificate headers.
 from __future__ import annotations
 
 import logging
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 
+from awid.protected_membership import TeamProtectionObservation
 from awid.dns_auth import enforce_timestamp_skew, parse_didkey_auth, require_timestamp
 from awid.signing import verify_did_key_signature
 from awid.team_certificate import TeamCertificateError, decode_team_certificate
@@ -37,6 +38,7 @@ from aweb.identity_binding import (
     verify_identity_binding,
 )
 from aweb.identity_scope import legacy_lifetime_for_scope, normalize_identity_scope
+from aweb.membership import require_fresh
 from aweb.team_auth import certificate_refusal, parse_and_verify_certificate
 from aweb.team_auth_envelope import team_auth_signature_payload
 
@@ -70,6 +72,12 @@ class TeamIdentity:
     identity_scope: str
     certificate_id: str
     grant: GrantContext | None = None
+    protection_observation: TeamProtectionObservation | None = field(default=None, repr=False, compare=False)
+
+    def require_fresh(self) -> None:
+        """Fence an effect with this request's original membership observation."""
+        if self.protection_observation is not None:
+            require_fresh(self.protection_observation)
 
     @property
     def lifetime(self) -> str:
@@ -136,22 +144,13 @@ async def resolve_team_identity(
             request, did_key=did_key, did_aw=row.get("did_aw") or "",
             address=row.get("address") or "",
         )
-    await refresh_projection_binding(db, agent_id=row["agent_id"], did_key=did_key, binding=binding)
-
     # Keep the admitting certificate recorded on the projection current
     # (aweb-abfn): identity-only auth checks THIS value against the registry's
     # revocations, so a row still naming a replaced certificate would either
     # miss a revocation or strip a live member. The certificate presented here
     # was verified against the registry (signature and revocation) above.
     presented_certificate_id = (cert_info.get("certificate_id") or "").strip()
-    if presented_certificate_id and presented_certificate_id != (row.get("certificate_id") or "").strip():
-        await db.execute(
-            "UPDATE {{tables.agents}} SET certificate_id = $2 WHERE agent_id = $1",
-            row["agent_id"],
-            presented_certificate_id,
-        )
-
-    return TeamIdentity(
+    identity = TeamIdentity(
         team_id=team_id,
         alias=cert_info["alias"],
         did_key=did_key,
@@ -160,7 +159,20 @@ async def resolve_team_identity(
         agent_id=str(row["agent_id"]),
         identity_scope=normalize_identity_scope(cert_info.get("identity_scope") or cert_info.get("lifetime")),
         certificate_id=cert_info.get("certificate_id", ""),
+        protection_observation=cert_info.get("protection_observation"),
     )
+    identity.require_fresh()
+    # Binding and certificate projection changes share the original admission
+    # fence: an expired final SQL await rolls both back.
+    async with db.transaction() as tx:
+        await refresh_projection_binding(tx, agent_id=row["agent_id"], did_key=did_key, binding=binding)
+        if presented_certificate_id and presented_certificate_id != (row.get("certificate_id") or "").strip():
+            await tx.execute(
+                "UPDATE {{tables.agents}} SET certificate_id = $2 WHERE agent_id = $1",
+                row["agent_id"], presented_certificate_id,
+            )
+        identity.require_fresh()
+    return identity
 
 
 # ---------------------------------------------------------------------------
@@ -349,6 +361,7 @@ async def verify_request_certificate(request: Request, db, *, fresh: bool = Fals
         fresh=fresh,
     )
     await authenticate_id_chain(request, binding)
+    require_fresh(protection_observation)
     cert_info["identity_kind"] = getattr(request.state, "identity_kind", None)
     cert_info["identity_binding"] = binding
     cert_info["identity_binding_fresh"] = binding.fresh_observation
@@ -395,9 +408,11 @@ async def _get_team_identity_with_grant_scope(
 
     aweb_db = _aweb_db(db)
     try:
-        return await resolve_team_identity(aweb_db, cert_info, request=request)
+        identity = await resolve_team_identity(aweb_db, cert_info, request=request)
     except ValueError as e:
         raise HTTPException(status_code=403, detail=str(e))
+    identity.require_fresh()
+    return identity
 
 
 async def get_team_identity(request: Request, db=Depends(get_db)) -> TeamIdentity:

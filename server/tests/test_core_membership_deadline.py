@@ -3,8 +3,9 @@
 import asyncio
 import json
 from contextlib import asynccontextmanager
+from dataclasses import replace
 from types import SimpleNamespace
-from uuid import uuid4
+from uuid import UUID, uuid4
 
 import httpx
 import pytest
@@ -32,11 +33,15 @@ class DelayedDB:
         row = await self.db.fetch_one(query, *args)
         if self.phase == "lookup" and "SELECT agent_id, certificate_id" in query:
             self.ticks[0] = 61.0
+        if self.phase == "mint-write" and "INSERT INTO {{tables.identity_session_grants}}" in query:
+            self.ticks[0] = 61.0
         return row
 
     async def execute(self, query, *args):
         result = await self.db.execute(query, *args)
         if self.phase == "projection" and "SET certificate_id" in query:
+            self.ticks[0] = 61.0
+        if self.phase == "revoke-audit" and "identity_grant.revoke" in query:
             self.ticks[0] = 61.0
         return result
 
@@ -80,8 +85,10 @@ async def native_app(env, ticks, monkeypatch, phase="none"):
 
     @app.get("/verify")
     async def verify(identity=Depends(auth.get_team_identity)):
-        assert identity.protection_observation is observed[0]
-        return {"deadline": identity.protection_observation.deadline}
+        observation = getattr(identity, "protection_observation", None)
+        if observation is not None:
+            assert observation is observed[0]
+        return {"deadline": observation.deadline if observation is not None else None}
 
     @app.get("/certificate")
     async def certificate(request: Request):
@@ -129,6 +136,8 @@ async def test_resolution_preserves_original_evidence_and_rolls_back_expired_pro
     async with httpx.AsyncClient(transport=httpx.ASGITransport(app), base_url=ORIGIN) as client:
         response = await client.get("/verify", headers=env.member.headers(aud=ORIGIN, method="GET", path="/verify"))
     assert response.status_code == (200 if phase == "none" else 503), response.text
+    if phase == "none":
+        assert response.json() == {"deadline": 60.0}
     recorded = await env.stack.aweb_db.fetch_value("SELECT certificate_id FROM {{tables.agents}} WHERE agent_id=$1", agent_id)
     # A completed fresh resolution may precede a later caller-side delay.
     expected = env.member.certificate_id if phase in {"none", "resolution-return"} else "previous-certificate"
@@ -143,6 +152,7 @@ async def test_locked_grant_mint_fences_original_observation_without_partial_wri
     key = did_key(SigningKey.generate())
     body = json.dumps({"grant_did_key": key, "scopes": ["mail.read"], "ttl_seconds": 60}).encode()
     headers = env.member.headers(aud=ORIGIN, method="POST", path="/v1/identity-grants", body=body)
+    headers["Content-Type"] = "application/json"
     async with httpx.AsyncClient(transport=httpx.ASGITransport(app), base_url=ORIGIN) as client:
         async with env.stack.aweb_db.transaction() as blocker:
             await blocker.fetch_value("SELECT pg_advisory_xact_lock(hashtextextended($1,0))", f"identity-grant:{key}")
@@ -165,3 +175,48 @@ async def test_locked_grant_mint_fences_original_observation_without_partial_wri
         assert response.json() == {"detail": {"code": "protected_state_unavailable"}}
     assert await env.stack.aweb_db.fetch_value("SELECT count(*) FROM {{tables.identity_session_grants}}") == (0 if expired else 1)
     assert len(observed) == 1 and observed[0].deadline == 60.0
+
+
+@pytest.mark.asyncio
+async def test_grant_final_insert_await_rolls_back(membership_env, monkeypatch):
+    env, ticks = membership_env, [0.0]
+    app, _, _ = await native_app(env, ticks, monkeypatch, "mint-write")
+    body = json.dumps({"grant_did_key": did_key(SigningKey.generate()), "scopes": ["mail.read"]}).encode()
+    headers = env.member.headers(aud=ORIGIN, method="POST", path="/v1/identity-grants", body=body)
+    async with httpx.AsyncClient(transport=httpx.ASGITransport(app), base_url=ORIGIN) as client:
+        response = await client.post("/v1/identity-grants", content=body, headers={**headers, "Content-Type": "application/json"})
+    assert response.status_code == 503, response.text
+    assert await env.stack.aweb_db.fetch_value("SELECT count(*) FROM {{tables.identity_session_grants}}") == 0
+
+
+@pytest.mark.asyncio
+async def test_grant_revoke_final_audit_await_rolls_back_both_writes(membership_env, monkeypatch):
+    env, ticks = membership_env, [0.0]
+    app, _, _ = await native_app(env, ticks, monkeypatch)
+    body = json.dumps({"grant_did_key": did_key(SigningKey.generate()), "scopes": ["mail.read"]}).encode()
+    headers = env.member.headers(aud=ORIGIN, method="POST", path="/v1/identity-grants", body=body)
+    async with httpx.AsyncClient(transport=httpx.ASGITransport(app), base_url=ORIGIN) as client:
+        minted = await client.post("/v1/identity-grants", content=body, headers={**headers, "Content-Type": "application/json"})
+        assert minted.status_code == 200, minted.text
+        grant_id = minted.json()["grant_id"]
+        app.state.db.get_manager().phase = "revoke-audit"
+        path = f"/v1/identity-grants/{grant_id}/revoke"
+        response = await client.post(path, headers=env.member.headers(aud=ORIGIN, method="POST", path=path))
+    assert response.status_code == 503, response.text
+    assert await env.stack.aweb_db.fetch_value("SELECT revoked_at FROM {{tables.identity_session_grants}} WHERE grant_id=$1", UUID(grant_id)) is None
+    assert await env.stack.aweb_db.fetch_value("SELECT count(*) FROM {{tables.audit_log}} WHERE event_type='identity_grant.revoke'") == 0
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("change", ["key", "alias"])
+async def test_known_certificate_mismatch_stays_401_without_projection_or_grant_writes(membership_env, monkeypatch, change):
+    env, ticks = membership_env, [0.0]
+    app, agent_id, _ = await native_app(env, ticks, monkeypatch)
+    changed = replace(env.member, **({"alias": "other"} if change == "alias" else {"member_key": SigningKey.generate()}))
+    body = json.dumps({"grant_did_key": did_key(SigningKey.generate()), "scopes": ["mail.read"]}).encode()
+    headers = changed.headers(aud=ORIGIN, method="POST", path="/v1/identity-grants", body=body)
+    async with httpx.AsyncClient(transport=httpx.ASGITransport(app), base_url=ORIGIN) as client:
+        response = await client.post("/v1/identity-grants", content=body, headers={**headers, "Content-Type": "application/json"})
+    assert response.status_code == 401 and "certificate_binding_mismatch" in response.text, response.text
+    assert await env.stack.aweb_db.fetch_value("SELECT count(*) FROM {{tables.identity_session_grants}}") == 0
+    assert await env.stack.aweb_db.fetch_value("SELECT certificate_id FROM {{tables.agents}} WHERE agent_id=$1", agent_id) == "previous-certificate"
