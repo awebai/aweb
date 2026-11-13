@@ -62,7 +62,8 @@ def main():
     parser.add_argument('--label', default=os.environ.get('AWEB_CANDIDATE_RESOURCE_LABEL', ''))
     parser.add_argument('--manifest', default=os.environ.get('CANDIDATE_RESOURCE_MANIFEST', ''))
     parser.add_argument('containers', nargs='*')
-    args = parser.parse_args()
+    # The shim places options between the operation and container operands.
+    args = parser.parse_intermixed_args()
     if not args.label or not args.manifest:
         parser.error('run label and manifest are required')
     if args.operation == 'remember':

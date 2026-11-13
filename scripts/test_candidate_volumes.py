@@ -20,6 +20,48 @@ SPEC.loader.exec_module(VOLUMES)
 
 
 class Commands(unittest.TestCase):
+    def test_shim_removal_records_mounts_through_real_helper_cli(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            fake = root / 'docker'
+            calls = root / 'calls.jsonl'
+            manifest = root / 'owned.tsv'
+            # Exercise the helper with this test's interpreter, including 3.12
+            # used by the gate, rather than the host's default python3.
+            (root / 'python3').symlink_to(sys.executable)
+            fake.write_text('#!' + sys.executable + '\n' + '''import json, os, sys
+from pathlib import Path
+args = sys.argv[1:]
+with Path(os.environ['TEST_DOCKER_CALLS']).open('a') as output:
+    output.write(json.dumps(args) + '\\n')
+if args[:2] == ['container', 'inspect']:
+    print(json.dumps([{'Config': {'Labels': {'aweb.candidate-gate': 'owned'}},
+                      'Mounts': [{'Type': 'volume', 'Name': 'volume-' + args[2]}]}]))
+elif args[:2] == ['volume', 'inspect']:
+    print(json.dumps([{'Name': args[2], 'Labels': {'com.docker.volume.anonymous': ''}}]))
+elif args == ['rm', '--volumes', '-f', 'first', 'second']:
+    pass
+else:
+    sys.exit('Unexpected Docker call: ' + repr(args))
+''')
+            fake.chmod(0o755)
+            env = dict(os.environ, AWEB_CANDIDATE_REAL_DOCKER=str(fake),
+                       AWEB_CANDIDATE_RESOURCE_LABEL='owned',
+                       CANDIDATE_RESOURCE_MANIFEST=str(manifest), TEST_DOCKER_CALLS=str(calls),
+                       PATH=str(root) + os.pathsep + os.environ['PATH'])
+            for command in (['rm'], ['container', 'rm'], ['container', 'remove']):
+                with self.subTest(command=command):
+                    manifest.write_text('')
+                    calls.write_text('')
+                    result = subprocess.run(['bash', str(SHIM), *command, '-f', 'first', 'second'],
+                                            env=env, text=True, capture_output=True)
+                    self.assertEqual(result.returncode, 0, result.stderr)
+                    self.assertEqual(manifest.read_text(), 'volume\tvolume-first\nvolume\tvolume-second\n')
+                    self.assertEqual([json.loads(line) for line in calls.read_text().splitlines()], [
+                        ['container', 'inspect', 'first'], ['volume', 'inspect', 'volume-first'],
+                        ['container', 'inspect', 'second'], ['volume', 'inspect', 'volume-second'],
+                        ['rm', '--volumes', '-f', 'first', 'second']])
+
     def test_compose_removal_includes_anonymous_volumes(self):
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
