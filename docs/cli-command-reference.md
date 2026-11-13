@@ -1783,6 +1783,7 @@ Subcommands:
 - `refresh` Refresh a team member's profile and existing team-instructions block
 - `up` Launch local team agents in tmux
 - `agent-status` Read whether an agent still holds a certificate, a workspace, or task claims
+- `log-key` Manage the owner key that agents' local message logs are sealed to
 - `remove-agent` Retire an agent: release its claims, then revoke its certificate
 - `replace-key` Replace a local agent identity key under team-controller authority
 
@@ -1934,6 +1935,42 @@ retired comes from somewhere other than the command that retired it.
 Flags:
 - `-h, --help help for agent-status`
 - `--team-id string Canonical team id (<name>:<namespace>) to read from (defaults to active team)`
+
+## `team admin log-key`
+
+### `team admin log-key`
+
+Manage the owner key that agents' local message logs are sealed to
+
+Subcommands:
+- `create` Create (or rotate) the team's owner log key; prints its signed public record
+- `install` Install the team's owner log key record on this host; local logs are then sealed to it
+
+Flags:
+- `-h, --help help for log-key`
+- `--team string Override the selected team_id for this command`
+
+## `team admin log-key create`
+
+### `team admin log-key create`
+
+Create a new log key for the team on the owner's machine. The private key is kept in
+the OS keychain under a passphrase; the public record, signed with the team controller
+key, is written to --out (or stdout) for `aw team admin log-key install` on each agent host.
+Running it again rotates the key; earlier keys stay in the keychain.
+
+Flags:
+- `-h, --help help for create`
+- `--out string Write the signed public record to this file instead of stdout`
+
+## `team admin log-key install`
+
+### `team admin log-key install`
+
+Install the team's owner log key record on this host; local logs are then sealed to it
+
+Flags:
+- `-h, --help help for install`
 
 ## `team admin remove-agent`
 
@@ -2934,12 +2971,24 @@ Flags:
 
 Show local communication log
 
+Subcommands:
+- `read` Read sealed local logs with the owner's log keys from this machine's keychain
+
 Flags:
 - `--channel string Filter by channel (mail, chat, dm)`
 - `--from string Filter by sender (substring match)`
 - `-h, --help help for log`
 - `--limit int Max entries to show (default 20)`
 - `--team string Override the selected team_id for this command`
+
+## `log read`
+
+### `log read`
+
+Read sealed local logs with the owner's log keys from this machine's keychain
+
+Flags:
+- `-h, --help help for read`
 
 ## `mail`
 
