@@ -32,10 +32,6 @@ class Settings(BaseSettings):
     db_pool_max_connections: int = Field(default=5, ge=1)
     db_statement_cache_size: int = Field(default=0, ge=0)
     app_id: str = Field(default="library")
-    app_events_origin: str | None = None
-    app_emit_kid: str | None = None
-    app_emit_key_seed_hex: str | None = None
-    app_emit_timeout_seconds: float = Field(default=3.0, gt=0)
 
     @field_validator("awid_service_token")
     @classmethod

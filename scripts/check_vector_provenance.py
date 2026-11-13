@@ -20,10 +20,6 @@ EXPECTED_VECTOR_ROOTS = {
     PurePosixPath("naapp/secrets/vectors"),
     PurePosixPath("test-vectors"),
 }
-APP_EMIT_COPIES = (
-    PurePosixPath("cli/go/internal/conformance/vectors/app-emit-credential-v1.json"),
-    PurePosixPath("naapp/library/tests/vectors/app-emit-credential-v1.json"),
-)
 MANAGED_PUBLIC_COPIES = {
     PurePosixPath("cli/go/internal/conformance/vectors/team-auth-envelope-v2.json"): (
         PUBLIC_ROOT / "team-auth-envelope-v2.json"
@@ -975,21 +971,6 @@ def check(
                 f"managed public-vector package copy differs from authority: {copy}"
             )
 
-    missing_app_emit = [
-        str(path) for path in APP_EMIT_COPIES if path not in tracked_set
-    ]
-    if missing_app_emit:
-        failures.append(
-            f"missing classified app-emit snapshots: {', '.join(missing_app_emit)}"
-        )
-    else:
-        source = read(APP_EMIT_COPIES[0])
-        for path in APP_EMIT_COPIES[1:]:
-            if read(path) != source:
-                failures.append(
-                    f"app-emit snapshot differs from consumer authority: {path}"
-                )
-
     required_files = (
         *ROOT_CONSUMERS,
         *REFERENCE_CONSUMERS,
@@ -1155,14 +1136,6 @@ def self_test(root: Path) -> None:
             overrides={managed_copy: read_bytes(root, managed_copy) + b"\n"},
             expected="managed public-vector package copy differs",
         )
-    snapshot = APP_EMIT_COPIES[1]
-    _expect_mutation(
-        "divergent classified snapshot",
-        root,
-        tracked,
-        overrides={snapshot: read_bytes(root, snapshot) + b"\n"},
-        expected="app-emit snapshot differs",
-    )
     _expect_mutation(
         "unclassified vector root",
         root,
