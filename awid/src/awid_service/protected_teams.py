@@ -11,6 +11,7 @@ import base64
 import hashlib
 import json
 import logging
+from contextlib import asynccontextmanager
 from datetime import datetime, timezone
 
 from fastapi import HTTPException
@@ -146,7 +147,7 @@ async def _artifact(request, operation):
     )
 
 
-async def require_effect(request, tx, *, domain, name, operation):
+async def require_effect(request, tx, *, domain, name, operation, deadlines=None):
     """Call inside the effect transaction, BEFORE any team/record row lock."""
     await team_guard(tx, domain, name)
     binding = await protection(tx, domain, name)
@@ -192,7 +193,7 @@ async def require_effect(request, tx, *, domain, name, operation):
             )
             for proof in proofs:
                 try:
-                    verify_proof(
+                    fields = verify_proof(
                         proof,
                         binding=binding,
                         team_id=build_team_id(domain, name),
@@ -204,6 +205,8 @@ async def require_effect(request, tx, *, domain, name, operation):
                         consumer=consumer,
                         now=datetime.now(timezone.utc),
                     )
+                    if deadlines is not None:
+                        deadlines.append((datetime.fromisoformat(fields["expires_at"]), code))
                     return binding
                 except EffectRefused:
                     continue
@@ -215,7 +218,7 @@ async def require_effect(request, tx, *, domain, name, operation):
     raise refusal(code)
 
 
-async def require_namespace_effect(request, tx, *, domain, operation):
+async def require_namespace_effect(request, tx, *, domain, operation, deadlines=None):
     await namespace_guard(tx, domain, exclusive=True)
     teams = await tx.fetch_all(
         "SELECT name FROM {{tables.team_protection}} WHERE domain=$1 AND mode='protected' ORDER BY name",
@@ -223,8 +226,29 @@ async def require_namespace_effect(request, tx, *, domain, operation):
     )
     for row in teams:
         await require_effect(
-            request, tx, domain=domain, name=row["name"], operation=operation
+            request, tx, domain=domain, name=row["name"], operation=operation, deadlines=deadlines
         )
+
+
+@asynccontextmanager
+async def effect_transaction(request, db, *, domain, operation, name=None):
+    """Serialize authority and fence its original proof expiry before commit.
+
+    This scope encloses the complete route effect, including early successful
+    returns and namespace cascades. Generation/controller guards remain held;
+    only a synchronous deadline check follows the effect's final await.
+    """
+    deadlines = []
+    async with db.transaction() as tx:
+        if name is None:
+            await require_namespace_effect(request, tx, domain=domain, operation=operation, deadlines=deadlines)
+        else:
+            await require_effect(request, tx, domain=domain, name=name, operation=operation, deadlines=deadlines)
+        yield tx
+        now = datetime.now(timezone.utc)
+        for expiry, code in deadlines:
+            if now >= expiry:
+                raise refusal(code)
 
 
 async def provision_team_protection(
