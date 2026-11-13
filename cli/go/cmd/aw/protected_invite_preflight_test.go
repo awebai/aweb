@@ -3,13 +3,38 @@ package main
 import (
 	"crypto/ed25519"
 	"encoding/json"
-	"github.com/awebai/aw/awconfig"
-	"github.com/awebai/aw/awid"
 	"net/http"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
+
+	"github.com/awebai/aw/awconfig"
+	"github.com/awebai/aw/awid"
 )
+
+// Invite workflow fixtures explicitly model an upgraded legacy registry. The
+// controller read is signed with their saved team key; these fixtures test the
+// workflow after that read, while native AWID tests cover registry authority.
+func serveExplicitLegacyInviteTeam(t *testing.T, w http.ResponseWriter, r *http.Request, teamID string) bool {
+	t.Helper()
+	name, domain, ok := strings.Cut(teamID, ":")
+	if !ok || r.Method != http.MethodGet || r.URL.Path != "/v1/namespaces/"+domain+"/teams/"+name {
+		return false
+	}
+	credential := strings.Fields(r.Header.Get("Authorization"))
+	if len(credential) != 3 || credential[0] != "DIDKey" {
+		t.Fatalf("expected signed controller read, got %q", r.Header.Get("Authorization"))
+	}
+	if _, err := awid.ExtractPublicKey(credential[1]); err != nil {
+		t.Fatal(err)
+	}
+	_ = json.NewEncoder(w).Encode(map[string]any{
+		"team_id": teamID, "team_did_key": credential[1],
+		"protection": map[string]any{"mode": "legacy"},
+	})
+	return true
+}
 
 func TestLocalInviteProtectionRefusesBeforeMintOrInviteConsumption(t *testing.T) {
 	for _, mode := range []string{"protected", "missing"} {

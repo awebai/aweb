@@ -3,9 +3,10 @@ package main
 import (
 	"encoding/json"
 	"fmt"
+	"regexp"
+
 	"github.com/awebai/aw/awid"
 	"github.com/awebai/aw/internal/handoff"
-	"regexp"
 )
 
 var protectedHistoryID = regexp.MustCompile(`^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$`)

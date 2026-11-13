@@ -55,6 +55,9 @@ func TestTeamJoinHarnessCommand(t *testing.T) {
 	var admissionCalls, connectCalls, docsCalls atomic.Int32
 	var docsFailure, connectFailure atomic.Bool
 	server := newLocalHTTPServerHandlerWithURL(t, func(serverURL string, w http.ResponseWriter, r *http.Request) {
+		if serveExplicitLegacyInviteTeam(t, w, r, "backend:acme.com") {
+			return
+		}
 		switch {
 		case r.URL.Path == "/api/v1/discovery":
 			_ = json.NewEncoder(w).Encode(map[string]any{"onboarding_url": serverURL, "aweb_url": serverURL, "registry_url": serverURL})
