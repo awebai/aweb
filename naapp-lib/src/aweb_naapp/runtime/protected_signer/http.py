@@ -229,7 +229,12 @@ class ProtectedOperationsHTTP:
             async def admission_policy(request: Request):
                 try:
                     await self._guard(request)
-                    if set(request.query_params) != {"team_id"} or len(request.query_params.getlist("team_id")) != 1:
+                    # Released clients send team_id alone and get the exact
+                    # configuration answer; include=admissions opts in to the
+                    # root's own counts (human-assurance-contract.md s5).
+                    params = request.query_params
+                    if (set(params) - {"include"} != {"team_id"} or len(params.getlist("team_id")) != 1
+                            or params.getlist("include") not in ([], ["admissions"])):
                         raise SignerRefused("request_invalid")
                     async for chunk in request.stream():
                         if chunk:

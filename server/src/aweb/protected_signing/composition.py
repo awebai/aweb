@@ -232,6 +232,8 @@ class IndependentProtectedSigner:
         an arbitrary valid registry key is not a prospective root grant. The
         current controller/H checks remain independent of policy contents.
         """
+        from .admission import admission_counts
+
         c = self.context
         if c.authority_kind != "team_controller" or team_id != c.authority_id:
             raise SignerRefused("scope_refused")
@@ -256,11 +258,26 @@ class IndependentProtectedSigner:
                         policy = None
                 except (ValueError, TypeError):
                     raise SignerRefused("evidence_unavailable") from None
+            admissions = None
+            counted = request.query_params.get("include") == "admissions"
+            if counted and policy is not None and await tx.fetch_value(
+                "SELECT 1 FROM {{tables.protected_root_endorsements}} WHERE service_id=$1 AND root_id=$2",
+                c.service_id, principal,
+            ):
+                # The endorsed root's own bucket only, as the bounds count it:
+                # a snapshot for its refusal sentence, never a reservation.
+                admissions = await admission_counts(tx, service_id=c.service_id, team_id=team_id, root_id=principal,
+                    window_seconds=policy.fields()["bounds"]["rate_window_seconds"], now=self.signer.clock())
+                if admissions["next_at"] is not None:
+                    admissions["next_at"] = admissions["next_at"].isoformat().replace("+00:00", "Z")
             await fence.check(tx, actor)
             fence.require_fresh()
             enforce_timestamp_skew(require_timestamp(request))
-        return {"service_id": c.service_id, "team_id": team_id, "mode": "protected",
+        answer = {"service_id": c.service_id, "team_id": team_id, "mode": "protected",
                 "policy": policy.fields() if policy is not None else None}
+        if counted:
+            answer["admissions"] = admissions
+        return answer
 
     async def migrate(self):
         await AsyncMigrationManager(
