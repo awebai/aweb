@@ -3,7 +3,10 @@ file, destroy removes only the bundle's own containers and volumes and only
 when the project is named, backup refuses while a writer runs, and restore
 fails closed."""
 
+import json
 from pathlib import Path
+
+import pytest
 
 from tests.test_team_deployment_runner import EXAMPLE, TEAMCTL, deployment, run
 
@@ -198,3 +201,116 @@ def test_start_reloads_the_running_front_with_the_rendered_sites(tmp_path):
     assert len(reloads) == 1 and reloads[0] > up and "--force" in made[reloads[0]].split(), made
     served = [call for call in made[reloads[0] + 1:] if call.startswith("run --rm --user 0 --network teamrun_services")]
     assert len(served) == 1 and "certificate.pem" in served[0], made[reloads[0]:]
+
+
+def agents_deployment(tmp_path: Path, team: dict) -> str:
+    """A deployment with agents, its signer's profile and a clean OATS checkout
+    holding the two fragments teamctl records."""
+    import json
+    import subprocess
+
+    from tests.test_team_deployment_egress_policy import CONTROLLER
+    from tests.test_team_deployment_render_env import AGENTS, APPS, EGRESS, PROFILE, SIGNER
+
+    oats = tmp_path / "oats"
+    for fragment in ("container/agent/compose.agent.yaml", "container/agent/egress/compose.egress.yaml"):
+        (oats / fragment).parent.mkdir(parents=True, exist_ok=True)
+        (oats / fragment).write_text("services: {}\n", encoding="utf-8")
+    git = ["git", "-C", str(oats), "-c", "user.name=t", "-c", "user.email=t@example.com"]
+    subprocess.run(["git", "init", "-q", str(oats)], check=True)
+    subprocess.run([*git, "add", "."], check=True)
+    subprocess.run([*git, "commit", "-q", "-m", "fragments"], check=True)
+    profile = tmp_path / "profile.json"
+    profile.write_text(json.dumps({
+        **PROFILE, "registry_origin": team.get("registryUrl", "https://api.awid.ai"),
+        "namespace_authorities": [{"domain": "example.com", "controller_did": CONTROLLER}],
+    }), encoding="utf-8")
+    agents = {**AGENTS, "compose": {**AGENTS["compose"], "oatsSource": str(oats)}}
+    return deployment(tmp_path, {**EXAMPLE, "team": team, "agents": agents, "egress": EGRESS,
+                                 "signer": {**SIGNER, "profileFile": str(profile)}, **APPS})
+
+
+BASE_SERVICES = ["postgres", "redis", "aweb", "secrets", "logs", "signer", "egress", "agent"]
+PUBLIC_REGISTRY_ADDRESSES = ["104.21.0.10", "172.67.0.10"]
+
+
+def start_with_agents(tmp_path: Path, team: dict, services: list[str], registry: list[str]):
+    # The stub docker answers what start asks before the ingress probe: the
+    # services, the origins' addresses seen from aweb, the agents network's
+    # isolation, a first line from each followed log, and the probe's pass.
+    import json
+
+    resolved = {"origins": {role: ["172.31.0.250"] for role in ("aweb", "secrets", "logs", "signer")},
+                "backends": {"postgres": "172.31.0.3", "redis": "172.31.0.4"}}
+    resolved["origins"]["registry"] = registry
+    answers = {
+        "config --services": "\n".join(services) + "\n",
+        "SOCK_STREAM": json.dumps(resolved),
+        "gateway_mode_ipv4": "true false isolated",
+        "logs --follow": "attached\n",
+        "probe-ingress.mjs": "OATS_EGRESS_INGRESS_PASS",
+    }
+    path = agents_deployment(tmp_path, team)
+    return run(tmp_path, "start", path, command=TEAMCTL, docker_ok=True, answers=answers)
+
+
+def followed(tmp_path: Path) -> list[str]:
+    # The backend logs teamctl followed for the probe: one file per local
+    # route. (The followers run concurrently, so their docker calls can
+    # interleave in the stub's call log.)
+    logs = tmp_path / "run" / "ingress-logs"
+    return sorted(path.stem for path in logs.glob("*.log")) if logs.exists() else []
+
+
+def probes(made: list[str]) -> list[str]:
+    return [call for call in made if "probe-ingress.mjs" in call]
+
+
+def test_start_probes_the_public_registry_as_an_external_route_with_no_backend_log(tmp_path):
+    # The default registry is the public one, which is no service of the
+    # deployment: before the external route, teamctl refused to probe it.
+    result = start_with_agents(tmp_path, {"id": "devteam:example.com"}, BASE_SERVICES, PUBLIC_REGISTRY_ADDRESSES)
+    assert "ingress probe: exit 0, OATS_EGRESS_INGRESS_PASS" in result.stdout, result.stdout + result.stderr
+    made = calls(tmp_path)
+    assert followed(tmp_path) == ["aweb", "logs", "secrets", "signer"]
+    assert len(probes(made)) == 1 and "--human-log /logs/signer.log" in probes(made)[0]
+    routes = json.loads((tmp_path / "run" / "ingress-logs" / "route-logs.json").read_text())
+    assert routes["registry"] == {"path": "/health", "external": True}
+    assert routes["signer"] == {"path": "/readyz", "log": "/logs/signer.log"}
+
+
+def test_start_probes_a_local_registry_through_its_own_log(tmp_path):
+    team = {"id": "devteam:example.com", "registryUrl": "https://registry.example.com", "registryRoute": "local"}
+    result = start_with_agents(tmp_path, team, [*BASE_SERVICES, "registry"], ["172.31.0.250"])
+    assert "ingress probe: exit 0, OATS_EGRESS_INGRESS_PASS" in result.stdout, result.stdout + result.stderr
+    assert followed(tmp_path) == ["aweb", "logs", "registry", "secrets", "signer"]
+    routes = json.loads((tmp_path / "run" / "ingress-logs" / "route-logs.json").read_text())
+    assert routes["registry"] == {"path": "/health", "log": "/logs/registry.log"}
+
+
+@pytest.mark.parametrize(
+    ("team", "services", "registry", "refusal"),
+    [
+        # A missing local registry never becomes an external route.
+        ({"id": "devteam:example.com", "registryUrl": "https://registry.example.com", "registryRoute": "local"},
+         BASE_SERVICES, ["172.31.0.250"], "registry: the ingress probe needs its backend log"),
+        ({"id": "devteam:example.com"}, [*BASE_SERVICES, "registry"], PUBLIC_REGISTRY_ADDRESSES,
+         "registry is a service of this deployment; set team.registryRoute: local"),
+        ({"id": "devteam:example.com", "registryUrl": "https://registry.example.com", "registryRoute": "local"},
+         [*BASE_SERVICES, "registry"], PUBLIC_REGISTRY_ADDRESSES,
+         "104.21.0.10 is not one of the deployment's private ingress addresses"),
+        ({"id": "devteam:example.com"}, BASE_SERVICES, ["172.31.0.250"],
+         "172.31.0.250 is one of the deployment's own addresses"),
+        ({"id": "devteam:example.com"}, [s for s in BASE_SERVICES if s != "logs"], PUBLIC_REGISTRY_ADDRESSES,
+         "logs: the ingress probe needs its backend log"),
+    ],
+)
+def test_start_holds_the_agents_when_a_declared_route_does_not_match_the_deployment(
+    tmp_path, team, services, registry, refusal
+):
+    result = start_with_agents(tmp_path, team, services, registry)
+    assert result.returncode == 1
+    assert "teamctl: no ingress probe: " in result.stderr and refusal in result.stderr, result.stderr
+    assert "agents held: the ingress refusal probe did not pass" in result.stderr
+    made = calls(tmp_path)
+    assert followed(tmp_path) == [] and probes(made) == []

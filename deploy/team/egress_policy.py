@@ -126,14 +126,18 @@ def ingress_routes(config: dict, policy: dict, services: list[str]) -> dict[str,
     local route, probed through the deployment's ingress and witnessed in its
     own service's log, except a registry the operator declares external
     (team.registryRoute): that one is the registry's operator's, so its route
-    has a matched positive control and no log witness. A declared route that
-    does not match the deployment is refused, never turned into the other."""
+    has a matched positive control and no log witness. A local registry is
+    reached only at the deployment's private ingress addresses, never at the
+    public origin; the probe's log witness shows the registry service itself
+    answered. A declared route that does not match the deployment is refused,
+    never turned into the other."""
     registry_route = config["team"].get("registryRoute", "external")
     routes = {}
     for role in ROLES:
         if role == "registry" and registry_route == "external":
             if role in services:
-                raise Refused("registry: team.registryRoute is external, but registry is a service of this deployment")
+                raise Refused("registry: team.registryRoute is external, but registry is a service of this deployment;"
+                              " set team.registryRoute: local")
             own = {policy["frontAddress"], *policy["privateIngressAddresses"], *policy["deniedAddresses"],
                    *(address for other, target in policy["targets"].items() if other != role
                      for address in target["addresses"])}
@@ -145,6 +149,11 @@ def ingress_routes(config: dict, policy: dict, services: list[str]) -> dict[str,
             continue
         if role not in services:
             raise Refused(f"{role}: the ingress probe needs its backend log, and {role} is not a service of this deployment")
+        if role == "registry":
+            for address in policy["targets"][role]["addresses"]:
+                if address not in policy["privateIngressAddresses"]:
+                    raise Refused(f"registry: team.registryRoute is local, but {address} is not one of the deployment's"
+                                  " private ingress addresses")
         routes[role] = {"path": ALLOWED_PATHS[role], "log": f"/logs/{role}.log"}
     return routes
 
