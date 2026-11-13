@@ -87,13 +87,34 @@ def world(tmp_path, monkeypatch):
     )
     module_dir = Path(__file__).resolve().parents[1] / "e2e"
     bootstrap = f"""
-import os, sys
+import os, signal, sys
 from pathlib import Path
 sys.path.insert(0, {str(module_dir)!r})
 import runner_supervisor as supervisor
 supervisor.EGRESS_READY = Path({str(marker)!r})
 supervisor_pid = os.getpid()
+class AfterChildExit(bytes):
+    def __bool__(self):
+        # The guardian has exactly one child. Observe its exit without reaping
+        # it, so the real input write happens after all child readers close.
+        # A watchdog lets _worker kill/reap a broken child instead of orphaning
+        # it if the launch guard regresses. It does not order the race.
+        def overdue(*_):
+            raise TimeoutError('child did not refuse before registration input')
+        previous = signal.signal(signal.SIGALRM, overdue)
+        signal.alarm(3)
+        try:
+            os.waitid(os.P_ALL, 0, os.WEXITED | os.WNOWAIT)
+        finally:
+            signal.alarm(0)
+            signal.signal(signal.SIGALRM, previous)
+        return True
 class ObservedPolicy(supervisor.Policy):
+    def request(self, body):
+        argv, data = super().request(body)
+        if data and (self.state / 'input-after-child-exit').exists():
+            data = AfterChildExit(data)
+        return argv, data
     def check(self):
         super().check()
         (self.state / 'installation-checked').touch()
@@ -421,6 +442,23 @@ async def test_child_rechecks_marker_immediately_before_exec(world, operation):
     assert rc == 0 and stderr == b""
     assert frames[1] == {"exec": False}, "the child must refuse removal after the parent check"
     assert frames[2] == {"exit": 127}
+    assert not (policy.state / "registered").exists()
+    assert not (policy.state / "ready").exists()
+
+
+@LINUX
+async def test_registration_reports_refusal_when_child_exits_before_input_write(world):
+    policy, _, command = world
+    (policy.state / "remove-before-exec").touch()
+    (policy.state / "input-after-child-exit").touch()
+    rc, stdout, stderr = await supervisor_result(
+        command, {"command": "register", "code": secrets.token_urlsafe(24)}
+    )
+    frames = [json.loads(line) for line in stdout.splitlines()]
+    assert rc == 0 and stderr == b""
+    assert len(frames) == 3, "identity must be followed by the child's exec and exit results"
+    assert frames[0]["uid"] == os.geteuid()
+    assert frames[1:] == [{"exec": False}, {"exit": 127}]
     assert not (policy.state / "registered").exists()
     assert not (policy.state / "ready").exists()
 
