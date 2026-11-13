@@ -202,7 +202,7 @@ team's deployment (above).
 | Database passwords, Redis's password | Not exercised for this bundle: the role's password, the component's URL file and `postgres/roles/<name>` (or Redis's `users.acl` and aweb's `redis-url`) change together, then the services restart. | | Not qualified |
 | The agents' harness login | The OATS container's; see its documentation. | | |
 
-### The owner's log key for the agents' local logs (`aweb-acyh`, OPEN)
+### The owner's log key for the agents' local logs (`aweb-acyh`)
 
 The agents' local logs are plaintext today
 (`deploy/team/access/agents.md`). Sealing them under a key the team owner
