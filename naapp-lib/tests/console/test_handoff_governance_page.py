@@ -208,9 +208,9 @@ async def authenticator(context, page):
     return cdp, device["authenticatorId"]
 
 
-async def open_page(service, width):
+async def open_page(service, width, **context_options):
     context = await service.browser.new_context(
-        ignore_https_errors=True, viewport={"width": width, "height": 900}
+        ignore_https_errors=True, viewport={"width": width, "height": 900}, **context_options
     )
     page = await context.new_page()
     cdp, device = await authenticator(context, page)

@@ -1,6 +1,18 @@
 "use strict";
 
 (() => {
+  // A time the server wrote in UTC and marked data-local reads in the
+  // viewer's own zone; without script it keeps its UTC text.
+  for (const time of document.querySelectorAll("time[datetime][data-local]")) {
+    const at = new Date(time.dateTime);
+    if (Number.isFinite(at.getTime())) {
+      time.textContent = at.toLocaleString(undefined, {
+        year: "numeric", month: "short", day: "numeric", hour: "2-digit", minute: "2-digit",
+        timeZoneName: "short",
+      });
+    }
+  }
+
   // The app's page names this tab's CSRF storage key and the copy shown here.
   const config = document.body.dataset;
   const csrfKey = config.consoleCsrfKey;

@@ -149,6 +149,12 @@ def _when(stamp):
     return datetime.fromisoformat(stamp.replace("Z", "+00:00")).strftime("%Y-%m-%d %H:%M UTC")
 
 
+def _time(stamp):
+    """A time marked for the console script to show in the viewer's zone;
+    without script it reads as UTC."""
+    return f'<time datetime="{escape(stamp, quote=True)}" data-local>{escape(_when(stamp))}</time>'
+
+
 def _window(seconds):
     return {3600: "hour", 86400: "day"}.get(seconds, f"{seconds} seconds")
 
@@ -184,10 +190,10 @@ def owner_page_html(view: dict) -> str:
     if view["pending"]:
         parts.append('<ul class="owner-list">')
         for item in view["pending"]:
-            asked = f", asked {_when(item['asked_at'])}" if item.get("asked_at") else ""
+            asked = f", asked {_time(item['asked_at'])}" if item.get("asked_at") else ""
             parts.append(
-                f'<li><a href="/handoff/{e(item["handoff_id"])}">Review the request from {e(item["requester"])}{e(asked)}</a>'
-                f'<p>Expires {e(_when(item["expires_at"]))}</p>'
+                f'<li><a href="/handoff/{e(item["handoff_id"])}">Review the request from {e(item["requester"])}{asked}</a>'
+                f'<p>Expires {_time(item["expires_at"])}</p>'
                 + _technical([("Operation", item["operation"]), ("Digest", item["digest"])]) + "</li>"
             )
         parts.append("</ul>")
@@ -209,7 +215,7 @@ def owner_page_html(view: dict) -> str:
             for agent in view["admitted"]:
                 state = {"active": "member", "reserved": "being added", "removed": "removed"}.get(agent["state"], agent["state"])
                 parts.append(
-                    f'<li>{e(agent["alias"] or "unnamed agent")}: {e(state)}, added {e(_when(agent["admitted_at"]))}'
+                    f'<li>{e(agent["alias"] or "unnamed agent")}: {e(state)}, added {_time(agent["admitted_at"])}'
                     + _technical([("Added by", agent["root_id"]), ("Agent key", agent["child_key"])]) + "</li>"
                 )
             parts.append("</ul>")
@@ -235,7 +241,7 @@ def owner_page_html(view: dict) -> str:
             if item.get("decided_by_you") and item["state"] != "expired":
                 outcome += " by you"
             parts.append(
-                f'<li>{e(outcome)}, {e(_when(item["at"]))}: a request from {e(item["requester"])}'
+                f'<li>{e(outcome)}, {_time(item["at"])}: a request from {e(item["requester"])}'
                 + _technical([("Operation", item["operation"]), ("Digest", item["digest"])]) + "</li>"
             )
         parts.append("</ul>")

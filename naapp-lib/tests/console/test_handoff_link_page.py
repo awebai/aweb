@@ -48,7 +48,7 @@ async def test_one_touch_from_the_mailed_link_approves(link_service, width):
         await expect(page.locator("#handoff-fingerprint")).to_be_visible()
         # Who asked and until when are in sight; identifiers are in details.
         await expect(page.locator("#handoff-requested")).to_contain_text("Requested by")
-        await expect(page.locator("#handoff-expires")).to_have_text(re.compile(r"^Expires \d{4}-\d\d-\d\d \d\d:\d\d UTC$"))
+        await expect(page.locator("#handoff-expires")).to_have_text(re.compile(r"^Expires .+$"))
         await expect(page.locator("#handoff-act")).to_be_hidden()
         await expect(page.locator("#handoff-target")).to_be_hidden()
         await expect(page.locator("#handoff-fingerprint")).to_have_text(
@@ -248,3 +248,13 @@ async def test_a_click_after_the_server_expired_the_request_says_expired(link_se
         s.world.clock.advance(timedelta(hours=25))
         await page.locator("#handoff-action").click()
         await expect(page.locator("#handoff-title")).to_have_text("Request expired")
+
+
+async def test_times_read_in_the_readers_own_zone(link_service):
+    s = link_service
+    context, page, _, _ = await open_page(s, 390, timezone_id="America/New_York", locale="en-US")
+    async with context:
+        await page.goto(s.link)
+        expires = page.locator("#handoff-expires")
+        await expect(expires).to_have_text(re.compile(r"^Expires .+ E[SD]T$"))
+        assert "UTC" not in await expires.inner_text()

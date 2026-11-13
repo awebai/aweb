@@ -124,9 +124,12 @@ import { operationTable } from "/handoff-assets/operations.mjs";
     document.getElementById("handoff-title").focus();
   }
 
-  // A stored UTC time as the page shows it.
+  // A stored time in the reader's own zone, with the zone named.
   function when(stamp) {
-    return new Date(stamp).toISOString().slice(0, 16).replace("T", " ") + " UTC";
+    return new Date(stamp).toLocaleString(undefined, {
+      year: "numeric", month: "short", day: "numeric", hour: "2-digit", minute: "2-digit",
+      timeZoneName: "short",
+    });
   }
 
   // The page's heading is its state: the request, then what became of it.

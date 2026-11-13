@@ -105,9 +105,13 @@ def test_the_owner_page_names_what_it_governs_and_reads_as_sentences():
             "Who can approve"):
         assert f">{heading}</h2>" in html
     # Every waiting row says who asked and when, so each link reads differently.
-    assert 'href="/handoff/h-1">Review the request from did:aw:ROOT, asked 2026-11-13 09:30 UTC</a>' in html
-    assert 'href="/handoff/h-2">Review the request from did:aw:OPS, asked 2026-11-13 10:00 UTC</a>' in html
-    assert "Denied by you, 2026-11-13 10:00 UTC: a request from did:aw:ROOT" in html
+    # Times are marked for the viewer's zone and read as UTC without script.
+    assert ('href="/handoff/h-1">Review the request from did:aw:ROOT, asked '
+        '<time datetime="2026-11-13T09:30:00Z" data-local>2026-11-13 09:30 UTC</time></a>') in html
+    assert ('href="/handoff/h-2">Review the request from did:aw:OPS, asked '
+        '<time datetime="2026-11-13T10:00:00Z" data-local>2026-11-13 10:00 UTC</time></a>') in html
+    assert ('Denied by you, <time datetime="2026-11-13T10:00:00Z" data-local>2026-11-13 10:00 UTC</time>: '
+        "a request from did:aw:ROOT") in html
     assert "The root agent: 3 of 5 at a time, 2 of 10 in the last hour." in html
     assert "in engineering" in html and "in engineering:customer.example" not in html
     assert "needs its own approval" not in html
