@@ -116,7 +116,7 @@ async def test_hook_checks_full_registered_certificate(registry, change):
                              team_key_did=facts.team_did_key,
                              registered_certificate_ids=facts.published_certificate_ids,
                              protection_observation=facts.protection_observation,
-                             registered_certificate=facts.registered_certificates[0])
+                             )
     encoded = base64.b64encode(json.dumps(presented.certificate()).encode()).decode()
     if change == "genuine":
         _verify_client_certificate(encoded, envelope, options)
@@ -189,3 +189,45 @@ async def test_unavailable_exact_membership_refuses(registry, fault):
             "/v1/items", headers=member.headers(aud=ORIGIN, method="GET", path="/v1/items")
         )
     assert response.status_code == 503, response.text
+
+
+@pytest.mark.parametrize("private", [False, True], ids=["public", "private"])
+@pytest.mark.parametrize("original_subject", ["genuine", "different"])
+async def test_retained_subject_is_original_evidence(registry, private, original_subject):
+    from awid_service.testing import SERVICE_TOKEN
+    from fastapi import HTTPException
+
+    from aweb_naapp.runtime.team_auth import AWIDTeamCache
+
+    member = Member(team_id=TEAM)
+    await publish(registry, member, protected=True)
+    if private:
+        await registry.db.execute("UPDATE {{tables.teams}} SET visibility='private'")
+    principal = member.did_key if original_subject == "genuine" else Member(team_id=TEAM).did_key
+    cache = AWIDTeamCache(registry_url="https://registry.example", ttl_seconds=60,
+                          transport=registry.transport, service_token=SERVICE_TOKEN)
+    async def check():
+        return await cache.check_current_member(TEAM, certificate_id=member.certificate_id,
+                                               team_did_key=member.team_did_key, principal=principal)
+    if original_subject == "genuine":
+        proof = await check()
+        assert proof.principal == principal
+        assert proof.is_fresh_at(proof.checked_at)
+    else:
+        with pytest.raises(HTTPException) as refused:
+            await check()
+        assert refused.value.status_code == 401
+        assert "certificate_binding_mismatch" in str(refused.value.detail)
+
+
+async def test_private_protected_presenter_needs_no_private_history_access(registry):
+    member = Member(team_id=TEAM)
+    await publish(registry, member, protected=True)
+    await registry.db.execute("UPDATE {{tables.teams}} SET visibility='private'")
+    async with relying_app(registry, public_origin=ORIGIN) as (client, _):
+        response = await client.get(
+            "/v1/items", headers=member.headers(aud=ORIGIN, method="GET", path="/v1/items")
+        )
+    assert response.status_code == 200, response.text
+    # Only public per-certificate status is needed, never private metadata/history.
+    assert all("/status" in request.url.path for request in registry.transport.calls)
