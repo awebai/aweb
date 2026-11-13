@@ -546,6 +546,7 @@ async def test_original_protection_expiry_at_final_effect_await_is_unavailable(w
 
     clock = 1000.0
     monkeypatch.setattr(protected_membership, "monotonic", lambda: clock)
+    assert (await world.post(world.body())).status_code == 200
     # The trusted prepared effect performs real SQL writes before this final
     # synchronous clock advance; H2 and installation clocks remain unchanged.
     original = SqlPreparedEffect.apply
@@ -558,14 +559,16 @@ async def test_original_protection_expiry_at_final_effect_await_is_unavailable(w
         return result
 
     monkeypatch.setattr(SqlPreparedEffect, "apply", apply)
-    response = await world.post(world.body())
+    # Revoke consumes no H2 membership proof, isolating the owner's original
+    # protection deadline from the principal's separate membership deadline.
+    response = await world.post(world.body(act="human-role.revoke"))
     assert response.status_code == (503 if expire else 200), response.text
     if expire:
         assert response.json()["detail"] == "protected_state_unavailable"
-        assert await world.counts() == (0, 0, 0)
-        assert world.effect.committed == 0
-    else:
         assert await world.counts() == (1, 1, 1)
+        assert world.effect.committed == 1
+    else:
+        assert await world.counts() == (2, 0, 2)
 
 
 async def test_revoke_needs_no_principal_membership_and_refuses_a_carried_certificate(world):
