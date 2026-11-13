@@ -150,6 +150,8 @@ class CatalogOperation:
             object.__setattr__(self, "_subject_bytes", canonical_json_bytes(subject))
         except (ValueError, TypeError, Refused):
             raise SignerRefused("request_invalid") from None
+        if spec.family == "log_key_record" and subject["team_id"] != self.context.authority_id:
+            raise SignerRefused("scope_refused")
         if self.redirect_uri is not None:
             from aweb_naapp.console.handoff_wire import HandoffWireRefused, loopback_redirect
 

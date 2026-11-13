@@ -538,3 +538,29 @@ async def test_server_record_uses_same_real_uv_receipt_and_cannot_switch_destina
             requester=world.requester,
         )
     assert (await world.audit.kinds()).count("protected_operation_signed") == 1
+
+
+async def test_log_key_record_uses_real_uv_and_one_retained_signature(world):
+    from awid.e2ee_keys import encryption_key_id
+    from awid.log_key_record import log_key_record_signing_bytes
+
+    from aweb_naapp.runtime.protected_signer import CatalogOperation
+
+    public = base64.b64encode(bytes(range(32))).rstrip(b"=").decode()
+    operation = CatalogOperation(
+        world.operation.operation_id, world.operation.context, "https://signer.example.com",
+        "team.log-key.sign", "default",
+        {"team_id": world.operation.context.authority_id, "key_id": encryption_key_id(public),
+         "public_key": public, "created_at": "2026-11-12T00:00:00Z"},
+    )
+    prepared = await world.signer.prepare(operation, requester=world.requester)
+    assert "expires_at" not in prepared.payload["artifact"]
+    options = await world.signer.approval_options(operation.operation_id, human=world.human)
+    proof = world.device.get(dict(options))
+    receipt = await world.signer.execute(operation.operation_id, proof, human=world.human)
+    raw = base64.b64decode(receipt.result["signing"])
+    assert raw == log_key_record_signing_bytes(prepared.payload["artifact"])
+    world.key.verify_key.verify(raw, base64.b64decode(receipt.result["signature"]))
+    assert await world.signer.receipt(operation.operation_id, reader=world.reader) == receipt
+    assert await world.signer.execute(operation.operation_id, proof, human=world.human) == receipt
+    assert (await world.audit.kinds()).count("protected_operation_signed") == 1

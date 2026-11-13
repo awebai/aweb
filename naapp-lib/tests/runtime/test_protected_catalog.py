@@ -6,9 +6,10 @@ from pathlib import Path
 import pytest
 
 from aweb_naapp.runtime.protected_signer import SignerRefused
-from aweb_naapp.runtime.protected_signer.catalog import OPERATIONS, operation_spec
+from aweb_naapp.runtime.protected_signer.catalog import BASE_OPERATIONS, OPERATIONS, operation_spec
 
 CATALOG = Path(__file__).resolve().parents[3] / "docs/vectors/human-assurance-v1.json"
+LOG_KEY_CATALOG = CATALOG.with_name("human-assurance-log-key-v1.json")
 
 
 def test_operation_registry_matches_all_frozen_signer_rows_only():
@@ -18,16 +19,29 @@ def test_operation_registry_matches_all_frozen_signer_rows_only():
         for row in source["operations"]
         if row["enforced_by"] == "signer"
     }
-    assert set(OPERATIONS) == set(expected)
-    assert len(OPERATIONS) == 53
-    for key, spec in OPERATIONS.items():
+    assert set(BASE_OPERATIONS) == set(expected)
+    assert len(BASE_OPERATIONS) == 53
+    for key, spec in BASE_OPERATIONS.items():
         row = expected[key]
         assert spec.key_role == row["key_role"]
         assert spec.rule == row["rule"]
         assert spec.payload_binding == tuple(row["payload_binding"])
         assert spec.bounds == tuple(row["bounds"])
         assert spec.needs_human == (row["rule"] == "live_floor")
-    assert sum(spec.needs_human for spec in OPERATIONS.values()) == 45
+    assert sum(spec.needs_human for spec in BASE_OPERATIONS.values()) == 45
+
+
+def test_explicit_log_key_extension_joins_the_same_table_without_changing_the_base():
+    extension = json.loads(LOG_KEY_CATALOG.read_bytes())
+    expected = {(row["operation"], row["variant"]): row for row in extension["operations"]}
+    assert set(OPERATIONS) - set(BASE_OPERATIONS) == set(expected)
+    assert len(OPERATIONS) == 54
+    for key, row in expected.items():
+        spec = OPERATIONS[key]
+        assert spec.key_role == row["key_role"] == "team_controller"
+        assert spec.rule == row["rule"] == "live_floor"
+        assert spec.payload_binding == tuple(row["payload_binding"])
+        assert spec.bounds == tuple(row["bounds"])
 
 
 @pytest.mark.parametrize(
@@ -181,13 +195,29 @@ def test_browser_uses_the_same_typed_catalog_and_exact_b2_commitment():
             "subject": {"server_url": record["server_url"]},
         }
     )
+    import base64
+
+    from awid.e2ee_keys import encryption_key_id
+    from awid.log_key_record import build_log_key_record
+
+    def log_subject(raw):
+        public = base64.b64encode(raw).rstrip(b"=").decode()
+        return {"team_id": "demo:example.org", "key_id": encryption_key_id(public),
+                "public_key": public, "created_at": "2026-11-12T00:00:00Z"}
+
+    log_key = log_subject(bytes(range(32)))
+    cases.append({
+        "operation": "team.log-key.sign", "variant": "default", "subject": log_key,
+        "artifact": build_log_key_record(log_key, record["team_did_key"]),
+        "substitution": log_subject(bytes(reversed(range(32)))),
+    })
     script = r"""
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import { validateProtectedPresentation } from './naapp-lib/src/aweb_naapp/assets/protected-presentation.mjs';
 import { coveredRequestDigest } from './naapp-lib/src/aweb_naapp/assets/canonical-json.mjs';
 const {table, cases} = JSON.parse(readFileSync(0, 'utf8'));
-for (const {operation, variant, artifact, subject = artifact.subject} of cases) {
+for (const {operation, variant, artifact, subject = artifact.subject, substitution} of cases) {
   const state = {
     mode: 'governance', handoff_id: 'handoff', state: 'pending',
     operation_id: 'operation', expires_at: artifact.expires_at ?? '2026-11-12T00:10:00Z',
@@ -201,7 +231,10 @@ for (const {operation, variant, artifact, subject = artifact.subject} of cases) 
   assert.deepEqual((await validateProtectedPresentation(state, 'handoff', table)).subject, subject);
   // Consistent request+artifact substitution retains the original approval digest.
   const substituted = structuredClone(state);
-  if (artifact.subject) {
+  if (substitution) {
+    Object.assign(substituted.payload.request.subject, substitution);
+    Object.assign(substituted.payload.request.artifact, substitution);
+  } else if (artifact.subject) {
     substituted.payload.request.subject.app_id = 'another-app';
     substituted.payload.request.artifact.subject.app_id = 'another-app';
   } else {
@@ -209,6 +242,13 @@ for (const {operation, variant, artifact, subject = artifact.subject} of cases) 
     substituted.payload.request.artifact.server_url = 'https://another.example.org';
   }
   await assert.rejects(validateProtectedPresentation(substituted, 'handoff', table));
+  if (artifact.public_key) {
+    const invalidID = structuredClone(state);
+    invalidID.payload.request.subject.key_id = `sha256:${'A'.repeat(43)}`;
+    invalidID.payload.request.artifact.key_id = invalidID.payload.request.subject.key_id;
+    invalidID.digest = await coveredRequestDigest(invalidID.payload);
+    await assert.rejects(validateProtectedPresentation(invalidID, 'handoff', table));
+  }
   // A recomputed digest cannot enable an unregistered field or mismatched typed artifact.
   for (const mutate of [
     s => {if (s.payload.request.artifact.subject) s.payload.request.artifact.subject.extra = 'raw'; s.payload.request.subject.extra = 'raw';},

@@ -1,6 +1,7 @@
 package handoff
 
 import (
+	"encoding/base64"
 	"time"
 
 	"github.com/awebai/aw/awid"
@@ -12,6 +13,39 @@ import (
 func preparedArtifactMismatch(sent map[string]any, artifact map[string]any) string {
 	scope, _ := sent["scope"].(map[string]any)
 	authority, _ := scope["authority"].(map[string]any)
+	if sent["operation"] == "team.log-key.sign" {
+		subject, _ := sent["subject"].(map[string]any)
+		if sent["variant"] != "default" || authority["kind"] != "team_controller" ||
+			!exactMembers(subject, []string{"team_id", "key_id", "public_key", "created_at"}) ||
+			!exactMembers(artifact, []string{"v", "team_id", "key_id", "public_key", "created_at", "team_key_did"}) ||
+			!sameJSON(artifact["v"], 1) || !sameJSON(artifact["team_id"], authority["id"]) {
+			return "its artifact is not the team's log-key record"
+		}
+		for name, value := range subject {
+			if !sameJSON(artifact[name], value) {
+				return "its artifact names another log key"
+			}
+		}
+		public, _ := subject["public_key"].(string)
+		raw, err := base64.RawStdEncoding.Strict().DecodeString(public)
+		if err != nil || len(raw) != 32 || base64.RawStdEncoding.EncodeToString(raw) != public {
+			return "its artifact has an invalid log key"
+		}
+		keyID, err := awid.ComputeEncryptionKeyID(raw)
+		if err != nil || !sameJSON(subject["key_id"], keyID) {
+			return "its artifact has another log-key id"
+		}
+		key, _ := artifact["team_key_did"].(string)
+		if _, err := awid.ExtractPublicKey(key); err != nil {
+			return "its artifact names an invalid team key"
+		}
+		stamp, _ := artifact["created_at"].(string)
+		const layout = "2006-01-02T15:04:05Z"
+		if created, err := time.Parse(layout, stamp); err != nil || created.Format(layout) != stamp {
+			return "its artifact has an invalid created_at"
+		}
+		return ""
+	}
 	if sent["operation"] == "team.server-record.publish" {
 		subject, _ := sent["subject"].(map[string]any)
 		if sent["variant"] != "default" || authority["kind"] != "team_controller" ||

@@ -54,7 +54,7 @@ ROOT_CONSUMERS = {
         'Path(__file__).resolve().parents[3] / "docs/vectors/owner-act-v1.json"',
     ),
     PurePosixPath("naapp-lib/tests/runtime/test_protected_catalog.py"): _consumer(
-        ("human-assurance-v1.json", "owner-act-v1.json"),
+        ("human-assurance-v1.json", "human-assurance-log-key-v1.json", "owner-act-v1.json"),
         'Path(__file__).resolve().parents[3] / "docs/vectors/human-assurance-v1.json"',
     ),
     PurePosixPath("server/tests/test_protected_service_profile.py"): _consumer(

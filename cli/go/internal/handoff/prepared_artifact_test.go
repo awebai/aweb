@@ -1,12 +1,62 @@
 package handoff
 
 import (
+	"encoding/base64"
 	"encoding/json"
 	"testing"
 	"time"
 
 	"github.com/awebai/aw/awid"
 )
+
+func logKeyPreparation(t *testing.T) (map[string]any, map[string]any) {
+	sent, payload := serverRecordPreparation(t)
+	public := make([]byte, 32)
+	for i := range public {
+		public[i] = byte(i)
+	}
+	keyID, err := awid.ComputeEncryptionKeyID(public)
+	if err != nil {
+		t.Fatal(err)
+	}
+	sent["operation"] = "team.log-key.sign"
+	sent["subject"] = map[string]any{"team_id": "h:example.com", "key_id": keyID,
+		"public_key": base64.RawStdEncoding.EncodeToString(public), "created_at": "2026-11-12T00:00:00Z"}
+	request := payload["request"].(map[string]any)
+	key := request["artifact"].(map[string]any)["team_did_key"]
+	artifact := map[string]any{"v": 1, "team_key_did": key}
+	for name, value := range sent["subject"].(map[string]any) {
+		artifact[name] = value
+	}
+	request["artifact"] = artifact
+	for name, value := range sent {
+		request[name] = value
+	}
+	return sent, payload
+}
+
+func TestALogKeyPreparationUsesTheSameDigestAndExactPublicRecord(t *testing.T) {
+	sent, payload := logKeyPreparation(t)
+	if err := verifyPrepared(sent, coveredDigestOf(payload), payload); err != nil {
+		t.Fatal(err)
+	}
+	for _, name := range []string{"key_id", "public_key", "created_at", "team_id", "signature", "private_key"} {
+		sent, payload := logKeyPreparation(t)
+		artifact := payload["request"].(map[string]any)["artifact"].(map[string]any)
+		artifact[name] = "changed"
+		if ErrorCode(verifyPrepared(sent, coveredDigestOf(payload), payload)) != "operation_mismatch" {
+			t.Fatalf("accepted changed %s", name)
+		}
+	}
+	// Even a consistent substitution with a recomputed digest must have the
+	// correct derived key id, never an arbitrary caller-selected id.
+	sent, payload = logKeyPreparation(t)
+	sent["subject"].(map[string]any)["key_id"] = "sha256:wrong"
+	payload["request"].(map[string]any)["artifact"].(map[string]any)["key_id"] = "sha256:wrong"
+	if ErrorCode(verifyPrepared(sent, coveredDigestOf(payload), payload)) != "operation_mismatch" {
+		t.Fatal("accepted an unrelated key id")
+	}
+}
 
 func serverRecordPreparation(t *testing.T) (map[string]any, map[string]any) {
 	t.Helper()

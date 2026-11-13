@@ -822,8 +822,28 @@ _ROWS = (
         ),
     ),
 )
-OPERATIONS = MappingProxyType({(spec.operation, spec.variant): spec for spec in _ROWS})
-if len(OPERATIONS) != len(_ROWS):
+# The original frozen 80-row policy inventory remains unchanged. Explicitly
+# authorized additions join the same runtime table and pipeline.
+BASE_OPERATIONS = MappingProxyType({(spec.operation, spec.variant): spec for spec in _ROWS})
+_ADDITIONS = (
+    OperationSpec(
+        "team.log-key.sign",
+        "default",
+        "team_controller",
+        "live_floor",
+        "log_key_record",
+        ("v", "team_id", "key_id", "public_key", "created_at", "team_key_did"),
+        (
+            "Exact public X25519 log key and derived key_id; no private key or generic signing bytes",
+            "A new artifact after controller replacement requires a new live approval",
+            "Exact completed artifact replay is receipt recovery, not new signing; installation verifies its own team certificate",
+        ),
+    ),
+)
+OPERATIONS = MappingProxyType(
+    {(spec.operation, spec.variant): spec for spec in (*_ROWS, *_ADDITIONS)}
+)
+if len(OPERATIONS) != len(_ROWS) + len(_ADDITIONS):
     raise RuntimeError("duplicate protected operation selector")
 
 

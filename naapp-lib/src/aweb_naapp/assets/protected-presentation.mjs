@@ -37,6 +37,19 @@ function validSubject(subject, schema) {
     (subject.team_seq_first === undefined || subject.team_seq_first <= subject.team_seq_last);
 }
 
+async function validLogKey(subject) {
+  try {
+    const publicBytes = Uint8Array.from(atob(subject.public_key), c => c.charCodeAt(0));
+    const encode = bytes => btoa(String.fromCharCode(...bytes)).replace(/=+$/, "");
+    if (publicBytes.length !== 32 || encode(publicBytes) !== subject.public_key) return false;
+    const prefix = new TextEncoder().encode("aweb-e2ee-v2 encryption-key\n");
+    const material = new Uint8Array(prefix.length + publicBytes.length);
+    material.set(prefix); material.set(publicBytes, prefix.length);
+    const digest = new Uint8Array(await crypto.subtle.digest("SHA-256", material));
+    return subject.key_id === `sha256:${encode(digest)}`;
+  } catch { return false; }
+}
+
 export async function validateProtectedPresentation(state, handoffId, table) {
   const {payload, digest} = state;
   const request = payload?.request;
@@ -62,6 +75,13 @@ export async function validateProtectedPresentation(state, handoffId, table) {
         artifact.team_id !== request.scope.authority.id ||
         artifact.server_url !== subject.server_url || !nonempty(artifact.team_did_key) ||
         !Number.isFinite(Date.parse(artifact.issued_at))) refused();
+  } else if (spec.family === "log_key_record") {
+    if (!object(artifact) || Object.keys(artifact).sort().join(",") !==
+        "created_at,key_id,public_key,team_id,team_key_did,v" ||
+        artifact.v !== 1 || artifact.team_id !== request.scope.authority.id ||
+        !nonempty(artifact.team_key_did) || !Number.isFinite(Date.parse(artifact.created_at)) ||
+        Object.keys(subject).some(name => artifact[name] !== subject[name]) ||
+        !(await validLogKey(subject))) refused();
   } else {
     // A new family must provide its actual typed codec/presentation binding;
     // registering a name in the table alone never enables an approval button.

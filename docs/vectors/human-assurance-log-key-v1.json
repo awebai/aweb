@@ -1,0 +1,25 @@
+{
+  "schema_version": 1,
+  "status": "additive catalog implementation candidate; not runtime evidence",
+  "extends": "human-assurance-v1.json",
+  "policy_ref": "aweb.human-assurance/1",
+  "operations": [
+    {
+      "operation": "team.log-key.sign",
+      "variant": "default",
+      "key_role": "team_controller",
+      "enforced_by": "signer",
+      "origin": "human",
+      "authorizers": "current eligible human for the selected team controller",
+      "payload_binding": ["v", "team_id", "key_id", "public_key", "created_at", "team_key_did"],
+      "rule": "live_floor",
+      "bounds": [
+        "Exact public X25519 log key and derived key_id; no private key or generic signing bytes",
+        "A new artifact after controller replacement requires a new live approval",
+        "Exact completed artifact replay is receipt recovery, not new signing; installation verifies its own team certificate"
+      ],
+      "policy_version": "aweb.human-assurance/1 + current deployment policy_version",
+      "audit": "Atomic signed record, exact receipt and local governance audit; installation remains a separate effect"
+    }
+  ]
+}

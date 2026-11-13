@@ -7,6 +7,12 @@ labels and serializers are never accepted as an operation or a codec.
 from datetime import timedelta
 
 from awid.did import public_key_from_did
+from awid.log_key_record import (
+    LOG_KEY_FIELDS,
+    build_log_key_record,
+    log_key_record_signing_bytes,
+    validate_log_key_subject,
+)
 from awid.team_server_record import (
     RECORD_FIELDS,
     build_team_server_record,
@@ -29,6 +35,8 @@ def validate_subject(operation, variant, subject):
     try:
         if spec.family == "owner_act":
             return validate_owner_act_subject(operation, subject)
+        if spec.family == "log_key_record":
+            return validate_log_key_subject(subject)
         if spec.family == "server_record":
             if type(subject) is not dict or set(subject) != {"server_url"}:
                 raise ValueError()
@@ -64,6 +72,10 @@ def artifact_for(operation, key, now):
         return build_team_server_record(
             operation.context.authority_id, key, subject["server_url"], now
         )
+    if spec.family == "log_key_record":
+        if subject["team_id"] != operation.context.authority_id:
+            raise SignerRefused("scope_refused")
+        return build_log_key_record(subject, key)
     raise SignerRefused("operation_refused")
 
 
@@ -98,12 +110,24 @@ def signing_bytes(operation, artifact):
             return record_signing_bytes(artifact)
         except (ValueError, TypeError, KeyError):
             raise SignerRefused("operation_mismatch") from None
+    if spec.family == "log_key_record":
+        try:
+            if (
+                type(artifact) is not dict
+                or set(artifact) != LOG_KEY_FIELDS
+                or artifact["team_id"] != operation.context.authority_id
+                or any(artifact[name] != value for name, value in subject.items())
+            ):
+                raise ValueError()
+            return log_key_record_signing_bytes(artifact)
+        except (ValueError, TypeError, KeyError):
+            raise SignerRefused("operation_mismatch") from None
     raise SignerRefused("operation_refused")
 
 
 def authority_key(operation, artifact):
     family = operation_spec(operation.operation, operation.variant).family
-    if family == "owner_act":
+    if family in {"owner_act", "log_key_record"}:
         return artifact.get("team_key_did")
     if family == "server_record":
         return artifact.get("team_did_key")
@@ -126,5 +150,17 @@ def presentation_schema(operation, variant):
         return {
             "fields": {"server_url": {"pattern": r"https?://[^\s]+"}},
             "required": ["server_url"],
+        }
+    if spec.family == "log_key_record":
+        return {
+            "fields": {
+                "team_id": {"pattern": r"[^\s:]+:[^\s:]+"},
+                "key_id": {"pattern": r"sha256:[A-Za-z0-9+/]{43}"},
+                "public_key": {"pattern": r"[A-Za-z0-9+/]{43}"},
+                "created_at": {
+                    "pattern": r"[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}Z"
+                },
+            },
+            "required": ["team_id", "key_id", "public_key", "created_at"],
         }
     return None

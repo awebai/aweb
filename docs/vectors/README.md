@@ -63,6 +63,14 @@ inputs, not cryptographic known answers or evidence that runtime paths have
 passed. Implementations must exercise the applicable cases against their
 shared signer and adapters; static catalog validation is not runtime acceptance.
 
+### `human-assurance-log-key-v1.json` — additive catalog candidate
+
+Adds the live-floor `team.log-key.sign/default` selector for the existing
+`aweb.log-key/1` public record, without changing the frozen base inventory.
+The same operation table, exact B2 commitment and B3 approval path apply.
+This candidate binds all unsigned record fields and retains installation's
+independent team-certificate check. It is not runtime or deployment evidence.
+
 ### `id-certificates-v1.json` — contract candidate
 
 The [identity certificates contract](../id-certificates.md) freezes

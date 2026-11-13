@@ -80,6 +80,52 @@ def test_only_exact_typed_owner_act_is_signed(case):
     assert adapter.team_key_did == fields["team_key_did"]
 
 
+def test_typed_log_key_record_uses_the_same_isolated_file_without_private_log_material(
+    case,
+):
+    import base64
+    from datetime import UTC, datetime
+
+    from aweb_naapp.runtime.protected_signer import CatalogOperation
+    from aweb_naapp.runtime.protected_signer.codecs import artifact_for
+    from awid.e2ee_keys import encryption_key_id
+    from awid.log_key_record import log_key_record_signing_bytes
+
+    _, key, original, _ = case
+    public = base64.b64encode(bytes(range(32))).rstrip(b"=").decode()
+    operation = CatalogOperation(
+        original.operation_id,
+        original.context,
+        "https://signer.customer.example",
+        "team.log-key.sign",
+        "default",
+        {
+            "team_id": original.context.authority_id,
+            "key_id": encryption_key_id(public),
+            "public_key": public,
+            "created_at": "2026-11-12T00:00:00Z",
+        },
+    )
+    adapter = custody(case)
+    artifact = artifact_for(
+        operation, adapter.team_key_did, datetime(2026, 11, 13, tzinfo=UTC)
+    )
+    signature = adapter.sign_operation(operation, artifact)
+    key.verify_key.verify(log_key_record_signing_bytes(artifact), signature)
+    for changed in (
+        {
+            **artifact,
+            "team_key_did": did_from_public_key(
+                bytes(SigningKey.generate().verify_key)
+            ),
+        },
+        {**artifact, "signature": "caller-controlled"},
+        {**artifact, "created_at": "2026-11-13T00:00:00Z"},
+    ):
+        with pytest.raises(SignerRefused):
+            adapter.sign_operation(operation, changed)
+
+
 @pytest.mark.parametrize(
     "field,value",
     [
