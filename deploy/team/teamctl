@@ -2,7 +2,7 @@
 # The operator command of one team's deployment on one machine.
 #
 #   TEAM_DEPLOYMENT_PROJECT=<compose project> TEAM_DEPLOYMENT_RUN_DIR=<dir> \
-#     deploy/team/teamctl start|connect|stop <deployment.yaml>
+#     deploy/team/teamctl start|connect|stop|reload-tls <deployment.yaml>
 #     deploy/team/teamctl destroy <deployment.yaml> --confirm <project>
 #     deploy/team/teamctl backup <deployment.yaml> <new directory>
 #     deploy/team/teamctl restore --lab-rehearsal <deployment.yaml> <backup directory>
@@ -20,6 +20,12 @@
 #          the agents are held, with no seat, deployment or session admitted.
 # connect  prints, as JSON, the origins, the team and registry, the agent
 #          container and the deployment's docker compose command.
+#          With a front, its certificate and key are checked before
+#          anything starts: the key is the certificate's, the certificate is
+#          valid now and names every public origin's host, and Caddy accepts
+#          the rendered configuration.
+# reload-tls  checks the front's certificate and key as start does, reloads
+#          the front and confirms each host now serves that certificate.
 # stop     stops every service of the bundle. Containers, networks, volumes,
 #          the secrets directory and the agents' state all stay.
 # destroy  removes the bundle's own containers and its named volumes, and
@@ -46,7 +52,7 @@ SELF="$TEAM_DIR/teamctl"
 
 usage() {
   {
-    echo "usage: TEAM_DEPLOYMENT_PROJECT=<name> TEAM_DEPLOYMENT_RUN_DIR=<dir> $0 start|connect|stop <deployment.yaml>"
+    echo "usage: TEAM_DEPLOYMENT_PROJECT=<name> TEAM_DEPLOYMENT_RUN_DIR=<dir> $0 start|connect|stop|reload-tls <deployment.yaml>"
     echo "       $0 destroy <deployment.yaml> --confirm <project>"
     echo "       $0 backup <deployment.yaml> <new directory>"
     echo "       $0 restore --lab-rehearsal <deployment.yaml> <backup directory>"
@@ -64,7 +70,7 @@ action="$1"
 shift
 lab_rehearsal=0 confirm="" target=""
 case "$action" in
-  start | connect | stop) [[ $# -eq 1 ]] || usage ;;
+  start | connect | stop | reload-tls) [[ $# -eq 1 ]] || usage ;;
   destroy)
     [[ $# -eq 1 || ($# -eq 3 && "$2" == --confirm) ]] || usage
     confirm="${3:-}"
@@ -457,6 +463,105 @@ render() {
   mkdir -p "$run_dir"
   python_in_server "$TEAM_DIR/render_env.py" "$deployment" >"$env_file.tmp"
   mv "$env_file.tmp" "$env_file"
+  if [[ -n "$(env_value FRONT_IMAGE)" ]]; then
+    mkdir -p "$run_dir/front"
+    python_in_server "$TEAM_DIR/render_env.py" --front "$deployment" >"$run_dir/front/Caddyfile.tmp"
+    mv "$run_dir/front/Caddyfile.tmp" "$run_dir/front/Caddyfile"
+    chmod 0644 "$run_dir/front/Caddyfile"
+    printf 'FRONT_CONFIG_DIR=%s\n' "$run_dir/front" >>"$env_file"
+  fi
+}
+
+# The hosts the front serves, one per line, from its rendered configuration.
+front_hosts() {
+  sed -n 's/^\([^ {]*\):443 {$/\1/p' "$run_dir/front/Caddyfile"
+}
+
+# The front's certificate and key, checked before the front runs with them:
+# the key is the certificate's, the certificate is valid now and names every
+# host the front serves, and Caddy accepts the configuration and loads them.
+# Read as root by the server image's Python with no network, since the key
+# belongs to the front; only the outcome is printed.
+check_front() {
+  local secrets
+  secrets="$(cd "$TEAM_DIR" && realpath "$(env_value SECRETS_DIR)")/$(env_value FRONT_SECRETS)"
+  # shellcheck disable=SC2046
+  docker run --rm --user 0 --network none -v "$secrets:/run/secrets/front:ro" \
+    --entrypoint python "$(env_value AWEB_IMAGE)" -c '
+import datetime, sys
+from cryptography import x509
+from cryptography.hazmat.primitives import serialization
+
+try:
+    chain = x509.load_pem_x509_certificates(open("/run/secrets/front/certificate.pem", "rb").read())
+    key = serialization.load_pem_private_key(open("/run/secrets/front/key.pem", "rb").read(), password=None)
+except (OSError, ValueError) as refused:
+    sys.exit(f"teamctl: the front needs certificate.pem and key.pem it can read: {type(refused).__name__}")
+leaf = chain[0]
+public = serialization.PublicFormat.SubjectPublicKeyInfo
+if key.public_key().public_bytes(serialization.Encoding.DER, public) != leaf.public_key().public_bytes(serialization.Encoding.DER, public):
+    sys.exit("teamctl: the front key is not the certificate key")
+now = datetime.datetime.now(datetime.timezone.utc)
+if not leaf.not_valid_before_utc <= now < leaf.not_valid_after_utc:
+    sys.exit(f"teamctl: the front certificate is not valid now: {leaf.not_valid_before_utc} to {leaf.not_valid_after_utc}")
+try:
+    names = leaf.extensions.get_extension_for_class(x509.SubjectAlternativeName).value.get_values_for_type(x509.DNSName)
+except x509.ExtensionNotFound:
+    names = []
+
+
+def covered(host):
+    return any(name == host or (name.startswith("*.") and host.split(".", 1)[1] == name[2:]) for name in names)
+
+
+missing = [host for host in sys.argv[1:] if not covered(host)]
+if missing:
+    sys.exit(f"teamctl: the front certificate does not name {missing}")
+print(f"front certificate: {len(sys.argv) - 1} hosts named, valid until {leaf.not_valid_after_utc.isoformat()}")
+' $(front_hosts) </dev/null || return 1
+  docker run --rm --network none -v "$secrets:/run/secrets/front:ro" -v "$run_dir/front:/etc/caddy:ro" \
+    "$(env_value FRONT_IMAGE)" caddy validate --config /etc/caddy/Caddyfile --adapter caddyfile </dev/null >/dev/null 2>"$run_dir/front/validate.log" || {
+    echo "teamctl: Caddy refuses the front's configuration; see $run_dir/front/validate.log" >&2
+    return 1
+  }
+}
+
+# Each host the front serves, asked over TLS with its own SNI from the
+# services network: the SHA-256 of the certificate it serves, which must be
+# the one in certificate.pem.
+served_certificates() {
+  local secrets
+  secrets="$(cd "$TEAM_DIR" && realpath "$(env_value SECRETS_DIR)")/$(env_value FRONT_SECRETS)"
+  # shellcheck disable=SC2046
+  docker run --rm --user 0 --network "${project}_services" -v "$secrets:/run/secrets/front:ro" \
+    --entrypoint python "$(env_value AWEB_IMAGE)" -c '
+import hashlib, socket, ssl, sys
+from cryptography import x509
+from cryptography.hazmat.primitives import serialization
+
+leaf = x509.load_pem_x509_certificates(open("/run/secrets/front/certificate.pem", "rb").read())[0]
+expected = hashlib.sha256(leaf.public_bytes(serialization.Encoding.DER)).hexdigest()
+context = ssl.create_default_context()
+context.check_hostname = False
+context.verify_mode = ssl.CERT_NONE
+wrong = []
+for host in sys.argv[1:]:
+    with socket.create_connection(("front", 443), timeout=10) as raw, context.wrap_socket(raw, server_hostname=host) as tls:
+        served = hashlib.sha256(tls.getpeercert(binary_form=True)).hexdigest()
+    if served != expected:
+        wrong.append(host)
+if wrong:
+    sys.exit(f"teamctl: the front does not serve certificate.pem for {wrong}")
+print(f"front serves certificate.pem for {len(sys.argv) - 1} hosts: sha256 {expected}")
+' $(front_hosts) </dev/null
+}
+
+reload-tls() {
+  render
+  [[ -n "$(env_value FRONT_IMAGE)" ]] || refuse "the deployment has no front"
+  check_front || exit 1
+  dc exec -T front caddy reload --config /etc/caddy/Caddyfile --adapter caddyfile </dev/null
+  served_certificates
 }
 
 # The deployment's Compose model, for a command that does not start it: the
@@ -470,6 +575,9 @@ model() {
 
 start() {
   render
+  if [[ -n "$(env_value FRONT_IMAGE)" ]]; then
+    check_front || exit 1
+  fi
   local with_agents=0 services=()
   if [[ -n "$(env_value EGRESS_ADDRESS)" ]]; then
     with_agents=1

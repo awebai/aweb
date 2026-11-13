@@ -857,6 +857,43 @@
           "x-env": "LOGS_HOOK_CA_FILE"
         }
       }
+    },
+    "front": {
+      "description": "The deployment's TLS front: the reverse proxy for every public origin, with the operator's certificate and key (descriptors/front.md).",
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "image"
+      ],
+      "properties": {
+        "image": {
+          "$ref": "#/$defs/image",
+          "x-env": "FRONT_IMAGE"
+        },
+        "secrets": {
+          "$ref": "#/$defs/secrets",
+          "default": "front",
+          "x-env": "FRONT_SECRETS"
+        },
+        "compose": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "bindAddress": {
+              "type": "string",
+              "default": "0.0.0.0",
+              "x-env": "FRONT_BIND_ADDRESS"
+            },
+            "port": {
+              "type": "integer",
+              "minimum": 1,
+              "maximum": 65535,
+              "default": 443,
+              "x-env": "FRONT_PORT"
+            }
+          }
+        }
+      }
     }
   }
 }

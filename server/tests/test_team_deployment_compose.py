@@ -9,7 +9,7 @@ import yaml
 REPO_ROOT = Path(__file__).resolve().parents[2]
 TEAM = REPO_ROOT / "deploy" / "team"
 COMPOSE = yaml.safe_load((TEAM / "compose.yaml").read_text(encoding="utf-8"))
-OPTIONAL = ("secrets", "logs", "signer")
+OPTIONAL = ("secrets", "logs", "signer", "front")
 COMPONENT_FILES = {name: (TEAM / f"compose.{name}.yaml").read_text(encoding="utf-8") for name in OPTIONAL}
 SERVICES = {
     **COMPOSE["services"],
@@ -52,7 +52,7 @@ def test_an_optional_component_is_its_own_file_and_the_core_file_needs_none_of_i
 
 
 def test_the_services_are_on_the_services_network_and_none_is_on_the_agents_network():
-    for name in ("secrets", "logs", "signer", "postgres"):
+    for name in ("secrets", "logs", "signer", "postgres", "front"):
         assert SERVICES[name]["networks"] == ["services"], name
     assert SERVICES["aweb"]["networks"] == ["services", "backend"]
 
@@ -112,6 +112,7 @@ def test_each_service_mounts_only_its_own_secrets_read_only():
         "logs": [f"{secrets_dir}/${{LOGS_SECRETS:-logs}}:/run/secrets/logs:ro"],
         "signer": [f"{secrets_dir}/${{SIGNER_SECRETS:-signer}}:/run/secrets/signer:ro"],
         "postgres": [f"{secrets_dir}/${{POSTGRES_SECRETS:-postgres}}:/run/secrets/postgres:ro"],
+        "front": [f"{secrets_dir}/${{FRONT_SECRETS:-front}}:/run/secrets/front:ro"],
         "redis": [f"{secrets_dir}/redis:/run/secrets/redis:ro"],
     }
 
@@ -133,13 +134,16 @@ def test_aweb_takes_its_redis_url_from_the_env_file_or_the_bundled_default():
     assert environment(AWEB)["AWEB_REDIS_URL_FILE"] is None
 
 
-def test_only_aweb_and_the_apps_are_published_and_on_the_address_the_operator_gave():
+def test_only_the_front_aweb_and_the_apps_are_published_and_on_the_address_the_operator_gave():
+    # The front is the public TLS ingress; the others are its upstreams, on
+    # the address an operator's own reverse proxy reaches when there is no front.
     published = {name: service["ports"] for name, service in SERVICES.items() if "ports" in service}
     assert published == {
         "aweb": ["${AWEB_BIND_ADDRESS:-127.0.0.1}:${AWEB_PORT:-8000}:8000"],
         "secrets": ["${SECRETS_BIND_ADDRESS:-127.0.0.1}:${SECRETS_PORT:-8770}:8770"],
         "logs": ["${LOGS_BIND_ADDRESS:-127.0.0.1}:${LOGS_PORT:-8765}:8765"],
         "signer": ["${SIGNER_BIND_ADDRESS:-127.0.0.1}:${SIGNER_PORT:-8080}:8080"],
+        "front": ["${FRONT_BIND_ADDRESS:-0.0.0.0}:${FRONT_PORT:-443}:443"],
     }
 
 

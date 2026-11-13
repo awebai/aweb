@@ -75,3 +75,23 @@ def test_restore_fails_closed_without_the_lab_rehearsal_scope(tmp_path):
     for task in ("aweb-acyp", "aweb-acgh.16.23", "aweb-acyw", "aweb-acxy.4"):
         assert task in result.stderr
     assert calls(tmp_path) == []
+
+
+FRONT = {"image": "docker.io/library/caddy@sha256:" + "4" * 64}
+
+
+def test_start_checks_the_fronts_certificate_before_anything_starts(tmp_path):
+    # The docker that fails stands for a check that refuses the certificate.
+    path = deployment(tmp_path, {**EXAMPLE, "front": FRONT})
+    result = run(tmp_path, "start", path, command=TEAMCTL)
+    assert result.returncode == 1
+    made = calls(tmp_path)
+    assert len(made) == 1 and made[0].startswith("run --rm --user 0 --network none") and "certificate.pem" in made[0]
+    assert (tmp_path / "run" / "front" / "Caddyfile").read_text().startswith("{\n  auto_https off\n")
+
+
+def test_reload_tls_refuses_a_deployment_without_a_front(tmp_path):
+    path = deployment(tmp_path, EXAMPLE)
+    result = run(tmp_path, "reload-tls", path, command=TEAMCTL, docker_ok=True)
+    assert result.returncode == 1 and "no front" in result.stderr
+    assert calls(tmp_path) == []

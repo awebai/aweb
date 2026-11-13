@@ -13,6 +13,7 @@ import ipaddress
 import json
 import sys
 from pathlib import Path
+from urllib.parse import urlsplit
 
 import jsonschema
 import yaml
@@ -109,7 +110,7 @@ def _collect(schema: dict, value: object, out: dict[str, str]) -> None:
 
 
 # The components an operator can leave out, each in its own Compose file.
-OPTIONAL_COMPONENTS = ("secrets", "logs", "signer", "agents")
+OPTIONAL_COMPONENTS = ("secrets", "logs", "signer", "agents", "front")
 
 # Where the signer's public configuration is mounted, outside its secrets.
 SIGNER_CONFIG = "/etc/aweb/signer"
@@ -208,6 +209,47 @@ def render(config: object) -> dict[str, str]:
     return out
 
 
+# Each public origin the front serves, and the service behind it.
+FRONT_SITES = (
+    ("aweb", "publicOrigin", "aweb:8000"),
+    ("secrets", "publicOrigin", "secrets:8770"),
+    ("secrets", "consoleOrigin", "secrets:8770"),
+    ("logs", "publicOrigin", "logs:8765"),
+    ("logs", "consoleOrigin", "logs:8765"),
+    ("signer", "requestOrigin", "signer:8080"),
+    ("signer", "humanOrigin", "signer:8080"),
+)
+
+# Where the front's certificate chain and key are mounted.
+FRONT_SECRETS = "/run/secrets/front"
+
+
+def render_front(config: object) -> str:
+    """The front's Caddyfile: one site per public origin, each with the
+    operator's certificate. A request whose Host its TLS SNI does not name is
+    refused (strict_sni_host); Caddy compares hostnames alone, so each site
+    also refuses, itself, any authority but its own host on port 443: the
+    signer's request host must never reach its human host."""
+    config = normalize(config)
+    if "front" not in config:
+        raise Refused("front: missing; the deployment has no front to render")
+    out = "{\n  auto_https off\n  servers {\n    strict_sni_host on\n  }\n}\n"
+    for component, key, upstream in FRONT_SITES:
+        if component not in config:
+            continue
+        origin = urlsplit(config[component][key])
+        if origin.port not in (None, 443):
+            raise Refused(f"{component}.{key}: the front serves origins on port 443 only")
+        host = origin.hostname
+        out += (
+            f"{host}:443 {{\n  tls {FRONT_SECRETS}/certificate.pem {FRONT_SECRETS}/key.pem\n"
+            f"  @misdirected not header_regexp Host ^{host.replace('.', '[.]')}(:443)?$\n"
+            "  respond @misdirected 421\n"
+            f"  reverse_proxy {upstream}\n}}\n"
+        )
+    return out
+
+
 def env_file(settings: dict[str, str]) -> str:
     for name, value in settings.items():
         if any(character in value for character in "\n\r\0"):
@@ -216,14 +258,16 @@ def env_file(settings: dict[str, str]) -> str:
 
 
 def main(argv: list[str]) -> int:
-    if len(argv) != 2:
-        print("usage: render_env.py deployment.yaml", file=sys.stderr)
+    front = len(argv) == 3 and argv[1] == "--front"
+    if len(argv) != 2 and not front:
+        print("usage: render_env.py [--front] deployment.yaml", file=sys.stderr)
         return 2
+    path = argv[-1]
     try:
-        config = yaml.safe_load(Path(argv[1]).read_text(encoding="utf-8"))
-        sys.stdout.write(env_file(render(config)))
+        config = yaml.safe_load(Path(path).read_text(encoding="utf-8"))
+        sys.stdout.write(render_front(config) if front else env_file(render(config)))
     except (OSError, yaml.YAMLError) as exc:
-        print(f"render_env: {argv[1]} cannot be read: {type(exc).__name__}", file=sys.stderr)
+        print(f"render_env: {path} cannot be read: {type(exc).__name__}", file=sys.stderr)
         return 1
     except Refused as refused:
         print(f"render_env: {refused}", file=sys.stderr)
