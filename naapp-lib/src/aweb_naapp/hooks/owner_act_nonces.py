@@ -176,7 +176,9 @@ class OwnerActVerifier:
                             controller_did_key=team_key, operations={(checked.act, "default")},
                             artifact_type="owner-act", artifact=signing, artifact_signature=signature,
                             consumer=dict(consumer), now=now)
-                        proof_expires_at = datetime.fromisoformat(fields["expires_at"])
+                        # Owner-act clocks use naive UTC internally, matching
+                        # the existing act/key deadline representation.
+                        proof_expires_at = datetime.strptime(fields["expires_at"], "%Y-%m-%dT%H:%M:%SZ")
                         matched = True
                         break
                     except EffectRefused:
