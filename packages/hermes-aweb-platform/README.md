@@ -4,10 +4,10 @@ Hermes gateway platform for Aweb agent mail/chat. It runs real `aw` commands
 for identity/trust, events, body fetches, exact-session replies and read receipts.
 It creates no identities and changes no server protocol.
 
-Validated Hermes release: **v0.22.2**, upstream commit
-`d923a5eb487a17c0a68801bba9ef0f56c81040a8`. Support is limited to this tested
-release; a broader version range is not established. The earlier investigation
-used `38d55b90dab7b37d7f26f0450b61851463fb1329` on upstream main.
+Hermes requirement: **v0.22.2 or newer (checked on v0.23.1)**. The checked
+upstream commits are `d923a5eb487a17c0a68801bba9ef0f56c81040a8` (v0.22.2)
+and `3b421578588243f920886e6fe79a6faa87ea026e` (v0.23.1). The earlier
+investigation used `38d55b90dab7b37d7f26f0450b61851463fb1329` on upstream main.
 See [build evidence](../../docs/evidence/hermes-plugin-build-2026-10-18.md) and
 [model/install evidence](../../docs/evidence/hermes-model-acceptance-2026-10-19.md)
 for the separate transport, release and model checks. Telegram is untested.
@@ -20,7 +20,7 @@ If you already use Hermes, keep that installation, executable and `HERMES_HOME`
 (or its default `~/.hermes`). Install the plugin into that same Hermes home.
 If you do not have Hermes, follow
 [Hermes's installation guide](https://hermes-agent.nousresearch.com/docs/getting-started/installation).
-The validated release remains v0.22.2; a wider version range is not established.
+Use v0.22.2 or newer; the upgrade comparison checked v0.23.1.
 
 Git, Node/npm and the public aw CLI must be on PATH. If aw is not installed:
 
@@ -126,8 +126,11 @@ home. Keep model and Telegram credentials in Hermes's own configuration.
 Without a configured home channel, Hermes can send its missing-home-channel
 notice as a visible reply before the model answer; that notice can mark the
 input read. Likewise, a clarify prompt is a visible reply: read state does not
-mean the model turn has finished. The model acceptance run configured the home
-channel.
+mean the model turn has finished. In an aweb chat, `/sethome` stores that exact
+chat as the home target (`AWEB_HOME_CHANNEL=chat:<session-id>` and the matching
+platform home channel). A new conversation no longer triggers the missing-home
+notice. The separate
+model acceptance run configured the home channel.
 
 ## Troubleshooting settings
 
@@ -178,6 +181,12 @@ boundaries remain because a public final-turn/guard-release receipt is absent:
 | Runner `_is_user_authorized_for_source` (`run.py:4020`) | Distinguish ignored unauthorized `None` from accepted no-reply `None`; refuse unauthorized control bypass. | Real unauthorized sender remains unread; do not remove this gate on upgrade. |
 | `_dispatch_inline_reply` (`base.py:3599`) | Preserve a failed inline handler disposition when Hermes contains its exception. | Approval/clarify/stop probes through actual gateway dispatch. |
 | aw reconnect diagnostic (`cli/go/cmd/aw/events.go:93`) | aw may reconnect HTTP streams inside one child process; degrade health before the next frame. | Check this CLI diagnostic and JSON event shape when upgrading aw. |
+
+The v0.22.2/v0.23.1 comparison passed lifecycle, live chat and seven of eight
+delivery probes on each release. `test_mail_reply_routes` failed on both:
+a nonempty mail subject prefixes the body, so a body slash command is not
+recognized as a command. The mail overlap/control-route assertions remain
+unproved; the upgrade comparison did not exercise a model.
 
 For a Hermes upgrade, inspect those boundaries at the new commit and run the
 following targeted checks before advancing the supported version:

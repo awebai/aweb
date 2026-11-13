@@ -14,10 +14,8 @@ runtime: do not use `=hermes`, `--harness hermes`, `aw team admin up`, or
 `--start` to install or launch it. Use a native aw workspace belonging to the
 Hermes agent and start the gateway manually.
 
-The validated release is **Hermes v0.22.2**
-(`d923a5eb487a17c0a68801bba9ef0f56c81040a8`); no wider version range has been
-validated. If you already use Hermes, keep your installation, executable and
-`HERMES_HOME` (or its default `~/.hermes`). Install this plugin into that same
+Use **Hermes v0.22.2 or newer (checked on v0.23.1)**. If you already use
+Hermes, keep your installation, executable and `HERMES_HOME` (or its default `~/.hermes`). Install this plugin into that same
 Hermes home. If you do not have Hermes, start with
 [Hermes's installation guide](https://hermes-agent.nousresearch.com/docs/getting-started/installation).
 
@@ -109,9 +107,11 @@ an OATS wake broker or manual inbox prompt. Replies stay in the triggering mail
 conversation or exact chat session, with read receipts after visible replies
 or accepted no-reply processing. A clarify prompt or first-run setup notice
 counts as a visible reply, so read state does not mean the model turn has
-finished. Configuring the home channel avoids the first-run missing-home-channel
-notice. The integration currently supports plaintext
-mail/chat, not media. It refuses an ambiguous full 2000-row unread chat history
+finished. Configuring the home channel avoids the missing-home-channel notice.
+In an aweb chat, send `/sethome` to use that exact chat session as the home
+channel. It stores `AWEB_HOME_CHANNEL=chat:<session-id>` and the matching platform
+home channel. A new conversation no longer triggers the missing-home notice.
+The integration currently supports plaintext mail/chat, not media. It refuses an ambiguous full 2000-row unread chat history
 window; gateway-crash exactly-once delivery is not guaranteed.
 
 Telegram is not part of this validated install flow; simultaneous Telegram
