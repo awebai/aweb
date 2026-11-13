@@ -345,6 +345,16 @@ func TestADanglingIdentityEntryRefusesBeforeAnyRegistration(t *testing.T) {
 // The command refuses a home holding an identity before the pre-run renews
 // that identity's due encryption assertion or checks for updates.
 func TestNoAddressRefusesAnExistingIdentityWithoutRenewingIt(t *testing.T) {
+	assertCreationRefusesWithoutRenewing(t, func(registryURL string) []string { return []string{"--no-address", "--registry", registryURL} })
+}
+
+func TestLocalRefusesAnExistingIdentityWithoutRenewingIt(t *testing.T) {
+	assertCreationRefusesWithoutRenewing(t, func(string) []string { return []string{"--local"} })
+}
+
+// assertCreationRefusesWithoutRenewing runs aw id create with modeArgs on a
+// home holding a messaging identity whose encryption assertion is due.
+func assertCreationRefusesWithoutRenewing(t *testing.T, modeArgs func(registryURL string) []string) {
 	t.Setenv(awconfig.IdentityHomeEnv, "")
 	root, err := filepath.EvalSymlinks(t.TempDir())
 	if err != nil {
@@ -403,7 +413,7 @@ func TestNoAddressRefusesAnExistingIdentityWithoutRenewingIt(t *testing.T) {
 	bin := filepath.Join(t.TempDir(), "aw")
 	buildAwBinary(t, ctx, bin)
 	before := homeContents(t, home)
-	command := exec.CommandContext(ctx, bin, "--json", "--identity-home", home, "id", "create", "--no-address", "--registry", server.URL)
+	command := exec.CommandContext(ctx, bin, append([]string{"--json", "--identity-home", home, "id", "create"}, modeArgs(server.URL)...)...)
 	command.Dir, command.Env = root, testCommandEnv(root)
 	out, runErr := command.CombinedOutput()
 	mu.Lock()

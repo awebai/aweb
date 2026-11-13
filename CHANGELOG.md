@@ -2,6 +2,13 @@
 
 ## Unreleased
 
+- `aw id create --local --identity-home H` creates a key-only local identity
+  (a did:key registered nowhere, with no address or membership) in a fresh
+  home, for an agent a parent issues and a team admits. `--json` reports
+  `status` and `did_key`. A killed run resumes with the same key, and a rerun
+  on the finished home returns `already_exists` with the same `did_key`;
+  any other home is refused with `identity_exists` and left unchanged.
+
 - `aw id endorse --no-wait` shows the approval page and exits instead of
   waiting for the human: `--json` reports `operation_id`, `state`, `page`,
   `digest`, `fingerprint` and `expires_at`. Running the same command again

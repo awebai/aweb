@@ -611,6 +611,7 @@ Flags:
 - `-h, --help help for create`
 - `--human-parent string did:aw of the issuing human (local key, or a registered account human with --org)`
 - `--inbound-mode string Hosted inbound delivery mode (default team-and-contacts; requires --org)`
+- `--local Create a key-only local identity (a did:key registered nowhere) in an explicit fresh --identity-home; resumable, and a rerun returns it`
 - `--name string Global identity name (address name under --domain)`
 - `--no-address Create a registered identity with no address in an explicit fresh --identity-home, registering its own did:aw at --registry; resumable`
 - `--org string Hosted organization slug or ID (human CLI login or explicit owner principal)`
