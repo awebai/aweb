@@ -180,6 +180,13 @@ class IndependentProtectedSigner:
             and operation.audience != self.request_origin
         ):
             raise SignerRefused("scope_refused")
+        if operation.intent()["operation"] == "team.agent.remove":
+            if operation.intent()["subject"]["root_id_or_self"] == "self":
+                from .self_removal import self_requester
+
+                return await self_requester(self, request, operation, purpose="prepare")
+            if "X-AWID-Team-Certificate" in request.headers:
+                raise SignerRefused("requester_invalid")
         return await self.requester(
             request,
             principal=request.headers.get("X-AWEB-DID-AW", ""),
@@ -187,23 +194,27 @@ class IndependentProtectedSigner:
             context=operation.context,
         )
 
-    async def authenticate_receipt(self, request, operation_id):
-        context = await self.signer.lookup_context(operation_id)
-        if context is None:
+    async def _authenticate_retained(self, request, operation_id, *, purpose):
+        operation = await self.signer.lookup_operation(operation_id)
+        if operation is None:
             raise SignerRefused("operation_not_found")
+        if operation.intent()["operation"] == "team.agent.remove":
+            if operation.intent()["subject"]["root_id_or_self"] == "self":
+                from .self_removal import self_requester
+
+                return await self_requester(self, request, operation, purpose=purpose)
+            if "X-AWID-Team-Certificate" in request.headers:
+                raise SignerRefused("requester_invalid")
         return await self.requester(
-            request,
-            principal=request.headers.get("X-AWEB-DID-AW", ""),
-            operation="protected_operation_receipt",
-            context=context,
+            request, principal=request.headers.get("X-AWEB-DID-AW", ""),
+            operation="protected_operation_" + purpose, context=operation.context,
         )
 
+    async def authenticate_receipt(self, request, operation_id):
+        return await self._authenticate_retained(request, operation_id, purpose="receipt")
+
     async def authenticate_execute(self, request, operation_id):
-        context = await self.signer.lookup_context(operation_id)
-        if context is None:
-            raise SignerRefused("operation_not_found")
-        return await self.requester(request, principal=request.headers.get("X-AWEB-DID-AW", ""),
-                                    operation="protected_operation_execute", context=context)
+        return await self._authenticate_retained(request, operation_id, purpose="execute")
 
     def protected_sessions(self):
         from aweb_naapp.console import ConsoleSessions
@@ -316,11 +327,11 @@ class IndependentProtectedSigner:
             selected.pop("generation")
         if expected != selected:
             raise SignerRefused("scope_refused")
-        await self._request_key(request, principal=principal, operation=operation,
-                                scope=context.fields(), domain=context.authority_domain)
+        key_did = await self._request_key(request, principal=principal, operation=operation,
+                                        scope=context.fields(), domain=context.authority_domain)
         if operation == "protected_operation_receipt":
-            return ReceiptReader(principal, context)
-        return RestrictedRequester(principal, context)
+            return ReceiptReader(principal, context, key_did=key_did)
+        return RestrictedRequester(principal, context, key_did=key_did)
 
     async def _request_key(self, request, *, principal, operation, scope, domain):
         try:

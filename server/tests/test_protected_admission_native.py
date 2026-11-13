@@ -39,7 +39,7 @@ async def admissions(world, tmp_path):
 
 
 @asynccontextmanager
-async def admission_world(world, tmp_path):
+async def admission_world(world, tmp_path, *, bounds=None):
     """Share native admission setup with real-socket CLI compositions.
 
     ``world`` comes from ``signer_world`` and already owns the frozen external
@@ -50,7 +50,7 @@ async def admission_world(world, tmp_path):
     public = {"version": 1, "teams": [TEAM],
         "root_selector": {"kind": "service_endorsed_root", "service_id": w.context.service_id},
         "subject_kinds": ["local_agent", "registered_agent"], "member_role": "member",
-        "bounds": {"max_active": 2, "rate_window_seconds": 3600, "max_per_window": 2}}
+        "bounds": bounds if bounds is not None else {"max_active": 2, "rate_window_seconds": 3600, "max_per_window": 2}}
     policy = await provision_policy(w.app, public)
     context = replace(w.context, authority_kind="human_identity", authority_id=w.context.human_id)
     directory = tmp_path / "human-custody"

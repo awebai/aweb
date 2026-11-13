@@ -47,6 +47,7 @@ from .types import (
     RestrictedRequester,
     RevokeHumanRole,
     SignerRefused,
+    _checked_self_removal,
     owner_act_operation,
 )
 
@@ -162,6 +163,32 @@ class ProtectedSigner:
         )
         return self._operation(_json(row["request"])).context if row is not None else None
 
+    async def lookup_operation(self, operation_id):
+        """Internal authentication input, never an actor-free HTTP disclosure."""
+        row = await self.db.fetch_one(
+            "SELECT request FROM {{tables.protected_signer_operations}} WHERE operation_id=$1",
+            self._operation_id(operation_id),
+        )
+        return self._operation(_json(row["request"])) if row is not None else None
+
+    async def lookup_owned_self_removal(self, operation_id, *, principal, key_did, certificate_id):
+        """Routing only: the embedding must still verify the actual fresh proof.
+
+        A retained self request permits its own historical receipt/reconciliation,
+        not a new operation or general membership. No result is disclosed here.
+        """
+        row = await self.db.fetch_one(
+            "SELECT request,requester FROM {{tables.protected_signer_operations}} WHERE operation_id=$1",
+            self._operation_id(operation_id),
+        )
+        if row is None or row["requester"] != principal:
+            return None
+        request = _json(row["request"])
+        if (request["operation"] != "team.agent.remove" or request["subject"]["root_id_or_self"] != "self"
+            or request["subject"]["certificate_id"] != certificate_id or request["requester_key"] != key_did):
+            return None
+        return self._operation(request)
+
     async def lookup_handoff(self, handoff_id: str) -> dict[str, Any] | None:
         """Public routing facts only; the id grants no inspection or execution."""
         row = await self.db.fetch_one(
@@ -271,7 +298,7 @@ class ProtectedSigner:
         self, operation: RevokeHumanRole | OwnerActOperation, *, requester: RestrictedRequester
     ) -> PreparedOperation:
         typed = owner_act_operation(operation)
-        if typed.operation in {"identity.root.endorse", "team.agent.admit"} and self.admission is None:
+        if typed.operation in {"identity.root.endorse", "team.agent.admit", "team.agent.remove"} and self.admission is None:
             raise SignerRefused("operation_refused")
         # Existing owner-act-only embeddings retain their released port. A
         # missing adapter for a new family refuses before creating B2 state.
@@ -283,9 +310,10 @@ class ProtectedSigner:
             raise SignerRefused("operation_refused")
         if requester.context != operation.context or not requester.principal:
             raise SignerRefused("scope_refused")
+        _checked_self_removal(requester, operation_id=operation.operation_id)
         intent = canonical_json_bytes(operation.intent())
         fence = await self.authority.observe(operation.context, purpose="prepare")
-        if typed.operation in {"identity.root.endorse", "team.agent.admit"}:
+        if typed.operation in {"identity.root.endorse", "team.agent.admit", "team.agent.remove"}:
             # Authenticate the current local grant before reading admission
             # configuration. Existing operations reconcile their retained body
             # before new operation-specific registry observations can refuse a
@@ -303,7 +331,10 @@ class ProtectedSigner:
                     return self._prepared(retained)
                 await fence.check(tx, requester)
                 fence.require_fresh()
-        extra = await self.admission.observe(typed, requester, purpose="prepare") if typed.operation in {"identity.root.endorse", "team.agent.admit"} else None
+        cap = _checked_self_removal(requester, operation=typed)
+        if cap is not None and cap.read_only:
+            raise SignerRefused("scope_refused")
+        extra = await self.admission.observe(typed, requester, purpose="prepare") if typed.operation in {"identity.root.endorse", "team.agent.admit", "team.agent.remove"} else None
         pending = None
         async with self.db.transaction() as tx:
             row = await self._lock(tx, operation.operation_id)
@@ -327,11 +358,14 @@ class ProtectedSigner:
             expires_at = now + (self.mailed_approval_wait if mailed else timedelta(seconds=600))
             if "expires_at" in fields:
                 expires_at = min(expires_at, _time(fields["expires_at"]))
+            if typed.operation == "team.agent.remove":
+                expires_at = min(expires_at, _time(fields["request"]["timestamp"]) + timedelta(seconds=300))
             additions = await extra.freeze(tx) if extra is not None else {}
             expected_additions = (
                 {"registry", "expected_head", "responsibility_statement", "admission_policy"}
                 if typed.operation == "identity.root.endorse" else
-                {"request_id", "admission_policy_version"} if typed.operation == "team.agent.admit" else set()
+                {"request_id", "admission_policy_version"} if typed.operation == "team.agent.admit" else
+                {"requester_key"} if typed.operation == "team.agent.remove" else set()
             )
             if set(additions) != expected_additions:
                 raise SignerRefused("operation_mismatch")
@@ -402,6 +436,7 @@ class ProtectedSigner:
             row = await self._lock(tx, operation_id)
             if row is None:
                 raise SignerRefused("operation_not_found")
+            _checked_self_removal(actor, operation=self._operation(_json(row["request"])))
             expected = _json(row["request"])["scope"]
             if purpose == "receipt":
                 matches = {
@@ -736,7 +771,7 @@ class ProtectedSigner:
             return await self._execute_request(operation_id, requester=requester)
         except SignerRefused as error:
             return await self._execution_refusal(operation_id, requester, error,
-                operations={"team.agent.admit"})
+                operations={"team.agent.admit", "team.agent.remove"})
 
     async def _execution_refusal(self, operation_id, actor, error, *, operations, human_session=None):
         # Only definite execution failures in this slice become final receipts.
@@ -786,11 +821,14 @@ class ProtectedSigner:
         operation = owner_act_operation(self._operation(_json(row["request"])))
         if operation.spec.needs_human:
             raise SignerRefused("live_approval_required")
-        if operation.operation != "team.agent.admit" or self.admission is None:
+        if operation.operation not in {"team.agent.admit", "team.agent.remove"} or self.admission is None:
             raise SignerRefused("operation_refused")
         if row["result"] is not None or row["refusal_code"] is not None:
             return self._receipt(row)
+        cap = _checked_self_removal(requester, operation=operation)
         if row["signed_result"] is None:
+            if cap is not None and cap.read_only:
+                raise SignerRefused("scope_refused")
             extra = await self.admission.observe(operation, requester, purpose="execute")
             fence = await self.authority.observe(operation.context, purpose="execute")
             async with self.db.transaction() as tx:
@@ -839,6 +877,9 @@ class ProtectedSigner:
             return self._receipt(row)
         request, signed = _json(row["request"]), _json(row["signed_result"])
         operation = self._operation(request)
+        cap = _checked_self_removal(requester, operation=operation)
+        if cap is not None and cap.read_only:
+            may_send = False
         # This read never creates a second certificate, signature or quota use.
         confirmed = await self.admission.registered(operation, request["artifact"], signed)
         if not confirmed and may_send and row["delivery_claim"] is None and self.clock() < row["expires_at"]:

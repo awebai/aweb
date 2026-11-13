@@ -8,6 +8,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"path/filepath"
 	"slices"
 	"strings"
 	"time"
@@ -236,11 +237,13 @@ type rootRegistry interface {
 	currentHead(ctx context.Context, bundle map[string]any) (string, error)
 }
 
-// registerEndorsement registers signed with its supporting chain and confirms
-// it by reading the root's current certificate back. A registration whose
-// answer failed is confirmed by that read-back too; another current head is a
-// conflict, and no read-back leaves it unconfirmed.
-func registerEndorsement(ctx context.Context, registry rootRegistry, chain []any, signed map[string]any, expectedHead *string) error {
+// registerEndorsement registers signed with its supporting chain, confirms it
+// by reading the root's current certificate back, and installs that confirmed
+// chain in home so the root can issue children. A registration whose answer
+// failed is confirmed by that read-back too; another current head is a
+// conflict, and no read-back leaves it unconfirmed; neither installs anything.
+// Installing again writes the same chain.
+func registerEndorsement(ctx context.Context, registry rootRegistry, chain []any, signed map[string]any, expectedHead *string, home string) error {
 	bundle := map[string]any{"v": 1, "type": "aweb.id-chain", "certificates": append(slices.Clone(chain), signed)}
 	ours, err := awid.IDCertificateID(signed["certificate"].(map[string]any))
 	if err != nil {
@@ -253,6 +256,9 @@ func registerEndorsement(ctx context.Context, registry rootRegistry, chain []any
 		return withErrorCode("registration_unconfirmed", fmt.Errorf("the endorsed certificate %s could not be read back (%v; registration: %v); run again with the same operation id", ours, err, registerErr))
 	case current != ours:
 		return withErrorCode("registration_conflict", fmt.Errorf("the registry's current certificate for the root is %s, not the endorsed %s (registration: %v)", current, ours, registerErr))
+	}
+	if err := awconfig.SaveInstalledIDChain(home, bundle); err != nil {
+		return fmt.Errorf("the endorsed certificate %s is registered, but its chain could not be installed in %s: %w; run again with the same operation id", ours, home, err)
 	}
 	return nil
 }
@@ -422,12 +428,12 @@ func runIDEndorse(cmd *cobra.Command, _ []string) error {
 	}
 	root := &pinnedRootRegistry{registry: registry, profile: profile, domain: domain, signer: awid.KeySigner(identity.SigningKey),
 		root: awid.IDChainSubject{ID: request.RootID, DIDKey: request.RootKey}}
-	if err := registerEndorsement(ctx, root, chain, signed, expectedHead); err != nil {
+	if err := registerEndorsement(ctx, root, chain, signed, expectedHead, filepath.Dir(identity.SigningKeyPath)); err != nil {
 		return fmt.Errorf("operation %s committed; %w", request.OperationID, err)
 	}
 	certificateID, _ := awid.IDCertificateID(artifact)
 	forgetProtectedOperationQuietly(request.OperationID)
-	report := map[string]any{"operation_id": request.OperationID, "state": receipt.State, "certificate_id": certificateID, "registered": true}
+	report := map[string]any{"operation_id": request.OperationID, "state": receipt.State, "certificate_id": certificateID, "registered": true, "chain_installed": true}
 	printOutput(report, func(any) string {
 		return fmt.Sprintf("Operation %s committed; %s is endorsed by %s and registered as certificate %s.\n", request.OperationID, request.RootID, request.Human, certificateID)
 	})

@@ -7,6 +7,7 @@ The authority adapter still validates their current association in the effect tx
 from __future__ import annotations
 
 import json
+import math
 from collections.abc import Mapping
 from dataclasses import dataclass, field
 from datetime import datetime
@@ -25,10 +26,76 @@ class SignerRefused(ValueError):
         super().__init__(code)
 
 
+_SELF_REMOVAL_SEAL = object()
+
+
+@dataclass(frozen=True)
+class _SelfRemovalAdmission:
+    """An embedding's one admitted self request; never deserialized from JSON.
+
+    The embedding mints this only after the actual member proof and fresh
+    membership checks. It does not confer a general requester grant.
+    """
+
+    context: ProtectedKeyContext
+    operation_id: str
+    certificate_id: str
+    principal: str
+    key_did: str
+    deadline: float
+    read_only: bool
+    _intent: bytes = field(repr=False)
+    _seal: object = field(repr=False, compare=False)
+
+
+def _admitted_self_removal(operation, *, principal, key_did, deadline, read_only=False):
+    intent = operation.intent()
+    subject = intent.get("subject", {})
+    if (intent.get("operation") != "team.agent.remove" or intent.get("variant") != "default"
+        or operation.context.authority_kind != "team_controller" or subject.get("root_id_or_self") != "self"
+        or subject.get("member_id") != principal or not principal or not key_did
+        or type(deadline) not in (int, float) or not math.isfinite(deadline) or type(read_only) is not bool):
+        raise SignerRefused("scope_refused")
+    try:
+        operation_id, certificate_id = intent["operation_id"], subject["certificate_id"]
+        if str(UUID(operation_id)) != operation_id or str(UUID(certificate_id)) != certificate_id:
+            raise ValueError()
+        from awid.signing import canonical_json_bytes
+
+        return _SelfRemovalAdmission(operation.context, operation_id, certificate_id, principal,
+            key_did, float(deadline), read_only, canonical_json_bytes(intent), _SELF_REMOVAL_SEAL)
+    except (ValueError, TypeError, KeyError):
+        raise SignerRefused("scope_refused") from None
+
+
+def _checked_self_removal(actor, *, operation=None, operation_id=None):
+    cap = getattr(actor, "self_removal", None)
+    if cap is None:
+        return None
+    if (type(cap) is not _SelfRemovalAdmission or cap._seal is not _SELF_REMOVAL_SEAL
+        or cap.context != actor.context or cap.principal != actor.principal or cap.key_did != actor.key_did):
+        raise SignerRefused("scope_refused")
+    intent = json.loads(cap._intent)
+    if (cap.operation_id != intent["operation_id"] or cap.certificate_id != intent["subject"]["certificate_id"]
+        or cap.principal != intent["subject"]["member_id"] or cap.context.fields() != intent["scope"]
+        or not math.isfinite(cap.deadline) or type(cap.read_only) is not bool):
+        raise SignerRefused("scope_refused")
+    if operation_id is not None and cap.operation_id != operation_id:
+        raise SignerRefused("scope_refused")
+    if operation is not None:
+        from awid.signing import canonical_json_bytes
+
+        if operation.context != cap.context or canonical_json_bytes(operation.intent()) != cap._intent:
+            raise SignerRefused("scope_refused")
+    return cap
+
+
 @dataclass(frozen=True)
 class RestrictedRequester:
     principal: str
     context: ProtectedKeyContext
+    key_did: str | None = None
+    self_removal: _SelfRemovalAdmission | None = field(default=None, repr=False)
 
 
 @dataclass(frozen=True)
@@ -43,6 +110,8 @@ class AdmittedHuman:
 class ReceiptReader:
     principal: str
     context: ProtectedKeyContext
+    key_did: str | None = None
+    self_removal: _SelfRemovalAdmission | None = field(default=None, repr=False)
 
 
 Actor = RestrictedRequester | AdmittedHuman | ReceiptReader

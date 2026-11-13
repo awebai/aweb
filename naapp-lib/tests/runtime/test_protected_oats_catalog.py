@@ -13,6 +13,7 @@ def test_runtime_selectors_are_exactly_the_reviewed_slice_and_existing_revoke():
     assert set(OPERATIONS) == {
         ("identity.root.endorse", "default"),
         ("team.agent.admit", "default"),
+        ("team.agent.remove", "default"),
         ("human-role.revoke", "default"),
     }
     frozen = json.loads((Path(__file__).resolve().parents[3] / "docs/vectors/human-assurance-v1.json").read_bytes())
