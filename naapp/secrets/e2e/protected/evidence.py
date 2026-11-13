@@ -29,14 +29,15 @@ OWNER_ACT_PREFIX = b"aweb.owner-act/1\n"
 
 
 def signed_act(result: str | dict) -> dict:
-    """The act a stored result signs: H over the decoded signing bytes, and
-    the act's nonce."""
+    """The act a stored result signs: H over the decoded signing bytes, the
+    act's nonce, and its expiry."""
     fields = json.loads(result) if isinstance(result, str) else result
     signing = base64.b64decode(fields["signing"], validate=True)
     if not signing.startswith(OWNER_ACT_PREFIX):
         raise SystemExit("the stored result does not sign an owner act")
-    return {"act_sha256": hashlib.sha256(signing).hexdigest(),
-            "nonce": json.loads(signing[len(OWNER_ACT_PREFIX):])["nonce"]}
+    act = json.loads(signing[len(OWNER_ACT_PREFIX):])
+    return {"act_sha256": hashlib.sha256(signing).hexdigest(), "nonce": act["nonce"],
+            "act_expires_at": act["expires_at"]}
 
 
 async def evidence(operation_ids: list[str]) -> dict:

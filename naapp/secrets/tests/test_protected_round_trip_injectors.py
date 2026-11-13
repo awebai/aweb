@@ -99,7 +99,8 @@ SIGNING = b"aweb.owner-act/1\n" + json.dumps(ACT, separators=(",", ":"), sort_ke
 
 def test_the_signed_act_is_named_by_the_hash_of_its_exact_signing_bytes_and_its_nonce():
     act = signed_act(base64.b64encode(SIGNING).decode())
-    assert act == SignedAct(nonce="n0nce", sha256=hashlib.sha256(SIGNING).hexdigest(), act="human-role.revoke")
+    assert act == SignedAct(nonce="n0nce", sha256=hashlib.sha256(SIGNING).hexdigest(), act="human-role.revoke",
+                            expires_at="2026-11-13T12:05:00Z")
 
 
 @pytest.mark.parametrize("signing", [
@@ -122,7 +123,7 @@ FIRST = {"assignments": 0, "holding": {"ended": True, "subject": SUBJECT, "super
          "authority_rows": [{"subject": SUBJECT, "authority": "owner_act", "commitment": H, "signing_sha256": H,
                              "event_id": "e1", "kind": "post-governance-hook", "act": "role.revoked",
                              "event_act_sha256": H}]}
-ACT_SIGNED = SignedAct(nonce="n0nce", sha256=H, act="human-role.revoke")
+ACT_SIGNED = SignedAct(nonce="n0nce", sha256=H, act="human-role.revoke", expires_at="2026-11-13T12:05:00Z")
 
 
 def test_one_revoke_and_its_exact_replay_are_one_effect():

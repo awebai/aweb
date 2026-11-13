@@ -17,10 +17,14 @@ through the Compose adapter (scripts/e2e-team-deployment.sh), and the team's
 owner installs Secrets and Logs after the operator's install-owner grant.
 
 Then the protected round trip (naapp/secrets/e2e/protected_round_trip.py, the
-same body the secrets e2e lane runs): the signer is configured, provisioned
-and started, the approver's passkey is enrolled with Chromium, aw prepares a
-human-role revoke, the approver approves it in the browser, aw reads the
-committed receipt, and the refusals sign nothing they must not.
+same body the secrets e2e lane runs): the owner activates the apps' hook
+bindings and designates the approver's holding, the signer is configured,
+provisioned and started, the approver's passkey is enrolled with Chromium, and
+the refusals sign nothing they must not. Under the registry's real limiter the
+journey's one revoke follows: a lost prepare, resumed, approved in the browser
+and signed once; its first delivery applied with the app's answer withheld;
+and its exact replay answered applied earlier, with one effect in the app's own
+records.
 
 The agents wait for the egress boundary.
 
@@ -41,7 +45,6 @@ import shutil
 import subprocess
 import sys
 import time
-from collections.abc import Callable
 from pathlib import Path
 
 import pexpect
@@ -58,12 +61,16 @@ sys.path.insert(0, str(REPO / "naapp" / "secrets" / "e2e"))
 from protected_round_trip import (  # noqa: E402
     HOOK_BINDING_IDENTITY,
     HOOK_READINESS_DEADLINE,
+    AnswerDrop,
     Founded,
     Holder,
+    Holding,
     Site,
     approve,
+    assert_one_effect,
     changed_act,
     connect_requester,
+    deliver_once_lost,
     designate_command,
     did_key_window,
     docker,
@@ -71,9 +78,12 @@ from protected_round_trip import (  # noqa: E402
     first_json,
     found_team,
     hooks_ready_at,
+    lost_prepare,
     provision_signer,
+    read_only_psql,
+    receiver_snapshot,
     refusals,
-    round_trip,
+    replay_delivery,
     select_hook_bindings,
     start_revoke,
 )
@@ -108,6 +118,8 @@ MAIL = f"mail.{DOMAIN}"
 FRONT_IMAGE = "caddy:2.10-alpine"
 # The role the round trip revokes, of this deployment's Secrets app.
 ROLE = "secrets.owner"
+# The time the journey allows a human to approve on the page.
+APPROVAL_MARGIN = datetime.timedelta(seconds=60)
 # The agents' uid: the signer refuses custody a worker could read.
 AGENT_UID = 20001
 
@@ -127,41 +139,6 @@ DATABASES = {
     "logsledger": "logs/purge-ledger-database-url",
     "signer": "signer/database-url",
 }
-
-class PrepareDrop:
-    """The front drops the signer's answer to a committed prepare: every 2xx
-    answer to POST /protected-operations on the signer's host is aborted.
-
-    enable() reads the front's Caddyfile as it is rendered now, after the
-    signer's own render, and refuses, changing nothing, unless it holds
-    exactly one site for the signer's host; disable() puts back exactly the
-    text enable() replaced. Each change is reloaded."""
-
-    def __init__(self, rendered: Path, host: str, upstream: str, reload: Callable[[], None]):
-        self.rendered, self.host, self.upstream, self.reload = rendered, host, upstream, reload
-        self.replaced: str | None = None
-
-    def enable(self) -> None:
-        current = self.rendered.read_text()
-        site = f"{self.host}:443 {{\n"
-        if current.count(site) != 1:
-            raise SystemExit(f"FAILED: the front holds {current.count(site)} sites for {self.host}, not one;"
-                             " the prepare answers cannot be dropped")
-        self.rendered.write_text(current.replace(
-            site,
-            f"{site}  @prepare {{\n    method POST\n    path /protected-operations\n  }}\n"
-            f"  reverse_proxy @prepare {self.upstream} {{\n    @answered status 2xx\n"
-            "    handle_response @answered {\n      abort\n    }\n  }\n", 1))
-        self.replaced = current
-        self.reload()
-
-    def disable(self) -> None:
-        if self.replaced is None:
-            return
-        self.rendered.write_text(self.replaced)
-        self.replaced = None
-        self.reload()
-
 
 def run(*args: str, env: dict[str, str] | None = None, input: str | None = None, timeout: int = 600) -> str:
     result = subprocess.run(args, env=env, input=input, text=True, capture_output=True, timeout=timeout, check=False)
@@ -750,7 +727,25 @@ class World:
         assert all(row["state"] == "pending" for row in after if row["binding_id"] not in chosen), after
         active = {f"{app}/{kind}/{hook}": {field: row[field] for field in HOOK_BINDING_IDENTITY + ("binding_id",)}
                   for (app, kind, hook), row in selected.items()}
+        self.activated_hooks = active
         return {"active": active, "left_pending": pending, "ready_at": ready.isoformat()}
+
+    def secrets_holding(self, founded: Founded) -> Holding:
+        """The approver's holding of the app role, named by the Secrets
+        installation and generation whose bindings were activated."""
+        secrets_binding = self.activated_hooks["secrets/production/post-governance-hook"]
+        return Holding(app_id=f"{TEAM}-secrets", installation_id=secrets_binding["installation_id"],
+                       generation=secrets_binding["generation"], team_id=TEAM_ID, role=ROLE,
+                       principal=founded.approver)
+
+    def await_window_end(self, seed: dict) -> None:
+        """Until the filled did_key window is over, by the registry Redis's own clock."""
+        def now() -> float:
+            seconds, micros = self.compose("exec", "-T", "registry-redis", "redis-cli", "TIME").split()
+            return int(seconds) + int(micros) / 1e6
+        ends = seed["seeded_at"] + seed["remaining"] + 1
+        while (left := ends - now()) > 0:
+            time.sleep(min(left, 5))
 
     # --- the registry's real limiter, for the throttle legs -----------------
 
@@ -1028,16 +1023,22 @@ class World:
                       self.images["chromium"], *args, "--ca", "/world/tls/ca.pem", timeout=300).strip()
             return first_json(out) if "{" in out else {}
 
-        drop = PrepareDrop(
-            self.run_dir / "front" / "Caddyfile", HOSTS["signer"], UPSTREAMS["signer"],
-            lambda: self.compose("exec", "-T", "front", "caddy", "reload", "--config", "/etc/caddy/Caddyfile",
-                                 "--adapter", "caddyfile"))
+        front = self.run_dir / "front" / "Caddyfile"
 
-        def drop_prepare_answers(on: bool) -> None:
-            if on:
-                drop.enable()
-            else:
-                drop.disable()
+        def reload_front() -> None:
+            self.compose("exec", "-T", "front", "caddy", "reload", "--config", "/etc/caddy/Caddyfile",
+                         "--adapter", "caddyfile")
+
+        def drop_prepare_answers() -> AnswerDrop:
+            return AnswerDrop(front, HOSTS["signer"], "POST", "/protected-operations", UPSTREAMS["signer"],
+                              reload_front)
+
+        def drop_owner_act_answers() -> AnswerDrop:
+            return AnswerDrop(front, HOSTS["secrets-console"], "POST", "/.well-known/aweb-owner-act",
+                              UPSTREAMS["secrets-console"], reload_front)
+
+        def secrets_query(select: str) -> str:
+            return self.compose("exec", "-T", "postgres", *read_only_psql("secrets", select)).strip()
 
         return Site(
             runtime=self.world, mounted="/world", domain=DOMAIN, team=TEAM, registry=origin("registry"),
@@ -1048,6 +1049,9 @@ class World:
             operator=operator_command, start_signer=start_signer, signer_evidence=signer_evidence,
             signer_access_log=lambda: self.compose("logs", "--no-color", "--no-log-prefix", "signer"),
             chromium=chromium, drop_prepare_answers=drop_prepare_answers,
+            signatures=lambda: sum(row["signed"] for row in self.signer_table().values()),
+            drop_owner_act_answers=drop_owner_act_answers, secrets_query=secrets_query,
+            app_log=lambda: self.compose("logs", "--no-color", "--no-log-prefix", "secrets"),
         )
 
 
@@ -1104,21 +1108,12 @@ def changed_act_leg(world: World, site: Site, holder: Holder, founded: Founded, 
 
 
 def lost_prepare_leg(world: World, site: Site, holder: Holder, founded: Founded, aw_bin: str) -> dict:
-    """A lost prepare answer resumed while the registry refuses the signer's
-    key lookups: aw waits the hint, resends the saved bytes, and once
-    approved the original operation completes with one signature."""
-    machine, approver = holder.container, founded.approver
-    saved = site.runtime / "holder" / ".config" / "aw" / "governance"
-    site.drop_prepare_answers(True)
-    try:
-        lost = docker("exec", machine, "aw", "--json", "app", "role", "revoke", site.app_id, "--role", site.role,
-                      "--principal", approver, "--protected-profile", site.profile_in_machine, "--approver", approver,
-                      timeout=240)
-    finally:
-        site.drop_prepare_answers(False)
-    assert first_json(lost.stdout)["error"]["code"] == "prepare_unconfirmed", lost.stdout
-    operation = re.search(r"Preparing operation (\S+)", lost.stderr).group(1)
-    request = (saved / f"{operation}.json").read_text()
+    """The control aw's lost prepare, resumed while the registry refuses the
+    signer's key lookups: its caller does not wait out the hint, so it must not
+    recover. Nothing is approved here even if a page appears, so this leg can
+    never sign or apply the revoke the journey makes once, later."""
+    machine = holder.container
+    operation = lost_prepare(site, holder, founded)
     before = world.signer_table()
     signed_before = sum(row["signed"] for row in before.values())
     seed = world.fill_did_key_window()
@@ -1129,12 +1124,11 @@ def lost_prepare_leg(world: World, site: Site, holder: Holder, founded: Founded,
     evidence = {"operation": operation, "seed": seed}
     index = child.expect([r"Approve it on this page: (\S+)", pexpect.EOF])
     evidence["waited"] = round(time.monotonic() - started, 1)
+    evidence["page_shown"] = index == 0
     if index == 0:
-        report = approve(site, machine, child.match.group(1))
-        assert report["states"] == ["login-required", "ready", "navigated"], report
-        status, output = finish(child)
-        receipt = first_json(output)
-        evidence["state"] = receipt.get("state") if status == 0 else first_json(output)["error"]["code"]
+        child.sendintr()
+        finish(child)
+        evidence["state"] = "page_shown"
     else:
         child.close()
         evidence["state"] = first_json(child.before)["error"]["code"]
@@ -1145,34 +1139,94 @@ def lost_prepare_leg(world: World, site: Site, holder: Holder, founded: Founded,
         "signed": after[operation]["signed"],
         "new_signatures": sum(row["signed"] for row in after.values()) - signed_before,
         "expires_unchanged": after[operation]["expires_at"] == before[operation]["expires_at"],
-        "request_was_saved": bool(request),
     })
     return evidence
 
 
+def the_revoke(world: World, site: Site, holder: Holder, founded: Founded) -> dict:
+    """The journey's one revoke, under the registry's real limiter. A lost
+    prepare leaves the operation pending; with the registry refusing the
+    signer's key lookups, aw resumes it, waits out the registry's Retry-After
+    and resends the same bytes; once approved the original operation is signed
+    once, delivered and applied, and the app's answer is withheld. With the
+    limiter's window over, the exact replay is answered applied earlier. The
+    app's own records show one effect."""
+    operation = lost_prepare(site, holder, founded)
+    pending = site.signer_evidence(operation)
+    nonce = pending["frozen_nonce"]
+    before = world.signer_table()
+    signed_before = sum(row["signed"] for row in before.values())
+    holding = world.secrets_holding(founded)
+    baseline = receiver_snapshot(site.secrets_query, holding, nonce)
+    seed = world.fill_did_key_window()
+    # The pending operation's lifetime runs from its prepare and is never
+    # extended: it must outlast the window's Retry-After and the approval.
+    left = (datetime.datetime.fromisoformat(pending["expires_at"]) - datetime.datetime.now(datetime.UTC))
+    if left.total_seconds() <= seed["remaining"] + APPROVAL_MARGIN.total_seconds():
+        raise SystemExit(f"BOUNDARY: the pending operation has {left.total_seconds():.0f}s left, not more than the"
+                         f" window's {seed['remaining']:.0f}s and {APPROVAL_MARGIN.total_seconds():.0f}s to approve;"
+                         " the fixture cannot qualify the throttle leg")
+    since = world.since()
+    delivered = deliver_once_lost(site, holder, operation)
+    after = world.signer_table()
+    act = delivered["act"]
+    assert act.nonce == nonce, f"approval: the signed act's nonce {act.nonce} is not the frozen {nonce}"
+    evidence = {
+        "operation": operation, "seed": seed, "waited": delivered["paged"], **throttle_evidence(world, since),
+        "rows_for_operation": sum(1 for op in after if op == operation), "signed": after[operation]["signed"],
+        "new_signatures": sum(row["signed"] for row in after.values()) - signed_before,
+        "expires_unchanged": after[operation]["expires_at"] == before[operation]["expires_at"],
+        "act_sha256": act.sha256,
+    }
+    subject = baseline["holding"]["subject"]
+    first = receiver_snapshot(site.secrets_query, holding, nonce, subject, act.sha256)
+    # The replay comes after the filled window, so the limiter cannot stand in
+    # for the app's answer, and inside the signed act's own validity.
+    world.await_window_end(seed)
+    if datetime.datetime.now(datetime.UTC) >= datetime.datetime.fromisoformat(act.expires_at.replace("Z", "+00:00")):
+        raise SystemExit(f"BOUNDARY: the signed act expired at {act.expires_at} before its replay could be sent")
+    report = replay_delivery(site, holder, operation, act)
+    replayed = world.signer_table()
+    evidence["replay_new_signatures"] = sum(row["signed"] for row in replayed.values()) - signed_before - 1
+    evidence["replay_rows_for_operation"] = sum(1 for op in replayed if op == operation)
+    replay = receiver_snapshot(site.secrets_query, holding, nonce, subject, act.sha256)
+    assert_one_effect(baseline, first, replay, act)
+    evidence["applied"] = report["applied"]
+    return evidence
+
+
+def record_leg(world: World, name: str, leg: dict) -> None:
+    (world.run_dir / f"throttle-{name}.json").write_text(json.dumps(leg, indent=2))
+    print(f"throttle {name}:", json.dumps(leg, sort_keys=True))
+    for each in leg.values():
+        # The fixture worked only if the registry really refused, past the SDK's budget.
+        assert each["registry_429"] >= 1 and each["hints"] and min(each["hints"]) > 5, each
+        assert each["prepares"][0] == 503, each
+        assert each["expires_unchanged"], each
+
+
 def throttled_calls(world: World, site: Site, holder: Holder, founded: Founded) -> None:
-    """Both legs with the candidate's aw, then with the control aw, whose
-    caller does not wait out the hint and so must not recover."""
-    for name, aw_bin in (("candidate", "aw"), ("control", world.control_aw(holder.container))):
-        changed = changed_act_leg(world, site, holder, founded, aw_bin)
-        lost = lost_prepare_leg(world, site, holder, founded, aw_bin)
-        (world.run_dir / f"throttle-{name}.json").write_text(json.dumps({"changed_act": changed, "lost_prepare": lost},
-                                                                       indent=2))
-        print(f"throttle {name}:", json.dumps({"changed_act": changed, "lost_prepare": lost}, sort_keys=True))
-        for leg in (changed, lost):
-            # The fixture worked only if the registry really refused, past the SDK's budget.
-            assert leg["registry_429"] >= 1 and leg["hints"] and min(leg["hints"]) > 5, leg
-            assert leg["prepares"][0] == 503, leg
-            assert leg["expires_unchanged"], leg
-        if name == "candidate":
-            assert changed["code"] == "operation_conflict" and changed["prepares"][-1] == 409, changed
-            assert changed["elapsed"] >= min(changed["hints"]) - 1, changed
-            assert changed["signed"] is False and changed["saved_unchanged"], changed
-            assert lost["state"] == "committed" and lost["waited"] >= min(lost["hints"]) - 1, lost
-            assert lost["signed"] and lost["rows_for_operation"] == 1 and lost["new_signatures"] == 1, lost
-        else:
-            assert changed["code"] != "operation_conflict" and changed["signed"] is False, changed
-            assert lost["state"] != "committed" and lost["new_signatures"] == 0, lost
+    """The control aw's legs and the candidate's changed act first, while the
+    holding exists, each checked as it ends: none signs or applies anything.
+    The candidate's lost prepare is last, and is the journey's one revoke."""
+    control = {"changed_act": changed_act_leg(world, site, holder, founded, world.control_aw(holder.container))}
+    control["lost_prepare"] = lost_prepare_leg(world, site, holder, founded, world.control_aw(holder.container))
+    record_leg(world, "control", control)
+    assert control["changed_act"]["code"] != "operation_conflict" and control["changed_act"]["signed"] is False, control
+    assert control["lost_prepare"]["page_shown"] is False, control
+    assert control["lost_prepare"]["state"] != "committed" and control["lost_prepare"]["new_signatures"] == 0, control
+
+    changed = changed_act_leg(world, site, holder, founded, "aw")
+    assert changed["code"] == "operation_conflict" and changed["prepares"][-1] == 409, changed
+    assert changed["elapsed"] >= min(changed["hints"]) - 1, changed
+    assert changed["signed"] is False and changed["saved_unchanged"], changed
+
+    lost = the_revoke(world, site, holder, founded)
+    record_leg(world, "candidate", {"changed_act": changed, "lost_prepare": lost})
+    assert lost["waited"] >= min(lost["hints"]) - 1, lost
+    assert lost["signed"] and lost["rows_for_operation"] == 1 and lost["new_signatures"] == 1, lost
+    assert lost["replay_new_signatures"] == 0 and lost["replay_rows_for_operation"] == 1, lost
+    assert lost["applied"] == "earlier", lost
 
 
 # Every image scripts/e2e/team-deployment-images.sh builds for the journey;
@@ -1289,15 +1343,16 @@ def journey(world: World, stop_after: str | None = None, agents_only: bool = Fal
 
 
 def protected_act(world: World, site: Site, holder: Holder, founded: Founded) -> None:
-    operation = round_trip(site, holder, founded)
-    print(f"SIGNED: {operation} committed, approved in the browser, receipt read by aw")
     refusals(site, holder, founded)
-    print("REFUSED: no UV signs nothing; a changed act is operation_conflict; a lost prepare completes once")
+    print("REFUSED: no UV and a cancelled LOGIN sign nothing; a changed act is operation_conflict")
 
-    print("=== Step 6: critical calls under the registry's real limiter")
+    print("=== Step 6: critical calls under the registry's real limiter, and the one revoke")
     throttled_calls(world, site, holder, founded)
-    print("THROTTLED: a changed act waits out the registry's Retry-After and is operation_conflict; a lost prepare"
-          " waits it out and completes once; the control aw recovers from neither")
+    print("THROTTLED: a changed act waits out the registry's Retry-After and is operation_conflict; the control aw"
+          " recovers from neither of its legs")
+    print("SIGNED: the lost prepare, resumed under the limiter, was approved in the browser and signed once;"
+          " its first delivery was applied with its answer withheld, and its exact replay was answered applied"
+          " earlier, with one effect in the app's own records")
 
 
 def agents_stage(world: World, founded: Founded) -> int:

@@ -1,13 +1,15 @@
 """The protected round trip, one body for every place it runs.
 
-One human-role.revoke goes through the independent protected server
-(aweb.protected_signing.host, HOST.md): the requester's aw prepares it, the
-approving human logs in on the console page in a fresh Chromium tab with a
-passkey and approves the exact act with a separate user verification, the
-server signs with the team controller key only it holds, and aw reports the
-exact committed receipt. Then the refusals: no user verification signs
-nothing, a changed act is refused, and a lost prepare answer is completed
-from its receipt with one signature.
+First the refusals, while the approver's holding exists: no user
+verification and a cancelled LOGIN sign nothing, and a changed act is refused.
+Then one human-role.revoke goes through the independent protected server
+(aweb.protected_signing.host, HOST.md). Its prepare answer is lost, so aw
+keeps the pending operation and its request. Resumed, the approving human logs
+in on the console page in a fresh Chromium tab with a passkey and approves the
+exact act with a separate user verification; the server signs it once with
+the team controller key only it holds; aw delivers it to the app, which
+applies it, and the app's answer is withheld. The exact replay of the same
+signed act is answered applied earlier. The app's own records show one effect.
 
 The body runs in the secrets e2e lane (tests/test_e2e_protected_revoke.py)
 and in the team deployment journey (scripts/e2e/team_deployment_journey.py).
@@ -252,6 +254,8 @@ class SignedAct:
     nonce: str
     sha256: str
     act: str
+    # Until when the app accepts it: a later delivery is refused signed_act_invalid.
+    expires_at: str
 
 
 def signed_act(signing: str) -> SignedAct:
@@ -266,7 +270,8 @@ def signed_act(signing: str) -> SignedAct:
     if not decoded.startswith(OWNER_ACT_PREFIX):
         raise SystemExit("FAILED: the signing bytes are not an owner act's")
     act = json.loads(decoded[len(OWNER_ACT_PREFIX):])
-    return SignedAct(nonce=act["nonce"], sha256=hashlib.sha256(decoded).hexdigest(), act=act["act"])
+    return SignedAct(nonce=act["nonce"], sha256=hashlib.sha256(decoded).hexdigest(), act=act["act"],
+                     expires_at=act["expires_at"])
 
 
 def assert_one_effect(baseline: dict, first: dict, replay: dict, act: SignedAct) -> None:
@@ -462,15 +467,25 @@ class Site:
     # its uid with its own settings; returns its JSON.
     operator: Callable[..., dict]
     start_signer: Callable[[], None]
-    # What the signer signed for one operation, read from its database
-    # (e2e/protected/evidence.py): {"signed": bool, "refusal_code": ...}.
+    # What the signer holds for one operation, read from its database
+    # (e2e/protected/evidence.py): signed, refusal_code, expires_at,
+    # frozen_nonce, and for a signed one the act's act_sha256 and nonce.
     signer_evidence: Callable[[str], dict]
+    # How many operations the signer has signed.
+    signatures: Callable[[], int]
     # The signer's own access log so far, as uvicorn writes it.
     signer_access_log: Callable[[], str]
     # The approving human's Chromium in a machine's network namespace.
     chromium: Callable[..., dict]
-    # While on, the front drops the answer of a committed prepare once.
-    drop_prepare_answers: Callable[[bool], None]
+    # The front withholding the signer's answers to POST /protected-operations.
+    drop_prepare_answers: Callable[[], AnswerDrop]
+    # The front withholding the app's answers to POST /.well-known/aweb-owner-act
+    # on the app's console host.
+    drop_owner_act_answers: Callable[[], AnswerDrop]
+    # One SELECT against the app's database, read only (read_only_psql).
+    secrets_query: Callable[[str], str]
+    # The app's own access log so far.
+    app_log: Callable[[], str]
 
     @property
     def team_id(self) -> str:
@@ -629,26 +644,9 @@ def handoff_requests(site: Site, page: str) -> list[tuple[str, str, int]]:
     return segment
 
 
-def round_trip(site: Site, holder: Holder, founded: Founded) -> str:
-    """aw prepares, the page logs the human in, then the human approves the
-    exact act aw printed, and aw reports its receipt. Returns the operation."""
-    machine, approver = holder.container, founded.approver
-    saved = site.runtime / "holder" / ".config" / "aw" / "governance"
-    child, page, operation, digest = start_revoke(site, machine, approver)
-    report = approve(site, machine, page)
-    assert report["states"] == ["login-required", "ready", "navigated"], report
-    assert report["digest"] == digest and report["act"] == "human-role.revoke", report
-    status, output = finish(child)
-    assert status == 0, output
-    receipt = first_json(output)
-    assert (receipt["operation_id"], receipt["state"]) == (operation, "committed"), receipt
-    assert site.signer_evidence(operation) == {"signed": True, "refusal_code": None}
-    assert not (saved / f"{operation}.json").exists(), "a committed operation's saved request remains"
-    return operation
-
-
 def refusals(site: Site, holder: Holder, founded: Founded) -> None:
-    """The essential refusals, each with what was and was not signed."""
+    """The essential refusals, each with what was and was not signed. None
+    signs or applies anything: they run while the holding exists."""
     machine, approver = holder.container, founded.approver
     saved = site.runtime / "holder" / ".config" / "aw" / "governance"
 
@@ -709,31 +707,113 @@ def refusals(site: Site, holder: Holder, founded: Founded) -> None:
     assert first_json(refused.stdout)["error"]["code"] == "operation_conflict", refused.stdout
     assert site.signer_evidence(changed)["signed"] is False
 
-    # A lost prepare answer: the front drops the committed prepare's
-    # response once. aw reads the receipt instead of preparing again, keeps
-    # the request, and the resume completes the original operation with one
-    # signature.
-    site.drop_prepare_answers(True)
-    try:
+
+def lost_prepare(site: Site, holder: Holder, founded: Founded) -> str:
+    """Prepare loss: the front withholds the signer's answer to the committed
+    prepare of a revoke. aw reads the receipt instead of preparing again and
+    keeps the request: the operation is pending, unsigned, and has had no
+    effect. Returns its id."""
+    machine, approver = holder.container, founded.approver
+    saved = site.runtime / "holder" / ".config" / "aw" / "governance"
+    with site.drop_prepare_answers():
         lost = docker("exec", machine, "aw", "--json", "app", "role", "revoke", site.app_id, "--role", site.role,
                       "--principal", approver, "--protected-profile", site.profile_in_machine, "--approver", approver,
                       timeout=240)
-    finally:
-        site.drop_prepare_answers(False)
-    assert lost.returncode != 0, lost.stdout
-    assert first_json(lost.stdout)["error"]["code"] == "prepare_unconfirmed", lost.stdout
+    assert lost.returncode != 0, f"prepare loss: aw did not fail {lost.stdout}"
+    assert first_json(lost.stdout)["error"]["code"] == "prepare_unconfirmed", f"prepare loss: {lost.stdout}"
     preparing = re.search(r"Preparing operation (\S+)", lost.stderr)
-    assert preparing, lost.stderr
+    assert preparing, f"prepare loss: no operation named {lost.stderr}"
     operation = preparing.group(1)
-    assert (saved / f"{operation}.json").exists()
-    child = pexpect.spawn("docker", ["exec", "-it", machine, "aw", "--json", "app", "role", "resume", operation,
-                                     "--protected-profile", site.profile_in_machine],
-                          encoding="utf-8", timeout=180, echo=False)
-    child.expect(r"Approve it on this page: (\S+)")
-    report = approve(site, machine, child.match.group(1))
-    assert report["states"] == ["login-required", "ready", "navigated"], report
-    status, output = finish(child)
-    assert status == 0, output
-    receipt = first_json(output)
-    assert (receipt["operation_id"], receipt["state"]) == (operation, "committed"), receipt
-    assert site.signer_evidence(operation) == {"signed": True, "refusal_code": None}
+    assert (saved / f"{operation}.json").exists(), "prepare loss: the request was not saved"
+    assert site.signer_evidence(operation)["signed"] is False, "prepare loss: signed before any approval"
+    return operation
+
+
+# The app's answers to the owner-act deliveries, in its own access log.
+DELIVERIES = re.compile(r'"POST /\.well-known/aweb-owner-act HTTP/[\d.]+" (\d{3})')
+
+
+def deliveries(site: Site) -> list[int]:
+    return [int(m.group(1)) for m in DELIVERIES.finditer(site.app_log())]
+
+
+def deliver_once_lost(site: Site, holder: Holder, operation: str, aw_bin: str = "aw",
+                      timeout: int = 300) -> dict:
+    """Approval and the first application, with its answer lost: aw resumes
+    the pending operation from its saved request, the human approves the
+    exact act aw printed, the signer signs it once, and aw delivers it to the
+    app, which applies it; the front withholds the app's answer, so aw keeps
+    the request. Returns when aw printed the page, the printed digest and the
+    signed act."""
+    machine = holder.container
+    saved = site.runtime / "holder" / ".config" / "aw" / "governance"
+    answered = deliveries(site)
+    with site.drop_owner_act_answers():
+        child = pexpect.spawn("docker", ["exec", "-it", machine, aw_bin, "--json", "app", "role", "resume", operation,
+                                         "--protected-profile", site.profile_in_machine],
+                              encoding="utf-8", timeout=timeout, echo=False)
+        started = time.monotonic()
+        child.expect(r"Operation (\S+)\r?\n\s+digest:\s+([0-9a-f]{64})")
+        printed, digest = child.match.group(1), child.match.group(2)
+        child.expect(r"Approve it on this page: (\S+)")
+        paged = round(time.monotonic() - started, 1)
+        report = approve(site, machine, child.match.group(1))
+        status, output = finish(child)
+    assert printed == operation, f"approval: aw resumed {printed}, not {operation}"
+    assert report["states"] == ["login-required", "ready", "navigated"], f"approval: {report}"
+    assert report["digest"] == digest and report["act"] == "human-role.revoke", f"approval: {report}"
+    evidence = site.signer_evidence(operation)
+    assert evidence["signed"] is True and evidence["refusal_code"] is None, f"approval: {evidence}"
+    assert status != 0, f"lost answer: aw settled although the answer was withheld {output}"
+    error = first_json(output)["error"]
+    # A transport loss carries no app code; an app's own refusal keeps its code.
+    assert error["code"] == "owner_act_undelivered", f"lost answer: {error}"
+    assert f"aw app role resume {operation}" in error["message"], f"lost answer: {error}"
+    assert (saved / f"{operation}.json").exists(), "lost answer: the request was not kept"
+    # The app answered the one delivery 200; the front withheld it.
+    assert deliveries(site)[len(answered):] == [200], f"first application: the app answered {deliveries(site)}"
+    act = SignedAct(nonce=evidence["nonce"], sha256=evidence["act_sha256"], act="human-role.revoke",
+                    expires_at=evidence["act_expires_at"])
+    return {"paged": paged, "digest": digest, "act": act}
+
+
+def replay_delivery(site: Site, holder: Holder, operation: str, act: SignedAct, aw_bin: str = "aw") -> dict:
+    """Exact replay: aw resumes the same operation, which is already committed,
+    and delivers the identical signed act again; the app finds it applied
+    earlier and answers 409, so aw settles it as applied earlier and forgets
+    the request. Returns aw's report."""
+    machine = holder.container
+    saved = site.runtime / "holder" / ".config" / "aw" / "governance"
+    answered = deliveries(site)
+    replayed = docker("exec", machine, aw_bin, "--json", "app", "role", "resume", operation,
+                      "--protected-profile", site.profile_in_machine, timeout=300)
+    assert replayed.returncode == 0, f"replay: {replayed.stdout}{replayed.stderr}"
+    report = first_json(replayed.stdout)
+    assert (report["operation_id"], report["state"], report["applied"]) == (operation, "committed", "earlier"), (
+        f"replay: {report}")
+    assert signed_act(report["result"]["signing"]) == act, "replay: aw delivered other signing bytes"
+    assert site.signer_evidence(operation)["act_sha256"] == act.sha256, "replay: the signer's act changed"
+    assert not (saved / f"{operation}.json").exists(), "replay: the settled request was kept"
+    assert deliveries(site)[len(answered):] == [409], f"replay: the app answered {deliveries(site)}"
+    return report
+
+
+def revoke_once(site: Site, holder: Holder, founded: Founded, holding: Holding) -> SignedAct:
+    """The one revoke: a lost prepare, its approval with the first answer of
+    the app lost, and the exact replay; the app's own records show one
+    effect. Returns the act."""
+    operation = lost_prepare(site, holder, founded)
+    nonce = site.signer_evidence(operation)["frozen_nonce"]
+    signatures = site.signatures()
+    baseline = receiver_snapshot(site.secrets_query, holding, nonce)
+    first_delivery = deliver_once_lost(site, holder, operation)
+    act = first_delivery["act"]
+    assert act.nonce == nonce, f"approval: the signed act's nonce {act.nonce} is not the frozen {nonce}"
+    assert site.signatures() == signatures + 1, "approval: not exactly one new signature"
+    subject = baseline["holding"]["subject"]
+    first = receiver_snapshot(site.secrets_query, holding, nonce, subject, act.sha256)
+    replay_delivery(site, holder, operation, act)
+    assert site.signatures() == signatures + 1, "replay: a new signature"
+    replay = receiver_snapshot(site.secrets_query, holding, nonce, subject, act.sha256)
+    assert_one_effect(baseline, first, replay, act)
+    return act
