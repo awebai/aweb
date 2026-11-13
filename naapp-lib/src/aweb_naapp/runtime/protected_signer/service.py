@@ -517,9 +517,14 @@ class ProtectedSigner:
         """The complete frozen request, for the link's own approver; consumes nothing."""
         operation_id, human = await self._link_human(handoff_id, token)
         row = await self._authorized(operation_id, human, "approval")
-        if row["result"] is None and row["refusal_code"] is None and self.clock() >= row["expires_at"]:
-            # Only the link's own approver reaches this: they may know it
-            # expired, and when.
+        # Read under the operation lock: the candidate may have been looked up
+        # before the effect was signed. A decided or signed effect (which may
+        # already be applied) spends the link, without saying how it ended.
+        if row["result"] is not None or row["refusal_code"] is not None or row.get("signed_result") is not None:
+            raise SignerRefused("scope_refused")
+        if self.clock() >= row["expires_at"]:
+            # Unsigned and undecided at its expiry: nothing was signed. Only the
+            # link's own approver reaches this, and may know when it expired.
             raise RequestExpired(_stamp(row["expires_at"]))
         intent = self._operation(_json(row["request"])).intent()
         spec = catalog.OPERATIONS.get((intent["operation"], intent["variant"]))

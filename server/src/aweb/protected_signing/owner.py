@@ -45,7 +45,8 @@ async def owner_view(composition, *, scope: str, now: datetime | None = None) ->
     fields = context.fields()
     rows = await c.db.fetch_all(
         "SELECT operation_id,handoff_id,requester,request,digest,approval_id,expires_at,"
-        "result IS NOT NULL AS committed,refusal_code,committed_at FROM {{tables.protected_signer_operations}} "
+        "result IS NOT NULL AS committed,signed_result IS NOT NULL AS signed,refusal_code,committed_at "
+        "FROM {{tables.protected_signer_operations}} "
         "ORDER BY expires_at DESC"
     )
     pending, history, requests = [], [], {}
@@ -64,6 +65,11 @@ async def owner_view(composition, *, scope: str, now: datetime | None = None) ->
             history.append({**entry, "state": "committed", "at": _stamp(row["committed_at"])})
         elif row["refusal_code"] is not None:
             history.append({**entry, "state": "refused", "code": row["refusal_code"], "at": _stamp(row["expires_at"])})
+        elif row["signed"]:
+            # Signed but not confirmed: it may already be applied, so it is
+            # never "expired" and no longer waits for a decision (the
+            # signer's own receipt says unknown, external_effect_unresolved).
+            history.append({**entry, "state": "unresolved", "at": _stamp(row["expires_at"])})
         elif row["expires_at"] <= now:
             history.append({**entry, "state": "expired", "at": _stamp(row["expires_at"])})
         else:
@@ -161,7 +167,8 @@ def _window(seconds):
     return {3600: "hour", 86400: "day"}.get(seconds, f"{seconds} seconds")
 
 
-_OUTCOMES = {"committed": "Approved", "expired": "Expired, nobody decided"}
+_OUTCOMES = {"committed": "Approved", "expired": "Expired, nobody decided",
+    "unresolved": "Signed; whether it took effect is not confirmed yet"}
 _REFUSALS = {"human_refused": "Denied"}
 
 
@@ -240,7 +247,7 @@ def owner_page_html(view: dict) -> str:
         parts.append('<ul class="owner-list">')
         for item in view["history"]:
             outcome = _OUTCOMES.get(item["state"]) or _REFUSALS.get(item.get("code"), "Not completed")
-            if item.get("decided_by_you") and item["state"] != "expired":
+            if item.get("decided_by_you") and item["state"] not in ("expired", "unresolved"):
                 outcome += " by you"
             parts.append(
                 f'<li>{e(outcome)}, {_time(item["at"])}: a request from {e(item["requester"])}'

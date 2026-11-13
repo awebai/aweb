@@ -189,3 +189,23 @@ async def test_an_operation_not_classified_revealable_refuses_the_reveal(mailing
     with pytest.raises(SignerRefused, match="scope_refused"):
         await world.signer.link_view(prepared.handoff_id, token)
     assert (await world.signer.receipt(prepared.operation_id, reader=world.reader)).state == "pending"
+
+
+async def test_a_signed_but_unconfirmed_request_is_never_reported_expired_to_its_link(mailing):
+    """The candidate is read before signing (its link still stored), the
+    effect is then signed but not confirmed, and the request expires: the
+    link must not say it expired undecided, since it may already be applied."""
+    world, contacts = mailing
+    prepared, token = await mailed(world, contacts)
+    # The candidate lookup happens first, as a racing link view would do it.
+    operation_id, _ = await world.signer._link_human(prepared.handoff_id, token)
+    await world.passkeys.db.execute(
+        "UPDATE {{tables.protected_signer_operations}} SET signed_result=$2::jsonb WHERE operation_id=$1",
+        operation_id, '{"signing":"c2lnbmVk","signature":"c2lnbmF0dXJl"}')
+    world.clock.advance(timedelta(hours=25))
+    with pytest.raises(SignerRefused) as refused:
+        await world.signer.link_view(prepared.handoff_id, token)
+    assert refused.value.code == "scope_refused"
+    # The signer's own receipt keeps it unresolved, not expired.
+    receipt = await world.signer.receipt(prepared.operation_id, reader=world.reader)
+    assert (receipt.state, receipt.code) == ("unknown", "external_effect_unresolved")

@@ -159,3 +159,27 @@ def test_the_sign_in_page_title_does_not_repeat_itself():
     page = protected_shell("aweb.protected.console.csrf").page("Sign in", "<h1>Sign in</h1>")
     assert "<title>Sign in · Protected signing</title>" in page.body.decode()
     assert protected_shell("aweb.protected.console.csrf").brand.sign_in.title == "Sign in"
+
+
+@pytest.mark.asyncio
+async def test_a_signed_but_unconfirmed_effect_is_unresolved_never_expired(admissions):
+    from datetime import UTC, datetime, timedelta
+
+    from aweb.protected_signing.owner import owner_page_html
+
+    a = admissions
+    operation = root_operation(a)
+    assert (await prepare(a, operation)).status_code == 200
+    # The composed engine retains a signed effect before it confirms delivery.
+    await a.w.db.execute(
+        "UPDATE {{tables.protected_signer_operations}} SET signed_result=$2::jsonb WHERE operation_id=$1",
+        operation.operation_id, '{"signing":"c2lnbmVk","signature":"c2lnbmF0dXJl"}')
+    scope = await scope_of(a.human)
+    for when in (datetime.now(UTC), datetime.now(UTC) + timedelta(days=2)):
+        view = await owner_view(a.group, scope=scope, now=when)
+        assert view["pending"] == []
+        [entry] = [h for h in view["history"] if h["operation_id"] == operation.operation_id]
+        assert entry["state"] == "unresolved"
+        # This operation's own row (others in the fixture may really expire).
+        [row] = [li for li in owner_page_html(view).split("<li>") if entry["digest"] in li]
+        assert "Expired, nobody decided" not in row and "not confirmed yet" in row
