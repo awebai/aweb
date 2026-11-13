@@ -62,3 +62,23 @@ func currentIDCertificate(row map[string]any) (map[string]any, error) {
 	}
 	return nil, idCertificateRefusal("evidence_unavailable")
 }
+
+// RegisteredIDHead is id's current certificate ID as evidence states it, only
+// once the evidence is fresh and the whole status verifies as domain's under
+// its namespace authority, the same checks VerifyIDChain applies. Malformed,
+// stale or unanchored evidence, or evidence that does not hold id, is an
+// error, never a head.
+func RegisteredIDHead(evidence *IDChainEvidence, domain, id string) (string, error) {
+	if err := idEvidenceUsable(evidence); err != nil {
+		return "", err
+	}
+	status, err := parseIDStatus(evidence, domain)
+	if err != nil {
+		return "", err
+	}
+	row, err := status.row(id)
+	if err != nil {
+		return "", err
+	}
+	return row.CurrentCertificateID, nil
+}

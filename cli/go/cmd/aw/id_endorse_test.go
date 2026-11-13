@@ -1,6 +1,7 @@
 package main
 
 import (
+	"bytes"
 	"context"
 	"crypto/ed25519"
 	"crypto/sha256"
@@ -10,6 +11,7 @@ import (
 	"errors"
 	"net/http"
 	"net/http/httptest"
+	"os"
 	"strconv"
 	"strings"
 	"testing"
@@ -302,40 +304,74 @@ func TestAChangedEndorsementUnderASavedOperationIDIsAConflict(t *testing.T) {
 	}
 }
 
-// competingRegistry is a registry whose status names another current
-// certificate for the root, and that refuses the registration.
-func competingRegistry(t *testing.T, root, current string) *httptest.Server {
+// statusRegistry is a registry whose status answer is status, and that
+// refuses every registration.
+func statusRegistry(t *testing.T, status any) *httptest.Server {
 	t.Helper()
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
-		switch r.URL.Path {
-		case "/v1/id-certificates/status":
-			_ = json.NewEncoder(w).Encode(map[string]any{"identities": []any{map[string]any{"id": root, "current_certificate_id": current}}})
-		default:
-			w.WriteHeader(http.StatusConflict)
-			_, _ = w.Write([]byte(`{"detail":"head_conflict"}`))
+		if r.URL.Path == "/v1/id-certificates/status" {
+			_ = json.NewEncoder(w).Encode(status)
+			return
 		}
+		w.WriteHeader(http.StatusConflict)
+		_, _ = w.Write([]byte(`{"detail":"head_conflict"}`))
 	}))
 	t.Cleanup(server.Close)
 	return server
 }
 
-func TestTheRealReadBackReportsAnotherCurrentHeadAsAConflict(t *testing.T) {
+// vectorStatus is the published status fixture name for example.com.
+func vectorStatus(t *testing.T, name string) map[string]any {
+	t.Helper()
+	data, err := os.ReadFile("../../../../docs/vectors/id-certificates-v1.json")
+	if err != nil {
+		t.Fatal(err)
+	}
+	var vectors struct {
+		Statuses map[string]map[string]any `json:"status_fixtures"`
+	}
+	d := json.NewDecoder(bytes.NewReader(data))
+	d.UseNumber()
+	if err := d.Decode(&vectors); err != nil {
+		t.Fatal(err)
+	}
+	return vectors.Statuses[name]
+}
+
+// readBackAt is the real read-back adapter at a registry answering status,
+// for an endorsed root of example.com whose certificate the vector's status
+// does not hold as current. It answers the outcome of registering it.
+func readBackAt(t *testing.T, status any, controller string) error {
+	t.Helper()
+	const root = "did:aw:2e2SPDJNyxg5Dt6EFJX3Tcn8Tauj"
 	humanPublic, humanKey, _ := ed25519.GenerateKey(nil)
 	humanDID := awid.ComputeDIDKey(humanPublic)
-	human := map[string]any{"v": json.Number("1"), "type": "aweb.id-certificate", "id": admitTestHuman, "domain": "customer.example",
-		"parent": map[string]any{"kind": "namespace", "id": "customer.example"}, "kind": "human", "issuer_key": humanDID, "issued_at": "2026-11-13T09:00:00Z"}
+	human := map[string]any{"v": json.Number("1"), "type": "aweb.id-certificate", "id": admitTestHuman, "domain": "example.com",
+		"parent": map[string]any{"kind": "namespace", "id": "example.com"}, "kind": "human", "issuer_key": humanDID, "issued_at": "2026-11-13T09:00:00Z"}
 	humanSigning, _ := awid.IDCertificateSigningBytes(human)
 	humanSigned := map[string]any{"certificate": human, "signature": base64.RawURLEncoding.EncodeToString(ed25519.Sign(humanKey, humanSigning))}
-	artifact := endorsedArtifact(humanDID)
+	artifact := map[string]any{"v": json.Number("1"), "type": "aweb.id-certificate", "id": root, "domain": "example.com",
+		"parent": map[string]any{"kind": "identity", "id": admitTestHuman}, "kind": "agent", "issuer_key": humanDID, "issued_at": "2026-11-13T10:00:00Z"}
 	signed, err := endorsedCertificate(signedEndorsement(t, humanKey, artifact), artifact, humanDID)
 	if err != nil {
 		t.Fatal(err)
 	}
-	other := "sha256:" + strings.Repeat("cd", 32)
-	server := competingRegistry(t, artifact["id"].(string), other)
-	profile := endorseTestProfile(t, humanKey)
-	profile.RegistryOrigin = server.URL
+	server := statusRegistry(t, status)
+	raw, _ := json.Marshal(map[string]any{
+		"v": 1, "service_id": "customer-signer", "request_origin": "https://signer.example.com",
+		"human_origin": "https://human.example.com", "rp_id": "human.example.com", "registry_origin": server.URL,
+		"namespace_authorities": []any{map[string]any{"domain": "example.com", "controller_did": controller}},
+		"bindings": []any{map[string]any{
+			"scope": map[string]any{"v": 1, "kind": "protected_key", "service_id": "customer-signer",
+				"authority": map[string]any{"kind": "human_identity", "id": admitTestHuman, "domain": "example.com"},
+				"human":     map[string]any{"id": admitTestHuman, "domain": "example.com"}, "generation": 1},
+			"authority_key_did": humanDID, "policy": map[string]any{"ref": "aweb.human-assurance/1", "version": 1}}},
+	})
+	profile, err := handoff.ParseProfile(raw)
+	if err != nil {
+		t.Fatal(err)
+	}
 	registry, err := newConfiguredRegistryClient(nil)
 	if err != nil {
 		t.Fatal(err)
@@ -344,10 +380,59 @@ func TestTheRealReadBackReportsAnotherCurrentHeadAsAConflict(t *testing.T) {
 		t.Fatal(err)
 	}
 	_, rootKey, _ := ed25519.GenerateKey(nil)
-	root := &pinnedRootRegistry{registry: registry, profile: profile, domain: "customer.example", signer: awid.KeySigner(rootKey),
-		root: awid.IDChainSubject{ID: artifact["id"].(string), DIDKey: awid.ComputeDIDKey(rootKey.Public().(ed25519.PublicKey))}}
-	err = registerEndorsement(context.Background(), root, []any{humanSigned}, signed, nil)
-	if errorCodeOf(err) != "registration_conflict" || !strings.Contains(err.Error(), other) {
+	adapter := &pinnedRootRegistry{registry: registry, profile: profile, domain: "example.com", signer: awid.KeySigner(rootKey),
+		root: awid.IDChainSubject{ID: root, DIDKey: awid.ComputeDIDKey(rootKey.Public().(ed25519.PublicKey))}}
+	return registerEndorsement(context.Background(), adapter, []any{humanSigned}, signed, nil)
+}
+
+// openEpochController is the controller key of status's open namespace epoch.
+func openEpochController(status map[string]any) string {
+	epochs := status["namespace"].(map[string]any)["epochs"].([]any)
+	for i := len(epochs) - 1; i >= 0; i-- {
+		if epoch := epochs[i].(map[string]any); epoch["retired_at"] == nil {
+			return epoch["did_key"].(string)
+		}
+	}
+	return ""
+}
+
+func TestTheRealReadBackReportsAVerifiedCompetingHeadAsAConflict(t *testing.T) {
+	status := vectorStatus(t, "normal")
+	var head string
+	for _, value := range status["identities"].([]any) {
+		if row := value.(map[string]any); row["id"] == "did:aw:2e2SPDJNyxg5Dt6EFJX3Tcn8Tauj" {
+			head = row["current_certificate_id"].(string)
+		}
+	}
+	err := readBackAt(t, status, openEpochController(status))
+	if errorCodeOf(err) != "registration_conflict" || head == "" || !strings.Contains(err.Error(), head) {
 		t.Fatalf("err %v", err)
+	}
+}
+
+func TestTheRealReadBackNeverTakesUnverifiedStatusAsAHead(t *testing.T) {
+	normal := vectorStatus(t, "normal")
+	for name, tc := range map[string]struct {
+		status     any
+		controller string
+	}{
+		"bare rows": {map[string]any{"identities": []any{map[string]any{"id": "did:aw:2e2SPDJNyxg5Dt6EFJX3Tcn8Tauj",
+			"current_certificate_id": "garbage-head"}}}, openEpochController(normal)},
+		"another namespace authority": {normal, func() string {
+			public, _, _ := ed25519.GenerateKey(nil)
+			return awid.ComputeDIDKey(public)
+		}()},
+		"another domain's status": {func() map[string]any {
+			other := map[string]any{}
+			for k, v := range normal {
+				other[k] = v
+			}
+			other["domain"] = "other.example"
+			return other
+		}(), openEpochController(normal)},
+	} {
+		if err := readBackAt(t, tc.status, tc.controller); errorCodeOf(err) != "registration_unconfirmed" {
+			t.Errorf("%s: err %v", name, err)
+		}
 	}
 }

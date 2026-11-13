@@ -1,8 +1,11 @@
 package awid
 
 import (
+	"bytes"
+	"encoding/json"
 	"fmt"
 	"reflect"
+	"strings"
 	"testing"
 )
 
@@ -93,5 +96,65 @@ func TestARegisteredChainDeeperThanTheMaximumIsNotBuilt(t *testing.T) {
 	}
 	if _, err := RegisteredIDChain(map[string]any{"identities": rows[:IDChainMaxDepth]}, fmt.Sprintf("did:aw:D%d", IDChainMaxDepth-1)); err != nil {
 		t.Fatalf("the maximum depth: %v", err)
+	}
+}
+
+// normalEvidence is fresh, whole status evidence for example.com.
+func normalEvidence(t *testing.T, change func(status map[string]any)) *IDChainEvidence {
+	t.Helper()
+	v := loadStatusVectors(t)
+	raw, _ := json.Marshal(v.Statuses["normal"])
+	var status map[string]any
+	d := json.NewDecoder(bytes.NewReader(raw))
+	d.UseNumber()
+	if err := d.Decode(&status); err != nil {
+		t.Fatal(err)
+	}
+	if change != nil {
+		change(status)
+	}
+	age := 0.0
+	return &IDChainEvidence{Status: status, AgeSeconds: &age, NamespaceAuthority: map[string]any{
+		"domain": "example.com", "dns_name": "_awid.example.com", "inherited": false, "controller_key": openEpochKey(v.Statuses["normal"])}}
+}
+
+func TestARegisteredHeadIsReadOnlyFromWholeFreshStatus(t *testing.T) {
+	const human = "did:aw:3YDAM5ZLRKg7eHH1Zs6sSMwkga8w"
+	evidence := normalEvidence(t, nil)
+	var want string
+	for _, value := range evidence.Status["identities"].([]any) {
+		if row := value.(map[string]any); row["id"] == human {
+			want = row["current_certificate_id"].(string)
+		}
+	}
+	if head, err := RegisteredIDHead(evidence, "example.com", human); err != nil || head != want || want == "" {
+		t.Fatalf("head %q want %q err %v", head, want, err)
+	}
+	stale := normalEvidence(t, nil)
+	old := 61.0
+	stale.AgeSeconds = &old
+	unanchored := normalEvidence(t, nil)
+	unanchored.NamespaceAuthority = map[string]any{}
+	for name, tc := range map[string]struct {
+		evidence *IDChainEvidence
+		domain   string
+		id       string
+	}{
+		"another domain":         {normalEvidence(t, nil), "other.example", human},
+		"stale":                  {stale, "example.com", human},
+		"no namespace authority": {unanchored, "example.com", human},
+		"an identity it lacks":   {normalEvidence(t, nil), "example.com", "did:aw:27zc4QzaQx7zjzNGJ4SUYdqJnqFL"},
+		"a head it does not hold": {normalEvidence(t, func(s map[string]any) {
+			s["identities"].([]any)[0].(map[string]any)["current_certificate_id"] = "sha256:" + strings.Repeat("cd", 32)
+		}), "example.com", human},
+		"a repeated identity": {normalEvidence(t, func(s map[string]any) {
+			rows := s["identities"].([]any)
+			s["identities"] = append(rows, rows[0])
+		}), "example.com", human},
+		"not a status": {normalEvidence(t, func(s map[string]any) { delete(s, "namespace") }), "example.com", human},
+	} {
+		if head, err := RegisteredIDHead(tc.evidence, tc.domain, tc.id); err == nil {
+			t.Errorf("%s: head %q", name, head)
+		}
 	}
 }

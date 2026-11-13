@@ -284,19 +284,12 @@ func (r *pinnedRootRegistry) currentHead(ctx context.Context, bundle map[string]
 	// A fresh client: the read-back never answers from evidence read before
 	// the registration.
 	evidence := pinnedStatusClient(r.registry, r.profile).IDChainEvidence(ctx, bundle, r.root, r.domain)
-	current := ""
-	rows, _ := evidence.Status["identities"].([]any)
-	for _, value := range rows {
-		row, _ := value.(map[string]any)
-		if row["id"] == r.root.ID {
-			current, _ = row["current_certificate_id"].(string)
-		}
+	current, err := awid.RegisteredIDHead(evidence, r.domain, r.root.ID)
+	if err != nil {
+		return "", fmt.Errorf("the registry's status for %s does not verify: %w", r.root.ID, err)
 	}
-	if current == "" {
-		return "", fmt.Errorf("the registry's status names no current certificate for %s", r.root.ID)
-	}
-	// Another current head is the registry's answer as it is; only the
-	// endorsed head must also verify as the root's whole chain.
+	// Another head, from status that verifies, is the registry's answer;
+	// the endorsed head must also verify as the root's whole chain.
 	certificates, _ := bundle["certificates"].([]any)
 	leaf, _ := certificates[len(certificates)-1].(map[string]any)
 	ours, err := awid.IDCertificateID(leaf["certificate"].(map[string]any))

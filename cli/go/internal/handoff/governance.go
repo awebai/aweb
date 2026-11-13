@@ -243,9 +243,13 @@ func approve(ctx context.Context, opts GovernanceOptions, operationID string, bo
 }
 
 // checkPrepared runs the caller's check of prepared's frozen request under
-// ctx, ending at the operation's expiry, and refuses an operation that
-// expired while it ran: nothing about it is shown or sent after that.
+// ctx, ending at the operation's expiry, and stops a caller that was
+// cancelled, or an operation that expired, before or while it ran: nothing
+// about it is shown or sent after that.
 func checkPrepared(ctx context.Context, opts GovernanceOptions, prepared *Prepared) error {
+	if err := ctx.Err(); err != nil {
+		return err
+	}
 	if opts.CheckPrepared == nil {
 		return nil
 	}
@@ -254,6 +258,11 @@ func checkPrepared(ctx context.Context, opts GovernanceOptions, prepared *Prepar
 	checkCtx, cancel := context.WithDeadline(ctx, prepared.ExpiresAt)
 	defer cancel()
 	if err := opts.CheckPrepared(checkCtx, request); err != nil {
+		return err
+	}
+	// The caller may have given up, or the operation expired, while the
+	// check ran, even when it succeeded.
+	if err := ctx.Err(); err != nil {
 		return err
 	}
 	if !now().Before(prepared.ExpiresAt) {

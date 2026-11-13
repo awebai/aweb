@@ -543,6 +543,23 @@ func TestTheCallersCheckRunsUnderTheCallersContextUntilTheOperationExpires(t *te
 	}
 }
 
+func TestACallerCancelledDuringASuccessfulCheckIsShownNoPage(t *testing.T) {
+	stub := newSignerStub(t, pendingReceipt, committedReceipt)
+	var opened string
+	var notified bytes.Buffer
+	opts := stub.options(&opened)
+	opts.Notify = &notified
+	ctx, cancel := context.WithCancel(context.Background())
+	opts.CheckPrepared = func(context.Context, map[string]any) error {
+		cancel() // the caller gives up while the check succeeds
+		return nil
+	}
+	_, err := Approve(ctx, opts, "11111111-1111-4111-8111-111111111111", revokeIntent())
+	if !errors.Is(err, context.Canceled) || opened != "" || strings.Contains(notified.String(), "/handoff/") || stub.reads != 0 {
+		t.Fatalf("err %v, opened %q, notified %q, %d reads", err, opened, notified.String(), stub.reads)
+	}
+}
+
 func TestAnOperationThatExpiresDuringTheCallersCheckShowsNoPage(t *testing.T) {
 	stub := newSignerStub(t, pendingReceipt, committedReceipt)
 	stub.expiresIn = 200 * time.Millisecond
