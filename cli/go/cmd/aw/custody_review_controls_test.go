@@ -233,7 +233,7 @@ func TestSecurityReviewCaptureRootCannotBeASymlink(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	dir, err := c.writeCapture(capture)
+	dir, err := c.writeCapture(capture.CredentialCapture)
 	if err == nil {
 		actual, _ := filepath.EvalSymlinks(dir)
 		t.Fatalf("resident signing-key capture was copied through a symlink outside its home: %s", actual)
@@ -265,5 +265,53 @@ func TestSecurityReviewOldCaptureCannotPublishAfterANewerBuildFails(t *testing.T
 	c.clientMu.Unlock()
 	if got != nil {
 		t.Fatalf("old generation %d was rebuilt and served after a newer published generation failed its build", gen)
+	}
+}
+
+// A capture's read precedes its decision; an equal-generation refusal must
+// not be cleared merely because that old capture reaches the mutex later.
+func TestSecurityReviewDelayedCaptureDoesNotClearAnEqualGenerationRefusal(t *testing.T) {
+	for _, interrupted := range []bool{false, true} {
+		name := "unpublished_older_writer"
+		if interrupted {
+			name = "interrupted_supported_writer"
+		}
+		t.Run(name, func(t *testing.T) {
+			c := newCaptureService(t)
+			commitTeams(t, c.home, "second")
+			if c.deps(t).client == nil {
+				t.Fatal("no published client")
+			}
+			earlier, err := c.captureCredentials()
+			if err != nil {
+				t.Fatal(err)
+			}
+			if interrupted {
+				stop := errors.New("interrupted before publication")
+				err = awconfig.UpdateCredentials(c.home, teamsOp, func(begin func() error) error {
+					if err := begin(); err != nil {
+						return err
+					}
+					writeTeams(t, c.home, "partial")
+					return stop
+				})
+				if !errors.Is(err, stop) {
+					t.Fatalf("did not leave the interrupted update: %v", err)
+				}
+			} else {
+				writeTeams(t, c.home, "unpublished")
+			}
+			if c.deps(t).client != nil {
+				t.Fatal("changed home should refuse")
+			}
+			builds := len(c.builtOn)
+			old := c.admitCapture(context.Background(), earlier, nil)
+			c.clientMu.Lock()
+			published := c.client
+			c.clientMu.Unlock()
+			if old.client != nil || published != nil {
+				t.Fatalf("capture read before the refusal reattached a client: returned=%p published=%p builds=%d", old.client, published, len(c.builtOn)-builds)
+			}
+		})
 	}
 }

@@ -17,6 +17,7 @@ import (
 	"runtime"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	aweb "github.com/awebai/aw"
@@ -132,10 +133,11 @@ type custodyService struct {
 	snapshotCertificate *awid.TeamCertificate
 	identityChanged     bool
 	// observedGeneration is the newest generation any admission observed,
-	// built or not; decisions orders admissions, and lastRefusal is the order
-	// of the latest one that refused, so nothing older publishes over it.
+	// built or not. captures orders captures by when they read the home, and
+	// lastRefusal is the order of the newest capture that was refused, so
+	// nothing read before it admits a client or publishes over it.
 	observedGeneration int64
-	decisions          int64
+	captures           atomic.Int64
 	lastRefusal        int64
 	// clientMu serializes building the client and guards the client, the
 	// functions derived from it, the selection-derived fields and the last
@@ -288,47 +290,45 @@ func (s *custodyService) clientDeps(ctx context.Context) custodyClientDeps {
 // as its admission read them. The decision is taken under clientMu; a build
 // it needs runs outside it, and its result is published only if nothing the
 // service observed meanwhile supersedes it.
-func (s *custodyService) admitCapture(ctx context.Context, capture *awconfig.CredentialCapture, captureErr error) custodyClientDeps {
+func (s *custodyService) admitCapture(ctx context.Context, capture *custodyCapture, captureErr error) custodyClientDeps {
 	s.clientMu.Lock()
-	deps, decision, build := s.decideLocked(capture, captureErr)
+	deps, build := s.decideLocked(capture, captureErr)
 	s.clientMu.Unlock()
 	if !build {
 		return deps
 	}
-	built, err := s.buildSnapshot(ctx, capture)
+	built, err := s.buildSnapshot(ctx, capture.CredentialCapture)
 	s.clientMu.Lock()
 	defer s.clientMu.Unlock()
-	return s.publishLocked(capture, decision, built, err)
+	return s.publishLocked(capture, built, err)
 }
 
 // decideLocked decides what capture admits. Observations are fenced: a
-// capture of a generation older than one already observed changes nothing
-// and admits no client, and each decision that refuses is ordered, so a build
-// decided before it never publishes. It reports the decision's order and
-// whether a build is needed.
-func (s *custodyService) decideLocked(capture *awconfig.CredentialCapture, captureErr error) (custodyClientDeps, int64, bool) {
+// capture of a generation older than one already observed, or read before a
+// capture that was refused, changes nothing and admits no client; a refusal
+// records its capture's order, so a build from a capture read before it
+// never publishes. It reports whether a build is needed.
+func (s *custodyService) decideLocked(capture *custodyCapture, captureErr error) (custodyClientDeps, bool) {
 	switch {
 	case s.identityChanged:
-		return custodyClientDeps{}, 0, false
+		return custodyClientDeps{}, false
 	case captureErr != nil:
 		code := "credential_update_incomplete"
 		if errors.Is(captureErr, awconfig.ErrLockUnavailable) {
 			code = "credential_update_busy"
 		}
 		s.reportFailureLocked("load credentials", code, captureErr)
-		return custodyClientDeps{}, 0, false
+		return custodyClientDeps{}, false
 	}
-	s.decisions++
-	decision := s.decisions
-	if err := s.checkPinLocked(capture); err != nil {
+	if err := s.checkPinLocked(capture.CredentialCapture); err != nil {
+		// identityChanged refuses every later admission and publication.
 		s.identityChanged = true
-		s.lastRefusal = decision
 		s.detachClientLocked()
 		s.reportFailureLocked("load credentials", "identity_changed", err)
-		return custodyClientDeps{}, 0, false
+		return custodyClientDeps{}, false
 	}
-	if capture.State.Generation < s.observedGeneration {
-		return custodyClientDeps{}, 0, false
+	if capture.State.Generation < s.observedGeneration || capture.order < s.lastRefusal {
+		return custodyClientDeps{}, false
 	}
 	s.observedGeneration = capture.State.Generation
 	if !capture.State.Published() {
@@ -336,18 +336,25 @@ func (s *custodyService) decideLocked(capture *awconfig.CredentialCapture, captu
 		if capture.State.Marker != nil && !capture.State.Committed() {
 			code = awconfig.ErrCredentialUpdateIncomplete.Error()
 		}
-		s.lastRefusal = decision
-		s.detachClientLocked()
+		s.refuseLocked(capture)
 		s.reportFailureLocked("load credentials", code, fmt.Errorf("the resident home's credentials are not a published generation"))
-		return custodyClientDeps{}, 0, false
+		return custodyClientDeps{}, false
 	}
 	if s.client != nil && capture.Projection == s.snapshotProjection {
-		return s.depsLocked(), 0, false
+		return s.depsLocked(), false
 	}
 	// The superseded snapshot is dropped before the build, so a failed build
 	// serves nothing rather than credentials known to be replaced.
 	s.detachClientLocked()
-	return custodyClientDeps{}, decision, true
+	return custodyClientDeps{}, true
+}
+
+// refuseLocked drops the served snapshot and records capture's order as the
+// newest refused one: decideLocked refuses nothing older than lastRefusal
+// before reaching here, so the order only grows.
+func (s *custodyService) refuseLocked(capture *custodyCapture) {
+	s.lastRefusal = capture.order
+	s.detachClientLocked()
 }
 
 // builtSnapshot is a client built from one capture, with what the capture's
@@ -359,12 +366,12 @@ type builtSnapshot struct {
 	certificate *awid.TeamCertificate
 }
 
-// publishLocked publishes built, the result of the build decision ordered as
-// decision, unless the service has since observed a newer generation or
-// refused, or a concurrent build already published this generation.
-func (s *custodyService) publishLocked(capture *awconfig.CredentialCapture, decision int64, built *builtSnapshot, err error) custodyClientDeps {
+// publishLocked publishes built, the result of building capture, unless the
+// service has since observed a newer generation or refused a capture read
+// after it, or a concurrent build already published this generation.
+func (s *custodyService) publishLocked(capture *custodyCapture, built *builtSnapshot, err error) custodyClientDeps {
 	switch {
-	case s.identityChanged || decision < s.lastRefusal || capture.State.Generation < s.observedGeneration:
+	case s.identityChanged || capture.order < s.lastRefusal || capture.State.Generation < s.observedGeneration:
 		return custodyClientDeps{}
 	case err != nil:
 		s.reportFailureLocked("connect to aweb", custodyClientInitializationErrorCode(err), err)
@@ -382,16 +389,30 @@ func (s *custodyService) publishLocked(capture *awconfig.CredentialCapture, deci
 	return s.depsLocked()
 }
 
+// custodyCapture is one capture of the resident home's credentials and its
+// order among this service's captures: a capture with a higher order read
+// the home no earlier than one with a lower order.
+type custodyCapture struct {
+	*awconfig.CredentialCapture
+	order int64
+}
+
 // captureCredentials reads the resident home's credentials once, under the
 // shared side of its credential lock, waiting at most custodyCaptureWait for
-// an update to finish.
-func (s *custodyService) captureCredentials() (*awconfig.CredentialCapture, error) {
+// an update to finish. The capture's order is taken under the lock, just
+// before the read.
+func (s *custodyService) captureCredentials() (*custodyCapture, error) {
 	deadline := time.Now().Add(custodyCaptureWait)
 	for {
 		lock, err := awconfig.LockCredentialsShared(s.residentHome)
 		if err == nil {
 			defer lock.Close()
-			return awconfig.CaptureCredentials(s.residentHome)
+			order := s.captures.Add(1)
+			capture, err := awconfig.CaptureCredentials(s.residentHome)
+			if err != nil {
+				return nil, err
+			}
+			return &custodyCapture{CredentialCapture: capture, order: order}, nil
 		}
 		if !errors.Is(err, awconfig.ErrLockUnavailable) || time.Now().After(deadline) {
 			return nil, fmt.Errorf("the resident home's credentials are being updated: %w", err)

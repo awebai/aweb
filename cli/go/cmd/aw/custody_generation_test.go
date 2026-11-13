@@ -502,12 +502,64 @@ func TestCustodyNeverFollowsACaptureRootSymlink(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err := c.writeCapture(capture); err == nil {
+	if _, err := c.writeCapture(capture.CredentialCapture); err == nil {
 		t.Fatal("a capture was written through a symlinked root")
 	}
 	info, err := os.Stat(outside)
 	entries, _ := os.ReadDir(outside)
 	if err != nil || info.Mode().Perm() != 0o755 || len(entries) != 0 {
 		t.Fatalf("the symlinked root's target was changed: %v %v %v", info.Mode().Perm(), entries, err)
+	}
+}
+
+// A capture read before the home was observed unpublished, but admitted
+// after that refusal, admits no client: refusals are ordered by when the
+// capture read the home, not by when it was decided.
+func TestCustodyAdmitsNoCaptureReadBeforeARefusal(t *testing.T) {
+	c := newCaptureService(t)
+	commitTeams(t, c.home, "second")
+	if c.deps(t).client == nil {
+		t.Fatal("generation 2 is not served")
+	}
+	earlier, err := c.captureCredentials()
+	if err != nil {
+		t.Fatal(err)
+	}
+	writeTeams(t, c.home, "written by an older aw")
+	if c.deps(t).client != nil {
+		t.Fatal("an unpublished home was served")
+	}
+	builds := len(c.builtOn)
+	if deps := c.admitCapture(context.Background(), earlier, nil); deps.client != nil || len(c.builtOn) != builds {
+		t.Fatalf("a capture read before the unpublished refusal admitted a client (%d builds)", len(c.builtOn)-builds)
+	}
+}
+
+// Refusals decided out of capture order keep the newest one: a capture read
+// between two refusals admits no client after both are decided.
+func TestCustodyKeepsTheNewestRefusalWhenRefusalsAreDecidedOutOfOrder(t *testing.T) {
+	c := newCaptureService(t)
+	commitTeams(t, c.home, "second")
+	writeTeams(t, c.home, "changed by hand")
+	first, err := c.captureCredentials()
+	if err != nil {
+		t.Fatal(err)
+	}
+	writeTeams(t, c.home, "second")
+	between, err := c.captureCredentials()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !between.State.Published() {
+		t.Fatal("restoring the published bytes did not publish the home again")
+	}
+	writeTeams(t, c.home, "changed by hand")
+	if c.deps(t).client != nil {
+		t.Fatal("an unpublished home was served")
+	}
+	_ = c.admitCapture(context.Background(), first, nil)
+	builds := len(c.builtOn)
+	if deps := c.admitCapture(context.Background(), between, nil); deps.client != nil || len(c.builtOn) != builds {
+		t.Fatalf("a capture read before the newest refusal admitted a client (%d builds)", len(c.builtOn)-builds)
 	}
 }
