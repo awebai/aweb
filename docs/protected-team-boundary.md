@@ -128,6 +128,9 @@ the retained complete signed certificate. Null or invalid historical blobs
 produce unavailable exact evidence, never a manufactured binding. A presentation
 with a changed member key, alias, scope or other signed field under an active ID
 refuses. Existing signature/revocation/current-key rules still apply.
+An explicit fresh revoked status overrides earlier cached revocation evidence
+on legacy and protected teams alike. Active legacy presentations do not require
+the protected-only artifact digest.
 
 Retained identity/grant/stream/hook references must match every membership field
 they consume against a full-artifact-backed current registry row (ID, subject

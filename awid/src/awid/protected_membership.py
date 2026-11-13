@@ -124,6 +124,8 @@ async def observe_team_protection(registry, team_id, *, certificate_id=None):
 def check_presented_membership(observation, certificate):
     """Pure exact presentation check using one negotiated public observation."""
     observation.require_fresh()
+    if observation.certificate_status == "revoked":
+        raise TeamCertificateError("revoked")
     if not observation.protected:
         return certificate
     if certificate.get("team_id") != observation.team_id:
@@ -158,6 +160,8 @@ def check_presented_membership(observation, certificate):
 async def verify_registered_membership(registry, observation, certificate):
     """Use the same pure verifier for public status or a full-authority list."""
     observation.require_fresh()
+    if observation.certificate_status == "revoked":
+        raise TeamCertificateError("revoked")
     if not observation.protected:
         return certificate
     if observation.certificate_id is not None:
