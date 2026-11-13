@@ -19,7 +19,3 @@ services:
     depends_on:
       egress:
         condition: service_healthy
-    # aw reaches a registry with its own client only when the operator names
-    # it: the team's registry, as deployment.yaml configures it.
-    environment:
-      AWID_REGISTRY_URL: ${AWID_REGISTRY_URL:?AWID_REGISTRY_URL is required, team.registryUrl}

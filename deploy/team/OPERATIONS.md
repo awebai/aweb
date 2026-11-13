@@ -30,8 +30,9 @@ aw id team show-server --team <team> --namespace <domain>
 
 A team registry on a private address, an internal-only name or plain http is
 one `aw` reaches only when the operator names it: run these with
-`AWID_REGISTRY_URL` set to `team.registryUrl`, or with `--registry`. The agent
-container is given `AWID_REGISTRY_URL` from `team.registryUrl`.
+`AWID_REGISTRY_URL` set to `team.registryUrl`, or with `--registry`. The same
+holds for an `aw` command in an agent seat: the agent image does not accept
+`AWID_REGISTRY_URL` as container environment, so the command names it itself.
 
 A record signed by another key is refused, so a new controller key needs the
 record published again. Once the signer holds the key, that has no supported
