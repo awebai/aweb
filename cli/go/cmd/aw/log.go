@@ -28,6 +28,9 @@ var logCmd = &cobra.Command{
 		}
 		logsDir := defaultLogsDir()
 		path := commLogPath(logsDir, commLogNameForSelection(sel))
+		if localLogKeyForSelection(sel).sealing() {
+			return withErrorCode("local_log_sealed", fmt.Errorf("the local log of team %s is sealed to the team's owner log key; the owner reads it with `aw log read %s` on the machine that holds that key", sel.TeamID, path))
+		}
 
 		entries, err := readCommLog(path, logLimit)
 		if err != nil {
@@ -105,12 +108,17 @@ func filterCommLog(entries []CommLogEntry, channel, from string) []CommLogEntry 
 	return out
 }
 
+// formatLogTimestamp shows an RFC 3339 log timestamp as local-log text.
+func formatLogTimestamp(ts string) string {
+	if t, err := time.Parse(time.RFC3339, ts); err == nil {
+		return t.Format("2006-01-02 15:04:05")
+	}
+	return ts
+}
+
 // formatLogLine formats one log entry for human display.
 func formatLogLine(e *CommLogEntry) string {
-	ts := e.Timestamp
-	if t, err := time.Parse(time.RFC3339, ts); err == nil {
-		ts = t.Format("2006-01-02 15:04:05")
-	}
+	ts := formatLogTimestamp(e.Timestamp)
 
 	arrow := "←"
 	peer := e.From

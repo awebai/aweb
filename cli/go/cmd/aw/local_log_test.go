@@ -2,11 +2,14 @@ package main
 
 import (
 	"bufio"
+	"context"
 	"crypto/ecdh"
 	"crypto/ed25519"
 	"crypto/rand"
 	"encoding/json"
+	"net/http"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -254,5 +257,125 @@ func TestInteractionLogSealsExistingPlaintextKeepingDedup(t *testing.T) {
 	opened := openAllLines(t, interactionLogPath(root), f.ownerKey)
 	if len(opened) != 2 || !strings.Contains(opened[0], "before") || !strings.Contains(opened[1], "after") {
 		t.Fatalf("owner reads %v", opened)
+	}
+}
+
+// resignTeamCertificateForTest replaces the workspace's team certificate with
+// the same membership signed by a team key the test holds.
+func resignTeamCertificateForTest(t *testing.T, workingDir, teamID string) ed25519.PrivateKey {
+	t.Helper()
+	old, err := awconfig.LoadTeamCertificateForTeam(workingDir, teamID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, teamKey, err := ed25519.GenerateKey(rand.Reader)
+	if err != nil {
+		t.Fatal(err)
+	}
+	cert, err := awid.SignTeamCertificate(teamKey, awid.TeamCertificateFields{
+		Team: old.Team, MemberDIDKey: old.MemberDIDKey, MemberDIDAW: old.MemberDIDAW,
+		MemberAddress: old.MemberAddress, Alias: old.Alias, IdentityScope: old.IdentityScope,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := awconfig.SaveTeamCertificateForTeam(workingDir, teamID, cert); err != nil {
+		t.Fatal(err)
+	}
+	return teamKey
+}
+
+func TestAwMailSendSealsTheCommLogAfterLogKeyInstall(t *testing.T) {
+	t.Parallel()
+
+	server := newLocalHTTPServer(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/v1/agents":
+			_ = json.NewEncoder(w).Encode(awid.ListAgentsResponse{Agents: []awid.AgentView{}})
+		case "/v1/messages":
+			var posted awid.SendMessageRequest
+			_ = json.NewDecoder(r.Body).Decode(&posted)
+			_ = json.NewEncoder(w).Encode(map[string]string{"message_id": "msg-sealed-1", "conversation_id": posted.ConversationID, "status": "delivered", "delivered_at": "2026-11-13T12:00:00Z"})
+		case "/v1/agents/heartbeat":
+			w.WriteHeader(http.StatusOK)
+		default:
+			t.Errorf("unexpected path=%s", r.URL.Path)
+		}
+	}))
+
+	ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
+	defer cancel()
+	tmp := t.TempDir()
+	bin := filepath.Join(tmp, "aw")
+	buildAwBinary(t, ctx, bin)
+	writeDefaultWorkspaceBindingForTest(t, tmp, server.URL)
+	const teamID = "backend:demo"
+	teamKey := resignTeamCertificateForTest(t, tmp, teamID)
+
+	awCmd := func(args ...string) ([]byte, error) {
+		run := exec.CommandContext(ctx, bin, args...)
+		run.Env = append(testCommandEnv(tmp), "AWID_REGISTRY_URL=http://127.0.0.1:1")
+		run.Dir = tmp
+		return run.CombinedOutput()
+	}
+	writeRecord := func(signer ed25519.PrivateKey) (string, *awid.LogKeyPair) {
+		pair, err := awid.GenerateLogKeyPair()
+		if err != nil {
+			t.Fatal(err)
+		}
+		rec, err := awid.NewLogKeyRecord(teamID, pair.Public, time.Now())
+		if err != nil {
+			t.Fatal(err)
+		}
+		if err := awid.SignLogKeyRecord(rec, signer); err != nil {
+			t.Fatal(err)
+		}
+		data, err := json.Marshal(rec)
+		if err != nil {
+			t.Fatal(err)
+		}
+		path := filepath.Join(tmp, "log-key-"+rec.KeyID[len(rec.KeyID)-6:]+".json")
+		if err := os.WriteFile(path, data, 0o644); err != nil {
+			t.Fatal(err)
+		}
+		return path, pair
+	}
+
+	_, stranger, err := ed25519.GenerateKey(rand.Reader)
+	if err != nil {
+		t.Fatal(err)
+	}
+	foreign, _ := writeRecord(stranger)
+	if out, err := awCmd("team", "admin", "log-key", "install", foreign); err == nil || !strings.Contains(string(out), "not signed by this team's key") {
+		t.Fatalf("a record not signed by the team key must be refused for that reason: %v\n%s", err, out)
+	}
+
+	recordPath, pair := writeRecord(teamKey)
+	if out, err := awCmd("team", "admin", "log-key", "install", recordPath); err != nil {
+		t.Fatalf("install: %v\n%s", err, out)
+	}
+	if out, err := awCmd("mail", "send", "--plaintext", "--to", "eve", "--subject", "sealed subject", "--body", "sealed body"); err != nil {
+		t.Fatalf("mail send: %v\n%s", err, out)
+	}
+
+	logs, err := filepath.Glob(filepath.Join(tmp, ".config", "aw", "logs", "*.jsonl"))
+	if err != nil || len(logs) != 1 {
+		t.Fatalf("logs = %v, %v", logs, err)
+	}
+	raw, err := os.ReadFile(logs[0])
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(string(raw), "sealed body") || strings.Contains(string(raw), "sealed subject") {
+		t.Fatalf("comm log holds plaintext: %s", raw)
+	}
+	opened := openAllLines(t, logs[0], pair.Private)
+	if len(opened) != 1 || !strings.Contains(opened[0], `"body":"sealed body"`) || !strings.Contains(opened[0], `"msg_id":"msg-sealed-1"`) {
+		t.Fatalf("owner reads %v", opened)
+	}
+
+	out, err := awCmd("log")
+	if err == nil || !strings.Contains(string(out), "aw log read") {
+		t.Fatalf("agent-side aw log must refuse while sealing is on: %v\n%s", err, out)
 	}
 }
