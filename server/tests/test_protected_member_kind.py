@@ -10,7 +10,7 @@ import pytest
 from aweb_naapp.runtime.protected_signer import SignerRefused
 from awid.did import did_from_public_key, generate_keypair, stable_id_from_public_key
 from awid.identity_observation import observe_identity_binding, observe_identity_kind
-from awid.registry_types import IDTreeEnrollment
+from awid.registry_types import IDTreeEnrollment, RegistryError
 
 from aweb.protected_signing.admission import AdmissionEffects
 from aweb.protected_signing.removal import agent_target
@@ -23,11 +23,17 @@ def legacy_member():
 
     class Registry:
         namespace_keys = {}
+        enrollment = IDTreeEnrollment(False, None)
+        evidence_calls = 0
 
         async def resolve_key_fresh(self, selected):
             return SimpleNamespace(did_aw=selected,
                 current_did_key=key if selected == principal else "human-key",
-                id_tree=IDTreeEnrollment(False, None))
+                id_tree=self.enrollment)
+
+        async def id_chain_evidence(self, bundle, subject, *, domain):
+            self.evidence_calls += 1
+            raise RegistryError("status unavailable", status_code=503)
 
     registry = Registry()
     c = SimpleNamespace(registry=registry, context=SimpleNamespace(human_id="human"),
@@ -48,9 +54,7 @@ async def test_legacy_registered_unknown_kind_cannot_be_removed_as_an_agent(lega
         await agent_target(c, record, self_key=record.member_did_key if self_remove else None)
 
 
-@pytest.mark.asyncio
-async def test_legacy_registered_unknown_kind_cannot_be_admitted_as_an_agent(legacy_member):
-    c, record = legacy_member
+def admission_attempt(c, record):
     registry = c.registry
     # The same kind boundary applies when the root admits a global child.
     # Root/policy admission are existing independent ports; the target's
@@ -70,8 +74,27 @@ async def test_legacy_registered_unknown_kind_cannot_be_admitted_as_an_agent(leg
         "child_id": record.member_did_aw, "child_key": record.member_did_key}
     operation = SimpleNamespace(operation="team.agent.admit", audience=registry.registry_url,
         intent=lambda: {"subject": subject})
+    return Effects(c).observe(operation, SimpleNamespace(principal="root"), purpose="prepare")
+
+
+@pytest.mark.asyncio
+async def test_legacy_registered_unknown_kind_cannot_be_admitted_as_an_agent(legacy_member):
     with pytest.raises(SignerRefused, match="subject_ineligible"):
-        await Effects(c).observe(operation, SimpleNamespace(principal="root"), purpose="prepare")
+        await admission_attempt(*legacy_member)
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("path", ["root_remove", "self_remove", "admit"])
+@pytest.mark.parametrize("missing_enrollment", [False, True])
+async def test_registered_kind_evidence_failure_is_unavailable(legacy_member, path, missing_enrollment):
+    c, record = legacy_member
+    c.registry.enrollment = None if missing_enrollment else IDTreeEnrollment(True, "example.org")
+    with pytest.raises(SignerRefused, match="evidence_unavailable"):
+        if path == "admit":
+            await admission_attempt(c, record)
+        else:
+            await agent_target(c, record, self_key=record.member_did_key if path == "self_remove" else None)
+    assert c.registry.evidence_calls == (0 if missing_enrollment else 1)
 
 
 
