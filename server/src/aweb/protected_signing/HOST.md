@@ -245,3 +245,83 @@ retains the signed owner act and local transactional audit. It does not apply
 the act to the remote app. Deployment isolation, final console dependency
 review, native/browser evidence, published pins and the covering release gate
 remain separate acceptance evidence; the factory does not establish them.
+
+### Initial bounded admission policy
+
+After the selected team-controller binding and its authorizer are provisioned,
+run as the protected service uid with its existing file settings:
+
+```sh
+python -m aweb.protected_signing.operator policy-init --file /run/secrets/signer/admission-policy.json
+```
+
+This is an explicit local operator action. The file contains the public policy
+without `digest`: positive `version`, sorted distinct `teams`,
+`root_selector: {"kind":"service_endorsed_root","service_id":"<configured service>"}`,
+nonempty sorted `subject_kinds` from `local_agent` and `registered_agent`, literal
+`member_role: "member"`, and positive finite integer bounds `max_active`,
+`rate_window_seconds`, `max_per_window`. All bounds live inside `bounds`.
+Without a key manifest the selected single-controller host requires `teams` to
+contain exactly its own team. With `AWEB_PROTECTED_CONTROLLER_KEYS_FILE`, each
+listed controller must have its own loaded matching private custody and current
+registry/authorizer checks. A namespace pin or another profile reference is not
+another team's controller custody. No wildcard, admin role or implicit bound is
+accepted.
+
+The service computes `sha256:` plus the lowercase SHA-256 of
+`aweb.admission-policy/1` followed by LF and the canonical unsigned policy.
+Repeating the exact initial policy returns it without another write. Changing
+it, including its version or any bound, refuses `policy_changed`; this command
+cannot substitute for the separately approved policy-change operation.
+
+`GET /protected-admission-policies?team_id=<team>` is configuration only. It
+requires the current registered key of a requester explicitly admitted for the
+selected protected binding. It uses covering-v2 label
+`protected_admission_policy_read`, the team's namespace domain, and the exact
+scope `{service_id,team_id}`. It returns only `service_id`, `team_id`, `mode`, and
+`policy`; the policy includes its immutable version and digest. A known bound
+team without a policy returns `policy:null`. Unknown authority, a missing
+requester grant, stale proof or unavailable registry evidence refuses; none is
+reported as an absent policy. Reading or preparing never creates a policy.
+
+The shared executor connects these policies to `identity.root.endorse/default`
+and `team.agent.admit/default`. A root endorsement needs the root's current key
+proof and a separate live authorizer LOGIN/UV, freezing the existing policy and
+ID-certificate fields. Its committed signature is distinct from registration:
+`aw` registers with the root's own subject proof and verifies registry read-back.
+Only this service's retained endorsement, now current in the pinned registry,
+authorizes bounded admission. An ordinary human-parent issuance is insufficient.
+Admission accepts the caller's exact policy version/digest and agent fields;
+no browser or synthetic human decision is used for its default variant.
+
+Admission counters are keyed by service, team and stable root ID. Changing the
+root key cannot reset them. Reserved uncertain registrations count toward the
+bounds. One signature and quota reservation are retained before a single
+registry mutation attempt. The result becomes committed only after fresh
+registration fields match the frozen certificate ID/member/key/alias/scope.
+An ambiguous send is reconciled by reads of that same registration; it never
+creates another signature, certificate ID or quota use. An unresolved signed
+registration at expiry remains `unknown/external_effect_unresolved`, rather
+than claiming it never applied. Operator recovery and membership-removal
+operations remain separate from the read/configuration command.
+
+### Multiple explicit private authorities on one host
+
+For root endorsement and team admission on the same request/human origins,
+provision the public profile's human-identity and team-controller bindings.
+`AWEB_PROTECTED_CONTROLLER_KEYS_FILE` optionally names a JSON object mapping
+EACH profile `authority_key_did` to its absolute private seed-file path. It
+contains references, not private values. The selected binding's entry must
+exactly equal `AWEB_PROTECTED_CONTROLLER_KEY_FILE`; omitted, extra or wrong
+keys refuse. Every referenced seed still passes the existing real-file uid,
+mode and symlink checks, matches the public pin, and is excluded from ordinary
+member keys. Projected Secret symlinks do not replace private-volume custody.
+
+Use the existing `operator install-controller --source-pem` for each selected
+scope/key slot, and `operator bootstrap --requester --contact` for each binding
+before serving the group. The one existing enrollment page and B3 completion
+fence resolve each mailed link's exact stored scope; they cannot select another
+authorizer. LOGIN and per-act UV use the same exact context resolution. The
+host mounts one shared operations HTTP surface, dispatching only exact trusted
+contexts to instances of the same shared executor. No additional signing or
+WebAuthn engine, wildcard key selector or worker key import/export is added.
