@@ -48,7 +48,7 @@ Every 5 s (`--interval`), it appends one JSON line per sample. Every line has
 |---|---|---|
 | `meta` | `docker info` | project, interval, host CPUs and memory, the service names used |
 | `container` | `docker stats`, `docker inspect` | CPU %, memory and limit, network and block I/O (cumulative), PIDs, restarts, OOM kill, CPU limit |
-| `postgres` | `psql` in the `postgres` and `registry-db` containers | `max_connections`, and per database: connections, active, idle in transaction, waiting on a lock, ungranted locks, longest lock wait, commits and rollbacks (cumulative), deadlocks. When `pg_stat_statements` is already loaded and installed, `statements` holds what changed since the previous tick: the ten query IDs with the most execution time, the rest summed as `other`, entries new to or evicted from the view, and `dealloc`. The first reading is only a `baseline` |
+| `postgres` | `psql` in the `postgres` and `registry-db` containers | `max_connections`, and per database: connections, active, idle in transaction, waiting on a lock, ungranted locks, longest lock wait, commits and rollbacks (cumulative), deadlocks. When `pg_stat_statements` is already loaded and installed, `statements` holds what changed since the previous tick: the ten query IDs with the most execution time, the rest summed as `other`, entries new to, reset in or evicted from the view, whether all statistics were reset (`stats_reset` changed), and `dealloc`. An entry that is new, or reset (any counter dropped), counts from zero, so no delta is negative. The first reading is only a `baseline` |
 | `redis` | aweb's Redis through the aweb container; `redis-cli` in `registry-redis` | clients, maxclients, blocked clients, memory and maxmemory, commands (cumulative), rejected connections, evictions |
 | `log` | `docker logs` of every container | HTTP statuses from access lines; WARNING and higher levels from JSON, uvicorn and PostgreSQL lines; PostgreSQL errors by class (`too_many_clients`, `lock_timeout`, `statement_timeout`, `idle_in_transaction_timeout`, `deadlock`, `out_of_memory`, `other`). Counts are kept per whole second, together with each key's exact first time |
 | `probe_error` | the collector | a probe that failed, and why. The next tick retries it |
@@ -102,9 +102,11 @@ python3 summarise.py --samples samples.jsonl --marks marks.jsonl --seats 40 --js
 
 Each step gets eight things:
 
-- **Coverage:** the collector's slots in the step: expected, attempted,
-  completed with every probe, skipped because a tick overran, and missing
-  because the collector was not running. It also lists failed probes and any
+- **Coverage:** the part of the step before the collector first started, which
+  nothing measured, and the collector's slots in the step: expected,
+  attempted, completed with every probe, skipped because a tick overran, and
+  missing because the collector was not running. A file may hold several runs,
+  each beginning with its `meta` record. It also lists failed probes and any
   stretch longer than 1.5 intervals without a complete sample. A step with
   incomplete coverage says so, and one with no samples says that nothing in it
   is evidence that nothing happened.
@@ -117,7 +119,9 @@ Each step gets eight things:
   the ticks' deltas. A statement counts only in the ticks where it was among
   that tick's ten slowest, and the rest is under `other`. The ranking says it
   is partial when a baseline reading or an eviction fell in the step, or when a
-  reading had no statements.
+  reading had no statements. It is also partial when an entry or all statistics
+  were reset in the step, or when evictions grew. Evictions are measured from
+  the last reading before the step, so one in the step's first interval counts.
 - **Redis:** clients, blocked clients, commands per second, memory, rejections
   and evictions.
 - **HTTP**, per service: status counts, the time of the first 429 and of the
@@ -152,6 +156,11 @@ Every first time states its precision:
 - Counters are cut at the samples nearest the step's edges, so up to one
   interval of a neighbour's activity can be included.
 - Log counts are cut to the second.
+- On PostgreSQL 16, an entry reset on its own with `pg_stat_statements_reset`
+  and arguments, whose counters then all overtake their old values within one
+  interval, is indistinguishable from steady growth. PostgreSQL 17 adds a
+  per-entry `stats_since` that would show it. Whole-view resets are detected
+  through `stats_reset`.
 - First times are as precise as each one says.
 - Access lines carry no latency, so the report has none: latency is the
   driver's to measure. Secrets runs with `--no-access-log` and the TLS front

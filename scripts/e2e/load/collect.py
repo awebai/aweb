@@ -244,10 +244,12 @@ POSTGRES_HAS_STATEMENTS_SQL = "SELECT count(*) FROM pg_extension WHERE extname =
 # Every statement's counters, and no text: comments survive normalisation,
 # constants can remain, and a utility statement is kept as written, so no text
 # leaves the database. pg_stat_statements(false) does not read the text file.
-# dealloc counts entries evicted since the statistics were last reset.
+# dealloc counts entries evicted since the statistics were last reset, and
+# stats_reset changes when they all are.
 POSTGRES_STATEMENTS_SQL = """\
 SELECT json_build_object(
   'dealloc', (SELECT dealloc FROM pg_stat_statements_info),
+  'stats_reset', (SELECT stats_reset FROM pg_stat_statements_info),
   'rows', (
     SELECT coalesce(json_agg(json_build_array(
       s.userid, d.datname, s.queryid, s.toplevel, s.calls, s.total_exec_time, s.rows)), '[]'::json)
@@ -266,23 +268,31 @@ def statement_snapshot(rows: list[list[Any]]) -> Snapshot:
             for userid, datname, queryid, toplevel, calls, exec_ms, n_rows in rows}
 
 
-def statement_deltas(previous: Snapshot | None, current: Snapshot, limit: int = STATEMENTS_PER_TICK) -> dict:
+def statement_deltas(previous: Snapshot | None, current: Snapshot, limit: int = STATEMENTS_PER_TICK,
+                     statistics_reset: bool = False) -> dict:
     """What each statement did since the previous tick: the `limit` with the
     most execution time, by database and query ID, and the rest summed as
-    other. An entry absent before is new in the view since then, so it counts
-    from zero; an entry gone is evicted, and what it did before leaving is lost.
-    The first snapshot is only a baseline."""
+    other. The first snapshot is only a baseline.
+
+    Each entry counts from zero when it is new in the view since then, when
+    any of its counters dropped (it was reset), or when all statistics were
+    reset (statistics_reset). What it did before a reset, and what an evicted
+    entry did before leaving, is lost; the counts say how often that happened."""
     if previous is None:
         return {"baseline": True}
+    if statistics_reset:
+        previous = {}
+    zero = (0, 0.0, 0)
     by_query: dict[tuple[str, int], list[float]] = {}
-    new_entries = 0
+    new_entries = reset_entries = 0
     for key, (calls, exec_ms, n_rows) in current.items():
         before = previous.get(key)
         if before is None:
             new_entries += 1
-            before = (0, 0.0, 0)
-        if calls < before[0]:
-            before = (0, 0.0, 0)
+            before = zero
+        elif calls < before[0] or exec_ms < before[1] or n_rows < before[2]:
+            reset_entries += 1
+            before = zero
         totals = by_query.setdefault((key[1], key[2]), [0, 0.0, 0])
         totals[0] += calls - before[0]
         totals[1] += exec_ms - before[1]
@@ -296,7 +306,9 @@ def statement_deltas(previous: Snapshot | None, current: Snapshot, limit: int = 
         "other": {"calls": sum(t[0] for _, t in rest), "exec_ms": sum(t[1] for _, t in rest),
                   "rows": sum(t[2] for _, t in rest)},
         "new_entries": new_entries,
+        "reset_entries": reset_entries,
         "evicted_entries": sum(1 for key in previous if key not in current),
+        "statistics_reset": statistics_reset,
     }
 
 
@@ -342,6 +354,7 @@ class Collector:
         self.logs_until = time.time()
         self.statements_database: dict[str, str | None] = {}
         self.statement_snapshots: dict[str, Snapshot] = {}
+        self.statement_resets: dict[str, Any] = {}
 
     def write(self, record: dict[str, Any]) -> None:
         line = json.dumps(record, sort_keys=True)
@@ -410,9 +423,13 @@ class Collector:
             if database:
                 result = json.loads(_run([*psql, "-d", database], POSTGRES_STATEMENTS_SQL))
                 current = statement_snapshot(result["rows"])
-                record["statements"] = {**statement_deltas(self.statement_snapshots.get(service), current),
-                                        "dealloc": result["dealloc"]}
+                reset = service in self.statement_resets and result["stats_reset"] != self.statement_resets[service]
+                record["statements"] = {
+                    **statement_deltas(self.statement_snapshots.get(service), current, statistics_reset=reset),
+                    "dealloc": result["dealloc"],
+                }
                 self.statement_snapshots[service] = current
+                self.statement_resets[service] = result["stats_reset"]
         self.write(record)
 
     def probe_aweb_redis(self, container: dict[str, str]) -> None:

@@ -7,6 +7,7 @@ lines."""
 
 from __future__ import annotations
 
+import re
 import sys
 import unittest
 from pathlib import Path
@@ -156,11 +157,13 @@ class Postgres(unittest.TestCase):
         self.assertEqual(aweb["numbackends"], 10)
 
     def test_the_query_only_reads(self):
+        # Whole words, so that a column such as stats_reset is not a verb.
+        writes = re.compile(r"(?<![\w'])(INSERT|UPDATE|DELETE|CREATE|ALTER|DROP|TRUNCATE|COPY|CALL|SET|RESET)\b"
+                            r"|_RESET\s*\(", re.IGNORECASE)
+        self.assertTrue(writes.search("SELECT pg_stat_statements_reset()"))
+        self.assertTrue(writes.search("SET lock_timeout = 0"))
         for sql in (collect.POSTGRES_SQL, collect.POSTGRES_HAS_STATEMENTS_SQL, collect.POSTGRES_STATEMENTS_SQL):
-            upper = sql.upper()
-            for verb in ("INSERT", "UPDATE", "DELETE", "CREATE", "ALTER", "DROP", "SET ", "RESET",
-                         "PG_STAT_RESET"):
-                self.assertNotIn(verb, upper)
+            self.assertIsNone(writes.search(sql), sql)
 
     def test_statements_are_read_without_their_text(self):
         # Comments survive normalisation and constants can remain, so no text
@@ -210,6 +213,34 @@ class StatementDeltas(unittest.TestCase):
         before = collect.statement_snapshot([row(1, 500, 5000.0)])
         after = collect.statement_snapshot([row(1, 3, 30.0)])
         self.assertEqual(collect.statement_deltas(before, after)["top"][0]["calls"], 3)
+
+    def test_a_reset_is_seen_in_any_counter_even_when_calls_overtook_the_old_value(self):
+        # naapp-review's counterexample: (5 calls, 5000 ms, 50 rows), reset, then
+        # (100, 100, 100) gave 95 calls and -4900 ms.
+        before = collect.statement_snapshot([row(1, 5, 5000.0, rows=50)])
+        after = collect.statement_snapshot([row(1, 100, 100.0, rows=100)])
+        deltas = collect.statement_deltas(before, after)
+        self.assertEqual(deltas["top"], [{"datname": "aweb", "queryid": 1, "calls": 100, "exec_ms": 100.0,
+                                          "rows": 100}])
+        self.assertEqual(deltas["reset_entries"], 1)
+
+    def test_a_statistics_reset_counts_every_entry_from_zero(self):
+        # Every counter overtook its old value, so only pg_stat_statements_info's
+        # stats_reset can tell.
+        before = collect.statement_snapshot([row(1, 5, 5000.0, rows=50), row(2, 1, 1.0)])
+        after = collect.statement_snapshot([row(1, 100, 6000.0, rows=60)])
+        deltas = collect.statement_deltas(before, after, statistics_reset=True)
+        self.assertTrue(deltas["statistics_reset"])
+        self.assertEqual(deltas["top"][0]["calls"], 100)
+        self.assertEqual(deltas["top"][0]["exec_ms"], 6000.0)
+        self.assertEqual(deltas["evicted_entries"], 0)
+
+    def test_no_delta_is_ever_negative(self):
+        before = collect.statement_snapshot([row(1, 5, 5000.0, rows=50), row(2, 9, 90.0, rows=9)])
+        after = collect.statement_snapshot([row(1, 100, 100.0, rows=100), row(2, 10, 80.0, rows=10)])
+        deltas = collect.statement_deltas(before, after)
+        for entry in deltas["top"]:
+            self.assertTrue(entry["calls"] >= 0 and entry["exec_ms"] >= 0 and entry["rows"] >= 0, entry)
 
     def test_users_and_nesting_levels_of_one_query_are_summed(self):
         before = collect.statement_snapshot([row(1, 0, 0.0), row(1, 0, 0.0, userid=11, toplevel=False)])

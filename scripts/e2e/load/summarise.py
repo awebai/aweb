@@ -68,17 +68,26 @@ def counter_delta(values: list[Any]) -> float | None:
 
 
 def _coverage(samples: list[dict], start: float, end: float) -> dict[str, Any]:
-    """How much of the step the collector measured: its schedule's slots in the
-    step, which it attempted, completed with every probe, skipped because a tick
+    """How much of the step the collector measured: the part of the step before
+    it first started, which nothing measured; its schedule's slots in the step,
+    which it attempted, completed with every probe, skipped because a tick
     overran, or never reached because it was not running; which probes failed;
-    and the stretches without a complete sample."""
-    meta = next((s for s in samples if s["kind"] == "meta"), None)
-    if meta is None:
+    and the stretches without a complete sample. A file can hold several runs,
+    each starting with its meta record; a run's schedule ends where the next
+    run's begins."""
+    runs = sorted((s for s in samples if s["kind"] == "meta"), key=lambda m: m["schedule_start"])
+    if not runs:
         return {"available": False, "complete": False}
-    origin, interval = meta["schedule_start"], meta["interval_seconds"]
-    # Slot k is due at origin + k * interval; the step expects those due in [start, end).
-    first_slot = max(0, math.ceil((start - origin) / interval))
-    expected = max(0, math.ceil((end - origin) / interval) - first_slot)
+    interval = max(run["interval_seconds"] for run in runs)
+    expected = 0
+    for run, following in zip(runs, [*runs[1:], None]):
+        origin, every = run["schedule_start"], run["interval_seconds"]
+        low = max(start, origin)
+        high = min(end, following["schedule_start"] if following else math.inf)
+        if low < high:
+            # Slot k is due at origin + k * every; the run expects those due in [low, high).
+            expected += max(0, math.ceil((high - origin) / every) - math.ceil((low - origin) / every))
+    unmeasured = [[start, min(end, runs[0]["schedule_start"])]] if runs[0]["schedule_start"] > start else []
     ticks = [s for s in samples if s["kind"] == "tick" and s.get("scheduled_t") is not None
              and start <= s["scheduled_t"] < end]
     skipped = sum(1 for s in samples if s["kind"] == "tick_skipped" and start <= s["scheduled_t"] < end)
@@ -98,6 +107,7 @@ def _coverage(samples: list[dict], start: float, end: float) -> dict[str, Any]:
     return {
         "available": True,
         "interval_seconds": interval,
+        "unmeasured": unmeasured,
         "expected": expected,
         "attempted": len(ticks),
         "completed": sum(1 for tick in ticks if whole(tick)),
@@ -105,7 +115,8 @@ def _coverage(samples: list[dict], start: float, end: float) -> dict[str, Any]:
         "missing": missing,
         "failed_probes": failed,
         "gaps": gaps,
-        "complete": expected > 0 and missing == 0 and skipped == 0 and not failed and not gaps,
+        "complete": (expected > 0 and missing == 0 and skipped == 0 and not failed and not gaps
+                     and not unmeasured),
     }
 
 
@@ -159,19 +170,25 @@ def _containers(series: dict[str, list[dict]], start: float) -> dict[str, dict]:
     return out
 
 
-def _statements(points: list[dict], start: float) -> dict[str, Any] | None:
+def _statements(history: list[dict], start: float) -> dict[str, Any] | None:
     """The step's statements by execution time, from the collector's per-tick
     deltas. A statement's time counts only in the ticks where it was among that
     tick's slowest; the rest of each tick is under other. Partial names what
-    the ranking cannot include. None when pg_stat_statements is not in use."""
-    inside = _inside(points, start)
+    the ranking cannot include. None when pg_stat_statements is not in use.
+
+    history is this service's readings up to the step's end. Evictions are
+    measured from the last reading before the step that had statements, so an
+    entry evicted and recreated under the same key in the step's first interval
+    still counts."""
+    inside = [p for p in history if p["t"] >= start]
     if not any(p.get("statements_available") for p in inside):
         return None
+    previous = next((p for p in reversed(history) if p["t"] < start and "statements" in p), None)
     sums: dict[tuple[str, int], list[float]] = {}
     other = 0.0
     partial = []
-    baseline = missing = evicted = 0
-    deallocs = []
+    baseline = missing = evicted = reset_entries = statistics_resets = 0
+    deallocs = [previous["statements"].get("dealloc")] if previous else []
     for point in inside:
         deltas = point.get("statements")
         if deltas is None:
@@ -182,6 +199,8 @@ def _statements(points: list[dict], start: float) -> dict[str, Any] | None:
             baseline += 1
             continue
         evicted += deltas.get("evicted_entries", 0)
+        reset_entries += deltas.get("reset_entries", 0)
+        statistics_resets += bool(deltas.get("statistics_reset"))
         other += deltas["other"]["exec_ms"]
         for entry in deltas["top"]:
             totals = sums.setdefault((entry["datname"], entry["queryid"]), [0, 0.0])
@@ -189,8 +208,17 @@ def _statements(points: list[dict], start: float) -> dict[str, Any] | None:
             totals[1] += entry["exec_ms"]
     if baseline:
         partial.append("the collector's baseline reading fell in the step: the time before it is not counted")
-    dealloc_growth = counter_delta(deallocs) if len(deallocs) > 1 else None
-    if evicted or dealloc_growth:
+    elif previous is None:
+        partial.append("no reading before the step to measure its first interval's evictions from")
+    if statistics_resets:
+        partial.append("pg_stat_statements was reset in the step: what ran between the previous reading and "
+                       "the reset is lost")
+    if reset_entries:
+        partial.append(f"{reset_entries} entries were reset in the step: what each ran before its reset is lost")
+    dealloc_growth = counter_delta(deallocs)
+    if None in deallocs:
+        partial.append("a reading in the step did not report evictions")
+    elif evicted or dealloc_growth:
         partial.append(f"{max(evicted, int(dealloc_growth or 0))} entries were evicted from pg_stat_statements "
                        "in the step: their time before eviction is lost")
     if missing:
@@ -208,9 +236,11 @@ def _statements(points: list[dict], start: float) -> dict[str, Any] | None:
     }
 
 
-def _postgres(series: dict[str, list[dict]], start: float) -> dict[str, dict]:
+def _postgres(samples: list[dict], series: dict[str, list[dict]], start: float, end: float) -> dict[str, dict]:
     out = {}
     for service, points in series.items():
+        history = sorted((s for s in samples if s["kind"] == "postgres" and s.get("service") == service
+                          and s["t"] <= end), key=lambda s: s["t"])
         inside = _inside(points, start)
         names = sorted({d["datname"] for p in inside for d in p["databases"]})
 
@@ -235,7 +265,7 @@ def _postgres(series: dict[str, list[dict]], start: float) -> dict[str, dict]:
             "max_connections": inside[-1]["max_connections"],
             "connections_max": _max(sum(d["numbackends"] for d in p["databases"]) for p in inside),
             "databases": databases,
-            "statements": _statements(points, start),
+            "statements": _statements(history, start),
         }
     return out
 
@@ -406,7 +436,7 @@ def summarise(samples: list[dict[str, Any]], window: dict[str, Any]) -> dict[str
         "host_ncpu": meta.get("host_ncpu"),
         "coverage": _coverage(samples, start, end),
         "containers": _containers(series["container"], start),
-        "postgres": _postgres(series["postgres"], start),
+        "postgres": _postgres(samples, series["postgres"], start, end),
         "redis": _redis(series["redis"], start),
         "http": http,
         "logs": logs,
@@ -442,7 +472,10 @@ def _table(header: list[str], rows: list[list[str]]) -> list[str]:
 def _coverage_lines(coverage: dict[str, Any], start: float) -> list[str]:
     if not coverage["available"]:
         return ["No collector samples in this step: nothing below is evidence that nothing happened.", ""]
-    lines = [f"Samples every {coverage['interval_seconds']:g} s: expected {coverage['expected']}, "
+    lines = [f"Nothing measured +{a - start:.1f} s to +{b - start:.1f} s: the collector had not started."
+             for a, b in coverage["unmeasured"]]
+    lines += [""] if lines else []
+    lines += [f"Samples every {coverage['interval_seconds']:g} s: expected {coverage['expected']}, "
              f"attempted {coverage['attempted']}, completed {coverage['completed']}, "
              f"skipped {coverage['skipped']}, missing {coverage['missing']}.", ""]
     if coverage["failed_probes"]:

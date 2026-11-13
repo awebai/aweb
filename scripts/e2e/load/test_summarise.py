@@ -7,7 +7,8 @@ aweb and AWID images, PostgreSQL 16 with pg_stat_statements, Redis 7, aweb's
 Redis behind an ACL password). fixtures/ramp-marks.jsonl is the stand-in's
 marks in the driver's format.
 
-Step 10 only polled aweb. Step 20 also:
+Warmup reset pg_stat_statements, which the collector must notice through
+stats_reset. Step 10 only polled aweb. Step 20 also:
 - held a PostgreSQL advisory lock that a second session waited on;
 - kept a client blocked in the registry's Redis;
 - opened a database that does not exist;
@@ -35,9 +36,9 @@ import summarise  # noqa: E402
 
 SAMPLES = HERE / "fixtures" / "ramp-samples.jsonl"
 MARKS = HERE / "fixtures" / "ramp-marks.jsonl"
-FIRST_429 = collect.parse_docker_timestamp("2026-11-13T04:27:21.014050710Z")
-REGISTRY_429S = 42
-REGISTRY_404S = 60
+FIRST_429 = collect.parse_docker_timestamp("2026-11-13T04:38:54.895946086Z")
+REGISTRY_429S = 30
+REGISTRY_404S = 72
 AWEB_200S_STEP_10 = 17
 CANARY = "canary-5d1e"
 
@@ -147,6 +148,18 @@ class Statements(unittest.TestCase):
         self.assertEqual(times, sorted(times, reverse=True))
         self.assertGreater(statements["total_exec_ms"], 0)
 
+    def test_the_recorded_statistics_reset_is_detected_and_reported(self):
+        samples, marks, windows = recorded()
+        (reset,) = [s for s in samples if s["kind"] == "postgres" and s.get("statements", {}).get("statistics_reset")]
+        # The reset ran at warmup, so the reading that saw it is in warmup.
+        (warmup,) = [m for m in marks if m["event"] == "warmup_start"]
+        self.assertTrue(warmup["t"] <= reset["t"] < windows[0]["start"])
+        window = {"seats": 0, "start": warmup["t"], "end": windows[0]["start"], "open": False, "workload": None}
+        partial = summarise.summarise(samples, window)["postgres"]["postgres"]["statements"]["partial"]
+        self.assertTrue(any("pg_stat_statements was reset" in reason for reason in partial), partial)
+        later = summarise.summarise(samples, windows[1])["postgres"]["postgres"]["statements"]["partial"]
+        self.assertFalse(any("reset" in reason for reason in later), later)
+
     def test_a_ranking_with_a_baseline_or_eviction_in_the_step_says_it_is_partial(self):
         samples, marks, windows = recorded()
         window = windows[1]
@@ -205,6 +218,83 @@ class Coverage(unittest.TestCase):
         self.assertEqual(coverage["failed_probes"], {"postgres:postgres": 1})
         self.assertEqual(coverage["attempted"], coverage["expected"] - 1)
         self.assertEqual(coverage["completed"], coverage["expected"] - 2)
+
+
+def meta(schedule_start: float, interval: float = 5.0) -> dict:
+    return {"t": schedule_start, "kind": "meta", "schedule_start": schedule_start, "interval_seconds": interval,
+            "host_ncpu": 4}
+
+
+def tick(slot: int, scheduled_t: float, t: float) -> dict:
+    return {"t": t, "kind": "tick", "slot": slot, "scheduled_t": scheduled_t, "probes": {"containers": "ok"}}
+
+
+def reading(t: float, statements: dict) -> dict:
+    return {"t": t, "kind": "postgres", "service": "postgres", "max_connections": 100, "databases": [],
+            "statements_available": True, "statements": statements}
+
+
+def deltas(dealloc: int, **extra) -> dict:
+    return {"top": [{"datname": "aweb", "queryid": 1, "calls": 1, "exec_ms": 1.0, "rows": 0}],
+            "other": {"calls": 0, "exec_ms": 0.0, "rows": 0}, "new_entries": 0, "evicted_entries": 0,
+            "reset_entries": 0, "statistics_reset": False, "dealloc": dealloc, **extra}
+
+
+WINDOW = {"seats": 10, "start": 10.0, "end": 20.0, "open": False, "workload": None}
+
+
+class LateStart(unittest.TestCase):
+    def test_a_collector_that_started_inside_the_step_has_not_covered_it(self):
+        # naapp-review's counterexample: step [0, 10), interval 5, schedule
+        # starting at 5, one good tick at 5.1, was reported complete.
+        window = dict(WINDOW, start=0.0, end=10.0)
+        summary = summarise.summarise([meta(5.0), tick(0, 5.0, 5.1)], window)
+        coverage = summary["coverage"]
+        self.assertFalse(coverage["complete"])
+        self.assertEqual(coverage["unmeasured"], [[0.0, 5.0]])
+        text = summarise.render(summary)
+        self.assertIn("Coverage incomplete", text)
+        self.assertNotIn("None observed.", text)
+
+    def test_a_restarted_collector_leaves_its_downtime_unmeasured(self):
+        samples = [meta(0.0), tick(0, 0.0, 0.1), tick(1, 5.0, 5.1), tick(2, 10.0, 10.1),
+                   meta(17.0), tick(0, 17.0, 17.1)]
+        coverage = summarise.summarise(samples, WINDOW)["coverage"]
+        self.assertEqual(coverage["expected"], 3)
+        self.assertEqual(coverage["missing"], 1)
+        self.assertFalse(coverage["complete"])
+
+
+class StatementUncertainty(unittest.TestCase):
+    def test_an_eviction_in_the_steps_first_interval_makes_the_ranking_partial(self):
+        # naapp-review's counterexample: dealloc 0 at t=9 (before the step),
+        # then 1 at t=11 and t=16, with evicted_entries 0: an entry evicted and
+        # recreated under the same key between snapshots.
+        samples = [meta(0.0), reading(9.0, deltas(0)), reading(11.0, deltas(1)), reading(16.0, deltas(1))]
+        partial = summarise.summarise(samples, WINDOW)["postgres"]["postgres"]["statements"]["partial"]
+        self.assertEqual(len(partial), 1, partial)
+        self.assertIn("evicted", partial[0])
+
+    def test_the_comparison_reaches_past_a_failed_reading_before_the_step(self):
+        failed = {"t": 9.5, "kind": "postgres", "service": "postgres", "max_connections": 100, "databases": [],
+                  "statements_available": True}
+        samples = [meta(0.0), reading(4.0, deltas(0)), failed, reading(11.0, deltas(2)), reading(16.0, deltas(2))]
+        partial = summarise.summarise(samples, WINDOW)["postgres"]["postgres"]["statements"]["partial"]
+        self.assertTrue(any("evicted" in reason for reason in partial), partial)
+
+    def test_resets_make_the_ranking_partial(self):
+        samples = [meta(0.0), reading(9.0, deltas(0)), reading(11.0, deltas(0, reset_entries=2)),
+                   reading(16.0, deltas(0, statistics_reset=True))]
+        partial = summarise.summarise(samples, WINDOW)["postgres"]["postgres"]["statements"]["partial"]
+        self.assertEqual(len(partial), 2, partial)
+        self.assertTrue(any("reset" in reason and "2 entries" in reason for reason in partial), partial)
+        self.assertTrue(any("pg_stat_statements was reset" in reason for reason in partial), partial)
+
+    def test_a_clean_step_is_not_partial(self):
+        samples = [meta(0.0), reading(9.0, deltas(0)), reading(11.0, deltas(0)), reading(16.0, deltas(0))]
+        statements = summarise.summarise(samples, WINDOW)["postgres"]["postgres"]["statements"]
+        self.assertEqual(statements["partial"], [])
+        self.assertEqual(statements["ranked"][0]["calls"], 2)
 
 
 class Workload(unittest.TestCase):
