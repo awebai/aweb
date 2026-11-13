@@ -493,3 +493,73 @@ async def test_private_public_status_negotiates_protection_without_changing_rele
                 await verify_registered_membership(registry, observation, changed)
     finally:
         await registry.aclose()
+
+
+@pytest.mark.asyncio
+async def test_controller_write_serializes_with_activation_before_reading_absent_binding(
+    controller_app,
+):
+    import asyncio
+    from awid_service.protected_teams import provision_team_protection
+
+    env = controller_app
+    pending = None
+    try:
+        async with env.db.transaction() as operator:
+            operator_pid = await operator.fetch_value("SELECT pg_backend_pid()")
+            await provision_team_protection(
+                operator,
+                domain="local",
+                name="base",
+                service_id="independent-signer",
+                service_did_key=keypair()[1],
+                expected_generation=0,
+                approval_ref="operator-reviewed-cutover",
+            )
+            pending = asyncio.create_task(
+                send(
+                    env,
+                    "POST",
+                    TEAM_PATH + "/visibility",
+                    {
+                        "domain": "local",
+                        "operation": "set_team_visibility",
+                        "team_name": "base",
+                        "visibility": "private",
+                    },
+                    {"visibility": "private"},
+                    signer=env.team,
+                )
+            )
+            # Observe a real database lock wait, rather than assuming a sleeping
+            # HTTP task reached the authority fence. All PIDs belong to this test DB.
+            for _ in range(200):
+                if pending.done():
+                    pytest.fail(
+                        "controller write escaped the uncommitted activation fence"
+                    )
+                blocked = await env.db.fetch_value(
+                    "SELECT EXISTS(SELECT 1 FROM pg_stat_activity WHERE datname=current_database() "
+                    "AND $1=ANY(pg_blocking_pids(pid)))",
+                    operator_pid,
+                )
+                if blocked:
+                    break
+                await asyncio.sleep(0.01)
+            else:
+                pytest.fail(
+                    "controller write never reached the canonical authority lock"
+                )
+        response = await asyncio.wait_for(pending, 5)
+        assert response.status_code == 403, response.text
+        assert response.json()["detail"]["code"] == "protected_controller_required"
+        assert (
+            await env.db.fetch_value(
+                "SELECT visibility FROM {{tables.teams}} WHERE name='base'"
+            )
+            == "public"
+        )
+    finally:
+        if pending is not None and not pending.done():
+            pending.cancel()
+            await asyncio.gather(pending, return_exceptions=True)
