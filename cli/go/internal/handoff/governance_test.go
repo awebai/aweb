@@ -37,6 +37,15 @@ type signerStub struct {
 	firstBody   []byte
 	posts       atomic.Int32
 	expiresIn   time.Duration
+	// postThrottle answers the next prepares 503 receipt_unavailable with
+	// these Retry-After values, before any effect, in order.
+	postThrottle []string
+	postBodies   [][]byte
+	// auths is each request's own signing mark, in order.
+	auths []string
+	// blockPrepare holds every unthrottled prepare open until the client
+	// gives up on it.
+	blockPrepare bool
 }
 
 func newSignerStub(t *testing.T, receipts ...string) *signerStub {
@@ -45,10 +54,25 @@ func newSignerStub(t *testing.T, receipts ...string) *signerStub {
 		s.mu.Lock()
 		defer s.mu.Unlock()
 		w.Header().Set("Content-Type", "application/json")
+		s.auths = append(s.auths, r.Header.Get("X-Test-Auth"))
 		switch {
 		case r.Method == http.MethodPost && r.URL.Path == "/request/protected-operations":
 			s.posts.Add(1)
 			body, _ := io.ReadAll(r.Body)
+			s.postBodies = append(s.postBodies, body)
+			if len(s.postThrottle) > 0 {
+				w.Header().Set("Retry-After", s.postThrottle[0])
+				s.postThrottle = s.postThrottle[1:]
+				w.WriteHeader(http.StatusServiceUnavailable)
+				_, _ = w.Write([]byte(`{"detail":"receipt_unavailable"}`))
+				return
+			}
+			if s.blockPrepare {
+				s.mu.Unlock()
+				<-r.Context().Done()
+				s.mu.Lock()
+				return
+			}
 			if s.firstBody != nil && !bytes.Equal(body, s.firstBody) {
 				w.WriteHeader(http.StatusConflict)
 				_, _ = w.Write([]byte(`{"detail":"operation_conflict"}`))
@@ -74,9 +98,13 @@ func newSignerStub(t *testing.T, receipts ...string) *signerStub {
 		case r.Method == http.MethodGet && strings.HasPrefix(r.URL.Path, "/request/protected-operations/"):
 			reply := s.receipts[min(s.reads, len(s.receipts)-1)]
 			s.reads++
-			// "!<status>:<code>" answers that refusal; "!503" is busy.
+			// "!<status>:<code>[:<Retry-After>]" answers that refusal; "!503" is busy.
 			if strings.HasPrefix(reply, "!") {
-				status, code, _ := strings.Cut(reply[1:], ":")
+				status, rest, _ := strings.Cut(reply[1:], ":")
+				code, hint, hinted := strings.Cut(rest, ":")
+				if hinted {
+					w.Header().Set("Retry-After", hint)
+				}
 				n, _ := strconv.Atoi(status)
 				w.WriteHeader(n)
 				_, _ = w.Write([]byte(`{"detail":"` + cmp.Or(code, "busy") + `"}`))
@@ -176,11 +204,14 @@ func coveredDigestOf(payload map[string]any) string {
 }
 
 func (s *signerStub) options(opened *string) GovernanceOptions {
+	var signed atomic.Int32
 	return GovernanceOptions{
 		Request: s.server.URL + "/request", Human: s.server.URL + "/human",
 		Sign: func(ctx context.Context, method string, target *url.URL, body []byte) (*http.Response, error) {
 			req, _ := http.NewRequestWithContext(ctx, method, target.String(), bytes.NewReader(body))
 			req.Header.Set("Content-Type", "application/json")
+			// Each request is signed on its own, as the requester signer does.
+			req.Header.Set("X-Test-Auth", strconv.Itoa(int(signed.Add(1))))
 			return http.DefaultClient.Do(req)
 		},
 		Open:         func(u string) error { *opened = u; return nil },

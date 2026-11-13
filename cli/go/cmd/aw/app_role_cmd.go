@@ -97,7 +97,10 @@ func init() {
 		cmd.Flags().StringVar(&appCredentialFileFlag, "credential", "", "The holder's export from aw app credential register")
 		cmd.Flags().StringVar(&appNoticeContactFlag, "notice-contact", "", "The notice contact, for a role that declares one")
 	}
-	appRoleCmd.AddCommand(appRoleDesignateCmd, appRoleRevokeCmd)
+	appRoleRevokeCmd.Flags().StringVar(&appProtectedProfileFlag, "protected-profile", "", "Prepare the act at the protected service this operator-provisioned profile names; the controlling human approves it there")
+	appRoleRevokeCmd.Flags().StringVar(&appApproverFlag, "approver", "", "With --protected-profile, the did:aw of the human who approves the act")
+	appRoleResumeCmd.Flags().StringVar(&appProtectedProfileFlag, "protected-profile", "", "The profile the operation was prepared through")
+	appRoleCmd.AddCommand(appRoleDesignateCmd, appRoleRevokeCmd, appRoleResumeCmd)
 	appCredentialCmd.AddCommand(appCredentialRegisterCmd, appCredentialReplaceCmd)
 	appCmd.AddCommand(appRoleCmd, appCredentialCmd)
 	appCmd.GroupID = groupUtility
@@ -212,9 +215,14 @@ func runHumanRoleAct(cmd *cobra.Command, act, appName string) error {
 	if err != nil {
 		return err
 	}
-	teamKey, err := loadOwnerTeamKey(selection.TeamID)
-	if err != nil {
-		return err
+	// Through a protected service, the act is approved by the controlling
+	// human there; aw needs no controller key.
+	protected := strings.TrimSpace(appProtectedProfileFlag) != ""
+	var teamKey ed25519.PrivateKey
+	if !protected {
+		if teamKey, err = loadOwnerTeamKey(selection.TeamID); err != nil {
+			return err
+		}
 	}
 	ctx, cancel := commandAPIContext(cmd)
 	installationID, err := app.installation(ctx, client, selection.TeamID)
@@ -249,6 +257,9 @@ func runHumanRoleAct(cmd *cobra.Command, act, appName string) error {
 	subject, err := request.subject()
 	if err != nil {
 		return err
+	}
+	if protected {
+		return runProtectedHumanRoleAct(cmd, act, selection.TeamID, app.Origins.Human, subject)
 	}
 	fields, err := newOwnerAct(act, selection.TeamID, app.Origins.Human, teamKey, subject, time.Now())
 	if err != nil {

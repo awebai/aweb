@@ -1,0 +1,127 @@
+"""The agents' egress policy, derived from one team's deployment.
+
+The egress component (OATS container/agent/egress, README "Derived policy")
+reads this file read-only at /etc/egress/policy.json. It is derived, never
+written by an operator: the five origins agents use come from deployment.yaml,
+their addresses are what each origin's host resolves to on the services
+network when the deployment starts, the denied addresses are the protected
+backends', and the authority records are the signer profile's namespace
+authorities, in AWID's own TXT encoding.
+"""
+
+import ipaddress
+
+from awid.dns_verify import _parse_awid_record, awid_txt_name, awid_txt_value
+
+ROLES = ("aweb", "secrets", "logs", "signer", "registry")
+
+
+class Refused(Exception):
+    """The deployment cannot give its agents an egress policy."""
+
+
+def _origins(config: dict) -> dict[str, str]:
+    return {
+        "aweb": config["aweb"]["publicOrigin"],
+        "secrets": config["secrets"]["publicOrigin"],
+        "logs": config["logs"]["publicOrigin"],
+        "signer": config["signer"]["requestOrigin"],
+        "registry": config["team"].get("registryUrl", "https://api.awid.ai"),
+    }
+
+
+def _pinned(role: str, addresses: list[str]) -> list[str]:
+    if not 1 <= len(addresses) <= 8 or len(set(addresses)) != len(addresses):
+        raise Refused(f"{role}: needs one to eight distinct addresses, got {len(addresses)}")
+    for address in addresses:
+        try:
+            ipaddress.IPv4Address(address)
+        except ValueError:
+            raise Refused(f"{role}: {address!r} is not an IPv4 address") from None
+    return list(addresses)
+
+
+def derive(config: dict, profile: dict, addresses: dict[str, list[str]], denied: list[str]) -> dict:
+    """The policy for this deployment, its signer's profile, the addresses
+    each role's origin resolves to and the protected backends' addresses."""
+    origins = _origins(config)
+    if profile["request_origin"] != origins["signer"]:
+        raise Refused("request_origin: the signer profile names another signer")
+    if profile["registry_origin"] != origins["registry"]:
+        raise Refused("registry_origin: the signer profile names another registry")
+    records = []
+    for authority in profile["namespace_authorities"]:
+        name = awid_txt_name(authority["domain"])
+        text = awid_txt_value(authority["controller_did"], profile["registry_origin"])
+        # The record agents will be answered is one AWID itself accepts.
+        _parse_awid_record(text, dns_name=name)
+        records.append({"name": name, "text": text})
+    return {
+        "frontAddress": config["agents"]["resolverIp"],
+        "privateIngressAddresses": list(config["egress"].get("privateIngressAddresses", [])),
+        "deniedAddresses": [_pinned("denied", [address])[0] for address in denied],
+        "humanOrigin": config["signer"]["humanOrigin"],
+        "authorityRecords": records,
+        "targets": {role: {"origin": origins[role], "addresses": _pinned(role, addresses[role])} for role in ROLES},
+    }
+
+
+# The probe's credential-free stand-ins for the agent's state, login and
+# authorized keys, under the run directory, and where the agent sees them.
+PROBE_MOUNTS = (
+    ("probe/state", "/state", True),
+    ("probe/login", "/etc/agent-login", False),
+    ("probe/authorized_keys", "/etc/agent-ssh/authorized_keys", False),
+    ("resolv.conf", "/etc/resolv.conf", False),
+)
+PROBE_CA = ("probe/ca.pem", "/public/world-ca.pem")
+# One existing GET route per role that answers 200 and changes nothing.
+ALLOWED_PATHS = {"aweb": "/ready", "secrets": "/ready", "logs": "/ready", "signer": "/readyz", "registry": "/health"}
+
+
+def boundary_plan(
+    config: dict,
+    policy: dict,
+    *,
+    project: str,
+    images: dict[str, str],
+    run_dir: str,
+    backends: dict[str, str],
+    protected_sources: list[str],
+    ca: bool,
+) -> dict:
+    """The runtime plan of the OATS boundary probe (egress
+    probe-compose-boundary.mjs) for this deployment's Compose project: its
+    inert probe container and the egress proxy on the actual agents network,
+    the mounts the probe is approved to have, the protected sources none may
+    overlap, and the two backends no agent may reach."""
+    for role, address in backends.items():
+        if address not in policy["deniedAddresses"]:
+            raise Refused(f"{role}: {address} is not one of the policy's denied addresses")
+    mounts = [*PROBE_MOUNTS, (*PROBE_CA, False)] if ca else PROBE_MOUNTS
+    result = {
+        "probeContainer": f"{project}-agent-probe",
+        "proxyContainer": f"{project}-egress-1",
+        "agentsNetwork": f"{project}_agents",
+        "servicesNetwork": f"{project}_services",
+        "probeImage": images["agent"],
+        "proxyImage": images["egress"],
+        "uid": config["agents"].get("uid", 20001),
+        "gid": config["agents"].get("gid", 20001),
+        "approvedProbeMounts": [
+            {"Type": "bind", "Source": f"{run_dir}/{source}", "Destination": target, "RW": writable}
+            for source, target, writable in mounts
+        ],
+        "protectedSources": list(protected_sources),
+        "policy": policy,
+        "allowedPaths": dict(ALLOWED_PATHS),
+        "deniedBackends": [
+            {"role": "postgres", "address": backends["postgres"], "port": config.get("postgres", {}).get("port", 5432)},
+            # Redis is on aweb's backend network alone.
+            {"role": "redis", "address": backends["redis"], "port": 6379, "controlNetwork": f"{project}_backend"},
+        ],
+        "protectedPaths": [],
+    }
+    if ca:
+        result["caFile"] = PROBE_CA[1]
+    return result

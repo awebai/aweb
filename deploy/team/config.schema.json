@@ -1,0 +1,862 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "One team's deployment",
+  "description": "The operator's deployment.yaml. Literals that are not secret and references to secrets; never a credential. A component's section is added with its descriptor. x-env on an input is the setting its service reads; the Compose layer's env file is rendered from it.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "team",
+    "postgres",
+    "aweb"
+  ],
+  "$defs": {
+    "origin": {
+      "type": "string",
+      "pattern": "^https://[A-Za-z0-9.-]+(:[0-9]+)?$"
+    },
+    "image": {
+      "type": "string",
+      "pattern": "^[a-z0-9][a-z0-9._/:-]*@sha256:[0-9a-f]{64}$"
+    },
+    "secrets": {
+      "description": "Where the component's secret files come from: an existing Secret's name in Kubernetes, a directory under compose.secretsDir on one machine.",
+      "type": "string",
+      "pattern": "^[a-z0-9]([a-z0-9-]*[a-z0-9])?$"
+    },
+    "file": {
+      "description": "An absolute path of a configuration file that is not secret.",
+      "type": "string",
+      "pattern": "^/"
+    },
+    "ipv4": {
+      "type": "string",
+      "pattern": "^((25[0-5]|2[0-4][0-9]|1?[0-9]?[0-9])\\.){3}(25[0-5]|2[0-4][0-9]|1?[0-9]?[0-9])$"
+    },
+    "cidr": {
+      "type": "string",
+      "pattern": "^((25[0-5]|2[0-4][0-9]|1?[0-9]?[0-9])\\.){3}(25[0-5]|2[0-4][0-9]|1?[0-9]?[0-9])/([0-9]|[12][0-9]|3[0-2])$"
+    },
+    "bytes": {
+      "description": "A size in bytes, as an integer: Docker and Kubernetes spell quantities differently.",
+      "type": "integer",
+      "minimum": 1
+    },
+    "id": {
+      "type": "integer",
+      "minimum": 1,
+      "maximum": 2147483647
+    }
+  },
+  "properties": {
+    "team": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "id"
+      ],
+      "properties": {
+        "id": {
+          "description": "The canonical team id, name:domain.",
+          "type": "string",
+          "pattern": "^[a-z0-9][a-z0-9-]*:[a-z0-9][a-z0-9.-]*$",
+          "x-env": "TEAM_ID"
+        },
+        "registryUrl": {
+          "$ref": "#/$defs/origin",
+          "default": "https://api.awid.ai",
+          "x-env": "AWID_REGISTRY_URL"
+        }
+      }
+    },
+    "postgres": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "bundled": {
+          "description": "Run a PostgreSQL server in the deployment and create each component's database and role at first start.",
+          "type": "boolean",
+          "default": true,
+          "x-env": "POSTGRES_BUNDLED"
+        },
+        "host": {
+          "type": "string",
+          "default": "postgres",
+          "x-env": "POSTGRES_HOST"
+        },
+        "port": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 65535,
+          "default": 5432,
+          "x-env": "POSTGRES_PORT"
+        },
+        "secrets": {
+          "$ref": "#/$defs/secrets",
+          "default": "postgres",
+          "x-env": "POSTGRES_SECRETS"
+        }
+      }
+    },
+    "aweb": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "image",
+        "publicOrigin"
+      ],
+      "properties": {
+        "image": {
+          "$ref": "#/$defs/image",
+          "x-env": "AWEB_IMAGE"
+        },
+        "publicOrigin": {
+          "$ref": "#/$defs/origin",
+          "x-env": "AWEB_PUBLIC_ORIGIN"
+        },
+        "appInternalOrigins": {
+          "description": "The exact origins of apps this server installs from internal addresses. They must resolve inside network.servicesCidr.",
+          "type": "array",
+          "minItems": 1,
+          "uniqueItems": true,
+          "items": {
+            "$ref": "#/$defs/origin"
+          },
+          "x-env": "AWEB_APP_INTERNAL_ORIGINS"
+        },
+        "secrets": {
+          "$ref": "#/$defs/secrets",
+          "default": "aweb",
+          "x-env": "AWEB_SECRETS"
+        },
+        "compose": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "bindAddress": {
+              "type": "string",
+              "default": "127.0.0.1",
+              "x-env": "AWEB_BIND_ADDRESS"
+            },
+            "port": {
+              "type": "integer",
+              "minimum": 1,
+              "maximum": 65535,
+              "default": 8000,
+              "x-env": "AWEB_PORT"
+            }
+          }
+        }
+      }
+    },
+    "compose": {
+      "description": "Inputs of the Compose layer alone.",
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "secretsDir"
+      ],
+      "properties": {
+        "secretsDir": {
+          "description": "The host directory that holds one subdirectory of secret files per component.",
+          "type": "string",
+          "pattern": "^/",
+          "x-env": "SECRETS_DIR"
+        }
+      }
+    },
+    "signer": {
+      "description": "The protected signer host: human approval with passkeys (descriptors/signer.md).",
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "image",
+        "profileFile",
+        "scopeFile",
+        "requestOrigin",
+        "humanOrigin",
+        "workerUids",
+        "emailSmtpHost",
+        "emailSmtpPort",
+        "emailUsername",
+        "emailFrom"
+      ],
+      "properties": {
+        "image": {
+          "$ref": "#/$defs/image",
+          "x-env": "SIGNER_IMAGE"
+        },
+        "profileFile": {
+          "$ref": "#/$defs/file",
+          "x-env": "SIGNER_PROFILE_SOURCE",
+          "description": "The one protected service profile, on the machine that renders and runs the deployment. Its request and human origins must equal requestOrigin and humanOrigin, and its registry team.registryUrl."
+        },
+        "scopeFile": {
+          "$ref": "#/$defs/file",
+          "x-env": "SIGNER_SCOPE_SOURCE"
+        },
+        "requestOrigin": {
+          "$ref": "#/$defs/origin",
+          "x-env": "SIGNER_REQUEST_ORIGIN"
+        },
+        "humanOrigin": {
+          "description": "Where people approve with their passkeys. The signer takes it from its profile; the deployment routes it.",
+          "$ref": "#/$defs/origin"
+        },
+        "secrets": {
+          "$ref": "#/$defs/secrets",
+          "default": "signer",
+          "x-env": "SIGNER_SECRETS"
+        },
+        "workerUids": {
+          "description": "The uids agents and workers run as. The signer's own uid, 1001, is not one of them.",
+          "type": "array",
+          "minItems": 1,
+          "uniqueItems": true,
+          "items": {
+            "type": "integer",
+            "minimum": 1,
+            "not": {
+              "const": 1001
+            }
+          },
+          "x-env": "AWEB_PROTECTED_WORKER_UIDS"
+        },
+        "databaseSchema": {
+          "type": "string",
+          "pattern": "^[a-z][a-z0-9_]{0,62}$",
+          "default": "protected_signer",
+          "x-env": "AWEB_PROTECTED_DATABASE_SCHEMA"
+        },
+        "databaseUsesTransactionPooler": {
+          "type": "boolean",
+          "default": false,
+          "x-env": "AWEB_PROTECTED_DATABASE_USES_TRANSACTION_POOLER"
+        },
+        "humanCsrfKey": {
+          "type": "string",
+          "pattern": "^[A-Za-z0-9._-]{1,128}$",
+          "default": "aweb.protected.console.csrf",
+          "x-env": "AWEB_PROTECTED_HUMAN_CSRF_KEY"
+        },
+        "trustedClientHeader": {
+          "type": "string",
+          "pattern": "^[A-Za-z0-9-]{1,64}$",
+          "x-env": "AWEB_PROTECTED_TRUSTED_CLIENT_HEADER"
+        },
+        "emailSmtpHost": {
+          "type": "string",
+          "pattern": "^[A-Za-z0-9.-]+$",
+          "x-env": "AWEB_PROTECTED_EMAIL_SMTP_HOST"
+        },
+        "emailSmtpPort": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 65535,
+          "x-env": "AWEB_PROTECTED_EMAIL_SMTP_PORT"
+        },
+        "emailUsername": {
+          "type": "string",
+          "minLength": 1,
+          "x-env": "AWEB_PROTECTED_EMAIL_USERNAME"
+        },
+        "emailFrom": {
+          "type": "string",
+          "minLength": 1,
+          "x-env": "AWEB_PROTECTED_EMAIL_FROM"
+        },
+        "emailTls": {
+          "enum": [
+            "starttls",
+            "implicit"
+          ],
+          "default": "starttls",
+          "x-env": "AWEB_PROTECTED_EMAIL_TLS"
+        },
+        "emailCaFile": {
+          "$ref": "#/$defs/file",
+          "description": "Trust anchors for the SMTP server, when a private authority signed its certificate.",
+          "x-env": "SIGNER_EMAIL_CA_SOURCE"
+        },
+        "compose": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "bindAddress": {
+              "type": "string",
+              "default": "127.0.0.1",
+              "x-env": "SIGNER_BIND_ADDRESS"
+            },
+            "port": {
+              "type": "integer",
+              "minimum": 1,
+              "maximum": 65535,
+              "default": 8080,
+              "x-env": "SIGNER_PORT"
+            }
+          }
+        },
+        "kubernetes": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "configMap": {
+              "description": "An existing ConfigMap that supplies the profile, the scope and the optional CA file.",
+              "$ref": "#/$defs/secrets"
+            }
+          }
+        }
+      }
+    },
+    "network": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "servicesCidr": {
+          "description": "The address range of the services. Compose creates the services network with it; in Kubernetes it states the cluster's pod range. Hook and app-manifest fetches to internal addresses are allowed only inside it.",
+          "$ref": "#/$defs/cidr",
+          "x-env": "SERVICES_CIDR"
+        }
+      }
+    },
+    "agents": {
+      "description": "The OATS team container (descriptors/agents.md).",
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "image",
+        "resolverIp",
+        "network"
+      ],
+      "properties": {
+        "image": {
+          "$ref": "#/$defs/image",
+          "x-env": "AGENT_IMAGE"
+        },
+        "uid": {
+          "$ref": "#/$defs/id",
+          "default": 20001,
+          "x-env": "AGENT_UID"
+        },
+        "gid": {
+          "$ref": "#/$defs/id",
+          "default": 20001,
+          "x-env": "AGENT_GID"
+        },
+        "secrets": {
+          "description": "The harness login alone, mounted at /etc/agent-login/. Never a service, provider, tool or database credential.",
+          "$ref": "#/$defs/secrets",
+          "default": "agents",
+          "x-env": "AGENTS_SECRETS"
+        },
+        "cpus": {
+          "type": "number",
+          "exclusiveMinimum": 0,
+          "maximum": 2,
+          "default": 2,
+          "x-env": "AGENT_CPUS"
+        },
+        "memory": {
+          "$ref": "#/$defs/bytes",
+          "maximum": 4294967296,
+          "default": 4294967296,
+          "x-env": "AGENT_MEMORY"
+        },
+        "tmpSize": {
+          "$ref": "#/$defs/bytes",
+          "default": 134217728,
+          "x-env": "AGENT_TMP_SIZE"
+        },
+        "resolverIp": {
+          "description": "The egress resolver, the only nameserver the agents have.",
+          "$ref": "#/$defs/ipv4",
+          "x-env": "AGENT_RESOLVER_IP"
+        },
+        "caFile": {
+          "description": "A public PEM certificate authority the agents trust in addition to the system roots, for a deployment whose origins a private authority signed. Never a private key.",
+          "$ref": "#/$defs/file",
+          "x-env": "AGENT_CA_FILE"
+        },
+        "mirrorsDir": {
+          "description": "Compose: an operator-maintained host directory of bare Git mirrors, mounted read-only at /mirrors outside /state. Kubernetes names an existing claim instead (agents.kubernetes.mirrorsClaim).",
+          "$ref": "#/$defs/file",
+          "x-env": "AGENT_MIRRORS_DIR"
+        },
+        "network": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "address"
+          ],
+          "properties": {
+            "subnet": {
+              "$ref": "#/$defs/cidr",
+              "default": "172.30.0.0/24",
+              "x-env": "AGENTS_SUBNET"
+            },
+            "address": {
+              "$ref": "#/$defs/ipv4",
+              "x-env": "AGENT_IP"
+            }
+          }
+        },
+        "compose": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "stateDir",
+            "authorizedKeysFile",
+            "pidsLimit",
+            "name",
+            "oatsSource"
+          ],
+          "properties": {
+            "stateDir": {
+              "$ref": "#/$defs/file",
+              "x-env": "TEAM_STATE_DIR"
+            },
+            "authorizedKeysFile": {
+              "$ref": "#/$defs/file",
+              "x-env": "AUTHORIZED_KEYS_FILE"
+            },
+            "workDir": {
+              "$ref": "#/$defs/file",
+              "x-env": "TEAM_WORK_DIR"
+            },
+            "pidsLimit": {
+              "type": "integer",
+              "minimum": 1,
+              "x-env": "AGENT_PIDS"
+            },
+            "name": {
+              "description": "The container name's suffix. Not the team id, whose colon Docker refuses.",
+              "type": "string",
+              "pattern": "^[a-z0-9][a-z0-9_.-]{0,62}$",
+              "x-env": "TEAM"
+            },
+            "oatsSource": {
+              "description": "A checkout of the OATS source at the pinned commit, whose agent and egress Compose services the deployment extends.",
+              "$ref": "#/$defs/file",
+              "x-env": "OATS_SOURCE"
+            }
+          }
+        },
+        "kubernetes": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "fsGroup": {
+              "$ref": "#/$defs/id",
+              "default": 20001
+            },
+            "stateSize": {
+              "$ref": "#/$defs/bytes",
+              "default": 10737418240
+            },
+            "storageClass": {
+              "type": "string",
+              "default": ""
+            },
+            "requests": {
+              "type": "object",
+              "additionalProperties": false,
+              "properties": {
+                "cpu": {
+                  "type": "number",
+                  "exclusiveMinimum": 0,
+                  "default": 0.5
+                },
+                "memory": {
+                  "$ref": "#/$defs/bytes",
+                  "default": 2147483648
+                }
+              }
+            },
+            "ephemeralStorage": {
+              "type": "object",
+              "additionalProperties": false,
+              "properties": {
+                "request": {
+                  "$ref": "#/$defs/bytes",
+                  "default": 268435456
+                },
+                "limit": {
+                  "$ref": "#/$defs/bytes",
+                  "default": 1073741824
+                }
+              }
+            },
+            "authorizedKeys": {
+              "type": "object",
+              "additionalProperties": false,
+              "required": [
+                "name"
+              ],
+              "properties": {
+                "kind": {
+                  "enum": [
+                    "ConfigMap",
+                    "Secret"
+                  ],
+                  "default": "ConfigMap"
+                },
+                "name": {
+                  "$ref": "#/$defs/secrets"
+                }
+              }
+            },
+            "imagePullSecrets": {
+              "type": "array",
+              "items": {
+                "$ref": "#/$defs/secrets"
+              }
+            },
+            "imagePullPolicy": {
+              "enum": [
+                "IfNotPresent",
+                "Always",
+                "Never"
+              ],
+              "default": "IfNotPresent"
+            },
+            "service": {
+              "type": "object",
+              "additionalProperties": false,
+              "properties": {
+                "enabled": {
+                  "type": "boolean",
+                  "default": false
+                }
+              }
+            },
+            "mirrorsClaim": {
+              "description": "An existing operator-provisioned PersistentVolumeClaim of bare Git mirrors, mounted read-only at /mirrors outside /state. Never the agents' state claim.",
+              "type": "string",
+              "pattern": "^[a-z0-9]([a-z0-9-]*[a-z0-9])?$",
+              "maxLength": 63
+            }
+          }
+        }
+      },
+      "allOf": [
+        {
+          "if": {
+            "required": [
+              "kubernetes",
+              "mirrorsDir"
+            ]
+          },
+          "then": {
+            "properties": {
+              "kubernetes": {
+                "required": [
+                  "mirrorsClaim"
+                ]
+              }
+            }
+          }
+        }
+      ]
+    },
+    "egress": {
+      "description": "The agents' only way out: authoritative DNS and a TLS forwarder to the deployment's own origins (descriptors/egress.md).",
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "image"
+      ],
+      "properties": {
+        "image": {
+          "$ref": "#/$defs/image",
+          "x-env": "EGRESS_IMAGE"
+        },
+        "privateIngressAddresses": {
+          "description": "The private addresses of the TLS ingress the deployment's origins resolve to; nothing else private is reachable.",
+          "type": "array",
+          "uniqueItems": true,
+          "items": {
+            "$ref": "#/$defs/ipv4"
+          },
+          "default": []
+        }
+      }
+    },
+    "secrets": {
+      "description": "The Secrets app (descriptors/secrets.md).",
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "image",
+        "appId",
+        "publicOrigin",
+        "consoleOrigin",
+        "emailSmtpHost",
+        "emailFrom",
+        "egressDeniedNetworks"
+      ],
+      "properties": {
+        "image": {
+          "$ref": "#/$defs/image",
+          "x-env": "SECRETS_IMAGE"
+        },
+        "secrets": {
+          "$ref": "#/$defs/secrets",
+          "default": "secrets",
+          "x-env": "SECRETS_SECRETS"
+        },
+        "appId": {
+          "description": "The id this deployment installs the app under. Each deployment chooses its own.",
+          "type": "string",
+          "pattern": "^[a-z0-9][a-z0-9-]{0,62}$",
+          "x-env": "SECRETS_APP_ID"
+        },
+        "publicOrigin": {
+          "$ref": "#/$defs/origin",
+          "x-env": "SECRETS_PUBLIC_ORIGIN"
+        },
+        "consoleOrigin": {
+          "description": "The console's own host, distinct from the public origin's.",
+          "$ref": "#/$defs/origin",
+          "x-env": "SECRETS_CONSOLE_ORIGIN"
+        },
+        "dbSchema": {
+          "type": "string",
+          "pattern": "^[a-z][a-z0-9_]{0,62}$",
+          "default": "public",
+          "x-env": "SECRETS_DB_SCHEMA"
+        },
+        "emailSmtpHost": {
+          "type": "string",
+          "pattern": "^[A-Za-z0-9.-]+$",
+          "x-env": "SECRETS_EMAIL_SMTP_HOST"
+        },
+        "emailSmtpPort": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 65535,
+          "default": 587,
+          "x-env": "SECRETS_EMAIL_SMTP_PORT"
+        },
+        "emailTls": {
+          "enum": [
+            "starttls",
+            "implicit"
+          ],
+          "default": "starttls",
+          "x-env": "SECRETS_EMAIL_TLS"
+        },
+        "emailFrom": {
+          "type": "string",
+          "minLength": 1,
+          "x-env": "SECRETS_EMAIL_FROM"
+        },
+        "hookInternalOrigins": {
+          "description": "The exact origins of hook receivers on internal addresses. They must resolve inside network.servicesCidr.",
+          "type": "array",
+          "uniqueItems": true,
+          "items": {
+            "$ref": "#/$defs/origin"
+          },
+          "x-env": "SECRETS_HOOK_INTERNAL_ORIGINS",
+          "minItems": 1
+        },
+        "egressDeniedNetworks": {
+          "description": "Addresses and ranges the app never connects to, beyond its fixed floor.",
+          "type": "array",
+          "uniqueItems": true,
+          "items": {
+            "type": "string",
+            "pattern": "^[0-9A-Fa-f:.]+(/[0-9]{1,3})?$"
+          },
+          "x-env": "SECRETS_EGRESS_DENIED_NETWORKS"
+        },
+        "clientAddressHeader": {
+          "description": "A header the operator's proxy overwrites with the client address. Never one a caller controls.",
+          "type": "string",
+          "pattern": "^[A-Za-z0-9-]{1,64}$",
+          "x-env": "SECRETS_CLIENT_ADDRESS_HEADER"
+        },
+        "compose": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "bindAddress": {
+              "type": "string",
+              "default": "127.0.0.1",
+              "x-env": "SECRETS_BIND_ADDRESS"
+            },
+            "port": {
+              "type": "integer",
+              "minimum": 1,
+              "maximum": 65535,
+              "default": 8770,
+              "x-env": "SECRETS_PORT"
+            }
+          }
+        },
+        "kmsKeyId": {
+          "description": "A KMS key in place of the local custody key file.",
+          "type": "string",
+          "minLength": 1,
+          "x-env": "SECRETS_KMS_KEY_ID"
+        },
+        "kmsRegion": {
+          "type": "string",
+          "pattern": "^[a-z0-9-]+$",
+          "x-env": "SECRETS_KMS_REGION"
+        },
+        "emailCaFile": {
+          "description": "Trust anchors for the SMTP server, when a private authority signed its certificate.",
+          "$ref": "#/$defs/file",
+          "x-env": "SECRETS_EMAIL_CA_FILE"
+        },
+        "hookCaFile": {
+          "description": "Trust anchors for hook receivers, when a private authority signed their certificates.",
+          "$ref": "#/$defs/file",
+          "x-env": "SECRETS_HOOK_CA_FILE"
+        },
+        "egressCaFile": {
+          "description": "Trust anchors for the upstreams the broker calls, when a private authority signed their certificates.",
+          "$ref": "#/$defs/file",
+          "x-env": "SECRETS_EGRESS_CA_FILE"
+        }
+      }
+    },
+    "logs": {
+      "description": "The Logs app (descriptors/logs.md).",
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "image",
+        "appId",
+        "publicOrigin",
+        "consoleOrigin",
+        "emailSmtpHost",
+        "emailFrom",
+        "egressDeniedNetworks"
+      ],
+      "properties": {
+        "image": {
+          "$ref": "#/$defs/image",
+          "x-env": "LOGS_IMAGE"
+        },
+        "secrets": {
+          "$ref": "#/$defs/secrets",
+          "default": "logs",
+          "x-env": "LOGS_SECRETS"
+        },
+        "appId": {
+          "description": "The id this deployment installs the app under. Each deployment chooses its own.",
+          "type": "string",
+          "pattern": "^[a-z0-9][a-z0-9-]{0,62}$",
+          "x-env": "LOGS_APP_ID"
+        },
+        "publicOrigin": {
+          "$ref": "#/$defs/origin",
+          "x-env": "LOGS_PUBLIC_ORIGIN"
+        },
+        "consoleOrigin": {
+          "description": "The console's own host, distinct from the public origin's.",
+          "$ref": "#/$defs/origin",
+          "x-env": "LOGS_CONSOLE_ORIGIN"
+        },
+        "dbSchema": {
+          "type": "string",
+          "pattern": "^[a-z][a-z0-9_]{0,62}$",
+          "default": "public",
+          "x-env": "LOGS_DB_SCHEMA"
+        },
+        "emailSmtpHost": {
+          "type": "string",
+          "pattern": "^[A-Za-z0-9.-]+$",
+          "x-env": "LOGS_EMAIL_SMTP_HOST"
+        },
+        "emailSmtpPort": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 65535,
+          "default": 587,
+          "x-env": "LOGS_EMAIL_SMTP_PORT"
+        },
+        "emailTls": {
+          "enum": [
+            "starttls",
+            "implicit"
+          ],
+          "default": "starttls",
+          "x-env": "LOGS_EMAIL_TLS"
+        },
+        "emailFrom": {
+          "type": "string",
+          "minLength": 1,
+          "x-env": "LOGS_EMAIL_FROM"
+        },
+        "hookInternalOrigins": {
+          "description": "The exact origins of hook receivers on internal addresses. They must resolve inside network.servicesCidr.",
+          "type": "array",
+          "uniqueItems": true,
+          "items": {
+            "$ref": "#/$defs/origin"
+          },
+          "x-env": "LOGS_HOOK_INTERNAL_ORIGINS",
+          "minItems": 1
+        },
+        "egressDeniedNetworks": {
+          "description": "Addresses and ranges the app never connects to, beyond its fixed floor.",
+          "type": "array",
+          "uniqueItems": true,
+          "items": {
+            "type": "string",
+            "pattern": "^[0-9A-Fa-f:.]+(/[0-9]{1,3})?$"
+          },
+          "x-env": "LOGS_EGRESS_DENIED_NETWORKS"
+        },
+        "clientAddressHeader": {
+          "description": "A header the operator's proxy overwrites with the client address. Never one a caller controls.",
+          "type": "string",
+          "pattern": "^[A-Za-z0-9-]{1,64}$",
+          "x-env": "LOGS_CLIENT_ADDRESS_HEADER"
+        },
+        "compose": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "bindAddress": {
+              "type": "string",
+              "default": "127.0.0.1",
+              "x-env": "LOGS_BIND_ADDRESS"
+            },
+            "port": {
+              "type": "integer",
+              "minimum": 1,
+              "maximum": 65535,
+              "default": 8765,
+              "x-env": "LOGS_PORT"
+            }
+          }
+        },
+        "checkpointIntervalSeconds": {
+          "type": "integer",
+          "minimum": 1,
+          "default": 300,
+          "x-env": "LOGS_CHECKPOINT_INTERVAL_SECONDS"
+        },
+        "retentionIntervalSeconds": {
+          "type": "integer",
+          "minimum": 1,
+          "default": 3600,
+          "x-env": "LOGS_RETENTION_INTERVAL_SECONDS"
+        },
+        "emailCaFile": {
+          "description": "Trust anchors for the SMTP server, when a private authority signed its certificate.",
+          "$ref": "#/$defs/file",
+          "x-env": "LOGS_EMAIL_CA_FILE"
+        },
+        "hookCaFile": {
+          "description": "Trust anchors for hook receivers, when a private authority signed their certificates.",
+          "$ref": "#/$defs/file",
+          "x-env": "LOGS_HOOK_CA_FILE"
+        }
+      }
+    }
+  }
+}

@@ -7,6 +7,9 @@ signer configuration format. The existing public protected-service profile
 continues to pin the exact request/human origins, RP, registry, namespace keys,
 authority and policy. Public configuration grants no authority.
 
+Source basis: `server/src/aweb/protected_signing/` with the database-URL file
+and `/readyz` at `f8947bf94`, and the Compose service body at `1a86d3ff7`.
+
 ## Process, image and dependencies
 
 Build the existing `server/Dockerfile` from the **current joined source** with

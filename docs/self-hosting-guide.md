@@ -362,11 +362,21 @@ audit directory, writable) by uid `1001`.
 
 For `aweb`:
 
-- `AWEB_DATABASE_URL` or `DATABASE_URL`
+- `AWEB_DATABASE_URL` or `DATABASE_URL`, or `AWEB_DATABASE_URL_FILE`: a file
+  that holds the URL, so the database password is in no environment
 - `AWEB_REDIS_URL` or `REDIS_URL`
 - `AWID_REGISTRY_URL`
 - `AWEB_PUBLIC_ORIGIN` for federated mail/chat delivery
 - `APP_ENV=development` when using an internal `http://awid:8010` registry
+- `AWEB_APP_INTERNAL_ORIGINS` and `AWEB_APP_INTERNAL_CIDR`, together, when the
+  apps you install run on internal addresses beside the server (for example in
+  the same cluster). `AWEB_APP_INTERNAL_ORIGINS` is a JSON list of exact HTTPS
+  app origins, such as `["https://secrets.apps.internal"]`;
+  `AWEB_APP_INTERNAL_CIDR` is the one network their addresses must lie in, such
+  as the cluster's service CIDR. Only a listed origin is fetched on an internal
+  address, and only inside that network; every other app origin stays public,
+  so a manifest on a private address is refused. Unset, no origin is internal.
+  The server refuses to start if either value is malformed or only one is set.
 
 For `awid`:
 
@@ -528,8 +538,37 @@ unset AWID_SERVICE_TOKEN
 aweb serve
 ```
 
-This configures standalone aweb; the bundled Compose stack still operates its
-own AWID service and uses its shared token. Startup refuses missing credentials,
+To run the same thing under Docker Compose, use
+[`server/docker-compose.customer.yml`](../server/docker-compose.customer.yml).
+It runs aweb, PostgreSQL and Redis, no registry, and has no service token.
+Every credential is a file under one directory, and none is in the
+environment or in `.env`:
+
+```text
+/etc/aweb-secrets/
+  aweb/member-keys.json    team id -> key file, relative paths
+  aweb/<name>.key          the member key files it names
+  aweb/database-url        postgresql://aweb:<password>@postgres:5432/aweb
+  postgres/password        the same password, alone
+```
+
+The files under `aweb/` must be readable by uid `1001` and by no one else:
+owner `1001` with mode `0400`, or `root:1001` with mode `0440`.
+`postgres/password` is read by root in the database container.
+
+```bash
+cd server
+cat > .env <<'ENV'
+AWEB_PUBLIC_ORIGIN=https://aweb.example.com
+SECRETS_DIR=/etc/aweb-secrets
+ENV
+docker compose -f docker-compose.customer.yml up --build -d
+curl http://localhost:8000/ready
+```
+
+Each subdirectory is mounted read-only at `/run/secrets/<service>`. The default
+`server/docker-compose.yml` is the other shape: it operates its own AWID
+service and uses the shared token. Startup refuses missing credentials,
 an empty key map, unreadable keys or non-Ed25519 PEM keys. Restart after changing
 the key map. If a service token is also configured, it takes precedence.
 

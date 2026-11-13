@@ -233,7 +233,7 @@ import { operationTable } from "/handoff-assets/operations.mjs";
         // No completion was sent: an explicit retry obtains fresh options.
         status.textContent = "The passkey prompt was cancelled. You can try again.";
         action.disabled = false;
-        document.body.dataset.handoffState = "ready";
+        document.body.dataset.handoffState = governance && !loggedIn ? "login-required" : "ready";
       } else {
         failed();
       }

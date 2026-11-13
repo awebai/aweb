@@ -4,12 +4,23 @@
 // (docs/design/handoff-wire.md).
 package handoff
 
-import "errors"
+import (
+	"errors"
+	"math"
+	"net/http"
+	"strconv"
+	"time"
+)
 
 // Error is a handoff failure with a stable code.
 type Error struct {
 	Code string
 	Err  error
+	// RetryAfter is the service's explicit hint, from a 429 or 503 answer's
+	// Retry-After, of when the same request may succeed; Hinted says it was
+	// given. It never extends an operation's deadline.
+	RetryAfter time.Duration
+	Hinted     bool
 }
 
 func (e *Error) Error() string { return e.Code + ": " + e.Err.Error() }
@@ -24,4 +35,40 @@ func ErrorCode(err error) string {
 		return e.Code
 	}
 	return ""
+}
+
+// retryHint is the explicit retry hint err carries, if any.
+func retryHint(err error) (time.Duration, bool) {
+	var e *Error
+	if errors.As(err, &e) && e.Hinted {
+		return e.RetryAfter, true
+	}
+	return 0, false
+}
+
+// hinted gives err the Retry-After of a 429 or 503 answer. Only delta-seconds
+// is a hint; anything else is none. A value too large for a duration is the
+// longest one, so it fails a deadline check rather than wrapping around.
+func hinted(err error, resp *http.Response) error {
+	var e *Error
+	if !errors.As(err, &e) || (resp.StatusCode != http.StatusTooManyRequests && resp.StatusCode != http.StatusServiceUnavailable) {
+		return err
+	}
+	value := resp.Header.Get("Retry-After")
+	if value == "" || len(value) > 20 {
+		return err
+	}
+	for _, c := range value {
+		if c < '0' || c > '9' {
+			return err
+		}
+	}
+	e.Hinted = true
+	seconds, parseErr := strconv.ParseUint(value, 10, 64)
+	if parseErr != nil || seconds > uint64(math.MaxInt64/int64(time.Second)) {
+		e.RetryAfter = time.Duration(math.MaxInt64)
+	} else {
+		e.RetryAfter = time.Duration(seconds) * time.Second
+	}
+	return err
 }

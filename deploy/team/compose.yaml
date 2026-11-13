@@ -1,0 +1,88 @@
+# One team's deployment on one machine. See README.md.
+#
+# The env file is rendered from the operator's deployment.yaml, which holds
+# no credential; every credential is a file under SECRETS_DIR, mounted
+# read-only into the one service that owns it. From this directory:
+#
+#   python render_env.py deployment.yaml > .env
+#   docker compose --env-file .env up -d
+#
+# The env file's COMPOSE_FILE names this file and the file of each optional
+# component deployment.yaml has (compose.secrets.yaml, compose.logs.yaml,
+# compose.signer.yaml). A component it leaves out is not in the model at all,
+# so none of its settings is required.
+services:
+  # aweb's cache, reachable by aweb alone.
+  redis:
+    image: redis:7-alpine
+    restart: unless-stopped
+    networks: [backend]
+    volumes:
+      - redis_data:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  # Runs when postgres.bundled is true. At first start it creates one
+  # database and one role per file in /run/secrets/postgres/roles/.
+  postgres:
+    profiles: [postgres]
+    image: postgres:16-alpine
+    restart: unless-stopped
+    networks: [services]
+    environment:
+      POSTGRES_PASSWORD_FILE: /run/secrets/postgres/password
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+      - "${SECRETS_DIR:?SECRETS_DIR is required, compose.secretsDir}/${POSTGRES_SECRETS:-postgres}:/run/secrets/postgres:ro"
+      - ./postgres-roles.sh:/docker-entrypoint-initdb.d/roles.sh:ro
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  aweb:
+    extends:
+      file: ../../server/compose.aweb.yaml
+      service: aweb
+    image: ${AWEB_IMAGE:?AWEB_IMAGE is required, aweb.image}
+    networks: [services, backend]
+    ports:
+      - "${AWEB_BIND_ADDRESS:-127.0.0.1}:${AWEB_PORT:-8000}:8000"
+    volumes:
+      - "${SECRETS_DIR:?SECRETS_DIR is required, compose.secretsDir}/${AWEB_SECRETS:-aweb}:/run/secrets/aweb:ro"
+    depends_on:
+      redis:
+        condition: service_healthy
+      postgres:
+        condition: service_healthy
+        required: false
+
+networks:
+  # aweb, the apps, the signer and PostgreSQL.
+  services:
+    ipam:
+      config:
+        - subnet: ${SERVICES_CIDR:?SERVICES_CIDR is required, network.servicesCidr}
+  # The team container and the egress boundary. It has no route out of its
+  # own: an agent reaches a service only through egress. Isolated: internal
+  # alone still leaves the host reachable at the bridge's gateway address.
+  agents:
+    internal: true
+    enable_ipv6: false
+    driver_opts:
+      com.docker.network.bridge.gateway_mode_ipv4: isolated
+    ipam:
+      config:
+        - subnet: ${AGENTS_SUBNET:-172.30.0.0/24}
+
+  # aweb and Redis: no app, signer or agent reaches Redis.
+  backend:
+    internal: true
+
+volumes:
+  postgres_data:
+  redis_data:

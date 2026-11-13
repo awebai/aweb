@@ -28,6 +28,11 @@ type GovernanceOptions struct {
 	Notify io.Writer
 	// PollInterval bounds how often the receipt is read without a wake.
 	PollInterval time.Duration
+	// RetryWithin bounds how long aw keeps waiting out a throttled prepare,
+	// or the receipt read that reconciles a lost one, before it stops and
+	// leaves the operation to be resumed (default two minutes). The
+	// operation's own expiry is the service's and is never extended.
+	RetryWithin time.Duration
 	// Save persists an operation's exact prepare body before it is sent, so a
 	// lost answer can be resumed with Resume under the same id and binding.
 	Save func(operationID string, body []byte) error
@@ -122,10 +127,86 @@ func Resume(ctx context.Context, opts GovernanceOptions, saved []byte) (*Receipt
 	return approve(ctx, opts, operationID, body, saved, nil)
 }
 
+// now and pause are the clock and the wait the governance client uses.
+var (
+	now   = time.Now
+	pause = func(ctx context.Context, d time.Duration) error {
+		timer := time.NewTimer(d)
+		defer timer.Stop()
+		select {
+		case <-timer.C:
+			return nil
+		case <-ctx.Done():
+			return ctx.Err()
+		}
+	}
+)
+
+func retryWithin(opts GovernanceOptions) time.Duration {
+	if opts.RetryWithin > 0 {
+		return opts.RetryWithin
+	}
+	return 2 * time.Minute
+}
+
+func pollInterval(opts GovernanceOptions) time.Duration {
+	if opts.PollInterval > 0 {
+		return opts.PollInterval
+	}
+	return 2 * time.Second
+}
+
+// withinBound runs attempt, and again after each explicit throttle hint, until
+// it gives no hint or the invocation's retry bound until would pass. Each
+// attempt runs under that bound; each wait is at least the poll interval and
+// must end inside it, and the bound is checked again before the next attempt.
+// exhausted reports the bound stopped it, with the last attempt's error.
+// until is aw's own bound on this invocation, never the operation's expiry.
+func withinBound(ctx context.Context, opts GovernanceOptions, until time.Time, attempt func(context.Context) error) (err error, exhausted bool) {
+	for {
+		boundCtx, cancel := context.WithDeadline(ctx, until)
+		err = attempt(boundCtx)
+		cancel()
+		hint, ok := retryHint(err)
+		if !ok {
+			return err, false
+		}
+		wait := max(pollInterval(opts), hint)
+		if wait >= until.Sub(now()) {
+			return err, true
+		}
+		if waitErr := pause(ctx, wait); waitErr != nil {
+			return waitErr, false
+		}
+		if !now().Before(until) {
+			return err, true
+		}
+	}
+}
+
+// prepareRetrying sends the exact prepare bytes again after each explicit
+// throttle hint, within the invocation's retry bound. A repeat of the same id
+// and bytes is answered with the original operation; a changed body stays a
+// conflict.
+func prepareRetrying(ctx context.Context, opts GovernanceOptions, operationID string, body map[string]any, raw []byte, until time.Time) (*Prepared, error) {
+	var prepared *Prepared
+	err, exhausted := withinBound(ctx, opts, until, func(ctx context.Context) error {
+		var err error
+		prepared, err = prepare(ctx, opts, body, raw)
+		return err
+	})
+	if exhausted {
+		return nil, coded(ErrorCode(err), fmt.Errorf("operation %s could not be prepared now (%w); its request is saved, resume it later", operationID, err))
+	}
+	return prepared, err
+}
+
 func approve(ctx context.Context, opts GovernanceOptions, operationID string, body map[string]any, raw []byte, wake *Loopback) (*Receipt, error) {
-	prepared, err := prepare(ctx, opts, body, raw)
+	// One retry bound for preparing and for reconciling a lost answer.
+	until := now().Add(retryWithin(opts))
+	prepared, err := prepareRetrying(ctx, opts, operationID, body, raw, until)
 	if ErrorCode(err) == "prepare_answer_lost" {
-		return reconcileLostPrepare(ctx, opts, operationID, err)
+		return reconcileLostPrepare(ctx, opts, operationID, err, until)
 	}
 	if err != nil {
 		return nil, err
@@ -149,30 +230,47 @@ func approve(ctx context.Context, opts GovernanceOptions, operationID string, bo
 			}
 		}()
 	}
-	interval := opts.PollInterval
-	if interval <= 0 {
-		interval = 2 * time.Second
-	}
+	interval := pollInterval(opts)
 	for {
-		receipt, err := ReadReceipt(ctx, opts, operationID)
+		// No read outlasts the operation.
+		readCtx, cancelRead := context.WithDeadline(ctx, prepared.ExpiresAt)
+		receipt, err := ReadReceipt(readCtx, opts, operationID)
+		cancelRead()
 		switch {
 		case ErrorCode(err) == "receipt_unavailable":
-			// Read again until the operation expires; the outcome stays unknown.
-			if time.Now().After(prepared.ExpiresAt) {
+			// Read again, after the service's hint if it gave one, while the
+			// wait ends before the operation expires; the outcome stays unknown.
+			hint, ok := retryHint(err)
+			wait := max(interval, hint)
+			if wait >= prepared.ExpiresAt.Sub(now()) {
 				return unresolvedReceipt(operationID, "receipt_unavailable"), err
+			}
+			if ok {
+				if err := pause(ctx, wait); err != nil {
+					return unresolvedReceipt(operationID, "receipt_unavailable"), err
+				}
 			}
 		case err != nil:
 			return unresolvedReceipt(operationID, ErrorCode(err)), err
 		case receipt.State != "pending":
 			return settled(opts, receipt)
-		case time.Now().After(prepared.ExpiresAt):
+		case now().After(prepared.ExpiresAt):
 			return receipt, coded("operation_expired", fmt.Errorf("operation %s was still pending at its expiry", operationID))
 		}
-		select {
-		case <-woken:
-		case <-time.After(interval):
-		case <-ctx.Done():
-			return unresolvedReceipt(operationID, "receipt_unavailable"), ctx.Err()
+		if _, hintedWait := retryHint(err); !hintedWait {
+			select {
+			case <-woken:
+			case <-time.After(interval):
+			case <-ctx.Done():
+				return unresolvedReceipt(operationID, "receipt_unavailable"), ctx.Err()
+			}
+		}
+		// A wait that ran past the expiry sends no further read.
+		if !now().Before(prepared.ExpiresAt) {
+			if err != nil {
+				return unresolvedReceipt(operationID, "receipt_unavailable"), err
+			}
+			return receipt, coded("operation_expired", fmt.Errorf("operation %s was still pending at its expiry", operationID))
 		}
 	}
 }
@@ -180,9 +278,17 @@ func approve(ctx context.Context, opts GovernanceOptions, operationID string, bo
 // reconcileLostPrepare reads the receipt of an operation whose prepare answer
 // never arrived. A pending operation cannot be shown without its frozen
 // request, so aw reports it under its id, to be resumed from its saved body.
-func reconcileLostPrepare(ctx context.Context, opts GovernanceOptions, operationID string, lost error) (*Receipt, error) {
-	receipt, err := ReadReceipt(ctx, opts, operationID)
+func reconcileLostPrepare(ctx context.Context, opts GovernanceOptions, operationID string, lost error, until time.Time) (*Receipt, error) {
+	var receipt *Receipt
+	err, _ := withinBound(ctx, opts, until, func(ctx context.Context) error {
+		var err error
+		receipt, err = ReadReceipt(ctx, opts, operationID)
+		return err
+	})
 	if err != nil {
+		if ctx.Err() != nil {
+			return unresolvedReceipt(operationID, "receipt_unavailable"), err
+		}
 		return unresolvedReceipt(operationID, "receipt_unavailable"),
 			coded("receipt_unavailable", fmt.Errorf("operation %s: %v, and its receipt could not be read: %w", operationID, lost, err))
 	}
@@ -253,7 +359,7 @@ func prepare(ctx context.Context, opts GovernanceOptions, body map[string]any, d
 		return nil, coded("prepare_answer_lost", err)
 	}
 	if resp.StatusCode != http.StatusOK {
-		return nil, refusal(resp.StatusCode, reply)
+		return nil, hinted(refusal(resp.StatusCode, reply), resp)
 	}
 	answer, ok := decodeObject(reply)
 	if !ok || !exactMembers(answer, preparedMembers) {
@@ -371,7 +477,7 @@ func ReadReceipt(ctx context.Context, opts GovernanceOptions, operationID string
 	}
 	switch {
 	case resp.StatusCode == http.StatusTooManyRequests || resp.StatusCode >= 500:
-		return nil, unavailable(refusal(resp.StatusCode, reply))
+		return nil, hinted(unavailable(refusal(resp.StatusCode, reply)), resp)
 	case resp.StatusCode != http.StatusOK:
 		// A refusal of the requester, its scope or the id does not pass.
 		return nil, refusal(resp.StatusCode, reply)
@@ -422,8 +528,13 @@ func decodeReceipt(reply []byte) (*Receipt, bool) {
 	return receipt, true
 }
 
-// decodeObject decodes exactly one JSON object, refusing duplicate members at
-// any depth, so what aw checks is what any other reader of the bytes sees.
+// DecodeObject decodes exactly one JSON object, numbers as json.Number,
+// refusing duplicate members at any depth, so what aw checks is what any other
+// reader of the bytes sees.
+func DecodeObject(raw []byte) (map[string]any, bool) {
+	return decodeObject(raw)
+}
+
 func decodeObject(raw []byte) (map[string]any, bool) {
 	decoder := json.NewDecoder(bytes.NewReader(raw))
 	decoder.UseNumber()

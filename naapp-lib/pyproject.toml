@@ -25,8 +25,7 @@ nonces = ["pgdbm>=0.5.0"]
 # Request-time runtime code under aweb_naapp.runtime. The docs
 # surface (`import aweb_naapp`) never imports these.
 runtime = [
-  # Principal-attestation records, registry_auth and protected-request support.
-  # Keep the current main release cohort's dependency bound.
+  # The first awid release with the principal-attestation records the runtime reads.
   "awid-service>=0.5.40rc1",
   "fastapi>=0.116.1",
   "httpx>=0.28.1",
