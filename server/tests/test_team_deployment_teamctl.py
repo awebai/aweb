@@ -43,12 +43,40 @@ def test_destroy_removes_only_the_bundles_containers_and_named_volumes(tmp_path)
     assert not [call for call in made if " down " in f" {call} " or "--remove-orphans" in call]
 
 
+def test_destroy_fails_when_it_cannot_list_the_bundles_volumes(tmp_path):
+    # A failed listing is not an empty one: destroy must not report the volumes gone.
+    path = deployment(tmp_path, EXAMPLE)
+    result = run(tmp_path, "destroy", path, "--confirm", "teamrun", command=TEAMCTL, docker_ok=True,
+                 fails={"config --volumes": 77})
+    assert result.returncode != 0 and "could not list the bundle's volumes" in result.stderr
+
+
 def test_backup_refuses_while_a_writer_runs(tmp_path):
     path = deployment(tmp_path, EXAMPLE)
     result = run(tmp_path, "backup", path, str(tmp_path / "backup"), command=TEAMCTL, docker_ok=True,
                  answers={"--status running --services": "postgres\naweb\n"})
     assert result.returncode == 1 and "aweb" in result.stderr and "teamctl stop" in result.stderr
     assert not (tmp_path / "backup").exists()
+    assert not [call for call in calls(tmp_path) if "pg_dump" in call]
+
+
+def test_backup_stops_when_it_cannot_list_the_running_services(tmp_path):
+    # A failed listing is not an empty one: no writer is known to be stopped.
+    path = deployment(tmp_path, EXAMPLE)
+    result = run(tmp_path, "backup", path, str(tmp_path / "backup"), command=TEAMCTL, docker_ok=True,
+                 fails={"--status running --services": 78})
+    assert result.returncode != 0 and "could not list the running services" in result.stderr
+    assert not (tmp_path / "backup").exists()
+    assert not [call for call in calls(tmp_path) if "pg_dump" in call]
+
+
+def test_backup_fails_when_it_cannot_list_the_databases(tmp_path):
+    # A failed query is not an empty database list: no manifest says the backup is whole.
+    path = deployment(tmp_path, EXAMPLE)
+    result = run(tmp_path, "backup", path, str(tmp_path / "backup"), command=TEAMCTL, docker_ok=True,
+                 fails={"select datname": 79})
+    assert result.returncode != 0 and "could not list the databases" in result.stderr
+    assert not (tmp_path / "backup" / "manifest.json").exists()
     assert not [call for call in calls(tmp_path) if "pg_dump" in call]
 
 

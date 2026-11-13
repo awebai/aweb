@@ -23,8 +23,9 @@ everything below. Each row is what one artifact gives on its own.
 | The services network | Plaintext HTTP between the services and plaintext PostgreSQL. Redis needs its password, held in `aweb/redis-url`. | | `deploy/team/compose.yaml` |
 
 A backup made with `teamctl backup` holds every database and all of the files
-above but the signer's controller custody, which it leaves out: whoever holds
-the backup holds all the rest (`OPERATIONS.md`).
+above but two, which it leaves out: the signer's controller custody and the
+agents' harness login, which is minted again rather than restored. Whoever
+holds the backup holds all the rest (`OPERATIONS.md`).
 
 Stating what the operator can do does not authorize it. Access to a team's data
 follows the team's own authorization; the operator's runbook

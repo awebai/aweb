@@ -131,7 +131,9 @@ PY
 compose=()
 dc() {
   if [[ ${#compose[@]} -eq 0 ]]; then
-    while IFS= read -r argument; do compose+=("$argument"); done < <(compose_command)
+    local listed argument
+    listed="$(compose_command)" || refuse "could not build the deployment's docker compose command"
+    while IFS= read -r argument; do compose+=("$argument"); done <<<"$listed"
   fi
   "${compose[@]}" "$@"
 }
@@ -303,15 +305,16 @@ INGRESS_ROUTES="aweb:aweb:/ready secrets:secrets:/ready logs:logs:/ready signer:
 INGRESS_AUDIT_PATH=/ready
 
 ingress_probe() {
-  local origins logs followers=() route role service path ca_mount=() ca_flag=() out status services
-  read -r -a origins < <(python_in_server - "$run_dir/egress-policy.json" <<'PY'
+  local origins listed logs followers=() route role service path ca_mount=() ca_flag=() out status services
+  listed="$(python_in_server - "$run_dir/egress-policy.json" <<'PY'
 import json
 import sys
 
 policy = json.load(open(sys.argv[1], encoding="utf-8"))
 print(policy["targets"]["signer"]["addresses"][0], policy["targets"]["signer"]["origin"], policy["humanOrigin"])
 PY
-)
+)" || refuse "could not read the signer's origins from the egress policy"
+  read -r -a origins <<<"$listed"
   logs="$run_dir/ingress-logs"
   rm -rf "$logs"
   mkdir -p "$logs"
@@ -599,10 +602,13 @@ start() {
     exit 1
   fi
   # The agent and its egress start last, after their policy is derived.
+  # A failed listing would leave the list empty and start every service.
   if [[ "$with_agents" -eq 1 ]]; then
+    local listed service
+    listed="$(dc config --services)" || refuse "could not list the deployment's services; nothing was started"
     while read -r service; do
-      [[ "$service" == egress || "$service" == agent ]] || services+=("$service")
-    done < <(dc config --services)
+      [[ -z "$service" || "$service" == egress || "$service" == agent ]] || services+=("$service")
+    done <<<"$listed"
   fi
   if ! dc up -d --wait --wait-timeout "${TEAM_DEPLOYMENT_WAIT_SECONDS:-300}" ${services[@]+"${services[@]}"}; then
     dc ps --all --format '{{.Service}} {{.Status}}' >&2 || true
@@ -619,7 +625,11 @@ start() {
   fi
   # An internal origin is allowed only inside the services range: every
   # address its host resolves to, seen from the service that connects to it.
+  # A failed listing would check nothing and pass.
+  local internal
+  internal="$(internal_hosts)" || refuse "could not list the deployment's internal origins"
   while read -r service cidr hosts; do
+    [[ -n "$service" ]] || continue
     # shellcheck disable=SC2086
     if ! dc exec -T "$service" python -c '
 import ipaddress, socket, sys
@@ -633,7 +643,7 @@ for host in sys.argv[2:]:
       echo "teamctl: $service's internal origins do not resolve inside $cidr" >&2
       exit 1
     fi
-  done < <(internal_hosts)
+  done <<<"$internal"
   # Healthy is the images' liveness checks. Ready is each service's own
   # readiness answer, asked with the Host its proxy sends; anything but 200
   # fails the run.
@@ -730,13 +740,14 @@ destroy() {
   fi
   model
   dc --profile '*' rm --stop --force
-  local key
+  local key volumes
+  volumes="$(dc config --volumes)" || refuse "could not list the bundle's volumes; they may remain"
   while read -r key; do
     [[ -n "$key" ]] || continue
     if docker volume inspect "${project}_$key" >/dev/null 2>&1; then
       docker volume rm "${project}_$key" >/dev/null
     fi
-  done < <(dc config --volumes)
+  done <<<"$volumes"
 }
 
 # What deployment.yaml names on the host, one line each: kind (archive, file
@@ -824,8 +835,11 @@ backup() {
   model
   [[ "$(env_value POSTGRES_BUNDLED)" == true ]] ||
     refuse "teamctl backs up the bundled PostgreSQL only; with your own server (postgres.bundled: false) back up its databases with its own tools"
-  local writers
-  writers="$(dc ps --status running --services | grep -vx postgres || true)"
+  # A failed listing is not an empty one: nothing is known to be stopped.
+  local running writers
+  running="$(dc ps --status running --services)" ||
+    refuse "could not list the running services; nothing was backed up"
+  writers="$(grep -vx postgres <<<"$running" || true)"
   [[ -z "$writers" ]] || refuse "stop the deployment first (teamctl stop); still running: $(tr '\n' ' ' <<<"$writers")"
   mkdir -m 0700 "$target"
   target="$(cd "$target" && pwd)"
@@ -833,11 +847,14 @@ backup() {
   local was_running=0
   [[ -z "$(dc ps --status running --services postgres)" ]] || was_running=1
   dc up -d --wait postgres
-  local database
+  # A failed query is not an empty list: no manifest may call the backup whole.
+  local databases database
+  databases="$(psql_postgres "select datname from pg_database where not datistemplate and datname <> 'postgres' order by 1")" ||
+    refuse "could not list the databases; the backup in $target is incomplete and has no manifest"
   while read -r database; do
     [[ -n "$database" ]] || continue
     dc exec -T postgres pg_dump -U postgres -Fc -d "$database" </dev/null >"$target/databases/$database.dump"
-  done < <(psql_postgres "select datname from pg_database where not datistemplate and datname <> 'postgres' order by 1")
+  done <<<"$databases"
   psql_postgres "show server_version" >"$target/databases/server-version"
   [[ "$was_running" -eq 1 ]] || dc stop postgres
   host_paths >"$run_dir/host-paths"
@@ -966,11 +983,12 @@ print("\n".join(plan))
 PY
 )" || exit 1
   [[ -z "$(dc --profile '*' ps -a -q)" ]] || refuse "the bundle's containers exist; a restore starts from none (teamctl destroy)"
-  local key
+  local key volumes
+  volumes="$(dc config --volumes)" || refuse "could not list the bundle's volumes; nothing was restored"
   while read -r key; do
     [[ -z "$key" ]] || ! docker volume inspect "${project}_$key" >/dev/null 2>&1 ||
       refuse "the volume ${project}_$key exists; a restore starts from none (teamctl destroy)"
-  done < <(dc config --volumes)
+  done <<<"$volumes"
   local kind name mode path
   while read -r kind name mode; do
     path="$(sed -n "s/^$kind $name //p" "$run_dir/host-paths")"
