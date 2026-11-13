@@ -30,6 +30,13 @@ async def _registry(awaitable, *, missing=None):
         )) from None
 
 
+async def _lock_quota(tx, service_id, team_id, root_id):
+    key = int.from_bytes(hashlib.sha256(
+        b"aweb.admission-quota/1\n" + json.dumps([service_id, team_id, root_id], separators=(",", ":")).encode()
+    ).digest()[:8], "big", signed=True)
+    await tx.execute("SELECT pg_advisory_xact_lock($1::bigint)", key)
+
+
 async def provision_policy(composition, fields):
     """Install exactly one initial policy under real current controller custody.
 
@@ -111,8 +118,10 @@ class AdmissionEffects:
 
     async def observe(self, operation, actor, *, purpose):
         """Remote evidence precedes all operation/policy/quota locks."""
-        from awid.id_certificates import verify_id_chain
+        if operation.operation == "team.agent.remove":
+            from .removal import observe_removal
 
+            return await observe_removal(self, operation, actor, purpose=purpose)
         c, subject = self.c, operation.intent()["subject"]
         if operation.audience != c.registry.registry_url:
             raise SignerRefused("scope_refused")
@@ -126,29 +135,8 @@ class AdmissionEffects:
         teams = subject["teams"] if operation.operation == "identity.root.endorse" else [subject["team_id"]]
         if not set(teams) <= set(fields["teams"]):
             raise SignerRefused("admission_policy_missing")
-        root = await _registry(c.registry.resolve_key_fresh(subject["root_id"]), missing="subject_ineligible")
-        if root.did_aw != subject["root_id"] or root.current_did_key != subject["root_key"]:
-            raise SignerRefused("subject_ineligible")
-        tree = root.id_tree
-        if tree is None:
-            raise SignerRefused("evidence_unavailable")
-        head = None
-        if tree.enrolled:
-            if tree.domain != c.context.human_domain:
-                raise SignerRefused("subject_ineligible")
-            evidence = await _registry(c.registry.id_chain_evidence(None,
-                {"id": root.did_aw, "did_key": root.current_did_key}, domain=tree.domain))
-            kind = verify_id_chain(None, subject={"id": root.did_aw, "did_key": root.current_did_key}, evidence=evidence, domain=tree.domain)
-            if kind["outcome"] == "unavailable":
-                raise SignerRefused("evidence_unavailable")
-            if not kind["identity_valid"] or kind["kind"] != "agent" or kind["human_id"] != c.context.human_id:
-                raise SignerRefused("subject_ineligible")
-            heads = [row["current_certificate_id"] for row in evidence.status["identities"] if row["id"] == root.did_aw]
-            if len(heads) != 1:
-                raise SignerRefused("evidence_unavailable")
-            head = heads[0]
-        elif operation.operation == "team.agent.admit":
-            raise SignerRefused("subject_ineligible")
+        head = await self.root_head(subject["root_id"], subject["root_key"],
+            require_enrolled=operation.operation == "team.agent.admit")
         if operation.operation == "team.agent.admit":
             kind_name = "local_agent" if subject["child_id"] is None else "registered_agent"
             if kind_name not in fields["subject_kinds"]:
@@ -181,6 +169,46 @@ class AdmissionEffects:
                         raise SignerRefused("subject_ineligible")
         return _AdmissionObservation(self, operation, policy, head, started + 60)
 
+    async def root_head(self, root_id, root_key, *, require_enrolled):
+        """The current registered agent/H chain shared by bounded root acts."""
+        from awid.id_certificates import verify_id_chain
+
+        c = self.c
+        root = await _registry(c.registry.resolve_key_fresh(root_id), missing="subject_ineligible")
+        if root.did_aw != root_id or root.current_did_key != root_key:
+            raise SignerRefused("subject_ineligible")
+        tree = root.id_tree
+        if tree is None:
+            raise SignerRefused("evidence_unavailable")
+        if not tree.enrolled:
+            if require_enrolled:
+                raise SignerRefused("subject_ineligible")
+            return None
+        if tree.domain != c.context.human_domain:
+            raise SignerRefused("subject_ineligible")
+        subject = {"id": root_id, "did_key": root_key}
+        evidence = await _registry(c.registry.id_chain_evidence(None, subject, domain=tree.domain))
+        kind = verify_id_chain(None, subject=subject, evidence=evidence, domain=tree.domain)
+        if kind["outcome"] == "unavailable":
+            raise SignerRefused("evidence_unavailable")
+        if not kind["identity_valid"] or kind["kind"] != "agent" or kind["human_id"] != c.context.human_id:
+            raise SignerRefused("subject_ineligible")
+        heads = [row["current_certificate_id"] for row in evidence.status["identities"] if row["id"] == root_id]
+        if len(heads) != 1:
+            raise SignerRefused("evidence_unavailable")
+        return heads[0]
+
+    async def hold_endorsed_root(self, tx, root_id, head):
+        c = self.c.context
+        row = await tx.fetch_one(
+            "SELECT * FROM {{tables.protected_root_endorsements}} WHERE service_id=$1 AND root_id=$2 FOR SHARE",
+            c.service_id, root_id,
+        )
+        if (row is None or row["human_id"] != c.human_id or row["human_domain"] != c.human_domain
+            or row["certificate_id"] != head):
+            raise SignerRefused("subject_ineligible")
+        return row
+
     async def record_endorsement(self, tx, operation, request, result, evidence):
         from awid.id_certificates import id_certificate_id
         from aweb_naapp.runtime.protected_signer import VerifiedProtectedEffect
@@ -205,6 +233,10 @@ class AdmissionEffects:
         AWID registers it once after verifying that signed certificate. No nonce
         alone or mere signature is reported as a completed admission.
         """
+        if operation.operation == "team.agent.remove":
+            from .removal import removal_confirmed
+
+            return await removal_confirmed(self.c, operation)
         c = self.c
         namespace, name = operation.context.authority_id.split(":", 1)[::-1]
         client = getattr(c.registry, "client", c.registry)
@@ -221,9 +253,15 @@ class AdmissionEffects:
         return True
 
     async def register(self, operation, artifact, signed):
+        if operation.operation == "team.agent.remove":
+            return await _registry(self.c.authority.custody.remove_member(self.c.registry, operation, artifact, signed))
         await _registry(self.c.authority.custody.register_admission(self.c.registry, operation, artifact, signed))
 
     async def confirm(self, tx, operation):
+        if operation.operation == "team.agent.remove":
+            from .removal import confirm_removal
+
+            return await confirm_removal(self.c, tx, operation)
         await tx.execute("UPDATE {{tables.protected_root_admissions}} SET state='active' WHERE operation_id=$1", operation.operation_id)
 
 
@@ -242,16 +280,7 @@ class _AdmissionObservation:
         return policy.fields()
 
     async def _root(self, tx):
-        op, c = self.operation, self.operation.context
-        root = op.intent()["subject"]["root_id"]
-        row = await tx.fetch_one(
-            "SELECT * FROM {{tables.protected_root_endorsements}} WHERE service_id=$1 AND root_id=$2 FOR SHARE",
-            c.service_id, root,
-        )
-        if (row is None or row["human_id"] != c.human_id or row["human_domain"] != c.human_domain
-            or row["certificate_id"] != self.head):
-            raise SignerRefused("subject_ineligible")
-        return row
+        return await self.adapter.hold_endorsed_root(tx, self.operation.intent()["subject"]["root_id"], self.head)
 
     async def _hold_endorsement(self, tx, *, conflict="operation_conflict"):
         op = self.operation
@@ -308,10 +337,7 @@ class _AdmissionObservation:
 
     async def reserve(self, tx, request):
         op, c, subject = self.operation, self.operation.context, self.operation.intent()["subject"]
-        key = int.from_bytes(hashlib.sha256(
-            b"aweb.admission-quota/1\n" + json.dumps([c.service_id, subject["team_id"], subject["root_id"]], separators=(",", ":")).encode()
-        ).digest()[:8], "big", signed=True)
-        await tx.execute("SELECT pg_advisory_xact_lock($1::bigint)", key)
+        await _lock_quota(tx, c.service_id, subject["team_id"], subject["root_id"])
         fields = await self._current(tx)
         bounds = fields["bounds"]
         active = await tx.fetch_value(

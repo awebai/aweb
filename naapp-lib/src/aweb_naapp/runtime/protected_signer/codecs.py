@@ -13,6 +13,7 @@ from aweb_naapp.hooks.owner_act import owner_act_signing_bytes
 
 from .catalog import operation_spec
 from .identity_artifacts import identity_artifact, identity_signing_bytes, validate_identity_subject
+from .removal import removal_artifact, removal_signing_bytes, validate_removal_subject
 from .types import SignerRefused, owner_act_operation
 
 _REVOKE = {"app_id", "installation_id", "role", "principal"}
@@ -25,6 +26,8 @@ def validate_subject(operation, variant, subject):
     try:
         if operation in {"identity.root.endorse", "team.agent.admit"}:
             return validate_identity_subject(operation, variant, subject)
+        if operation == "team.agent.remove" and variant == "default":
+            return validate_removal_subject(subject)
         # Keep the released parser's closed revoke shape. The existing owner
         # act codec validates its full grammar before any pending B2 state.
         if operation == "human-role.revoke" and variant == "default":
@@ -42,6 +45,8 @@ def artifact_for(operation, key, now):
     stamp = now.astimezone(UTC).isoformat(timespec="seconds").replace("+00:00", "Z")
     if operation.operation in {"identity.root.endorse", "team.agent.admit"}:
         return identity_artifact(operation, key, stamp)
+    if operation.operation == "team.agent.remove":
+        return removal_artifact(operation, key, stamp)
     return {"v": 1, "type": "aweb.owner-act", "act": operation.operation,
         "team_id": operation.context.authority_id, "team_key_did": key, "aud": operation.audience,
         "subject": operation.intent()["subject"], "nonce": uuid4().hex, "issued_at": stamp,
@@ -52,6 +57,8 @@ def signing_bytes(operation, artifact):
     validate_subject(operation.operation, operation.variant, operation.intent()["subject"])
     if operation.operation in {"identity.root.endorse", "team.agent.admit"}:
         return identity_signing_bytes(operation, artifact)
+    if operation.operation == "team.agent.remove":
+        return removal_signing_bytes(operation, artifact)
     if (artifact.get("act") != operation.operation or artifact.get("team_id") != operation.context.authority_id
         or artifact.get("aud") != operation.audience or artifact.get("subject") != operation.intent()["subject"]):
         raise SignerRefused("operation_mismatch")
@@ -61,6 +68,8 @@ def signing_bytes(operation, artifact):
 def authority_key(operation, artifact):
     operation = owner_act_operation(operation)
     operation_spec(operation.operation, operation.variant)
+    if operation.operation == "team.agent.remove":
+        return artifact.get("controller_did")
     if operation.operation == "identity.root.endorse":
         return artifact.get("issuer_key")
     if operation.operation == "team.agent.admit":

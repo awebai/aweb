@@ -1,6 +1,6 @@
 """Closed signer operation registry, frozen human-assurance/1 catalog.
 
-This is executable package data, never loaded from a worker's request or an
+This is executable package data, never loaded from a worker"s request or an
 operator-editable catalog. All selectors share one engine; a family selects
 its existing wire codec/effect adapter, not another approval implementation.
 The cross-contract test pins every row to the public frozen catalog.
@@ -31,6 +31,25 @@ class OperationSpec:
 
 
 _ROWS = (
+    OperationSpec(
+        "team.agent.remove",
+        "default",
+        "team_controller",
+        "bounded_unattended",
+        "member_revocation",
+        (
+            "team_id",
+            "root_id_or_self",
+            "member_id",
+            "certificate_id",
+            "expected_membership",
+        ),
+        (
+            "Agent target only; no human holding/last-owner bypass",
+            "Root same permitted team/scope; self only own membership",
+            "Membership removal distinct from ID revocation",
+        ),
+    ),
     OperationSpec(
         "identity.root.endorse",
         "default",
