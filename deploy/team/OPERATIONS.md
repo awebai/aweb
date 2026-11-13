@@ -140,6 +140,43 @@ restore is not supported. The Secrets procedure is pending
 | Database passwords, Redis's password | Not exercised for this bundle: the role's password, the component's URL file and `postgres/roles/<name>` (or Redis's `users.acl` and aweb's `redis-url`) change together, then the services restart. | | Not qualified |
 | The agents' harness login | The OATS container's; see its documentation. | | |
 
+### The owner's log key for the agents' local logs (`aweb-acyh`, OPEN)
+
+The agents' local logs are plaintext today
+(`deploy/team/access/agents.md`). Sealing them under a key the team owner
+holds is built on a branch and not released: nothing here applies until the
+pinned `aw` includes `aw team admin log-key`. The record that turns sealing on
+is signed by the team controller key, which the signer holds once a deployment
+is set up. The supported path is for the owner to make the key on the machine
+where they read the logs, and for the signer to sign the record as one of its
+protected acts. Neither exists yet. Until both do, the stopgap is:
+
+1. First setup, **before** the controller key is installed in the signer,
+   while the owner's machine still holds it in `~/.awid/team-keys/`: on the
+   machine where the owner will read the logs, run
+   `aw team admin log-key create --team <team_id> --out log-key.json`. The log
+   private key stays in that machine's keychain and never enters the
+   container. `log-key.json` is public.
+2. In the agent container, as the agents' user and from a directory bound to
+   the team, run `aw team admin log-key install log-key.json`. One install
+   covers every agent of the container, because they share `/state/home`.
+   `aw doctor local` reports `local.log_key.owner_key_installed` as ok.
+3. A new log key, or a new record after the controller key is replaced, needs
+   the controller key again. The owner restores the offline controller copy
+   (the controller's backup, above) to `~/.awid/team-keys/` on the reading
+   machine, runs step 1 there while present, removes it again at once, and
+   repeats step 2. This exposes the controller key outside the signer by hand,
+   and nothing enforces its removal. It is the reason the signer act is
+   wanted.
+
+After a controller replacement the agents' local logging **stops**, and does
+not fall back to plaintext, until a record signed by the new controller key is
+installed. Lines already sealed stay readable on the owner's machine with the
+existing log key. While sealing is on, an agent's own `aw log` refuses and
+`aw run --continue` shows no recap. The owner reads the logs by copying the
+files out of the container and running `aw log read <files>` on the reading
+machine.
+
 ## Removing an agent, a service or an owner
 
 A member is removed by revoking its certificate, which the team key signs.
