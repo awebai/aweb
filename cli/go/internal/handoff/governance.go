@@ -239,11 +239,14 @@ func approve(ctx context.Context, opts GovernanceOptions, operationID string, bo
 		return nil, err
 	}
 	page := opts.Human + "/handoff/" + url.PathEscape(prepared.HandoffID)
-	fmt.Fprintf(opts.Notify, "Operation %s\n  digest:      %s\n  fingerprint: %s\nApprove it on this page: %s\n",
-		prepared.OperationID, prepared.Digest, Fingerprint(prepared.Digest), page)
+	// The signer mails each approver their own link, so there is nothing to
+	// pass on. The fingerprint stays in sight; the full digest is in --json,
+	// and aw has verified it above (human-assurance-contract.md section 5).
+	fmt.Fprintf(opts.Notify, "The signer has emailed the approver this request; it expires at %s.\n  details: operation %s · fingerprint %s\n",
+		prepared.ExpiresAt.UTC().Format("2006-01-02 15:04 UTC"), prepared.OperationID, Fingerprint(prepared.Digest))
 	if opts.Open != nil {
 		if err := opts.Open(page); err != nil {
-			fmt.Fprintf(opts.Notify, "Could not open a browser (%v); open the page above yourself.\n", err)
+			fmt.Fprintf(opts.Notify, "Could not open a browser (%v).\n", err)
 		}
 	}
 	if opts.OnPresented != nil {

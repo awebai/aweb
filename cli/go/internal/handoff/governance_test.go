@@ -601,3 +601,31 @@ func TestTheFingerprintIsTheDigestsFirstSixteenHexInFours(t *testing.T) {
 		t.Fatalf("fingerprint %q", got)
 	}
 }
+
+// Juan 2026-11-13, via coordinator: the signer mails the approver, and the
+// terminal leads with what happens; the fingerprint stays visible on one
+// details line, the full digest is in --json, and there is no link to relay.
+func TestAnApprovalTellsWhoDecidesAndKeepsOnlyTheFingerprintInSight(t *testing.T) {
+	stub := newSignerStub(t, pendingReceipt, committedReceipt)
+	var opened string
+	var notified bytes.Buffer
+	opts := stub.options(&opened)
+	opts.Notify = &notified
+	var presented *Prepared
+	opts.OnPresented = func(prepared *Prepared, _ string) { presented = prepared }
+	if _, err := Approve(context.Background(), opts, "11111111-1111-4111-8111-111111111111", revokeIntent()); err != nil {
+		t.Fatal(err)
+	}
+	text := notified.String()
+	for _, want := range []string{"The signer has emailed the approver", "expires at", "details: operation 11111111-1111-4111-8111-111111111111",
+		"fingerprint " + Fingerprint(presented.Digest)} {
+		if !strings.Contains(text, want) {
+			t.Errorf("%q lacks %q", text, want)
+		}
+	}
+	for _, unwanted := range []string{presented.Digest, "/handoff/", "this page"} {
+		if strings.Contains(text, unwanted) {
+			t.Errorf("%q shows %q", text, unwanted)
+		}
+	}
+}

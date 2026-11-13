@@ -60,7 +60,7 @@ func init() {
 	flags.StringVar(&idEndorseLabelFlag, "deployment-label", "", "The deployment's name, shown to the human")
 	flags.StringVar(&idEndorseOperationFlag, "operation-id", "", "The UUID for this endorsement; by default aw continues the same unfinished request or starts a new one")
 	flags.StringVar(&appProtectedProfileFlag, "protected-profile", "", "The operator-provisioned protected-service profile (default: AWEB_PROTECTED_PROFILE, else protected-profile.json in the identity home)")
-	flags.BoolVar(&idEndorseNoWaitFlag, "no-wait", false, "Show the approval page and exit without waiting for the human; rerun with the same --operation-id to finish")
+	flags.BoolVar(&idEndorseNoWaitFlag, "no-wait", false, "Exit once the approver has been emailed, without waiting for them; run the same command again to finish")
 	flags.BoolVar(&idEndorseNoBrowserFlag, "no-browser", false, "Do not open a browser; the page is only reported")
 	identityCmd.AddCommand(idEndorseCmd)
 }
@@ -187,6 +187,14 @@ func pendingEndorsementReport(prepared *handoff.Prepared, page string, receipt *
 		"digest": prepared.Digest, "fingerprint": handoff.Fingerprint(prepared.Digest),
 		"expires_at": prepared.ExpiresAt.UTC().Format(time.RFC3339Nano),
 	}
+}
+
+// pendingEndorsementText says, for people, who decides an endorsement that was
+// not waited for and how to continue; --json keeps the page and digest.
+func pendingEndorsementText(report map[string]any) string {
+	expires, _ := time.Parse(time.RFC3339Nano, fmt.Sprint(report["expires_at"]))
+	return fmt.Sprintf("Waiting for the approver, whom the signer has emailed; the request expires at %s. Run the same command again to continue (operation %s).\n",
+		expires.UTC().Format("2006-01-02 15:04 UTC"), report["operation_id"])
 }
 
 // endorsedCertificate is the root's signed ID certificate in a committed
@@ -385,13 +393,10 @@ func runIDEndorse(cmd *cobra.Command, _ []string) error {
 		return fmt.Errorf("operation %s: %w", request.OperationID, err)
 	}
 	if receipt.State == "pending" && presented != nil {
-		// Not waited for: the human approves on the page, and a rerun with
-		// the same operation id finishes.
+		// Not waited for: the signer has emailed the approver, and running
+		// the same command again finds this operation and finishes it.
 		report := pendingEndorsementReport(presented, page, receipt)
-		printOutput(report, func(any) string {
-			return fmt.Sprintf("Operation %s is pending (%s) until %s; approve it on %s, then run this command again with the same --operation-id.\n",
-				request.OperationID, receipt.Reason, report["expires_at"], page)
-		})
+		printOutput(report, func(any) string { return pendingEndorsementText(report) })
 		return nil
 	}
 	artifact, _ := frozen["artifact"].(map[string]any)
