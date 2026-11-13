@@ -646,35 +646,31 @@ func (s *Store) DeleteRegistration(home string) (bool, error) {
 
 // ListRegistrations reads every registration, ordered by registration time so
 // the stream bound admits the oldest first and a restart admits the same set.
-func (s *Store) ListRegistrations() ([]Registration, error) {
+// A file that cannot be read, does not parse or names no usable home is
+// skipped and returned as a fault, so one bad file never hides the others.
+// The error is reserved for the registry directory itself.
+func (s *Store) ListRegistrations() ([]Registration, []RegistrationFault, error) {
 	entries, err := os.ReadDir(filepath.Join(s.dir, "registry.d"))
 	if err != nil {
 		if os.IsNotExist(err) {
-			return nil, nil
+			return nil, nil, nil
 		}
-		return nil, err
+		return nil, nil, err
 	}
 	out := []Registration{}
+	var faults []RegistrationFault
 	for _, entry := range entries {
 		if entry.IsDir() || !strings.HasSuffix(entry.Name(), ".json") {
 			continue
 		}
-		var r Registration
-		ok, err := readJSON(filepath.Join(s.dir, "registry.d", entry.Name()), &r)
+		path := filepath.Join(s.dir, "registry.d", entry.Name())
+		r, ok, err := readRegistrationFile(path)
 		if err != nil {
-			return nil, err
+			faults = append(faults, RegistrationFault{Path: path, Error: err.Error()})
+			continue
 		}
 		if !ok {
 			continue
-		}
-		if strings.TrimSpace(r.Home) == "" {
-			return nil, fmt.Errorf("%s: registration home is empty", filepath.Join(s.dir, "registry.d", entry.Name()))
-		}
-		if _, err := CanonicalHome(r.Home); err != nil {
-			return nil, fmt.Errorf("%s: %w", filepath.Join(s.dir, "registry.d", entry.Name()), err)
-		}
-		if normalized, normalizeErr := r.normalized(); normalizeErr == nil {
-			r = normalized
 		}
 		out = append(out, r)
 	}
@@ -684,7 +680,30 @@ func (s *Store) ListRegistrations() ([]Registration, error) {
 		}
 		return out[i].Home < out[j].Home
 	})
-	return out, nil
+	return out, faults, nil
+}
+
+// registrationFileKey is the home key a registry file is stored under.
+func registrationFileKey(path string) string {
+	return strings.TrimSuffix(filepath.Base(path), ".json")
+}
+
+func readRegistrationFile(path string) (Registration, bool, error) {
+	var r Registration
+	ok, err := readJSON(path, &r)
+	if err != nil || !ok {
+		return Registration{}, false, err
+	}
+	if strings.TrimSpace(r.Home) == "" {
+		return Registration{}, false, errors.New("registration home is empty")
+	}
+	if _, err := CanonicalHome(r.Home); err != nil {
+		return Registration{}, false, err
+	}
+	if normalized, normalizeErr := r.normalized(); normalizeErr == nil {
+		r = normalized
+	}
+	return r, true, nil
 }
 
 // SaveInstance writes per-instance lifecycle/status state atomically, dropping

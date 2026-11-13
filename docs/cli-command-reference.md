@@ -19,7 +19,7 @@ to refresh it.
 | Identity | `auth`, `custody`, `id`, `mcp-config`, `org`, `team`, `whoami` |
 | Messaging & Network | `a2a`, `beads-mail`, `chat`, `contacts`, `control`, `directory`, `events`, `gc-mail`, `heartbeat`, `inbound-mode`, `log`, `mail`, `room`, `wake` |
 | Coordination & Runtime | `activity`, `agent`, `instructions`, `lock`, `notify`, `role-name`, `roles`, `run`, `status`, `status-host`, `task`, `work` |
-| Utility | `app`, `completion`, `doctor`, `help`, `hooks`, `logs`, `plugin`, `upgrade`, `version` |
+| Utility | `app`, `audit`, `completion`, `doctor`, `help`, `hooks`, `plugin`, `upgrade`, `version` |
 | Additional Commands | `blueprint`, `session`, `who` |
 
 ## Global Flags
@@ -4094,6 +4094,7 @@ Designate or revoke a holder of an app role, as the team owner
 
 Subcommands:
 - `designate` Designate a human member as a holder of an app role
+- `resume` Resume a protected role act whose prepare answer was lost, from its saved request
 - `revoke` End a holder's holding of an app role
 
 Flags:
@@ -4115,6 +4116,16 @@ Flags:
 - `--role string The app role, as its manifest names it`
 - `--yes Sign what is shown without asking`
 
+## `app role resume`
+
+### `app role resume`
+
+Resume a protected role act whose prepare answer was lost, from its saved request
+
+Flags:
+- `-h, --help help for resume`
+- `--protected-profile string The profile the operation was prepared through`
+
 ## `app role revoke`
 
 ### `app role revoke`
@@ -4122,10 +4133,46 @@ Flags:
 End a holder's holding of an app role
 
 Flags:
+- `--approver string With --protected-profile, the did:aw of the human who approves the act`
 - `-h, --help help for revoke`
 - `--principal string The holder's did:aw`
+- `--protected-profile string Prepare the act at the protected service this operator-provisioned profile names; the controlling human approves it there`
 - `--role string The app role, as its manifest names it`
 - `--yes Sign what is shown without asking`
+
+## `audit`
+
+### `audit`
+
+A team's audit log
+
+Subcommands:
+- `verify` Verify an exported team log offline
+
+Flags:
+- `-h, --help help for audit`
+
+## `audit verify`
+
+### `audit verify`
+
+Verify an exported team log (aweb.logs-export/1) offline, against the receipt and
+checkpoint keys you accept and the receipts and checkpoints you hold yourself.
+
+It reads only the files it is given: no workspace, identity or server.
+Give each key you accept, for receipts and for checkpoints; a key that signs
+both is given to both. Each --witness file holds one receipt or checkpoint per
+line, in an export's own line shape. --bundle - reads the export from stdin.
+
+Exits 0 when the bundle is intact, 1 when it is verified and not intact, and 2
+when it could not be verified.
+
+Flags:
+- `--bundle string The export to verify, or - for stdin`
+- `--checkpoint-key stringArray A did:key you accept for checkpoints (repeatable)`
+- `-h, --help help for verify`
+- `--receipt-key stringArray A did:key you accept for receipts (repeatable)`
+- `--witness stringArray A file of receipts and checkpoints you hold (repeatable)`
 
 ## `completion`
 
@@ -4386,40 +4433,6 @@ What will be signed is shown before the team's controller key signs it.
 Flags:
 - `-h, --help help for revoke`
 - `--yes Sign without asking for confirmation (what is signed is still shown)`
-
-## `logs`
-
-### `logs`
-
-A team's audit log
-
-Subcommands:
-- `verify` Verify an exported team log offline
-
-Flags:
-- `-h, --help help for logs`
-
-## `logs verify`
-
-### `logs verify`
-
-Verify an exported team log (aweb.logs-export/1) offline, against the receipt and
-checkpoint keys you accept and the receipts and checkpoints you hold yourself.
-
-It reads only the files it is given: no workspace, identity or server.
-Give each key you accept, for receipts and for checkpoints; a key that signs
-both is given to both. Each --witness file holds one receipt or checkpoint per
-line, in an export's own line shape. --bundle - reads the export from stdin.
-
-Exits 0 when the bundle is intact, 1 when it is verified and not intact, and 2
-when it could not be verified.
-
-Flags:
-- `--bundle string The export to verify, or - for stdin`
-- `--checkpoint-key stringArray A did:key you accept for checkpoints (repeatable)`
-- `-h, --help help for verify`
-- `--receipt-key stringArray A did:key you accept for receipts (repeatable)`
-- `--witness stringArray A file of receipts and checkpoints you hold (repeatable)`
 
 ## `plugin`
 

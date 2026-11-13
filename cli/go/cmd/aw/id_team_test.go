@@ -1501,7 +1501,7 @@ func testTeamInviteAndAcceptInviteFlow(t *testing.T, tokenStdin bool) {
 
 	// Verify certificate signature
 	teamPub := teamKey.Public().(ed25519.PublicKey)
-	if err := awid.VerifyTeamCertificate(cert, teamPub); err != nil {
+	if err := awid.CheckDecodedTeamCertificate(cert, awid.ComputeDIDKey(teamPub)); err != nil {
 		t.Fatalf("verify certificate: %v", err)
 	}
 	if !encryptionKeyPublished.Load() {

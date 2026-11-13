@@ -76,27 +76,6 @@ async def unregister_waiting(
         logger.warning("Failed to unregister waiting for %s in %s", agent_id, session_id)
 
 
-async def is_agent_waiting(
-    redis,
-    session_id: str,
-    agent_id: str,
-    max_age_seconds: int = 90,
-) -> bool:
-    """Check if an agent has an active (non-stale) SSE connection on a session."""
-    if redis is None:
-        return False
-
-    try:
-        key = _chat_waiting_key(session_id)
-        cutoff = time.time() - max_age_seconds
-        # Atomic check-and-cleanup: returns 1 if fresh, 0 if stale (removed), -1 if absent.
-        result = await redis.eval(_STALE_CHECK_SCRIPT, 1, key, agent_id, cutoff)
-        return result == 1
-    except Exception:
-        logger.warning("Failed to check waiting for %s in %s", agent_id, session_id)
-        return False
-
-
 async def get_waiting_agents(
     redis,
     session_id: str,

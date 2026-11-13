@@ -413,20 +413,6 @@ async def get_mail_conversation(
     raise HTTPException(status_code=404, detail=RESOURCE_NOT_FOUND_DETAIL)
 
 
-def _recipient_transport_hint(payload: SendMessageRequest) -> str:
-    if payload.to_address is not None:
-        return "to_address"
-    if payload.to_stable_id is not None:
-        return "to_stable_id"
-    if payload.to_did is not None:
-        return "to_did"
-    if payload.to_agent_id is not None:
-        return "to_agent_id"
-    if payload.to_alias is not None:
-        return "to_alias"
-    return "mail"
-
-
 def _send_response(sent: SentMail) -> SendMessageResponse:
     return SendMessageResponse(**asdict(sent))
 
@@ -436,22 +422,6 @@ async def send_message(
     request: Request, payload: SendMessageRequest, db=Depends(get_db),
     auth: MessagingAuth = Depends(get_messaging_auth),
 ) -> SendMessageResponse:
-    from aweb.human_channels.http import ingress_requested, accept_native_http
-
-    if ingress_requested(request):
-        accepted = await accept_native_http(
-            request, payload, auth=auth, db=db, kind="mail"
-        )
-        row = await db.get_manager("aweb").fetch_one(
-            "SELECT created_at FROM {{tables.messages}} WHERE message_id=$1",
-            UUID(accepted["message_id"]),
-        )
-        return SendMessageResponse(
-            message_id=accepted["message_id"],
-            conversation_id=accepted["conversation_id"],
-            status="delivered",
-            delivered_at=row["created_at"].isoformat(),
-        )
     attachment_context = prepare_attachment_send(
         getattr(request.app.state, "attachment_backend", None), payload, auth,
     )

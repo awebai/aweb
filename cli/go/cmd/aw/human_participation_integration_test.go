@@ -134,7 +134,7 @@ func TestHumanParticipationFetchConnectMailAndManifest(t *testing.T) {
 			t.Errorf("invalid v2 request %s: %s", r.URL.Path, payload)
 		}
 		got, err := awid.DecodeTeamCertificateHeader(r.Header.Get("X-AWID-Team-Certificate"))
-		if err != nil || awid.VerifyTeamCertificate(got, controller.Public().(ed25519.PublicKey)) != nil {
+		if err != nil || awid.CheckDecodedTeamCertificate(got, awid.ComputeDIDKey(controller.Public().(ed25519.PublicKey))) != nil {
 			t.Error("bad team cert")
 		}
 		bundle, err := awid.DecodeIDChainHeader(r.Header.Get("X-AWID-ID-Chain"))

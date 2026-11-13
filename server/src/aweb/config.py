@@ -153,7 +153,9 @@ def get_awid_member_signing_keys() -> dict[str, bytes]:
     """Load existing aw Ed25519 seed PEM keys, indexed by canonical team ID.
 
     The JSON manifest contains paths, never key material. Relative paths are
-    relative to that manifest. Only ordinary member keys belong here, not the
+    relative to that manifest. Each key file is read with
+    :func:`aweb_naapp.key_file.read_key_file`, so it passes the same file checks
+    as every other mounted key. Only ordinary member keys belong here, not the
     customer's team controller key. Certificates are registered at AWID.
     """
     filename = os.getenv("AWID_MEMBER_KEYS_FILE", "").strip()

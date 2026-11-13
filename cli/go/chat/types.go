@@ -13,6 +13,7 @@ type Event struct {
 	AttachmentsAvailable bool                        `json:"attachments_available"`
 	SenderMembership     *awid.SenderMembership      `json:"sender_membership,omitempty"`
 	Type                 string                      `json:"type"`
+	Seq                  int64                       `json:"seq,omitempty"`
 	Agent                string                      `json:"agent,omitempty"`
 	SessionID            string                      `json:"session_id,omitempty"`
 	MessageID            string                      `json:"message_id,omitempty"`

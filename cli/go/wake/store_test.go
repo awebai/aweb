@@ -25,9 +25,13 @@ func tempStore(t *testing.T) *Store {
 // shortTempStore puts the state directory under a short path. A unix socket
 // path is bounded by sun_path (104 bytes on macOS), and t.TempDir() embeds the
 // test's name, which alone can exceed it.
+// shortTempStore is a store whose control socket path fits the unix socket
+// limit wherever TMPDIR points. Under a long TMPDIR the socket would be
+// shortened into the user's shared runtime directory, which exists only on a
+// host where aw already runs and which accepts only owner-only sockets.
 func shortTempStore(t *testing.T) *Store {
 	t.Helper()
-	dir, err := os.MkdirTemp("", "awwk")
+	dir, err := os.MkdirTemp("/tmp", "awwk")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -253,7 +257,7 @@ func TestStoreRoundTripsRegistrationsAndCanonicalisesHomes(t *testing.T) {
 		t.Fatalf("home=%q want %q", loaded.Home, home)
 	}
 
-	all, err := store.ListRegistrations()
+	all, _, err := store.ListRegistrations()
 	if err != nil || len(all) != 1 {
 		t.Fatalf("registrations=%v err=%v", all, err)
 	}
@@ -262,7 +266,7 @@ func TestStoreRoundTripsRegistrationsAndCanonicalisesHomes(t *testing.T) {
 	if err != nil || !existed {
 		t.Fatalf("existed=%t err=%v", existed, err)
 	}
-	if all, _ := store.ListRegistrations(); len(all) != 0 {
+	if all, _, _ := store.ListRegistrations(); len(all) != 0 {
 		t.Fatalf("registrations survived deletion: %v", all)
 	}
 }
@@ -299,7 +303,7 @@ func TestStoreDropsLegacyPendingHintsOnDisk(t *testing.T) {
 }
 
 func TestStoreLayoutMatchesTheNote(t *testing.T) {
-	store := tempStore(t)
+	store := shortTempStore(t)
 	home := tempHome(t, "instance")
 	if err := store.SaveRegistration(Registration{Home: home, IdentityHome: filepath.Join(home, ".aw"), Delivery: DeliverySession}); err != nil {
 		t.Fatal(err)
