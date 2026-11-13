@@ -724,8 +724,23 @@ class World:
                  ".then(s=>{console.log(s.join(' '))},e=>{console.error(e.code||e.message);process.exit(1)})")
         node = ssh(f'node -e "{reach}"')
         assert node.returncode == 0 and node.stdout.split() == ["200", "200"], node.stdout + node.stderr
+        # The same calls with trust that leaves the agents' CA out fail
+        # certificate verification: the positives above rest on that CA. The
+        # trust is changed for these processes only; the session's files stay.
+        system = ssh("test -s /etc/ssl/certs/ca-certificates.crt")
+        assert system.returncode == 0, "the agent image has no system CA bundle to stand for trust without the agents' CA"
+        go = ssh(f"SSL_CERT_FILE=/etc/ssl/certs/ca-certificates.crt SSL_CERT_DIR=/nonexistent "
+                 f"aw --identity-home {home} --json id resolve {founded.approver}")
+        go_output = go.stdout + go.stderr
+        assert go.returncode != 0 and "x509: certificate signed by unknown authority" in go_output, go_output
+        untrusted = ssh(f'env -u NODE_EXTRA_CA_CERTS -u SSL_CERT_FILE node -e "{reach}"')
+        node_refusal = untrusted.stderr.strip()
+        assert untrusted.returncode != 0 and node_refusal in {
+            "UNABLE_TO_VERIFY_LEAF_SIGNATURE", "UNABLE_TO_GET_ISSUER_CERT_LOCALLY", "SELF_SIGNED_CERT_IN_CHAIN",
+        }, untrusted.stdout + untrusted.stderr
         return {"seat": seat, "trust": trust, "inbound": inbound.group(1), "resolved": first_json(resolved.stdout),
-                "node": node.stdout.split()}
+                "node": node.stdout.split(),
+                "without_the_agents_ca": {"go": "x509: certificate signed by unknown authority", "node": node_refusal}}
 
     def machine(self, name: str) -> str:
         """A cli container as one machine; its HOME is /world/<name>."""
