@@ -755,6 +755,7 @@ test-isolated:
 
 .PHONY: test-egress-controls
 test-egress-controls:
+	python3 scripts/test-egress/test_dns.py -v
 	python3 -m unittest discover -s scripts/test-egress -p test_native.py -v
 
 # The shared page renderer is packaged in the Python wheel. Rebuild from its
