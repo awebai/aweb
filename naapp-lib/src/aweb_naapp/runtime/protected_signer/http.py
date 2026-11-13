@@ -3,8 +3,8 @@
 from __future__ import annotations
 
 import re
-from contextlib import contextmanager
 from collections.abc import Awaitable, Callable
+from contextlib import contextmanager
 from dataclasses import asdict
 from math import ceil
 from typing import Any
