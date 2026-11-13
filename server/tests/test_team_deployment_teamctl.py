@@ -43,6 +43,20 @@ def test_destroy_removes_only_the_bundles_containers_and_named_volumes(tmp_path)
     assert not [call for call in made if " down " in f" {call} " or "--remove-orphans" in call]
 
 
+def test_destroy_ignores_the_compose_files_run_beside_the_bundle(tmp_path):
+    # TEAM_DEPLOYMENT_COMPOSE_FILES adds what the project runs beside the
+    # bundle (the journey's test world); destroy keeps it out of what it removes.
+    beside = tmp_path / "compose.beside.yaml"
+    beside.write_text("services: {}\n", encoding="utf-8")
+    path = deployment(tmp_path, EXAMPLE)
+    result = run(tmp_path, "destroy", path, "--confirm", "teamrun", command=TEAMCTL, docker_ok=True,
+                 extra_files=str(beside), answers={"config --volumes": "postgres_data\n"})
+    assert result.returncode == 0, result.stderr
+    made = calls(tmp_path)
+    assert [call for call in made if " rm --stop --force" in call], made
+    assert not [call for call in made if "compose.beside.yaml" in call], made
+
+
 def test_destroy_fails_when_it_cannot_list_the_bundles_volumes(tmp_path):
     # A failed listing is not an empty one: destroy must not report the volumes gone.
     path = deployment(tmp_path, EXAMPLE)

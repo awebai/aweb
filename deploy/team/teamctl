@@ -739,6 +739,10 @@ destroy() {
     exit 2
   fi
   model
+  # Only the bundle's own files: what the project runs beside it
+  # (TEAM_DEPLOYMENT_COMPOSE_FILES) is neither removed nor its volumes listed.
+  TEAM_DEPLOYMENT_COMPOSE_FILES=""
+  compose=()
   dc --profile '*' rm --stop --force
   local key volumes
   volumes="$(dc config --volumes)" || refuse "could not list the bundle's volumes; they may remain"
