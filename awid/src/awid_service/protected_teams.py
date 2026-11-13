@@ -248,6 +248,7 @@ async def effect_transaction(request, db, *, domain, operation, name=None):
         now = datetime.now(timezone.utc)
         for expiry, code in deadlines:
             if now >= expiry:
+                logger.warning("Protected effect expired before commit: operation=%s code=%s", operation, code)
                 raise refusal(code)
 
 

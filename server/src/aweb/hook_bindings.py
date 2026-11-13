@@ -333,9 +333,9 @@ _CONFLICT_REFUSALS = frozenset({"subject_mismatch", "nonce_reused"})
 
 def _service_error(refused: Refused) -> ServiceError:
     detail = str(refused)
-    if refused.code == "protected_state_unavailable":
-        error = ServiceError(detail)
-        error.status_code = 503
+    if refused.code in {"protected_state_unavailable", "protected_controller_required"}:
+        error = ServiceError({"code": refused.code, "message": detail})
+        error.status_code = 503 if refused.code == "protected_state_unavailable" else 403
         return error
     if refused.code in _CONFLICT_REFUSALS:
         return ConflictError(detail)

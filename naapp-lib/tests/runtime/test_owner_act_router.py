@@ -525,7 +525,7 @@ async def test_forged_signature_cannot_observe_holding_or_installation(
     )
     response = await world.post(body)
     assert (response.status_code, response.json()["detail"]) == (
-        (503, "team_key_unavailable") if unknown_team else (403, "owner_required")
+        (503, "protected_state_unavailable") if unknown_team else (403, "owner_required")
     )
     assert world.effect.prepared is None
     assert len(world.coordination.server.transport.calls) == before_reads
