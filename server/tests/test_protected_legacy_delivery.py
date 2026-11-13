@@ -107,7 +107,7 @@ async def test_legacy_plan_preserves_cache_fences_and_sends_one_exact_request(na
             assert json.loads(base64.b64decode(body["certificate"])) == {**artifact,
                 "signature": base64.b64encode(base64.b64decode(result["signature"])).rstrip(b"=").decode()}
     finally:
-        await client.close()
+        await client.aclose()
 
 
 @pytest.mark.asyncio
@@ -121,4 +121,4 @@ async def test_only_a_distinct_registration_envelope_needs_another_signature(nam
         if calls:
             assert calls[0] != base64.b64decode(result["signing"])
     finally:
-        await client.close()
+        await client.aclose()
