@@ -299,7 +299,7 @@ async def test_a_prepared_act_older_than_the_key_bound_is_refused(db, registry, 
 @pytest.mark.asyncio
 @pytest.mark.parametrize("protected", [False, True], ids=["legacy", "protected"])
 async def test_current_protection_refuses_a_controller_only_owner_act(registry, team_key, protected):
-    from awid.did import generate_keypair, did_from_public_key
+    from awid.did import did_from_public_key, generate_keypair
     from awid.protected_membership import observe_team_protection
     from awid.registry import RegistryClient
 

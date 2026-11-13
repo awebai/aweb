@@ -17,6 +17,8 @@ from datetime import UTC, datetime, timedelta
 from typing import Any
 from urllib.parse import urlsplit
 
+from awid.controller_request import raw_controller_request_target
+from awid.protected_effect import HEADER, EffectRefused, http_consumer
 from awid.team_certificate import MAX_HEADER_BYTES, TeamCertificateError, decode_team_certificate
 from fastapi import APIRouter, FastAPI, HTTPException, Request
 from fastapi.responses import JSONResponse
@@ -141,6 +143,7 @@ async def _delivery(request: Request, declaration: Any) -> OwnerActDelivery:
         if len(body_bytes) + len(chunk) > MAX_BODY_BYTES:
             raise _refuse(400, "request_invalid")
         body_bytes.extend(chunk)
+    request.state.owner_act_body = bytes(body_bytes)
     try:
         body = json.loads(body_bytes, object_pairs_hook=_object)
         if not isinstance(body, dict) or set(body) - _BODY_FIELDS:
@@ -252,10 +255,20 @@ def mount_owner_act_routes(
         # Stage 2. Only the caller-selected team affects a registry failure.
         try:
             prepared_act = await verifier.prepare(
-                delivery.signing, delivery.signature, team_id=delivery.team_id
+                delivery.signing, delivery.signature, team_id=delivery.team_id,
+                protected_delivery=(request.headers.get(HEADER), http_consumer(
+                    audience=verifier.audience, method=request.method,
+                    path=raw_controller_request_target(request), body=request.state.owner_act_body)),
             )
-        except Refused:
+        except Refused as exc:
+            if exc.code == "protected_controller_required":
+                raise _refuse(403, exc.code) from None
+            if exc.code == "protected_state_unavailable":
+                raise _refuse(503, exc.code) from None
             raise _refuse() from None
+        except EffectRefused as exc:
+            logger.exception("Current protected owner-act authority unavailable")
+            raise _refuse(503, exc.code) from None
         except Exception:
             raise _refuse(503, "team_key_unavailable") from None
         try:
