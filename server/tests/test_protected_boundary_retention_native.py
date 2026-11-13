@@ -111,7 +111,8 @@ async def test_genuine_retained_admission_and_exact_confirmation(admissions, tmp
 
 
 @pytest.mark.asyncio
-async def test_genuine_b3_owner_act_reaches_protected_sql_consumer(world, tmp_path, test_db_factory):
+@pytest.mark.parametrize("unconfirmed", [False, True])
+async def test_genuine_b3_owner_act_reaches_protected_sql_consumer(world, tmp_path, test_db_factory, monkeypatch, unconfirmed):
     import httpx
     from fastapi import FastAPI, Request
     from fastapi.responses import JSONResponse
@@ -161,14 +162,51 @@ async def test_genuine_b3_owner_act_reaches_protected_sql_consumer(world, tmp_pa
     async with httpx.AsyncClient(transport=httpx.ASGITransport(app=app), follow_redirects=False) as client:
         custody.configure_effects(registry=w.registry, clients={w.operation.audience: client}, clock=lambda: w.app.signer.clock())
         prepared = await prepare_owner(w)
+        candidate_row = await w.db.fetch_one(
+            "SELECT candidate_links FROM {{tables.protected_signer_operations}} WHERE operation_id=$1", prepared.operation_id)
+        token = next(iter(json.loads(candidate_row["candidate_links"]).values()))
+        captured = await w.app.signer._link_human(prepared.handoff_id, token)
+        if unconfirmed:
+            async def unreadable(*args):
+                return None  # Hide only confirmation; the actual consumer still applies.
+            monkeypatch.setattr(custody, "confirm_retained", unreadable)
         options = await w.app.signer.approval_options(prepared.operation_id, human=w.human)
         result = await w.app.signer.execute(prepared.operation_id, w.device.get(dict(options)), human=w.human)
-        assert result.state == "committed" and result.result["v"] == 2
+        if unconfirmed:
+            assert result.state == "unknown" and result.code == "external_effect_unresolved"
+        else:
+            assert result.state == "committed" and result.result["v"] == 2
         assert await db.fetch_value("SELECT count(*) FROM holding") == 0
         assert await db.fetch_value("SELECT count(*) FROM {{tables.owner_act_nonces}}") == 1
         assert await db.fetch_value("SELECT count(*) FROM {{tables.protected_effect_receipts}}") == 1
         row = await w.db.fetch_one("SELECT retained_effect FROM {{tables.protected_signer_operations}} WHERE operation_id=$1", prepared.operation_id)
         retained = json.loads(row["retained_effect"])
+        if unconfirmed:
+            from aweb.protected_signing.owner import owner_view, owner_page_html
+            async with w.db.transaction() as tx:
+                scope = (await w.app.authority.binding(tx))["b3_scope"]
+            for offset in (timedelta(), timedelta(days=2)):
+                view = await owner_view(w.app, scope=scope, now=w.app.signer.clock() + offset)
+                assert view["pending"] == []
+                assert [(item["operation_id"], item["state"]) for item in view["history"]] == [
+                    (prepared.operation_id, "unresolved")]
+                html = owner_page_html(view)
+                assert "whether it took effect is not confirmed yet" in html
+                assert "Expired, nobody decided" not in html and "by you" not in html
+            # A real candidate captured before signing reaches the freshly
+            # locked signed/retained row after expiry; it cannot report unsigned expiry.
+            async def stale_candidate(*args):
+                return captured
+            monkeypatch.setattr(w.app.signer, "_link_human", stale_candidate)
+            original_clock = w.app.signer.clock
+            monkeypatch.setattr(w.app.signer, "clock", lambda: original_clock() + timedelta(days=2))
+            with pytest.raises(SignerRefused, match="scope_refused"):
+                await w.app.signer.link_view(prepared.handoff_id, token)
+            reread = await w.db.fetch_one(
+                "SELECT retained_effect FROM {{tables.protected_signer_operations}} WHERE operation_id=$1", prepared.operation_id)
+            assert json.loads(reread["retained_effect"]) == retained
+            assert await db.fetch_value("SELECT count(*) FROM {{tables.owner_act_nonces}}") == 1
+            return
         body = base64.b64decode(retained["delivery"]["body"])
         url = w.operation.audience + retained["delivery"]["path"]
         missing = await client.post(url, content=body)
