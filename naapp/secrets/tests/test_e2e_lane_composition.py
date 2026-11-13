@@ -16,6 +16,8 @@ from tests.test_e2e_owner_acts import (
     REGISTRY,
     UPSTREAMS,
     front_caddyfile,
+    identity_folder,
+    machine_dir,
     secrets_env,
 )
 
@@ -82,3 +84,12 @@ def test_secrets_sends_its_governance_and_use_events_to_the_lanes_logs():
 def test_the_lane_subnet_is_the_one_the_compose_file_fixes():
     subnet = LANE["networks"]["default"]["ipam"]["config"][0]["subnet"]
     assert subnet == "${SECRETS_E2E_SUBNET:-" + LANE_SUBNET + "}"
+
+
+def test_the_owners_identity_is_issued_into_the_folder_the_controller_machine_selects():
+    # The namespace root issues the owner's identity on the holder's machine,
+    # where its controller key is, into the controller machine's own folder:
+    # aw there selects its working directory's .aw.
+    assert machine_dir("controller") == "/runtime/controller"
+    assert identity_folder("controller") == machine_dir("controller") + "/.aw"
+    assert identity_folder("controller") != identity_folder("holder")
