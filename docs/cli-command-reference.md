@@ -1139,6 +1139,7 @@ Subcommands:
 - `members` List a team's members from AWID certificates
 - `register` Protocol/admin: register or sync a customer-controlled team with a service
 - `reissue-cert` Protocol/admin: mint and register a fresh certificate for the same member key
+- `remove-agent` Remove an admitted agent from a protected team through its protected service, as the endorsed root
 - `remove-member` Protocol/admin: remove a member by revoking a team certificate
 - `request` Protocol/admin bridge: print the add-member command the team owner should run
 - `rotate-key` Rotate the team controller key, re-signing the team's AWID records with it
@@ -1513,6 +1514,26 @@ Flags:
 - `--namespace string Namespace domain`
 - `--registry string Registry origin override`
 - `--team string Team name`
+
+## `id team remove-agent`
+
+### `id team remove-agent`
+
+Remove one agent's membership of a protected team, through the protected service
+named by --protected-profile, proving this identity's key as the deployment's
+endorsed root that admitted it. The membership is the one --certificate names:
+the certificate file aw id team admit wrote, or the agent home's installed copy.
+No human approves it, and nothing in the agent's home is changed.
+
+--operation-id is the caller's UUID, kept before anything is sent. Running again
+with the same id and the same inputs resumes that operation and returns its
+receipt; changed inputs under the id refuse operation_conflict.
+
+Flags:
+- `--certificate string The agent's team certificate file`
+- `-h, --help help for remove-agent`
+- `--operation-id string The caller's UUID for this removal; the same id resumes it`
+- `--protected-profile string The operator-provisioned protected-service profile`
 
 ## `id team remove-member`
 

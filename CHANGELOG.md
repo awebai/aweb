@@ -2,6 +2,14 @@
 
 ## Unreleased
 
+- `aw id team remove-agent --protected-profile P --certificate F --operation-id U`
+  removes, as the deployment's endorsed root, the agent membership that
+  certificate file names, through the protected service's bounded
+  `team.agent.remove`. aw checks that the service signs exactly the registry's
+  revocation of that certificate under the profile's pinned controller key,
+  and changes nothing in the agent's home. The same `--operation-id` resumes
+  the removal; changed inputs refuse `operation_conflict`.
+
 - `aw id team install-cert --identity-home H --certificate F` installs a team
   certificate file, such as the one `aw id team admit --certificate-out`
   wrote, into the home whose identity it names, after checking it at the
