@@ -51,6 +51,11 @@ func identityExists(format string, args ...any) error {
 // identity_exists before anything is sent.
 func createUnaddressedIdentity(ctx context.Context, c unaddressedCreate) (map[string]any, error) {
 	statePath := filepath.Join(c.Root, unaddressedStateFile)
+	// Checked before the lock is taken as well as under it, so a refused home
+	// is left exactly as it was.
+	if _, err := unaddressedHomeRefusal(c, statePath); err != nil {
+		return nil, err
+	}
 	lock, err := awconfig.TryLockExclusive(statePath + ".lock")
 	if err != nil {
 		return nil, fmt.Errorf("identity creation already in progress in %s, or its lock is unavailable: %w", c.Root, err)
@@ -94,35 +99,57 @@ func createUnaddressedIdentity(ctx context.Context, c unaddressedCreate) (map[st
 	return map[string]any{"status": status, "did_aw": stableID, "did_key": didKey, "registry_url": c.RegistryURL, "identity_home": c.Root}, nil
 }
 
+// unaddressedHomeRefusal refuses a home that holds an identity, anything this
+// creation did not write, or a creation for another registry. It reports
+// whether the home holds an interrupted creation to resume.
+func unaddressedHomeRefusal(c unaddressedCreate, statePath string) (bool, error) {
+	if _, err := os.Lstat(filepath.Join(c.Root, "identity.yaml")); err == nil {
+		return false, identityExists("%s already holds an identity; it is used as it is", c.Root)
+	}
+	raw, err := os.ReadFile(statePath)
+	resumed := err == nil
+	if err != nil && !errors.Is(err, os.ErrNotExist) {
+		return false, err
+	}
+	// The home holds nothing this creation did not write: its lock, and once
+	// marked, its state and key.
+	owned := map[string]bool{unaddressedStateFile + ".lock": true}
+	if resumed {
+		owned[unaddressedStateFile], owned["signing.key"] = true, true
+	}
+	entries, err := os.ReadDir(c.Root)
+	if err != nil {
+		return false, err
+	}
+	for _, entry := range entries {
+		if !owned[entry.Name()] {
+			return false, identityExists("%s holds %s, which this creation did not write; an identity is created only in its own home", c.Root, entry.Name())
+		}
+	}
+	if !resumed {
+		return false, nil
+	}
+	var state unaddressedCreationState
+	if json.Unmarshal(raw, &state) != nil || state.Version != 1 {
+		return false, errors.New("the interrupted identity creation's state is not valid; keep the home for inspection")
+	}
+	if state.RegistryURL != c.RegistryURL {
+		return false, identityExists("%s holds a creation for registry %s, not %s", c.Root, state.RegistryURL, c.RegistryURL)
+	}
+	return true, nil
+}
+
 // unaddressedKey is the key of the creation in c.Root. A fresh creation is
 // marked first and its key installed next; an interrupted one resumes with
 // its installed key, or, killed before the key was installed (when nothing
 // can have been registered), installs a fresh one. It reports whether the
 // creation was resumed.
 func unaddressedKey(c unaddressedCreate, statePath string) (ed25519.PrivateKey, bool, error) {
-	keyPath := filepath.Join(c.Root, "signing.key")
-	if _, err := os.Stat(filepath.Join(c.Root, "identity.yaml")); err == nil {
-		return nil, false, identityExists("%s already holds an identity; it is used as it is", c.Root)
+	resumed, err := unaddressedHomeRefusal(c, statePath)
+	if err != nil {
+		return nil, false, err
 	}
-	raw, err := os.ReadFile(statePath)
-	resumed := err == nil
-	// The home holds nothing this creation did not write: its lock, and once
-	// marked, its state and key. Checked before any key or registry use.
-	owned := map[string]bool{unaddressedStateFile + ".lock": true}
-	if resumed {
-		owned[unaddressedStateFile], owned["signing.key"] = true, true
-	}
-	entries, dirErr := os.ReadDir(c.Root)
-	if dirErr != nil {
-		return nil, false, dirErr
-	}
-	for _, entry := range entries {
-		if !owned[entry.Name()] {
-			return nil, false, identityExists("%s holds %s, which this creation did not write; an identity is created only in its own home", c.Root, entry.Name())
-		}
-	}
-	switch {
-	case errors.Is(err, os.ErrNotExist):
+	if !resumed {
 		data, err := json.Marshal(unaddressedCreationState{Version: 1, RegistryURL: c.RegistryURL})
 		if err != nil {
 			return nil, false, err
@@ -130,17 +157,8 @@ func unaddressedKey(c unaddressedCreate, statePath string) (ed25519.PrivateKey, 
 		if err := awid.AtomicWriteFile(statePath, data); err != nil {
 			return nil, false, err
 		}
-	case err != nil:
-		return nil, false, err
-	default:
-		var state unaddressedCreationState
-		if json.Unmarshal(raw, &state) != nil || state.Version != 1 {
-			return nil, false, errors.New("the interrupted identity creation's state is not valid; keep the home for inspection")
-		}
-		if state.RegistryURL != c.RegistryURL {
-			return nil, false, identityExists("%s holds a creation for registry %s, not %s", c.Root, state.RegistryURL, c.RegistryURL)
-		}
 	}
+	keyPath := filepath.Join(c.Root, "signing.key")
 	key, err := awid.LoadSigningKey(keyPath)
 	if errors.Is(err, os.ErrNotExist) {
 		_, key, err = awid.GenerateKeypair()

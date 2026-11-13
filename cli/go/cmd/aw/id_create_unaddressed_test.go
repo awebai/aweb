@@ -4,13 +4,17 @@ import (
 	"context"
 	"crypto/ed25519"
 	"encoding/json"
+	"maps"
 	"net/http"
 	"net/http/httptest"
 	"os"
+	"os/exec"
 	"path/filepath"
+	"slices"
 	"strings"
 	"sync"
 	"testing"
+	"time"
 
 	"github.com/awebai/aw/awconfig"
 	"github.com/awebai/aw/awid"
@@ -221,10 +225,13 @@ func TestAHomeHoldingAnotherOrACompleteIdentityRefusesAndSendsNothing(t *testing
 		registry := newMappingRegistry(t)
 		root := t.TempDir()
 		prepare(t, root, registry.server.URL)
-		before := registry.count()
+		before, contents := registry.count(), homeContents(t, root)
 		_, err := createUnaddressedIdentity(context.Background(), unaddressedRequest(t, registry, root))
 		if errorCodeOf(err) != "identity_exists" || registry.count() != before {
 			t.Errorf("%s: err %v after %d registrations", name, err, registry.count()-before)
+		}
+		if !maps.Equal(contents, homeContents(t, root)) {
+			t.Errorf("%s: the refusal changed the home", name)
 		}
 	}
 }
@@ -300,12 +307,147 @@ func TestAResumedCreationRefusesAFileItDidNotCreateBeforeSendingAnything(t *test
 		if err := os.WriteFile(filepath.Join(root, "workspace.yaml"), []byte("aweb_url: https://other.example\n"), 0o600); err != nil {
 			t.Fatal(err)
 		}
+		contents := homeContents(t, root)
 		_, err := createUnaddressedIdentity(context.Background(), unaddressedRequest(t, registry, root))
 		if errorCodeOf(err) != "identity_exists" || registry.count() != 0 {
 			t.Errorf("%s: err %v after %d registrations", name, err, registry.count())
+		}
+		if !maps.Equal(contents, homeContents(t, root)) {
+			t.Errorf("%s: the refusal changed the home", name)
 		}
 		if _, statErr := os.Stat(filepath.Join(root, "signing.key")); installKey == os.IsNotExist(statErr) {
 			t.Errorf("%s: the key was installed or removed", name)
 		}
 	}
+}
+
+func TestADanglingIdentityEntryRefusesBeforeAnyRegistration(t *testing.T) {
+	for name, interrupted := range map[string]bool{"fresh home": false, "interrupted creation": true} {
+		registry := newMappingRegistry(t)
+		root := t.TempDir()
+		if interrupted {
+			interruptedCreation(t, root, registry.server.URL, true)
+		}
+		if err := os.Symlink(filepath.Join(root, "missing-target"), filepath.Join(root, "identity.yaml")); err != nil {
+			t.Fatal(err)
+		}
+		contents := homeContents(t, root)
+		_, err := createUnaddressedIdentity(context.Background(), unaddressedRequest(t, registry, root))
+		if errorCodeOf(err) != "identity_exists" || registry.count() != 0 {
+			t.Errorf("%s: err %v after %d registrations", name, err, registry.count())
+		}
+		if !maps.Equal(contents, homeContents(t, root)) {
+			t.Errorf("%s: the refusal changed the home", name)
+		}
+	}
+}
+
+// The command refuses a home holding an identity before the pre-run renews
+// that identity's due encryption assertion or checks for updates.
+func TestNoAddressRefusesAnExistingIdentityWithoutRenewingIt(t *testing.T) {
+	t.Setenv(awconfig.IdentityHomeEnv, "")
+	root, err := filepath.EvalSymlinks(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	pub, key, err := awid.GenerateKeypair()
+	if err != nil {
+		t.Fatal(err)
+	}
+	did := awid.ComputeDIDKey(pub)
+	var mu sync.Mutex
+	requests := []string{}
+	server := newLocalHTTPServer(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		mu.Lock()
+		requests = append(requests, r.Method+" "+r.URL.Path)
+		mu.Unlock()
+		if r.Method == http.MethodGet && r.URL.Path == "/v1/messages/inbox" {
+			_ = json.NewEncoder(w).Encode(awid.InboxResponse{})
+			return
+		}
+		if r.Method == http.MethodPut && r.URL.Path == "/v1/agents/me/encryption-key" {
+			var assertion awid.EncryptionKeyAssertion
+			_ = json.NewDecoder(r.Body).Decode(&assertion)
+			_ = json.NewEncoder(w).Encode(map[string]any{"encryption_key": assertion})
+			return
+		}
+		http.NotFound(w, r)
+	}))
+	writeMessagingPrincipalForTest(t, root, server.URL, "alice", did, key)
+	home := filepath.Join(root, ".aw")
+	installMailReadEncryptionKeyForTest(t, root, home, did, key)
+	statePath := filepath.Join(home, "encryption.yaml")
+	state, err := awconfig.LoadEncryptionKeyStateFrom(statePath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	record := state.ActiveRecord()
+	private, err := awid.LoadX25519PrivateKey(filepath.Join(home, record.PrivateKeyPath))
+	if err != nil {
+		t.Fatal(err)
+	}
+	due, err := awid.BuildEncryptionKeyAssertion(key, did, "", private.PublicKey().Bytes(), "", time.Now().Add(-80*24*time.Hour))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := saveEncryptionAssertion(filepath.Join(home, record.AssertionPath), due); err != nil {
+		t.Fatal(err)
+	}
+	record.ExpiresAt = due.ExpiresAt
+	state.UpsertRecord(*record)
+	if err := awconfig.SaveEncryptionKeyStateTo(statePath, state); err != nil {
+		t.Fatal(err)
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
+	defer cancel()
+	bin := filepath.Join(t.TempDir(), "aw")
+	buildAwBinary(t, ctx, bin)
+	before := homeContents(t, home)
+	command := exec.CommandContext(ctx, bin, "--json", "--identity-home", home, "id", "create", "--no-address", "--registry", server.URL)
+	command.Dir, command.Env = root, testCommandEnv(root)
+	out, runErr := command.CombinedOutput()
+	mu.Lock()
+	sent := append([]string(nil), requests...)
+	mu.Unlock()
+	if runErr == nil || !strings.Contains(string(out), "identity_exists") || len(sent) != 0 {
+		t.Fatalf("want identity_exists before any request: error=%v requests=%v output=%s", runErr, sent, out)
+	}
+	if after := homeContents(t, home); !maps.Equal(before, after) {
+		t.Fatalf("the refused creation changed the home: before %v after %v", slices.Sorted(maps.Keys(before)), slices.Sorted(maps.Keys(after)))
+	}
+	// The same home's due assertion is renewed by an ordinary command.
+	inbox := exec.CommandContext(ctx, bin, "--identity-home", home, "mail", "inbox")
+	inbox.Dir, inbox.Env = root, testCommandEnv(root)
+	if out, err := inbox.CombinedOutput(); err != nil {
+		t.Fatalf("mail inbox: %v %s", err, out)
+	}
+	mu.Lock()
+	defer mu.Unlock()
+	if !slices.Contains(requests, http.MethodPut+" /v1/agents/me/encryption-key") {
+		t.Fatalf("an ordinary command did not renew the due assertion: %v", requests)
+	}
+}
+
+// homeContents maps each file under home to its bytes, and each symbolic
+// link to its target.
+func homeContents(t *testing.T, home string) map[string]string {
+	t.Helper()
+	contents := map[string]string{}
+	err := filepath.WalkDir(home, func(path string, entry os.DirEntry, err error) error {
+		if err != nil || entry.IsDir() {
+			return err
+		}
+		if entry.Type()&os.ModeSymlink != 0 {
+			target, err := os.Readlink(path)
+			contents[path] = "-> " + target
+			return err
+		}
+		data, err := os.ReadFile(path)
+		contents[path] = string(data)
+		return err
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	return contents
 }
