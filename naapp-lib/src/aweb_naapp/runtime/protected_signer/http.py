@@ -363,6 +363,7 @@ class ProtectedOperationsHTTP:
             "scope_refused",
             "human_admission_unavailable",
             "json_required",
+            "operation_expired",
         }:
             return error
         if isinstance(error, SignerRefused) and error.code == "console_session_required":
@@ -444,7 +445,12 @@ class ProtectedOperationsHTTP:
         async def link_view(handoff_id: str, request: Request):
             try:
                 body = await self._link_request(request, {"token"})
-                prepared = await self.signer.link_view(handoff_id, body["token"])
+                try:
+                    prepared = await self.signer.link_view(handoff_id, body["token"])
+                except SignerRefused as expired:
+                    if expired.code != "operation_expired":
+                        raise
+                    raise HTTPException(410, "operation_expired") from None
                 frozen = prepared.payload
                 result = asdict(prepared)
                 result["payload"] = {

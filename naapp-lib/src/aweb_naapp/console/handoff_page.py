@@ -25,10 +25,12 @@ if TYPE_CHECKING:
 
 def _unavailable(error: HTTPException) -> HTMLResponse:
     # Fixed copy only: do not echo an id, scope, exception detail or redirect.
+    # The page cannot tell yet whether a terminal or a mailed link opened it.
     guidance = (
-        "Please wait before starting a new request from your terminal."
+        "Too many attempts from this browser. Wait a minute, then open the page again."
         if error.status_code == 429
-        else "Return to your terminal and start a new request."
+        else "If it came by email, the link is no longer valid; if a terminal started it, "
+        "start a new request there."
     )
     return HTMLResponse(
         '<!doctype html><html lang="en"><head><meta charset="utf-8">'
@@ -149,12 +151,13 @@ def handoff_page_router(
             # fingerprint stays in sight and the full digest is one step away.
             governance_fields = (
                 '<section id="handoff-governance" class="card" aria-labelledby="handoff-governance-title" hidden>'
-                '<h2 id="handoff-governance-title" tabindex="-1">What this request does</h2>'
+                '<h2 id="handoff-governance-title">What this request does</h2>'
+                '<p id="handoff-requested"></p><p id="handoff-expires"></p>'
+                '<dl><dt>Fingerprint</dt><dd id="handoff-fingerprint"></dd></dl>'
+                '<details id="handoff-details"><summary>Technical details</summary>'
                 '<dl><dt>Act</dt><dd id="handoff-act"></dd>'
                 '<dt>Target</dt><dd id="handoff-target"></dd>'
-                '<dt>Fingerprint</dt><dd id="handoff-fingerprint"></dd></dl>'
-                '<details id="handoff-details"><summary>Technical details</summary>'
-                '<dl><dt>Full digest</dt><dd id="handoff-digest"></dd></dl>'
+                '<dt>Full digest</dt><dd id="handoff-digest"></dd></dl>'
                 "<details><summary>View the frozen operation</summary>"
                 '<pre id="handoff-payload"></pre></details></details></section>'
             )
@@ -179,13 +182,12 @@ def handoff_page_router(
             '<dt id="handoff-requester-label" hidden>Requested by</dt>'
             '<dd id="handoff-requester" hidden></dd></dl></section>'
             f"{governance_fields}"
-            '<p id="handoff-status" role="status" aria-live="polite">Preparing your request…</p>'
+            '<p id="handoff-status" role="status" aria-live="polite" tabindex="-1">Preparing your request…</p>'
             '<p id="handoff-choice-note" hidden>Both choices ask for your passkey.</p>'
             '<div class="handoff-choices">'
             f'<button id="handoff-action" class="btn primary" type="button" disabled>{action}</button>'
             '<button id="handoff-deny" class="btn secondary" type="button" hidden>Deny</button></div>'
-            '<section id="handoff-outcome" aria-labelledby="handoff-outcome-title" hidden>'
-            '<h2 id="handoff-outcome-title" tabindex="-1"></h2><p id="handoff-outcome-text"></p></section>'
+            '<p id="handoff-outcome-text" hidden></p>'
             '<section id="handoff-allow" aria-labelledby="handoff-allow-title" hidden>'
             '<h2 id="handoff-allow-title" tabindex="-1">Allow this terminal session?</h2>'
             "<p>The terminal will be able to act as this identity in this role for up to 15 minutes.</p>"

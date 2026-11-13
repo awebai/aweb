@@ -128,3 +128,11 @@ async def test_the_link_routes_refuse_anything_but_the_exact_request(link_http, 
     private(response)
     assert prepared.digest not in response.text
     assert (await world.signer.receipt(prepared.operation_id, reader=world.reader)).state == "pending"
+
+
+async def test_an_expired_request_answers_its_approver_gone(link_http):
+    world, client, prepared, token = link_http
+    world.clock.advance(timedelta(hours=25))
+    response = await client.post(f"/handoff/{prepared.handoff_id}/link", json={"token": token}, headers=BROWSER)
+    assert (response.status_code, response.json()) == (410, {"detail": "operation_expired"})
+    assert prepared.digest not in response.text

@@ -514,6 +514,10 @@ class ProtectedSigner:
     async def link_view(self, handoff_id: str, token: str) -> PreparedOperation:
         """The complete frozen request, for the link's own approver; consumes nothing."""
         operation_id, human = await self._link_human(handoff_id, token)
+        row = await self._authorized(operation_id, human, "approval")
+        if row["result"] is None and row["refusal_code"] is None and self.clock() >= row["expires_at"]:
+            # Only the link's own approver reaches this: they may know it expired.
+            raise SignerRefused("operation_expired")
         try:
             linked = await self.approvals.open_link(token)
         except ApprovalRefused:
@@ -521,7 +525,7 @@ class ProtectedSigner:
         if linked.request is None:
             # This deployment's policy does not let a link reveal its request.
             raise SignerRefused("scope_refused")
-        return self._prepared(await self._authorized(operation_id, human, "approval"))
+        return self._prepared(row)
 
     async def link_options(self, handoff_id: str, token: str, decision: str) -> Mapping[str, Any]:
         operation_id, human = await self._link_human(handoff_id, token)

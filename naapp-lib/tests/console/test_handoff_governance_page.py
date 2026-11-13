@@ -258,7 +258,7 @@ async def test_fresh_tab_logs_in_then_approves_the_frozen_act_with_two_real_uv_g
         )
         await expect(page.locator("#handoff-act")).to_have_text("human-role.revoke")
         await expect(page.locator("#handoff-target")).to_contain_text(s.world.operation.principal)
-        await expect(page.locator("#handoff-governance-title")).to_be_focused()
+        await expect(page.locator("#handoff-title")).to_be_focused()
         await expect(page.locator("body")).to_have_attribute("data-handoff-state", "ready")
         await expect(action).to_have_text("Approve")
         assert page.url == s.origin + "/handoff/" + s.prepared.handoff_id

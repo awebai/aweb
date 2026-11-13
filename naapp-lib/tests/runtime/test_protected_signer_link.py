@@ -152,3 +152,14 @@ async def test_a_mailed_owner_act_still_expires_with_its_frozen_artifact(mailing
     # The 24-hour mailed wait never outlives the owner act's own frozen expiry.
     assert prepared.expires_at == prepared.payload["artifact"]["expires_at"]
     assert stamp(prepared.expires_at) <= world.clock() + timedelta(seconds=600)
+
+
+async def test_the_links_own_approver_is_told_the_request_expired(mailing):
+    world, contacts = mailing
+    prepared, token = await mailed(world, contacts)
+    world.clock.advance(timedelta(hours=25))
+    with pytest.raises(SignerRefused, match="operation_expired"):
+        await world.signer.link_view(prepared.handoff_id, token)
+    # Anyone else's token still learns nothing, not even that it expired.
+    with pytest.raises(SignerRefused, match="scope_refused"):
+        await world.signer.link_view(prepared.handoff_id, token[:-2] + "xx")

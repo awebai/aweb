@@ -18,4 +18,6 @@ body { margin: 0; }
 .handoff h2 { font-size: var(--step-2); }
 .handoff-choices { display: flex; flex-wrap: wrap; gap: var(--s2); margin: var(--s2) 0; }
 @media (max-width: 30rem) { .handoff-choices .btn { width: 100%; justify-content: center; } }
-#handoff-outcome { margin-top: var(--s3); }
+#handoff-status:empty { min-height: 0; margin: 0; }
+/* Focus moved by the page (headings, status) shows no ring for mouse users. */
+.handoff [tabindex="-1"]:focus:not(:focus-visible) { outline: none; }

@@ -61,7 +61,7 @@ import { operationTable } from "/handoff-assets/operations.mjs";
     csrf = undefined;
     document.body.dataset.handoffState = governance && submitted ? "unconfirmed" : "refused";
     status.textContent = governance
-      ? "This page could not confirm whether your decision was recorded. The requester sees the outcome."
+      ? "This page could not confirm what happened. Your owner page shows the outcome under History."
       : "This request could not be completed. Return to your terminal and start again.";
   }
 
@@ -98,6 +98,10 @@ import { operationTable } from "/handoff-assets/operations.mjs";
     document.getElementById("handoff-digest").textContent = digest;
     document.getElementById("handoff-fingerprint").textContent = digest.slice(0, 16).match(/.{4}/g).join(" ");
     document.getElementById("handoff-payload").textContent = JSON.stringify(payload, null, 2);
+    const asked = request.artifact?.issued_at;
+    document.getElementById("handoff-requested").textContent =
+      `Requested by ${request.requester}` + (nonempty(asked) ? ` · asked ${when(asked)}` : "");
+    document.getElementById("handoff-expires").textContent = `Expires ${when(state.expires_at)}`;
     document.getElementById("handoff-governance").hidden = false;
     action.textContent = "Approve";
     deny.hidden = false;
@@ -112,7 +116,25 @@ import { operationTable } from "/handoff-assets/operations.mjs";
     }
     document.body.dataset.handoffState = "ready";
     action.disabled = false;
-    document.getElementById("handoff-governance-title").focus();
+    document.getElementById("handoff-title").focus();
+  }
+
+  // A stored UTC time as the page shows it.
+  function when(stamp) {
+    return new Date(stamp).toISOString().slice(0, 16).replace("T", " ") + " UTC";
+  }
+
+  // The page's heading is its state: the request, then what became of it.
+  function setTitle(text) {
+    document.getElementById("handoff-title").textContent = text;
+    document.title = text;
+  }
+
+  function stopChoices() {
+    action.hidden = true;
+    deny.hidden = true;
+    note.hidden = true;
+    document.getElementById("handoff-explanation").hidden = true;
   }
 
   function governanceComplete(result) {
@@ -156,18 +178,44 @@ import { operationTable } from "/handoff-assets/operations.mjs";
       referrerPolicy: "no-referrer", headers: {"Content-Type": "application/json"},
       body: JSON.stringify(body),
     });
-    if (!response.ok) throw new Error("handoff_refused");
+    if (!response.ok) {
+      const error = new Error("handoff_refused");
+      error.status = response.status;
+      throw error;
+    }
     return response.json();
   }
 
+  function ownerPageSentence(before) {
+    const owner = document.createElement("a");
+    owner.href = "/";
+    owner.textContent = "owner page";
+    status.replaceChildren(before, owner, ".");
+  }
+
   function linkUnavailable() {
-    action.disabled = true;
-    deny.hidden = true;
-    note.hidden = true;
+    stopChoices();
     document.getElementById("handoff-governance").hidden = true;
-    document.getElementById("handoff-explanation").hidden = true;
     document.body.dataset.handoffState = "refused";
-    status.textContent = "This link is not valid any more. Requests still waiting for you are on your owner page.";
+    setTitle("This link no longer works");
+    ownerPageSentence("This link is not valid any more. Requests still waiting for you are on your ");
+    document.getElementById("handoff-title").focus();
+  }
+
+  let decided = false;
+  let expiresAt;
+  let expiresAtMs = Infinity;
+
+  function linkExpired(at) {
+    if (decided) return;
+    decided = true;
+    stopChoices();
+    document.getElementById("handoff-governance").hidden = true;
+    document.body.dataset.handoffState = "expired";
+    setTitle("Request expired");
+    status.textContent = (at ? `This request expired at ${when(at)} without a decision.` :
+      "This request expired without a decision.") + " Nothing was signed.";
+    document.getElementById("handoff-title").focus();
   }
 
   async function linkLoad() {
@@ -176,8 +224,14 @@ import { operationTable } from "/handoff-assets/operations.mjs";
       if (state.mode !== "governance-link") throw new Error("handoff_refused");
       await governanceState({...state, mode: "governance"});
       document.getElementById("handoff-explanation").hidden = true;
-    } catch {
-      linkUnavailable();
+      // The request ends at its own expiry, even with the page open.
+      expiresAt = state.expires_at;
+      expiresAtMs = Date.parse(state.expires_at);
+      const left = expiresAtMs - Date.now();
+      setTimeout(() => linkExpired(state.expires_at), Math.max(0, Math.min(left, 2 ** 31 - 1)));
+    } catch (error) {
+      if (error.status === 410) linkExpired();
+      else linkUnavailable();
     }
   }
 
@@ -193,36 +247,41 @@ import { operationTable } from "/handoff-assets/operations.mjs";
     authority_changed: ["Not completed", "The team's signing key or approvers changed after this was requested."],
   };
 
+  const unconfirmed = ["Not confirmed",
+    "This page could not confirm what happened. Your owner page shows the outcome under History."];
+
   function outcome(title, text) {
-    action.hidden = true;
-    deny.hidden = true;
-    note.hidden = true;
+    decided = true;
+    stopChoices();
     status.textContent = "";
-    const section = document.getElementById("handoff-outcome");
-    document.getElementById("handoff-outcome-title").textContent = title;
-    document.getElementById("handoff-outcome-text").textContent = text;
-    section.hidden = false;
-    document.getElementById("handoff-outcome-title").focus();
+    setTitle(title);
+    const sentence = document.getElementById("handoff-outcome-text");
+    sentence.textContent = text;
+    sentence.hidden = false;
+    document.getElementById("handoff-title").focus();
   }
 
   function linkOutcome(result) {
     document.body.dataset.handoffState = "complete";
     if (result.state === "committed") {
-      outcome("Approved", "The signer has carried it out. There is nothing else to do here.");
+      outcome("Approved", "Done. There is nothing else to do here.");
     } else if (result.state === "pending") {
-      outcome("Approved", "The signer is still carrying it out. The requester sees the result.");
+      outcome("Approved", "It is still being carried out. Your owner page shows the outcome under History.");
     } else if (result.state === "refused" && refusals[result.code]) {
       outcome(...refusals[result.code]);
     } else {
-      outcome("Not completed", "The signer could not complete this request. Nothing was signed.");
+      // A code this page does not know: it cannot say what happened.
+      outcome(...unconfirmed);
     }
   }
 
   async function decide(decision) {
+    const pressed = decision === "reject" ? deny : action;
     action.disabled = true;
     deny.disabled = true;
     document.body.dataset.handoffState = "verifying";
     status.textContent = "Waiting for your passkey…";
+    status.focus();
     let sent = false;
     try {
       const options = await linkPost("/options", {token: linkToken, decision});
@@ -236,13 +295,17 @@ import { operationTable } from "/handoff-assets/operations.mjs";
     } catch (error) {
       if (!sent && error.name === "NotAllowedError") {
         // Nothing was sent: a new choice gets fresh options.
-        status.textContent = "Nothing was decided. Choose again.";
+        // WebAuthn reports a cancel and a missing passkey alike.
+        status.textContent = "Nothing was decided. If your passkey is on another device, open this link there.";
         action.disabled = false;
         deny.disabled = false;
         document.body.dataset.handoffState = "ready";
+        pressed.focus();
       } else if (sent) {
         document.body.dataset.handoffState = "unconfirmed";
-        outcome("Not confirmed", "This page could not confirm whether your decision was recorded. The requester sees the outcome.");
+        outcome(...unconfirmed);
+      } else if (Date.now() >= expiresAtMs) {
+        linkExpired(expiresAt);
       } else {
         linkUnavailable();
       }
@@ -322,6 +385,7 @@ import { operationTable } from "/handoff-assets/operations.mjs";
     deny.disabled = true;
     document.body.dataset.handoffState = "verifying";
     status.textContent = "Waiting for your passkey…";
+    status.focus();
     let sent = false;
     try {
       const options = await request("/options", {decision: "reject"});
@@ -338,6 +402,7 @@ import { operationTable } from "/handoff-assets/operations.mjs";
         action.disabled = false;
         deny.disabled = false;
         document.body.dataset.handoffState = "ready";
+        deny.focus();
       } else {
         submitted = sent;
         failed();
@@ -410,6 +475,7 @@ import { operationTable } from "/handoff-assets/operations.mjs";
         action.disabled = false;
         deny.disabled = false;
         document.body.dataset.handoffState = governance && !loggedIn ? "login-required" : "ready";
+        action.focus();
       } else {
         failed();
       }
