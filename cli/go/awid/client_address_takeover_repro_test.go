@@ -91,6 +91,7 @@ func newAddressTakeoverFixture(t *testing.T) *addressTakeoverFixture {
 	t.Cleanup(server.Close)
 
 	resolver := NewRegistryResolver(server.Client(), staticTXTResolver{})
+	routeUntrustedResolverRegistriesToInjectedClient(resolver)
 	resolver.registryCache["acme.com"] = cachedValue[DomainAuthority]{
 		value:     DomainAuthority{RegistryURL: server.URL, ControllerDID: controllerDID},
 		expiresAt: time.Now().Add(time.Minute),

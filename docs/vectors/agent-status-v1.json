@@ -85,14 +85,14 @@
         },
         "fixing": {
           "by": "operator",
-          "text": "Nactiva's operator"
+          "text": "Acme's operator"
         },
         "observed_at": "2026-10-14T16:00:00Z",
         "valid_until": "2026-10-14T16:05:00Z"
       },
-      "canonical_payload": "{\"agent\":\"did:aw:2CiZ88hVF4JuQim8nnSuyeiV2HF2\",\"fixing\":{\"by\":\"operator\",\"text\":\"Nactiva's operator\"},\"observed_at\":\"2026-10-14T16:00:00Z\",\"publisher_did\":\"did:key:z6MkehRgf7yJbgaGfYsdoAsKdBPE3dj2CYhowQdcjqSJgvVd\",\"reachable\":\"degraded\",\"reason\":{\"code\":\"oats.joined_team_poll_only\",\"text\":\"It checks for messages only now and then.\"},\"seq\":1792080000000,\"team_id\":\"default:acme.aweb.ai\",\"type\":\"agent_status\",\"v\":1,\"valid_until\":\"2026-10-14T16:05:00Z\"}",
-      "signed_payload": "eyJhZ2VudCI6ImRpZDphdzoyQ2laODhoVkY0SnVRaW04bm5TdXllaVYySEYyIiwiZml4aW5nIjp7ImJ5Ijoib3BlcmF0b3IiLCJ0ZXh0IjoiTmFjdGl2YSdzIG9wZXJhdG9yIn0sIm9ic2VydmVkX2F0IjoiMjAyNi0xMC0xNFQxNjowMDowMFoiLCJwdWJsaXNoZXJfZGlkIjoiZGlkOmtleTp6Nk1rZWhSZ2Y3eUpiZ2FHZllzZG9Bc0tkQlBFM2RqMkNZaG93UWRjanFTSmd2VmQiLCJyZWFjaGFibGUiOiJkZWdyYWRlZCIsInJlYXNvbiI6eyJjb2RlIjoib2F0cy5qb2luZWRfdGVhbV9wb2xsX29ubHkiLCJ0ZXh0IjoiSXQgY2hlY2tzIGZvciBtZXNzYWdlcyBvbmx5IG5vdyBhbmQgdGhlbi4ifSwic2VxIjoxNzkyMDgwMDAwMDAwLCJ0ZWFtX2lkIjoiZGVmYXVsdDphY21lLmF3ZWIuYWkiLCJ0eXBlIjoiYWdlbnRfc3RhdHVzIiwidiI6MSwidmFsaWRfdW50aWwiOiIyMDI2LTEwLTE0VDE2OjA1OjAwWiJ9",
-      "signature": "2DSLUcmVZYvmxEJ682Ja71MmY5z7srBsLbQOfqyDW8/jtMoTvsNLZfUll5uB0074sTmEJpukyj67ZU9OtDPCCA"
+      "canonical_payload": "{\"agent\":\"did:aw:2CiZ88hVF4JuQim8nnSuyeiV2HF2\",\"fixing\":{\"by\":\"operator\",\"text\":\"Acme's operator\"},\"observed_at\":\"2026-10-14T16:00:00Z\",\"publisher_did\":\"did:key:z6MkehRgf7yJbgaGfYsdoAsKdBPE3dj2CYhowQdcjqSJgvVd\",\"reachable\":\"degraded\",\"reason\":{\"code\":\"oats.joined_team_poll_only\",\"text\":\"It checks for messages only now and then.\"},\"seq\":1792080000000,\"team_id\":\"default:acme.aweb.ai\",\"type\":\"agent_status\",\"v\":1,\"valid_until\":\"2026-10-14T16:05:00Z\"}",
+      "signed_payload": "eyJhZ2VudCI6ImRpZDphdzoyQ2laODhoVkY0SnVRaW04bm5TdXllaVYySEYyIiwiZml4aW5nIjp7ImJ5Ijoib3BlcmF0b3IiLCJ0ZXh0IjoiQWNtZSdzIG9wZXJhdG9yIn0sIm9ic2VydmVkX2F0IjoiMjAyNi0xMC0xNFQxNjowMDowMFoiLCJwdWJsaXNoZXJfZGlkIjoiZGlkOmtleTp6Nk1rZWhSZ2Y3eUpiZ2FHZllzZG9Bc0tkQlBFM2RqMkNZaG93UWRjanFTSmd2VmQiLCJyZWFjaGFibGUiOiJkZWdyYWRlZCIsInJlYXNvbiI6eyJjb2RlIjoib2F0cy5qb2luZWRfdGVhbV9wb2xsX29ubHkiLCJ0ZXh0IjoiSXQgY2hlY2tzIGZvciBtZXNzYWdlcyBvbmx5IG5vdyBhbmQgdGhlbi4ifSwic2VxIjoxNzkyMDgwMDAwMDAwLCJ0ZWFtX2lkIjoiZGVmYXVsdDphY21lLmF3ZWIuYWkiLCJ0eXBlIjoiYWdlbnRfc3RhdHVzIiwidiI6MSwidmFsaWRfdW50aWwiOiIyMDI2LTEwLTE0VDE2OjA1OjAwWiJ9",
+      "signature": "Cm6bzQfTOcEB1UB3EQey+HJqhBWeduNfU31Y9jnWmNjiQraIwoxpwJYDYp06HLTHbBG37A6QichYv9a+05aJAA"
     },
     {
       "name": "unknown_without_fixing_text",

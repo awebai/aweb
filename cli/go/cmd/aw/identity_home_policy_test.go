@@ -18,13 +18,27 @@ import (
 )
 
 func TestIdentityHomeNeutralExemptionsAreExact(t *testing.T) {
-	want := []*cobra.Command{pinStoreCompareAndSetCmd, versionCmd, upgradeCmd, authLoginCmd, authStatusCmd, authLogoutCmd, teamAdmissionInviteCmd, orgCreateCmd, orgListCmd, orgAvailabilityCmd}
+	want := []*cobra.Command{pinStoreCompareAndSetCmd, versionCmd, upgradeCmd, authLoginCmd, authStatusCmd, authLogoutCmd, teamAdmissionInviteCmd, orgCreateCmd, orgListCmd, orgAvailabilityCmd, auditVerifyCmd}
 	if len(identityHomeNeutralCommandExemptions) != len(want) {
 		t.Fatalf("identity-neutral exemption count=%d want %d", len(identityHomeNeutralCommandExemptions), len(want))
 	}
 	for _, cmd := range want {
 		if _, ok := identityHomeNeutralCommandExemptions[cmd]; !ok {
 			t.Fatalf("identity-neutral exemption missing command pointer %p (%s)", cmd, cmd.CommandPath())
+		}
+	}
+}
+
+func TestOfflineCommandsAreExactAndIdentityHomeNeutral(t *testing.T) {
+	if len(offlineCommands) != 1 {
+		t.Fatalf("offline command count=%d want 1", len(offlineCommands))
+	}
+	if _, ok := offlineCommands[auditVerifyCmd]; !ok {
+		t.Fatal("aw audit verify is not an offline command")
+	}
+	for cmd := range offlineCommands {
+		if !isIdentityHomeNeutralCommand(cmd) {
+			t.Fatalf("offline command %s is not identity-home neutral", cmd.CommandPath())
 		}
 	}
 }

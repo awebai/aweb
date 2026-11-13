@@ -9,7 +9,6 @@ import (
 	"fmt"
 	"io"
 	"net/http"
-	"net/url"
 	"strings"
 	"time"
 )
@@ -206,35 +205,12 @@ func SelectJSONRPCInterface(card Card) (Interface, error) {
 	return Interface{}, fmt.Errorf("agent card has no JSONRPC 1.0 interface")
 }
 
-func SameOriginRPCFromCardURL(cardURL string) string {
-	parsed, err := url.Parse(strings.TrimSpace(cardURL))
-	if err != nil {
-		return ""
-	}
-	if strings.HasSuffix(parsed.Path, "/agent-card.json") {
-		parsed.Path = strings.TrimSuffix(parsed.Path, "/agent-card.json") + "/rpc"
-		parsed.RawQuery = ""
-		parsed.Fragment = ""
-		return parsed.String()
-	}
-	return ""
-}
-
 func NewUserTextMessage(contextID, text string) Message {
 	return Message{
 		MessageID: "msg-" + randomHexString(16),
 		ContextID: strings.TrimSpace(contextID),
 		Role:      RoleUser,
 		Parts:     []Part{{Text: text, MediaType: "text/plain"}},
-	}
-}
-
-func IsTerminalState(state string) bool {
-	switch state {
-	case TaskStateCompleted, TaskStateFailed, TaskStateCanceled, TaskStateRejected:
-		return true
-	default:
-		return false
 	}
 }
 

@@ -183,7 +183,7 @@ func selectChildIssuer(ctx context.Context, opts idChildOptions) (*selectedChild
 		if err != nil {
 			return nil, err
 		}
-		registry := awid.NewAWIDRegistryClient(nil, opts.TXTResolver)
+		registry := newAWIDRegistryClient(nil, opts.TXTResolver)
 		registry.DefaultRegistryURL = human.record.RegistryURL
 		issuer := human.issuer(opts.Keychain, opts.Prompt, opts.TXTResolver, registry, human.record.RegistryURL)
 		return &selectedChildIssuer{childIssuer: issuer, domain: domain, registryURL: human.record.RegistryURL, kind: "human"}, nil
@@ -202,7 +202,7 @@ func childIssuerRegistry(ctx context.Context, opts idChildOptions, domain string
 	if err != nil {
 		return nil, "", err
 	}
-	registry := awid.NewAWIDRegistryClient(nil, opts.TXTResolver)
+	registry := newAWIDRegistryClient(nil, opts.TXTResolver)
 	registry.DefaultRegistryURL = registryURL
 	return registry, registryURL, nil
 }

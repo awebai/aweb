@@ -45,6 +45,7 @@ func TestCreateTeam(t *testing.T) {
 	defer server.Close()
 
 	client := NewAWIDRegistryClient(nil, nil)
+	routeUntrustedRegistriesToInjectedClient(client)
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
 
@@ -89,6 +90,7 @@ func TestGetTeam(t *testing.T) {
 	defer server.Close()
 
 	client := NewAWIDRegistryClient(nil, nil)
+	routeUntrustedRegistriesToInjectedClient(client)
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
 
@@ -136,6 +138,7 @@ func TestSetTeamVisibility(t *testing.T) {
 	defer server.Close()
 
 	client := NewAWIDRegistryClient(nil, nil)
+	routeUntrustedRegistriesToInjectedClient(client)
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
 
@@ -205,6 +208,7 @@ func TestSetTeamVisibilitySignsVisibilityInPayload(t *testing.T) {
 	defer server.Close()
 
 	client := NewAWIDRegistryClient(nil, nil)
+	routeUntrustedRegistriesToInjectedClient(client)
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
 
@@ -237,6 +241,7 @@ func TestDeleteTeam(t *testing.T) {
 	defer server.Close()
 
 	client := NewAWIDRegistryClient(nil, nil)
+	routeUntrustedRegistriesToInjectedClient(client)
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
 
@@ -297,6 +302,7 @@ func TestDeleteTeamSignsTeamNameInPayload(t *testing.T) {
 	defer server.Close()
 
 	client := NewAWIDRegistryClient(nil, nil)
+	routeUntrustedRegistriesToInjectedClient(client)
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
 
@@ -340,6 +346,7 @@ func TestRegisterCertificate(t *testing.T) {
 	defer server.Close()
 
 	client := NewAWIDRegistryClient(nil, nil)
+	routeUntrustedRegistriesToInjectedClient(client)
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
 
@@ -395,6 +402,7 @@ func TestRegisterCertificateAlreadyRegisteredTypedError(t *testing.T) {
 	defer server.Close()
 
 	client := NewAWIDRegistryClient(server.Client(), nil)
+	routeUntrustedRegistriesToInjectedClient(client)
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
 
@@ -460,6 +468,7 @@ func TestFetchTeamCertificate(t *testing.T) {
 	defer server.Close()
 
 	client := NewAWIDRegistryClient(nil, nil)
+	routeUntrustedRegistriesToInjectedClient(client)
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
 
@@ -470,8 +479,8 @@ func TestFetchTeamCertificate(t *testing.T) {
 	if got.CertificateID != cert.CertificateID {
 		t.Fatalf("certificate_id=%q", got.CertificateID)
 	}
-	if err := VerifyTeamCertificate(got, teamPub); err != nil {
-		t.Fatalf("VerifyTeamCertificate: %v", err)
+	if err := CheckDecodedTeamCertificate(got, ComputeDIDKey(teamPub)); err != nil {
+		t.Fatalf("CheckDecodedTeamCertificate: %v", err)
 	}
 	parts := strings.Fields(gotAuth)
 	if len(parts) != 3 || parts[0] != "DIDKey" || parts[1] != cert.MemberDIDKey {
@@ -504,6 +513,7 @@ func TestListCertificates(t *testing.T) {
 	defer server.Close()
 
 	client := NewAWIDRegistryClient(nil, nil)
+	routeUntrustedRegistriesToInjectedClient(client)
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
 
@@ -543,6 +553,7 @@ func TestResolveTeamMember(t *testing.T) {
 	defer server.Close()
 
 	client := NewAWIDRegistryClient(nil, nil)
+	routeUntrustedRegistriesToInjectedClient(client)
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
 
@@ -582,6 +593,7 @@ func TestRevokeCertificate(t *testing.T) {
 	defer server.Close()
 
 	client := NewAWIDRegistryClient(nil, nil)
+	routeUntrustedRegistriesToInjectedClient(client)
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
 
@@ -673,6 +685,7 @@ func TestListCertificatesReturnsEveryCertificateBeyondTheFirstPage(t *testing.T)
 	defer server.Close()
 
 	client := NewAWIDRegistryClient(nil, nil)
+	routeUntrustedRegistriesToInjectedClient(client)
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
 
@@ -731,6 +744,7 @@ func TestListCertificatesRefusesToReturnATruncatedListing(t *testing.T) {
 	defer server.Close()
 
 	client := NewAWIDRegistryClient(nil, nil)
+	routeUntrustedRegistriesToInjectedClient(client)
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
 
@@ -776,6 +790,7 @@ func TestListCertificatesRefusesAListingWhoseCursorNeverAdvances(t *testing.T) {
 	defer server.Close()
 
 	client := NewAWIDRegistryClient(nil, nil)
+	routeUntrustedRegistriesToInjectedClient(client)
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
 
@@ -816,6 +831,7 @@ func TestListCertificatesRefusesToReturnWhatItGatheredAtThePageCap(t *testing.T)
 	defer server.Close()
 
 	client := NewAWIDRegistryClient(nil, nil)
+	routeUntrustedRegistriesToInjectedClient(client)
 	ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
 	defer cancel()
 

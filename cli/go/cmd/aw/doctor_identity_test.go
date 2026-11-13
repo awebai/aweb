@@ -233,7 +233,7 @@ func TestAwDoctorIdentityGlobalHappyPath(t *testing.T) {
 	server, _ := newDoctorAWIDServer(t, &fixture, nil)
 	updateDoctorIdentityRegistryURL(t, fixture.Dir, server.URL)
 
-	out, err := runDoctorCLI(t, fixture.Bin, fixture.Dir, "doctor", "registry", "--online", "--json")
+	out, err := runDoctorCLIWithRegistry(t, fixture.Bin, fixture.Dir, server.URL, "doctor", "registry", "--online", "--json")
 	if err != nil {
 		t.Fatalf("doctor registry online failed: %v\n%s", err, string(out))
 	}
@@ -274,7 +274,7 @@ func TestAwDoctorIdentityPublishedEncryptionKeyMatchesLocal(t *testing.T) {
 	server, _ := newDoctorAWIDServer(t, &fixture, nil)
 	updateDoctorIdentityRegistryURL(t, fixture.Dir, server.URL)
 
-	out, err := runDoctorCLI(t, fixture.Bin, fixture.Dir, "doctor", "registry", "--online", "--json")
+	out, err := runDoctorCLIWithRegistry(t, fixture.Bin, fixture.Dir, server.URL, "doctor", "registry", "--online", "--json")
 	if err != nil {
 		t.Fatalf("doctor registry online failed: %v\n%s", err, string(out))
 	}
@@ -359,7 +359,7 @@ func TestAwDoctorIdentityDIDNotFoundFails(t *testing.T) {
 	server, _ := newDoctorAWIDServer(t, &fixture, map[string]string{"did": "not_found"})
 	updateDoctorIdentityRegistryURL(t, fixture.Dir, server.URL)
 
-	out, err := runDoctorCLI(t, fixture.Bin, fixture.Dir, "doctor", "registry", "--online", "--json")
+	out, err := runDoctorCLIWithRegistry(t, fixture.Bin, fixture.Dir, server.URL, "doctor", "registry", "--online", "--json")
 	if err != nil {
 		t.Fatalf("doctor registry online failed: %v\n%s", err, string(out))
 	}
@@ -378,7 +378,7 @@ func TestAwDoctorIdentityAddressNotFoundWarns(t *testing.T) {
 	server, _ := newDoctorAWIDServer(t, &fixture, map[string]string{"address": "not_found", "list": "empty"})
 	updateDoctorIdentityRegistryURL(t, fixture.Dir, server.URL)
 
-	out, err := runDoctorCLI(t, fixture.Bin, fixture.Dir, "doctor", "registry", "--online", "--json")
+	out, err := runDoctorCLIWithRegistry(t, fixture.Bin, fixture.Dir, server.URL, "doctor", "registry", "--online", "--json")
 	if err != nil {
 		t.Fatalf("doctor registry online failed: %v\n%s", err, string(out))
 	}
@@ -400,7 +400,7 @@ func TestAwDoctorIdentityKeyMismatchFails(t *testing.T) {
 	server, hits := newDoctorAWIDServer(t, &fixture, map[string]string{"current_key": "mismatch"})
 	updateDoctorIdentityRegistryURL(t, fixture.Dir, server.URL)
 
-	out, err := runDoctorCLI(t, fixture.Bin, fixture.Dir, "doctor", "registry", "--online", "--json")
+	out, err := runDoctorCLIWithRegistry(t, fixture.Bin, fixture.Dir, server.URL, "doctor", "registry", "--online", "--json")
 	if err != nil {
 		t.Fatalf("doctor registry online failed: %v\n%s", err, string(out))
 	}
@@ -445,7 +445,7 @@ func TestAwDoctorIdentityCallerLacksVisibility(t *testing.T) {
 	server, hits := newDoctorAWIDServer(t, &fixture, map[string]string{"address": "forbidden"})
 	updateDoctorIdentityRegistryURL(t, fixture.Dir, server.URL)
 
-	out, err := runDoctorCLI(t, fixture.Bin, fixture.Dir, "doctor", "registry", "--online", "--json")
+	out, err := runDoctorCLIWithRegistry(t, fixture.Bin, fixture.Dir, server.URL, "doctor", "registry", "--online", "--json")
 	if err != nil {
 		t.Fatalf("doctor registry online failed: %v\n%s", err, string(out))
 	}
@@ -470,7 +470,7 @@ func TestAwDoctorIdentityAddressInconsistencyWarns(t *testing.T) {
 	server, _ := newDoctorAWIDServer(t, &fixture, map[string]string{"address": "different_stable", "list": "different_address"})
 	updateDoctorIdentityRegistryURL(t, fixture.Dir, server.URL)
 
-	out, err := runDoctorCLI(t, fixture.Bin, fixture.Dir, "doctor", "registry", "--online", "--json")
+	out, err := runDoctorCLIWithRegistry(t, fixture.Bin, fixture.Dir, server.URL, "doctor", "registry", "--online", "--json")
 	if err != nil {
 		t.Fatalf("doctor registry online failed: %v\n%s", err, string(out))
 	}
@@ -488,7 +488,7 @@ func TestAwDoctorIdentityMissingDeliveryOriginWarns(t *testing.T) {
 	server, _ := newDoctorAWIDServer(t, &fixture, map[string]string{"delivery": "missing"})
 	updateDoctorIdentityRegistryURL(t, fixture.Dir, server.URL)
 
-	out, err := runDoctorCLI(t, fixture.Bin, fixture.Dir, "doctor", "registry", "--online", "--json")
+	out, err := runDoctorCLIWithRegistry(t, fixture.Bin, fixture.Dir, server.URL, "doctor", "registry", "--online", "--json")
 	if err != nil {
 		t.Fatalf("doctor registry online failed: %v\n%s", err, string(out))
 	}

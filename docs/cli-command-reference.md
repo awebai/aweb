@@ -19,7 +19,7 @@ to refresh it.
 | Identity | `auth`, `custody`, `id`, `mcp-config`, `org`, `team`, `whoami` |
 | Messaging & Network | `a2a`, `beads-mail`, `chat`, `contacts`, `control`, `directory`, `events`, `gc-mail`, `heartbeat`, `inbound-mode`, `log`, `mail`, `room`, `wake` |
 | Coordination & Runtime | `activity`, `agent`, `instructions`, `lock`, `notify`, `role-name`, `roles`, `run`, `status`, `status-host`, `task`, `work` |
-| Utility | `completion`, `doctor`, `help`, `hooks`, `plugin`, `upgrade`, `version` |
+| Utility | `audit`, `completion`, `doctor`, `help`, `hooks`, `plugin`, `upgrade`, `version` |
 | Additional Commands | `blueprint`, `session`, `who` |
 
 ## Global Flags
@@ -1783,6 +1783,7 @@ Subcommands:
 - `refresh` Refresh a team member's profile and existing team-instructions block
 - `up` Launch local team agents in tmux
 - `agent-status` Read whether an agent still holds a certificate, a workspace, or task claims
+- `log-key` Manage the owner key that agents' local message logs are sealed to
 - `remove-agent` Retire an agent: release its claims, then revoke its certificate
 - `replace-key` Replace a local agent identity key under team-controller authority
 
@@ -1934,6 +1935,77 @@ retired comes from somewhere other than the command that retired it.
 Flags:
 - `-h, --help help for agent-status`
 - `--team-id string Canonical team id (<name>:<namespace>) to read from (defaults to active team)`
+
+## `team admin log-key`
+
+### `team admin log-key`
+
+Manage the owner key that agents' local message logs are sealed to
+
+Subcommands:
+- `create` Create (or rotate) the team's owner log key; prints its unsigned public record
+- `install` Install the team's owner log key record on this host; local logs are then sealed to it
+- `sign` Sign a log key record, or attach a signature made elsewhere
+- `signing-bytes` Print the exact bytes a team key signs for a log key record
+
+Flags:
+- `-h, --help help for log-key`
+- `--team string Override the selected team_id for this command`
+
+## `team admin log-key create`
+
+### `team admin log-key create`
+
+Create a new log key for the team on the machine where the owner reads the logs. The
+private key is kept in the OS keychain under a passphrase. The public record is written
+to --out (or stdout) unsigned: sign it with `aw team admin log-key sign` wherever the
+team controller key is held, then install it with `aw team admin log-key install` on
+each agent host. Running it again rotates the key; earlier keys stay in the keychain.
+
+Flags:
+- `-h, --help help for create`
+- `--out string Write the unsigned public record to this file instead of stdout`
+
+## `team admin log-key install`
+
+### `team admin log-key install`
+
+Install the team's owner log key record on this host; local logs are then sealed to it
+
+Flags:
+- `-h, --help help for install`
+
+## `team admin log-key sign`
+
+### `team admin log-key sign`
+
+Complete a log key record through exactly one route:
+  --team-key-did and --signature attach a signature produced elsewhere, such as by the
+  deployment's protected signer, after verifying it over the record's signing bytes;
+  --offline-controller-key signs with the team controller key in ~/.awid/team-keys/ on
+  this machine, which is outside the route of a deployment whose signer holds that key.
+With no route, or both, it refuses. The signed record is written to --out (or stdout).
+
+Flags:
+- `-h, --help help for sign`
+- `--offline-controller-key Sign with the team controller key in ~/.awid/team-keys/ on this machine`
+- `--out string Write the signed record to this file instead of stdout`
+- `--record string The log key record to sign`
+- `--signature string A signature produced elsewhere: unpadded standard base64 of the 64 Ed25519 bytes`
+- `--team-key-did string The did:key of the team key that produced --signature`
+
+## `team admin log-key signing-bytes`
+
+### `team admin log-key signing-bytes`
+
+Print, with no trailing newline, the bytes the team controller key --team-key-did signs
+for the record: the aweb.log-key/1 prefix and the canonical JSON of its unsigned fields.
+Use it to cross-check what any signer is asked to sign.
+
+Flags:
+- `-h, --help help for signing-bytes`
+- `--record string The log key record`
+- `--team-key-did string The did:key of the team key that will sign`
 
 ## `team admin remove-agent`
 
@@ -2934,12 +3006,24 @@ Flags:
 
 Show local communication log
 
+Subcommands:
+- `read` Read sealed local logs with the owner's log keys from this machine's keychain
+
 Flags:
 - `--channel string Filter by channel (mail, chat, dm)`
 - `--from string Filter by sender (substring match)`
 - `-h, --help help for log`
 - `--limit int Max entries to show (default 20)`
 - `--team string Override the selected team_id for this command`
+
+## `log read`
+
+### `log read`
+
+Read sealed local logs with the owner's log keys from this machine's keychain
+
+Flags:
+- `-h, --help help for read`
 
 ## `mail`
 
@@ -4016,6 +4100,40 @@ List ready tasks that are not already claimed by other workspaces
 
 Flags:
 - `-h, --help help for ready`
+
+## `audit`
+
+### `audit`
+
+A team's audit log
+
+Subcommands:
+- `verify` Verify an exported team log offline
+
+Flags:
+- `-h, --help help for audit`
+
+## `audit verify`
+
+### `audit verify`
+
+Verify an exported team log (aweb.logs-export/1) offline, against the receipt and
+checkpoint keys you accept and the receipts and checkpoints you hold yourself.
+
+It reads only the files it is given: no workspace, identity or server.
+Give each key you accept, for receipts and for checkpoints; a key that signs
+both is given to both. Each --witness file holds one receipt or checkpoint per
+line, in an export's own line shape. --bundle - reads the export from stdin.
+
+Exits 0 when the bundle is intact, 1 when it is verified and not intact, and 2
+when it could not be verified.
+
+Flags:
+- `--bundle string The export to verify, or - for stdin`
+- `--checkpoint-key stringArray A did:key you accept for checkpoints (repeatable)`
+- `-h, --help help for verify`
+- `--receipt-key stringArray A did:key you accept for receipts (repeatable)`
+- `--witness stringArray A file of receipts and checkpoints you hold (repeatable)`
 
 ## `completion`
 

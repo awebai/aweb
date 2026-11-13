@@ -579,6 +579,13 @@ func formatWakeStatus(v any) string {
 		}
 	}
 
+	if len(status.RegistrationFaults) > 0 {
+		b.WriteString("\nUnreadable registrations (skipped):\n")
+		for _, fault := range status.RegistrationFaults {
+			fmt.Fprintf(&b, "  %s  error=%s\n", fault.Path, fault.Error)
+		}
+	}
+
 	if len(status.Instances) == 0 {
 		b.WriteString("\nInstances: none registered\n")
 		return b.String()

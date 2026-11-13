@@ -212,7 +212,7 @@ func runHumanFetchCert(cmd *cobra.Command) error {
 	} else if err != nil && !os.IsNotExist(err) {
 		return err
 	}
-	registry, err := newConfiguredRegistryClient(nil, "")
+	registry, err := newConfiguredRegistryClient(nil)
 	if err != nil {
 		return err
 	}

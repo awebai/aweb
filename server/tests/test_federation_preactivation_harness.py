@@ -150,8 +150,8 @@ def test_topology_and_canonical_input_artifacts_are_exact() -> None:
 
     expected_inputs = {
         "docs/vectors/federation-origin-ip-v1.json": (
-            12746,
-            "6d6ec789c4d994913ae84a26021a8e8fe0c7eb3aaf008ee10ce623db7a87cb18",
+            15231,
+            "503136cce893f63f0b7fe21525e0de03b873dae2d043debe1b80756c0fe66e43",
         ),
         "docs/vectors/federation-discovery-v1.json": (
             18774,

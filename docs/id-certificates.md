@@ -3,7 +3,7 @@
 Status: **contract candidate; docs and vectors before implementation**.
 [`vectors/id-certificates-v1.json`](vectors/id-certificates-v1.json) freezes the
 bytes and decisions below. This is the source of truth for the identity tree;
-it supersedes [member attribution](member-attribution.md), not existing team
+it supersedes [member attribution](drafts/member-attribution.md), not existing team
 certificates, `member_person`, `member_custody`, owner acts or membership auth.
 The identity-path change was approved on 2026-10-26: a namespace admits human
 and agent identities, humans can issue humans, and local agents need no registry

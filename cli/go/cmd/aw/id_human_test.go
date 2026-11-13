@@ -128,6 +128,7 @@ func newHumanInitHarness(t *testing.T) *humanInitHarness {
 	keyring.MockInit()
 	h := &humanInitHarness{t: t, home: t.TempDir(), registryURL: realAWIDFixture(t)}
 	t.Setenv("HOME", h.home)
+	t.Setenv("AWID_REGISTRY_URL", h.registryURL)
 	t.Setenv("AW_CONFIG_PATH", "")
 	pub, key, err := awid.GenerateKeypair()
 	if err != nil {

@@ -2273,6 +2273,7 @@ func TestTeamHumanAddProfileMaterializeFailureRollsBackCreatedHome(t *testing.T)
 	})
 	defer server.Close()
 	t.Setenv(libraryURLEnvVar, server.URL)
+	t.Setenv("AWID_REGISTRY_URL", server.URL)
 	writeLocalTeamSignedRequestWorkspaceForTest(t, root, server.URL, "eng:local", "eng", memberDID, memberPriv)
 	if err := awconfig.SaveTeamKey("local", "eng", teamKey); err != nil {
 		t.Fatal(err)

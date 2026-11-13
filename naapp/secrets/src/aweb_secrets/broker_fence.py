@@ -164,7 +164,9 @@ class BrokerFence:
             and selected.policy_digest == self.admission.policy_digest,
             "grant_revoked",
         )
-        policy = await records.policy(tx, scope.installation_id, intent["policy_digest"])
+        policy = await records.policy(
+            tx, scope.installation_id, intent["policy_digest"], team_id=scope.team_id
+        )
         if policy is None:
             raise AdmissionRefused("grant_revoked")
         operation = (

@@ -111,14 +111,14 @@ async def current_run_policy(tx: TransactionManager, policy_ref: str) -> ActionP
     combined = _b2_policy(policy_ref, installation, team, parent)
     if combined is None or template_id == "-":
         return combined
-    template = await records.grant_template(tx, installation, template_id)
+    template = await records.grant_template(tx, installation, template_id, team_id=team)
     if (
         template is None
         or template.digest != template_digest
         or template.terms["policy_digest"] != child_digest
     ):
         return None
-    child = await records.policy(tx, installation, child_digest)
+    child = await records.policy(tx, installation, child_digest, team_id=team)
     other = None if child is None else _b2_policy(policy_ref, installation, team, child)
     if other is None:
         return None
