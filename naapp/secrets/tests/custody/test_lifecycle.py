@@ -223,6 +223,62 @@ async def test_health_checks_older_versions_and_other_teams(db, provider, tmp_pa
     assert not (await current.health()).ok
 
 
+class _RoundTripKmsClient:
+    """Stand-in for the external SDK, retaining data keys only in test memory."""
+
+    alias = "alias/custody-test"
+    key_id = "arn:aws:kms:eu-west-1:123456789012:key/custody-test"
+
+    def __init__(self):
+        self._keys = {}
+
+    def generate_data_key(self, *, KeyId, KeySpec, EncryptionContext):
+        if KeyId != self.alias or KeySpec != "AES_256":
+            raise ValueError("unknown KMS key")
+        plaintext, wrapped = os.urandom(32), os.urandom(64)
+        self._keys[wrapped] = plaintext, dict(EncryptionContext)
+        return {"Plaintext": plaintext, "CiphertextBlob": wrapped, "KeyId": self.key_id}
+
+    def decrypt(self, *, CiphertextBlob, KeyId, EncryptionContext):
+        if KeyId != self.key_id or CiphertextBlob not in self._keys:
+            raise ValueError("unknown KMS data key")
+        plaintext, context = self._keys[CiphertextBlob]
+        if context != EncryptionContext:
+            raise ValueError("wrong KMS encryption context")
+        return {"Plaintext": plaintext}
+
+
+@pytest.mark.parametrize("to_kms", [True, False], ids=["local-to-kms", "kms-to-local"])
+async def test_health_refuses_a_custody_provider_mode_switch(db, provider, canary, to_kms):
+    client = _RoundTripKmsClient()
+    kms = AwsKmsProvider(key_id=client.alias, client=client)
+    original_provider, replacement = (provider, kms) if to_kms else (kms, provider)
+    original, changed = Custody(original_provider, db), Custody(replacement, db)
+    # Both providers can serve an empty live store and round-trip fresh data.
+    assert (await changed.health()).ok
+    version = await _ingest(original, db, "sec_secret1", canary)
+    retained = await db.fetch_all("SELECT * FROM {{tables.sealed_versions}}")
+    assert retained
+    # KMS returns a canonical key ARN while its configuration names an alias.
+    # Existing KMS ciphertext must not be rejected by a local-key equality rule.
+    if not to_kms:
+        assert retained[0]["key_id"] == client.key_id != kms.key_id
+    assert (await original.health()).ok
+    seal_canary(replacement)
+    health = await changed.health()
+    assert not health.ok
+    if original_provider.key_id in repr(health) or replacement.key_id in repr(health):
+        raise AssertionError("custody health disclosed key identity")
+    with pytest.raises(CustodyUnavailable):
+        await changed.opener.open(_context("sec_secret1", version))
+    if await db.fetch_all("SELECT * FROM {{tables.sealed_versions}}") != retained:
+        raise AssertionError("custody health changed retained ciphertext")
+    if (await original.opener.open(_context("sec_secret1", version))).reveal() != value_bytes(
+        canary
+    ):
+        raise AssertionError("restoring the original provider did not recover the value")
+
+
 async def test_health_is_degraded_when_kms_is_unreachable(db: AsyncDatabaseManager) -> None:
     with socket.socket() as probe:
         probe.bind(("127.0.0.1", 0))

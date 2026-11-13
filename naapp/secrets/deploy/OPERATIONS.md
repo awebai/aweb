@@ -224,6 +224,9 @@ Restore the original key and restart; do not delete or reseal stored rows to
 make the check pass. Replacing the mounted file alone does not change the key
 already held by a running process. An empty live ciphertext store can pass
 with a new local key; this does not prove that retained backups can be opened.
+Switching to KMS also refuses readiness while retained local-key ciphertext
+exists. A local provider still refuses retained KMS rows. This check does not
+compare KMS identifiers to each other or implement provider migration.
 
 Qualify KMS and local-key operations separately with actual pre-rotation
 ciphertext, fresh writes, restart and backup compatibility. Record the provider

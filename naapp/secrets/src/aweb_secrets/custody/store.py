@@ -45,7 +45,7 @@ from pgdbm.core import TransactionManager
 from aweb_secrets import run_pin_store
 from aweb_secrets.secret import SecretRecord, sealed_shape
 
-from .providers import LocalKeyFileProvider
+from .providers import AwsKmsProvider, LocalKeyFileProvider
 from .run_pins import RunPins
 from .sealing import (
     CustodyUnavailable,
@@ -788,21 +788,28 @@ class Custody:
         )
 
     async def health(self) -> Health:
-        """Probe the provider and check local-key compatibility with retained ciphertext.
+        """Probe the provider and refuse incompatible retained ciphertext.
 
         The local provider reads its key once. After restart, a valid but
         different key can round-trip a fresh canary while every old value is
         unreadable. Include inert candidates and private backend credentials;
         no activation or current-version filter may hide retained ciphertext.
-        KMS identifiers retain the provider's own decrypt semantics.
+        A KMS provider cannot open local ciphertext either. Local providers
+        also refuse KMS rows; KMS-to-KMS identifiers retain the provider's own
+        decrypt semantics (a configured alias need not equal its returned ARN).
         """
         try:
             await asyncio.to_thread(seal_canary, self._provider)
         except CustodyUnavailable as exc:
             return Health(ok=False, reason=str(exc))
-        if isinstance(self._provider, LocalKeyFileProvider) and await self._db.fetch_value(
-            "SELECT EXISTS (SELECT 1 FROM {{tables.sealed_versions}} WHERE key_id <> $1)",
-            self._provider.key_id,
+        provider = self._provider
+        if isinstance(
+            provider, (LocalKeyFileProvider, AwsKmsProvider)
+        ) and await self._db.fetch_value(
+            "SELECT EXISTS (SELECT 1 FROM {{tables.sealed_versions}} "
+            "WHERE key_id <> $1 AND ($2 OR key_id LIKE 'local:%'))",
+            provider.key_id,
+            isinstance(provider, LocalKeyFileProvider),
         ):
             return Health(ok=False, reason="retained ciphertext requires another custody key")
         return Health(ok=True)
