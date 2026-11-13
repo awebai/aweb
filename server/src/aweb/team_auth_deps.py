@@ -243,7 +243,7 @@ async def verify_request_certificate(request: Request, db, *, fresh: bool = Fals
         raise HTTPException(status_code=401, detail="Invalid DIDKey signature")
 
     # -- Step 4: Resolve team public key from awid --
-    team_did_key = await _resolve_team_key(request, cert_team_id, db=db)
+    team_did_key = await _resolve_team_key(request, cert_team_id, db=_aweb_db(db))
     if not team_did_key:
         raise HTTPException(status_code=401, detail="unknown_team")
 
@@ -289,7 +289,7 @@ async def verify_request_certificate(request: Request, db, *, fresh: bool = Fals
                 refreshed_key = await refresh(domain, team_name, rejected_key=team_did_key)
             if not refreshed_key or refreshed_key == team_did_key:
                 raise
-            refreshed_key = await pinned_team_key_for_request(request, cert_team_id, refreshed_key, db=db)
+            refreshed_key = await pinned_team_key_for_request(request, cert_team_id, refreshed_key, db=_aweb_db(db))
             team_did_key = refreshed_key
             cert_info = check_certificate(team_did_key)
             # Bad signatures under the refreshed key must not drive revocation
