@@ -1,5 +1,10 @@
 # Knowledge log
 
+## 2026-11-13
+* **Harvest**: OKF proposal from aweb-expert/aweb-expert-deploy-team with backing notes receiver-anchors-for-one-effect.md and designate-anchors-are-credential-authorizations.md. The aw delivery paths and the receiver's writers were checked at main f268e6596. The third claim (check a fact before offering it as an option) was folded into the lesson as its origin, since the [evidence and reproduction standard](/aweb-expert/decisions/evidence-and-reproduction-standard.md) already states the rule.
+* **Creation**: decision [an owner act's exact replay is tested only on the protected path](/aweb-expert/decisions/owner-act-replay-is-tested-only-on-the-protected-path.md).
+* **Creation**: lesson [prove one owner-act effect from the receiver's durable anchors](/aweb-expert/lessons/prove-one-owner-act-effect-from-receiver-anchors.md).
+
 ## 2026-11-04
 * **Harvest**: OKF proposal from aweb-expert/aweb-expert-fresh-eyes (tasks aweb-acst and aweb-actf).
 * **Update**: [identity and routing review needs the real client](/aweb-expert/lessons/identity-and-routing-review-needs-the-real-client.md) gains that the real client includes the last released binary and that a skipped released-client case is not evidence.
