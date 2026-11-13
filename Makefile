@@ -143,6 +143,7 @@ test: test-egress-controls check-aw-commit-repo-stamp check-cli-go-tidy test-ide
 
 test-shipping:
 	python3 scripts/test_candidate_volumes.py
+	python3 scripts/test_candidate_ledger_evidence.py
 	python3 scripts/test-egress/test_driver_evidence.py
 	python3 scripts/test_unit_reports.py
 	python3 scripts/test_secrets_shards.py

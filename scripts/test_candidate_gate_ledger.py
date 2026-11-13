@@ -37,6 +37,31 @@ REAL_RECIPES = frozenset({
 })
 
 
+CLI_E2E_RECIPE = '''cli-e2e:
+\t@set -eu; cleanup() { status=$$?; set +e; \
+\t  if [ "$$status" -ne 0 ]; then \
+\t    docker compose -p "$$LIBRARY_E2E_PROJECT" -f docker-compose.e2e.yml logs --no-color postgres; \
+\t    ids="$$(docker compose -p "$$LIBRARY_E2E_PROJECT" -f docker-compose.e2e.yml ps -aq postgres)"; \
+\t    if [ -n "$$ids" ]; then docker inspect $$ids; fi; \
+\t  fi; \
+\t  docker compose -p "$$LIBRARY_E2E_PROJECT" -f docker-compose.e2e.yml down -v --remove-orphans; \
+\t  cleanup_status=$$?; [ "$$status" -ne 0 ] || status=$$cleanup_status; exit "$$status"; \
+\t}; trap cleanup EXIT; \
+\t  docker compose -p "$$LIBRARY_E2E_PROJECT" -f docker-compose.e2e.yml up -d --wait postgres; \
+\t  docker compose -p "$$LIBRARY_E2E_PROJECT" -f docker-compose.e2e.yml exec -T postgres pg_isready -U aweb
+'''
+
+
+def retain_result(evidence, name, result, success):
+    output = result.stdout + result.stderr
+    (evidence / f"{name}.log").write_text(output)
+    if (result.returncode == 0) != success:
+        print(f"Ledger fixture {name} returned {result.returncode}; captured output:\n{output}",
+              file=sys.stderr, flush=True)
+        raise AssertionError(f"{name}: see {evidence}/{name}.log")
+    return output
+
+
 def source_checks() -> list[str]:
     """Every other product target the candidate suite runs, read from the suite
     itself. The fixture stubs each one to check its committed source, so a
@@ -112,11 +137,9 @@ _candidate-artifact-server:
 \t@docker build -f candidate-gate/proof.Dockerfile -t "$$AWEB_CANDIDATE_RESOURCE_LABEL-proof" candidate-gate
 \t@docker run --rm "$$AWEB_CANDIDATE_RESOURCE_LABEL-proof" sh -c 'test "$$(echo 42)" = 42'
 \t@test "$$(wc -l < "$$CANDIDATE_LOG_DIR/setup.log")" = 2
-cli-e2e:
-\t@set -eu; trap 'docker compose -p "$$LIBRARY_E2E_PROJECT" -f docker-compose.e2e.yml down -v --remove-orphans' EXIT; \
-\t  docker compose -p "$$LIBRARY_E2E_PROJECT" -f docker-compose.e2e.yml up -d --wait postgres; \
-\t  docker compose -p "$$LIBRARY_E2E_PROJECT" -f docker-compose.e2e.yml exec -T postgres pg_isready -U aweb
-freshness:
+'''
+        recipes += CLI_E2E_RECIPE
+        recipes += '''freshness:
 \t@test "$$(redis-cli -u "$$REDIS_URL" PING)" = PONG
 naapp-e2e-packages:
 \t@printf '%s\\n' proof/first proof/second
@@ -145,9 +168,7 @@ candidate-gate:
             if stages is not None:
                 settings["AWEB_CANDIDATE_STAGES"] = stages
             result = run(repo, *args, env=settings)
-            (evidence / f"{name}.log").write_text(result.stdout + result.stderr)
-            assert (result.returncode == 0) == success, f"{name}: see {evidence}/{name}.log"
-            return result.stdout + result.stderr
+            return retain_result(evidence, name, result, success)
 
         gate = ("bash", "scripts/candidate-docker-gate.sh")
         ledger = evidence / "ledger.tsv"
