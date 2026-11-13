@@ -187,9 +187,9 @@ class Done:
         self.stdout, self.returncode, self.stderr = stdout, returncode, stderr
 
 
-class Orchestration(unittest.TestCase):
-    """The order of the steps, with a scripted container. Each answer is what
-    the real command prints; the point is what the helper does with it."""
+class ScriptedContainer(unittest.TestCase):
+    """A scripted container. Each answer is what the real command prints; the
+    point is what the helper does with it."""
 
     def container(self, answers: dict[str, Done]):
         calls: list[str] = []
@@ -203,6 +203,10 @@ class Orchestration(unittest.TestCase):
             raise AssertionError(f"unexpected command: {command}")
 
         return run, calls
+
+
+class Orchestration(ScriptedContainer):
+    """The order of the steps of the check that sends its own mail."""
 
     def test_a_session_that_never_signed_in_is_sent_nothing(self):
         home = "/state/agents/b"
@@ -237,6 +241,164 @@ class Orchestration(unittest.TestCase):
             )
         self.assertEqual(failed.exception.stage, "preflight")
         self.assertIn("HOME", failed.exception.detail)
+
+
+SENDER_DID = "did:key:z6MkSender"
+RECEIVER_DID = "did:key:z6MkReceiver"
+CONVERSATION = "9f8fe9e5-3ad7-4bf0-9835-47e7e20267e5"
+REPLY_ID = "0192b7e4-2222-7a3b-9e4f-5a6b7c8d9e0f"
+RECEIVER_HOME = "/state/agents/b"
+SENDER_HOME = "/state/seats/a/.aw"
+
+
+def mail(message_id: str, from_did: str, to_did: str, created_at: str, *, body: str = "4",
+         subject: str = "Re: wake check 3f9c2a1e", status: str = "verified", conversation: str = CONVERSATION) -> dict:
+    """A message as aw mail show --json prints it."""
+    aliases = {SENDER_DID: "alice", RECEIVER_DID: "b"}
+    return {"message_id": message_id, "conversation_id": conversation, "from_alias": aliases.get(from_did, "mallory"),
+            "from_did": from_did, "to_alias": aliases.get(to_did, "mallory"), "to_did": to_did, "subject": subject,
+            "body": body, "created_at": created_at, "verification_status": status, "read_at": None}
+
+
+SENT_JSON = mail(MESSAGE_ID, SENDER_DID, RECEIVER_DID, "2026-11-13T05:10:00.123456+00:00",
+                 body=BODY, subject="wake check 3f9c2a1e")
+REPLY_JSON = mail(REPLY_ID, RECEIVER_DID, SENDER_DID, "2026-11-13T05:11:00.5+00:00")
+SESSION_CREATED_MS = 1794546000000  # 2026-11-13T05:00:00Z
+
+
+def bind(shown: dict) -> wake.BoundMail:
+    return wake.bind_sent_mail({"messages": [shown]}, message_id=MESSAGE_ID, sender_did=SENDER_DID,
+                               receiver_dids={RECEIVER_DID}, receiver_alias="b", session_created_ms=SESSION_CREATED_MS)
+
+
+class BindSentMail(unittest.TestCase):
+    def test_the_mail_from_the_sender_to_the_receiver_after_the_session_started_is_bound(self):
+        sent = bind(SENT_JSON)
+        self.assertEqual((sent.message_id, sent.sender, sent.subject, sent.body), (MESSAGE_ID, "alice",
+                                                                                   "wake check 3f9c2a1e", BODY))
+        self.assertEqual((sent.conversation_id, sent.sender_did, sent.receiver_did),
+                         (CONVERSATION, SENDER_DID, RECEIVER_DID))
+
+    def test_another_sender_recipient_or_a_mail_older_than_the_session_is_refused(self):
+        cases = {
+            "another sender": {**SENT_JSON, "from_did": "did:key:z6MkMallory"},
+            "another recipient DID": {**SENT_JSON, "to_did": "did:key:z6MkOther"},
+            "another recipient alias": {**SENT_JSON, "to_alias": "c"},
+            "sent before the session": {**SENT_JSON, "created_at": "2026-11-13T04:59:59+00:00"},
+            "another message": {**SENT_JSON, "message_id": REPLY_ID},
+            "no conversation": {**SENT_JSON, "conversation_id": ""},
+        }
+        for name, shown in cases.items():
+            with self.subTest(name), self.assertRaises(wake.WakeCheckFailed) as failed:
+                bind(shown)
+            self.assertEqual(failed.exception.stage, "sent")
+
+
+class FindReply(unittest.TestCase):
+    def test_the_receivers_first_later_reply_in_the_conversation_is_the_reply(self):
+        later = mail("0192b7e4-3333-7a3b-9e4f-5a6b7c8d9e0f", RECEIVER_DID, SENDER_DID, "2026-11-13T05:12:00+00:00")
+        found = wake.find_reply({"messages": [SENT_JSON, REPLY_JSON, later]}, bind(SENT_JSON))
+        self.assertEqual(found["message_id"], REPLY_ID)
+        self.assertEqual(found["body"], "4")
+        self.assertEqual(found["verification_status"], "verified")
+        self.assertEqual(found["later_replies"], 1)
+
+    def test_unrelated_and_pre_existing_replies_are_not_the_reply(self):
+        conversation = {"messages": [
+            mail("0192b7e4-4444-7a3b-9e4f-5a6b7c8d9e0f", RECEIVER_DID, SENDER_DID, "2026-11-13T05:09:00+00:00"),
+            SENT_JSON,
+            mail("0192b7e4-5555-7a3b-9e4f-5a6b7c8d9e0f", "did:key:z6MkMallory", SENDER_DID,
+                 "2026-11-13T05:11:00+00:00"),
+            mail("0192b7e4-6666-7a3b-9e4f-5a6b7c8d9e0f", RECEIVER_DID, SENDER_DID, "2026-11-13T05:11:00+00:00",
+                 conversation="0192b7e4-0000-0000-0000-000000000000"),
+            mail("0192b7e4-7777-7a3b-9e4f-5a6b7c8d9e0f", RECEIVER_DID, "did:key:z6MkOther",
+                 "2026-11-13T05:11:00+00:00"),
+        ]}
+        self.assertIsNone(wake.find_reply(conversation, bind(SENT_JSON)))
+
+    def test_an_unverified_reply_from_the_receiver_is_a_trust_failure(self):
+        conversation = {"messages": [SENT_JSON, {**REPLY_JSON, "verification_status": "unverified"}]}
+        with self.assertRaises(wake.WakeCheckFailed) as failed:
+            wake.find_reply(conversation, bind(SENT_JSON))
+        self.assertEqual(failed.exception.stage, "reply")
+
+    def test_a_long_reply_body_is_capped(self):
+        found = wake.find_reply({"messages": [SENT_JSON, {**REPLY_JSON, "body": "x" * 5000}]}, bind(SENT_JSON))
+        self.assertEqual(len(found["body"]), wake.REPLY_BODY_LIMIT)
+        self.assertTrue(found["body_truncated"])
+
+
+class Correlation(ScriptedContainer):
+    """The already-sent mail's wake and reply, with a scripted container."""
+
+    def answers(self, conversation: list[dict], texts: list[str]) -> dict[str, Done]:
+        status = {"daemon_running": True, "instances": [{
+            "home": RECEIVER_HOME, "delivery": "session", "phase": "active", "paused": False,
+            "receive_identities": [{"identity_home": RECEIVER_HOME + "/.aw", "stream_admitted": True,
+                                    "stream_phase": "streaming"}],
+        }]}
+        return {
+            'printf "%s" "$HOME"': Done("/state/home"),
+            "aw version": Done("aw 1.36.60"),
+            "aw wake status --json": Done(json.dumps(status)),
+            "oats session inspect": Done(json.dumps({"ok": True, "result": {"present": True, "state": "idle"}})),
+            "instance.json": Done(json.dumps({"createdAt": "2026-11-13T05:00:00Z", "tmux": {}})),
+            "test -r /etc/agent-login/claude-token": Done(),
+            "node -": Done(json.dumps({"transcript": "/state/home/.claude/projects/p/s.jsonl", "texts": texts})),
+            f"{SENDER_HOME} --json whoami": Done(json.dumps({"alias": "alice", "did": SENDER_DID})),
+            f"{RECEIVER_HOME}/.aw --json whoami": Done(json.dumps({"alias": "b", "did": RECEIVER_DID})),
+            "mail show --message-id": Done(json.dumps({"messages": [SENT_JSON]})),
+            "mail show --conversation-id": Done(json.dumps({"messages": conversation})),
+        }
+
+    def correlate(self, run):
+        return wake.correlate_mail_wake(run, message_id=MESSAGE_ID, sender_home=SENDER_HOME,
+                                        receiver_instance_home=RECEIVER_HOME, receiver_alias="b",
+                                        timeout=0, reply_timeout=0, signed_in_wait=0, poll=0)
+
+    def test_the_sent_mail_its_wake_and_its_reply_are_one_receipt_and_nothing_is_sent(self):
+        run, calls = self.container(self.answers([SENT_JSON, REPLY_JSON], [VERIFIED]))
+        receipt = self.correlate(run)
+        self.assertEqual(receipt["sent"]["message_id"], MESSAGE_ID)
+        self.assertEqual(receipt["sent"]["conversation_id"], CONVERSATION)
+        self.assertEqual(receipt["presented"]["trust_status"], "verified")
+        self.assertEqual(receipt["evidence"]["block"], VERIFIED)
+        self.assertEqual(receipt["reply"]["message_id"], REPLY_ID)
+        self.assertFalse(any("mail send" in call or "mail inbox" in call or "mail ack" in call for call in calls))
+
+    def test_no_reply_by_the_deadline_keeps_what_was_seen_and_invents_no_reply(self):
+        run, _ = self.container(self.answers([SENT_JSON], [VERIFIED]))
+        with self.assertRaises(wake.WakeCheckFailed) as failed:
+            self.correlate(run)
+        self.assertEqual(failed.exception.stage, "reply")
+        partial = failed.exception.partial
+        self.assertEqual(partial["sent"]["message_id"], MESSAGE_ID)
+        self.assertEqual(partial["presented"]["message_id"], MESSAGE_ID)
+        self.assertNotIn("reply", partial)
+
+    def test_no_wake_by_the_deadline_keeps_the_bound_mail_and_invents_no_wake(self):
+        run, _ = self.container(self.answers([SENT_JSON, REPLY_JSON], []))
+        with self.assertRaises(wake.WakeCheckFailed) as failed:
+            self.correlate(run)
+        self.assertEqual(failed.exception.stage, "presentation")
+        self.assertEqual(failed.exception.partial["sent"]["message_id"], MESSAGE_ID)
+        self.assertNotIn("presented", failed.exception.partial)
+
+    def test_preflight_only_reads_the_session_and_sends_nothing(self):
+        run, calls = self.container(self.answers([], []))
+        result = wake.preflight_only(run, receiver_instance_home=RECEIVER_HOME, signed_in_wait=0, poll=0)
+        self.assertEqual(result["transcript"], "/state/home/.claude/projects/p/s.jsonl")
+        self.assertNotIn("tmux", result)
+        self.assertFalse(any(" mail " in call for call in calls))
+
+
+class FailureOutput(unittest.TestCase):
+    def test_a_failure_prints_its_stage_and_detail_and_any_partial_receipt(self):
+        self.assertEqual(wake.failure_output(wake.WakeCheckFailed("preflight", "no login")),
+                         {"failed": "preflight", "detail": "no login"})
+        partial = {"sent": {"message_id": MESSAGE_ID}}
+        self.assertEqual(wake.failure_output(wake.WakeCheckFailed("reply", "none", partial)),
+                         {"failed": "reply", "detail": "none", "partial": partial})
 
 
 if __name__ == "__main__":

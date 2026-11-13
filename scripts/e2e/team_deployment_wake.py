@@ -27,6 +27,19 @@ Inside the agent container, over the operator's route, as the agent user:
 The mail asks for no action, but it is typed into a live Claude session,
 which takes one model turn on it.
 
+Two other modes send nothing:
+
+- --preflight-only runs step 1 alone, so a caller with one mail to spend
+  learns first whether the session can take it.
+- --message-id correlates a mail the caller already sent. The sender's aw
+  mail show, which leaves read state alone, binds it to the sender's DID, to
+  the receiver's alias and a DID the receiver streams, and to a time after the
+  session started. Step 3 then proves its wake. The reply is the receiver's
+  first verified mail to the sender in that conversation created after it.
+  Other senders, recipients and conversations, and earlier mail, are never the
+  reply. A failure carries "partial": what was observed before it, nothing
+  inferred.
+
 Transport trust (the live CA negative) is the journey's requalify_agent. Sender
 trust is cited from channel-core's existing tests, not tested here.
 """
@@ -54,18 +67,22 @@ CLAUDE_PROJECTS = "/state/home/.claude/projects"
 CLAUDE_LOGIN = "/etc/agent-login/claude-token"
 REFUSED_STATES = {"stopped", "not-launched", "shell", "generic shell", "generic-shell", "blocked"}
 CALL_TIMEOUT = 60
+REPLY_BODY_LIMIT = 4000
+SENDER_TRUST = "cited separately: channel-core stable_identity_forgery_repro, trust and terminal-adapter tests"
 PANE_LINES = 400
 
 Container = Callable[..., subprocess.CompletedProcess]
 
 
 class WakeCheckFailed(Exception):
-    """A check that did not pass; stage is preflight, send, presentation or trust."""
+    """A check that did not pass; stage is preflight, send, sent, presentation,
+    trust or reply. partial holds what was observed before it, never more."""
 
-    def __init__(self, stage: str, detail: str) -> None:
+    def __init__(self, stage: str, detail: str, partial: dict | None = None) -> None:
         super().__init__(f"{stage}: {detail}")
         self.stage = stage
         self.detail = detail
+        self.partial = partial
 
 
 @dataclass(frozen=True)
@@ -75,6 +92,21 @@ class SentMail:
     subject: str
     body: str
     nonce: str
+
+
+@dataclass(frozen=True)
+class BoundMail:
+    """A mail someone else sent, as its sender's aw shows it, bound to the
+    sender and the receiver by DID."""
+    message_id: str
+    conversation_id: str
+    sender: str
+    sender_did: str
+    receiver: str
+    receiver_did: str
+    subject: str
+    body: str
+    created_at: str
 
 
 @dataclass(frozen=True)
@@ -128,7 +160,7 @@ def parse_mail_events(text: str) -> list[MailEvent]:
     return events
 
 
-def require_presented(events: list[MailEvent], sent: SentMail) -> dict:
+def require_presented(events: list[MailEvent], sent: SentMail | BoundMail) -> dict:
     """The event for the sent mail, presented whole and verified."""
     matching = [event for event in events if event.meta.get("message_id") == sent.message_id]
     if not matching:
@@ -159,6 +191,59 @@ def require_not_promoted(events: list[MailEvent]) -> None:
                                            f"with trust_status={status}" + (" and a warning" if event.warning else ""))
         if event.warning and verified != "false":
             raise WakeCheckFailed("trust", f"message {event.meta.get('message_id')} carries a warning but verified={verified}")
+
+
+def _instant(text: str) -> datetime:
+    return datetime.fromisoformat(str(text).replace("Z", "+00:00"))
+
+
+def bind_sent_mail(shown: dict, *, message_id: str, sender_did: str, receiver_dids: set[str], receiver_alias: str,
+                   session_created_ms: int) -> BoundMail:
+    """The mail aw mail show --message-id printed for the sender, bound to the
+    sender's DID, one of the receiver's DIDs and alias, and the session: a mail
+    from before the session started is not this session's wake."""
+    messages = shown.get("messages") or []
+    if len(messages) != 1 or messages[0].get("message_id") != message_id:
+        raise WakeCheckFailed("sent", f"aw mail show did not return exactly message {message_id}")
+    message = messages[0]
+    if message.get("from_did") != sender_did:
+        raise WakeCheckFailed("sent", f"the mail is from {message.get('from_did')}, not the sender {sender_did}")
+    if message.get("to_did") not in receiver_dids or message.get("to_alias") != receiver_alias:
+        raise WakeCheckFailed("sent", f"the mail is to {message.get('to_alias')} ({message.get('to_did')}), "
+                                      f"not {receiver_alias} ({', '.join(sorted(receiver_dids))})")
+    if not message.get("conversation_id"):
+        raise WakeCheckFailed("sent", "the mail has no conversation_id")
+    if _instant(message["created_at"]).timestamp() * 1000 < session_created_ms:
+        raise WakeCheckFailed("sent", f"the mail was created at {message['created_at']}, before the session")
+    return BoundMail(message_id=message_id, conversation_id=message["conversation_id"],
+                     sender=message.get("from_alias", ""), sender_did=sender_did, receiver=receiver_alias,
+                     receiver_did=message["to_did"], subject=message.get("subject", ""),
+                     body=message.get("body", ""), created_at=message["created_at"])
+
+
+def find_reply(conversation: dict, sent: BoundMail) -> dict | None:
+    """The receiver's first reply to the sender in the sent mail's conversation,
+    created after it, as aw mail show --conversation-id printed it; None when
+    there is none yet. Messages from anyone else, to anyone else, in another
+    conversation or from before the sent mail are never the reply."""
+    sent_at = _instant(sent.created_at)
+    replies = sorted(
+        (message for message in conversation.get("messages") or []
+         if message.get("conversation_id") == sent.conversation_id
+         and message.get("from_did") == sent.receiver_did and message.get("to_did") == sent.sender_did
+         and message.get("message_id") != sent.message_id and _instant(message["created_at"]) > sent_at),
+        key=lambda message: _instant(message["created_at"]))
+    if not replies:
+        return None
+    reply = replies[0]
+    status = reply.get("verification_status")
+    if status not in TRUSTED_STATUSES:
+        raise WakeCheckFailed("reply", f"the reply {reply.get('message_id')} is {status}, not verified")
+    body = reply.get("body") or ""
+    return {"message_id": reply["message_id"], "conversation_id": reply["conversation_id"],
+            "from": reply.get("from_alias"), "from_did": reply["from_did"], "verification_status": status,
+            "created_at": reply["created_at"], "body": body[:REPLY_BODY_LIMIT],
+            "body_truncated": len(body) > REPLY_BODY_LIMIT, "later_replies": len(replies) - 1}
 
 
 # Runs in the container with its node. OATS's own rule for a home's
@@ -344,10 +429,98 @@ def check_full_event_wake(
     here is short; waiting is done by polling."""
     preflight = _preflight(container, receiver_instance_home, signed_in_wait, poll)
     sent = _send(container, sender_home, receiver_alias)
+    presented, evidence = _await_presented(container, receiver_instance_home, preflight, sent, timeout, poll)
+    return {
+        "sent": asdict(sent),
+        "preflight": _screened(preflight),
+        "presented": presented,
+        "evidence": evidence,
+        "sender_trust": SENDER_TRUST,
+    }
 
+
+def preflight_only(container: Container, *, receiver_instance_home: str, signed_in_wait: float = 60,
+                   poll: float = 5) -> dict:
+    """The preflight alone, sending nothing: run before the caller spends its one mail."""
+    return _screened(_preflight(container, receiver_instance_home, signed_in_wait, poll))
+
+
+def correlate_mail_wake(
+    container: Container,
+    *,
+    message_id: str,
+    sender_home: str,
+    receiver_instance_home: str,
+    receiver_alias: str,
+    timeout: float = 180,
+    reply_timeout: float = 300,
+    signed_in_wait: float = 60,
+    poll: float = 5,
+) -> dict:
+    """Correlate a mail the caller already sent with its wake in the receiver's
+    session and the receiver's reply; return the receipt or raise
+    WakeCheckFailed carrying what was observed before the failure.
+
+    Sends nothing and acknowledges nothing: the sender's mail is read with aw
+    mail show, which leaves read state alone."""
+    preflight = _preflight(container, receiver_instance_home, signed_in_wait, poll)
+    sender_did = _did(container, sender_home, "the sender")
+    receiver_dids = {_did(container, home, "the receiver") for home in preflight["streaming_identities"]}
+    shown = _json("sent", _call(container, "sent", _sender_aw(sender_home, "mail show --message-id "
+                                                                              + shlex.quote(message_id)),
+                                "aw mail show for the sent mail").stdout, "aw mail show")
+    sent = bind_sent_mail(shown, message_id=message_id, sender_did=sender_did, receiver_dids=receiver_dids,
+                          receiver_alias=receiver_alias, session_created_ms=preflight["created_ms"])
+    observed: dict = {"sent": asdict(sent), "preflight": _screened(preflight)}
+    try:
+        presented, evidence = _await_presented(container, receiver_instance_home, preflight, sent, timeout, poll)
+    except WakeCheckFailed as failed:
+        raise WakeCheckFailed(failed.stage, failed.detail, observed) from None
+    observed.update(presented=presented, evidence=evidence)
+
+    deadline = time.monotonic() + reply_timeout
+    while True:
+        conversation = _json("reply", _call(
+            container, "reply", _sender_aw(sender_home, "mail show --conversation-id "
+                                           + shlex.quote(sent.conversation_id) + " --limit 500"),
+            "aw mail show for the conversation").stdout, "aw mail show")
+        try:
+            reply = find_reply(conversation, sent)
+        except WakeCheckFailed as failed:
+            raise WakeCheckFailed(failed.stage, failed.detail, observed) from None
+        if reply is not None:
+            break
+        if time.monotonic() >= deadline:
+            raise WakeCheckFailed("reply", f"no reply from {receiver_alias} in conversation "
+                                           f"{sent.conversation_id} within {reply_timeout:g}s", observed)
+        time.sleep(poll)
+    return {**observed, "reply": reply, "sender_trust": SENDER_TRUST}
+
+
+def _sender_aw(sender_home: str, arguments: str) -> str:
+    return f"aw --identity-home {shlex.quote(sender_home)} --json {arguments}"
+
+
+def _did(container: Container, identity_home: str, who: str) -> str:
+    whoami = _json("sent", _call(container, "sent", _sender_aw(identity_home, "whoami"), f"aw whoami for {who}").stdout,
+                   "aw whoami")
+    did = str(whoami.get("did") or "").strip()
+    if not did:
+        raise WakeCheckFailed("sent", f"aw whoami for {who} reports no DID")
+    return did
+
+
+def _screened(preflight: dict) -> dict:
+    return {key: value for key, value in preflight.items() if key != "tmux"}
+
+
+def _await_presented(container: Container, home: str, preflight: dict, sent: SentMail | BoundMail, timeout: float,
+                     poll: float) -> tuple[dict, dict]:
+    """Poll the receiver's transcript for the sent mail's full event until the
+    deadline; return the presentation and its evidence."""
     deadline = time.monotonic() + timeout
     while True:
-        found = _transcript(container, receiver_instance_home, preflight["created_ms"], sent.message_id)
+        found = _transcript(container, home, preflight["created_ms"], sent.message_id)
         events = [event for text in found["texts"] for event in parse_mail_events(text)]
         if any(event.meta.get("message_id") == sent.message_id for event in events) or time.monotonic() >= deadline:
             break
@@ -361,40 +534,57 @@ def check_full_event_wake(
         in_pane = any(event.meta.get("message_id") == sent.message_id for event in pane_events)
         raise WakeCheckFailed(failed.stage, failed.detail + (
             "; the pane shows a block for it" if in_pane else "; the pane shows none either")) from None
-    return {
-        "sent": asdict(sent),
-        "preflight": {key: value for key, value in preflight.items() if key != "tmux"},
-        "presented": presented,
-        "evidence": {
-            "surface": "Claude transcript user turn (Claude's own storage, not an OATS contract)",
-            "transcript": found["transcript"],
-            "block": next(text for text in found["texts"] if sent.message_id in text),
-            "pane": None if pane is None else any(e.meta.get("message_id") == sent.message_id for e in pane_events),
-        },
-        "sender_trust": "cited separately: channel-core stable_identity_forgery_repro, trust and terminal-adapter tests",
+    return presented, {
+        "surface": "Claude transcript user turn (Claude's own storage, not an OATS contract)",
+        "transcript": found["transcript"],
+        "block": next(text for text in found["texts"] if sent.message_id in text),
+        "pane": None if pane is None else any(e.meta.get("message_id") == sent.message_id for e in pane_events),
     }
+
+
+def failure_output(failed: WakeCheckFailed) -> dict:
+    output = {"failed": failed.stage, "detail": failed.detail}
+    if failed.partial is not None:
+        output["partial"] = failed.partial
+    return output
 
 
 def main(argv: list[str]) -> int:
     parser = argparse.ArgumentParser(description=(__doc__ or "").splitlines()[0])
     parser.add_argument("--ssh-config", required=True, help="the operator's ssh_config for the agent container")
     parser.add_argument("--host", default="team-agent")
-    parser.add_argument("--sender-home", required=True, help="seat A's identity home, /state/seats/<A>/.aw")
     parser.add_argument("--receiver-home", required=True, help="seat B's absolute OATS instance home")
-    parser.add_argument("--receiver-alias", required=True)
-    parser.add_argument("--timeout", type=float, default=180)
+    parser.add_argument("--receiver-alias", help="seat B's alias; required unless --preflight-only")
+    parser.add_argument("--sender-home", help="the sender seat's identity home, /state/seats/<A>/.aw; "
+                                              "required unless --preflight-only")
+    mode = parser.add_mutually_exclusive_group()
+    mode.add_argument("--preflight-only", action="store_true", help="check the session and send nothing")
+    mode.add_argument("--message-id", help="correlate this already-sent mail and its reply instead of sending one")
+    parser.add_argument("--timeout", type=float, default=180, help="seconds to wait for the wake")
+    parser.add_argument("--reply-timeout", type=float, default=300,
+                        help="with --message-id, seconds to wait for the reply after the wake")
     args = parser.parse_args(argv)
+    if not args.preflight_only and not (args.sender_home and args.receiver_alias):
+        parser.error("--sender-home and --receiver-alias are required unless --preflight-only")
 
     def container(command: str, timeout: int = 120) -> subprocess.CompletedProcess:
         return subprocess.run(["ssh", "-F", args.ssh_config, args.host, command], capture_output=True, text=True,
                               timeout=timeout, check=False)
 
     try:
-        receipt = check_full_event_wake(container, sender_home=args.sender_home,
-                                        receiver_instance_home=args.receiver_home,
-                                        receiver_alias=args.receiver_alias, timeout=args.timeout)
+        if args.preflight_only:
+            receipt = preflight_only(container, receiver_instance_home=args.receiver_home)
+        elif args.message_id:
+            receipt = correlate_mail_wake(container, message_id=args.message_id, sender_home=args.sender_home,
+                                          receiver_instance_home=args.receiver_home,
+                                          receiver_alias=args.receiver_alias, timeout=args.timeout,
+                                          reply_timeout=args.reply_timeout)
+        else:
+            receipt = check_full_event_wake(container, sender_home=args.sender_home,
+                                            receiver_instance_home=args.receiver_home,
+                                            receiver_alias=args.receiver_alias, timeout=args.timeout)
     except WakeCheckFailed as failed:
-        print(json.dumps({"failed": failed.stage, "detail": failed.detail}))
+        print(json.dumps(failure_output(failed), indent=2 if failed.partial is not None else None))
         return 1
     print(json.dumps(receipt, indent=2))
     return 0
