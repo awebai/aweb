@@ -48,7 +48,3 @@ func PublicAddress(address, scope string) string {
 func DescribeIdentityScope(scope string) string {
 	return NormalizeIdentityScope(scope)
 }
-
-func IsSelfCustodial(custody string) bool {
-	return strings.TrimSpace(strings.ToLower(custody)) == CustodySelf
-}

@@ -15,7 +15,6 @@ from aweb.app_registry import (
     get_installed_app_event_type,
     normalize_app_event_type,
     normalize_delivery_intent,
-    normalize_local_event_type,
     validate_team_id,
 )
 from aweb.service_errors import ForbiddenError, ValidationError

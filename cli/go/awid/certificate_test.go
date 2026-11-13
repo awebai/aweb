@@ -10,7 +10,7 @@ import (
 	"testing"
 )
 
-func TestSignAndVerifyTeamCertificate(t *testing.T) {
+func TestSignAndCheckTeamCertificate(t *testing.T) {
 	teamPub, teamPriv, err := GenerateKeypair()
 	if err != nil {
 		t.Fatal(err)
@@ -59,12 +59,12 @@ func TestSignAndVerifyTeamCertificate(t *testing.T) {
 		t.Fatal("signature is empty")
 	}
 
-	if err := VerifyTeamCertificate(cert, teamPub); err != nil {
+	if err := CheckDecodedTeamCertificate(cert, ComputeDIDKey(teamPub)); err != nil {
 		t.Fatalf("verify: %v", err)
 	}
 }
 
-func TestVerifyTeamCertificateRejectsTampered(t *testing.T) {
+func TestCheckDecodedTeamCertificateRejectsTampered(t *testing.T) {
 	teamPub, teamPriv, err := GenerateKeypair()
 	if err != nil {
 		t.Fatal(err)
@@ -86,12 +86,12 @@ func TestVerifyTeamCertificateRejectsTampered(t *testing.T) {
 
 	tampered := *cert
 	tampered.Alias = "mallory"
-	if err := VerifyTeamCertificate(&tampered, teamPub); err == nil {
+	if err := CheckDecodedTeamCertificate(&tampered, ComputeDIDKey(teamPub)); err == nil {
 		t.Fatal("expected verification to fail for tampered certificate")
 	}
 }
 
-func TestVerifyTeamCertificateRejectsWrongTeamKey(t *testing.T) {
+func TestCheckDecodedTeamCertificateRejectsWrongTeamKey(t *testing.T) {
 	_, teamPriv, err := GenerateKeypair()
 	if err != nil {
 		t.Fatal(err)
@@ -115,7 +115,7 @@ func TestVerifyTeamCertificateRejectsWrongTeamKey(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	if err := VerifyTeamCertificate(cert, otherPub); err == nil {
+	if err := CheckDecodedTeamCertificate(cert, ComputeDIDKey(otherPub)); err == nil {
 		t.Fatal("expected verification to fail with wrong team key")
 	}
 }
@@ -278,7 +278,7 @@ func TestTeamCertificateJSON(t *testing.T) {
 
 	// Verify the key signature_payload is present when verifying
 	teamPub := teamPriv.Public().(ed25519.PublicKey)
-	if err := VerifyTeamCertificate(&decoded, teamPub); err != nil {
+	if err := CheckDecodedTeamCertificate(&decoded, ComputeDIDKey(teamPub)); err != nil {
 		t.Fatalf("verify after JSON round-trip: %v", err)
 	}
 }
@@ -344,7 +344,7 @@ func TestLegacyLifetimeTeamCertificatePreservesSignedWireShape(t *testing.T) {
 	if decoded.IdentityScope != IdentityModeGlobal {
 		t.Fatalf("identity_scope=%q", decoded.IdentityScope)
 	}
-	if err := VerifyTeamCertificate(decoded, teamPub); err != nil {
+	if err := CheckDecodedTeamCertificate(decoded, ComputeDIDKey(teamPub)); err != nil {
 		t.Fatalf("verify decoded legacy certificate: %v", err)
 	}
 
@@ -375,7 +375,7 @@ func TestLegacyLifetimeTeamCertificatePreservesSignedWireShape(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := VerifyTeamCertificate(roundTrip, teamPub); err != nil {
+	if err := CheckDecodedTeamCertificate(roundTrip, ComputeDIDKey(teamPub)); err != nil {
 		t.Fatalf("verify preserved legacy certificate: %v", err)
 	}
 }

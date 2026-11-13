@@ -200,8 +200,6 @@ const (
 
 func NewChannelCoreRunner(store *Store) *ChannelCoreRunner { return &ChannelCoreRunner{store: store} }
 
-func (r *ChannelCoreRunner) Status() ChannelCoreStatus { return ChannelCoreStatus{} }
-
 func (r *ChannelCoreRunner) StartChild(ctx context.Context, reg Registration, cfg channelCoreChildConfig) *ChannelCoreChild {
 	if cfg.AdmissionSize <= 0 {
 		cfg.AdmissionSize = 256

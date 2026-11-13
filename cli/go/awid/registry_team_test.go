@@ -470,8 +470,8 @@ func TestFetchTeamCertificate(t *testing.T) {
 	if got.CertificateID != cert.CertificateID {
 		t.Fatalf("certificate_id=%q", got.CertificateID)
 	}
-	if err := VerifyTeamCertificate(got, teamPub); err != nil {
-		t.Fatalf("VerifyTeamCertificate: %v", err)
+	if err := CheckDecodedTeamCertificate(got, ComputeDIDKey(teamPub)); err != nil {
+		t.Fatalf("CheckDecodedTeamCertificate: %v", err)
 	}
 	parts := strings.Fields(gotAuth)
 	if len(parts) != 3 || parts[0] != "DIDKey" || parts[1] != cert.MemberDIDKey {

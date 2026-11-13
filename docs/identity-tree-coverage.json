@@ -261,10 +261,6 @@
         "reason": "Released a2a publication signing/key custody; ID-certificate verification uses the shared verifier."
       },
       {
-        "file": "cli/go/awid/app_task_authorization.go",
-        "reason": "Released app task authorization signing/key custody; ID-certificate verification uses the shared verifier."
-      },
-      {
         "file": "cli/go/awid/atomic_address_claim.go",
         "reason": "Released atomic address claim signing/key custody; ID-certificate verification uses the shared verifier."
       },
@@ -495,10 +491,6 @@
       {
         "file": "scripts/freeze_human_channels_profile.py",
         "reason": "Existing freeze human channels profile test support or fixture signatures; not an identity-tree verifier."
-      },
-      {
-        "file": "scripts/spikes/human_channels_e2ee.py",
-        "reason": "Existing human channels e2ee test support or fixture signatures; not an identity-tree verifier."
       },
       {
         "file": "server/src/aweb/e2ee_messages.py",

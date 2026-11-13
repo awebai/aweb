@@ -21,7 +21,7 @@ from awid.atomic_claim import (
     atomic_address_claim_namespace_canonical,
     normalize_atomic_address_claim_fields,
 )
-from awid.did import public_key_from_did, stable_id_from_did_key, stable_id_from_public_key, validate_stable_id
+from awid.did import public_key_from_did, stable_id_from_public_key, validate_stable_id
 from awid.dns_verify import DomainVerifier
 from awid.dns_auth import validate_did_key as _validate_dns_did_key
 from awid.controller_request import ControllerAuthRoute, verify_controller_json_request
@@ -523,26 +523,6 @@ def _validated_did_log_proof(
     return payload, awid_sha256_hex(payload), state_hash
 
 
-async def _resolve_caller_did_aw(db, caller_did_key: str | None) -> str | None:
-    caller_did_key = (caller_did_key or "").strip()
-    if not caller_did_key:
-        return None
-    row = await db.fetch_one(
-        """
-        SELECT did_aw
-        FROM {{tables.did_aw_mappings}}
-        WHERE current_did_key = $1
-        """,
-        caller_did_key,
-    )
-    if row is None:
-        try:
-            return stable_id_from_did_key(caller_did_key)
-        except Exception:
-            return None
-    return row["did_aw"]
-
-
 # ---------------------------------------------------------------------------
 # Routes
 # ---------------------------------------------------------------------------
@@ -588,7 +568,7 @@ async def register_address(
         if ns_locked is None:
             raise HTTPException(status_code=404, detail="Namespace not found")
 
-        did_row = await _require_registered_did(
+        await _require_registered_did(
             tx,
             did_aw=body.did_aw,
             current_did_key=body.current_did_key,
@@ -1238,7 +1218,7 @@ async def reassign_address(
         if row is None:
             raise HTTPException(status_code=404, detail="Address not found")
 
-        did_row = await _require_registered_did(
+        await _require_registered_did(
             tx,
             did_aw=body.did_aw,
             current_did_key=body.current_did_key,
