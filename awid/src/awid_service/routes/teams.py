@@ -461,6 +461,9 @@ class CertificateStatusResponse(BaseModel):
     status: Literal["active", "revoked"]
     revoked_at: str | None
 
+    protection: dict | None = None
+    certificate_sha256: str | None = None
+
 
 class CertificateResponse(BaseModel):
     team_id: str
@@ -1115,39 +1118,44 @@ async def get_team_member(
 @router.get(
     "/{name}/certificates/{certificate_id}/status",
     response_model=CertificateStatusResponse,
+    response_model_exclude_unset=True,
     dependencies=[Depends(rate_limit_dep("certificate_status", allow_trusted_service=True))],
 )
 async def certificate_status(
-    domain: str,
-    name: str,
-    certificate_id: str,
+    domain: str, name: str, certificate_id: str,
+    include_protection: bool = Query(default=False, alias="protection"),
     db_infra=Depends(get_db),
 ) -> CertificateStatusResponse:
-    """Public facts for one published certificate, including on private teams.
+    """Public exact-certificate facts; protection evidence is negotiated.
 
-    Active means not revoked; callers must still verify the presented certificate
-    against the current team key. A rotation invalidates old-key signatures.
+    Released callers retain their exact four-field shape. Protection/hash
+    exposes no member fields and grants no private team-metadata read access.
     """
     db = db_infra.get_manager("aweb")
+    if include_protection:
+        async with db.transaction() as tx:
+            await team_guard(tx, domain, name)
+            return await _certificate_status_response(tx, domain, name, certificate_id, include_protection=True)
+    return await _certificate_status_response(db, domain, name, certificate_id)
+
+
+async def _certificate_status_response(db, domain, name, certificate_id, *, include_protection=False):
     row = await db.fetch_one(
-        """
-        SELECT t.team_did_key, tc.revoked_at
-        FROM {{tables.team_certificates}} tc
-        JOIN {{tables.teams}} t ON t.team_uuid = tc.team_uuid
-        WHERE t.domain = $1 AND t.name = $2 AND t.deleted_at IS NULL
-          AND tc.certificate_id = $3
-        """,
+        "SELECT t.team_did_key, tc.revoked_at, tc.certificate FROM {{tables.team_certificates}} tc "
+        "JOIN {{tables.teams}} t ON t.team_uuid=tc.team_uuid "
+        "WHERE t.domain=$1 AND t.name=$2 AND t.deleted_at IS NULL AND tc.certificate_id=$3",
         domain, name, certificate_id,
     )
     if row is None:
         raise HTTPException(status_code=404, detail="Certificate not found")
-    revoked_at = row["revoked_at"]
-    return CertificateStatusResponse(
-        team_id=build_team_id(domain, name),
-        team_did_key=row["team_did_key"],
-        status="revoked" if revoked_at is not None else "active",
-        revoked_at=revoked_at.isoformat() if revoked_at is not None else None,
-    )
+    fields = dict(team_id=build_team_id(domain, name), team_did_key=row["team_did_key"],
+        status="revoked" if row["revoked_at"] is not None else "active",
+        revoked_at=row["revoked_at"].isoformat() if row["revoked_at"] is not None else None)
+    if include_protection:
+        from awid.protected_membership import registered_certificate_digest
+        fields.update(protection=await protection(db, domain, name),
+            certificate_sha256=registered_certificate_digest(row["certificate"]) if row["certificate"] else None)
+    return CertificateStatusResponse(**fields)
 
 
 class TeamServerRecordBody(BaseModel):

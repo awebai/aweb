@@ -23,6 +23,15 @@ namespace/team deletion and recreation. Service-key replacement, recovery and
 deprotection use the recorded operator provisioning path and advance generation;
 no controller-key-only worker endpoint can make those changes.
 
+Private status-only callers may negotiate `?protection=1` on the existing
+public certificate-status read. It adds the current protection projection and
+exact retained `certificate_sha256`, under the same canonical-team guard as
+the current controller/status read. No member fields or private metadata
+permission are disclosed. Calls without the query preserve their exact
+four-field response, because released consumers check that exact shape.
+Missing negotiated evidence is unknown; a new caller never infers legacy
+from an old registry's unchanged four-field answer.
+
 An upgraded registry projects absence of a protection row explicitly as
 `{"mode":"legacy"}`. A missing response field, unknown/malformed binding,
 older registry or failed lookup is unavailable evidence, never inferred legacy.

@@ -17,6 +17,7 @@ from typing import Any
 from time import monotonic
 from types import MappingProxyType
 
+from awid.did import public_key_from_did
 from awid.protected_effect import EffectRefused, validate_binding
 from awid.signing import canonical_json_bytes
 from awid.team_certificate import TeamCertificateError, check_team_certificate
@@ -46,6 +47,9 @@ class TeamProtectionObservation:
     controller_did_key: str
     binding: Mapping[str, Any]
     deadline: float
+    certificate_id: str | None = None
+    certificate_sha256: str | None = None
+    certificate_status: str | None = None
 
     def __post_init__(self):
         object.__setattr__(
@@ -66,57 +70,110 @@ class TeamProtectionObservation:
             raise EffectRefused("protected_admission_required")
 
 
-async def observe_team_protection(registry, team_id):
+async def observe_team_protection(registry, team_id, *, certificate_id=None):
     started = monotonic()
     try:
         domain, name = parse_team_id(team_id)
-        team = await registry.get_team_fresh(domain, name)
-        if team is None or team.team_id != team_id or not team.team_did_key:
-            raise ValueError("current team unavailable")
-        result = TeamProtectionObservation(
-            team_id, team.team_did_key, team.protection, started + 60
-        )
+        if certificate_id is not None:
+            status = await registry.get_team_certificate_status_fresh(
+                domain, name, certificate_id, include_protection=True
+            )
+            if status is None:
+                raise TeamCertificateError("unregistered")
+            if (
+                not isinstance(status, dict)
+                or status.get("team_id") != team_id
+                or status.get("status") not in {"active", "revoked"}
+                or (
+                    status["status"] == "active"
+                    and status.get("revoked_at") is not None
+                )
+                or (
+                    status["status"] == "revoked"
+                    and not isinstance(status.get("revoked_at"), str)
+                )
+            ):
+                raise ValueError("malformed certificate status")
+            public_key_from_did(status["team_did_key"])
+            result = TeamProtectionObservation(
+                team_id,
+                status["team_did_key"],
+                status.get("protection"),
+                started + 60,
+                certificate_id,
+                status.get("certificate_sha256"),
+                status["status"],
+            )
+        else:
+            team = await registry.get_team_fresh(domain, name)
+            if team is None or team.team_id != team_id or not team.team_did_key:
+                raise ValueError("current team unavailable")
+            public_key_from_did(team.team_did_key)
+            result = TeamProtectionObservation(
+                team_id, team.team_did_key, team.protection, started + 60
+            )
         result.require_fresh()
         return result
+    except TeamCertificateError:
+        raise
     except Exception:
         logger.exception("Current protected-team evidence unavailable")
         raise EffectRefused("protected_state_unavailable") from None
 
 
-async def verify_registered_membership(registry, observation, certificate):
-    """A full signature/registry check on a protected team, no ID-set shortcut.
-
-    certificate is the complete decoded signed v1 artifact. The returned
-    observation remains the caller's original freshness fence.
-    """
+def check_presented_membership(observation, certificate):
+    """Pure exact presentation check using one negotiated public observation."""
     observation.require_fresh()
     if not observation.protected:
         return certificate
     if certificate.get("team_id") != observation.team_id:
         raise TeamCertificateError("certificate_binding_mismatch")
-    domain, name = parse_team_id(observation.team_id)
-    try:
-        records = await registry.list_team_certificates_fresh(
-            domain, name, active_only=False
-        )
-    except Exception:
-        logger.exception("Exact protected membership evidence unavailable")
-        raise EffectRefused("protected_state_unavailable") from None
+    if observation.certificate_id is None or observation.certificate_status not in {
+        "active",
+        "revoked",
+    }:
+        raise EffectRefused("protected_state_unavailable")
     checked = check_team_certificate(
         base64.b64encode(canonical_json_bytes(certificate)).decode(),
         subject_did_key=certificate.get("member_did_key"),
         team_did_key=observation.controller_did_key,
-        revoked_certificate_ids={r.certificate_id for r in records if r.revoked_at},
-        registered_certificate_ids={r.certificate_id for r in records},
+        revoked_certificate_ids={observation.certificate_id}
+        if observation.certificate_status == "revoked"
+        else set(),
+        registered_certificate_ids={observation.certificate_id},
     )
-    record = next(r for r in records if r.certificate_id == checked["certificate_id"])
-    digest = getattr(record, "certificate_sha256", None)
-    if digest is None:
+    digest = observation.certificate_sha256
+    if (
+        not isinstance(digest, str)
+        or len(digest) != 64
+        or any(c not in "0123456789abcdef" for c in digest)
+    ):
         raise EffectRefused("protected_state_unavailable")
     if digest != certificate_digest(checked):
         raise TeamCertificateError("certificate_binding_mismatch")
     observation.require_fresh()
     return checked
+
+
+async def verify_registered_membership(registry, observation, certificate):
+    """Use the same pure verifier for public status or a full-authority list."""
+    observation.require_fresh()
+    if not observation.protected:
+        return certificate
+    if observation.certificate_id is not None:
+        return check_presented_membership(observation, certificate)
+    record = await resolve_registered_membership(
+        registry, observation, certificate.get("certificate_id")
+    )
+    from dataclasses import replace
+
+    exact = replace(
+        observation,
+        certificate_id=record.certificate_id,
+        certificate_sha256=record.certificate_sha256,
+        certificate_status="revoked" if record.revoked_at else "active",
+    )
+    return check_presented_membership(exact, certificate)
 
 
 async def resolve_registered_membership(registry, observation, certificate_id):
@@ -221,3 +278,45 @@ async def verify_retained_membership(
         certificate_sha256=certificate_sha256,
     )
     return record
+
+
+def check_retained_subject_record(
+    observation,
+    record,
+    *,
+    certificate_id,
+    controller_did_key,
+    principal,
+    certificate_sha256=None,
+):
+    """Pure subject-only baseline for consumers that use no alias/scope/rights.
+
+    The caller supplies its ORIGINAL literal subject, ID and controller. It
+    must not copy missing provenance out of record. A did:aw binding still
+    requires the consumer's independent current identity/key proof. Only .8's
+    explicit baseline permits pre-cutover references; resource ACLs are separate.
+    """
+    observation.require_fresh()
+    if not observation.protected:
+        return
+    if record is None or record.certificate_id != certificate_id:
+        raise TeamCertificateError("unregistered")
+    if record.revoked_at:
+        raise TeamCertificateError("revoked")
+    if not getattr(record, "certificate_sha256", None):
+        raise EffectRefused("protected_state_unavailable")
+    if not isinstance(principal, str):
+        raise TeamCertificateError("certificate_binding_mismatch")
+    if principal.startswith("did:key:"):
+        matches = principal == record.member_did_key
+    elif principal.startswith("did:aw:"):
+        matches = principal == record.member_did_aw
+    else:
+        matches = False
+    if not matches or controller_did_key != observation.controller_did_key:
+        raise TeamCertificateError("certificate_binding_mismatch")
+    if (
+        certificate_sha256 is not None
+        and certificate_sha256 != record.certificate_sha256
+    ):
+        raise TeamCertificateError("certificate_binding_mismatch")
