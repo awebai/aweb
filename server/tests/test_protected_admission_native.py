@@ -94,7 +94,10 @@ async def admission_world(world, tmp_path):
 
 
 def headers(a, *, body=b"", path="/protected-operations", method="POST", label="protected_operation_prepare", context=None):
-    return {**dict(proof_request(a.w, body=body, path=path, method=method, operation=label, context=context).headers),
+    # Policy reads bind the public service/team selector, not a complete
+    # protected operation scope. Keep the exact query in the signed target.
+    scope = {"service_id": a.w.context.service_id, "team_id": TEAM} if label == "protected_admission_policy_read" else None
+    return {**dict(proof_request(a.w, body=body, path=path, method=method, operation=label, context=context, scope=scope).headers),
         "X-AWEB-DID-AW": a.w.root_id, "Content-Type": "application/json"}
 
 

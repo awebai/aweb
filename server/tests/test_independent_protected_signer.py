@@ -73,6 +73,7 @@ def proof_request(
     method="POST",
     path="/protected-operations",
     context=None,
+    scope=None,
 ):
     key = key or world.root
     timestamp = datetime.now(UTC).isoformat()
@@ -90,7 +91,7 @@ def proof_request(
             "service_id": SERVICE,
             "scope_sha256": hashlib.sha256(
                 canonical_json_bytes(
-                    (world.context if context is None else context).fields()
+                    (world.context if context is None else context).fields() if scope is None else scope
                 )
             ).hexdigest(),
         }
@@ -105,13 +106,14 @@ def proof_request(
     async def receive():
         return {"type": "http.request", "body": body, "more_body": False}
 
+    route, _, query = path.partition("?")
     return Request(
         {
             "type": "http",
             "method": method,
-            "path": path,
-            "raw_path": path.encode(),
-            "query_string": b"",
+            "path": route,
+            "raw_path": route.encode(),
+            "query_string": query.encode(),
             "headers": [(k.encode(), v.encode()) for k, v in headers.items()],
         },
         receive,
@@ -620,9 +622,29 @@ async def test_agent_requester_cannot_execute_a_live_floor_operation(world):
     prepared = await world.app.signer.prepare(world.operation, requester=requester)
     with pytest.raises(SignerRefused, match="scope_refused"):
         await world.app.signer.execute(prepared.operation_id, {}, human=requester)
-    with pytest.raises(SignerRefused, match="scope_refused"):
+    from fastapi import HTTPException
+
+    # A prepare proof cannot be relabelled as execute: possession fails first.
+    with pytest.raises(HTTPException) as malformed:
         await world.app.requester(
             proof_request(world),
             principal=world.root_id,
             operation="protected_operation_execute",
         )
+    assert malformed.value.status_code == 401
+    # A genuine execute proof builds only a requester, never a human actor.
+    # The shared operation rule must then refuse this live-floor action.
+    execute_requester = await world.app.requester(
+        proof_request(world, operation="protected_operation_execute", body=b"",
+            path=f"/protected-operations/{prepared.operation_id}/execute"),
+        principal=world.root_id,
+        operation="protected_operation_execute",
+    )
+    with pytest.raises(SignerRefused, match="live_approval_required"):
+        await world.app.signer.execute_request(prepared.operation_id, requester=execute_requester)
+    row = await world.db.fetch_one(
+        "SELECT result,signed_result,refusal_code,approval_id FROM {{tables.protected_signer_operations}} WHERE operation_id=$1",
+        prepared.operation_id,
+    )
+    assert row["result"] is None and row["signed_result"] is None and row["refusal_code"] is None
+    assert row["approval_id"] is not None
