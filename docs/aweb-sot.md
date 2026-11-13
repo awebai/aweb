@@ -522,6 +522,27 @@ The OSS request middleware does not impose a per-client limit before team
 authentication, so an auth-failing request is not counted by a global client
 rate limiter here. Hosted proxy admission is deployment policy.
 
+**Registered-certificate cache misses.** In strict registration mode, a
+correctly signed, unrevoked presented certificate absent from the cached
+all-certificates list gets one fresh list read and one verification retry.
+A completed read that still omits it answers 401 `unregistered`. Suppressed
+admission, Redis failure, timeout or failed fresh authority answers transient
+503; the old cached omission is not current proof of absence. The successful
+read replaces only the existing registry/team/reader cache partition, with
+its ordinary TTL and retention. Already registered certificates take the
+existing path without a new admission check.
+
+The fresh-list producer and its waiters each retain the registry client's
+total timeout; cancellation of a waiter propagates immediately and cannot
+extend the bounded producer. Concurrent callers in one client share that
+producer. Across clients, a separate five-second per-registry/team Redis
+`SET NX` window bounds added list refreshes to 12 attempts per minute.
+Bad request signatures spend neither refresh budget; bad certificate
+signatures spend only the existing key-refresh budget. A newly valid
+certificate after key rotation still requires fresh revocations, including
+when that certificate also misses the registered list. This changes no
+registration-mode activation or revocation freshness policy.
+
 **Revocation.** Against an honest, available registry, a newly revoked
 certificate may continue to verify for at most the 120-second fresh-plus-stale
 window. During a registry failure only, the revocation tier may serve the last
@@ -595,6 +616,13 @@ changes nothing: which version stays active is a decision about that team's
 data. Deactivate all but one active version for those teams, then run it again.
 A hosted deployment that keeps its own copy of the aweb migrations needs the
 same file in that copy.
+
+Creation of a team's instructions or roles version takes the same per-team
+transaction advisory lock as activation (`team-instructions-activation` or
+`team-roles-activation`). Version allocation and the optional active-base check
+run after taking that lock, so concurrent creators allocate distinct ordered
+versions rather than racing on `MAX(version) + 1`. The database's one-active
+indexes remain the final invariant for every writer.
 
 ### Current table inventory
 
