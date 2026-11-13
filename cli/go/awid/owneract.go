@@ -39,28 +39,32 @@ var (
 	HumanRoleOwnerActs = []string{"human-credential.replace", "human-role.designate", "human-role.revoke"}
 	// LogsOwnerActs are the acts logs accepts in addition to AppOwnerActs.
 	LogsOwnerActs = []string{"logs.retention.set", "logs.erase", "logs.legal-hold.set", "logs.legal-hold.release"}
+	// TeamGovernanceOwnerActs is opt-in. It does not widen any installed-app
+	// or hook receiver's vocabulary.
+	TeamGovernanceOwnerActs = []string{"team.owner.change", "team.controller-permissions.change"}
 )
 
 var (
-	ownerUUID        = regexp.MustCompile(`^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$`)
-	ownerTeamID      = regexp.MustCompile(`^[a-z0-9][a-z0-9_-]{0,63}:[a-z0-9]([a-z0-9.-]{0,251}[a-z0-9])?$`)
-	ownerOrigin      = regexp.MustCompile(`^https://[a-z0-9]([a-z0-9.-]{0,251}[a-z0-9])?(:[0-9]{1,5})?$`)
-	ownerDIDKey      = regexp.MustCompile(`^did:key:z[1-9A-HJ-NP-Za-km-z]{40,60}$`)
-	ownerDIDAW       = regexp.MustCompile(`^did:aw:[1-9A-HJ-NP-Za-km-z]{20,32}$`)
-	ownerNonce       = regexp.MustCompile(`^[0-9a-f]{32}$`)
-	ownerTime        = regexp.MustCompile(`^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}Z$`)
-	ownerAppID       = regexp.MustCompile(`^[a-z][a-z0-9-]{0,62}$`)
-	ownerDigest      = regexp.MustCompile(`^sha256:[0-9a-f]{64}$`)
-	ownerSHA256      = regexp.MustCompile(`^[0-9a-f]{64}$`)
-	ownerToken       = regexp.MustCompile(`^[a-z][a-z0-9_.-]{0,63}$`)
-	ownerAppScope    = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9:._/-]{0,127}$`)
-	ownerRef         = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9._:/-]{0,127}$`)
-	ownerPath        = regexp.MustCompile(`^/[A-Za-z0-9._~!$&'()*+,;=:@/%-]{0,511}$`)
-	ownerMethod      = regexp.MustCompile(`^(GET|HEAD|POST|PUT|PATCH|DELETE)$`)
-	ownerHookName    = regexp.MustCompile(`^(post-secret-use-hook|post-governance-hook|post-manifest-command-hook|post-mutation-hook|post-command-hook)$`)
-	ownerEventClass  = regexp.MustCompile(`^(all|post-secret-use-hook|post-governance-hook|post-manifest-command-hook|post-mutation-hook|post-command-hook)$`)
-	ownerCatalogID   = regexp.MustCompile(`^[a-z][a-z0-9_.-]{0,63}$`)
-	maxOwnerActItems = 64
+	ownerUUID                 = regexp.MustCompile(`^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$`)
+	ownerTeamID               = regexp.MustCompile(`^[a-z0-9][a-z0-9_-]{0,63}:[a-z0-9]([a-z0-9.-]{0,251}[a-z0-9])?$`)
+	ownerOrigin               = regexp.MustCompile(`^https://[a-z0-9]([a-z0-9.-]{0,251}[a-z0-9])?(:[0-9]{1,5})?$`)
+	ownerDIDKey               = regexp.MustCompile(`^did:key:z[1-9A-HJ-NP-Za-km-z]{40,60}$`)
+	ownerDIDAW                = regexp.MustCompile(`^did:aw:[1-9A-HJ-NP-Za-km-z]{20,32}$`)
+	ownerNonce                = regexp.MustCompile(`^[0-9a-f]{32}$`)
+	ownerTime                 = regexp.MustCompile(`^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}Z$`)
+	ownerAppID                = regexp.MustCompile(`^[a-z][a-z0-9-]{0,62}$`)
+	ownerDigest               = regexp.MustCompile(`^sha256:[0-9a-f]{64}$`)
+	ownerSHA256               = regexp.MustCompile(`^[0-9a-f]{64}$`)
+	ownerToken                = regexp.MustCompile(`^[a-z][a-z0-9_.-]{0,63}$`)
+	ownerAppScope             = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9:._/-]{0,127}$`)
+	ownerRef                  = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9._:/-]{0,127}$`)
+	ownerPath                 = regexp.MustCompile(`^/[A-Za-z0-9._~!$&'()*+,;=:@/%-]{0,511}$`)
+	ownerMethod               = regexp.MustCompile(`^(GET|HEAD|POST|PUT|PATCH|DELETE)$`)
+	ownerHookName             = regexp.MustCompile(`^(post-secret-use-hook|post-governance-hook|post-manifest-command-hook|post-mutation-hook|post-command-hook)$`)
+	ownerEventClass           = regexp.MustCompile(`^(all|post-secret-use-hook|post-governance-hook|post-manifest-command-hook|post-mutation-hook|post-command-hook)$`)
+	ownerCatalogID            = regexp.MustCompile(`^[a-z][a-z0-9_.-]{0,63}$`)
+	ownerControllerPermission = regexp.MustCompile(`^[a-z][a-z0-9.-]{0,63}/[a-z][a-z0-9_]{0,63}$`)
+	maxOwnerActItems          = 64
 )
 
 // ownerField describes one subject field.
@@ -167,6 +171,20 @@ func appFields(extra map[string]ownerField) map[string]ownerField {
 }
 
 var ownerSubjects = map[string]ownerSubject{
+	"team.owner.change": {
+		fields: map[string]ownerField{
+			"team_id": ownerString(ownerTeamID), "expected_revision": ownerInteger(1, strictjson.MaxSafeInteger),
+			"old_owners": ownerList(ownerDIDAW), "new_owners": ownerList(ownerDIDAW),
+		},
+		required: []string{"team_id", "old_owners", "new_owners", "expected_revision"},
+	},
+	"team.controller-permissions.change": {
+		fields: map[string]ownerField{
+			"team_id": ownerString(ownerTeamID), "expected_revision": ownerInteger(1, strictjson.MaxSafeInteger),
+			"old_permissions": ownerList(ownerControllerPermission), "new_permissions": ownerList(ownerControllerPermission),
+		},
+		required: []string{"team_id", "old_permissions", "new_permissions", "expected_revision"},
+	},
 	"hook-binding.activate":    bindingSubject(),
 	"hook-binding.revoke":      bindingSubject(),
 	"app-role.designate":       enrolmentSubject(),

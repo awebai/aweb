@@ -121,6 +121,7 @@ def test_public_wire_helpers_do_not_create_verified_authority() -> None:
         "HUMAN_ROLE_ACTS",
         "HumanCredential",
         "LOGS_ACTS",
+        "TEAM_GOVERNANCE_ACTS",
         "PREFIX",
         "Refused",
         "VerifiedOwnerAct",

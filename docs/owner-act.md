@@ -111,6 +111,12 @@ audience or vocabulary is refused.
 | A naapp that declares human roles ([owner-act delivery](owner-act-delivery.md)), on its delivery route | `human-role.designate`, `human-role.revoke`, `human-credential.replace`, `human-credential.cap-set` |
 | logs, in addition | `logs.retention.set`, `logs.erase`, `logs.legal-hold.set`, `logs.legal-hold.release` |
 
+The [typed team-governance consumer](team-governance.md), under implementation,
+defines its own opt-in `team.owner.change` and
+`team.controller-permissions.change` vocabulary. Adding these codecs does not
+widen any existing hook or installed-app receiver's allowlist, or enable a
+mutation route before its consumer is connected.
+
 Subjects are flat objects. A field marked "when" is required in that case and
 refused otherwise.
 

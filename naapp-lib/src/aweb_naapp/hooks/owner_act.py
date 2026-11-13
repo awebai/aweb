@@ -45,6 +45,7 @@ __all__ = [
     "HUMAN_ROLE_ACTS",
     "HumanCredential",
     "LOGS_ACTS",
+    "TEAM_GOVERNANCE_ACTS",
     "PREFIX",
     "Refused",
     "VerifiedOwnerAct",
@@ -65,6 +66,8 @@ APP_ACTS = ("app-role.designate", "app-role.revoke", "app-credential.recover")
 # owner-act delivery route.
 HUMAN_ROLE_ACTS = ("human-credential.replace", "human-role.designate", "human-role.revoke")
 LOGS_ACTS = ("logs.retention.set", "logs.erase", "logs.legal-hold.set", "logs.legal-hold.release")
+# Opt-in team governance; existing app/hook/contact vocabularies do not grow.
+TEAM_GOVERNANCE_ACTS = ("team.owner.change", "team.controller-permissions.change")
 # How many active credentials each holding of an app role may hold. It names
 # no holder; it serves no route until an app mounts it.
 CREDENTIAL_CAP_ACT = "human-credential.cap-set"
@@ -152,6 +155,7 @@ _HOOKS = (
 _HOOK = re.compile("|".join(_HOOKS))
 _EVENT_CLASS = re.compile("|".join(("all", *_HOOKS)))
 _CATALOG_ID = re.compile(r"[a-z][a-z0-9_.-]{0,63}")
+_CONTROLLER_PERMISSION = re.compile(r"[a-z][a-z0-9.-]{0,63}/[a-z][a-z0-9_]{0,63}")
 
 
 @dataclass(frozen=True)
@@ -275,6 +279,24 @@ _HUMAN_REVOCATION = _Subject(
     required=("app_id", "installation_id", "role", "principal"),
 )
 _SUBJECTS: dict[str, _Subject] = {
+    "team.owner.change": _Subject(
+        fields={
+            "team_id": _string(_TEAM_ID),
+            "old_owners": _list(_DID_AW),
+            "new_owners": _list(_DID_AW),
+            "expected_revision": _integer(1, MAX_SAFE_INTEGER),
+        },
+        required=("team_id", "old_owners", "new_owners", "expected_revision"),
+    ),
+    "team.controller-permissions.change": _Subject(
+        fields={
+            "team_id": _string(_TEAM_ID),
+            "old_permissions": _list(_CONTROLLER_PERMISSION),
+            "new_permissions": _list(_CONTROLLER_PERMISSION),
+            "expected_revision": _integer(1, MAX_SAFE_INTEGER),
+        },
+        required=("team_id", "old_permissions", "new_permissions", "expected_revision"),
+    ),
     "hook-binding.activate": _BINDING,
     "hook-binding.revoke": _BINDING,
     "app-role.designate": _ENROLMENT,
