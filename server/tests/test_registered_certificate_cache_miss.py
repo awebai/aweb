@@ -24,7 +24,7 @@ from test_team_key_rotation_cache import _Redis
 
 
 @pytest_asyncio.fixture
-async def world(monkeypatch):
+async def world(monkeypatch, aweb_cloud_db):
     monkeypatch.setenv("AWEB_REQUIRE_REGISTERED_CERTIFICATES", "true")
     clock = [1_000_000]
     monkeypatch.setattr(registry_module, "_cache_now", lambda: clock[0])
@@ -34,6 +34,8 @@ async def world(monkeypatch):
         clock=clock, team=team, team_did=team_did, member=member, member_did=member_did,
         registered=["cert-earlier"], revoked=[], list_reads=0, list_status=200, clients=[],
         entered=asyncio.Event(), release=None, registry_key=team_did,
+        # The real aweb schema: certificate verification reads the team-key pins.
+        db=SimpleNamespace(get_manager=lambda _name: aweb_cloud_db.aweb_db),
     )
 
     async def handler(request):
@@ -95,7 +97,7 @@ async def _verify(env, certificate_id, *, signer=None, registry=None, bad_reques
         "X-AWEB-Timestamp": timestamp, "X-AWID-Team-Certificate": _encode_certificate(cert),
     })
     request.app.state.awid_registry_client = registry or env.registry
-    return await verify_request_certificate(request, db=object())
+    return await verify_request_certificate(request, db=env.db)
 
 
 async def _refused(env, certificate_id, **kwargs):
@@ -174,12 +176,24 @@ async def test_redis_admission_failure_never_fetches_authority(world):
 @pytest.mark.asyncio
 async def test_concurrent_misses_share_inflight_refresh_past_admission_window(world):
     world.release = asyncio.Event()
+    # Count the callers that reached the shared refresh: verification awaits
+    # its database before it, so they arrive asynchronously.
+    arrived = []
+    refresh = world.registry.refresh_team_certificates_after_miss
+
+    async def counted_refresh(*args, **kwargs):
+        arrived.append(None)
+        return await refresh(*args, **kwargs)
+
+    world.registry.refresh_team_certificates_after_miss = counted_refresh
     calls = [asyncio.create_task(_refused(world, "cert-never")) for _ in range(12)]
     try:
         await asyncio.wait_for(world.entered.wait(), 1)
         world.clock[0] += 6
         calls.extend(asyncio.create_task(_refused(world, "cert-never")) for _ in range(12))
-        await asyncio.sleep(0)
+        async with asyncio.timeout(5):
+            while len(arrived) < len(calls):
+                await asyncio.sleep(0.01)
         assert world.list_reads == 1
     finally:
         world.release.set()
