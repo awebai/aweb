@@ -295,3 +295,118 @@ async def test_team_read_projects_authoritative_protection_explicitly(
         assert binding["history_id"]
     else:
         assert binding == {"mode": "legacy"}
+
+
+@pytest.mark.asyncio
+async def test_operator_protection_transition_preserves_history_and_requires_generation(
+    controller_app,
+):
+    from awid_service.protected_teams import provision_team_protection
+
+    env = controller_app
+    service_did = keypair()[1]
+    async with env.db.transaction() as tx:
+        first = await provision_team_protection(
+            tx,
+            domain="local",
+            name="base",
+            service_id="independent-signer",
+            service_did_key=service_did,
+            expected_generation=0,
+            approval_ref="operator-reviewed-initial-cutover",
+        )
+    async with env.db.transaction() as tx:
+        second = await provision_team_protection(
+            tx,
+            domain="local",
+            name="base",
+            service_id="independent-signer",
+            service_did_key=keypair()[1],
+            expected_generation=1,
+            approval_ref="operator-reviewed-key-replacement",
+        )
+    assert first["history_id"] == second["history_id"]
+    assert second["generation"] == 2
+    with pytest.raises(ValueError, match="protection_generation_changed"):
+        async with env.db.transaction() as tx:
+            await provision_team_protection(
+                tx,
+                domain="local",
+                name="base",
+                service_id="independent-signer",
+                service_did_key=service_did,
+                expected_generation=1,
+                approval_ref="stale-transition",
+            )
+    async with env.db.transaction() as tx:
+        await provision_team_protection(
+            tx,
+            domain="local",
+            name="base",
+            service_id="independent-signer",
+            service_did_key=service_did,
+            expected_generation=2,
+            approval_ref="operator-reviewed-deprotection",
+            mode="legacy",
+        )
+    row = await env.db.fetch_one(
+        "SELECT history_id,generation,mode FROM {{tables.team_protection}}"
+    )
+    assert str(row["history_id"]) == first["history_id"]
+    assert row["generation"] == 3 and row["mode"] == "legacy"
+    assert (await env.client.get(TEAM_PATH)).json()["protection"] == {"mode": "legacy"}
+
+
+@pytest.mark.asyncio
+async def test_operator_cannot_reuse_a_controller_or_member_key_for_attestation(
+    controller_app,
+):
+    from awid_service.protected_teams import provision_team_protection
+
+    env = controller_app
+    for reused in (env.controller[1], env.team[1]):
+        with pytest.raises(ValueError, match="service_key_not_distinct"):
+            async with env.db.transaction() as tx:
+                await provision_team_protection(
+                    tx,
+                    domain="local",
+                    name="base",
+                    service_id="independent-signer",
+                    service_did_key=reused,
+                    expected_generation=0,
+                    approval_ref="operator-record",
+                )
+    assert (
+        await env.db.fetch_value("SELECT count(*) FROM {{tables.team_protection}}") == 0
+    )
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("protected", [False, True], ids=["legacy", "protected"])
+async def test_new_team_uuid_does_not_reset_canonical_protection(
+    controller_app, protected
+):
+    env = controller_app
+    if protected:
+        await protect_team(env)
+    # Represents an explicitly retired old incarnation; its canonical binding
+    # is independent of this disposable UUID and cannot be erased by create.
+    await env.db.execute(
+        "UPDATE {{tables.teams}} SET deleted_at=now() WHERE domain='local' AND name='base'"
+    )
+    response = await send(
+        env,
+        "POST",
+        "/v1/namespaces/local/teams",
+        {"domain": "local", "operation": "create_team", "name": "base"},
+        {"name": "base", "team_did_key": keypair()[1], "visibility": "public"},
+    )
+    assert response.status_code == (403 if protected else 200), response.text
+    if protected:
+        assert response.json()["detail"]["code"] == "protected_controller_required"
+        assert (
+            await env.db.fetch_value(
+                "SELECT count(*) FROM {{tables.teams}} WHERE deleted_at IS NULL"
+            )
+            == 0
+        )
