@@ -6,7 +6,7 @@ These exercise the policy scenarios mailed-link-reveals-and-decides-nothing,
 mailed-link-approves-with-one-exact-act-uv, mailed-link-denies-with-one-exact-act-uv,
 mailed-link-assertion-for-the-other-decision, mailed-link-other-candidate-or-spent,
 mailed-link-not-revealing-policy and mailed-wait-capped-by-frozen-owner-act
-(docs/vectors/human-assurance-v1.json)."""
+of the human-assurance policy vectors."""
 
 from __future__ import annotations
 
