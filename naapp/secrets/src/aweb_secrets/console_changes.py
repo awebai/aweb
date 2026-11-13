@@ -8,7 +8,7 @@ No LOGIN credential lock is acquired late in that effect transaction. S4
 checks the exact login on request entry; passkey retirement also voids its B2
 decisions. A confirmation releases protected results only to its deciding owner.
 
-Creation routes expose only the kinds with proof-bound governance implemented
+Change routes expose only the kinds with proof-bound governance implemented
 by ChangeSets. Draft, decision and confirmation share the same sole writer.
 """
 
@@ -49,9 +49,9 @@ from pgdbm import TransactionManager
 
 from aweb_secrets.change import ChangeRefused
 from aweb_secrets.change_sets import (
-    AUDITED_CREATE_KINDS,
     ChangeSets,
     Confirmation,
+    audited_change,
     change_policy_ref,
 )
 from aweb_secrets.console import OwnerConsole, _body, _require_json, _text
@@ -118,7 +118,7 @@ class ConsoleChanges:
         if any(
             not isinstance(item, dict)
             or not (
-                (item.get("kind") in AUDITED_CREATE_KINDS and item.get("op") == "create")
+                audited_change(item)
                 or (item.get("kind"), item.get("op"))
                 in (("approver", "create"), ("approver_contact", "update"))
             )
