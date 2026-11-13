@@ -7,7 +7,7 @@ from uuid import uuid4
 
 import pytest
 
-from aweb_naapp.runtime.protected_signer.retention import FrozenDelivery, RetainedEffect
+from aweb_naapp.runtime.protected_signer.retention import EffectConfirmation, FrozenDelivery, RetainedEffect
 
 
 def retained():
@@ -72,3 +72,20 @@ def test_retention_cannot_replace_the_engine_artifact_or_extend_its_bound():
 def test_retained_delivery_is_a_fixed_mutation_request(change):
     with pytest.raises(ValueError):
         replace(retained().delivery, **change)
+
+
+def test_confirmation_names_the_exact_effect_with_an_original_freshness_bound():
+    effect = retained()
+    observation = EffectConfirmation(effect.operation_id, effect.artifact_sha256, effect.expires_at)
+    observation.require_matches(effect, effect.expires_at - timedelta(seconds=1))
+    for changed in [replace(observation, operation_id=str(uuid4())), replace(observation, artifact_sha256="b" * 64)]:
+        with pytest.raises(ValueError):
+            changed.require_matches(effect, effect.expires_at - timedelta(seconds=1))
+    with pytest.raises(ValueError):
+        observation.require_matches(effect, effect.expires_at)
+
+
+@pytest.mark.parametrize("change", [{"extra": "private"}, {"v": True}, {"signature": "bad"}])
+def test_private_storage_has_a_closed_unambiguous_shape(change):
+    with pytest.raises(ValueError):
+        RetainedEffect.from_fields({**retained().fields(), **change})

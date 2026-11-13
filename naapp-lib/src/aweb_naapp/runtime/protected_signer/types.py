@@ -424,6 +424,6 @@ class PreparedOperation:
 class OperationReceipt:
     operation_id: str
     state: Literal["pending", "committed", "refused", "unknown"]
-    result: Mapping[str, str] | None = None
+    result: Mapping[str, Any] | None = None
     code: str | None = None
     expires_at: str | None = None

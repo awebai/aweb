@@ -18,6 +18,7 @@ from .operation_codecs import (
     ROOT_CODEC,
     OperationCodec,
 )
+from .operation_effects import ENDORSEMENT, LOCAL_SIGNATURE, REGISTERED_MEMBERSHIP, OperationEffect
 from .types import SignerRefused
 
 
@@ -32,6 +33,7 @@ class OperationDefinition:
     bounds: tuple[str, ...]
 
     codec: OperationCodec
+    effect: OperationEffect
     consumer_available: bool = True
 
     @property
@@ -63,6 +65,7 @@ _ROWS = (
             "Membership removal distinct from ID revocation",
         ),
         codec=REMOVAL_CODEC,
+        effect=REGISTERED_MEMBERSHIP,
     ),
     OperationDefinition(
         "identity.root.endorse",
@@ -97,6 +100,7 @@ _ROWS = (
             "Execute refuses policy_changed on changed current policy; retry never rebinds",
         ),
         codec=ROOT_CODEC,
+        effect=ENDORSEMENT,
     ),
     OperationDefinition(
         "team.agent.admit",
@@ -133,6 +137,7 @@ _ROWS = (
             "Counters per policy/team/root ID; key rotation retains bucket; aggregate ceiling only if explicit",
         ),
         codec=ADMISSION_CODEC,
+        effect=REGISTERED_MEMBERSHIP,
     ),
     OperationDefinition(
         "human-role.revoke",
@@ -148,6 +153,7 @@ _ROWS = (
             "Last-owner safeguards",
         ),
         codec=REVOKE_CODEC,
+        effect=LOCAL_SIGNATURE,
     ),
 )
 

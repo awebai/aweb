@@ -34,6 +34,7 @@ from aweb_naapp.runtime.passkeys import Passkeys, passkey_evidence_commitment
 
 from .catalog import operation_spec
 from .codecs import artifact_for, authority_key, signing_bytes
+from .retention import EffectConfirmation, RetainedEffect
 from .types import (
     AdmittedHuman,
     AuthorityProvider,
@@ -275,8 +276,7 @@ class ProtectedSigner:
         self, operation: RevokeHumanRole | OwnerActOperation, *, requester: RestrictedRequester
     ) -> PreparedOperation:
         typed = owner_act_operation(operation)
-        if typed.operation in {"identity.root.endorse", "team.agent.admit", "team.agent.remove"} and self.admission is None:
-            raise SignerRefused("operation_not_served")
+        provider = self._effect_provider(typed)
         # Existing owner-act-only embeddings retain their released port. A
         # missing adapter for a new family refuses before creating B2 state.
         signing_port = "sign_owner_act" if typed.spec.family == "owner_act" else "sign_operation"
@@ -289,7 +289,7 @@ class ProtectedSigner:
         _checked_self_removal(requester, operation_id=operation.operation_id)
         intent = canonical_json_bytes(operation.intent())
         fence = await self.authority.observe(operation.context, purpose="prepare")
-        if typed.operation in {"identity.root.endorse", "team.agent.admit", "team.agent.remove"}:
+        if provider is not None:
             # Authenticate the current local grant before reading admission
             # configuration. Existing operations reconcile their retained body
             # before new operation-specific registry observations can refuse a
@@ -310,7 +310,7 @@ class ProtectedSigner:
         cap = _checked_self_removal(requester, operation=typed)
         if cap is not None and cap.read_only:
             raise SignerRefused("scope_refused")
-        extra = await self.admission.observe(typed, requester, purpose="prepare") if typed.operation in {"identity.root.endorse", "team.agent.admit", "team.agent.remove"} else None
+        extra = await provider.observe(typed, requester, purpose="prepare") if provider is not None else None
         async with self.db.transaction() as tx:
             row = await self._lock(tx, operation.operation_id)
             await fence.prepare(tx, requester)
@@ -469,6 +469,8 @@ class ProtectedSigner:
         row = await self._authorized(operation_id, human, "execute", human_session=human_session)
         if row["result"] is not None or row["refusal_code"] is not None:
             return self._receipt(row)
+        if row.get("retained_effect") is not None:
+            return await self._reconcile_retained(operation_id, human, may_send=True, human_session=human_session)
         link = self._link(row, human)
         approval = await self.store.get(row["approval_id"])
         if approval is None:
@@ -513,8 +515,9 @@ class ProtectedSigner:
         ):
             raise SignerRefused("scope_refused")
         fence = await self.authority.observe(human.context, purpose="execute")
-        typed = self._operation(_json(row["request"]))
-        extra = await self.admission.observe(typed, human, purpose="execute") if typed.intent()["operation"] == "identity.root.endorse" and self.admission is not None else None
+        typed = owner_act_operation(self._operation(_json(row["request"])))
+        provider = self._effect_provider(typed)
+        extra = await provider.observe(typed, human, purpose="execute") if provider is not None else None
         async with self.db.transaction() as tx:
             row = await self._lock(tx, operation_id)
             if row is None:
@@ -586,21 +589,25 @@ class ProtectedSigner:
                 "signing": base64.b64encode(signing).decode(),
                 "signature": base64.b64encode(signature).decode(),
             }
+            retained_effect = self._retain_authorized_effect(operation, request, signing, signature, fence, deadline)
             await tx.execute(
                 "UPDATE {{tables.protected_signer_operations}} SET result=$2::jsonb,"
-                "evidence_ref=$3,committed_at=$4,candidate_links='{}'::jsonb WHERE operation_id=$1",
+                "signed_result=$3::jsonb,retained_effect=$4::jsonb,evidence_ref=$5,committed_at=$6,"
+                "candidate_links='{}'::jsonb WHERE operation_id=$1",
                 operation_id,
-                json.dumps(result),
+                json.dumps(result) if retained_effect is None else None,
+                json.dumps(result) if retained_effect is not None else None,
+                json.dumps(retained_effect.fields()) if retained_effect is not None else None,
                 decided.evidence_ref,
-                self.clock(),
+                self.clock() if retained_effect is None else None,
             )
-            if extra is not None:
+            if typed.spec.effect.signing_commit is not None:
                 from .types import _verified_effect
 
                 effect = _verified_effect(operation, human=human,
                     transaction_id=int(await tx.fetch_value("SELECT txid_current()")),
                     evidence_ref=decided.evidence_ref, expires_at=deadline)
-                await self.admission.record_endorsement(tx, operation, request, result, effect)
+                await getattr(provider, typed.spec.effect.signing_commit)(tx, operation, request, result, effect)
             await self.approvals.record_outcome(
                 approval.approval_id,
                 operation_id,
@@ -629,6 +636,8 @@ class ProtectedSigner:
             self._session_fresh(human_session)
             if self.clock() >= deadline:
                 raise SignerRefused("gesture_expired")
+        if retained_effect is not None:
+            return await self._reconcile_retained(operation_id, human, may_send=True, human_session=human_session)
         return OperationReceipt(operation_id, "committed", result=result)
 
     async def execute_request(self, operation_id, *, requester):
@@ -721,9 +730,10 @@ class ProtectedSigner:
                     verify_did_key_signature(did_key=fence.team_key_did, payload=signing,
                         signature_b64=base64.b64encode(signature).decode())
                     signed = {"signing": base64.b64encode(signing).decode(), "signature": base64.b64encode(signature).decode()}
+                    retained_effect = self._retain_authorized_effect(operation, request, signing, signature, fence, row["expires_at"])
                     await tx.execute(
-                        "UPDATE {{tables.protected_signer_operations}} SET signed_result=$2::jsonb WHERE operation_id=$1",
-                        operation_id, json.dumps(signed),
+                        "UPDATE {{tables.protected_signer_operations}} SET signed_result=$2::jsonb,retained_effect=$3::jsonb WHERE operation_id=$1",
+                        operation_id, json.dumps(signed), json.dumps(retained_effect.fields()) if retained_effect is not None else None,
                     )
                     await self._emit(AuditKind.PROTECTED_OPERATION_SIGNED, tx, row, requester.principal)
                 await extra.check(tx, request)
@@ -740,6 +750,8 @@ class ProtectedSigner:
         row = await self._authorized(operation_id, requester, "receipt")
         if row["result"] is not None or row["signed_result"] is None:
             return self._receipt(row)
+        if row.get("retained_effect") is not None:
+            return await self._reconcile_retained(operation_id, requester, may_send=may_send)
         request, signed = _json(row["request"]), _json(row["signed_result"])
         operation = self._operation(request)
         cap = _checked_self_removal(requester, operation=operation)
@@ -801,6 +813,177 @@ class ProtectedSigner:
         policy = await self.policies.current(POLICY_REF, tx=tx)
         if policy is None or policy.version != request["policy_version"]:
             raise SignerRefused("policy_changed")
+
+    def _effect_provider(self, operation):
+        name = owner_act_operation(operation).spec.effect.provider
+        if name is None:
+            return None
+        provider = getattr(self, name, None)
+        if provider is None:
+            raise SignerRefused("operation_not_served")
+        return provider
+
+    def _retain_authorized_effect(self, operation, request, signing, signature, authority, expires_at):
+        """Local only, inside the signature transaction; never exposes a proof."""
+        retain = getattr(self.custody, "retain_authorized_effect", None)
+        if not callable(retain):
+            return None
+        typed = owner_act_operation(operation)
+        retained = retain(operation=typed, request=request, artifact=request["artifact"], signing=signing,
+            signature=signature, authority=authority, expires_at=expires_at)
+        if retained is None:
+            return None
+        if (type(retained) is not RetainedEffect
+            or not callable(getattr(self.custody, "deliver_retained", None))
+            or not callable(getattr(self.custody, "confirm_retained", None))):
+            raise SignerRefused("operation_not_served")
+        signed = {"signing": base64.b64encode(signing).decode(), "signature": base64.b64encode(signature).decode()}
+        try:
+            retained.require_matches(operation.operation_id, signed, expires_at)
+            if retained.delivery.audience != operation.audience:
+                raise ValueError()
+        except (ValueError, TypeError):
+            raise SignerRefused("operation_mismatch") from None
+        return retained
+
+    async def _load_retained(self, row):
+        """Recheck original artifact and UV bound; loading never authorizes release."""
+        try:
+            request = _json(row["request"])
+            operation = owner_act_operation(self._operation(request))
+            retained = RetainedEffect.from_fields(_json(row["retained_effect"]))
+            until = row["expires_at"]
+            if "expires_at" in request["artifact"]:
+                until = min(until, _time(request["artifact"]["expires_at"]))
+            if row["evidence_ref"] is not None:
+                evidence = await self.passkeys.retained_proof(row["evidence_ref"])
+                metadata = evidence.metadata
+                if (metadata.get("purpose") != "approve" or metadata.get("approval_id") != row["approval_id"]
+                    or metadata.get("request_sha256") != row["digest"]):
+                    raise ValueError()
+                until = min(until, _time(metadata["challenge_issued_at"]) + timedelta(seconds=300),
+                    _time(metadata["challenge_expires_at"]))
+            retained.require_matches(row["operation_id"], _json(row["signed_result"]), until)
+            if retained.signing != signing_bytes(operation, request["artifact"]) or retained.delivery.audience != operation.audience:
+                raise ValueError()
+            verify_did_key_signature(did_key=authority_key(operation, request["artifact"]),
+                payload=retained.signing, signature_b64=base64.b64encode(retained.signature).decode())
+            return operation, request, retained
+        except (ValueError, TypeError, KeyError):
+            raise SignerRefused("evidence_unavailable") from None
+
+    async def _retained_uv(self, tx, row, actor):
+        if row["evidence_ref"] is None:
+            return
+        if type(actor) is not AdmittedHuman:
+            raise SignerRefused("scope_refused")
+        held = await self.passkeys.prepare_current_approvers(tx, [(actor.b3_scope, actor.subject)])
+        evidence = await self.passkeys.retained_proof(row["evidence_ref"], tx=tx)
+        if (evidence.metadata.get("subject") != actor.subject or evidence.context.get("scope") != actor.b3_scope
+            or any(evidence.context.get(k) != v for k, v in actor.context.fields().items())):
+            raise SignerRefused("proof_invalid")
+        if (not await self.passkeys.check_current_approver(tx, held, scope=actor.b3_scope, subject=actor.subject)
+            or not await self._credential_current(tx, actor, evidence.credential_id)):
+            raise SignerRefused("approval_spent")
+
+    async def _reconcile_retained(self, operation_id, actor, *, may_send, human_session=None):
+        """One committed bundle, one release claim, then read-only confirmation."""
+        row = await self._authorized(operation_id, actor, "receipt", human_session=human_session)
+        if row["result"] is not None or row["refusal_code"] is not None:
+            return self._receipt(row)
+        operation, request, retained = await self._load_retained(row)
+        cap = _checked_self_removal(actor, operation=operation)
+        if cap is not None and cap.read_only:
+            may_send = False
+        confirm = getattr(self.custody, "confirm_retained", None)
+        deliver = getattr(self.custody, "deliver_retained", None)
+        if not callable(confirm) or not callable(deliver):
+            raise SignerRefused("operation_not_served")
+
+        async def observe_confirmation():
+            started = self.clock()
+            observed = await confirm(operation, retained)
+            if observed is None:
+                return None
+            try:
+                if type(observed) is not EffectConfirmation:
+                    raise ValueError()
+                observed.require_matches(retained, self.clock())
+                return min(observed.valid_until, started + timedelta(seconds=60))
+            except (ValueError, TypeError):
+                raise SignerRefused("evidence_unavailable") from None
+
+        confirmed_until = await observe_confirmation()
+        if confirmed_until is None and may_send and row["delivery_claim"] is None and self.clock() < retained.expires_at:
+            provider = self._effect_provider(operation)
+            extra = await provider.observe(operation, actor, purpose="execute") if provider is not None else None
+            fence = await self.authority.observe(actor.context, purpose="execute")
+            claim = None
+            async with self.db.transaction() as tx:
+                row = await self._lock(tx, operation_id)
+                await fence.prepare(tx, actor)
+                await self._hold_session(tx, actor, human_session)
+                if row["result"] is not None or row["refusal_code"] is not None or row["delivery_claim"] is not None:
+                    await self._check_session(tx, human_session)
+                    await fence.check(tx, actor)
+                    fence.require_fresh()
+                    self._session_fresh(human_session)
+                    return self._receipt(row)
+                if fence.team_key_did != authority_key(operation, request["artifact"]):
+                    raise SignerRefused("authority_changed")
+                if extra is not None:
+                    await extra.check(tx, request)
+                await self._check_prepared_policy(tx, request)
+                await self._retained_uv(tx, row, actor)
+                claim = str(uuid.uuid4())
+                await tx.execute("UPDATE {{tables.protected_signer_operations}} SET delivery_claim=$2 WHERE operation_id=$1",
+                    operation_id, claim)
+                if extra is not None:
+                    await extra.check(tx, request)
+                    extra.require_fresh()
+                await self._retained_uv(tx, row, actor)
+                await self._check_session(tx, human_session)
+                await fence.check(tx, actor)
+                await self._check_prepared_policy(tx, request)
+                fence.require_fresh()
+                if extra is not None:
+                    extra.require_fresh()
+                self._session_fresh(human_session)
+                if self.clock() >= retained.expires_at:
+                    raise SignerRefused("operation_expired")
+            if claim is not None:
+                async with asyncio.timeout((retained.expires_at - self.clock()).total_seconds()):
+                    await deliver(operation, retained)
+                confirmed_until = await observe_confirmation()
+        if confirmed_until is not None:
+            fence = await self.authority.observe(actor.context, purpose="receipt")
+            async with self.db.transaction() as tx:
+                row = await self._lock(tx, operation_id)
+                await fence.prepare(tx, actor)
+                await self._hold_session(tx, actor, human_session)
+                if row["result"] is not None or row["refusal_code"] is not None:
+                    await self._check_session(tx, human_session)
+                    await fence.check(tx, actor)
+                    fence.require_fresh()
+                    self._session_fresh(human_session)
+                    return self._receipt(row)
+                provider = self._effect_provider(operation)
+                commit = operation.spec.effect.confirmation_commit
+                if commit is not None:
+                    await getattr(provider, commit)(tx, operation)
+                await tx.execute("UPDATE {{tables.protected_signer_operations}} SET result=$2::jsonb,committed_at=$3 WHERE operation_id=$1",
+                    operation_id, json.dumps(retained.applied_result()), self.clock())
+                await self._emit(AuditKind.PROTECTED_OPERATION_APPLIED, tx, row, actor.principal)
+                await self._check_session(tx, human_session)
+                await fence.check(tx, actor)
+                fence.require_fresh()
+                self._session_fresh(human_session)
+                if self.clock() >= confirmed_until:
+                    raise SignerRefused("evidence_unavailable")
+            return OperationReceipt(operation_id, "committed", result=retained.applied_result())
+        if self.clock() >= retained.expires_at:
+            return OperationReceipt(operation_id, "unknown", code="external_effect_unresolved")
+        return self._receipt(row)
 
     def _sign_artifact(self, operation, artifact):
         adapter = getattr(self.custody, "sign_operation", None)
@@ -908,6 +1091,8 @@ class ProtectedSigner:
         if type(reader) not in (ReceiptReader, AdmittedHuman):
             raise SignerRefused("scope_refused")
         row = await self._authorized(operation_id, reader, "receipt", human_session=human_session)
+        if row.get("retained_effect") is not None and row["result"] is None:
+            return await self._reconcile_retained(operation_id, reader, may_send=False, human_session=human_session)
         if (row["result"] is None and row["refusal_code"] is None and row["approval_id"] is not None
             and self._operation(_json(row["request"])).intent()["operation"] == "identity.root.endorse"):
             approval = await self.store.get(row["approval_id"])
