@@ -17,6 +17,7 @@ import pytest_asyncio
 from awid.did import did_from_public_key
 from awid.ratelimit import NoOpRateLimiter
 from awid.signing import canonical_json_bytes, sign_message
+from awid_service.attestation_rotation import DEFAULT_ROTATE_MAX_BODY_BYTES
 from awid_service.db import AwidDatabaseInfra
 from awid_service.routes.teams import router
 from awid_service.testing import dns_naming
@@ -70,6 +71,7 @@ async def world(test_db_factory, monkeypatch):
     registry.state.db = infra
     registry.state.rate_limiter = NoOpRateLimiter()
     registry.state.awid_service_token = None
+    registry.state.rotate_max_body_bytes = DEFAULT_ROTATE_MAX_BODY_BYTES
     registry.include_router(router)
     db = infra.get_manager("aweb")
     team_key = SigningKey.generate()
@@ -122,6 +124,11 @@ async def world(test_db_factory, monkeypatch):
         await infra.close()
 
 
+async def _pinned_key(app_db) -> str | None:
+    # Library connects by its DSN alone, so its tables are in the default schema.
+    return await app_db.fetch_value("SELECT team_did_key FROM public.team_key_pins WHERE team_id = $1", TEAM_ID)
+
+
 async def _shelf(client, headers):
     return await client.get("/v1/shelf", headers=headers)
 
@@ -136,9 +143,7 @@ async def test_substituted_registry_team_key_does_not_admit_a_forged_member(worl
 
     assert forged.status_code == 401, forged.text
     assert forged.json()["detail"] == "team_key_unverified"
-    assert await app_db.fetch_value(
-        "SELECT team_did_key FROM {{tables.team_key_pins}} WHERE team_id = $1", TEAM_ID,
-    ) == _did(team_key)
+    assert await _pinned_key(app_db) == _did(team_key)
 
 
 async def test_rotation_signed_by_the_dns_controller_moves_the_pin(world):
@@ -150,6 +155,4 @@ async def test_rotation_signed_by_the_dns_controller_moves_the_pin(world):
     accepted = await _shelf(client, await certify(next_key, "dave"))
 
     assert accepted.status_code == 200, accepted.text
-    assert await app_db.fetch_value(
-        "SELECT team_did_key FROM {{tables.team_key_pins}} WHERE team_id = $1", TEAM_ID,
-    ) == _did(next_key)
+    assert await _pinned_key(app_db) == _did(next_key)

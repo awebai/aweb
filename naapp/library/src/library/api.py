@@ -5,6 +5,8 @@ from typing import Annotated
 
 from aweb_naapp.css import font_bytes
 from aweb_naapp.identity_assets import identity_asset, mount_identity_routes
+from aweb_naapp.runtime.team_key_pins import DatabaseTeamKeyPins
+from awid.external_authority import TXTOutcomeResolver
 from fastapi import Depends, FastAPI, HTTPException, Query, Request
 from fastapi.responses import HTMLResponse, PlainTextResponse, Response
 from pgdbm import AsyncDatabaseManager
@@ -65,7 +67,11 @@ assert _OG_CARD is not None
 _OG_CARD_BYTES = _OG_CARD[0]
 
 
-def create_app(settings: Settings | None = None) -> FastAPI:
+def create_app(
+    settings: Settings | None = None, *, awid_txt_resolver: TXTOutcomeResolver | None = None
+) -> FastAPI:
+    """library's app. ``awid_txt_resolver`` answers the ``_awid`` records that
+    name who may move a pinned team key (system DNS by default)."""
     resolved = settings or get_settings()
     build_identity = resolve_build_identity()
     deployment_identity = resolve_render_deployment_identity()
@@ -80,6 +86,9 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             registry_url=resolved.awid_registry_url,
             ttl_seconds=resolved.auth_cache_ttl_seconds,
             service_token=resolved.awid_service_token,
+            team_key_pins=DatabaseTeamKeyPins(lambda: database.db),
+            txt_resolver=awid_txt_resolver,
+            enforce_team_key_pins=resolved.enforce_team_key_pins,
         )
         try:
             yield
