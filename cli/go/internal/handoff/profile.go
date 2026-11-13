@@ -111,6 +111,19 @@ func (p *Profile) BindingFor(scope map[string]any) (*ProfileBinding, error) {
 	return nil, coded("profile_scope_refused", errors.New("the profile configures no binding for this scope"))
 }
 
+// teamDomain is the authority domain of team's controller bindings, when the
+// profile binds that team's controller at all.
+func (p *Profile) teamDomain(team string) (string, bool) {
+	for _, binding := range p.Bindings {
+		authority, _ := binding.Scope["authority"].(map[string]any)
+		if authority["kind"] == "team_controller" && authority["id"] == team {
+			domain, _ := authority["domain"].(string)
+			return domain, true
+		}
+	}
+	return "", false
+}
+
 func namespaceAuthorities(value any) (map[string]bool, bool) {
 	rows, _ := value.([]any)
 	if len(rows) == 0 {

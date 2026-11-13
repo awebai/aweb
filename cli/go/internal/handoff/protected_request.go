@@ -4,9 +4,12 @@ import (
 	"crypto/sha256"
 	"encoding/base64"
 	"encoding/hex"
+	"errors"
 	"fmt"
 	"net/http"
+	"net/url"
 	"regexp"
+	"strings"
 
 	"github.com/awebai/aw/awid"
 )
@@ -33,7 +36,12 @@ type ProtectedRequest struct {
 
 var receiptPath = regexp.MustCompile(`^/protected-operations/[^/?#]+$`)
 
-// protectedOperationLabel is the covering-v2 operation of the two protected
+// admissionPolicyPath is the policy read's route; its query names the team.
+const admissionPolicyPath = "/protected-admission-policies"
+
+const admissionPolicyReadLabel = "protected_admission_policy_read"
+
+// protectedOperationLabel is the covering-v2 operation of the protected
 // routes, and nothing else.
 func protectedOperationLabel(method, path string) (string, error) {
 	switch {
@@ -41,8 +49,39 @@ func protectedOperationLabel(method, path string) (string, error) {
 		return "protected_operation_prepare", nil
 	case method == http.MethodGet && receiptPath.MatchString(path):
 		return "protected_operation_receipt", nil
+	case method == http.MethodGet && strings.HasPrefix(path, admissionPolicyPath+"?"):
+		return admissionPolicyReadLabel, nil
 	}
 	return "", fmt.Errorf("%s %s is not a protected-operation route", method, path)
+}
+
+// AdmissionPolicyPath is the policy read's exact path and query for team.
+func AdmissionPolicyPath(team string) string {
+	return admissionPolicyPath + "?" + url.Values{"team_id": {team}}.Encode()
+}
+
+// requestDomain is the authority domain r's envelope binds. An operation's
+// scope must be one the profile configures; a policy read's scope is exactly
+// this service and one team the profile binds a controller for, read from
+// its own path and nothing else.
+func requestDomain(r ProtectedRequest, operation string) (string, error) {
+	if operation != admissionPolicyReadLabel {
+		if _, err := r.Profile.BindingFor(r.Scope); err != nil {
+			return "", err
+		}
+		authority, _ := r.Scope["authority"].(map[string]any)
+		domain, _ := authority["domain"].(string)
+		return domain, nil
+	}
+	team, _ := r.Scope["team_id"].(string)
+	if !exactMembers(r.Scope, []string{"service_id", "team_id"}) || r.Scope["service_id"] != r.Profile.ServiceID || r.Path != AdmissionPolicyPath(team) || len(r.Body) != 0 {
+		return "", coded("profile_scope_refused", errors.New("the policy read is not exactly this service and one team's path"))
+	}
+	domain, ok := r.Profile.teamDomain(team)
+	if !ok {
+		return "", coded("profile_scope_refused", fmt.Errorf("the profile configures no controller for team %s", team))
+	}
+	return domain, nil
 }
 
 // ProtectedRequestHeaders is the requester proof for r
@@ -58,11 +97,10 @@ func ProtectedRequestHeaders(r ProtectedRequest) (http.Header, error) {
 	if err != nil {
 		return nil, err
 	}
-	if _, err := r.Profile.BindingFor(r.Scope); err != nil {
+	domain, err := requestDomain(r, operation)
+	if err != nil {
 		return nil, err
 	}
-	authority, _ := r.Scope["authority"].(map[string]any)
-	domain, _ := authority["domain"].(string)
 	scope, err := awid.StrictCanonicalJSON(r.Scope)
 	if err != nil {
 		return nil, err

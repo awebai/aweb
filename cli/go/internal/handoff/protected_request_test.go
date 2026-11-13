@@ -2,11 +2,16 @@ package handoff
 
 import (
 	"bytes"
+	"crypto/ed25519"
+	"crypto/sha256"
 	"encoding/base64"
+	"encoding/hex"
 	"encoding/json"
 	"os"
 	"strings"
 	"testing"
+
+	"github.com/awebai/aw/awid"
 )
 
 type protectedRequestVectors struct {
@@ -95,9 +100,10 @@ func TestAProtectedRequestForAnotherScopeOrBodyIsNotTheSignedOne(t *testing.T) {
 	}
 }
 
-func TestOnlyTheTwoProtectedRoutesHaveAnOperationLabel(t *testing.T) {
+func TestOnlyTheProtectedRoutesHaveAnOperationLabel(t *testing.T) {
 	vectors, profile := readProtectedVectors(t)
-	for _, route := range [][2]string{{"POST", "/protected-operations/x"}, {"GET", "/protected-operations"}, {"DELETE", "/protected-operations/x"}, {"POST", "/other"}} {
+	for _, route := range [][2]string{{"POST", "/protected-operations/x"}, {"GET", "/protected-operations"}, {"DELETE", "/protected-operations/x"}, {"POST", "/other"},
+		{"POST", "/protected-admission-policies?team_id=engineering%3Acustomer.example"}, {"GET", "/protected-admission-policies"}} {
 		_, err := ProtectedRequestHeaders(ProtectedRequest{
 			Profile: profile, Scope: profile.Bindings[0].Scope, RequesterID: vectors.RequesterID,
 			Method: route[0], Path: route[1], Timestamp: "2026-11-11T00:00:00Z",
@@ -172,5 +178,76 @@ func TestAScopeTheProfileDoesNotConfigureIsNeverSigned(t *testing.T) {
 	})
 	if ErrorCode(err) != "profile_scope_refused" {
 		t.Fatalf("err %v", err)
+	}
+}
+
+// policyReadRequest is a policy read of team by a freshly keyed requester.
+func policyReadRequest(t *testing.T, profile *Profile, team, query string) (ProtectedRequest, ed25519.PublicKey) {
+	t.Helper()
+	public, private, err := ed25519.GenerateKey(nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return ProtectedRequest{
+		Profile: profile, Scope: map[string]any{"service_id": profile.ServiceID, "team_id": team},
+		RequesterID: "did:aw:3YDAM5ZLRKg7eHH1Zs6sSMwkga8w", Method: "GET",
+		Path: "/protected-admission-policies?" + query, Timestamp: "2026-11-11T00:00:00Z",
+		Sign: func(payload []byte) (string, []byte, error) {
+			return awid.ComputeDIDKey(public), ed25519.Sign(private, payload), nil
+		},
+	}, public
+}
+
+func TestAPolicyReadIsSignedOverItsTeamScopeAndExactQuery(t *testing.T) {
+	_, profile := readProtectedVectors(t)
+	request, _ := policyReadRequest(t, profile, "engineering:customer.example", "team_id=engineering%3Acustomer.example")
+	headers, err := ProtectedRequestHeaders(request)
+	if err != nil {
+		t.Fatal(err)
+	}
+	raw, err := base64.RawURLEncoding.DecodeString(headers.Get("X-AWEB-Signed-Payload"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	envelope, ok := decodeObject(raw)
+	if !ok {
+		t.Fatalf("envelope %s", raw)
+	}
+	scope, _ := awid.StrictCanonicalJSON(map[string]any{"service_id": "customer-signer", "team_id": "engineering:customer.example"})
+	scopeSum := sha256.Sum256(scope)
+	emptySum := sha256.Sum256(nil)
+	for name, want := range map[string]string{
+		"operation": "protected_admission_policy_read", "method": "GET", "aud": "https://signer.customer.example",
+		"path": "/protected-admission-policies?team_id=engineering%3Acustomer.example", "domain": "customer.example",
+		"service_id": "customer-signer", "scope_sha256": hex.EncodeToString(scopeSum[:]), "body_sha256": hex.EncodeToString(emptySum[:]),
+	} {
+		if envelope[name] != want {
+			t.Errorf("%s = %v, want %s", name, envelope[name], want)
+		}
+	}
+}
+
+func TestAPolicyReadForATeamTheProfileDoesNotBindOrAnotherQueryIsNeverSigned(t *testing.T) {
+	_, profile := readProtectedVectors(t)
+	for name, change := range map[string]func(*ProtectedRequest){
+		"unbound team": func(r *ProtectedRequest) {
+			r.Scope["team_id"] = "sales:customer.example"
+			r.Path = "/protected-admission-policies?team_id=sales%3Acustomer.example"
+		},
+		"query for another team": func(r *ProtectedRequest) {
+			r.Path = "/protected-admission-policies?team_id=sales%3Acustomer.example"
+		},
+		"extra query":     func(r *ProtectedRequest) { r.Path += "&x=1" },
+		"other service":   func(r *ProtectedRequest) { r.Scope["service_id"] = "other" },
+		"extra scope":     func(r *ProtectedRequest) { r.Scope["human"] = "did:aw:x" },
+		"body":            func(r *ProtectedRequest) { r.Body = []byte("{}") },
+		"operation scope": func(r *ProtectedRequest) { r.Scope = profile.Bindings[0].Scope },
+	} {
+		request, _ := policyReadRequest(t, profile, "engineering:customer.example", "team_id=engineering%3Acustomer.example")
+		change(&request)
+		request.Sign = func([]byte) (string, []byte, error) { t.Fatalf("%s: signed", name); return "", nil, nil }
+		if _, err := ProtectedRequestHeaders(request); err == nil {
+			t.Errorf("%s: accepted", name)
+		}
 	}
 }
