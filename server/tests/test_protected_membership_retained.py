@@ -156,6 +156,7 @@ async def test_exact_retained_and_presented_membership(membership_env, surface, 
         headers = claimed.headers(aud=ORIGIN, method="GET", path="/v1/messages")
     async with httpx.AsyncClient(transport=httpx.ASGITransport(app), base_url=ORIGIN) as client:
         response = await client.get("/v1/messages", headers=headers)
-    assert response.status_code == (401 if protected and change != "genuine" else 200), response.text
+    rejected = (protected and change != "genuine") or (surface == "task" and change == "key")
+    assert response.status_code == (401 if rejected else 200), response.text
     if protected and change != "genuine":
         assert "certificate_binding_mismatch" in response.text
