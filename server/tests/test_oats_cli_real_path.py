@@ -358,3 +358,43 @@ async def test_a_spawned_key_only_agent_is_admitted_and_its_certificate_installe
             certificate_id=certificate["certificate_id"])
         status, refused, progress = await _aw(home, *install)
         assert status != 0 and refused["error"]["code"] == "certificate_revoked", progress
+
+
+@pytest.mark.usefixtures("source_cli_binary")
+@pytest.mark.asyncio
+async def test_the_endorsed_root_removes_the_agent_it_admitted_once_under_its_own_operation_id(test_db_factory, tmp_path):
+    async with oats_world(test_db_factory, tmp_path) as (a, profile, home):
+        w = a.w
+        status, endorsed, progress = await _endorse(a, profile, home, str(uuid4()))
+        assert status == 0 and endorsed["state"] == "committed", progress
+        _, child_public = generate_keypair()
+        certificate_out = home[0] / "worker-team-certificate.json"
+        status, admitted, progress = await _aw(home, "id", "team", "admit", "--protected-profile", str(profile), "--team", TEAM,
+            "--member-key", did_from_public_key(child_public), "--alias", "worker", "--policy-version", str(a.policy["version"]),
+            "--policy-digest", a.policy["digest"], "--operation-id", str(uuid4()), "--certificate-out", str(certificate_out))
+        assert status == 0 and admitted["state"] == "committed", progress
+        certificate = json.loads(certificate_out.read_text())
+        before = certificate_out.read_bytes()
+
+        # The root removes the membership the certificate file names; the
+        # registry revokes it and the admission no longer counts.
+        removal = str(uuid4())
+        remove = ("id", "team", "remove-agent", "--protected-profile", str(profile), "--certificate", str(certificate_out),
+            "--operation-id", removal)
+        status, removed, progress = await _aw(home, *remove)
+        assert status == 0, progress
+        assert removed == {"operation_id": removal, "state": "committed", "certificate_id": certificate["certificate_id"]}
+        records = await w.registry.list_team_certificates_fresh(DOMAIN, "engineering", active_only=False)
+        revoked = [r for r in records if r.certificate_id == certificate["certificate_id"]]
+        assert len(revoked) == 1 and revoked[0].revoked_at
+        assert await w.db.fetch_value(
+            "SELECT state FROM {{tables.protected_root_admissions}} WHERE certificate_id=$1", certificate["certificate_id"]) == "removed"
+        assert certificate_out.read_bytes() == before
+
+        # The same id and inputs return the retained receipt: no second
+        # signature or revocation.
+        status, again, progress = await _aw(home, *remove)
+        assert status == 0 and again == removed, progress
+        assert await w.db.fetch_value(
+            "SELECT count(*) FROM {{tables.protected_local_audit}} WHERE kind='protected_operation_signed' AND subject=$1",
+            removal) == 1
