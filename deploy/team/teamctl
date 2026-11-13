@@ -25,7 +25,9 @@
 #          With a front, its certificate and key are checked before
 #          anything starts: the key is the certificate's, the certificate is
 #          valid now and names every public origin's host, and Caddy accepts
-#          the rendered configuration.
+#          the rendered configuration. Once the services are up, the front
+#          reloads the rendered sites and each host is checked to serve
+#          that certificate.
 # reload-tls  checks the front's certificate and key as start does, reloads
 #          the front and confirms each host now serves that certificate.
 # stop     stops every service of the bundle. Containers, networks, volumes,
@@ -606,6 +608,13 @@ start() {
     dc logs --no-color --timestamps >"$run_dir/compose.log" 2>&1 || true
     echo "teamctl: not every service became healthy; logs in $run_dir/compose.log" >&2
     exit 1
+  fi
+  # Compose leaves a running front as it is when only its mounted
+  # configuration changed: the front loads the sites just rendered, a
+  # component added since included.
+  if [[ -n "$(env_value FRONT_IMAGE)" ]]; then
+    dc exec -T front caddy reload --config /etc/caddy/Caddyfile --adapter caddyfile --force </dev/null
+    served_certificates
   fi
   # An internal origin is allowed only inside the services range: every
   # address its host resolves to, seen from the service that connects to it.

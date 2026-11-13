@@ -128,3 +128,18 @@ def test_reload_tls_forces_the_reload_though_the_configuration_is_unchanged(tmp_
     assert result.returncode == 0, result.stderr
     reloads = [call for call in calls(tmp_path) if "caddy reload" in call]
     assert len(reloads) == 1 and "--force" in reloads[0].split(), reloads
+
+
+def test_start_reloads_the_running_front_with_the_rendered_sites(tmp_path):
+    # Compose leaves a running front as it is when only its mounted
+    # configuration changed, so a component added later (the signer's
+    # origins) would get no site (seen on run37).
+    path = deployment(tmp_path, {**EXAMPLE, "front": FRONT})
+    result = run(tmp_path, "start", path, command=TEAMCTL, docker_ok=True)
+    assert result.returncode == 0, result.stderr
+    made = calls(tmp_path)
+    up = next(i for i, call in enumerate(made) if " up -d " in call)
+    reloads = [i for i, call in enumerate(made) if "caddy reload" in call]
+    assert len(reloads) == 1 and reloads[0] > up and "--force" in made[reloads[0]].split(), made
+    served = [call for call in made[reloads[0] + 1:] if call.startswith("run --rm --user 0 --network teamrun_services")]
+    assert len(served) == 1 and "certificate.pem" in served[0], made[reloads[0]:]
