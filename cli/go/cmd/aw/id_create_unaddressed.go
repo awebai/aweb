@@ -106,17 +106,23 @@ func unaddressedKey(c unaddressedCreate, statePath string) (ed25519.PrivateKey, 
 	}
 	raw, err := os.ReadFile(statePath)
 	resumed := err == nil
+	// The home holds nothing this creation did not write: its lock, and once
+	// marked, its state and key. Checked before any key or registry use.
+	owned := map[string]bool{unaddressedStateFile + ".lock": true}
+	if resumed {
+		owned[unaddressedStateFile], owned["signing.key"] = true, true
+	}
+	entries, dirErr := os.ReadDir(c.Root)
+	if dirErr != nil {
+		return nil, false, dirErr
+	}
+	for _, entry := range entries {
+		if !owned[entry.Name()] {
+			return nil, false, identityExists("%s holds %s, which this creation did not write; an identity is created only in its own home", c.Root, entry.Name())
+		}
+	}
 	switch {
 	case errors.Is(err, os.ErrNotExist):
-		entries, err := os.ReadDir(c.Root)
-		if err != nil {
-			return nil, false, err
-		}
-		for _, entry := range entries {
-			if entry.Name() != unaddressedStateFile+".lock" {
-				return nil, false, identityExists("%s already holds %s; an identity is created only in an empty home", c.Root, entry.Name())
-			}
-		}
 		data, err := json.Marshal(unaddressedCreationState{Version: 1, RegistryURL: c.RegistryURL})
 		if err != nil {
 			return nil, false, err

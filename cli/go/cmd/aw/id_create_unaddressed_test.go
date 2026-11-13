@@ -291,3 +291,21 @@ func TestNoAddressNeedsAnExplicitHomeAndRegistryAndNoAddressFlags(t *testing.T) 
 		}
 	}
 }
+
+func TestAResumedCreationRefusesAFileItDidNotCreateBeforeSendingAnything(t *testing.T) {
+	for name, installKey := range map[string]bool{"before its key": false, "with its key": true} {
+		registry := newMappingRegistry(t)
+		root := t.TempDir()
+		interruptedCreation(t, root, registry.server.URL, installKey)
+		if err := os.WriteFile(filepath.Join(root, "workspace.yaml"), []byte("aweb_url: https://other.example\n"), 0o600); err != nil {
+			t.Fatal(err)
+		}
+		_, err := createUnaddressedIdentity(context.Background(), unaddressedRequest(t, registry, root))
+		if errorCodeOf(err) != "identity_exists" || registry.count() != 0 {
+			t.Errorf("%s: err %v after %d registrations", name, err, registry.count())
+		}
+		if _, statErr := os.Stat(filepath.Join(root, "signing.key")); installKey == os.IsNotExist(statErr) {
+			t.Errorf("%s: the key was installed or removed", name)
+		}
+	}
+}
