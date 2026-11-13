@@ -75,7 +75,7 @@ async def test_holder_credential_outage_is_503_without_writes_and_recovers(
         await service.runtime.installation_fence().permit(member.team_id)
         grant = await service.runtime.installation_grants().status_for(member.team_id)
         assert grant is not None and grant.max_age_seconds == 1
-        published = next(iter(directory._cache.values()))
+        published = await directory.resolve(member.team_id)
         deadline = max(grant.fresh_until, published.expires_at)
         name, domain = member.team_id.split(":", 1)
         removed = await registry.db.fetch_value(

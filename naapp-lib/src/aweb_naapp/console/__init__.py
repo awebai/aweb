@@ -42,6 +42,7 @@ from aweb_naapp.console.assets import console_assets_router as console_assets_ro
 from aweb_naapp.hooks.strictjson import Refused
 from aweb_naapp.runtime.approvals import AuthenticationFailed
 from aweb_naapp.runtime.credential_audit import GovernanceUnavailable
+from aweb_naapp.runtime.installation import InstallationRefused
 from aweb_naapp.runtime.passkeys import ContactChangeRefused, EnrolmentRefused, Passkeys
 
 if TYPE_CHECKING:
@@ -425,6 +426,10 @@ class ConsoleRoute(APIRoute):
                 response = JSONResponse(
                     {"detail": error.detail}, error.status_code, headers=error.headers
                 )
+            except InstallationRefused as error:
+                # Translate after the handler's transaction has unwound, keeping
+                # the provider's stable code/status and never its private cause.
+                response = JSONResponse({"detail": error.code}, error.status)
             except RequestValidationError as error:
                 detail = [
                     {"loc": problem["loc"], "type": problem["type"]} for problem in error.errors()
