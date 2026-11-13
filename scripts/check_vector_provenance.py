@@ -182,15 +182,6 @@ ROOT_CONSUMERS = {
         "hook-catalog-v1.json",
         'Path(__file__).resolve().parents[3] / "docs" / "vectors" / "hook-catalog-v1.json"',
     ),
-    PurePosixPath("cli/go/awid/app_task_authorization_test.go"): _consumer(
-        "app-task-authorization-v1.json",
-        '"../../../docs/vectors/app-task-authorization-v1.json"',
-
-    ),
-    PurePosixPath("cli/go/awid/page_proposal_test.go"): _consumer(
-        "page-proposal-v1.json",
-        '"../../../docs/vectors/page-proposal-v1.json"',
-    ),
     PurePosixPath("cli/go/cmd/aw/hosted_creation_install_test.go"): _consumer(
         "id-certificates-v1.json",
         '"../../../../docs/vectors/id-certificates-v1.json"',
