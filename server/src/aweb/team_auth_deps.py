@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import logging
 from dataclasses import dataclass
+from typing import Any
 
 from awid.dns_auth import enforce_timestamp_skew, parse_didkey_auth, require_timestamp
 from awid.signing import verify_did_key_signature
@@ -242,7 +243,7 @@ async def verify_request_certificate(request: Request, db, *, fresh: bool = Fals
         raise HTTPException(status_code=401, detail="Invalid DIDKey signature")
 
     # -- Step 4: Resolve team public key from awid --
-    team_did_key = await _resolve_team_key(request, cert_team_id)
+    team_did_key = await _resolve_team_key(request, cert_team_id, db=db)
     if not team_did_key:
         raise HTTPException(status_code=401, detail="unknown_team")
 
@@ -288,7 +289,7 @@ async def verify_request_certificate(request: Request, db, *, fresh: bool = Fals
                 refreshed_key = await refresh(domain, team_name, rejected_key=team_did_key)
             if not refreshed_key or refreshed_key == team_did_key:
                 raise
-            refreshed_key = await pinned_team_key_for_request(request, cert_team_id, refreshed_key)
+            refreshed_key = await pinned_team_key_for_request(request, cert_team_id, refreshed_key, db=db)
             team_did_key = refreshed_key
             cert_info = check_certificate(team_did_key)
             # Bad signatures under the refreshed key must not drive revocation
@@ -405,7 +406,7 @@ def _team_read_failure(exc: Exception, registry_client, team_id: str, *, operati
     return awid_dependency_http_exception(exc, operation=operation, team_id=team_id)
 
 
-async def _resolve_team_key(request: Request, team_id: str) -> str:
+async def _resolve_team_key(request: Request, team_id: str, *, db: Any = None) -> str:
     """Resolve the team's public key: the registry's answer, held to the key
     this server admitted (aweb.team_key_pins).
 
@@ -427,7 +428,7 @@ async def _resolve_team_key(request: Request, team_id: str) -> str:
         key = await registry_client.get_team_public_key(domain, team_name)
         if not key:
             return ""
-        return await pinned_team_key_for_request(request, team_id, key)
+        return await pinned_team_key_for_request(request, team_id, key, db=db)
     except HTTPException:
         raise
     except AWID_DEPENDENCY_ERRORS as exc:

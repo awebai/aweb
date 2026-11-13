@@ -100,14 +100,18 @@ async def pinned_team_key(
     )
 
 
-async def pinned_team_key_for_request(request: Request, team_id: str, served_key: str) -> str:
-    """``pinned_team_key`` with the app's database, registry and DNS resolver;
-    an unverified key is the 401 ``team_key_unverified`` and a failed act read
-    is the registry dependency error."""
+async def pinned_team_key_for_request(
+    request: Request, team_id: str, served_key: str, *, db: Any = None,
+) -> str:
+    """``pinned_team_key`` with ``db`` (the request's database, else the
+    app's), the app's registry and its DNS resolver; an unverified key is the
+    401 ``team_key_unverified`` and a failed act read is the registry
+    dependency error."""
     state = request.app.state
+    database = db if db is not None else state.db
     try:
         return await pinned_team_key(
-            db=state.db.get_manager("aweb"),
+            db=database.get_manager("aweb"),
             registry_client=state.awid_registry_client,
             txt_resolver=txt_resolver_for(state),
             team_id=team_id,

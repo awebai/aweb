@@ -51,7 +51,7 @@ class _Redis:
 
 
 @pytest_asyncio.fixture
-async def world(monkeypatch):
+async def world(monkeypatch, aweb_cloud_db):
     monkeypatch.delenv("AWEB_REQUIRE_REGISTERED_CERTIFICATES", raising=False)
     clock = [1_000_000]
     monkeypatch.setattr(registry_module, "_cache_now", lambda: clock[0])
@@ -63,6 +63,8 @@ async def world(monkeypatch):
         member=member, member_did=member_did, keys={"backend": old_did, "other": old_did},
         key_reads=0, revocation_reads=0, revoked=[], status=200,
         entered=asyncio.Event(), release=None, clients=[],
+        # The real aweb schema holds the team-key pins verification reads.
+        db_infra=SimpleNamespace(get_manager=lambda _name: aweb_cloud_db.aweb_db),
     )
 
     async def handler(request):
@@ -126,7 +128,7 @@ async def _verify(env, *, signer="new", name="backend", registry=None, cert_patc
     headers.update(headers_patch or {})
     request = _request_with_app_state(headers)
     request.app.state.awid_registry_client = registry or env.registry
-    return await verify_request_certificate(request, db=object())
+    return await verify_request_certificate(request, db=env.db_infra)
 
 
 async def _refused(env, **kwargs):
@@ -155,6 +157,16 @@ async def test_external_rotation_recovers_on_first_request_and_updates_cache(wor
 async def test_bad_certificate_flood_is_coalesced_including_slow_attempt(world):
     env = world
     env.release = asyncio.Event()
+    # Count the callers that reached the shared refresh: verification awaits
+    # its database before it, so they arrive asynchronously.
+    arrived = []
+    refresh = env.registry.refresh_team_key_after_signature_failure
+
+    async def counted_refresh(*args, **kwargs):
+        arrived.append(None)
+        return await refresh(*args, **kwargs)
+
+    env.registry.refresh_team_key_after_signature_failure = counted_refresh
     calls = [asyncio.create_task(_refused(env)) for _ in range(16)]
     try:
         await asyncio.wait_for(env.entered.wait(), timeout=1)
@@ -163,7 +175,9 @@ async def test_bad_certificate_flood_is_coalesced_including_slow_attempt(world):
         env.clock[0] += 6
         more = [asyncio.create_task(_refused(env)) for _ in range(8)]
         calls.extend(more)
-        await asyncio.sleep(0)
+        async with asyncio.timeout(5):
+            while len(arrived) < len(calls):
+                await asyncio.sleep(0.01)
         assert env.key_reads == 1
     finally:
         env.release.set()
