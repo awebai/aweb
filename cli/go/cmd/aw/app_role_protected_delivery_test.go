@@ -113,6 +113,22 @@ func TestASignedActThatIsNotWhatAwRequestedIsNeverDelivered(t *testing.T) {
 		"short signature": json.RawMessage(`{"signing":"AA==","signature":"` + base64.StdEncoding.EncodeToString(make([]byte, 63)) + `"}`),
 		"long signature":  json.RawMessage(`{"signing":"AA==","signature":"` + base64.StdEncoding.EncodeToString(make([]byte, 65)) + `"}`),
 		"null":            json.RawMessage(`null`),
+		"newline in signature": func() json.RawMessage {
+			r := signedReceipt(t, key, "human-role.revoke", "h:example.com", "https://app.example.com", subject, now)
+			var m map[string]string
+			_ = json.Unmarshal(r, &m)
+			m["signature"] = m["signature"][:40] + "\n" + m["signature"][40:]
+			out, _ := json.Marshal(m)
+			return out
+		}(),
+		"carriage return in signing": func() json.RawMessage {
+			r := signedReceipt(t, key, "human-role.revoke", "h:example.com", "https://app.example.com", subject, now)
+			var m map[string]string
+			_ = json.Unmarshal(r, &m)
+			m["signing"] = m["signing"][:8] + "\r" + m["signing"][8:]
+			out, _ := json.Marshal(m)
+			return out
+		}(),
 	} {
 		if _, err := signedActFor(intent, authority, result, now); errorCodeOf(err) != "signed_act_invalid" {
 			t.Errorf("%s: %v", name, err)
@@ -289,5 +305,20 @@ func TestAnAppsRefusalKeepsTheSavedRequestWithItsCode(t *testing.T) {
 	}
 	if len(app.posts) != 2 || !bytes.Equal(app.posts[0], app.posts[1]) || app.effects != 0 {
 		t.Fatalf("posts %d effects %d", len(app.posts), app.effects)
+	}
+}
+
+func TestOnlyAConflictSayingAppliedEarlierSettlesAnOperation(t *testing.T) {
+	// applied_earlier means the act took effect only as the receiver's 409.
+	// The same words in any other answer, such as an ingress error page or a
+	// redirect, leave the act unapplied: its request is kept, with the code.
+	for _, status := range []int{http.StatusForbidden, http.StatusServiceUnavailable, http.StatusFound, http.StatusBadRequest} {
+		app := newOwnerActApp(t)
+		app.failWith, app.failCode = status, "applied_earlier"
+		intent, binding, receipt, id := settleWorld(t, app, time.Now())
+		err := settleProtectedAct(settleCommand(), id, intent, binding, receipt, nil)
+		if err == nil || errorCodeOf(err) != "applied_earlier" || !saved(t, id) || app.effects != 0 {
+			t.Errorf("%d: err %v saved %v effects %d", status, err, saved(t, id), app.effects)
+		}
 	}
 }

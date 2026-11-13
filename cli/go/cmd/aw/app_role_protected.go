@@ -247,7 +247,7 @@ func settleProtectedAct(cmd *cobra.Command, operationID string, intent map[strin
 	report := map[string]any{"operation_id": operationID, "state": receipt.State, "result": json.RawMessage(receipt.Result)}
 	applied, err := deliverOwnerAct(cmd, signed.Audience, humanRoleActRequest{Act: signed.Act}.deliveryBody(signed.Signing, signed.Signature))
 	switch {
-	case errorCodeOf(err) == "applied_earlier":
+	case errors.Is(err, errOwnerActAppliedEarlier):
 		// The app found this exact act (by its signing hash) already applied:
 		// an earlier delivery took effect and its answer was lost.
 		report["applied"] = "earlier"
@@ -293,6 +293,10 @@ func signedActFor(intent map[string]any, authorityKeyDID string, result []byte, 
 	signature, _ := fields["signature"].(string)
 	if !ok || len(fields) != 2 || signingText == "" || signature == "" {
 		return nil, invalid("the receipt's result is not exactly a signing and a signature")
+	}
+	// Go's strict base64 still skips CR and LF; one spelling is accepted.
+	if strings.ContainsAny(signingText+signature, "\r\n") {
+		return nil, invalid("its signing or signature has a line break")
 	}
 	signing, err := base64.StdEncoding.Strict().DecodeString(signingText)
 	if err != nil {
