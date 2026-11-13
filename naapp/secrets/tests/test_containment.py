@@ -4,13 +4,14 @@ import asyncio
 import os
 
 import pytest
-from aweb_naapp.roles import hold_role, principal_key
 from aweb_naapp.runtime.approvals import ApprovalState
 from aweb_naapp_testing.owner_acts import INSTALLATION_ID
 
 from aweb_secrets import containment, derived_lineage, records
 from aweb_secrets.custody import CustodyUnavailable, SealContext, encode_value
-from tests.test_change_sets import TEAM, world  # noqa: F401
+from aweb_secrets.owners import hold_owner
+from tests.human_owner import canonical_actor
+from tests.test_change_sets import ALICE, TEAM, world  # noqa: F401
 from tests.test_use_approval_lineage import child, request_child, seed
 from tests.test_use_approvals import SECRET_ID, approve, uses  # noqa: F401
 
@@ -256,7 +257,7 @@ async def test_reverse_id_replacement_and_approver_retirement_do_not_deadlock(us
     import uuid
     from datetime import timedelta
 
-    from aweb_secrets.owners import OWNER_ROLE, approver_scope
+    from aweb_secrets.owners import approver_scope
     from aweb_secrets.secret import SecretRecord
     from tests.test_containment_service import service
     from tests.test_use_approval_lineage import grant_record
@@ -353,9 +354,11 @@ async def test_reverse_id_replacement_and_approver_retirement_do_not_deadlock(us
         async with db.transaction() as retirement:
             blocker = await retirement.fetch_value("SELECT pg_backend_pid()")
             await uses.world.fence.check(retirement, uses.world.admitted)
-            assert await hold_role(retirement, principal_key(REQUESTER), OWNER_ROLE)
+            assert await hold_owner(retirement, ALICE, installation_id=INSTALLATION_ID)
             prepared = await uses.world.credential_audit.prepare_containment(
-                retirement, admitted=uses.world.admitted, principal=REQUESTER
+                retirement,
+                admitted=uses.world.admitted,
+                principal=canonical_actor(uses.world, ALICE),
             )
             await retirement.fetch_value(
                 "SELECT approval_id FROM {{tables.approvals}} WHERE approval_id=$1 FOR UPDATE",
@@ -371,7 +374,7 @@ async def test_reverse_id_replacement_and_approver_retirement_do_not_deadlock(us
                         retirement,
                         scope=scope,
                         subject=holder.subject,
-                        authorized_by=principal_key(REQUESTER).principal_did,
+                        authorized_by=ALICE.principal_did,
                     )
             await uses.world.fence.check(retirement, uses.world.admitted)
         await asyncio.wait_for(task, 5)

@@ -317,3 +317,44 @@ async def test_an_endorsement_that_is_not_waited_for_is_finished_by_a_rerun(test
         assert status == 0, progress
         assert endorsed["operation_id"] == operation and endorsed["state"] == "committed" and endorsed["registered"] is True
         assert await _current_head(w, w.root_id) == endorsed["certificate_id"]
+
+
+@pytest.mark.usefixtures("source_cli_binary")
+@pytest.mark.asyncio
+async def test_a_spawned_key_only_agent_is_admitted_and_its_certificate_installed_in_its_home(test_db_factory, tmp_path):
+    async with oats_world(test_db_factory, tmp_path) as (a, profile, home):
+        w = a.w
+        status, endorsed, progress = await _endorse(a, profile, home, str(uuid4()))
+        assert status == 0 and endorsed["state"] == "committed", progress
+
+        # OATS's spawn: a key-only home for the agent, registered nowhere.
+        child = home[0] / "worker-home"
+        create = ("--identity-home", str(child), "id", "create", "--local")
+        status, created, progress = await _aw(home, *create)
+        assert status == 0 and created["status"] == "created", progress
+        assert "did_aw" not in created
+        status, again, progress = await _aw(home, *create)
+        assert status == 0 and again == {**created, "status": "already_exists"}, progress
+
+        # The root admits that key; the certificate file is installed into the
+        # agent's home after aw checks it at the real registry.
+        certificate_out = home[0] / "worker-team-certificate.json"
+        status, admitted, progress = await _aw(home, "id", "team", "admit", "--protected-profile", str(profile), "--team", TEAM,
+            "--member-key", created["did_key"], "--alias", "worker", "--policy-version", str(a.policy["version"]),
+            "--policy-digest", a.policy["digest"], "--operation-id", str(uuid4()), "--certificate-out", str(certificate_out))
+        assert status == 0 and admitted["state"] == "committed", progress
+        certificate = json.loads(certificate_out.read_text())
+        install = ("--identity-home", str(child), "id", "team", "install-cert", "--certificate", str(certificate_out),
+            "--registry", w.registry_origin)
+        status, installed, progress = await _aw(home, *install)
+        assert status == 0, progress
+        assert installed["status"] == "installed" and installed["team_id"] == TEAM and installed["alias"] == "worker"
+        assert installed["certificate_id"] == certificate["certificate_id"] and installed["did_key"] == created["did_key"]
+        status, again, progress = await _aw(home, *install)
+        assert status == 0 and again["status"] == "already_installed", progress
+
+        # Once the registry revokes it, the same file is refused.
+        await w.registry.revoke_team_certificate(DOMAIN, "engineering", team_controller_signing_key=bytes(w.controller),
+            certificate_id=certificate["certificate_id"])
+        status, refused, progress = await _aw(home, *install)
+        assert status != 0 and refused["error"]["code"] == "certificate_revoked", progress

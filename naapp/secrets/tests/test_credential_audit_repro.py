@@ -11,14 +11,12 @@ from tests.test_change_sets import (
     decide,
     designate_approver,
     draft,
-    enrol_owner,
 )
-from tests.test_credential_audit import audit_for, designate, events, target
+from tests.test_credential_audit import artifact_count, audit_for, designate, events, target
 from tests.test_credential_audit import world as world
 
 
 async def test_canonical_approver_writer_binds_metadata_before_designation_audit(world):
-    await enrol_owner(world, ALICE, "owner@example.com")
     audit = await audit_for(world)
     item = designate_approver("finance", "finance@example.com", ["sec_19ab42"])
     request = change_set(drafter=by_member(ALICE), changes=[item])
@@ -76,4 +74,4 @@ async def test_unavailable_scope_resolver_is_a_fixed_governance_refusal(world):
         "owner_principals",
         "outbox_events",
     ):
-        assert await world.db.fetch_value("SELECT count(*) FROM {{tables." + table + "}}") == 0
+        assert await artifact_count(world, table) == 0

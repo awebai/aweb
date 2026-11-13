@@ -2,6 +2,30 @@
 
 ## Unreleased
 
+- `aw id team remove-agent --protected-profile P --certificate F --operation-id U`
+  removes, as the deployment's endorsed root, the agent membership that
+  certificate file names, through the protected service's bounded
+  `team.agent.remove`. aw checks that the service signs exactly the registry's
+  revocation of that certificate under the profile's pinned controller key,
+  and changes nothing in the agent's home. The same `--operation-id` resumes
+  the removal; changed inputs refuse `operation_conflict`.
+
+- `aw id team install-cert --identity-home H --certificate F` installs a team
+  certificate file, such as the one `aw id team admit --certificate-out`
+  wrote, into the home whose identity it names, after checking it at the
+  registry: signed by the team's current key, registered for that member and
+  not revoked. A local identity takes certificates of one team only. Then
+  `aw service init` connects the home. A rerun reports `already_installed`
+  and completes an interrupted install. Refusals carry
+  the codes listed in `--help`; only `registry_unavailable` is worth retrying.
+
+- `aw id create --local --identity-home H` creates a key-only local identity
+  (a did:key registered nowhere, with no address or membership) in a fresh
+  home, for an agent a parent issues and a team admits. `--json` reports
+  `status` and `did_key`. A killed run resumes with the same key, and a rerun
+  on the finished home returns `already_exists` with the same `did_key`;
+  any other home is refused with `identity_exists` and left unchanged.
+
 - `aw id endorse --no-wait` shows the approval page and exits instead of
   waiting for the human: `--json` reports `operation_id`, `state`, `page`,
   `digest`, `fingerprint` and `expires_at`. Running the same command again

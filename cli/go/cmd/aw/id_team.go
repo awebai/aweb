@@ -2877,16 +2877,7 @@ func runTeamFetchCert(cmd *cobra.Command, args []string) error {
 	existingCert, existingErr := loadTeamCertificateAt(workingDir, identityRoot, teamID)
 	if existingErr == nil && existingCert != nil {
 		if strings.TrimSpace(existingCert.CertificateID) == certificateID {
-			certPath := awconfig.TeamCertificateRelativePath(teamID)
-			if err := upsertAcceptedTeamMembershipState(workingDir, &teamAcceptInviteOutput{
-				Status:   "already_installed",
-				TeamID:   teamID,
-				Alias:    strings.TrimSpace(existingCert.Alias),
-				CertPath: certPath,
-			}, existingCert, "", "", false, identityRoot); err != nil {
-				return err
-			}
-			if err := ensureAndPublishLocalIdentityEncryptionKeyForDir(workingDir, currentEncryptionKeyIdentityHome()); err != nil {
+			if err := recordTeamCertificate(workingDir, identityRoot, existingCert, "", "already_installed"); err != nil {
 				return err
 			}
 			printOutput(teamFetchCertOutput{
@@ -2894,7 +2885,7 @@ func runTeamFetchCert(cmd *cobra.Command, args []string) error {
 				TeamID:        teamID,
 				Alias:         strings.TrimSpace(existingCert.Alias),
 				CertificateID: strings.TrimSpace(existingCert.CertificateID),
-				CertPath:      certPath,
+				CertPath:      awconfig.TeamCertificateRelativePath(teamID),
 			}, formatTeamFetchCert)
 			return nil
 		}
@@ -2939,19 +2930,7 @@ func runTeamFetchCert(cmd *cobra.Command, args []string) error {
 		return fmt.Errorf("fetched certificate team_id %q does not match requested %q", cert.Team, teamID)
 	}
 
-	certPath, err := saveAcceptedTeamCertificate(workingDir, identityRoot, teamID, cert)
-	if err != nil {
-		return err
-	}
-	if err := upsertAcceptedTeamMembershipState(workingDir, &teamAcceptInviteOutput{
-		Status:   "installed",
-		TeamID:   teamID,
-		Alias:    strings.TrimSpace(cert.Alias),
-		CertPath: certPath,
-	}, cert, registryURL, "", false, identityRoot); err != nil {
-		return err
-	}
-	if err := ensureAndPublishLocalIdentityEncryptionKeyForDir(workingDir, currentEncryptionKeyIdentityHome()); err != nil {
+	if err := recordTeamCertificate(workingDir, identityRoot, cert, registryURL, "installed"); err != nil {
 		return err
 	}
 
@@ -2960,7 +2939,7 @@ func runTeamFetchCert(cmd *cobra.Command, args []string) error {
 		TeamID:        teamID,
 		Alias:         strings.TrimSpace(cert.Alias),
 		CertificateID: strings.TrimSpace(cert.CertificateID),
-		CertPath:      certPath,
+		CertPath:      awconfig.TeamCertificateRelativePath(teamID),
 	}, formatTeamFetchCert)
 	return nil
 }

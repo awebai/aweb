@@ -89,6 +89,7 @@ from aweb_secrets.owners import (
     OwnerDirectory,
     apply_owner_migrations,
     approver_scope,
+    has_owner,
     is_owner_scope,
 )
 from aweb_secrets.passkey_context import PasskeyContexts
@@ -333,6 +334,7 @@ async def enrol_owner(world: World, principal: PrincipalKey, contact: str) -> st
     from tests.human_owner import apply_holder
 
     designation = await apply_holder(world, "human-role.designate", principal, contact)
+    assert await has_owner(world.db, principal, installation_id=world.admitted.installation_id)
     return designation.approver.scope
 
 
