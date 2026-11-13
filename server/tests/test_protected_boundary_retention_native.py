@@ -188,6 +188,8 @@ async def test_cache_wait_expiry_keeps_original_bundle_claim_and_never_sends(adm
     original_clock = a.w.app.signer.clock
     original_request = custody._request_effect
     original_invalidate = a.w.registry.invalidate_team_certificate_cache
+    original_deliver = custody.deliver_retained
+    refusals = []
     invalidations, sends = [], []
 
     async def invalidate(*args):
@@ -200,10 +202,19 @@ async def test_cache_wait_expiry_keeps_original_bundle_claim_and_never_sends(adm
             sends.append(delivery)
         return await original_request(delivery, **kwargs)
 
+    async def deliver(operation, retained):
+        try:
+            await original_deliver(operation, retained)
+        except SignerRefused as exc:
+            refusals.append(exc.code)
+            raise
+
+    monkeypatch.setattr(custody, "deliver_retained", deliver)
     monkeypatch.setattr(a.w.registry, "invalidate_team_certificate_cache", invalidate)
     monkeypatch.setattr(custody, "_request_effect", request)
     response = await execute(a, operation)
-    assert response.status_code == 410 and response.json()["detail"] == "operation_expired", response.text
+    assert response.status_code == 200 and response.json()["code"] == "external_effect_unresolved", response.text
+    assert refusals == ["operation_expired"]
     assert sends == [] and len(invalidations) == 2
     before = await a.w.db.fetch_one(
         "SELECT signed_result,retained_effect,delivery_claim FROM {{tables.protected_signer_operations}} WHERE operation_id=$1",
