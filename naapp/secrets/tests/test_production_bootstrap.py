@@ -11,6 +11,7 @@ from datetime import UTC, datetime, timedelta
 from urllib.parse import parse_qs, urlsplit
 from uuid import uuid4
 
+import dns.asyncresolver as dns_api
 import httpx
 import pytest
 from aweb_naapp.egress import DnsResolver, InternalDestinations
@@ -58,7 +59,7 @@ async def envelopes(db, team_id):
 
 
 @pytest.fixture
-async def root(test_db_factory, registry, tmp_path, request):
+async def root(test_db_factory, registry, tmp_path, request, monkeypatch):
     member = Member(team_id="root:example.com", member_key=member_key("alice"))
     options = getattr(request, "param", {})
     private = options.get("private_team", False)
@@ -115,6 +116,12 @@ async def root(test_db_factory, registry, tmp_path, request):
             # a real local NXDOMAIN answer instead of querying public DNS.
             dns = DnsServer()
             await dns.start()
+            # The SDK's AWID authority lookups read TXT through dnspython's
+            # default resolver. Point it at the same private server, so a test
+            # publishes the TXT evidence it needs and nothing reaches public DNS.
+            resolver = dns_api.Resolver(configure=False)
+            resolver.nameservers, resolver.port = ["127.0.0.1"], dns.port
+            monkeypatch.setattr(dns_api, "default_resolver", resolver)
             hook_transport = service.runtime._hooks.transport
             assert hook_transport is not None
             hook_transport._egress = replace(
