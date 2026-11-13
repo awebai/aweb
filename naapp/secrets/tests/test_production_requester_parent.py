@@ -18,7 +18,11 @@ from aweb_naapp_testing import Member, did_key
 from aweb_naapp_testing.network import DnsServer
 from aweb_naapp_testing.webauthn import SoftAuthenticator
 from awid.dns_verify import awid_txt_value
-from awid.id_certificates import encode_id_chain_header, id_certificate_signing_bytes
+from awid.id_certificates import (
+    encode_id_chain_header,
+    id_certificate_signing_bytes,
+    verify_id_chain,
+)
 from nacl.signing import SigningKey
 
 from tests.human_owner import b64, fixture_principal, human
@@ -167,6 +171,21 @@ async def test_first_session_start_resolves_the_requester_from_runtime_evidence(
             headers["X-AWID-ID-Chain"] = encode_id_chain_header(
                 {"v": 1, "type": "aweb.id-chain", "certificates": chain}
             )
+        if requester in {"child", "missing_certificate"}:
+            # The direct child's chain must hold under the runtime's own
+            # evidence; otherwise any refusal below says nothing about the
+            # holding. The result carries only outcome codes.
+            bundle = {"v": 1, "type": "aweb.id-chain", "certificates": chain}
+            subject = {"id": signer.extra_cert_fields["member_did_aw"], "did_key": signer.did_key}
+            evidence = await service.runtime.registry_client().id_chain_evidence(
+                bundle, subject, domain="example.com"
+            )
+            verified = verify_id_chain(
+                bundle, subject=subject, evidence=evidence, domain="example.com"
+            )
+            assert (verified.get("identity_valid"), verified.get("kind")) == (True, "agent"), {
+                key: verified.get(key) for key in ("outcome", "reason", "identity_valid", "kind")
+            }
         started = await client.post(
             settings.public_origin + "/handoffs", content=raw, headers=headers
         )
