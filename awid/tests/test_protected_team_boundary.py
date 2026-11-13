@@ -7,6 +7,8 @@ The detached proof mechanism is intentionally absent: these are legacy callers.
 
 from __future__ import annotations
 
+import base64
+import json
 from datetime import datetime, timezone
 
 import pytest
@@ -36,6 +38,24 @@ async def protect_team(env):
         keypair()[1],
         1,
     )
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("malformed", [[], "not-an-object"])
+async def test_protected_register_refuses_nonobject_artifact_without_a_server_error(controller_app, malformed):
+    env = controller_app
+    await protect_team(env)
+    body = certificate_body(env)
+    body["certificate"] = base64.b64encode(json.dumps(malformed).encode()).decode()
+    response = await send(
+        env, "POST", TEAM_PATH + "/certificates",
+        {"domain": "local", "team_name": "base", "operation": "register_certificate",
+         "certificate_id": body["certificate_id"]},
+        body, signer=env.team,
+    )
+    assert response.status_code == 403, response.text
+    assert response.json()["detail"]["code"] == "protected_admission_required"
+    assert await env.db.fetch_value("SELECT count(*) FROM {{tables.team_certificates}}") == 0
 
 
 @pytest.mark.asyncio
