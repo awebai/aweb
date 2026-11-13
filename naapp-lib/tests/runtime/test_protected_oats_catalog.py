@@ -38,6 +38,27 @@ def test_no_unreviewed_route_or_generic_signing_operation_is_enabled(name):
         operation_spec(name)
 
 
+def test_each_definition_owns_its_consumer_codec_and_page_schema():
+    """The page and byte codec select the same closed definition.
+
+    This guards the architectural boundary: a new table row must supply its
+    codec, rather than require another selector list in the shared codec.
+    """
+    from aweb_naapp.runtime.protected_signer.catalog import presentation_catalog
+
+    page = presentation_catalog()
+    for selector, definition in OPERATIONS.items():
+        assert callable(definition.codec.parse_subject)
+        assert callable(definition.codec.build_artifact)
+        assert callable(definition.codec.signing_bytes)
+        assert definition.codec.authority_field
+        assert page["|".join(selector)]["subject_schema"] == definition.codec.subject_schema
+
+    # Public presentation data must not mutate the authoritative definition.
+    page["human-role.revoke|default"]["subject_schema"]["required"].clear()
+    assert presentation_catalog()["human-role.revoke|default"]["subject_schema"]["required"]
+
+
 @pytest.mark.asyncio
 async def test_released_revoke_type_reaches_the_live_floor_execute_refusal():
     from types import SimpleNamespace
