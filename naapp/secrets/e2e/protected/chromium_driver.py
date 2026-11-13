@@ -58,9 +58,16 @@ def trust(ca: str) -> None:
     nssdb.mkdir(parents=True, exist_ok=True)
     if not (nssdb / "cert9.db").exists():
         subprocess.run(["certutil", "-d", f"sql:{nssdb}", "-N", "--empty-password"], check=True)
-    subprocess.run(
-        ["certutil", "-d", f"sql:{nssdb}", "-A", "-t", "C,,", "-n", "lane-ca", "-i", ca], check=True
-    )
+    # certutil -A reads one certificate from a file: each authority the file
+    # holds is added under its own name.
+    end = "-----END CERTIFICATE-----"
+    for number, block in enumerate(Path(ca).read_text().split(end)[:-1]):
+        one = nssdb / f"lane-ca-{number}.pem"
+        one.write_text(block.strip() + "\n" + end + "\n")
+        subprocess.run(
+            ["certutil", "-d", f"sql:{nssdb}", "-A", "-t", "C,,", "-n", f"lane-ca-{number}", "-i", str(one)],
+            check=True,
+        )
 
 
 def authenticator(page, user_verified: bool):
