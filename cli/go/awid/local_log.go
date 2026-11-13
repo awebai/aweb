@@ -99,8 +99,9 @@ func SignLogKeyRecord(rec *LogKeyRecord, teamKey ed25519.PrivateKey) error {
 	if len(teamKey) != ed25519.PrivateKeySize {
 		return errors.New("team controller key is required")
 	}
-	rec.TeamKeyDID = ComputeDIDKey(teamKey.Public().(ed25519.PublicKey))
-	payload, err := logKeyRecordSignedPayload(rec)
+	candidate := *rec
+	candidate.TeamKeyDID = ComputeDIDKey(teamKey.Public().(ed25519.PublicKey))
+	payload, err := LogKeyRecordSigningBytes(&candidate)
 	if err != nil {
 		return err
 	}
@@ -109,7 +110,62 @@ func SignLogKeyRecord(rec *LogKeyRecord, teamKey ed25519.PrivateKey) error {
 	if err != nil {
 		return err
 	}
-	rec.Signature = encodeLogBytes(signature)
+	candidate.Signature = encodeLogBytes(signature)
+	*rec = candidate
+	return nil
+}
+
+// LogKeyRecordSigningBytes returns exactly the bytes the team controller key
+// signs for rec: LogKeyRecordPrefix followed by the canonical JSON of its six
+// unsigned fields, team_key_did included. It refuses a record that could not
+// verify (wrong version, no team, a key id that does not match the public
+// key, or no valid signing did:key). It is the one serializer of those
+// bytes; a signature produced elsewhere is checked against it.
+func LogKeyRecordSigningBytes(rec *LogKeyRecord) ([]byte, error) {
+	if rec == nil {
+		return nil, errors.New("missing log key record")
+	}
+	if rec.V != logKeyRecordVersion {
+		return nil, fmt.Errorf("unsupported log key record version %d", rec.V)
+	}
+	if strings.TrimSpace(rec.TeamID) == "" {
+		return nil, errors.New("log key record requires a team id")
+	}
+	if _, err := rec.publicKey(); err != nil {
+		return nil, err
+	}
+	if _, err := ExtractPublicKey(rec.TeamKeyDID); err != nil {
+		return nil, fmt.Errorf("log key record team_key_did: %w", err)
+	}
+	return logKeyRecordSignedPayload(rec)
+}
+
+// AttachLogKeyRecordSignature completes rec with a signature produced
+// elsewhere, such as by a protected signer, by the team key teamKeyDID. The
+// signature is unpadded standard base64 of the 64 Ed25519 bytes over
+// LogKeyRecordSigningBytes. It is checked by the shared strict verifier
+// before rec changes; a refused signature leaves rec as it was. Whether
+// teamKeyDID is the team's key is checked at install, against the host's own
+// team certificate.
+func AttachLogKeyRecordSignature(rec *LogKeyRecord, teamKeyDID, signature string) error {
+	if rec == nil {
+		return errors.New("missing log key record")
+	}
+	candidate := *rec
+	candidate.TeamKeyDID = strings.TrimSpace(teamKeyDID)
+	signing, err := LogKeyRecordSigningBytes(&candidate)
+	if err != nil {
+		return err
+	}
+	raw, err := decodeLogBytes(signature)
+	if err != nil {
+		return fmt.Errorf("log key record signature: %w", err)
+	}
+	if err := idStrictVerify(candidate.TeamKeyDID, raw, func() ([]byte, error) { return signing, nil }); err != nil {
+		return fmt.Errorf("log key record signature does not verify: %w", err)
+	}
+	candidate.Signature = encodeLogBytes(raw)
+	*rec = candidate
 	return nil
 }
 

@@ -171,3 +171,94 @@ func TestLogKeyBackupRoundTripsOnlyWithItsPassphrase(t *testing.T) {
 		t.Fatalf("a human signing key must not import as a log key: %v", err)
 	}
 }
+
+func TestLogKeyRecordSigningBytesAreTheSignedPayload(t *testing.T) {
+	teamKey, teamDID := newTestTeamKey(t)
+	pair, err := GenerateLogKeyPair()
+	if err != nil {
+		t.Fatal(err)
+	}
+	rec, err := NewLogKeyRecord(testLogTeamID, pair.Public, time.Date(2026, 11, 13, 9, 0, 0, 0, time.UTC))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := LogKeyRecordSigningBytes(rec); err == nil {
+		t.Fatal("signing bytes need the signing team key named")
+	}
+	rec.TeamKeyDID = teamDID
+	signing, err := LogKeyRecordSigningBytes(rec)
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := LogKeyRecordPrefix + `{"created_at":"2026-11-13T09:00:00Z","key_id":"` + rec.KeyID + `","public_key":"` + rec.PublicKey + `","team_id":"acme:example.com","team_key_did":"` + teamDID + `","v":1}`
+	if string(signing) != want {
+		t.Fatalf("signing bytes\n got %s\nwant %s", signing, want)
+	}
+
+	signed := *rec
+	signed.TeamKeyDID = ""
+	if err := SignLogKeyRecord(&signed, teamKey); err != nil {
+		t.Fatal(err)
+	}
+	if !ed25519.Verify(teamKey.Public().(ed25519.PublicKey), signing, mustDecodeLogBytes(t, signed.Signature)) {
+		t.Fatal("SignLogKeyRecord does not sign the bytes LogKeyRecordSigningBytes returns")
+	}
+
+	relabelled := *rec
+	relabelled.KeyID = "sha256:not-the-key"
+	if _, err := LogKeyRecordSigningBytes(&relabelled); err == nil {
+		t.Fatal("a record whose key id does not match its public key has no signing bytes")
+	}
+}
+
+func TestAttachLogKeyRecordSignatureAcceptsOnlyAVerifyingSignature(t *testing.T) {
+	teamKey, teamDID := newTestTeamKey(t)
+	pair, err := GenerateLogKeyPair()
+	if err != nil {
+		t.Fatal(err)
+	}
+	rec, err := NewLogKeyRecord(testLogTeamID, pair.Public, time.Now())
+	if err != nil {
+		t.Fatal(err)
+	}
+	withKey := *rec
+	withKey.TeamKeyDID = teamDID
+	signing, err := LogKeyRecordSigningBytes(&withKey)
+	if err != nil {
+		t.Fatal(err)
+	}
+	signature := encodeLogBytes(ed25519.Sign(teamKey, signing))
+
+	otherKey, otherDID := newTestTeamKey(t)
+	for name, attempt := range map[string]struct{ did, sig string }{
+		"another key's did":       {otherDID, signature},
+		"another key's signature": {teamDID, encodeLogBytes(ed25519.Sign(otherKey, signing))},
+		"bare payload signature":  {teamDID, encodeLogBytes(ed25519.Sign(teamKey, signing[len(LogKeyRecordPrefix):]))},
+		"padded encoding":         {teamDID, signature + "=="},
+		"not a did":               {"did:key:nope", signature},
+	} {
+		unsigned := *rec
+		if err := AttachLogKeyRecordSignature(&unsigned, attempt.did, attempt.sig); err == nil {
+			t.Fatalf("%s: attached", name)
+		}
+		if unsigned != *rec {
+			t.Fatalf("%s: a refused signature changed the record", name)
+		}
+	}
+
+	if err := AttachLogKeyRecordSignature(rec, teamDID, signature); err != nil {
+		t.Fatal(err)
+	}
+	if err := VerifyLogKeyRecord(rec, testLogTeamID, teamDID); err != nil {
+		t.Fatalf("attached record must verify: %v", err)
+	}
+}
+
+func mustDecodeLogBytes(t *testing.T, s string) []byte {
+	t.Helper()
+	b, err := decodeLogBytes(s)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return b
+}
