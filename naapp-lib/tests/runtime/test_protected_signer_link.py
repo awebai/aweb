@@ -1,6 +1,12 @@
 """Mailed approval links: the signer mails each approver after prepare commits,
 the personal link reveals the request, and one fresh exact-act UV approves or
-rejects it (human-assurance-contract.md, "Mailed approval links")."""
+rejects it (human-assurance-contract.md, "Mailed approval links").
+
+These exercise the policy scenarios mailed-link-reveals-and-decides-nothing,
+mailed-link-approves-with-one-exact-act-uv, mailed-link-denies-with-one-exact-act-uv,
+mailed-link-assertion-for-the-other-decision, mailed-link-other-candidate-or-spent,
+mailed-link-not-revealing-policy and mailed-wait-capped-by-frozen-owner-act
+(docs/vectors/human-assurance-v1.json)."""
 
 from __future__ import annotations
 
