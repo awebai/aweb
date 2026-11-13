@@ -15,7 +15,7 @@ from pgdbm.errors import QueryError
 from fastapi.exceptions import RequestValidationError
 from pydantic import BaseModel, ConfigDict, Field, ValidationError, field_validator, model_validator
 
-from awid_service.protected_teams import advance_incarnation, require_effect, protection, team_guard
+from awid_service.protected_teams import advance_incarnation, effect_transaction, protection, team_guard
 
 _TEAM_NAME_PATTERN = re.compile(r"^[a-z0-9]([a-z0-9-]*[a-z0-9])?$")
 
@@ -565,8 +565,7 @@ async def create_team(
         request, db, domain=domain, operation="create_team", name=body.name,
     )
 
-    async with db.transaction() as tx:
-        await require_effect(request, tx, domain=domain, name=body.name, operation="create_team")
+    async with effect_transaction(request, db, domain=domain, name=body.name, operation="create_team") as tx:
         now = datetime.now(timezone.utc)
         try:
             row = await tx.fetch_one(
@@ -727,8 +726,7 @@ async def delete_team(
         request, db, domain=domain, operation="delete_team", team_name=name,
     )
 
-    async with db.transaction() as tx:
-        await require_effect(request, tx, domain=domain, name=name, operation="delete_team")
+    async with effect_transaction(request, db, domain=domain, name=name, operation="delete_team") as tx:
         row = await tx.fetch_one(
             """
             SELECT team_uuid
@@ -815,8 +813,7 @@ async def rotate_team_key(
         name=name, new_team_did_key=body.new_team_did_key,
     )
 
-    async with db.transaction() as tx:
-        await require_effect(request, tx, domain=domain, name=name, operation="rotate_team_key")
+    async with effect_transaction(request, db, domain=domain, name=name, operation="rotate_team_key") as tx:
         old_row = await tx.fetch_one(
             """
             SELECT team_uuid, team_did_key FROM {{tables.teams}}
@@ -872,8 +869,7 @@ async def register_certificate(
         request, db, domain=domain, name=name,
         operation="register_certificate", certificate_id=body.certificate_id,
     )
-    async with db.transaction() as tx:
-        await require_effect(request, tx, domain=domain, name=name, operation="register_certificate")
+    async with effect_transaction(request, db, domain=domain, name=name, operation="register_certificate") as tx:
         await _require_member_address_owned_by_did_aw(
             tx,
             member_address=body.member_address,
@@ -943,8 +939,7 @@ async def set_team_visibility(
         operation="set_team_visibility", visibility=body.visibility,
     )
 
-    async with db.transaction() as tx:
-        await require_effect(request, tx, domain=domain, name=name, operation="set_team_visibility")
+    async with effect_transaction(request, db, domain=domain, name=name, operation="set_team_visibility") as tx:
         row = await tx.fetch_one(
             """
             UPDATE {{tables.teams}}
@@ -958,7 +953,7 @@ async def set_team_visibility(
         )
         if row is None:
             raise HTTPException(status_code=404, detail="Team not found")
-        return await _team_response(db, row)
+        return await _team_response(tx, row)
 
 
 @router.get(
@@ -1220,8 +1215,7 @@ async def publish_team_server(
     _validate_team_name_path(name)
     body = await _team_server_body(request)
     db = db_infra.get_manager("aweb")
-    async with db.transaction() as tx:
-        await require_effect(request, tx, domain=domain, name=name, operation="publish_team_server")
+    async with effect_transaction(request, db, domain=domain, name=name, operation="publish_team_server") as tx:
         team = await tx.fetch_one(
             """
             SELECT team_uuid, team_did_key FROM {{tables.teams}}
@@ -1389,8 +1383,7 @@ async def revoke_certificate(
         operation="revoke_certificate", certificate_id=body.certificate_id,
     )
 
-    async with db.transaction() as tx:
-        await require_effect(request, tx, domain=domain, name=name, operation="revoke_certificate")
+    async with effect_transaction(request, db, domain=domain, name=name, operation="revoke_certificate") as tx:
         row = await tx.fetch_one(
             """
             UPDATE {{tables.team_certificates}}
