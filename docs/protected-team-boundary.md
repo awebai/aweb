@@ -56,6 +56,12 @@ last await. This is coordinated cutover, not distributed atomicity. Package .8
 owns each installation's authorization, historical baseline, restore and rollback
 limits; a restored database counter alone cannot establish safe history.
 
+Core certificate authentication retains that original observation through
+identity binding, ID-chain authentication and local identity resolution.
+Projection updates and grant mint/revoke effects check it inside their
+transaction after the final await, so expiry rolls back their writes. A later
+read never renews evidence already used by the operation.
+
 ## Detached proof
 
 `X-AWEB-Protected-Effect` contains unpadded base64url of canonical JSON
