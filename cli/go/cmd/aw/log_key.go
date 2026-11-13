@@ -35,16 +35,13 @@ type logKeyCreateOptions struct {
 	Now      time.Time
 }
 
-// createLogKey makes a new owner log key for the team: the private key goes
-// to the keychain under a new passphrase and the returned record is signed by
-// the team controller key. Running it again rotates the key; earlier keys stay
-// in the keychain so their lines remain readable.
+// createLogKey makes a new owner log key for the team on the machine where
+// the owner reads the logs: the private key goes to the keychain under a new
+// passphrase, and the returned record is unsigned. It needs no controller key;
+// signLogKey signs the record wherever the controller key is held. Running it
+// again rotates the key; earlier keys stay in the keychain so their lines
+// remain readable.
 func createLogKey(opts logKeyCreateOptions) (*awid.LogKeyRecord, error) {
-	teamKey, err := loadOwnerTeamKey(opts.TeamID)
-	if err != nil {
-		return nil, err
-	}
-	defer wipeBytes(teamKey)
 	pair, err := awid.GenerateLogKeyPair()
 	if err != nil {
 		return nil, err
@@ -76,10 +73,49 @@ func createLogKey(opts logKeyCreateOptions) (*awid.LogKeyRecord, error) {
 	if err := opts.Keychain.SaveLogKey(rec.KeyID, blob); err != nil {
 		return nil, err
 	}
-	if err := awid.SignLogKeyRecord(rec, teamKey); err != nil {
-		return nil, err
-	}
 	return rec, nil
+}
+
+type logKeySignOptions struct {
+	Record *awid.LogKeyRecord
+	// OfflineControllerKey signs with the team controller key in this
+	// machine's ~/.awid/team-keys/: an explicit route outside a deployment
+	// whose controller key lives only in its signer.
+	OfflineControllerKey bool
+	// TeamKeyDID and Signature attach a signature produced elsewhere.
+	TeamKeyDID string
+	Signature  string
+}
+
+// signLogKey completes opts.Record through exactly one route, chosen by the
+// caller: the explicit offline controller key, or a signature produced
+// elsewhere and verified before it is attached. With no route, or both, it
+// refuses rather than choose one. A refused sign leaves the record as it was.
+// Signing an already signed record replaces its signature, as after a
+// controller replacement.
+func signLogKey(opts logKeySignOptions) error {
+	if opts.Record == nil {
+		return errors.New("missing log key record")
+	}
+	attach := strings.TrimSpace(opts.TeamKeyDID) != "" || strings.TrimSpace(opts.Signature) != ""
+	switch {
+	case opts.OfflineControllerKey && attach:
+		return usageError("choose one route: --offline-controller-key, or --team-key-did with --signature")
+	case opts.OfflineControllerKey:
+		teamKey, err := loadOwnerTeamKey(opts.Record.TeamID)
+		if err != nil {
+			return err
+		}
+		defer wipeBytes(teamKey)
+		return awid.SignLogKeyRecord(opts.Record, teamKey)
+	case attach:
+		if strings.TrimSpace(opts.TeamKeyDID) == "" || strings.TrimSpace(opts.Signature) == "" {
+			return usageError("attaching a signature needs both --team-key-did and --signature")
+		}
+		return awid.AttachLogKeyRecordSignature(opts.Record, opts.TeamKeyDID, opts.Signature)
+	default:
+		return usageError("say how the record is signed: --team-key-did with --signature to attach a signature produced elsewhere, or --offline-controller-key to sign with the controller key in ~/.awid/team-keys/ (outside a deployment whose signer holds it)")
+	}
 }
 
 // installLogKeyRecord installs rec on this agent host once it verifies under
@@ -205,7 +241,14 @@ func printOwnerLogLine(out io.Writer, plaintext []byte, asJSON bool) error {
 	return err
 }
 
-var logKeyCreateOut string
+var (
+	logKeyCreateOut      string
+	logKeySignRecord     string
+	logKeySignOut        string
+	logKeySignOffline    bool
+	logKeySignTeamKeyDID string
+	logKeySignSignature  string
+)
 
 var teamLogKeyCmd = &cobra.Command{
 	Use:   "log-key",
@@ -214,11 +257,12 @@ var teamLogKeyCmd = &cobra.Command{
 
 var teamLogKeyCreateCmd = &cobra.Command{
 	Use:   "create",
-	Short: "Create (or rotate) the team's owner log key; prints its signed public record",
-	Long: "Create a new log key for the team on the owner's machine. The private key is kept in\n" +
-		"the OS keychain under a passphrase; the public record, signed with the team controller\n" +
-		"key, is written to --out (or stdout) for `aw team admin log-key install` on each agent host.\n" +
-		"Running it again rotates the key; earlier keys stay in the keychain.",
+	Short: "Create (or rotate) the team's owner log key; prints its unsigned public record",
+	Long: "Create a new log key for the team on the machine where the owner reads the logs. The\n" +
+		"private key is kept in the OS keychain under a passphrase. The public record is written\n" +
+		"to --out (or stdout) unsigned: sign it with `aw team admin log-key sign` wherever the\n" +
+		"team controller key is held, then install it with `aw team admin log-key install` on\n" +
+		"each agent host. Running it again rotates the key; earlier keys stay in the keychain.",
 	Args: cobra.NoArgs,
 	RunE: func(cmd *cobra.Command, args []string) error {
 		teamID := strings.TrimSpace(teamFlag)
@@ -238,21 +282,91 @@ var teamLogKeyCreateCmd = &cobra.Command{
 		if err != nil {
 			return err
 		}
-		data, err := json.MarshalIndent(rec, "", "  ")
+		return writeLogKeyRecord(cmd, rec, logKeyCreateOut, "Unsigned log key record %s for team %s written to %s; sign it with `aw team admin log-key sign`.\n")
+	},
+}
+
+var teamLogKeySignCmd = &cobra.Command{
+	Use:   "sign",
+	Short: "Sign a log key record, or attach a signature made elsewhere",
+	Long: "Complete a log key record through exactly one route:\n" +
+		"  --team-key-did and --signature attach a signature produced elsewhere, such as by the\n" +
+		"  deployment's protected signer, after verifying it over the record's signing bytes;\n" +
+		"  --offline-controller-key signs with the team controller key in ~/.awid/team-keys/ on\n" +
+		"  this machine, which is outside the route of a deployment whose signer holds that key.\n" +
+		"With no route, or both, it refuses. The signed record is written to --out (or stdout).",
+	Args: cobra.NoArgs,
+	RunE: func(cmd *cobra.Command, args []string) error {
+		rec, err := readLogKeyRecordFile(logKeySignRecord)
 		if err != nil {
 			return err
 		}
-		data = append(data, '\n')
-		if strings.TrimSpace(logKeyCreateOut) == "" {
-			_, err = cmd.OutOrStdout().Write(data)
+		if err := signLogKey(logKeySignOptions{
+			Record:               rec,
+			OfflineControllerKey: logKeySignOffline,
+			TeamKeyDID:           logKeySignTeamKeyDID,
+			Signature:            logKeySignSignature,
+		}); err != nil {
 			return err
 		}
-		if err := os.WriteFile(logKeyCreateOut, data, 0o644); err != nil {
-			return err
-		}
-		fmt.Fprintf(cmd.ErrOrStderr(), "Log key %s for team %s written to %s\n", rec.KeyID, rec.TeamID, logKeyCreateOut)
-		return nil
+		return writeLogKeyRecord(cmd, rec, logKeySignOut, "Log key record %s for team %s signed and written to %s; install it with `aw team admin log-key install`.\n")
 	},
+}
+
+var teamLogKeySigningBytesCmd = &cobra.Command{
+	Use:   "signing-bytes",
+	Short: "Print the exact bytes a team key signs for a log key record",
+	Long: "Print, with no trailing newline, the bytes the team controller key --team-key-did signs\n" +
+		"for the record: the aweb.log-key/1 prefix and the canonical JSON of its unsigned fields.\n" +
+		"Use it to cross-check what any signer is asked to sign.",
+	Args: cobra.NoArgs,
+	RunE: func(cmd *cobra.Command, args []string) error {
+		rec, err := readLogKeyRecordFile(logKeySignRecord)
+		if err != nil {
+			return err
+		}
+		rec.TeamKeyDID = strings.TrimSpace(logKeySignTeamKeyDID)
+		signing, err := awid.LogKeyRecordSigningBytes(rec)
+		if err != nil {
+			return err
+		}
+		_, err = cmd.OutOrStdout().Write(signing)
+		return err
+	},
+}
+
+func readLogKeyRecordFile(path string) (*awid.LogKeyRecord, error) {
+	if strings.TrimSpace(path) == "" {
+		return nil, usageError("--record is required")
+	}
+	data, err := os.ReadFile(path)
+	if err != nil {
+		return nil, err
+	}
+	var rec awid.LogKeyRecord
+	if err := json.Unmarshal(data, &rec); err != nil {
+		return nil, fmt.Errorf("parse log key record %s: %w", path, err)
+	}
+	return &rec, nil
+}
+
+// writeLogKeyRecord writes the public record to out, or to stdout when out
+// is empty; done names the written file on stderr.
+func writeLogKeyRecord(cmd *cobra.Command, rec *awid.LogKeyRecord, out, done string) error {
+	data, err := json.MarshalIndent(rec, "", "  ")
+	if err != nil {
+		return err
+	}
+	data = append(data, '\n')
+	if strings.TrimSpace(out) == "" {
+		_, err = cmd.OutOrStdout().Write(data)
+		return err
+	}
+	if err := os.WriteFile(out, data, 0o644); err != nil {
+		return err
+	}
+	fmt.Fprintf(cmd.ErrOrStderr(), done, rec.KeyID, rec.TeamID, out)
+	return nil
 }
 
 var teamLogKeyInstallCmd = &cobra.Command{
@@ -260,19 +374,15 @@ var teamLogKeyInstallCmd = &cobra.Command{
 	Short: "Install the team's owner log key record on this host; local logs are then sealed to it",
 	Args:  cobra.ExactArgs(1),
 	RunE: func(cmd *cobra.Command, args []string) error {
-		data, err := os.ReadFile(args[0])
+		rec, err := readLogKeyRecordFile(args[0])
 		if err != nil {
 			return err
-		}
-		var rec awid.LogKeyRecord
-		if err := json.Unmarshal(data, &rec); err != nil {
-			return fmt.Errorf("parse log key record %s: %w", args[0], err)
 		}
 		_, sel, err := resolveClientSelection()
 		if err != nil {
 			return err
 		}
-		if err := installLogKeyRecord(sel, &rec); err != nil {
+		if err := installLogKeyRecord(sel, rec); err != nil {
 			return err
 		}
 		fmt.Fprintf(cmd.OutOrStdout(), "Installed log key %s for team %s; local mail and chat logs are now sealed to it.\n", rec.KeyID, rec.TeamID)
@@ -296,8 +406,15 @@ var logReadCmd = &cobra.Command{
 }
 
 func init() {
-	teamLogKeyCreateCmd.Flags().StringVar(&logKeyCreateOut, "out", "", "Write the signed public record to this file instead of stdout")
-	teamLogKeyCmd.AddCommand(teamLogKeyCreateCmd, teamLogKeyInstallCmd)
+	teamLogKeyCreateCmd.Flags().StringVar(&logKeyCreateOut, "out", "", "Write the unsigned public record to this file instead of stdout")
+	teamLogKeySignCmd.Flags().StringVar(&logKeySignRecord, "record", "", "The log key record to sign")
+	teamLogKeySignCmd.Flags().StringVar(&logKeySignOut, "out", "", "Write the signed record to this file instead of stdout")
+	teamLogKeySignCmd.Flags().BoolVar(&logKeySignOffline, "offline-controller-key", false, "Sign with the team controller key in ~/.awid/team-keys/ on this machine")
+	teamLogKeySignCmd.Flags().StringVar(&logKeySignTeamKeyDID, "team-key-did", "", "The did:key of the team key that produced --signature")
+	teamLogKeySignCmd.Flags().StringVar(&logKeySignSignature, "signature", "", "A signature produced elsewhere: unpadded standard base64 of the 64 Ed25519 bytes")
+	teamLogKeySigningBytesCmd.Flags().StringVar(&logKeySignRecord, "record", "", "The log key record")
+	teamLogKeySigningBytesCmd.Flags().StringVar(&logKeySignTeamKeyDID, "team-key-did", "", "The did:key of the team key that will sign")
+	teamLogKeyCmd.AddCommand(teamLogKeyCreateCmd, teamLogKeySignCmd, teamLogKeySigningBytesCmd, teamLogKeyInstallCmd)
 	bindTeamSelector(teamLogKeyCmd)
 	teamLogKeyCmd.GroupID = teamAdminGroupOperations
 	teamAdminCmd.AddCommand(teamLogKeyCmd)

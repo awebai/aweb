@@ -1943,8 +1943,10 @@ Flags:
 Manage the owner key that agents' local message logs are sealed to
 
 Subcommands:
-- `create` Create (or rotate) the team's owner log key; prints its signed public record
+- `create` Create (or rotate) the team's owner log key; prints its unsigned public record
 - `install` Install the team's owner log key record on this host; local logs are then sealed to it
+- `sign` Sign a log key record, or attach a signature made elsewhere
+- `signing-bytes` Print the exact bytes a team key signs for a log key record
 
 Flags:
 - `-h, --help help for log-key`
@@ -1954,14 +1956,15 @@ Flags:
 
 ### `team admin log-key create`
 
-Create a new log key for the team on the owner's machine. The private key is kept in
-the OS keychain under a passphrase; the public record, signed with the team controller
-key, is written to --out (or stdout) for `aw team admin log-key install` on each agent host.
-Running it again rotates the key; earlier keys stay in the keychain.
+Create a new log key for the team on the machine where the owner reads the logs. The
+private key is kept in the OS keychain under a passphrase. The public record is written
+to --out (or stdout) unsigned: sign it with `aw team admin log-key sign` wherever the
+team controller key is held, then install it with `aw team admin log-key install` on
+each agent host. Running it again rotates the key; earlier keys stay in the keychain.
 
 Flags:
 - `-h, --help help for create`
-- `--out string Write the signed public record to this file instead of stdout`
+- `--out string Write the unsigned public record to this file instead of stdout`
 
 ## `team admin log-key install`
 
@@ -1971,6 +1974,38 @@ Install the team's owner log key record on this host; local logs are then sealed
 
 Flags:
 - `-h, --help help for install`
+
+## `team admin log-key sign`
+
+### `team admin log-key sign`
+
+Complete a log key record through exactly one route:
+  --team-key-did and --signature attach a signature produced elsewhere, such as by the
+  deployment's protected signer, after verifying it over the record's signing bytes;
+  --offline-controller-key signs with the team controller key in ~/.awid/team-keys/ on
+  this machine, which is outside the route of a deployment whose signer holds that key.
+With no route, or both, it refuses. The signed record is written to --out (or stdout).
+
+Flags:
+- `-h, --help help for sign`
+- `--offline-controller-key Sign with the team controller key in ~/.awid/team-keys/ on this machine`
+- `--out string Write the signed record to this file instead of stdout`
+- `--record string The log key record to sign`
+- `--signature string A signature produced elsewhere: unpadded standard base64 of the 64 Ed25519 bytes`
+- `--team-key-did string The did:key of the team key that produced --signature`
+
+## `team admin log-key signing-bytes`
+
+### `team admin log-key signing-bytes`
+
+Print, with no trailing newline, the bytes the team controller key --team-key-did signs
+for the record: the aweb.log-key/1 prefix and the canonical JSON of its unsigned fields.
+Use it to cross-check what any signer is asked to sign.
+
+Flags:
+- `-h, --help help for signing-bytes`
+- `--record string The log key record`
+- `--team-key-did string The did:key of the team key that will sign`
 
 ## `team admin remove-agent`
 

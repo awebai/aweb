@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"crypto/ed25519"
 	"crypto/rand"
+	"encoding/base64"
 	"errors"
 	"os"
 	"path/filepath"
@@ -45,22 +46,37 @@ func ownerWithTeamKey(t *testing.T, f *localLogFixture) {
 	}
 }
 
-func TestLogKeyCreateSignsARecordAndKeepsTheKeyInTheKeychain(t *testing.T) {
+// createSignedLogKey runs the owner's two steps: make the key on the reading
+// machine, then sign its record with the local controller key.
+func createSignedLogKey(t *testing.T, keychain logKeyStore) *awid.LogKeyRecord {
+	t.Helper()
+	prompt := &scriptedPassphrases{answers: []string{testLogPassphrase, testLogPassphrase}}
+	rec, err := createLogKey(logKeyCreateOptions{TeamID: localLogTestTeamID, Keychain: keychain, Prompt: prompt.prompt, Now: time.Now()})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := signLogKey(logKeySignOptions{Record: rec, OfflineControllerKey: true}); err != nil {
+		t.Fatal(err)
+	}
+	return rec
+}
+
+// Making the key needs no controller key: the record comes out unsigned,
+// and nothing installs it until it is signed.
+func TestLogKeyCreateKeepsTheKeyAndWritesAnUnsignedRecord(t *testing.T) {
 	keyring.MockInit()
 	f := newLocalLogFixture(t)
-	ownerWithTeamKey(t, f)
 	prompt := &scriptedPassphrases{answers: []string{testLogPassphrase, testLogPassphrase}}
 
 	rec, err := createLogKey(logKeyCreateOptions{TeamID: localLogTestTeamID, Keychain: awconfig.LogKeychain{}, Prompt: prompt.prompt, Now: time.Now()})
 	if err != nil {
 		t.Fatal(err)
 	}
-	cert, err := awconfig.LoadTeamCertificateForTeam(f.sel.WorkingDir, localLogTestTeamID)
-	if err != nil {
-		t.Fatal(err)
+	if rec.TeamKeyDID != "" || rec.Signature != "" {
+		t.Fatalf("create must leave the record unsigned: %+v", rec)
 	}
-	if err := awid.VerifyLogKeyRecord(rec, localLogTestTeamID, cert.TeamDIDKey); err != nil {
-		t.Fatalf("created record must verify under the team key: %v", err)
+	if err := installLogKeyRecord(f.sel, rec); err == nil {
+		t.Fatal("an unsigned record must not install")
 	}
 	blob, err := awconfig.LogKeychain{}.LoadLogKey(rec.KeyID)
 	if err != nil {
@@ -79,16 +95,88 @@ func TestLogKeyCreateSignsARecordAndKeepsTheKeyInTheKeychain(t *testing.T) {
 	}
 }
 
-func TestLogKeyCreateRefusesWithoutTheTeamControllerKey(t *testing.T) {
+func TestLogKeySignOfflineSignsWithTheLocalControllerKey(t *testing.T) {
+	keyring.MockInit()
+	f := newLocalLogFixture(t)
+	ownerWithTeamKey(t, f)
+	rec := createSignedLogKey(t, awconfig.LogKeychain{})
+	if err := installLogKeyRecord(f.sel, rec); err != nil {
+		t.Fatalf("an offline-signed record must install: %v", err)
+	}
+}
+
+func TestLogKeySignOfflineRefusesWithoutTheTeamControllerKey(t *testing.T) {
 	keyring.MockInit()
 	newLocalLogFixture(t)
 	prompt := &scriptedPassphrases{answers: []string{testLogPassphrase, testLogPassphrase}}
-	_, err := createLogKey(logKeyCreateOptions{TeamID: localLogTestTeamID, Keychain: awconfig.LogKeychain{}, Prompt: prompt.prompt, Now: time.Now()})
+	rec, err := createLogKey(logKeyCreateOptions{TeamID: localLogTestTeamID, Keychain: awconfig.LogKeychain{}, Prompt: prompt.prompt, Now: time.Now()})
+	if err != nil {
+		t.Fatal(err)
+	}
+	unsigned := *rec
+	err = signLogKey(logKeySignOptions{Record: rec, OfflineControllerKey: true})
 	if err == nil || !strings.Contains(err.Error(), "only the owner of team") {
 		t.Fatalf("err = %v", err)
 	}
-	if prompt.asked != 0 {
-		t.Fatal("a non-owner must not be asked for a passphrase")
+	if *rec != unsigned {
+		t.Fatal("a refused sign changed the record")
+	}
+}
+
+// Sign never chooses a route itself: no route, or both, is refused, so a
+// deployment never falls back to loading a controller key it did not ask for.
+func TestLogKeySignRequiresExactlyOneRoute(t *testing.T) {
+	keyring.MockInit()
+	f := newLocalLogFixture(t)
+	ownerWithTeamKey(t, f)
+	prompt := &scriptedPassphrases{answers: []string{testLogPassphrase, testLogPassphrase}}
+	rec, err := createLogKey(logKeyCreateOptions{TeamID: localLogTestTeamID, Keychain: awconfig.LogKeychain{}, Prompt: prompt.prompt, Now: time.Now()})
+	if err != nil {
+		t.Fatal(err)
+	}
+	err = signLogKey(logKeySignOptions{Record: rec})
+	if err == nil || !strings.Contains(err.Error(), "--offline-controller-key") || !strings.Contains(err.Error(), "--signature") {
+		t.Fatalf("no route: err = %v", err)
+	}
+	if rec.Signature != "" {
+		t.Fatal("no route signed the record")
+	}
+	err = signLogKey(logKeySignOptions{Record: rec, OfflineControllerKey: true, TeamKeyDID: "did:key:z6Mk", Signature: "sig"})
+	if err == nil {
+		t.Fatal("two routes must be refused")
+	}
+	if rec.Signature != "" {
+		t.Fatal("two routes signed the record")
+	}
+}
+
+// A signature produced elsewhere over the shared signing bytes is attached
+// only after it verifies, and the attached record installs.
+func TestLogKeySignAttachesAnExternalSignature(t *testing.T) {
+	keyring.MockInit()
+	f := newLocalLogFixture(t)
+	prompt := &scriptedPassphrases{answers: []string{testLogPassphrase, testLogPassphrase}}
+	rec, err := createLogKey(logKeyCreateOptions{TeamID: localLogTestTeamID, Keychain: awconfig.LogKeychain{}, Prompt: prompt.prompt, Now: time.Now()})
+	if err != nil {
+		t.Fatal(err)
+	}
+	teamDID := awid.ComputeDIDKey(f.teamKey.Public().(ed25519.PublicKey))
+	external := *rec
+	external.TeamKeyDID = teamDID
+	signing, err := awid.LogKeyRecordSigningBytes(&external)
+	if err != nil {
+		t.Fatal(err)
+	}
+	signature := base64.RawStdEncoding.EncodeToString(ed25519.Sign(f.teamKey, signing))
+
+	if err := signLogKey(logKeySignOptions{Record: rec, TeamKeyDID: teamDID, Signature: base64.RawStdEncoding.EncodeToString(ed25519.Sign(f.teamKey, []byte("other")))}); err == nil {
+		t.Fatal("a signature over other bytes was attached")
+	}
+	if err := signLogKey(logKeySignOptions{Record: rec, TeamKeyDID: teamDID, Signature: signature}); err != nil {
+		t.Fatal(err)
+	}
+	if err := installLogKeyRecord(f.sel, rec); err != nil {
+		t.Fatalf("the attached record must install: %v", err)
 	}
 }
 
@@ -150,12 +238,8 @@ func TestLogReadOpensEveryRotatedKeyAndPlaintextLines(t *testing.T) {
 	keychain := awconfig.LogKeychain{}
 
 	appendCommLog(f.logsDir, name, localLogPolicyForSelection(f.sel), &CommLogEntry{Timestamp: "2026-11-13T09:00:00Z", Dir: "recv", Channel: "mail", From: "alice", Body: "plain before any key"})
-	for i, body := range []string{"sealed under the first key", "sealed under the second key"} {
-		prompt := &scriptedPassphrases{answers: []string{testLogPassphrase, testLogPassphrase}}
-		rec, err := createLogKey(logKeyCreateOptions{TeamID: localLogTestTeamID, Keychain: keychain, Prompt: prompt.prompt, Now: time.Now()})
-		if err != nil {
-			t.Fatalf("key %d: %v", i, err)
-		}
+	for _, body := range []string{"sealed under the first key", "sealed under the second key"} {
+		rec := createSignedLogKey(t, keychain)
 		if err := installLogKeyRecord(f.sel, rec); err != nil {
 			t.Fatal(err)
 		}
@@ -181,11 +265,7 @@ func TestLogReadPrintsInteractionEntriesAndJSON(t *testing.T) {
 	keyring.MockInit()
 	f := newLocalLogFixture(t)
 	ownerWithTeamKey(t, f)
-	prompt := &scriptedPassphrases{answers: []string{testLogPassphrase, testLogPassphrase}}
-	rec, err := createLogKey(logKeyCreateOptions{TeamID: localLogTestTeamID, Keychain: awconfig.LogKeychain{}, Prompt: prompt.prompt, Now: time.Now()})
-	if err != nil {
-		t.Fatal(err)
-	}
+	rec := createSignedLogKey(t, awconfig.LogKeychain{})
 	if err := installLogKeyRecord(f.sel, rec); err != nil {
 		t.Fatal(err)
 	}
@@ -213,18 +293,14 @@ func TestLogReadRefusesAWrongPassphrase(t *testing.T) {
 	keyring.MockInit()
 	f := newLocalLogFixture(t)
 	ownerWithTeamKey(t, f)
-	prompt := &scriptedPassphrases{answers: []string{testLogPassphrase, testLogPassphrase}}
-	rec, err := createLogKey(logKeyCreateOptions{TeamID: localLogTestTeamID, Keychain: awconfig.LogKeychain{}, Prompt: prompt.prompt, Now: time.Now()})
-	if err != nil {
-		t.Fatal(err)
-	}
+	rec := createSignedLogKey(t, awconfig.LogKeychain{})
 	if err := installLogKeyRecord(f.sel, rec); err != nil {
 		t.Fatal(err)
 	}
 	appendCommLog(f.logsDir, commLogNameForSelection(f.sel), localLogPolicyForSelection(f.sel), &CommLogEntry{Dir: "recv", Channel: "mail", Body: "secret"})
 
 	var out bytes.Buffer
-	err = readOwnerLogs(logReadOptions{Files: []string{f.commLogPath()}, Keychain: awconfig.LogKeychain{}, Prompt: (&scriptedPassphrases{answers: []string{"not the passphrase"}}).prompt, Out: &out})
+	err := readOwnerLogs(logReadOptions{Files: []string{f.commLogPath()}, Keychain: awconfig.LogKeychain{}, Prompt: (&scriptedPassphrases{answers: []string{"not the passphrase"}}).prompt, Out: &out})
 	if err == nil || strings.Contains(out.String(), "secret") {
 		t.Fatalf("err = %v, out = %q", err, out.String())
 	}
@@ -248,11 +324,7 @@ func TestLogReadNeutralizesTerminalControlInForgedLines(t *testing.T) {
 	keyring.MockInit()
 	f := newLocalLogFixture(t)
 	ownerWithTeamKey(t, f)
-	prompt := &scriptedPassphrases{answers: []string{testLogPassphrase, testLogPassphrase}}
-	rec, err := createLogKey(logKeyCreateOptions{TeamID: localLogTestTeamID, Keychain: awconfig.LogKeychain{}, Prompt: prompt.prompt, Now: time.Now()})
-	if err != nil {
-		t.Fatal(err)
-	}
+	rec := createSignedLogKey(t, awconfig.LogKeychain{})
 	if err := installLogKeyRecord(f.sel, rec); err != nil {
 		t.Fatal(err)
 	}

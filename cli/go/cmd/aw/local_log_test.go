@@ -6,6 +6,7 @@ import (
 	"crypto/ecdh"
 	"crypto/ed25519"
 	"crypto/rand"
+	"encoding/base64"
 	"encoding/json"
 	"fmt"
 	"net/http"
@@ -566,5 +567,76 @@ func TestAwDoctorLocalReportsTheOwnerLogKey(t *testing.T) {
 	}
 	if detail := fmt.Sprint(plaintext.Detail); !strings.Contains(detail, interactionLog) && !strings.Contains(detail, resolvedLog) {
 		t.Fatalf("the check must name the log holding plaintext: %#v", plaintext.Detail)
+	}
+}
+
+// The owner's split as an operator runs it: an unsigned record, its exact
+// signing bytes, a signature made elsewhere attached with `sign`, then
+// `install`. `sign` without a route refuses.
+func TestAwLogKeySignAttachesASignatureMadeElsewhere(t *testing.T) {
+	t.Parallel()
+
+	ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
+	defer cancel()
+	tmp := t.TempDir()
+	bin := filepath.Join(tmp, "aw")
+	buildAwBinary(t, ctx, bin)
+	writeDefaultWorkspaceBindingForTest(t, tmp, "https://app.aweb.ai")
+	const teamID = "backend:demo"
+	teamKey := resignTeamCertificateForTest(t, tmp, teamID)
+	teamDID := awid.ComputeDIDKey(teamKey.Public().(ed25519.PublicKey))
+
+	awCmd := func(args ...string) ([]byte, error) {
+		run := exec.CommandContext(ctx, bin, args...)
+		run.Env = append(testCommandEnv(tmp), "AWID_REGISTRY_URL=http://127.0.0.1:1")
+		run.Dir = tmp
+		return run.Output()
+	}
+
+	pair, err := awid.GenerateLogKeyPair()
+	if err != nil {
+		t.Fatal(err)
+	}
+	unsigned, err := awid.NewLogKeyRecord(teamID, pair.Public, time.Now())
+	if err != nil {
+		t.Fatal(err)
+	}
+	data, err := json.Marshal(unsigned)
+	if err != nil {
+		t.Fatal(err)
+	}
+	unsignedPath := filepath.Join(tmp, "unsigned.json")
+	if err := os.WriteFile(unsignedPath, data, 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	signing, err := awCmd("team", "admin", "log-key", "signing-bytes", "--record", unsignedPath, "--team-key-did", teamDID)
+	if err != nil {
+		t.Fatalf("signing-bytes: %v", err)
+	}
+	withKey := *unsigned
+	withKey.TeamKeyDID = teamDID
+	want, err := awid.LogKeyRecordSigningBytes(&withKey)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(signing) != string(want) {
+		t.Fatalf("signing-bytes printed %q, want %q", signing, want)
+	}
+
+	if out, err := awCmd("team", "admin", "log-key", "sign", "--record", unsignedPath); err == nil {
+		t.Fatalf("sign without a route must refuse: %s", out)
+	}
+
+	signature := base64.RawStdEncoding.EncodeToString(ed25519.Sign(teamKey, signing))
+	signedPath := filepath.Join(tmp, "signed.json")
+	if _, err := awCmd("team", "admin", "log-key", "sign", "--record", unsignedPath, "--team-key-did", teamDID, "--signature", signature, "--out", signedPath); err != nil {
+		t.Fatalf("sign: %v", err)
+	}
+	if _, err := awCmd("team", "admin", "log-key", "install", signedPath); err != nil {
+		t.Fatalf("install of the attached record: %v", err)
+	}
+	if _, err := os.Stat(filepath.Join(tmp, ".config", "aw", "log-keys", awconfig.EncodeTeamIDForCertificatePath(teamID)+".json")); err != nil {
+		t.Fatalf("record not installed: %v", err)
 	}
 }

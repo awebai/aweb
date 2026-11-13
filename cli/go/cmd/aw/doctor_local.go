@@ -438,7 +438,7 @@ func (r *doctorRunner) runLogKeyChecks(state *doctorLocalState) {
 			doctorStatusWarn,
 			target,
 			"No owner log key is installed for this team; local mail and chat logs are written in plaintext.",
-			"The team owner runs `aw team admin log-key create`, then `aw team admin log-key install <record>` on this host.",
+			"The team owner runs `aw team admin log-key create`, has the record signed with `aw team admin log-key sign`, then runs `aw team admin log-key install <record>` on this host.",
 			nil,
 		))
 		return
