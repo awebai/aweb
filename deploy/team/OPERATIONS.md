@@ -130,6 +130,49 @@ starting an older image on a migrated database is not a migration rollback, and
 restore is not supported. The Secrets procedure is pending
 (`naapp/secrets/deploy/OPERATIONS.md`, "Upgrade and migration").
 
+### Before upgrading Secrets to team-scoped installations (`aweb-acxc.45`)
+
+That Secrets version gives every installation's policies, grant templates,
+change-set settings and configuration revisions the team that owns them. Its
+migrations keep a team only where the installation's retained rows (its
+secrets, grants, intents, owner principals, role holdings and fences) name
+exactly one. An installation with none, or with more than one, makes the
+migration refuse, naming the table, and Secrets does not start. That is by
+design: an installation id is not team authority.
+
+Run the read-only count first, with every writer stopped and after `backup`:
+
+```sh
+<the deployment's docker compose command> exec -T postgres \
+  psql -U postgres -X -d secrets -v secrets_schema=<secrets.dbSchema> -f - \
+  < deploy/team/secrets-attribution-count.sql
+```
+
+`teamctl connect` prints the deployment's compose command, and
+`secrets.dbSchema` defaults to `public`. The script opens a read-only
+transaction and writes nothing. It refuses a schema that does not exist, rather
+than answering zero. For each of the four tables it prints how many
+installations have zero, several or one team. The counts are per table: an
+installation can appear in more than one, so do not add them up. The script
+was run on PostgreSQL against fixtures with one, several and no teams, a fresh
+schema and a missing schema (source `1217f9b21`, SHA-256 `40f41cd3…`, gate
+`a2930875`), apart from that gate's unrelated infrastructure status.
+
+- **Every `zero_teams` and `multiple_teams` is 0:** upgrade.
+- **Any other count:** do not upgrade. Keep the old image running, the
+  backup and the count. Which team owns those installations needs an explicit,
+  evidenced decision, and there is no supported repair statement. Do not
+  update or delete rows, add rows to make the count zero, or give them the
+  team that happens to be connected. A supported remedy would be a separately
+  reviewed tool or migration; ask the Secrets owner.
+
+**A refused upgrade is not undone by starting the old image.** Each migration
+file commits on its own, and they do not run in the order above: the
+configuration-revision migration can commit before the one that refuses.
+After a refusal, read the migration ledger to see what was applied, and choose
+the image from that, with the Secrets owner. Restore is not supported for a
+team's deployment (above).
+
 ## Rotating a credential
 
 | Credential | Supported path | What it ends | What stays |

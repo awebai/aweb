@@ -21,6 +21,7 @@ This directory holds what both layers share.
 | `compose.test.yaml` | The journey's test world: its own registry, DNS, SMTP, TLS front and aw. Never in a production deployment. |
 | `access/` | Who can read what, one page per party: the operator, the team, the agents of a container, the registry's operator and the model provider. |
 | `OPERATIONS.md` | What each `teamctl` command keeps and deletes, backup, and the restore, rotation and removal gaps with their owners. |
+| `secrets-attribution-count.sql` | The read-only count to run before upgrading Secrets to team-scoped installations (`OPERATIONS.md`, "Upgrade"). |
 | `postgres-roles.sh` | Run by the bundled PostgreSQL at its first start: one role and one database per component. |
 | `descriptors/<component>.md` | What one component needs from an operator, written by its owner. |
 
