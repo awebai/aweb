@@ -363,7 +363,7 @@ async def test_original_detached_proof_deadline_is_not_extended(db, registry, te
             "artifact_sha256": artifact_digest(signing, signature), "consumer": consumer,
             "issued_at": now.strftime("%Y-%m-%dT%H:%M:%SZ"),
             "expires_at": (now + timedelta(seconds=10)).strftime("%Y-%m-%dT%H:%M:%SZ"),
-        }, service)
+        }, bytes(service))
         checked = OwnerActVerifier(
             scope="core", audience=AUDIENCE, acts=CORE_ACTS,
             team_key_for=verifier(registry)._team_key_for, team_authority_for=authority,
