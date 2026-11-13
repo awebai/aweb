@@ -12,6 +12,7 @@ from fastapi import APIRouter, Depends, HTTPException, Query, Request
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_serializer
 
 from awid.dns_verify import DomainVerifier
+from awid_service.protected_teams import require_namespace_effect
 from awid_service.deps import get_db, get_domain_verifier
 from awid.dns_verify import DnsVerificationError
 from awid.pagination import encode_cursor, validate_pagination_params
@@ -807,6 +808,7 @@ async def delete_namespace(
 
     # Transactional: lock the row, verify ownership, then delete
     async with db.transaction() as tx:
+        await require_namespace_effect(request, tx, domain=domain, operation="delete_namespace")
         row = await tx.fetch_one(
             """
             SELECT namespace_id, controller_did, parent_domain, parent_controller_key

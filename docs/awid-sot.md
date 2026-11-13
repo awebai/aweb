@@ -61,6 +61,11 @@ SOT.
 
 ## Authentication
 
+Explicitly cut-over protected teams additionally require a detached service
+attestation from the isolated executor for controller effects. Unmarked teams
+retain the rules below. The authoritative binding, exact-certificate requirement
+and cutover procedure are specified in [Protected team boundary](protected-team-boundary.md).
+
 awid write operations are authenticated by an Ed25519 signature over a
 **canonical JSON envelope of explicit structured fields** rather than over
 the request body bytes. Each operation has its own envelope shape.
@@ -1430,6 +1435,7 @@ full ordered SQL, not a copied `001` snapshot.
 - `id_identities`
 - `id_certificates`
 - `id_namespace_epochs`
+- `team_protection`
 <!-- END SOURCE INVENTORY: awid-tables -->
 
 ---

@@ -293,6 +293,9 @@ class Team:
     visibility: str
     created_at: str
 
+    # None is older/unknown registry evidence, never an implicit legacy mode.
+    protection: dict[str, Any] | None = None
+
 
 @dataclass(frozen=True)
 class TeamCertificate:
@@ -304,6 +307,8 @@ class TeamCertificate:
     identity_scope: str
     issued_at: str
     revoked_at: str | None = None
+
+    certificate_sha256: str | None = None
 
     @property
     def lifetime(self) -> str:
@@ -3202,6 +3207,7 @@ def _address_from_json(data: dict[str, Any]) -> Address:
 
 def _team_from_json(data: dict[str, Any]) -> Team:
     return Team(
+        protection=data.get("protection"),
         team_id=data["team_id"],
         domain=data["domain"],
         name=data["name"],
@@ -3236,6 +3242,7 @@ def _team_to_json(value: Team) -> dict[str, Any]:
 
 def _team_certificate_from_json(data: dict[str, Any]) -> TeamCertificate:
     return TeamCertificate(
+        certificate_sha256=data.get("certificate_sha256"),
         certificate_id=data["certificate_id"],
         member_did_key=data["member_did_key"],
         member_did_aw=data.get("member_did_aw"),
