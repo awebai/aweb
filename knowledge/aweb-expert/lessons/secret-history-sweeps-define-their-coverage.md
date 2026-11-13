@@ -33,7 +33,8 @@ Learned during a read-only credential sweep of repository history.
   untested unless an authorised operator checks it.
 - Treat temporary files, decoder buffers, scanner output and exception paths as
   separate persistence boundaries, and recheck library behaviour when versions
-  change.
+  change. Database statement statistics are one such boundary:
+  [statement statistics keep role passwords](/aweb-expert/lessons/statement-statistics-keep-role-passwords.md).
 
 The detector rule is a case of
 [a harness must be shown to fail](/aweb-expert/lessons/a-harness-must-be-shown-to-fail.md).
