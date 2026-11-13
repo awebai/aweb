@@ -698,6 +698,9 @@ async def get_team(
     return _team_response(row)
 
 
+_TEAM_KEY_ACT_NOT_FOUND = "Team key act not found"
+
+
 class TeamKeyActResponse(BaseModel):
     team_id: str
     team_did_key: str
@@ -712,53 +715,37 @@ class TeamKeyActResponse(BaseModel):
     dependencies=[Depends(rate_limit_dep("team_get", allow_trusted_service=True))],
 )
 async def get_team_key_act(
-    request: Request,
     domain: str,
     name: str,
-    authorization: str | None = Header(default=None),
     db_infra=Depends(get_db),
 ) -> TeamKeyActResponse:
-    """The namespace controller's latest act naming the team's current key.
+    """The namespace controller's latest act naming the team's current key,
+    anonymously, for public and private teams.
 
-    Read like the team itself. The signed bytes are returned exactly as
-    signed (unpadded base64url) so a reader verifies them against the
-    controller its own DNS lookup names. A team whose current key no stored
-    act names answers 404.
+    Like the certificate-status and team-server reads, it serves relying
+    servers that hold no read credential; it shows only the current team key,
+    which certificate status already shows, and a namespace controller key.
+    The signed bytes are returned exactly as signed (unpadded base64url) so a
+    reader verifies them against the controller its own DNS lookup names. An
+    unknown team and a team whose current key no stored act names answer the
+    same 404.
     """
     name = _validate_team_name_path(name)
     db = db_infra.get_manager("aweb")
-    team = await db.fetch_one(
+    act = await db.fetch_one(
         """
-        SELECT team_uuid, team_did_key, visibility
-        FROM {{tables.teams}}
-        WHERE domain = $1 AND name = $2 AND deleted_at IS NULL
+        SELECT a.team_did_key, a.signer_did_key, a.signed_payload, a.signature
+        FROM {{tables.team_key_acts}} a
+        JOIN {{tables.teams}} t ON t.team_uuid = a.team_uuid AND t.team_did_key = a.team_did_key
+        WHERE t.domain = $1 AND t.name = $2 AND t.deleted_at IS NULL
+        ORDER BY a.act_id DESC
+        LIMIT 1
         """,
         domain,
         name,
     )
-    if team is None:
-        raise HTTPException(status_code=404, detail="Team not found")
-    await _require_team_read_access(
-        request,
-        db,
-        team_uuid=team["team_uuid"],
-        team_did_key=team["team_did_key"],
-        visibility=team["visibility"],
-        authorization=authorization,
-    )
-    act = await db.fetch_one(
-        """
-        SELECT team_did_key, signer_did_key, signed_payload, signature
-        FROM {{tables.team_key_acts}}
-        WHERE team_uuid = $1 AND team_did_key = $2
-        ORDER BY act_id DESC
-        LIMIT 1
-        """,
-        team["team_uuid"],
-        team["team_did_key"],
-    )
     if act is None:
-        raise HTTPException(status_code=404, detail="Team key act not found")
+        raise HTTPException(status_code=404, detail=_TEAM_KEY_ACT_NOT_FOUND)
     return TeamKeyActResponse(team_id=build_team_id(domain, name), **dict(act))
 
 

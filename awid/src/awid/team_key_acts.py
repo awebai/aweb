@@ -13,15 +13,19 @@ from __future__ import annotations
 import base64
 import binascii
 import json
-from collections.abc import Mapping
+import logging
+from collections.abc import Awaitable, Callable, Mapping
 from dataclasses import dataclass
 from datetime import datetime
-from typing import Any
+from typing import Any, Protocol
 
 from awid.external_authority import TXTOutcomeResolver, discover_registry_authority
 from awid.federation_errors import FederationAuthorityError
 from awid.id_tree_requests import CONTROLLER_REQUEST_TYPE
 from awid.signing import verify_did_key_signature
+from awid.team_ids import parse_team_id
+
+logger = logging.getLogger(__name__)
 
 ROTATE_TEAM_KEY_OPERATION = "rotate_team_key"
 MAX_SIGNED_PAYLOAD_BYTES = 16384
@@ -32,7 +36,7 @@ class TeamKeyActError(Exception):
 
     ``reason`` is one of: malformed, wrong_operation, team_mismatch,
     key_mismatch, bad_signature, not_newer, controller_unavailable,
-    signer_not_controller.
+    signer_not_controller, no_act.
     """
 
     def __init__(self, reason: str, detail: str = "") -> None:
@@ -137,3 +141,98 @@ async def verify_team_key_change(
     if act.signer_did_key != controller:
         raise TeamKeyActError("signer_not_controller")
     return act
+
+
+@dataclass(frozen=True)
+class TeamKeyPin:
+    """The team key a relying server holds, and the signing time of the act
+    that set it (None for a key pinned on first sight)."""
+
+    team_did_key: str
+    act_at: datetime | None
+
+
+class TeamKeyPinStore(Protocol):
+    """Where a relying server keeps its team-key pins."""
+
+    async def pin(self, team_id: str) -> TeamKeyPin | None:
+        """The current pin, or None for a team never seen."""
+
+    async def first_sight(self, team_id: str, team_did_key: str) -> TeamKeyPin:
+        """Record ``team_did_key`` as the pin of a team never seen, and return
+        the pin now held (another writer's, if it got there first)."""
+
+    async def move(self, team_id: str, *, expected: TeamKeyPin, new: TeamKeyPin) -> bool:
+        """Replace ``expected`` with ``new``; False when the pin is no longer ``expected``."""
+
+
+class MemoryTeamKeyPins:
+    """Pins held for the life of the process."""
+
+    def __init__(self) -> None:
+        self._pins: dict[str, TeamKeyPin] = {}
+
+    async def pin(self, team_id: str) -> TeamKeyPin | None:
+        return self._pins.get(team_id)
+
+    async def first_sight(self, team_id: str, team_did_key: str) -> TeamKeyPin:
+        return self._pins.setdefault(team_id, TeamKeyPin(team_did_key, None))
+
+    async def move(self, team_id: str, *, expected: TeamKeyPin, new: TeamKeyPin) -> bool:
+        if self._pins.get(team_id) != expected:
+            return False
+        self._pins[team_id] = new
+        return True
+
+
+class TeamKeyUnverified(Exception):
+    """The registry names a key for a pinned team that no valid act establishes."""
+
+    def __init__(self, team_id: str, reason: str) -> None:
+        super().__init__(f"{team_id}: {reason}")
+        self.team_id = team_id
+        self.reason = reason
+
+
+async def pinned_team_key(
+    team_id: str,
+    served_key: str,
+    *,
+    pins: TeamKeyPinStore,
+    fetch_act: Callable[[], Awaitable[Any]],
+    resolver: TXTOutcomeResolver,
+) -> str:
+    """``served_key`` when it is the team's pinned key, or when the namespace
+    controller's act (``fetch_act()``, None when the registry has none) moves
+    the pin to it; raises TeamKeyUnverified otherwise. A team never seen is
+    pinned to ``served_key``. Registry read errors from ``fetch_act`` propagate."""
+    pin = await pins.pin(team_id)
+    if pin is None:
+        pin = await pins.first_sight(team_id, served_key)
+    if pin.team_did_key == served_key:
+        return served_key
+    domain, name = parse_team_id(team_id)
+    try:
+        record = await fetch_act()
+        if record is None:
+            raise TeamKeyActError("no_act")
+        act = await verify_team_key_change(
+            record, domain=domain, name=name, team_did_key=served_key, pinned_at=pin.act_at, resolver=resolver,
+        )
+    except TeamKeyActError as exc:
+        logger.warning(
+            "refusing registry team key for %s: pinned %s, registry serves %s (%s)",
+            team_id, pin.team_did_key, served_key, exc,
+        )
+        raise TeamKeyUnverified(team_id, exc.reason) from None
+    if not await pins.move(team_id, expected=pin, new=TeamKeyPin(served_key, act.signed_at)):
+        current = await pins.pin(team_id)
+        if current is None or current.team_did_key != served_key:
+            logger.warning("team key pin for %s moved concurrently; refusing %s", team_id, served_key)
+            raise TeamKeyUnverified(team_id, "pin_moved")
+        return served_key
+    logger.warning(
+        "team key pin for %s moved from %s to %s by the namespace controller act signed %s by %s",
+        team_id, pin.team_did_key, served_key, act.signed_at.isoformat(), act.signer_did_key,
+    )
+    return served_key

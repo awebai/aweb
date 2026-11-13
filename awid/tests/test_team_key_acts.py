@@ -15,7 +15,15 @@ import pytest
 from awid.external_authority import DNSLookup
 from awid.registry import RegistryClient
 from awid.signing import canonical_json_bytes, sign_message
-from awid.team_key_acts import TeamKeyActError, verify_team_key_act, verify_team_key_change
+from awid.team_key_acts import (
+    MemoryTeamKeyPins,
+    TeamKeyActError,
+    TeamKeyPin,
+    TeamKeyUnverified,
+    pinned_team_key,
+    verify_team_key_act,
+    verify_team_key_change,
+)
 from test_controller_request_v2_http import ORIGIN, controller_app, keypair, send  # noqa: F401
 
 ROTATE_PATH = '/v1/namespaces/local/teams/base/rotate'
@@ -61,12 +69,6 @@ async def test_rotation_keeps_a_verifiable_controller_act(controller_app, coveri
 
 
 @pytest.mark.asyncio
-async def test_a_team_never_rotated_has_no_act(controller_app):
-    response = await controller_app.client.get(ACT_PATH)
-    assert response.status_code == 404, response.text
-
-
-@pytest.mark.asyncio
 async def test_the_served_act_is_the_one_that_set_the_current_key(controller_app):
     env = controller_app
     _, first = keypair()
@@ -98,17 +100,27 @@ async def test_rotation_to_the_same_key_records_a_fresh_act(controller_app):
 
 
 @pytest.mark.asyncio
-async def test_a_private_team_act_is_read_like_the_team(controller_app):
+async def test_a_private_team_act_is_read_anonymously(controller_app):
     env = controller_app
     _, new_did_key = keypair()
     await _rotate(env, new_did_key)
     await env.db.execute("UPDATE {{tables.teams}} SET visibility='private' WHERE domain='local' AND name='base'")
 
-    anonymous_team = await env.client.get('/v1/namespaces/local/teams/base')
-    anonymous_act = await env.client.get(ACT_PATH)
+    team = await env.client.get('/v1/namespaces/local/teams/base')
+    act = await env.client.get(ACT_PATH)
 
-    assert anonymous_team.status_code != 200
-    assert (anonymous_act.status_code, anonymous_act.json()) == (anonymous_team.status_code, anonymous_team.json())
+    assert team.status_code != 200
+    assert act.status_code == 200, act.text
+    assert verify_team_key_act(act.json(), domain='local', name='base', team_did_key=new_did_key)
+
+
+@pytest.mark.asyncio
+async def test_an_unknown_team_and_a_team_without_an_act_answer_the_same_404(controller_app):
+    env = controller_app
+    unknown = await env.client.get('/v1/namespaces/local/teams/nobody/key-act')
+    without_act = await env.client.get(ACT_PATH)
+    assert (unknown.status_code, unknown.json()) == (without_act.status_code, without_act.json()) == (
+        404, {'detail': 'Team key act not found'})
 
 
 def _claims(**overrides):
@@ -242,3 +254,80 @@ async def test_registry_client_reads_the_served_act(controller_app):
         assert await client.get_team_key_act('local', 'base') is None
     finally:
         await client.aclose()
+
+
+TEAM_ID = 'base:team.example.com'
+
+
+def _fetch(record):
+    async def fetch():
+        return record
+    return fetch
+
+
+@pytest.mark.asyncio
+async def test_a_team_never_seen_is_pinned_to_the_first_key():
+    pins = MemoryTeamKeyPins()
+    _, team = keypair()
+    resolver = TXTAnswers({})
+    assert await pinned_team_key(TEAM_ID, team, pins=pins, fetch_act=_fetch(None), resolver=resolver) == team
+    assert await pins.pin(TEAM_ID) == TeamKeyPin(team, None)
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize('record', [None, 'stale-act'])
+async def test_a_different_key_without_a_valid_act_is_refused(record):
+    pins = MemoryTeamKeyPins()
+    controller = keypair()
+    _, pinned = keypair()
+    _, served = keypair()
+    await pins.first_sight(TEAM_ID, pinned)
+    if record == 'stale-act':
+        record = _example_act(controller, pinned)  # an act, but for another key
+    with pytest.raises(TeamKeyUnverified) as refused:
+        await pinned_team_key(
+            TEAM_ID, served, pins=pins, fetch_act=_fetch(record),
+            resolver=_dns('_awid.team.example.com', controller[1]),
+        )
+    assert refused.value.reason == ('no_act' if record is None else 'key_mismatch')
+    assert await pins.pin(TEAM_ID) == TeamKeyPin(pinned, None)
+
+
+@pytest.mark.asyncio
+async def test_a_valid_act_moves_the_pin():
+    pins = MemoryTeamKeyPins()
+    controller = keypair()
+    _, pinned = keypair()
+    _, served = keypair()
+    await pins.first_sight(TEAM_ID, pinned)
+    record = _example_act(controller, served)
+    key = await pinned_team_key(
+        TEAM_ID, served, pins=pins, fetch_act=_fetch(record), resolver=_dns('_awid.team.example.com', controller[1]),
+    )
+    assert key == served
+    moved = await pins.pin(TEAM_ID)
+    assert moved.team_did_key == served
+    assert moved.act_at == verify_team_key_act(record, domain='team.example.com', name='base', team_did_key=served).signed_at
+
+
+@pytest.mark.asyncio
+async def test_a_pin_that_moved_elsewhere_meanwhile_is_not_overwritten():
+    controller = keypair()
+    _, pinned = keypair()
+    _, served = keypair()
+    _, elsewhere = keypair()
+
+    class Racing(MemoryTeamKeyPins):
+        async def move(self, team_id, *, expected, new):
+            self._pins[team_id] = TeamKeyPin(elsewhere, None)
+            return False
+
+    pins = Racing()
+    await pins.first_sight(TEAM_ID, pinned)
+    with pytest.raises(TeamKeyUnverified) as refused:
+        await pinned_team_key(
+            TEAM_ID, served, pins=pins, fetch_act=_fetch(_example_act(controller, served)),
+            resolver=_dns('_awid.team.example.com', controller[1]),
+        )
+    assert refused.value.reason == 'pin_moved'
+    assert (await pins.pin(TEAM_ID)).team_did_key == elsewhere
