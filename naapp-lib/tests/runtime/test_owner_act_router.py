@@ -779,6 +779,73 @@ async def test_replay_rechecks_original_key_deadline_after_observed_nonce_lock_w
     assert await world.counts() == (1, 1, 1)
 
 
+@pytest.mark.parametrize("stale", [False, True])
+async def test_replay_rechecks_fence_freshness_after_observed_nonce_lock_wait(
+    world, monkeypatch, stale
+):
+    # The fresh neighbour need not race a short deadline while observing the
+    # lock wait. Only the expiry case uses the short original window.
+    max_age = 3 if stale else 60
+    monkeypatch.setenv("AWEB_APP_GRANT_MAX_AGE_SECONDS", str(max_age))
+    body = world.body()
+    assert (await world.post(body)).status_code == 200
+    observed = await world.runtime.installation_grants().status_for(world.member.team_id)
+    assert observed is not None and observed.max_age_seconds == max_age
+    db = world.runtime.db()
+    async with db.transaction() as blocker:
+        await blocker.fetch_value("SELECT nonce FROM {{tables.owner_act_nonces}} FOR UPDATE")
+        blocker_pid = await blocker.fetch_value("SELECT pg_backend_pid()")
+        pending = asyncio.create_task(world.post(body))
+        try:
+
+            async def observed_wait():
+                for _ in range(500):
+                    row = await db.fetch_one(
+                        "SELECT query FROM pg_stat_activity "
+                        "WHERE $1=ANY(pg_blocking_pids(pid)) "
+                        "AND query LIKE '%owner_act_nonces%' AND query LIKE '%FOR SHARE%'",
+                        blocker_pid,
+                    )
+                    if row is not None:
+                        assert "act_sha256" in row["query"]
+                        return
+                    await asyncio.sleep(0.01)
+                raise AssertionError("replay did not wait in the actual applied_in receipt read")
+
+            # This wait occurs after the replay has taken and checked F6, so
+            # only its post-read check can observe expiry across this gap.
+            await asyncio.wait_for(observed_wait(), 8)
+            fence = await db.fetch_one(
+                "SELECT state,fresh_until, "
+                "extract(epoch FROM fresh_until-clock_timestamp()) AS remaining "
+                "FROM {{tables.installation_fences}} WHERE app_id=$1 AND team_id=$2",
+                world.runtime.manifest.app_id,
+                world.member.team_id,
+            )
+            assert fence["state"] == "active" and fence["fresh_until"] is not None
+            if stale:
+                # Let the original SQL deadline pass while the nonce read is
+                # blocked. Do not refresh, overwrite the fence, or change keys.
+                await asyncio.sleep(max(0, float(fence["remaining"])) + 0.02)
+                assert await db.fetch_value("SELECT clock_timestamp() >= $1", fence["fresh_until"])
+            else:
+                assert fence["remaining"] > 0
+            assert not pending.done()
+        except BaseException:
+            pending.cancel()
+            await asyncio.gather(pending, return_exceptions=True)
+            raise
+    response = await asyncio.wait_for(pending, 8)
+    expected = (
+        (503, {"detail": "authority_unavailable"})
+        if stale
+        else (409, {"detail": "applied_earlier"})
+    )
+    assert (response.status_code, response.json()) == expected
+    assert world.effect.prepares == world.effect.committed == 1
+    assert await world.counts() == (1, 1, 1)
+
+
 async def test_identical_act_with_substituted_body_credential_is_not_acknowledged(world):
     body = world.body()
     assert (await world.post(body)).status_code == 200
