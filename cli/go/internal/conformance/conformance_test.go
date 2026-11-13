@@ -1731,13 +1731,6 @@ func TestRotationAnnouncementVectors(t *testing.T) {
 	}
 }
 
-func strField(m map[string]interface{}, key string) string {
-	if v, ok := m[key].(string); ok {
-		return v
-	}
-	return ""
-}
-
 func signedPayloadDigest(canonical, signature string) (string, error) {
 	signatureBytes, err := base64.RawStdEncoding.DecodeString(strings.TrimSpace(signature))
 	if err != nil {
@@ -1754,11 +1747,4 @@ func stringValue(value any) string {
 		return out
 	}
 	return ""
-}
-
-func intField(m map[string]interface{}, key string) int {
-	if v, ok := m[key].(float64); ok {
-		return int(v)
-	}
-	return 0
 }
