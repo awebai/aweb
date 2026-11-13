@@ -291,21 +291,23 @@ SIGNER_HUMAN_PATH=/handoff-assets/handoff.css
 
 # The OATS ingress probe (egress image, probe-ingress.mjs, full mode), from the
 # services side against the actual TLS ingress, for every route egress allows:
-# the policy's five origins at their pinned addresses, each with matched H1/H2
-# controls that must reach its own backend, and the human origin's Host or
-# :authority carried under any of them, which must reach no backend. Each
-# backend's own access log is followed from before the first probe request.
-# The registry's log is one of them: a deployment whose registry is not one of
-# its services cannot be probed here. TEAM_DEPLOYMENT_INGRESS_CA names the
-# ingress's trust anchors when a private authority signed it.
-INGRESS_ROUTES="aweb:aweb:/ready secrets:secrets:/ready logs:logs:/ready signer:signer:/readyz registry:registry:/health"
+# the policy's five origins at their pinned addresses. Each local route has
+# matched H1/H2 controls that must reach its own backend, and the human
+# origin's Host or :authority carried under any of them, which must reach no
+# backend; each such backend's own access log is followed from before the
+# first probe request. A registry the operator declares external
+# (team.registryRoute) is the registry's operator's: its route has a positive
+# control and no log witness (egress_policy.ingress_routes). The signer's route
+# is always local, so the human origin's refusal under the signer's SNI is
+# always proved. TEAM_DEPLOYMENT_INGRESS_CA names the ingress's trust anchors
+# when a private authority signed it.
 # The one path every backend logs, Secrets included (it logs /ready and /live
 # alone): the probe sends its extra coverage controls and every forbidden
 # request there, so a misrouted request cannot go unseen.
 INGRESS_AUDIT_PATH=/ready
 
 ingress_probe() {
-  local origins listed logs followers=() route role service path ca_mount=() ca_flag=() out status services
+  local origins listed logs followers=() role local_roles ca_mount=() ca_flag=() out status services
   listed="$(python_in_server - "$run_dir/egress-policy.json" <<'PY'
 import json
 import sys
@@ -319,33 +321,39 @@ PY
   rm -rf "$logs"
   mkdir -p "$logs"
   # Read once: grep -q on a live pipe would end it early, and pipefail fails it.
-  services="$(dc config --services)"
-  for route in $INGRESS_ROUTES; do
-    IFS=: read -r role service path <<<"$route"
-    if ! grep -qx "$service" <<<"$services"; then
-      echo "teamctl: the ingress probe needs $role's backend log, and $service is not a service of this deployment" >&2
-      return 1
-    fi
+  services="$(dc config --services)" || refuse "could not list the deployment's services"
+  local_roles="$(python_in_server - "$deployment" "$TEAM_DIR" "$run_dir/egress-policy.json" "$logs/route-logs.json" \
+    "$services" <<'PY'
+import importlib.util
+import json
+import sys
+from pathlib import Path
+
+import yaml
+
+path, team_dir, policy, out, services = sys.argv[1:]
+spec = importlib.util.spec_from_file_location("egress_policy", Path(team_dir) / "egress_policy.py")
+egress_policy = importlib.util.module_from_spec(spec)
+spec.loader.exec_module(egress_policy)
+config = yaml.safe_load(open(path, encoding="utf-8"))
+try:
+    routes = egress_policy.ingress_routes(config, json.loads(Path(policy).read_text(encoding="utf-8")),
+                                          services.split())
+except egress_policy.Refused as refused:
+    sys.exit(f"teamctl: no ingress probe: {refused}")
+Path(out).write_text(json.dumps(routes, indent=2) + "\n", encoding="utf-8")
+print(" ".join(role for role, route in routes.items() if "log" in route))
+PY
+)" || return 1
+  for role in $local_roles; do
     : >"$logs/$role.log"
-    dc logs --follow --no-color --no-log-prefix "$service" >>"$logs/$role.log" 2>&1 &
+    dc logs --follow --no-color --no-log-prefix "$role" >>"$logs/$role.log" 2>&1 &
     followers+=($!)
   done
   # Each follower is attached once it has written its log so far.
-  for route in $INGRESS_ROUTES; do
-    IFS=: read -r role service path <<<"$route"
+  for role in $local_roles; do
     for _ in $(seq 1 50); do [[ -s "$logs/$role.log" ]] && break; sleep 0.2; done
   done
-  python_in_server - "$logs/route-logs.json" $INGRESS_ROUTES <<'PY'
-import json
-import sys
-
-out, *routes = sys.argv[1:]
-table = {}
-for route in routes:
-    role, _service, path = route.split(":")
-    table[role] = {"path": path, "log": f"/logs/{role}.log"}
-open(out, "w", encoding="utf-8").write(json.dumps(table, indent=2) + "\n")
-PY
   if [[ -n "${TEAM_DEPLOYMENT_INGRESS_CA:-}" ]]; then
     ca_mount=(-v "$TEAM_DEPLOYMENT_INGRESS_CA:/input/world-ca.pem:ro")
     ca_flag=(--ca-file /input/world-ca.pem)
