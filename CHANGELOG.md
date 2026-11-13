@@ -2,6 +2,23 @@
 
 ## Unreleased
 
+- `aw id endorse --no-wait` shows the approval page and exits instead of
+  waiting for the human: `--json` reports `operation_id`, `state`, `page`,
+  `digest`, `fingerprint` and `expires_at`. Running the same command again
+  with the same `--operation-id` resumes it, and once the human has approved,
+  finishes the endorsement, registering and reading back the certificate.
+  `--no-browser` reports the page without opening a browser, for setup an
+  agent drives.
+
+- `aw id create --no-address --registry R --identity-home H` creates a
+  registered identity with no address: a fresh self-custodial key registers
+  its own did:aw at R and is read back, with no namespace controller key
+  involved. It is how a deployment root is created before a human endorses
+  it. Creation is resumable: the key is kept privately before anything is
+  sent, so a rerun completes an interrupted creation with the same key. A
+  home that already holds an identity, or anything else, refuses
+  `identity_exists`. `--json` carries `did_aw` and `did_key`.
+
 - aw no longer blind-retries a `503` that carries `Retry-After`: the request
   returns at once with the service's hint, since a retry before it cannot
   succeed and repeats what the service asked to wait for. A bare `503` keeps

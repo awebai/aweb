@@ -612,6 +612,7 @@ Flags:
 - `--human-parent string did:aw of the issuing human (local key, or a registered account human with --org)`
 - `--inbound-mode string Hosted inbound delivery mode (default team-and-contacts; requires --org)`
 - `--name string Global identity name (address name under --domain)`
+- `--no-address Create a registered identity with no address in an explicit fresh --identity-home, registering its own did:aw at --registry; resumable`
 - `--org string Hosted organization slug or ID (human CLI login or explicit owner principal)`
 - `--owner-identity-home string Authorize --org creation with this owner's absolute native credential directory`
 - `--registry string Registry origin override (default: api.awid.ai)`
@@ -679,6 +680,8 @@ Flags:
 - `--deployment-label string The deployment's name, shown to the human`
 - `-h, --help help for endorse`
 - `--human string The did:aw of the human who endorses this root`
+- `--no-browser Do not open a browser; the page is only reported`
+- `--no-wait Show the approval page and exit without waiting for the human; rerun with the same --operation-id to finish`
 - `--operation-id string The caller's UUID for this endorsement; the same id resumes it`
 - `--protected-profile string The operator-provisioned protected-service profile`
 - `--team stringArray A team (name:domain) the root will admit agents to; repeat for each`
