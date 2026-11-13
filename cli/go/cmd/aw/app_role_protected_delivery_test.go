@@ -322,3 +322,66 @@ func TestOnlyAConflictSayingAppliedEarlierSettlesAnOperation(t *testing.T) {
 		}
 	}
 }
+
+func serviceOwnedReceipt(t *testing.T, receipt *handoff.Receipt, id string) {
+	t.Helper()
+	var artifact map[string]string
+	if err := json.Unmarshal(receipt.Result, &artifact); err != nil {
+		t.Fatal(err)
+	}
+	signing, _ := base64.StdEncoding.DecodeString(artifact["signing"])
+	raw, _ := base64.StdEncoding.DecodeString(artifact["signature"])
+	digest, err := awid.ProtectedArtifactDigest(signing, base64.RawStdEncoding.EncodeToString(raw))
+	if err != nil {
+		t.Fatal(err)
+	}
+	receipt.Result, _ = json.Marshal(map[string]any{"v": 2, "type": "aweb.protected-delivery", "artifact": artifact,
+		"delivery": map[string]any{"mode": "service_owned", "state": "applied", "reference": map[string]any{"operation_id": id, "artifact_sha256": digest}}})
+}
+
+func TestServiceOwnedAppliedReceiptAfterExpiryNeverPostsAgain(t *testing.T) {
+	app := newOwnerActApp(t)
+	intent, binding, receipt, id := settleWorld(t, app, time.Now().Add(-time.Hour))
+	serviceOwnedReceipt(t, receipt, id)
+	if err := settleProtectedAct(settleCommand(), id, intent, binding, receipt, nil); err != nil {
+		t.Fatal(err)
+	}
+	if len(app.posts) != 0 || app.effects != 0 || saved(t, id) {
+		t.Fatalf("posts %d effects %d saved %v", len(app.posts), app.effects, saved(t, id))
+	}
+}
+
+func TestServiceOwnedReceiptRejectsUnknownModeOrReferenceWithoutLegacyFallback(t *testing.T) {
+	for _, dimension := range []string{"mode", "state", "operation_id", "artifact_sha256", "version", "extra"} {
+		t.Run(dimension, func(t *testing.T) {
+			app := newOwnerActApp(t)
+			intent, binding, receipt, id := settleWorld(t, app, time.Now())
+			serviceOwnedReceipt(t, receipt, id)
+			var result map[string]any
+			_ = json.Unmarshal(receipt.Result, &result)
+			delivery := result["delivery"].(map[string]any)
+			reference := delivery["reference"].(map[string]any)
+			switch dimension {
+			case "mode":
+				delivery["mode"] = "client_owned"
+			case "state":
+				delivery["state"] = "unknown"
+			case "operation_id":
+				reference["operation_id"] = "44444444-4444-4444-8444-444444444444"
+			case "artifact_sha256":
+				reference["artifact_sha256"] = strings.Repeat("0", 64)
+			case "version":
+				result["v"] = 3
+			case "extra":
+				result["extra"] = "refuse"
+			}
+			receipt.Result, _ = json.Marshal(result)
+			if err := settleProtectedAct(settleCommand(), id, intent, binding, receipt, nil); errorCodeOf(err) != "signed_act_invalid" {
+				t.Fatalf("%v", err)
+			}
+			if len(app.posts) != 0 || !saved(t, id) {
+				t.Fatal("invalid service result posted or forgot original request")
+			}
+		})
+	}
+}
