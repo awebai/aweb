@@ -64,6 +64,8 @@ async def test_connect_binds_the_full_protected_registered_certificate(
         team_controller_signing_key=team_key,
         certificate_id=cert["certificate_id"],
         member_did_key=member_did,
+        member_did_aw=None,
+        member_address=None,
         alias=cert["alias"],
         identity_scope="local",
         certificate=_encode_certificate(cert),
