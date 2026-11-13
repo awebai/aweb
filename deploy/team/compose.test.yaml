@@ -1,8 +1,9 @@
 # The journey's test world beside one team's deployment, added after
 # compose.yaml: its own AWID registry, the DNS that names it and every public
-# host, a captured SMTP server, a TLS front for every public origin, and the
+# host, a captured SMTP server, a TLS front for the registry, and the
 # image with the real aw. Production has none of these: it uses the
-# operator's registry, DNS, SMTP and reverse proxy.
+# operator's registry, DNS and SMTP, and the deployment's front or the
+# operator's own reverse proxy.
 #
 # The journey writes TEST_WORLD_DIR (DNS zone, certificates, front
 # configuration) before it starts any of them, and passes the TEST_ settings
@@ -77,8 +78,9 @@ services:
       services:
         ipv4_address: ${TEST_SMTP_IP:?}
 
-  # Terminates TLS for every public origin and keeps the public Host.
-  front:
+  # Terminates TLS for the registry's origin and keeps the public Host. The
+  # deployment's own origins are its front's (compose.front.yaml).
+  world-front:
     image: caddy:2.10-alpine
     volumes:
       - "${TEST_WORLD_DIR:?}/front/Caddyfile:/etc/caddy/Caddyfile:ro"

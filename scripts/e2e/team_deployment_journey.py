@@ -50,6 +50,7 @@ from aweb_naapp_testing.network import make_certificates
 REPO = Path(__file__).resolve().parents[2]
 TEAM_DIR = REPO / "deploy" / "team"
 ADAPTER = REPO / "scripts" / "e2e-team-deployment.sh"
+TEAMCTL = REPO / "deploy" / "team" / "teamctl"
 EVIDENCE = REPO / "naapp" / "secrets" / "e2e" / "protected" / "evidence.py"
 sys.path.insert(0, str(REPO / "naapp" / "secrets" / "e2e"))
 
@@ -97,6 +98,8 @@ UPSTREAMS = {
     "human": "signer:8080",
 }
 MAIL = f"mail.{DOMAIN}"
+# The deployment's front and the world's registry front run this Caddy.
+FRONT_IMAGE = "caddy:2.10-alpine"
 # The role the round trip revokes, of this deployment's Secrets app.
 ROLE = "secrets.owner"
 # The agents' uid: the signer refuses custody a worker could read.
@@ -112,6 +115,13 @@ def run(*args: str, env: dict[str, str] | None = None, input: str | None = None,
     if result.returncode != 0:
         raise SystemExit(f"FAILED: {' '.join(args[:6])} ...\n{result.stdout[-3000:]}\n{result.stderr[-3000:]}")
     return result.stdout
+
+
+def front_image() -> str:
+    """The front's Caddy image, by the digest it was pulled at."""
+    if subprocess.run(["docker", "image", "inspect", FRONT_IMAGE], capture_output=True, check=False).returncode != 0:
+        run("docker", "pull", "-q", FRONT_IMAGE)
+    return run("docker", "image", "inspect", "--format", "{{index .RepoDigests 0}}", FRONT_IMAGE).strip()
 
 
 def image_user(image: str) -> str:
@@ -132,7 +142,12 @@ class World:
         network = ipaddress.ip_network(cidr)
         self.cidr = cidr
         top = network.broadcast_address
-        self.front_ip, self.dns_ip, self.smtp_ip = (str(top - 5), str(top - 4), str(top - 3))
+        # The world's front serves the registry alone, as the operator's
+        # registry is served apart from the team's deployment; the bundle's
+        # own front (deploy/team/compose.front.yaml) serves every origin of
+        # the deployment at ingress_ip.
+        self.registry_front_ip, self.dns_ip, self.smtp_ip = (str(top - 5), str(top - 4), str(top - 3))
+        self.ingress_ip = str(top - 6)
         self.env = {
             **os.environ,
             "TEAM_DEPLOYMENT_PROJECT": project,
@@ -140,7 +155,7 @@ class World:
             "TEAM_DEPLOYMENT_COMPOSE_FILES": f"{TEAM_DIR / 'compose.test.yaml'}:{self.world / 'compose.trust.yaml'}",
             "TEST_WORLD_DIR": str(self.world),
             "TEST_DNS_IP": self.dns_ip,
-            "TEST_FRONT_IP": self.front_ip,
+            "TEST_FRONT_IP": self.registry_front_ip,
             "TEST_SMTP_IP": self.smtp_ip,
             "TEST_AWID_IMAGE": images["awid"],
             "TEST_CLI_IMAGE": images["cli"],
@@ -166,22 +181,21 @@ class World:
         )
         self.publish_controller("did:key:z6MkpendingpendingpendingpendingpendingpendingpendingP")
         tls = make_certificates(self.world / "tls", [*HOSTS.values(), MAIL], [])
-        self.caddyfile = (
-            # A request whose Host its TLS SNI does not name is refused: the
-            # signer's request host must never reach its human host. Caddy
-            # compares hostnames alone, so each site also refuses, itself,
-            # any authority but its own host on port 443.
+        # The certificate the deployment's front is renewed to, from an
+        # authority every client of this world trusts from the start beside
+        # the first.
+        renewal = make_certificates(self.world / "tls-renewal", [HOSTS[name] for name in HOSTS if name != "registry"], [])
+        tls.ca_file.write_bytes(tls.ca_file.read_bytes() + renewal.ca_file.read_bytes())
+        (self.world / "front" / "Caddyfile").write_text(
+            # As the deployment's front has it (render_env.py --front).
             "{\n  auto_https off\n  servers {\n    strict_sni_host on\n  }\n}\n"
-            + "".join(
-                f"{HOSTS[name]}:443 {{\n  tls /tls/{tls.cert_file.name} /tls/{tls.key_file.name}\n"
-                f"  @misdirected not header_regexp Host ^{re.escape(HOSTS[name])}(:443)?$\n"
-                "  respond @misdirected 421\n"
-                f"  reverse_proxy {UPSTREAMS[name]}\n}}\n"
-                for name in HOSTS
-            )
+            f"{HOSTS['registry']}:443 {{\n  tls /tls/{tls.cert_file.name} /tls/{tls.key_file.name}\n"
+            f"  @misdirected not header_regexp Host ^{re.escape(HOSTS['registry'])}(:443)?$\n"
+            "  respond @misdirected 421\n"
+            f"  reverse_proxy {UPSTREAMS['registry']}\n}}\n"
         )
-        (self.world / "front" / "Caddyfile").write_text(self.caddyfile)
-        for path in [*(self.world / "tls").iterdir(), *(self.world / "front").iterdir(), *(self.world / "dns").iterdir()]:
+        for path in [*(self.world / "tls").iterdir(), *(self.world / "tls-renewal").iterdir(),
+                     *(self.world / "front").iterdir(), *(self.world / "dns").iterdir()]:
             path.chmod(0o644)
 
     def write_trust(self, services: list[str]) -> None:
@@ -195,11 +209,17 @@ class World:
             }
             for name in services
         }
+        # The deployment's front at the address this world's DNS gives every
+        # origin of the deployment.
+        trust["front"] = {"networks": {"services": {"ipv4_address": self.ingress_ip}}}
         (self.world / "compose.trust.yaml").write_text(yaml.safe_dump({"services": trust}))
 
     def publish_controller(self, controller_did: str) -> None:
         zone = self.world / "dns" / f"{DOMAIN}.zone"
-        records = "".join(f"{host.removesuffix('.' + DOMAIN)} IN A {self.front_ip}\n" for host in HOSTS.values())
+        records = "".join(
+            f"{host.removesuffix('.' + DOMAIN)} IN A {self.registry_front_ip if name == 'registry' else self.ingress_ip}\n"
+            for name, host in HOSTS.items()
+        )
         tmp = zone.with_suffix(".tmp")
         tmp.write_text(
             f"$ORIGIN {DOMAIN}.\n$TTL 1\n"
@@ -313,6 +333,53 @@ class World:
                 "seat_scope": whoami.get("identity_scope"), "seat_inbound": whoami.get("inbound_mode"),
                 "seat_inbound_configurable": whoami.get("inbound_configurable")}
 
+    def served_front_certificate(self, host: str) -> str:
+        """The SHA-256 of the certificate the deployment's front serves for
+        host, asked over TLS with that SNI from the services network."""
+        return run("docker", "run", "--rm", "--network", f"{self.project}_services", "--entrypoint", "python",
+                   self.images["aweb"], "-c",
+                   "import hashlib, socket, ssl, sys\n"
+                   "context = ssl.create_default_context()\n"
+                   "context.check_hostname = False\n"
+                   "context.verify_mode = ssl.CERT_NONE\n"
+                   "with socket.create_connection(('front', 443), timeout=10) as raw,"
+                   " context.wrap_socket(raw, server_hostname=sys.argv[1]) as tls:\n"
+                   "    print(hashlib.sha256(tls.getpeercert(binary_form=True)).hexdigest())\n",
+                   host).strip()
+
+    def front_renewal(self) -> dict:
+        """The operator renews the front's certificate: with a key that is not
+        the new certificate's, teamctl reload-tls refuses and the front keeps
+        serving the old one; with both new files, it reloads and every host
+        serves the new certificate."""
+        host = HOSTS["aweb"]
+        before = self.served_front_certificate(host)
+
+        def install(certificate: Path, key: Path) -> None:
+            run("docker", "run", "--rm", "-v", f"{self.secrets / 'front'}:/front", "-v", f"{certificate}:/new.pem:ro",
+                "-v", f"{key}:/new.key:ro", "alpine:3.22", "sh", "-c",
+                "cat /new.pem > /front/certificate.pem && cat /new.key > /front/key.pem"
+                " && chown 0:0 /front/certificate.pem /front/key.pem && chmod 0400 /front/certificate.pem /front/key.pem")
+
+        def reload() -> subprocess.CompletedProcess:
+            return subprocess.run([str(TEAMCTL), "reload-tls", str(self.deployment_path)], env=self.env,
+                                  capture_output=True, text=True, timeout=300, check=False)
+
+        renewal = self.world / "tls-renewal"
+        install(renewal / "server.pem", self.world / "tls" / "server.key")
+        mismatched = reload()
+        assert mismatched.returncode != 0 and "not the certificate key" in mismatched.stderr, (
+            mismatched.stdout + mismatched.stderr)
+        kept = self.served_front_certificate(host)
+        assert kept == before, "front renewal: a refused reload changed the served certificate"
+        install(renewal / "server.pem", renewal / "server.key")
+        renewed = reload()
+        assert renewed.returncode == 0, renewed.stdout + renewed.stderr
+        after = self.served_front_certificate(host)
+        assert after != before, "front renewal: the front still serves the old certificate"
+        return {"before": before[:16], "refused": mismatched.stderr.strip().splitlines()[-1],
+                "kept": kept == before, "after": after[:16], "reload": renewed.stdout.strip().splitlines()[-1]}
+
     def redis_isolation(self, required: set[str]) -> dict:
         """aweb reaches Redis with its password; from aweb's own network a
         client without it, or with a wrong one, is refused, which shows Redis
@@ -332,8 +399,10 @@ class World:
 
         def ask(service: str, commands: str) -> subprocess.CompletedProcess:
             return subprocess.run(
-                ["docker", "run", "--rm", "-i", "--network", f"container:{containers[service]}", "redis:7-alpine",
-                 "timeout", "5", "redis-cli", "-h", address[0], "-p", "6379"],
+                # --init: without it redis-cli is the container's PID 1, which
+                # the timeout's TERM cannot stop (seen on run32).
+                ["docker", "run", "--rm", "-i", "--init", "--network", f"container:{containers[service]}",
+                 "redis:7-alpine", "timeout", "5", "redis-cli", "-h", address[0], "-p", "6379"],
                 input=commands, text=True, capture_output=True, timeout=60, check=False)
 
         ready = json.loads(self.compose("exec", "-T", "aweb", "curl", "-fsS", "http://localhost:8000/ready"))
@@ -409,7 +478,11 @@ class World:
                     "oatsSource": str(self.oats_source),
                 },
             }
-            config["egress"] = {"image": self.images["egress"], "privateIngressAddresses": [self.front_ip]}
+            config["egress"] = {"image": self.images["egress"],
+                                "privateIngressAddresses": [self.ingress_ip, self.registry_front_ip]}
+        # Published on the lab machine's loopback alone: its clients are on
+        # the services network.
+        config["front"] = {"image": front_image(), "compose": {"bindAddress": "127.0.0.1", "port": 18443}}
         path = self.run_dir / "deployment.yaml"
         path.write_text(yaml.safe_dump(config, sort_keys=False))
         self.write_trust(["aweb", *(name for name in ("secrets", "logs", "signer") if name in config)])
@@ -586,10 +659,10 @@ class World:
         def now() -> float:
             seconds, micros = self.compose("exec", "-T", "registry-redis", "redis-cli", "TIME").split()
             return int(seconds) + int(micros) / 1e6
-        seed = did_key_window(now(), self.front_ip)
+        seed = did_key_window(now(), self.registry_front_ip)
         if seed["wait"]:
             time.sleep(seed["wait"] + 0.5)
-            seed = did_key_window(now(), self.front_ip)
+            seed = did_key_window(now(), self.registry_front_ip)
         self.compose("exec", "-T", "registry-redis", "redis-cli", "SET", seed["key"], str(seed["limit"]),
                      "EX", str(seed["ttl"]))
         return {**seed, "seeded_at": now()}
@@ -694,6 +767,13 @@ class World:
         keys = self.world / f"{name}-member" / "identity" / ".aw"
         return (keys / "signing.key").read_text(), keys / fetched["cert_path"]
 
+    def write_front_files(self) -> None:
+        """The deployment's front holds this world's certificate for every
+        origin, as an operator's front holds theirs."""
+        (self.secrets / "front").mkdir()
+        shutil.copyfile(self.world / "tls" / "server.pem", self.secrets / "front" / "certificate.pem")
+        shutil.copyfile(self.world / "tls" / "server.key", self.secrets / "front" / "key.pem")
+
     def write_service_files(self, machine: str) -> None:
         pem, _ = self.admit_service(machine, "aweb")
         (self.secrets / "aweb" / f"{TEAM}.key").write_text(pem)
@@ -731,6 +811,8 @@ class World:
         owners = {
             "postgres": run("docker", "run", "--rm", "postgres:16-alpine", "id", "-u", "postgres").strip(),
             "redis": run("docker", "run", "--rm", "redis:7-alpine", "id", "-u", "redis").strip(),
+            # Caddy runs as root.
+            "front": "0",
             "aweb": image_user(self.images["aweb"]),
             "secrets": image_user(self.images["secrets"]),
             "logs": image_user(self.images["logs"]),
@@ -819,15 +901,18 @@ class World:
                       self.images["chromium"], *args, "--ca", "/world/tls/ca.pem", timeout=300).strip()
             return first_json(out) if "{" in out else {}
 
+        rendered = self.run_dir / "front" / "Caddyfile"
+        original = rendered.read_text()
+
         def drop_prepare_answers(on: bool) -> None:
-            caddyfile = self.caddyfile
+            caddyfile = original
             if on:
                 caddyfile = caddyfile.replace(
                     f"{HOSTS['signer']}:443 {{\n",
                     f"{HOSTS['signer']}:443 {{\n  @prepare {{\n    method POST\n    path /protected-operations\n  }}\n"
                     "  reverse_proxy @prepare signer:8080 {\n    @answered status 2xx\n"
                     "    handle_response @answered {\n      abort\n    }\n  }\n", 1)
-            (self.world / "front" / "Caddyfile").write_text(caddyfile)
+            rendered.write_text(caddyfile)
             self.compose("exec", "-T", "front", "caddy", "reload", "--config", "/etc/caddy/Caddyfile",
                          "--adapter", "caddyfile")
 
@@ -1026,8 +1111,9 @@ def journey(world: World, stop_after: str | None = None, agents_only: bool = Fal
     world.write_world()
     world.write_database_files()
     world.write_redis_files()
+    world.write_front_files()
     world.deployment()
-    world.compose("up", "-d", "--wait", "dns", "registry", "front", "smtp")
+    world.compose("up", "-d", "--wait", "dns", "registry", "world-front", "smtp")
     site = world.site()
     holder = Holder(world.machine("holder"), DOMAIN)
 
@@ -1046,6 +1132,7 @@ def journey(world: World, stop_after: str | None = None, agents_only: bool = Fal
         print("BOUNDARY: the deployment did not come up; see compose.log in the run directory")
         return 1
     print("UP: aweb, secrets and logs are ready")
+    print("FRONT RENEWED:", json.dumps(world.front_renewal(), sort_keys=True))
     connect_requester(site, holder)
     print("LOCAL MEMBERS:", json.dumps(world.local_members(), sort_keys=True))
     print("MEMBER MAIL:", json.dumps(world.member_mail(holder.container), sort_keys=True))
