@@ -71,6 +71,7 @@ discovery/default. Environment entries carry only paths or nonsecret metadata.
 | `AWEB_PROTECTED_DATABASE_SCHEMA` | lowercase schema identifier | `protected_signer` | Tables within the dedicated signer database. |
 | `AWEB_PROTECTED_DATABASE_USES_TRANSACTION_POOLER` | boolean | `false` | Existing database adapter's transaction-pooler settings. |
 | `AWEB_PROTECTED_CONTROLLER_KEY_FILE` → `/run/secrets/signer/private-controller/controller.key:ro` | private real file, 64-hex-character seed with optional LF | required | Actual team-controller custody, matching profile and current registry. |
+| `AWEB_PROTECTED_CONTROLLER_KEYS_FILE` → `/etc/aweb/signer/controller-keys.json:ro` | optional JSON map of every profile authority-key DID to its absolute private seed-file path | unset (one selected key) | Serve explicit human-identity and team-controller bindings on the same origins; each real file passes the unchanged custody checks, and the selected entry equals `CONTROLLER_KEY_FILE`. Paths only, no secret values. |
 | `AWEB_PROTECTED_MEMBER_KEYS_FILE` → `/run/secrets/signer/members.json:ro` | path to existing team-ID → PEM-file manifest | required | Ordinary member keys for private registry reads; relative paths resolve from this manifest. Controller substitution refuses. |
 | Member PEM files → `/run/secrets/signer/member-*.pem:ro` | existing aw `ED25519 PRIVATE KEY` format | required referenced files | Registered member credentials and certificates, separate from controller custody. |
 | `AWEB_PROTECTED_WORKER_UIDS` | JSON array of positive integer UIDs | required | Actual untrusted worker UIDs; none may be 0 or signer uid 1001. Do not omit a worker to bypass isolation. |
@@ -99,6 +100,7 @@ are mandatory.
 | --- | --- | --- |
 | `database-url` | recommended `1001:1001`, 0400; readable projected root-owned 0440/0444 files also use the existing shared file reader | Platform PostgreSQL provisioner: dedicated database/role, whole DSN. |
 | `private-controller/controller.key` | **1001:1001, 0400** (0600 also supported); real parent directory **1001:1001, 0700** | Authorized controller custodian → private-volume materializer. No runtime key generation/import on a miss. |
+| Additional `private-controller/*.key` files | **1001:1001, 0400** (0600 supported), same real **0700** private parent | Authorized custodian → private-volume materializer, one explicit matching profile key per slot. No projected symlinks or worker mounts. |
 | `member-*.pem` | recommended `1001:1001`, 0400, read-only signer mount | Existing team membership provisioner, with valid ordinary member certificates. |
 | `smtp-password` | recommended `1001:1001`, 0400; readable nonwritable projected file supported by existing reader | Platform mail-account provisioner. |
 

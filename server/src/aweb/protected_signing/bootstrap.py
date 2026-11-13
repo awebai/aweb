@@ -152,14 +152,16 @@ async def initialise(c, *, requester, contact):
             )
             await tx.execute(
                 "INSERT INTO {{tables.protected_authorizer_bindings}} "
-                "(service_id,team_id,human_id,human_domain,generation,subject,b3_scope,policy_version) "
-                "VALUES($1,$2,$3,$4,1,$5,$6,1)",
+                "(service_id,team_id,human_id,human_domain,generation,subject,b3_scope,policy_version,authority_kind,authority_domain) "
+                "VALUES($1,$2,$3,$4,1,$5,$6,1,$7,$8)",
                 c.context.service_id,
                 c.context.authority_id,
                 c.context.human_id,
                 c.context.human_domain,
                 subject,
                 scope,
+                c.context.authority_kind,
+                c.context.authority_domain,
             )
             await tx.execute(
                 "INSERT INTO {{tables.protected_requester_bindings}} (b3_scope,principal) VALUES($1,$2)",
@@ -272,6 +274,8 @@ async def prepare_completion(c, token):
     )
     if enrolment is None:
         raise EnrolmentRefused("enrolment unavailable")
+    if hasattr(c, "for_b3_scope"):
+        c = await c.for_b3_scope(enrolment["scope"], tx=c.db)
     observed = await c.authority.observe(c.context, purpose="prepare")
     return BootstrapCompletion(c, observed, enrolment)
 
@@ -337,8 +341,9 @@ def bootstrap_router(c, *, csrf_key, limiter=None):
         CeremonyCopy(
             enrolment=Ceremony(
                 "Set up protected signing",
-                f"Register a passkey for {c.context.human_id}, controller {c.context.authority_id}. "
-                "This enrolls only the administrator-selected authorizer; it approves no act.",
+                (f"Register a passkey for {c.context.human_id}, controller {c.context.authority_id}. "
+                 if not hasattr(c, "components") else "Register a passkey for the administrator-selected protected authority. ")
+                + "This enrolls only the administrator-selected authorizer; it approves no act.",
                 "Register passkey",
                 "Your passkey is registered. Open your approval link to sign in.",
             ),

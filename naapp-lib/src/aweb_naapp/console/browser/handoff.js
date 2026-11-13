@@ -1,6 +1,7 @@
 "use strict";
 
-import { coveredRequestDigest } from "/handoff-assets/canonical-json.mjs";
+import { validateProtectedPresentation } from "/handoff-assets/protected-presentation.mjs";
+import { operationTable } from "/handoff-assets/operations.mjs";
 
 (() => {
   const {handoffId, purpose} = document.body.dataset;
@@ -70,25 +71,7 @@ import { coveredRequestDigest } from "/handoff-assets/canonical-json.mjs";
 
   async function governanceState(state) {
     const {payload, digest} = state;
-    const request = payload?.request;
-    const subject = request?.subject;
-    const artifact = request?.artifact;
-    if (state.mode !== "governance" || state.handoff_id !== handoffId ||
-        state.state !== "pending" || !nonempty(state.operation_id) ||
-        !/^[0-9a-f]{64}$/.test(digest) || !nonempty(state.expires_at) ||
-        !Number.isFinite(Date.parse(state.expires_at)) ||
-        !nonempty(payload?.policy?.ref) || !Number.isSafeInteger(payload?.policy?.version) ||
-        payload.policy.version < 1 || request?.operation !== "human-role.revoke" ||
-        request.operation_id !== state.operation_id ||
-        !subject || typeof subject !== "object" || Array.isArray(subject) ||
-        Object.keys(subject).sort().join(",") !== "app_id,installation_id,principal,role" ||
-        !Object.values(subject).every(nonempty) ||
-        artifact?.act !== request.operation || !nonempty(artifact?.team_id) ||
-        !nonempty(artifact?.aud) || !artifact.subject ||
-        Object.keys(subject).some(key => artifact.subject[key] !== subject[key])) {
-      throw new Error("handoff_refused");
-    }
-    if (await coveredRequestDigest(payload) !== digest) throw new Error("handoff_refused");
+    const {request, subject} = await validateProtectedPresentation(state, handoffId, operationTable);
     operationId = state.operation_id;
     frozenRedirect = request.redirect_uri;
     if (frozenRedirect !== undefined) {
@@ -99,13 +82,23 @@ import { coveredRequestDigest } from "/handoff-assets/canonical-json.mjs";
     }
     document.getElementById("handoff-act").textContent = request.operation;
     document.getElementById("handoff-target").textContent =
-      `${subject.principal} · ${subject.role} · ${subject.app_id} · ${subject.installation_id}`;
+      [subject.principal, subject.role, subject.app_id, subject.installation_id,
+        subject.deployment_label, subject.root_id, subject.root_key, subject.domain]
+        .filter(value => value !== undefined).join(" · ");
     document.getElementById("handoff-digest").textContent = digest;
     document.getElementById("handoff-fingerprint").textContent = digest.slice(0, 16).match(/.{4}/g).join(" ");
     document.getElementById("handoff-payload").textContent = JSON.stringify(payload, null, 2);
     document.getElementById("handoff-governance").hidden = false;
     action.textContent = "Approve operation with passkey";
-    status.textContent = "Compare the act, target and fingerprint with your terminal before approving.";
+    const compare = "Compare the act, target and fingerprint with your terminal before approving.";
+    if (request.operation === "identity.root.endorse") {
+      const policy = request.admission_policy;
+      status.textContent = `${request.responsibility_statement} Agent admissions for ${policy.teams.join(", ")}: ` +
+        `at most ${policy.bounds.max_active} active per root and ${policy.bounds.max_per_window} per ${policy.bounds.rate_window_seconds} seconds. ${compare}`;
+      action.textContent = "Endorse root with passkey";
+    } else {
+      status.textContent = compare;
+    }
     document.body.dataset.handoffState = "ready";
     action.disabled = false;
     document.getElementById("handoff-governance-title").focus();

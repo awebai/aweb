@@ -36,12 +36,15 @@ class IndependentAuthority:
         c = self.context
         row = await tx.fetch_one(
             "SELECT * FROM {{tables.protected_authorizer_bindings}} "
-            "WHERE service_id=$1 AND team_id=$2 AND human_id=$3 AND human_domain=$4"
+            "WHERE service_id=$1 AND team_id=$2 AND human_id=$3 AND human_domain=$4 "
+            "AND authority_kind=$5 AND COALESCE(authority_domain,split_part(team_id,':',2))=$6"
             + (" FOR SHARE" if hold else ""),
             c.service_id,
             c.authority_id,
             c.human_id,
             c.human_domain,
+            c.authority_kind,
+            c.authority_domain,
         )
         if row is None or not row["active"]:
             raise SignerRefused("authority_changed")
@@ -65,7 +68,8 @@ class IndependentAuthority:
     async def observe(self, context, *, purpose):
         c = self.context
         if (
-            context.authority_kind != "team_controller"
+            context.authority_kind
+            != getattr(self.custody, "authority_kind", "team_controller")
             or {k: v for k, v in context.fields().items() if k != "generation"}
             != {k: v for k, v in c.fields().items() if k != "generation"}
             or c.service_id != self.custody.service_id
@@ -74,28 +78,26 @@ class IndependentAuthority:
             raise SignerRefused("scope_refused")
         started = self.timer()
         try:
-            resolved = await self.registry.resolve_key_fresh(c.human_id)
-            binding = await observe_identity_binding(
-                self.registry,
-                did_aw=c.human_id,
-                did_key=resolved.current_did_key,
-            )
-            if (
-                binding.self_derived
-                or binding.id_tree is None
-                or not binding.id_tree.enrolled
-                or binding.id_tree.domain != c.human_domain
-            ):
-                raise SignerRefused("subject_ineligible")
-            kind = await observe_identity_kind(self.registry, binding)
-            if kind.result["outcome"] == "unavailable":
-                raise SignerRefused("evidence_unavailable")
-            if not kind.is_human or kind.result["human_id"] != c.human_id:
-                raise SignerRefused("issuer_kind_forbidden")
-            name, domain = c.authority_id.split(":", 1)
-            if domain != c.authority_domain:
+            human_key = await self._own_human(c.human_id, c.human_domain)
+            if c.authority_kind == "team_controller":
+                name, domain = c.authority_id.split(":", 1)
+                if domain != c.authority_domain:
+                    raise SignerRefused("scope_refused")
+                team_key = await self.registry.get_team_public_key_fresh(domain, name)
+            elif c.authority_kind == "namespace_controller":
+                if c.authority_id != c.authority_domain:
+                    raise SignerRefused("scope_refused")
+                namespace = await self.registry.get_namespace_fresh(c.authority_domain)
+                team_key = namespace.controller_did if namespace is not None else None
+            elif c.authority_kind == "human_identity":
+                team_key = (
+                    human_key
+                    if c.authority_id == c.human_id
+                    and c.authority_domain == c.human_domain
+                    else await self._own_human(c.authority_id, c.authority_domain)
+                )
+            else:
                 raise SignerRefused("scope_refused")
-            team_key = await self.registry.get_team_public_key_fresh(domain, name)
         except SignerRefused:
             raise
         except Exception as exc:
@@ -118,6 +120,27 @@ class IndependentAuthority:
         if team_key != self.custody.team_key_did:
             raise SignerRefused("authority_changed")
         return _Current(self, context, purpose, started + 60)
+
+    async def _own_human(self, principal, domain):
+        resolved = await self.registry.resolve_key_fresh(principal)
+        binding = await observe_identity_binding(
+            self.registry,
+            did_aw=principal,
+            did_key=resolved.current_did_key,
+        )
+        if (
+            binding.self_derived
+            or binding.id_tree is None
+            or not binding.id_tree.enrolled
+            or binding.id_tree.domain != domain
+        ):
+            raise SignerRefused("subject_ineligible")
+        kind = await observe_identity_kind(self.registry, binding)
+        if kind.result["outcome"] == "unavailable":
+            raise SignerRefused("evidence_unavailable")
+        if not kind.is_human or kind.result["human_id"] != principal:
+            raise SignerRefused("issuer_kind_forbidden")
+        return resolved.current_did_key
 
 
 class _Current:

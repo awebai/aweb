@@ -19,6 +19,28 @@
   Identity mismatches and ordinary dependency failures retain their existing
   refusal behavior; the server adds no wait or retry.
 
+- `aw id team admission-policy --team T --protected-profile P` reads a
+  protected team's agent admission policy from its protected service, proving
+  this identity's key. `--json` carries the mode and the complete policy,
+  including the version and digest an admission binds; aw checks the digest
+  against the policy itself. A protected team without a policy refuses
+  `admission_policy_missing`, and a read that cannot be answered refuses
+  `receipt_unavailable`, never "no policy".
+- `aw id team admit` lets a deployment's endorsed root admit an agent to a
+  protected team through its protected service, with no human present, within
+  the admission policy version and digest the caller names. The caller supplies
+  `--operation-id`; the same id with the same inputs resumes the admission and
+  returns its original certificate, and changed inputs refuse
+  `operation_conflict`. The membership certificate is written to
+  `--certificate-out` only once it is the one the service froze, signed by the
+  team key the profile pins, for exactly the requested member.
+- `aw id endorse` asks a human, through the protected service, to endorse this
+  registered agent as the deployment's root for the listed teams. Before the
+  approval page is shown, aw compares the admission policy the service froze
+  with its own read of every team's policy. Once the human approves, aw
+  verifies the signed certificate, registers it with the root's own key at the
+  pinned registry on the human's verified chain, and reads it back.
+
 - `aw id team add-member` registers the certificate at the team namespace's
   own registry: the one `AWID_REGISTRY_URL` names, or else the one the
   namespace's `_awid` record names, as the namespace commands do. A member
