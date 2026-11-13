@@ -13,6 +13,7 @@ import (
 	"strings"
 	"time"
 
+	aweb "github.com/awebai/aw"
 	"github.com/awebai/aw/awconfig"
 	"github.com/awebai/aw/awid"
 	"github.com/awebai/aw/internal/handoff"
@@ -225,9 +226,7 @@ func runHumanRoleAct(cmd *cobra.Command, act, appName string) error {
 			return err
 		}
 	}
-	ctx, cancel := commandAPIContext(cmd)
-	installationID, err := app.installation(ctx, client, selection.TeamID)
-	cancel()
+	installationID, err := roleActInstallation(cmd, app, client, selection.TeamID, protected)
 	if err != nil {
 		return err
 	}
@@ -424,6 +423,26 @@ var ownerActTransport = func() http.RoundTripper { return awid.NewAPITransport()
 // exact act took effect on an earlier delivery. No other answer means that,
 // whatever its body says.
 var errOwnerActAppliedEarlier = errors.New("the app already applied this act")
+
+// roleActInstallation is app's active installation for a role act. Through a
+// protected service the lookup waits out the service's explicit throttle
+// hints within its own bound, handoff.DefaultRetryWithin from now and never
+// past the command's own deadline, before the prepare, which then has a bound
+// of its own. A local act reads it once within the API timeout.
+func roleActInstallation(cmd *cobra.Command, app *holderApp, client *aweb.Client, teamID string, protected bool) (string, error) {
+	if !protected {
+		ctx, cancel := commandAPIContext(cmd)
+		defer cancel()
+		return app.installation(ctx, client, teamID)
+	}
+	parent := cmd.Context()
+	if parent == nil {
+		parent = context.Background()
+	}
+	ctx, cancel := context.WithTimeout(parent, handoff.DefaultRetryWithin)
+	defer cancel()
+	return app.installationWithinBound(ctx, client, teamID)
+}
 
 // deliverOwnerAct posts a signed act to the app's human origin, with no
 // team-auth and no redirect, and returns the app's answer.

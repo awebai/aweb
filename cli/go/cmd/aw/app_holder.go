@@ -13,6 +13,7 @@ import (
 	"path/filepath"
 	"runtime"
 	"strings"
+	"time"
 
 	aweb "github.com/awebai/aw"
 	"github.com/awebai/aw/awconfig"
@@ -82,13 +83,45 @@ func (a *holderApp) role(name string) (appmanifest.OwnerActRole, error) {
 // must be of the manifest this machine pinned.
 func (a *holderApp) installation(ctx context.Context, client *aweb.Client, teamID string) (string, error) {
 	current, err := activeInstallation(ctx, client, teamID, a.AppID)
-	if err != nil {
+	var unavailable *installationUnavailable
+	switch {
+	case errors.As(err, &unavailable) && unavailable.hinted:
+		return "", withErrorCode(err.Error(), fmt.Errorf("%s's installation in team %s could not be read now; the service asks to retry after %d seconds: %w", a.Name, teamID, int64(unavailable.retryAfter/time.Second), err))
+	case errors.As(err, &unavailable):
+		return "", withErrorCode(err.Error(), fmt.Errorf("%s's installation in team %s could not be read now: %w", a.Name, teamID, err))
+	case err != nil:
 		return "", withErrorCode(err.Error(), fmt.Errorf("%s has no active installation in team %s", a.Name, teamID))
 	}
 	if current.Digest != a.Digest {
 		return "", withErrorCode("installation_manifest_mismatch", fmt.Errorf("team %s's installation of %s is of manifest %s, not the %s installed here; update the app", teamID, a.Name, current.Digest, a.Digest))
 	}
 	return current.InstallationID, nil
+}
+
+// installationWithinBound is a.installation, waiting out each explicit
+// Retry-After hint of an unavailable answer and reading again, while the wait
+// ends before ctx's deadline. ctx carries the caller's bound; a hint that does
+// not fit it, an unhinted or unusable answer, and every refusal end at once.
+// Cancellation ends the wait.
+func (a *holderApp) installationWithinBound(ctx context.Context, client *aweb.Client, teamID string) (string, error) {
+	for {
+		id, err := a.installation(ctx, client, teamID)
+		var unavailable *installationUnavailable
+		if err == nil || !errors.As(err, &unavailable) || !unavailable.hinted {
+			return id, err
+		}
+		deadline, bounded := ctx.Deadline()
+		if !bounded || !time.Now().Add(unavailable.retryAfter).Before(deadline) {
+			return "", err
+		}
+		timer := time.NewTimer(unavailable.retryAfter)
+		select {
+		case <-ctx.Done():
+			timer.Stop()
+			return "", ctx.Err()
+		case <-timer.C:
+		}
+	}
 }
 
 // holderSessionOptions are the options of a session handoff for roleName on

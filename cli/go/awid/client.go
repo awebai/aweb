@@ -1579,8 +1579,15 @@ func shouldRetryAPITransportError(ctx context.Context, method, path string, body
 	return isSafeHTTPMethod(method) || isIdempotentSendRequest(method, path, body)
 }
 
+// shouldRetryAPIResponse retries a bare 503 a few times, briefly. A 503 that
+// carries Retry-After is returned at once: the service has said when to come
+// back, a blind retry before then cannot succeed, and the caller decides
+// whether to wait.
 func shouldRetryAPIResponse(ctx context.Context, method, path string, body []byte, attempt int, resp *http.Response) (bool, error) {
 	if resp == nil || resp.StatusCode != http.StatusServiceUnavailable || attempt >= apiTransientMaxRetries || ctx.Err() != nil {
+		return false, nil
+	}
+	if strings.TrimSpace(resp.Header.Get("Retry-After")) != "" {
 		return false, nil
 	}
 	if isSafeHTTPMethod(method) || isIdempotentSendRequest(method, path, body) {
