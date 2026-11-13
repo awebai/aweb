@@ -17,7 +17,7 @@ function fieldValid(value, schema) {
     return matched !== null && matched[0] === item;
   };
   if (schema.list) {
-    return Array.isArray(value) && value.length <= 64 && value.every(text) &&
+    return Array.isArray(value) && value.length <= (schema.maxItems ?? 64) && value.every(text) &&
       value.every((item, index) => index === 0 || value[index - 1] < item);
   }
   return text(value);
@@ -50,6 +50,29 @@ async function validLogKey(subject) {
   } catch { return false; }
 }
 
+function exact(value, names) {
+  return object(value) && Object.keys(value).sort().join(",") === [...names].sort().join(",");
+}
+
+async function validAdmissionPolicy(policy, service, teams) {
+  if (!exact(policy, ["version","digest","teams","root_selector","subject_kinds","member_role","bounds"]) ||
+      !Number.isSafeInteger(policy.version) || policy.version < 1 ||
+      !/^sha256:[0-9a-f]{64}$/.test(policy.digest) || policy.member_role !== "member" ||
+      !exact(policy.root_selector,["kind","service_id"]) || policy.root_selector.kind !== "service_endorsed_root" ||
+      policy.root_selector.service_id !== service ||
+      !Array.isArray(policy.teams) || policy.teams.length === 0 ||
+      !policy.teams.every((t,i)=>nonempty(t) && (i === 0 || policy.teams[i-1] < t)) ||
+      !teams.every(t=>policy.teams.includes(t)) ||
+      !Array.isArray(policy.subject_kinds) || policy.subject_kinds.length === 0 ||
+      !policy.subject_kinds.every((k,i)=>["local_agent","registered_agent"].includes(k) && (i === 0 || policy.subject_kinds[i-1] < k)) ||
+      !exact(policy.bounds,["max_active","rate_window_seconds","max_per_window"]) ||
+      !Object.values(policy.bounds).every(v=>Number.isSafeInteger(v) && v > 0)) return false;
+  const {digest,...unsigned} = policy;
+  const bytes = new TextEncoder().encode("aweb.admission-policy/1\n" + canonical(unsigned));
+  const sum = new Uint8Array(await crypto.subtle.digest("SHA-256", bytes));
+  return digest === "sha256:" + Array.from(sum,b=>b.toString(16).padStart(2,"0")).join("");
+}
+
 export async function validateProtectedPresentation(state, handoffId, table) {
   const {payload, digest} = state;
   const request = payload?.request;
@@ -68,6 +91,18 @@ export async function validateProtectedPresentation(state, handoffId, table) {
         artifact.act !== request.operation || artifact.team_id !== request.scope.authority.id ||
         artifact.aud !== request.audience || !object(artifact.subject) ||
         canonical(subject) !== canonical(artifact.subject)) refused();
+  } else if (spec.family === "id_certificate" && request.operation === "identity.root.endorse") {
+    const authority = request.scope.authority;
+    if (!exact(artifact,["v","type","id","domain","parent","kind","issuer_key","issued_at"]) ||
+        artifact.v !== 1 || artifact.type !== "aweb.id-certificate" || artifact.kind !== "agent" ||
+        artifact.id !== subject.root_id || artifact.domain !== subject.domain ||
+        subject.domain !== authority.domain || authority.id !== request.scope.human?.id ||
+        !exact(artifact.parent,["kind","id"]) || artifact.parent.kind !== "identity" || artifact.parent.id !== authority.id ||
+        !nonempty(artifact.issuer_key) || !Number.isFinite(Date.parse(artifact.issued_at)) ||
+        request.registry !== request.audience ||
+        !(request.expected_head === null || /^sha256:[0-9a-f]{64}$/.test(request.expected_head)) ||
+        request.responsibility_statement !== "Everything this root spawns counts as yours for human responsibility; this grants no resource permissions." ||
+        !(await validAdmissionPolicy(request.admission_policy,request.scope.service_id,subject.teams))) refused();
   } else if (spec.family === "server_record") {
     if (!object(artifact) || Object.keys(artifact).sort().join(",") !==
         "issued_at,server_url,team_did_key,team_id,type,v" ||

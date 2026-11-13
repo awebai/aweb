@@ -46,6 +46,7 @@ class HostSettings(BaseSettings):
     profile_file: Path
     scope_file: Path
     controller_key_file: Path
+    controller_keys_file: Path | None = None
     member_keys_file: Path
     worker_uids: list[Annotated[StrictInt, Field(gt=0)]] = Field(min_length=1)
     database_url: SecretStr = Field(default_factory=lambda: SecretStr(""), repr=False)
@@ -104,6 +105,10 @@ async def validate_provisioning(composition):
     fresh observation and transaction fences on every use.
     """
     c = composition
+    if hasattr(c, "components"):
+        for component in c.components:
+            await validate_provisioning(component)
+        return
     observation = await c.authority.observe(c.context, purpose="prepare")
     async with c.db.transaction() as tx:
         row = await c.authority.binding(tx, hold=True)
@@ -122,30 +127,47 @@ async def validate_provisioning(composition):
         observation.require_fresh()
 
 
+def load_custodies(settings, *, profile, scope):
+    """Validate every private slot before opening a database or registry client."""
+    selected = profile.binding_for(scope)
+    bindings = [selected]
+    paths = {selected.authority_key_did: settings.controller_key_file}
+    if settings.controller_keys_file is not None:
+        raw = settings.controller_keys_file.read_bytes()
+        if len(raw) > 65536:
+            raise SignerRefused("custody_not_isolated")
+        manifest = parse_strict(raw)
+        if type(manifest) is not dict or not manifest or any(type(key) is not str or type(value) is not str or not Path(value).is_absolute() for key, value in manifest.items()):
+            raise SignerRefused("custody_not_isolated")
+        bindings = list(profile.bindings)
+        if set(manifest) != {b.authority_key_did for b in bindings} or Path(manifest[selected.authority_key_did]) != settings.controller_key_file:
+            raise SignerRefused("custody_not_isolated")
+        paths = {key: Path(value) for key, value in manifest.items()}
+    custodians = []
+    for binding in bindings:
+        context = binding.context()
+        custody = ProtectedControllerCustody(
+            service_id=context.service_id, team_id=context.authority_id, domain=context.authority_domain,
+            key_file=paths[binding.authority_key_did], worker_uids=frozenset(settings.worker_uids), authority_kind=context.authority_kind,
+        )
+        if custody.team_key_did != binding.authority_key_did:
+            raise SignerRefused("authority_changed")
+        custodians.append((binding, custody))
+    keys = _member_keys(settings.member_keys_file)
+    if any(binding.context().authority_kind == "team_controller" and binding.context().authority_id not in keys for binding, _ in custodians):
+        raise SignerRefused("custody_not_isolated")
+    private_keys = {custody.team_key_did for _, custody in custodians}
+    if any(did_key_from_signing_key(key) in private_keys for key in keys.values()):
+        raise SignerRefused("custody_not_isolated")
+    return selected, keys, custodians
+
+
 @asynccontextmanager
 async def open_composition(
     settings, *, profile, scope, mailer, registry_transport=None
 ):
     """The same isolated custody and owned DB/client for host and local admin."""
-    binding = profile.binding_for(scope)
-    context = binding.context()
-    custody = ProtectedControllerCustody(
-        service_id=context.service_id,
-        team_id=context.authority_id,
-        domain=context.authority_domain,
-        key_file=settings.controller_key_file,
-        worker_uids=frozenset(settings.worker_uids),
-        authority_kind=context.authority_kind,
-    )
-    if custody.team_key_did != binding.authority_key_did:
-        raise SignerRefused("authority_changed")
-    keys = _member_keys(settings.member_keys_file)
-    if (
-        context.authority_kind == "team_controller" and context.authority_id not in keys
-    ) or any(
-        did_key_from_signing_key(key) == custody.team_key_did for key in keys.values()
-    ):
-        raise SignerRefused("custody_not_isolated")
+    selected, keys, custodians = load_custodies(settings, profile=profile, scope=scope)
     async with AsyncExitStack() as resources:
         db = AsyncDatabaseManager(
             build_database_config(
@@ -164,16 +186,25 @@ async def open_composition(
             member_signing_keys=keys,
         )
         resources.push_async_callback(registry.aclose)
-        composition = IndependentProtectedSigner.from_profile(
-            db,
-            profile=profile,
-            scope=scope,
-            registry_client=registry,
-            custody=custody,
-            delivery=ProtectedNotifications(
-                db=db, mailer=mailer, human_origin=profile.human_origin
-            ),
-        )
+        groups = []
+
+        async def proof_context(scope, *, tx):
+            if not groups:
+                raise SignerRefused("scope_refused")
+            return await groups[0].context_for_scope(scope, tx=tx)
+
+        components = [IndependentProtectedSigner.from_profile(
+            db, profile=profile, scope=binding.scope.model_dump(mode="json"), registry_client=registry, custody=custody,
+            delivery=ProtectedNotifications(db=db, mailer=mailer, human_origin=profile.human_origin),
+            proof_context=proof_context if len(custodians) > 1 else None,
+        ) for binding, custody in custodians]
+        composition = components[0]
+        if len(components) > 1:
+            from .group import ProtectedSignerGroup
+
+            composition = ProtectedSignerGroup(components,
+                selected=next(c for c in components if c.context == selected.context()))
+            groups.append(composition)
         yield composition
 
 

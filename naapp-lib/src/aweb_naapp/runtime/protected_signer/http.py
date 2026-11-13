@@ -152,6 +152,10 @@ def _http(error: Exception) -> HTTPException:
             "scope_refused": (403, "scope_refused"),
             "authority_changed": (403, "authority_changed"),
             "policy_changed": (403, "policy_changed"),
+            "live_approval_required": (403, "live_approval_required"),
+            "admission_policy_missing": (403, "admission_policy_missing"),
+            "admission_limit_reached": (403, "admission_limit_reached"),
+            "subject_ineligible": (403, "subject_ineligible"),
             "operation_not_found": (404, "operation_not_found"),
             "operation_conflict": (409, "operation_conflict"),
             "evidence_unavailable": (503, "receipt_unavailable"),
@@ -185,13 +189,14 @@ class ProtectedOperationsHTTP:
         requester: Requester,
         reader: Reader,
         limiter: LoginLimiter,
+        executor: Callable[[Request, str], Awaitable[RestrictedRequester]] | None = None,
         policy_reader: Callable[[Request, str], Awaitable[dict[str, Any]]] | None = None,
         human_sessions: ConsoleSessions | None = None,
         human_csrf_key: str | None = None,
     ):
         require_canonical_server_origin(request_origin)
         self.signer, self.requester, self.reader, self.limiter = signer, requester, reader, limiter
-        self.policy_reader = policy_reader
+        self.policy_reader, self.executor = policy_reader, executor
         self.hosts = _origin_hosts(request_origin)
         if (human_sessions is None) != (human_csrf_key is None):
             raise ValueError("human sessions and CSRF storage key must be configured together")
@@ -262,6 +267,23 @@ class ProtectedOperationsHTTP:
                 return result
             except Exception as error:
                 raise _http(error) from None
+
+        if self.executor is not None:
+            @router.post("/protected-operations/{operation_id}/execute")
+            async def execute_request(operation_id: str, request: Request):
+                try:
+                    await self._guard(request)
+                    async for chunk in request.stream():
+                        if chunk:
+                            raise SignerRefused("request_invalid")
+                    request._body = b""
+                    assert self.executor is not None
+                    requester = await self.executor(request, operation_id)
+                    if type(requester) is not RestrictedRequester:
+                        raise SignerRefused("requester_invalid")
+                    return receipt_json(await self.signer.execute_request(operation_id, requester=requester))
+                except Exception as error:
+                    raise _http(error) from None
 
         @router.get("/protected-operations/{operation_id}")
         async def receipt(operation_id: str, request: Request):

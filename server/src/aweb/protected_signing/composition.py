@@ -93,6 +93,7 @@ class IndependentProtectedSigner:
         request_origin,
         delivery,
         policy_version=None,
+        proof_context=None,
     ):
         from awid.log import require_canonical_server_origin
 
@@ -108,6 +109,7 @@ class IndependentProtectedSigner:
         self.authority = IndependentAuthority(
             db, context=context, registry=registry, custody=custody
         )
+        self.protected_authority_keys = frozenset({custody.team_key_did})
         self.audit = LocalAudit()
         # Same original db, the same B2 store and B3 implementation as every
         # other embedding. No synthetic installation or reusable signer unlock.
@@ -119,7 +121,7 @@ class IndependentProtectedSigner:
             delivery=delivery,
             audit=self.audit,
             retirement=ApprovalRevocation(PgApprovalStore(db), self.audit),
-            proof_context=self.authority.context_for_scope,
+            proof_context=self.authority.context_for_scope if proof_context is None else proof_context,
             enrolment_ttl=timedelta(hours=1),
             challenge_ttl=timedelta(minutes=5),
         )
@@ -133,8 +135,12 @@ class IndependentProtectedSigner:
             custody=custody,
         )
 
+        from .admission import AdmissionEffects
+
+        self.signer.admission = AdmissionEffects(self)
+
     @classmethod
-    def from_profile(cls, db, *, profile, scope, registry_client, custody, delivery):
+    def from_profile(cls, db, *, profile, scope, registry_client, custody, delivery, proof_context=None):
         """Use the host's lifespan-owned registry_client(), without another client.
 
         The profile must already come from trusted operator configuration.
@@ -154,6 +160,7 @@ class IndependentProtectedSigner:
             request_origin=profile.request_origin,
             delivery=delivery,
             policy_version=binding.policy.version,
+            proof_context=proof_context,
         )
 
     async def authenticate_prepare(self, request, operation):
@@ -182,6 +189,13 @@ class IndependentProtectedSigner:
             context=context,
         )
 
+    async def authenticate_execute(self, request, operation_id):
+        context = await self.signer.lookup_context(operation_id)
+        if context is None:
+            raise SignerRefused("operation_not_found")
+        return await self.requester(request, principal=request.headers.get("X-AWEB-DID-AW", ""),
+                                    operation="protected_operation_execute", context=context)
+
     def protected_sessions(self):
         from aweb_naapp.console import ConsoleSessions
 
@@ -205,6 +219,7 @@ class IndependentProtectedSigner:
             requester=self.authenticate_prepare,
             reader=self.authenticate_receipt,
             limiter=limiter,
+            executor=self.authenticate_execute,
             policy_reader=self.read_admission_policy,
             human_sessions=human_sessions,
             human_csrf_key=human_csrf_key,
@@ -265,6 +280,7 @@ class IndependentProtectedSigner:
         if operation not in {
             "protected_operation_prepare",
             "protected_operation_receipt",
+            "protected_operation_execute",
         }:
             raise SignerRefused("scope_refused")
         context = self.context if context is None else context

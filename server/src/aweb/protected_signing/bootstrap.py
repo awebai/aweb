@@ -274,6 +274,8 @@ async def prepare_completion(c, token):
     )
     if enrolment is None:
         raise EnrolmentRefused("enrolment unavailable")
+    if hasattr(c, "for_b3_scope"):
+        c = await c.for_b3_scope(enrolment["scope"], tx=c.db)
     observed = await c.authority.observe(c.context, purpose="prepare")
     return BootstrapCompletion(c, observed, enrolment)
 
@@ -339,8 +341,9 @@ def bootstrap_router(c, *, csrf_key, limiter=None):
         CeremonyCopy(
             enrolment=Ceremony(
                 "Set up protected signing",
-                f"Register a passkey for {c.context.human_id}, controller {c.context.authority_id}. "
-                "This enrolls only the administrator-selected authorizer; it approves no act.",
+                (f"Register a passkey for {c.context.human_id}, controller {c.context.authority_id}. "
+                 if not hasattr(c, "components") else "Register a passkey for the administrator-selected protected authority. ")
+                + "This enrolls only the administrator-selected authorizer; it approves no act.",
                 "Register passkey",
                 "Your passkey is registered. Open your approval link to sign in.",
             ),

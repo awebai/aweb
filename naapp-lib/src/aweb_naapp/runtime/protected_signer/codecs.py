@@ -163,6 +163,17 @@ def presentation_schema(operation, variant):
     from aweb_naapp.hooks.owner_act import _subject_schema
 
     spec = operation_spec(operation, variant)
+    if operation == "identity.root.endorse" and variant == "default":
+        return {
+            "fields": {
+                "domain": {"pattern": r"[a-z0-9.-]+"},
+                "root_id": {"pattern": r"did:aw:[1-9A-HJ-NP-Za-km-z]+"},
+                "root_key": {"pattern": r"did:key:z[1-9A-HJ-NP-Za-km-z]+"},
+                "teams": {"pattern": r"[^\s:]+:[^\s:]+", "list": True, "maxItems": 4096},
+                "deployment_label": {"pattern": r"[^\x00-\x1f]{1,128}"},
+            },
+            "required": ["domain", "root_id", "root_key", "teams", "deployment_label"],
+        }
     if spec.family == "owner_act":
         return _subject_schema(operation)
     if spec.family == "server_record":

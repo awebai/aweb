@@ -95,3 +95,53 @@ def test_a_retained_artifact_cannot_change_its_frozen_fields(name, changed):
         artifact["issued_at"] = "not-a-timestamp"
     with pytest.raises(SignerRefused, match="operation_mismatch"):
         signing_bytes(op, artifact)
+
+
+def test_browser_accepts_the_frozen_endorsement_and_refuses_artifact_or_policy_substitutions():
+    import json
+    import subprocess
+    from pathlib import Path
+
+    from aweb_naapp.runtime.protected_signer.admission_policy import AdmissionPolicy
+    from aweb_naapp.runtime.protected_signer.catalog import presentation_catalog
+
+    op = operation("identity.root.endorse")
+    policy = AdmissionPolicy.from_unsigned({"version": 1, "teams": [TEAM],
+        "root_selector": {"kind": "service_endorsed_root", "service_id": SERVICE},
+        "subject_kinds": ["local_agent"], "member_role": "member",
+        "bounds": {"max_active": 10, "rate_window_seconds": 60, "max_per_window": 2}}, service_id=SERVICE)
+    request = {**op.intent(), "artifact": artifact_for(op, HKEY, NOW), "registry": op.audience,
+        "expected_head": None, "admission_policy": policy.fields(),
+        "responsibility_statement": "Everything this root spawns counts as yours for human responsibility; this grants no resource permissions."}
+    script = r'''
+import assert from 'node:assert/strict';
+import {readFileSync} from 'node:fs';
+import {validateProtectedPresentation} from './src/aweb_naapp/assets/protected-presentation.mjs';
+import {coveredRequestDigest} from './src/aweb_naapp/assets/canonical-json.mjs';
+const {request,table} = JSON.parse(readFileSync(0,'utf8'));
+const state = {mode:'governance',handoff_id:'handoff',state:'pending',operation_id:request.operation_id,
+ expires_at:'2026-11-13T12:10:00Z',payload:{policy:{ref:'aweb.human-assurance/1',version:1},request}};
+state.digest = await coveredRequestDigest(state.payload);
+assert.deepEqual((await validateProtectedPresentation(state,'handoff',table)).artifact,request.artifact);
+for (const mutation of [
+ r=>r.artifact.parent.id=r.subject.root_id,
+ r=>r.artifact.domain='other.example',
+ r=>r.artifact.root_key=r.subject.root_key,
+ r=>r.registry='https://other.example',
+ r=>r.admission_policy.bounds.max_active++,
+ r=>r.admission_policy.member_role='admin',
+ r=>r.responsibility_statement='You delegate all resource rights',
+ r=>r.subject.teams.push('other:customer.example'),
+]) {
+ const changed=structuredClone(state); mutation(changed.payload.request);
+ changed.digest=await coveredRequestDigest(changed.payload);
+ await assert.rejects(validateProtectedPresentation(changed,'handoff',table));
+}
+const changed=structuredClone(state);
+changed.payload.request.subject.deployment_label='another deployment';
+await assert.rejects(validateProtectedPresentation(changed,'handoff',table));
+'''
+    result = subprocess.run(["node", "--input-type=module", "-e", script],
+        input=json.dumps({"request": request, "table": presentation_catalog()}), text=True,
+        capture_output=True, cwd=Path(__file__).resolve().parents[2], timeout=20)
+    assert result.returncode == 0, result.stdout + result.stderr
