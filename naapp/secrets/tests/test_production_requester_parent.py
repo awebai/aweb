@@ -156,7 +156,7 @@ async def test_first_session_start_resolves_the_requester_from_runtime_evidence(
             # A legacy holding without retained evidence cannot borrow the
             # requester's certificate to establish the human's membership.
             await db.execute("UPDATE role_holdings SET certificate=NULL")
-        before = await effects(service, installed["installation_id"])
+        before = await effects(service, installed["installation_id"], member.team_id)
         handoffs_before = await db.fetch_value("SELECT count(*) FROM console_handoffs")
         _, _, raw, headers = start_request(root, signer, principal.principal_did, purpose="session")
         if requester not in {"holder", "no_chain"}:
@@ -167,7 +167,7 @@ async def test_first_session_start_resolves_the_requester_from_runtime_evidence(
             settings.public_origin + "/handoffs", content=raw, headers=headers
         )
         assert started.status_code == status, started.text
-        assert await effects(service, installed["installation_id"]) == before
+        assert await effects(service, installed["installation_id"], member.team_id) == before
         assert await db.fetch_value("SELECT count(*) FROM console_sessions") == 0
         if code:
             assert started.json()["detail"] == code
