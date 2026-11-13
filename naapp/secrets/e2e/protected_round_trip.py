@@ -258,6 +258,14 @@ class SignedAct:
     expires_at: str
 
 
+def owner_act_document(signing: bytes) -> dict:
+    """The act exact signing bytes carry: the owner-act prefix, then its
+    canonical JSON."""
+    if not signing.startswith(OWNER_ACT_PREFIX):
+        raise SystemExit("FAILED: the signing bytes are not an owner act's")
+    return json.loads(signing[len(OWNER_ACT_PREFIX):])
+
+
 def signed_act(signing: str) -> SignedAct:
     """The act in a committed receipt's result.signing: padded standard base64
     with no line break, of the owner-act prefix and the act's canonical JSON."""
@@ -267,9 +275,7 @@ def signed_act(signing: str) -> SignedAct:
         decoded = base64.b64decode(signing, validate=True)
     except ValueError as error:
         raise SystemExit(f"FAILED: the signing bytes are not standard base64: {error}") from None
-    if not decoded.startswith(OWNER_ACT_PREFIX):
-        raise SystemExit("FAILED: the signing bytes are not an owner act's")
-    act = json.loads(decoded[len(OWNER_ACT_PREFIX):])
+    act = owner_act_document(decoded)
     return SignedAct(nonce=act["nonce"], sha256=hashlib.sha256(decoded).hexdigest(), act=act["act"],
                      expires_at=act["expires_at"])
 
@@ -402,6 +408,117 @@ def receiver_snapshot(query: Callable[[str], str], holding: Holding, nonce: str,
         raise SystemExit(f"FAILED: the app holds {len(holdings)} holdings for {holding} (subject {subject}), not one")
     snapshot["holding"] = holdings[0]
     return snapshot
+
+
+# --- a designation's effect, which the owner signs locally ------------------
+
+HUMAN_CREDENTIAL_PREFIX = b"aweb.human-credential/1\n"
+
+
+def credential_sha256(credential: dict) -> str:
+    """A human credential's credential_sha256 (docs/owner-act-delivery.md, "The
+    credential"): the SHA-256 of its prefix and the canonical JSON of its id,
+    public key and relying party."""
+    canonical = json.dumps({field: credential[field] for field in ("credential_id", "public_key", "rp_id")},
+                           separators=(",", ":"), sort_keys=True, ensure_ascii=False)
+    return hashlib.sha256(HUMAN_CREDENTIAL_PREFIX + canonical.encode()).hexdigest()
+
+
+@dataclass(frozen=True)
+class Designation:
+    """What the owner designates: the holding, at the app's console origin
+    (the act's audience), for the exported credential, with the notice
+    contact the owner gives."""
+
+    holding: Holding
+    audience: str
+    credential_sha256: str
+    contact: str
+
+
+def designation_snapshot(query: Callable[[str], str], holding: Holding, *, schema: str) -> dict:
+    """The app's own records of one designation, read in one repeatable-read,
+    read-only transaction in the app's `schema`: the scoped role assignments;
+    the current holding (its B3 subject and notice contact); the configuration
+    revision; the counts of owner-act nonce rows for the app and team and of
+    credential authorizations for the holding; each such authorization, with
+    the act its retained signing bytes carry and their digest; and the nonce
+    rows whose act is one of those authorizations' commitments. The signing
+    bytes themselves are not kept."""
+    s = sql_schema(schema)
+    team, role, principal = sql_literal(holding.team_id), sql_literal(holding.role), sql_literal(holding.principal)
+    installation, app = sql_literal(holding.installation_id), sql_literal(holding.app_id)
+    generation = sql_literal(holding.generation)
+    authorized = (f" FROM {s}.credential_authorizations WHERE app_id = {app} AND team_id = {team}"
+                  f" AND installation_id = {installation} AND generation = {generation}::bigint AND role = {role}"
+                  f" AND principal = {principal}")
+    text = query(
+        "SELECT json_build_object("
+        f"'assignments', (SELECT count(*) FROM {s}.role_assignments WHERE team_id = {team} AND role = {role}"
+        f" AND principal_did = {principal}),"
+        "'holdings', (SELECT coalesce(json_agg(json_build_object('subject', p.subject, 'contact', p.contact)),"
+        f" '[]'::json) FROM {s}.role_holdings h JOIN {s}.passkey_approvers p ON p.scope = h.b3_scope"
+        f" WHERE h.installation_id = {installation} AND h.team_id = {team} AND h.role = {role}"
+        f" AND h.principal_did = {principal} AND h.ended_in IS NULL AND p.superseded_at IS NULL),"
+        f"'revision', coalesce((SELECT revision FROM {s}.config_revisions"
+        f" WHERE installation_id = {installation} AND team_id = {team}), 0),"
+        f"'nonces', (SELECT count(*) FROM {s}.owner_act_nonces WHERE scope = {app} AND team_id = {team}),"
+        f"'authorizations', (SELECT count(*){authorized}),"
+        "'authorization_rows', (SELECT coalesce(json_agg(json_build_object('subject', subject,"
+        " 'authority', authority, 'commitment', commitment, 'signing_sha256', encode(sha256(signing), 'hex'),"
+        " 'signing_hex', encode(signing, 'hex'), 'principal', principal,"
+        " 'notice_contact_sha256', notice_contact_sha256, 'credential_sha256', credential_sha256)), '[]'::json)"
+        f"{authorized}),"
+        "'nonce_rows', (SELECT coalesce(json_agg(json_build_object('nonce', nonce, 'act_sha256', act_sha256)),"
+        f" '[]'::json) FROM {s}.owner_act_nonces WHERE scope = {app} AND team_id = {team}"
+        f" AND act_sha256 IN (SELECT commitment{authorized}))"
+        ")")
+    snapshot = json.loads(text)
+    for row in snapshot["authorization_rows"]:
+        signing = row.pop("signing_hex")
+        row["document"] = owner_act_document(bytes.fromhex(signing)) if signing else None
+    return snapshot
+
+
+def assert_designated(baseline: dict, after: dict, designation: Designation) -> None:
+    """The app's own records show that the owner's one designation took
+    effect: the holding exists with the signed contact, and its one
+    authorization is the owner's act, bound to the act the owner meant (its
+    kind, team, audience, app, installation, role, principal, credential and
+    contact) and to exactly one nonce row with that act's nonce and H."""
+    holding = designation.holding
+    assert baseline["assignments"] == 0 and not baseline["holdings"], f"baseline: already held {baseline}"
+    assert not baseline["authorization_rows"] and not baseline["nonce_rows"], f"baseline: already designated {baseline}"
+    contact_sha256 = hashlib.sha256(designation.contact.encode()).hexdigest()
+    assert after["assignments"] == 1, f"designation: assignments {after['assignments']}"
+    assert len(after["holdings"]) == 1, f"designation: holdings {after['holdings']}"
+    (held,) = after["holdings"]
+    assert held["contact"] == designation.contact, f"designation: contact {held}"
+    for key in ("revision", "nonces", "authorizations"):
+        assert after[key] == baseline[key] + 1, f"designation: {key} {baseline[key]} -> {after[key]}"
+    rows = after["authorization_rows"]
+    assert len(rows) == 1 and rows[0]["subject"] == held["subject"], f"designation: authorizations {rows}"
+    (row,) = rows
+    assert (row["authority"], row["principal"], row["notice_contact_sha256"], row["credential_sha256"]) == (
+        "owner_act", holding.principal, contact_sha256, designation.credential_sha256), f"designation: {row}"
+    assert row["commitment"] == row["signing_sha256"], f"designation: the commitment is not H {row}"
+    document = row["document"] or {}
+    expected = {"act": "human-role.designate", "team_id": holding.team_id, "aud": designation.audience,
+                "subject": {"app_id": holding.app_id, "installation_id": holding.installation_id,
+                            "role": holding.role, "principal": holding.principal,
+                            "credential_sha256": designation.credential_sha256,
+                            "notice_contact_sha256": contact_sha256}}
+    signed = {key: document.get(key) for key in expected}
+    assert signed == expected, f"designation: the signed act is not the one meant {signed}"
+    assert after["nonce_rows"] == [{"nonce": document["nonce"], "act_sha256": row["commitment"]}], (
+        f"designation: nonce rows {after['nonce_rows']}")
+
+
+def assert_unchanged(after: dict, duplicate: dict) -> None:
+    """A refused duplicate designation left every scoped record as the
+    designation left it."""
+    for key in after:
+        assert duplicate[key] == after[key], f"duplicate: {key} changed {after[key]} -> {duplicate[key]}"
 
 
 class AnswerDrop:

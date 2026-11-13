@@ -4,13 +4,19 @@ answer to one request (a signer's prepare, an app's owner-act delivery)."""
 import base64
 import hashlib
 import json
+from pathlib import Path
 
 import pytest
 from protected_round_trip import (
     AnswerDrop,
+    Designation,
     Holding,
     SignedAct,
+    assert_designated,
     assert_one_effect,
+    assert_unchanged,
+    credential_sha256,
+    designation_snapshot,
     read_only_psql,
     receiver_snapshot,
     signed_act,
@@ -233,3 +239,153 @@ def test_the_snapshot_runs_read_only_in_one_session():
     assert args[:5] == ["psql", "-U", "secrets", "-d", "secrets"] and "-q" in args and "-At" in args
     commands = [args[i + 1] for i, arg in enumerate(args) if arg == "-c"]
     assert commands == ["BEGIN TRANSACTION ISOLATION LEVEL REPEATABLE READ READ ONLY", "SELECT 1", "COMMIT"]
+
+
+# --- a designation's effect at the app (no signer: the owner signs it locally)
+
+
+VECTORS = json.loads((Path(__file__).resolve().parents[3] / "docs/vectors/owner-act-delivery-v1.json").read_text())
+
+
+@pytest.mark.parametrize("case", VECTORS["credential_cases"], ids=lambda case: case["name"])
+def test_a_credential_is_named_by_its_published_digest(case):
+    assert credential_sha256(case["credential"]) == case["credential_sha256"]
+
+
+CREDENTIAL = VECTORS["credential_cases"][0]["credential"]
+CONTACT = "approver@h.test"
+CONTACT_SHA256 = hashlib.sha256(CONTACT.encode()).hexdigest()
+DESIGNATION = Designation(holding=HOLDING, audience="https://console.secrets.lf.test",
+                          credential_sha256=credential_sha256(CREDENTIAL), contact=CONTACT)
+DESIGNATE = {"v": 1, "type": "aweb.owner-act/1", "act": "human-role.designate", "team_id": "lfteam:lf.test",
+             "aud": "https://console.secrets.lf.test", "team_key_did": "did:key:z6Mk",
+             "subject": {"app_id": "lfteam-secrets", "installation_id": "4fead199-b779", "role": "secrets.owner",
+                         "principal": "did:aw:approver", "credential_sha256": credential_sha256(CREDENTIAL),
+                         "notice_contact_sha256": CONTACT_SHA256},
+             "issued_at": "2026-11-13T12:00:00Z", "expires_at": "2026-11-13T12:05:00Z", "nonce": "d3s1gn"}
+
+
+def designate_signing(document=DESIGNATE) -> bytes:
+    return b"aweb.owner-act/1\n" + json.dumps(document, separators=(",", ":"), sort_keys=True).encode()
+
+
+def authorization(signing=None, **changes) -> dict:
+    signing = signing or designate_signing()
+    digest = hashlib.sha256(signing).hexdigest()
+    row = {"subject": SUBJECT, "authority": "owner_act", "commitment": digest, "signing_sha256": digest,
+           "signing_hex": signing.hex(), "principal": "did:aw:approver", "notice_contact_sha256": CONTACT_SHA256,
+           "credential_sha256": credential_sha256(CREDENTIAL)}
+    row.update(changes)
+    return row
+
+
+def designation_rows(**changes) -> dict:
+    """What the app's database returns after the designation, with changes."""
+    rows = {"assignments": 1, "holdings": [{"subject": SUBJECT, "contact": CONTACT}], "revision": 8, "nonces": 4,
+            "authorizations": 3, "authorization_rows": [authorization()],
+            "nonce_rows": [{"nonce": "d3s1gn", "act_sha256": hashlib.sha256(designate_signing()).hexdigest()}]}
+    rows.update(changes)
+    return rows
+
+
+UNDESIGNATED = {"assignments": 0, "holdings": [], "revision": 7, "nonces": 3, "authorizations": 2,
+                "authorization_rows": [], "nonce_rows": []}
+
+
+def snapshot(rows: dict) -> dict:
+    _, query = snapshot_of(rows)
+    return designation_snapshot(query, HOLDING, schema="public")
+
+
+def test_the_designation_snapshot_reads_the_holdings_scoped_records_in_the_apps_schema():
+    queries, query = snapshot_of(UNDESIGNATED)
+    designation_snapshot(query, HOLDING, schema="secrets")
+    (select,) = queries
+    for literal in ("'lfteam-secrets'", "'4fead199-b779'", "'1'", "'lfteam:lf.test'", "'secrets.owner'",
+                    "'did:aw:approver'"):
+        assert literal in select, literal
+    for table in ("role_assignments", "role_holdings", "passkey_approvers", "config_revisions", "owner_act_nonces",
+                  "credential_authorizations"):
+        assert f"secrets.{table}" in select, table
+    assert "public." not in select and "credential_narrowing_authority" not in select and "outbox" not in select
+
+
+def test_the_snapshot_keeps_the_signed_document_and_its_digest_not_the_signing_bytes():
+    taken = snapshot(designation_rows())
+    (row,) = taken["authorization_rows"]
+    assert "signing_hex" not in row and row["document"] == DESIGNATE
+    assert row["signing_sha256"] == hashlib.sha256(designate_signing()).hexdigest()
+
+
+def test_one_designation_is_one_holding_bound_to_the_exact_act_the_owner_signed():
+    assert_designated(snapshot(UNDESIGNATED), snapshot(designation_rows()), DESIGNATION)
+
+
+def changed_document(**changes) -> dict:
+    document = json.loads(json.dumps(DESIGNATE))
+    for key, value in changes.items():
+        if key in document["subject"]:
+            document["subject"][key] = value
+        else:
+            document[key] = value
+    return document
+
+
+def signed_as(document: dict) -> dict:
+    signing = designate_signing(document)
+    return designation_rows(authorization_rows=[authorization(signing)], nonce_rows=[
+        {"nonce": document["nonce"], "act_sha256": hashlib.sha256(signing).hexdigest()}])
+
+
+@pytest.mark.parametrize("after", [
+    # Not held, or held twice, or held with another contact.
+    designation_rows(assignments=0),
+    designation_rows(holdings=[]),
+    designation_rows(holdings=[{"subject": SUBJECT, "contact": "other@h.test"}]),
+    # No revision, nonce or authorization for it.
+    designation_rows(revision=7),
+    designation_rows(nonces=3),
+    designation_rows(authorizations=2),
+    designation_rows(authorization_rows=[]),
+    designation_rows(nonce_rows=[]),
+    # An authorization that is not this holding's, or not the owner's act.
+    designation_rows(authorization_rows=[authorization(subject="another")]),
+    designation_rows(authorization_rows=[authorization(authority="passkey_session")]),
+    designation_rows(authorization_rows=[authorization(commitment="0" * 64)]),
+    # A commitment and nonce row that agree, but not with the retained signing bytes.
+    designation_rows(authorization_rows=[authorization(commitment="0" * 64)],
+                     nonce_rows=[{"nonce": "d3s1gn", "act_sha256": "0" * 64}]),
+    designation_rows(authorization_rows=[authorization(principal="did:aw:other")]),
+    designation_rows(authorization_rows=[authorization(notice_contact_sha256="0" * 64)]),
+    designation_rows(authorization_rows=[authorization(credential_sha256="0" * 64)]),
+    # The nonce row is another act's, or another nonce.
+    designation_rows(nonce_rows=[{"nonce": "d3s1gn", "act_sha256": "0" * 64}]),
+    designation_rows(nonce_rows=[{"nonce": "other", "act_sha256": hashlib.sha256(designate_signing()).hexdigest()}]),
+    # A self-consistent act that is not the one the owner meant.
+    signed_as(changed_document(act="human-role.revoke")),
+    signed_as(changed_document(team_id="other:lf.test")),
+    signed_as(changed_document(aud="https://console.other.lf.test")),
+    signed_as(changed_document(app_id="other-secrets")),
+    signed_as(changed_document(installation_id="other")),
+    signed_as(changed_document(role="secrets.reader")),
+    signed_as(changed_document(principal="did:aw:other")),
+    signed_as(changed_document(credential_sha256="0" * 64)),
+    signed_as(changed_document(notice_contact_sha256="0" * 64)),
+])
+def test_a_designation_not_bound_to_the_owners_exact_act_is_refused(after):
+    with pytest.raises(AssertionError, match="designation"):
+        assert_designated(snapshot(UNDESIGNATED), snapshot(after), DESIGNATION)
+
+
+def test_a_baseline_that_already_holds_the_role_is_refused():
+    with pytest.raises(AssertionError, match="baseline"):
+        assert_designated(snapshot(designation_rows()), snapshot(designation_rows()), DESIGNATION)
+
+
+def test_a_refused_duplicate_leaves_every_scoped_record_as_the_designation_left_it():
+    after = snapshot(designation_rows())
+    assert_unchanged(after, snapshot(designation_rows()))
+    for changed in (designation_rows(revision=9), designation_rows(nonces=5), designation_rows(authorizations=4),
+                    designation_rows(holdings=[{"subject": "another", "contact": CONTACT}])):
+        with pytest.raises(AssertionError, match="duplicate"):
+            assert_unchanged(after, snapshot(changed))
