@@ -514,7 +514,7 @@ class World:
 
     def deployment(self) -> Path:
         config: dict = {
-            "team": {"id": TEAM_ID, "registryUrl": origin("registry")},
+            "team": {"id": TEAM_ID, "registryUrl": origin("registry"), "registryRoute": "local"},
             "postgres": {"bundled": True},
             "network": {"servicesCidr": self.cidr},
             "aweb": {"image": self.images["aweb"], "publicOrigin": origin("aweb"),
