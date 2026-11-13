@@ -100,7 +100,10 @@ def collect_archive(archive, sha, destination):
                     for s in valid
                 ),
             }
+    supervision_path = destination / "var/log/vm-gate/supervisor-receipt.json"
+    supervision = json.loads(supervision_path.read_text()) if supervision_path.exists() else None
     return {
+        "supervision": supervision,
         "stages": stages,
         "gate_summaries": summaries,
         "memory": memory,

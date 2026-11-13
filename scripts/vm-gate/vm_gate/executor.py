@@ -233,6 +233,8 @@ exit "$status"
                 or observation.get("raw_exit") != int(receipt.stdout.strip())
                 or type(observation.get("grace_expired")) is not bool):
             raise Infrastructure("inconsistent supervisor completion receipt")
+        if observation.get("interrupted") and observation.get("finalized") is not True:
+            raise Infrastructure("gate interrupted without verified cleanup; partial evidence retained")
         if observation["grace_expired"]:
             raise Infrastructure("gate finalization exceeded grace; partial evidence retained")
         return int(receipt.stdout.strip())

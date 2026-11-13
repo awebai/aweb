@@ -23,8 +23,7 @@ finalize_candidate() {
   if [[ "$interrupted" == 1 ]]; then
     # A partial run must never be read as complete, even if all its completed
     # stages passed. The interrupted stage has no manufactured code verdict.
-    printf 'run\tINTERRUPTED\tinterruption.tsv\t0s\texit=%s\n' "$status" >> "$LOG_DIR/summary.tsv"
-    printf '%s\t%s\t%s\n' "$run_id" "$status" "$finished" > "$LOG_DIR/interruption.tsv"
+    write_candidate_interruption "$status"
   fi
   for stage in $pending; do
     if [[ -s "$LOG_DIR/$stage.log" && -f "$LOG_DIR/summary.tsv" ]] && \
@@ -52,9 +51,43 @@ finalize_candidate() {
   fi
   return "$status"
 }
+write_candidate_interruption() {
+  local status="$1" cleanup=absent observed
+  observed="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+  if ! grep -q $'^run\tINTERRUPTED\t' "$LOG_DIR/summary.tsv" 2>/dev/null; then
+    printf 'run\tINTERRUPTED\tinterruption.tsv\t0s\texit=%s\n' "$status" >> "$LOG_DIR/summary.tsv"
+  fi
+  if [[ -f "$LOG_DIR/wrapper-verdict.log" ]]; then
+    if grep -q '^candidate gate cleanup PASSED$' "$LOG_DIR/wrapper-verdict.log"; then
+      cleanup=passed
+    elif grep -q '^candidate gate cleanup FAILED$' "$LOG_DIR/wrapper-verdict.log"; then
+      cleanup=failed
+    fi
+  fi
+  printf '%s\t%s\t%s\tcleanup=%s\tchild_exit=%s\twriter_exit=%s\n' \
+    "$run_id" "$status" "$observed" "$cleanup" "${candidate_child_status:-unobserved}" "${candidate_writer_status:-unobserved}" > "$LOG_DIR/interruption.tsv"
+}
+finish_candidate_output() {
+  candidate_writer_status=0
+  if [[ -n "${candidate_writer:-}" ]]; then
+    wait "$candidate_writer" || candidate_writer_status=$?
+  fi
+  [[ -z "${output_pipe:-}" ]] || rm -f "$output_pipe"
+}
 candidate_interrupted() {
-  local status="$1"
+  local status="$1" stop_signal="$2"
   trap '' INT TERM
   finalize_candidate "$status" || true
+  if [[ -n "${candidate_job:-}" ]]; then
+    kill -s "$stop_signal" "$candidate_job" 2>/dev/null || true
+    candidate_child_status=0
+    wait "$candidate_job" || candidate_child_status=$?
+  fi
+  finish_candidate_output
+  # Only the final child-owned verdict establishes cleanup. Waiting for a
+  # vanished process alone never supplies a successful cleanup receipt.
+  if [[ -f "$LOG_DIR/run-id" && "$(cat "$LOG_DIR/run-id")" == "$run_id" ]]; then
+    write_candidate_interruption "$status"
+  fi
   exit "$status"
 }

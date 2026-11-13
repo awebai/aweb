@@ -52,6 +52,26 @@ class SupervisorTests(unittest.TestCase):
         self.assertTrue(receipt['group_settled'])
         self.assertEqual((root / 'gate-exit').read_text().strip(), '143')
 
+    def test_interrupted_process_exit_does_not_attest_gate_cleanup(self):
+        code, receipt, _, output = self.invoke(
+            "trap 'exit 143' TERM; touch ready; sleep 30", stop=True)
+        self.assertEqual(code, 143, output)
+        self.assertTrue(receipt['group_settled'])
+        self.assertFalse(receipt['finalized'])
+
+    def test_gate_cleanup_receipt_is_required_and_bound_to_run(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            registry = root / 'registry'
+            registry.write_text('this-run\t' + str(root) + '\n')
+            (root / 'run-id').write_text('other-run\n')
+            (root / 'wrapper-verdict.log').write_text('candidate gate cleanup PASSED\n')
+            self.assertEqual(supervisor.cleanup_receipts(registry, True)[0]['status'], 'absent')
+            (root / 'run-id').write_text('this-run\n')
+            self.assertEqual(supervisor.cleanup_receipts(registry, True)[0]['status'], 'absent')
+            (root / 'interruption.tsv').write_text('this-run\t143\tdate\tcleanup=passed\twriter_exit=0\n')
+            self.assertEqual(supervisor.cleanup_receipts(registry, True)[0]['status'], 'passed')
+
     def test_signal_resistant_group_is_killed_within_grace(self):
         started = time.monotonic()
         code, receipt, _, output = self.invoke("trap '' TERM; touch ready; while :; do sleep 30; done", stop=True, grace=.15)

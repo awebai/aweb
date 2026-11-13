@@ -3,6 +3,9 @@
 from __future__ import annotations
 
 import os
+import json
+import subprocess
+import time
 import re
 from pathlib import Path
 import shutil
@@ -62,6 +65,73 @@ def checked(root: Path, *args: str):
     result = run(root, *args)
     assert result.returncode == 0, result.stdout + result.stderr
     return result.stdout.strip()
+
+
+def interrupted_docker_proof(repo: Path, evidence: Path, env: dict[str, str]) -> None:
+    """Exercise the real wrapper, GNU deadline and owned Docker cleanup."""
+    supervised = evidence / "supervised"
+    supervised.mkdir()
+    settings = dict(env, AWEB_CANDIDATE_STAGES="checks unit",
+                    PYTHONPATH=str(ROOT / "scripts/vm-gate"))
+    command = ["timeout", "--signal=TERM", "--kill-after=130s", "600",
+               sys.executable, "-m", "vm_gate.supervisor", "run", str(supervised),
+               "120", "bash", "scripts/candidate-docker-gate.sh"]
+    sha = checked(repo, "git", "rev-parse", "HEAD")
+    with (evidence / "deadline-output.log").open("w") as output:
+        process = subprocess.Popen(command, cwd=repo, env=settings, stdout=output,
+                                   stderr=subprocess.STDOUT)
+        try:
+            started = time.monotonic()
+            log_dir = None
+            while time.monotonic() - started < 550 and process.poll() is None:
+                active = [path for path in Path('/tmp').glob('aweb-candidate-gate-' + sha + '-*')
+                          if (path / 'unit-active').exists()]
+                if len(active) == 1:
+                    log_dir = active[0]
+                    break
+                time.sleep(.2)
+            if log_dir is None:
+                raise AssertionError('real blocked Docker stage was not reached; see deadline-output.log')
+            builders = [line.split('\t')[1] for line in (log_dir / 'owned-resources.tsv').read_text().splitlines()
+                        if line.startswith('builder\t')]
+            assert builders, 'no owned builder manifest'
+            label = 'aweb.candidate-gate=' + builders[0]
+            before = run(repo, 'docker', 'ps', '-aq', '--filter', 'label=' + label)
+            assert before.returncode == 0 and before.stdout.strip(), 'no live owned Docker containers'
+            (evidence / 'docker-before-deadline.json').write_text(json.dumps({
+                'label': label, 'container_ids': before.stdout.split(), 'builders': builders,
+                'unit_active': str(log_dir / 'unit-active')}, indent=2) + '\n')
+            raw = process.wait(timeout=760)
+            assert raw == 124, f'GNU timeout raw exit {raw}, expected 124'
+        finally:
+            if process.poll() is None:
+                process.terminate()
+                process.wait(timeout=150)
+    receipt = json.loads((supervised / 'supervisor-receipt.json').read_text())
+    assert receipt['raw_exit'] == 143 and receipt['child_exit'] != 0, receipt
+    assert receipt['finalized'] and not receipt['grace_expired'], receipt
+    assert (log_dir / 'unit-active').stat().st_mtime < receipt['term_at']
+    interruption = (log_dir / 'interruption.tsv').read_text()
+    assert 'cleanup=passed' in interruption and 'writer_exit=0' in interruption
+    rows = [line.split('\t') for line in (evidence / 'ledger.tsv').read_text().splitlines()]
+    assert [(row[1], row[2]) for row in rows] == [('checks', 'passed')], rows
+    assert 'run\tINTERRUPTED\t' in (log_dir / 'summary.tsv').read_text()
+    absence = {}
+    for kind, args in [('containers', ['ps', '-aq']), ('networks', ['network', 'ls', '-q']),
+                       ('volumes', ['volume', 'ls', '-q'])]:
+        result = run(repo, 'docker', *args, '--filter', 'label=' + label)
+        assert result.returncode == 0 and not result.stdout.strip(), (kind, result.stdout, result.stderr)
+        absence[kind] = result.stdout.split()
+    for builder in builders:
+        for kind, name in [('container', 'buildx_buildkit_' + builder + '0'),
+                           ('volume', 'buildx_buildkit_' + builder + '0_state')]:
+            result = run(repo, 'docker', kind, 'inspect', name)
+            assert result.returncode != 0, (kind, name, 'still exists')
+    (evidence / 'deadline-result.json').write_text(json.dumps({
+        'fixture_sha': sha, 'gnu_timeout_exit': raw, 'supervisor': receipt,
+        'run_log': str(log_dir), 'owned_absence_before_vm_delete': absence,
+        'builder_names_absent': builders}, indent=2) + '\n')
+    print('PASS: real deadline TERM preserves checks, completes gate Docker cleanup, and proves own absence', flush=True)
 
 
 def main() -> None:
@@ -124,6 +194,11 @@ e2e-naapp:
 candidate-gate:
 \tbash scripts/candidate-docker-gate.sh
 '''
+        interruption_only = sys.argv[1:] == ["--interruption-only"]
+        if interruption_only:
+            recipes = recipes.replace(
+                "_candidate-unit-suites:\n",
+                "_candidate-unit-suites:\n\t@touch \"$$CANDIDATE_LOG_DIR/unit-active\"; sleep 1800\n")
         (repo / "Makefile").write_text(recipes)
         init_fixture_repo(repo)
         checked(repo, "git", "config", "user.name", "gate integration")
@@ -138,6 +213,10 @@ candidate-gate:
                    AWEB_GATE_LOG_DIR=str(evidence / "logs"),
                    CLI_VERSION="1.2.3", A2A_GATEWAY_VERSION="1.2.3",
                    AWEB_CANDIDATE_RUNNER_MEMORY="1g", AWEB_CANDIDATE_BUILDER_MEMORY="1g")
+
+        if interruption_only:
+            interrupted_docker_proof(repo, evidence, env)
+            return
 
         def invoke(name: str, *args: str, stages: str | None = None, success: bool = True):
             settings = dict(env)

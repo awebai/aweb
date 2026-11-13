@@ -191,7 +191,7 @@ if [[ -z "$pending" ]]; then
   exit 0
 fi
 
-run_candidate() (
+run_candidate() {
 set -euo pipefail
 command -v docker >/dev/null || refuse "docker is unavailable"
 wait_for_disk
@@ -477,8 +477,10 @@ docker run --rm --init \
   -w "$checkout" \
   "$IMAGE" \
   bash scripts/candidate-suite.sh "$pending" \
-  2>&1 | tee "$LOG_DIR/gate.log"
-status="${PIPESTATUS[0]}"
+  2>&1 | (trap '' INT TERM; exec tee "$LOG_DIR/gate.log") &
+runner_job=$!
+wait "$runner_job"
+status=$?
 set -e
 
 if [[ "$status" -ne 0 ]]; then
@@ -488,21 +490,32 @@ fi
 printf 'candidate gate PASSED at %s; logs: %s\n' \
   "$SOURCE_SHA" "$LOG_DIR" | tee -a "$LOG_DIR/wrapper-verdict.log"
 
-)
+}
 
-# The child owns Docker cleanup. The lock holder records its completed proof
-# before waiting for cleanup on interruption; background wait makes traps prompt.
+# The child owns Docker cleanup. Its output reader survives group signals;
+# the lock holder records completed proof, then waits for real child cleanup.
 source "$ROOT/scripts/candidate-record.sh"
 started="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
 run_log="$LEDGER_LOGS/${KEY:0:12}-run-$run_id.log"
-trap 'candidate_interrupted 130' INT
-trap 'candidate_interrupted 143' TERM
-set +e
-run_candidate 2>&1 | tee "$run_log" &
+mkdir -p "$LOG_DIR"
+output_pipe="$LOG_DIR/output.pipe"
+mkfifo "$output_pipe"
+if [[ -n "${AWEB_GATE_RUN_REGISTRY:-}" ]]; then
+  printf '%s\t%s\n' "$run_id" "$LOG_DIR" >> "$AWEB_GATE_RUN_REGISTRY"
+fi
+trap 'candidate_interrupted 130 INT' INT
+trap 'candidate_interrupted 143 TERM' TERM
+(trap '' INT TERM; exec tee "$run_log") < "$output_pipe" &
+candidate_writer=$!
+run_candidate > "$output_pipe" 2>&1 &
 candidate_job=$!
+set +e
 wait "$candidate_job"
 status=$?
+candidate_child_status=$status
 trap '' INT TERM
+finish_candidate_output
+if [[ "$status" == 0 && "$candidate_writer_status" != 0 ]]; then status=1; fi
 finalize_candidate "$status"
 status=$?
 exit "$status"

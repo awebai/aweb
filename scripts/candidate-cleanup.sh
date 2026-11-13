@@ -13,7 +13,8 @@ cleanup_work() {
 cleanup() {
   local original_status="${1:-$?}" cleanup_status=0 resource filter ids item
   local -a filters list remove
-  trap - EXIT INT TERM
+  trap - EXIT
+  trap '' INT TERM
   set +e
   filters=("aweb.candidate-gate=$resource_label")
   for item in "${suite_projects[@]}"; do filters+=("com.docker.compose.project=$item"); done

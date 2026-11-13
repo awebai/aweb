@@ -110,6 +110,12 @@ finalization, then kills that owned group. GNU timeout has a 130-second fallback
 and SSH/completion budgeting reserves 150 seconds. Actual command return codes,
 forwarded signals, escalation times and completion receipts are retained.
 A controller stop requests that same supervisor before collecting evidence.
+A completed process group alone does not attest gate cleanup: on interruption,
+`finalized` also requires registered current-run gate cleanup receipts, with
+matching run IDs, successful wrapper verdicts and completed log writers.
+The gate records completed stages first, forwards the signal to its direct
+child, waits for child cleanup and its signal-resistant log writer, then records
+that observed cleanup outcome in `interruption.tsv`.
 Missing/late completion is inconclusive: bounded stop failure never prevents
 the subsequent partial-evidence pull or provider cleanup.
 
@@ -133,6 +139,9 @@ bundle, provider events, summary.tsv files and immutable before/after gate
 ledger copies remain beside it. Nested prerequisite evidence is retained, but
 its unrelated SHA does not become the selected gate's stage result. Sampling
 gaps/removal races remain explicit. Raw archives stay local/operator-only.
+The UID-1000 candidate can write LOGS, including exit/supervisor receipts; these
+are operator observations, not an attestation against malicious candidate code.
+Root stop validates the live PID/start-time/UID/command before sending a signal.
 
 [errors.py](vm_gate/errors.py) is the single exit-code authority. Normal gate
 exits pass through; refusal and infrastructure errors have separate classes.

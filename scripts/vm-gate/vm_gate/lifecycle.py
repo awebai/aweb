@@ -167,6 +167,7 @@ def run_session(
                         server, timeout=budget.require("pull", now=clock())
                     )
                     for field in [
+                        "supervision",
                         "stages",
                         "gate_summaries",
                         "memory",

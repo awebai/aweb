@@ -57,6 +57,12 @@ class EvidenceTests(unittest.TestCase):
             collect_archive(archive, SHA, Path(self.tmp.name) / "out")
         self.assertFalse((Path(self.tmp.name) / "escaped").exists())
 
+    def test_summary_preserves_child_exit_beside_conservative_interruption(self):
+        receipt = {"raw_exit": 143, "child_exit": 0, "signal": 15, "interrupted": True}
+        archive = self.archive({"var/log/vm-gate/supervisor-receipt.json": json.dumps(receipt)})
+        result = collect_archive(archive, SHA, Path(self.tmp.name) / "out")
+        self.assertEqual(result["supervision"], receipt)
+
     def test_memory_uses_concurrent_current_sum_not_sum_of_individual_highwaters(self):
         samples = [
             {
