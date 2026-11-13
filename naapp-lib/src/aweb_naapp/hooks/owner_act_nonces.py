@@ -85,7 +85,8 @@ class PreparedOwnerAct:
         self._prepared_at = prepared_at
         self._protection = protection
         self._proof_expires_at = proof_expires_at
-        self._proof, self._proof_header, self._transaction_id = proof, proof_header, None
+        self._proof, self._proof_header = proof, proof_header
+        self._transaction_id: int | None = None
 
     async def record_applied(self, tx):
         """Trusted consumer calls after its actual effect/audit in this tx."""
