@@ -21,8 +21,11 @@ import (
 
 const installTeamID = "backend:example.com"
 
-// certificateRegistry serves a team's current key and its certificate rows,
-// as AWID does, or a 503 when down.
+// certificateRegistry is a private team at AWID: its metadata and
+// certificate list refuse team_private to a caller without member authority,
+// as they do to a member whose certificate is revoked; each certificate's
+// anonymous status answers its current team key and whether it is revoked.
+// It answers 503 when down.
 type certificateRegistry struct {
 	server  *httptest.Server
 	mu      sync.Mutex
@@ -43,14 +46,24 @@ func newCertificateRegistry(t *testing.T, teamKey ed25519.PrivateKey) *certifica
 			_, _ = w.Write([]byte(`{"detail":"unavailable"}`))
 			return
 		}
-		switch req.URL.Path {
-		case "/v1/namespaces/example.com/teams/backend":
-			_ = json.NewEncoder(w).Encode(awid.RegistryTeam{TeamID: installTeamID, Domain: "example.com", Name: "backend", TeamDIDKey: r.teamKey})
-		case "/v1/namespaces/example.com/teams/backend/certificates":
-			_ = json.NewEncoder(w).Encode(map[string]any{"certificates": r.rows, "has_more": false})
-		default:
-			http.NotFound(w, req)
+		const prefix = "/v1/namespaces/example.com/teams/backend/certificates/"
+		if id, isStatus := strings.CutSuffix(strings.TrimPrefix(req.URL.Path, prefix), "/status"); isStatus && strings.HasPrefix(req.URL.Path, prefix) {
+			for _, row := range r.rows {
+				if row.CertificateID == id {
+					status, revokedAt := "active", any(nil)
+					if row.RevokedAt != "" {
+						status, revokedAt = "revoked", row.RevokedAt
+					}
+					_ = json.NewEncoder(w).Encode(map[string]any{"team_id": installTeamID, "team_did_key": r.teamKey, "status": status, "revoked_at": revokedAt})
+					return
+				}
+			}
+			w.WriteHeader(http.StatusNotFound)
+			_, _ = w.Write([]byte(`{"detail":"Certificate not found"}`))
+			return
 		}
+		w.WriteHeader(http.StatusForbidden)
+		_, _ = w.Write([]byte(`{"detail":{"code":"team_private","message":"Team is private"}}`))
 	}))
 	t.Cleanup(r.server.Close)
 	return r
@@ -490,14 +503,14 @@ func TestConcurrentInstallsOfTwoTeamsIntoOneLocalHomeInstallOnlyOne(t *testing.T
 			http.NotFound(w, r)
 			return
 		}
-		if rest == "" {
-			reached <- name
-			<-release
-			_ = json.NewEncoder(w).Encode(awid.RegistryTeam{TeamID: cert.Team, Domain: "example.com", Name: name, TeamDIDKey: cert.TeamDIDKey})
+		if rest != "certificates/"+cert.CertificateID+"/status" {
+			w.WriteHeader(http.StatusForbidden)
+			_, _ = w.Write([]byte(`{"detail":{"code":"team_private","message":"Team is private"}}`))
 			return
 		}
-		_ = json.NewEncoder(w).Encode(map[string]any{"certificates": []awid.RegistryCertificate{{CertificateID: cert.CertificateID, TeamID: cert.Team,
-			MemberDIDKey: didKey, Alias: cert.Alias, IdentityScope: cert.IdentityScope, IssuedAt: cert.IssuedAt}}, "has_more": false})
+		reached <- name
+		<-release
+		_ = json.NewEncoder(w).Encode(map[string]any{"team_id": cert.Team, "team_did_key": cert.TeamDIDKey, "status": "active", "revoked_at": nil})
 	}))
 	defer func() { unblock(); server.Close() }()
 	errs := make(chan error, 2)
