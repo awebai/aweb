@@ -4489,12 +4489,13 @@ Flags:
 ### `hooks`
 
 Read the team's app hook bindings and activate or revoke them as the team owner.
-Activation and revocation are aweb.owner-act/1 acts signed with the team's controller key,
-which only the team owner holds.
+Activation uses live approval through the protected controller signer.
+Revocation uses its existing owner-act route.
 
 Subcommands:
 - `activate` Activate a pending hook binding as the team owner
 - `bindings` List an installed app's hook bindings in the selected team
+- `resume` Resume delivery of the same protected hook activation
 - `revoke` Revoke a pending or active hook binding as the team owner
 
 Flags:
@@ -4506,11 +4507,12 @@ Flags:
 
 Activate a pending hook binding as the team owner.
 The binding is checked against the app manifest fetched from its origin at its pinned digest.
-What will be signed is shown before the team's controller key signs it.
+Activation requires --protected-profile and --approver for live exact-binding approval.
 
 Flags:
+- `--approver string The configured human who approves this exact binding`
 - `-h, --help help for activate`
-- `--yes Sign without asking for confirmation (what is signed is still shown)`
+- `--protected-profile string Public profile of the protected controller signer`
 
 ## `hooks bindings`
 
@@ -4521,13 +4523,23 @@ List an installed app's hook bindings in the selected team
 Flags:
 - `-h, --help help for bindings`
 
+## `hooks resume`
+
+### `hooks resume`
+
+Resume delivery of the same protected hook activation
+
+Flags:
+- `-h, --help help for resume`
+- `--protected-profile string The original protected-service profile`
+
 ## `hooks revoke`
 
 ### `hooks revoke`
 
 Revoke a pending or active hook binding as the team owner.
 The act names the binding as the server stores it; the app's origin is not contacted.
-What will be signed is shown before the team's controller key signs it.
+Activation requires --protected-profile and --approver for live exact-binding approval.
 
 Flags:
 - `-h, --help help for revoke`

@@ -21,9 +21,9 @@ from datetime import datetime
 from typing import Any
 from uuid import UUID
 
-from aweb_naapp.hooks.owner_act import CORE_ACTS, hook_binding_subject
+from aweb_naapp.hooks.owner_act import CORE_ACTS, PREFIX, hook_binding_subject
 from aweb_naapp.hooks.owner_act_nonces import OwnerActVerifier
-from aweb_naapp.hooks.strictjson import Refused
+from aweb_naapp.hooks.strictjson import Refused, parse_strict
 from awid.team_ids import parse_team_id
 
 from aweb.app_registry import normalize_app_id, normalize_digest, normalize_origin, validate_team_id
@@ -428,7 +428,9 @@ async def _apply_owner_act(
 ) -> HookBinding:
     team_id = validate_team_id(team_id)
     # Refusals that need no signature come first; the transaction checks them again.
-    _require_live(await _binding(db, team_id=team_id, binding_id=binding_id, lock=False), act=act)
+    initial = await _binding(db, team_id=team_id, binding_id=binding_id, lock=False)
+    if not (act == ACTIVATE and initial.state == "active"):
+        _require_live(initial, act=act)
     try:
         prepared = await verifier.prepare(signing, signature, team_id=team_id)
     except Refused as refused:
@@ -439,12 +441,35 @@ async def _apply_owner_act(
     async with db.transaction() as tx:
         binding = await _binding(tx, team_id=team_id, binding_id=binding_id, lock=False)
         # Lock the install row before the binding, in the order installs write them.
-        await tx.fetch_one(
-            "SELECT 1 FROM {{tables.team_app_installs}} WHERE team_id = $1 AND app_id = $2 FOR UPDATE",
+        install = await tx.fetch_one(
+            "SELECT * FROM {{tables.team_app_installs}} WHERE team_id = $1 AND app_id = $2 FOR UPDATE",
             team_id,
             binding.app_id,
         )
         binding = await _binding(tx, team_id=team_id, binding_id=binding_id, lock=True)
+        if act == ACTIVATE and binding.state == "active":
+            # A lost success answer may be acknowledged only under fresh key
+            # evidence and the same current installation. No nonce/effect/audit
+            # is written, and an old generation never becomes active again.
+            stored = await tx.fetch_value(
+                "SELECT activation_act_sha256 FROM {{tables.app_hook_bindings}} WHERE binding_id=$1",
+                binding.binding_id,
+            )
+            if stored != act_sha256 or parse_strict(signing[len(PREFIX):])["subject"] != _subject(binding):
+                raise ConflictError("the binding is not pending")
+            if install is None or install["state"] == "uninstalled" or (
+                install["installation_id"], install["generation"], install["origin"], install["digest"]
+            ) != (binding.installation_id, binding.generation, binding.origin, binding.digest):
+                raise ConflictError("the activation's installation changed")
+            if binding.kind == PRODUCTION:
+                await _require_production_keys(tx, binding)
+            try:
+                if not await verifier.applied_in(tx, prepared):
+                    raise ConflictError("the activation has no exact committed nonce receipt")
+                prepared.require_fresh()
+            except Refused as refused:
+                raise _service_error(refused) from refused
+            return binding
         _require_live(binding, act=act)
         if act == ACTIVATE and binding.kind == PRODUCTION:
             await _require_production_keys(tx, binding)
@@ -479,6 +504,10 @@ async def _apply_owner_act(
             )
         if in_transaction is not None:
             await in_transaction(tx)
+        try:
+            prepared.require_fresh()
+        except Refused as refused:
+            raise _service_error(refused) from refused
     return binding_from_row(row)
 
 

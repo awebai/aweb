@@ -920,6 +920,8 @@ installation and its generation.
 | `revoked` | Revoked by the owner or by uninstall. Terminal. |
 | `superseded` | Replaced by a new generation of the install. Terminal. |
 
+The protected online activation path is described in [protected hook activation](protected-hook-activation.md). It uses the same closed owner-act subject and requires live approval of the exact installed binding.
+
 - **Install never activates.** An install or update by an admin creates its
   bindings as `pending`.
 - **Only the team owner activates or revokes**, with an `aweb.owner-act/1`

@@ -31,8 +31,8 @@ var hooksCmd = &cobra.Command{
 	Use:   "hooks",
 	Short: "Read the team's app hook bindings and activate or revoke them as the team owner",
 	Long: "Read the team's app hook bindings and activate or revoke them as the team owner.\n" +
-		"Activation and revocation are aweb.owner-act/1 acts signed with the team's controller key,\n" +
-		"which only the team owner holds.",
+		"Activation uses live approval through the protected controller signer.\n" +
+		"Revocation uses its existing owner-act route.",
 }
 
 func init() {
@@ -65,26 +65,36 @@ func init() {
 			"The binding is checked against the app manifest fetched from its origin at its pinned digest."),
 		hookOwnerActCmd("revoke", "hook-binding.revoke", "Revoke a pending or active hook binding as the team owner",
 			"The act names the binding as the server stores it; the app's origin is not contacted."))
+	hooksCmd.AddCommand(protectedHookResumeCmd())
 	rootCmd.AddCommand(hooksCmd)
 }
 
 func hookOwnerActCmd(verb, act, short, subject string) *cobra.Command {
 	var yes bool
+	var profilePath, approver string
 	cmd := &cobra.Command{
 		Use:   verb + " <app-id> <binding-id>",
 		Short: short,
 		Long: short + ".\n" + subject + "\n" +
-			"What will be signed is shown before the team's controller key signs it.",
+			"Activation requires --protected-profile and --approver for live exact-binding approval.",
 		Args: cobra.ExactArgs(2),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			appID, err := installedAppID(args[0])
 			if err != nil {
 				return err
 			}
+			if act == "hook-binding.activate" {
+				return runProtectedHookActivate(cmd, appID, strings.TrimSpace(args[1]), profilePath, approver)
+			}
 			return runHookOwnerAct(cmd, act, appID, strings.TrimSpace(args[1]), yes)
 		},
 	}
-	cmd.Flags().BoolVar(&yes, "yes", false, "Sign without asking for confirmation (what is signed is still shown)")
+	if act == "hook-binding.activate" {
+		cmd.Flags().StringVar(&profilePath, "protected-profile", "", "Public profile of the protected controller signer")
+		cmd.Flags().StringVar(&approver, "approver", "", "The configured human who approves this exact binding")
+	} else {
+		cmd.Flags().BoolVar(&yes, "yes", false, "Sign without asking for confirmation (what is signed is still shown)")
+	}
 	return cmd
 }
 
