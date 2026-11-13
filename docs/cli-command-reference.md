@@ -1132,6 +1132,7 @@ Subcommands:
 - `delete` Protocol/admin: delete an AWID team using the namespace controller key
 - `fetch-cert` Protocol/admin bridge: fetch and install an approved team certificate
 - `import-request` Protocol/admin: create a signed BYOT import request for aweb cloud
+- `install-cert` Install an issued team certificate file into an identity home
 - `invite` Generate an invite token for a team
 - `leave` Remove a team membership from this identity
 - `list` List team memberships for this identity
@@ -1364,6 +1365,31 @@ Flags:
 - `--organization-id string AC organization id for a new imported team`
 - `--team string Team name`
 - `--timestamp string RFC3339 timestamp to sign (defaults to now; accepted for five minutes by cloud)`
+
+## `id team install-cert`
+
+### `id team install-cert`
+
+Install a team membership certificate file, such as the one `aw id team admit`
+wrote with --certificate-out, into the explicit --identity-home whose identity it
+names. The certificate is checked against the registry before anything is
+written; then `aw service init` connects the home's workspace.
+
+Running it again with the same certificate reports already_installed and
+completes an install that was interrupted. Refusals, with their --json codes:
+  certificate_invalid        the file is not a team certificate
+  member_mismatch            it names another key, did:aw or scope than the home's identity
+  team_key_not_current       it is signed by a key that is not the team's current key
+  certificate_bad_signature  its signature does not verify under that key
+  certificate_revoked        the registry has revoked it
+  certificate_unregistered   the registry does not hold it for this member
+  certificate_conflict       the home holds another certificate for the team
+  registry_unavailable       the registry could not be read; retrying may succeed
+
+Flags:
+- `--certificate string Certificate file to install`
+- `-h, --help help for install-cert`
+- `--registry string Registry origin the team is read from (default: the configured registry)`
 
 ## `id team invite`
 

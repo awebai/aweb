@@ -2,6 +2,14 @@
 
 ## Unreleased
 
+- `aw id team install-cert --identity-home H --certificate F` installs a team
+  certificate file, such as the one `aw id team admit --certificate-out`
+  wrote, into the home whose identity it names, after checking it at the
+  registry: signed by the team's current key, registered for that member and
+  not revoked. Then `aw service init` connects the home. A rerun reports
+  `already_installed` and completes an interrupted install. Refusals carry
+  the codes listed in `--help`; only `registry_unavailable` is worth retrying.
+
 - `aw id create --local --identity-home H` creates a key-only local identity
   (a did:key registered nowhere, with no address or membership) in a fresh
   home, for an agent a parent issues and a team admits. `--json` reports

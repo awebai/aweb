@@ -1,0 +1,331 @@
+package main
+
+import (
+	"context"
+	"crypto/ed25519"
+	"encoding/json"
+	"maps"
+	"net/http"
+	"net/http/httptest"
+	"os"
+	"os/exec"
+	"path/filepath"
+	"strings"
+	"sync"
+	"testing"
+	"time"
+
+	"github.com/awebai/aw/awconfig"
+	"github.com/awebai/aw/awid"
+)
+
+const installTeamID = "backend:example.com"
+
+// certificateRegistry serves a team's current key and its certificate rows,
+// as AWID does, or a 503 when down.
+type certificateRegistry struct {
+	server  *httptest.Server
+	mu      sync.Mutex
+	teamKey string
+	rows    []awid.RegistryCertificate
+	down    bool
+}
+
+func newCertificateRegistry(t *testing.T, teamKey ed25519.PrivateKey) *certificateRegistry {
+	t.Helper()
+	r := &certificateRegistry{teamKey: awid.ComputeDIDKey(teamKey.Public().(ed25519.PublicKey))}
+	r.server = httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, req *http.Request) {
+		r.mu.Lock()
+		defer r.mu.Unlock()
+		w.Header().Set("Content-Type", "application/json")
+		if r.down {
+			w.WriteHeader(http.StatusServiceUnavailable)
+			_, _ = w.Write([]byte(`{"detail":"unavailable"}`))
+			return
+		}
+		switch req.URL.Path {
+		case "/v1/namespaces/example.com/teams/backend":
+			_ = json.NewEncoder(w).Encode(awid.RegistryTeam{TeamID: installTeamID, Domain: "example.com", Name: "backend", TeamDIDKey: r.teamKey})
+		case "/v1/namespaces/example.com/teams/backend/certificates":
+			_ = json.NewEncoder(w).Encode(map[string]any{"certificates": r.rows, "has_more": false})
+		default:
+			http.NotFound(w, req)
+		}
+	}))
+	t.Cleanup(r.server.Close)
+	return r
+}
+
+func (r *certificateRegistry) register(cert *awid.TeamCertificate, revoked bool) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	row := awid.RegistryCertificate{CertificateID: cert.CertificateID, TeamID: cert.Team, MemberDIDKey: cert.MemberDIDKey,
+		MemberDIDAW: cert.MemberDIDAW, Alias: cert.Alias, IdentityScope: cert.IdentityScope, IssuedAt: cert.IssuedAt}
+	if revoked {
+		row.RevokedAt = "2026-11-13T00:00:00Z"
+	}
+	r.rows = append(r.rows, row)
+}
+
+// keyOnlyHome is a home holding a local identity, and its did:key.
+func keyOnlyHome(t *testing.T) (string, string) {
+	t.Helper()
+	root := t.TempDir()
+	result, err := createUnaddressedIdentity(context.Background(), localRequest(root))
+	if err != nil {
+		t.Fatal(err)
+	}
+	return root, result["did_key"].(string)
+}
+
+func signedMemberCertificate(t *testing.T, teamKey ed25519.PrivateKey, memberDIDKey, memberDIDAW, scope string) *awid.TeamCertificate {
+	t.Helper()
+	cert, err := awid.SignTeamCertificate(teamKey, awid.TeamCertificateFields{Team: installTeamID, MemberDIDKey: memberDIDKey,
+		MemberDIDAW: memberDIDAW, Alias: "agent-1", IdentityScope: scope})
+	if err != nil {
+		t.Fatal(err)
+	}
+	return cert
+}
+
+func certificateFile(t *testing.T, cert *awid.TeamCertificate) string {
+	t.Helper()
+	path := filepath.Join(t.TempDir(), "admitted.cert")
+	if err := awid.SaveTeamCertificate(path, cert); err != nil {
+		t.Fatal(err)
+	}
+	return path
+}
+
+func installRequest(t *testing.T, registry *certificateRegistry, home, certificatePath string) teamCertificateInstall {
+	t.Helper()
+	client, err := newConfiguredRegistryClient(nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := client.TrustRegistryOrigin(registry.server.URL); err != nil {
+		t.Fatal(err)
+	}
+	return teamCertificateInstall{WorkingDir: t.TempDir(), Home: home, CertificatePath: certificatePath,
+		RegistryURL: registry.server.URL, Registry: client}
+}
+
+func TestAnAdmittedLocalCertificateIsInstalledIntoAKeyOnlyHome(t *testing.T) {
+	_, teamKey, _ := awid.GenerateKeypair()
+	registry := newCertificateRegistry(t, teamKey)
+	home, didKey := keyOnlyHome(t)
+	cert := signedMemberCertificate(t, teamKey, didKey, "", awid.IdentityModeLocal)
+	registry.register(cert, false)
+	result, err := installTeamCertificateFile(context.Background(), installRequest(t, registry, home, certificateFile(t, cert)))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if result["status"] != "installed" || result["team_id"] != installTeamID || result["alias"] != "agent-1" ||
+		result["certificate_id"] != cert.CertificateID || result["did_key"] != didKey || result["did_aw"] != nil {
+		t.Fatalf("result %v", result)
+	}
+	installed, err := awconfig.LoadTeamCertificateForTeamFromIdentityHome(home, installTeamID)
+	if err != nil || installed.CertificateID != cert.CertificateID || installed.Signature != cert.Signature {
+		t.Fatalf("installed %+v, %v", installed, err)
+	}
+	state, err := awconfig.LoadTeamStateFromIdentityHome(home)
+	if err != nil || state.Membership(installTeamID) == nil {
+		t.Fatalf("membership %+v, %v", state, err)
+	}
+}
+
+func TestReinstallingTheSameCertificateReportsItAndChangesNothing(t *testing.T) {
+	_, teamKey, _ := awid.GenerateKeypair()
+	registry := newCertificateRegistry(t, teamKey)
+	home, didKey := keyOnlyHome(t)
+	cert := signedMemberCertificate(t, teamKey, didKey, "", awid.IdentityModeLocal)
+	registry.register(cert, false)
+	path := certificateFile(t, cert)
+	if _, err := installTeamCertificateFile(context.Background(), installRequest(t, registry, home, path)); err != nil {
+		t.Fatal(err)
+	}
+	contents := homeContents(t, home)
+	result, err := installTeamCertificateFile(context.Background(), installRequest(t, registry, home, path))
+	if err != nil || result["status"] != "already_installed" || result["certificate_id"] != cert.CertificateID {
+		t.Fatalf("rerun %v, %v", result, err)
+	}
+	if !maps.Equal(contents, homeContents(t, home)) {
+		t.Fatal("the rerun changed the home")
+	}
+}
+
+// A run killed after the certificate was saved and before the membership was
+// recorded is completed by the rerun.
+func TestAnInstallKilledBeforeItsMembershipIsCompletedByTheRerun(t *testing.T) {
+	_, teamKey, _ := awid.GenerateKeypair()
+	registry := newCertificateRegistry(t, teamKey)
+	home, didKey := keyOnlyHome(t)
+	cert := signedMemberCertificate(t, teamKey, didKey, "", awid.IdentityModeLocal)
+	registry.register(cert, false)
+	if _, err := awconfig.SaveTeamCertificateForTeamToIdentityHome(home, installTeamID, cert); err != nil {
+		t.Fatal(err)
+	}
+	result, err := installTeamCertificateFile(context.Background(), installRequest(t, registry, home, certificateFile(t, cert)))
+	if err != nil || result["status"] != "already_installed" {
+		t.Fatalf("rerun %v, %v", result, err)
+	}
+	state, err := awconfig.LoadTeamStateFromIdentityHome(home)
+	if err != nil || state.Membership(installTeamID) == nil {
+		t.Fatalf("membership %+v, %v", state, err)
+	}
+}
+
+func TestACertificateThatIsNotThisHomesCurrentMembershipIsRefusedAndNothingInstalled(t *testing.T) {
+	_, teamKey, _ := awid.GenerateKeypair()
+	_, otherKey, _ := awid.GenerateKeypair()
+	for name, tc := range map[string]struct {
+		code    string
+		prepare func(t *testing.T, registry *certificateRegistry, home, didKey string) string
+	}{
+		"another member's key": {"member_mismatch", func(t *testing.T, registry *certificateRegistry, home, _ string) string {
+			pub, _, _ := awid.GenerateKeypair()
+			cert := signedMemberCertificate(t, teamKey, awid.ComputeDIDKey(pub), "", awid.IdentityModeLocal)
+			registry.register(cert, false)
+			return certificateFile(t, cert)
+		}},
+		"a registered member where the home is local": {"member_mismatch", func(t *testing.T, registry *certificateRegistry, home, didKey string) string {
+			cert := signedMemberCertificate(t, teamKey, didKey, "did:aw:someone", awid.IdentityModeGlobal)
+			registry.register(cert, false)
+			return certificateFile(t, cert)
+		}},
+		"signed by a key that is not the team's current key": {"team_key_not_current", func(t *testing.T, registry *certificateRegistry, home, didKey string) string {
+			cert := signedMemberCertificate(t, otherKey, didKey, "", awid.IdentityModeLocal)
+			registry.register(cert, false)
+			return certificateFile(t, cert)
+		}},
+		"a signature that does not verify": {"certificate_bad_signature", func(t *testing.T, registry *certificateRegistry, home, didKey string) string {
+			cert := signedMemberCertificate(t, otherKey, didKey, "", awid.IdentityModeLocal)
+			cert.TeamDIDKey = registry.teamKey
+			registry.register(cert, false)
+			return certificateFile(t, cert)
+		}},
+		"revoked": {"certificate_revoked", func(t *testing.T, registry *certificateRegistry, home, didKey string) string {
+			cert := signedMemberCertificate(t, teamKey, didKey, "", awid.IdentityModeLocal)
+			registry.register(cert, true)
+			return certificateFile(t, cert)
+		}},
+		"not registered": {"certificate_unregistered", func(t *testing.T, registry *certificateRegistry, home, didKey string) string {
+			return certificateFile(t, signedMemberCertificate(t, teamKey, didKey, "", awid.IdentityModeLocal))
+		}},
+		"not a certificate": {"certificate_invalid", func(t *testing.T, registry *certificateRegistry, home, didKey string) string {
+			path := filepath.Join(t.TempDir(), "admitted.cert")
+			_ = os.WriteFile(path, []byte("not a certificate\n"), 0o600)
+			return path
+		}},
+		"another certificate already installed for the team": {"certificate_conflict", func(t *testing.T, registry *certificateRegistry, home, didKey string) string {
+			first := signedMemberCertificate(t, teamKey, didKey, "", awid.IdentityModeLocal)
+			registry.register(first, false)
+			if _, err := installTeamCertificateFile(context.Background(), installRequest(t, registry, home, certificateFile(t, first))); err != nil {
+				t.Fatal(err)
+			}
+			second := signedMemberCertificate(t, teamKey, didKey, "", awid.IdentityModeLocal)
+			registry.register(second, false)
+			return certificateFile(t, second)
+		}},
+		"the registry is unavailable": {"registry_unavailable", func(t *testing.T, registry *certificateRegistry, home, didKey string) string {
+			cert := signedMemberCertificate(t, teamKey, didKey, "", awid.IdentityModeLocal)
+			registry.register(cert, false)
+			registry.down = true
+			return certificateFile(t, cert)
+		}},
+	} {
+		registry := newCertificateRegistry(t, teamKey)
+		home, didKey := keyOnlyHome(t)
+		path := tc.prepare(t, registry, home, didKey)
+		contents := homeContents(t, home)
+		_, err := installTeamCertificateFile(context.Background(), installRequest(t, registry, home, path))
+		if code := errorCodeOf(err); code != tc.code {
+			t.Errorf("%s: code %q, err %v", name, code, err)
+		}
+		if !maps.Equal(contents, homeContents(t, home)) {
+			t.Errorf("%s: the refusal changed the home", name)
+		}
+	}
+}
+
+func TestInstallCertRefusalCodesAreDocumented(t *testing.T) {
+	for _, code := range installCertificateCodes {
+		if !strings.Contains(teamInstallCertCmd.Long, code) {
+			t.Errorf("--help does not name %s", code)
+		}
+	}
+}
+
+// The real commands take a fresh home through OATS's order: a key-only
+// identity, then the certificate file its admission wrote.
+func TestTheInstallCommandInstallsAnAdmittedCertificateIntoALocalHome(t *testing.T) {
+	ctx, cancel := context.WithTimeout(context.Background(), time.Minute)
+	defer cancel()
+	bin := filepath.Join(t.TempDir(), "aw")
+	buildAwBinary(t, ctx, bin)
+	root, err := filepath.EvalSymlinks(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	home := filepath.Join(root, "child")
+	run := func(args ...string) (map[string]any, string, error) {
+		t.Helper()
+		command := exec.CommandContext(ctx, bin, append([]string{"--json", "--identity-home", home}, args...)...)
+		command.Dir, command.Env = root, testCommandEnv(root)
+		out, err := command.CombinedOutput()
+		var result map[string]any
+		_ = json.Unmarshal(out, &result)
+		return result, string(out), err
+	}
+	created, out, err := run("id", "create", "--local")
+	if err != nil {
+		t.Fatalf("create --local: %v %s", err, out)
+	}
+	_, teamKey, _ := awid.GenerateKeypair()
+	registry := newCertificateRegistry(t, teamKey)
+	cert := signedMemberCertificate(t, teamKey, created["did_key"].(string), "", awid.IdentityModeLocal)
+	registry.register(cert, false)
+	path := certificateFile(t, cert)
+	installed, out, err := run("id", "team", "install-cert", "--certificate", path, "--registry", registry.server.URL)
+	if err != nil || installed["status"] != "installed" || installed["certificate_id"] != cert.CertificateID {
+		t.Fatalf("install-cert: %v %s", err, out)
+	}
+	again, out, err := run("id", "team", "install-cert", "--certificate", path, "--registry", registry.server.URL)
+	if err != nil || again["status"] != "already_installed" {
+		t.Fatalf("rerun: %v %s", err, out)
+	}
+	stored, err := awconfig.LoadTeamCertificateForTeamFromIdentityHome(home, installTeamID)
+	if err != nil || stored.CertificateID != cert.CertificateID {
+		t.Fatalf("stored %+v, %v", stored, err)
+	}
+
+	// The installed home is what aw service init connects.
+	var connected connectRequest
+	var connectedWith string
+	service := newLocalHTTPServerHandlerWithURL(t, func(serviceURL string, w http.ResponseWriter, r *http.Request) {
+		switch {
+		case r.Method == http.MethodGet && r.URL.Path == "/api/v1/discovery":
+			_ = json.NewEncoder(w).Encode(map[string]any{"onboarding_url": serviceURL, "aweb_url": serviceURL})
+		case r.Method == http.MethodPost && r.URL.Path == "/v1/connect":
+			connectedWith = requireCertificateAuthForTest(t, r).CertificateID
+			_ = json.NewDecoder(r.Body).Decode(&connected)
+			_ = json.NewEncoder(w).Encode(map[string]any{"team_id": installTeamID, "alias": "agent-1", "agent_id": "agent-1-id",
+				"workspace_id": "workspace-1", "team_did_key": registry.teamKey})
+		case r.Method == http.MethodPut && r.URL.Path == "/v1/agents/me/encryption-key":
+			writePublishEncryptionKeyResponseForTest(t, w, "agent-1-id", installTeamID, "agent-1")
+		default:
+			t.Errorf("unexpected %s %s", r.Method, r.URL.Path)
+			http.NotFound(w, r)
+		}
+	})
+	if _, out, err := run("service", "init", "--service", service.URL, "--team", installTeamID); err != nil {
+		t.Fatalf("service init: %v %s", err, out)
+	}
+	if connectedWith != cert.CertificateID || connected.WorkspacePath != home {
+		t.Fatalf("connected with %q for %q", connectedWith, connected.WorkspacePath)
+	}
+	workspace, err := awconfig.LoadWorktreeWorkspaceFrom(filepath.Join(home, "workspace.yaml"))
+	if err != nil || workspace.Membership(installTeamID) == nil || workspace.Membership(installTeamID).WorkspaceID != "workspace-1" {
+		t.Fatalf("workspace %+v, %v", workspace, err)
+	}
+}
