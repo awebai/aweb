@@ -2,6 +2,7 @@
 
 * [Converged decisions stay frozen](converged-decisions-stay-frozen.md) - Once the team has converged and committed on a functionally fine choice, do not reopen it for a marginal detail; a coordinator's flip-flop costs more than the gain.
 * [Verify business facts; consolidate before cutting](verify-business-facts-and-consolidate-before-cutting.md) - Never justify a cut with an assumed product or roadmap fact, and treat messy-but-needed machinery as something to consolidate, not remove.
+* [A dead-code list is a list of questions](a-dead-code-list-is-a-list-of-questions.md) - Tool-reported dead code is not unused; check each item for consumers the tools miss (conformance tests, gate fixtures, documented tools, interface methods, gate-checked snapshots, multi-line re-exports), delete only what has none, and route the rest to its owner with the consumer and the registry edits named.
 * [Correctness over momentum](correctness-over-momentum.md) - Activity is not progress; write and pressure-test plans for irreversible steps instead of manufacturing work to avoid idleness.
 * [Drive coordination to done](drive-coordination-to-done.md) - Decide what is yours, track work by next step and done-signal, hold the full scope as tracked work, and escalate only genuine product or authority forks.
 * [A harness must be shown to fail](a-harness-must-be-shown-to-fail.md) - A red counts only if its text names the property; a zero counts only if the detector was shown positive; a validated detector is not a valid experiment.
