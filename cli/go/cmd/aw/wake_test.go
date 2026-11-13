@@ -501,7 +501,8 @@ func TestWakeRunIsIdempotentAndServesItsSocket(t *testing.T) {
 
 	// A unix socket path is bounded by sun_path, and t.TempDir() embeds the
 	// test name; the daemon says so itself, but the test needs a short one.
-	stateRoot, err := os.MkdirTemp("", "awwk")
+	// /tmp keeps it short whatever TMPDIR is.
+	stateRoot, err := os.MkdirTemp("/tmp", "awwk")
 	if err != nil {
 		t.Fatal(err)
 	}

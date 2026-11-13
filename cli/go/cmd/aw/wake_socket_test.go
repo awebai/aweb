@@ -44,7 +44,8 @@ func TestWakeControlStartup(t *testing.T) {
 			stateDir := filepath.Join(home, ".config", "aw", "wake")
 			flags := []string{}
 			if name == "short-state-override" || name == "unservable" {
-				short, err := os.MkdirTemp("", "aw-wake-")
+				// /tmp keeps the state path short whatever TMPDIR is.
+				short, err := os.MkdirTemp("/tmp", "aw-wake-")
 				if err != nil {
 					t.Fatal(err)
 				}
