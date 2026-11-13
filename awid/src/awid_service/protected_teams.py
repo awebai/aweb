@@ -173,36 +173,40 @@ async def require_effect(request, tx, *, domain, name, operation):
             if covering
             else b""
         )
-        audience = (
-            json.loads(envelope)["aud"]
-            if envelope
-            else getattr(request.app.state, "awid_public_origins", ())[0]
-        )
-        consumer = http_consumer(
-            audience=audience,
-            method=request.method,
-            path=raw_controller_request_target(request),
-            body=await _request_body(request),
-            controller_envelope=envelope,
-        )
+        origins = getattr(request.app.state, "awid_public_origins", ())
+        # Independently signed artifacts have no covering HTTP audience. Their
+        # detached proof may use any pinned registry origin, never an origin
+        # supplied solely by the request or by an unverified proof.
+        audiences = (json.loads(envelope)["aud"],) if envelope else origins
+        body = await _request_body(request)
         proofs = decode_proofs(request.headers.get(HEADER))
-        for proof in proofs:
-            try:
-                verify_proof(
-                    proof,
-                    binding=binding,
-                    team_id=build_team_id(domain, name),
-                    controller_did_key=team["team_did_key"],
-                    operations=OPERATIONS[operation],
-                    artifact_type=artifact_type,
-                    artifact=signing,
-                    artifact_signature=signature,
-                    consumer=consumer,
-                    now=datetime.now(timezone.utc),
-                )
-                return binding
-            except EffectRefused:
+        for audience in audiences:
+            if audience not in origins:
                 continue
+            consumer = http_consumer(
+                audience=audience,
+                method=request.method,
+                path=raw_controller_request_target(request),
+                body=body,
+                controller_envelope=envelope,
+            )
+            for proof in proofs:
+                try:
+                    verify_proof(
+                        proof,
+                        binding=binding,
+                        team_id=build_team_id(domain, name),
+                        controller_did_key=team["team_did_key"],
+                        operations=OPERATIONS[operation],
+                        artifact_type=artifact_type,
+                        artifact=signing,
+                        artifact_signature=signature,
+                        consumer=consumer,
+                        now=datetime.now(timezone.utc),
+                    )
+                    return binding
+                except EffectRefused:
+                    continue
     except (ValueError, TypeError, KeyError, IndexError):
         pass
     logger.warning(
