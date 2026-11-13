@@ -331,6 +331,13 @@ def test_the_agent_and_its_egress_are_the_oats_sources_own_services():
 def test_the_agent_starts_only_once_its_egress_is_healthy_and_adds_no_route_or_mount():
     agent = AGENTS_FILE["agent"]
     assert agent["depends_on"] == {"egress": {"condition": "service_healthy"}}
-    # Its networks, mounts and limits are the OATS service's: the deployment adds none.
+    # Its networks, mounts and limits are the OATS service's: the deployment
+    # adds none.
     assert set(agent) == {"extends", "depends_on"}
     assert set(AGENTS_FILE) == {"egress", "agent"}
+
+
+def test_the_agent_passes_no_environment_the_image_does_not_accept():
+    # The OATS agent image accepts only its own environment and its CA
+    # variables; any other variable the deployment sets refuses the container.
+    assert "environment" not in AGENTS_FILE["agent"]

@@ -144,6 +144,30 @@ class OwnerActVerifier:
         )
         return PreparedOwnerAct(checked, signing, self, _utc_now(lambda: now))
 
+    async def applied_in(self, tx: TransactionManager, prepared: PreparedOwnerAct) -> bool:
+        """Read an exact committed act's nonce receipt, without consuming it.
+
+        A different signed act under the same nonce still refuses. This grants
+        no effect authority: the caller must hold/check its installation fence
+        and require the original prepared proof fresh after its final await.
+        """
+        if not isinstance(prepared, PreparedOwnerAct) or prepared._verifier is not self:
+            raise Refused("verifier_misconfigured", "the act was prepared by another verifier")
+        prepared.require_fresh()
+        act = prepared._checked
+        digest = await tx.fetch_value(
+            "SELECT act_sha256 FROM {{tables.owner_act_nonces}} "
+            "WHERE scope = $1 AND team_id = $2 AND nonce = $3 FOR SHARE",
+            self.scope,
+            act.team_id,
+            act.nonce,
+        )
+        if digest is None:
+            return False
+        if digest != hashlib.sha256(prepared._signing).hexdigest():
+            raise Refused("nonce_reused", act.nonce)
+        return True
+
     async def consume_in(
         self,
         tx: TransactionManager,
