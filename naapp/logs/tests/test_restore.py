@@ -107,17 +107,29 @@ async def stored_content(world: World) -> dict[str, str | None]:
     return {str(row["event_id"]): row["purge_act"] if row["purged"] else None for row in rows}
 
 
+async def event_ids(world: World) -> dict[str, str]:
+    """Each stored event's id by its event hash: a purged event's skeleton,
+    as an export or a query shows it, carries its hash but not its id."""
+    rows = await world.db.fetch_all(
+        "SELECT event_hash, event_id FROM {{tables.chain_events}} WHERE team_id = $1",
+        world.member.team_id,
+    )
+    return {row["event_hash"]: str(row["event_id"]) for row in rows}
+
+
 async def exported_content(world: World) -> dict[str, bool]:
     """Whether each event in the team's export carries its content."""
+    ids = await event_ids(world)
     lines = [json.loads(line) async for line in export_bundle(world.db, world.member.team_id)]
     events = [line["event"] for line in lines if "event" in line]
-    return {event["link"]["event_id"]: "content" in event for event in events}
+    return {ids[event["event_hash"]]: "content" in event for event in events}
 
 
 async def queried_content(world: World) -> dict[str, bool]:
     """Whether a reader's query shows each event's content."""
+    ids = await event_ids(world)
     page = await query(world.db, world.member.team_id, EventFilter())
-    return {event["event_id"]: not event.get("purged", False) for event in page.events}
+    return {ids[event["event_hash"]]: not event.get("purged", False) for event in page.events}
 
 
 async def test_a_restored_logs_serves_no_content_purged_after_its_backup(world, tmp_path):
