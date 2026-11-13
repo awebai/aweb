@@ -162,9 +162,10 @@ protected acts. Neither exists yet. Until both do, the stopgap is:
    covers every agent of the container, because they share `/state/home`.
    `aw doctor local` reports `local.log_key.owner_key_installed` as ok.
    Running agents follow it from their next write, without a restart. Lines
-   written before the install stay plaintext: `aw doctor local` names each
-   log still holding plaintext, with a count (`local.log_key.plaintext_lines`),
-   and the owner decides whether to keep, move or delete those files.
+   written before the install stay plaintext: `aw doctor local`, run as each
+   agent from that agent's directory, names each of that agent's logs still
+   holding plaintext, with a count (`local.log_key.plaintext_lines`), and the
+   owner decides whether to keep, move or delete those files.
 3. A new log key, or a new record after the controller key is replaced, needs
    the controller key again. The owner restores the offline controller copy
    (the controller's backup, above) to `~/.awid/team-keys/` on the reading
