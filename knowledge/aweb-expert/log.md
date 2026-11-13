@@ -1,5 +1,9 @@
 # Knowledge log
 
+## 2026-11-13
+* **Harvest**: OKF proposal from aweb-expert/aweb-expert-deploy-team.
+* **Creation**: lessons [a host driver's stub harness models the host's file ownership](/aweb-expert/lessons/a-host-driver-harness-models-the-hosts-file-ownership.md) and [a fixed early failure exposes the next unexercised check](/aweb-expert/lessons/a-fixed-early-failure-exposes-the-next-check.md).
+
 ## 2026-11-04
 * **Harvest**: OKF proposal from aweb-expert/aweb-expert-fresh-eyes (tasks aweb-acst and aweb-actf).
 * **Update**: [identity and routing review needs the real client](/aweb-expert/lessons/identity-and-routing-review-needs-the-real-client.md) gains that the real client includes the last released binary and that a skipped released-client case is not evidence.
