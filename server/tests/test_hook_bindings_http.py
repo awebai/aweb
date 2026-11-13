@@ -206,7 +206,7 @@ async def test_an_unreachable_registry_is_a_classified_503_and_changes_nothing(e
         await unreachable.aclose()
 
     assert response.status_code == 503, response.text
-    assert "AWID owner-act team key" in response.json()["detail"]
+    assert response.json()["detail"] == {"code": "protected_state_unavailable"}
     rows = await env.db.fetch_all("SELECT state FROM {{tables.app_hook_bindings}} WHERE binding_id = $1",
                                   registration.binding_id)
     assert [row["state"] for row in rows] == ["pending"]
@@ -253,8 +253,8 @@ async def test_a_stalled_registry_is_a_classified_503_and_the_same_act_can_retry
                 response = await client.post(url, json=_body(signing, signature))
 
     assert response.status_code == 503, response.text
-    assert response.json()["detail"] == "AWID owner-act team key upstream unavailable (TimeoutError)"
-    assert "AWID registry dependency failed reading the owner-act team key" in caplog.text
+    assert response.json()["detail"] == {"code": "protected_state_unavailable"}
+    assert "Current protected-team evidence unavailable" in caplog.text
     assert "TimeoutError" in caplog.text
     assert await env.db.fetch_value(
         "SELECT state FROM {{tables.app_hook_bindings}} WHERE binding_id = $1", registration.binding_id,
