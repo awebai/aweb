@@ -99,7 +99,11 @@ On a protected team, the original literal principal is compared with the full-
 artifact-backed registered subject using the shared protected membership verifier;
 `did:aw` also retains its independent current-key check. The proof carries that
 principal and the original protection observation, and N5 checks the principal
-again against the locked creator evidence. An ID and controller alone cannot
+again against the locked creator evidence. Exchange, read admission and action
+admission recheck the original protected observation after their final local
+await, before returning or committing. A host performing further work in the
+same transaction retains that observation and rechecks it before its commit.
+An ID and controller alone cannot
 establish protected membership. Missing original evidence or unreadable exact
 registry state is 503; a conflicting registered subject is 401
 `certificate_binding_mismatch`. Historical subject-only references require the
