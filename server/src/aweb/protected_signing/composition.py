@@ -65,13 +65,21 @@ class BindingPolicy:
             and row["policy_version"] != self.expected_version
         ):
             raise SignerRefused("policy_changed")
+        # Juan 2026-11-13, via coordinator: the approver's mailed personal link
+        # reveals the request, and a mailed approval may wait up to 24 hours,
+        # still capped by every frozen artifact deadline. Deciding still needs
+        # the approver's own fresh exact-act passkey assertion.
         return ActionPolicy(
             policy_ref,
             row["policy_version"],
             Assurance.PASSKEY,
-            timedelta(seconds=600),
+            MAILED_APPROVAL_WAIT,
             (row["b3_scope"],),
+            link_reveals_request=True,
         )
+
+
+MAILED_APPROVAL_WAIT = timedelta(hours=24)
 
 
 class IndependentProtectedSigner:
@@ -133,6 +141,7 @@ class IndependentProtectedSigner:
             audit=self.audit,
             authority=self.authority,
             custody=custody,
+            mailed_approval_wait=MAILED_APPROVAL_WAIT,
         )
 
         from .admission import AdmissionEffects

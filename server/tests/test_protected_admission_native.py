@@ -597,3 +597,24 @@ async def test_a_proof_signed_without_include_cannot_read_the_counts(admissions)
     response = await a.client.get(signed + "&include=admissions",
         headers=headers(a, path=signed, method="GET", label="protected_admission_policy_read"))
     assert response.status_code == 401 and response.json()["detail"] == "requester_invalid"
+
+
+
+@pytest.mark.asyncio
+async def test_a_mailed_endorsement_waits_a_day_and_one_touch_from_the_link_endorses(admissions):
+    from datetime import UTC, datetime, timedelta
+
+    a = admissions
+    operation = root_operation(a)
+    response = await prepare(a, operation)
+    assert response.status_code == 200, response.text
+    frozen = response.json()
+    expires = datetime.fromisoformat(frozen["expires_at"].replace("Z", "+00:00"))
+    now = datetime.now(UTC)
+    assert now + timedelta(hours=23) < expires <= now + timedelta(hours=24, seconds=5)
+    token = a.w.delivery.approval_links[-1]
+    view = await a.human.signer.link_view(frozen["handoff_id"], token)
+    assert view.digest == frozen["digest"] and view.payload == frozen["payload"]["request"]
+    options = await a.human.signer.link_options(frozen["handoff_id"], token, "approve")
+    result = await a.human.signer.link_decide(frozen["handoff_id"], token, "approve", a.device.get(dict(options)))
+    assert result.state == "committed"
