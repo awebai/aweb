@@ -7,6 +7,7 @@ composition; these controls prove the local engine's transaction/retry fences.
 
 import base64
 import json
+from contextlib import asynccontextmanager
 from dataclasses import replace
 from datetime import timedelta
 
@@ -152,6 +153,38 @@ async def test_retained_signature_never_releases_after_original_uv_window(world)
     assert result.state == "unknown" and result.code == "external_effect_unresolved"
     row = await row_for(world, prepared.operation_id)
     assert row["result"] is None and row["signed_result"] is not None and row["delivery_claim"] is None
+    assert port.retains == 1 and port.posts == 0 and await counts(world) == (1, 0)
+
+
+async def test_a_commit_wait_crossing_original_uv_deadline_sends_nothing(world, monkeypatch):
+    port = EffectPort(world)
+    world.signer.custody = port
+    original_confirm = port.confirm_retained
+    transaction = world.passkeys.db.transaction
+    armed = crossed = False
+
+    async def confirm(operation, retained):
+        nonlocal armed
+        result = await original_confirm(operation, retained)
+        armed = True
+        return result
+
+    @asynccontextmanager
+    async def delayed_claim_commit(*args, **kw):
+        nonlocal crossed
+        async with transaction(*args, **kw) as tx:
+            yield tx
+        if armed and not crossed:
+            crossed = True
+            world.clock.advance(timedelta(seconds=301))
+
+    port.confirm_retained = confirm
+    monkeypatch.setattr(world.passkeys.db, "transaction", delayed_claim_commit)
+    prepared, proof = await approve(world)
+    result = await world.signer.execute(prepared.operation_id, proof, human=world.human)
+    assert crossed and result.state == "unknown" and result.code == "external_effect_unresolved"
+    row = await row_for(world, prepared.operation_id)
+    assert row["delivery_claim"] is not None and row["result"] is None
     assert port.retains == 1 and port.posts == 0 and await counts(world) == (1, 0)
 
 

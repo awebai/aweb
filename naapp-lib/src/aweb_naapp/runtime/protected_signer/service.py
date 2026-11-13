@@ -952,6 +952,8 @@ class ProtectedSigner:
                 if self.clock() >= retained.expires_at:
                     raise SignerRefused("operation_expired")
             if claim is not None:
+                if self.clock() >= retained.expires_at:
+                    return OperationReceipt(operation_id, "unknown", code="external_effect_unresolved")
                 async with asyncio.timeout((retained.expires_at - self.clock()).total_seconds()):
                     await deliver(operation, retained)
                 confirmed_until = await observe_confirmation()
