@@ -6,6 +6,7 @@ Native bodies require the coordinator's VM placement. No local DB fallback.
 import asyncio
 import base64
 import json
+from contextlib import asynccontextmanager
 from dataclasses import replace
 from types import SimpleNamespace
 from uuid import uuid4
@@ -26,13 +27,25 @@ from aweb.protected_signing.bootstrap import initialise, prepare_completion
 from aweb.protected_signing.composition import IndependentProtectedSigner
 from aweb.protected_signing.custody import ProtectedControllerCustody
 from aweb.protected_signing.group import ProtectedSignerGroup
-from tests.test_independent_protected_signer import DOMAIN, HUMAN_ORIGIN, ORIGIN, TEAM, did, proof_request
+from tests.test_independent_protected_signer import DOMAIN, ORIGIN, TEAM, did, proof_request
 
 pytest_plugins = ("tests.test_independent_protected_signer",)
 
 
 @pytest_asyncio.fixture
 async def admissions(world, tmp_path):
+    async with admission_world(world, tmp_path) as value:
+        yield value
+
+
+@asynccontextmanager
+async def admission_world(world, tmp_path):
+    """Share native admission setup with real-socket CLI compositions.
+
+    ``world`` comes from ``signer_world`` and already owns the frozen external
+    origins. ``api`` is exposed for a listener; the in-process client remains
+    available for the existing component tests.
+    """
     w = world
     public = {"version": 1, "teams": [TEAM],
         "root_selector": {"kind": "service_endorsed_root", "service_id": w.context.service_id},
@@ -53,9 +66,9 @@ async def admissions(world, tmp_path):
         return await groups[0].context_for_scope(scope, tx=tx)
 
     team = IndependentProtectedSigner(w.db, context=w.context, registry=w.registry, custody=w.app.authority.custody,
-        human_origin=HUMAN_ORIGIN, request_origin=ORIGIN, delivery=w.delivery, proof_context=proof_context)
+        human_origin=w.human_origin, request_origin=w.request_origin, delivery=w.delivery, proof_context=proof_context)
     human = IndependentProtectedSigner(w.db, context=context, registry=w.registry, custody=custody,
-        human_origin=HUMAN_ORIGIN, request_origin=ORIGIN, delivery=w.delivery, proof_context=proof_context)
+        human_origin=w.human_origin, request_origin=w.request_origin, delivery=w.delivery, proof_context=proof_context)
     group = ProtectedSignerGroup([team, human], selected=team)
     groups.append(group)
     w.app = team
@@ -64,7 +77,7 @@ async def admissions(world, tmp_path):
     # synthetic human authority, enrollment row or test-only key writer here.
     await initialise(human, requester=w.root_id, contact="operator@customer.example")
     token = w.delivery.enrolment
-    device = SoftAuthenticator(HUMAN_ORIGIN)
+    device = SoftAuthenticator(w.human_origin)
     credential = device.create(await human.passkeys.enrolment_options(token))
     approver = await human.passkeys.complete_enrolment(token, credential, fence=await prepare_completion(human, token))
     login = await human.passkeys.verify_login(approver.scope, device.get(await human.passkeys.login_options(approver.scope)))
@@ -76,8 +89,8 @@ async def admissions(world, tmp_path):
 
     api = FastAPI()
     api.include_router(group.operations_http(limiter=Limiter()).api_router())
-    async with httpx.AsyncClient(transport=httpx.ASGITransport(app=api), base_url=ORIGIN) as client:
-        yield SimpleNamespace(w=w, human=human, actor=actor, device=device, group=group, client=client, policy=policy)
+    async with httpx.AsyncClient(transport=httpx.ASGITransport(app=api), base_url=w.request_origin) as client:
+        yield SimpleNamespace(w=w, human=human, actor=actor, device=device, group=group, client=client, api=api, policy=policy)
 
 
 def headers(a, *, body=b"", path="/protected-operations", method="POST", label="protected_operation_prepare", context=None):
