@@ -13,6 +13,14 @@ import { operationTable } from "/handoff-assets/operations.mjs";
   const governance = purpose === "governance";
   const loginScope = document.body.dataset.loginScope;
   const csrfKey = document.body.dataset.consoleCsrfKey;
+  const deny = document.getElementById("handoff-deny");
+  const note = document.getElementById("handoff-choice-note");
+  // A mailed personal link carries its approver's token in the fragment,
+  // which the browser never sends. Take it, then drop it from the address bar
+  // and history; it is only ever sent in a POST body.
+  const linkToken = governance ? new URLSearchParams(window.location.hash.slice(1)).get("k") : null;
+  if (linkToken !== null) history.replaceState(null, "", window.location.pathname);
+  const linked = typeof linkToken === "string" && linkToken.length > 0;
   let loggedIn = false;
   let operationId;
   let submitted = false;
@@ -51,7 +59,7 @@ import { operationTable } from "/handoff-assets/operations.mjs";
     csrf = undefined;
     document.body.dataset.handoffState = governance && submitted ? "unconfirmed" : "refused";
     status.textContent = governance
-      ? "This page cannot confirm the operation’s outcome. Check the existing receipt in your terminal before retrying."
+      ? "This page could not confirm whether your decision was recorded. The requester sees the outcome."
       : "This request could not be completed. Return to your terminal and start again.";
   }
 
@@ -89,15 +97,13 @@ import { operationTable } from "/handoff-assets/operations.mjs";
     document.getElementById("handoff-fingerprint").textContent = digest.slice(0, 16).match(/.{4}/g).join(" ");
     document.getElementById("handoff-payload").textContent = JSON.stringify(payload, null, 2);
     document.getElementById("handoff-governance").hidden = false;
-    action.textContent = "Approve operation with passkey";
-    const compare = "Compare the act, target and fingerprint with your terminal before approving.";
+    action.textContent = "Approve with passkey";
     if (request.operation === "identity.root.endorse") {
       const policy = request.admission_policy;
       status.textContent = `${request.responsibility_statement} Agent admissions for ${policy.teams.join(", ")}: ` +
-        `at most ${policy.bounds.max_active} active per root and ${policy.bounds.max_per_window} per ${policy.bounds.rate_window_seconds} seconds. ${compare}`;
-      action.textContent = "Endorse root with passkey";
+        `at most ${policy.bounds.max_active} active per root and ${policy.bounds.max_per_window} per ${policy.bounds.rate_window_seconds} seconds.`;
     } else {
-      status.textContent = compare;
+      status.textContent = "Check the request before you decide.";
     }
     document.body.dataset.handoffState = "ready";
     action.disabled = false;
@@ -137,7 +143,116 @@ import { operationTable } from "/handoff-assets/operations.mjs";
     complete(result);
   }
 
+  // The mailed link's own narrow routes: no cookie, no CSRF token, no
+  // session. The token authenticates only its approver's view and ceremony.
+  async function linkPost(suffix, body) {
+    const response = await fetch(`/handoff/${handoffId}/link${suffix}`, {
+      method: "POST", credentials: "omit", cache: "no-store", redirect: "error",
+      referrerPolicy: "no-referrer", headers: {"Content-Type": "application/json"},
+      body: JSON.stringify(body),
+    });
+    if (!response.ok) throw new Error("handoff_refused");
+    return response.json();
+  }
+
+  function linkUnavailable() {
+    action.disabled = true;
+    deny.hidden = true;
+    note.hidden = true;
+    document.getElementById("handoff-governance").hidden = true;
+    document.getElementById("handoff-explanation").hidden = true;
+    document.body.dataset.handoffState = "refused";
+    status.textContent = "This link is not valid any more. Requests still waiting for you are on your owner page.";
+  }
+
+  async function linkLoad() {
+    try {
+      const state = await linkPost("", {token: linkToken});
+      if (state.mode !== "governance-link") throw new Error("handoff_refused");
+      await governanceState({...state, mode: "governance"});
+      document.getElementById("handoff-explanation").hidden = true;
+      action.textContent = "Approve";
+      deny.hidden = false;
+      deny.disabled = false;
+      note.hidden = false;
+    } catch {
+      linkUnavailable();
+    }
+  }
+
+  // What a refused decision means for the approver, in words.
+  const refusals = {
+    human_refused: ["Denied", "The request is refused. Nothing was signed."],
+    approval_expired: ["Not completed", "Your approval came too late to be used. Nothing was signed."],
+    operation_expired: ["Expired", "This request expired before it was decided. Nothing was signed."],
+    proof_invalid: ["Not completed", "Your passkey answer could not be checked, so nothing was decided."],
+    approval_spent: ["Not completed", "Your passkeys or access changed, so this approval cannot be used."],
+    stale_binding: ["Not completed", "Your passkeys or access changed while this was waiting."],
+    policy_changed: ["Not completed", "The team's policy changed after this was requested, so this approval cannot apply."],
+    authority_changed: ["Not completed", "The team's signing key or approvers changed after this was requested."],
+  };
+
+  function outcome(title, text) {
+    action.hidden = true;
+    deny.hidden = true;
+    note.hidden = true;
+    status.textContent = "";
+    const section = document.getElementById("handoff-outcome");
+    document.getElementById("handoff-outcome-title").textContent = title;
+    document.getElementById("handoff-outcome-text").textContent = text;
+    section.hidden = false;
+    document.getElementById("handoff-outcome-title").focus();
+  }
+
+  function linkOutcome(result) {
+    document.body.dataset.handoffState = "complete";
+    if (result.state === "committed") {
+      outcome("Approved", "The signer has carried it out. There is nothing else to do here.");
+    } else if (result.state === "pending") {
+      outcome("Approved", "The signer is still carrying it out. The requester sees the result.");
+    } else if (result.state === "refused" && refusals[result.code]) {
+      outcome(...refusals[result.code]);
+    } else {
+      outcome("Not completed", "The signer could not complete this request. Nothing was signed.");
+    }
+  }
+
+  async function decide(decision) {
+    action.disabled = true;
+    deny.disabled = true;
+    document.body.dataset.handoffState = "verifying";
+    status.textContent = "Waiting for your passkey…";
+    let sent = false;
+    try {
+      const options = await linkPost("/options", {token: linkToken, decision});
+      if (options.userVerification !== "required") throw new Error("handoff_refused");
+      const credential = await navigator.credentials.get({
+        publicKey: PublicKeyCredential.parseRequestOptionsFromJSON(options),
+      });
+      if (!credential) throw new Error("handoff_refused");
+      sent = true;
+      linkOutcome(await linkPost("/decide", {token: linkToken, decision, assertion: credential.toJSON()}));
+    } catch (error) {
+      if (!sent && error.name === "NotAllowedError") {
+        // Nothing was sent: a new choice gets fresh options.
+        status.textContent = "Nothing was decided. Choose again.";
+        action.disabled = false;
+        deny.disabled = false;
+        document.body.dataset.handoffState = "ready";
+      } else if (sent) {
+        document.body.dataset.handoffState = "unconfirmed";
+        outcome("Not confirmed", "This page could not confirm whether your decision was recorded. The requester sees the outcome.");
+      } else {
+        linkUnavailable();
+      }
+    }
+  }
+
   async function load() {
+    if (linked) {
+      await linkLoad();
+      return;
+    }
     try {
       if (governance && !loggedIn) {
         if (!nonempty(loginScope) || !nonempty(csrfKey)) throw new Error("handoff_refused");
@@ -186,7 +301,13 @@ import { operationTable } from "/handoff-assets/operations.mjs";
     }
   }
 
+  deny.addEventListener("click", () => decide("reject"));
+
   action.addEventListener("click", async () => {
+    if (linked) {
+      await decide("approve");
+      return;
+    }
     action.disabled = true;
     document.body.dataset.handoffState = "verifying";
     status.textContent = "Follow your browser’s passkey prompt.";
