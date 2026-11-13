@@ -389,6 +389,32 @@ bound measured in seconds and fail closed at expiry, with no stale fallback.
 The general registry outage-grace cache cannot serve this path. See the
 [app task request contract](app-task-requests.md#verification-in-order).
 
+### Private Registries and the aw CLI
+
+The `aw` CLI and the A2A gateway reach a registry with their own HTTP client
+only when the operator chose it explicitly: the built-in default
+(`https://api.awid.ai`), `AWID_REGISTRY_URL`, or a registry flag on the
+current command line (`--registry`, `--registry-url`, `--awid-registry`).
+Every other registry origin is reached only at public addresses, over
+`https`, without proxies: a `registry_url` stored in `identity.yaml`,
+`teams.yaml`, controller metadata or a human record, the gateway's configured
+`registry_url`, a registry carried by an invite or returned by service
+discovery, and any registry an `_awid` TXT record names. The CLI resolves such
+a host once per connection and refuses it if any answer is a private,
+loopback, link-local or otherwise non-public address.
+
+The one exception is the isolated-development mode of the federation
+contract: with both `APP_ENV=development` and `AWEB_FEDERATION_TEST=1` set, an
+isolated host (a loopback address, `localhost`, `*.localhost`, `*.test`,
+`*.test.local` or a single-label name) may also be reached over `http` or at a
+non-public address. No other host gains anything in that mode.
+
+So wherever `aw` or the gateway uses a private self-hosted registry, set
+`AWID_REGISTRY_URL` to it in that process's environment, as in the examples
+above. `aw doctor identity` reports `identity.local.registry_url_pinned`: it
+warns when the stored registry is plainly private and `AWID_REGISTRY_URL`
+does not name it.
+
 ### Cross-Registry Authority and Migration
 
 `AWID_REGISTRY_URL` selects this aweb service's home registry. It does not route

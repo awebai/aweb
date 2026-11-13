@@ -708,7 +708,7 @@ func runTeamCreate(cmd *cobra.Command, args []string) error {
 		return usageError("--request-id and --show-token require hosted creation; use --hosted")
 	}
 
-	registry, err := newConfiguredRegistryClient(nil, "")
+	registry, err := newConfiguredRegistryClient(nil)
 	if err != nil {
 		return err
 	}
@@ -1454,7 +1454,7 @@ func runTeamMembers(cmd *cobra.Command, args []string) error {
 	if err != nil {
 		return err
 	}
-	registry, err := newConfiguredRegistryClient(nil, "")
+	registry, err := newConfiguredRegistryClient(nil)
 	if err != nil {
 		return err
 	}
@@ -1910,7 +1910,7 @@ func acceptTeamInviteWithDetails(workingDir, token string, opts teamAcceptInvite
 		return nil, fmt.Errorf("local team controller key for %s not found: %w (cross-machine joins should use `aw id team request`, controller-side `aw id team add-member`, then invitee-side `aw id team fetch-cert`)", teamID, err)
 	}
 
-	registry, err := newConfiguredRegistryClient(nil, "")
+	registry, err := newConfiguredRegistryClient(nil)
 	if err != nil {
 		return nil, err
 	}
@@ -2215,7 +2215,7 @@ func acceptHostedTeamInviteWithDetails(workingDir, token string, opts teamAccept
 	registry := opts.Registry
 	if treeRequest != nil && treeRequest.IDChain != nil {
 		if registry == nil {
-			registry, err = newConfiguredRegistryClient(nil, awebURL)
+			registry, err = newConfiguredRegistryClient(nil)
 			if err != nil {
 				return nil, err
 			}
@@ -2227,7 +2227,7 @@ func acceptHostedTeamInviteWithDetails(workingDir, token string, opts teamAccept
 	registryURL := ""
 	var atomicAddressClaim *awid.AtomicAddressClaimIdentityProof
 	if creation.ResponseJSON == "" && scope == awid.IdentityModeGlobal && memberAddress != "" {
-		registry, err := newConfiguredRegistryClient(nil, awebURL)
+		registry, err := newConfiguredRegistryClient(nil)
 		if err != nil {
 			return nil, err
 		}
@@ -2320,7 +2320,7 @@ func acceptHostedTeamInviteWithDetails(workingDir, token string, opts teamAccept
 		return nil, err
 	}
 	if registry == nil && resp.IDChain != nil {
-		registry, err = newConfiguredRegistryClient(nil, awebURL)
+		registry, err = newConfiguredRegistryClient(nil)
 		if err != nil {
 			return nil, err
 		}
@@ -2560,7 +2560,7 @@ func revokeAcceptedTeamCertificate(accepted *acceptedTeamInvite) error {
 		return nil
 	}
 
-	registry, err := newConfiguredRegistryClient(nil, "")
+	registry, err := newConfiguredRegistryClient(nil)
 	if err != nil {
 		return err
 	}
@@ -2736,7 +2736,7 @@ func runTeamAddMember(cmd *cobra.Command, args []string) error {
 	ctx, cancel := commandAPIContext(cmd)
 	defer cancel()
 
-	registry, err := newConfiguredRegistryClient(nil, "")
+	registry, err := newConfiguredRegistryClient(nil)
 	if err != nil {
 		return err
 	}
@@ -2892,7 +2892,7 @@ func runTeamFetchCert(cmd *cobra.Command, args []string) error {
 		return fmt.Errorf("load local signing key: %w (run `aw id create` first on this machine)", err)
 	}
 
-	registry, err := newConfiguredRegistryClient(nil, "")
+	registry, err := newConfiguredRegistryClient(nil)
 	if err != nil {
 		return err
 	}
@@ -2970,7 +2970,7 @@ func runTeamRemoveMember(cmd *cobra.Command, args []string) error {
 		return fmt.Errorf("load team key for %s: %w", teamID, err)
 	}
 
-	registry, err := newConfiguredRegistryClient(nil, "")
+	registry, err := newConfiguredRegistryClient(nil)
 	if err != nil {
 		return err
 	}
@@ -3655,7 +3655,7 @@ func newTeamCloudHTTPClient() *http.Client {
 }
 
 func verifyTeamRegisterLocalKey(ctx context.Context, teamKey ed25519.PrivateKey, domain, teamName, registryURL string) error {
-	registry, err := newConfiguredRegistryClient(nil, "")
+	registry, err := newConfiguredRegistryClient(nil)
 	if err != nil {
 		return err
 	}

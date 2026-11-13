@@ -271,7 +271,7 @@ func verifyA2ACardWithAWID(ctx context.Context, cardURL, digestValue, address, r
 	if err != nil {
 		return a2a.VerificationResult{Tier: a2a.VerificationTier2, Status: a2a.VerificationFailed, Code: "a2a_address_invalid", Message: err.Error(), Digest: digestValue}
 	}
-	registry := awid.NewAWIDRegistryClient(a2aHTTPClient(), nil)
+	registry := newAWIDRegistryClient(a2aHTTPClient(), nil)
 	registry.RequestID = "aw-a2a-" + time.Now().UTC().Format("20060102T150405.000000000")
 	if registryURL != "" {
 		if err := registry.SetFallbackRegistryURL(registryURL); err != nil {
@@ -504,7 +504,7 @@ func runA2APublish(ctx context.Context, cardURL string) (a2aPublishOutput, error
 	if strings.TrimSpace(selection.DID) != "" && strings.TrimSpace(selection.DID) != currentDIDKey {
 		return a2aPublishOutput{}, usageError("current identity did %s does not match signing key %s; repair .aw/identity.yaml before publishing", selection.DID, currentDIDKey)
 	}
-	registry := awid.NewAWIDRegistryClient(a2aHTTPClient(), nil)
+	registry := newAWIDRegistryClient(a2aHTTPClient(), nil)
 	registry.RequestID = "aw-a2a-publish-" + time.Now().UTC().Format("20060102T150405.000000000")
 	registryURL := strings.TrimSpace(a2aPublishRegistry)
 	if registryURL == "" {

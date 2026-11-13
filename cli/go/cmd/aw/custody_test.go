@@ -1114,6 +1114,7 @@ func TestCustodyCreateE2EEResolvesRecipientThroughRealRegistryResolver(t *testin
 		http.NotFound(w, r)
 	}))
 	t.Cleanup(registry.Close)
+	t.Setenv("AWID_REGISTRY_URL", registry.URL)
 
 	resolver := awid.NewRegistryResolver(registry.Client(), nil)
 	if err := resolver.SetFallbackRegistryURL(registry.URL); err != nil {

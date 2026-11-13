@@ -96,7 +96,7 @@ func bootstrapConnect(ctx context.Context, workingDir string, serviceURLs onboar
 		}
 
 		stableID = awid.ComputeStableID(pub)
-		registry, err := newConfiguredRegistryClient(nil, serviceURLs.OnboardingURL)
+		registry, err := newConfiguredRegistryClient(nil)
 		if err != nil {
 			return connectOutput{}, err
 		}
