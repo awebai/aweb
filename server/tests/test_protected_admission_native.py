@@ -107,13 +107,13 @@ async def prepare(a, operation):
     return await a.client.post("/protected-operations", content=raw, headers=headers(a, body=raw, context=operation.context))
 
 
-async def registered_agent(a, key):
-    """A real registered agent chain, not merely a legacy global key mapping."""
+async def registered_identity(a, key, *, kind="agent"):
+    """A real registered kind, not merely a legacy global key mapping."""
     child = await a.w.registry.register_did(did(key), bytes(key))
     certificate = await sign_id_certificate({
         "v": 1, "type": "aweb.id-certificate", "id": child.did_aw,
         "domain": DOMAIN, "parent": {"kind": "identity", "id": a.w.context.human_id},
-        "kind": "agent", "issuer_key": did(a.w.human_key),
+        "kind": kind, "issuer_key": did(a.w.human_key),
         "issued_at": datetime.now(UTC).strftime("%Y-%m-%dT%H:%M:%SZ"),
     }, signer=lambda raw: (did(a.w.human_key), a.w.human_key.sign(raw).signature))
     await a.w.registry.register_id_certificate(
@@ -273,7 +273,7 @@ async def test_registered_agent_retains_global_fields_and_a_human_is_refused(adm
     from nacl.signing import SigningKey
 
     key = SigningKey.generate()
-    child = await registered_agent(a, key)
+    child = await registered_identity(a, key)
     op = admit_operation(a, registered=(child, did(key)))
     assert (await prepare(a, op)).status_code == 200
     response = await execute(a, op)
@@ -285,12 +285,16 @@ async def test_registered_agent_retains_global_fields_and_a_human_is_refused(adm
 
 
 @pytest.mark.asyncio
-async def test_legacy_registered_unknown_kind_is_not_an_unattended_agent(admissions):
+@pytest.mark.parametrize("enrolled_human", [False, True])
+async def test_unknown_or_human_global_kind_is_not_an_unattended_agent(admissions, enrolled_human):
     a = admissions
     await endorse(a)
     seed, public = generate_keypair()
-    child = await a.w.registry.register_did(did_from_public_key(public), seed)
-    op = admit_operation(a, registered=(child.did_aw, did_from_public_key(public)))
+    from nacl.signing import SigningKey
+
+    child = (await registered_identity(a, SigningKey(seed), kind="human") if enrolled_human
+        else (await a.w.registry.register_did(did_from_public_key(public), seed)).did_aw)
+    op = admit_operation(a, registered=(child, did_from_public_key(public)))
     refused = await prepare(a, op)
     assert refused.status_code == 403 and refused.json() == {"detail": "subject_ineligible"}
     assert await a.w.app.signer.lookup_context(op.operation_id) is None

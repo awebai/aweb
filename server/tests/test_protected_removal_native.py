@@ -26,7 +26,7 @@ from tests.test_protected_admission_native import (
     execute,
     headers,
     prepare,
-    registered_agent,
+    registered_identity,
 )
 
 pytest_plugins = ("tests.test_protected_admission_native",)
@@ -45,7 +45,7 @@ def removal(a, certificate, *, self_remove=False, **changes):
 
 async def admitted(a, *, registered=False):
     key = SigningKey.generate()
-    child = await registered_agent(a, key) if registered else None
+    child = await registered_identity(a, key) if registered else None
     operation = admit_operation(a, child_id=child, child_key=did(key))
     assert (await prepare(a, operation)).status_code == 200
     response = await execute(a, operation)
@@ -88,14 +88,16 @@ async def signature_count(a, operation):
 
 @pytest.mark.asyncio
 @pytest.mark.parametrize("self_remove", [False, True])
-async def test_unenrolled_global_member_cannot_leave_as_an_agent(admissions, self_remove):
+@pytest.mark.parametrize("enrolled_human", [False, True])
+async def test_unknown_or_human_global_member_cannot_leave_as_an_agent(admissions, self_remove, enrolled_human):
     a = admissions
     await endorse(a)
     key = SigningKey.generate()
-    member = (await a.w.registry.register_did(did(key), bytes(key))).did_aw
-    # This is a valid legacy global membership, with no ID certificate that
-    # proves agent kind. Legacy humans can occupy precisely this state.
-    assert (await a.w.registry.resolve_key_fresh(member)).id_tree.enrolled is False
+    member = (await registered_identity(a, key, kind="human") if enrolled_human
+        else (await a.w.registry.register_did(did(key), bytes(key))).did_aw)
+    # An unrelated verified human and a legacy unknown global membership both
+    # refuse. Neither is one of the explicitly excluded custody keys.
+    assert (await a.w.registry.resolve_key_fresh(member)).id_tree.enrolled is enrolled_human
     certificate = {"version": 1, "certificate_id": str(uuid4()), "team_id": TEAM,
         "team_did_key": did(a.w.controller), "member_did_key": did(key), "member_did_aw": member,
         "alias": "legacy", "identity_scope": "global",
