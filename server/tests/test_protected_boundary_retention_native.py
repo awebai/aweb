@@ -165,16 +165,35 @@ async def test_genuine_b3_owner_act_reaches_protected_sql_consumer(world, tmp_pa
         candidate_row = await w.db.fetch_one(
             "SELECT candidate_links FROM {{tables.protected_signer_operations}} WHERE operation_id=$1", prepared.operation_id)
         token = next(iter(json.loads(candidate_row["candidate_links"]).values()))
-        captured = await w.app.signer._link_human(prepared.handoff_id, token)
         if unconfirmed:
             async def unreadable(*args):
                 return None  # Hide only confirmation; the actual consumer still applies.
             monkeypatch.setattr(custody, "confirm_retained", unreadable)
         options = await w.app.signer.approval_options(prepared.operation_id, human=w.human)
-        result = await w.app.signer.execute(prepared.operation_id, w.device.get(dict(options)), human=w.human)
+        proof = w.device.get(dict(options))
+        original_clock = w.app.signer.clock
         if unconfirmed:
+            # The candidate and authorized unsigned snapshot precede a real
+            # B3-authorized signature, retained delivery and consumer commit.
+            authorized = w.app.signer._authorized
+            interleaved = False
+            results = []
+            async def sign_after_authorized(operation_id, actor, purpose, **kwargs):
+                nonlocal interleaved
+                snapshot = await authorized(operation_id, actor, purpose, **kwargs)
+                if purpose == "approval" and not interleaved:
+                    interleaved = True
+                    results.append(await w.app.signer.execute(prepared.operation_id, proof, human=w.human))
+                    monkeypatch.setattr(w.app.signer, "clock", lambda: original_clock() + timedelta(days=2))
+                return snapshot
+            monkeypatch.setattr(w.app.signer, "_authorized", sign_after_authorized)
+            with pytest.raises(SignerRefused, match="scope_refused"):
+                await w.app.signer.link_view(prepared.handoff_id, token)
+            assert interleaved
+            result = results[0]
             assert result.state == "pending" and result.code == "effect_in_progress"
         else:
+            result = await w.app.signer.execute(prepared.operation_id, proof, human=w.human)
             assert result.state == "committed" and result.result["v"] == 2
         assert await db.fetch_value("SELECT count(*) FROM holding") == 0
         assert await db.fetch_value("SELECT count(*) FROM {{tables.owner_act_nonces}}") == 1
@@ -186,22 +205,13 @@ async def test_genuine_b3_owner_act_reaches_protected_sql_consumer(world, tmp_pa
             async with w.db.transaction() as tx:
                 scope = (await w.app.authority.binding(tx))["b3_scope"]
             for offset in (timedelta(), timedelta(days=2)):
-                view = await owner_view(w.app, scope=scope, now=w.app.signer.clock() + offset)
+                view = await owner_view(w.app, scope=scope, now=original_clock() + offset)
                 assert view["pending"] == []
                 assert [(item["operation_id"], item["state"]) for item in view["history"]] == [
                     (prepared.operation_id, "unresolved")]
                 html = owner_page_html(view)
                 assert "whether it took effect is not confirmed yet" in html
                 assert "Expired, nobody decided" not in html and "by you" not in html
-            # A real candidate captured before signing reaches the freshly
-            # locked signed/retained row after expiry; it cannot report unsigned expiry.
-            async def stale_candidate(*args):
-                return captured
-            monkeypatch.setattr(w.app.signer, "_link_human", stale_candidate)
-            original_clock = w.app.signer.clock
-            monkeypatch.setattr(w.app.signer, "clock", lambda: original_clock() + timedelta(days=2))
-            with pytest.raises(SignerRefused, match="scope_refused"):
-                await w.app.signer.link_view(prepared.handoff_id, token)
             historical = await w.app.signer.receipt(prepared.operation_id, reader=w.human)
             assert historical.state == "unknown" and historical.code == "external_effect_unresolved"
             reread = await w.db.fetch_one(
