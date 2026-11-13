@@ -188,6 +188,9 @@ def render(config: object) -> dict[str, str]:
     # reads with the whole URL from its own file.
     out["AWEB_REDIS_URL"] = ""
     out["AWEB_REDIS_URL_FILE"] = "/run/secrets/aweb/redis-url"
+    # aweb delivers federated mail and chat only to the servers the operator
+    # lists, and to none unless it lists one.
+    out["AWEB_FEDERATION_OUTBOUND"] = ",".join(config["aweb"].get("federationOutbound", [])) or "off"
     # aweb fetches app manifests from internal addresses only inside the services range.
     if "appInternalOrigins" in config["aweb"]:
         out["AWEB_APP_INTERNAL_CIDR"] = config["network"]["servicesCidr"]

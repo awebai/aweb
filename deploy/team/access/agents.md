@@ -29,7 +29,8 @@ readable by every agent like the login above.
 | A direct export of a stored value | No agent-facing route exports a stored value; Secrets' errors are fixed codes and its receipts have no body. Broker results are filtered and redacted, but an arbitrary transformation by the upstream is covered by no confidentiality guarantee: a credential an upstream returns is withheld only when redaction recognises it. | `naapp/secrets/values/src/aweb_secrets_values/redaction.py`; `naapp/secrets/src/aweb_secrets/member_types.py` |
 | A signature from the signer | The signer signs only after a person approves in the browser. | `server/src/aweb/protected_signing/README.md` |
 
-Egress bounds where packets go, not where data goes. aweb delivers mail to other
-servers, and the Secrets broker sends requests the agent chooses under an
-`open_request` grant, where both the grant and Secrets' policy allow it: both
-carry data out through allowed origins.
+Egress bounds where packets go, not where data goes. aweb delivers mail and
+chat to the other servers the operator lists (`aweb.federationOutbound`; none by
+default, `deploy/team/OPERATIONS.md`), and the Secrets broker sends requests
+the agent chooses under an `open_request` grant, where both the grant and
+Secrets' policy allow it: both carry data out through allowed origins.

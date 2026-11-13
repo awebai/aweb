@@ -12,6 +12,7 @@ it holds that member's key, no registry-wide token, and runs no registry.
 | `aweb.secrets` | mount at `/run/secrets/aweb` | reference | `aweb` | Where the secret files come from. |
 | `team.registryUrl` | `AWID_REGISTRY_URL` | https origin | `https://api.awid.ai` | The AWID registry the team is in. |
 | `aweb.appInternalOrigins` | `AWEB_APP_INTERNAL_ORIGINS`, with `AWEB_APP_INTERNAL_CIDR` set to `network.servicesCidr` | exact https origins, each resolving inside `network.servicesCidr` | unset | The origins of this deployment's Secrets and Logs, which the server installs from internal addresses. Unset, it refuses to fetch a manifest from a private address. |
+| `aweb.federationOutbound` | `AWEB_FEDERATION_OUTBOUND`: the origins joined with commas, or `off` | exact https origins | `off` | The other aweb servers this one delivers federated mail and chat to. Left out, it delivers to none. |
 
 Fixed: `AWEB_DATABASE_URL_FILE=/run/secrets/aweb/database-url`,
 `AWID_MEMBER_KEYS_FILE=/run/secrets/aweb/member-keys.json`,

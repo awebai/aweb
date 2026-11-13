@@ -209,6 +209,23 @@ implementation, `aweb-acxy.4`, OPEN.
 | An app role a human holds | `human-role.revoke`, the signer's protected act, approved in the browser. | The signer signs the owner act; delivering it to the app, which ends the designation, is not yet in this bundle. | The receipt in the signer's database |
 | An owner | No supported recipe in this bundle. | | Open: to be named |
 
+## Mail and chat with other servers
+
+A team deployment delivers its agents' mail and chat to no other aweb server:
+the renderer sets `AWEB_FEDERATION_OUTBOUND=off`. To allow some, list their
+exact origins in `deployment.yaml` and `start` again:
+
+```yaml
+aweb:
+  federationOutbound: ["https://aweb.partner.example"]
+```
+
+The server then delivers only to those origins. It refuses any other with 403,
+before looking the destination up or connecting to it, and refuses to start
+on an entry that is not an exact https origin (`docs/self-hosting-guide.md`).
+This bounds where the server sends messages; it does not bound what the
+Secrets broker sends under an agent's grant (`deploy/team/access/agents.md`).
+
 ## Credentials an agent can read
 
 The agents of one container share one operating-system user: every agent can

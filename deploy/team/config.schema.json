@@ -123,6 +123,15 @@
           },
           "x-env": "AWEB_APP_INTERNAL_ORIGINS"
         },
+        "federationOutbound": {
+          "description": "The other aweb servers this one delivers federated mail and chat to, as exact origins. Left out, it delivers to none.",
+          "type": "array",
+          "minItems": 1,
+          "uniqueItems": true,
+          "items": {
+            "$ref": "#/$defs/origin"
+          }
+        },
         "secrets": {
           "$ref": "#/$defs/secrets",
           "default": "aweb",

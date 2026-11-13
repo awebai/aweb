@@ -30,6 +30,9 @@ def test_each_input_becomes_the_setting_its_service_reads_with_defaults_filled()
         # the URL without one is not set.
         "AWEB_REDIS_URL": "",
         "AWEB_REDIS_URL_FILE": "/run/secrets/aweb/redis-url",
+        # aweb delivers federated mail and chat to no other server unless
+        # the operator lists one.
+        "AWEB_FEDERATION_OUTBOUND": "off",
         "AWID_REGISTRY_URL": "https://api.awid.ai",
         "COMPOSE_FILE": "compose.yaml",
         "COMPOSE_PROFILES": "postgres",
@@ -362,6 +365,22 @@ def test_aweb_refuses_internal_app_origins_that_are_not_exact_https_origins(valu
     config = copy.deepcopy(EXAMPLE)
     config["aweb"]["appInternalOrigins"] = value
     with pytest.raises(render_env.Refused, match="aweb.appInternalOrigins"):
+        render_env.render(config)
+
+
+def test_aweb_delivers_federated_messages_only_to_the_servers_the_operator_lists():
+    config = copy.deepcopy(EXAMPLE)
+    config["aweb"]["federationOutbound"] = ["https://aweb.partner.example", "https://mail.other.example:8443"]
+    rendered = render_env.render(config)
+    assert rendered["AWEB_FEDERATION_OUTBOUND"] == "https://aweb.partner.example,https://mail.other.example:8443"
+
+
+@pytest.mark.parametrize("value", [[], ["http://aweb.partner.example"], ["https://aweb.partner.example/v1"], ["off"]])
+def test_aweb_refuses_federation_entries_that_are_not_exact_https_origins(value):
+    # Delivery to no other server is the default, not a list entry.
+    config = copy.deepcopy(EXAMPLE)
+    config["aweb"]["federationOutbound"] = value
+    with pytest.raises(render_env.Refused, match="aweb.federationOutbound"):
         render_env.render(config)
 
 

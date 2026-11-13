@@ -27,6 +27,9 @@ services:
       # passed together from the env file, or not at all.
       AWEB_APP_INTERNAL_ORIGINS:
       AWEB_APP_INTERNAL_CIDR:
+      # Where it delivers federated mail and chat: "off", or a comma-separated
+      # list of origins. Passed only when the env file has it.
+      AWEB_FEDERATION_OUTBOUND:
     healthcheck:
       test: ["CMD", "curl", "-f", "http://localhost:8000/ready"]
       interval: 30s

@@ -165,6 +165,11 @@ def test_aweb_requires_registered_certificates_only_where_the_env_file_says_so()
     assert environment(AWEB)["AWEB_REQUIRE_REGISTERED_CERTIFICATES"] is None
 
 
+def test_aweb_is_given_its_federation_outbound_setting_only_when_the_env_file_has_it():
+    # The team deployment's renderer always renders it; unset, aweb delivers anywhere.
+    assert environment(AWEB)["AWEB_FEDERATION_OUTBOUND"] is None
+
+
 def test_aweb_is_given_its_internal_app_origins_only_when_the_env_file_has_them():
     assert environment(AWEB)["AWEB_APP_INTERNAL_ORIGINS"] is None
     assert environment(AWEB)["AWEB_APP_INTERNAL_CIDR"] is None
