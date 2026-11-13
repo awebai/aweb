@@ -29,6 +29,11 @@ FIXTURES = HERE / "fixtures" / "team_deployment_wake"
 VERIFIED = (FIXTURES / "verified.txt").read_text()
 UNVERIFIED = (FIXTURES / "unverified.txt").read_text()
 MESSAGE_ID = "0192b7e4-1c2d-7a3b-9e4f-5a6b7c8d9e0f"
+# Claude names a session's transcript by its UUID.
+PARENT = "5b1f0c2e-8d4a-4c3b-9a7e-1f2d3c4b5a60"
+OLDER = "0a1b2c3d-4e5f-4a6b-8c7d-9e0f1a2b3c4d"
+HELPER = "1c2d3e4f-5a6b-4c7d-8e9f-0a1b2c3d4e5f"
+STALE = "2d3e4f5a-6b7c-4d8e-9f0a-1b2c3d4e5f6a"
 BODY = "Automated delivery check 3f9c2a1e. No action is needed; do not reply or run any tool."
 SENT = wake.SentMail(message_id=MESSAGE_ID, sender="alice", subject="wake check 3f9c2a1e", body=BODY, nonce="3f9c2a1e")
 
@@ -119,8 +124,14 @@ class TranscriptReader(unittest.TestCase):
     def tearDown(self):
         subprocess.run(["rm", "-rf", str(self.root)], check=True)
 
-    def write(self, name: str, lines: list[str], age: float = 0) -> Path:
-        path = self.projects / name / f"{name}.jsonl"
+    def write(self, session: str, lines: list[str], age: float = 0, project: str = "-state-agents-b",
+              subagent: bool = False) -> Path:
+        """A transcript where Claude keeps them: <projects>/<project>/<session>.jsonl, or
+        a subagent's under <project>/<parent session>/subagents/."""
+        directory = self.projects / project
+        if subagent:
+            directory = directory / PARENT / "subagents"
+        path = directory / f"{session}.jsonl"
         path.parent.mkdir(parents=True, exist_ok=True)
         path.write_text("\n".join(lines) + "\n")
         stamp = time.time() - age
@@ -135,8 +146,8 @@ class TranscriptReader(unittest.TestCase):
 
     def test_the_homes_newest_transcript_gives_the_user_turns_that_carry_the_needle(self):
         home = str(self.home)
-        self.write("older", [entry(home, "startup task")], age=30)
-        path = self.write("newest", [
+        self.write(OLDER, [entry(home, "startup task")], age=30)
+        path = self.write(PARENT, [
             entry(home, "startup task"),
             entry(home, [{"type": "tool_result", "content": MESSAGE_ID}]),
             entry(home, VERIFIED),
@@ -148,13 +159,27 @@ class TranscriptReader(unittest.TestCase):
         self.assertEqual(found["texts"], [VERIFIED])
 
     def test_a_helper_session_in_the_homes_work_tree_or_an_older_one_is_not_the_homes(self):
-        self.write("helper", [entry(str(self.home / "work"), VERIFIED)])
-        self.write("stale", [entry(str(self.home), VERIFIED)], age=3600)
+        self.write(HELPER, [entry(str(self.home / "work"), VERIFIED)])
+        self.write(STALE, [entry(str(self.home), VERIFIED)], age=3600)
         self.assertEqual(self.read(MESSAGE_ID), {"transcript": None, "texts": []})
 
     def test_a_signed_in_session_is_seen_before_any_needle(self):
-        path = self.write("startup", [entry(str(self.home), "startup task")])
+        path = self.write(PARENT, [entry(str(self.home), "startup task")])
         self.assertEqual(self.read(""), {"transcript": str(path), "texts": []})
+
+    def test_a_newer_subagent_transcript_does_not_replace_the_sessions_own(self):
+        # naapp-review's counterexample: subagents inherit the home's cwd.
+        home = str(self.home)
+        path = self.write(PARENT, [entry(home, "startup task")], age=20)
+        self.write("agent-a1b2c3", [entry(home, VERIFIED)], subagent=True)
+        found = self.read(MESSAGE_ID)
+        self.assertEqual(found, {"transcript": str(path), "texts": []})
+
+    def test_a_subagent_or_non_session_file_alone_is_not_a_signed_in_session(self):
+        home = str(self.home)
+        self.write("agent-a1b2c3", [entry(home, "startup task")], subagent=True)
+        self.write("notes", [entry(home, "startup task")])
+        self.assertEqual(self.read(""), {"transcript": None, "texts": []})
 
 
 class Done:

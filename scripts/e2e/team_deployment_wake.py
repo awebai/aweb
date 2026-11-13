@@ -162,9 +162,11 @@ def require_not_promoted(events: list[MailEvent]) -> None:
 
 
 # Runs in the container with its node. OATS's own rule for a home's
-# conversation (packages/record lib/last-conversation.mjs): the newest Claude
-# transcript whose recorded cwd is the home itself, modified after the home was
-# created. A session in <home>/work is a helper's. Prints the transcript's path
+# conversation (packages/record lib/last-conversation.mjs): among Claude's
+# parent-session transcripts (a session UUID's file, never one under
+# subagents/, whose transcripts inherit the home's cwd), the newest modified
+# since the home was created whose first recorded cwd is the home itself. A
+# session in <home>/work is a helper's. Prints the transcript's path
 # and the user-turn texts that contain the needle; an empty needle asks only
 # whether the transcript exists.
 TRANSCRIPT_READER = r"""
@@ -174,6 +176,7 @@ const args = process.argv.slice(1);
 const [projects, home, createdMs, needle] = args;
 const real = p => { try { return fs.realpathSync(p); } catch { return p; } };
 const want = real(home), created = Number(createdMs);
+const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 function* files(dir) {
   let entries = [];
   try { entries = fs.readdirSync(dir, { withFileTypes: true }); } catch { return; }
@@ -193,8 +196,9 @@ function records(file) {
 }
 let best = null;
 for (const file of files(projects)) {
+  if (path.basename(path.dirname(file)) === "subagents" || !UUID.test(path.basename(file, ".jsonl"))) continue;
   const mtime = fs.statSync(file).mtimeMs;
-  if (mtime <= created || (best && mtime <= best.mtime)) continue;
+  if (mtime < created || (best && (mtime < best.mtime || (mtime === best.mtime && file > best.file)))) continue;
   const first = records(file).find(r => typeof r.cwd === "string");
   if (first && real(first.cwd) === want) best = { file, mtime };
 }
