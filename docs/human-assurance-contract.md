@@ -263,6 +263,59 @@ membership. It uses the protected controller, never a raw worker key. It does
 not revoke a human, remove a human-role holding, or acquire resource rights.
 Existing last-owner and containment limits apply.
 
+### Owner-approved agent membership removal (catalog addition)
+
+Juan 2026-11-13, via coordinator: `team.agent.remove/owner_approved` is a
+`team_controller` / `live_floor` signer operation. It is an additive row;
+the frozen base inventory is unchanged. Its policy scenarios are in
+[`human-assurance-owner-removal-v1.json`](vectors/human-assurance-owner-removal-v1.json).
+This specifies the next implementation; it does not claim the runtime serves
+the variant yet.
+
+The current team owner's fresh exact-act passkey approval may remove any
+agent/service membership or membership whose kind is not verified, including one admitted
+before cutover, one outside the requesting root's admission bucket, or one
+whose admitting root has been replaced or revoked. A working root, membership
+certificate or operator credential alone does not authorize this variant.
+The default root/self variant keeps its existing narrower authority.
+
+The closed subject is `{team_id, member_id, certificate_id,
+expected_membership}`. `member_id` is the certificate's `member_did_aw`, or
+its `member_did_key` for a local member. `expected_membership` carries exactly
+`{member_did_key, member_did_aw, member_address, alias, identity_scope}` with
+explicit nulls for absent optional fields. Prepare binds the exact current
+certificate UUID and snapshot, current controller, authority generation and
+action policy into B2. Approval displays the target and consequence. A changed
+target or snapshot under the same operation UUID conflicts, never silently
+selects another certificate.
+
+Every team certificate has exactly one owner-approved removal operation,
+selected by current verified kind. A verified human belongs exclusively to
+`team.human.remove/default`, which refuses unknown kind. A verified agent or
+an unknown kind belongs to `team.agent.remove/owner_approved`. For unknown
+kind, including a registered but unenrolled legacy member, the frozen approval
+display says plainly **"kind not verified"**. The server derives this
+classification from current authoritative facts, never a requester-supplied
+kind label. The owner's live exact-act approval authorizes removal in either
+operation; the unknown case does not assert verified agent kind.
+
+This exception is exclusive to the owner-approved variant. Root/self unattended
+removal and unattended admission still require positive verified agent kind
+for global subjects and retain their local-member and protected-key checks.
+Current human/controller/namespace authority and last-owner protections
+remain independent checks. Unavailable current evidence still refuses release;
+it is not converted into an unknown-kind approval. Human-role removal remains
+a separate operation.
+
+The existing certificate-revocation encoding and exact registry confirmation
+remain the effect boundary. Retain one signed effect and its release claim;
+an ambiguous answer reconciles that owned operation without a second mutation
+or signature. If the certificate has an admission record, release its capacity
+only with fresh confirmation and the atomic receipt/audit transition, keeping
+rate history. A pre-cutover or service certificate without an admission record
+can still be revoked; removal must not fabricate a quota record or charge.
+Original operation, authority-observation and UV deadlines never restart.
+
 Hook retargeting uses the existing owner-act vocabulary: revoke the old
 binding and activate the new binding as separate exact acts, with separate
 live approvals. There is no hidden multi-act queue behind one gesture.
