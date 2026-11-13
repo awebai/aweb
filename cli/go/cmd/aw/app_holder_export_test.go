@@ -1,6 +1,7 @@
 package main
 
 import (
+	"bytes"
 	"encoding/base64"
 	"encoding/json"
 	"os"
@@ -96,7 +97,10 @@ func TestAHolderExportBindsOnlyItsOwnHolding(t *testing.T) {
 	}
 }
 
-func TestAHolderExportKeepsItsIDChainVerifiable(t *testing.T) {
+// signedHolderChain is a real one-certificate human ID chain, with the
+// integer version every issuer writes, and the subject it names.
+func signedHolderChain(t *testing.T) (map[string]any, awid.IDChainSubject) {
+	t.Helper()
 	pub, key, err := awid.GenerateKeypair()
 	if err != nil {
 		t.Fatal(err)
@@ -111,18 +115,64 @@ func TestAHolderExportKeepsItsIDChainVerifiable(t *testing.T) {
 		t.Fatal(err)
 	}
 	_, signature, _ := awid.KeySigner(key)(payload)
-	e := testHolderExport()
-	e.IDChain = map[string]any{"v": 1, "type": "aweb.id-chain", "certificates": []any{
+	chain := map[string]any{"v": 1, "type": "aweb.id-chain", "certificates": []any{
 		map[string]any{"certificate": certificate, "signature": base64.RawURLEncoding.EncodeToString(signature)},
 	}}
-	if _, err := awid.EncodeIDChainHeader(e.IDChain); err != nil {
-		t.Fatalf("the chain as written: %v", err)
-	}
-	got, err := readHolderExport(writeTestHolderExport(t, e))
+	return chain, awid.IDChainSubject{ID: certificate["id"].(string), DIDKey: awid.ComputeDIDKey(pub)}
+}
+
+// readBackChainReason writes the export as JSON, edited by edit, reads it
+// with readHolderExport and returns VerifyIDChain's refusal reason for the
+// chain it read. No status evidence is supplied, so a chain whose shape and
+// signatures hold stops at the evidence step.
+func readBackChainReason(t *testing.T, edit func(doc map[string]any)) string {
+	t.Helper()
+	chain, subject := signedHolderChain(t)
+	e := testHolderExport()
+	e.IDChain = chain
+	data, err := json.Marshal(e)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err := awid.EncodeIDChainHeader(got.IDChain); err != nil {
-		t.Fatalf("the chain as read back: %v", err)
+	decoder := json.NewDecoder(bytes.NewReader(data))
+	decoder.UseNumber()
+	var doc map[string]any
+	if err := decoder.Decode(&doc); err != nil {
+		t.Fatal(err)
+	}
+	edit(doc)
+	got, err := readHolderExport(writeTestHolderExport(t, doc))
+	if err != nil {
+		t.Fatal(err)
+	}
+	return awid.VerifyIDChain(got.IDChain, subject, nil, "example.com").Reason
+}
+
+func TestAHolderExportKeepsItsIDChainVerifiable(t *testing.T) {
+	if reason := readBackChainReason(t, func(map[string]any) {}); reason != "evidence_unavailable" {
+		t.Fatalf("a signed chain read back from its export is refused before evidence: %s", reason)
+	}
+}
+
+func TestAHolderExportStillRefusesAMalformedOrTamperedChain(t *testing.T) {
+	first := func(doc map[string]any) map[string]any {
+		return doc["id_chain"].(map[string]any)["certificates"].([]any)[0].(map[string]any)
+	}
+	for name, edit := range map[string]func(map[string]any){
+		"a fractional chain version": func(doc map[string]any) {
+			doc["id_chain"].(map[string]any)["v"] = json.Number("1.5")
+		},
+		"a fractional certificate version": func(doc map[string]any) {
+			first(doc)["certificate"].(map[string]any)["v"] = json.Number("1.0")
+		},
+		"a certificate changed after signing": func(doc map[string]any) {
+			first(doc)["certificate"].(map[string]any)["kind"] = "agent"
+		},
+	} {
+		if reason := readBackChainReason(t, edit); reason == "evidence_unavailable" {
+			t.Errorf("%s: reached the evidence step", name)
+		} else {
+			t.Logf("%s: %s", name, reason)
+		}
 	}
 }
