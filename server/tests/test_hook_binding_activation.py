@@ -227,6 +227,23 @@ async def test_original_protection_deadline_after_last_effect_await_rolls_back(e
     assert await env.db.fetch_value("SELECT count(*) FROM {{tables.owner_act_nonces}}") == int(not expire)
 
 
+@pytest.mark.asyncio
+async def test_protected_core_owner_act_refusal_preserves_its_code(env):
+    await _install(env.db)
+    registration, _ = await _bindings(env)
+    await env.registry_db.execute(
+        "INSERT INTO {{tables.team_protection}} "
+        "(domain,name,service_id,service_did_key,generation) VALUES ('acme.com','backend','test-service',$1,1)",
+        _did(SigningKey.generate()),
+    )
+    with pytest.raises(ServiceError) as refused:
+        await _activate(env, registration)
+    assert refused.value.status_code == 403
+    assert refused.value.detail["code"] == "protected_controller_required"
+    assert (await list_app_bindings(env.db, team_id=TEAM, app_id="logs"))[0].state == "pending"
+    assert await env.db.fetch_value("SELECT count(*) FROM {{tables.owner_act_nonces}}") == 0
+
+
 async def _revoke(env, binding, *, owner=None, team_id=TEAM, act="hook-binding.revoke"):
     signing, signature = (owner or env.owner).sign(act, binding)
     return await revoke_binding(
