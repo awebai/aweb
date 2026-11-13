@@ -3,6 +3,8 @@
 import base64
 from datetime import UTC, datetime
 
+from awid.registry import CachedRegistryClient
+
 from aweb_naapp.runtime.protected_signer import SignerRefused
 from aweb_naapp.runtime.protected_signer.types import owner_act_operation
 
@@ -22,9 +24,25 @@ def delivery_plan(custody, operation, artifact, signing, signature, timestamp):
     return plan
 
 
-def authenticate_plan(custody, plan):
-    authentication = custody._key.sign(plan.controller_envelope).signature if plan.controller_envelope is not None else None
+def authenticate_plan(custody, plan, *, signing, signature):
+    # A revoke artifact already is its exact controller-auth envelope. Reuse
+    # its original signature instead of performing another key operation.
+    if plan.controller_envelope is None:
+        authentication = None
+    elif plan.controller_envelope == signing:
+        authentication = signature
+    else:
+        authentication = custody._key.sign(plan.controller_envelope).signature
     return plan.authenticate(authentication)
+
+
+async def _invalidate(client, operation, domain, name):
+    # Preserve the SDK's existing registration tolerance, separately from the
+    # strict prepared-revocation invalidation port. No alternate cache exists.
+    if operation.spec.effect.cache_tolerates_unavailable and isinstance(client, CachedRegistryClient):
+        await client._invalidate_team_certificate_cache_keys(domain, name, tolerate_unavailable=True)
+    else:
+        await client.invalidate_team_certificate_cache(domain, name)
 
 
 async def deliver_legacy(custody, registry, operation, artifact, result):
@@ -36,7 +54,18 @@ async def deliver_legacy(custody, registry, operation, artifact, result):
     plan = delivery_plan(custody, operation, artifact, signing, signature, timestamp)
     if plan.audience != registry.registry_url:
         raise SignerRefused("scope_refused")
-    delivery = authenticate_plan(custody, plan)
+    delivery = authenticate_plan(custody, plan, signing=signing, signature=signature)
     client = getattr(registry, "client", registry)
-    await client._request_json(delivery.method, delivery.path, headers=dict(delivery.headers),
-        content=delivery.body, registry_url=registry.registry_url)
+    typed = owner_act_operation(operation)
+    origin = await client._registry_url_for_domain(custody.domain)
+    if origin != registry.registry_url:
+        raise SignerRefused("scope_refused")
+    name = custody.team_id.partition(":")[0]
+    await _invalidate(client, typed, custody.domain, name)
+    try:
+        await client._request_json(delivery.method, delivery.path, headers=dict(delivery.headers),
+            content=delivery.body, registry_url=origin)
+    finally:
+        # A lost answer can follow a committed change. Do not preserve a stale
+        # active certificate after returning that ambiguity to reconciliation.
+        await _invalidate(client, typed, custody.domain, name)

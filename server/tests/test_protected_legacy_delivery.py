@@ -76,6 +76,11 @@ class ObservedCachedRegistry(CachedRegistryClient):
         self.events.append("domain")
         return self.registry_url
 
+    async def _invalidate_team_certificate_cache_keys(self, domain, name, *, tolerate_unavailable=False):
+        assert tolerate_unavailable is True
+        assert (domain, name) == (DOMAIN, "engineering")
+        self.events.append("invalidate")
+
     async def invalidate_team_certificate_cache(self, domain, name):
         # Observe the existing SDK cache port. No local Redis is started.
         assert (domain, name) == (DOMAIN, "engineering")
@@ -116,9 +121,43 @@ async def test_only_a_distinct_registration_envelope_needs_another_signature(nam
     op, artifact, result, custody, calls = fixture(name)
     client = ObservedCachedRegistry()
     try:
-        await custody.register_admission(client, op, artifact, result)
+        deliver = custody.remove_member if name == "team.agent.remove" else custody.register_admission
+        await deliver(client, op, artifact, result)
         assert len(calls) == expected_auth_signatures
         if calls:
             assert calls[0] != base64.b64decode(result["signing"])
+    finally:
+        await client.aclose()
+
+
+@pytest.mark.asyncio
+async def test_a_resolved_registry_mismatch_does_not_invalidate_or_send():
+    from aweb_naapp.runtime.protected_signer import SignerRefused
+
+    op, artifact, result, custody, _ = fixture("team.agent.admit")
+    client = ObservedCachedRegistry()
+
+    async def other_origin(domain):
+        client.events.append("domain")
+        return "https://other.customer.example"
+
+    client._registry_url_for_domain = other_origin
+    try:
+        with pytest.raises(SignerRefused, match="scope_refused"):
+            await deliver_legacy(custody, client, op, artifact, result)
+        assert client.events == ["domain"] and client.sent == []
+    finally:
+        await client.aclose()
+
+
+@pytest.mark.asyncio
+async def test_a_changed_signed_result_never_reaches_a_cache_or_delivery_port():
+    op, artifact, result, custody, _ = fixture("team.agent.remove")
+    client = ObservedCachedRegistry()
+    try:
+        with pytest.raises(ValueError, match="signed artifact"):
+            await deliver_legacy(custody, client, op, artifact,
+                {**result, "signing": base64.b64encode(b"changed").decode()})
+        assert client.events == [] and client.sent == []
     finally:
         await client.aclose()
