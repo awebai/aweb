@@ -28,7 +28,7 @@ from aweb.coordination.app_tasks import (
 )
 from aweb.service_errors import ConflictError, ForbiddenError, ValidationError
 from aweb.task_contracts import validate_app_task, strict_json_bytes
-from test_dashboard_privacy import privacy_app, TEAM  # noqa: F401
+from test_dashboard_privacy import privacy_app as privacy_app, TEAM
 from test_task_answers import _v2_request
 
 
@@ -503,7 +503,8 @@ async def test_c2_cached_authority_outage_fails_closed(cached_app_request_contex
     unavailable[0] = f"/v1/namespaces/example.test/teams/{team_name}" + registry_suffix
     body = _body(env, expired=expired_replay, request_id="action-1" if expired_replay else "cache-new")
     response = await _app_http(context, "POST", "/v1/tasks/app-requests", body)
-    assert response.status_code == 503 and response.json()["detail"] == "authority_unavailable", response.text
+    expected = {"code": "protected_state_unavailable"} if registry_suffix == "" else "authority_unavailable"
+    assert response.status_code == 503 and response.json()["detail"] == expected, response.text
     assert await env.db.fetch_value("SELECT count(*) FROM {{tables.task_app_requests}}") == 1
 
 
