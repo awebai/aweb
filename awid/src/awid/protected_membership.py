@@ -19,6 +19,7 @@ from types import MappingProxyType
 
 from awid.did import public_key_from_did
 from awid.protected_effect import EffectRefused, validate_binding
+from awid.registry_types import RegistryError
 from awid.signing import canonical_json_bytes
 from awid.team_certificate import TeamCertificateError, check_team_certificate
 from awid.team_ids import parse_team_id
@@ -116,9 +117,14 @@ async def observe_team_protection(registry, team_id, *, certificate_id=None):
         return result
     except TeamCertificateError:
         raise
-    except Exception:
-        logger.exception("Current protected-team evidence unavailable")
-        raise EffectRefused("protected_state_unavailable") from None
+    except Exception as exc:
+        # A relying server may distinguish an unserved private team from a
+        # failed credential. Retain that typed cause without inventing legacy.
+        private_refusal = (isinstance(exc, RegistryError) and exc.status_code == 403
+                           and (exc.code == "team_private" or "team_private" in exc.detail))
+        if not private_refusal:
+            logger.exception("Current protected-team evidence unavailable")
+        raise EffectRefused("protected_state_unavailable") from exc
 
 
 def check_presented_membership(observation, certificate):
