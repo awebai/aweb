@@ -19,6 +19,9 @@ from pgdbm.core import TransactionManager
 
 
 class AuditKind(StrEnum):
+    PROTECTED_OPERATION_PREPARED = "protected_operation_prepared"
+    PROTECTED_OPERATION_SIGNED = "protected_operation_signed"
+    PROTECTED_OPERATION_REFUSED = "protected_operation_refused"
     APPROVER_DESIGNATED = "approver_designated"
     APPROVER_REDESIGNATED = "approver_redesignated"
     APPROVER_ENROLLED = "approver_enrolled"

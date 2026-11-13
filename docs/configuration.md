@@ -96,8 +96,9 @@ key: new lines use the new key, and earlier keys stay in the owner's keychain
 so older lines remain readable. A rotated-out key protects only what was
 sealed to it.
 
-Without an installed record the logs are written in plaintext, and `aw doctor`
-warns. An installed record that does not verify stops local logging rather
+Without an installed record the logs are written in plaintext, the default,
+and `aw doctor` reports it for information without degrading its verdict. An
+installed record that does not verify stops local logging rather
 than falling back to plaintext; `aw doctor` reports it as a failure. Each
 sealed interaction-log line carries a visible tag derived from its kind and
 message id, so the agent can skip messages it already logged; the tag reveals

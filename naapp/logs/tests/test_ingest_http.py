@@ -79,6 +79,7 @@ class World:
     now: datetime
     client: httpx.AsyncClient
     runtime: object = None
+    ledger: object = None
 
     def event(self, kind, *, event_id=None, payload=None, producer=None, occurred_at=None, hook=None):
         signing, _ = signed_event(kind, team_id=self.member.team_id, event_id=event_id or str(uuid4()))
@@ -146,8 +147,8 @@ async def customer_hosted_credential(coordination, member, directory) -> dict[st
     return {"signing_key_file": str(key), "certificate_file": str(certificate)}
 
 
-@pytest.fixture
-async def world(coordination, test_db_factory, tmp_path, monkeypatch, request):
+@pytest.fixture(name="world")
+async def world_fixture(coordination, test_db_factory, tmp_path, monkeypatch, request):
     now = datetime.now(UTC).replace(microsecond=0)
     member = Member(
         team_id=f"logs-{uuid4().hex[:12]}:ingest.example", certificate_id="c_41",
@@ -163,6 +164,7 @@ async def world(coordination, test_db_factory, tmp_path, monkeypatch, request):
         "valid_from": "2026-01-01T00:00:00Z", "valid_until": None,
     }]))
     db = await test_db_factory.create_db(suffix="logs_http")
+    ledger = await test_db_factory.create_db(suffix="logs_http_purge_ledger")
     server_db = coordination.server.db.get_manager("aweb")
     overrides = dict(getattr(request, "param", {}))
     awid_authority: dict = {"awid_service_token": SERVICE_TOKEN}
@@ -174,6 +176,7 @@ async def world(coordination, test_db_factory, tmp_path, monkeypatch, request):
         }}
     settings = LogsSettings(
         _env_file=None, database_url=db.config.get_dsn(), db_schema=db.schema,
+        purge_ledger_database_url=ledger.config.get_dsn(),
         app_id=TEST_APP_ID, public_origin=ORIGIN, console_origin=CONSOLE,
         awid_registry_url=REGISTRY_URL, **awid_authority,
         app_key_files=write_key_files(tmp_path),
@@ -211,7 +214,7 @@ async def world(coordination, test_db_factory, tmp_path, monkeypatch, request):
         async with httpx.AsyncClient(transport=httpx.ASGITransport(app=service), base_url=ORIGIN) as client:
             yield World(
                 coordination, db, server_db, member, settings, installation, bindings, now, client,
-                service.api_app.state.runtime,
+                service.api_app.state.runtime, ledger,
             )
 
 

@@ -2,7 +2,10 @@
 
 `make test-cli`, `test-server`, and `test-awid` prepare dependencies, then run
 behind the native deny proxy. Loopback stays direct. The exact existing
-`127.0.0.1.nip.io` fixture is forwarded to 127.0.0.1 without DNS. Reserved test
+`127.0.0.1.nip.io` and `signer.example.com` fixtures are forwarded to 127.0.0.1
+without DNS. The governance browser fixture explicitly selects this proxy for
+both Chromium and Playwright driver requests. Its RP alias stays behind the
+proxy; it is not a `NO_PROXY` or wildcard-domain exception. Reserved test
 suffixes bypass the native proxy to retain normal DNS failure semantics. Other requests fail the wrapper even when
 the caller ignores the error. The per-run refused-host report remains visible.
 
@@ -22,7 +25,9 @@ Dockerfile is retained with the run's evidence.
 This proxy is a **soft** guard: a client disabling proxy support bypasses it.
 `make test-isolated` is the hard Go/Python/Node suite gate: dependencies are built
 into an image before execution; the runner has only an internal Docker network,
-no Docker socket, and a DNS sink with no upstream. It disables the native
+no Docker socket, and a DNS sink with no upstream. Exact hosts entries map the
+same two fixture names to loopback for driver requests when the native proxy
+is disabled. It disables the native
 proxy and the host's DNS search domains, keeping reserved fixture lookups from
 expanding into queries for the host's network. Refused DNS retains normal connection-error semantics. PostgreSQL and Redis share
 the runner's network namespace, so fixtures remain loopback. A denied DNS query

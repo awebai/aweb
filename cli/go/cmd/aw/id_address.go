@@ -107,7 +107,7 @@ func executeIDAddressClaim(ctx context.Context, workingDir string, opts idAddres
 		return idAddressClaimOutput{}, err
 	}
 
-	registry, err := newConfiguredRegistryClient(nil, "")
+	registry, err := newConfiguredRegistryClient(nil)
 	if err != nil {
 		return idAddressClaimOutput{}, err
 	}

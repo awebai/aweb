@@ -84,6 +84,18 @@ class PreparedOwnerAct:
     def __repr__(self) -> str:
         return f"PreparedOwnerAct({self._checked.act!r})"
 
+    def require_fresh(self) -> None:
+        """Original key/act deadlines, synchronously after the final effect await.
+
+        This does not authenticate again, renew evidence, or consume a nonce.
+        The caller must still use consume_in in the effect's transaction.
+        """
+        now = _utc_now(self._verifier._clock)
+        if now - self._prepared_at > KEY_FRESHNESS:
+            raise Refused("owner_required", "prepared too long ago for its team key to be current")
+        if now >= self._checked.expires_at:
+            raise Refused("expired", "the owner act expired")
+
 
 class OwnerActVerifier:
     """One verifier's owner-act check: its scope, audience and vocabulary, and
@@ -132,6 +144,30 @@ class OwnerActVerifier:
         )
         return PreparedOwnerAct(checked, signing, self, _utc_now(lambda: now))
 
+    async def applied_in(self, tx: TransactionManager, prepared: PreparedOwnerAct) -> bool:
+        """Read an exact committed act's nonce receipt, without consuming it.
+
+        A different signed act under the same nonce still refuses. This grants
+        no effect authority: the caller must hold/check its installation fence
+        and require the original prepared proof fresh after its final await.
+        """
+        if not isinstance(prepared, PreparedOwnerAct) or prepared._verifier is not self:
+            raise Refused("verifier_misconfigured", "the act was prepared by another verifier")
+        prepared.require_fresh()
+        act = prepared._checked
+        digest = await tx.fetch_value(
+            "SELECT act_sha256 FROM {{tables.owner_act_nonces}} "
+            "WHERE scope = $1 AND team_id = $2 AND nonce = $3 FOR SHARE",
+            self.scope,
+            act.team_id,
+            act.nonce,
+        )
+        if digest is None:
+            return False
+        if digest != hashlib.sha256(prepared._signing).hexdigest():
+            raise Refused("nonce_reused", act.nonce)
+        return True
+
     async def consume_in(
         self,
         tx: TransactionManager,
@@ -151,16 +187,12 @@ class OwnerActVerifier:
         if expected_subject is None:
             raise Refused("verifier_misconfigured", "every verifier option is required")
         act = prepared._checked
-        now = _utc_now(self._clock)
         # The team key read in prepare is trusted for the same bound as the
         # registry cache: a prepared act older than that may predate a key
         # rotation, so it no longer proves the current controller key.
-        if now - prepared._prepared_at > KEY_FRESHNESS:
-            raise Refused("owner_required", "prepared too long ago for its team key to be current")
+        prepared.require_fresh()
         # Expiry again: a prepared act held past its expiry could otherwise be
         # consumed after its earlier nonce row was pruned.
-        if now >= act.expires_at:
-            raise Refused("expired", f"expired at {act.fields['expires_at']}")
         used = await tx.fetch_value(
             "SELECT 1 FROM {{tables.owner_act_nonces}} WHERE scope = $1 AND team_id = $2 AND nonce = $3",
             self.scope,

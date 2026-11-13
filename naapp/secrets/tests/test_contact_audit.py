@@ -10,7 +10,7 @@ from aweb_naapp_testing.webauthn import SoftAuthenticator
 
 from aweb_secrets.owners import approver_scope
 from tests.test_change_sets import (
-    ALICE,
+    BOB,
     ORIGIN,
     TEAM,
     by_member,
@@ -34,7 +34,9 @@ async def schedule(world, *, prepared=True):
         )
     new_contact = "new-finance@example.com"
     request = change_set(
-        drafter=by_member(ALICE),
+        # ALICE's two setup drafts have used her per-member budget. This
+        # independent draft still receives the owner's actual approval.
+        drafter=by_member(BOB),
         changes=[change_approver_contact("finance", new_contact)],
     )
     async with world.db.transaction() as tx:

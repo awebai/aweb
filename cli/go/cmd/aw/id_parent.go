@@ -394,7 +394,7 @@ func executeIDParentImport(ctx context.Context, opts idParentOptions, raw []byte
 	if err != nil {
 		return idParentImportOutput{}, err
 	}
-	registry := awid.NewAWIDRegistryClient(nil, opts.TXTResolver)
+	registry := newAWIDRegistryClient(nil, opts.TXTResolver)
 	registry.DefaultRegistryURL = registryURL
 
 	chain := response["chain"].(map[string]any)

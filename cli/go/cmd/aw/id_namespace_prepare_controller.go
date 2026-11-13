@@ -69,7 +69,7 @@ func executeIDNamespacePrepareController(opts idNamespacePrepareControllerOption
 		return idNamespacePrepareControllerOutput{}, err
 	}
 
-	registry, err := newConfiguredRegistryClient(nil, "")
+	registry, err := newConfiguredRegistryClient(nil)
 	if err != nil {
 		return idNamespacePrepareControllerOutput{}, err
 	}

@@ -95,6 +95,7 @@ from aweb_naapp.runtime.passkeys.proof import (
     PasskeyProofUnavailable,
     ProofContextResolver,
     ProofContextUnavailable,
+    ProtectedKeyContext,
     RetainedPasskeyProof,
     is_public_cose_key,
     passkey_evidence_commitment,
@@ -186,8 +187,26 @@ DESIGNATE_ACT = "app-role.designate"
 RECOVER_ACT = "app-credential.recover"
 REVOKE_ACT = "app-role.revoke"
 HOLDER_DESIGNATE_ACT = "human-role.designate"
+# A protected authority's first approver, on its signer's once-only bootstrap.
+PROTECTED_BOOTSTRAP = "protected-bootstrap"
+# One transaction lock serializes every protected bootstrap: they are rare,
+# local operator acts, and in turn each sees the others' scope, subject and id.
+PROTECTED_BOOTSTRAP_LOCK = "aweb_naapp.passkeys.protected-bootstrap"
 HOLDER_REPLACE_ACT = "human-credential.replace"
 HOLDER_REVOKE_ACT = "human-role.revoke"
+
+
+@dataclass(frozen=True)
+class ProtectedBootstrap:
+    """A protected authority's once-only local bootstrap, admitted by its
+    signer in the transaction `transaction_id` names: evidence for that
+    authority's first approver, with no team owner act. B3 binds it to its
+    transaction and lets it take effect once; what makes it legitimate is
+    the signer's."""
+
+    bootstrap_id: str
+    actor: str
+    transaction_id: int
 
 
 @dataclass(frozen=True)
@@ -511,8 +530,83 @@ class Passkeys:
             raise DesignationRefused("the first approver needs app-role.designate")
         if previous is not None and kind != RECOVER_ACT:
             raise DesignationRefused("replacing an approver needs app-credential.recover")
+        return await self._designated(
+            tx,
+            scope=scope,
+            subject=str(uuid.uuid4()),
+            contact=contact,
+            act=(act_id, kind, actor),
+            previous=previous,
+            now=now,
+        )
+
+    async def designate_first(
+        self,
+        tx: TransactionManager,
+        *,
+        scope: str,
+        subject: str,
+        contact: str,
+        evidence: ProtectedBootstrap,
+    ) -> Designation:
+        """Designate `subject`, the pending human the signer selected, as a
+        protected authority's first approver in the caller's transaction, on
+        the `ProtectedBootstrap` its signer admitted there. It only begins: a
+        scope that has ever had an approver, or a subject that already
+        exists, is refused, and a bootstrap takes effect once. Bootstraps are
+        serialized with one another, so concurrent ones decide in turn. The
+        approver is in effect at once and enrols through the returned link;
+        nothing is sent: deliver the designation after the commit."""
+        if not isinstance(evidence, ProtectedBootstrap):
+            raise TypeError("a first designation needs a protected bootstrap")
+        if evidence.transaction_id != await _transaction_id(tx):
+            raise DesignationRefused("the bootstrap was admitted in another transaction")
+        if not subject:
+            raise DesignationRefused("a first designation names its subject")
+        await tx.execute(
+            "SELECT pg_advisory_xact_lock(hashtextextended($1, 0))", PROTECTED_BOOTSTRAP_LOCK
+        )
+        act_id = f"bootstrap:{evidence.bootstrap_id}"
+        await self._refuse_used(tx, act_id)
+        if await self._holds_a_human_role(tx, scope):
+            raise DesignationRefused("a human-role holder is designated by its own acts")
+        if await tx.fetch_value(
+            "SELECT 1 FROM {{tables.passkey_approvers}} WHERE scope = $1 LIMIT 1 FOR UPDATE",
+            scope,
+        ):
+            raise DesignationRefused("the scope has had an approver: a bootstrap only begins")
+        if await tx.fetch_value(
+            "SELECT 1 FROM {{tables.passkey_approvers}} WHERE subject = $1", subject
+        ):
+            raise DesignationRefused("the subject already exists")
+        return await self._designated(
+            tx,
+            scope=scope,
+            subject=subject,
+            contact=contact,
+            act=(act_id, PROTECTED_BOOTSTRAP, evidence.actor),
+            previous=None,
+            now=self._clock(),
+        )
+
+    async def _designated(
+        self,
+        tx: TransactionManager,
+        *,
+        scope: str,
+        subject: str,
+        contact: str,
+        act: tuple[str, str, str],
+        previous: Mapping[str, Any] | None,
+        now: datetime,
+    ) -> Designation:
+        """`subject`, the new approver for `scope` under `act` (its id, kind
+        and actor), replacing `previous` after the cooling-off when there is
+        one; its enrolment link, the act's record and its audit event, in
+        `tx`."""
+        act_id, kind, actor = act
         approver = Approver(
-            scope=scope, subject=str(uuid.uuid4()), subject_type=SUBJECT_TYPE, contact=contact
+            scope=scope, subject=subject, subject_type=SUBJECT_TYPE, contact=contact
         )
         effective_at = now
         notified: list[str] = []
@@ -1359,7 +1453,7 @@ class Passkeys:
                 if bound is None:
                     raise ProofContextUnavailable()
                 installation = await self._proof_context(scope, tx=tx)
-                if not isinstance(installation, PasskeyInstallationContext):
+                if not isinstance(installation, (PasskeyInstallationContext, ProtectedKeyContext)):
                     raise ProofContextUnavailable()
                 context = canonical_json_bytes(
                     {
@@ -1472,6 +1566,8 @@ class Passkeys:
         fence prepares authority in the effect tx before B3, and checks it
         after audit before commit. A refused effect leaves the link unused;
         its WebAuthn challenge stays spent, so retry needs fresh options.
+        The challenge and the link must both still be live once the fence's
+        check has returned, just before the commit.
         """
         enrolment = await self._usable_enrolment(link_token)
         try:
@@ -1536,6 +1632,10 @@ class Passkeys:
             )
             if fence is not None:
                 await fence.check(tx)
+            # After the last await: a lock wait in the fence may outlast the
+            # registration challenge or the link, which then enrol nothing.
+            if self._clock() >= min(issued["expires_at"], enrolment["expires_at"]):
+                raise EnrolmentRefused("the registration or its link expired")
         return Approver(
             scope=enrolment["scope"],
             subject=enrolment["subject"],
@@ -1694,15 +1794,23 @@ class Passkeys:
             )
             await tx.execute(
                 "INSERT INTO {{tables.passkey_proofs}} "
-                "(evidence_ref,app_id,team_id,installation_id,generation,record,commitment) "
-                "VALUES($1,$2,$3,$4,$5,$6,$7)",
+                "(evidence_ref,app_id,team_id,installation_id,generation,record,commitment,authority_context) "
+                "VALUES($1,$2,$3,$4,$5,$6,$7,$8)",
                 evidence_ref,
-                context["app_id"],
-                context["team_id"],
-                context["installation_id"],
+                context.get("app_id"),
+                context.get("team_id"),
+                context.get("installation_id"),
                 context["generation"],
                 canonical_json_bytes(retained.export()),
                 commitment,
+                canonical_json_bytes(
+                    {
+                        key: context[key]
+                        for key in ("v", "kind", "service_id", "authority", "human", "generation")
+                    }
+                )
+                if context.get("kind") == "protected_key"
+                else None,
             )
             if audit is not None:
                 kind, details = audit
@@ -2256,12 +2364,19 @@ class Passkeys:
             proof = RetainedPasskeyProof.from_export(json.loads(row["record"]))
         except (ValueError, KeyError, TypeError):
             raise PasskeyProofUnavailable() from None
+        if proof.context.get("kind") == "protected_key":
+            stored = row["authority_context"]
+            if stored is None:
+                raise PasskeyProofUnavailable()
+            expected = json.loads(stored)
+        else:
+            expected = {
+                field: row[field]
+                for field in ("app_id", "team_id", "installation_id", "generation")
+            }
         if (
             proof.metadata["evidence_ref"] != evidence_ref
-            or any(
-                proof.context[field] != row[field]
-                for field in ("app_id", "team_id", "installation_id", "generation")
-            )
+            or any(proof.context[field] != value for field, value in expected.items())
             or passkey_evidence_commitment(proof) != row["commitment"]
         ):
             raise PasskeyProofUnavailable()
@@ -2271,7 +2386,7 @@ class Passkeys:
         self,
         evidence_ref: str,
         *,
-        context: PasskeyInstallationContext,
+        context: PasskeyInstallationContext | ProtectedKeyContext,
         scope: str,
         subject: str,
         purpose: str,
@@ -2282,7 +2397,7 @@ class Passkeys:
         Expected context comes from the admitted installation. Liveness,
         session expiry and action authority are separate caller responsibilities.
         """
-        if not isinstance(context, PasskeyInstallationContext):
+        if not isinstance(context, (PasskeyInstallationContext, ProtectedKeyContext)):
             raise PasskeyProofUnavailable()
         proof = await self.retained_proof(evidence_ref, tx=tx)
         if any(proof.context[k] != v for k, v in context.fields().items()) or (

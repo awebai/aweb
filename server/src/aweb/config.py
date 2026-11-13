@@ -2,6 +2,7 @@ import json
 import os
 import re
 from dataclasses import dataclass, field
+from ipaddress import IPv4Network, IPv6Network, ip_network
 from pathlib import Path
 from datetime import datetime
 from typing import Optional
@@ -13,7 +14,10 @@ from awid.ratelimit import normalize_service_token
 from awid.utc_timestamps import parse_utc_seconds
 from awid.team_ids import build_team_id, parse_team_id
 from awid.signing import load_signing_key_pem
+from aweb_naapp.hooks.strictjson import parse_strict
 from aweb_naapp.key_file import read_key_file
+from aweb_naapp.egress import EgressRefused, InternalDestinations
+from aweb_naapp.egress.addresses import check_internal_cidr
 
 
 def _env_bool(*names: str, default: bool = False) -> bool:
@@ -32,6 +36,54 @@ def _env_optional_int(*names: str) -> Optional[int]:
             continue
         return int(value)
     return None
+
+
+@dataclass(frozen=True)
+class AppInternalOrigins:
+    """The exact app origins the operator lets this server fetch manifests from
+    on internal addresses, and the one network those addresses must lie in."""
+
+    origins: frozenset[str] = frozenset()
+    cidr: IPv4Network | IPv6Network | None = None
+
+    @property
+    def destinations(self) -> InternalDestinations:
+        return InternalDestinations.ALLOWED if self.origins else InternalDestinations.DISABLED
+
+
+def get_app_internal_origins() -> AppInternalOrigins:
+    """Read AWEB_APP_INTERNAL_ORIGINS (a JSON list of exact HTTPS origins) and
+    AWEB_APP_INTERNAL_CIDR (their network), supplied together or not at all.
+
+    Unset, every app origin is public: a manifest on a private address is
+    refused. These are operator startup settings; no install request names them.
+    """
+    from aweb.app_registry import canonical_app_origin
+    from aweb.service_errors import ServiceError
+
+    raw_origins = (os.getenv("AWEB_APP_INTERNAL_ORIGINS") or "").strip()
+    raw_cidr = (os.getenv("AWEB_APP_INTERNAL_CIDR") or "").strip()
+    if not raw_origins and not raw_cidr:
+        return AppInternalOrigins()
+    if not raw_origins or not raw_cidr:
+        raise ValueError("AWEB_APP_INTERNAL_ORIGINS and AWEB_APP_INTERNAL_CIDR must be supplied together")
+    try:
+        listed = json.loads(raw_origins)
+    except json.JSONDecodeError as exc:
+        raise ValueError("AWEB_APP_INTERNAL_ORIGINS must be a JSON list of exact HTTPS origins") from exc
+    if not isinstance(listed, list) or not listed or not all(isinstance(entry, str) for entry in listed):
+        raise ValueError("AWEB_APP_INTERNAL_ORIGINS must be a JSON list of exact HTTPS origins")
+    origins = set()
+    for entry in listed:
+        try:
+            origins.add(canonical_app_origin(entry))
+        except (ServiceError, EgressRefused, ValueError) as exc:
+            raise ValueError(f"AWEB_APP_INTERNAL_ORIGINS: {entry!r} is not an exact HTTPS origin") from exc
+    try:
+        cidr = check_internal_cidr(ip_network(raw_cidr, strict=True))
+    except (ValueError, EgressRefused) as exc:
+        raise ValueError("AWEB_APP_INTERNAL_CIDR must be an exact, permitted internal network") from exc
+    return AppInternalOrigins(frozenset(origins), cidr)
 
 
 FEDERATION_OUTBOUND_SETTING = "AWEB_FEDERATION_OUTBOUND"
@@ -121,6 +173,7 @@ class Settings:
     hook_producer_keys: tuple["HookProducerKey", ...]
     federation_outbound: FederationOutbound = field(default_factory=FederationOutbound)
     awid_member_signing_keys: dict[str, bytes] = field(default_factory=dict, repr=False)
+    app_internal_origins: AppInternalOrigins = field(default_factory=AppInternalOrigins)
 
 
 def get_awid_registry_url() -> str:
@@ -138,6 +191,32 @@ def get_awid_service_token() -> str | None:
     return normalize_service_token(os.getenv("AWID_SERVICE_TOKEN"))
 
 
+def load_member_signing_keys(manifest: Path, *, allow_empty: bool = False) -> dict[str, bytes]:
+    """The member keys a team-to-key-file manifest names, by canonical team ID.
+
+    The manifest is strict JSON and holds paths, never key material; a
+    relative path is relative to the manifest. Each key file passes the
+    shared key-file checks. Raises OSError, ValueError or TypeError, whose
+    messages the callers replace with their own: none repeats a file's
+    content.
+    """
+    manifest = manifest.expanduser()
+    entries = parse_strict(manifest.read_bytes())
+    if not isinstance(entries, dict) or (not entries and not allow_empty):
+        raise ValueError("expected a nonempty team-to-key-file object")
+    keys = {}
+    for team_id, filename in entries.items():
+        if build_team_id(*parse_team_id(team_id)) != team_id:
+            raise ValueError("team IDs must be canonical name:domain values")
+        if not isinstance(filename, str) or not filename.strip():
+            raise ValueError("each team must name a PEM key file")
+        path = Path(filename).expanduser()
+        if not path.is_absolute():
+            path = manifest.parent / path
+        keys[team_id] = load_signing_key_pem(read_key_file(path))
+    return keys
+
+
 def get_awid_member_signing_keys() -> dict[str, bytes]:
     """Load existing aw Ed25519 seed PEM keys, indexed by canonical team ID.
 
@@ -151,21 +230,7 @@ def get_awid_member_signing_keys() -> dict[str, bytes]:
     if not filename:
         return {}
     try:
-        manifest = Path(filename).expanduser()
-        entries = json.loads(manifest.read_text())
-        if not isinstance(entries, dict) or not entries:
-            raise ValueError("expected a nonempty team-to-key-file object")
-        keys = {}
-        for team_id, filename in entries.items():
-            if build_team_id(*parse_team_id(team_id)) != team_id:
-                raise ValueError("team IDs must be canonical name:domain values")
-            if not isinstance(filename, str) or not filename.strip():
-                raise ValueError("each team must name a PEM key file")
-            path = Path(filename).expanduser()
-            if not path.is_absolute():
-                path = manifest.parent / path
-            keys[team_id] = load_signing_key_pem(read_key_file(path))
-        return keys
+        return load_member_signing_keys(Path(filename))
     except (OSError, ValueError, TypeError):
         # Do not echo file contents or key-parser details into startup logs.
         raise ValueError("AWID_MEMBER_KEYS_FILE must name a nonempty JSON map of canonical team IDs to readable Ed25519 PEM key files") from None
@@ -321,6 +386,25 @@ def _key_time(kid: str, name: str, value: object) -> datetime:
         ) from exc
 
 
+def _url_from_environment_or_file(variable: str, fallback: str, file_variable: str, what: str) -> str:
+    """The URL from its environment variable, or the whole content of the file
+    the file variable names, read with the shared key-file checks. The file
+    holds a password, so no error repeats its content."""
+    url = os.getenv(variable) or os.getenv(fallback) or ""
+    path = os.getenv(file_variable, "").strip()
+    if not path:
+        return url
+    if url:
+        raise ValueError(f"{file_variable} is set together with {variable} or {fallback}; set one")
+    try:
+        url = read_key_file(Path(path)).decode("utf-8").strip()
+    except (OSError, ValueError):
+        url = ""
+    if not url:
+        raise ValueError(f"{file_variable} must name a readable file that holds the {what}")
+    return url
+
+
 def get_settings() -> Settings:
     """
     Load settings from environment at call time.
@@ -328,14 +412,19 @@ def get_settings() -> Settings:
     Uses `AWEB_*` settings, falling back to unprefixed infrastructure vars where
     that keeps deployment wiring simple.
     """
-    database_url = os.getenv("AWEB_DATABASE_URL") or os.getenv("DATABASE_URL")
+    database_url = _url_from_environment_or_file(
+        "AWEB_DATABASE_URL", "DATABASE_URL", "AWEB_DATABASE_URL_FILE", "database URL"
+    )
     if not database_url:
         raise ValueError(
-            "DATABASE_URL or AWEB_DATABASE_URL environment variable is required. "
+            "DATABASE_URL, AWEB_DATABASE_URL or AWEB_DATABASE_URL_FILE is required. "
             "Example: postgresql://user:pass@localhost:5432/aweb"
         )
 
-    redis_url = os.getenv("AWEB_REDIS_URL") or os.getenv("REDIS_URL") or "redis://localhost:6379/0"
+    redis_url = (
+        _url_from_environment_or_file("AWEB_REDIS_URL", "REDIS_URL", "AWEB_REDIS_URL_FILE", "Redis URL")
+        or "redis://localhost:6379/0"
+    )
 
     port_str = os.getenv("AWEB_PORT", "8000")
     try:
@@ -392,5 +481,6 @@ def get_settings() -> Settings:
         require_registered_certificates=require_registered_certificates(),
         app_grant_max_age_seconds=get_app_grant_max_age_seconds(),
         hook_producer_keys=get_hook_producer_keys(),
+        app_internal_origins=get_app_internal_origins(),
         federation_outbound=parse_federation_outbound(os.getenv(FEDERATION_OUTBOUND_SETTING)),
     )

@@ -98,6 +98,7 @@ func TestIdentityLogRawWireVectors(t *testing.T) {
 			})
 			server := httptest.NewServer(mux)
 			t.Cleanup(server.Close)
+			t.Setenv("AWID_REGISTRY_URL", server.URL)
 
 			resolver := awid.NewRegistryResolver(server.Client(), forbiddenTXTResolver{t: t})
 			if err := resolver.SetFallbackRegistryURL(server.URL); err != nil {

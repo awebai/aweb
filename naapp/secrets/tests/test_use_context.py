@@ -25,7 +25,7 @@ from aweb_secrets.use_context import (
     store_use_context,
     use_context,
 )
-from tests.test_admission import ALICE, NOW, _admit, _install
+from tests.test_admission import ALICE, INSTALLATION, NOW, _admit, _install
 from tests.test_admission import db as db
 from tests.test_admission import fence as fence
 
@@ -41,7 +41,7 @@ def _committer(directory):
 
 def _context(admission=None):
     if admission is None:
-        return CommitmentContext("secrets", "backend:acme.com", "inst_5d2a9c31", 3, "request")
+        return CommitmentContext("secrets", "backend:acme.com", INSTALLATION, 3, "request")
     installed = admission.installation
     return CommitmentContext(
         installed.app_id,

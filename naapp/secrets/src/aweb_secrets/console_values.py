@@ -11,7 +11,6 @@ draft/approve/confirm flow owns activation of both candidates.
 from datetime import UTC, datetime
 
 from aweb_naapp.console import ConsoleRoute, ConsoleSession, KeyBoundConsoleSession
-from aweb_naapp.roles import hold_role
 from aweb_naapp.runtime.installation import AdmittedInstallation, InstallationRefused
 from fastapi import APIRouter, Depends, HTTPException, Request, Response
 from pgdbm import TransactionManager
@@ -26,7 +25,8 @@ from aweb_secrets.custody import (
 )
 from aweb_secrets.custody.onepassword import OnePasswordRead, OnePasswordReference, OnePasswordSDK
 from aweb_secrets.custody.store import BACKEND_CREDENTIAL_ID, StagedOnePasswordReference
-from aweb_secrets.owners import OWNER_ROLE, owner_scope
+from aweb_secrets.owners import hold_owner as hold_owner_holding
+from aweb_secrets.owners import owner_scope
 from aweb_secrets.secret import SecretInvalid, SecretRecord
 
 
@@ -60,7 +60,7 @@ class ConsoleValues:
             or owner.team_id != admitted.team_id
             or current.scope
             != owner_scope(admitted.installation_id, admitted.team_id, owner.principal_did)
-            or not await hold_role(tx, owner, OWNER_ROLE)
+            or not await hold_owner_holding(tx, owner, installation_id=admitted.installation_id)
         ):
             raise HTTPException(status_code=403, detail="owner_required")
         await self.console.prepare_session(

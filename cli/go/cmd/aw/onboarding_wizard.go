@@ -443,7 +443,7 @@ func provisionBYODIdentity(req guidedOnboardingRequest, name, domain string) (*g
 		return nil, err
 	}
 
-	registry, err := newConfiguredRegistryClient(nil, "")
+	registry, err := newConfiguredRegistryClient(nil)
 	if err != nil {
 		return nil, err
 	}
@@ -671,7 +671,7 @@ type hostedIdentityProvision struct {
 func provisionHostedIdentity(
 	onboardingURL, registryURL, username, alias string, global bool, inboundMode string,
 ) (hostedIdentityProvision, error) {
-	registry, err := newConfiguredRegistryClient(nil, "")
+	registry, err := newConfiguredRegistryClient(nil)
 	if err != nil {
 		return hostedIdentityProvision{}, err
 	}

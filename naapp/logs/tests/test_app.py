@@ -51,11 +51,16 @@ def _chain_kid() -> str:
 
 
 def _deployment(
-    tmp_path: Path, database_url: str, *, db_schema: str = "public"
+    tmp_path: Path,
+    database_url: str,
+    purge_ledger_database_url: str = "postgresql://localhost/logs_purges",
+    *,
+    db_schema: str = "public",
 ) -> LogsSettings:
     return LogsSettings(
         _env_file=None,
         database_url=database_url,
+        purge_ledger_database_url=purge_ledger_database_url,
         db_schema=db_schema,
         public_origin=ORIGIN,
         console_origin=CONSOLE,
@@ -64,9 +69,16 @@ def _deployment(
     )
 
 
-def _deployment_on(tmp_path: Path, database: AsyncDatabaseManager) -> LogsSettings:
-    """A deployment on the test database, in the schema the test database gives."""
-    return _deployment(tmp_path, database.config.get_dsn(), db_schema=database.schema or "public")
+def _deployment_on(
+    tmp_path: Path, database: AsyncDatabaseManager, ledger: AsyncDatabaseManager
+) -> LogsSettings:
+    """A deployment on the test databases, in the schema the content database gives."""
+    return _deployment(
+        tmp_path,
+        database.config.get_dsn(),
+        ledger.config.get_dsn(),
+        db_schema=database.schema or "public",
+    )
 
 
 @pytest.fixture
@@ -87,31 +99,42 @@ async def running(service: OriginApps, origin: str = ORIGIN) -> AsyncIterator[ht
             yield client
 
 
-async def test_the_catalog_lists_the_served_manifest(tmp_path: Path, database) -> None:
-    settings = _deployment_on(tmp_path, database)
+async def test_the_catalog_lists_the_served_manifest(
+    tmp_path: Path, database, purge_ledger_database
+) -> None:
+    settings = _deployment_on(tmp_path, database, purge_ledger_database)
     async with running(_app(settings)) as client:
         catalog = (await client.get("/.well-known/aweb-app-versions.json")).json()
-        (variant,) = catalog["variants"]
-        served = await client.get(variant["url"])
-        assert served.status_code == 200
-        assert variant["digest"] == "sha256:" + hashlib.sha256(served.content).hexdigest()
-        manifest = json.loads(served.content)
-        assert manifest["app"]["origin"] == ORIGIN
-        assert {e["kid"]: e["did_key"] for e in manifest["app_keys"]} == {
-            kid: did_key_of(path) for kid, path in settings.app_key_files.items()
-        }
+        served = {}
+        for variant in catalog["variants"]:
+            response = await client.get(variant["url"])
+            assert response.status_code == 200
+            assert variant["digest"] == "sha256:" + hashlib.sha256(response.content).hexdigest()
+            manifest = json.loads(response.content)
+            assert manifest["app"]["origin"] == ORIGIN
+            assert {e["kid"]: e["did_key"] for e in manifest["app_keys"]} == {
+                kid: did_key_of(path) for kid, path in settings.app_key_files.items()
+            }
+            served[variant["manifest_version"]] = manifest
+        # Released clients select version 2; only version 3 declares the
+        # reader role its owner designates on the console origin.
+        assert sorted(served) == [2, 3]
+        assert "owner_acts" not in served[2]
+        assert served[3]["owner_acts"]["origin"] == CONSOLE
         assert (await client.get("/.well-known/aweb-app.json")).status_code == 404
 
 
-async def test_logs_serves_no_docs_surface(tmp_path: Path, database) -> None:
-    settings = _deployment_on(tmp_path, database)
+async def test_logs_serves_no_docs_surface(tmp_path: Path, database, purge_ledger_database) -> None:
+    settings = _deployment_on(tmp_path, database, purge_ledger_database)
     async with running(_app(settings)) as client:
         for path in ("/docs", "/redoc", "/openapi.json", "/"):
             assert (await client.get(path)).status_code == 404, path
 
 
-async def test_logs_is_ready_with_its_chain_tables(tmp_path: Path, database) -> None:
-    settings = _deployment_on(tmp_path, database)
+async def test_logs_is_ready_with_its_chain_tables(
+    tmp_path: Path, database, purge_ledger_database
+) -> None:
+    settings = _deployment_on(tmp_path, database, purge_ledger_database)
     async with running(_app(settings)) as client:
         ready = await client.get("/ready")
         assert ready.status_code == 200, ready.text
@@ -124,8 +147,10 @@ async def test_logs_is_ready_with_its_chain_tables(tmp_path: Path, database) -> 
         }
 
 
-async def test_a_running_logs_checkpoints_each_team_whose_chain_moved(tmp_path: Path, database) -> None:
-    settings = _deployment_on(tmp_path, database)
+async def test_a_running_logs_checkpoints_each_team_whose_chain_moved(
+    tmp_path: Path, database, purge_ledger_database
+) -> None:
+    settings = _deployment_on(tmp_path, database, purge_ledger_database)
     settings = settings.model_copy(update={"checkpoint_interval_seconds": 0.05})
     signer = chain_signer(
         settings, load_manifest(served_manifest(settings.app_key_files, origin=ORIGIN))
@@ -156,9 +181,9 @@ async def test_a_running_logs_checkpoints_each_team_whose_chain_moved(tmp_path: 
 
 
 async def test_a_running_logs_purges_what_a_teams_retention_has_expired(
-    tmp_path: Path, database
+    tmp_path: Path, database, purge_ledger_database
 ) -> None:
-    settings = _deployment_on(tmp_path, database)
+    settings = _deployment_on(tmp_path, database, purge_ledger_database)
     settings = settings.model_copy(update={"retention_interval_seconds": 0.05})
     signer = chain_signer(
         settings, load_manifest(served_manifest(settings.app_key_files, origin=ORIGIN))
@@ -246,10 +271,11 @@ def _mail_environment(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
 
 
 async def test_logs_starts_from_its_environment_and_serves_its_committed_template(
-    tmp_path: Path, database, monkeypatch: pytest.MonkeyPatch
+    tmp_path: Path, database, purge_ledger_database, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     key_files = write_key_files(tmp_path)
     monkeypatch.setenv("LOGS_DATABASE_URL", database.config.get_dsn())
+    monkeypatch.setenv("LOGS_PURGE_LEDGER_DATABASE_URL", purge_ledger_database.config.get_dsn())
     monkeypatch.setenv("LOGS_DB_SCHEMA", database.schema or "public")
     monkeypatch.setenv("LOGS_PUBLIC_ORIGIN", ORIGIN)
     monkeypatch.setenv("LOGS_CONSOLE_ORIGIN", CONSOLE)
@@ -266,13 +292,12 @@ def test_logs_does_not_start_without_its_mail_settings(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     monkeypatch.setenv("LOGS_DATABASE_URL", "postgresql://localhost/logs")
+    monkeypatch.setenv("LOGS_PURGE_LEDGER_DATABASE_URL", "postgresql://localhost/logs_purges")
     monkeypatch.setenv("LOGS_PUBLIC_ORIGIN", ORIGIN)
     monkeypatch.setenv("LOGS_CONSOLE_ORIGIN", CONSOLE)
     monkeypatch.setenv("LOGS_APP_ID", TEST_APP_ID)
     key_files = write_key_files(tmp_path)
-    monkeypatch.setenv(
-        "LOGS_APP_KEY_FILES", json.dumps({kid: str(path) for kid, path in key_files.items()})
-    )
+    monkeypatch.setenv("LOGS_APP_KEY_FILES", json.dumps({kid: str(path) for kid, path in key_files.items()}))
     _mail_environment(tmp_path, monkeypatch)
     monkeypatch.delenv("LOGS_EMAIL_SMTP_HOST")
     with pytest.raises(ValueError, match="LOGS_EMAIL_SMTP_HOST"):
@@ -283,12 +308,11 @@ def test_logs_reads_its_configuration_from_the_environment_only(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     monkeypatch.setenv("LOGS_DATABASE_URL", "postgresql://localhost/logs")
+    monkeypatch.setenv("LOGS_PURGE_LEDGER_DATABASE_URL", "postgresql://localhost/logs_purges")
     monkeypatch.setenv("LOGS_PUBLIC_ORIGIN", ORIGIN)
     monkeypatch.setenv("LOGS_APP_ID", TEST_APP_ID)
     key_files = write_key_files(tmp_path)
-    monkeypatch.setenv(
-        "LOGS_APP_KEY_FILES", json.dumps({kid: str(path) for kid, path in key_files.items()})
-    )
+    monkeypatch.setenv("LOGS_APP_KEY_FILES", json.dumps({kid: str(path) for kid, path in key_files.items()}))
     _mail_environment(tmp_path, monkeypatch)
     monkeypatch.delenv("LOGS_CONSOLE_ORIGIN", raising=False)
     # A .env in the working directory is not configuration.
@@ -299,14 +323,16 @@ def test_logs_reads_its_configuration_from_the_environment_only(
     assert [error["loc"] for error in refused.value.errors()] == [("console_origin",)]
 
 
-async def test_each_origin_serves_only_its_own_routes(tmp_path: Path, database) -> None:
-    service = _app(_deployment_on(tmp_path, database))
+async def test_each_origin_serves_only_its_own_routes(
+    tmp_path: Path, database, purge_ledger_database
+) -> None:
+    service = _app(_deployment_on(tmp_path, database, purge_ledger_database))
     async with running(service) as public:
         async with httpx.AsyncClient(
             transport=httpx.ASGITransport(app=service), base_url=CONSOLE
         ) as console:
             # The member tools are on the public origin, behind team-auth.
-            for path in ("/v1/reader-slots", "/v1/reader-removals", "/v1/hooks/ingest"):
+            for path in ("/v1/reader-removals", "/v1/hooks/ingest"):
                 assert (await public.post(path, json={})).status_code == 401, path
                 assert (await console.post(path, json={})).status_code == 404, path
             # The reader's console is on the console origin only.
@@ -322,10 +348,12 @@ async def test_each_origin_serves_only_its_own_routes(tmp_path: Path, database) 
             assert refused.status_code == 403
 
 
-async def test_a_stopped_logs_starts_again_with_the_same_routes(tmp_path: Path, database) -> None:
-    service = _app(_deployment_on(tmp_path, database))
+async def test_a_stopped_logs_starts_again_with_the_same_routes(
+    tmp_path: Path, database, purge_ledger_database
+) -> None:
+    service = _app(_deployment_on(tmp_path, database, purge_ledger_database))
     for _ in range(2):
         async with running(service) as public:
-            assert (await public.post("/v1/reader-slots", json={})).status_code == 401
+            assert (await public.post("/v1/reader-removals", json={})).status_code == 401
             assert (await public.get("/ready")).status_code == 200
     assert {route.path for route in service.console_app.routes} == set()

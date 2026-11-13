@@ -24,13 +24,13 @@ pytest_plugins = ("tests.runtime.test_human_member",)
 
 
 @pytest.mark.parametrize("certificate", [b"", b"not-json", b"[]", b"\xff"])
-async def test_malformed_certificate_is_a_typed_owner_refusal(tmp_path, certificate):
+async def test_a_malformed_certificate_is_no_membership_evidence(tmp_path, certificate):
     runtime = _runtime(tmp_path)
     with pytest.raises(OwnerActDeliveryRefused) as refused:
         await runtime.check_human_role_member(
             TEAM, principal="did:aw:untrusted-input", certificate=certificate
         )
-    assert refused.value.code == "owner_required"
+    assert refused.value.code == "principal_not_member"
 
 
 async def test_delivery_retains_exact_signed_bytes_and_exposes_proved_identity(
@@ -52,7 +52,7 @@ async def test_delivery_retains_exact_signed_bytes_and_exposes_proved_identity(
 
 
 @pytest.mark.parametrize("different", ["team", "principal"])
-async def test_delivery_cannot_substitute_a_different_certificate_identity(
+async def test_a_certificate_of_another_identity_is_no_membership_evidence(
     human, registry, tmp_path, different
 ):
     member, principal, client, _, _ = human
@@ -65,7 +65,7 @@ async def test_delivery_cannot_substitute_a_different_certificate_identity(
             certificate=json.dumps(member.certificate()).encode(),
             identity_client=client,
         )
-    assert refused.value.code == "owner_required"
+    assert refused.value.code == "principal_not_member"
 
 
 async def test_delivery_maps_definite_membership_loss_to_its_typed_refusal(

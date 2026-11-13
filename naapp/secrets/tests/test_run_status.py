@@ -3,14 +3,15 @@
 from dataclasses import replace
 
 import pytest
-from aweb_naapp.roles import assign, principal_key
 from aweb_naapp.runtime.approvals import Decision
 from aweb_naapp.runtime.authorization import Authorization
 
 from aweb_secrets import records
 from aweb_secrets.run_service import RunDispatch
 from aweb_secrets.status_service import UseStatus
+from tests.human_owner import canonical_actor
 from tests.test_admission import BOB
+from tests.test_change_sets import ALICE
 from tests.test_run_dispatch_service import decide, report, setup
 from tests.test_status_service import STATUS
 from tests.test_use_approvals import REQUESTER
@@ -89,9 +90,7 @@ async def test_only_original_requester_receives_stored_run_output(uses, new_work
         approvals=context.arguments["approvals"],
         runs=context.service.status,
     )
-    owner = BOB
-    async with uses.world.db.transaction() as tx:
-        await assign(tx, principal_key(owner), "secrets.owner")
+    owner = canonical_actor(uses.world, ALICE)
     before = await snapshot(uses.world.db)
     own = await service.get(ref=admitted.body["request_ref"], authorization=authorization(context))
     inspected = await service.get(

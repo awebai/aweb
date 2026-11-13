@@ -16,15 +16,19 @@ ENV UV_HTTP_TIMEOUT=300 UV_CONCURRENT_DOWNLOADS=4
 
 WORKDIR /app
 
+# Optional extras, such as "protected" for the independent protected host
+# (aweb.protected_signing.host). Empty builds the coordination server alone.
+ARG AWEB_EXTRA=""
+
 COPY server/pyproject.toml server/uv.lock server/README.md ./
 COPY awid/pyproject.toml awid/README.md /awid/
 COPY naapp-lib/pyproject.toml naapp-lib/README.md /naapp-lib/
-RUN uv sync --frozen --no-dev --no-install-project
+RUN uv sync --frozen --no-dev --no-install-project ${AWEB_EXTRA:+--extra "$AWEB_EXTRA"}
 
 COPY server/src ./src/
 COPY awid/src /awid/src
 COPY naapp-lib/src /naapp-lib/src
-RUN uv sync --frozen --no-dev
+RUN uv sync --frozen --no-dev ${AWEB_EXTRA:+--extra "$AWEB_EXTRA"}
 
 
 FROM python:3.12-slim AS runtime

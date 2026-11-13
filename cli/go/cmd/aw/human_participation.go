@@ -27,7 +27,8 @@ type humanParticipation struct {
 // Kept separate from resolveLocalSigningIdentity: arbitrary signing, blueprint
 // publishing and worker custody must never inherit human authority.
 func humanParticipationAllowed(cmd *cobra.Command) bool {
-	return cmd == initCmd || cmd == teamFetchCertCmd || cmd == mailSendCmd || cmd == mailInboxCmd || cmd == mailShowCmd || cmd == mailReplyCmd || (cmd == idRequestCmd && idRequestTeamAuth)
+	return cmd == initCmd || cmd == teamFetchCertCmd || cmd == mailSendCmd || cmd == mailInboxCmd || cmd == mailShowCmd || cmd == mailReplyCmd || (cmd == idRequestCmd && idRequestTeamAuth) ||
+		cmd == appCredentialRegisterCmd || cmd == appRoleDesignateCmd || cmd == appCredentialReplaceCmd
 }
 func humanSelectionRequested() bool { return humanFlag != "" || humanDomainFlag != "" }
 func prepareHumanParticipation(cmd *cobra.Command) error {
@@ -212,7 +213,7 @@ func runHumanFetchCert(cmd *cobra.Command) error {
 	} else if err != nil && !os.IsNotExist(err) {
 		return err
 	}
-	registry, err := newConfiguredRegistryClient(nil, "")
+	registry, err := newConfiguredRegistryClient(nil)
 	if err != nil {
 		return err
 	}

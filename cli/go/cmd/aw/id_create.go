@@ -76,6 +76,8 @@ func init() {
 	idCreateCmd.Flags().BoolVar(&idCreateSkipDNSVerify, "skip-dns-verify", false, "Skip the DNS TXT verification prompt and lookup")
 	idCreateCmd.Flags().StringVar(&idCreateHumanParent, "human-parent", "", "did:aw of the issuing human (local key, or a registered account human with --org)")
 	idCreateCmd.Flags().BoolVar(&idCreateRootParent, "root-parent", false, "Have this machine's namespace controller issue a humanless agent (BYOT only)")
+	idCreateCmd.Flags().BoolVar(&idCreateLocal, "local", false, "Create a key-only local identity (a did:key registered nowhere) in an explicit fresh --identity-home; resumable, and a rerun returns it")
+	idCreateCmd.Flags().BoolVar(&idCreateNoAddress, "no-address", false, "Create a registered identity with no address in an explicit fresh --identity-home, registering its own did:aw at --registry; resumable")
 	identityCmd.AddCommand(idCreateCmd)
 }
 
@@ -123,6 +125,9 @@ type preparedIDCreate struct {
 }
 
 func runIDCreate(cmd *cobra.Command, args []string) error {
+	if idCreateLocal || idCreateNoAddress {
+		return runUnaddressedIdentityCreate(cmd, idCreateLocal)
+	}
 	if cmd.Flags().Changed("org") {
 		return runHostedIdentityCreate(cmd)
 	}
@@ -215,7 +220,7 @@ func executeIDCreate(workingDir string, opts idCreateOptions) (idCreateOutput, e
 	ctx, cancel := commandAPIContext(nil)
 	defer cancel()
 
-	registry, err := newConfiguredRegistryClient(nil, "")
+	registry, err := newConfiguredRegistryClient(nil)
 	if err != nil {
 		return idCreateOutput{}, err
 	}
@@ -375,7 +380,7 @@ func prepareIDCreatePlan(workingDir string, opts idCreateOptions) (*preparedIDCr
 		return nil, err
 	}
 
-	registry, err := newConfiguredRegistryClient(nil, "")
+	registry, err := newConfiguredRegistryClient(nil)
 	if err != nil {
 		return nil, err
 	}
@@ -512,7 +517,7 @@ func verifyIDCreateDomainAuthority(ctx context.Context, resolver awid.TXTResolve
 	if strings.TrimSpace(registryURL) != strings.TrimSpace(expectedRegistryURL) {
 		return fmt.Errorf("TXT registry %s does not match %s", registryURL, expectedRegistryURL)
 	}
-	controller, err := awid.NewAWIDRegistryClient(nil, resolver).IDNamespaceController(ctx, domain, registryURL, authority)
+	controller, err := newAWIDRegistryClient(nil, resolver).IDNamespaceController(ctx, domain, registryURL, authority)
 	if err != nil {
 		return err
 	}

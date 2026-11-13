@@ -1,6 +1,6 @@
 [project]
 name = "aweb-naapp"
-version = "0.5.2"
+version = "0.5.2rc2"
 description = "Reusable Native Agentic App (naapp) docs surface: shared chrome, the aweb design system, and manifest-driven llms.txt and reference generators."
 readme = "README.md"
 license = { text = "MIT" }
@@ -26,7 +26,7 @@ nonces = ["pgdbm>=0.5.0"]
 # surface (`import aweb_naapp`) never imports these.
 runtime = [
   # The first awid release with the principal-attestation records the runtime reads.
-  "awid-service>=0.5.40",
+  "awid-service>=0.5.40rc2",
   "fastapi>=0.116.1",
   "httpx>=0.28.1",
   "jsonschema>=4.23.0",
@@ -84,7 +84,7 @@ egress = [
 # (a subprocess test pins that). Installing awid-service brings that package's
 # own dependencies, which the core server and every naapp already carry.
 hooks = [
-  "awid-service>=0.5.40",
+  "awid-service>=0.5.40rc2",
   "pgdbm>=0.5.0",
   "pynacl>=1.6.2",
 ]
