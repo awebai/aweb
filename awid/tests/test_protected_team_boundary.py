@@ -295,3 +295,201 @@ async def test_team_read_projects_authoritative_protection_explicitly(
         assert binding["history_id"]
     else:
         assert binding == {"mode": "legacy"}
+
+
+@pytest.mark.asyncio
+async def test_operator_protection_transition_preserves_history_and_requires_generation(
+    controller_app,
+):
+    from awid_service.protected_teams import provision_team_protection
+
+    env = controller_app
+    service_did = keypair()[1]
+    async with env.db.transaction() as tx:
+        first = await provision_team_protection(
+            tx,
+            domain="local",
+            name="base",
+            service_id="independent-signer",
+            service_did_key=service_did,
+            expected_generation=0,
+            approval_ref="operator-reviewed-initial-cutover",
+        )
+    async with env.db.transaction() as tx:
+        second = await provision_team_protection(
+            tx,
+            domain="local",
+            name="base",
+            service_id="independent-signer",
+            service_did_key=keypair()[1],
+            expected_generation=1,
+            approval_ref="operator-reviewed-key-replacement",
+        )
+    assert first["history_id"] == second["history_id"]
+    assert second["generation"] == 2
+    with pytest.raises(ValueError, match="protection_generation_changed"):
+        async with env.db.transaction() as tx:
+            await provision_team_protection(
+                tx,
+                domain="local",
+                name="base",
+                service_id="independent-signer",
+                service_did_key=service_did,
+                expected_generation=1,
+                approval_ref="stale-transition",
+            )
+    async with env.db.transaction() as tx:
+        await provision_team_protection(
+            tx,
+            domain="local",
+            name="base",
+            service_id="independent-signer",
+            service_did_key=service_did,
+            expected_generation=2,
+            approval_ref="operator-reviewed-deprotection",
+            mode="legacy",
+        )
+    row = await env.db.fetch_one(
+        "SELECT history_id,generation,mode FROM {{tables.team_protection}}"
+    )
+    assert str(row["history_id"]) == first["history_id"]
+    assert row["generation"] == 3 and row["mode"] == "legacy"
+    assert (await env.client.get(TEAM_PATH)).json()["protection"] == {"mode": "legacy"}
+
+
+@pytest.mark.asyncio
+async def test_operator_cannot_reuse_a_controller_or_member_key_for_attestation(
+    controller_app,
+):
+    from awid_service.protected_teams import provision_team_protection
+
+    env = controller_app
+    for reused in (env.controller[1], env.team[1]):
+        with pytest.raises(ValueError, match="service_key_not_distinct"):
+            async with env.db.transaction() as tx:
+                await provision_team_protection(
+                    tx,
+                    domain="local",
+                    name="base",
+                    service_id="independent-signer",
+                    service_did_key=reused,
+                    expected_generation=0,
+                    approval_ref="operator-record",
+                )
+    assert (
+        await env.db.fetch_value("SELECT count(*) FROM {{tables.team_protection}}") == 0
+    )
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("protected", [False, True], ids=["legacy", "protected"])
+async def test_new_team_uuid_does_not_reset_canonical_protection(
+    controller_app, protected
+):
+    env = controller_app
+    if protected:
+        await protect_team(env)
+    # Represents an explicitly retired old incarnation; its canonical binding
+    # is independent of this disposable UUID and cannot be erased by create.
+    await env.db.execute(
+        "UPDATE {{tables.teams}} SET deleted_at=now() WHERE domain='local' AND name='base'"
+    )
+    response = await send(
+        env,
+        "POST",
+        "/v1/namespaces/local/teams",
+        {"domain": "local", "operation": "create_team", "name": "base"},
+        {"name": "base", "team_did_key": keypair()[1], "visibility": "public"},
+    )
+    assert response.status_code == (403 if protected else 200), response.text
+    if protected:
+        assert response.json()["detail"]["code"] == "protected_controller_required"
+        assert (
+            await env.db.fetch_value(
+                "SELECT count(*) FROM {{tables.teams}} WHERE deleted_at IS NULL"
+            )
+            == 0
+        )
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("protected", [False, True], ids=["legacy", "protected"])
+async def test_private_public_status_negotiates_protection_without_changing_released_shape(
+    controller_app, protected
+):
+    from awid.registry import RegistryClient
+    from awid.protected_membership import (
+        observe_team_protection,
+        verify_registered_membership,
+    )
+    from awid.team_certificate import TeamCertificateError
+    import base64
+    import json
+
+    env = controller_app
+    cert = certificate_body(env)
+    await send(
+        env,
+        "POST",
+        TEAM_PATH + "/certificates",
+        {
+            "domain": "local",
+            "operation": "register_certificate",
+            "team_name": "base",
+            "certificate_id": cert["certificate_id"],
+        },
+        cert,
+        signer=env.team,
+    )
+    hidden = await send(
+        env,
+        "POST",
+        TEAM_PATH + "/visibility",
+        {
+            "domain": "local",
+            "operation": "set_team_visibility",
+            "team_name": "base",
+            "visibility": "private",
+        },
+        {"visibility": "private"},
+        signer=env.team,
+    )
+    assert hidden.status_code == 200, hidden.text
+    if protected:
+        await protect_team(env)
+    assert (await env.client.get(TEAM_PATH)).status_code == 403
+    path = TEAM_PATH + "/certificates/" + cert["certificate_id"] + "/status"
+    old = await env.client.get(path)
+    assert old.status_code == 200, old.text
+    assert set(old.json()) == {"team_id", "team_did_key", "status", "revoked_at"}
+    current = await env.client.get(path + "?protection=1")
+    assert current.status_code == 200, current.text
+    assert current.json()["protection"]["mode"] == (
+        "protected" if protected else "legacy"
+    )
+    assert current.json()["certificate_sha256"]
+    registry = RegistryClient(
+        registry_url="http://registry.test", transport=env.client._transport
+    )
+    try:
+        observation = await observe_team_protection(
+            registry, "base:local", certificate_id=cert["certificate_id"]
+        )
+        decoded = json.loads(base64.b64decode(cert["certificate"]))
+        await verify_registered_membership(registry, observation, decoded)
+        changed = {**decoded, "alias": "different-member"}
+        from awid.signing import canonical_json_bytes
+
+        changed["signature"] = sign_message(
+            env.team[0],
+            canonical_json_bytes(
+                {k: v for k, v in changed.items() if k != "signature"}
+            ),
+        )
+        if protected:
+            with pytest.raises(
+                TeamCertificateError, match="certificate_binding_mismatch"
+            ):
+                await verify_registered_membership(registry, observation, changed)
+    finally:
+        await registry.aclose()

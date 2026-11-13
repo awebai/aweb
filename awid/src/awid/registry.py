@@ -1420,6 +1420,17 @@ class RegistryClient:
             cursor = None
         raise RegistryError(f"AWID revocations pagination exceeded {MAX_REGISTRY_PAGES} pages", status_code=502)
 
+    async def get_team_certificate_status_fresh(self, domain, name, certificate_id, *, include_protection=False):
+        """Uncached public exact-certificate facts, with optional protection v1.
+
+        No private metadata read, controller substitution or fallback registry.
+        An older response missing negotiated evidence stays unknown to consumers.
+        """
+        path = f"/v1/namespaces/{quote(domain, safe='')}/teams/{quote(name, safe='')}/certificates/{quote(certificate_id, safe='')}/status"
+        if include_protection:
+            path += "?protection=1"
+        return await self._request_optional_json("GET", path, registry_url=await self._registry_url_for_domain(domain))
+
     async def list_team_certificates(
         self,
         domain: str,
