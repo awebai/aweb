@@ -8,6 +8,7 @@ import base64
 import json
 from contextlib import asynccontextmanager
 from dataclasses import replace
+from datetime import UTC, datetime
 from types import SimpleNamespace
 from uuid import uuid4
 
@@ -17,7 +18,7 @@ import pytest_asyncio
 from aweb_naapp.runtime.protected_signer import AdmittedHuman, CatalogOperation, SignerRefused
 from aweb_naapp_testing.webauthn import SoftAuthenticator
 from awid.did import did_from_public_key, generate_keypair
-from awid.id_certificates import ID_CERTIFICATE_PREFIX
+from awid.id_certificates import ID_CERTIFICATE_PREFIX, sign_id_certificate
 from awid.signing import canonical_json_bytes
 from awid.team_certificate import check_team_certificate
 from fastapi import FastAPI
@@ -104,6 +105,21 @@ def headers(a, *, body=b"", path="/protected-operations", method="POST", label="
 async def prepare(a, operation):
     raw = canonical_json_bytes(operation.intent())
     return await a.client.post("/protected-operations", content=raw, headers=headers(a, body=raw, context=operation.context))
+
+
+async def registered_agent(a, key):
+    """A real registered agent chain, not merely a legacy global key mapping."""
+    child = await a.w.registry.register_did(did(key), bytes(key))
+    certificate = await sign_id_certificate({
+        "v": 1, "type": "aweb.id-certificate", "id": child.did_aw,
+        "domain": DOMAIN, "parent": {"kind": "identity", "id": a.w.context.human_id},
+        "kind": "agent", "issuer_key": did(a.w.human_key),
+        "issued_at": datetime.now(UTC).strftime("%Y-%m-%dT%H:%M:%SZ"),
+    }, signer=lambda raw: (did(a.w.human_key), a.w.human_key.sign(raw).signature))
+    await a.w.registry.register_id_certificate(
+        {"v": 1, "type": "aweb.id-chain", "certificates": [a.w.human_certificate, certificate]},
+        signer=lambda raw: (did(key), key.sign(raw).signature), expected_head=None, invitation_id=None)
+    return child.did_aw
 
 
 async def execute(a, operation):
@@ -254,16 +270,31 @@ async def test_concurrent_admissions_obey_the_same_root_active_and_rate_bounds(a
 async def test_registered_agent_retains_global_fields_and_a_human_is_refused(admissions):
     a = admissions
     await endorse(a)
-    seed, public = generate_keypair()
-    child = await a.w.registry.register_did(did_from_public_key(public), seed)
-    op = admit_operation(a, registered=(child.did_aw, did_from_public_key(public)))
+    from nacl.signing import SigningKey
+
+    key = SigningKey.generate()
+    child = await registered_agent(a, key)
+    op = admit_operation(a, registered=(child, did(key)))
     assert (await prepare(a, op)).status_code == 200
     response = await execute(a, op)
     assert response.status_code == 200 and response.json()["state"] == "committed", response.text
     certificate = json.loads(base64.b64decode(response.json()["result"]["signing"]))
-    assert certificate["identity_scope"] == "global" and certificate["member_did_aw"] == child.did_aw
+    assert certificate["identity_scope"] == "global" and certificate["member_did_aw"] == child
     refused = await prepare(a, admit_operation(a, registered=(a.w.context.human_id, did(a.w.human_key))))
     assert refused.status_code == 403 and refused.json()["detail"] == "subject_ineligible"
+
+
+@pytest.mark.asyncio
+async def test_legacy_registered_unknown_kind_is_not_an_unattended_agent(admissions):
+    a = admissions
+    await endorse(a)
+    seed, public = generate_keypair()
+    child = await a.w.registry.register_did(did_from_public_key(public), seed)
+    op = admit_operation(a, registered=(child.did_aw, did_from_public_key(public)))
+    refused = await prepare(a, op)
+    assert refused.status_code == 403 and refused.json() == {"detail": "subject_ineligible"}
+    assert await a.w.app.signer.lookup_context(op.operation_id) is None
+    assert await a.w.db.fetch_value("SELECT count(*) FROM {{tables.protected_root_admissions}}") == 0
 
 
 @pytest.mark.asyncio

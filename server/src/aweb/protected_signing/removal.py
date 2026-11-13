@@ -60,12 +60,13 @@ async def agent_target(c, record, *, self_key=None):
         binding = await observe_identity_binding(c.registry, did_aw=record.member_did_aw, did_key=resolved.current_did_key)
         if binding.self_derived or binding.id_tree is None:
             raise SignerRefused("subject_ineligible")
-        if binding.id_tree.enrolled:
-            kind = (await observe_identity_kind(c.registry, binding)).result
-            if kind["outcome"] == "unavailable":
-                raise SignerRefused("evidence_unavailable")
-            if kind["identity_valid"] is not True or kind["kind"] != "agent":
-                raise SignerRefused("subject_ineligible")
+        # Legacy registered humans can be unenrolled. Unknown kind is not
+        # agent authority (docs/id-certificates.md, legacy-human coexistence).
+        kind = (await observe_identity_kind(c.registry, binding)).result
+        if kind["outcome"] == "unavailable":
+            raise SignerRefused("evidence_unavailable")
+        if kind["identity_valid"] is not True or kind["kind"] != "agent":
+            raise SignerRefused("subject_ineligible")
     except IdentityObservationRefused as error:
         if error.code == "identity_binding_mismatch":
             raise SignerRefused("subject_ineligible") from None

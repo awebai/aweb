@@ -161,12 +161,13 @@ class AdmissionEffects:
                     )) from None
                 if binding.self_derived or binding.id_tree is None:
                     raise SignerRefused("subject_ineligible")
-                if binding.id_tree.enrolled:
-                    observed = await observe_identity_kind(c.registry, binding)
-                    if observed.result["outcome"] == "unavailable":
-                        raise SignerRefused("evidence_unavailable")
-                    if observed.result["identity_valid"] is not True or observed.result["kind"] != "agent":
-                        raise SignerRefused("subject_ineligible")
+                # A legacy global mapping may belong to an unenrolled human;
+                # only verified agent kind admits a registered child unattended.
+                observed = await observe_identity_kind(c.registry, binding)
+                if observed.result["outcome"] == "unavailable":
+                    raise SignerRefused("evidence_unavailable")
+                if observed.result["identity_valid"] is not True or observed.result["kind"] != "agent":
+                    raise SignerRefused("subject_ineligible")
         return _AdmissionObservation(self, operation, policy, head, started + 60)
 
     async def root_head(self, root_id, root_key, *, require_enrolled):
