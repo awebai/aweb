@@ -144,20 +144,30 @@ restore is not supported. The Secrets procedure is pending
 
 The agents' local logs are plaintext today
 (`deploy/team/access/agents.md`). Sealing them under a key the team owner
-holds is built on a branch and not released: nothing here applies until the
-pinned `aw` includes `aw team admin log-key`. The record that turns sealing on
-is signed by the team controller key, which the signer holds once a deployment
-is set up. The supported path is for the owner to make the key on the machine
-where they read the logs, and for the signer to sign the record as one of its
-protected acts. Neither exists yet. Until both do, the stopgap is:
+holds is on `aw`'s main branch and not released: nothing here applies until the
+pinned `aw` includes `aw team admin log-key`. Making the key needs no controller
+key; the record that turns sealing on must be signed by the team controller
+key, which the signer holds once a deployment is set up. The supported signing
+route is a protected signer act (`team.log-key.sign`), which does not exist
+yet. Until it does, the record is signed with the owner's offline controller
+copy:
 
-1. First setup, **before** the controller key is installed in the signer,
-   while the owner's machine still holds it in `~/.awid/team-keys/`: on the
-   machine where the owner will read the logs, run
-   `aw team admin log-key create --team <team_id> --out log-key.json`. The log
-   private key stays in that machine's keychain and never enters the
-   container. `log-key.json` is public.
-2. In the agent container, as the agents' user and from a directory bound to
+1. On the machine where the owner will read the logs, run
+   `aw team admin log-key create --team <team_id> --out unsigned.json`. The log
+   private key stays in that machine's keychain, under a passphrase, and never
+   enters the container. The record is public.
+2. Sign it where the controller key is present: at first setup, before the
+   controller key is installed in the signer, on the owner's machine that
+   still holds it in `~/.awid/team-keys/`; afterwards, wherever the owner
+   restores the offline controller copy (the controller's backup, above),
+   removing it again at once. Run
+   `aw team admin log-key sign --record unsigned.json --offline-controller-key --out log-key.json`.
+   `sign` with no route refuses; it never loads a controller key on its own.
+   Restoring the copy exposes the controller key outside the signer by hand,
+   and nothing enforces its removal: it is the reason the signer act is
+   wanted. `aw team admin log-key signing-bytes --record unsigned.json --team-key-did <did>`
+   prints the exact bytes signed, for a cross-check.
+3. In the agent container, as the agents' user and from a directory bound to
    the team, run `aw team admin log-key install log-key.json`. One install
    covers every agent of the container, because they share `/state/home`.
    `aw doctor local` reports `local.log_key.owner_key_installed` as ok.
@@ -166,21 +176,16 @@ protected acts. Neither exists yet. Until both do, the stopgap is:
    agent from that agent's directory, names each of that agent's logs still
    holding plaintext, with a count (`local.log_key.plaintext_lines`), and the
    owner decides whether to keep, move or delete those files.
-3. A new log key, or a new record after the controller key is replaced, needs
-   the controller key again. The owner restores the offline controller copy
-   (the controller's backup, above) to `~/.awid/team-keys/` on the reading
-   machine, runs step 1 there while present, removes it again at once, and
-   repeats step 2. This exposes the controller key outside the signer by hand,
-   and nothing enforces its removal. It is the reason the signer act is
-   wanted.
 
 After a controller replacement the agents' local logging **stops**, and does
-not fall back to plaintext, until a record signed by the new controller key is
-installed. Lines already sealed stay readable on the owner's machine with the
-existing log key. While sealing is on, an agent's own `aw log` refuses and
-`aw run --continue` shows no recap. The owner reads the logs by copying the
-files out of the container and running `aw log read <files>` on the reading
-machine.
+not fall back to plaintext, until the record is signed again by the new
+controller key (step 2, with the same `unsigned.json`) and installed again
+(step 3). The log key itself does not change, so step 1 is not repeated. A new
+log key is step 1 again, then steps 2 and 3. Lines already sealed stay readable
+on the owner's machine with the keys in its keychain. While sealing is on, an
+agent's own `aw log` refuses and `aw run --continue` shows no recap. The owner
+reads the logs by copying the files out of the container and running
+`aw log read <files>` on the reading machine.
 
 ## Removing an agent, a service or an owner
 
