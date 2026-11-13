@@ -245,7 +245,6 @@ var mailSendCmd = &cobra.Command{
 			return err
 		}
 		logsDir := defaultLogsDir()
-		logPolicy := localLogPolicyForSelection(sel)
 		from := preferredIdentityDisplayLabel(
 			"",
 			selectionAddress(sel),
@@ -253,7 +252,7 @@ var mailSendCmd = &cobra.Command{
 			strings.TrimSpace(sel.DID),
 			"",
 		)
-		appendCommLog(logsDir, commLogNameForSelection(sel), logPolicy, &CommLogEntry{
+		appendCommLog(logsDir, commLogNameForSelection(sel), &CommLogEntry{
 			Timestamp:      time.Now().UTC().Format(time.RFC3339),
 			Dir:            "send",
 			Channel:        "mail",
@@ -264,7 +263,7 @@ var mailSendCmd = &cobra.Command{
 			Subject:        mailSendSubject,
 			Body:           mailSendBody,
 		})
-		appendMailInteractionLog(logPolicy, &InteractionEntry{
+		appendMailInteractionLog(&InteractionEntry{
 			Timestamp:      time.Now().UTC().Format(time.RFC3339),
 			Kind:           interactionKindMailOut,
 			MessageID:      resp.MessageID,
@@ -405,7 +404,6 @@ var mailReplyCmd = &cobra.Command{
 			debugLog("ack replied mail %s: %v", messageID, ackErr)
 		}
 		logsDir := defaultLogsDir()
-		logPolicy := localLogPolicyForSelection(sel)
 		from := preferredIdentityDisplayLabel(
 			"",
 			selectionAddress(sel),
@@ -413,7 +411,7 @@ var mailReplyCmd = &cobra.Command{
 			strings.TrimSpace(sel.DID),
 			"",
 		)
-		appendCommLog(logsDir, commLogNameForSelection(sel), logPolicy, &CommLogEntry{
+		appendCommLog(logsDir, commLogNameForSelection(sel), &CommLogEntry{
 			Timestamp:      time.Now().UTC().Format(time.RFC3339),
 			Dir:            "send",
 			Channel:        "mail",
@@ -424,7 +422,7 @@ var mailReplyCmd = &cobra.Command{
 			Subject:        subject,
 			Body:           body,
 		})
-		appendMailInteractionLog(logPolicy, &InteractionEntry{
+		appendMailInteractionLog(&InteractionEntry{
 			Timestamp:      time.Now().UTC().Format(time.RFC3339),
 			Kind:           interactionKindMailOut,
 			MessageID:      resp.MessageID,
@@ -787,7 +785,6 @@ var mailInboxCmd = &cobra.Command{
 			return err
 		}
 		logsDir := defaultLogsDir()
-		logPolicy := localLogPolicyForSelection(sel)
 		for _, msg := range resp.Messages {
 			// Only log unread messages to avoid duplicates on repeated inbox calls.
 			if msg.ReadAt != nil {
@@ -807,7 +804,7 @@ var mailInboxCmd = &cobra.Command{
 				msg.ToDID,
 				"",
 			)
-			appendCommLog(logsDir, commLogNameForSelection(sel), logPolicy, &CommLogEntry{
+			appendCommLog(logsDir, commLogNameForSelection(sel), &CommLogEntry{
 				Timestamp:      msg.CreatedAt,
 				Dir:            "recv",
 				Channel:        "mail",
@@ -825,7 +822,7 @@ var mailInboxCmd = &cobra.Command{
 				SigningKeyID:   msg.SigningKeyID,
 				Verification:   string(msg.VerificationStatus),
 			})
-			appendMailInteractionLog(logPolicy, &InteractionEntry{
+			appendMailInteractionLog(&InteractionEntry{
 				Timestamp:      msg.CreatedAt,
 				Kind:           interactionKindMailIn,
 				MessageID:      msg.MessageID,
@@ -1160,8 +1157,8 @@ func threadsWithoutSelf(resp *awid.ConversationsResponse, sel *awconfig.Selectio
 // Human participation is independent of the current agent workspace. Its
 // communication log is already keyed by human identity; do not add its mail to
 // the agent runtime's interaction log used by aw run.
-func appendMailInteractionLog(policy localLogPolicy, entry *InteractionEntry) {
+func appendMailInteractionLog(entry *InteractionEntry) {
 	if activeHuman == nil {
-		appendInteractionLogForCWD(policy, entry)
+		appendInteractionLogForCWD(entry)
 	}
 }

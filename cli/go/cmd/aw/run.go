@@ -201,16 +201,15 @@ func runRun(cmd *cobra.Command, args []string) error {
 	loop.OnBuildCommand = func(_ []string, opts awrun.BuildOptions) {
 		lastBuildOptions = opts
 	}
-	logPolicy := localLogPolicyForSelection(sel)
 	loop.OnUserPrompt = func(text string) {
-		appendInteractionLogForDir(workingDir, logPolicy, &InteractionEntry{
+		appendInteractionLogForDir(workingDir, &InteractionEntry{
 			Timestamp: time.Now().UTC().Format(time.RFC3339),
 			Kind:      interactionKindUser,
 			Text:      text,
 		})
 	}
 	loop.OnRunComplete = func(summary awrun.RunSummary) {
-		appendInteractionLogForDir(workingDir, logPolicy, &InteractionEntry{
+		appendInteractionLogForDir(workingDir, &InteractionEntry{
 			Timestamp: time.Now().UTC().Format(time.RFC3339),
 			Kind:      interactionKindAgent,
 			SessionID: summary.SessionID,
@@ -218,8 +217,7 @@ func runRun(cmd *cobra.Command, args []string) error {
 		})
 	}
 
-	// A log sealed to the owner log key is not the agent's to read back.
-	if runContinueMode && !logPolicy.sealing() {
+	if runContinueMode {
 		if recap := loadRunContinueRecap(workingDir, cmd.OutOrStdout()); recap != "" {
 			fmt.Fprint(cmd.OutOrStdout(), recap)
 		}
