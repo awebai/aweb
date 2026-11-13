@@ -43,7 +43,6 @@ Requester = Callable[[Request, RevokeHumanRole | OwnerActOperation], Awaitable[R
 Reader = Callable[[Request, str], Awaitable[ReceiptReader]]
 _FIELDS = {"operation_id", "operation", "variant", "scope", "audience", "subject"}
 _SCOPE = {"v", "kind", "service_id", "authority", "human", "generation"}
-_SUBJECT = {"app_id", "installation_id", "role", "principal"}
 
 
 def parse_operation(body: Any) -> RevokeHumanRole | OwnerActOperation:
@@ -51,9 +50,7 @@ def parse_operation(body: Any) -> RevokeHumanRole | OwnerActOperation:
     try:
         if not isinstance(body, dict) or not _FIELDS <= set(body) <= _FIELDS | {"redirect_uri"}:
             raise ValueError()
-        spec = operation_spec(body["operation"], body["variant"])
-        if not spec.consumer_available:
-            raise SignerRefused("operation_refused")
+        operation_spec(body["operation"], body["variant"])
         scope, subject = body["scope"], body["subject"]
         if not isinstance(scope, dict) or set(scope) != _SCOPE or not isinstance(subject, dict):
             raise ValueError()
@@ -148,6 +145,7 @@ def _http(error: Exception) -> HTTPException:
             "request_invalid": (400, "request_invalid"),
             "redirect_uri_refused": (400, "redirect_uri_refused"),
             "operation_refused": (400, "operation_refused"),
+            "operation_not_served": (400, "operation_not_served"),
             "requester_invalid": (401, "requester_invalid"),
             "scope_refused": (403, "scope_refused"),
             "authority_changed": (403, "authority_changed"),

@@ -420,6 +420,7 @@ docker run -d \
   --user "$(id -u):$(id -g)" \
   "${CLIENT_NETWORK_ARGS[@]}" \
   "${GATEWAY_PUBLISH_ARGS[@]}" \
+  -e AWID_REGISTRY_URL="$AWID_DOCKER_URL" \
   -v "$GATEWAY_DIR:/workspace:ro" \
   -v "$CONFIG_PATH:/config/gateway.yaml:ro" \
   -v "$TMP_ROOT/audit:/audit" \

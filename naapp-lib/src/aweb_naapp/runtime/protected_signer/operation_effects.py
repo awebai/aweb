@@ -1,0 +1,20 @@
+"""Code-owned effect ports on the operation definition, not request selectors."""
+
+from collections.abc import Callable
+from dataclasses import dataclass
+
+from .delivery_plans import certificate_delivery, owner_act_delivery, revocation_delivery
+
+
+@dataclass(frozen=True)
+class OperationEffect:
+    provider: str | None = None
+    signing_commit: str | None = None
+    confirmation_commit: str | None = None
+    delivery_plan: Callable | None = None
+
+
+LOCAL_SIGNATURE = OperationEffect(delivery_plan=owner_act_delivery)
+ENDORSEMENT = OperationEffect("admission", signing_commit="record_endorsement")
+REGISTERED_MEMBERSHIP = OperationEffect("admission", confirmation_commit="confirm", delivery_plan=certificate_delivery)
+REVOKED_MEMBERSHIP = OperationEffect("admission", confirmation_commit="confirm", delivery_plan=revocation_delivery)

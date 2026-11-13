@@ -343,6 +343,9 @@ func refusal(status int, body []byte) error {
 	if code == "" {
 		code = "handoff_http_" + fmt.Sprint(status)
 	}
+	if code == "operation_not_served" {
+		return coded(code, fmt.Errorf("the app answered %d: this protected service does not serve the requested operation; upgrade the service to a version that supports it", status))
+	}
 	return coded(code, fmt.Errorf("the app answered %d", status))
 }
 

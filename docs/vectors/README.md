@@ -73,6 +73,13 @@ inventory remains in `human-assurance-v1.json`.
 These additional scenarios specify the `owner_approved` variant before its
 implementation; they do not claim a served route or successful native run.
 
+### `protected-operation-availability-v1.json` — prepare availability
+
+Unknown/unserved operation selectors, missing consumer/signing adapters,
+malformed requests and incorrect request origins retain distinct refusal
+codes. The shared HTTP mount consumes these cases without an operation store;
+successful signing and current-authority execution remain separate boundaries.
+
 ### `id-certificates-v1.json` — contract candidate
 
 The [identity certificates contract](../id-certificates.md) freezes

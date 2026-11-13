@@ -57,6 +57,10 @@ ROOT_CONSUMERS = {
         "protected-effect-v1.json",
         'filepath.Join("..", "..", "..", "docs", "vectors", "protected-effect-v1.json")',
     ),
+    PurePosixPath("naapp-lib/tests/runtime/test_protected_operation_availability.py"): _consumer(
+        "protected-operation-availability-v1.json",
+        'Path(__file__).resolve().parents[3] / "docs/vectors/protected-operation-availability-v1.json"',
+    ),
     PurePosixPath("naapp-lib/tests/runtime/test_protected_oats_catalog.py"): _consumer(
         "human-assurance-v1.json",
         'Path(__file__).resolve().parents[3] / "docs/vectors/human-assurance-v1.json"',
