@@ -166,6 +166,47 @@ class Holder:
             child.sendline(self.passphrase)
 
 
+class AnswerDrop:
+    """The front withholds the answer to one request: while it is in effect,
+    every 2xx answer to `method` `path` on `host` is aborted, so the caller
+    sees its connection lost after the upstream has answered.
+
+    Entering it reads the front's Caddyfile as it is rendered then, and
+    refuses, changing nothing, unless the file holds exactly one site for
+    `host`; leaving it, also on an exception, puts back exactly the text it
+    replaced. Each change is reloaded."""
+
+    def __init__(self, rendered: Path, host: str, method: str, path: str, upstream: str,
+                 reload: Callable[[], None]):
+        self.rendered, self.host, self.method, self.path = rendered, host, method, path
+        self.upstream, self.reload = upstream, reload
+        self.replaced: str | None = None
+
+    def __enter__(self) -> AnswerDrop:
+        if self.replaced is not None:
+            raise SystemExit(f"FAILED: the drop for {self.method} {self.path} on {self.host} is already in effect")
+        current = self.rendered.read_text()
+        site = f"{self.host}:443 {{\n"
+        if current.count(site) != 1:
+            raise SystemExit(f"FAILED: the front holds {current.count(site)} sites for {self.host}, not one;"
+                             f" the answers to {self.method} {self.path} cannot be dropped")
+        self.rendered.write_text(current.replace(
+            site,
+            f"{site}  @dropped {{\n    method {self.method}\n    path {self.path}\n  }}\n"
+            f"  reverse_proxy @dropped {self.upstream} {{\n    @answered status 2xx\n"
+            "    handle_response @answered {\n      abort\n    }\n  }\n", 1))
+        self.replaced = current
+        self.reload()
+        return self
+
+    def __exit__(self, *_: object) -> None:
+        if self.replaced is None:
+            return
+        self.rendered.write_text(self.replaced)
+        self.replaced = None
+        self.reload()
+
+
 @dataclass
 class Site:
     """Where one round trip runs. ``runtime`` is the host directory every
