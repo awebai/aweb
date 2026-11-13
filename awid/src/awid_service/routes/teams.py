@@ -1177,6 +1177,8 @@ async def _team_server_body(request: Request) -> TeamServerRecordBody:
         body.extend(chunk)
         if len(body) > _TEAM_SERVER_MAX_BODY_BYTES:
             raise HTTPException(status_code=413, detail="request body too large")
+    # Retain the bounded exact bytes for the detached consumer binding.
+    request.state.protected_effect_body = bytes(body)
     try:
         return TeamServerRecordBody.model_validate(json.loads(bytes(body)))
     except ValueError as exc:
