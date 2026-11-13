@@ -578,6 +578,13 @@ identity's `signing.key`). A process pointed at that directory (via
 normally; requests are signed per-request with the session key and the server
 attributes the results to the identity.
 
+`grant.yaml` also records `team_did_key`: the team key named by the resident's
+team certificate when the grant was minted. A grant home holds no team
+certificate, and this field is read only to verify the team's owner log-key
+record for sealed local logs (see [Local Message Logs](configuration.md#local-message-logs)).
+It grants nothing. A grant minted before the field existed cannot verify that
+record and stops local logging until it is minted again.
+
 When a grant-backed worker also needs plaintext mail/chat messages to carry the
 resident identity's ordinary message signature, run local resident custody from
 the resident home with `aw custody serve`. Local API-key workspaces created by

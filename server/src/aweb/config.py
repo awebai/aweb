@@ -34,6 +34,73 @@ def _env_optional_int(*names: str) -> Optional[int]:
     return None
 
 
+FEDERATION_OUTBOUND_SETTING = "AWEB_FEDERATION_OUTBOUND"
+
+
+@dataclass(frozen=True)
+class FederationOutbound:
+    """Where this server may deliver federated mail and chat.
+
+    ``origins`` is None when the operator set nothing, and delivery goes to any
+    origin the delivery transport admits; empty when it is ``off``; otherwise
+    the canonical origins it may deliver to and no others. ``refusal`` names
+    why a setting that cannot be read refuses every delivery.
+    """
+
+    origins: frozenset[str] | None = None
+    refusal: str = ""
+
+    def refuses(self, origin: str) -> str:
+        """Why a delivery to the canonical ``origin`` is refused, or "" when it may go."""
+        if self.refusal:
+            return self.refusal
+        if self.origins is None:
+            return ""
+        if not self.origins:
+            return f"{FEDERATION_OUTBOUND_SETTING} is off"
+        if origin not in self.origins:
+            return f"{FEDERATION_OUTBOUND_SETTING} does not list this origin"
+        return ""
+
+
+def parse_federation_outbound(raw: str | None) -> FederationOutbound:
+    """Read ``AWEB_FEDERATION_OUTBOUND``: unset or blank, ``off``, or a
+    comma-separated list of origins (``scheme://host[:port]``). Raises
+    ``ValueError`` naming the setting and the entry it cannot read."""
+    raw = (raw or "").strip()
+    if not raw:
+        return FederationOutbound()
+    if raw.lower() == "off":
+        return FederationOutbound(origins=frozenset())
+    origins = set()
+    for entry in raw.split(","):
+        entry = entry.strip()
+        if not entry:
+            continue
+        try:
+            origins.add(canonical_server_origin(entry))
+        except ValueError as exc:
+            raise ValueError(
+                f"{FEDERATION_OUTBOUND_SETTING} entry {entry!r} is not a server origin ({exc}): "
+                "set it to off, or to a comma-separated list of origins such as https://aweb.example.com"
+            ) from None
+    if not origins:
+        raise ValueError(f"{FEDERATION_OUTBOUND_SETTING} lists no origin: leave it unset, set it to off, or list origins")
+    return FederationOutbound(origins=frozenset(origins))
+
+
+def get_federation_outbound() -> FederationOutbound:
+    """The operator's switch for federated delivery, read at call time.
+
+    A value that cannot be read refuses every delivery: this is a data
+    boundary, so it fails closed. Start-up refuses the same value, through
+    get_settings, before any send."""
+    try:
+        return parse_federation_outbound(os.getenv(FEDERATION_OUTBOUND_SETTING))
+    except ValueError:
+        return FederationOutbound(origins=frozenset(), refusal=f"{FEDERATION_OUTBOUND_SETTING} is not a valid setting")
+
+
 @dataclass
 class Settings:
     host: str
@@ -52,6 +119,7 @@ class Settings:
     require_registered_certificates: bool
     app_grant_max_age_seconds: int
     hook_producer_keys: tuple["HookProducerKey", ...]
+    federation_outbound: FederationOutbound = field(default_factory=FederationOutbound)
     awid_member_signing_keys: dict[str, bytes] = field(default_factory=dict, repr=False)
 
 
@@ -324,4 +392,5 @@ def get_settings() -> Settings:
         require_registered_certificates=require_registered_certificates(),
         app_grant_max_age_seconds=get_app_grant_max_age_seconds(),
         hook_producer_keys=get_hook_producer_keys(),
+        federation_outbound=parse_federation_outbound(os.getenv(FEDERATION_OUTBOUND_SETTING)),
     )

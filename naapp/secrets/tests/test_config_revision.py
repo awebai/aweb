@@ -20,6 +20,7 @@ from aweb_secrets.revisions import (
 
 INSTALLATION = "inst_1"
 OTHER = "inst_2"
+TEAM = "backend:acme.com"
 
 
 @pytest.fixture
@@ -31,18 +32,18 @@ async def db(test_db_factory) -> AsyncIterator[AsyncDatabaseManager]:
 
 async def _bump(db: AsyncDatabaseManager, installation_id: str) -> int:
     async with db.transaction() as tx:
-        return await bump_config_revision(tx, installation_id)
+        return await bump_config_revision(tx, installation_id, team_id=TEAM)
 
 
 async def test_an_installation_starts_at_revision_zero(db: AsyncDatabaseManager) -> None:
-    assert await config_revision(db, INSTALLATION) == 0
+    assert await config_revision(db, INSTALLATION, team_id=TEAM) == 0
 
 
 async def test_each_bump_moves_one_installation_on(db: AsyncDatabaseManager) -> None:
     assert await _bump(db, INSTALLATION) == 1
     assert await _bump(db, INSTALLATION) == 2
-    assert await config_revision(db, INSTALLATION) == 2
-    assert await config_revision(db, OTHER) == 0
+    assert await config_revision(db, INSTALLATION, team_id=TEAM) == 2
+    assert await config_revision(db, OTHER, team_id=TEAM) == 0
 
 
 async def test_a_bump_rolls_back_with_its_transaction(db: AsyncDatabaseManager) -> None:
@@ -51,9 +52,9 @@ async def test_a_bump_rolls_back_with_its_transaction(db: AsyncDatabaseManager) 
 
     with pytest.raises(Abandoned):
         async with db.transaction() as tx:
-            await bump_config_revision(tx, INSTALLATION)
+            await bump_config_revision(tx, INSTALLATION, team_id=TEAM)
             raise Abandoned
-    assert await config_revision(db, INSTALLATION) == 0
+    assert await config_revision(db, INSTALLATION, team_id=TEAM) == 0
 
 
 async def test_concurrent_bumps_each_get_their_own_revision(db: AsyncDatabaseManager) -> None:
@@ -88,7 +89,7 @@ def _change(base_revision: int) -> dict[str, Any]:
 async def test_a_draft_computed_before_a_narrowing_act_is_stale_after_it(
     db: AsyncDatabaseManager,
 ) -> None:
-    drafted = _change(await config_revision(db, INSTALLATION))
+    drafted = _change(await config_revision(db, INSTALLATION, team_id=TEAM))
     await _bump(db, INSTALLATION)  # a revoke, disable or remove (S8, §12)
     with pytest.raises(ChangeRefused) as refused:
         check_confirmable(
@@ -96,7 +97,7 @@ async def test_a_draft_computed_before_a_narrowing_act_is_stale_after_it(
             installation_id=INSTALLATION,
             install_generation=1,
             team_id="backend:acme.com",
-            current_revision=await config_revision(db, INSTALLATION),
+            current_revision=await config_revision(db, INSTALLATION, team_id=TEAM),
             now=datetime(2026, 10, 20, 12, 5, tzinfo=UTC),
         )
     assert refused.value.code == "base_revision_stale"
@@ -107,7 +108,7 @@ async def _confirm(db: AsyncDatabaseManager, base: int, held: asyncio.Event | No
     transaction open until ``held`` is set, as an apply step would."""
     try:
         async with db.transaction() as tx:
-            await claim_config_revision(tx, INSTALLATION, base)
+            await claim_config_revision(tx, INSTALLATION, base, team_id=TEAM)
             if held is not None:
                 await held.wait()
         return "applied"
@@ -117,8 +118,8 @@ async def _confirm(db: AsyncDatabaseManager, base: int, held: asyncio.Event | No
 
 async def test_a_claim_at_the_current_revision_moves_it_on(db: AsyncDatabaseManager) -> None:
     async with db.transaction() as tx:
-        assert await claim_config_revision(tx, INSTALLATION, 0) == 1
-    assert await config_revision(db, INSTALLATION) == 1
+        assert await claim_config_revision(tx, INSTALLATION, 0, team_id=TEAM) == 1
+    assert await config_revision(db, INSTALLATION, team_id=TEAM) == 1
 
 
 async def test_a_claim_against_a_past_revision_is_stale_and_changes_nothing(
@@ -126,7 +127,7 @@ async def test_a_claim_against_a_past_revision_is_stale_and_changes_nothing(
 ) -> None:
     await _bump(db, INSTALLATION)
     assert await _confirm(db, 0) == "base_revision_stale"
-    assert await config_revision(db, INSTALLATION) == 1
+    assert await config_revision(db, INSTALLATION, team_id=TEAM) == 1
 
 
 @pytest.mark.parametrize("base", [0, 3])
@@ -143,4 +144,14 @@ async def test_two_confirms_on_one_base_apply_exactly_once(
     held.set()
     results = sorted(await asyncio.gather(first, second))
     assert results == ["applied", "base_revision_stale"]
-    assert await config_revision(db, INSTALLATION) == base + 1
+    assert await config_revision(db, INSTALLATION, team_id=TEAM) == base + 1
+
+
+async def test_configuration_revisions_do_not_cross_teams_with_the_same_installation(db) -> None:
+    async with db.transaction() as tx:
+        assert await bump_config_revision(tx, INSTALLATION, team_id="team-a:acme.com") == 1
+        assert await bump_config_revision(tx, INSTALLATION, team_id="team-b:acme.com") == 1
+    assert await config_revision(db, INSTALLATION, team_id="team-a:acme.com") == 1
+    async with db.transaction() as tx:
+        assert await claim_config_revision(tx, INSTALLATION, 1, team_id="team-b:acme.com") == 2
+    assert await config_revision(db, INSTALLATION, team_id="team-a:acme.com") == 1

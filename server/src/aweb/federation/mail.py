@@ -12,6 +12,7 @@ import httpx
 from awid.federation_errors import federation_error_spec
 from awid.log import canonical_server_origin
 from awid.id_certificates import encode_id_chain_header
+from aweb.config import get_federation_outbound
 from aweb.messaging.chat_policy import HumanChatRefused
 
 from aweb.messaging.address_auth import refuse_same_origin_nonresident
@@ -68,6 +69,14 @@ class FederatedMailDeliveryError(RuntimeError):
         self.status_code = status_code
 
 
+class FederatedDeliveryRefused(FederatedMailDeliveryError):
+    """The operator's AWEB_FEDERATION_OUTBOUND setting refuses delivery to this origin."""
+
+    def __init__(self, origin: str, why: str) -> None:
+        super().__init__(origin, "delivery_outbound_refused", status_code=403)
+        self.args = (f"Federated delivery to {origin} is refused: {why}",)
+
+
 def _transport_failure_reason(exc: Exception) -> str:
     if isinstance(exc, AddressRefused):
         return "delivery_address_refused"
@@ -93,6 +102,9 @@ async def deliver_federated_message(
 ) -> dict[str, Any]:
     """POST a sender-signed mail/chat envelope to a remote aweb delivery origin.
 
+    Every federated mail and chat send leaves this server here, so this is where
+    the operator's AWEB_FEDERATION_OUTBOUND setting refuses one, with 403.
+
     The request goes through ``transport`` alone: the delivery origin comes from
     a record another party publishes, and the transport decides which origins
     and addresses are connected to. A server that has no delivery transport
@@ -100,6 +112,11 @@ async def deliver_federated_message(
     nowhere, and the send is refused as a failed delivery.
     """
     origin = canonical_server_origin(delivery_origin)
+    # The operator's switch comes first, so a refused send resolves and
+    # connects to nothing, whatever transport the host gave.
+    refusal = get_federation_outbound().refuses(origin)
+    if refusal:
+        raise FederatedDeliveryRefused(origin, refusal)
     if transport is None:
         raise FederatedMailDeliveryError(origin, "delivery_unavailable", status_code=502)
     if not isinstance(transport, httpx.AsyncBaseTransport):

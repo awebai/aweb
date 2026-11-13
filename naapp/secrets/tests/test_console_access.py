@@ -156,7 +156,7 @@ async def seed(w: World) -> None:
         for operation in (INSERT, READ):
             await records.create_operation(tx, INSTALLATION_ID, TEAM, operation)
         for policy in (DB_POLICY, OPEN_POLICY):
-            await records.create_policy(tx, INSTALLATION_ID, policy)
+            await records.create_policy(tx, INSTALLATION_ID, policy, team_id=TEAM)
         for record in (DB_WRITE, READING, OPEN):
             await records.create_grant(tx, INSTALLATION_ID, TEAM, record)
         for member in (DB_AGENT, READER):

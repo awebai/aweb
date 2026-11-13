@@ -181,6 +181,15 @@ func TestRunGrantMintWritesGrantHome(t *testing.T) {
 	if grant.Subject.Alias != "alice" || grant.Subject.DIDAW != "did:aw:alice" {
 		t.Fatalf("grant subject=%+v", grant.Subject)
 	}
+	// The resident's team key is recorded so the grant seat can verify the
+	// team's owner log-key record without a team certificate of its own.
+	residentCert, err := awconfig.LoadTeamCertificateForTeam(tmp, "backend:demo")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if grant.TeamDIDKey == "" || grant.TeamDIDKey != residentCert.TeamDIDKey {
+		t.Fatalf("grant home team_did_key=%q, want the resident certificate's %q", grant.TeamDIDKey, residentCert.TeamDIDKey)
+	}
 
 	keyPath := awconfig.GrantHomeSigningKeyPath(outDir)
 	info, err := os.Stat(keyPath)

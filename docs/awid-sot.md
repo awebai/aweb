@@ -1305,6 +1305,23 @@ which raises.
   before the write also covers a write whose answer is lost after AWID
   committed it. Other domains' entries are kept.
 
+### Registry client outbound bounds
+
+When `RegistryClient` follows a domain-selected registry override without an
+injected transport, each request resolves the registry host once, refuses the
+whole answer if any address is nonpublic, and connects only to an admitted IP.
+The original hostname and port remain in `Host`, and TLS verification and SNI
+name the original hostname. These requests ignore environment proxies and do
+not follow redirects. The configured home registry and explicitly injected
+transports retain their operator-selected policy; the home service credential
+is never sent to an override. Lookup, connection and response reading share the
+request timeout.
+
+Certificate, team, address and revocation scans read at most 500 pages, including
+legacy timestamp-paged revocations. A final page at that limit succeeds. A
+registry that still has more data raises `RegistryError(status_code=502)` with
+`pagination exceeded 500 pages`; a partial scan is never returned as complete.
+
 ### Public identity-tree write client
 
 `RegistryClient` (`awid/src/awid/registry.py`) makes the three identity-tree

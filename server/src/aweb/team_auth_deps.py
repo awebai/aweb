@@ -272,15 +272,40 @@ async def verify_request_certificate(request: Request, db, *, fresh: bool = Fals
             registered_certificate_ids=registered_certs,
         )
 
+    async def check_with_registration(team_key: str, *, refresh_revocations: bool = False):
+        nonlocal registered_certs, revoked_certs
+        try:
+            result = check_certificate(team_key)
+        except TeamCertificateError as exc:
+            if exc.reason != "unregistered":
+                raise
+            # Unregistered already establishes a valid signature. Rotation
+            # additionally requires current revocations before a list retry.
+            if refresh_revocations:
+                revoked_certs = await _get_revoked_certificates(request, cert_team_id, fresh=True)
+                if cert_data["certificate_id"] in revoked_certs:
+                    raise TeamCertificateError("revoked") from None
+            registry = getattr(request.app.state, "awid_registry_client", None)
+            if not callable(getattr(registry, "refresh_team_certificates_after_miss", None)):
+                # An uncached registry client's initial list was already live.
+                raise
+            registered_certs = await registered_certificates(registry, cert_team_id, after_miss=True)
+            result = check_certificate(team_key)
+        else:
+            if refresh_revocations:
+                revoked_certs = await _get_revoked_certificates(request, cert_team_id, fresh=True)
+                if result["certificate_id"] in revoked_certs:
+                    raise TeamCertificateError("revoked") from None
+        return result
+
     try:
         try:
-            # The team key was resolved from the certificate's own team_id (step 4).
-            cert_info = check_certificate(team_did_key)
+            cert_info = await check_with_registration(team_did_key)
         except TeamCertificateError as e:
             if e.reason != "bad_signature":
                 raise
-            # A controller may have rotated outside this client's invalidation
-            # path. Only this failure may spend the bounded refresh budget.
+            # Only a certificate signature failure may spend the separate
+            # bounded team-key refresh budget.
             registry = getattr(request.app.state, "awid_registry_client", None)
             refresh = getattr(registry, "refresh_team_key_after_signature_failure", None)
             refreshed_key = None
@@ -291,12 +316,7 @@ async def verify_request_certificate(request: Request, db, *, fresh: bool = Fals
                 raise
             refreshed_key = await pinned_team_key_for_request(request, cert_team_id, refreshed_key, db=_aweb_db(db))
             team_did_key = refreshed_key
-            cert_info = check_certificate(team_did_key)
-            # Bad signatures under the refreshed key must not drive revocation
-            # reads. A valid replacement certificate also needs current revocations.
-            revoked_certs = await _get_revoked_certificates(request, cert_team_id, fresh=True)
-            if cert_info["certificate_id"] in revoked_certs:
-                raise TeamCertificateError("revoked") from None
+            cert_info = await check_with_registration(team_did_key, refresh_revocations=True)
     except TeamCertificateError as e:
         if e.reason == "unregistered":
             logger.warning(
@@ -492,7 +512,7 @@ async def _get_registered_certificates(request: Request, team_id: str) -> set[st
     return await registered_certificates(getattr(request.app.state, "awid_registry_client", None), team_id)
 
 
-async def registered_certificates(registry_client, team_id: str) -> set[str]:
+async def registered_certificates(registry_client, team_id: str, *, after_miss: bool = False) -> set[str]:
     """The certificate IDs the AWID registry knows for a team, read through this registry client."""
     try:
         domain, team_name = parse_team_id(team_id)
@@ -503,9 +523,12 @@ async def registered_certificates(registry_client, team_id: str) -> set[str]:
         raise awid_registry_not_configured_exception(operation="AWID certificate existence check")
 
     try:
-        certificates = await registry_client.list_team_certificates(
-            domain, team_name, active_only=False
-        )
+        if after_miss:
+            certificates = await registry_client.refresh_team_certificates_after_miss(domain, team_name)
+        else:
+            certificates = await registry_client.list_team_certificates(
+                domain, team_name, active_only=False
+            )
     except AWID_DEPENDENCY_ERRORS as exc:
         status_code = getattr(exc, "status_code", None)
         if status_code == 404:

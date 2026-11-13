@@ -45,7 +45,7 @@ async def _wait_for_database_lock(db, pid):
 async def _setup(tx):
     await records.create_secret(tx, INSTALLATION, TEAM, SECRET)
     await records.set_active_version(tx, INSTALLATION, TEAM, SECRET.secret_id, 1)
-    await records.create_policy(tx, INSTALLATION, POLICY)
+    await records.create_policy(tx, INSTALLATION, POLICY, team_id=TEAM)
     grant = _grant("grt_issuer01", {"principal": DID_AW})
     await records.create_grant(tx, INSTALLATION, TEAM, grant)
     return grant
