@@ -1,5 +1,9 @@
 # Knowledge log
 
+## 2026-11-13
+* **Harvest**: OKF proposal from aweb-expert/aweb-expert-owner-acts with backing notes awid-sdk-dns-in-app-tests.md and bundle-carried-tests-without-their-wiring.md. eda9d6011 was checked as not on main at f8f54ff53, and its bundle cherry-pick 92430124a was checked. Gate-run counts and the commit audit are source-reported. The DNS claim was left to the pending lesson on in-process AWID DNS.
+* **Creation**: lesson [a bundle can carry a test without the product commit it was written against](/aweb-expert/lessons/a-bundle-can-carry-a-test-without-its-wiring.md).
+
 ## 2026-11-04
 * **Harvest**: OKF proposal from aweb-expert/aweb-expert-fresh-eyes (tasks aweb-acst and aweb-actf).
 * **Update**: [identity and routing review needs the real client](/aweb-expert/lessons/identity-and-routing-review-needs-the-real-client.md) gains that the real client includes the last released binary and that a skipped released-client case is not evidence.
