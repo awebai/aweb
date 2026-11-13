@@ -17,6 +17,7 @@ import json
 import os
 import re
 import socket
+import sys
 from contextlib import asynccontextmanager
 from pathlib import Path
 from uuid import uuid4
@@ -100,33 +101,49 @@ def _root_home(tmp_path, w):
     return root, env
 
 
-async def _aw(home, *args):
-    """aw's exit status, its --json answer and its progress lines."""
+@asynccontextmanager
+async def _running(home, *args, grace=5.0):
+    """The aw process for args, which never outlives its caller: on every
+    exit, a timeout, cancellation or failed assertion included, it is asked to
+    terminate, killed if it has not after grace seconds, and waited for."""
     root, env = home
     proc = await asyncio.create_subprocess_exec(os.environ["AW_TEST_CLI_BINARY"], "--json", *args, cwd=root, env=env,
         stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.PIPE)
-    out, err = await asyncio.wait_for(proc.communicate(), 120)
+    try:
+        yield proc
+    finally:
+        if proc.returncode is None:
+            proc.terminate()
+            try:
+                await asyncio.wait_for(proc.wait(), grace)
+            except TimeoutError:
+                proc.kill()
+                await proc.wait()
+
+
+async def _aw(home, *args, timeout=120, grace=5.0):
+    """aw's exit status, its --json answer and its progress lines."""
+    async with _running(home, *args, grace=grace) as proc:
+        out, err = await asyncio.wait_for(proc.communicate(), timeout)
     return proc.returncode, json.loads(out or b"{}"), err.decode()
 
 
-async def _endorse(a, profile, home, operation_id):
+async def _endorse(a, profile, home, operation_id, *, page_timeout=60, timeout=120):
     """Run aw id endorse, approving its exact operation once aw shows its page."""
-    root, env = home
-    proc = await asyncio.create_subprocess_exec(os.environ["AW_TEST_CLI_BINARY"], "--json", "id", "endorse",
-        "--protected-profile", str(profile), "--human", a.human.context.authority_id, "--team", TEAM,
-        "--deployment-label", "oats-root", "--operation-id", operation_id, cwd=root, env=env,
-        stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.PIPE)
-    progress = []
-    while True:
-        line = (await asyncio.wait_for(proc.stderr.readline(), 60)).decode()
-        assert line, "".join(progress)
-        progress.append(line)
-        if re.search(r"Approve it on this page: \S+/handoff/\S+", line):
-            break
-    options = await a.human.signer.approval_options(operation_id, human=a.actor)
-    approved = await a.human.signer.execute(operation_id, a.device.get(dict(options)), human=a.actor)
-    assert approved.state == "committed"
-    out, err = await asyncio.wait_for(proc.communicate(), 120)
+    args = ("id", "endorse", "--protected-profile", str(profile), "--human", a.human.context.authority_id if a else "",
+        "--team", TEAM, "--deployment-label", "oats-root", "--operation-id", operation_id)
+    async with _running(home, *args) as proc:
+        progress = []
+        while True:
+            line = (await asyncio.wait_for(proc.stderr.readline(), page_timeout)).decode()
+            assert line, "".join(progress)
+            progress.append(line)
+            if re.search(r"Approve it on this page: \S+/handoff/\S+", line):
+                break
+        options = await a.human.signer.approval_options(operation_id, human=a.actor)
+        approved = await a.human.signer.execute(operation_id, a.device.get(dict(options)), human=a.actor)
+        assert approved.state == "committed"
+        out, err = await asyncio.wait_for(proc.communicate(), timeout)
     return proc.returncode, json.loads(out or b"{}"), "".join(progress) + err.decode()
 
 
@@ -192,3 +209,53 @@ async def test_an_endorsed_root_admits_an_agent_once_under_its_own_operation_id(
         changed = tuple("other" if arg == "worker" else arg for arg in admit)
         status, refused, progress = await _aw(home, *changed)
         assert status != 0 and refused["error"]["code"] == "operation_conflict", progress
+
+
+def _fake_aw(tmp_path, monkeypatch, body):
+    """An aw stand-in that records its pid, then runs body."""
+    pid_file = tmp_path / "fake-aw.pid"
+    fake = tmp_path / "fake-aw"
+    fake.write_text(f"#!{sys.executable}\nimport os, signal, time\nopen({str(pid_file)!r}, 'w').write(str(os.getpid()))\n{body}\n")
+    fake.chmod(0o755)
+    monkeypatch.setenv("AW_TEST_CLI_BINARY", str(fake))
+    return pid_file
+
+
+def _gone(pid_file):
+    try:
+        os.kill(int(pid_file.read_text()), 0)
+    except ProcessLookupError:
+        return True
+    return False
+
+
+@pytest.mark.asyncio
+async def test_an_aw_that_never_answers_is_stopped_when_its_wait_ends(tmp_path, monkeypatch):
+    pid_file = _fake_aw(tmp_path, monkeypatch, "time.sleep(60)")
+    with pytest.raises(TimeoutError):
+        await _aw((tmp_path, dict(os.environ)), "id", "team", "admission-policy", timeout=2)
+    assert _gone(pid_file)
+
+
+@pytest.mark.asyncio
+async def test_an_aw_that_ignores_termination_is_killed(tmp_path, monkeypatch):
+    pid_file = _fake_aw(tmp_path, monkeypatch, "signal.signal(signal.SIGTERM, signal.SIG_IGN)\ntime.sleep(60)")
+    with pytest.raises(TimeoutError):
+        await _aw((tmp_path, dict(os.environ)), "id", "team", "admission-policy", timeout=2, grace=0.5)
+    assert _gone(pid_file)
+
+
+@pytest.mark.asyncio
+async def test_an_endorse_that_never_shows_its_page_is_stopped(tmp_path, monkeypatch):
+    pid_file = _fake_aw(tmp_path, monkeypatch, "time.sleep(60)")
+    with pytest.raises(TimeoutError):
+        await _endorse(None, tmp_path / "profile.json", (tmp_path, dict(os.environ)), str(uuid4()), page_timeout=2)
+    assert _gone(pid_file)
+
+
+@pytest.mark.asyncio
+async def test_an_endorse_whose_aw_ends_before_its_page_is_reported_and_stopped(tmp_path, monkeypatch):
+    pid_file = _fake_aw(tmp_path, monkeypatch, "import sys\nsys.stderr.write('Preparing operation x\\n')")
+    with pytest.raises(AssertionError, match="Preparing operation x"):
+        await _endorse(None, tmp_path / "profile.json", (tmp_path, dict(os.environ)), str(uuid4()), page_timeout=5)
+    assert _gone(pid_file)

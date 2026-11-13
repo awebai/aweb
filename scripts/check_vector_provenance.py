@@ -50,6 +50,10 @@ ROOT_CONSUMERS = {
         'Path(__file__).resolve().parents[2]',
         'FIXTURE.with_name("protected-service-request-v1.json")',
     ),
+    PurePosixPath("server/tests/test_oats_cli_real_path.py"): _consumer(
+        "protected-service-profile-v1.json",
+        'Path(__file__).resolve().parents[2] / "docs/vectors/protected-service-profile-v1.json"',
+    ),
     PurePosixPath("server/tests/test_human_chat_policy.py"): _consumer(
         "id-certificates-v1.json",
         "Path(__file__).resolve().parents[2] / 'docs/vectors/id-certificates-v1.json'",
