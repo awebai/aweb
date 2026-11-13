@@ -29,7 +29,6 @@
         "title": "Remove {/subject/principal} from {/subject/role}?"
       },
       "family": "owner_act",
-      "go_verifier": "ownerActArtifactDiffers",
       "key_role": "team_controller",
       "operation": "human-role.revoke",
       "prepared_fields": [],
@@ -122,7 +121,6 @@
         "title": "Approve {/subject/deployment_label} as the root agent for {/subject/teams}?"
       },
       "family": "id_certificate",
-      "go_verifier": "endorsementDiffers",
       "key_role": "human_identity",
       "operation": "identity.root.endorse",
       "prepared_fields": [
@@ -265,7 +263,6 @@
         "title": "Admit {/subject/member_alias} to {/subject/team_id}?"
       },
       "family": "member_certificate",
-      "go_verifier": "admissionArtifactDiffers",
       "key_role": "team_controller",
       "operation": "team.agent.admit",
       "prepared_fields": [
@@ -307,7 +304,6 @@
         "title": "Remove {/subject/expected_membership/alias} from {/subject/team_id}?"
       },
       "family": "member_revocation",
-      "go_verifier": "removalArtifactDiffers",
       "key_role": "team_controller",
       "operation": "team.agent.remove",
       "prepared_fields": [

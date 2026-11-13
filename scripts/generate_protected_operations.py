@@ -21,7 +21,7 @@ def generated():
         "package handoff", "", f'const protectedOperationsDescriptionSHA256 = "{digest}"', "",
         "var generatedPreparedShapes = map[string]preparedShape{"]
     for row in description["operations"]:
-        verifier = row["go_verifier"]
+        verifier = OPERATIONS[(row["operation"], row["variant"])].codec.go_verifier
         if not re.fullmatch(r"[a-zA-Z][a-zA-Z0-9]+", verifier):
             raise ValueError("definition needs an existing consumer codec verifier")
         selector = row["operation"] + "|" + row["variant"]

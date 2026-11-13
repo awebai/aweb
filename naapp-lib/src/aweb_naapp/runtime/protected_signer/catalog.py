@@ -292,5 +292,5 @@ def operation_description():
          "subject_schema": deepcopy(spec.codec.subject_schema),
          "prepared_fields": sorted(spec.prepared_fields), "bindings": spec.bindings(),
          "display": spec.display.fields(), "responsibility_statement": spec.display.responsibility_statement,
-         "go_verifier": spec.codec.go_verifier, "presentation": deepcopy(spec.codec.presentation)}
+         "presentation": deepcopy(spec.codec.presentation)}
         for _, spec in sorted(OPERATIONS.items())]}
