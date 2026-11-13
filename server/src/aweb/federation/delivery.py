@@ -3,6 +3,12 @@
 from __future__ import annotations
 
 from aweb.human_kind import is_verified_human
+from aweb.membership import observe, check_retained, require_fresh
+from awid.protected_membership import resolve_registered_membership
+from awid.protected_effect import EffectRefused
+from awid.team_certificate import TeamCertificateError
+from aweb.membership import refuse
+from fastapi import HTTPException
 
 from aweb.agent_wake import record_did_wakes
 from aweb.messaging.chat_policy import HumanChatRefused, recipient_label
@@ -346,13 +352,45 @@ async def _require_recipient_encryption_assertion(
         ) from exc
 
 
+async def _prepare_membership(db, registry, envelope, recipient):
+    if not recipient or recipient.get("inbound_mode") in {"open", "contacts_only"}:
+        return {}
+    team_id = recipient.get("team_id")
+    if not team_id:
+        return {}
+    rows = await db.get_manager("aweb").fetch_all(
+        "SELECT * FROM {{tables.agents}} WHERE team_id=$1 AND deleted_at IS NULL "
+        "AND ((did_aw=$2 AND did_aw_verified_key=did_key) OR did_key=$2)",
+        team_id, envelope.sender_did_aw,
+    )
+    if not rows:
+        return {}
+    try:
+        observation = await observe(registry, team_id)
+    except HTTPException as exc:
+        return {str(row["agent_id"]): exc for row in rows}
+    records = {}
+    for row in rows:
+        record = None
+        if observation.protected:
+            try:
+                record = await resolve_registered_membership(registry, observation, row.get("certificate_id"))
+                check_retained(observation, record, row)
+            except (EffectRefused, TeamCertificateError, HTTPException) as exc:
+                records[str(row["agent_id"])] = exc if isinstance(exc, HTTPException) else refuse(exc)
+                continue
+        records[str(row["agent_id"])] = (observation, record)
+    return records
+
+
 async def _authorize_policy(
     tx,
     *,
     envelope: FederationEnvelope,
     recipient: dict,
     stored_route_continuation: bool,
-) -> None:
+    membership_evidence=None,
+):
     mode = str(recipient.get("inbound_mode") or "").strip().lower()
     recipient_global = _is_global_recipient(recipient)
     if recipient_global and mode == "open":
@@ -362,11 +400,12 @@ async def _authorize_policy(
     if not recipient_global and stored_route_continuation:
         return
 
+    membership_refusal = None
     recipient_team = str(recipient.get("team_id") or "").strip()
     if recipient_team and not (recipient_global and mode == "contacts_only"):
         same_team = await tx.fetch_one(
             """
-            SELECT agent_id FROM {{tables.agents}}
+            SELECT * FROM {{tables.agents}}
             WHERE team_id = $1 AND deleted_at IS NULL
               AND ((did_aw = $2 AND did_aw_verified_key = did_key) OR did_key = $2)
             LIMIT 1
@@ -376,7 +415,19 @@ async def _authorize_policy(
             envelope.sender_did_aw,
         )
         if same_team is not None:
-            return
+            evidence = (membership_evidence or {}).get(str(same_team["agent_id"]))
+            if evidence is None:
+                membership_refusal = HTTPException(status_code=503, detail={"code": "protected_state_unavailable"})
+            elif isinstance(evidence, HTTPException):
+                membership_refusal = evidence
+            else:
+                observation, record = evidence
+                try:
+                    check_retained(observation, record, same_team)
+                except HTTPException as exc:
+                    membership_refusal = exc
+                else:
+                    return observation
 
     owner_dids = [
         value
@@ -402,6 +453,8 @@ async def _authorize_policy(
     )
     if any(row["contact_did_aw"] == envelope.sender_did_aw for row in bindings):
         return
+    if membership_refusal is not None:
+        raise membership_refusal
     if any(row["contact_did_aw"] is None for row in bindings):
         raise FederationAuthorityError("contact_identity_binding_required")
     raise FederationAuthorityError("recipient_policy_rejected")
@@ -827,6 +880,7 @@ async def _deliver_federated_phase_b(
     signature: str,
     recipient: dict,
     id_chain: dict | None = None,
+    membership_evidence=None,
     authority_token: AuthoritySecurityToken | None,
     stored_route_continuation: bool = False,
     stored_route_snapshot: dict | None = None,
@@ -890,11 +944,12 @@ async def _deliver_federated_phase_b(
             envelope=envelope,
             recipient=recipient,
         )
-        await _authorize_policy(
+        policy_observation = await _authorize_policy(
             tx,
             envelope=envelope,
             recipient=recipient,
             stored_route_continuation=stored_route_continuation,
+            membership_evidence=membership_evidence,
         )
         await _ensure_sender_contact(
             tx,
@@ -987,6 +1042,8 @@ async def _deliver_federated_phase_b(
         )
         if before_commit is not None:
             await before_commit()
+        if policy_observation is not None:
+            require_fresh(policy_observation)
         return result
 
 
@@ -997,6 +1054,7 @@ async def deliver_federated_phase_b(
     signature: str,
     recipient: dict,
     id_chain: dict | None = None,
+    registry_client=None,
     authority_token: AuthoritySecurityToken | None,
     stored_route_continuation: bool = False,
     stored_route_snapshot: dict | None = None,
@@ -1004,12 +1062,14 @@ async def deliver_federated_phase_b(
     envelope_hash_override: str | None = None,
 ) -> dict[str, object]:
     try:
+        membership_evidence = await _prepare_membership(db, registry_client, envelope, recipient)
         return await _deliver_federated_phase_b(
             db,
             envelope=envelope,
             signature=signature,
             recipient=recipient,
             id_chain=id_chain,
+            membership_evidence=membership_evidence,
             authority_token=authority_token,
             stored_route_continuation=stored_route_continuation,
             stored_route_snapshot=stored_route_snapshot,

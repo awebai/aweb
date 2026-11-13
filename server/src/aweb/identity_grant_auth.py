@@ -18,6 +18,7 @@ from awid.log import canonical_server_origin
 from awid.signing import canonical_json_bytes, verify_did_key_signature
 from fastapi import HTTPException, Request
 
+from aweb.membership import verify_retained, require_fresh
 from aweb.auth_context import GRANT_SCOPE_ANY, GrantContext
 from aweb.auth_context import GRANT_SCOPES as GRANT_SCOPES
 from aweb.config import get_settings, require_registered_certificates
@@ -202,6 +203,10 @@ async def _verify_identity_grant_row(request: Request, db, *, required_scope=_US
                     status_code=403, detail="grant issuing certificate not registered"
                 )
 
+    membership_observation = await verify_retained(
+        getattr(request.app.state, "awid_registry_client", None), row,
+        certificate_id=issuing_certificate_id,
+    )
     required = (
         required_grant_scope(request.method, _app_relative_path(request))
         if required_scope is _USE_PATH_SCOPE
@@ -226,6 +231,7 @@ async def _verify_identity_grant_row(request: Request, db, *, required_scope=_US
         expires_at=row["expires_at"],
         never_expires=never_expires(row.get("issued_at"), row["expires_at"]),
     )
+    require_fresh(membership_observation)
     return dict(row), grant
 
 

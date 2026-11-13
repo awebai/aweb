@@ -8,6 +8,7 @@ from typing import Any
 
 from fastapi import HTTPException, Request
 
+from aweb.membership import verify_retained, require_fresh
 from aweb.grant_expiry import never_expires
 from aweb.config import require_registered_certificates
 from aweb.team_auth_deps import TeamIdentity, _aweb_db, _get_registered_certificates, _get_revoked_certificates
@@ -46,7 +47,7 @@ async def require_valid_stream_grant(request: Request, db, identity: TeamIdentit
     """Check before constructing StreamingResponse, while HTTP errors are legal."""
     reason = await grant_terminal_reason(request, db, identity)
     if reason:
-        raise HTTPException(status_code=403, detail=GRANT_TERMINAL_DETAILS[reason])
+        raise HTTPException(status_code=503 if reason == "verification_unavailable" else 403, detail=GRANT_TERMINAL_DETAILS[reason])
 
 
 async def grant_terminal_reason(request: Request, db, identity: TeamIdentity) -> str | None:
@@ -62,7 +63,8 @@ async def grant_terminal_reason(request: Request, db, identity: TeamIdentity) ->
         """
         SELECT g.team_id, g.grant_did_key, g.issued_at, g.expires_at, g.revoked_at,
                g.issued_by_certificate_id,
-               a.agent_id, a.status, a.deleted_at
+               a.agent_id, a.status, a.deleted_at, a.did_key AS subject_did_key,
+               a.alias, a.identity_scope, a.did_aw, a.address
         FROM {{tables.identity_session_grants}} AS g
         JOIN {{tables.agents}} AS a ON a.agent_id = g.subject_agent_id
         WHERE g.grant_id = $1::UUID
@@ -87,6 +89,11 @@ async def grant_terminal_reason(request: Request, db, identity: TeamIdentity) ->
             registered_certs = await _get_registered_certificates(request, row["team_id"])
             if issuing_certificate_id not in registered_certs:
                 return "grant_issuer_revoked"
+    observation = await verify_retained(
+        getattr(request.app.state, "awid_registry_client", None), row,
+        certificate_id=issuing_certificate_id,
+    )
+    require_fresh(observation)
     return None
 
 
@@ -159,6 +166,11 @@ class NeverGrantStreamGuard:
         self.checked_at = now
         try:
             return await grant_terminal_reason(self.request, self.db, self.identity)
+        except HTTPException as exc:
+            if exc.status_code == 401:
+                return "grant_issuer_revoked"
+            logging.getLogger(__name__).warning("Never-grant stream revalidation failed", exc_info=True)
+            return "verification_unavailable"
         except Exception:
             logging.getLogger(__name__).warning("Never-grant stream revalidation failed", exc_info=True)
             return "verification_unavailable"

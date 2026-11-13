@@ -122,7 +122,7 @@ async def test_another_teams_evidence_is_not_authority(registry, cache, member):
 
 async def test_unreadable_private_team_facts_are_retryable(registry, member):
     cache = AWIDTeamCache(
-        registry_url=REGISTRY_URL, ttl_seconds=60, service_token="wrong-service-token",
+        registry_url=REGISTRY_URL, ttl_seconds=60, service_token="wrong-service-token-at-least-32-bytes",
         transport=registry.transport,
     )
     visibility = await registry.db.fetch_value("SELECT visibility FROM {{tables.teams}}")
