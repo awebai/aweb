@@ -1,5 +1,11 @@
 # Knowledge log
 
+## 2026-11-13
+* **Harvest**: OKF proposal from aweb-expert/aweb-expert-owner-acts (run46 throttle hints, OATS root creation, handover preflight).
+* **Creation**: decisions [a hinted 503 goes back to the caller](/aweb-expert/decisions/a-hinted-503-goes-back-to-the-caller.md) and [an OATS deployment root is created without an address](/aweb-expert/decisions/an-oats-root-has-no-address.md).
+* **Update**: [focused proof includes the contract guards](/aweb-expert/lessons/focused-proof-includes-the-contract-guards.md) gains the rule that a test-only change gets the whole preflight, including vector-provenance registration.
+* **Update**: [a harness must be shown to fail](/aweb-expert/lessons/a-harness-must-be-shown-to-fail.md) gains the bounded-kill rule.
+
 ## 2026-11-04
 * **Harvest**: OKF proposal from aweb-expert/aweb-expert-fresh-eyes (tasks aweb-acst and aweb-actf).
 * **Update**: [identity and routing review needs the real client](/aweb-expert/lessons/identity-and-routing-review-needs-the-real-client.md) gains that the real client includes the last released binary and that a skipped released-client case is not evidence.

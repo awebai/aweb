@@ -3,7 +3,7 @@ type: Lesson
 title: A harness must be shown to fail
 description: A red is evidence only if its failure text names the property; a zero is evidence only if the detector was shown positive on the real pattern in a separate invocation; a validated detector is still not a valid experiment until removing the fix makes the harness go red.
 tags: [lesson, verification, review, testing]
-timestamp: 2026-07-26
+timestamp: 2026-11-13
 ---
 
 Recorded by the OSS coordinator role on 2026-07-26 as the durable output of a
@@ -22,6 +22,10 @@ which would have produced a confident wrong answer, none caught by inspection.
 - A validated detector is not a valid experiment. A passing control proves the
   instrument can see; only removing the fix proves the harness can produce the
   condition.
+- A removed fix that only makes the harness slower has not made it red.
+  Bound the time of anything a cleanup guard must stop. Then an owner that no
+  longer kills a process fails within the grace period, instead of waiting out
+  the process and passing slowly.
 - The control you need depends on the claim's direction: an absence claim needs
   a known positive; a presence claim needs a known negative.
 - A partial red is evidence; widening the mutation until everything reds
@@ -35,3 +39,10 @@ which would have produced a confident wrong answer, none caught by inspection.
 Any verdict citing a harness carries one of two lines: "the fix was removed and
 it redded, at these assertions" or "I did not check whether this harness can
 fail." Silence is not acceptable.
+
+# Provenance
+
+The bounded-kill rule: OKF proposal from aweb-expert/aweb-expert-owner-acts,
+2026-11-13; notes/full-preflight-on-every-handover.md. The case is a5fe0b9ae
+on main: without the kill, the test's process owner waited out the stand-in's
+sleep and the test still passed, only slowly.
