@@ -42,7 +42,7 @@ async def activate(a, tmp_path):
 
 
 @pytest.mark.asyncio
-@pytest.mark.parametrize("lost_answer", [False, True])
+@pytest.mark.parametrize("lost_answer", [False, True, "purged"])
 async def test_genuine_retained_admission_and_exact_confirmation(admissions, tmp_path, monkeypatch, lost_answer):
     a = admissions
     await endorse(a)  # Actual B3/UV endorsement authorizes the bounded root.
@@ -62,10 +62,21 @@ async def test_genuine_retained_admission_and_exact_confirmation(admissions, tmp
     response = await execute(a, operation)
     if lost_answer:
         assert response.status_code == 503, response.text
+        if lost_answer == "purged":
+            await a.w.host.db.execute("DELETE FROM {{tables.protected_effect_receipts}} WHERE operation_id=$1::uuid", operation.operation_id)
+        else:
+            async with a.w.host.db.transaction() as tx:
+                await provision_team_protection(tx, domain=DOMAIN, name="engineering", service_id=a.w.context.service_id,
+                    service_did_key=did(SigningKey.generate()), expected_generation=1, approval_ref="native-service-key-transition")
         original_clock = a.w.app.signer.clock
         monkeypatch.setattr(a.w.app.signer, "clock", lambda: original_clock() + timedelta(hours=2))
         response = await execute(a, operation)
     assert response.status_code == 200, response.text
+    if lost_answer == "purged":
+        assert response.json()["state"] == "unknown"
+        assert response.json()["code"] == "external_effect_unresolved"
+        assert len(sends) == 1
+        return
     result = response.json()["result"]
     assert result["v"] == 2 and result["delivery"]["state"] == "applied"
     assert set(result) == {"v", "type", "artifact", "delivery"}
@@ -97,3 +108,70 @@ async def test_genuine_retained_admission_and_exact_confirmation(admissions, tmp
     assert len(sends) == 2
     status = await a.w.registry.get_team_certificate_status_fresh(DOMAIN, "engineering", artifact["certificate_id"])
     assert status["status"] == "revoked"
+
+
+@pytest.mark.asyncio
+async def test_genuine_b3_owner_act_reaches_protected_sql_consumer(world, tmp_path, test_db_factory):
+    import httpx
+    from fastapi import FastAPI, Request
+    from fastapi.responses import JSONResponse
+    from types import SimpleNamespace
+
+    from aweb_naapp.hooks.owner_act import HUMAN_ROLE_ACTS, Refused
+    from aweb_naapp.hooks.owner_act_nonces import OwnerActVerifier, apply_owner_act_migrations
+    from aweb_naapp.runtime.protected_effect_receipts import receipt_router
+    from awid.protected_effect import http_consumer
+    from awid.protected_membership import observe_team_protection
+    from tests.test_independent_protected_signer import prepare as prepare_owner
+
+    w = world
+    custody = await activate(SimpleNamespace(w=w), tmp_path)
+    db = await test_db_factory.create_db(suffix="actual_owner_consumer")
+    await apply_owner_act_migrations(db)
+    await db.execute("CREATE TABLE holding (app_id text,installation_id text,role text,principal text)")
+    await db.execute("INSERT INTO holding VALUES($1,$2,$3,$4)", w.operation.app_id,
+        w.operation.installation_id, w.operation.role, w.operation.principal)
+    async def key(team):
+        return (await observe_team_protection(w.registry, team)).controller_did_key
+    async def authority(team):
+        return await observe_team_protection(w.registry, team)
+    verifier = OwnerActVerifier(scope=w.operation.app_id, audience=w.operation.audience, acts=HUMAN_ROLE_ACTS,
+        team_key_for=key, team_authority_for=authority)
+    app = FastAPI()
+    app.include_router(receipt_router(lambda request: db))
+
+    @app.post("/.well-known/aweb-owner-act")
+    async def effect(request: Request):
+        body = await request.body()
+        payload = json.loads(body)
+        try:
+            prepared = await verifier.prepare(base64.b64decode(payload["signing"]), payload["signature"], team_id=TEAM,
+                protected_delivery=(request.headers.get(HEADER), http_consumer(audience=w.operation.audience,
+                    method="POST", path=request.url.path, body=body)))
+            async with db.transaction() as tx:
+                row = await tx.fetch_one("SELECT * FROM holding FOR UPDATE")
+                await verifier.consume_in(tx, prepared, expected_subject=dict(row))
+                await tx.execute("DELETE FROM holding")
+                await prepared.record_applied(tx)
+                prepared.require_fresh()
+        except Refused as exc:
+            return JSONResponse({"detail": exc.code}, status_code=503 if exc.code == "protected_state_unavailable" else 403)
+        return {"applied": True}
+
+    async with httpx.AsyncClient(transport=httpx.ASGITransport(app=app), follow_redirects=False) as client:
+        custody.configure_effects(registry=w.registry, clients={w.operation.audience: client}, clock=lambda: w.app.signer.clock())
+        prepared = await prepare_owner(w)
+        options = await w.app.signer.approval_options(prepared.operation_id, human=w.human)
+        result = await w.app.signer.execute(prepared.operation_id, w.device.get(dict(options)), human=w.human)
+        assert result.state == "committed" and result.result["v"] == 2
+        assert await db.fetch_value("SELECT count(*) FROM holding") == 0
+        assert await db.fetch_value("SELECT count(*) FROM {{tables.owner_act_nonces}}") == 1
+        assert await db.fetch_value("SELECT count(*) FROM {{tables.protected_effect_receipts}}") == 1
+        row = await w.db.fetch_one("SELECT retained_effect FROM {{tables.protected_signer_operations}} WHERE operation_id=$1", prepared.operation_id)
+        retained = json.loads(row["retained_effect"])
+        body = base64.b64decode(retained["delivery"]["body"])
+        url = w.operation.audience + retained["delivery"]["path"]
+        missing = await client.post(url, content=body)
+        assert (missing.status_code, missing.json()["detail"]) == (403, "protected_controller_required")
+        altered = await client.post(url, content=body + b" ", headers=retained["delivery"]["headers"])
+        assert (altered.status_code, altered.json()["detail"]) == (403, "protected_controller_required")
