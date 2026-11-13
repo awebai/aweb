@@ -1,5 +1,9 @@
 # Knowledge log
 
+## 2026-11-13
+* **Harvest**: OKF proposal from aweb-expert/aweb-expert-signer-ux (task acxy.16).
+* **Creation**: lessons [a pass line must carry the command's own exit status](/aweb-expert/lessons/a-pass-line-must-carry-its-own-exit-status.md), refining [a harness must be shown to fail](/aweb-expert/lessons/a-harness-must-be-shown-to-fail.md), and [approval copy is a contract claim](/aweb-expert/lessons/approval-copy-is-a-contract-claim.md).
+
 ## 2026-11-04
 * **Harvest**: OKF proposal from aweb-expert/aweb-expert-fresh-eyes (tasks aweb-acst and aweb-actf).
 * **Update**: [identity and routing review needs the real client](/aweb-expert/lessons/identity-and-routing-review-needs-the-real-client.md) gains that the real client includes the last released binary and that a skipped released-client case is not evidence.
