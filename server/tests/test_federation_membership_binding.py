@@ -141,8 +141,8 @@ async def test_exact_contact_still_delivers_when_same_team_projection_is_invalid
         env.member.team_id, envelope.target_current_did_key, envelope.target_did_aw, envelope.target_address,
     ))
     await manager.execute(
-        "INSERT INTO {{tables.contacts}} (owner_did,contact_address,contact_did_aw,binding_controller_did,reference_type,status) "
-        "VALUES ($1,$2,$3,$4,'identity','active')",
+        "INSERT INTO {{tables.contacts}} (owner_did,contact_address,contact_did_aw,binding_controller_did,reference_type,status,binding_accepted_at) "
+        "VALUES ($1,$2,$3,$4,'identity','active',now())",
         envelope.target_did_aw, envelope.sender_address, envelope.sender_did_aw, env.member.team_did_key,
     )
     await env.stack.awid_db.execute(
