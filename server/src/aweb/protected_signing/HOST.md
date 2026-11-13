@@ -112,6 +112,54 @@ Resources close on startup failure and shutdown. Existing deployments require
 their authorized migration procedure; this entry point is not permission to
 apply migrations or move keys in a real deployment.
 
+## One-command setup
+
+For a team that is already registered, one local administrator command runs
+every step below in order, as the protected process uid:
+
+```sh
+python -m aweb.protected_signing.operator setup \
+  --config-dir /run/secrets/signer/config \
+  --team engineering:customer.example \
+  --human did:aw:HUMAN --requester did:aw:ROOT \
+  --contact approver@customer.example \
+  --human-origin https://human.customer.example \
+  --request-origin https://signer.customer.example \
+  --registry-origin https://registry.customer.example \
+  --controller-pem /private-provisioning/team-controller.pem \
+  --member-pem /private-provisioning/member.pem \
+  --max-active 5 --max-per-window 10
+```
+
+Replace those public placeholders. The database (`AWEB_PROTECTED_DATABASE_URL_FILE`,
+`AWEB_PROTECTED_DATABASE_SCHEMA`), `AWEB_PROTECTED_WORKER_UIDS` and the SMTP
+settings come from the environment, as for the host.
+
+1. The first run reads the registry's current team controller and namespace
+   controller keys and prints them with a short `confirm_pins` fingerprint.
+   It writes nothing. Check the keys independently, then run the same command
+   with `--confirm-pins <fingerprint>`. Keys that changed in between refuse
+   `authority_changed`.
+2. The confirmed run writes `protected-profile.json`, `protected-scope.json`,
+   `members.json`, `admission-policy.json` and `host.env` into `--config-dir`
+   (mode 0700), and installs the controller key into `keys/` with
+   `install-controller`'s checks. It then records the first approver with the
+   `bootstrap` command's code, which mails their enrolment link, and provisions
+   the initial policy with `policy-init`'s code. It answers
+   `awaiting_enrolment`.
+3. Once the approver has created their passkey from the mailed link, run the
+   same command again. It checks provisioning as `check` does and answers
+   `ready`. A rerun before enrolment sends the same pending person the link
+   again.
+
+Setup never overwrites: a file that exists must hold exactly what setup would
+write, or it refuses `setup_conflict`. Changing a bound or a key afterwards is
+the separate policy-change or controller-cutover procedure, not a setup rerun.
+Start the host with the environment in `host.env`. Give each agent the public
+profile by copying `protected-profile.json` to its identity home (`.aw/`),
+where `aw` finds it by default. The sections below describe each step on its
+own.
+
 ## First operator enrollment
 
 Use the production package's local administrator command, as the protected
@@ -196,10 +244,14 @@ python -m aweb.protected_signing.operator install-controller \
   --source-pem /private-provisioning/team-controller.pem
 ```
 
-The command validates the existing PEM with AWID's shared loader and compares
-its public key to the selected profile. It writes one **new** regular
-`CONTROLLER_KEY_FILE` (32-byte seed as 64 hex characters plus LF), exclusively,
-mode 0400, under a real 0700 directory owned by the invoking uid. It refuses
+The command validates the existing PEM with AWID's shared loader and finds the
+profile binding whose `authority_key_did` is its public key; a key no binding
+pins refuses `authority_changed`. It writes that binding's private slot: the
+selected binding's `CONTROLLER_KEY_FILE`, or, with
+`AWEB_PROTECTED_CONTROLLER_KEYS_FILE`, the manifest's path for that key. A
+pinned key with no slot on this host refuses `custody_not_isolated`. It writes
+one **new** regular file (32-byte seed as 64 hex characters plus LF),
+exclusively, mode 0400, under a real 0700 directory owned by the invoking uid. It refuses
 existing paths, symlinks, unsafe directory ownership/mode and a mismatched key;
 it never overwrites, registers or rotates authority. The serving host also
 checks the registry's current key. Remove the short-lived input after successful
@@ -317,9 +369,10 @@ keys refuse. Every referenced seed still passes the existing real-file uid,
 mode and symlink checks, matches the public pin, and is excluded from ordinary
 member keys. Projected Secret symlinks do not replace private-volume custody.
 
-Use the existing `operator install-controller --source-pem` for each selected
-scope/key slot, and `operator bootstrap --requester --contact` for each binding
-before serving the group. The one existing enrollment page and B3 completion
+Run `operator install-controller --source-pem` once per private key, team
+controller and human identity alike: each PEM goes to the manifest slot of the
+binding that pins it. Run `operator bootstrap --requester --contact` for each
+binding before serving the group. The one existing enrollment page and B3 completion
 fence resolve each mailed link's exact stored scope; they cannot select another
 authorizer. LOGIN and per-act UV use the same exact context resolution. The
 host mounts one shared operations HTTP surface, dispatching only exact trusted

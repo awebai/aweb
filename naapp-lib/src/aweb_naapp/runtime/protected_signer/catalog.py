@@ -80,6 +80,12 @@ class OperationDefinition:
             raise SignerRefused("operation_mismatch") from None
         return result
 
+    # Whether a mailed personal link may reveal this operation's whole frozen
+    # request: true only where every field of that request was reviewed as
+    # public (identifiers, labels, policy). Unclassified operations refuse
+    # (human-assurance-contract.md, "Mailed approval links").
+    link_revealable: bool = False
+
     @property
     def needs_human(self) -> bool:
         return self.rule == "live_floor"
@@ -172,6 +178,7 @@ _ROWS = (
         prepared_fields=frozenset({"registry", "expected_head", "responsibility_statement", "admission_policy"}),
         finalize_execution_refusal=True,
         receipt_uv_expiry=True,
+        link_revealable=True,
     ),
     OperationDefinition(
         "team.agent.admit",
@@ -245,6 +252,7 @@ _ROWS = (
             (("subject_ineligible", "The selected role holding cannot be revoked by this operation."),
              ("issuer_kind_forbidden", "This controller cannot revoke the selected role holding."))),
         signing_port="sign_owner_act",
+        link_revealable=True,
     ),
 )
 

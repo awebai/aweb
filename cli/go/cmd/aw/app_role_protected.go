@@ -43,9 +43,13 @@ var appRoleResumeCmd = &cobra.Command{
 }
 
 func loadProtectedProfile() (*handoff.Profile, error) {
-	path := strings.TrimSpace(appProtectedProfileFlag)
-	if path == "" {
-		return nil, usageError("--protected-profile is required")
+	home, err := identityHomeForDir("")
+	if err != nil {
+		return nil, err
+	}
+	path, err := protectedProfilePath(appProtectedProfileFlag, home.Root)
+	if err != nil {
+		return nil, err
 	}
 	raw, err := os.ReadFile(path)
 	if err != nil {
@@ -236,7 +240,7 @@ func settleProtectedAct(cmd *cobra.Command, operationID string, intent map[strin
 	}
 	if err != nil {
 		if code := handoff.ErrorCode(err); code != "" {
-			return withErrorCode(code, fmt.Errorf("operation %s: %w", operationID, err))
+			return withErrorCode(code, fmt.Errorf("%w (operation %s)", err, operationID))
 		}
 		return err
 	}

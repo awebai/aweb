@@ -7,6 +7,7 @@ import (
 	"os"
 	"path/filepath"
 	"regexp"
+	"strings"
 )
 
 // PendingGovernanceOperation is a protected operation aw prepared and has not
@@ -83,4 +84,35 @@ func RemovePendingGovernanceOperation(operationID string) error {
 		return err
 	}
 	return nil
+}
+
+// ListPendingGovernanceOperations returns every pending operation aw has
+// saved, in no particular order.
+func ListPendingGovernanceOperations() ([]*PendingGovernanceOperation, error) {
+	dir, err := PathInUserState("governance")
+	if err != nil {
+		return nil, err
+	}
+	entries, err := os.ReadDir(dir)
+	if errors.Is(err, os.ErrNotExist) {
+		return nil, nil
+	}
+	if err != nil {
+		return nil, err
+	}
+	var ops []*PendingGovernanceOperation
+	for _, entry := range entries {
+		id, ok := strings.CutSuffix(entry.Name(), ".json")
+		if !ok || !operationIDPattern.MatchString(id) {
+			continue
+		}
+		op, err := LoadPendingGovernanceOperation(id)
+		if err != nil {
+			return nil, err
+		}
+		if op != nil {
+			ops = append(ops, op)
+		}
+	}
+	return ops, nil
 }

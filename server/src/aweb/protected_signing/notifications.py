@@ -1,5 +1,6 @@
 """B3 mail and locator-only B2 notices through the configured TLS mailer."""
 
+from datetime import UTC
 from html import escape
 
 from aweb_naapp.email import EmailNotSent, Message
@@ -18,12 +19,12 @@ class ProtectedNotifications(PasskeyEmailDelivery):
         self.db = db
 
     async def deliver_approval_link(self, approver, link_token, approval):
-        # Post-commit only: self.db's fresh read cannot see the preparing
-        # transaction's uncommitted handoff. The shared signer currently does
-        # not dispatch this port; future wiring must call after commit.
-        # Shared prepare retains the candidate tokens privately. The public
-        # handoff is only a locator: actual LOGIN and distinct act UV remain
-        # mandatory. Never put a candidate bearer token or payload in mail.
+        # Called by the shared signer after prepare commits, so this fresh read
+        # sees the committed handoff. The personal token rides in the URL
+        # fragment, which browsers never send to a server; the page posts it.
+        # Revealing the request needs that token, and deciding it still needs
+        # this approver's own fresh exact-act passkey assertion
+        # (human-assurance-contract.md, "Mailed approval links").
         if not approver.contact:
             return DeliveryStatus.FAILED
         handoff_id = await self.db.fetch_value(
@@ -33,14 +34,29 @@ class ProtectedNotifications(PasskeyEmailDelivery):
         )
         if handoff_id is None:
             return DeliveryStatus.FAILED
-        url = f"{self._origin}/handoff/{handoff_id}"
+        url = f"{self._origin}/handoff/{handoff_id}#k={link_token}"
+        expires = approval.expires_at.astimezone(UTC).strftime("%Y-%m-%d %H:%M UTC")
+        text = (
+            "A request is waiting for your approval. Open it to see what it asks for, "
+            "then approve or deny it with your passkey.\n\n"
+            f"{url}\n\n"
+            f"It expires at {expires}. Deny also asks for your passkey.\n"
+            "If you did not expect this request, open it and choose Deny.\n"
+        )
+        html = (
+            "<p>A request is waiting for your approval. Open it to see what it asks for, "
+            "then approve or deny it with your passkey.</p>"
+            f'<p><a href="{escape(url, quote=True)}">Review the request</a></p>'
+            f"<p>It expires at {escape(expires)}. Deny also asks for your passkey.</p>"
+            "<p>If you did not expect this request, open it and choose Deny.</p>"
+        )
         try:
             await self._mailer.send(
                 Message(
                     to=approver.contact,
-                    subject="Protected signing approval requested",
-                    text=f"Review the request with your passkey.\n\n{url}\n",
-                    html=f'<p><a href="{escape(url, quote=True)}">Review the request</a></p>',
+                    subject="A request is waiting for your approval",
+                    text=text,
+                    html=html,
                 )
             )
         except EmailNotSent:

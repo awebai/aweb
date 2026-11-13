@@ -672,8 +672,9 @@ exact act on the service's page; nothing is signed here. Before the page is show
 aw checks the admission policy the service froze against its own read of every
 team's policy. Endorsement grants no resource permissions and creates no policy.
 
---operation-id is the caller's UUID, kept before anything is sent. Running again
-with the same id and inputs resumes that operation; changed inputs refuse
+Without --operation-id, aw keeps a new UUID before anything is sent, and running
+the same command again continues that request. With --operation-id, running
+again with the same id and inputs resumes that operation; changed inputs refuse
 operation_conflict. Once the endorsement commits, aw registers the root's new
 certificate at the pinned registry and reads it back.
 
@@ -682,9 +683,9 @@ Flags:
 - `-h, --help help for endorse`
 - `--human string The did:aw of the human who endorses this root`
 - `--no-browser Do not open a browser; the page is only reported`
-- `--no-wait Show the approval page and exit without waiting for the human; rerun with the same --operation-id to finish`
-- `--operation-id string The caller's UUID for this endorsement; the same id resumes it`
-- `--protected-profile string The operator-provisioned protected-service profile`
+- `--no-wait Exit without waiting for the approver; run the same command again to finish`
+- `--operation-id string The UUID for this endorsement; by default aw continues the same unfinished request or starts a new one`
+- `--protected-profile string The operator-provisioned protected-service profile (default: AWEB_PROTECTED_PROFILE, else protected-profile.json in the identity home)`
 - `--team stringArray A team (name:domain) the root will admit agents to; repeat for each`
 
 ## `id grant`
@@ -1228,7 +1229,7 @@ receipt_unavailable and never means the team has no policy.
 
 Flags:
 - `-h, --help help for admission-policy`
-- `--protected-profile string The operator-provisioned protected-service profile to read the policy from`
+- `--protected-profile string The operator-provisioned protected-service profile to read the policy from (default: AWEB_PROTECTED_PROFILE, else protected-profile.json in the identity home)`
 - `--team string The team (name:domain) whose policy to read; the profile must bind its controller`
 
 ## `id team admit`
@@ -1241,8 +1242,9 @@ deployment's endorsed root. No human approves it: the service admits only within
 the team's admission policy, whose version and digest the caller names as read
 from aw id team admission-policy.
 
---operation-id is the caller's UUID, kept before anything is sent. Running again
-with the same id and the same inputs resumes that operation and returns its
+Without --operation-id, aw keeps a new UUID before anything is sent, and running
+the same command again continues that request. With --operation-id, running
+again with the same id and the same inputs resumes that operation and returns its
 original certificate; changed inputs under the id refuse operation_conflict. The
 verified membership certificate is written to --certificate-out.
 
@@ -1252,10 +1254,10 @@ Flags:
 - `-h, --help help for admit`
 - `--member-id string The agent's did:aw, when it is a registered identity; omit for a local agent`
 - `--member-key string The agent's did:key`
-- `--operation-id string The caller's UUID for this admission; the same id resumes it`
+- `--operation-id string The UUID for this admission; by default aw continues the same unfinished request or starts a new one`
 - `--policy-digest string The admission policy digest the caller read (sha256:<hex>)`
 - `--policy-version int The admission policy version the caller read`
-- `--protected-profile string The operator-provisioned protected-service profile`
+- `--protected-profile string The operator-provisioned protected-service profile (default: AWEB_PROTECTED_PROFILE, else protected-profile.json in the identity home)`
 - `--team string The protected team (name:domain)`
 
 ## `id team cleanup-cloud`
@@ -1526,15 +1528,16 @@ endorsed root that admitted it. The membership is the one --certificate names:
 the certificate file aw id team admit wrote, or the agent home's installed copy.
 No human approves it, and nothing in the agent's home is changed.
 
---operation-id is the caller's UUID, kept before anything is sent. Running again
-with the same id and the same inputs resumes that operation and returns its
+Without --operation-id, aw keeps a new UUID before anything is sent, and running
+the same command again continues that request. With --operation-id, running
+again with the same id and the same inputs resumes that operation and returns its
 receipt; changed inputs under the id refuse operation_conflict.
 
 Flags:
 - `--certificate string The agent's team certificate file`
 - `-h, --help help for remove-agent`
-- `--operation-id string The caller's UUID for this removal; the same id resumes it`
-- `--protected-profile string The operator-provisioned protected-service profile`
+- `--operation-id string The UUID for this removal; by default aw continues the same unfinished request or starts a new one`
+- `--protected-profile string The operator-provisioned protected-service profile (default: AWEB_PROTECTED_PROFILE, else protected-profile.json in the identity home)`
 
 ## `id team remove-member`
 

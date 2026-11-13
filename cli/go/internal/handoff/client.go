@@ -346,7 +346,7 @@ func refusal(status int, body []byte) error {
 	if code == "operation_not_served" {
 		return coded(code, fmt.Errorf("the app answered %d: this protected service does not serve the requested operation; upgrade the service to a version that supports it", status))
 	}
-	return coded(code, fmt.Errorf("the app answered %d", status))
+	return told(code, fmt.Errorf("the app answered %d", status), Facts{})
 }
 
 // RefusalCode is the `detail` code of an app's refusal body, or "".

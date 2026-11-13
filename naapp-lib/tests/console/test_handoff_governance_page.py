@@ -6,6 +6,7 @@ import json
 import os
 import re
 import socket
+from contextlib import asynccontextmanager
 from dataclasses import replace
 from datetime import UTC, datetime, timedelta
 from types import SimpleNamespace
@@ -71,7 +72,16 @@ def test_governance_browser_keeps_direct_routing_inside_the_isolated_runner(monk
 
 @pytest.fixture
 async def governance_service(world, tmp_path, request):
+    async with governance_server(world, tmp_path, redirect=getattr(request, "param", True)) as service:
+        yield service
+
+
+@asynccontextmanager
+async def governance_server(world, tmp_path, *, redirect=True, signer=None):
+    """The human origin over real TLS in Chromium, for ``signer`` (by default
+    the world's own) with one prepared operation."""
     w = world
+    signer = w.signer if signer is None else signer
     w.clock.now = datetime.now(UTC)
     tls = make_certificates(tmp_path, ["signer.example.com"], ["127.0.0.1"])
     with socket.socket() as human_socket, socket.socket() as callback_socket:
@@ -100,7 +110,7 @@ async def governance_service(world, tmp_path, request):
             window=timedelta(minutes=1),
         )
         mount = ProtectedOperationsHTTP(
-            w.signer,
+            signer,
             request_origin="https://request.example.com",
             requester=refuse_request_actor,
             reader=refuse_request_actor,
@@ -126,9 +136,9 @@ async def governance_service(world, tmp_path, request):
 
         operation = replace(
             w.operation,
-            redirect_uri=callback_origin + "/callback" if getattr(request, "param", True) else None,
+            redirect_uri=callback_origin + "/callback" if redirect else None,
         )
-        prepared = await w.signer.prepare(operation, requester=w.requester)
+        prepared = await signer.prepare(operation, requester=w.requester)
         servers = [
             (
                 uvicorn.Server(
@@ -198,9 +208,9 @@ async def authenticator(context, page):
     return cdp, device["authenticatorId"]
 
 
-async def open_page(service, width):
+async def open_page(service, width, **context_options):
     context = await service.browser.new_context(
-        ignore_https_errors=True, viewport={"width": width, "height": 900}
+        ignore_https_errors=True, viewport={"width": width, "height": 900}, **context_options
     )
     page = await context.new_page()
     cdp, device = await authenticator(context, page)
@@ -248,15 +258,18 @@ async def test_fresh_tab_logs_in_then_approves_the_frozen_act_with_two_real_uv_g
         )
         await expect(page.locator("#handoff-act")).to_have_text("human-role.revoke")
         await expect(page.locator("#handoff-target")).to_contain_text(s.world.operation.principal)
-        await expect(page.locator("#handoff-governance-title")).to_be_focused()
+        await expect(page.locator("#handoff-title")).to_be_focused()
         await expect(page.locator("body")).to_have_attribute("data-handoff-state", "ready")
-        await expect(action).to_have_text("Approve operation with passkey")
+        await expect(action).to_have_text("Approve")
         assert page.url == s.origin + "/handoff/" + s.prepared.handoff_id
         assert await page.evaluate("key => !!sessionStorage.getItem(key)", CSRF_KEY)
         assert not any(url.endswith("/execute") for url in posts)
         assert not s.callback.done()
         assert await page.evaluate("document.documentElement.scrollWidth <= innerWidth")
         await capture_enabled_control(page, action, tmp_path / f"governance-ready-{width}.png")
+        # The full digest and frozen operation are one step away, in
+        # Technical details (Juan 2026-11-13, via coordinator).
+        await page.get_by_text("Technical details", exact=True).click()
         summary = page.get_by_text("View the frozen operation", exact=True)
         await summary.click()
         await expect(page.locator("#handoff-payload")).to_be_visible()
@@ -350,7 +363,7 @@ async def test_cancelled_login_or_non_uv_approval_never_executes_or_calls_back(
             for field in ("act", "digest", "fingerprint"):
                 await expect(page.locator(f"#handoff-{field}")).to_be_empty()
             await expect(
-                page.get_by_role("button", name="Approve operation with passkey")
+                page.get_by_role("button", name="Approve")
             ).to_be_hidden()
             assert not any("/governance/" in url for url in posts)
             (tmp_path / "governance-cancel-375.json").write_text(
@@ -525,9 +538,9 @@ async def test_committed_operation_with_damaged_or_lost_response_is_unconfirmed(
         await expect(page.locator("body")).to_have_attribute("data-handoff-state", "unconfirmed")
         assert observed == [(200, "committed")]
         await expect(page.locator("#handoff-action")).to_be_disabled()
-        await expect(page.get_by_role("status")).to_contain_text("cannot confirm")
+        await expect(page.get_by_role("status")).to_contain_text("could not confirm")
         await expect(page.get_by_role("status")).to_contain_text(
-            "Check the existing receipt in your terminal before retrying."
+            "The requester sees the outcome."
         )
         assert not s.callback.done()
         # The effect committed before its browser reply was damaged. Refusing

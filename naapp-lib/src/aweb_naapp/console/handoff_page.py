@@ -25,10 +25,14 @@ if TYPE_CHECKING:
 
 def _unavailable(error: HTTPException) -> HTMLResponse:
     # Fixed copy only: do not echo an id, scope, exception detail or redirect.
+    # A refusal is final; a rate limit is not, so it says only when to retry.
+    lead = "" if error.status_code == 429 else '<p role="status">This request cannot be completed.</p>'
+    # The page cannot tell yet whether a terminal or a mailed link opened it.
     guidance = (
-        "Please wait before starting a new request from your terminal."
+        "Too many attempts from this browser. Wait a minute, then open the page again."
         if error.status_code == 429
-        else "Return to your terminal and start a new request."
+        else "If it came by email, the link is no longer valid; if a terminal started it, "
+        "start a new request there."
     )
     return HTMLResponse(
         '<!doctype html><html lang="en"><head><meta charset="utf-8">'
@@ -38,8 +42,7 @@ def _unavailable(error: HTTPException) -> HTMLResponse:
         '<link rel="stylesheet" href="/handoff-assets/handoff.css"></head>'
         '<body><main class="handoff" aria-labelledby="handoff-unavailable">'
         '<h1 id="handoff-unavailable">Request unavailable</h1>'
-        '<p role="status">This request cannot be completed.</p>'
-        f"<p>{guidance}</p></main></body></html>",
+        f"{lead}<p>{guidance}</p></main></body></html>",
         status_code=error.status_code,
         headers=error.headers,
     )
@@ -136,26 +139,31 @@ def handoff_page_router(
         governance_fields = ""
         if governance:
             assert routing is not None  # Validated before leaving the HTML refusal boundary.
-            title = "Review a protected operation"
-            explanation = (
-                "Sign in with your passkey, then compare the operation and fingerprint with "
-                "your terminal before approving. Approval requires a separate passkey gesture."
-            )
+            title = "Review this request"
+            # A mailed personal link opens the request directly; without one,
+            # the approver signs in first. The script chooses, and replaces
+            # this text with what the request asks for.
+            explanation = "Sign in with your passkey to see the request."
             data = (
                 f' data-login-scope="{escape(routing["b3_scope"], quote=True)}"'
                 f' data-console-csrf-key="{escape(routing["csrf_key"], quote=True)}"'
             )
+            # Juan 2026-11-13, via coordinator: the request leads, the
+            # fingerprint stays in sight and the full digest is one step away.
             governance_fields = (
                 '<section id="handoff-governance" class="card" aria-labelledby="handoff-governance-title" hidden>'
-                '<h2 id="handoff-governance-title" tabindex="-1">Review this operation</h2>'
+                '<h2 id="handoff-governance-title">What this request does</h2>'
+                '<p id="handoff-requested"></p><p id="handoff-expires"></p>'
+                '<dl><dt>Fingerprint</dt><dd id="handoff-fingerprint"></dd></dl>'
+                '<details id="handoff-details"><summary>Technical details</summary>'
                 '<dl><dt>Act</dt><dd id="handoff-act"></dd>'
                 '<dt>Target</dt><dd id="handoff-target"></dd>'
-                '<dt>Full digest</dt><dd id="handoff-digest"></dd>'
-                '<dt>Fingerprint</dt><dd id="handoff-fingerprint"></dd></dl>'
-                "<p>Compare all four groups with your terminal. If anything differs, close this page.</p>"
+                '<dt>Full digest</dt><dd id="handoff-digest"></dd></dl>'
                 "<details><summary>View the frozen operation</summary>"
-                '<pre id="handoff-payload"></pre></details></section>'
+                '<pre id="handoff-payload"></pre></details></details></section>'
             )
+        # A governance request may reach a person who has no terminal at all.
+        eyebrow = "" if governance else '<p class="handoff-eyebrow">Terminal request</p>'
         return HTMLResponse(
             '<!doctype html><html lang="en"><head><meta charset="utf-8">'
             '<meta name="viewport" content="width=device-width,initial-scale=1">'
@@ -164,8 +172,9 @@ def handoff_page_router(
             '<link rel="stylesheet" href="/handoff-assets/handoff.css">'
             '<script type="module" src="/handoff-assets/handoff.js"></script></head>'
             f'<body data-handoff-id="{identifier}" data-purpose="{purpose}"{data} data-handoff-state="loading">'
-            '<main class="handoff"><p class="handoff-eyebrow">Terminal request</p>'
-            f"<h1>{title}</h1><p>{explanation}</p>"
+            '<main class="handoff">'
+            f"{eyebrow}"
+            f'<h1 id="handoff-title" tabindex="-1">{title}</h1><p id="handoff-explanation">{explanation}</p>'
             '<p class="handoff-origin">On <span id="handoff-origin"></span></p>'
             '<section id="handoff-scope" class="card" aria-label="Requested identity and role" hidden>'
             '<dl><dt>Identity</dt><dd id="handoff-principal"></dd>'
@@ -174,8 +183,12 @@ def handoff_page_router(
             '<dt id="handoff-requester-label" hidden>Requested by</dt>'
             '<dd id="handoff-requester" hidden></dd></dl></section>'
             f"{governance_fields}"
-            '<p id="handoff-status" role="status" aria-live="polite">Preparing your request…</p>'
-            f'<button id="handoff-action" class="btn" type="button" disabled>{action}</button>'
+            '<p id="handoff-status" role="status" aria-live="polite" tabindex="-1">Preparing your request…</p>'
+            '<p id="handoff-choice-note" hidden>Both choices ask for your passkey.</p>'
+            '<div class="handoff-choices">'
+            f'<button id="handoff-action" class="btn primary" type="button" disabled>{action}</button>'
+            '<button id="handoff-deny" class="btn secondary" type="button" hidden>Deny</button></div>'
+            '<p id="handoff-outcome-text" hidden></p>'
             '<section id="handoff-allow" aria-labelledby="handoff-allow-title" hidden>'
             '<h2 id="handoff-allow-title" tabindex="-1">Allow this terminal session?</h2>'
             "<p>The terminal will be able to act as this identity in this role for up to 15 minutes.</p>"

@@ -575,3 +575,81 @@ async def test_b2_policy_change_cannot_release_a_retained_unsent_admission(admis
         operation.operation_id,
     )
     assert row["signed_result"] == retained["signed_result"] and row["result"] is None and row["delivery_claim"] is None
+
+
+async def read_policy(a, query):
+    path = "/protected-admission-policies?" + query
+    return await a.client.get(path, headers=headers(a, path=path, method="GET", label="protected_admission_policy_read"))
+
+
+@pytest.mark.asyncio
+async def test_the_policy_read_answers_exactly_as_released_clients_expect_unless_counts_are_asked(admissions):
+    a = admissions
+    await endorse(a)
+    for _ in range(2):
+        op = admit_operation(a)
+        assert (await prepare(a, op)).status_code == 200
+        assert (await execute(a, op)).json()["state"] == "committed"
+    team = "team_id=" + TEAM.replace(":", "%3A")
+    plain = await read_policy(a, team)
+    assert plain.status_code == 200, plain.text
+    assert set(plain.json()) == {"service_id", "team_id", "mode", "policy"}
+
+    counted = await read_policy(a, team + "&include=admissions")
+    assert counted.status_code == 200, counted.text
+    body = counted.json()
+    assert {k: v for k, v in body.items() if k != "admissions"} == plain.json()
+    first = await a.w.db.fetch_value(
+        "SELECT min(admitted_at) FROM {{tables.protected_root_admissions}} WHERE root_id=$1", a.w.root_id)
+    assert body["admissions"] == {"active": 2, "in_window": 2,
+        "next_at": (first + __import__("datetime").timedelta(seconds=3600)).isoformat().replace("+00:00", "Z")}
+
+
+@pytest.mark.asyncio
+async def test_a_root_not_yet_endorsed_reads_configuration_only(admissions):
+    a = admissions
+    team = "team_id=" + TEAM.replace(":", "%3A")
+    response = await read_policy(a, team + "&include=admissions")
+    assert response.status_code == 200, response.text
+    assert response.json()["admissions"] is None
+    assert response.json()["policy"] == a.policy
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("query", ["&include=everything", "&include=admissions&include=admissions", "&other=1"])
+async def test_the_policy_read_refuses_any_other_query(admissions, query):
+    a = admissions
+    response = await read_policy(a, "team_id=" + TEAM.replace(":", "%3A") + query)
+    assert response.status_code == 400 and response.json()["detail"] == "request_invalid"
+
+
+@pytest.mark.asyncio
+async def test_a_proof_signed_without_include_cannot_read_the_counts(admissions):
+    a = admissions
+    await endorse(a)
+    team = "team_id=" + TEAM.replace(":", "%3A")
+    signed = "/protected-admission-policies?" + team
+    response = await a.client.get(signed + "&include=admissions",
+        headers=headers(a, path=signed, method="GET", label="protected_admission_policy_read"))
+    assert response.status_code == 401 and response.json()["detail"] == "requester_invalid"
+
+
+
+@pytest.mark.asyncio
+async def test_a_mailed_endorsement_waits_a_day_and_one_touch_from_the_link_endorses(admissions):
+    from datetime import UTC, datetime, timedelta
+
+    a = admissions
+    operation = root_operation(a)
+    response = await prepare(a, operation)
+    assert response.status_code == 200, response.text
+    frozen = response.json()
+    expires = datetime.fromisoformat(frozen["expires_at"].replace("Z", "+00:00"))
+    now = datetime.now(UTC)
+    assert now + timedelta(hours=23) < expires <= now + timedelta(hours=24, seconds=5)
+    token = a.w.delivery.approval_links[-1]
+    view = await a.human.signer.link_view(frozen["handoff_id"], token)
+    assert view.digest == frozen["digest"] and view.payload == frozen["payload"]["request"]
+    options = await a.human.signer.link_options(frozen["handoff_id"], token, "approve")
+    result = await a.human.signer.link_decide(frozen["handoff_id"], token, "approve", a.device.get(dict(options)))
+    assert result.state == "committed"

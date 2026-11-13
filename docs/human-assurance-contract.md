@@ -608,6 +608,9 @@ No adapter implements its own ceremony, request parser or receipt store.
 | Human | GET `/handoff/{handoff_id}/governance` | Current authorized human reads the frozen operation/state. |
 | Human | POST `/handoff/{handoff_id}/governance/options` | B3 options for this exact act/current human. |
 | Human | POST `/handoff/{handoff_id}/governance/execute` | Existing browser/CSRF protections, bound UV and current authority; execute once. |
+| Human | POST `/handoff/{handoff_id}/link` | Personal mailed link: reveals the frozen operation's display to that approver; decides nothing. |
+| Human | POST `/handoff/{handoff_id}/link/options` | B3 options for that approver, this exact act and one decision (approve or reject). |
+| Human | POST `/handoff/{handoff_id}/link/decide` | That approver's one fresh exact-act UV decides; approve then executes once. |
 
 The request origin accepts one of these mutually exclusive requester proofs:
 
@@ -693,9 +696,14 @@ aw constructs `/handoff/{handoff_id}` on its pinned human origin; any echoed
 origin mismatch refuses. The server binds the identifier to its original
 requester and exact authority scope. Changed body, key, target, human, policy or
 callback under that identifier refuses `operation_conflict`. Pending lifetime
-uses the existing shared handoff's bounded expiry (at most 600 seconds), capped
-by every frozen artifact/policy deadline. It is never extended by polling or
-retry. A new explicit attempt after expiry has a new operation ID; it cannot
+uses the existing shared handoff's bounded expiry: at most 600 seconds, or at
+most 24 hours for a `live_floor` approval whose notice the signer mails to its
+approvers (Juan 2026-11-13, via coordinator: people do not read mail within ten
+minutes). Either is capped by every frozen artifact/policy deadline, so an
+owner act whose frozen `expires_at` is at most 600 seconds still expires then.
+Only the wait for the human grows: the 300-second UV-at-effect bound, the
+owner-act lifetime and execution deadlines are unchanged. It is never extended
+by polling or retry. A new explicit attempt after expiry has a new operation ID; it cannot
 silently recover by re-signing the old one.
 
 Use B2's existing covered-request digest, not a second digest engine:
@@ -705,11 +713,63 @@ REQUEST freezes the typed operation/variant, service/origins, requester, scope,
 key authority/generation, every artifact field, expected state/head, operation
 ID, protocol nonce/issued/expiry and validated completion binding. Canonical
 JSON is the existing B2 safe-integer/no-float form; unknown and duplicate fields
-refuse. The `digest` is 64 lowercase hex characters. Both page and CLI display
-the full digest and its comparison fingerprint: the first 16 hex characters in
-four groups of four separated by a single space. The page displays the selected
-identity/key and scope alongside that value; a short fingerprint is a human
-comparison aid, never the authentication check. Clients verify the full digest.
+refuse. The `digest` is 64 lowercase hex characters. Its comparison
+fingerprint is the first 16 hex characters in four groups of four separated by
+a single space. Page and CLI lead with the act in names and consequences, from
+the operation's own display definition, and keep the fingerprint visible. The
+full digest is one step away: in the page's Technical details, with the
+selected identity/key and scope, and in the CLI's `--json` output or details
+line (Juan 2026-11-13, via coordinator). A short fingerprint is a human
+comparison aid, never the authentication check. Clients verify the full digest
+themselves.
+
+### Mailed approval links
+
+The signer mails each eligible approver their own approval notice after the
+prepare transaction commits; the requester never receives or relays a link.
+Opening that personal link reveals the request, and one fresh user-verified
+passkey assertion bound to the exact act approves or rejects it: one gesture,
+with no separate LOGIN (Juan 2026-11-13, via coordinator). The notice says
+that Deny also asks for the passkey. This is the only way possession of a
+mailed link reveals a request. Its requirements:
+
+* The link carries B2's personal candidate token in the URL fragment. The page
+  strips it from history and sends it only in POST bodies. It is bound to that
+  candidate, that approval and the pinned human origin, and expires with the
+  operation. The page and the reveal, options and decide responses are
+  `no-store` with a no-referrer policy, and none is exposed cross-origin. The
+  token is redacted from access, application and error logs and from any
+  tracing or body capture. The page loads no third-party asset.
+* GET and passive prefetch/preview requests return no frozen payload, consume
+  no token or approval, and make no decision. Reveal, options and decide use
+  POST only, under the pinned Host/Origin and the WebAuthn RP/origin checks of
+  these narrow routes, without a standing LOGIN session. Any holder of the
+  personal token, including an active mail scanner that executes the page and
+  sends its reveal POST, can read the request; token possession alone cannot
+  approve or reject. Reveal is read-only, so such a reader cannot spend the
+  token or prevent the person's later ceremony. Origin, RP and CSRF checks are
+  necessary but never replace the exact-act UV.
+* Reveal returns the complete frozen request the covered digest is computed
+  over, technical fields included, never a projection of it. The operation's
+  definition must classify that whole request as revealable: names and values
+  shown to the person are frozen into it at prepare, and it holds no secret,
+  credential, token or private key reference. A request not classified
+  revealable refuses reveal; fields are never redacted or substituted, so the
+  digest the person can check is the digest of what they saw.
+* Options and decide resolve the token to its candidate, map that candidate to
+  the current authorized human and enrolled credential, and keep every fence:
+  current authority and generation, policy version, B2 eligibility and
+  retirement, the B3 UV and counter checks, the 300-second UV-at-effect bound
+  and one consumption. A reject is the same exact-act ceremony with the reject
+  purpose and records `refused(human_refused)`.
+* No standing session is created. The link never authenticates a console
+  session, an owner page, another operation or another candidate.
+
+Inbox access therefore discloses the complete classified request to whoever
+holds the inbox or runs the page with its link; it never supplies the
+approval. The notice and the page show the operation's actual retained
+`expires_at`, never a nominal 24 hours. This is the narrow link-bound route,
+not a general anonymous human API.
 
 Governance prepare accepts an optional `redirect_uri` under the existing
 literal-loopback parser. Invalid input is HTTP 400 `redirect_uri_refused`.

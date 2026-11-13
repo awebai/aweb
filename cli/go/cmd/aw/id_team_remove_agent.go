@@ -32,8 +32,9 @@ var teamRemoveAgentCmd = &cobra.Command{
 		"endorsed root that admitted it. The membership is the one --certificate names:\n" +
 		"the certificate file aw id team admit wrote, or the agent home's installed copy.\n" +
 		"No human approves it, and nothing in the agent's home is changed.\n\n" +
-		"--operation-id is the caller's UUID, kept before anything is sent. Running again\n" +
-		"with the same id and the same inputs resumes that operation and returns its\n" +
+		"Without --operation-id, aw keeps a new UUID before anything is sent, and running\n" +
+		"the same command again continues that request. With --operation-id, running\n" +
+		"again with the same id and the same inputs resumes that operation and returns its\n" +
 		"receipt; changed inputs under the id refuse operation_conflict.",
 	Args: cobra.NoArgs,
 	RunE: runTeamRemoveAgent,
@@ -42,8 +43,8 @@ var teamRemoveAgentCmd = &cobra.Command{
 func init() {
 	flags := teamRemoveAgentCmd.Flags()
 	flags.StringVar(&teamRemoveAgentCertificateFlag, "certificate", "", "The agent's team certificate file")
-	flags.StringVar(&teamRemoveAgentOperationIDFlag, "operation-id", "", "The caller's UUID for this removal; the same id resumes it")
-	flags.StringVar(&appProtectedProfileFlag, "protected-profile", "", "The operator-provisioned protected-service profile")
+	flags.StringVar(&teamRemoveAgentOperationIDFlag, "operation-id", "", "The UUID for this removal; by default aw continues the same unfinished request or starts a new one")
+	flags.StringVar(&appProtectedProfileFlag, "protected-profile", "", "The operator-provisioned protected-service profile (default: AWEB_PROTECTED_PROFILE, else protected-profile.json in the identity home)")
 	teamCmd.AddCommand(teamRemoveAgentCmd)
 }
 
@@ -112,7 +113,7 @@ func removeMember(ctx context.Context, opts handoff.GovernanceOptions, profile *
 	}
 	if err != nil {
 		if code := handoff.ErrorCode(err); code != "" {
-			return nil, withErrorCode(code, fmt.Errorf("operation %s: %w", request.OperationID, err))
+			return nil, withErrorCode(code, fmt.Errorf("%w (operation %s)", err, request.OperationID))
 		}
 		return nil, fmt.Errorf("operation %s: %w", request.OperationID, err)
 	}
@@ -157,9 +158,6 @@ func runTeamRemoveAgent(cmd *cobra.Command, _ []string) error {
 	if request.Certificate == "" {
 		return usageError("--certificate is required")
 	}
-	if err := validOperationID(request.OperationID); err != nil {
-		return err
-	}
 	profile, err := loadProtectedProfile()
 	if err != nil {
 		return err
@@ -178,6 +176,9 @@ func runTeamRemoveAgent(cmd *cobra.Command, _ []string) error {
 	}
 	binding, err := admissionBinding(profile, cert.Team)
 	if err != nil {
+		return err
+	}
+	if err := announceOperationID(cmd, &request.OperationID, profile, removalBody(profile, binding, request, cert)); err != nil {
 		return err
 	}
 	opts := handoff.GovernanceOptions{

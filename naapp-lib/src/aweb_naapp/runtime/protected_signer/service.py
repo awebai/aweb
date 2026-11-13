@@ -5,6 +5,7 @@ from __future__ import annotations
 import asyncio
 import base64
 import hashlib
+import hmac
 import json
 import uuid
 from collections.abc import Callable, Mapping
@@ -32,6 +33,7 @@ from aweb_naapp.runtime.approvals import (
 from aweb_naapp.runtime.audit import AuditEvent, AuditKind, AuditSink
 from aweb_naapp.runtime.passkeys import Passkeys, passkey_evidence_commitment
 
+from . import catalog
 from .codecs import artifact_for, authority_key, signing_bytes
 from .retention import EffectConfirmation, RetainedEffect
 from .types import (
@@ -43,6 +45,7 @@ from .types import (
     PreparedOperation,
     ProtectedKeyContext,
     ReceiptReader,
+    RequestExpired,
     RestrictedRequester,
     RevokeHumanRole,
     SignerRefused,
@@ -63,6 +66,18 @@ def _stamp(value):
 
 def _json(value):
     return json.loads(value) if isinstance(value, (str, bytes)) else value
+
+
+MAILED_APPROVAL_WAIT_CEILING = timedelta(hours=24)
+
+
+def decision_named(value) -> Decision:
+    """A link's decision word; anything else refuses."""
+    if value == "approve":
+        return Decision.APPROVE
+    if value == "reject":
+        return Decision.REJECT
+    raise SignerRefused("request_invalid")
 
 
 def _stable_context(context):
@@ -90,10 +105,20 @@ class ProtectedSigner:
         custody: ControllerCustody,
         admission=None,
         clock: Callable[[], datetime] = lambda: datetime.now(UTC),
+        mailed_approval_wait: timedelta | None = None,
     ) -> None:
         self.db, self.passkeys, self.policies, self.audit = db, passkeys, policies, audit
         self.authority, self.custody, self.clock = authority, custody, clock
         self.admission = admission
+        # When set, the signer mails each approver their personal link after
+        # prepare commits, and a live-floor approval may wait this long for
+        # them, still capped by every frozen artifact and policy deadline
+        # (human-assurance-contract.md, "Mailed approval links").
+        if mailed_approval_wait is not None and not (
+            timedelta(0) < mailed_approval_wait <= MAILED_APPROVAL_WAIT_CEILING
+        ):
+            raise ValueError("a mailed approval waits more than nothing and at most 24 hours")
+        self.mailed_approval_wait = mailed_approval_wait
         if passkeys.db is not db:
             raise ValueError("signer and B3 need the same original database")
         self.store = PgApprovalStore(db)
@@ -310,6 +335,7 @@ class ProtectedSigner:
         if cap is not None and cap.read_only:
             raise SignerRefused("scope_refused")
         extra = await provider.observe(typed, requester, purpose="prepare") if provider is not None else None
+        pending = None
         async with self.db.transaction() as tx:
             row = await self._lock(tx, operation.operation_id)
             await fence.prepare(tx, requester)
@@ -328,7 +354,10 @@ class ProtectedSigner:
             # Pending approval is bounded even for artifacts whose existing
             # consumer wire has no expiry (for example a team server record).
             # B2 additionally caps this deadline by the current policy TTL.
-            expires_at = typed.spec.effect_deadline(fields, now + timedelta(seconds=600))
+            wait = timedelta(seconds=600)
+            if typed.spec.needs_human and self.mailed_approval_wait is not None:
+                wait = self.mailed_approval_wait
+            expires_at = typed.spec.effect_deadline(fields, now + wait)
             additions = await extra.freeze(tx) if extra is not None else {}
             if set(additions) != typed.spec.prepared_fields:
                 raise SignerRefused("operation_mismatch")
@@ -387,7 +416,12 @@ class ProtectedSigner:
                 extra.require_fresh()
             if self.clock() >= row["expires_at"]:
                 raise SignerRefused("operation_expired")
-            return self._prepared(row)
+            prepared = self._prepared(row)
+        if pending is not None and self.mailed_approval_wait is not None:
+            # After commit only: B2's delivery reads the committed handoff row.
+            # Each approver's personal link goes to their own recorded contact.
+            await self.approvals.deliver(pending)
+        return prepared
 
     async def _authorized(self, operation_id, actor, purpose, *, human_session=None):
         fence = await self.authority.observe(actor.context, purpose=purpose)
@@ -424,7 +458,8 @@ class ProtectedSigner:
         return link
 
     async def approval_options(
-        self, operation_id: str, *, human: AdmittedHuman, human_session=None
+        self, operation_id: str, *, human: AdmittedHuman, human_session=None,
+        decision: Decision = Decision.APPROVE,
     ) -> Mapping[str, Any]:
         row = await self._authorized(operation_id, human, "approval", human_session=human_session)
         if row["refusal_code"] is not None:
@@ -434,10 +469,133 @@ class ProtectedSigner:
             raise SignerRefused("operation_expired")
         return await self.approvals.challenge(
             row["approval_id"],
-            Decision.APPROVE,
+            decision,
             Assurance.PASSKEY,
             link_token=link,
         )
+
+    # Mailed approval links (human-assurance-contract.md, "Mailed approval
+    # links"): the personal token names one candidate of one operation. It
+    # reveals only what B2's policy lets a link reveal and decides nothing by
+    # itself; approve and reject each need that candidate's fresh exact-act UV
+    # under every existing fence. No console session is created or used.
+
+    async def _link_human(self, handoff_id: str, token: str):
+        """The operation and current admitted human a personal link was sent to."""
+        if not isinstance(token, str) or not token:
+            raise SignerRefused("scope_refused")
+        row = await self.db.fetch_one(
+            "SELECT operation_id,request,approval_id,candidate_links FROM {{tables.protected_signer_operations}} "
+            "WHERE handoff_id=$1",
+            self._operation_id(handoff_id),
+        )
+        if row is None or row["approval_id"] is None:
+            raise SignerRefused("scope_refused")
+        subjects = [
+            subject for subject, link in _json(row["candidate_links"]).items()
+            if isinstance(link, str) and hmac.compare_digest(link.encode(), token.encode())
+        ]
+        approval = await self.store.get(row["approval_id"])
+        candidate = approval.candidate(subjects[0]) if approval is not None and len(subjects) == 1 else None
+        if candidate is None:
+            raise SignerRefused("scope_refused")
+        context = self._operation(_json(row["request"])).context
+        return row["operation_id"], AdmittedHuman(context.human_id, candidate.subject, candidate.scope, context)
+
+    async def link_view(self, handoff_id: str, token: str) -> PreparedOperation:
+        """The complete frozen request, for the link's own approver; consumes nothing."""
+        operation_id, human = await self._link_human(handoff_id, token)
+        row = await self._authorized(operation_id, human, "approval")
+        if row["result"] is None and row["refusal_code"] is None and self.clock() >= row["expires_at"]:
+            # Only the link's own approver reaches this: they may know it
+            # expired, and when.
+            raise RequestExpired(_stamp(row["expires_at"]))
+        intent = self._operation(_json(row["request"])).intent()
+        spec = catalog.OPERATIONS.get((intent["operation"], intent["variant"]))
+        if spec is None or not spec.link_revealable:
+            # The operation's own classification, not the deployment policy,
+            # decides whether its whole frozen request may be revealed.
+            raise SignerRefused("scope_refused")
+        try:
+            linked = await self.approvals.open_link(token)
+        except ApprovalRefused:
+            raise SignerRefused("scope_refused") from None
+        if linked.request is None:
+            # This deployment's policy does not let a link reveal its request.
+            raise SignerRefused("scope_refused")
+        return self._prepared(row)
+
+    async def link_options(self, handoff_id: str, token: str, decision: str) -> Mapping[str, Any]:
+        operation_id, human = await self._link_human(handoff_id, token)
+        return await self.approval_options(operation_id, human=human, decision=decision_named(decision))
+
+    async def link_decide(self, handoff_id: str, token: str, decision: str, proof) -> OperationReceipt:
+        operation_id, human = await self._link_human(handoff_id, token)
+        if decision_named(decision) is Decision.APPROVE:
+            return await self.execute(operation_id, proof, human=human)
+        return await self._reject_human(operation_id, proof, human=human)
+
+    async def reject(self, operation_id, proof, *, human: AdmittedHuman, human_session=None) -> OperationReceipt:
+        """A signed-in approver's Deny: the same exact-act ceremony as a link's."""
+        if type(human) is not AdmittedHuman:
+            raise SignerRefused("scope_refused")
+        return await self._reject_human(operation_id, proof, human=human, human_session=human_session)
+
+    async def _reject_human(self, operation_id, proof, *, human: AdmittedHuman, human_session=None) -> OperationReceipt:
+        """The candidate's exact-act UV with the reject purpose: a final
+        refused(human_refused) receipt. A B2 rejection that committed before a
+        crash is recorded by the next call, never decided twice."""
+        row = await self._authorized(operation_id, human, "execute", human_session=human_session)
+        if row["result"] is not None or row["refusal_code"] is not None:
+            return self._receipt(row)
+        link = self._link(row, human)
+        approval = await self.store.get(row["approval_id"])
+        if approval is None:
+            raise SignerRefused("approval_spent")
+        if approval.state is ApprovalState.PENDING:
+            claim, phase = await self._claim_verification(operation_id, human, human_session=human_session)
+            if claim is None:
+                return self._receipt(phase)
+            try:
+                approval = await self.approvals.decide(
+                    approval.approval_id, Decision.REJECT, Assurance.PASSKEY, proof, link_token=link
+                )
+            except ApprovalRefused as exc:
+                code = {
+                    Refusal.POLICY_CHANGED: "policy_changed",
+                    Refusal.EXPIRED: "approval_expired",
+                    Refusal.AUTHENTICATION_FAILED: "proof_invalid",
+                    Refusal.APPROVER_RETIRED: "approval_spent",
+                    Refusal.REVOKED: "approval_spent",
+                    Refusal.APPROVER_MISMATCH: "scope_refused",
+                    Refusal.REQUEST_MISMATCH: "operation_mismatch",
+                }.get(exc.reason, "operation_refused")
+                await self._refuse_verification(operation_id, claim, code)
+                raise SignerRefused(code) from exc
+        decided = approval.decided_by
+        if approval.state is not ApprovalState.REJECTED or decided is None or (
+            decided.subject, decided.scope, decided.assurance
+        ) != (human.subject, human.b3_scope, Assurance.PASSKEY):
+            raise SignerRefused("scope_refused")
+        fence = await self.authority.observe(human.context, purpose="execute")
+        async with self.db.transaction() as tx:
+            row = await self._lock(tx, operation_id)
+            await fence.prepare(tx, human)
+            await self._hold_session(tx, human, human_session)
+            if row["result"] is None and row["refusal_code"] is None:
+                await tx.execute(
+                    "UPDATE {{tables.protected_signer_operations}} SET refusal_code='human_refused',"
+                    "evidence_ref=$2,candidate_links='{}'::jsonb WHERE operation_id=$1",
+                    operation_id,
+                    decided.evidence_ref,
+                )
+                await self._emit(AuditKind.PROTECTED_OPERATION_REFUSED, tx, row, human.principal, refusal="human_refused")
+            await self._check_session(tx, human_session)
+            await fence.check(tx, human)
+            fence.require_fresh()
+            self._session_fresh(human_session)
+            row = await self._lock(tx, operation_id)
+            return self._receipt(row)
 
     async def execute(self, operation_id, proof, *, human, human_session=None):
         try:
