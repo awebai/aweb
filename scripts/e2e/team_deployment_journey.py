@@ -75,6 +75,7 @@ from protected_round_trip import (  # noqa: E402
     finish,
     first_json,
     found_team,
+    hook_app_ids,
     install_app,
     lost_prepare,
     provision_signer,
@@ -815,13 +816,14 @@ class World:
         self.own(owners)
         return owners
 
-    def install_apps(self, site: Site, machine: str, owner_did_key: str) -> None:
+    def install_apps(self, machine: str, owner_did_key: str) -> None:
         """The owner publishes the team's coordination server at the registry,
         signed by the team's key, which installed apps read to reach it; the
         operator's explicit install-owner grant; then the owner installs
         Secrets and Logs from their internal origins. Membership alone grants
         no install authority."""
-        print("TEAM SERVER:", json.dumps(publish_team_server(site, machine), sort_keys=True))
+        print("TEAM SERVER:", json.dumps(publish_team_server(machine, TEAM, DOMAIN, origin("aweb"), origin("registry")),
+                                           sort_keys=True))
         self.compose("exec", "-T", "aweb", "aweb", "install-admin", "grant", "--team-id", TEAM_ID,
                      "--principal-did", owner_did_key, "--role", "owner")
         for app in ("secrets", "logs"):
@@ -1191,10 +1193,10 @@ def journey(world: World, stop_after: str | None = None, agents_only: bool = Fal
     print("LOCAL MEMBERS:", json.dumps(world.local_members(), sort_keys=True))
     print("MEMBER MAIL:", json.dumps(world.member_mail(holder.container), sort_keys=True))
     print("=== Setup: the team owner installs Secrets and Logs from their internal origins")
-    world.install_apps(site, holder.container, founded.requester_did_key)
+    world.install_apps(holder.container, founded.requester_did_key)
     if agents_only:
         print("=== Setup: the owner activates the apps' hook bindings")
-        world.activated_hooks = activate_hooks(site, holder.container)
+        world.activated_hooks = activate_hooks(holder.container, hook_app_ids(site))
         print("HOOKS ACTIVE:", json.dumps(world.activated_hooks, sort_keys=True))
     else:
         print("=== Setup: the owner designates the approver's holding of the app role, before the signer holds the key")

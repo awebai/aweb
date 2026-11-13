@@ -669,14 +669,15 @@ def connect_requester(site: Site, holder: Holder) -> None:
     aw(holder.container, "init", "--url", site.aweb, "--name", "owner", "--do-not-touch-agents-md")
 
 
-def publish_team_server(site: Site, machine: str) -> dict:
-    """The owner publishes the team's coordination server at the registry,
-    signed by the team's key; installed apps read it there to reach aweb."""
-    aw(machine, "id", "team", "set-server", "--team", site.team, "--namespace", site.domain, "--url", site.aweb,
-       "--registry", site.registry)
-    published = aw(machine, "id", "team", "show-server", "--team", site.team, "--namespace", site.domain,
-                   "--registry", site.registry)
-    assert published.get("server_url", "").rstrip("/") == site.aweb, published
+def publish_team_server(machine: str, team: str, domain: str, aweb: str, registry: str) -> dict:
+    """The owner, on the machine holding the team's key, publishes the team's
+    coordination server at the registry, signed by that key; installed apps
+    read it there to reach aweb."""
+    aw(machine, "id", "team", "set-server", "--team", team, "--namespace", domain, "--url", aweb,
+       "--registry", registry)
+    published = aw(machine, "id", "team", "show-server", "--team", team, "--namespace", domain,
+                   "--registry", registry)
+    assert published.get("server_url", "").rstrip("/") == aweb, published
     return published
 
 
@@ -691,14 +692,14 @@ def hook_app_ids(site: Site) -> dict[str, str]:
     return {"secrets": site.app_id, "logs": site.logs_app_id}
 
 
-def activate_hooks(site: Site, machine: str) -> dict:
+def activate_hooks(machine: str, apps: dict[str, str]) -> dict:
     """The owner activates the required hook bindings with its own
     controller key, one supported owner act each, then waits until they are
     in effect: every selected binding active, as the installation,
     generation and manifest selected, and the latest active_from plus a
     margin past. Binding readiness, not proof of delivery. The other
-    bindings stay pending."""
-    apps = hook_app_ids(site)
+    bindings stay pending. `apps` names each installed app's id by its
+    name in REQUIRED_HOOK_BINDINGS."""
 
     def bindings() -> dict[str, list[dict]]:
         return {app: aw(machine, "hooks", "bindings", app_id)["bindings"] for app, app_id in apps.items()}
@@ -798,7 +799,7 @@ def designate_holding(site: Site, holder: Holder, founded: Founded) -> dict:
     assert early.returncode != 0 and "503 release_context_unavailable" in early.stdout + early.stderr, (
         early.stdout + early.stderr)
     assert holding_of(site, human) == ("0", ""), holding_of(site, human)
-    hooks = activate_hooks(site, machine)
+    hooks = activate_hooks(machine, hook_app_ids(site))
     # The owner signs only for that exact credential: aw shows its fingerprint.
     designated = docker("exec", machine, *command, timeout=300)
     assert designated.returncode == 0, designated.stdout + designated.stderr
