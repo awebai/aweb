@@ -827,9 +827,12 @@ a stored participant route, so the transport admits it before any connection:
 the origin is `https` and named by host, the host is resolved once, and every
 answer is a public address (loopback, private, link-local, shared CGNAT,
 unique-local, multicast, reserved, unspecified and IPv4-mapped forms of those
-are refused, as are the IPv6 transition prefixes that embed an IPv4 address,
-NAT64 `64:ff9b::/96` and `64:ff9b:1::/48`, 6to4 `2002::/16` and Teredo
-`2001::/32`; one refused answer refuses the name). The connection goes to an
+are refused, as is every other block of the IANA special-purpose address
+registries that is not globally reachable, including the IPv6 transition
+prefixes that embed an IPv4 address (NAT64 `64:ff9b::/96` and
+`64:ff9b:1::/48`, 6to4 `2002::/16`, Teredo `2001::/32`), any IPv6 address
+outside `2000::/3`, and deprecated site-local `fec0::/10`; one refused answer
+refuses the name). The connection goes to an
 admitted address, trying the answers in order until one accepts a connection,
 while TLS verification, SNI and `Host` name the origin; proxy
 settings in the environment are not read, redirects are not followed, each
