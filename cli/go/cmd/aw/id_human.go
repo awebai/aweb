@@ -155,7 +155,7 @@ func executeIDHumanInit(ctx context.Context, opts idHumanInitOptions) (idHumanIn
 	if err != nil {
 		return idHumanInitOutput{}, err
 	}
-	registry := awid.NewAWIDRegistryClient(nil, opts.TXTResolver)
+	registry := newAWIDRegistryClient(nil, opts.TXTResolver)
 	registry.DefaultRegistryURL = registryURL
 	controller, err := registry.IDNamespaceController(ctx, domain, registryURL, authority)
 	if err != nil {

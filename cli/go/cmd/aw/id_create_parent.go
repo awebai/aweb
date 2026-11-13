@@ -143,7 +143,7 @@ func checkRootController(ctx context.Context, resolver awid.TXTResolver, domain,
 	if err != nil {
 		return err
 	}
-	controller, err := awid.NewAWIDRegistryClient(nil, resolver).IDNamespaceController(ctx, domain, registryURL, authority)
+	controller, err := newAWIDRegistryClient(nil, resolver).IDNamespaceController(ctx, domain, registryURL, authority)
 	if err != nil {
 		return err
 	}
@@ -284,7 +284,7 @@ func resumeIDCreateChain(ctx context.Context, opts idCreateOptions, parent *idCr
 	if err != nil {
 		return idCreateOutput{}, err
 	}
-	registry, err := newConfiguredRegistryClient(nil, "")
+	registry, err := newConfiguredRegistryClient(nil)
 	if err != nil {
 		return idCreateOutput{}, err
 	}

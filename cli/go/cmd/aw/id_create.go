@@ -215,7 +215,7 @@ func executeIDCreate(workingDir string, opts idCreateOptions) (idCreateOutput, e
 	ctx, cancel := commandAPIContext(nil)
 	defer cancel()
 
-	registry, err := newConfiguredRegistryClient(nil, "")
+	registry, err := newConfiguredRegistryClient(nil)
 	if err != nil {
 		return idCreateOutput{}, err
 	}
@@ -375,7 +375,7 @@ func prepareIDCreatePlan(workingDir string, opts idCreateOptions) (*preparedIDCr
 		return nil, err
 	}
 
-	registry, err := newConfiguredRegistryClient(nil, "")
+	registry, err := newConfiguredRegistryClient(nil)
 	if err != nil {
 		return nil, err
 	}
@@ -512,7 +512,7 @@ func verifyIDCreateDomainAuthority(ctx context.Context, resolver awid.TXTResolve
 	if strings.TrimSpace(registryURL) != strings.TrimSpace(expectedRegistryURL) {
 		return fmt.Errorf("TXT registry %s does not match %s", registryURL, expectedRegistryURL)
 	}
-	controller, err := awid.NewAWIDRegistryClient(nil, resolver).IDNamespaceController(ctx, domain, registryURL, authority)
+	controller, err := newAWIDRegistryClient(nil, resolver).IDNamespaceController(ctx, domain, registryURL, authority)
 	if err != nil {
 		return err
 	}

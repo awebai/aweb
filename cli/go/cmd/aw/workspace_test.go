@@ -1227,7 +1227,7 @@ func TestAwWorkspaceAddWorktreeCreatesLocalSelfCustodialCLIWorkspaceWithTeamKey(
 	}
 
 	run := exec.CommandContext(ctx, bin, "workspace", "add-worktree", "developer")
-	run.Env = testCommandEnv(tmp)
+	run.Env = append(testCommandEnv(tmp), "AWID_REGISTRY_URL="+server.URL)
 	run.Stdin = strings.NewReader("")
 	run.Dir = repo
 	out, err := run.CombinedOutput()
@@ -1553,6 +1553,8 @@ func TestAwWorkspaceAddWorktreeWithoutIdentityUsesDiscoveryAndMailRoundTrip(t *t
 		run.Env = withoutEnvForTest(testCommandEnv(tmp), "AWEB_URL", "AWID_REGISTRY_URL")
 		if len(args) > 0 && args[0] == "mail" {
 			run.Env = append(run.Env, "AWID_REGISTRY_URL=http://127.0.0.1:1")
+		} else {
+			run.Env = append(run.Env, "AWID_REGISTRY_URL="+registryServer.URL)
 		}
 		run.Dir = dir
 		out, err := run.CombinedOutput()
@@ -2016,7 +2018,7 @@ func TestAwWorkspaceAddWorktreeRevokesCertificateWhenConnectFails(t *testing.T) 
 	}
 
 	run := exec.CommandContext(ctx, bin, "workspace", "add-worktree", "developer")
-	run.Env = testCommandEnv(tmp)
+	run.Env = append(testCommandEnv(tmp), "AWID_REGISTRY_URL="+server.URL)
 	run.Stdin = strings.NewReader("")
 	run.Dir = repo
 	out, err := run.CombinedOutput()
@@ -2131,7 +2133,7 @@ func TestAwWorkspaceAddWorktreeRevokesCertificateWhenConnectAliasMismatches(t *t
 	}
 
 	run := exec.CommandContext(ctx, bin, "workspace", "add-worktree", "developer")
-	run.Env = testCommandEnv(tmp)
+	run.Env = append(testCommandEnv(tmp), "AWID_REGISTRY_URL="+server.URL)
 	run.Stdin = strings.NewReader("")
 	run.Dir = repo
 	out, err := run.CombinedOutput()

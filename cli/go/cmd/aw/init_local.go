@@ -146,7 +146,7 @@ func runImplicitLocalInit(req implicitLocalInitRequest) (connectOutput, error) {
 		return connectOutput{}, err
 	}
 	{
-		registry, err := newConfiguredRegistryClient(nil, "")
+		registry, err := newConfiguredRegistryClient(nil)
 		if err != nil {
 			return connectOutput{}, err
 		}
@@ -172,7 +172,7 @@ func runImplicitLocalInit(req implicitLocalInitRequest) (connectOutput, error) {
 		return connectOutput{}, err
 	}
 
-	registry, err := newConfiguredRegistryClient(nil, "")
+	registry, err := newConfiguredRegistryClient(nil)
 	if err != nil {
 		return connectOutput{}, err
 	}

@@ -169,7 +169,7 @@ func verifyWhoPresentation(ctx context.Context, subject awid.IDChainSubject, bun
 		out.IDChainResult = preflight
 		return out, nil
 	}
-	registry := awid.NewAWIDRegistryClient(nil, opts.TXTResolver)
+	registry := newAWIDRegistryClient(nil, opts.TXTResolver)
 	status := awid.NewIDStatusClient(registry, opts.TXTResolver)
 	if strings.TrimSpace(opts.RegistryURL) != "" {
 		authority, err := awid.DiscoverAuthoritativeRegistry(ctx, opts.TXTResolver, domain)

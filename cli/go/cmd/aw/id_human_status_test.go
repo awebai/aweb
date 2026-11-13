@@ -132,6 +132,7 @@ func TestHumanEnrollmentStatusCommandHelper(t *testing.T) {
 	t.Setenv("AWID_FIXTURE_DNS_DOMAIN", "example.com")
 	t.Setenv("AWID_FIXTURE_DNS_CONTROLLER", controller)
 	registryURL := realAWIDFixture(t)
+	t.Setenv("AWID_REGISTRY_URL", registryURL)
 	child.opts.RegistryURL = registryURL
 	var args []string
 	if status == "pending" {

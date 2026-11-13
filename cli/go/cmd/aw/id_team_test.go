@@ -184,6 +184,7 @@ func TestRunTeamMembersInfersActiveTeamAndCanIncludeRevoked(t *testing.T) {
 		}}})
 	}))
 	defer server.Close()
+	t.Setenv("AWID_REGISTRY_URL", server.URL)
 	if err := awconfig.SaveTeamState(root, &awconfig.TeamState{
 		ActiveTeam: "backend:acme.com",
 		Memberships: []awconfig.TeamMembership{{
@@ -220,6 +221,7 @@ func TestRunTeamMembersDiscoversRegistryFromHostedMembershipAwebURL(t *testing.T
 		}}})
 	}))
 	defer registryServer.Close()
+	t.Setenv("AWID_REGISTRY_URL", registryServer.URL)
 	awebServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.Method != http.MethodGet || r.URL.Path != "/api/v1/discovery" {
 			t.Fatalf("unexpected discovery request %s %s", r.Method, r.URL.String())
@@ -883,6 +885,9 @@ func TestRunTeamRegisterUsesDiscoveredRegistryForLocalKeyCheck(t *testing.T) {
 	home := t.TempDir()
 	t.Setenv("HOME", home)
 	t.Setenv("AWID_REGISTRY_URL", "http://127.0.0.1:1")
+	// The discovered registry is an isolated host reached in isolated development.
+	t.Setenv("APP_ENV", "development")
+	t.Setenv("AWEB_FEDERATION_TEST", "1")
 	writeTeamKeyForTest(t, home, "juanreyero.com", "circle", teamKey)
 
 	registryHits := 0
@@ -1272,7 +1277,8 @@ func TestBootstrapFirstLocalTeamMemberCreatesTeamAndRegistersCertificate(t *test
 	}))
 
 	t.Setenv("HOME", t.TempDir())
-	registry, err := newConfiguredRegistryClient(nil, "")
+	t.Setenv("AWID_REGISTRY_URL", server.URL)
+	registry, err := newConfiguredRegistryClient(nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -1605,7 +1611,7 @@ func TestTeamInviteJoinConnectsWorkspaceByDefault(t *testing.T) {
 	})
 
 	runInvite := exec.CommandContext(ctx, bin, "team", "invite", "--team-id", "backend:acme.com")
-	runInvite.Env = testCommandEnv(home)
+	runInvite.Env = append(testCommandEnv(home), "AWID_REGISTRY_URL="+server.URL)
 	runInvite.Dir = inviterDir
 	inviteOut, err := runInvite.CombinedOutput()
 	if err != nil {
@@ -1627,7 +1633,7 @@ func TestTeamInviteJoinConnectsWorkspaceByDefault(t *testing.T) {
 
 	// Run the printed command, with the saved token file.
 	runAccept := exec.CommandContext(ctx, bin, "team", "join", "--token-file", tokenFile, "--name", "bob", "--json")
-	runAccept.Env = append(testCommandEnv(home), "AWEB_URL=https://ambient-must-not-win.example")
+	runAccept.Env = append(testCommandEnv(home), "AWEB_URL=https://ambient-must-not-win.example", "AWID_REGISTRY_URL="+server.URL)
 	runAccept.Dir = acceptDir
 	acceptOut, err := runAccept.CombinedOutput()
 	if err != nil {
@@ -1688,7 +1694,7 @@ func TestTeamInviteJoinConnectsWorkspaceByDefault(t *testing.T) {
 		t.Fatalf("workspace aweb_url=%q want %q", workspace.AwebURL, server.URL)
 	}
 	reconnect := exec.CommandContext(ctx, bin, "workspace", "connect", "--service", server.URL, "--json")
-	reconnect.Env = testCommandEnv(home)
+	reconnect.Env = append(testCommandEnv(home), "AWID_REGISTRY_URL="+server.URL)
 	reconnect.Dir = acceptDir
 	if reconnectOut, err := reconnect.CombinedOutput(); err != nil {
 		t.Fatalf("explicit connection retry did not converge: %v\n%s", err, string(reconnectOut))
@@ -1701,7 +1707,7 @@ func TestTeamInviteJoinConnectsWorkspaceByDefault(t *testing.T) {
 		t.Fatal(err)
 	}
 	runSecondInvite := exec.CommandContext(ctx, bin, "team", "invite", "--team-id", "backend:acme.com", "--json")
-	runSecondInvite.Env = testCommandEnv(home)
+	runSecondInvite.Env = append(testCommandEnv(home), "AWID_REGISTRY_URL="+server.URL)
 	runSecondInvite.Dir = inviterDir
 	secondInviteOut, err := runSecondInvite.CombinedOutput()
 	if err != nil {
@@ -1716,7 +1722,7 @@ func TestTeamInviteJoinConnectsWorkspaceByDefault(t *testing.T) {
 		t.Fatal("second invite token is empty")
 	}
 	runIdentityOnlyJoin := exec.CommandContext(ctx, bin, "team", "join", secondToken, "--name", "charlie", "--no-connect", "--json")
-	runIdentityOnlyJoin.Env = testCommandEnv(home)
+	runIdentityOnlyJoin.Env = append(testCommandEnv(home), "AWID_REGISTRY_URL="+server.URL)
 	runIdentityOnlyJoin.Dir = identityOnlyDir
 	identityOnlyOut, err := runIdentityOnlyJoin.CombinedOutput()
 	if err != nil {
@@ -1759,7 +1765,7 @@ func TestTeamInviteJoinConnectsWorkspaceByDefault(t *testing.T) {
 		t.Fatal(err)
 	}
 	runLegacyJoin := exec.CommandContext(ctx, bin, "team", "join", legacyToken, "--name", "legacy", "--no-connect", "--json")
-	runLegacyJoin.Env = testCommandEnv(home)
+	runLegacyJoin.Env = append(testCommandEnv(home), "AWID_REGISTRY_URL="+server.URL)
 	runLegacyJoin.Dir = legacyDir
 	legacyJoinOut, err := runLegacyJoin.CombinedOutput()
 	if err != nil {
@@ -1790,7 +1796,7 @@ func TestTeamInviteJoinConnectsWorkspaceByDefault(t *testing.T) {
 		t.Fatal(err)
 	}
 	runThirdInvite := exec.CommandContext(ctx, bin, "team", "invite", "--team-id", "backend:acme.com", "--json")
-	runThirdInvite.Env = testCommandEnv(home)
+	runThirdInvite.Env = append(testCommandEnv(home), "AWID_REGISTRY_URL="+server.URL)
 	runThirdInvite.Dir = inviterDir
 	thirdInviteOut, err := runThirdInvite.CombinedOutput()
 	if err != nil {
@@ -1806,7 +1812,7 @@ func TestTeamInviteJoinConnectsWorkspaceByDefault(t *testing.T) {
 	}
 	failConnect.Store(true)
 	runFailedConnect := exec.CommandContext(ctx, bin, "team", "join", thirdToken, "--name", "dana")
-	runFailedConnect.Env = testCommandEnv(home)
+	runFailedConnect.Env = append(testCommandEnv(home), "AWID_REGISTRY_URL="+server.URL)
 	runFailedConnect.Dir = failedConnectDir
 	failedConnectOut, err := runFailedConnect.CombinedOutput()
 	if err == nil {
@@ -3337,6 +3343,7 @@ func TestTeamAcceptInviteGlobalDefaultClaimUsesNamespaceAuthority(t *testing.T) 
 		}
 	}))
 	defer server.Close()
+	t.Setenv("AWID_REGISTRY_URL", server.URL)
 
 	inviteID, err := awid.GenerateUUID4()
 	if err != nil {
@@ -3472,6 +3479,7 @@ func TestTeamAcceptInviteGlobalDefaultClaimResumesAfterClaimRollbackFailure(t *t
 		}
 	}))
 	defer server.Close()
+	t.Setenv("AWID_REGISTRY_URL", server.URL)
 
 	inviteID, err := awid.GenerateUUID4()
 	if err != nil {
@@ -3529,6 +3537,7 @@ func TestRollbackDefaultAddressClaimDeletesOnlyNewlyCreatedAddress(t *testing.T)
 		w.WriteHeader(http.StatusNoContent)
 	}))
 	defer server.Close()
+	t.Setenv("AWID_REGISTRY_URL", server.URL)
 
 	_, controllerKey, err := awid.GenerateKeypair()
 	if err != nil {
@@ -4853,6 +4862,7 @@ func TestTeamAddSwitchListLeaveFlow(t *testing.T) {
 			t.Fatalf("unexpected %s %s", r.Method, r.URL.Path)
 		}
 	}))
+	t.Setenv("AWID_REGISTRY_URL", server.URL)
 
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()

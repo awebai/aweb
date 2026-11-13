@@ -1052,7 +1052,7 @@ func foundTeamWithNamespaceControllerAuthority(wd, teamName, alias, explicitDoma
 			return nil, err
 		}
 	}
-	registry, err := newConfiguredRegistryClient(nil, "")
+	registry, err := newConfiguredRegistryClient(nil)
 	if err != nil {
 		return nil, err
 	}
@@ -2131,7 +2131,7 @@ func rollbackJustCreatedTeamMemberWithExplicitHostedAuth(anchorDir string, accep
 		return nil
 	}
 
-	registry, err := newConfiguredRegistryClient(nil, "")
+	registry, err := newConfiguredRegistryClient(nil)
 	if err != nil {
 		return err
 	}
@@ -2634,7 +2634,7 @@ func runTeamHumanRemoveAgent(cmd *cobra.Command, args []string) error {
 
 	var verified *verifiedMember
 	if !isAwebHostedNamespace(domain) {
-		registry, regErr := newConfiguredRegistryClient(nil, "")
+		registry, regErr := newConfiguredRegistryClient(nil)
 		if regErr != nil {
 			return regErr
 		}
@@ -2669,7 +2669,7 @@ func revokeTeamCertificate(ctx context.Context, domain, team, teamID, memberAddr
 	if err != nil {
 		return certificateStoreResult{}, fmt.Errorf("load team key for %s: %w", teamID, err)
 	}
-	registry, err := newConfiguredRegistryClient(nil, "")
+	registry, err := newConfiguredRegistryClient(nil)
 	if err != nil {
 		return certificateStoreResult{}, err
 	}
