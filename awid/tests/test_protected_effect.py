@@ -240,3 +240,44 @@ def test_retained_membership_pure_check_matches_every_consumed_authoritative_fie
             check_retained_membership_record(observation, record, **values)
     else:
         check_retained_membership_record(observation, record, **values)
+
+
+@pytest.mark.parametrize(
+    "principal,accepted",
+    [
+        ("did:key:original", True),
+        ("did:aw:original", True),
+        ("did:key:other", False),
+        ("did:aw:other", False),
+    ],
+)
+def test_subject_only_retained_baseline_never_copies_unused_fields(principal, accepted):
+    from time import monotonic
+    from types import SimpleNamespace
+    from awid.protected_membership import (
+        TeamProtectionObservation,
+        check_retained_subject_record,
+    )
+    from awid.team_certificate import TeamCertificateError
+
+    _, binding, fields, _, _ = example()
+    observation = TeamProtectionObservation(
+        fields["team_id"], fields["controller_did_key"], binding, monotonic() + 60
+    )
+    record = SimpleNamespace(
+        certificate_id="original-cert",
+        member_did_key="did:key:original",
+        member_did_aw="did:aw:original",
+        revoked_at=None,
+        certificate_sha256="a" * 64,
+    )
+    arguments = dict(
+        certificate_id="original-cert",
+        controller_did_key=fields["controller_did_key"],
+        principal=principal,
+    )
+    if accepted:
+        check_retained_subject_record(observation, record, **arguments)
+    else:
+        with pytest.raises(TeamCertificateError, match="certificate_binding_mismatch"):
+            check_retained_subject_record(observation, record, **arguments)
