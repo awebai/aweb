@@ -2,6 +2,11 @@
 
 ## Unreleased
 
+- aweb server keeps a registry throttling hint on `503 identity_binding_unavailable`
+  responses as `Retry-After`, including authenticated installation lookups.
+  Identity mismatches and ordinary dependency failures retain their existing
+  refusal behavior; the server adds no wait or retry.
+
 - `aw id team add-member` registers the certificate at the team namespace's
   own registry: the one `AWID_REGISTRY_URL` names, or else the one the
   namespace's `_awid` record names, as the namespace commands do. A member
