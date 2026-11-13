@@ -1195,6 +1195,16 @@ class RegistryClient:
             registry_url=await self._registry_url_for_domain(domain),
         )
 
+    async def get_team_key_act(self, domain: str, name: str) -> dict[str, Any] | None:
+        """Read the namespace controller's act naming the team's current key,
+        or None on 404. Never cached: the caller verifies it with
+        ``awid.team_key_acts.verify_team_key_change``."""
+        return await self._request_optional_json(
+            "GET",
+            f"/v1/namespaces/{domain}/teams/{name}/key-act",
+            registry_url=await self._registry_url_for_domain(domain),
+        )
+
     async def publish_team_server_record(
         self, domain: str, name: str, record: dict[str, Any], signature: str,
     ) -> dict[str, Any]:

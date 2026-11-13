@@ -32,7 +32,7 @@ from awid.signing import VerifyResult, canonical_json_bytes, verify_signature_wi
 from awid.team_ids import build_team_id
 from awid.team_server_record import TeamServerRecordError, verify_team_server_record
 from awid_service.delivery_origin import validate_delivery_origin
-from awid.controller_request import ControllerAuthRoute, verify_controller_json_request
+from awid.controller_request import ControllerAuthRoute, verified_controller_proof, verify_controller_json_request
 from awid_service.attestation_rotation import ResignedRecords, apply_resigned_records
 
 router = APIRouter(prefix="/v1/namespaces/{domain}/teams", tags=["teams"], route_class=ControllerAuthRoute)
@@ -698,6 +698,70 @@ async def get_team(
     return _team_response(row)
 
 
+class TeamKeyActResponse(BaseModel):
+    team_id: str
+    team_did_key: str
+    signer_did_key: str
+    signed_payload: str
+    signature: str
+
+
+@router.get(
+    "/{name}/key-act",
+    response_model=TeamKeyActResponse,
+    dependencies=[Depends(rate_limit_dep("team_get", allow_trusted_service=True))],
+)
+async def get_team_key_act(
+    request: Request,
+    domain: str,
+    name: str,
+    authorization: str | None = Header(default=None),
+    db_infra=Depends(get_db),
+) -> TeamKeyActResponse:
+    """The namespace controller's latest act naming the team's current key.
+
+    Read like the team itself. The signed bytes are returned exactly as
+    signed (unpadded base64url) so a reader verifies them against the
+    controller its own DNS lookup names. A team whose current key no stored
+    act names answers 404.
+    """
+    name = _validate_team_name_path(name)
+    db = db_infra.get_manager("aweb")
+    team = await db.fetch_one(
+        """
+        SELECT team_uuid, team_did_key, visibility
+        FROM {{tables.teams}}
+        WHERE domain = $1 AND name = $2 AND deleted_at IS NULL
+        """,
+        domain,
+        name,
+    )
+    if team is None:
+        raise HTTPException(status_code=404, detail="Team not found")
+    await _require_team_read_access(
+        request,
+        db,
+        team_uuid=team["team_uuid"],
+        team_did_key=team["team_did_key"],
+        visibility=team["visibility"],
+        authorization=authorization,
+    )
+    act = await db.fetch_one(
+        """
+        SELECT team_did_key, signer_did_key, signed_payload, signature
+        FROM {{tables.team_key_acts}}
+        WHERE team_uuid = $1 AND team_did_key = $2
+        ORDER BY act_id DESC
+        LIMIT 1
+        """,
+        team["team_uuid"],
+        team["team_did_key"],
+    )
+    if act is None:
+        raise HTTPException(status_code=404, detail="Team key act not found")
+    return TeamKeyActResponse(team_id=build_team_id(domain, name), **dict(act))
+
+
 @router.delete(
     "/{name}",
     dependencies=[Depends(rate_limit_dep("team_delete", allow_trusted_service=True))],
@@ -827,6 +891,19 @@ async def rotate_team_key(
             domain,
             name,
             body.new_team_did_key,
+        )
+        proof = verified_controller_proof(request)
+        await tx.execute(
+            """
+            INSERT INTO {{tables.team_key_acts}}
+                (team_uuid, team_did_key, signer_did_key, signed_payload, signature)
+            VALUES ($1, $2, $3, $4, $5)
+            """,
+            old_row["team_uuid"],
+            body.new_team_did_key,
+            proof.signer_did_key,
+            base64.urlsafe_b64encode(proof.signed_payload).rstrip(b"=").decode("ascii"),
+            proof.signature,
         )
 
     resp = _team_response(row)
