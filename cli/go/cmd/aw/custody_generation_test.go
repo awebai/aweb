@@ -408,3 +408,61 @@ func TestCustodyStartingDuringAnUpdateThatCrashesFailsClosed(t *testing.T) {
 		t.Fatalf("client %p built on %v (%s)", deps.client, c.builtOn, c.lastError)
 	}
 }
+
+// An older capture is never built and served once a newer generation was
+// published, even after the snapshot was dropped.
+func TestCustodyNeverBuildsAnOlderCaptureAfterTheSnapshotWasDropped(t *testing.T) {
+	c := newCaptureService(t)
+	older, err := c.captureCredentials()
+	if err != nil {
+		t.Fatal(err)
+	}
+	commitTeams(t, c.home, "second")
+	if c.deps(t).client == nil {
+		t.Fatal("generation 2 not served")
+	}
+	writeTeams(t, c.home, "written by an older aw")
+	if c.deps(t).client != nil {
+		t.Fatal("an unpublished change was served")
+	}
+	builds := len(c.builtOn)
+	c.clientMu.Lock()
+	deps := c.admitCaptureLocked(context.Background(), older, nil)
+	c.clientMu.Unlock()
+	if deps.client != nil || len(c.builtOn) != builds {
+		t.Fatalf("an older capture was built and served after a newer generation: client %p, %d builds", deps.client, len(c.builtOn)-builds)
+	}
+}
+
+// A published generation that fails to build leaves no client: the service
+// never serves a snapshot it has seen superseded.
+func TestCustodyServesNoSupersededSnapshotWhenTheNewOneFailsToBuild(t *testing.T) {
+	c := newCaptureService(t)
+	if c.deps(t).client == nil {
+		t.Fatal("no client before the update")
+	}
+	connect := c.connectClient
+	c.connectClient = func(context.Context, awconfig.IdentityHome) (*awconfig.Selection, *aweb.Client, error) {
+		return nil, nil, errors.New("aweb unreachable")
+	}
+	commitTeams(t, c.home, "second")
+	if deps := c.deps(t); deps.client != nil {
+		t.Fatal("the superseded snapshot was served")
+	}
+	c.connectClient = connect
+	if deps := c.deps(t); deps.client == nil {
+		t.Fatalf("the next request did not build the new generation: %s", c.lastError)
+	}
+}
+
+// A home whose update lock stays held is reported busy, not incomplete.
+func TestCustodyReportsABusyHomeAsBusy(t *testing.T) {
+	c := newCaptureService(t)
+	op := awconfig.CredentialOperation{Command: "test-writer", Intent: "slow"}
+	_ = awconfig.UpdateCredentials(c.home, op, func(func() error) error {
+		if deps := c.deps(t); deps.client != nil || c.lastError != "credential_update_busy" {
+			t.Errorf("client %p, last error %q", deps.client, c.lastError)
+		}
+		return nil
+	})
+}

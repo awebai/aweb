@@ -9,7 +9,8 @@
   (`credential-generation.json`, with `credential-update.json` marking an
   update in progress). Custody serves each request from one published
   snapshot, refuses requests with `credential_update_incomplete` while an
-  update is unfinished and `credential_update_unpublished` after a change
+  update is unfinished, `credential_update_busy` while one holds the home
+  past its wait, and `credential_update_unpublished` after a change
   made without a generation (a restart re-validates and adopts it), and
   with `identity_changed` until restart if the resident key changes. While
   custody serves a home (it holds `credential-reader.lock`), a supported

@@ -282,7 +282,11 @@ func (s *custodyService) admitCaptureLocked(ctx context.Context, capture *awconf
 	case s.identityChanged:
 		return custodyClientDeps{}
 	case captureErr != nil:
-		s.reportFailureLocked("load credentials", "credential_update_incomplete", captureErr)
+		code := "credential_update_incomplete"
+		if errors.Is(captureErr, awconfig.ErrLockUnavailable) {
+			code = "credential_update_busy"
+		}
+		s.reportFailureLocked("load credentials", code, captureErr)
 		return custodyClientDeps{}
 	}
 	if err := s.checkPinLocked(capture); err != nil {
@@ -301,9 +305,14 @@ func (s *custodyService) admitCaptureLocked(ctx context.Context, capture *awconf
 		return custodyClientDeps{}
 	}
 	if s.client == nil || capture.Projection != s.snapshotProjection {
-		if s.client != nil && capture.State.Generation < s.snapshotGeneration {
+		// A capture older than the generation this service last served is
+		// never built, attached or not.
+		if capture.State.Generation < s.snapshotGeneration {
 			return s.depsLocked()
 		}
+		// The superseded snapshot is dropped before the build, so a failed
+		// build serves nothing rather than credentials known to be replaced.
+		s.detachClientLocked()
 		s.buildLocked(ctx, capture)
 	}
 	return s.depsLocked()
