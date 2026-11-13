@@ -235,7 +235,8 @@ PUBLIC_REGISTRY_ADDRESSES = ["104.21.0.10", "172.67.0.10"]
 
 
 def start_with_agents(tmp_path: Path, team: dict, services: list[str], registry: list[str],
-                      egress_log: str | None = None, follower_seconds: int = 0):
+                      egress_log: str | None = None, follower_seconds: int = 0, inspected: str | None = None,
+                      fails: dict[str, int] | None = None):
     # The stub docker answers what start asks before the ingress probe: the
     # services, the origins' addresses seen from aweb, the agents network's
     # isolation, a first line from each followed log, and the probe's pass.
@@ -254,9 +255,11 @@ def start_with_agents(tmp_path: Path, team: dict, services: list[str], registry:
     }
     if egress_log is not None:
         answers["--timestamps --follow"] = egress_log
+    if inspected is not None:
+        answers["com.docker.compose.project"] = inspected
     path = agents_deployment(tmp_path, team)
     holds = {"--timestamps --follow": follower_seconds} if follower_seconds else None
-    return run(tmp_path, "start", path, command=TEAMCTL, docker_ok=True, answers=answers, holds=holds)
+    return run(tmp_path, "start", path, command=TEAMCTL, docker_ok=True, answers=answers, holds=holds, fails=fails)
 
 
 def followed(tmp_path: Path) -> list[str]:
@@ -325,13 +328,18 @@ LATER_LINE = "2099-01-01T00:00:00.000000000Z [INFO] 172.30.0.10:4000 - 1 \"A IN 
 EARLIER_LINE = "2000-01-01T00:00:00.000000000Z [INFO] replayed history"
 
 
-def egress_capture(tmp_path: Path, line: str, monkeypatch, follower_seconds: int = 4):
+INSPECTED = "sha256:" + "e" * 64 + "|teamrun|egress|json-file|2026-11-13T18:00:00.000000000Z"
+
+
+def egress_capture(tmp_path: Path, line: str, monkeypatch, follower_seconds: int = 4,
+                   inspected: str | None = INSPECTED, fails: dict[str, int] | None = None):
     log = tmp_path / "capture" / "agent-egress-refusals.log"
     log.parent.mkdir()
     monkeypatch.setenv("TEAM_DEPLOYMENT_EGRESS_LOG", str(log))
     monkeypatch.setenv("TEAM_DEPLOYMENT_CAPTURE_SECONDS", "2")
     result = start_with_agents(tmp_path, {"id": "devteam:example.com"}, BASE_SERVICES, PUBLIC_REGISTRY_ADDRESSES,
-                               egress_log=line + "\n", follower_seconds=follower_seconds)
+                               egress_log=line + "\n", follower_seconds=follower_seconds, inspected=inspected,
+                               fails=fails)
     return result, log
 
 
@@ -359,13 +367,48 @@ def test_the_egress_capture_starts_after_egress_and_before_any_probe_or_the_agen
     # that reused the PID.
     assert "docker logs --timestamps --follow egress-container-id" in receipt["follower_command"]
     assert receipt["follower_started"]
+    assert (receipt["image"], receipt["project"], receipt["service"]) == ("sha256:" + "e" * 64, "teamrun", "egress")
 
 
-def test_a_follower_gone_before_its_identity_is_read_holds_the_agent(tmp_path, monkeypatch):
-    result, log = egress_capture(tmp_path, LATER_LINE, monkeypatch, follower_seconds=0)
-    assert result.returncode == 1
-    assert "egress capture: the follower exited" in result.stderr, result.stderr
-    assert not [call for call in calls(tmp_path) if "probe-ingress.mjs" in call]
+def held_before_probes(result, tmp_path: Path, message: str) -> None:
+    assert result.returncode == 1 and message in result.stderr, result.stderr
+    assert "agents held: egress's log is not being captured" in result.stderr
+    made = calls(tmp_path)
+    assert not [call for call in made if "probe-ingress.mjs" in call]
+    assert not [call for call in made if call.rstrip().endswith(" agent")]
+
+
+def test_a_follower_that_prints_a_fresh_line_and_exits_holds_the_agent(tmp_path, monkeypatch):
+    # A fresh line is not enough: the follower must still be streaming.
+    result, _ = egress_capture(tmp_path, LATER_LINE, monkeypatch, follower_seconds=0,
+                               fails={"--timestamps --follow": 1})
+    held_before_probes(result, tmp_path, "egress capture: the follower exited")
+
+
+@pytest.mark.parametrize(
+    ("inspected", "fails"),
+    [(None, {"com.docker.compose.project": 1}),
+     ("sha256:" + "e" * 64 + "|otherproject|egress|json-file|t", None),
+     ("|teamrun|egress|json-file|t", None)],
+)
+def test_a_capture_whose_egress_cannot_be_identified_holds_the_agent(tmp_path, monkeypatch, inspected, fails):
+    # docker inspect failing, or naming another project or no image: no
+    # receipt is written, and the follower is stopped.
+    result, log = egress_capture(tmp_path, LATER_LINE, monkeypatch, inspected=inspected, fails=fails)
+    held_before_probes(result, tmp_path, "egress capture: no receipt")
+    assert not log.with_name(log.name + ".receipt.json").exists()
+
+
+@pytest.mark.parametrize("which", ["log", "receipt"])
+def test_a_capture_refuses_a_dangling_symlink_and_leaves_its_target_alone(tmp_path, monkeypatch, which):
+    log = tmp_path / "capture" / "agent-egress-refusals.log"
+    log.parent.mkdir()
+    target = tmp_path / "elsewhere"
+    (log if which == "log" else log.with_name(log.name + ".receipt.json")).symlink_to(target)
+    monkeypatch.setenv("TEAM_DEPLOYMENT_EGRESS_LOG", str(log))
+    result = start_with_agents(tmp_path, {"id": "devteam:example.com"}, BASE_SERVICES, PUBLIC_REGISTRY_ADDRESSES)
+    assert result.returncode == 1 and "already exists" in result.stderr
+    assert not target.exists()
 
 
 def test_a_capture_that_shows_no_new_line_holds_the_agent(tmp_path, monkeypatch):

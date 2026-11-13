@@ -285,6 +285,26 @@ start_egress() {
   fi
 }
 
+# The time now, UTC, to the microsecond (date's %N is not portable).
+utc_now() {
+  python_in_server -c 'import datetime; print(datetime.datetime.now(datetime.timezone.utc).strftime("%Y-%m-%dT%H:%M:%S.%fZ"))'
+}
+
+# Stops and reaps a follower this function started; nothing else.
+stop_follower() {
+  kill "$1" 2>/dev/null || true
+  wait "$1" 2>/dev/null || true
+}
+
+# Whether the follower is still this capture: running (not exited or a
+# zombie) and still the command that was started.
+follower_live() {
+  local pid="$1" id="$2" state command
+  state="$(ps -o stat= -p "$pid" 2>/dev/null)" || return 1
+  command="$(ps -o command= -p "$pid" 2>/dev/null)" || return 1
+  [[ -n "$state" && "$state" != Z* && "$command" == *"logs --timestamps --follow $id"* ]]
+}
+
 # With TEAM_DEPLOYMENT_EGRESS_LOG (an absolute path not yet there), egress's
 # own log (both streams, Docker timestamps, kept verbatim) is followed into
 # that file from once egress is healthy, before any probe or the agent, so no
@@ -293,20 +313,23 @@ start_egress() {
 # stops it when it collects. Agents are held unless a line timestamped after
 # the follower attached arrives within TEAM_DEPLOYMENT_CAPTURE_SECONDS (egress's
 # own health checks log every 5 s): replayed history alone does not show the
-# follower streaming.
-# The time now, UTC, to the microsecond (date's %N is not portable).
-utc_now() {
-  python_in_server -c 'import datetime; print(datetime.datetime.now(datetime.timezone.utc).strftime("%Y-%m-%dT%H:%M:%S.%fZ"))'
-}
-
+# follower streaming. The follower must still be running after that line, and
+# its receipt (this deployment's egress by image, project and service, and the
+# follower's own identity) must be written; otherwise it is stopped and the
+# agents are held.
 capture_egress() {
-  local log="$TEAM_DEPLOYMENT_EGRESS_LOG" id attached follower deadline
+  local log="$TEAM_DEPLOYMENT_EGRESS_LOG" id attached follower deadline witness inspected started command path
   [[ "$log" == /* ]] || refuse "TEAM_DEPLOYMENT_EGRESS_LOG must be an absolute path"
-  [[ ! -e "$log" && ! -e "$log.receipt.json" ]] || refuse "the egress capture $log already exists; each capture has its own file"
+  # Any existing entry is refused, a dangling symlink included, and the log
+  # is created without replacing anything: no write lands elsewhere.
+  for path in "$log" "$log.receipt.json"; do
+    [[ ! -e "$path" && ! -L "$path" ]] || refuse "the egress capture $path already exists; each capture has its own file"
+  done
+  (set -o noclobber && : >"$log") 2>/dev/null || refuse "could not create the egress capture $log"
   id="$(dc ps -q egress)" || refuse "could not find the egress container"
   [[ "$(grep -c . <<<"$id")" -eq 1 ]] || refuse "egress is not exactly one container"
-  attached="$(utc_now)"
-  nohup docker logs --timestamps --follow "$id" >"$log" 2>&1 </dev/null &
+  attached="$(utc_now)" || refuse "could not read the time"
+  nohup docker logs --timestamps --follow "$id" >>"$log" 2>&1 </dev/null &
   follower=$!
   deadline=$((SECONDS + ${TEAM_DEPLOYMENT_CAPTURE_SECONDS:-30}))
   until python_in_server - "$log" "$attached" <<'PY'
@@ -324,36 +347,51 @@ sys.exit(0 if any(stamp(line.split(" ", 1)[0]) > after for line in lines if line
 PY
   do
     if ((SECONDS >= deadline)); then
-      kill "$follower" 2>/dev/null || true
-      wait "$follower" 2>/dev/null || true
+      stop_follower "$follower"
       echo "teamctl: egress capture: no line after the follower attached at $attached" >&2
       return 1
     fi
     sleep 0.5
   done
-  # The follower's identity (its start time and command line, as ps reports
-  # them), so the owner that stops it by PID can check it is still this
-  # process. A follower already gone here is no capture.
-  local follower_started follower_command
-  follower_started="$(ps -o lstart= -p "$follower" 2>/dev/null)" || true
-  follower_command="$(ps -o command= -p "$follower" 2>/dev/null)" || true
-  if [[ -z "$follower_started" || "$follower_command" != *"logs --timestamps --follow $id"* ]]; then
-    echo "teamctl: egress capture: the follower exited before its identity was read" >&2
+  # A fresh line is not enough: the follower must still be streaming. Its
+  # identity (start time and command line, as ps reports them) lets the owner
+  # that stops it by PID check it still is this process.
+  if ! follower_live "$follower" "$id"; then
+    stop_follower "$follower"
+    echo "teamctl: egress capture: the follower exited after its first line" >&2
     return 1
   fi
-  python_in_server - "$log.receipt.json" "$id" "$follower" "$attached" "$(utc_now)" \
-    "$follower_started" "$follower_command" \
-    "$(docker inspect --format '{{.Image}}|{{index .Config.Labels "com.docker.compose.project"}}|{{index .Config.Labels "com.docker.compose.service"}}|{{.HostConfig.LogConfig.Type}}|{{.State.StartedAt}}' "$id")" <<'PY'
+  if ! witness="$(utc_now)" || ! started="$(ps -o lstart= -p "$follower")" || ! command="$(ps -o command= -p "$follower")" \
+    || ! inspected="$(docker inspect --format '{{.Image}}|{{index .Config.Labels "com.docker.compose.project"}}|{{index .Config.Labels "com.docker.compose.service"}}|{{.HostConfig.LogConfig.Type}}|{{.State.StartedAt}}' "$id")" \
+    || ! python_in_server - "$log.receipt.json" "$project" "$id" "$follower" "$attached" "$witness" "$started" "$command" \
+      "$inspected" <<'PY'
 import json
+import os
+import re
 import sys
 
-out, container, pid, attached, witness, started_ps, command_ps, inspected = sys.argv[1:]
-image, project, service, driver, started = (inspected.split("|") + [""] * 5)[:5]
-json.dump({"container": container, "image": image, "project": project, "service": service, "logDriver": driver,
+out, project, container, pid, attached, witness, started_ps, command_ps, inspected = sys.argv[1:]
+fields = inspected.strip().split("|")
+if len(fields) != 5:
+    sys.exit("egress's inspection is not five fields")
+image, owner, service, driver, started = fields
+if not re.fullmatch(r"sha256:[0-9a-f]{64}", image) or owner != project or service != "egress" or not driver or not started:
+    sys.exit("egress's image, project or service is not this deployment's egress")
+if not started_ps.strip() or not command_ps.strip():
+    sys.exit("the follower's identity is empty")
+receipt = {"container": container, "image": image, "project": owner, "service": service, "logDriver": driver,
            "startedAt": started, "follower_pid": int(pid), "follower_started": started_ps.strip(),
-           "follower_command": command_ps.strip(), "attached_at": attached, "witness_at": witness},
-          open(out, "w", encoding="utf-8"), indent=2)
+           "follower_command": command_ps.strip(), "attached_at": attached, "witness_at": witness}
+# Created without replacing anything, a symlink included.
+fd = os.open(out, os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW, 0o644)
+with os.fdopen(fd, "w", encoding="utf-8") as handle:
+    json.dump(receipt, handle, indent=2)
 PY
+  then
+    stop_follower "$follower"
+    echo "teamctl: egress capture: no receipt; the follower is stopped" >&2
+    return 1
+  fi
   echo "egress capture: streaming into $log (follower $follower, attached $attached)"
 }
 
