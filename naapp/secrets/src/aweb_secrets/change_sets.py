@@ -128,10 +128,9 @@ APPLICABLE_KINDS = frozenset(
 )
 
 
-# These creation paths have proof-bound governance in the sole writer. Keep
-# HTTP creation exposure tied to this set; the required B3 sink separately
-# supports approver creation and owner-scheduled contact changes.
-AUDITED_CREATE_KINDS = frozenset(
+# These creation paths have proof-bound governance in the sole writer. The
+# required B3 sink separately audits approver creation and contact changes.
+_AUDITED_CREATE_KINDS = frozenset(
     {
         "backend_credential",
         "onepassword_binding",
@@ -146,6 +145,14 @@ AUDITED_CREATE_KINDS = frozenset(
         "runner",
     }
 )
+
+
+def audited_change(item: Mapping[str, Any]) -> bool:
+    """Keep HTTP exposure tied to the sole writer's proof-bound audit paths."""
+    return (item.get("op") == "create" and item.get("kind") in _AUDITED_CREATE_KINDS) or (
+        item.get("kind"),
+        item.get("op"),
+    ) == ("reenable", "enable")
 
 
 async def apply_change_set_migrations(db: AsyncDatabaseManager) -> None:
@@ -756,7 +763,7 @@ class ChangeSets:
                     "job credential fields differ from source kind", code="job_source_invalid"
                 )
 
-    async def _creation_audit(
+    async def _change_audit(
         self,
         tx: TransactionManager,
         change: Mapping[str, Any],
@@ -775,7 +782,17 @@ class ChangeSets:
             "approval_id": evidence.approval_id,
             "approval_evidence_sha256": commitment,
         }
-        if kind == "policy":
+        if kind == "reenable":
+            if after["target_kind"] == "installation":
+                payload.update(act="installation.enabled")
+            else:
+                secret_id = await self._reenable_id(
+                    tx, change["installation_id"], change["team_id"], after["target_ref"]
+                )
+                payload.update(
+                    act="resource.enabled", resource_type="secret", resource_ref=secret_id
+                )
+        elif kind == "policy":
             payload.update(act="policy.changed", policy_digest=item["ref"])
         elif kind == "role":
             payload.update(
@@ -949,11 +966,7 @@ class ChangeSets:
             for i in change["changes"]
             if i["kind"] in {"backend_credential", "onepassword_binding"}
         ]
-        audited_items = [
-            i
-            for i in change["changes"]
-            if i["op"] == "create" and i["kind"] in AUDITED_CREATE_KINDS
-        ]
+        audited_items = [i for i in change["changes"] if audited_change(i)]
         commitment = None
         if audited_items:
             if (
@@ -1010,7 +1023,7 @@ class ChangeSets:
                     designations.extend(applied)
         if commitment is not None:
             for item in audited_items:
-                await self._creation_audit(tx, change, item, evidence, commitment, governance_view)
+                await self._change_audit(tx, change, item, evidence, commitment, governance_view)
         await tx.execute(
             "UPDATE {{tables.change_sets}} SET state = 'applied', closed_at = NOW()"
             " WHERE change_id = $1",

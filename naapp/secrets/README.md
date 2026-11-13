@@ -231,6 +231,15 @@ The fresh-confirmation HTTP routes support `create` items for backend credential
 1Password bindings, secret metadata/native values, destinations, operations,
 grants, policies, plain roles, jobs and runners. Every such effect requires the
 actual retained APPROVE commitment and atomic signed governance recording.
+Owner containment recovery uses the same routes with `kind: reenable`,
+`op: enable` and `after: {v: 1, target_kind, target_ref}`. Only `installation`
+(the admitted installation ID) and `secret` (its display ref) are supported.
+Fresh APPROVE plus confirmation emits `installation.enabled` or
+`resource.enabled`, with the retained proof commitment and fresh audit admission
+in the effect transaction. Failure rolls back recovery and approval consumption.
+Installation recovery clears only its local kill flag; secret recovery enables
+only that record. Disabled descendants, destroyed values and revoked authority
+remain unchanged, and authoritative uninstall still refuses recovery.
 Job credentials must name same-installation/team secrets and compatible structured
 fields; this slice supports durable slots. Job updates and mint slots retain
 their integration guards. Self-contact and contact-change cancellation remain
