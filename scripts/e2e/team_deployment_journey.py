@@ -135,7 +135,7 @@ def check_operator_secrets(secrets: Path, *, root_uid: int = 0, staging_uid: int
     """An operator-provided secrets directory (--secrets-dir), checked before
     anything is staged: root-owned and writable by root alone, as the OATS
     credential receiver requires of its login directory's ancestors; each
-    component directory pre-created, empty and owned by the staging user; and
+    component directory pre-created, empty, the staging user's and private (0700); and
     agents/ the receiver's (root:<agents' gid> 0750), whose contents are never
     read. The parent is checked first, so the children of a directory that is
     not root's (a kept run's own secrets, say) are never examined."""
@@ -161,6 +161,11 @@ def check_operator_secrets(secrets: Path, *, root_uid: int = 0, staging_uid: int
             raise SystemExit(f"FAILED: {component}: not a directory")
         if child.st_uid != staging_uid:
             raise SystemExit(f"FAILED: {component}: not owned by the staging user")
+        # Credentials are written with the caller's umask before own()
+        # chowns and chmods them: only a private directory keeps them out of
+        # reach meanwhile.
+        if child.st_mode & 0o077:
+            raise SystemExit(f"FAILED: {component}: must be private to the staging user (0700)")
         if any((secrets / component).iterdir()):
             raise SystemExit(f"FAILED: {component}: not empty")
     try:

@@ -190,3 +190,24 @@ def test_the_journey_refuses_an_operator_secrets_directory_before_it_makes_the_r
     with pytest.raises(SystemExit, match="not root-owned"):
         J.main()
     assert not (tmp_path / "run47").exists()
+
+
+@pytest.mark.parametrize("mode", [0o755, 0o750, 0o705, 0o770, 0o701])
+def test_a_component_directory_others_can_reach_is_refused_before_any_write(tmp_path, monkeypatch, mode):
+    # Credentials are written with the caller's umask before each component's
+    # files are chowned and chmodded; only a private directory keeps them
+    # unreachable meanwhile.
+    secrets = operator_secrets(tmp_path)
+    (secrets / "postgres").chmod(mode)
+    assert "postgres: must be private to the staging user (0700)" in refusal(secrets)
+    images = tmp_path / "images.txt"
+    images.write_text("")
+    # The CLI's own check, with this test's uid standing in for root.
+    original = J.check_operator_secrets
+    monkeypatch.setattr(J, "check_operator_secrets",
+                        lambda path: original(path, root_uid=ME, staging_uid=ME, agents_gid=MY_GROUP))
+    monkeypatch.setattr(sys, "argv", ["journey", "--run-dir", str(tmp_path / "run"), "--project", "p",
+                                      "--images", str(images), "--secrets-dir", str(secrets)])
+    with pytest.raises(SystemExit, match="must be private"):
+        J.main()
+    assert not (tmp_path / "run").exists() and list((secrets / "postgres").iterdir()) == []
