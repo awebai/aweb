@@ -235,7 +235,7 @@ PUBLIC_REGISTRY_ADDRESSES = ["104.21.0.10", "172.67.0.10"]
 
 
 def start_with_agents(tmp_path: Path, team: dict, services: list[str], registry: list[str],
-                      egress_log: str | None = None):
+                      egress_log: str | None = None, follower_seconds: int = 0):
     # The stub docker answers what start asks before the ingress probe: the
     # services, the origins' addresses seen from aweb, the agents network's
     # isolation, a first line from each followed log, and the probe's pass.
@@ -255,7 +255,8 @@ def start_with_agents(tmp_path: Path, team: dict, services: list[str], registry:
     if egress_log is not None:
         answers["--timestamps --follow"] = egress_log
     path = agents_deployment(tmp_path, team)
-    return run(tmp_path, "start", path, command=TEAMCTL, docker_ok=True, answers=answers)
+    holds = {"--timestamps --follow": follower_seconds} if follower_seconds else None
+    return run(tmp_path, "start", path, command=TEAMCTL, docker_ok=True, answers=answers, holds=holds)
 
 
 def followed(tmp_path: Path) -> list[str]:
@@ -324,13 +325,13 @@ LATER_LINE = "2099-01-01T00:00:00.000000000Z [INFO] 172.30.0.10:4000 - 1 \"A IN 
 EARLIER_LINE = "2000-01-01T00:00:00.000000000Z [INFO] replayed history"
 
 
-def egress_capture(tmp_path: Path, line: str, monkeypatch):
+def egress_capture(tmp_path: Path, line: str, monkeypatch, follower_seconds: int = 4):
     log = tmp_path / "capture" / "agent-egress-refusals.log"
     log.parent.mkdir()
     monkeypatch.setenv("TEAM_DEPLOYMENT_EGRESS_LOG", str(log))
     monkeypatch.setenv("TEAM_DEPLOYMENT_CAPTURE_SECONDS", "2")
     result = start_with_agents(tmp_path, {"id": "devteam:example.com"}, BASE_SERVICES, PUBLIC_REGISTRY_ADDRESSES,
-                               egress_log=line + "\n")
+                               egress_log=line + "\n", follower_seconds=follower_seconds)
     return result, log
 
 
@@ -354,6 +355,17 @@ def test_the_egress_capture_starts_after_egress_and_before_any_probe_or_the_agen
     receipt = json.loads(log.with_name(log.name + ".receipt.json").read_text())
     assert receipt["container"] == "egress-container-id" and receipt["follower_pid"] > 0
     assert receipt["attached_at"] < receipt["witness_at"]
+    # The follower's identity, so its owner stops this process and no other
+    # that reused the PID.
+    assert "docker logs --timestamps --follow egress-container-id" in receipt["follower_command"]
+    assert receipt["follower_started"]
+
+
+def test_a_follower_gone_before_its_identity_is_read_holds_the_agent(tmp_path, monkeypatch):
+    result, log = egress_capture(tmp_path, LATER_LINE, monkeypatch, follower_seconds=0)
+    assert result.returncode == 1
+    assert "egress capture: the follower exited" in result.stderr, result.stderr
+    assert not [call for call in calls(tmp_path) if "probe-ingress.mjs" in call]
 
 
 def test_a_capture_that_shows_no_new_line_holds_the_agent(tmp_path, monkeypatch):

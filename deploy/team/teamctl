@@ -331,15 +331,27 @@ PY
     fi
     sleep 0.5
   done
+  # The follower's identity (its start time and command line, as ps reports
+  # them), so the owner that stops it by PID can check it is still this
+  # process. A follower already gone here is no capture.
+  local follower_started follower_command
+  follower_started="$(ps -o lstart= -p "$follower" 2>/dev/null)" || true
+  follower_command="$(ps -o command= -p "$follower" 2>/dev/null)" || true
+  if [[ -z "$follower_started" || "$follower_command" != *"logs --timestamps --follow $id"* ]]; then
+    echo "teamctl: egress capture: the follower exited before its identity was read" >&2
+    return 1
+  fi
   python_in_server - "$log.receipt.json" "$id" "$follower" "$attached" "$(utc_now)" \
+    "$follower_started" "$follower_command" \
     "$(docker inspect --format '{{.Image}}|{{index .Config.Labels "com.docker.compose.project"}}|{{index .Config.Labels "com.docker.compose.service"}}|{{.HostConfig.LogConfig.Type}}|{{.State.StartedAt}}' "$id")" <<'PY'
 import json
 import sys
 
-out, container, pid, attached, witness, inspected = sys.argv[1:]
+out, container, pid, attached, witness, started_ps, command_ps, inspected = sys.argv[1:]
 image, project, service, driver, started = (inspected.split("|") + [""] * 5)[:5]
 json.dump({"container": container, "image": image, "project": project, "service": service, "logDriver": driver,
-           "startedAt": started, "follower_pid": int(pid), "attached_at": attached, "witness_at": witness},
+           "startedAt": started, "follower_pid": int(pid), "follower_started": started_ps.strip(),
+           "follower_command": command_ps.strip(), "attached_at": attached, "witness_at": witness},
           open(out, "w", encoding="utf-8"), indent=2)
 PY
   echo "egress capture: streaming into $log (follower $follower, attached $attached)"
