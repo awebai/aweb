@@ -33,8 +33,10 @@ if command == 'doctor':
     sys.exit(7)
 for number in (signal.SIGTERM, signal.SIGINT):
     signal.signal(number, lambda n, f: sys.exit(128 + n))
-(state / 'ready').write_text(json.dumps({'pid': os.getpid(), 'uid': os.geteuid(),
-                                       'cwd': os.getcwd()}))
+pending = state / 'ready.pending'
+pending.write_text(json.dumps({'pid': os.getpid(), 'uid': os.geteuid(),
+                               'cwd': os.getcwd()}))
+pending.replace(state / 'ready')
 while True:
     time.sleep(.05)
 """
@@ -161,6 +163,45 @@ async def test_private_registration_and_observable_command_exit(world, capfd):
     process = await launcher.launch(Invocation(policy.argv("doctor"), "unused"))
     assert await process.wait() == 7
     assert capfd.readouterr() == ("", "")
+
+
+async def test_worker_ready_is_published_only_after_complete_json(world):
+    policy, launcher, _ = world
+    binary = policy.prefix / "bin" / "aweb-secrets-runner"
+    pause = """
+real_open = Path.open
+def paused_open(path, *args, **kwargs):
+    stream = real_open(path, *args, **kwargs)
+    if path.name in ('ready', 'ready.pending') and kwargs.get('mode') == 'w':
+        (state / 'ready-write-open').touch()
+        while not (state / 'finish-ready-write').exists():
+            time.sleep(.01)
+    return stream
+Path.open = paused_open
+command = sys.argv[1]
+"""
+    binary.write_text(binary.read_text().replace("command = sys.argv[1]", pause))
+    process = await launcher.launch(Invocation(policy.argv("run"), "unused"))
+    identity = await process.identity()
+    try:
+        async with asyncio.timeout(5):
+            while not (policy.state / "ready-write-open").exists():
+                await asyncio.sleep(0.01)
+        assert not (policy.state / "ready").exists(), "an open, incomplete file is not ready"
+        (policy.state / "finish-ready-write").touch()
+        observed = await ready(policy.state / "ready")
+        assert (observed["pid"], observed["uid"], observed["cwd"]) == (
+            identity.pid,
+            os.geteuid(),
+            "/",
+        )
+    finally:
+        (policy.state / "finish-ready-write").touch()
+        await process.signal(signal.SIGTERM)
+        result = await process.wait()
+    assert result == 143
+    with pytest.raises(ProcessLookupError):
+        os.kill(identity.pid, 0)
 
 
 @pytest.mark.parametrize("number", [signal.SIGTERM, signal.SIGINT])
