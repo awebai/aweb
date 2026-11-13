@@ -11,7 +11,7 @@ from aweb_naapp.runtime.protected_signer.retention import (
     FrozenDelivery,
     RetainedEffect,
 )
-from .legacy_delivery import authenticate_plan, delivery_plan
+from .legacy_delivery import _invalidate, authenticate_plan, delivery_plan
 from awid.protected_effect import (
     HEADER,
     artifact_digest,
@@ -62,7 +62,7 @@ class ProtectedEffectCustody:
         if now >= until:
             raise SignerRefused("operation_expired")
         plan = delivery_plan(self, operation, artifact, signing, signature, _stamp(now))
-        delivery = authenticate_plan(self, plan)
+        delivery = authenticate_plan(self, plan, signing=signing, signature=signature)
         digest = artifact_digest(signing, _raw(signature))
         fields = {
             "v": 1,
@@ -137,7 +137,16 @@ class ProtectedEffectCustody:
             or self._effect_clock() >= retained.expires_at
         ):
             raise SignerRefused("operation_expired")
-        await self._request_effect(retained.delivery)
+        if not operation.spec.effect.invalidates_membership:
+            await self._request_effect(retained.delivery)
+            return
+        client = getattr(self._effect_registry, "client", self._effect_registry)
+        name = self.team_id.partition(":")[0]
+        await _invalidate(client, operation, self.domain, name)
+        try:
+            await self._request_effect(retained.delivery)
+        finally:
+            await _invalidate(client, operation, self.domain, name)
 
     async def confirm_retained(self, operation, retained):
         started = self._effect_clock()

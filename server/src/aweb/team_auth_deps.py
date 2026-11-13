@@ -247,6 +247,11 @@ async def verify_request_certificate(request: Request, db, *, fresh: bool = Fals
     try:
         protection_observation = await observe_team_protection(registry, cert_team_id)
     except EffectRefused as exc:
+        if isinstance(exc.__cause__, AWID_DEPENDENCY_ERRORS):
+            raise _team_read_failure(
+                exc.__cause__, registry, cert_team_id,
+                operation="AWID team key resolution", reading="team key resolution",
+            ) from exc
         raise HTTPException(status_code=503, detail={"code": exc.code}) from exc
     team_did_key = protection_observation.controller_did_key
 
