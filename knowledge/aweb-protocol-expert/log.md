@@ -1,5 +1,10 @@
 # Knowledge log
 
+## 2026-11-13
+* **Harvest**: OKF proposal from seat aweb-protocol-expert-security-fixes with one backing note; the operator's approval is source-reported (relayed by the coordinator), and message identifiers are omitted.
+* **Creation**: decision [protected execution is an additional verifier fact](/aweb-protocol-expert/decisions/protected-execution-is-an-additional-verifier-fact.md), an approved design that is not implemented or activated; it refines [team certificates are controller-only](/aweb-protocol-expert/decisions/team-certificates-are-controller-only.md) without superseding it, and amends the unchanged-wire promise only for explicitly cut-over teams under [accepted guarantees change only by ruling](/aweb-protocol-expert/lessons/accepted-guarantees-change-only-by-ruling.md).
+* **Update**: [team certificates are controller-only](/aweb-protocol-expert/decisions/team-certificates-are-controller-only.md) gains a "Refined by" pointer to the protected-execution decision.
+
 ## 2026-11-06
 * **Fix**: review of the db-access proposal on npm gitHead, PubSub release and stream checkouts: hosted specifics in [stream bodies leave the request connection scope](/aweb-protocol-expert/lessons/stream-bodies-leave-the-request-connection-scope.md) and [an npm tarball publish records no gitHead](/aweb-protocol-expert/lessons/npm-tarball-publish-records-no-githead.md) are stated generically or dropped, as the OSS and Cloud boundary requires.
 * **Update**: [SSE cleanup is cancelled on client disconnect](/aweb-protocol-expert/lessons/sse-cleanup-is-cancelled-on-disconnect.md) and [a PubSub release survives any cancellation](/aweb-protocol-expert/decisions/pubsub-release-survives-any-cancellation.md) link each other: the AnyIO shield covers Starlette's disconnect, not native task cancellation.
