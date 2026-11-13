@@ -1,5 +1,9 @@
 # Knowledge log
 
+## 2026-11-13
+* **Harvest**: OKF proposal from aweb-expert/aweb-expert-wake-fixes (task aweb-acyz).
+* **Update**: [elapsed time is a test input](/aweb-expert/lessons/elapsed-time-is-a-test-input.md) gains that a lock-holding "still waiting" probe races the waiter's server-side lock_timeout; prove the block with pg_blocking_pids and give the waiter no lock timeout.
+
 ## 2026-11-04
 * **Harvest**: OKF proposal from aweb-expert/aweb-expert-fresh-eyes (tasks aweb-acst and aweb-actf).
 * **Update**: [identity and routing review needs the real client](/aweb-expert/lessons/identity-and-routing-review-needs-the-real-client.md) gains that the real client includes the last released binary and that a skipped released-client case is not evidence.
