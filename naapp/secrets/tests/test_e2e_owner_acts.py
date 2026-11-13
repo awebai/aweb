@@ -1,10 +1,16 @@
 """The H owner-acts journey with the real aw, end to end (make e2e only).
 
 Real: AWID with DNS verification, aweb, CoreDNS, SMTP, this app's production
-image behind TLS on two public hostnames, the aw binary, the holder's human key
-in a real Secret Service, and the shared handoff page and routes. The only
-stand-in is the person: a software authenticator drives the page's JSON routes
-from the holder's own network namespace, so aw's loopback receives the code.
+image behind TLS on two public hostnames, the Logs app as a team deployment
+runs it (the audit target a designation's governance needs), the aw binary,
+the holder's human key in a real Secret Service, and the shared handoff page
+and routes. The only stand-in is the person: a software authenticator drives
+the page's JSON routes from the holder's own network namespace, so aw's
+loopback receives the code.
+
+The owner signs the designation locally, so aw keeps no request to replay:
+its proof is the app's own records (protected_round_trip.assert_designated),
+and a refused duplicate leaves them unchanged.
 
 Topology, as on H: the holder (a human) runs aw on their own machine, where the
 browser is; the team owner signs with the team's controller key on another.
@@ -29,8 +35,23 @@ import pexpect
 import pytest
 from aweb_naapp_testing.network import make_certificates
 from nacl.signing import SigningKey
+from protected_round_trip import (
+    Designation,
+    Holding,
+    activate_hooks,
+    assert_designated,
+    assert_unchanged,
+    aw,
+    aw_refused,
+    credential_sha256,
+    designate_command,
+    designation_snapshot,
+    first_json,
+    install_app,
+    publish_team_server,
+    read_only_psql,
+)
 from protected_round_trip import Holder as SharedHolder
-from protected_round_trip import aw, aw_refused, first_json
 from protected_round_trip import await_awid_txt as shared_await_awid_txt
 from protected_round_trip import docker as _docker
 
@@ -48,6 +69,97 @@ AWEB = "http://aweb.svc.test:8000"
 API = "https://api.secrets.svc.test"
 CONSOLE = "https://console.secrets.svc.test"
 ROLE = "secrets.owner"
+# The lane's Logs, and the network both apps' hooks stay inside.
+LOGS_APP_ID = "lane-logs"
+LOGS_API = "https://api.logs.svc.test"
+LOGS_CONSOLE = "https://console.logs.svc.test"
+LANE_SUBNET = "172.31.240.0/24"
+# The lane's Secrets keeps its records in this schema of the lane's database.
+SECRETS_SCHEMA = "secrets"
+# The notice contact the owner designates the holder with.
+CONTACT = "holder@h.test"
+# Every setting the Logs base service names, as a deployment's .env gives
+# them: Compose reads them when it loads the file, for every lane command.
+LOGS_COMPOSE_ENV = {
+    "LOGS_APP_ID": LOGS_APP_ID,
+    "LOGS_PUBLIC_ORIGIN": LOGS_API,
+    "LOGS_CONSOLE_ORIGIN": LOGS_CONSOLE,
+    "TEAM_ID": TEAM_ID,
+    "AWID_REGISTRY_URL": REGISTRY,
+    "LOGS_EMAIL_SMTP_HOST": "mail.svc.test",
+    "LOGS_EMAIL_SMTP_PORT": "1025",
+    "LOGS_EMAIL_FROM": "logs@svc.test",
+    "LOGS_EMAIL_CA_FILE": "/runtime/tls/ca.pem",
+    "LOGS_EGRESS_DENIED_NETWORKS": "[]",
+}
+# What the TLS front serves, and the service behind each host.
+UPSTREAMS = {
+    "api.secrets.svc.test": "secrets:8770",
+    "console.secrets.svc.test": "secrets:8770",
+    "api.logs.svc.test": "logs:8765",
+    "console.logs.svc.test": "logs:8765",
+}
+
+
+def front_caddyfile(upstreams: dict[str, str], cert: str, key: str) -> str:
+    """The TLS front's configuration: each host on 443 with the lane's
+    certificate, proxied to its service with the public Host kept."""
+    return "{\n  auto_https off\n}\n" + "".join(
+        f"{host}:443 {{\n  tls /tls/{cert} /tls/{key}\n  reverse_proxy {target}\n}}\n"
+        for host, target in upstreams.items()
+    )
+
+
+def write_tls(runtime: Path, hosts: list[str]) -> tuple[str, str]:
+    """The lane's certificate for every host, and the TLS mail transport's
+    copy of it; all public to the lane's containers. Returns the
+    certificate's and key's file names."""
+    (runtime / "tls").mkdir()
+    tls = make_certificates(runtime / "tls", hosts, [])
+    shutil.copyfile(tls.cert_file, runtime / "tls" / "smtp.pem")
+    shutil.copyfile(tls.key_file, runtime / "tls" / "smtp-key.pem")
+    for path in (runtime / "tls").iterdir():
+        path.chmod(0o644)
+    return tls.cert_file.name, tls.key_file.name
+
+
+def secrets_env() -> dict[str, str]:
+    """The lane's Secrets settings: its own member credential (no AWID
+    service token), its key files, its mail, and its hook events to the
+    lane's Logs, inside the lane's network."""
+    return {
+        "SECRETS_DATABASE_URL": "postgresql://secrets:disposable@postgres:5432/secrets",
+        "SECRETS_DB_SCHEMA": SECRETS_SCHEMA,
+        "SECRETS_APP_ID": APP_ID,
+        "SECRETS_PUBLIC_ORIGIN": API,
+        "SECRETS_CONSOLE_ORIGIN": CONSOLE,
+        "SECRETS_AWID_REGISTRY_URL": REGISTRY,
+        "SECRETS_AWID_MEMBER_CREDENTIALS": json.dumps({TEAM_ID: {
+            "signing_key_file": "/run/secrets-keys/member.pem",
+            "certificate_file": "/run/secrets-keys/member-cert.json"}}),
+        "SECRETS_AUTH_CACHE_TTL_SECONDS": "1",
+        "SECRETS_CUSTODY_KEY_FILE": "/run/secrets-keys/custody",
+        "SECRETS_SECRET_REQUEST_KEY_FILE": "/run/secrets-keys/request",
+        "SECRETS_SECRET_PARAMS_KEY_FILE": "/run/secrets-keys/params",
+        "SECRETS_RESPONSE_KEY_FILE": "/run/secrets-keys/response",
+        "SECRETS_RUNNER_SERVICE_KEY_FILE": "/run/secrets-keys/runner",
+        "SECRETS_MANIFEST_REQUEST_KEY_FILE": "/run/secrets-keys/manifest",
+        "SECRETS_APP_KEY_FILES": json.dumps({
+            "secrets.hook-event-1": "/run/secrets-keys/event",
+            "secrets.hook-delivery-1": "/run/secrets-keys/delivery",
+            "secrets:grant-read-1": "/run/secrets-keys/grant",
+            "secrets:hook-resolve-1": "/run/secrets-keys/resolve"}),
+        "SECRETS_EMAIL_SMTP_HOST": "smtp.svc.test",
+        "SECRETS_EMAIL_SMTP_PORT": "1025",
+        "SECRETS_EMAIL_USERNAME": "lane",
+        "SECRETS_EMAIL_PASSWORD_FILE": "/run/secrets-keys/smtp",
+        "SECRETS_EMAIL_FROM": "secrets@svc.test",
+        "SECRETS_EGRESS_DENIED_NETWORKS": "[]",
+        "SECRETS_HOOK_INTERNAL_ORIGINS": json.dumps([LOGS_API]),
+        "SECRETS_HOOK_INTERNAL_DESTINATIONS": "allowed",
+        "SECRETS_HOOK_INTERNAL_CIDR": LANE_SUBNET,
+        "SECRETS_HOOK_CA_FILE": "/run/secrets-keys/hook-ca.pem",
+    }
 
 
 @dataclass
@@ -58,7 +170,8 @@ class Lane:
 
     def compose(self, *args: str, timeout: int = 900) -> subprocess.CompletedProcess[str]:
         return subprocess.run(
-            ["docker", "compose", "-p", self.project, "-f", str(APP_DIR / "docker-compose.e2e.yml"), *args],
+            ["docker", "compose", "-p", self.project, "-f", str(APP_DIR / "docker-compose.e2e.yml"),
+             "--profile", "logs", *args],
             cwd=APP_DIR, env=self.env, text=True, capture_output=True, timeout=timeout, check=False,
         )
 
@@ -139,7 +252,7 @@ def lane(tmp_path_factory: pytest.TempPathFactory) -> Iterator[Lane]:
     runtime.chmod(0o755)
     commit = subprocess.run(["git", "rev-parse", "HEAD"], cwd=REPO, text=True, capture_output=True, check=True).stdout.strip()
     lane = Lane(project, runtime, {**os.environ, "SECRETS_E2E_RUNTIME": str(runtime), "SECRETS_E2E_SOURCE_COMMIT": commit,
-                                       "SECRETS_E2E_AWID_SERVICE_TOKEN": secrets.token_hex(32)})
+                                       "SECRETS_E2E_AWID_SERVICE_TOKEN": secrets.token_hex(32), **LOGS_COMPOSE_ENV})
 
     (runtime / "dns").mkdir()
     (runtime / "dns" / "Corefile").write_text(
@@ -147,16 +260,9 @@ def lane(tmp_path_factory: pytest.TempPathFactory) -> Iterator[Lane]:
         ".:53 {\n  errors\n  forward . 127.0.0.11\n}\n"
     )
     publish_awid_txt(lane, "did:key:z6MkpendingpendingpendingpendingpendingpendingpendingP")
-    (runtime / "tls").mkdir()
-    tls = make_certificates(runtime / "tls", ["api.secrets.svc.test", "console.secrets.svc.test"], [])
+    cert, key = write_tls(runtime, [*UPSTREAMS, "mail.svc.test"])
     (runtime / "front").mkdir()
-    (runtime / "front" / "Caddyfile").write_text(
-        "{\n  auto_https off\n}\n"
-        + "".join(
-            f"{host}:443 {{\n  tls /tls/{tls.cert_file.name} /tls/{tls.key_file.name}\n  reverse_proxy secrets:8770\n}}\n"
-            for host in ("api.secrets.svc.test", "console.secrets.svc.test")
-        )
-    )
+    (runtime / "front" / "Caddyfile").write_text(front_caddyfile(UPSTREAMS, cert, key))
     try:
         lane.up("dns")
         dns = lane.compose("ps", "-q", "dns").stdout.strip()
@@ -169,6 +275,9 @@ def lane(tmp_path_factory: pytest.TempPathFactory) -> Iterator[Lane]:
         _docker("tag", f"{project}-browser", f"{project}-browser")
         yield lane
     finally:
+        # Every service's own record of the run, kept beside the runtime.
+        logs = lane.compose("logs", "--no-color", "--timestamps")
+        (runtime / "compose.log").write_text(logs.stdout + logs.stderr)
         lane.compose("--profile", "browser", "down", "-v", "--remove-orphans")
         for name in ("controller", "holder"):
             _docker("rm", "-f", f"{project}-{name}")
@@ -182,66 +291,99 @@ def grant_install_owner(lane: Lane, did_key: str) -> None:
     assert granted.returncode == 0, granted.stdout + granted.stderr
 
 
+def admit_app_member(lane: Lane, controller: str, name: str, home: Path) -> tuple[str, Path]:
+    """One app as an ordinary member of the team: its key, the owner's
+    add-member, and the member's own fetch of its certificate with its key
+    alone, as any member does, in an identity home of its own under the
+    runtime. Returns the key's PEM and the certificate's path."""
+    key = SigningKey.generate()
+    from awid.did import did_from_public_key  # noqa: PLC0415
+
+    did = did_from_public_key(bytes(key.verify_key))
+    added = aw(controller, "id", "team", "add-member", "--team", TEAM, "--namespace", DOMAIN,
+               "--did", did, "--name", name, "--global")
+    pem = (
+        "-----BEGIN ED25519 PRIVATE KEY-----\n"
+        + __import__("base64").b64encode(bytes(key)).decode()
+        + "\n-----END ED25519 PRIVATE KEY-----\n"
+    )
+    home.mkdir(mode=0o700)
+    (home / "signing.key").write_text(pem)
+    (home / "signing.key").chmod(0o600)
+    fetched = aw(controller, "--identity-home", f"/runtime/{home.relative_to(lane.runtime)}", "id", "team",
+                 "fetch-cert", "--namespace", DOMAIN, "--team", TEAM, "--cert-id", added["certificate_id"],
+                 "--registry", REGISTRY)
+    return pem, home / fetched["cert_path"]
+
+
 def write_service_member(lane: Lane, controller: str) -> None:
     """The app's own team member credential (no AWID service token), and its config."""
     keys = lane.runtime / "keys"
     keys.mkdir(mode=0o755)
-    service_key = SigningKey.generate()
-    from awid.did import did_from_public_key  # noqa: PLC0415
-
-    did = did_from_public_key(bytes(service_key.verify_key))
-    added = aw(controller, "id", "team", "add-member", "--team", TEAM, "--namespace", DOMAIN,
-               "--did", did, "--name", "secrets-service", "--global")
-    pem = (
-        "-----BEGIN ED25519 PRIVATE KEY-----\n"
-        + __import__("base64").b64encode(bytes(service_key)).decode()
-        + "\n-----END ED25519 PRIVATE KEY-----\n"
-    )
+    pem, certificate = admit_app_member(lane, controller, "secrets-service", keys / "service-home")
     (keys / "member.pem").write_text(pem)
-    # The member fetches its own certificate with its key alone, as any
-    # member does (aw id team fetch-cert), in an identity home of its own.
-    home = keys / "service-home"
-    home.mkdir(mode=0o700)
-    (home / "signing.key").write_text(pem)
-    (home / "signing.key").chmod(0o600)
-    fetched = aw(controller, "--identity-home", "/runtime/keys/service-home", "id", "team", "fetch-cert",
-                 "--namespace", DOMAIN, "--team", TEAM, "--cert-id", added["certificate_id"], "--registry", REGISTRY)
-    shutil.copyfile(home / fetched["cert_path"], keys / "member-cert.json")
+    shutil.copyfile(certificate, keys / "member-cert.json")
     for name in ("custody", "request", "params", "response", "runner", "smtp", "manifest", "event", "delivery", "grant", "resolve"):
         # The app's shared key-file format: 64 hex characters, each independent.
         (keys / name).write_text(secrets.token_hex(32) + "\n")
+    # The lane's CA, which the app's hook deliveries to the lane's Logs trust.
+    shutil.copyfile(lane.runtime / "tls" / "ca.pem", keys / "hook-ca.pem")
     for path in keys.iterdir():
         path.chmod(0o644)
-    env = {
-        "SECRETS_DATABASE_URL": "postgresql://secrets:disposable@postgres:5432/secrets",
-        "SECRETS_DB_SCHEMA": "secrets",
-        "SECRETS_APP_ID": APP_ID,
-        "SECRETS_PUBLIC_ORIGIN": API,
-        "SECRETS_CONSOLE_ORIGIN": CONSOLE,
-        "SECRETS_AWID_REGISTRY_URL": REGISTRY,
-        "SECRETS_AWID_MEMBER_CREDENTIALS": json.dumps({TEAM_ID: {
-            "signing_key_file": "/run/secrets-keys/member.pem",
-            "certificate_file": "/run/secrets-keys/member-cert.json"}}),
-        "SECRETS_AUTH_CACHE_TTL_SECONDS": "1",
-        "SECRETS_CUSTODY_KEY_FILE": "/run/secrets-keys/custody",
-        "SECRETS_SECRET_REQUEST_KEY_FILE": "/run/secrets-keys/request",
-        "SECRETS_SECRET_PARAMS_KEY_FILE": "/run/secrets-keys/params",
-        "SECRETS_RESPONSE_KEY_FILE": "/run/secrets-keys/response",
-        "SECRETS_RUNNER_SERVICE_KEY_FILE": "/run/secrets-keys/runner",
-        "SECRETS_MANIFEST_REQUEST_KEY_FILE": "/run/secrets-keys/manifest",
-        "SECRETS_APP_KEY_FILES": json.dumps({
-            "secrets.hook-event-1": "/run/secrets-keys/event",
-            "secrets.hook-delivery-1": "/run/secrets-keys/delivery",
-            "secrets:grant-read-1": "/run/secrets-keys/grant",
-            "secrets:hook-resolve-1": "/run/secrets-keys/resolve"}),
-        "SECRETS_EMAIL_SMTP_HOST": "smtp.svc.test",
-        "SECRETS_EMAIL_SMTP_PORT": "1025",
-        "SECRETS_EMAIL_USERNAME": "lane",
-        "SECRETS_EMAIL_PASSWORD_FILE": "/run/secrets-keys/smtp",
-        "SECRETS_EMAIL_FROM": "secrets@svc.test",
-        "SECRETS_EGRESS_DENIED_NETWORKS": "[]",
-    }
-    (lane.runtime / "secrets.env").write_text("".join(f"{k}={v}\n" for k, v in env.items()))
+    (lane.runtime / "secrets.env").write_text("".join(f"{k}={v}\n" for k, v in secrets_env().items()))
+
+
+def write_logs_files(lane: Lane, controller: str) -> None:
+    """The lane's Logs files, which the base service names: its member key
+    and certificate, its own keys, its mail credentials and the URLs of its
+    content and purge-ledger databases, each its own database."""
+    files = lane.runtime / "logs"
+    files.mkdir(mode=0o755)
+    pem, certificate = admit_app_member(lane, controller, "logs-service", lane.runtime / "logs-member")
+    (files / "awid-member-key").write_text(pem)
+    shutil.copyfile(certificate, files / "awid-member-certificate")
+    for name in ("logs-chain", "logs-resolve", "logs-grants", "logs-governance"):
+        (files / name).write_text(secrets.token_hex(32) + "\n")
+    (files / "smtp-username").write_text("logs-service")
+    (files / "smtp-password").write_text(secrets.token_urlsafe(16))
+    (files / "database-url").write_text("postgresql://secrets:disposable@postgres:5432/logs\n")
+    (files / "purge-ledger-database-url").write_text("postgresql://secrets:disposable@postgres:5432/logsledger\n")
+    for path in files.iterdir():
+        path.chmod(0o644)
+
+
+def create_logs_databases(lane: Lane) -> None:
+    for database in ("logs", "logsledger"):
+        created = lane.compose("exec", "-T", "postgres", "psql", "-U", "secrets", "-d", "secrets", "-v",
+                               "ON_ERROR_STOP=1", "-c", f"CREATE DATABASE {database}")
+        assert created.returncode == 0, created.stdout + created.stderr
+
+
+def start_apps(lane: Lane, controller: str) -> None:
+    """The lane's Secrets and Logs, with their members, files and databases,
+    behind the TLS front."""
+    write_service_member(lane, controller)
+    write_logs_files(lane, controller)
+    create_logs_databases(lane)
+    lane.up("secrets", "logs", "front")
+
+
+def install_apps(lane: Lane, controller: str, owner_did_key: str) -> None:
+    """The owner publishes the team's coordination server, the operator
+    grants the owner installation, and the owner installs Secrets and Logs
+    from their internal origins."""
+    publish_team_server(controller, TEAM, DOMAIN, AWEB, REGISTRY)
+    grant_install_owner(lane, owner_did_key)
+    install_app(controller, API)
+    install_app(controller, LOGS_API)
+
+
+def secrets_query(lane: Lane):
+    def query(select: str) -> str:
+        result = lane.compose("exec", "-T", "postgres", *read_only_psql("secrets", "secrets", select))
+        assert result.returncode == 0, result.stdout + result.stderr
+        return result.stdout.strip()
+    return query
 
 
 def test_the_owner_designates_a_human_holder_registered_on_another_machine(lane: Lane) -> None:
@@ -279,12 +421,9 @@ def test_the_owner_designates_a_human_holder_registered_on_another_machine(lane:
     child.close()
     assert child.exitstatus == 0, output
 
-    # The app, as its owner installs it.
-    write_service_member(lane, controller)
-    lane.up("secrets", "front")
-    grant_install_owner(lane, owner["did_key"])
-    installed = aw(controller, "plugin", "install", API)
-    assert installed["approved"], installed
+    # The apps, as their owner installs them, from their internal origins.
+    start_apps(lane, controller)
+    install_apps(lane, controller, owner["did_key"])
     # The holder's machine installs the app host-only: plugin install is not a
     # human act, and with no agent identity here nothing is registered. Then
     # the human connects to this server, so its --human commands reach it.
@@ -306,19 +445,34 @@ def test_the_owner_designates_a_human_holder_registered_on_another_machine(lane:
     child.close()
     assert child.exitstatus == 0, rest
     fingerprint = re.search(r"Fingerprint: ([0-9a-f]{4} [0-9a-f]{4} [0-9a-f]{4} [0-9a-f]{4})", output + rest).group(1)
+    exported = json.loads((lane.runtime / "holder" / "export.json").read_text())
+
+    # The designation's governance needs its audit target: the owner
+    # activates the apps' hook bindings and waits until they are in effect.
+    hooks = activate_hooks(controller, {"secrets": APP_ID, "logs": LOGS_APP_ID})
+    installed = hooks["active"]["secrets/production/post-governance-hook"]
+    holding = Holding(app_id=APP_ID, installation_id=installed["installation_id"],
+                      generation=installed["generation"], team_id=TEAM_ID, role=ROLE, principal=principal)
+    designation = Designation(holding=holding, audience=CONSOLE,
+                              credential_sha256=credential_sha256(exported["credential"]), contact=CONTACT)
+    query = secrets_query(lane)
+    baseline = designation_snapshot(query, holding, schema=SECRETS_SCHEMA)
 
     # The owner signs only for that exact credential: the fingerprint matches.
     shutil.copyfile(lane.runtime / "holder" / "export.json", lane.runtime / "controller" / "export.json")
-    result = _docker("exec", controller, "aw", "app", "role", "designate", APP_ID, "--role", ROLE,
-                     "--principal", principal, "--credential", "/runtime/controller/export.json", "--yes", timeout=300)
+    command = designate_command(APP_ID, ROLE, principal, "/runtime/controller/export.json", CONTACT)
+    result = _docker("exec", controller, *command, timeout=300)
     assert result.returncode == 0, result.stdout + result.stderr
     assert fingerprint in result.stderr, result.stderr
     assert "human-role.designate" in result.stdout
+    designated = designation_snapshot(query, holding, schema=SECRETS_SCHEMA)
+    assert_designated(baseline, designated, designation)
 
-    # A second designation of the same holding is refused by the app.
-    code = aw_refused(controller, "app", "role", "designate", APP_ID, "--role", ROLE, "--principal", principal,
-                      "--credential", "/runtime/controller/export.json", "--yes")
+    # A second designation of the same holding, a fresh act, is refused by
+    # the app, and leaves its records as the first one left them.
+    code = aw_refused(controller, *command[1:])
     assert code == "owner_required", code
+    assert_unchanged(designated, designation_snapshot(query, holding, schema=SECRETS_SCHEMA))
 
     # The holder holds the role: a session handoff starts for it.
     child = holder.act(principal, "--json", "app", "human", APP_ID, "--help")

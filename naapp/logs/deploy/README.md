@@ -28,6 +28,7 @@ setting's meaning. A customer deployment sets:
 | Input | Customer requirement |
 | --- | --- |
 | `LOGS_DATABASE_URL_FILE`, `LOGS_DB_SCHEMA` | Whole customer PostgreSQL DSN in a mounted file, never the environment; an app-owned role and schema (default `public`). Migrations run on startup. |
+| `LOGS_PURGE_LEDGER_DATABASE_URL_FILE` | Whole PostgreSQL DSN of the purge ledger, a database of its own, in a mounted file. Startup refuses the content database. Never restore it from a content backup; [restoring](../README.md#restoring-the-content-database) restores the content database alone and keeps the live ledger. |
 | `LOGS_APP_ID` | Stable customer app id. The hosted id `logs` is refused at any other origin. |
 | `LOGS_PUBLIC_ORIGIN` | HTTPS origin of ingest, the manifest and the member tools. |
 | `LOGS_CONSOLE_ORIGIN` | Plain HTTPS reader-console origin. Startup refuses the public host itself and any parent of it, where readers' passkeys would be usable from the public host. A subdomain of the public host is accepted. |
@@ -96,7 +97,8 @@ What this recipe enforces, and what it leaves to the host:
 - **Reader console.** Readers' passkeys are bound to the console host, and the
   console's session cookie never reaches the public origin.
 - **Database.** The database role is the customer's to restrict; backups hold
-  every retained event's content.
+  every retained event's content. The purge ledger holds no content, only the
+  id, hash and act of each purged event; its role needs only its own database.
 
 ## Hook delivery
 
@@ -161,7 +163,8 @@ references, never credential bytes. Mount this service's files read-only under
 service-only group 10001 (root-owned mode 0440). Never mount them into agents.
 
 The shared settings source accepts `NAME_FILE` for a scalar setting, including
-`LOGS_DATABASE_URL_FILE` and `LOGS_EMAIL_USERNAME_FILE`.
+`LOGS_DATABASE_URL_FILE`, `LOGS_PURGE_LEDGER_DATABASE_URL_FILE` and
+`LOGS_EMAIL_USERNAME_FILE`.
 Each holds UTF-8 text, at most 1 KiB; one trailing LF is removed. A missing,
 empty, oversized, non-regular or group/world-writable file refuses startup;
 projected Secret symlinks are supported. Supplying both `NAME` and `NAME_FILE`

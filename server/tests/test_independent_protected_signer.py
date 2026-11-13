@@ -6,6 +6,7 @@ import asyncio
 import base64
 import hashlib
 import uuid
+from contextlib import asynccontextmanager
 from dataclasses import replace
 from datetime import UTC, datetime
 from types import SimpleNamespace
@@ -79,7 +80,7 @@ def proof_request(
         {
             "v": 2,
             "type": "aweb.awid-controller-request",
-            "aud": ORIGIN,
+            "aud": world.request_origin,
             "domain": DOMAIN,
             "operation": operation,
             "method": method,
@@ -119,25 +120,40 @@ def proof_request(
 
 @pytest_asyncio.fixture
 async def world(test_db_factory, tmp_path):
+    async with signer_world(test_db_factory, tmp_path) as value:
+        yield value
+
+
+@asynccontextmanager
+async def signer_world(
+    test_db_factory, tmp_path, *, registry_origin=REGISTRY_URL,
+    request_origin=ORIGIN, human_origin=HUMAN_ORIGIN,
+):
+    """Build the same native world with external origins fixed before setup.
+
+    Callers may bind loopback listeners first, then serve ``world.host.app``
+    and their protected router at these origins. The default pytest fixture
+    keeps the existing in-process HTTPS pins.
+    """
     db = await test_db_factory.create_db(suffix="independent_signer", schema="signer")
     registry_db = await test_db_factory.create_db(suffix="customer_awid")
     ns, controller, human_key, root = [SigningKey.generate() for _ in range(4)]
     async with running_registry(
         registry_db.config.get_dsn(), service_token=None
     ) as host:
-        host.app.state.awid_public_origins = (REGISTRY_URL,)
+        host.app.state.awid_public_origins = (registry_origin,)
 
         async def namespace_authority(domain):
             assert domain == DOMAIN
             return DomainAuthority(
                 controller_did=did(ns),
-                registry_url=REGISTRY_URL,
+                registry_url=registry_origin,
                 dns_name="_awid." + DOMAIN,
             )
 
         host.app.dependency_overrides[get_domain_verifier] = lambda: namespace_authority
         registry = CustomerRegistry(
-            registry_origin=REGISTRY_URL,
+            registry_origin=registry_origin,
             namespace_keys={DOMAIN: did(ns)},
             transport=host.transport,
             member_signing_keys={TEAM: bytes(root)},
@@ -223,8 +239,8 @@ async def world(test_db_factory, tmp_path):
                 context=context,
                 registry=registry,
                 custody=custody,
-                human_origin=HUMAN_ORIGIN,
-                request_origin=ORIGIN,
+                human_origin=human_origin,
+                request_origin=request_origin,
                 delivery=delivery,
             )
             await app.migrate()
@@ -256,7 +272,7 @@ async def world(test_db_factory, tmp_path):
             async with db.transaction() as tx:
                 designation = await app.passkeys.reissue_enrolment(tx, scope=scope)
             await app.passkeys.deliver(designation)
-            device = SoftAuthenticator(HUMAN_ORIGIN)
+            device = SoftAuthenticator(human_origin)
             options = await app.passkeys.enrolment_options(delivery.enrolment)
             await app.passkeys.complete_enrolment(
                 delivery.enrolment, device.create(options)
@@ -278,6 +294,9 @@ async def world(test_db_factory, tmp_path):
             )
             yield SimpleNamespace(
                 app=app,
+                registry_origin=registry_origin,
+                request_origin=request_origin,
+                human_origin=human_origin,
                 db=db,
                 host=host,
                 registry=registry,

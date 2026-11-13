@@ -7,14 +7,17 @@ from .service import POLICY_REF, ProtectedSigner
 from .types import (
     AdmittedHuman,
     AuthorityProvider,
+    CatalogOperation,
     ControllerCustody,
     CurrentAuthority,
     OperationReceipt,
+    OwnerActOperation,
     PreparedOperation,
     ReceiptReader,
     RestrictedRequester,
     RevokeHumanRole,
     SignerRefused,
+    VerifiedProtectedEffect,
 )
 
 __all__ = [
@@ -22,7 +25,9 @@ __all__ = [
     "AuthorityProvider",
     "ControllerCustody",
     "CurrentAuthority",
+    "CatalogOperation",
     "OperationReceipt",
+    "OwnerActOperation",
     "POLICY_REF",
     "PreparedOperation",
     "ProtectedKeyContext",
@@ -32,4 +37,5 @@ __all__ = [
     "RestrictedRequester",
     "RevokeHumanRole",
     "SignerRefused",
+    "VerifiedProtectedEffect",
 ]

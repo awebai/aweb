@@ -1043,8 +1043,16 @@ class RegistryClient:
         )
         return None if data is None else _namespace_from_json(data)
 
-    async def get_namespace_fresh(self, domain: str) -> Namespace | None:
-        """Read current namespace authority without a stale cache result."""
+    async def get_namespace_fresh(
+        self, domain: str, *, registry_origin: str | None = None,
+    ) -> Namespace | None:
+        """Read current namespace authority at an optional trusted-host pin."""
+        if registry_origin is not None:
+            data = await self._request_optional_json(
+                "GET", f"/v1/namespaces/{domain}",
+                registry_url=canonical_server_origin(registry_origin),
+            )
+            return _namespace_from_json(data) if data is not None else None
         return await self.get_namespace(domain)
 
     async def update_namespace_delivery_origin(
@@ -1886,7 +1894,11 @@ class CachedRegistryClient(RegistryClient):
             decode=lambda payload: None if payload is None else _namespace_from_json(payload),
         )
 
-    async def get_namespace_fresh(self, domain: str) -> Namespace | None:
+    async def get_namespace_fresh(
+        self, domain: str, *, registry_origin: str | None = None,
+    ) -> Namespace | None:
+        if registry_origin is not None:
+            return await RegistryClient.get_namespace_fresh(self, domain, registry_origin=registry_origin)
         registry_url = await self._registry_url_for_domain(domain)
         cache_key = self._namespace_cache_key(domain, registry_url=registry_url)
         await self._invalidate_keys(cache_key)
