@@ -10,7 +10,7 @@ the access in the first table.
 | --- | --- | --- |
 | Every seat's identity: its signing key, encryption keys and certificate | `/state/seats/<alias>/.aw` | OATS `docs/container.md`, seat provisioning |
 | The harness login token | `/etc/agent-login/claude-token`, mounted read-only, group-readable by the agents' group | OATS `docs/container.md`: "readable by every agent in the same trust group; read-only mounting does not hide it or narrow its authority" |
-| Every harness session, verbatim | `/state/home/.claude` (`CLAUDE_CONFIG_DIR`), one directory for all agents, on the state volume that outlives the container. Nothing in the bundle removes old sessions. | OATS `docs/container.md`, launch configuration |
+| Claude Code's locally retained session transcripts, including prompts and tool output | The shared `/state/home/.claude` when the operator selects that launch configuration (`CLAUDE_CONFIG_DIR`), on the bind-mounted state that survives the container's recreation. OATS and `teamctl` do not prune that directory; the harness's own cleanup, and the operator or an agent deleting files, can remove its contents. It is persistent shared storage, not a complete or immutable archive. | OATS `docs/container.md`, launch configuration and shared storage |
 | Every mail and chat an agent's `aw` sent or received, decrypted | `.aw/interaction-log.jsonl` at the nearest directory, from where `aw` runs, that holds `.aw/context`, `.aw/workspace.yaml` or `.git`: inside a repository, that is the repository's root, untracked. Mode `0600`, appended, never rotated. | `cli/go/cmd/aw/interaction_log.go` |
 | The public CA and the operator's Git mirrors | `/etc/agent-trust/ca.pem`, `/mirrors` | `descriptors/agents.md` |
 
@@ -22,7 +22,7 @@ readable by every agent like the login above.
 
 | What | How it is kept out | Evidence |
 | --- | --- | --- |
-| Any service's credential | No secrets directory is mounted in the agent; the boundary probe checks every secrets directory, the database and Redis volumes, the Docker socket and every backup is out of reach. | `teamctl` boundary probe |
+| Any service's credential | No secrets directory is mounted in the agent; the boundary probe checks that the service-private sources, the database and Redis volumes, the Docker socket, and the backup paths declared in its plan (the backups `teamctl` recorded in this run directory, and `TEAM_DEPLOYMENT_PROTECTED_SOURCES`) are out of reach. It cannot find a backup made or copied elsewhere. | `teamctl` boundary probe |
 | PostgreSQL and Redis | The agent is on the agents network alone; egress denies both backends; Redis is on a network aweb alone shares, and needs its password. | Boundary probe; the journey's Redis isolation check |
 | The internet | Egress forwards to five origins only: aweb, Secrets, Logs, the signer's request origin and the registry. | `descriptors/egress.md`; the ingress probe |
 | A direct export of a stored value | No agent-facing route exports a stored value; Secrets' errors are fixed codes and its receipts have no body. Broker results are filtered and redacted, but an arbitrary transformation by the upstream is covered by no confidentiality guarantee: a credential an upstream returns is withheld only when redaction recognises it. | `naapp/secrets/values/src/aweb_secrets_values/redaction.py`; `naapp/secrets/src/aweb_secrets/member_types.py` |

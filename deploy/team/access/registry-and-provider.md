@@ -27,10 +27,13 @@ The token's powers apply only to an installation that configures one.
 
 ## The model provider
 
-The harness sends the provider every prompt and everything an agent reads into
-its context: decrypted mail and chat, files and command output, secret-use
-receipts. The provider's retention is its own; the harness also keeps every
-session under `/state/home/.claude` (`deploy/team/access/agents.md`).
+When the harness makes a model request, the configured provider receives its
+prompts and the context included with them, which can contain decrypted mail and
+chat, file contents, command output and secret-use receipts. The image neither
+redacts nor isolates those from the harness. The provider's retention is its
+own. The harness also retains session transcripts locally, under
+`/state/home/.claude` when that launch configuration is selected
+(`deploy/team/access/agents.md`).
 
 The harness login authenticates the team's account at the provider; every agent
 of the container can read it and use the account's authority.

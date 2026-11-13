@@ -19,7 +19,7 @@ everything below. Each row is what one artifact gives on its own.
 | The signer's controller custody file (`signer/private-controller/controller.key`) | | Everything the team's controller key signs: admit and remove members, sign team records, outside the signer's one supported operation. | `HOST.md`, "Controller key installation, backup and cutover" |
 | A service's member key (`aweb/<team>.key`, `secrets/awid-member-key`, `logs/awid-member-key`) | What that member reads in the team. | Act as that member. | |
 | The front's key (`front/key.pem`) | | Serve the deployment's origins as the deployment. | `descriptors/front.md` |
-| The agents' state (`agents.compose.stateDir`) and login | Every seat's key; every harness session transcript under `/state/home/.claude`; each `aw` interaction log; the harness login token. | Act as every seat, and as the harness account. | `deploy/team/access/agents.md` |
+| The agents' state (`agents.compose.stateDir`) and login | Every seat's key; the harness's locally retained session transcripts (under `/state/home/.claude` when that launch configuration is selected); each `aw` interaction log; the harness login token. | Act as every seat, and as the harness account. | `deploy/team/access/agents.md` |
 | The services network | Plaintext HTTP between the services and plaintext PostgreSQL. Redis needs its password, held in `aweb/redis-url`. | | `deploy/team/compose.yaml` |
 
 A backup made with `teamctl backup` holds every database and all of the files
