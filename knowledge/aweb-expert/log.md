@@ -1,5 +1,10 @@
 # Knowledge log
 
+## 2026-11-13
+* **Harvest**: OKF proposal from aweb-expert/aweb-expert-owner-acts (task aweb-acxy.18).
+* **Creation**: decision [custody detects every credential writer](/aweb-expert/decisions/custody-detects-every-credential-writer.md).
+* **Creation**: lesson [a served credential snapshot is fenced by every observation](/aweb-expert/lessons/a-served-credential-snapshot-is-fenced-by-every-observation.md).
+
 ## 2026-11-04
 * **Harvest**: OKF proposal from aweb-expert/aweb-expert-fresh-eyes (tasks aweb-acst and aweb-actf).
 * **Update**: [identity and routing review needs the real client](/aweb-expert/lessons/identity-and-routing-review-needs-the-real-client.md) gains that the real client includes the last released binary and that a skipped released-client case is not evidence.
