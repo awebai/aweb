@@ -87,14 +87,18 @@ async def test_legacy_registered_unknown_kind_cannot_be_admitted_as_an_agent(leg
 @pytest.mark.parametrize("path", ["root_remove", "self_remove", "admit"])
 @pytest.mark.parametrize("missing_enrollment", [False, True])
 async def test_registered_kind_evidence_failure_is_unavailable(legacy_member, path, missing_enrollment):
+    from aweb_naapp.runtime.protected_signer.http import _http
+
     c, record = legacy_member
     c.registry.enrollment = None if missing_enrollment else IDTreeEnrollment(True, "example.org")
-    with pytest.raises(SignerRefused, match="evidence_unavailable"):
+    with pytest.raises(SignerRefused, match="evidence_unavailable") as refusal:
         if path == "admit":
             await admission_attempt(c, record)
         else:
             await agent_target(c, record, self_key=record.member_did_key if path == "self_remove" else None)
     assert c.registry.evidence_calls == (0 if missing_enrollment else 1)
+    response = _http(refusal.value)
+    assert response.status_code == 503 and response.detail == "receipt_unavailable"
 
 
 

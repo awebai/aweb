@@ -58,7 +58,7 @@ async def agent_target(c, record, *, self_key=None):
         raise SignerRefused("subject_ineligible")
     try:
         binding = await observe_identity_binding(c.registry, did_aw=record.member_did_aw, did_key=resolved.current_did_key)
-        if binding.self_derived or binding.id_tree is None:
+        if binding.self_derived:
             raise SignerRefused("subject_ineligible")
         # Legacy registered humans can be unenrolled. Unknown kind is not
         # agent authority (docs/id-certificates.md, legacy-human coexistence).
