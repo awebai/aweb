@@ -18,7 +18,13 @@ from .operation_codecs import (
     ROOT_CODEC,
     OperationCodec,
 )
-from .operation_effects import ENDORSEMENT, LOCAL_SIGNATURE, REGISTERED_MEMBERSHIP, OperationEffect
+from .operation_effects import (
+    ENDORSEMENT,
+    LOCAL_SIGNATURE,
+    REGISTERED_MEMBERSHIP,
+    REVOKED_MEMBERSHIP,
+    OperationEffect,
+)
 from .types import SignerRefused
 
 
@@ -65,7 +71,7 @@ _ROWS = (
             "Membership removal distinct from ID revocation",
         ),
         codec=REMOVAL_CODEC,
-        effect=REGISTERED_MEMBERSHIP,
+        effect=REVOKED_MEMBERSHIP,
     ),
     OperationDefinition(
         "identity.root.endorse",
