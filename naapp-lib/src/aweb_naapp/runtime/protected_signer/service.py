@@ -268,6 +268,12 @@ class ProtectedSigner:
             now = self.clock().replace(microsecond=0)
             fields = artifact_for(typed, fence.team_key_did, now)
             signing_bytes(typed, fields)  # Validate the existing consumer's closed wire.
+            # Pending approval is bounded even for artifacts whose existing
+            # consumer wire has no expiry (for example a team server record).
+            # B2 additionally caps this deadline by the current policy TTL.
+            expires_at = now + timedelta(seconds=600)
+            if "expires_at" in fields:
+                expires_at = min(expires_at, _time(fields["expires_at"]))
             request = {
                 **operation.intent(),
                 "requester": requester.principal,
@@ -279,7 +285,7 @@ class ProtectedSigner:
                 request=request,
                 policy_ref=POLICY_REF,
                 requested_by=requester.principal,
-                expires_at=_time(fields["expires_at"]),
+                expires_at=expires_at,
                 tx=tx,
             )
             if pending.approval.policy_version != policy.version:

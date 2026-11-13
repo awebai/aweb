@@ -93,3 +93,130 @@ async def test_existing_custody_port_refuses_new_family_before_pending_or_remote
     # No db, authority or B2 initialized: refusal must precede all those uses.
     with pytest.raises(SignerRefused, match="operation_refused"):
         await signer.prepare(operation, requester=RestrictedRequester(context.human_id, context))
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "family,artifact_seconds",
+    [
+        ("owner_act", 600),
+        ("owner_act", 30),
+        ("server_record", None),
+    ],
+)
+async def test_prepare_bounds_the_handoff_without_inventing_an_artifact_expiry(
+    monkeypatch,
+    family,
+    artifact_seconds,
+):
+    """Exercise prepare up to B2's boundary, without a DB or approval ceremony."""
+    from contextlib import asynccontextmanager
+    from datetime import timedelta
+    from types import SimpleNamespace
+    from unittest.mock import AsyncMock, Mock
+
+    from awid.did import did_from_public_key, generate_keypair
+
+    from aweb_naapp.runtime.approvals import Assurance
+    from aweb_naapp.runtime.protected_signer import (
+        CatalogOperation,
+        ProtectedSigner,
+        RestrictedRequester,
+        service,
+    )
+
+    context = ProtectedKeyContext(
+        "signer",
+        "team_controller",
+        "demo:example.org",
+        "example.org",
+        "did:aw:3YDAM5ZLRKg7eHH1Zs6sSMwkga8w",
+        "example.org",
+        1,
+    )
+    now = datetime(2026, 11, 12, tzinfo=UTC)
+    _, public = generate_keypair()
+    key = did_from_public_key(public)
+    if family == "server_record":
+        name, subject = "team.server-record.publish", {"server_url": "https://coord.example.org"}
+    else:
+        name, subject = (
+            "human-role.revoke",
+            {
+                "app_id": "demo",
+                "installation_id": "00000000-0000-4000-8000-000000000002",
+                "role": "demo.owner",
+                "principal": context.human_id,
+            },
+        )
+    operation = CatalogOperation(
+        "00000000-0000-4000-8000-000000000001",
+        context,
+        "https://registry.example.org",
+        name,
+        "default",
+        subject,
+    )
+    actor = RestrictedRequester(context.human_id, context)
+    tx = object()
+    build_artifact = service.artifact_for
+
+    def artifact_for(*args):
+        artifact = build_artifact(*args)
+        if artifact_seconds is not None:
+            artifact["expires_at"] = (
+                (now + timedelta(seconds=artifact_seconds))
+                .isoformat(timespec="seconds")
+                .replace("+00:00", "Z")
+            )
+        return artifact
+
+    monkeypatch.setattr(service, "artifact_for", artifact_for)
+
+    @asynccontextmanager
+    async def transaction():
+        yield tx
+
+    class MintReached(Exception):
+        pass
+
+    async def mint(**kwargs):
+        assert kwargs["tx"] is tx
+        assert kwargs["expires_at"] == now + timedelta(seconds=artifact_seconds or 600)
+        artifact = kwargs["request"]["artifact"]
+        if family == "server_record":
+            from awid.team_server_record import RECORD_FIELDS
+
+            # Adding an expiry would change the signed wire and break its consumer.
+            assert set(artifact) == RECORD_FIELDS
+        else:
+            assert artifact["expires_at"] == kwargs["expires_at"].isoformat(
+                timespec="seconds"
+            ).replace("+00:00", "Z")
+        raise MintReached
+
+    signer = ProtectedSigner.__new__(ProtectedSigner)
+    signer.db = SimpleNamespace(transaction=transaction)
+    signer.clock = lambda: now
+    signer.custody = SimpleNamespace(sign_operation=Mock())
+    signer.authority = SimpleNamespace(
+        observe=AsyncMock(
+            return_value=SimpleNamespace(
+                team_key_did=key,
+                prepare=AsyncMock(),
+            )
+        )
+    )
+    signer.policies = SimpleNamespace(
+        current=AsyncMock(
+            return_value=SimpleNamespace(
+                min_assurance=Assurance.PASSKEY,
+                version=1,
+            )
+        )
+    )
+    signer._lock = AsyncMock(return_value=None)
+    signer.approvals = SimpleNamespace(mint=mint)
+    with pytest.raises(MintReached):
+        await signer.prepare(operation, requester=actor)
+    signer.custody.sign_operation.assert_not_called()

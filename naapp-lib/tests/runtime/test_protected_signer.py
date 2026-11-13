@@ -506,6 +506,14 @@ async def test_server_record_uses_same_real_uv_receipt_and_cannot_switch_destina
         {"server_url": "https://coord.example.org"},
     )
     prepared = await world.signer.prepare(operation, requester=world.requester)
+    assert "expires_at" not in prepared.payload["artifact"]
+    assert prepared.expires_at == (world.clock() + timedelta(seconds=600)).isoformat().replace(
+        "+00:00", "Z"
+    )
+    # A prepare retry keeps the original deadline and record, including its
+    # timestamp, even though this wire has no artifact expiry of its own.
+    world.clock.advance(timedelta(seconds=60))
+    assert await world.signer.prepare(operation, requester=world.requester) == prepared
     options = await world.signer.approval_options(operation.operation_id, human=world.human)
     receipt = await world.signer.execute(
         operation.operation_id,
