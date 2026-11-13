@@ -99,7 +99,10 @@ each component can restore without bringing back what was destroyed:
 | Signer | `team.controller.rotate` | `aweb-acxy.4` | OPEN |
 
 Logs will need a second database for its tombstone ledger, with its own DSN
-and its own backups; the bundle adds it when that ships.
+and its own backups; the bundle adds it when that ships. Until Logs has
+reapplied its tombstones after a restore, it answers ingest, reads and export
+with `503 restore_not_ready`: a restore that still answers 503 is waiting on
+that, not broken.
 
 `teamctl restore --lab-rehearsal <deployment.yaml> <backup>` restores a backup
 of **disposable lab data** to rehearse the mechanics, never a team's. It checks

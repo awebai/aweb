@@ -29,9 +29,11 @@ A seat's identity tells you which seat acted, not which agent.
 ## The audit log
 
 Logs records the events its producers send. In this bundle those are Secrets
-(secret uses and governance acts) and Logs itself; mail, chat, tasks and the
-agents' commands are not among them. An agent can write events as any seat in
-its container, and can leave its own out.
+(secret uses and governance acts) and Logs itself (its own owner acts); mail,
+chat, tasks and the agents' commands are not among them. No agent's commands
+are recorded. An agent could submit agent-reported events signed with any seat
+key in its container, and Logs would show them as that seat's claims, not as
+observed facts.
 
 ## Your owner authority
 
