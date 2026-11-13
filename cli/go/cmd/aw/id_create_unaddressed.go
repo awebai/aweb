@@ -23,6 +23,11 @@ import (
 // a human endorses it. Creation is resumable: the key is kept privately
 // before anything is sent, so a run killed at any point is completed by the
 // next with the same key, never replaced by a second identity.
+//
+// A local identity is the same creation registered nowhere: a key-only home
+// (a did:key, no did:aw, address, registry or membership) that the
+// parent/child exchange and a team admission take as a local agent. A rerun
+// on a home holding exactly that identity returns it.
 
 const unaddressedStateFile = "unaddressed-identity-create.json"
 
@@ -34,7 +39,8 @@ type unaddressedCreationState struct {
 	RegistryURL string `json:"registry_url"`
 }
 
-// unaddressedCreate is one creation into Root at RegistryURL.
+// unaddressedCreate is one creation into Root at RegistryURL, or, with no
+// Registry, of a local identity.
 type unaddressedCreate struct {
 	Root        string
 	RegistryURL string
@@ -51,6 +57,16 @@ func identityExists(format string, args ...any) error {
 // identity_exists before anything is sent.
 func createUnaddressedIdentity(ctx context.Context, c unaddressedCreate) (map[string]any, error) {
 	statePath := filepath.Join(c.Root, unaddressedStateFile)
+	local := c.Registry == nil
+	existing := func() map[string]any {
+		if didKey, ok := keyOnlyIdentity(c.Root); local && ok {
+			return map[string]any{"status": "already_exists", "did_key": didKey, "identity_home": c.Root}
+		}
+		return nil
+	}
+	if result := existing(); result != nil {
+		return result, nil
+	}
 	// Checked before the lock is taken as well as under it, so a refused home
 	// is left exactly as it was.
 	if _, err := unaddressedHomeRefusal(c, statePath); err != nil {
@@ -61,42 +77,90 @@ func createUnaddressedIdentity(ctx context.Context, c unaddressedCreate) (map[st
 		return nil, fmt.Errorf("identity creation already in progress in %s, or its lock is unavailable: %w", c.Root, err)
 	}
 	defer lock.Close()
+	if result := existing(); result != nil {
+		return result, nil
+	}
 	key, resumed, err := unaddressedKey(c, statePath)
 	if err != nil {
 		return nil, err
 	}
 	public := key.Public().(ed25519.PublicKey)
-	didKey, stableID := awid.ComputeDIDKey(public), awid.ComputeStableID(public)
+	didKey := awid.ComputeDIDKey(public)
+	status := "created"
+	if resumed {
+		status = "resumed"
+	}
+	result := map[string]any{"status": status, "did_key": didKey, "identity_home": c.Root}
+	identity := &awconfig.WorktreeIdentity{DID: didKey, Custody: awid.CustodySelf, IdentityScope: awid.IdentityModeLocal,
+		CreatedAt: time.Now().UTC().Format(time.RFC3339)}
+	if !local {
+		stableID := awid.ComputeStableID(public)
+		if err := registerUnaddressedIdentity(ctx, c, key, didKey, stableID); err != nil {
+			return nil, err
+		}
+		identity.StableID, identity.IdentityScope = stableID, awid.IdentityModeGlobal
+		identity.RegistryURL, identity.RegistryStatus = c.RegistryURL, "registered"
+		result["did_aw"], result["registry_url"] = stableID, c.RegistryURL
+	}
+	if err := awconfig.SaveWorktreeIdentityTo(filepath.Join(c.Root, "identity.yaml"), identity); err != nil {
+		return nil, err
+	}
+	if err := os.Remove(statePath); err != nil {
+		return nil, err
+	}
+	return result, nil
+}
+
+// registerUnaddressedIdentity registers stableID's mapping to didKey at
+// c.RegistryURL and confirms it there.
+func registerUnaddressedIdentity(ctx context.Context, c unaddressedCreate, key ed25519.PrivateKey, didKey, stableID string) error {
 	// An earlier run may already have registered it; the read-back decides.
-	_, err = c.Registry.RegisterIdentity(ctx, c.RegistryURL, didKey, stableID, key)
+	_, err := c.Registry.RegisterIdentity(ctx, c.RegistryURL, didKey, stableID, key)
 	var registered *awid.AlreadyRegisteredError
 	if err != nil && !errors.As(err, &registered) {
-		return nil, fmt.Errorf("register %s at %s: %w", stableID, c.RegistryURL, err)
+		return fmt.Errorf("register %s at %s: %w", stableID, c.RegistryURL, err)
 	}
 	// The registry's own answer, not the registration's, confirms the mapping:
 	// one held for another key completes nothing and leaves the creation
 	// resumable.
 	resolution, err := c.Registry.ResolveKeyAt(ctx, c.RegistryURL, stableID)
 	if err != nil {
-		return nil, fmt.Errorf("read back %s at %s: %w", stableID, c.RegistryURL, err)
+		return fmt.Errorf("read back %s at %s: %w", stableID, c.RegistryURL, err)
 	}
 	if resolution.DIDAW != stableID || resolution.CurrentDIDKey != didKey {
-		return nil, fmt.Errorf("%s reads back at %s with key %s, not this identity's", stableID, c.RegistryURL, resolution.CurrentDIDKey)
+		return fmt.Errorf("%s reads back at %s with key %s, not this identity's", stableID, c.RegistryURL, resolution.CurrentDIDKey)
 	}
-	if err := awconfig.SaveWorktreeIdentityTo(filepath.Join(c.Root, "identity.yaml"), &awconfig.WorktreeIdentity{
-		DID: didKey, StableID: stableID, Custody: awid.CustodySelf, IdentityScope: awid.IdentityModeGlobal,
-		RegistryURL: c.RegistryURL, RegistryStatus: "registered", CreatedAt: time.Now().UTC().Format(time.RFC3339),
-	}); err != nil {
-		return nil, err
+	return nil
+}
+
+// keyOnlyIdentity is the did:key of the complete local identity root holds,
+// when root holds exactly that: its identity file, its key and the creation
+// lock, and nothing else.
+func keyOnlyIdentity(root string) (string, bool) {
+	entries, err := os.ReadDir(root)
+	if err != nil {
+		return "", false
 	}
-	if err := os.Remove(statePath); err != nil {
-		return nil, err
+	for _, entry := range entries {
+		switch entry.Name() {
+		case "identity.yaml", "signing.key", unaddressedStateFile + ".lock":
+		default:
+			return "", false
+		}
 	}
-	status := "created"
-	if resumed {
-		status = "resumed"
+	if info, err := os.Lstat(filepath.Join(root, "identity.yaml")); err != nil || !info.Mode().IsRegular() {
+		return "", false
 	}
-	return map[string]any{"status": status, "did_aw": stableID, "did_key": didKey, "registry_url": c.RegistryURL, "identity_home": c.Root}, nil
+	identity, err := awconfig.LoadWorktreeIdentityFrom(filepath.Join(root, "identity.yaml"))
+	if err != nil || identity.Custody != awid.CustodySelf || identity.IdentityScope != awid.IdentityModeLocal ||
+		identity.StableID != "" || identity.Address != "" || identity.RegistryURL != "" {
+		return "", false
+	}
+	key, err := awid.LoadSigningKey(filepath.Join(root, "signing.key"))
+	if err != nil || awid.ComputeDIDKey(key.Public().(ed25519.PublicKey)) != identity.DID {
+		return "", false
+	}
+	return identity.DID, true
 }
 
 // unaddressedHomeRefusal refuses a home that holds an identity, anything this
@@ -170,16 +234,27 @@ func unaddressedKey(c unaddressedCreate, statePath string) (ed25519.PrivateKey, 
 	return key, resumed, err
 }
 
-var idCreateNoAddress bool
+var idCreateNoAddress, idCreateLocal bool
+
+// identityParentFlags name an address, a hosted organization or an issuing
+// parent, none of which an addressless creation takes.
+var identityParentFlags = []string{"name", "domain", "org", "owner-identity-home", "team-id", "inbound-mode", "human-parent", "root-parent", "skip-dns-verify"}
+
+func refuseCreateFlags(cmd *cobra.Command, mode, what string, flags []string) error {
+	for _, flag := range flags {
+		if cmd.Flags().Changed(flag) {
+			return usageError("%s creates %s; --%s does not apply", mode, what, flag)
+		}
+	}
+	return nil
+}
 
 // unaddressedFlagsRefusal refuses a --no-address creation without an explicit
 // identity home and registry, or combined with any flag that names an
 // address, a hosted organization or an issuing parent.
 func unaddressedFlagsRefusal(cmd *cobra.Command, explicitHome bool) error {
-	for _, flag := range []string{"name", "domain", "org", "owner-identity-home", "team-id", "inbound-mode", "human-parent", "root-parent", "skip-dns-verify"} {
-		if cmd.Flags().Changed(flag) {
-			return usageError("--no-address creates an identity with no address, organization or parent; --%s does not apply", flag)
-		}
+	if err := refuseCreateFlags(cmd, "--no-address", "an identity with no address, organization or parent", identityParentFlags); err != nil {
+		return err
 	}
 	if registry, _ := cmd.Flags().GetString("registry"); strings.TrimSpace(registry) == "" {
 		return usageError("--no-address requires --registry: the registry origin its did:aw is registered at")
@@ -190,7 +265,23 @@ func unaddressedFlagsRefusal(cmd *cobra.Command, explicitHome bool) error {
 	return nil
 }
 
-func runUnaddressedIdentityCreate(cmd *cobra.Command) error {
+// localFlagsRefusal refuses a --local creation without an explicit identity
+// home, or combined with a registry or any flag that names an address, a
+// hosted organization or an issuing parent.
+func localFlagsRefusal(cmd *cobra.Command, explicitHome bool) error {
+	flags := append([]string{"registry", "no-address"}, identityParentFlags...)
+	if err := refuseCreateFlags(cmd, "--local", "a key-only identity registered nowhere, with no address, organization or parent", flags); err != nil {
+		return err
+	}
+	if !explicitHome {
+		return usageError("--local requires an explicit --identity-home for the new identity")
+	}
+	return nil
+}
+
+// runUnaddressedIdentityCreate runs a --no-address creation, or a --local one
+// when local.
+func runUnaddressedIdentityCreate(cmd *cobra.Command, local bool) error {
 	wd, err := os.Getwd()
 	if err != nil {
 		return err
@@ -199,32 +290,42 @@ func runUnaddressedIdentityCreate(cmd *cobra.Command) error {
 	if err != nil {
 		return err
 	}
-	if err := unaddressedFlagsRefusal(cmd, home.Source == awconfig.IdentityHomeFlag); err != nil {
+	refusal := unaddressedFlagsRefusal
+	if local {
+		refusal = localFlagsRefusal
+	}
+	if err := refusal(cmd, home.Source == awconfig.IdentityHomeFlag); err != nil {
 		return err
 	}
-	registryURL, err := awid.CanonicalServerOrigin(strings.TrimSpace(idCreateRegistryURL))
-	if err != nil {
-		return usageError("--registry: %v", err)
+	create := unaddressedCreate{Root: home.Root}
+	if !local {
+		create.RegistryURL, err = awid.CanonicalServerOrigin(strings.TrimSpace(idCreateRegistryURL))
+		if err != nil {
+			return usageError("--registry: %v", err)
+		}
+		create.Registry, err = newConfiguredRegistryClient(nil)
+		if err != nil {
+			return err
+		}
+		// The operator names this registry explicitly, as a protected profile pins it.
+		if err := create.Registry.TrustRegistryOrigin(create.RegistryURL); err != nil {
+			return err
+		}
 	}
 	if err := os.MkdirAll(home.Root, 0o700); err != nil {
 		return err
 	}
-	registry, err := newConfiguredRegistryClient(nil)
-	if err != nil {
-		return err
-	}
-	// The operator names this registry explicitly, as a protected profile pins it.
-	if err := registry.TrustRegistryOrigin(registryURL); err != nil {
-		return err
-	}
 	ctx, cancel := commandAPIContext(cmd)
 	defer cancel()
-	result, err := createUnaddressedIdentity(ctx, unaddressedCreate{Root: home.Root, RegistryURL: registryURL, Registry: registry})
+	result, err := createUnaddressedIdentity(ctx, create)
 	if err != nil {
 		return err
 	}
 	printOutput(result, func(any) string {
-		return fmt.Sprintf("Identity %s %s with key %s at %s, with no address, in %s\n", result["did_aw"], result["status"], result["did_key"], registryURL, home.Root)
+		if local {
+			return fmt.Sprintf("Local identity %s with key %s, registered nowhere, in %s\n", result["status"], result["did_key"], home.Root)
+		}
+		return fmt.Sprintf("Identity %s %s with key %s at %s, with no address, in %s\n", result["did_aw"], result["status"], result["did_key"], create.RegistryURL, home.Root)
 	})
 	return nil
 }
