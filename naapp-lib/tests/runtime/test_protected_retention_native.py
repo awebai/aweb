@@ -14,7 +14,12 @@ import asyncpg
 import pytest
 from awid.signing import canonical_json_bytes
 
-from aweb_naapp.runtime.protected_signer import EffectConfirmation, FrozenDelivery, RetainedEffect, SignerRefused
+from aweb_naapp.runtime.protected_signer import (
+    EffectConfirmation,
+    FrozenDelivery,
+    RetainedEffect,
+    SignerRefused,
+)
 from tests.runtime.test_protected_signer import approve
 
 pytest_plugins = ("tests.runtime.test_protected_signer",)

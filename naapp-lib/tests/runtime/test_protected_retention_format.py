@@ -3,11 +3,19 @@
 import base64
 from dataclasses import replace
 from datetime import UTC, datetime, timedelta
+from types import SimpleNamespace
 from uuid import uuid4
 
 import pytest
 
-from aweb_naapp.runtime.protected_signer.retention import EffectConfirmation, FrozenDelivery, RetainedEffect
+from aweb_naapp.runtime.protected_signer import ProtectedSigner, SignerRefused
+from aweb_naapp.runtime.protected_signer.codecs import artifact_for, signing_bytes
+from aweb_naapp.runtime.protected_signer.retention import (
+    EffectConfirmation,
+    FrozenDelivery,
+    RetainedEffect,
+)
+from tests.runtime.test_protected_identity_artifacts import HKEY, NOW, operation
 
 
 def retained():
@@ -89,3 +97,46 @@ def test_confirmation_names_the_exact_effect_with_an_original_freshness_bound():
 def test_private_storage_has_a_closed_unambiguous_shape(change):
     with pytest.raises(ValueError):
         RetainedEffect.from_fields({**retained().fields(), **change})
+
+
+@pytest.mark.parametrize("change", ["operation", "signature", "deadline", "audience"])
+def test_engine_rejects_a_retainer_that_changes_the_verified_effect(change):
+    # Local byte-binding glue, not a current-authority/service-proof positive.
+    op = operation("team.agent.admit")
+    artifact = artifact_for(op, HKEY, NOW)
+    signing, signature = signing_bytes(op, artifact), b"s" * 64
+    limit = NOW + timedelta(seconds=60)
+    value = RetainedEffect(op.operation_id, signing, signature, "a" * 64, limit,
+        FrozenDelivery(op.audience, "POST", "/effect", {}, b"body"), "opaque")
+    if change == "operation":
+        value = replace(value, operation_id=str(uuid4()))
+    elif change == "signature":
+        value = replace(value, signature=b"t" * 64)
+    elif change == "deadline":
+        value = replace(value, expires_at=limit + timedelta(seconds=1))
+    else:
+        value = replace(value, delivery=replace(value.delivery, audience="https://different.example"))
+    calls = []
+
+    def retain(**kw):
+        assert kw["operation"] is op and kw["artifact"] == artifact
+        assert kw["signing"] == signing and kw["signature"] == signature and kw["expires_at"] == limit
+        return value
+
+    async def no_network(*args):
+        calls.append(args)
+
+    engine = object.__new__(ProtectedSigner)
+    engine.custody = SimpleNamespace(retain_authorized_effect=retain,
+        deliver_retained=no_network, confirm_retained=no_network)
+    with pytest.raises(SignerRefused, match="operation_mismatch"):
+        engine._retain_authorized_effect(op, {"artifact": artifact}, signing, signature, object(), limit)
+    assert calls == []
+
+
+@pytest.mark.parametrize("has_port", [False, True])
+def test_legacy_custody_keeps_its_existing_signed_result_without_retention(has_port):
+    engine = object.__new__(ProtectedSigner)
+    engine.custody = SimpleNamespace(**({"retain_authorized_effect": lambda **kw: None} if has_port else {}))
+    op = operation("team.agent.admit")
+    assert engine._retain_authorized_effect(op, {"artifact": {}}, b"signing", b"s" * 64, object(), NOW) is None
