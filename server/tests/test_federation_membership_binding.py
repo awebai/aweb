@@ -118,3 +118,40 @@ async def test_phase_b_rechecks_retained_same_team_membership(membership_env, pr
     else:
         result = await deliver()
         assert result["message_id"] == envelope.message_id
+
+
+@pytest.mark.asyncio
+async def test_exact_contact_still_delivers_when_same_team_projection_is_invalid(membership_env):
+    from tests.test_federation_activation_delivery import _seed_sender_authority
+
+    env = membership_env
+    manager = env.stack.aweb_db
+    envelope = _envelope()
+    token = await _seed_sender_authority(manager, envelope)
+    await manager.execute(
+        "INSERT INTO {{tables.agents}} "
+        "(team_id,alias,did_key,did_aw,did_aw_verified_key,certificate_id,identity_scope,status) "
+        "VALUES ($1,'impostor',$2,$3,$2,$4,'global','active')",
+        env.member.team_id, envelope.sender_current_did_key, envelope.sender_did_aw, env.member.certificate_id,
+    )
+    recipient = dict(await manager.fetch_one(
+        "INSERT INTO {{tables.agents}} "
+        "(team_id,alias,did_key,did_aw,did_aw_verified_key,address,identity_scope,inbound_mode) "
+        "VALUES ($1,'recipient',$2,$3,$2,$4,'global','team_and_contacts') RETURNING *",
+        env.member.team_id, envelope.target_current_did_key, envelope.target_did_aw, envelope.target_address,
+    ))
+    await manager.execute(
+        "INSERT INTO {{tables.contacts}} (owner_did,contact_address,contact_did_aw,binding_controller_did,reference_type,status) "
+        "VALUES ($1,$2,$3,$4,'identity','active')",
+        envelope.target_did_aw, envelope.sender_address, envelope.sender_did_aw, env.member.team_did_key,
+    )
+    await env.stack.awid_db.execute(
+        "INSERT INTO {{tables.team_protection}} "
+        "(domain,name,service_id,service_did_key,generation) VALUES ('beta.example','backend','test-signer',$1,1)",
+        Member(team_id=env.member.team_id).did_key,
+    )
+    result = await deliver_federated_phase_b(
+        _DB(manager), envelope=envelope, signature="signed-message", recipient=recipient,
+        authority_token=token, registry_client=env.registry,
+    )
+    assert result["message_id"] == envelope.message_id
