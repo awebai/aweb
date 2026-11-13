@@ -73,8 +73,10 @@ hermes config unset AWEB_ALLOWED_USERS
 hermes config set AWEB_ALLOW_ALL_USERS true
 ```
 
-This agent has no public address; reachability is through its team and the
-namespace, contact and channel paths, rather than public address discovery.
+A team-only agent has no public address: it can be reached by its own team, by
+people it has added as contacts or has written to, and through any channel you
+connect to it. Others can also reply in conversations the agent started. A fresh
+agent with no contacts or connected channels is reachable only by its own team.
 Use allow-all only for a team-only agent. For an agent with a **public address**,
 allowlist the full sender addresses and keep allow-all false:
 
