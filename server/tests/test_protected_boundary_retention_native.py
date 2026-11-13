@@ -175,3 +175,43 @@ async def test_genuine_b3_owner_act_reaches_protected_sql_consumer(world, tmp_pa
         assert (missing.status_code, missing.json()["detail"]) == (403, "protected_controller_required")
         altered = await client.post(url, content=body + b" ", headers=retained["delivery"]["headers"])
         assert (altered.status_code, altered.json()["detail"]) == (403, "protected_controller_required")
+
+
+
+@pytest.mark.asyncio
+async def test_cache_wait_expiry_keeps_original_bundle_claim_and_never_sends(admissions, tmp_path, monkeypatch):
+    a = admissions
+    await endorse(a)
+    custody = await activate(a, tmp_path)
+    operation = admit_operation(a)
+    assert (await prepare(a, operation)).status_code == 200
+    original_clock = a.w.app.signer.clock
+    original_request = custody._request_effect
+    original_invalidate = a.w.registry.invalidate_team_certificate_cache
+    invalidations, sends = [], []
+
+    async def invalidate(*args):
+        invalidations.append(args)
+        await original_invalidate(*args)
+        monkeypatch.setattr(a.w.app.signer, "clock", lambda: original_clock() + timedelta(hours=2))
+
+    async def request(delivery, **kwargs):
+        if not kwargs.get("receipt"):
+            sends.append(delivery)
+        return await original_request(delivery, **kwargs)
+
+    monkeypatch.setattr(a.w.registry, "invalidate_team_certificate_cache", invalidate)
+    monkeypatch.setattr(custody, "_request_effect", request)
+    response = await execute(a, operation)
+    assert response.status_code == 410 and response.json()["detail"] == "operation_expired", response.text
+    assert sends == [] and len(invalidations) == 2
+    before = await a.w.db.fetch_one(
+        "SELECT signed_result,retained_effect,delivery_claim FROM {{tables.protected_signer_operations}} WHERE operation_id=$1",
+        operation.operation_id)
+    assert all(before[k] is not None for k in ("signed_result", "retained_effect", "delivery_claim"))
+    recovered = await execute(a, operation)
+    assert recovered.status_code == 200 and recovered.json()["code"] == "external_effect_unresolved"
+    after = await a.w.db.fetch_one(
+        "SELECT signed_result,retained_effect,delivery_claim FROM {{tables.protected_signer_operations}} WHERE operation_id=$1",
+        operation.operation_id)
+    assert dict(after) == dict(before) and sends == [] and len(invalidations) == 2
