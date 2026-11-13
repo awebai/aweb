@@ -17,7 +17,6 @@ from uuid import UUID, uuid4
 
 import httpx
 import pytest
-from aweb_logs.purge_ledger import PurgeLedger
 from aweb_naapp.hooks.strictjson import decode_base64url
 from aweb_naapp_testing.databases import back_up, restore
 from pgdbm import AsyncDatabaseManager
@@ -26,6 +25,7 @@ from aweb_logs.app import create_app
 from aweb_logs.chain import open_receipt
 from aweb_logs.export import export_bundle
 from aweb_logs.ledger import load_epoch
+from aweb_logs.purge_ledger import PurgeLedger
 from aweb_logs.read_store import EventFilter, query
 from aweb_logs.retention import apply_retention, purge
 from aweb_logs.verify import verify_chain
@@ -177,6 +177,32 @@ async def test_an_event_erased_after_the_backup_stays_purged_when_it_is_redelive
         )
         assert report.intact
         assert [item.act for item in report.purged] == [erase_act]
+
+
+async def test_a_purge_made_before_the_ledger_existed_survives_a_restore_of_an_older_backup(
+    world, tmp_path
+):
+    erased = await delivered(world, world.delivery("app"))
+    backup = await back_up(world.db, tmp_path / "logs-content.dump")
+    # A Logs without the purge ledger purged the event in place.
+    act = f"logs.erase:{uuid4()}"
+    await world.db.execute(
+        "UPDATE {{tables.chain_events}}"
+        " SET salt = NULL, signing_bytes = NULL, signature = NULL, purge_act = $3"
+        " WHERE team_id = $1 AND event_id = $2",
+        world.member.team_id,
+        UUID(erased),
+        act,
+    )
+    # The upgraded Logs starts on the live content database.
+    async with logs_started(world):
+        pass
+
+    await restore(world.db, backup)
+    assert await stored_content(world) == {erased: None}
+
+    async with logs_started(world):
+        assert await stored_content(world) == {erased: act}
 
 
 async def test_logs_refuses_to_start_with_its_purge_ledger_in_its_content_database(world):

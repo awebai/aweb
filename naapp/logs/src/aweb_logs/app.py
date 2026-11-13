@@ -41,7 +41,11 @@ from aweb_logs.chain import CHECKPOINT_PURPOSE, RECEIPT_PURPOSE
 from aweb_logs.config import LogsSettings
 from aweb_logs.ingest import Ingestor, IngestRefused
 from aweb_logs.ledger import LogsSigner, checkpoint_moved_heads
-from aweb_logs.purge_ledger import PurgeLedger, apply_purge_ledger_migrations
+from aweb_logs.purge_ledger import (
+    PurgeLedger,
+    apply_purge_ledger_migrations,
+    record_existing_purges,
+)
 from aweb_logs.reader_acts import OWNER_ACTS
 from aweb_logs.reader_service import reader_service
 from aweb_logs.retention import reapply_purges, run_retention
@@ -177,6 +181,7 @@ def create_app(
                 # Before anything is served: a restored content database
                 # holds no content purged after its backup.
                 await apply_purge_ledger_migrations(runtime.db(), purges.db)
+                await record_existing_purges(runtime.db(), purges)
                 await reapply_purges(runtime.db(), purges)
                 readers = await reader_service(
                     runtime,

@@ -101,6 +101,12 @@ is appended already purged: its link and receipt are those of its content,
 which is never stored. A restored content database therefore never serves
 content purged after its backup, by reads, export or redelivery.
 
+Each start also tombstones every event the content database already holds
+purged, so purges made before the ledger existed are fenced from then on. That
+baseline comes from the database logs starts on: **the first start of a logs
+with a purge ledger must be on the live content database**, never on a
+restored one.
+
 - **Never restore the purge ledger from a content backup**, and never restore
   it to an earlier state. Back it up on its own line. Restoring content means:
   restore the content database only, keep the live ledger, start logs, and

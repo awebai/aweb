@@ -11,6 +11,13 @@ producer's redelivery cannot bring it back.
 
 A crash between the tombstone and the purge leaves the tombstone with its
 content still present; the next start finishes the purge.
+
+Each start also tombstones every event the content database already holds
+purged (:func:`record_existing_purges`), so purges made before the ledger
+existed, or committed before a crash lost their tombstone's commit order, are
+fenced from then on. That baseline is taken from the database Logs starts on:
+the first start of a Logs with this ledger must be on the live content
+database, not on a restored one.
 """
 
 from __future__ import annotations
@@ -73,3 +80,18 @@ class PurgeLedger:
             " ORDER BY team_id, purged_at, event_id"
         )
         return [(row["team_id"], row["event_id"], row["purge_act"]) for row in rows]
+
+
+async def record_existing_purges(content: AsyncDatabaseManager, ledger: PurgeLedger) -> None:
+    """Tombstone every event ``content`` holds purged, naming its purge act.
+    Events already tombstoned keep their first act."""
+    acts: dict[tuple[str, str], list[tuple[UUID, str]]] = {}
+    for row in await content.fetch_all(
+        "SELECT team_id, event_id, event_hash, purge_act FROM {{tables.chain_events}}"
+        " WHERE purge_act IS NOT NULL"
+    ):
+        acts.setdefault((row["team_id"], row["purge_act"]), []).append(
+            (row["event_id"], row["event_hash"])
+        )
+    for (team_id, act), events in acts.items():
+        await ledger.record(team_id, events, act=act)

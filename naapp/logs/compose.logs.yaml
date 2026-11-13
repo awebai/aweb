@@ -16,6 +16,8 @@ services:
       - /tmp
     environment:
       LOGS_DATABASE_URL_FILE: /run/secrets/logs/database-url
+      # The purge ledger's own database, never restored with the content one.
+      LOGS_PURGE_LEDGER_DATABASE_URL_FILE: /run/secrets/logs/purge-ledger-database-url
       LOGS_DB_SCHEMA: ${LOGS_DB_SCHEMA:-public}
       LOGS_APP_ID: ${LOGS_APP_ID:?LOGS_APP_ID is required, logs.appId}
       LOGS_PUBLIC_ORIGIN: ${LOGS_PUBLIC_ORIGIN:?LOGS_PUBLIC_ORIGIN is required, logs.publicOrigin}

@@ -271,10 +271,11 @@ def _mail_environment(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
 
 
 async def test_logs_starts_from_its_environment_and_serves_its_committed_template(
-    tmp_path: Path, database, monkeypatch: pytest.MonkeyPatch
+    tmp_path: Path, database, purge_ledger_database, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     key_files = write_key_files(tmp_path)
     monkeypatch.setenv("LOGS_DATABASE_URL", database.config.get_dsn())
+    monkeypatch.setenv("LOGS_PURGE_LEDGER_DATABASE_URL", purge_ledger_database.config.get_dsn())
     monkeypatch.setenv("LOGS_DB_SCHEMA", database.schema or "public")
     monkeypatch.setenv("LOGS_PUBLIC_ORIGIN", ORIGIN)
     monkeypatch.setenv("LOGS_CONSOLE_ORIGIN", CONSOLE)
@@ -291,6 +292,7 @@ def test_logs_does_not_start_without_its_mail_settings(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     monkeypatch.setenv("LOGS_DATABASE_URL", "postgresql://localhost/logs")
+    monkeypatch.setenv("LOGS_PURGE_LEDGER_DATABASE_URL", "postgresql://localhost/logs_purges")
     monkeypatch.setenv("LOGS_PUBLIC_ORIGIN", ORIGIN)
     monkeypatch.setenv("LOGS_CONSOLE_ORIGIN", CONSOLE)
     monkeypatch.setenv("LOGS_APP_ID", TEST_APP_ID)
@@ -306,6 +308,7 @@ def test_logs_reads_its_configuration_from_the_environment_only(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     monkeypatch.setenv("LOGS_DATABASE_URL", "postgresql://localhost/logs")
+    monkeypatch.setenv("LOGS_PURGE_LEDGER_DATABASE_URL", "postgresql://localhost/logs_purges")
     monkeypatch.setenv("LOGS_PUBLIC_ORIGIN", ORIGIN)
     monkeypatch.setenv("LOGS_APP_ID", TEST_APP_ID)
     key_files = write_key_files(tmp_path)
