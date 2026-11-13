@@ -25,24 +25,29 @@ from awid.did import did_key_from_signing_key
 from awid.signing import load_signing_key_pem
 
 from .bootstrap import initialise
-from .host import HostSettings, open_composition, validate_provisioning
+from .host import HostSettings, custody_slots, open_composition, validate_provisioning
 from .profile import ProtectedServiceProfile
 
 
 def install_controller(settings, *, profile, scope, source_pem):
-    """Exclusive real-file creation in the existing private operator volume."""
+    """Exclusive real-file creation in the existing private operator volume.
+
+    The PEM's public key selects the profile binding it is pinned to; the key
+    goes to that binding's private slot, the same path the serving host loads.
+    """
     if os.geteuid() in settings.worker_uids:
         raise SignerRefused("custody_not_isolated")
     seed = load_signing_key_pem(read_key_file(source_pem))
     public_key = did_key_from_signing_key(seed)
-    binding = profile.binding_for(scope)
-    if (
-        binding.context().authority_kind != "team_controller"
-        or public_key != binding.authority_key_did
-    ):
+    if public_key not in {binding.authority_key_did for binding in profile.bindings}:
         raise SignerRefused("authority_changed")
+    _, _, slots = custody_slots(settings, profile=profile, scope=scope)
+    if public_key not in slots:
+        # A pinned key this host has no private slot for: the manifest names it.
+        raise SignerRefused("custody_not_isolated")
+    destination = slots[public_key]
     directory = os.open(
-        settings.controller_key_file.parent,
+        destination.parent,
         os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW,
     )
     try:
@@ -50,7 +55,7 @@ def install_controller(settings, *, profile, scope, source_pem):
         if metadata.st_uid != os.geteuid() or stat.S_IMODE(metadata.st_mode) != 0o700:
             raise SignerRefused("custody_not_isolated")
         fd = os.open(
-            settings.controller_key_file.name,
+            destination.name,
             os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW,
             0o400,
             dir_fd=directory,
@@ -104,7 +109,7 @@ def parser():
     policy.add_argument("--file", type=Path, required=True)
     key = sub.add_parser(
         "install-controller",
-        help="Install the existing controller PEM as a private hex-seed file, without overwrite",
+        help="Install an existing pinned private key PEM (team controller or human identity) into its binding's private slot, without overwrite",
     )
     key.add_argument("--source-pem", type=Path, required=True)
     return result

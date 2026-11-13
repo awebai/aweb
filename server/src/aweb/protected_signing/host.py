@@ -127,8 +127,9 @@ async def validate_provisioning(composition):
         observation.require_fresh()
 
 
-def load_custodies(settings, *, profile, scope):
-    """Validate every private slot before opening a database or registry client."""
+def custody_slots(settings, *, profile, scope):
+    """The selected binding, the bindings this host serves and each one's
+    private key path: the selected key file alone, or the manifest's slots."""
     selected = profile.binding_for(scope)
     bindings = [selected]
     paths = {selected.authority_key_did: settings.controller_key_file}
@@ -143,6 +144,12 @@ def load_custodies(settings, *, profile, scope):
         if set(manifest) != {b.authority_key_did for b in bindings} or Path(manifest[selected.authority_key_did]) != settings.controller_key_file:
             raise SignerRefused("custody_not_isolated")
         paths = {key: Path(value) for key, value in manifest.items()}
+    return selected, bindings, paths
+
+
+def load_custodies(settings, *, profile, scope):
+    """Validate every private slot before opening a database or registry client."""
+    selected, bindings, paths = custody_slots(settings, profile=profile, scope=scope)
     custodians = []
     for binding in bindings:
         context = binding.context()

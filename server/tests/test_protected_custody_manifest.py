@@ -87,3 +87,53 @@ def test_unprovisioned_or_unsafe_authority_never_reaches_the_database(slots, cas
     settings.controller_keys_file.write_text(json.dumps(paths))
     with pytest.raises(SignerRefused):
         load_custodies(settings, profile=profile, scope=profile.bindings[0].scope.model_dump(mode="json"))
+
+
+def _pem(path, seed):
+    path.write_bytes(b"-----BEGIN ED25519 PRIVATE KEY-----\n" + base64.b64encode(seed) + b"\n-----END ED25519 PRIVATE KEY-----\n")
+    path.chmod(0o400)
+    return path
+
+
+def test_install_controller_fills_every_manifest_slot_including_the_human_key(slots, tmp_path):
+    from pathlib import Path
+
+    from aweb.protected_signing.operator import install_controller
+
+    settings, profile, paths, _, seeds = slots
+    for path in paths.values():
+        Path(path).unlink()
+    scope = profile.bindings[0].scope.model_dump(mode="json")
+    for index, (key, seed) in enumerate(zip(paths, seeds)):
+        source = _pem(tmp_path / f"source-{index}.pem", seed)
+        assert install_controller(settings, profile=profile, scope=scope, source_pem=source) == {"authority_key_did": key}
+        assert Path(paths[key]).read_text() == seed.hex() + "\n"
+        assert Path(paths[key]).stat().st_mode & 0o777 == 0o400
+    # The installed slots are exactly what the serving host loads.
+    _, _, custody = load_custodies(settings, profile=profile, scope=scope)
+    assert [c.authority_kind for _, c in custody] == ["team_controller", "human_identity"]
+
+
+def test_install_controller_refuses_a_key_no_binding_pins(slots, tmp_path):
+    from aweb.protected_signing.operator import install_controller
+
+    settings, profile, paths, _, _ = slots
+    stranger = _pem(tmp_path / "stranger.pem", generate_keypair()[0])
+    with pytest.raises(SignerRefused, match="authority_changed"):
+        install_controller(settings, profile=profile, scope=profile.bindings[0].scope.model_dump(mode="json"), source_pem=stranger)
+
+
+def test_install_controller_without_manifest_installs_only_the_selected_binding(slots, tmp_path):
+    from pathlib import Path
+
+    from aweb.protected_signing.operator import install_controller
+
+    settings, profile, paths, _, seeds = slots
+    settings.controller_keys_file = None
+    for path in paths.values():
+        Path(path).unlink()
+    scope = profile.bindings[0].scope.model_dump(mode="json")
+    # Without a manifest there is no slot for the second binding's key.
+    with pytest.raises(SignerRefused, match="custody_not_isolated"):
+        install_controller(settings, profile=profile, scope=scope, source_pem=_pem(tmp_path / "human.pem", seeds[1]))
+    assert not any(Path(p).exists() for p in paths.values())

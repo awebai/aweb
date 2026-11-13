@@ -196,10 +196,14 @@ python -m aweb.protected_signing.operator install-controller \
   --source-pem /private-provisioning/team-controller.pem
 ```
 
-The command validates the existing PEM with AWID's shared loader and compares
-its public key to the selected profile. It writes one **new** regular
-`CONTROLLER_KEY_FILE` (32-byte seed as 64 hex characters plus LF), exclusively,
-mode 0400, under a real 0700 directory owned by the invoking uid. It refuses
+The command validates the existing PEM with AWID's shared loader and finds the
+profile binding whose `authority_key_did` is its public key; a key no binding
+pins refuses `authority_changed`. It writes that binding's private slot: the
+selected binding's `CONTROLLER_KEY_FILE`, or, with
+`AWEB_PROTECTED_CONTROLLER_KEYS_FILE`, the manifest's path for that key. A
+pinned key with no slot on this host refuses `custody_not_isolated`. It writes
+one **new** regular file (32-byte seed as 64 hex characters plus LF),
+exclusively, mode 0400, under a real 0700 directory owned by the invoking uid. It refuses
 existing paths, symlinks, unsafe directory ownership/mode and a mismatched key;
 it never overwrites, registers or rotates authority. The serving host also
 checks the registry's current key. Remove the short-lived input after successful
@@ -317,9 +321,10 @@ keys refuse. Every referenced seed still passes the existing real-file uid,
 mode and symlink checks, matches the public pin, and is excluded from ordinary
 member keys. Projected Secret symlinks do not replace private-volume custody.
 
-Use the existing `operator install-controller --source-pem` for each selected
-scope/key slot, and `operator bootstrap --requester --contact` for each binding
-before serving the group. The one existing enrollment page and B3 completion
+Run `operator install-controller --source-pem` once per private key, team
+controller and human identity alike: each PEM goes to the manifest slot of the
+binding that pins it. Run `operator bootstrap --requester --contact` for each
+binding before serving the group. The one existing enrollment page and B3 completion
 fence resolve each mailed link's exact stored scope; they cannot select another
 authorizer. LOGIN and per-act UV use the same exact context resolution. The
 host mounts one shared operations HTTP surface, dispatching only exact trusted
