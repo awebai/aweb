@@ -110,6 +110,70 @@ def origin(name: str) -> str:
     return f"https://{HOSTS[name]}"
 
 
+# The hook bindings a team deployment activates before any owner act: the
+# audit-critical pairs that Secrets' governance acts and secret use need, and
+# Logs' own governance production, which its reader designation needs. The
+# other bindings the manifests declare (Logs' post-command,
+# post-manifest-command and post-mutation registrations) have no producer in
+# this bundle and stay pending.
+REQUIRED_HOOK_BINDINGS = (
+    ("secrets", "production", "post-governance-hook"),
+    ("secrets", "production", "post-secret-use-hook"),
+    ("logs", "registration", "post-governance-hook"),
+    ("logs", "registration", "post-secret-use-hook"),
+    ("logs", "production", "post-governance-hook"),
+)
+# The wait past the latest active_from: the producers allow five seconds of
+# skew between their clock and the database's that set active_from.
+HOOK_READINESS_MARGIN = datetime.timedelta(seconds=10)
+# The longest the journey waits for the bindings to come into effect: the
+# server's sixty seconds after activation, plus the margin, with room.
+HOOK_READINESS_DEADLINE = datetime.timedelta(minutes=3)
+
+
+# What names a binding: the app's installation, generation and manifest, and
+# the binding's kind and hook.
+HOOK_BINDING_IDENTITY = ("app_id", "installation_id", "generation", "digest", "kind", "hook")
+
+
+def select_hook_bindings(listed: dict[str, list[dict]]) -> dict[tuple[str, str, str], dict]:
+    """The listed row of each required binding, from each app's listing, named
+    by its kind and hook. A required binding listed none or several times is
+    refused, and so is an app whose rows are not one installation, generation
+    and manifest."""
+    for app, rows in listed.items():
+        installs = {(r["installation_id"], r["generation"], r["digest"]) for r in rows}
+        if len(installs) != 1:
+            raise SystemExit(f"FAILED: {app}'s hook bindings are not one installation, generation and manifest: "
+                             f"{sorted(map(str, installs))}")
+    selected = {}
+    for app, kind, hook in REQUIRED_HOOK_BINDINGS:
+        matches = [b for b in listed.get(app, []) if (b["kind"], b["hook"]) == (kind, hook)]
+        if len(matches) != 1:
+            raise SystemExit(f"FAILED: {app} lists {len(matches)} {kind} bindings for {hook}, not one")
+        selected[(app, kind, hook)] = matches[0]
+    return selected
+
+
+def hooks_ready_at(listed: list[dict], selected: list[dict],
+                   margin: datetime.timedelta = HOOK_READINESS_MARGIN) -> datetime.datetime:
+    """When the selected bindings are in effect: the latest of their
+    active_from, plus the margin. A selected binding that is not active, has
+    no active_from, or is no longer the installation, generation, manifest,
+    kind and hook selected, is refused."""
+    by_id = {b["binding_id"]: b for b in listed}
+    starts = []
+    for chosen in selected:
+        binding_id = chosen["binding_id"]
+        binding = by_id.get(binding_id)
+        if binding is None or binding.get("state") != "active" or not binding.get("active_from"):
+            raise SystemExit(f"FAILED: hook binding {binding_id} is not active with an active_from: {binding}")
+        if any(binding.get(field) != chosen[field] for field in HOOK_BINDING_IDENTITY):
+            raise SystemExit(f"FAILED: hook binding {binding_id} is no longer the one selected: {binding}")
+        starts.append(datetime.datetime.fromisoformat(binding["active_from"].replace("Z", "+00:00")))
+    return max(starts) + margin
+
+
 def designate_command(app_id: str, role: str, principal: str, credential: str, contact: str) -> list[str]:
     """The owner's designation of a holding of an app role. A role that
     declares a notice contact, as secrets.owner does, takes the holder's."""
@@ -646,21 +710,67 @@ class World:
         printed = re.search(r"Fingerprint: ([0-9a-f]{4}(?: [0-9a-f]{4}){3})", output + rest)
         assert printed, output + rest
         fingerprint = printed.group(1)
+        command = designate_command(site.app_id, site.role, human, export, site.contact)
+        # Before the hook bindings are in effect, the act's governance event has
+        # no audit target: the app refuses it, and nothing is held.
+        early = docker("exec", machine, *command, timeout=300)
+        assert early.returncode != 0 and "503 release_context_unavailable" in early.stdout + early.stderr, (
+            early.stdout + early.stderr)
+        assert self.holding(site, human) == ("0", ""), self.holding(site, human)
+        hooks = self.activate_hooks(machine)
         # The owner signs only for that exact credential: aw shows its fingerprint.
-        designated = docker("exec", machine, *designate_command(site.app_id, site.role, human, export, site.contact),
-                            timeout=300)
+        designated = docker("exec", machine, *command, timeout=300)
         assert designated.returncode == 0, designated.stdout + designated.stderr
         assert fingerprint in designated.stderr, designated.stderr
-        held = self.compose("exec", "-T", "postgres", "psql", "-U", "postgres", "-d", "secrets", "-At", "-c",
-                            "select count(*) from public.role_assignments where role = '" + site.role
-                            + "' and principal_did = '" + human + "'").strip()
-        assert held == "1", held
         # The holding keeps the notice contact the owner signed, byte for byte.
-        contact = self.compose("exec", "-T", "postgres", "psql", "-U", "postgres", "-d", "secrets", "-At", "-c",
-                               "select contact from public.passkey_approvers where principal = '" + human
-                               + "' and superseded_at is null").strip()
+        held, contact = self.holding(site, human)
+        assert held == "1", held
         assert contact == site.contact, contact
-        return {"role": site.role, "principal": human, "fingerprint": fingerprint, "contact": contact}
+        return {"role": site.role, "principal": human, "fingerprint": fingerprint, "contact": contact,
+                "refused_before_activation": "503 release_context_unavailable", "hooks": hooks}
+
+    def holding(self, site: Site, human: str) -> tuple[str, str]:
+        """The human's holdings of the app role, and its current notice contact,
+        in the app's own tables."""
+        def query(sql: str) -> str:
+            return self.compose("exec", "-T", "postgres", "psql", "-U", "postgres", "-d", "secrets", "-At",
+                                "-c", sql).strip()
+        held = query("select count(*) from public.role_assignments where role = '" + site.role
+                     + "' and principal_did = '" + human + "'")
+        contact = query("select contact from public.passkey_approvers where principal = '" + human
+                        + "' and superseded_at is null")
+        return held, contact
+
+    def hook_bindings(self, machine: str, app: str) -> list[dict]:
+        return self.aw(machine, "hooks", "bindings", f"{TEAM}-{app}")["bindings"]
+
+    def activate_hooks(self, machine: str) -> dict:
+        """The owner activates the required hook bindings with its own
+        controller key, one supported owner act each, then waits until they are
+        in effect: every selected binding active, as the installation,
+        generation and manifest selected, and the latest active_from plus a
+        margin past. Binding readiness, not proof of delivery. The other
+        bindings stay pending."""
+        listed = {app: self.hook_bindings(machine, app) for app in ("secrets", "logs")}
+        selected = select_hook_bindings(listed)
+        for (app, _, _), row in selected.items():
+            activated = docker("exec", machine, "aw", "hooks", "activate", f"{TEAM}-{app}", row["binding_id"],
+                               "--yes", timeout=300)
+            assert activated.returncode == 0, activated.stdout + activated.stderr
+        after = [row for app in ("secrets", "logs") for row in self.hook_bindings(machine, app)]
+        ready = hooks_ready_at(after, list(selected.values()))
+        wait = (ready - datetime.datetime.now(datetime.UTC)).total_seconds()
+        if wait > HOOK_READINESS_DEADLINE.total_seconds():
+            raise SystemExit(f"FAILED: the hook bindings are in effect only at {ready.isoformat()}, past the deadline")
+        if wait > 0:
+            time.sleep(wait)
+        chosen = {row["binding_id"] for row in selected.values()}
+        pending = sorted(f"{row['app_id']}/{row['kind']}/{row['hook']}" for row in after
+                         if row["binding_id"] not in chosen)
+        assert all(row["state"] == "pending" for row in after if row["binding_id"] not in chosen), after
+        active = {f"{app}/{kind}/{hook}": {field: row[field] for field in HOOK_BINDING_IDENTITY + ("binding_id",)}
+                  for (app, kind, hook), row in selected.items()}
+        return {"active": active, "left_pending": pending, "ready_at": ready.isoformat()}
 
     # --- the registry's real limiter, for the throttle legs -----------------
 
@@ -1175,9 +1285,14 @@ def journey(world: World, stop_after: str | None = None, agents_only: bool = Fal
     print("MEMBER MAIL:", json.dumps(world.member_mail(holder.container), sort_keys=True))
     print("=== Setup: the team owner installs Secrets and Logs from their internal origins")
     world.install_apps(holder.container, founded.requester_did_key)
-    if not agents_only:
+    if agents_only:
+        print("=== Setup: the owner activates the apps' hook bindings")
+        print("HOOKS ACTIVE:", json.dumps(world.activate_hooks(holder.container), sort_keys=True))
+    else:
         print("=== Setup: the owner designates the approver's holding of the app role, before the signer holds the key")
         designated = world.designate_holding(site, holder, founded)
+        print("REFUSED BEFORE ACTIVATION:", designated["refused_before_activation"])
+        print("HOOKS ACTIVE:", json.dumps(designated["hooks"], sort_keys=True))
         print("HOLDING:", json.dumps({k: designated[k] for k in ("role", "principal", "contact")}))
         if stop_after == "holding":
             print("STOPPED: after the approver's holding, as asked")

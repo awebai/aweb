@@ -38,6 +38,49 @@ A record signed by another key is refused, so a new controller key needs the
 record published again. Once the signer holds the key, that has no supported
 path (`aweb-acxy.4`, `team.controller.rotate`, OPEN).
 
+## The apps' hook bindings
+
+Every hook binding the Secrets and Logs manifests declare is `pending` once
+the apps are installed. While none owes Secrets' events to an audit target,
+Secrets refuses every owner act that widens its governance (a designation, a
+credential replacement) and every authorizing secret-use step with
+`503 release_context_unavailable`. The team owner activates these five, named
+by app, kind and hook, while its machine still holds the team's key, that is,
+before the signer takes custody:
+
+| App | Kind | Hook |
+| --- | --- | --- |
+| Secrets | production | `post-governance-hook` |
+| Secrets | production | `post-secret-use-hook` |
+| Logs | registration | `post-governance-hook` |
+| Logs | registration | `post-secret-use-hook` |
+| Logs | production | `post-governance-hook` |
+
+```sh
+aw --json hooks bindings <team>-secrets
+aw --json hooks bindings <team>-logs
+aw hooks activate <app-id> <binding-id> --yes
+```
+
+Each activation is one owner act signed with the team's controller key and
+checked against the app's pinned manifest; there is no order among them. A
+binding is in effect from its `active_from`, which the server sets sixty
+seconds after the activation. Re-read the bindings, and make the first owner
+act only once each of the five is `active`, from the installation, generation
+and manifest selected, and the latest `active_from` has passed by more than the
+producers' five seconds of clock skew. That is the bindings' readiness, not
+proof of delivery: the Logs reader's export shows what was delivered.
+
+The other bindings Logs declares, its `post-command-hook`,
+`post-manifest-command-hook` and `post-mutation-hook` registrations, have no
+producer in this bundle and stay pending. An active `post-command-hook` would
+let Logs accept events that any member certificate signs.
+
+Reinstalling or updating an app gives it a new generation of bindings, all
+pending again, and each needs the owner's activation. Once the signer holds the
+key, that has no supported path: reinstalling an app then leaves its owner acts
+and secret use refused.
+
 ## What each command keeps and deletes
 
 | Command | Does | Keeps | Deletes |

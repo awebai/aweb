@@ -97,3 +97,92 @@ def test_the_owner_names_the_approvers_lab_mailbox_as_the_holdings_notice_contac
     assert command == ["aw", "app", "role", "designate", "lfteam-secrets", "--role", "secrets.owner",
                        "--principal", "did:aw:approver", "--credential", "/world/holder-app.json",
                        "--notice-contact", "approver@lf.test", "--yes"]
+
+
+def binding(app, kind, hook, binding_id, state="pending", active_from=None, generation=1):
+    return {"app_id": f"lfteam-{app}", "kind": kind, "hook": hook, "binding_id": binding_id, "state": state,
+            "active_from": active_from, "installation_id": f"{app}-installation", "generation": generation,
+            "digest": f"sha256:{app}-manifest"}
+
+
+LOGS = [binding("logs", "registration", hook, f"logs-{hook}") for hook in (
+    "post-command-hook", "post-governance-hook", "post-manifest-command-hook", "post-mutation-hook",
+    "post-secret-use-hook")] + [binding("logs", "production", "post-governance-hook", "logs-production")]
+SECRETS = [binding("secrets", "production", "post-governance-hook", "secrets-governance"),
+           binding("secrets", "production", "post-secret-use-hook", "secrets-secret-use")]
+
+
+def test_the_deployment_activates_the_audit_critical_hook_pairs_and_logs_own_production():
+    assert set(journey().REQUIRED_HOOK_BINDINGS) == {
+        ("secrets", "production", "post-governance-hook"),
+        ("secrets", "production", "post-secret-use-hook"),
+        ("logs", "registration", "post-governance-hook"),
+        ("logs", "registration", "post-secret-use-hook"),
+        ("logs", "production", "post-governance-hook"),
+    }
+
+
+def test_each_required_binding_is_named_by_its_app_kind_and_hook():
+    selected = journey().select_hook_bindings({"logs": LOGS, "secrets": SECRETS})
+    assert {key: row["binding_id"] for key, row in selected.items()} == {
+        ("secrets", "production", "post-governance-hook"): "secrets-governance",
+        ("secrets", "production", "post-secret-use-hook"): "secrets-secret-use",
+        ("logs", "registration", "post-governance-hook"): "logs-post-governance-hook",
+        ("logs", "registration", "post-secret-use-hook"): "logs-post-secret-use-hook",
+        ("logs", "production", "post-governance-hook"): "logs-production",
+    }
+
+
+def test_an_apps_bindings_from_more_than_one_installation_generation_or_manifest_are_refused():
+    import pytest
+
+    mixed = SECRETS[:1] + [binding("secrets", "production", "post-secret-use-hook", "secrets-secret-use",
+                                   generation=2)]
+    with pytest.raises(SystemExit, match="secrets"):
+        journey().select_hook_bindings({"logs": LOGS, "secrets": mixed})
+
+
+def test_a_required_binding_missing_or_listed_twice_is_refused():
+    import pytest
+
+    with pytest.raises(SystemExit, match="post-secret-use-hook"):
+        journey().select_hook_bindings({"logs": LOGS, "secrets": SECRETS[:1]})
+    with pytest.raises(SystemExit, match="post-governance-hook"):
+        journey().select_hook_bindings({"logs": LOGS, "secrets": SECRETS + SECRETS[:1]})
+
+
+def test_the_bindings_are_ready_once_the_latest_active_from_has_passed_with_a_margin():
+    import datetime
+
+    selected = [binding("logs", "registration", "post-governance-hook", "a"),
+                binding("secrets", "production", "post-governance-hook", "b")]
+    listed = [binding("logs", "registration", "post-governance-hook", "a", "active", "2026-11-13T10:00:00.5Z"),
+              binding("secrets", "production", "post-governance-hook", "b", "active", "2026-11-13T10:00:03Z"),
+              binding("logs", "registration", "post-command-hook", "c", "pending")]
+    ready = journey().hooks_ready_at(listed, selected, margin=datetime.timedelta(seconds=10))
+    assert ready == datetime.datetime(2026, 11, 13, 10, 0, 13, tzinfo=datetime.UTC)
+
+
+def test_an_active_binding_is_ready_only_as_the_installation_generation_and_manifest_selected():
+    import pytest
+
+    selected = [binding("secrets", "production", "post-governance-hook", "b")]
+    moved = [binding("secrets", "production", "post-governance-hook", "b", "active", "2026-11-13T10:00:03Z",
+                     generation=2)]
+    with pytest.raises(SystemExit, match="b"):
+        journey().hooks_ready_at(moved, selected)
+
+
+def test_a_selected_binding_not_active_or_without_active_from_is_not_ready():
+    import datetime
+
+    import pytest
+
+    margin = datetime.timedelta(seconds=10)
+    selected = [binding("secrets", "production", "post-governance-hook", "b")]
+    with pytest.raises(SystemExit, match="b"):
+        journey().hooks_ready_at([binding("secrets", "production", "post-governance-hook", "b", "pending")],
+                                 selected, margin=margin)
+    with pytest.raises(SystemExit, match="b"):
+        journey().hooks_ready_at([binding("secrets", "production", "post-governance-hook", "b", "active")],
+                                 selected, margin=margin)
