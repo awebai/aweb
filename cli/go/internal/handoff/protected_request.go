@@ -34,7 +34,10 @@ type ProtectedRequest struct {
 	Sign      RequestKeySigner
 }
 
-var receiptPath = regexp.MustCompile(`^/protected-operations/[^/?#]+$`)
+var (
+	receiptPath = regexp.MustCompile(`^/protected-operations/[^/?#]+$`)
+	executePath = regexp.MustCompile(`^/protected-operations/[^/?#]+/execute$`)
+)
 
 // admissionPolicyPath is the policy read's route; its query names the team.
 const admissionPolicyPath = "/protected-admission-policies"
@@ -49,6 +52,8 @@ func protectedOperationLabel(method, path string) (string, error) {
 		return "protected_operation_prepare", nil
 	case method == http.MethodGet && receiptPath.MatchString(path):
 		return "protected_operation_receipt", nil
+	case method == http.MethodPost && executePath.MatchString(path):
+		return "protected_operation_execute", nil
 	case method == http.MethodGet && strings.HasPrefix(path, admissionPolicyPath+"?"):
 		return admissionPolicyReadLabel, nil
 	}

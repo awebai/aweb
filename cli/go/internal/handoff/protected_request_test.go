@@ -103,7 +103,8 @@ func TestAProtectedRequestForAnotherScopeOrBodyIsNotTheSignedOne(t *testing.T) {
 func TestOnlyTheProtectedRoutesHaveAnOperationLabel(t *testing.T) {
 	vectors, profile := readProtectedVectors(t)
 	for _, route := range [][2]string{{"POST", "/protected-operations/x"}, {"GET", "/protected-operations"}, {"DELETE", "/protected-operations/x"}, {"POST", "/other"},
-		{"POST", "/protected-admission-policies?team_id=engineering%3Acustomer.example"}, {"GET", "/protected-admission-policies"}} {
+		{"POST", "/protected-admission-policies?team_id=engineering%3Acustomer.example"}, {"GET", "/protected-admission-policies"},
+		{"GET", "/protected-operations/x/execute"}, {"POST", "/protected-operations/x/execute/more"}, {"POST", "/protected-operations//execute"}} {
 		_, err := ProtectedRequestHeaders(ProtectedRequest{
 			Profile: profile, Scope: profile.Bindings[0].Scope, RequesterID: vectors.RequesterID,
 			Method: route[0], Path: route[1], Timestamp: "2026-11-11T00:00:00Z",
@@ -249,5 +250,24 @@ func TestAPolicyReadForATeamTheProfileDoesNotBindOrAnotherQueryIsNeverSigned(t *
 		if _, err := ProtectedRequestHeaders(request); err == nil {
 			t.Errorf("%s: accepted", name)
 		}
+	}
+}
+
+func TestAnExecuteIsSignedAsAnExecuteOverItsOperationsScope(t *testing.T) {
+	vectors, profile := readProtectedVectors(t)
+	public, private, _ := ed25519.GenerateKey(nil)
+	headers, err := ProtectedRequestHeaders(ProtectedRequest{
+		Profile: profile, Scope: profile.Bindings[0].Scope, RequesterID: vectors.RequesterID,
+		Method: "POST", Path: "/protected-operations/11111111-1111-4111-8111-111111111111/execute", Timestamp: "2026-11-11T00:00:00Z",
+		Sign: func(payload []byte) (string, []byte, error) { return awid.ComputeDIDKey(public), ed25519.Sign(private, payload), nil },
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	raw, _ := base64.RawURLEncoding.DecodeString(headers.Get("X-AWEB-Signed-Payload"))
+	envelope, _ := decodeObject(raw)
+	emptySum := sha256.Sum256(nil)
+	if envelope["operation"] != "protected_operation_execute" || envelope["method"] != "POST" || envelope["body_sha256"] != hex.EncodeToString(emptySum[:]) {
+		t.Fatalf("envelope %v", envelope)
 	}
 }
