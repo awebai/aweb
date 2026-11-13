@@ -11,6 +11,7 @@ from time import monotonic_ns
 import httpx
 import pytest
 from aweb_naapp.console import CONSOLE_HEADERS
+from aweb_naapp_testing import Member
 from aweb_naapp_testing.human_members import registered_human
 from aweb_naapp_testing.webauthn import SoftAuthenticator
 
@@ -42,7 +43,15 @@ async def unchanged_authority_and_handoff(db, handoff):
 async def test_holder_credential_outage_is_503_without_writes_and_recovers(
     root, registry, monkeypatch, step
 ):
-    service, client, settings, member, _, _, _, _ = root
+    service, client, settings, team_member, _, _, _, _ = root
+    # root already registered its own member certificate. This distinct human
+    # follows the real registration helper once, under the same team controller.
+    member = Member(
+        team_id=team_member.team_id,
+        team_key=team_member.team_key,
+        alias="holder-http",
+        certificate_id="holder-http",
+    )
     # Configuration of the real observation windows, before their first read.
     # No cache entry is cleared or made authoritative by the test.
     monkeypatch.setenv("AWEB_APP_GRANT_MAX_AGE_SECONDS", "1")
