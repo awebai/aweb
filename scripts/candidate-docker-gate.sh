@@ -252,6 +252,10 @@ source "$ROOT/scripts/candidate-cleanup.sh"
 trap 'cleanup "$?"' EXIT
 trap 'cleanup 130' INT
 trap 'cleanup 143' TERM
+preexisting_volumes="$(docker volume ls -q)"
+while IFS= read -r volume; do
+  [[ -z "$volume" ]] || printf 'preexisting-volume\t%s\n' "$volume" >> "$LOG_DIR/owned-resources.tsv"
+done <<< "$preexisting_volumes"
 # The content-addressed input lives outside the resettable run logs. Retain a
 # checked copy in the mounted logs so the runner consumes the ledger's bytes.
 if [[ -n "${USER_PATHS_LATEST_METADATA:-}" ]]; then

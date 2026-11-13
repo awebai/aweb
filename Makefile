@@ -142,6 +142,7 @@ build: sync-doc-copies
 test: test-egress-controls check-aw-commit-repo-stamp check-cli-go-tidy test-identity-primitives test-python-locks test-sot-source-inventories test-vector-provenance test-federation-error-reference test-federation-authority-mutations test-federation-harness test-cli-reference test-mcp-tools-reference test-server test-awid test-cli test-channel test-channel-name-live-contract test-channel-core test-wake-channel-core-bundle test-pi-extension test-oats test-oats-proof-helpers test-tmux-guard test-release-cli-version test-npm-exact-publish test-pypi-exact-publish test-oci-exact-publish test-go-vulnerability-audit
 
 test-shipping:
+	python3 scripts/test_candidate_volumes.py
 	python3 scripts/test-egress/test_driver_evidence.py
 	python3 scripts/test_unit_reports.py
 	python3 scripts/test_secrets_shards.py
@@ -668,6 +669,7 @@ _candidate-gate-docker-boundaries:
 	@test -n "$(CANDIDATE_GATE_IMAGE)" || (echo "CANDIDATE_GATE_IMAGE is required"; exit 2)
 	@test -n "$(CANDIDATE_LOG_DIR)" || (echo "CANDIDATE_LOG_DIR is required"; exit 2)
 	python3 scripts/e2e/test_candidate_gate_docker_boundaries.py --image "$(CANDIDATE_GATE_IMAGE)"
+	AWEB_TEST_DOCKER_VOLUMES=1 AWEB_VOLUME_TEST_IMAGE="$(CANDIDATE_GATE_IMAGE)" python3 scripts/test_candidate_volumes.py RealVolumes -v
 	python3 scripts/test-egress/test_postgres.py -v
 	python3 scripts/test-egress/test_docker_dns.py --image "$(CANDIDATE_GATE_IMAGE)" --evidence "$(CANDIDATE_LOG_DIR)/dns-startup-control" DockerDNS.test_startup_failure_survives_container_cleanup -v
 

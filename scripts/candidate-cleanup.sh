@@ -17,6 +17,10 @@ cleanup() {
   set +e
   filters=("aweb.candidate-gate=$resource_label")
   for item in "${suite_projects[@]}"; do filters+=("com.docker.compose.project=$item"); done
+  # Image/CLI anonymous volumes have no gate label. Remember their exact names
+  # while the labelled containers still exist, including interrupted children.
+  python3 "$ROOT/scripts/candidate-volumes.py" remember --label "$resource_label" \
+    --manifest "$LOG_DIR/owned-resources.tsv" || cleanup_status=1
   # Stop the runner before removing anything it could recreate.
   if docker container inspect "$runner_name" >/dev/null 2>&1; then
     docker rm -fv "$runner_name" >/dev/null 2>&1 || cleanup_status=1
@@ -45,6 +49,8 @@ cleanup() {
       fi
     done
   done
+  python3 "$ROOT/scripts/candidate-volumes.py" remove --label "$resource_label" \
+    --manifest "$LOG_DIR/owned-resources.tsv" || cleanup_status=1
   # Every builder name in this manifest was allocated by this run's wrapper.
   # The host owns its own buildx config; nested configs may already be gone.
   while IFS=$'\t' read -r resource item; do

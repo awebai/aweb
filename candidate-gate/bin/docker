@@ -17,6 +17,13 @@ sibling_cpus="${AWEB_CANDIDATE_SIBLING_CPUS:-2}"
 sibling_memory="${AWEB_CANDIDATE_SIBLING_MEMORY:-4g}"
 sibling_pids="${AWEB_CANDIDATE_SIBLING_PIDS:-1024}"
 
+remember_volumes() {
+  [[ -n "$label" && -n "${CANDIDATE_RESOURCE_MANIFEST:-}" ]] || return 0
+  local helper
+  helper="$(cd "$(dirname "${BASH_SOURCE[0]}")/../../scripts" && pwd)/candidate-volumes.py"
+  python3 "$helper" remember --docker "$real" --label "$label" --manifest "$CANDIDATE_RESOURCE_MANIFEST" "$@"
+}
+
 compose_with_limits() {
   local -a prefix rest services compose_prefix build_services
   build_services=()
@@ -76,6 +83,12 @@ compose_with_limits() {
   if [[ -z "$label" || "${#rest[@]}" -eq 0 ]]; then
     exec "$real" compose "${prefix[@]}" "${rest[@]}"
   fi
+  case "${rest[0]}" in
+    down|rm)
+      remember_volumes
+      rest=("${rest[0]}" --volumes "${rest[@]:1}")
+      ;;
+  esac
 
   compose_prefix=("${prefix[@]}")
   if [[ "$has_file" -eq 0 ]]; then
@@ -161,6 +174,16 @@ compose_with_limits() {
 }
 
 case "$cmd" in
+  rm|container)
+    if [[ -n "$label" && ( "$cmd" == rm || "${1:-}" == rm || "${1:-}" == remove ) ]]; then
+      [[ "$cmd" != container ]] || shift
+      targets=()
+      for arg in "$@"; do [[ "$arg" == -* ]] || targets+=("$arg"); done
+      remember_volumes "${targets[@]}"
+      exec "$real" rm --volumes "$@"
+    fi
+    exec "$real" "$cmd" "$@"
+    ;;
   run|create)
     if [[ -n "$label" ]]; then
       exec "$real" "$cmd" \

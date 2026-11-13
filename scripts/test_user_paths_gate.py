@@ -159,7 +159,7 @@ class FrozenGateInput(unittest.TestCase):
                 repo, commands = root / 'repo', root / 'bin'
                 (repo / 'scripts').mkdir(parents=True)
                 commands.mkdir()
-                for name in ['candidate-docker-gate.sh', 'candidate-suite.sh', 'candidate-cleanup.sh', 'gate_settings.py', 'gate_budgets.py', 'candidate-network.py', 'fetch_released_aw.py']:
+                for name in ['candidate-docker-gate.sh', 'candidate-suite.sh', 'candidate-cleanup.sh', 'candidate-volumes.py', 'gate_settings.py', 'gate_budgets.py', 'candidate-network.py', 'fetch_released_aw.py']:
                     shutil.copy2(ROOT / 'scripts' / name, repo / 'scripts' / name)
                 # Docker itself is fake in this input/ledger test. Keep the
                 # wrapper's real host-preflight call, with an explicit stand-in.
