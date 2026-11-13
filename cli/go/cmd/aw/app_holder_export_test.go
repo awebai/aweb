@@ -1,6 +1,7 @@
 package main
 
 import (
+	"encoding/base64"
 	"encoding/json"
 	"os"
 	"path/filepath"
@@ -92,5 +93,36 @@ func TestAHolderExportBindsOnlyItsOwnHolding(t *testing.T) {
 		if err := e.bindsTo(b); errorCodeOf(err) != "holder_export_mismatch" {
 			t.Errorf("%s: err %v", name, err)
 		}
+	}
+}
+
+func TestAHolderExportKeepsItsIDChainVerifiable(t *testing.T) {
+	pub, key, err := awid.GenerateKeypair()
+	if err != nil {
+		t.Fatal(err)
+	}
+	certificate := map[string]any{
+		"v": 1, "type": "aweb.id-certificate", "id": awid.ComputeStableID(pub), "domain": "example.com",
+		"parent": map[string]any{"kind": "namespace", "id": "example.com"}, "kind": "human",
+		"issuer_key": awid.ComputeDIDKey(pub), "issued_at": "2026-11-13T00:00:00Z",
+	}
+	payload, err := awid.IDCertificateSigningBytes(certificate)
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, signature, _ := awid.KeySigner(key)(payload)
+	e := testHolderExport()
+	e.IDChain = map[string]any{"v": 1, "type": "aweb.id-chain", "certificates": []any{
+		map[string]any{"certificate": certificate, "signature": base64.RawURLEncoding.EncodeToString(signature)},
+	}}
+	if _, err := awid.EncodeIDChainHeader(e.IDChain); err != nil {
+		t.Fatalf("the chain as written: %v", err)
+	}
+	got, err := readHolderExport(writeTestHolderExport(t, e))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := awid.EncodeIDChainHeader(got.IDChain); err != nil {
+		t.Fatalf("the chain as read back: %v", err)
 	}
 }
