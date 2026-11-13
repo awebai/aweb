@@ -314,6 +314,7 @@ class LogsGovernance:
                 except Refused:
                     raise GovernanceRefused("the act does not name this change") from None
                 result = await effect(tx, act)
+                await prepared.record_applied(tx)
                 await self.fence.check(tx, admitted)
                 prepared.require_fresh()
         return result

@@ -26,6 +26,7 @@ from typing import Any
 
 from awid.protected_effect import EffectRefused, decode_proofs, verify_proof
 from awid.protected_membership import TeamProtectionObservation
+from awid.protected_receipts import record_receipt
 from pgdbm import AsyncDatabaseManager, AsyncMigrationManager, TransactionManager
 
 from aweb_naapp.hooks.owner_act import (
@@ -65,7 +66,7 @@ class PreparedOwnerAct:
     name, for logging.
     """
 
-    __slots__ = ("_checked", "_prepared_at", "_signing", "_verifier", "_protection", "_proof_expires_at")
+    __slots__ = ("_checked", "_prepared_at", "_signing", "_verifier", "_protection", "_proof_expires_at", "_proof", "_proof_header", "_transaction_id")
 
     def __init__(
         self,
@@ -75,6 +76,8 @@ class PreparedOwnerAct:
         prepared_at: datetime,
         protection: TeamProtectionObservation | None = None,
         proof_expires_at: datetime | None = None,
+        proof=None,
+        proof_header=None,
     ) -> None:
         self._checked = checked
         self._signing = signing
@@ -82,6 +85,18 @@ class PreparedOwnerAct:
         self._prepared_at = prepared_at
         self._protection = protection
         self._proof_expires_at = proof_expires_at
+        self._proof, self._proof_header, self._transaction_id = proof, proof_header, None
+
+    async def record_applied(self, tx):
+        """Trusted consumer calls after its actual effect/audit in this tx."""
+        if self._proof is None:
+            return
+        if self._transaction_id != await tx.fetch_value("SELECT txid_current()"):
+            raise Refused("verifier_misconfigured")
+        try:
+            await record_receipt(tx, self._proof, self._proof_header)
+        except EffectRefused as exc:
+            raise Refused(exc.code) from None
 
     @property
     def act_name(self) -> str:
@@ -162,6 +177,7 @@ class OwnerActVerifier:
             now=now,
         )
         proof_expires_at = None
+        proof_fields = proof_header = None
         if protection is not None and protection.protected:
             delivery = protected_delivery if protected_delivery is not None else self._protected_delivery
             try:
@@ -179,6 +195,7 @@ class OwnerActVerifier:
                         # Owner-act clocks use naive UTC internally, matching
                         # the existing act/key deadline representation.
                         proof_expires_at = datetime.strptime(fields["expires_at"], "%Y-%m-%dT%H:%M:%SZ")
+                        proof_fields, proof_header = fields, header
                         matched = True
                         break
                     except EffectRefused:
@@ -187,7 +204,7 @@ class OwnerActVerifier:
                     raise EffectRefused()
             except EffectRefused:
                 raise Refused("protected_controller_required") from None
-        return PreparedOwnerAct(checked, signing, self, _utc_now(lambda: now), protection, proof_expires_at)
+        return PreparedOwnerAct(checked, signing, self, _utc_now(lambda: now), protection, proof_expires_at, proof_fields, proof_header)
 
     async def applied_in(self, tx: TransactionManager, prepared: PreparedOwnerAct) -> bool:
         """Read an exact committed act's nonce receipt, without consuming it.
@@ -258,7 +275,8 @@ class OwnerActVerifier:
         )
         if inserted is None:
             raise Refused("nonce_reused", act.nonce)
-        return _verified(act, int(await tx.fetch_value("SELECT txid_current()")))
+        prepared._transaction_id = int(await tx.fetch_value("SELECT txid_current()"))
+        return _verified(act, prepared._transaction_id)
 
 
 def _utc_now(clock: Callable[[], datetime]) -> datetime:

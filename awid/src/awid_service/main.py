@@ -23,6 +23,7 @@ from .routes.dns_addresses import router as dns_addresses_router
 from .routes.dns_namespaces import router as dns_namespaces_router
 from .routes.id_certificates import router as id_certificates_router
 from .routes.teams import router as teams_router
+from .routes.protected_effect_receipts import router as protected_effect_receipts_router
 from .db import AwidDatabaseInfra
 
 logger = logging.getLogger(__name__)
@@ -216,6 +217,7 @@ def mount_registry(app: FastAPI) -> None:
     app.include_router(dns_addresses_router)
     app.include_router(a2a_publications_router)
     app.include_router(teams_router)
+    app.include_router(protected_effect_receipts_router)
     app.include_router(attestation_records_router)
     app.include_router(id_certificates_router)
 

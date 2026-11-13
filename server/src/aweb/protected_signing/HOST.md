@@ -387,3 +387,14 @@ reference. It has no worker HTTP route. Package .8 must establish authorization,
 real custody isolation, consumer drains/invalidation, exact historical baseline
 and rollback limits before invoking it. Build/install/test authorization never
 invokes that transition automatically.
+
+
+Service-owned owner-act delivery additionally pins consumer origins in
+`AWEB_PROTECTED_OWNER_ACT_ORIGINS` (a JSON array of canonical HTTPS origins).
+The registry origin already comes from the selected profile. Only host-owned
+clients for these configured origins may send a retained effect or read its
+fixed confirmation route. No worker-selected URL, redirect or regenerated
+authentication is accepted. Consumers must install the shared hooks ordered
+migrations and record the reference after their actual effect in its transaction.
+Their fixed receipt route must redact the proof header from all proxy/application
+logs and traces and return no-store; it exposes no private delivery headers.

@@ -78,13 +78,17 @@ class IndependentAuthority:
         ):
             raise SignerRefused("scope_refused")
         started = self.timer()
+        protection = None
         try:
             human_key = await self._own_human(c.human_id, c.human_domain)
             if c.authority_kind == "team_controller":
                 name, domain = c.authority_id.split(":", 1)
                 if domain != c.authority_domain:
                     raise SignerRefused("scope_refused")
-                team_key = await self.registry.get_team_public_key_fresh(domain, name)
+                from awid.protected_membership import observe_team_protection
+
+                protection = await observe_team_protection(self.registry, c.authority_id)
+                team_key = protection.controller_did_key
             elif c.authority_kind == "namespace_controller":
                 if c.authority_id != c.authority_domain:
                     raise SignerRefused("scope_refused")
@@ -120,7 +124,7 @@ class IndependentAuthority:
             ) from None
         if team_key != self.custody.team_key_did:
             raise SignerRefused("authority_changed")
-        return _Current(self, context, purpose, started + 60)
+        return _Current(self, context, purpose, started + 60, protection)
 
     async def _own_human(self, principal, domain):
         resolved = await self.registry.resolve_key_fresh(principal)
@@ -145,7 +149,7 @@ class IndependentAuthority:
 
 
 class _Current:
-    def __init__(self, authority, context, purpose, deadline):
+    def __init__(self, authority, context, purpose, deadline, protection=None):
         self.authority, self.context, self.purpose, self.deadline = (
             authority,
             context,
@@ -154,6 +158,7 @@ class _Current:
         )
         self.team_key_did = authority.custody.team_key_did
         self.self_deadline = None
+        self.protection = protection
 
     async def _check(self, tx, actor, *, hold):
         if type(actor) not in {AdmittedHuman, RestrictedRequester, ReceiptReader}:
@@ -193,6 +198,13 @@ class _Current:
         await self._check(tx, actor, hold=False)
 
     def require_fresh(self):
+        if self.protection is not None:
+            from awid.protected_effect import EffectRefused
+
+            try:
+                self.protection.require_fresh()
+            except EffectRefused:
+                raise SignerRefused("evidence_unavailable") from None
         now = self.authority.timer()
         if now > self.deadline or (self.self_deadline is not None and now >= self.self_deadline):
             raise SignerRefused("evidence_unavailable")

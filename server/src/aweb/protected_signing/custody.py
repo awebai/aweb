@@ -28,9 +28,10 @@ from awid.signing import sign_message
 
 
 from .legacy_delivery import deliver_legacy
+from .effects import ProtectedEffectCustody
 
 
-class ProtectedControllerCustody:
+class ProtectedControllerCustody(ProtectedEffectCustody):
     def __init__(
         self,
         *,
