@@ -141,8 +141,7 @@ async def test_resolution_preserves_original_evidence_and_rolls_back_expired_pro
     if phase == "none":
         assert response.json() == {"deadline": 60.0}
     recorded = await env.stack.aweb_db.fetch_value("SELECT certificate_id FROM {{tables.agents}} WHERE agent_id=$1", agent_id)
-    # A completed fresh resolution may precede a later caller-side delay.
-    expected = env.member.certificate_id if phase in {"none", "resolution-return"} else "previous-certificate"
+    expected = env.member.certificate_id if phase == "none" else "previous-certificate"
     assert recorded == expected
 
 
