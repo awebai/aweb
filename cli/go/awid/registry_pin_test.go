@@ -169,3 +169,46 @@ func TestIDStatusRouteToAnUntrustedOriginIsPinned(t *testing.T) {
 		t.Fatal("the built-in default must keep the caller's client")
 	}
 }
+
+// The isolated-development mode of the federation contract also applies to
+// the pinned registry client: with APP_ENV=development and
+// AWEB_FEDERATION_TEST enabled, an isolated host (loopback, localhost, *.test,
+// a single label) is reachable over http. Production refuses the same origin
+// when either variable is missing, and no other host gains anything.
+func TestPinnedRegistryAdmitsIsolatedHostsOnlyInIsolatedDevelopment(t *testing.T) {
+	server := jsonNamespaceServer(t)
+	get := func() error {
+		client := NewAWIDRegistryClient(nil, nil)
+		_, _, err := client.GetNamespaceAt(context.Background(), server.URL, "example.com")
+		return err
+	}
+	t.Setenv("AWID_REGISTRY_URL", "")
+
+	t.Setenv("APP_ENV", "development")
+	t.Setenv("AWEB_FEDERATION_TEST", "1")
+	if err := get(); err != nil {
+		t.Fatalf("isolated development must reach a loopback registry: %v", err)
+	}
+
+	for name, env := range map[string][2]string{
+		"no APP_ENV":            {"", "1"},
+		"production":            {"production", "1"},
+		"no federation test":    {"development", ""},
+		"federation test false": {"development", "false"},
+	} {
+		t.Setenv("APP_ENV", env[0])
+		t.Setenv("AWEB_FEDERATION_TEST", env[1])
+		if err := get(); err == nil {
+			t.Fatalf("%s: a loopback registry was reached outside isolated development", name)
+		}
+	}
+
+	t.Setenv("APP_ENV", "development")
+	t.Setenv("AWEB_FEDERATION_TEST", "1")
+	var lookups atomic.Int32
+	client := NewAWIDRegistryClient(nil, nil)
+	client.Resolver.pinnedHTTPClient = newPinnedRegistryHTTPClient(staticLookup(map[string][]string{"registry.example.com": {"10.0.0.1"}}, &lookups), false, nil)
+	if _, _, err := client.GetNamespaceAt(context.Background(), "http://registry.example.com", "example.com"); err == nil {
+		t.Fatal("isolated development must not admit a non-isolated host")
+	}
+}

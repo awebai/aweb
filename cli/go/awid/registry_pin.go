@@ -51,18 +51,24 @@ func newPinnedRegistryHTTPClient(lookup registryHostLookup, allowNonPublicTest b
 		if err != nil {
 			return nil, err
 		}
+		isolated := isolatedRegistryDevelopment(host)
+		var values []string
 		if _, err := netip.ParseAddr(host); err == nil {
-			return nil, fmt.Errorf("registry origin learned from DNS must be named by host, not address %s", host)
+			if !isolated {
+				return nil, fmt.Errorf("a registry not named by AWID_REGISTRY_URL or the command line must be named by host, not address %s", host)
+			}
+			values = []string{host}
+		} else {
+			answers, err := lookup(ctx, host)
+			if err != nil {
+				return nil, fmt.Errorf("resolve registry host %s: %w", host, err)
+			}
+			values = make([]string, len(answers))
+			for i, answer := range answers {
+				values[i] = answer.String()
+			}
 		}
-		answers, err := lookup(ctx, host)
-		if err != nil {
-			return nil, fmt.Errorf("resolve registry host %s: %w", host, err)
-		}
-		values := make([]string, len(answers))
-		for i, answer := range answers {
-			values[i] = answer.String()
-		}
-		approved, err := validateFederationResolvedIPs(values, allowNonPublicTest)
+		approved, err := validateFederationResolvedIPs(values, allowNonPublicTest || isolated)
 		if err != nil {
 			return nil, fmt.Errorf("registry host %s resolves to an address that is not public (%w); for a private self-hosted registry, name it with AWID_REGISTRY_URL", host, err)
 		}
@@ -83,10 +89,27 @@ func newPinnedRegistryHTTPClient(lookup registryHostLookup, allowNonPublicTest b
 type httpsOnlyRoundTripper struct{ next http.RoundTripper }
 
 func (h httpsOnlyRoundTripper) RoundTrip(req *http.Request) (*http.Response, error) {
-	if req.URL == nil || req.URL.Scheme != "https" {
+	if req.URL == nil || (req.URL.Scheme != "https" && !isolatedRegistryDevelopment(req.URL.Hostname())) {
 		return nil, errors.New("a registry not named by AWID_REGISTRY_URL or the command line must use https")
 	}
 	return h.next.RoundTrip(req)
+}
+
+// isolatedRegistryDevelopment is the federation contract's isolated-development
+// mode applied to registry dials: APP_ENV=development and AWEB_FEDERATION_TEST
+// both set, and an isolated host (a loopback literal, localhost, *.localhost,
+// *.test, *.test.local or a single label). Only then may a registry not chosen
+// by the operator be reached over http or at a non-public address.
+func isolatedRegistryDevelopment(host string) bool {
+	if !strings.EqualFold(strings.TrimSpace(os.Getenv("APP_ENV")), "development") {
+		return false
+	}
+	switch strings.ToLower(strings.TrimSpace(os.Getenv("AWEB_FEDERATION_TEST"))) {
+	case "1", "true", "yes", "on":
+	default:
+		return false
+	}
+	return isIsolatedFederationHost(host)
 }
 
 // registryOriginKey is the comparable form of a registry origin, or "" when
