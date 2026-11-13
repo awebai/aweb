@@ -40,6 +40,8 @@ def test_private_effect_round_trip_preserves_complete_delivery_and_public_artifa
     assert public["delivery"] == {"mode": "service_owned", "state": "applied", "reference": {
         "operation_id": effect.operation_id, "artifact_sha256": effect.artifact_sha256}}
     assert "retained-auth" not in str(public) and "retained-proof" not in str(public)
+    assert "retained-auth" not in repr(restored) and "retained-proof" not in repr(restored)
+    assert "retained-auth" not in repr(restored.delivery)
 
 
 def test_retained_headers_are_snapshotted_and_not_mutable_through_a_caller():

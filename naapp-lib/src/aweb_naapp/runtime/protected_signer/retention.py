@@ -11,7 +11,7 @@ from __future__ import annotations
 import base64
 import re
 from collections.abc import Mapping
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from types import MappingProxyType
 from typing import TYPE_CHECKING, Any, Protocol
@@ -37,8 +37,8 @@ class FrozenDelivery:
     audience: str
     method: str
     path: str
-    headers: Mapping[str, str]
-    body: bytes
+    headers: Mapping[str, str] = field(repr=False)
+    body: bytes = field(repr=False)
 
     def __post_init__(self):
         require_canonical_server_origin(self.audience)
@@ -78,8 +78,8 @@ class RetainedEffect:
     signature: bytes
     artifact_sha256: str
     expires_at: datetime
-    delivery: FrozenDelivery
-    attestation: str
+    delivery: FrozenDelivery = field(repr=False)
+    attestation: str = field(repr=False)
 
     def __post_init__(self):
         _aware(self.expires_at)
