@@ -303,8 +303,13 @@ async def world(tmp_path, human, coordination, test_db_factory):
     async def current_key(team):
         return (await runtime.team_cache().get(team)).team_did_key
 
+    async def current_authority(team):
+        from awid.protected_membership import observe_team_protection
+        return await observe_team_protection(runtime.registry_client(), team)
+
     verifier = OwnerActVerifier(
-        scope="example", audience=ORIGIN, acts=HUMAN_ROLE_ACTS, team_key_for=current_key
+        scope="example", audience=ORIGIN, acts=HUMAN_ROLE_ACTS, team_key_for=current_key,
+        team_authority_for=current_authority,
     )
     owner = TeamOwner(member.team_key, verifier, member.team_id, current_key)
     effect = SqlEffect(runtime, human[2], applied=asyncio.Event())
