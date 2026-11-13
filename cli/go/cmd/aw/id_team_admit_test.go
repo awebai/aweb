@@ -61,14 +61,15 @@ func admitTestProfile(t *testing.T, teamKey ed25519.PrivateKey, humans ...string
 // freezes the unsigned certificate of what was sent and signs it with
 // signKey on execute. sign changes what it signs (see the cases).
 type admitService struct {
-	mu       sync.Mutex
-	server   *httptest.Server
-	signKey  ed25519.PrivateKey
-	tamper   string
-	sent     map[string]any
-	artifact map[string]any
-	prepares int
-	executes int
+	serviceOwned bool
+	mu           sync.Mutex
+	server       *httptest.Server
+	signKey      ed25519.PrivateKey
+	tamper       string
+	sent         map[string]any
+	artifact     map[string]any
+	prepares     int
+	executes     int
 }
 
 func newAdmitService(t *testing.T, signKey ed25519.PrivateKey) *admitService {
@@ -144,10 +145,12 @@ func (s *admitService) committed() []byte {
 	if s.tamper == "key" {
 		_, key, _ = ed25519.GenerateKey(nil)
 	}
-	raw, _ := json.Marshal(map[string]any{"state": "committed", "result": map[string]any{
-		"signing":   base64.StdEncoding.EncodeToString(signing),
-		"signature": base64.StdEncoding.EncodeToString(ed25519.Sign(key, signing)),
-	}})
+	signature := ed25519.Sign(key, signing)
+	var result any = map[string]any{"signing": base64.StdEncoding.EncodeToString(signing), "signature": base64.StdEncoding.EncodeToString(signature)}
+	if s.serviceOwned {
+		result = appliedTestResult(s.sent["operation_id"].(string), signing, signature)
+	}
+	raw, _ := json.Marshal(map[string]any{"state": "committed", "result": result})
 	return raw
 }
 

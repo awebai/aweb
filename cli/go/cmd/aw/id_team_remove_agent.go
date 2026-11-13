@@ -130,7 +130,7 @@ func signedRevocation(result []byte, prepared *handoff.Prepared, controllerDID s
 	invalid := func(format string, args ...any) error {
 		return withErrorCode("signed_request_invalid", fmt.Errorf("the signed revocation is not the one aw requested: "+format, args...))
 	}
-	signing, signature, reason := signedResult(result)
+	signing, signature, reason := retainedSignedResult(result, prepared)
 	if reason != "" {
 		return invalid("%s", reason)
 	}
