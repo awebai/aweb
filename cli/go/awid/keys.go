@@ -179,11 +179,6 @@ func writePublicKey(path string, pub ed25519.PublicKey) error {
 	return nil
 }
 
-// SigningKeyPath returns the path to an agent's signing key file.
-func SigningKeyPath(keysDir, address string) string {
-	return filepath.Join(keysDir, addressToKeyFileBase(address)+".signing.key")
-}
-
 // PublicKeyPath returns the sibling public-key PEM path for a signing key path.
 func PublicKeyPath(signingKeyPath string) string {
 	return strings.TrimSuffix(signingKeyPath, ".key") + ".pub"

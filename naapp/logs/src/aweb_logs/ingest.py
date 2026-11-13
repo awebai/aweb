@@ -42,6 +42,7 @@ from fastapi import HTTPException, Request
 
 from aweb_logs.chain import artefact_json, format_time
 from aweb_logs.ledger import Conflicted, LogsSigner, OriginMismatch, append
+from aweb_logs.purge_ledger import PurgeLedger
 
 # How far an event's occurred_at may lead logs' clock: the delivery
 # credential's own replay window.
@@ -133,9 +134,11 @@ class Ingestor:
 
     def __init__(
         self, runtime: NaappRuntime, signer: LogsSigner, catalog: Catalog, quota: ClientQuota,
+        purges: PurgeLedger,
     ) -> None:
         self.runtime = runtime
         self.signer = signer
+        self.purges = purges
         self.catalog = catalog
         self.quota = quota
         self.resolver = runtime.hook_resolver()
@@ -212,11 +215,15 @@ class Ingestor:
                 member=event.fields["producer"]["certificate_id"], size=len(body), now=received_at,
             )
 
+        # An event purged before the content database was restored is
+        # appended purged again: its content never returns by redelivery.
+        purge_act = await self.purges.act(event.team_id, UUID(event.event_id))
         try:
             result = await append(
                 self.runtime.db(), self.signer, event=event, signing_bytes=signing,
                 signature=content["signature"], key_evidence=evidence, received_at=received_at,
                 before_append=charge if event.producer_kind == "client" else None,
+                purge_act=purge_act,
             )
         except OriginMismatch as exc:
             raise IngestRefused(503, "chain_origin_mismatch") from exc

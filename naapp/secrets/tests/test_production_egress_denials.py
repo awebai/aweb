@@ -43,7 +43,9 @@ async def scoped_request(root, url, host, port):
     policy = Policy.from_body({**POLICY_BODY, "approval": "none", "approvers": []})
     async with db.transaction() as tx:
         await records.revoke_grant(tx, installed["installation_id"], "grt_root_dispatch")
-        await records.create_policy(tx, installed["installation_id"], policy)
+        await records.create_policy(
+            tx, installed["installation_id"], policy, team_id=member.team_id
+        )
         await records.create_grant(
             tx,
             installed["installation_id"],

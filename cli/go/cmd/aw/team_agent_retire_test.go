@@ -176,7 +176,7 @@ func (s *retirementStores) retireVerified(t *testing.T, typedAddress string) (te
 	if err != nil {
 		t.Fatalf("aweb.New: %v", err)
 	}
-	registry, err := newConfiguredRegistryClient(nil, "")
+	registry, err := newConfiguredRegistryClient(nil)
 	if err != nil {
 		t.Fatalf("registry client: %v", err)
 	}

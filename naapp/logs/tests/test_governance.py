@@ -25,9 +25,8 @@ from .reader_world import (
     LOGS,
     World,
     count,
-    designation,
+    held_reader,
     outbox,
-    slot,
     world_fixture,  # noqa: F401
 )
 from .test_read_store import AGENT, secret_use
@@ -125,7 +124,7 @@ async def test_a_shortened_retention_is_recorded_and_its_purges_name_that_record
         30,
     )
     assert entry["authority"] == "owner_act"
-    assert await apply_retention(world.db, now=NOW, logs_origin=LOGS) == 1
+    assert await apply_retention(world.db, world.purges, now=NOW, logs_origin=LOGS) == 1
     assert await purged(world) == {1: f"logs.retention.set:{event_id}", 2: None}
 
 
@@ -186,11 +185,11 @@ async def test_a_hold_on_everything_stops_retention_and_erasure_until_released(w
     await appended(world, secret_use(seq=1), age=timedelta(days=45))
     await hold(world, "hold-1")
     await set_retention(world, "all", 30)
-    assert await apply_retention(world.db, now=NOW, logs_origin=LOGS) == 0
+    assert await apply_retention(world.db, world.purges, now=NOW, logs_origin=LOGS) == 0
     with pytest.raises(GovernanceRefused):
         await erase(world, erase_scope="range", chain_epoch=1, team_seq_first=1, team_seq_last=1)
     await release(world, "hold-1")
-    assert await apply_retention(world.db, now=NOW, logs_origin=LOGS) == 1
+    assert await apply_retention(world.db, world.purges, now=NOW, logs_origin=LOGS) == 1
     assert [entry["act"] for entry in await governance(world)] == [
         "logs.legal_hold.set",
         "logs.retention.shortened",
@@ -203,7 +202,7 @@ async def test_a_hold_on_an_actor_keeps_only_that_actors_events(world: World):
     await appended(world, secret_use(seq=2, actor=OTHER_AGENT), age=timedelta(days=45))
     await hold(world, "hold-1", actor_ref=AGENT)
     await set_retention(world, "all", 30)
-    assert await apply_retention(world.db, now=NOW, logs_origin=LOGS) == 1
+    assert await apply_retention(world.db, world.purges, now=NOW, logs_origin=LOGS) == 1
     after = await purged(world)
     assert after[1] is None and after[2] is not None
 
@@ -215,12 +214,8 @@ async def test_a_hold_is_recorded_and_owed_with_no_target_while_a_designation_is
     await hold(world, "hold-1")
     assert [entry["act"] for entry in await governance(world)] == ["logs.legal_hold.set"]
     assert len(await outbox(world)) == 1
-    scope = await slot(world)
-    signing, signature = world.owner.sign("app-role.designate", designation(scope))
     with pytest.raises(Refused) as refused:
-        await world.designations.designate(
-            signing=signing, signature=signature, scope=scope, contact="reader@example.com"
-        )
+        await held_reader(world)
     assert refused.value.code == "audit_target_unavailable"
     assert [entry["act"] for entry in await governance(world)] == ["logs.legal_hold.set"]
 
@@ -233,12 +228,8 @@ async def test_a_hold_is_recorded_while_logs_own_delivery_is_stalled(world: Worl
     await hold(world, "hold-2")
     assert [entry["hold_id"] for entry in await governance(world)] == ["hold-1", "hold-2"]
     assert len(await outbox(world)) == 2
-    scope = await slot(world)
-    signing, signature = world.owner.sign("app-role.designate", designation(scope))
     with pytest.raises(Refused) as refused:
-        await world.designations.designate(
-            signing=signing, signature=signature, scope=scope, contact="reader@example.com"
-        )
+        await held_reader(world)
     assert refused.value.code == "audit_delivery_stalled"
 
 
@@ -266,7 +257,7 @@ async def test_retention_never_purges_logs_own_governance_records(world: World):
     await appended(world, secret_use(seq=1), age=timedelta(days=2))
     await set_retention(world, "all", 1)
     later = datetime.now(UTC) + timedelta(days=3)
-    assert await apply_retention(world.db, now=later, logs_origin=LOGS) == 2
+    assert await apply_retention(world.db, world.purges, now=later, logs_origin=LOGS) == 2
     rows = await world.db.fetch_all(
         "SELECT producer_origin = $2 AS own, purge_act IS NOT NULL AS purged"
         " FROM {{tables.chain_events}} WHERE team_id = $1 ORDER BY team_seq",
@@ -315,7 +306,7 @@ async def test_an_erasure_counts_what_it_purged_while_retention_runs(world: Worl
     range_ = {"erase_scope": "range", "chain_epoch": 1, "team_seq_first": 1, "team_seq_last": 2}
     erasing = asyncio.create_task(erase(world, **range_))
     await recording.wait()
-    retained = await apply_retention(world.db, now=NOW, logs_origin=LOGS)
+    retained = await apply_retention(world.db, world.purges, now=NOW, logs_origin=LOGS)
     proceed.set()
     erased = await erasing
     assert (erased, retained) == (2, 0)

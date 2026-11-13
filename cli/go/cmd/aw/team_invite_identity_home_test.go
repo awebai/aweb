@@ -225,7 +225,7 @@ func TestSelectedIdentityControllerInviteAndAcceptRoundTrip(t *testing.T) {
 						w.WriteHeader(400)
 						return
 					}
-					if cert.MemberDIDKey != did || cert.MemberDIDAW != stable || cert.Team != team || awid.VerifyTeamCertificate(cert, controller.Public().(ed25519.PublicKey)) != nil {
+					if cert.MemberDIDKey != did || cert.MemberDIDAW != stable || cert.Team != team || awid.CheckDecodedTeamCertificate(cert, awid.ComputeDIDKey(controller.Public().(ed25519.PublicKey))) != nil {
 						t.Error("accepted certificate did not bind the selected principal to the selected controller team")
 						w.WriteHeader(400)
 						return

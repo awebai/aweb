@@ -17,6 +17,10 @@ class LogsSettings(NaappSettings, HookEgressSettings):
     model_config = SettingsConfigDict(env_prefix="LOGS_", env_file=".env", extra="ignore")
 
     app_id: str = Field(default="logs")
+    # The purge ledger's database (design §B6): one tombstone per purged event,
+    # reapplied before Logs serves. It must be a database of its own, never
+    # restored from a backup of the content database.
+    purge_ledger_database_url: str = Field(repr=False)
     # The origin a designated reader's browser uses (design §B5): passkeys are
     # bound to its hostname and its session cookie never reaches the agent origin.
     console_origin: str

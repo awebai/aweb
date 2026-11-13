@@ -42,6 +42,7 @@ from aweb_naapp.console.assets import console_assets_router as console_assets_ro
 from aweb_naapp.hooks.strictjson import Refused
 from aweb_naapp.runtime.approvals import AuthenticationFailed
 from aweb_naapp.runtime.credential_audit import GovernanceUnavailable
+from aweb_naapp.runtime.installation import InstallationRefused
 from aweb_naapp.runtime.passkeys import ContactChangeRefused, EnrolmentRefused, Passkeys
 
 if TYPE_CHECKING:
@@ -340,10 +341,12 @@ class LoginLimiter:
         self._volume_retention = volume_retention
         self._clock = clock
 
-    async def admit(self, request: Request, scope: str) -> None:
+    async def admit(self, request: Request, scope: str, *, bucket: str = LOGIN_BUCKET) -> None:
+        if not isinstance(bucket, str) or not bucket or len(bucket) > 128:
+            raise ValueError("a limiter bucket needs a bounded name")
         now = self._clock()
         charge = ratelimit.Charge(
-            bucket=LOGIN_BUCKET,
+            bucket=bucket,
             # The client's identity, hashed: bounded whatever a proxy header holds.
             key=_sha256(self._identity.of(request)).hex(),
             capacity=self._limit,
@@ -423,6 +426,10 @@ class ConsoleRoute(APIRoute):
                 response = JSONResponse(
                     {"detail": error.detail}, error.status_code, headers=error.headers
                 )
+            except InstallationRefused as error:
+                # Translate after the handler's transaction has unwound, keeping
+                # the provider's stable code/status and never its private cause.
+                response = JSONResponse({"detail": error.code}, error.status)
             except RequestValidationError as error:
                 detail = [
                     {"loc": problem["loc"], "type": problem["type"]} for problem in error.errors()

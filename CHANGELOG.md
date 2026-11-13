@@ -2,6 +2,125 @@
 
 ## Unreleased
 
+- `aw id endorse --no-wait` shows the approval page and exits instead of
+  waiting for the human: `--json` reports `operation_id`, `state`, `page`,
+  `digest`, `fingerprint` and `expires_at`. Running the same command again
+  with the same `--operation-id` resumes it, and once the human has approved,
+  finishes the endorsement, registering and reading back the certificate.
+  `--no-browser` reports the page without opening a browser, for setup an
+  agent drives.
+
+- `aw id create --no-address --registry R --identity-home H` creates a
+  registered identity with no address: a fresh self-custodial key registers
+  its own did:aw at R and is read back, with no namespace controller key
+  involved. It is how a deployment root is created before a human endorses
+  it. Creation is resumable: the key is kept privately before anything is
+  sent, so a rerun completes an interrupted creation with the same key. A
+  home that already holds an identity, or anything else, refuses
+  `identity_exists`. `--json` carries `did_aw` and `did_key`.
+
+- aw no longer blind-retries a `503` that carries `Retry-After`: the request
+  returns at once with the service's hint, since a retry before it cannot
+  succeed and repeats what the service asked to wait for. A bare `503` keeps
+  its three brief retries. A protected `aw app role revoke` waits out an
+  explicit delta-seconds hint on its installation lookup within that step's
+  own two-minute bound, then reads again; the prepare that follows has a
+  fresh two-minute bound of its own, so the act can wait up to about four
+  minutes on hints, and the command's own earlier deadline or cancellation
+  always ends it first. An inactive, mismatched or otherwise refused
+  installation still refuses at once, and nothing is prepared until the
+  lookup succeeds.
+
+- aweb server keeps a registry throttling hint on `503 identity_binding_unavailable`
+  responses as `Retry-After`, including authenticated installation lookups.
+  Identity mismatches and ordinary dependency failures retain their existing
+  refusal behavior; the server adds no wait or retry.
+
+- `aw id team admission-policy --team T --protected-profile P` reads a
+  protected team's agent admission policy from its protected service, proving
+  this identity's key. `--json` carries the mode and the complete policy,
+  including the version and digest an admission binds; aw checks the digest
+  against the policy itself. A protected team without a policy refuses
+  `admission_policy_missing`, and a read that cannot be answered refuses
+  `receipt_unavailable`, never "no policy".
+- `aw id team admit` lets a deployment's endorsed root admit an agent to a
+  protected team through its protected service, with no human present, within
+  the admission policy version and digest the caller names. The caller supplies
+  `--operation-id`; the same id with the same inputs resumes the admission and
+  returns its original certificate, and changed inputs refuse
+  `operation_conflict`. The membership certificate is written to
+  `--certificate-out` only once it is the one the service froze, signed by the
+  team key the profile pins, for exactly the requested member.
+- `aw id endorse` asks a human, through the protected service, to endorse this
+  registered agent as the deployment's root for the listed teams. Before the
+  approval page is shown, aw compares the admission policy the service froze
+  with its own read of every team's policy. Once the human approves, aw
+  verifies the signed certificate, registers it with the root's own key at the
+  pinned registry on the human's verified chain, and reads it back.
+
+- `aw id team add-member` registers the certificate at the team namespace's
+  own registry: the one `AWID_REGISTRY_URL` names, or else the one the
+  namespace's `_awid` record names, as the namespace commands do. A member
+  address is looked up at its own namespace's registry the same way. When DNS
+  cannot answer, nothing is sent. It previously used the default registry
+  whatever the team's namespace said.
+- aweb server: `AWEB_APP_INTERNAL_ORIGINS` (a JSON list of exact HTTPS app
+  origins) with `AWEB_APP_INTERNAL_CIDR` (their one network) lets a self-hosted
+  server install apps that run on internal addresses beside it. Only listed
+  origins, and only addresses inside that network, are fetched as internal;
+  every other app origin stays public. Unset, behaviour is unchanged.
+- Naapp runtime publishes compatible v2/v3 manifests from one v2 template and
+  an owner-role declaration with a configured human origin. Its shared anonymous
+  owner-act route authenticates before app reads and commits the single-use act,
+  effect and governance together, rechecking original authority deadlines after
+  effect waits. Existing exact v2 installation pins remain readable.
+- **An operator can stop the server delivering federated mail and chat to
+  other servers, or limit it to listed servers.** `AWEB_FEDERATION_OUTBOUND=off`
+  delivers to no other server, and a comma-separated list of origins delivers
+  only to those. A refused send answers `403` naming the setting, before the
+  server resolves or connects to the origin. Unset, delivery is unchanged. An
+  entry that is not an origin refuses start-up.
+
+- Chat sends return not-found when the sender leaves the session after target
+  resolution, matching the response for an absent session.
+
+- Secrets keeps installation-scoped state separate by team, even when two teams
+  report the same installation id. Upgrading existing state requires an
+  unambiguous retained team binding; missing or conflicting bindings stop the
+  migration for an explicit attribution decision.
+- Concurrent team instructions and roles version creation allocates distinct
+  version numbers under the same per-team lock as activation.
+
+- The Python registry client checks and pins the addresses of DNS-selected
+  registry overrides, retaining the original hostname for TLS. Registry list
+  scans stop after 500 pages with an explicit error instead of accumulating
+  unbounded results.
+
+- **`aw chat send-and-wait` and `aw chat listen` keep waiting when the server
+  ends the chat stream at its 300-second lifetime cap.** A wait extended by a
+  read receipt or a hang-on, or given with `--wait` above 300, used to end
+  then as a timeout while the other agent was still writing. The client now
+  reopens the stream after the last message or read receipt it saw, so nothing
+  is lost or presented twice, until its own wait ends. The server cap is
+  unchanged.
+
+- **One unreadable file in the `aw wake` registry no longer stops waking for
+  every other registered home.** A registry file that does not parse, or names
+  an empty or relative home, is skipped and logged; `aw wake status` (text and
+  `--json` as `registration_faults`) lists it, with the daemon running or down,
+  and `aw wake register` for another home succeeds beside it. A home whose own
+  file became unreadable keeps its last-good delivery and shows the error.
+
+- **A team deployment answers a member of a private team it does not serve
+  with 403 "team <id> is not served by this server".** A server that reads the
+  registry with member keys, and holds no registry service token, used to
+  answer such a connect with 503 and tell the operator to install
+  `AWID_SERVICE_TOKEN`, which a team deployment must never hold because it
+  reads every private team's roster. When the registry refuses a member key
+  for a team the server does serve, the 503 now names that team and the
+  current member certificate its controller must issue. Only a server
+  configured with the service token is still told to fix that token.
+
 - Human handoffs retain their authenticated team for credential collection and
   console session requests. Existing key-bound console sessions without retained
   team context are refused after migration and require signing in again; there
@@ -83,6 +202,15 @@
   the setting and the limit. The shipped `.env.example` set
   `LIBRARY_AUTH_CACHE_TTL_SECONDS=600`; a deployment made from it must lower
   it to 60 or remove the line before upgrading.
+- **The server reads its database URL from a file.** `AWEB_DATABASE_URL_FILE`
+  names a file that holds the URL, so the database password need not be in
+  the environment. Setting it together with `AWEB_DATABASE_URL` or
+  `DATABASE_URL` is refused at startup.
+- **A Compose file for a customer's own server.**
+  `server/docker-compose.customer.yml` runs aweb with PostgreSQL and Redis
+  against the public AWID registry, with ordinary member keys mounted
+  read-only and no service token or registry of its own. The self-hosting
+  guide's customer-server section shows how to start it.
 - **A hook delivery from a client is checked with the one team-certificate
   check, in Python and in Go.** The receiver (`aweb_naapp.hooks.delivery`,
   `cli/go/hookevent`) takes the team's revoked and registered certificate ids

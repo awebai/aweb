@@ -120,6 +120,7 @@ def main():
         runner = docker('run', '-d', '--init', '--user', '1000:1000', '--network', token, '--dns', dns_ip,
                         '--dns-search', '.',  # Do not expand reserved fixtures using the host's search suffix.
                         '--add-host', '127.0.0.1.nip.io:127.0.0.1',
+                        '--add-host', 'signer.example.com:127.0.0.1',
                         '--name', token + '-runner', '--cpus', '2', '--memory', '8g', '--pids-limit', '2048',
                         '-e', 'PGHOST=127.0.0.1', '-e', 'PGUSER=postgres', '-e', 'PGPASSWORD=postgres',
                         '-e', 'REDIS_URL=redis://127.0.0.1:6379/0',

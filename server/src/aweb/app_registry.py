@@ -13,6 +13,7 @@ from pathlib import Path
 from typing import Any
 from urllib.parse import urlparse
 
+from aweb_naapp.egress import canonical_url
 from aweb_naapp.manifest import ManifestError, load_manifest
 from aweb_naapp.manifest_keys import check_manifest_keys
 from awid.team_ids import parse_team_id
@@ -155,6 +156,15 @@ def normalize_origin(value: str) -> str:
     return f"{scheme}://{host_out}{f':{port}' if port is not None else ''}"
 
 
+def canonical_app_origin(value: str) -> str:
+    """The exact HTTPS origin an app's manifest is fetched from and compared as.
+
+    Refuses (ValidationError, EgressRefused or ValueError) anything but an
+    HTTPS origin the shared egress can address."""
+    canonical = canonical_url(normalize_origin(value) + "/")
+    return "https://" + canonical.authority
+
+
 def normalize_digest(value: str) -> str:
     digest = (value or "").strip().lower()
     if not DIGEST_RE.match(digest):
@@ -169,12 +179,6 @@ def normalize_app_version(value: str) -> str:
     if len(version) > 128:
         raise ValidationError("app_version is too long")
     return version
-
-
-def normalize_manifest_version(value: int) -> int:
-    if value <= 0:
-        raise ValidationError("manifest_version must be positive")
-    return value
 
 
 def normalize_scopes(values: list[str]) -> list[str]:

@@ -5,7 +5,7 @@ from typing import Literal
 
 from fastapi import APIRouter, Depends, Header, HTTPException, Query, Request
 from fastapi.responses import JSONResponse
-from pydantic import BaseModel, ConfigDict, Field, field_validator, model_serializer, model_validator
+from pydantic import BaseModel, ConfigDict, Field, model_serializer, model_validator
 
 from awid_service.deps import get_db as get_db_infra
 from awid_service.id_tree_clock import app_clock, serialization_time
@@ -23,7 +23,6 @@ from awid.log import (
 from awid.e2ee_keys import validate_encryption_key_assertion
 from awid.signing import verify_did_key_signature
 from awid.pagination import encode_cursor, validate_pagination_params
-from awid.signing import canonical_json_bytes
 from awid_service.routes.dns_addresses import (
     AddressDeliveryResponse,
     AddressListResponse,

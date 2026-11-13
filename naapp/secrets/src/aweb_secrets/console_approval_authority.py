@@ -7,7 +7,7 @@ Reconciliation also reuses this authority for mint/settle/presentation.
 from datetime import UTC, datetime
 
 from aweb_naapp.console import ConsoleSession, KeyBoundConsoleSession, session_is_current
-from aweb_naapp.roles import PrincipalKey, has_role, hold_role
+from aweb_naapp.roles import PrincipalKey
 from aweb_naapp.runtime.approvals import ApprovalDecisionFence
 from aweb_naapp.runtime.installation import AdmittedInstallation
 from aweb_naapp.runtime.passkeys import PreparedCurrentApprovers
@@ -15,7 +15,8 @@ from fastapi import HTTPException
 from pgdbm.core import TransactionManager
 
 from aweb_secrets.console import OwnerConsole
-from aweb_secrets.owners import OWNER_ROLE, is_owner_scope, owner_scope
+from aweb_secrets.owners import has_owner, is_owner_scope, owner_scope
+from aweb_secrets.owners import hold_owner as hold_owner_holding
 
 
 class ConsoleApprovalAuthority:
@@ -69,7 +70,9 @@ class ConsoleApprovalAuthority:
                 or owner.team_id != self.scope.team_id
                 or owner_scope(self.scope.installation_id, owner.team_id, owner.principal_did)
                 != self.owner_scope
-                or not await hold_role(tx, owner, OWNER_ROLE)
+                or not await hold_owner_holding(
+                    tx, owner, installation_id=self.scope.installation_id
+                )
             ):
                 raise HTTPException(403, "owner_required")
         else:
@@ -105,7 +108,9 @@ class ConsoleApprovalAuthority:
         ):
             raise HTTPException(401, "console_session_required")
         if self._require_owner:
-            if self._owner is None or not await has_role(tx, self._owner, OWNER_ROLE):
+            if self._owner is None or not await has_owner(
+                tx, self._owner, installation_id=self.scope.installation_id
+            ):
                 raise HTTPException(403, "owner_required")
         else:
             await self._approver(tx)

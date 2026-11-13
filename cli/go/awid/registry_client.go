@@ -499,7 +499,7 @@ func (c *RegistryClient) requestJSON(ctx context.Context, method, registryURL, p
 		if err != nil {
 			return err
 		}
-		resp, err := DoNoRedirectWithTimeout(c.httpClient(), req, APITimeout())
+		resp, err := DoNoRedirectWithTimeout(c.httpClientFor(registryURL), req, APITimeout())
 		if err != nil {
 			if shouldRetryRegistryTransportError(ctx, method, path, attempt, err) {
 				if waitErr := waitForRegistryRetry(ctx, attempt); waitErr != nil {

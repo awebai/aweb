@@ -64,7 +64,6 @@ def auth_dids(identity: IdentityAuth | MessagingAuth) -> list[str]:
     return dids
 
 
-
 def participant_dids(identity: IdentityAuth | MessagingAuth) -> list[str]:
     """One participant identity: global did:aw, otherwise local did:key.
 
@@ -142,10 +141,6 @@ async def resolve_identity_auth(request: Request, *, db=None) -> IdentityAuth:
     if envelope.version == 1:
         count_legacy_request_auth(request, "identity")
     return IdentityAuth(did_key=did_key, did_aw=did_aw, address=address)
-
-
-async def get_identity_auth(request: Request, db=Depends(get_db)) -> IdentityAuth:
-    return await resolve_identity_auth(request, db=db)
 
 
 async def lookup_identity_agent_context(

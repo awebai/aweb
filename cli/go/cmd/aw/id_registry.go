@@ -408,7 +408,7 @@ func executeIDNamespaceRotateController(opts idNamespaceRotateControllerOptions)
 		return idRotateOutput{}, err
 	}
 	registryURL := strings.TrimSpace(authority.RegistryURL)
-	registry := awid.NewAWIDRegistryClient(opts.HTTPClient, opts.TXTResolver)
+	registry := newAWIDRegistryClient(opts.HTTPClient, opts.TXTResolver)
 	result, err := registry.ReverifyNamespaceAt(ctx, registryURL, domain)
 	if err != nil {
 		return idRotateOutput{}, err
@@ -537,7 +537,7 @@ func resolveOptionalGlobalIdentityForLookup(workingDir string) (*awconfig.Resolv
 }
 
 func newRegistryClientWithPreferredBaseURL(baseURL string) (*awid.RegistryClient, error) {
-	registry, err := newConfiguredRegistryClient(nil, "")
+	registry, err := newConfiguredRegistryClient(nil)
 	if err != nil {
 		return nil, err
 	}

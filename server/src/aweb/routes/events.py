@@ -20,7 +20,6 @@ from fastapi.responses import StreamingResponse
 from pydantic import BaseModel, ConfigDict, Field
 
 from aweb.app_events import (
-    AppEventAuth,
     AppEventRecord,
     AppEventSubscription,
     current_app_events_for_agent,

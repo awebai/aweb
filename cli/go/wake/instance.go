@@ -170,6 +170,12 @@ func (r *instanceRunner) setConflictHome(home string) {
 	r.mu.Unlock()
 }
 
+func (r *instanceRunner) currentConflictHome() string {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	return r.conflictHome
+}
+
 func (r *instanceRunner) reactivateRegistration() {
 	r.mu.Lock()
 	// Binding updates reactivate when published. An identical active hook retry

@@ -33,8 +33,10 @@ if command == 'doctor':
     sys.exit(7)
 for number in (signal.SIGTERM, signal.SIGINT):
     signal.signal(number, lambda n, f: sys.exit(128 + n))
-(state / 'ready').write_text(json.dumps({'pid': os.getpid(), 'uid': os.geteuid(),
-                                       'cwd': os.getcwd()}))
+pending = state / 'ready.pending'
+pending.write_text(json.dumps({'pid': os.getpid(), 'uid': os.geteuid(),
+                               'cwd': os.getcwd()}))
+pending.replace(state / 'ready')
 while True:
     time.sleep(.05)
 """
@@ -87,13 +89,45 @@ def world(tmp_path, monkeypatch):
     )
     module_dir = Path(__file__).resolve().parents[1] / "e2e"
     bootstrap = f"""
-import os, sys
+import os, signal, sys
 from pathlib import Path
 sys.path.insert(0, {str(module_dir)!r})
 import runner_supervisor as supervisor
 supervisor.EGRESS_READY = Path({str(marker)!r})
 supervisor_pid = os.getpid()
+class AfterChildExit(bytes):
+    def __bool__(self):
+        # The guardian has exactly one child. Observe its exit without reaping
+        # it, so the real input write happens after all child readers close.
+        # A watchdog lets _worker kill/reap a broken child instead of orphaning
+        # it if the launch guard regresses. It does not order the race.
+        def overdue(*_):
+            raise TimeoutError('child did not refuse before registration input')
+        previous = signal.signal(signal.SIGALRM, overdue)
+        signal.alarm(3)
+        try:
+            os.waitid(os.P_ALL, 0, os.WEXITED | os.WNOWAIT)
+        finally:
+            signal.alarm(0)
+            signal.signal(signal.SIGALRM, previous)
+        return True
+real_write = os.write
+def observed_write(fd, data):
+    try:
+        return real_write(fd, data)
+    except BrokenPipeError:
+        if isinstance(data, AfterChildExit):
+            # Observe the real syscall failure without changing its control flow
+            # or writing the registration credential into fixture evidence.
+            (Path({str(state)!r}) / 'registration-broken-pipe').touch()
+        raise
+os.write = observed_write
 class ObservedPolicy(supervisor.Policy):
+    def request(self, body):
+        argv, data = super().request(body)
+        if data and (self.state / 'input-after-child-exit').exists():
+            data = AfterChildExit(data)
+        return argv, data
     def check(self):
         super().check()
         (self.state / 'installation-checked').touch()
@@ -129,6 +163,45 @@ async def test_private_registration_and_observable_command_exit(world, capfd):
     process = await launcher.launch(Invocation(policy.argv("doctor"), "unused"))
     assert await process.wait() == 7
     assert capfd.readouterr() == ("", "")
+
+
+async def test_worker_ready_is_published_only_after_complete_json(world):
+    policy, launcher, _ = world
+    binary = policy.prefix / "bin" / "aweb-secrets-runner"
+    pause = """
+real_open = Path.open
+def paused_open(path, *args, **kwargs):
+    stream = real_open(path, *args, **kwargs)
+    if path.name in ('ready', 'ready.pending') and kwargs.get('mode') == 'w':
+        (state / 'ready-write-open').touch()
+        while not (state / 'finish-ready-write').exists():
+            time.sleep(.01)
+    return stream
+Path.open = paused_open
+command = sys.argv[1]
+"""
+    binary.write_text(binary.read_text().replace("command = sys.argv[1]", pause))
+    process = await launcher.launch(Invocation(policy.argv("run"), "unused"))
+    identity = await process.identity()
+    try:
+        async with asyncio.timeout(5):
+            while not (policy.state / "ready-write-open").exists():
+                await asyncio.sleep(0.01)
+        assert not (policy.state / "ready").exists(), "an open, incomplete file is not ready"
+        (policy.state / "finish-ready-write").touch()
+        observed = await ready(policy.state / "ready")
+        assert (observed["pid"], observed["uid"], observed["cwd"]) == (
+            identity.pid,
+            os.geteuid(),
+            "/",
+        )
+    finally:
+        (policy.state / "finish-ready-write").touch()
+        await process.signal(signal.SIGTERM)
+        result = await process.wait()
+    assert result == 143
+    with pytest.raises(ProcessLookupError):
+        os.kill(identity.pid, 0)
 
 
 @pytest.mark.parametrize("number", [signal.SIGTERM, signal.SIGINT])
@@ -421,6 +494,24 @@ async def test_child_rechecks_marker_immediately_before_exec(world, operation):
     assert rc == 0 and stderr == b""
     assert frames[1] == {"exec": False}, "the child must refuse removal after the parent check"
     assert frames[2] == {"exit": 127}
+    assert not (policy.state / "registered").exists()
+    assert not (policy.state / "ready").exists()
+
+
+@LINUX
+async def test_registration_reports_refusal_when_child_exits_before_input_write(world):
+    policy, _, command = world
+    (policy.state / "remove-before-exec").touch()
+    (policy.state / "input-after-child-exit").touch()
+    rc, stdout, stderr = await supervisor_result(
+        command, {"command": "register", "code": secrets.token_urlsafe(24)}
+    )
+    frames = [json.loads(line) for line in stdout.splitlines()]
+    assert rc == 0 and stderr == b""
+    assert (policy.state / "registration-broken-pipe").exists(), "observe the real EPIPE"
+    assert len(frames) == 3, "identity must be followed by the child's exec and exit results"
+    assert frames[0]["uid"] == os.geteuid()
+    assert frames[1:] == [{"exec": False}, {"exit": 127}]
     assert not (policy.state / "registered").exists()
     assert not (policy.state / "ready").exists()
 

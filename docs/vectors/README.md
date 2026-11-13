@@ -28,7 +28,7 @@ The other tracked vector directories have disjoint, explicit purposes:
 | `naapp-lib/src/aweb_naapp/hooks/catalog-v1.json` | The byte-enforced package copy of `hook-catalog-v1.json`, shipped in the naapp-lib wheel so an installed app loads the catalog (`aweb_naapp.hooks.catalog.packaged_catalog`) with no repository checkout. |
 | `naapp-lib/tests/vectors/` | External cryptographic known-answer fixtures: `hpke-rfc9180-base-x25519.json` pins RFC 9180 upstream test-vector data for `test_crypto_hpke.py`; it is not an aweb public protocol vector. |
 | `naapp/folio/tests/vectors/` | App test snapshots; `app-emit-credential-v1.json` is byte-checked against its Go consumer authority. |
-| `naapp/library/tests/vectors/` | App snapshots plus Library blueprint input/output goldens; the app-emit snapshot is byte-checked. |
+| `naapp/library/tests/vectors/` | Library blueprint input/output goldens. |
 | `naapp/secrets/vectors/` | secrets' app-internal contracts: the `aweb.secrets.use-approval/1` request object under B2's prefix, and the transition-to-hook-action table checked against `hook-catalog-v1.json`. Each file is consumed by a test in `naapp/secrets/tests/`. |
 | `test-vectors/` | Repository-level policy, blueprint, app-manifest, and packaging fixtures governed by their own indexes. |
 
@@ -40,6 +40,17 @@ digest-pinned experimental app-manifest snapshots documented by
 identity/trust vector family.
 
 ## Accepting protocols awaiting client rollout
+
+### `protected-service-profile-v1.json` and `protected-service-request-v1.json` — implementation fixtures
+
+The [protected-service profile seam](../protected-service-profile.md) supplies
+one public operator-provisioned configuration and matching prepare/receipt
+covering-v2 proofs. They contain public synthetic identities and signatures,
+no private key material, and assert no deployed service or registry state.
+`server/tests/test_protected_service_profile.py` validates the profile and both
+request proofs against the shared strict configuration and reviewed verifier.
+CLI consumers use these same root bytes for cross-language parity. The fixed
+timestamp is exercised under the test clock; live proofs require current time.
 
 ### `human-assurance-v1.json` — frozen policy contract
 
@@ -137,7 +148,7 @@ checkpoints, rather than evidence those paths have already been implemented.
 
 ### `member-attribution-v1.json` — superseded, historical only
 
-The [old member attribution proposal](../member-attribution.md) is superseded
+The [old member attribution proposal](../drafts/member-attribution.md) is superseded
 by the identity tree. Its frozen bytes remain evidence, not a new email/SMTP
 implementation contract. No new consumer should implement this record.
 
@@ -489,8 +500,8 @@ The member-signed `aweb.app-task-authorization/1` (aweb-acgg.8): task body
 digests, domain-prefixed signing bytes and base64url signatures under fixed
 test keys, verification cases at a pinned clock with the bindings each is
 checked against and its expected refusal code, strict-JSON refusals, and task
-body bounds. The reference consumers are `aweb_naapp.runtime.task_requests` in
-`naapp-lib/tests/runtime/` and `aw`'s signer in `cli/go/awid/`. See [app task requests](../app-task-requests.md).
+body bounds. The reference consumer is `aweb_naapp.runtime.task_requests` in
+`naapp-lib/tests/runtime/`. See [app task requests](../app-task-requests.md).
 
 ### `app-request-credential-v1.json`
 
@@ -542,8 +553,8 @@ lockout cases are checked by `aweb_naapp.runtime.capability_links`. See
 
 `proposal_sha256` for page proposals (aweb-acgg.8): canonical bytes and
 digests over a record's collection, id and value, a bundle built from item
-digests, and value refusals. The reference consumers are `aweb_naapp.pages` in
-`naapp-lib/tests/pages/` and `cli/go/awid/`. See
+digests, and value refusals. The reference consumer is `aweb_naapp.pages` in
+`naapp-lib/tests/pages/`. See
 [the page format](../page-format.md) §5.
 
 ### `decision-display-v1.json`
@@ -950,7 +961,7 @@ reference duplication are mutation-tested failures.
 
 | Public fixture | Actual source consumers |
 |---|---|
-| `app-task-authorization-v1.json` | naapp-lib `test_task_request_vectors.py`; Go AWID `app_task_authorization_test.go`; Python aweb `test_c2_vectors.py` |
+| `app-task-authorization-v1.json` | naapp-lib `test_task_request_vectors.py`; Python aweb `test_c2_vectors.py` |
 | `app-request-credential-v1.json` | naapp-lib `test_task_request_vectors.py`, `test_app_credential_signer.py`; Python aweb `test_c2_vectors.py` |
 | `task-answer-v1.json` | naapp-lib `test_task_request_vectors.py`; Python aweb `test_c2_vectors.py`, including the ordered signed HTTP sequence |
 | `a2a-awid-publication-v1.json` | Python AWID `test_a2a_publication_route.py`; Go AWID `a2a_publication_test.go`; Go shared `conformance_test.go` |
@@ -1044,7 +1055,7 @@ The [P0 contract](../human-channels-contract-v1.md) fixes the public embedding
 ports and signature boundary. X-E2/X-GF encrypted re-share/federation annexes
 remain refused until exact-SHA Athena review; current native fixtures are unchanged.
 
-`human-channels-e2ee-spike.json` is an **unfrozen** X-E2 laboratory fixture, consumed by `server/tests/test_human_channels_e2ee_spike.py` and `cli/go/awid/human_channels_e2ee_spike_test.go`. It enables no profile.
+`human-channels-e2ee-spike.json` is an **unfrozen** X-E2 laboratory fixture, consumed by `cli/go/awid/human_channels_e2ee_spike_test.go`. It enables no profile.
 
 ## Human-channel presence verification
 

@@ -2,7 +2,7 @@
 # the proxy; the hard runner instead preserves DNS/connection error semantics.
 TEST_EGRESS_RUNNER ?= python3 $(abspath scripts/test-egress/native.py) --
 
-.PHONY: help clean test test-shipping test-server naapp-sync lint-naapp test-naapp test-awid test-awid-pooler test-cli test-cli-auth-v2 test-node-deps test-channel test-channel-name-live-contract test-channel-core test-wake-channel-core-bundle test-channel-core-process-guard test-pi-extension candidate-gate test-candidate-ledger release-candidate release-publish test-sot-source-inventories test-vector-provenance test-federation-error-reference regenerate-federation-error-reference test-cli-reference regenerate-cli-reference test-mcp-tools-reference prepare-oats-test-root check-oats-launch-environment-contract check-oats-pi-launch-order test-oats test-oats-proof-helpers test-tmux-guard test-a2a test-e2e test-federation-harness test-federation-e2e test-a2a-gateway-e2e check-a2a-copy-guardrails check-extension-docs build \
+.PHONY: help clean test test-shipping test-server naapp-sync lint-naapp test-naapp test-awid test-awid-pooler test-cli test-cli-auth-v2 test-node-deps test-channel test-channel-name-live-contract test-channel-core test-wake-channel-core-bundle test-channel-core-process-guard test-pi-extension candidate-gate test-candidate-ledger release-candidate release-publish test-sot-source-inventories test-vector-provenance test-federation-error-reference regenerate-federation-error-reference test-cli-reference regenerate-cli-reference test-mcp-tools-reference prepare-oats-test-root check-oats-launch-environment-contract check-oats-pi-launch-order test-oats test-oats-proof-helpers test-tmux-guard test-a2a test-e2e test-federation-harness test-federation-e2e test-a2a-gateway-e2e test-team-deployment-e2e check-a2a-copy-guardrails check-extension-docs build \
 	freshness check-go-vulnerability-audit check-node-audit check-exception-deadlines test-go-vulnerability-audit \
 	selfhost-up selfhost-down selfhost-logs awid-up awid-down awid-logs \
 	e2e-library-stack e2e-library-stack-up e2e-library-stack-seed e2e-library-stack-down \
@@ -145,6 +145,7 @@ test-shipping:
 	$(MAKE) test-vm-gate
 	python3 scripts/test_fixture_repo.py
 	python3 scripts/test_shipping.py
+	python3 scripts/test_server_image_publish.py
 	python3 scripts/test_aw_npm_publication.py
 	python3 scripts/test_candidate_cleanup.py
 	python3 scripts/test_candidate_interruption.py
@@ -155,6 +156,10 @@ test-shipping:
 	python3 scripts/test_folio_wakes_gate.py
 	python3 scripts/test_user_paths_gate.py
 	python3 scripts/test_fetch_released_aw.py
+
+.PHONY: test-server-image-build
+test-server-image-build:
+	AWEB_TEST_SERVER_IMAGE_BUILD=1 python3 scripts/test_server_image_publish.py ServerPlatformBuildTests -v
 
 .PHONY: test-vm-gate
 test-vm-gate:
@@ -475,6 +480,21 @@ test-federation-e2e:
 test-a2a-gateway-e2e:
 	./scripts/e2e-a2a-gateway-docker.sh
 
+# The team deployment journey (deploy/team) on this Docker host: every image
+# from this clean checkout into TEAM_DEPLOYMENT_REGISTRY (a disposable local
+# registry), then the journey in a run directory of its own. With
+# OATS_SOURCE, a clean OATS checkout at its pinned commit, the agents and
+# their egress too.
+TEAM_DEPLOYMENT_REGISTRY ?= localhost:5000
+TEAM_DEPLOYMENT_PROJECT ?= teamcompose
+test-team-deployment-e2e:
+	@test -n "$(TEAM_DEPLOYMENT_RUN_DIR)" || { echo "TEAM_DEPLOYMENT_RUN_DIR is required: a new directory for this run" >&2; exit 2; }
+	mkdir -p "$(TEAM_DEPLOYMENT_RUN_DIR)"
+	./scripts/e2e/team-deployment-images.sh "$(TEAM_DEPLOYMENT_REGISTRY)" "$(TEAM_DEPLOYMENT_RUN_DIR)/images.txt" $(OATS_SOURCE)
+	uv run --project naapp/secrets python scripts/e2e/team_deployment_journey.py \
+		--run-dir "$(TEAM_DEPLOYMENT_RUN_DIR)/journey" --project "$(TEAM_DEPLOYMENT_PROJECT)" \
+		--images "$(TEAM_DEPLOYMENT_RUN_DIR)/images.txt" $(if $(OATS_SOURCE),--oats-source "$(OATS_SOURCE)")
+
 check-a2a-copy-guardrails:
 	./scripts/check-a2a-copy-guardrails.sh
 
@@ -751,6 +771,7 @@ test-isolated:
 
 .PHONY: test-egress-controls
 test-egress-controls:
+	python3 scripts/test-egress/test_dns.py -v
 	python3 -m unittest discover -s scripts/test-egress -p test_native.py -v
 
 # The shared page renderer is packaged in the Python wheel. Rebuild from its

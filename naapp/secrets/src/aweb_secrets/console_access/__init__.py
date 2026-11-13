@@ -27,7 +27,7 @@ from aweb_naapp.console import (
     KeyBoundConsoleSession,
     session_is_current,
 )
-from aweb_naapp.roles import PrincipalKey, hold_role, members_of, roles_of
+from aweb_naapp.roles import PrincipalKey, members_of, roles_of
 from aweb_naapp.runtime.installation import AdmittedInstallation
 from fastapi import APIRouter, HTTPException, Request
 from fastapi.responses import HTMLResponse, Response
@@ -39,7 +39,8 @@ from aweb_secrets.console import OwnerConsole
 from aweb_secrets.console_changes import _errors
 from aweb_secrets.console_ui import _login_redirect, console_page, recovery_page
 from aweb_secrets.grant import is_secrets_role
-from aweb_secrets.owners import OWNER_ROLE, owner_scope
+from aweb_secrets.owners import hold_owner as hold_owner_holding
+from aweb_secrets.owners import owner_binding, owner_scope
 from aweb_secrets.principal_display import observed_principal_alias, principal_html
 from aweb_secrets.revisions import config_revision
 from aweb_secrets.run_planner import run_grant_covers_job
@@ -203,10 +204,7 @@ async def owner_installation(
     console: OwnerConsole, current: ConsoleSession
 ) -> tuple[str, AdmittedInstallation]:
     """The installation this console session's owner scope belongs to, admitted."""
-    row = await console.db.fetch_one(
-        "SELECT installation_id,team_id FROM {{tables.owner_principals}} WHERE scope=$1",
-        current.scope,
-    )
+    row = await owner_binding(console.db, current.scope)
     if row is None:
         raise HTTPException(403, "owner_required")
     return row["installation_id"], await console.installation(
@@ -230,7 +228,7 @@ async def hold_owner(
         or owner.team_id != admitted.team_id
         or admitted.installation_id != installation_id
         or current.scope != owner_scope(installation_id, admitted.team_id, owner.principal_did)
-        or not await hold_role(tx, owner, OWNER_ROLE)
+        or not await hold_owner_holding(tx, owner, installation_id=admitted.installation_id)
     ):
         raise HTTPException(403, "owner_required")
     await console.prepare_session(tx, current, approver_pairs=[(current.scope, current.subject)])
@@ -257,7 +255,11 @@ class ConsoleAccess:
                 await hold_owner(self.console, tx, current, admitted, installation_id)
                 # The canonical signed authority requires READ COMMITTED.
                 # Detect configuration commits across its multi-query view.
-                before_revision = await config_revision(tx, installation_id) if signed else None
+                before_revision = (
+                    await config_revision(tx, installation_id, team_id=admitted.team_id)
+                    if signed
+                    else None
+                )
                 secret_id = None
                 if secret_ref is not None:
                     stored = await records.secret_by_ref(
@@ -267,7 +269,7 @@ class ConsoleAccess:
                         raise HTTPException(404, "secret_not_found")
                     secret_id = stored.record.secret_id
                 agents = await self._agents(tx, admitted, secret_id)
-                revision = await config_revision(tx, installation_id)
+                revision = await config_revision(tx, installation_id, team_id=admitted.team_id)
                 if before_revision is not None and revision != before_revision:
                     raise HTTPException(409, "access_changed", headers={"Retry-After": "0"})
                 await self.console.fence.check(tx, admitted)

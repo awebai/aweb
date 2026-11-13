@@ -1,0 +1,1013 @@
+#!/usr/bin/env bash
+# The operator command of one team's deployment on one machine.
+#
+#   TEAM_DEPLOYMENT_PROJECT=<compose project> TEAM_DEPLOYMENT_RUN_DIR=<dir> \
+#     deploy/team/teamctl render|start|connect|stop|reload-tls <deployment.yaml>
+#     deploy/team/teamctl destroy <deployment.yaml> --confirm <project>
+#     deploy/team/teamctl backup <deployment.yaml> <new directory>
+#     deploy/team/teamctl restore --lab-rehearsal <deployment.yaml> <backup directory>
+#
+# OPERATIONS.md beside this file says what each command keeps and deletes.
+#
+# render   checks deployment.yaml and writes what Compose reads: RUN_DIR/.env and,
+#          with a front, RUN_DIR/front/Caddyfile. Nothing starts.
+# start    renders deployment.yaml to RUN_DIR/.env, starts deploy/team/compose.yaml
+#          and waits until every service is healthy, then checks from inside
+#          aweb and each app that its internal origins resolve inside
+#          network.servicesCidr, and that every service answers its own
+#          readiness route with 200 for the Host its proxy sends. The renderer has already refused a signer
+#          profile whose origins or registry differ from the deployment's.
+#          With agents, egress starts with its derived policy and the agent
+#          only after the ingress and boundary probes pass; it then exits 3:
+#          the agents are held, with no seat, deployment or session admitted.
+# connect  prints, as JSON, the origins, the team and registry, the agent
+#          container and the deployment's docker compose command.
+#          With a front, its certificate and key are checked before
+#          anything starts: the key is the certificate's, the certificate is
+#          valid now and names every public origin's host, and Caddy accepts
+#          the rendered configuration. Once the services are up, the front
+#          reloads the rendered sites and each host is checked to serve
+#          that certificate.
+# reload-tls  checks the front's certificate and key as start does, reloads
+#          the front and confirms each host now serves that certificate.
+# stop     stops every service of the bundle. Containers, networks, volumes,
+#          the secrets directory and the agents' state all stay.
+# destroy  removes the bundle's own containers and its named volumes, and
+#          nothing else of the project: the databases are gone. The secrets
+#          directory and the agents' state stay. The project must be named.
+# backup   with every service but the bundled PostgreSQL stopped: a dump of
+#          each database, the secrets directory without the signer's live
+#          controller custody or the agents' harness login, the agents'
+#          state and every file
+#          deployment.yaml names, with a manifest of digests and versions.
+#          The directory holds credentials; it is made 0700.
+# restore  fails closed: no component can yet restore a deployment that
+#          serves a team. --lab-rehearsal restores a backup of disposable lab
+#          data onto fresh volumes, to the paths deployment.yaml names, and
+#          leaves the bundle stopped.
+#
+# TEAM_DEPLOYMENT_COMPOSE_FILES names further Compose files, separated by
+# colons, that a test world adds (the journey's registry, DNS and mail).
+# No credential is read, printed or passed here: they are files the
+# services mount.
+set -euo pipefail
+
+TEAM_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+REPO_ROOT="$(cd "$TEAM_DIR/../.." && pwd)"
+SELF="$TEAM_DIR/teamctl"
+
+usage() {
+  {
+    echo "usage: TEAM_DEPLOYMENT_PROJECT=<name> TEAM_DEPLOYMENT_RUN_DIR=<dir> $0 render|start|connect|stop|reload-tls <deployment.yaml>"
+    echo "       $0 destroy <deployment.yaml> --confirm <project>"
+    echo "       $0 backup <deployment.yaml> <new directory>"
+    echo "       $0 restore --lab-rehearsal <deployment.yaml> <backup directory>"
+  } >&2
+  exit 2
+}
+
+refuse() {
+  echo "teamctl: $*" >&2
+  exit 1
+}
+
+[[ $# -ge 2 ]] || usage
+action="$1"
+shift
+lab_rehearsal=0 confirm="" target=""
+case "$action" in
+  render | start | connect | stop | reload-tls) [[ $# -eq 1 ]] || usage ;;
+  destroy)
+    [[ $# -eq 1 || ($# -eq 3 && "$2" == --confirm) ]] || usage
+    confirm="${3:-}"
+    ;;
+  backup)
+    [[ $# -eq 2 ]] || usage
+    target="$2"
+    ;;
+  restore)
+    if [[ "$1" == --lab-rehearsal ]]; then
+      lab_rehearsal=1
+      shift
+    fi
+    [[ $# -eq 2 ]] || usage
+    target="$2"
+    ;;
+  *) usage ;;
+esac
+[[ -n "${TEAM_DEPLOYMENT_PROJECT:-}" && -n "${TEAM_DEPLOYMENT_RUN_DIR:-}" ]] || usage
+deployment="$(cd "$(dirname "$1")" && pwd)/$(basename "$1")"
+project="$TEAM_DEPLOYMENT_PROJECT"
+run_dir="$TEAM_DEPLOYMENT_RUN_DIR"
+env_file="$run_dir/.env"
+
+python_in_server() {
+  uv run --quiet --project "$REPO_ROOT/server" python "$@"
+}
+
+# The docker compose command of this deployment, one argument per line: the
+# files the renderer's COMPOSE_FILE names (compose.yaml and each component the
+# deployment has), then the journey's own.
+compose_command() {
+  python_in_server - "$deployment" "$project" "$env_file" "$TEAM_DIR" "${TEAM_DEPLOYMENT_COMPOSE_FILES:-}" <<'PY'
+import importlib.util
+import sys
+from pathlib import Path
+
+import yaml
+
+path, project, env_file, team_dir, extra = sys.argv[1:]
+spec = importlib.util.spec_from_file_location("render_env", Path(team_dir) / "render_env.py")
+render_env = importlib.util.module_from_spec(spec)
+spec.loader.exec_module(render_env)
+files = render_env.render(yaml.safe_load(open(path, encoding="utf-8")))["COMPOSE_FILE"].split(":")
+command = ["docker", "compose", "-p", project, "--env-file", env_file]
+for file in [str(Path(team_dir) / name) for name in files] + [name for name in extra.split(":") if name]:
+    command += ["-f", file]
+print("\n".join(command))
+PY
+}
+
+compose=()
+dc() {
+  if [[ ${#compose[@]} -eq 0 ]]; then
+    local listed argument
+    listed="$(compose_command)" || refuse "could not build the deployment's docker compose command"
+    while IFS= read -r argument; do compose+=("$argument"); done <<<"$listed"
+  fi
+  "${compose[@]}" "$@"
+}
+
+# One line per service that names internal origins (aweb's apps, the apps'
+# hook receivers): the service, the range and the origins' hosts.
+internal_hosts() {
+  python_in_server - "$deployment" <<'PY'
+import sys
+from urllib.parse import urlsplit
+
+import yaml
+
+config = yaml.safe_load(open(sys.argv[1], encoding="utf-8"))
+cidr = config["network"]["servicesCidr"]
+named = {"aweb": config["aweb"].get("appInternalOrigins", [])}
+for app in ("secrets", "logs"):
+    named[app] = config.get(app, {}).get("hookInternalOrigins", [])
+for service, origins in named.items():
+    if origins:
+        print(service, cidr, *sorted({urlsplit(origin).hostname for origin in origins}))
+PY
+}
+
+# One line per deployed service: the service, its port, its readiness path
+# and the Host it answers to (its public origin's authority).
+readiness_targets() {
+  python_in_server - "$deployment" <<'PY'
+import sys
+from urllib.parse import urlsplit
+
+import yaml
+
+config = yaml.safe_load(open(sys.argv[1], encoding="utf-8"))
+print("aweb", 8000, "/ready", urlsplit(config["aweb"]["publicOrigin"]).netloc)
+for app, port in (("secrets", 8770), ("logs", 8765)):
+    if app in config:
+        print(app, port, "/ready", urlsplit(config[app]["publicOrigin"]).netloc)
+if "signer" in config:
+    print("signer", 8080, "/readyz", urlsplit(config["signer"]["requestOrigin"]).netloc)
+PY
+}
+
+env_value() {
+  sed -n "s/^$1=//p" "$env_file"
+}
+
+# With agents: the agents' resolv.conf and the path of egress's policy go in
+# the env file, and the OATS source must be a clean checkout, whose commit and
+# fragment blobs are recorded with the run.
+prepare_agents() {
+  printf 'nameserver %s\n' "$(env_value AGENT_RESOLVER_IP)" >"$run_dir/resolv.conf"
+  printf 'RESOLV_CONF_FILE=%s\nEGRESS_POLICY_FILE=%s\n' "$run_dir/resolv.conf" "$run_dir/egress-policy.json" >>"$env_file"
+  local oats
+  oats="$(env_value OATS_SOURCE)"
+  if [[ -n "$(git -C "$oats" status --porcelain)" ]]; then
+    echo "teamctl: the OATS source at $oats has changes; it must be the pinned commit as it is" >&2
+    exit 1
+  fi
+  {
+    echo "commit $(git -C "$oats" rev-parse HEAD)"
+    for file in container/agent/compose.agent.yaml container/agent/egress/compose.egress.yaml; do
+      echo "blob $(git -C "$oats" rev-parse "HEAD:$file") $file"
+    done
+  } >"$run_dir/oats-source.txt"
+}
+
+# Egress's policy, from what each of the five origins' hosts resolves to on
+# the services network, and the two backends no agent may reach: PostgreSQL
+# and Redis, at the addresses aweb itself connects to (Redis's is on aweb's
+# backend network alone). The resolved addresses are kept with the run for
+# the boundary probe.
+derive_egress_policy() {
+  local hosts addresses
+  hosts="$(python_in_server - "$deployment" <<'PY'
+import json
+import sys
+from urllib.parse import urlsplit
+
+import yaml
+
+config = yaml.safe_load(open(sys.argv[1], encoding="utf-8"))
+origins = {
+    "aweb": config["aweb"]["publicOrigin"],
+    "secrets": config["secrets"]["publicOrigin"],
+    "logs": config["logs"]["publicOrigin"],
+    "signer": config["signer"]["requestOrigin"],
+    "registry": config["team"].get("registryUrl", "https://api.awid.ai"),
+}
+print(json.dumps({
+    "origins": {role: urlsplit(origin).hostname for role, origin in origins.items()},
+    "backends": {"postgres": config.get("postgres", {}).get("host", "postgres"), "redis": "redis"},
+}))
+PY
+)"
+  addresses="$(dc exec -T aweb python -c '
+import json, socket, sys
+hosts = json.loads(sys.argv[1])
+def resolve(host):
+    return sorted({info[4][0] for info in socket.getaddrinfo(host, 443, socket.AF_INET, socket.SOCK_STREAM)})
+backends = {role: resolve(host) for role, host in hosts["backends"].items()}
+for role, found in backends.items():
+    if len(found) != 1:
+        sys.exit(f"{role} resolves to {len(found)} addresses, not one")
+print(json.dumps({"origins": {role: resolve(host) for role, host in hosts["origins"].items()},
+                  "backends": {role: found[0] for role, found in backends.items()}}))
+' "$hosts" </dev/null)"
+  printf '%s\n' "$addresses" >"$run_dir/egress-addresses.json"
+  python_in_server - "$deployment" "$TEAM_DIR" "$run_dir/egress-policy.json" "$addresses" <<'PY'
+import importlib.util
+import json
+import sys
+from pathlib import Path
+
+import yaml
+
+path, team_dir, out, resolved = sys.argv[1:]
+resolved = json.loads(resolved)
+spec = importlib.util.spec_from_file_location("egress_policy", Path(team_dir) / "egress_policy.py")
+egress_policy = importlib.util.module_from_spec(spec)
+spec.loader.exec_module(egress_policy)
+config = yaml.safe_load(open(path, encoding="utf-8"))
+profile = json.loads(Path(config["signer"]["profileFile"]).read_text(encoding="utf-8"))
+try:
+    policy = egress_policy.derive(config, profile, resolved["origins"], list(resolved["backends"].values()))
+except egress_policy.Refused as refused:
+    sys.exit(f"teamctl: no egress policy: {refused}")
+Path(out).write_text(json.dumps(policy, indent=2) + "\n", encoding="utf-8")
+Path(out).chmod(0o644)
+PY
+}
+
+# Egress alone, then the agents network as Docker created it: internal, no
+# IPv6 and no route to the host's bridge gateway, or no agent starts.
+start_egress() {
+  derive_egress_policy
+  if ! dc up -d --wait --wait-timeout "${TEAM_DEPLOYMENT_WAIT_SECONDS:-300}" egress; then
+    dc logs --no-color --timestamps egress >"$run_dir/egress.log" 2>&1 || true
+    echo "teamctl: egress did not become healthy; logs in $run_dir/egress.log" >&2
+    exit 1
+  fi
+  local inspected
+  inspected="$(docker network inspect "${project}_agents" \
+    --format '{{.Internal}} {{.EnableIPv6}} {{index .Options "com.docker.network.bridge.gateway_mode_ipv4"}}')"
+  echo "agents network: internal ipv6 gateway_mode_ipv4 = $inspected"
+  if [[ "$inspected" != "true false isolated" ]]; then
+    echo "teamctl: the agents network is not internal, IPv6-free and gateway-isolated" >&2
+    exit 1
+  fi
+}
+
+# The signer's human origin has one existing GET route that answers 200: its
+# page stylesheet. The ingress probe's human controls use it.
+SIGNER_HUMAN_PATH=/handoff-assets/handoff.css
+
+# The OATS ingress probe (egress image, probe-ingress.mjs, full mode), from the
+# services side against the actual TLS ingress, for every route egress allows:
+# the policy's five origins at their pinned addresses, each with matched H1/H2
+# controls that must reach its own backend, and the human origin's Host or
+# :authority carried under any of them, which must reach no backend. Each
+# backend's own access log is followed from before the first probe request.
+# The registry's log is one of them: a deployment whose registry is not one of
+# its services cannot be probed here. TEAM_DEPLOYMENT_INGRESS_CA names the
+# ingress's trust anchors when a private authority signed it.
+INGRESS_ROUTES="aweb:aweb:/ready secrets:secrets:/ready logs:logs:/ready signer:signer:/readyz registry:registry:/health"
+# The one path every backend logs, Secrets included (it logs /ready and /live
+# alone): the probe sends its extra coverage controls and every forbidden
+# request there, so a misrouted request cannot go unseen.
+INGRESS_AUDIT_PATH=/ready
+
+ingress_probe() {
+  local origins listed logs followers=() route role service path ca_mount=() ca_flag=() out status services
+  listed="$(python_in_server - "$run_dir/egress-policy.json" <<'PY'
+import json
+import sys
+
+policy = json.load(open(sys.argv[1], encoding="utf-8"))
+print(policy["targets"]["signer"]["addresses"][0], policy["targets"]["signer"]["origin"], policy["humanOrigin"])
+PY
+)" || refuse "could not read the signer's origins from the egress policy"
+  read -r -a origins <<<"$listed"
+  logs="$run_dir/ingress-logs"
+  rm -rf "$logs"
+  mkdir -p "$logs"
+  # Read once: grep -q on a live pipe would end it early, and pipefail fails it.
+  services="$(dc config --services)"
+  for route in $INGRESS_ROUTES; do
+    IFS=: read -r role service path <<<"$route"
+    if ! grep -qx "$service" <<<"$services"; then
+      echo "teamctl: the ingress probe needs $role's backend log, and $service is not a service of this deployment" >&2
+      return 1
+    fi
+    : >"$logs/$role.log"
+    dc logs --follow --no-color --no-log-prefix "$service" >>"$logs/$role.log" 2>&1 &
+    followers+=($!)
+  done
+  # Each follower is attached once it has written its log so far.
+  for route in $INGRESS_ROUTES; do
+    IFS=: read -r role service path <<<"$route"
+    for _ in $(seq 1 50); do [[ -s "$logs/$role.log" ]] && break; sleep 0.2; done
+  done
+  python_in_server - "$logs/route-logs.json" $INGRESS_ROUTES <<'PY'
+import json
+import sys
+
+out, *routes = sys.argv[1:]
+table = {}
+for route in routes:
+    role, _service, path = route.split(":")
+    table[role] = {"path": path, "log": f"/logs/{role}.log"}
+open(out, "w", encoding="utf-8").write(json.dumps(table, indent=2) + "\n")
+PY
+  if [[ -n "${TEAM_DEPLOYMENT_INGRESS_CA:-}" ]]; then
+    ca_mount=(-v "$TEAM_DEPLOYMENT_INGRESS_CA:/input/world-ca.pem:ro")
+    ca_flag=(--ca-file /input/world-ca.pem)
+  fi
+  out="$(docker run --rm --network "${project}_services" -v "$logs:/logs:ro" \
+    -v "$run_dir/egress-policy.json:/input/egress-policy.json:ro" -v "$logs/route-logs.json:/input/route-logs.json:ro" \
+    ${ca_mount[@]+"${ca_mount[@]}"} --entrypoint node "$(env_value EGRESS_IMAGE)" /opt/egress/probe-ingress.mjs \
+    --address "${origins[0]}" --request-origin "${origins[1]}" --human-origin "${origins[2]}" \
+    --human-log /logs/signer.log --human-path "$SIGNER_HUMAN_PATH" --audit-path "$INGRESS_AUDIT_PATH" \
+    ${ca_flag[@]+"${ca_flag[@]}"} \
+    --policy /input/egress-policy.json --route-logs /input/route-logs.json </dev/null)" && status=0 || status=$?
+  for follower in "${followers[@]}"; do
+    kill "$follower" 2>/dev/null || true
+    wait "$follower" 2>/dev/null || true
+  done
+  echo "ingress probe: exit $status, $out"
+  [[ "$status" -eq 0 && "$out" == OATS_EGRESS_INGRESS_PASS ]]
+}
+
+# The OATS boundary probe (egress probe-compose-boundary.mjs, run on the
+# Docker engine host with Node 22) against the actual agents network: an
+# inert probe from the agent image, as the agent service with empty state,
+# login and authorized keys and the public CA alone, beside egress and
+# nothing else. The probe is removed before the agent takes its address.
+# Protected sources are each service's secrets directory, Redis's and the
+# front's included (the agents' own login directory beside them is not one),
+# the backends' data volumes, every backup teamctl made while it is present,
+# the Docker socket and TEAM_DEPLOYMENT_PROTECTED_SOURCES (colon separated),
+# each as the engine host resolves it.
+boundary_probe() {
+  local node="${TEAM_DEPLOYMENT_NODE:-node}" probe="$project-agent-probe" sources=() out status
+  if ! "$node" -e 'process.exit(Number(process.versions.node.split(".")[0]) >= 22 ? 0 : 1)'; then
+    echo "teamctl: the boundary probe needs Node 22 or later as $node" >&2
+    return 1
+  fi
+  rm -rf "$run_dir/probe"
+  mkdir -p "$run_dir/probe/state" "$run_dir/probe/login"
+  : >"$run_dir/probe/authorized_keys"
+  local secrets_dir component name
+  secrets_dir="$(cd "$TEAM_DIR" && realpath "$(env_value SECRETS_DIR)")"
+  for component in POSTGRES AWEB SECRETS LOGS SIGNER FRONT; do
+    name="$(env_value "${component}_SECRETS")"
+    [[ -z "$name" || ! -e "$secrets_dir/$name" ]] || sources+=("$(realpath "$secrets_dir/$name")")
+  done
+  [[ ! -e "$secrets_dir/redis" ]] || sources+=("$(realpath "$secrets_dir/redis")")
+  local volume
+  for volume in postgres_data redis_data; do
+    if docker volume inspect "${project}_$volume" >/dev/null 2>&1; then
+      sources+=("$(docker volume inspect --format '{{.Mountpoint}}' "${project}_$volume")")
+    fi
+  done
+  sources+=("$(realpath /var/run/docker.sock)")
+  local backup
+  if [[ -f "$run_dir/backups" ]]; then
+    while IFS= read -r backup; do
+      [[ ! -e "$backup" ]] || sources+=("$(realpath "$backup")")
+    done <"$run_dir/backups"
+  fi
+  local extra
+  while IFS= read -r extra; do
+    [[ -z "$extra" ]] || sources+=("$(realpath "$extra")")
+  done < <(tr ':' '\n' <<<"${TEAM_DEPLOYMENT_PROTECTED_SOURCES:-}")
+  docker rm -f "$probe" >/dev/null 2>&1 || true
+  TEAM_STATE_DIR="$run_dir/probe/state" TEAM_LOGIN_DIR="$run_dir/probe/login" \
+    AUTHORIZED_KEYS_FILE="$run_dir/probe/authorized_keys" \
+    dc run -d --no-deps --name "$probe" --entrypoint sleep agent infinity >/dev/null
+  python_in_server - "$deployment" "$TEAM_DIR" "$run_dir" "$project" "$(env_value AGENT_IMAGE)" "$(env_value EGRESS_IMAGE)" \
+    "${sources[@]}" >"$run_dir/boundary-plan.json" <<'PY'
+import importlib.util
+import json
+import sys
+from pathlib import Path
+
+import yaml
+
+path, team_dir, run_dir, project, agent, egress, *sources = sys.argv[1:]
+spec = importlib.util.spec_from_file_location("egress_policy", Path(team_dir) / "egress_policy.py")
+egress_policy = importlib.util.module_from_spec(spec)
+spec.loader.exec_module(egress_policy)
+plan = egress_policy.boundary_plan(
+    yaml.safe_load(open(path, encoding="utf-8")),
+    json.loads(Path(run_dir, "egress-policy.json").read_text(encoding="utf-8")),
+    project=project,
+    images={"agent": agent, "egress": egress},
+    run_dir=run_dir,
+    backends=json.loads(Path(run_dir, "egress-addresses.json").read_text(encoding="utf-8"))["backends"],
+    protected_sources=sources,
+)
+print(json.dumps(plan, indent=2))
+PY
+  out="$("$node" "$(env_value OATS_SOURCE)/container/agent/egress/probe-compose-boundary.mjs" \
+    --plan "$run_dir/boundary-plan.json" </dev/null)" && status=0 || status=$?
+  docker rm -f "$probe" >/dev/null
+  echo "boundary probe: exit $status, $out"
+  [[ "$status" -eq 0 && "$out" == OATS_EGRESS_BOUNDARY_PASS ]]
+}
+
+# The agent container, from the unchanged pinned service at its own address,
+# then OATS's acceptance of it (agent accept.sh, live-lab evidence: this is
+# a live run) against the deployment's values: image, user, network and the
+# exact mounts. Its report is kept in the run directory.
+start_agent() {
+  local node="${TEAM_DEPLOYMENT_NODE:-node}" status
+  if ! dc up -d --no-deps --wait --wait-timeout "${TEAM_DEPLOYMENT_WAIT_SECONDS:-300}" agent; then
+    dc logs --no-color --timestamps agent >"$run_dir/agent.log" 2>&1 || true
+    echo "teamctl: the agent did not become healthy; logs in $run_dir/agent.log" >&2
+    return 1
+  fi
+  env AGENT_IMAGE="$(env_value AGENT_IMAGE)" AGENT_UID="$(env_value AGENT_UID)" AGENT_GID="$(env_value AGENT_GID)" \
+    AGENTS_NETWORK="${project}_agents" AGENT_IP="$(env_value AGENT_IP)" AGENT_PIDS="$(env_value AGENT_PIDS)" \
+    AGENT_MEMORY="$(env_value AGENT_MEMORY)" AGENT_CPUS="$(env_value AGENT_CPUS)" \
+    TEAM_STATE_DIR="$(env_value TEAM_STATE_DIR)" TEAM_LOGIN_DIR="$(env_value TEAM_LOGIN_DIR)" \
+    AUTHORIZED_KEYS_FILE="$(env_value AUTHORIZED_KEYS_FILE)" RESOLV_CONF_FILE="$(env_value RESOLV_CONF_FILE)" \
+    AGENT_TMP_SIZE="$(env_value AGENT_TMP_SIZE)" AGENT_CA_FILE="$(env_value AGENT_CA_FILE)" \
+    AGENT_MIRRORS_DIR="$(env_value AGENT_MIRRORS_DIR)" \
+    PATH="$(dirname "$(command -v "$node")"):$PATH" \
+    "$(env_value OATS_SOURCE)/container/agent/accept.sh" "oats-agent-$(env_value TEAM)" --evidence live-lab \
+    >"$run_dir/agent-accept.out" 2>&1 </dev/null && status=0 || status=$?
+  echo "agent acceptance: exit $status; report in $run_dir/agent-accept.out"
+  grep -E '^\[live-lab\] (FAIL|NOT RUN)' "$run_dir/agent-accept.out" || true
+  [[ "$status" -eq 0 ]]
+}
+
+render() {
+  mkdir -p "$run_dir"
+  python_in_server "$TEAM_DIR/render_env.py" "$deployment" >"$env_file.tmp"
+  mv "$env_file.tmp" "$env_file"
+  if [[ -n "$(env_value FRONT_IMAGE)" ]]; then
+    mkdir -p "$run_dir/front"
+    python_in_server "$TEAM_DIR/render_env.py" --front "$deployment" >"$run_dir/front/Caddyfile.tmp"
+    mv "$run_dir/front/Caddyfile.tmp" "$run_dir/front/Caddyfile"
+    chmod 0644 "$run_dir/front/Caddyfile"
+    printf 'FRONT_CONFIG_DIR=%s\n' "$run_dir/front" >>"$env_file"
+  fi
+}
+
+# The hosts the front serves, one per line, from its rendered configuration.
+front_hosts() {
+  sed -n 's/^\([^ {]*\):443 {$/\1/p' "$run_dir/front/Caddyfile"
+}
+
+# The front's certificate and key, checked before the front runs with them:
+# the key is the certificate's, the certificate is valid now and names every
+# host the front serves, and Caddy accepts the configuration and loads them.
+# Read as root by the server image's Python with no network, since the key
+# belongs to the front; only the outcome is printed.
+check_front() {
+  local secrets
+  secrets="$(cd "$TEAM_DIR" && realpath "$(env_value SECRETS_DIR)")/$(env_value FRONT_SECRETS)"
+  # shellcheck disable=SC2046
+  docker run --rm --user 0 --network none -v "$secrets:/run/secrets/front:ro" \
+    --entrypoint python "$(env_value AWEB_IMAGE)" -c '
+import datetime, sys
+from cryptography import x509
+from cryptography.hazmat.primitives import serialization
+
+try:
+    chain = x509.load_pem_x509_certificates(open("/run/secrets/front/certificate.pem", "rb").read())
+    key = serialization.load_pem_private_key(open("/run/secrets/front/key.pem", "rb").read(), password=None)
+except (OSError, ValueError) as refused:
+    sys.exit(f"teamctl: the front needs certificate.pem and key.pem it can read: {type(refused).__name__}")
+leaf = chain[0]
+public = serialization.PublicFormat.SubjectPublicKeyInfo
+if key.public_key().public_bytes(serialization.Encoding.DER, public) != leaf.public_key().public_bytes(serialization.Encoding.DER, public):
+    sys.exit("teamctl: the front key is not the certificate key")
+now = datetime.datetime.now(datetime.timezone.utc)
+if not leaf.not_valid_before_utc <= now < leaf.not_valid_after_utc:
+    sys.exit(f"teamctl: the front certificate is not valid now: {leaf.not_valid_before_utc} to {leaf.not_valid_after_utc}")
+try:
+    names = leaf.extensions.get_extension_for_class(x509.SubjectAlternativeName).value.get_values_for_type(x509.DNSName)
+except x509.ExtensionNotFound:
+    names = []
+
+
+def covered(host):
+    return any(name == host or (name.startswith("*.") and host.split(".", 1)[1] == name[2:]) for name in names)
+
+
+missing = [host for host in sys.argv[1:] if not covered(host)]
+if missing:
+    sys.exit(f"teamctl: the front certificate does not name {missing}")
+print(f"front certificate: {len(sys.argv) - 1} hosts named, valid until {leaf.not_valid_after_utc.isoformat()}")
+' $(front_hosts) </dev/null || return 1
+  docker run --rm --network none -v "$secrets:/run/secrets/front:ro" -v "$run_dir/front:/etc/caddy:ro" \
+    "$(env_value FRONT_IMAGE)" caddy validate --config /etc/caddy/Caddyfile --adapter caddyfile </dev/null >/dev/null 2>"$run_dir/front/validate.log" || {
+    echo "teamctl: Caddy refuses the front's configuration; see $run_dir/front/validate.log" >&2
+    return 1
+  }
+}
+
+# Each host the front serves, asked over TLS with its own SNI from the
+# services network: the SHA-256 of the certificate it serves, which must be
+# the one in certificate.pem.
+served_certificates() {
+  local secrets
+  secrets="$(cd "$TEAM_DIR" && realpath "$(env_value SECRETS_DIR)")/$(env_value FRONT_SECRETS)"
+  # shellcheck disable=SC2046
+  docker run --rm --user 0 --network "${project}_services" -v "$secrets:/run/secrets/front:ro" \
+    --entrypoint python "$(env_value AWEB_IMAGE)" -c '
+import hashlib, socket, ssl, sys
+from cryptography import x509
+from cryptography.hazmat.primitives import serialization
+
+leaf = x509.load_pem_x509_certificates(open("/run/secrets/front/certificate.pem", "rb").read())[0]
+expected = hashlib.sha256(leaf.public_bytes(serialization.Encoding.DER)).hexdigest()
+context = ssl.create_default_context()
+context.check_hostname = False
+context.verify_mode = ssl.CERT_NONE
+wrong = []
+for host in sys.argv[1:]:
+    with socket.create_connection(("front", 443), timeout=10) as raw, context.wrap_socket(raw, server_hostname=host) as tls:
+        served = hashlib.sha256(tls.getpeercert(binary_form=True)).hexdigest()
+    if served != expected:
+        wrong.append(host)
+if wrong:
+    sys.exit(f"teamctl: the front does not serve certificate.pem for {wrong}")
+print(f"front serves certificate.pem for {len(sys.argv) - 1} hosts: sha256 {expected}")
+' $(front_hosts) </dev/null
+}
+
+reload-tls() {
+  model
+  [[ -n "$(env_value FRONT_IMAGE)" ]] || refuse "the deployment has no front"
+  check_front || exit 1
+  # --force: Caddy skips a reload whose configuration is unchanged, and with
+  # it the replaced certificate files.
+  dc exec -T front caddy reload --config /etc/caddy/Caddyfile --adapter caddyfile --force </dev/null
+  served_certificates
+}
+
+# The deployment's Compose model, for a command that does not start it: the
+# env file, and with agents what their services' files name.
+model() {
+  render
+  if [[ -n "$(env_value EGRESS_ADDRESS)" ]]; then
+    prepare_agents
+  fi
+}
+
+start() {
+  render
+  if [[ -n "$(env_value FRONT_IMAGE)" ]]; then
+    check_front || exit 1
+  fi
+  local with_agents=0 services=()
+  if [[ -n "$(env_value EGRESS_ADDRESS)" ]]; then
+    with_agents=1
+    prepare_agents
+  fi
+  # The resolved model holds no credential: every one is a mounted file.
+  dc config >"$run_dir/compose.config.yaml"
+  if grep -q AWID_SERVICE_TOKEN "$run_dir/compose.config.yaml"; then
+    echo "teamctl: a service is given AWID_SERVICE_TOKEN" >&2
+    exit 1
+  fi
+  # The agent and its egress start last, after their policy is derived.
+  # A failed listing would leave the list empty and start every service.
+  if [[ "$with_agents" -eq 1 ]]; then
+    local listed service
+    listed="$(dc config --services)" || refuse "could not list the deployment's services; nothing was started"
+    while read -r service; do
+      [[ -z "$service" || "$service" == egress || "$service" == agent ]] || services+=("$service")
+    done <<<"$listed"
+  fi
+  if ! dc up -d --wait --wait-timeout "${TEAM_DEPLOYMENT_WAIT_SECONDS:-300}" ${services[@]+"${services[@]}"}; then
+    dc ps --all --format '{{.Service}} {{.Status}}' >&2 || true
+    dc logs --no-color --timestamps >"$run_dir/compose.log" 2>&1 || true
+    echo "teamctl: not every service became healthy; logs in $run_dir/compose.log" >&2
+    exit 1
+  fi
+  # Compose leaves a running front as it is when only its mounted
+  # configuration changed: the front loads the sites just rendered, a
+  # component added since included.
+  if [[ -n "$(env_value FRONT_IMAGE)" ]]; then
+    dc exec -T front caddy reload --config /etc/caddy/Caddyfile --adapter caddyfile --force </dev/null
+    served_certificates
+  fi
+  # An internal origin is allowed only inside the services range: every
+  # address its host resolves to, seen from the service that connects to it.
+  # A failed listing would check nothing and pass.
+  local internal
+  internal="$(internal_hosts)" || refuse "could not list the deployment's internal origins"
+  while read -r service cidr hosts; do
+    [[ -n "$service" ]] || continue
+    # shellcheck disable=SC2086
+    if ! dc exec -T "$service" python -c '
+import ipaddress, socket, sys
+net = ipaddress.ip_network(sys.argv[1])
+for host in sys.argv[2:]:
+    addresses = {info[4][0] for info in socket.getaddrinfo(host, 443, proto=socket.IPPROTO_TCP)}
+    outside = sorted(a for a in addresses if ipaddress.ip_address(a) not in net)
+    if outside:
+        sys.exit(f"{host} resolves outside {net}: {outside}")
+' "$cidr" $hosts </dev/null; then
+      echo "teamctl: $service's internal origins do not resolve inside $cidr" >&2
+      exit 1
+    fi
+  done <<<"$internal"
+  # Healthy is the images' liveness checks. Ready is each service's own
+  # readiness answer, asked with the Host its proxy sends; anything but 200
+  # fails the run.
+  # exec gets no stdin: it would read the rest of the list.
+  local targets ready=0
+  targets="$(readiness_targets)"
+  while read -r service port path host; do
+    if ! dc exec -T "$service" python -c '
+import sys, urllib.error, urllib.request
+service, port, path, host = sys.argv[1:]
+request = urllib.request.Request(f"http://127.0.0.1:{port}{path}", headers={"Host": host})
+opener = urllib.request.build_opener(urllib.request.ProxyHandler({}))
+try:
+    status = opener.open(request, timeout=10).status
+except urllib.error.HTTPError as refused:
+    status = refused.code
+print(f"{service} {path} {status}")
+sys.exit(status != 200)
+' "$service" "$port" "$path" "$host" </dev/null; then
+      echo "teamctl: $service is not ready" >&2
+      exit 1
+    fi
+    ready=$((ready + 1))
+  done <<<"$targets"
+  if [[ "$ready" -ne "$(grep -c . <<<"$targets")" ]]; then
+    echo "teamctl: $ready services checked for readiness, not every one" >&2
+    exit 1
+  fi
+  if [[ "$with_agents" -eq 1 ]]; then
+    start_egress
+    dc ps --format '{{.Service}} {{.Status}}'
+    # The signer's request origin is one of egress's five routes. Until the
+    # ingress is shown to refuse that origin's SNI carrying the human origin's
+    # Host or :authority, no agent is admitted.
+    if ! ingress_probe; then
+      echo "teamctl: agents held: the ingress refusal probe did not pass" >&2
+      exit 1
+    fi
+    if ! boundary_probe; then
+      echo "teamctl: agents held: the boundary probe did not pass" >&2
+      exit 1
+    fi
+    if ! start_agent; then
+      echo "teamctl: agents held: the agent container did not pass its acceptance" >&2
+      exit 1
+    fi
+    echo "teamctl: agents held: the agent runs credential-free; no seat, deployment or session is admitted" >&2
+    exit 3
+  fi
+  dc ps --format '{{.Service}} {{.Status}}'
+}
+
+connect() {
+  python_in_server - "$deployment" "$project" "$env_file" "$SELF" "$(compose_command)" <<'PY'
+import json
+import sys
+
+import yaml
+
+path, project, env_file, runner, compose = sys.argv[1:]
+config = yaml.safe_load(open(path, encoding="utf-8"))
+origins = {"aweb": config["aweb"]["publicOrigin"]}
+for app in ("secrets", "logs"):
+    if app in config:
+        origins[app] = {"api": config[app]["publicOrigin"], "console": config[app]["consoleOrigin"]}
+if "signer" in config:
+    origins["signer"] = {"request": config["signer"]["requestOrigin"], "human": config["signer"]["humanOrigin"]}
+agents = config.get("agents")
+print(json.dumps({
+    "project": project,
+    "envFile": env_file,
+    "team": config["team"]["id"],
+    "registry": config["team"].get("registryUrl", "https://api.awid.ai"),
+    "origins": origins,
+    "agent": {"container": f"oats-agent-{agents['compose']['name']}"} if agents else None,
+    "compose": compose.split("\n"),
+    "start": [runner, "start", path],
+}))
+PY
+}
+
+stop() {
+  model
+  dc stop
+}
+
+# The bundle's own containers and named volumes, never the project as a
+# whole: a project-wide down would also remove what a test world runs beside
+# it. Networks carry no data and stay.
+destroy() {
+  if [[ "$confirm" != "$project" ]]; then
+    echo "teamctl: destroy removes $project's containers and its volumes, and every database with them; name the project to do it: --confirm $project" >&2
+    exit 2
+  fi
+  model
+  # Only the bundle's own files: what the project runs beside it
+  # (TEAM_DEPLOYMENT_COMPOSE_FILES) is neither removed nor its volumes listed.
+  TEAM_DEPLOYMENT_COMPOSE_FILES=""
+  compose=()
+  dc --profile '*' rm --stop --force
+  local key volumes
+  volumes="$(dc config --volumes)" || refuse "could not list the bundle's volumes; they may remain"
+  while read -r key; do
+    [[ -n "$key" ]] || continue
+    if docker volume inspect "${project}_$key" >/dev/null 2>&1; then
+      docker volume rm "${project}_$key" >/dev/null
+    fi
+  done <<<"$volumes"
+}
+
+# What deployment.yaml names on the host, one line each: kind (archive, file
+# or kept), the key, the path. Archives and files are what a backup holds;
+# kept paths are the operator's own and are recorded only.
+host_paths() {
+  python_in_server - "$deployment" <<'PY'
+import sys
+
+import yaml
+
+config = yaml.safe_load(open(sys.argv[1], encoding="utf-8"))
+archives = {"compose.secretsDir", "agents.compose.stateDir", "agents.compose.workDir"}
+kept = {"agents.mirrorsDir", "agents.compose.oatsSource"}
+
+
+def walk(value, key=""):
+    if isinstance(value, dict):
+        for name, child in value.items():
+            yield from walk(child, f"{key}.{name}" if key else name)
+    elif isinstance(value, str) and (key in archives or key in kept or key.endswith("File")):
+        kind = "archive" if key in archives else "kept" if key in kept else "file"
+        yield kind, key, value
+
+
+for kind, key, value in walk(config):
+    print(kind, key, value)
+PY
+}
+
+# A directory as a tar archive with numeric owners and modes, read as root by
+# the server image's Python with no network; anything but a regular file or
+# a directory is refused. A member named after the archive's path ("./x/y")
+# is left out with everything under it. The archive belongs to the operator,
+# mode 0400.
+archive() {
+  local source="$1" out="$2"
+  shift 2
+  docker run --rm --user 0 --network none -v "$source:/source:ro" -v "$(dirname "$out"):/out" \
+    --entrypoint python "$(env_value AWEB_IMAGE)" -c '
+import os, sys, tarfile
+out, uid, gid, *left_out = sys.argv[1:]
+
+def regular(info):
+    if any(info.name == name or info.name.startswith(name + "/") for name in left_out):
+        return None
+    if not (info.isreg() or info.isdir()):
+        raise SystemExit(f"teamctl: {info.name} is not a regular file or a directory")
+    return info
+
+with tarfile.open(out, "w") as tar:
+    tar.add("/source", arcname=".", filter=regular)
+os.chown(out, int(uid), int(gid))
+os.chmod(out, 0o400)
+' "/out/$(basename "$out")" "$(id -u)" "$(id -g)" "$@" </dev/null
+}
+
+# An archive back into a directory that does not exist yet, owners and modes
+# kept; a member that is not a regular file or a directory, or whose name is
+# absolute or climbs out, refuses the whole archive before anything is written.
+unarchive() {
+  local archive="$1" destination="$2"
+  docker run --rm --user 0 --network none -v "$archive:/archive.tar:ro" -v "$(dirname "$destination"):/parent" \
+    --entrypoint python "$(env_value AWEB_IMAGE)" -c '
+import os, sys, tarfile
+from pathlib import PurePosixPath
+destination = sys.argv[1]
+with tarfile.open("/archive.tar") as tar:
+    members = tar.getmembers()
+    for member in members:
+        parts = PurePosixPath(member.name).parts
+        if not (member.isreg() or member.isdir()) or member.name.startswith("/") or ".." in parts:
+            raise SystemExit(f"teamctl: the archive holds {member.name!r}, which is not restored")
+    os.mkdir(destination, 0o700)
+    tar.extractall(destination, members=members, numeric_owner=True, filter="tar")
+' "/parent/$(basename "$destination")" </dev/null
+}
+
+psql_postgres() {
+  dc exec -T postgres psql -U postgres -AtX -v ON_ERROR_STOP=1 -c "$1" </dev/null
+}
+
+backup() {
+  [[ ! -e "$target" && ! -L "$target" ]] || refuse "the backup directory $target exists; a backup goes into a new one"
+  model
+  [[ "$(env_value POSTGRES_BUNDLED)" == true ]] ||
+    refuse "teamctl backs up the bundled PostgreSQL only; with your own server (postgres.bundled: false) back up its databases with its own tools"
+  # A failed listing is not an empty one: nothing is known to be stopped.
+  local running writers
+  running="$(dc ps --status running --services)" ||
+    refuse "could not list the running services; nothing was backed up"
+  writers="$(grep -vx postgres <<<"$running" || true)"
+  [[ -z "$writers" ]] || refuse "stop the deployment first (teamctl stop); still running: $(tr '\n' ' ' <<<"$writers")"
+  mkdir -m 0700 "$target"
+  target="$(cd "$target" && pwd)"
+  mkdir -m 0700 "$target/databases" "$target/archives" "$target/files"
+  local was_running=0
+  [[ -z "$(dc ps --status running --services postgres)" ]] || was_running=1
+  dc up -d --wait postgres
+  # A failed query is not an empty list: no manifest may call the backup whole.
+  local databases database
+  databases="$(psql_postgres "select datname from pg_database where not datistemplate and datname <> 'postgres' order by 1")" ||
+    refuse "could not list the databases; the backup in $target is incomplete and has no manifest"
+  while read -r database; do
+    [[ -n "$database" ]] || continue
+    dc exec -T postgres pg_dump -U postgres -Fc -d "$database" </dev/null >"$target/databases/$database.dump"
+  done <<<"$databases"
+  psql_postgres "show server_version" >"$target/databases/server-version"
+  [[ "$was_running" -eq 1 ]] || dc stop postgres
+  host_paths >"$run_dir/host-paths"
+  local kind key path left_out signer_secrets agents_secrets
+  while read -r kind key path; do
+    case "$kind" in
+      # The signer's live controller key stays out: its backup is the
+      # owner's separately protected offline copy (protected_signing/HOST.md).
+      # So does the agents' harness login, a person's account credential that
+      # is minted again rather than restored.
+      archive)
+        left_out=()
+        if [[ "$key" == compose.secretsDir ]]; then
+          signer_secrets="$(env_value SIGNER_SECRETS)"
+          agents_secrets="$(env_value AGENTS_SECRETS)"
+          left_out=("./${signer_secrets:-signer}/private-controller" "./${agents_secrets:-agents}")
+        fi
+        [[ ! -d "$path" ]] || archive "$path" "$target/archives/$key.tar" ${left_out[@]+"${left_out[@]}"}
+        ;;
+      file) install -m 0400 "$path" "$target/files/$key" ;;
+    esac
+  done <"$run_dir/host-paths"
+  python_in_server - "$target" "$project" "$env_file" "$REPO_ROOT" "$run_dir/host-paths" <<'PY'
+import datetime, hashlib, json, subprocess, sys
+from pathlib import Path
+
+target, project, env_file, repo, host_paths = sys.argv[1:]
+target = Path(target)
+paths = {key: (kind, path) for kind, key, path in (line.split(" ", 2) for line in Path(host_paths).read_text().splitlines())}
+
+
+def digest(path):
+    return hashlib.sha256(path.read_bytes()).hexdigest()
+
+
+env = dict(line.split("=", 1) for line in Path(env_file).read_text().splitlines() if "=" in line)
+revision = subprocess.run(["git", "-C", repo, "rev-parse", "HEAD"], capture_output=True, text=True).stdout.strip()
+clean = not subprocess.run(["git", "-C", repo, "status", "--porcelain"], capture_output=True, text=True).stdout.strip()
+manifest = {
+    "format": 1,
+    "createdAt": datetime.datetime.now(datetime.timezone.utc).isoformat(timespec="seconds"),
+    "project": project,
+    "source": {"revision": revision, "clean": clean},
+    "images": {key: value for key, value in sorted(env.items()) if key.endswith("_IMAGE")},
+    "postgres": {"serverVersion": (target / "databases" / "server-version").read_text().strip()},
+    "databases": [{"name": dump.stem, "sha256": digest(dump)} for dump in sorted((target / "databases").glob("*.dump"))],
+    "archives": [{"key": archive.stem, "path": paths[archive.stem][1], "sha256": digest(archive)}
+                 for archive in sorted((target / "archives").glob("*.tar"))],
+    "files": [{"key": file.name, "path": paths[file.name][1], "sha256": digest(file),
+               "mode": oct(Path(paths[file.name][1]).stat().st_mode & 0o7777)}
+              for file in sorted((target / "files").iterdir())],
+    "notBackedUp": [{"key": key, "path": path} for key, (kind, path) in sorted(paths.items()) if kind == "kept"],
+}
+(target / "manifest.json").write_text(json.dumps(manifest, indent=2, sort_keys=True) + "\n")
+(target / "manifest.json").chmod(0o400)
+PY
+  # The backup holds credentials: it is a protected source the agent's
+  # boundary probe checks, while it is present.
+  echo "$target" >>"$run_dir/backups"
+  echo "teamctl: backup in $target; it holds the deployment's credentials and custody key"
+}
+
+restore() {
+  if [[ "$lab_rehearsal" -ne 1 ]]; then
+    refuse "restore is not supported for a deployment that serves a team: Secrets must reapply its destroyed-version" \
+      "tombstones before a restored database serves (aweb-acyp), Logs its purge tombstones (aweb-acgh.16.23), and" \
+      "the signer must refuse a pending bootstrap restored over a completed enrollment (aweb-acyw); none does yet." \
+      "Controller rotation is aweb-acxy.4. --lab-rehearsal restores a backup of disposable lab data, never a team's."
+  fi
+  [[ -d "$target" && ! -L "$target" && -f "$target/manifest.json" ]] || refuse "$target is not a teamctl backup"
+  target="$(cd "$target" && pwd)"
+  model
+  host_paths >"$run_dir/host-paths"
+  # Every part checked against the manifest's digests, and every target taken
+  # from this deployment.yaml, not from the backup: the plan is printed only
+  # once all of it holds, and nothing is written before.
+  local plan
+  plan="$(python_in_server - "$target" "$run_dir/host-paths" <<'PY'
+import hashlib, json, os, re, sys
+from pathlib import Path
+
+target, host_paths = Path(sys.argv[1]), Path(sys.argv[2])
+paths = {key: (kind, path) for kind, key, path in (line.split(" ", 2) for line in host_paths.read_text().splitlines())}
+manifest = json.loads((target / "manifest.json").read_text())
+if manifest.get("format") != 1:
+    sys.exit("teamctl: the manifest's format is not 1")
+
+
+def part(relative, sha256):
+    path = target / relative
+    if path.is_symlink() or not path.is_file() or path.resolve().parent != (target / relative).parent.resolve():
+        sys.exit(f"teamctl: {relative} is not a regular file of the backup")
+    if hashlib.sha256(path.read_bytes()).hexdigest() != sha256:
+        sys.exit(f"teamctl: {relative} does not match the manifest's digest")
+
+
+def free(path):
+    path = Path(path)
+    if not path.is_absolute() or os.path.lexists(path):
+        sys.exit(f"teamctl: {path} exists or is not absolute; a restore writes only where nothing is")
+    if not path.parent.is_dir() or os.path.realpath(path.parent) != str(path.parent):
+        sys.exit(f"teamctl: {path.parent} is not a directory reached without a symbolic link")
+
+
+plan = []
+for database in manifest["databases"]:
+    if not re.fullmatch(r"[a-z_][a-z0-9_]{0,62}", database["name"]):
+        sys.exit(f"teamctl: {database['name']!r} is not a database this bundle makes")
+    part(f"databases/{database['name']}.dump", database["sha256"])
+    plan.append(f"database {database['name']} -")
+wanted = {key for key, (kind, _) in paths.items() if kind == "file"}
+if {file["key"] for file in manifest["files"]} != wanted:
+    sys.exit("teamctl: the backup's files are not the ones this deployment.yaml names")
+for kind, entries in (("archive", manifest["archives"]), ("file", manifest["files"])):
+    for entry in entries:
+        named = paths.get(entry["key"])
+        if named is None or named[0] != kind or named[1] != entry["path"]:
+            sys.exit(f"teamctl: the backup's {entry['key']} is not where this deployment.yaml puts it")
+        part(f"{kind}s/{entry['key']}" + (".tar" if kind == "archive" else ""), entry["sha256"])
+        free(entry["path"])
+        mode = entry.get("mode", "-")
+        if kind == "file" and not re.fullmatch(r"0o[0-7]{1,4}", mode):
+            sys.exit(f"teamctl: the backup's {entry['key']} has no mode")
+        plan.append(f"{kind} {entry['key']} {mode}")
+print("\n".join(plan))
+PY
+)" || exit 1
+  [[ -z "$(dc --profile '*' ps -a -q)" ]] || refuse "the bundle's containers exist; a restore starts from none (teamctl destroy)"
+  local key volumes
+  volumes="$(dc config --volumes)" || refuse "could not list the bundle's volumes; nothing was restored"
+  while read -r key; do
+    [[ -z "$key" ]] || ! docker volume inspect "${project}_$key" >/dev/null 2>&1 ||
+      refuse "the volume ${project}_$key exists; a restore starts from none (teamctl destroy)"
+  done <<<"$volumes"
+  local kind name mode path
+  while read -r kind name mode; do
+    path="$(sed -n "s/^$kind $name //p" "$run_dir/host-paths")"
+    case "$kind" in
+      archive) unarchive "$target/archives/$name.tar" "$path" ;;
+      file) install -m "${mode#0o}" "$target/files/$name" "$path" ;;
+    esac
+  done < <(grep -v '^database ' <<<"$plan")
+  dc up -d --wait postgres
+  while read -r kind name mode; do
+    dc exec -T postgres pg_restore -U postgres --exit-on-error -d "$name" <"$target/databases/$name.dump"
+  done < <(grep '^database ' <<<"$plan")
+  dc stop postgres
+  echo "teamctl: restored for a lab rehearsal of the mechanics, onto fresh volumes; not a recovery of a team's deployment."
+  echo "teamctl: the bundle is stopped; teamctl start starts it."
+}
+
+"$action"

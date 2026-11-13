@@ -81,7 +81,7 @@ async def test_disable_worker_a_stops_worker_b_while_its_actual_token_remains_ca
             await records.set_active_version(
                 tx, scope.installation_id, TEAM, record.secret_id, version
             )
-            await records.create_policy(tx, scope.installation_id, policy)
+            await records.create_policy(tx, scope.installation_id, policy, team_id=TEAM)
             await records.create_grant(
                 tx,
                 scope.installation_id,

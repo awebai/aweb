@@ -47,7 +47,7 @@ from typing import TYPE_CHECKING, Any
 from aweb_naapp.egress import InternalDestinations
 from aweb_naapp.hooks.producer import RegistrationView
 from aweb_naapp.hooks.strictjson import Refused as HookRefused
-from aweb_naapp.roles import PrincipalKey, assign, hold_role
+from aweb_naapp.roles import PrincipalKey, assign
 from aweb_naapp.runtime.approvals import (
     ActionPolicy,
     ApprovalRefused,
@@ -92,6 +92,7 @@ from aweb_secrets.grant import GrantRecord, GrantTemplate
 from aweb_secrets.job_changes import apply_job_change, job_prelock_ids
 from aweb_secrets.operation import CAPTURE_FIELDS, OperationTemplate
 from aweb_secrets.owners import OWNER_ROLE, OwnerDirectory, approver_scope, owner_scope
+from aweb_secrets.owners import hold_owner as hold_owner_holding
 from aweb_secrets.policy import Policy
 from aweb_secrets.revisions import claim_config_revision, config_revision
 from aweb_secrets.runner_protocol import RunnerRefused
@@ -212,7 +213,9 @@ class ChangeSetPolicies:
             return None
         installation_id, team_id = parts[1], parts[2]
         reader = tx or self._db
-        allow_requester = await four_eyes(reader, installation_id) == "not_required"
+        allow_requester = (
+            await four_eyes(reader, installation_id, team_id=team_id) == "not_required"
+        )
         if len(parts) == 4 and allow_requester:
             scopes: tuple[str, ...] = (parts[3],)
         else:
@@ -374,7 +377,7 @@ class ChangeSets:
         for index, item in enumerate(change["changes"]):
             if item["kind"] == "destination":
                 self._destination(item["after"], f"change.changes[{index}]")
-        if change["base_revision"] != await config_revision(tx, installation_id):
+        if change["base_revision"] != await config_revision(tx, installation_id, team_id=team_id):
             raise ChangeRefused(
                 "the configuration changed after this change set was drafted",
                 code="base_revision_stale",
@@ -877,7 +880,9 @@ class ChangeSets:
         if decided_by is None:
             raise ChangeRefused("no owner has decided the change set", code="change_not_approved")
         confirmer = await self._directory.owner_of(tx, decided_by.scope)
-        if confirmer is None or not await hold_role(tx, confirmer, OWNER_ROLE):
+        if confirmer is None or not await hold_owner_holding(
+            tx, confirmer, installation_id=admitted.installation_id
+        ):
             raise ChangeRefused("the deciding owner is no longer an owner", code="owner_required")
         row = await tx.fetch_one(
             "SELECT * FROM {{tables.change_sets}} WHERE change_id = $1", change_id
@@ -917,13 +922,13 @@ class ChangeSets:
         if evidence.approver_scope != decided_by.scope:
             raise ChangeRefused("the admitted decision changed", code="change_not_approved")
         installation_id = change["installation_id"]
-        distinct_approver = await lock_four_eyes(tx, installation_id)
+        distinct_approver = await lock_four_eyes(tx, installation_id, team_id=admitted.team_id)
         check_confirmable(
             change,
             installation_id=admitted.installation_id,
             install_generation=admitted.generation,
             team_id=admitted.team_id,
-            current_revision=await config_revision(tx, installation_id),
+            current_revision=await config_revision(tx, installation_id, team_id=admitted.team_id),
             now=datetime.now(UTC),
         )
         drafter = change["drafter"]
@@ -981,7 +986,9 @@ class ChangeSets:
                 raise ChangeRefused(
                     "approval proof unavailable", code="passkey_proof_unavailable"
                 ) from None
-        revision = await claim_config_revision(tx, installation_id, change["base_revision"])
+        revision = await claim_config_revision(
+            tx, installation_id, change["base_revision"], team_id=admitted.team_id
+        )
         designations: list[Designation] = []
         contact_changes: list[ContactChange] = []
         runner_registrations: list[RunnerRegistration] = []
@@ -1227,7 +1234,7 @@ class ChangeSets:
             except ContactChangeRefused as refused:
                 raise ChangeRefused(str(refused), code=refused.reason) from None
         if item["kind"] == "change_set_policy":
-            await relax_four_eyes(tx, installation_id=installation_id)
+            await relax_four_eyes(tx, installation_id=installation_id, team_id=team_id)
             return []
         if item["kind"] in RECORD_KINDS:
             await self._apply_record(tx, change, item)
@@ -1312,7 +1319,10 @@ class ChangeSets:
             elif kind == "grant":
                 grant = GrantRecord.from_after(after)
                 await _require_secret(tx, installation_id, team_id, grant.secret_id)
-                if await records.policy(tx, installation_id, grant.policy_digest) is None:
+                if (
+                    await records.policy(tx, installation_id, grant.policy_digest, team_id=team_id)
+                    is None
+                ):
                     raise records.RecordMissing(f"no policy {grant.policy_digest}")
                 if await tx.fetch_value(
                     "SELECT 1 FROM {{tables.grants}} WHERE grant_id = $1", grant.grant_id
@@ -1322,18 +1332,19 @@ class ChangeSets:
             elif kind == "grant_template":
                 template = GrantTemplate.from_after(after)
                 stored = await records.grant_template(
-                    tx, installation_id, template.grant_template_id
+                    tx, installation_id, template.grant_template_id, team_id=team_id
                 )
                 if op == "create" and stored is not None:
                     raise _exists(kind, template.grant_template_id)
                 if op == "update" and stored is None:
                     raise records.RecordMissing(f"no grant template {template.grant_template_id}")
-                await records.set_grant_template(tx, installation_id, template)
+                await records.set_grant_template(tx, installation_id, template, team_id=team_id)
             else:
                 await records.create_policy(
                     tx,
                     installation_id,
                     Policy.from_body({k: v for k, v in after.items() if k != "v"}),
+                    team_id=team_id,
                 )
         except records.RecordRefused as refused:
             raise ChangeRefused(str(refused), code=refused.code) from None

@@ -31,7 +31,6 @@ from aweb_naapp.console import (
 from aweb_naapp.console.handoff_sessions import ConsoleHandoffs
 from aweb_naapp.hooks.producer import Registrations
 from aweb_naapp.hooks.strictjson import Refused as HookRefused
-from aweb_naapp.roles import hold_role
 from aweb_naapp.runtime.approvals import (
     Approval,
     ApprovalRefused,
@@ -57,7 +56,8 @@ from aweb_secrets.change_sets import (
 from aweb_secrets.console import OwnerConsole, _body, _require_json, _text
 from aweb_secrets.console_results import confirmation_receipt, owner_confirmation_result
 from aweb_secrets.custody import SealContext
-from aweb_secrets.owners import OWNER_ROLE, owner_scope
+from aweb_secrets.owners import hold_owner as hold_owner_holding
+from aweb_secrets.owners import owner_binding, owner_scope
 from aweb_secrets.revisions import config_revision
 from aweb_secrets.use_audit import UseAuditUnavailable
 
@@ -144,7 +144,7 @@ class ConsoleChanges:
             or owner.team_id != admitted.team_id
             or current.scope
             != owner_scope(admitted.installation_id, admitted.team_id, owner.principal_did)
-            or not await hold_role(tx, owner, OWNER_ROLE)
+            or not await hold_owner_holding(tx, owner, installation_id=admitted.installation_id)
         ):
             raise HTTPException(403, "owner_required")
         self._unexpired(current)
@@ -225,7 +225,9 @@ class ConsoleChanges:
                 "install_generation": admitted.generation,
                 "team_id": admitted.team_id,
                 "drafter": {"via": "console", "scope": current.scope, "subject": current.subject},
-                "base_revision": await config_revision(tx, admitted.installation_id),
+                "base_revision": await config_revision(
+                    tx, admitted.installation_id, team_id=admitted.team_id
+                ),
                 "changes": body["changes"],
                 "reason": body["reason"],
                 "issued_at": issued.strftime("%Y-%m-%dT%H:%M:%SZ"),
@@ -276,10 +278,8 @@ class ConsoleChanges:
 
     async def installation_for_session(self, current: ConsoleSession) -> str:
         """Resolve an owner page from its stored scope; never parse an opaque locator."""
-        installation_id = await self.console.db.fetch_value(
-            "SELECT installation_id FROM {{tables.owner_principals}} WHERE scope=$1",
-            current.scope,
-        )
+        _owner_binding = await owner_binding(self.console.db, current.scope)
+        installation_id = None if _owner_binding is None else _owner_binding["installation_id"]
         if installation_id is None:
             raise HTTPException(403, "owner_required")
         admitted = await self._installation(current, installation_id)

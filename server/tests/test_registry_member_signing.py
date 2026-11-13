@@ -174,6 +174,26 @@ def test_invalid_member_configuration_refused_at_startup(monkeypatch, tmp_path, 
         _build_awid_registry_client(create_app(), redis=None)
 
 
+def test_group_writable_member_key_file_refused_at_startup(monkeypatch, tmp_path):
+    from aweb.config import get_settings
+
+    configure_member(monkeypatch, tmp_path)
+    (tmp_path / "server.pem").chmod(0o664)
+    with pytest.raises(ValueError, match="AWID_MEMBER_KEYS_FILE"):
+        get_settings()
+
+
+def test_member_key_path_that_is_not_a_regular_file_refused_at_startup(monkeypatch, tmp_path):
+    from aweb.config import get_settings
+
+    _, _, config = configure_member(monkeypatch, tmp_path)
+    fifo = tmp_path / "server.fifo"
+    os.mkfifo(fifo)
+    config.write_text(json.dumps({TEAM_ID: str(fifo)}))
+    with pytest.raises(ValueError, match="AWID_MEMBER_KEYS_FILE"):
+        get_settings()
+
+
 @pytest.mark.asyncio
 async def test_real_private_team_verification_revocation_and_recovery(real_stack, monkeypatch, tmp_path):
     """Real AWID gates + aweb's member, app-task and hook authority consumers."""

@@ -1,0 +1,58 @@
+{
+  "v": 1,
+  "profile": "protected-service-profile-v1.json",
+  "requester_id": "did:aw:44aKNQyvo1xh8rv6TfdfzjTn6nRp",
+  "requester_key": "did:key:z6MkwVDfCg9LbbY6xjH3EZk8YSFQZujV5Y4y1ZWeER9tDiN3",
+  "cases": [
+    {
+      "operation": "protected_operation_prepare",
+      "method": "POST",
+      "path": "/protected-operations",
+      "body": "{\"audience\":\"https://app.customer.example\",\"operation\":\"human-role.revoke\",\"operation_id\":\"11111111-1111-4111-8111-111111111111\",\"scope\":{\"authority\":{\"domain\":\"customer.example\",\"id\":\"engineering:customer.example\",\"kind\":\"team_controller\"},\"generation\":1,\"human\":{\"domain\":\"customer.example\",\"id\":\"did:aw:3YDAM5ZLRKg7eHH1Zs6sSMwkga8w\"},\"kind\":\"protected_key\",\"service_id\":\"customer-signer\",\"v\":1},\"subject\":{\"app_id\":\"customer-app\",\"installation_id\":\"22222222-2222-4222-8222-222222222222\",\"principal\":\"did:aw:3YDAM5ZLRKg7eHH1Zs6sSMwkga8w\",\"role\":\"customer.owner\"},\"variant\":\"default\"}",
+      "envelope": {
+        "v": 2,
+        "type": "aweb.awid-controller-request",
+        "aud": "https://signer.customer.example",
+        "domain": "customer.example",
+        "operation": "protected_operation_prepare",
+        "timestamp": "2026-11-11T00:00:00Z",
+        "method": "POST",
+        "path": "/protected-operations",
+        "body_sha256": "68b43e454d38adcf54242d7c88e54784aeec9c393807ddb3da9e2caac8b6b4d6",
+        "service_id": "customer-signer",
+        "scope_sha256": "d1d4d93529ebf76f8cd930b617e5e2d38614afd0bd4e3d80482751b02aa41a84"
+      },
+      "headers": {
+        "Authorization": "DIDKey did:key:z6MkwVDfCg9LbbY6xjH3EZk8YSFQZujV5Y4y1ZWeER9tDiN3 Dz/Wxf3+pnWPz2vX6mOiztv+UPCCH3O7twfuTLVSsYX+GQDEdowLkfoWC4AzcZiZN1RfVMewG6l0Plp2iqTNAw",
+        "X-AWEB-DID-AW": "did:aw:44aKNQyvo1xh8rv6TfdfzjTn6nRp",
+        "X-AWEB-Timestamp": "2026-11-11T00:00:00Z",
+        "X-AWEB-Signed-Payload": "eyJhdWQiOiJodHRwczovL3NpZ25lci5jdXN0b21lci5leGFtcGxlIiwiYm9keV9zaGEyNTYiOiI2OGI0M2U0NTRkMzhhZGNmNTQyNDJkN2M4OGU1NDc4NGFlZWM5YzM5MzgwN2RkYjNkYTllMmNhYWM4YjZiNGQ2IiwiZG9tYWluIjoiY3VzdG9tZXIuZXhhbXBsZSIsIm1ldGhvZCI6IlBPU1QiLCJvcGVyYXRpb24iOiJwcm90ZWN0ZWRfb3BlcmF0aW9uX3ByZXBhcmUiLCJwYXRoIjoiL3Byb3RlY3RlZC1vcGVyYXRpb25zIiwic2NvcGVfc2hhMjU2IjoiZDFkNGQ5MzUyOWViZjc2ZjhjZDkzMGI2MTdlNWUyZDM4NjE0YWZkMGJkNGUzZDgwNDgyNzUxYjAyYWE0MWE4NCIsInNlcnZpY2VfaWQiOiJjdXN0b21lci1zaWduZXIiLCJ0aW1lc3RhbXAiOiIyMDI2LTExLTExVDAwOjAwOjAwWiIsInR5cGUiOiJhd2ViLmF3aWQtY29udHJvbGxlci1yZXF1ZXN0IiwidiI6Mn0"
+      }
+    },
+    {
+      "operation": "protected_operation_receipt",
+      "method": "GET",
+      "path": "/protected-operations/11111111-1111-4111-8111-111111111111",
+      "body": "",
+      "envelope": {
+        "v": 2,
+        "type": "aweb.awid-controller-request",
+        "aud": "https://signer.customer.example",
+        "domain": "customer.example",
+        "operation": "protected_operation_receipt",
+        "timestamp": "2026-11-11T00:00:00Z",
+        "method": "GET",
+        "path": "/protected-operations/11111111-1111-4111-8111-111111111111",
+        "body_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+        "service_id": "customer-signer",
+        "scope_sha256": "d1d4d93529ebf76f8cd930b617e5e2d38614afd0bd4e3d80482751b02aa41a84"
+      },
+      "headers": {
+        "Authorization": "DIDKey did:key:z6MkwVDfCg9LbbY6xjH3EZk8YSFQZujV5Y4y1ZWeER9tDiN3 z7lzhyz69MEhPyuuLsYN1IGZSDiPlxnckgtGoMgm19Z44yE0Qy3T4q38/8/4cFdal3gmu6LA0qx9dMw6eCreCA",
+        "X-AWEB-DID-AW": "did:aw:44aKNQyvo1xh8rv6TfdfzjTn6nRp",
+        "X-AWEB-Timestamp": "2026-11-11T00:00:00Z",
+        "X-AWEB-Signed-Payload": "eyJhdWQiOiJodHRwczovL3NpZ25lci5jdXN0b21lci5leGFtcGxlIiwiYm9keV9zaGEyNTYiOiJlM2IwYzQ0Mjk4ZmMxYzE0OWFmYmY0Yzg5OTZmYjkyNDI3YWU0MWU0NjQ5YjkzNGNhNDk1OTkxYjc4NTJiODU1IiwiZG9tYWluIjoiY3VzdG9tZXIuZXhhbXBsZSIsIm1ldGhvZCI6IkdFVCIsIm9wZXJhdGlvbiI6InByb3RlY3RlZF9vcGVyYXRpb25fcmVjZWlwdCIsInBhdGgiOiIvcHJvdGVjdGVkLW9wZXJhdGlvbnMvMTExMTExMTEtMTExMS00MTExLTgxMTEtMTExMTExMTExMTExIiwic2NvcGVfc2hhMjU2IjoiZDFkNGQ5MzUyOWViZjc2ZjhjZDkzMGI2MTdlNWUyZDM4NjE0YWZkMGJkNGUzZDgwNDgyNzUxYjAyYWE0MWE4NCIsInNlcnZpY2VfaWQiOiJjdXN0b21lci1zaWduZXIiLCJ0aW1lc3RhbXAiOiIyMDI2LTExLTExVDAwOjAwOjAwWiIsInR5cGUiOiJhd2ViLmF3aWQtY29udHJvbGxlci1yZXF1ZXN0IiwidiI6Mn0"
+      }
+    }
+  ]
+}

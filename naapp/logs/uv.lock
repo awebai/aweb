@@ -199,7 +199,7 @@ wheels = [
 
 [[package]]
 name = "aweb"
-version = "1.27.51"
+version = "1.27.51rc2"
 source = { editable = "../../server" }
 dependencies = [
     { name = "aweb-naapp", extra = ["egress", "hooks"] },
@@ -225,6 +225,7 @@ dependencies = [
 [package.metadata]
 requires-dist = [
     { name = "aweb-naapp", extras = ["egress", "hooks"], editable = "../../naapp-lib" },
+    { name = "aweb-naapp", extras = ["runtime"], marker = "extra == 'protected'", editable = "../../naapp-lib" },
     { name = "awid-service", editable = "../../awid" },
     { name = "base58", specifier = ">=2.1.1" },
     { name = "cryptography", specifier = ">=45.0.6" },
@@ -243,6 +244,7 @@ requires-dist = [
     { name = "typer", specifier = ">=0.16.1" },
     { name = "uvicorn", extras = ["standard"], specifier = ">=0.35.0" },
 ]
+provides-extras = ["protected"]
 
 [package.metadata.requires-dev]
 dev = [
@@ -293,7 +295,7 @@ dev = [
 
 [[package]]
 name = "aweb-naapp"
-version = "0.5.2"
+version = "0.5.2rc2"
 source = { editable = "../../naapp-lib" }
 
 [package.optional-dependencies]
@@ -370,7 +372,7 @@ dev = [
 
 [[package]]
 name = "aweb-naapp-testing"
-version = "0.5.2"
+version = "0.5.2rc2"
 source = { editable = "../../naapp-lib/testing" }
 dependencies = [
     { name = "aiosmtpd" },
@@ -404,7 +406,7 @@ provides-extras = ["server"]
 
 [[package]]
 name = "awid-service"
-version = "0.5.40"
+version = "0.5.40rc2"
 source = { editable = "../../awid" }
 dependencies = [
     { name = "base58" },

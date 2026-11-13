@@ -248,14 +248,6 @@ async def list_agent_presences_by_workspace_ids(
     return results
 
 
-async def list_agent_presences_by_ids(
-    redis: Redis,
-    agent_ids: List[str],
-) -> List[Dict[str, str]]:
-    """Compatibility wrapper for the upstream agent-level presence API."""
-    return await list_agent_presences_by_workspace_ids(redis, agent_ids)
-
-
 async def _filter_valid_workspace_ids(
     redis: Redis,
     idx_key: str,
@@ -330,104 +322,6 @@ async def get_workspace_ids_by_team_id(
     """
     idx_key = _team_workspaces_index_key(team_id)
     return await _filter_valid_workspace_ids(redis, idx_key)
-
-
-async def get_workspace_ids_by_repo_id(
-    redis: Redis,
-    repo_id: str,
-) -> List[str]:
-    """
-    Get all workspace_ids that belong to a repo by ID.
-
-    Uses secondary index for O(1) lookup. Stale entries (presence expired but
-    index entry remains) are filtered out and lazily removed from the index.
-
-    Args:
-        repo_id: Repo UUID.
-
-    Returns:
-        List of workspace_ids in the repo.
-    """
-    idx_key = _repo_workspaces_index_key(repo_id)
-    return await _filter_valid_workspace_ids(redis, idx_key)
-
-
-async def get_workspace_ids_by_branch(
-    redis: Redis,
-    repo_id: str,
-    branch: str,
-) -> List[str]:
-    """
-    Get all workspace_ids working on a specific branch of a repo.
-
-    Uses secondary index for O(1) lookup. Stale entries (presence expired but
-    index entry remains) are filtered out and lazily removed from the index.
-
-    Args:
-        repo_id: Repo UUID.
-        branch: Branch name.
-
-    Returns:
-        List of workspace_ids on the branch.
-    """
-    idx_key = _branch_workspaces_index_key(repo_id, branch)
-    return await _filter_valid_workspace_ids(redis, idx_key)
-
-
-async def get_all_workspace_ids(
-    redis: Redis,
-) -> List[str]:
-    """
-    Get all workspace_ids with active presence.
-
-    Uses the global all_workspaces index. Stale entries (presence expired but
-    index entry remains) are filtered out and lazily removed from the index.
-
-    Returns:
-        List of all active workspace_ids.
-    """
-    idx_key = _all_workspaces_index_key()
-    return await _filter_valid_workspace_ids(redis, idx_key)
-
-
-async def get_workspace_id_by_alias(
-    redis: Redis,
-    team_id: str,
-    alias: str,
-) -> Optional[str]:
-    """
-    Get the workspace_id using a specific alias within a team.
-
-    Uses the alias secondary index for O(1) lookup. Returns the workspace_id
-    if the alias is in use and the workspace has active presence, None otherwise.
-
-    Note: This is for presence-based collision checking only. The database
-    (workspaces table) is the authoritative source for alias ownership.
-
-    Args:
-        team_id: Team address string.
-        alias: The alias to look up.
-
-    Returns:
-        workspace_id if alias is in use with active presence, None otherwise.
-    """
-    idx_key = _alias_index_key(team_id, alias)
-    workspace_id = await redis.get(idx_key)
-
-    if not workspace_id:
-        return None
-
-    # Normalize to string (may be bytes depending on Redis client config)
-    ws_id = workspace_id.decode("utf-8") if isinstance(workspace_id, bytes) else workspace_id
-
-    # Verify presence is still active (index may outlive presence due to TTL difference)
-    presence_key = _presence_key(ws_id)
-    if not await redis.exists(presence_key):
-        # Stale index entry - lazy cleanup
-        await redis.delete(idx_key)
-        return None
-
-    return ws_id
 
 
 async def clear_workspace_presence(

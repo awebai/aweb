@@ -143,8 +143,69 @@ class PasskeyInstallationContext:
         )
 
 
+@dataclass(frozen=True)
+class ProtectedKeyContext:
+    """Versioned preinstallation authority context; never a fake installation."""
+
+    service_id: str
+    authority_kind: str
+    authority_id: str
+    authority_domain: str
+    human_id: str
+    human_domain: str
+    generation: int
+
+    def __post_init__(self) -> None:
+        if (
+            self.authority_kind not in {"human_identity", "namespace_controller", "team_controller"}
+            or not all(
+                _text(v)
+                for v in (
+                    self.service_id,
+                    self.authority_id,
+                    self.authority_domain,
+                    self.human_id,
+                    self.human_domain,
+                )
+            )
+            or not _integer(self.generation, 1)
+        ):
+            raise ProofContextUnavailable()
+
+    def fields(self) -> dict[str, Any]:
+        return {
+            "v": 1,
+            "kind": "protected_key",
+            "service_id": self.service_id,
+            "authority": {
+                "kind": self.authority_kind,
+                "id": self.authority_id,
+                "domain": self.authority_domain,
+            },
+            "human": {"id": self.human_id, "domain": self.human_domain},
+            "generation": self.generation,
+        }
+
+
+PasskeyContext = PasskeyInstallationContext | ProtectedKeyContext
+PROTECTED_CONTEXT_FIELDS = {
+    "v",
+    "kind",
+    "service_id",
+    "authority",
+    "human",
+    "generation",
+    "scope",
+    "origin",
+    "rp_id",
+    "require_up",
+    "require_uv",
+    "binding_kind",
+}
+
+
 class ProofContextResolver(Protocol):
-    async def __call__(self, scope: str, *, tx: TransactionManager) -> PasskeyInstallationContext:
+    async def __call__(self, scope: str, *, tx: TransactionManager) -> PasskeyContext:
         """Read the exact authoritative scope binding; take no authority locks."""
         ...
 
@@ -291,12 +352,38 @@ def _checked(proof: RetainedPasskeyProof) -> tuple[dict[str, Any], dict[str, Any
     metadata = parse_request_json(proof.metadata_canonical)
     _require(canonical_json_bytes(context) == proof.context_canonical)
     _require(canonical_json_bytes(metadata) == proof.metadata_canonical)
-    _require(set(context) == CONTEXT_FIELDS)
+    protected = context.get("kind") == "protected_key"
+    if protected:
+        _require(set(context) == PROTECTED_CONTEXT_FIELDS)
+        _require(type(context["v"]) is int and context["v"] == 1)
+        authority, human = context["authority"], context["human"]
+        _require(isinstance(authority, dict) and set(authority) == {"kind", "id", "domain"})
+        _require(isinstance(human, dict) and set(human) == {"id", "domain"})
+        try:
+            original = ProtectedKeyContext(
+                context["service_id"],
+                authority["kind"],
+                authority["id"],
+                authority["domain"],
+                human["id"],
+                human["domain"],
+                context["generation"],
+            )
+        except ProofContextUnavailable:
+            raise PasskeyProofUnavailable() from None
+        _require(all(context[k] == v for k, v in original.fields().items()))
+        _require(all(_text(context[k]) for k in ("scope", "origin", "rp_id", "binding_kind")))
+    else:
+        _require(set(context) == CONTEXT_FIELDS)
     _require(METADATA_FIELDS <= set(metadata) <= METADATA_FIELDS | APPROVAL_FIELDS)
     _require(all(value is not None for value in metadata.values()))
-    _require(
-        all(_text(context[k]) for k in CONTEXT_FIELDS - {"generation", "require_up", "require_uv"})
-    )
+    if not protected:
+        _require(
+            all(
+                _text(context[k])
+                for k in CONTEXT_FIELDS - {"generation", "require_up", "require_uv"}
+            )
+        )
     _require(_integer(context["generation"], 1))
     _require(context["require_up"] is True and context["require_uv"] is True)
     _require(all(_text(metadata[k]) for k in ("evidence_ref", "subject", "purpose")))
@@ -384,7 +471,10 @@ def _checked(proof: RetainedPasskeyProof) -> tuple[dict[str, Any], dict[str, Any
             and policy["version"] == metadata["policy_version"]
         )
         request = wrapper["request"]
-        if isinstance(request, dict):
+        if protected:
+            _require(isinstance(request, dict))
+            _require(request.get("scope") == original.fields())
+        elif isinstance(request, dict):
             for key, value in (
                 ("team_id", context["team_id"]),
                 ("installation_id", context["installation_id"]),

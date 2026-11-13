@@ -8260,7 +8260,7 @@ function createActions({ host, getPage, update, announce }) {
   };
 }
 
-// digests.mjs
+// ../src/aweb_naapp/assets/canonical-json.mjs
 function scalarString(value) {
   for (const point of value)
     if (point.codePointAt(0) >= 55296 && point.codePointAt(0) <= 57343)
@@ -8287,6 +8287,8 @@ function canonical(value) {
     return "{" + Object.keys(value).sort(compareKeys).map((key) => scalarString(key) + ":" + canonical(value[key])).join(",") + "}";
   throw new TypeError("Not JSON");
 }
+
+// digests.mjs
 async function digest(prefix, value) {
   const bytes = await crypto.subtle.digest(
     "SHA-256",

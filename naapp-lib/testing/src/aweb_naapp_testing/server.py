@@ -24,6 +24,7 @@ import os
 from collections.abc import AsyncIterator
 from dataclasses import dataclass
 
+import httpx
 import pytest_asyncio
 from aweb.testing import Server, running_server
 from awid.dns_verify import DnsVerificationError, DomainAuthority
@@ -68,7 +69,13 @@ class Coordination:
             response = await client.post(
                 "/v1/connect", content=body, headers={**headers, "Content-Type": "application/json"}
             )
-        response.raise_for_status()
+        if response.is_error:
+            # The server's refusal detail, which raise_for_status() drops.
+            raise httpx.HTTPStatusError(
+                f"/v1/connect answered {response.status_code}: {response.text}",
+                request=response.request,
+                response=response,
+            )
         return response.json()
 
     def directory(self, *, ttl_seconds: int = 60) -> TeamServerDirectory:

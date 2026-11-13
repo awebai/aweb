@@ -41,6 +41,11 @@ type GrantHome struct {
 	AwebURL   string       `yaml:"aweb_url"`
 	MintedAt  string       `yaml:"minted_at,omitempty"`
 	Custody   GrantCustody `yaml:"custody,omitempty"`
+	// TeamDIDKey is the team key named by the resident's team certificate
+	// when the grant was minted. A grant home holds no team certificate; this
+	// is read only to verify the team's owner log-key record. It is absent
+	// from grants minted before it was recorded.
+	TeamDIDKey string `yaml:"team_did_key,omitempty"`
 }
 
 func GrantHomeStatePath(root string) string {
@@ -49,10 +54,6 @@ func GrantHomeStatePath(root string) string {
 
 func GrantHomeSigningKeyPath(root string) string {
 	return filepath.Join(filepath.Clean(root), "grant-signing.key")
-}
-
-func CustodyRunDir(root string) string {
-	return filepath.Join(filepath.Clean(root), "run")
 }
 
 func CustodySocketPath(root string) string {

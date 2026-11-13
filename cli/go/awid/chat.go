@@ -6,6 +6,7 @@ import (
 	"errors"
 	"net/http"
 	"sort"
+	"strconv"
 	"strings"
 	"time"
 )
@@ -1027,7 +1028,7 @@ func isCanonicalUUID(value string) bool {
 // that timestamp; if nil, no replay (server polls from now).
 // Uses a dedicated HTTP client without response timeout since SSE connections are long-lived.
 func (c *Client) ChatStream(ctx context.Context, sessionID string, deadline time.Time, after *time.Time) (*SSEStream, error) {
-	path := "/v1/chat/sessions/" + urlPathEscape(sessionID) + "/stream?deadline=" + urlQueryEscape(deadline.UTC().Format(time.RFC3339Nano))
+	path := chatStreamPath(sessionID, deadline)
 	if after != nil && !after.IsZero() {
 		// Truncate to second precision so the server replay query
 		// (WHERE created_at > $after) always includes our sent message.
@@ -1038,7 +1039,21 @@ func (c *Client) ChatStream(ctx context.Context, sessionID string, deadline time
 		// where sentAt and the signed timestamp land in the same second.
 		path += "&after=" + urlQueryEscape(after.Truncate(time.Second).Add(-time.Second).UTC().Format(time.RFC3339))
 	}
+	return c.openChatStream(ctx, path)
+}
 
+// ChatStreamAfterSeq opens an SSE stream for a session that delivers every
+// message and read receipt numbered after afterSeq. A client resumes a stream
+// the server ended this way without losing or repeating an event.
+func (c *Client) ChatStreamAfterSeq(ctx context.Context, sessionID string, deadline time.Time, afterSeq int64) (*SSEStream, error) {
+	return c.openChatStream(ctx, chatStreamPath(sessionID, deadline)+"&after_seq="+strconv.FormatInt(afterSeq, 10))
+}
+
+func chatStreamPath(sessionID string, deadline time.Time) string {
+	return "/v1/chat/sessions/" + urlPathEscape(sessionID) + "/stream?deadline=" + urlQueryEscape(deadline.UTC().Format(time.RFC3339Nano))
+}
+
+func (c *Client) openChatStream(ctx context.Context, path string) (*SSEStream, error) {
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, c.baseURL+path, nil)
 	if err != nil {
 		return nil, err

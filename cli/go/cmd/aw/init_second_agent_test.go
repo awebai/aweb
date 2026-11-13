@@ -88,7 +88,7 @@ func TestInitTeamAPIKeySecondAgentCommand(t *testing.T) {
 			if cert.Team != team || cert.MemberDIDKey != initialized[cert.Alias] {
 				t.Error("connected wrong team/member")
 			}
-			if err := awid.VerifyTeamCertificate(cert, teamPub); err != nil {
+			if err := awid.CheckDecodedTeamCertificate(cert, awid.ComputeDIDKey(teamPub)); err != nil {
 				t.Error(err)
 			}
 			connects = append(connects, cert.Alias)

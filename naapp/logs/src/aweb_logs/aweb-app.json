@@ -49,40 +49,6 @@
       ]
     },
     {
-      "name": "reader-slot",
-      "description": "Issue a pending reader slot for the contact the owner will designate.",
-      "method": "POST",
-      "path": "/v1/reader-slots",
-      "input_schema": {
-        "type": "object",
-        "properties": {
-          "contact_sha256": {
-            "type": "string"
-          }
-        },
-        "required": [
-          "contact_sha256"
-        ],
-        "additionalProperties": false
-      },
-      "params": [
-        {
-          "name": "contact_sha256",
-          "in": "body"
-        }
-      ],
-      "scopes": [
-        "logs.readers"
-      ],
-      "mutation": true,
-      "body": {
-        "mode": "json"
-      },
-      "invocation_contexts": [
-        "agent"
-      ]
-    },
-    {
       "name": "remove-reader",
       "description": "Remove a reader of the team's log; never the last one.",
       "method": "POST",

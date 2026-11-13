@@ -1,7 +1,5 @@
 """Real HTTP B3 callers retain the original authority and atomic signed audit."""
 
-import base64
-import hashlib
 from contextlib import asynccontextmanager
 
 import httpx
@@ -15,7 +13,6 @@ from aweb_secrets.approval_kind import approval_kind
 from aweb_secrets.change_sets import ChangeSets
 from aweb_secrets.console import OwnerConsole, owner_console_router
 from aweb_secrets.console_changes import ConsoleChanges, console_changes_router
-from aweb_secrets.owners import owner_scope
 from tests.test_change_sets import (
     ALICE,
     ORIGIN,
@@ -79,26 +76,20 @@ async def client(w, audit, *, registrations=None):
 
 
 async def bootstrap(w, human, contact="owner@example.com"):
-    scope = owner_scope(INSTALLATION_ID, TEAM, ALICE.principal_did)
-    subject = {
-        "app_id": w.admitted.app_id,
-        "installation_id": INSTALLATION_ID,
-        "role": scope,
-        "contact_sha256": hashlib.sha256(contact.encode()).hexdigest(),
-    }
-    signing, signature = w.owner.sign("app-role.designate", subject)
-    response = await human.post(
-        f"/installations/{INSTALLATION_ID}/owner-acts",
-        json={
-            "signing": base64.b64encode(signing).decode(),
-            "signature": signature,
-            "team_id": TEAM,
-            "principal": ALICE.principal_did,
-            "contact": contact,
-        },
+    from tests.test_owner_directory import designate_contact
+
+    await enrol_owner(w, ALICE, "alice@acme.com")
+    w.audit_event_start = await w.db.fetch_value(
+        "SELECT COALESCE(max(position),0) FROM {{tables.outbox_events}}"
     )
-    assert response.status_code == 200, response.text
-    return w.inbox.enrolments[contact][-1], hashlib.sha256(signing).hexdigest()
+    w.audit_base_credentials = await w.db.fetch_value(
+        "SELECT count(*) FROM {{tables.passkey_credentials}}"
+    )
+    scope = await designate_contact(w, "http-finance", contact, enrol=False)
+    commitment = await w.db.fetch_value(
+        "SELECT commitment FROM {{tables.credential_authorizations}} WHERE scope=$1", scope
+    )
+    return w.inbox.enrolments[contact][-1], commitment
 
 
 async def enrol(human, token, device):
@@ -113,7 +104,7 @@ async def enrol(human, token, device):
     )
 
 
-async def test_bootstrap_and_enrolment_http_preserve_original_owner_act(world):
+async def test_approver_enrolment_http_preserves_the_original_approve_proof(world):
     audit = await audit_for(world)
     async with client(world, audit) as (human, _):
         token, commitment = await bootstrap(world, human)
@@ -121,7 +112,7 @@ async def test_bootstrap_and_enrolment_http_preserve_original_owner_act(world):
         assert response.status_code == 200, response.text
         recorded = await events(world)
         assert [e["payload"]["act"] for e in recorded] == ["role.designated", "credential.enrolled"]
-        assert all(e["payload"]["owner_act_sha256"] == commitment for e in recorded)
+        assert all(e["payload"]["approval_evidence_sha256"] == commitment for e in recorded)
         assert token not in str(recorded)
         assert (
             await human.post("/enrolment/options", json={"link_token": token})
@@ -145,7 +136,8 @@ async def test_enrolment_http_target_refusal_rolls_back_and_fresh_ceremony_retri
         assert refused.status_code == 503
         assert refused.json() == {"detail": "audit_target_unavailable"}
         assert (
-            await world.db.fetch_value("SELECT count(*) FROM {{tables.passkey_credentials}}") == 0
+            await world.db.fetch_value("SELECT count(*) FROM {{tables.passkey_credentials}}")
+            == world.audit_base_credentials
         )
         assert (
             await world.db.fetch_value(
@@ -253,7 +245,7 @@ async def test_confirm_http_audit_refusal_rolls_back_b2_revision_and_designation
         assert refused.status_code == 503, refused.text
         assert refused.json() == {"detail": "audit_target_unavailable"}
         assert (await world.approvals.get(draft["approval_id"])).state is ApprovalState.APPROVED
-        assert await config_revision(world.db, INSTALLATION_ID) == 0
+        assert await config_revision(world.db, INSTALLATION_ID, team_id=TEAM) == 0
         assert await world.db.fetch_value("SELECT count(*) FROM {{tables.approvers}}") == 0
         assert "finance@example.com" not in world.inbox.enrolments
         assert await events(world) == []

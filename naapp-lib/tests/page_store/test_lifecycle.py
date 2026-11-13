@@ -5,11 +5,10 @@ from __future__ import annotations
 import asyncio
 import copy
 import json
-import os
-import subprocess
 from dataclasses import replace
 
 import pytest
+from aweb_naapp_testing.databases import back_up, restore
 
 from aweb_naapp.page_store import Access, PageStore, StoreError
 from aweb_naapp.page_store.lifecycle import Coverage, ExternalArchive, LifecycleHooks
@@ -142,12 +141,12 @@ async def test_delete_is_durable_revokes_access_and_does_not_claim_unowned_cover
 
 async def test_backup_restore_cannot_resurrect_deleted_page_or_prior_receipt(store, tmp_path):
     await create(store)
-    backup, env, database = await content_dump(store, tmp_path)
+    backup = await back_up(store.db, tmp_path / "before-delete.dump")
     store.lifecycle = EmptyAppHooks()
     await store.request_delete(SCOPE, OWNER, expected_rev=1, key="delete")
     await store.advance_delete(SCOPE)
     # Actual SQL restore into the content DB, keeping the separate ledger live.
-    await restore_dump(store, backup, env, database)
+    await restore(store.db, backup)
     assert await store.db.fetch_value("SELECT count(*) FROM {{tables.page_records}}") == 1
     fresh_process = PageStore(store.db, ledger=store.ledger, retention=POLICY)
     with pytest.raises(StoreError, match="restore_not_ready"):
@@ -242,56 +241,13 @@ async def test_startup_reapplies_erasure_after_key_expiry(store):
         await store.read(SCOPE, OWNER)
 
 
-async def content_dump(store, tmp_path):
-    backup = tmp_path / "before-delete.dump"
-    config = store.db.config
-    database = await store.db.fetch_value("SELECT current_database()")
-    assert database.startswith("test_")
-    env = {
-        **os.environ,
-        "PGHOST": config.host,
-        "PGPORT": str(config.port),
-        "PGUSER": config.user,
-        "PGPASSWORD": config.password,
-        "PGDATABASE": database,
-    }
-    # Inherit stderr so pytest shows tool failures (including version mismatches).
-    await asyncio.to_thread(
-        subprocess.run,
-        ["pg_dump", "--format=custom", "--no-owner", "--no-acl", "--file", str(backup)],
-        env=env,
-        check=True,
-    )
-    return backup, env, database
-
-
-async def restore_dump(store, backup, env, database):
-    await store.db.disconnect()
-    await asyncio.to_thread(
-        subprocess.run,
-        [
-            "pg_restore",
-            "--clean",
-            "--if-exists",
-            "--no-owner",
-            "--no-acl",
-            "--dbname",
-            database,
-            str(backup),
-        ],
-        env=env,
-        check=True,
-    )
-    await store.db.connect()
-
-
 async def test_live_page_restore_refuses_a_key_accepted_after_the_backup(store, tmp_path):
     await create(store)
-    backup, env, database = await content_dump(store, tmp_path)
+    backup = await back_up(store.db, tmp_path / "before-delete.dump")
     first = await store.mutate(
         SCOPE, OWNER, expected_rev=1, key="accepted-after-backup", records=[record_change()]
     )
-    await restore_dump(store, backup, env, database)
+    await restore(store.db, backup)
     restored = PageStore(store.db, ledger=store.ledger, retention=POLICY)
     await restored.start()
     with pytest.raises(StoreError, match="request_lost_in_restore") as refused:
@@ -314,8 +270,8 @@ async def test_restore_preserves_a_key_whose_transaction_is_in_the_backup(store,
     first = await store.mutate(
         SCOPE, OWNER, expected_rev=1, key="before-backup", records=[record_change()]
     )
-    backup, env, database = await content_dump(store, tmp_path)
-    await restore_dump(store, backup, env, database)
+    backup = await back_up(store.db, tmp_path / "before-delete.dump")
+    await restore(store.db, backup)
     restored = PageStore(store.db, ledger=store.ledger, retention=POLICY)
     await restored.start()
     assert (

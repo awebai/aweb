@@ -123,7 +123,10 @@ For a send to a global address (`domain/name`):
    closed on mismatch. The sending server connects only to an `https` delivery
    origin whose host resolves to public addresses (or private ones, for an
    origin its operator lists in `AWEB_FEDERATION_PRIVATE_DELIVERY_ORIGINS`), at
-   the address it checked, and does not follow redirects. A failed delivery
+   the address it checked, and does not follow redirects. A server whose
+   operator set `AWEB_FEDERATION_OUTBOUND` to `off`, or to a list of origins
+   that does not include this one, refuses the send with `403` naming the
+   setting before resolving or connecting. A failed delivery
    returns the status and one fixed reason (`delivery_origin_refused`,
    `delivery_address_refused`, `delivery_origin_unreachable`,
    `delivery_timeout`, `delivery_unavailable`, `HTTP <status>`, or the
