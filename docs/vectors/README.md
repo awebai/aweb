@@ -63,6 +63,14 @@ inputs, not cryptographic known answers or evidence that runtime paths have
 passed. Implementations must exercise the applicable cases against their
 shared signer and adapters; static catalog validation is not runtime acceptance.
 
+### `human-assurance-owner-removal-v1.json` — additive policy contract
+
+The current owner's live approval can revoke an exact agent/service membership
+outside a root's admission bucket, including pre-cutover and retired-root
+members. The unchanged base inventory remains in `human-assurance-v1.json`.
+These additional scenarios specify the `owner_approved` variant before its
+implementation; they do not claim a served route or successful native run.
+
 ### `id-certificates-v1.json` — contract candidate
 
 The [identity certificates contract](../id-certificates.md) freezes
