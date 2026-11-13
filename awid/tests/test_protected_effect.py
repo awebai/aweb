@@ -281,3 +281,38 @@ def test_subject_only_retained_baseline_never_copies_unused_fields(principal, ac
     else:
         with pytest.raises(TeamCertificateError, match="certificate_binding_mismatch"):
             check_retained_subject_record(observation, record, **arguments)
+
+
+def test_public_protected_effect_vector_and_authority_refusals():
+    import base64
+    import json
+    from pathlib import Path
+
+    fixture = (
+        Path(__file__).resolve().parents[2] / "docs/vectors/protected-effect-v1.json"
+    )
+    vector = json.loads(fixture.read_bytes())
+    fields = vector["fields"]
+    artifact = base64.b64decode(vector["artifact_signing_b64"], validate=True)
+    signature = vector["artifact_signature"]
+    assert artifact_digest(artifact, signature) == vector["artifact_sha256"]
+    assert (
+        check(
+            vector["proof"],
+            vector["binding"],
+            fields,
+            artifact,
+            signature,
+            now=datetime.fromisoformat(vector["now"].replace("Z", "+00:00")),
+        )
+        == fields
+    )
+    for case in vector["invalid"]:
+        with pytest.raises(EffectRefused):
+            check(
+                vector["proof"],
+                {**vector["binding"], **case["binding_override"]},
+                fields,
+                artifact,
+                signature,
+            )
