@@ -158,9 +158,11 @@ was run on PostgreSQL against fixtures with one, several and no teams, a fresh
 schema and a missing schema (source `1217f9b21`, SHA-256 `40f41cd3…`, gate
 `a2930875`), apart from that gate's unrelated infrastructure status.
 
-- **Every `zero_teams` and `multiple_teams` is 0:** upgrade.
-- **Any other count:** do not upgrade. Keep the old image running, the
-  backup and the count. Which team owns those installations needs an explicit,
+- **Only if the command finishes successfully, reports all four tables, and
+  every `zero_teams` and `multiple_teams` is 0:** upgrade.
+- **Any command error, timeout or missing table result, or any nonzero
+  `zero_teams` or `multiple_teams`:** stop before migration. Keep the old
+  image running, the backup and the output. Which team owns those installations needs an explicit,
   evidenced decision, and there is no supported repair statement. Do not
   update or delete rows, add rows to make the count zero, or give them the
   team that happens to be connected. A supported remedy would be a separately
