@@ -65,7 +65,7 @@ class PreparedOwnerAct:
     name, for logging.
     """
 
-    __slots__ = ("_checked", "_prepared_at", "_signing", "_verifier", "_protection")
+    __slots__ = ("_checked", "_prepared_at", "_signing", "_verifier", "_protection", "_proof_expires_at")
 
     def __init__(
         self,
@@ -74,12 +74,14 @@ class PreparedOwnerAct:
         verifier: OwnerActVerifier,
         prepared_at: datetime,
         protection: TeamProtectionObservation | None = None,
+        proof_expires_at: datetime | None = None,
     ) -> None:
         self._checked = checked
         self._signing = signing
         self._verifier = verifier
         self._prepared_at = prepared_at
         self._protection = protection
+        self._proof_expires_at = proof_expires_at
 
     @property
     def act_name(self) -> str:
@@ -100,6 +102,8 @@ class PreparedOwnerAct:
             except EffectRefused as exc:
                 raise Refused(exc.code) from None
         now = _utc_now(self._verifier._clock)
+        if self._proof_expires_at is not None and now >= self._proof_expires_at:
+            raise Refused("protected_controller_required", "the original service proof expired")
         if now - self._prepared_at > KEY_FRESHNESS:
             raise Refused("owner_required", "prepared too long ago for its team key to be current")
         if now >= self._checked.expires_at:
@@ -157,6 +161,7 @@ class OwnerActVerifier:
             acts=self.acts,
             now=now,
         )
+        proof_expires_at = None
         if protection is not None and protection.protected:
             delivery = protected_delivery if protected_delivery is not None else self._protected_delivery
             try:
@@ -167,10 +172,11 @@ class OwnerActVerifier:
                 matched = False
                 for proof in proofs:
                     try:
-                        verify_proof(proof, binding=dict(protection.binding), team_id=team_id,
+                        fields = verify_proof(proof, binding=dict(protection.binding), team_id=team_id,
                             controller_did_key=team_key, operations={(checked.act, "default")},
                             artifact_type="owner-act", artifact=signing, artifact_signature=signature,
                             consumer=dict(consumer), now=now)
+                        proof_expires_at = datetime.fromisoformat(fields["expires_at"])
                         matched = True
                         break
                     except EffectRefused:
@@ -179,7 +185,7 @@ class OwnerActVerifier:
                     raise EffectRefused()
             except EffectRefused:
                 raise Refused("protected_controller_required") from None
-        return PreparedOwnerAct(checked, signing, self, _utc_now(lambda: now), protection)
+        return PreparedOwnerAct(checked, signing, self, _utc_now(lambda: now), protection, proof_expires_at)
 
     async def applied_in(self, tx: TransactionManager, prepared: PreparedOwnerAct) -> bool:
         """Read an exact committed act's nonce receipt, without consuming it.

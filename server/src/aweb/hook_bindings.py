@@ -487,6 +487,10 @@ async def _apply_owner_act(
             )
         if in_transaction is not None:
             await in_transaction(tx)
+        try:
+            prepared.require_fresh()
+        except Refused as refused:
+            raise _service_error(refused) from refused
     return binding_from_row(row)
 
 

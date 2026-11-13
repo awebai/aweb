@@ -318,7 +318,11 @@ def mount_owner_act_routes(
                 await fence.check(tx, None)
                 prepared_effect.require_fresh()
                 prepared_act.require_fresh()
-        except Refused:
+        except Refused as exc:
+            if exc.code == "protected_state_unavailable":
+                raise _refuse(503, exc.code) from None
+            if exc.code == "protected_controller_required":
+                raise _refuse(403, exc.code) from None
             raise _refuse() from None
         except OwnerActDeliveryRefused as exc:
             raise _refuse(
