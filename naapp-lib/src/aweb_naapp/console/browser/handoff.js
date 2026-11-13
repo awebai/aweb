@@ -83,7 +83,9 @@ import { operationTable } from "/handoff-assets/operations.mjs";
     document.getElementById("handoff-act").textContent = request.operation;
     document.getElementById("handoff-target").textContent =
       [subject.principal, subject.role, subject.app_id, subject.installation_id,
-        subject.event_class, subject.binding_id, subject.hold_id].filter(value => value !== undefined).join(" · ");
+        subject.event_class, subject.binding_id, subject.hold_id, subject.team_id,
+        subject.server_url, subject.key_id, subject.public_key, subject.created_at]
+        .filter(value => value !== undefined).join(" · ");
     document.getElementById("handoff-digest").textContent = digest;
     document.getElementById("handoff-fingerprint").textContent = digest.slice(0, 16).match(/.{4}/g).join(" ");
     document.getElementById("handoff-payload").textContent = JSON.stringify(payload, null, 2);
