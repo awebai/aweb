@@ -17,7 +17,9 @@ import awid.protected_membership as membership
 from aweb.api import RequestBodyCacheMiddleware
 from aweb.routes.identity_grants import router as grants_router
 from aweb_naapp_testing import did_key
-from tests.test_protected_membership_retained import ORIGIN, TEAM, membership_env  # noqa: F401
+from tests.test_protected_membership_retained import ORIGIN, TEAM
+
+pytest_plugins = ("tests.test_protected_membership_retained",)
 
 
 class DelayedDB:
