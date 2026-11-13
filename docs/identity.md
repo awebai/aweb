@@ -16,7 +16,7 @@ The [identity certificates v1 candidate](id-certificates.md) defines a
 parent-signed human/agent tree rooted in DNS namespace authority, alongside
 unchanged team certificates. The nearest human answers for an agent;
 membership, roles and custody stay separate. Implementation follows contract
-review. The former [email attribution candidate](member-attribution.md) is
+review. The former [email attribution candidate](drafts/member-attribution.md) is
 superseded and must not be implemented.
 
 ## Entities

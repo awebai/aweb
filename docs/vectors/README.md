@@ -137,7 +137,7 @@ checkpoints, rather than evidence those paths have already been implemented.
 
 ### `member-attribution-v1.json` — superseded, historical only
 
-The [old member attribution proposal](../member-attribution.md) is superseded
+The [old member attribution proposal](../drafts/member-attribution.md) is superseded
 by the identity tree. Its frozen bytes remain evidence, not a new email/SMTP
 implementation contract. No new consumer should implement this record.
 
