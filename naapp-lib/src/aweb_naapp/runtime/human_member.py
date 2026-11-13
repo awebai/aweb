@@ -101,9 +101,10 @@ async def check_human_member(
         verify_team_certificate_signature(cert, facts.team_did_key)
     except TeamCertificateError:
         raise _refused(403, "principal_not_member") from None
+    await team_cache.verify_membership_certificate(cert, facts)
     try:
         membership = await team_cache.check_current_member(
-            team_id, certificate_id=certificate_id, team_did_key=facts.team_did_key
+            team_id, certificate_id=certificate_id, team_did_key=facts.team_did_key, certificate=cert
         )
     except HTTPException as exc:
         raise _refused(

@@ -25,7 +25,8 @@ import logging
 import re
 import time
 from collections.abc import Callable, Mapping
-from dataclasses import dataclass
+from contextlib import asynccontextmanager
+from dataclasses import dataclass, replace
 from dataclasses import field as dataclass_field
 from datetime import UTC, datetime
 from enum import StrEnum
@@ -35,6 +36,15 @@ from urllib.parse import quote, urlsplit
 import httpx
 from awid.did import did_key_from_signing_key, public_key_from_did, validate_stable_id
 from awid.log import canonical_server_origin
+from awid.protected_effect import EffectRefused
+from awid.protected_membership import (
+    TeamProtectionObservation,
+    check_retained_subject_record,
+    observe_team_protection,
+    resolve_registered_membership,
+    verify_registered_membership,
+)
+from awid.registry import RegistryClient
 from awid.registry_auth import RegistryRequestAuth
 from awid.signing import (
     canonical_json_bytes,
@@ -115,9 +125,17 @@ class MembershipProof:
     team_did_key: str
     checked_at: int
     fresh_until: int
+    protection_observation: TeamProtectionObservation | None = None
+    principal: str | None = None
+    member_alias: str | None = None
 
     def is_fresh_at(self, now: int) -> bool:
         """Check the original bounded window without extending its deadline."""
+        if self.protection_observation is not None:
+            try:
+                self.protection_observation.require_fresh()
+            except EffectRefused:
+                return False
         return (
             all(type(value) is int for value in (self.checked_at, self.fresh_until, now))
             and 0 <= self.fresh_until - self.checked_at <= seconds_to_ns(MAX_TEAM_FACTS_TTL_SECONDS)
@@ -132,6 +150,7 @@ class CachedTeamFacts:
     revoked_certificate_ids: frozenset[str]
     fetched_at: int
     expires_at: int
+    protection_observation: TeamProtectionObservation | None = None
 
 
 @dataclass(frozen=True)
@@ -252,17 +271,45 @@ class AWIDTeamCache:
             return httpx.AsyncClient(timeout=10.0)
         return httpx.AsyncClient(timeout=10.0, transport=self._transport)
 
+    @asynccontextmanager
+    async def registry_reader(self):
+        """An authenticated reader of the selected registry, with no stale fallback."""
+        registry = RegistryClient(
+            registry_url=self.registry_url, transport=self._transport,
+            service_token=self._request_auth.service_token,
+            member_signing_keys={k: v.signing_key for k, v in self._member_credentials.items()},
+        )
+        try:
+            yield registry
+        finally:
+            await registry.aclose()
+
+    async def verify_membership_certificate(self, certificate, facts):
+        try:
+            async with self.registry_reader() as registry:
+                await verify_registered_membership(registry, facts.protection_observation, certificate)
+        except TeamCertificateError as exc:
+            raise _certificate_refusal(exc) from exc
+        except EffectRefused as exc:
+            raise HTTPException(status_code=503, detail={"code": exc.code}) from exc
+
     async def require_current_member(
-        self, team_id: str, *, certificate_id: str, team_did_key: str
+        self, team_id: str, *, certificate_id: str, team_did_key: str,
+        certificate: Mapping[str, Any] | None = None,
+        principal: str | None = None,
+        member_alias: str | None = None,
     ) -> None:
         """Check membership without retaining a proof. May perform network I/O;
         call before opening any transaction. See :meth:`check_current_member`."""
         await self.check_current_member(
-            team_id, certificate_id=certificate_id, team_did_key=team_did_key
+            team_id, certificate_id=certificate_id, team_did_key=team_did_key, certificate=certificate, principal=principal, member_alias=member_alias
         )
 
     async def check_current_member(
-        self, team_id: str, *, certificate_id: str, team_did_key: str
+        self, team_id: str, *, certificate_id: str, team_did_key: str,
+        certificate: Mapping[str, Any] | None = None,
+        principal: str | None = None,
+        member_alias: str | None = None,
     ) -> MembershipProof:
         """Check mint-time Principal evidence before any transaction or lock.
 
@@ -270,6 +317,11 @@ class AWIDTeamCache:
         id and signing team key, never an observed-principal row. AWID must still
         publish that certificate as active under the same current team key.
         Facts share request authentication's cache, bounded to 60 seconds.
+        Protected callers also supply their original complete certificate or
+        literal principal. Subject-only historical references require the
+        operator's inventoried baseline; an optional original member_alias is
+        compared too, never inferred from the registry. Missing original
+        evidence is unavailable. did:aw subjects retain a current key check.
 
         Incomplete evidence or authority loss raises 403/current_member_required;
         unreadable or unavailable registry facts raise 503/current_membership_unavailable.
@@ -297,6 +349,37 @@ class AWIDTeamCache:
             raise _current_member_refusal(403 if exc.status_code == 401 else 503) from exc
         except ValueError as exc:
             raise _current_member_refusal(503) from exc
+        if facts.protection_observation is None:
+            raise HTTPException(status_code=503, detail={"code": "protected_state_unavailable"})
+        if facts.protection_observation.protected:
+            if certificate is not None:
+                if certificate.get("certificate_id") != certificate_id:
+                    raise _certificate_refusal(TeamCertificateError("certificate_binding_mismatch"))
+                await self.verify_membership_certificate(dict(certificate), facts)
+                if ((principal is not None and principal not in {
+                    certificate.get("member_did_key"), certificate.get("member_did_aw"),
+                }) or (member_alias is not None and member_alias != certificate.get("alias"))):
+                    raise _certificate_refusal(TeamCertificateError("certificate_binding_mismatch"))
+            elif principal is not None:
+                try:
+                    async with self.registry_reader() as registry:
+                        record = await resolve_registered_membership(registry, facts.protection_observation, certificate_id)
+                        check_retained_subject_record(
+                            facts.protection_observation, record, certificate_id=certificate_id,
+                            controller_did_key=team_did_key, principal=principal,
+                        )
+                        if member_alias is not None and member_alias != record.alias:
+                            raise TeamCertificateError("certificate_binding_mismatch")
+                        if principal.startswith("did:aw:"):
+                            if await self.current_did_key(principal) != record.member_did_key:
+                                raise TeamCertificateError("certificate_binding_mismatch")
+                    facts.protection_observation.require_fresh()
+                except TeamCertificateError as exc:
+                    raise _certificate_refusal(exc) from exc
+                except EffectRefused as exc:
+                    raise HTTPException(status_code=503, detail={"code": exc.code}) from exc
+            else:
+                raise HTTPException(status_code=503, detail={"code": "protected_state_unavailable"})
         if team_did_key != facts.team_did_key:
             raise _current_member_refusal(403)
         if time.monotonic_ns() > facts.expires_at:
@@ -307,9 +390,39 @@ class AWIDTeamCache:
             team_did_key=team_did_key,
             checked_at=facts.fetched_at,
             fresh_until=facts.expires_at,
+            protection_observation=facts.protection_observation,
+            principal=principal,
+            member_alias=member_alias,
         )
 
     async def get(self, team_id: str, certificate_id: str | None = None) -> CachedTeamFacts:
+        facts = await self._get_cached(team_id, certificate_id)
+        observation = facts.protection_observation
+        if observation is not None and not observation.protected:
+            try:
+                observation.require_fresh()
+                return facts
+            except EffectRefused:
+                pass
+        try:
+            async with self.registry_reader() as registry:
+                observation = await observe_team_protection(registry, team_id, certificate_id=certificate_id)
+                observation.require_fresh()
+            if observation.controller_did_key != facts.team_did_key:
+                raise EffectRefused("protected_state_unavailable")
+        except TeamCertificateError as exc:
+            raise _certificate_refusal(exc) from exc
+        except Exception as exc:
+            logger.warning("Current protected membership state unavailable", exc_info=True)
+            raise HTTPException(status_code=503, detail={"code": "protected_state_unavailable"}) from exc
+        facts = replace(facts, protection_observation=observation)
+        if self._reads_team_history(team_id) or certificate_id is None:
+            self._cache[team_id] = facts
+        else:
+            self._certificate_cache[(team_id, certificate_id)] = facts
+        return facts
+
+    async def _get_cached(self, team_id: str, certificate_id: str | None = None) -> CachedTeamFacts:
         if certificate_id and not self._reads_team_history(team_id):
             return await self._get_certificate_status(team_id, certificate_id)
         now = time.monotonic_ns()
@@ -394,14 +507,17 @@ class AWIDTeamCache:
             try:
                 # A check, not a load: requests read their own facts.
                 facts = await self._refresh_team_facts(team_id, time.monotonic_ns(), store=False)
-                check_team_certificate(
+                checked = check_team_certificate(
                     base64.b64encode(json.dumps(dict(credential.certificate)).encode()).decode("ascii"),
                     subject_did_key=did_key_from_signing_key(credential.signing_key),
                     team_did_key=facts.team_did_key,
                     revoked_certificate_ids=facts.revoked_certificate_ids,
                     registered_certificate_ids=facts.published_certificate_ids,
                 )
-            except (HTTPException, TeamCertificateError) as exc:
+                async with self.registry_reader() as registry:
+                    observation = await observe_team_protection(registry, team_id)
+                    await verify_registered_membership(registry, observation, checked)
+            except (HTTPException, TeamCertificateError, EffectRefused) as exc:
                 detail = exc.detail if isinstance(exc, HTTPException) else str(exc)
                 raise RuntimeError(
                     f"awid_member_credentials[{team_id}]: certificate {certificate_id} "
@@ -835,6 +951,7 @@ async def authenticate_request(
         )
     except TeamCertificateError as exc:
         raise _certificate_refusal(exc) from exc
+    await team_cache.verify_membership_certificate(cert, facts)
     alias = cert["alias"]
 
     did_aw = str(cert.get("member_did_aw") or "").strip() or None
@@ -842,6 +959,12 @@ async def authenticate_request(
         team_cache, did_aw=did_aw, did_key=did_key, profile=did_aw_profile
     )
 
+    try:
+        if facts.protection_observation is None:
+            raise EffectRefused("protected_state_unavailable")
+        facts.protection_observation.require_fresh()
+    except EffectRefused as exc:
+        raise HTTPException(status_code=503, detail={"code": exc.code}) from exc
     return Principal(
         team_id=team_id,
         did_key=did_key,

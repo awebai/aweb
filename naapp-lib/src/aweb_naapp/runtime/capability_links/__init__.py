@@ -996,6 +996,8 @@ async def _require_current_creator(
         or proof.team_id != creator.scope.team_id
         or proof.certificate_id != creator.certificate_id
         or proof.team_did_key != creator.team_did_key
+        or (proof.protection_observation is not None and proof.protection_observation.protected
+            and proof.principal != creator.principal_did)
         or not proof.is_fresh_at(checked_now)
     ):
         raise LinkRefused(
