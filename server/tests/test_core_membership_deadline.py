@@ -13,6 +13,7 @@ from nacl.signing import SigningKey
 
 import aweb.team_auth_deps as auth
 import awid.protected_membership as membership
+from aweb.api import RequestBodyCacheMiddleware
 from aweb.routes.identity_grants import router as grants_router
 from aweb_naapp_testing import did_key
 from tests.test_protected_membership_retained import ORIGIN, TEAM, membership_env  # noqa: F401
@@ -61,6 +62,7 @@ async def native_app(env, ticks, monkeypatch, phase="none"):
     )
     monkeypatch.setattr(membership, "monotonic", lambda: ticks[0])
     app = FastAPI()
+    app.add_middleware(RequestBodyCacheMiddleware)
     db = DelayedDB(env.stack.aweb_db, ticks, phase)
     app.state.db = SimpleNamespace(get_manager=lambda name="aweb": db)
     app.state.awid_registry_client = env.registry
@@ -148,7 +150,7 @@ async def test_locked_grant_mint_fences_original_observation_without_partial_wri
             try:
                 async with asyncio.timeout(10):
                     while not await blocker.fetch_value("SELECT EXISTS(SELECT 1 FROM pg_locks WHERE locktype='advisory' AND NOT granted)"):
-                        assert not pending.done(), pending.exception() if pending.done() else None
+                        assert not pending.done(), pending.result().text if pending.done() else None
                         await asyncio.sleep(0.01)
                 assert len(observed) == 1 and observed[0].deadline == 60.0
                 if expired:
