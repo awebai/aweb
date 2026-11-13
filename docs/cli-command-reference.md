@@ -683,7 +683,7 @@ Flags:
 - `-h, --help help for endorse`
 - `--human string The did:aw of the human who endorses this root`
 - `--no-browser Do not open a browser; the page is only reported`
-- `--no-wait Exit once the approver has been emailed, without waiting for them; run the same command again to finish`
+- `--no-wait Exit without waiting for the approver; run the same command again to finish`
 - `--operation-id string The UUID for this endorsement; by default aw continues the same unfinished request or starts a new one`
 - `--protected-profile string The operator-provisioned protected-service profile (default: AWEB_PROTECTED_PROFILE, else protected-profile.json in the identity home)`
 - `--team stringArray A team (name:domain) the root will admit agents to; repeat for each`

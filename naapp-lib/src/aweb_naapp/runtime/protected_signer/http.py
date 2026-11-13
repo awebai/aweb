@@ -40,6 +40,7 @@ from .types import (
     OwnerActOperation,
     ProtectedKeyContext,
     ReceiptReader,
+    RequestExpired,
     RestrictedRequester,
     RevokeHumanRole,
     SignerRefused,
@@ -460,12 +461,9 @@ class ProtectedOperationsHTTP:
                 body = await self._link_request(request, {"token"})
                 try:
                     prepared = await self.signer.link_view(handoff_id, body["token"])
-                except SignerRefused as expired:
-                    if expired.code != "operation_expired":
-                        raise
+                except RequestExpired as expired:
                     # Only the link's own approver gets here: they learn when.
-                    return JSONResponse({"detail": "operation_expired",
-                        "expires_at": getattr(expired, "expires_at", None)}, 410)
+                    return JSONResponse({"detail": "operation_expired", "expires_at": expired.expires_at}, 410)
                 frozen = prepared.payload
                 result = asdict(prepared)
                 result["payload"] = {

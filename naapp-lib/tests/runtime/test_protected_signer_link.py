@@ -163,3 +163,29 @@ async def test_the_links_own_approver_is_told_the_request_expired(mailing):
     # Anyone else's token still learns nothing, not even that it expired.
     with pytest.raises(SignerRefused, match="scope_refused"):
         await world.signer.link_view(prepared.handoff_id, token[:-2] + "xx")
+
+
+def test_only_reviewed_operations_may_reveal_their_frozen_request_on_a_link():
+    from aweb_naapp.runtime.protected_signer.catalog import OPERATIONS
+
+    # Each row's whole frozen request was checked to hold only public
+    # identifiers, labels and policy (human-assurance-contract.md, "Mailed
+    # approval links"); every other row refuses by default.
+    assert {key for key, spec in OPERATIONS.items() if spec.link_revealable} == {
+        ("identity.root.endorse", "default"), ("human-role.revoke", "default")}
+
+
+async def test_an_operation_not_classified_revealable_refuses_the_reveal(mailing, monkeypatch):
+    from dataclasses import replace as replace_spec
+
+    from aweb_naapp.runtime.protected_signer import catalog
+
+    world, contacts = mailing
+    prepared, token = await mailed(world, contacts)
+    unclassified = replace_spec(catalog.OPERATIONS[("human-role.revoke", "default")], link_revealable=False)
+    monkeypatch.setattr(catalog, "OPERATIONS", {**catalog.OPERATIONS, ("human-role.revoke", "default"): unclassified})
+    # The deployment's B2 policy reveals on links; the operation's own
+    # classification still refuses, and the token stays usable.
+    with pytest.raises(SignerRefused, match="scope_refused"):
+        await world.signer.link_view(prepared.handoff_id, token)
+    assert (await world.signer.receipt(prepared.operation_id, reader=world.reader)).state == "pending"

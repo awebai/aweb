@@ -24,6 +24,11 @@ class OperationSpec:
     bounds: tuple[str, ...]
 
     consumer_available: bool = True
+    # Whether a mailed personal link may reveal this operation's whole frozen
+    # request: true only where every field of that request was reviewed as
+    # public (identifiers, labels, policy). Unclassified operations refuse
+    # (human-assurance-contract.md, "Mailed approval links").
+    link_revealable: bool = False
 
     @property
     def needs_human(self) -> bool:
@@ -82,6 +87,7 @@ _ROWS = (
             "Client checks frozen policy against authorized read before displaying link",
             "Execute refuses policy_changed on changed current policy; retry never rebinds",
         ),
+        link_revealable=True,
     ),
     OperationSpec(
         "team.agent.admit",
@@ -131,6 +137,7 @@ _ROWS = (
             "Revoke: stored holding, no H2 admission check",
             "Last-owner safeguards",
         ),
+        link_revealable=True,
     ),
 )
 

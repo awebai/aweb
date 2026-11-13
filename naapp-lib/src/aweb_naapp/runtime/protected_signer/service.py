@@ -33,6 +33,7 @@ from aweb_naapp.runtime.approvals import (
 from aweb_naapp.runtime.audit import AuditEvent, AuditKind, AuditSink
 from aweb_naapp.runtime.passkeys import Passkeys, passkey_evidence_commitment
 
+from . import catalog
 from .catalog import operation_spec
 from .codecs import artifact_for, authority_key, signing_bytes
 from .types import (
@@ -44,6 +45,7 @@ from .types import (
     PreparedOperation,
     ProtectedKeyContext,
     ReceiptReader,
+    RequestExpired,
     RestrictedRequester,
     RevokeHumanRole,
     SignerRefused,
@@ -518,9 +520,13 @@ class ProtectedSigner:
         if row["result"] is None and row["refusal_code"] is None and self.clock() >= row["expires_at"]:
             # Only the link's own approver reaches this: they may know it
             # expired, and when.
-            expired = SignerRefused("operation_expired")
-            expired.expires_at = _stamp(row["expires_at"])
-            raise expired
+            raise RequestExpired(_stamp(row["expires_at"]))
+        intent = self._operation(_json(row["request"])).intent()
+        spec = catalog.OPERATIONS.get((intent["operation"], intent["variant"]))
+        if spec is None or not spec.link_revealable:
+            # The operation's own classification, not the deployment policy,
+            # decides whether its whole frozen request may be revealed.
+            raise SignerRefused("scope_refused")
         try:
             linked = await self.approvals.open_link(token)
         except ApprovalRefused:

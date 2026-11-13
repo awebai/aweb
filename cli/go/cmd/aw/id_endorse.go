@@ -61,7 +61,7 @@ func init() {
 	flags.StringVar(&idEndorseLabelFlag, "deployment-label", "", "The deployment's name, shown to the human")
 	flags.StringVar(&idEndorseOperationFlag, "operation-id", "", "The UUID for this endorsement; by default aw continues the same unfinished request or starts a new one")
 	flags.StringVar(&appProtectedProfileFlag, "protected-profile", "", "The operator-provisioned protected-service profile (default: AWEB_PROTECTED_PROFILE, else protected-profile.json in the identity home)")
-	flags.BoolVar(&idEndorseNoWaitFlag, "no-wait", false, "Exit once the approver has been emailed, without waiting for them; run the same command again to finish")
+	flags.BoolVar(&idEndorseNoWaitFlag, "no-wait", false, "Exit without waiting for the approver; run the same command again to finish")
 	flags.BoolVar(&idEndorseNoBrowserFlag, "no-browser", false, "Do not open a browser; the page is only reported")
 	identityCmd.AddCommand(idEndorseCmd)
 }
@@ -191,11 +191,12 @@ func pendingEndorsementReport(prepared *handoff.Prepared, page string, receipt *
 }
 
 // pendingEndorsementText says, for people, who decides an endorsement that was
-// not waited for and how to continue; --json keeps the page and digest.
+// not waited for, the page they approve on and how to continue; --json keeps
+// the digest. It claims no notice, which the prepare answer cannot show.
 func pendingEndorsementText(report map[string]any) string {
 	expires, _ := time.Parse(time.RFC3339Nano, fmt.Sprint(report["expires_at"]))
-	return fmt.Sprintf("Waiting for the approver, whom the signer has emailed; the request expires at %s. Run the same command again to continue (operation %s).\n",
-		expires.UTC().Format("2006-01-02 15:04 UTC"), report["operation_id"])
+	return fmt.Sprintf("Waiting for the approver, who approves on %s; the request expires at %s. Run the same command again to continue (operation %s).\n",
+		report["page"], expires.UTC().Format("2006-01-02 15:04 UTC"), report["operation_id"])
 }
 
 // endorsedCertificate is the root's signed ID certificate in a committed

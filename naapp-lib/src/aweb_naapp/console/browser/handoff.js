@@ -211,8 +211,8 @@ import { operationTable } from "/handoff-assets/operations.mjs";
   }
 
   let decided = false;
+  let inFlight = false;
   let expiresAt;
-  let expiresAtMs = Infinity;
 
   function linkExpired(at) {
     if (decided) return;
@@ -226,17 +226,34 @@ import { operationTable } from "/handoff-assets/operations.mjs";
     document.getElementById("handoff-title").focus();
   }
 
+  function checkAt(delay) {
+    setTimeout(checkExpiry, Math.max(0, Math.min(delay, 2 ** 31 - 1)));
+  }
+
+  // A local clock never establishes an outcome. A decision on its way keeps
+  // the page until its own answer; otherwise the signer says what is true.
+  async function checkExpiry() {
+    if (decided || inFlight) return;
+    try {
+      await linkPost("", {token: linkToken});
+      checkAt(30000);  // Still pending at the signer: the clocks differ.
+    } catch (error) {
+      if (decided || inFlight) return;
+      if (error.status === 410) linkExpired(nonempty(error.expiresAt) ? error.expiresAt : expiresAt);
+      else linkUnavailable();
+    }
+  }
+
   async function linkLoad() {
     try {
       const state = await linkPost("", {token: linkToken});
       if (state.mode !== "governance-link") throw new Error("handoff_refused");
       await governanceState({...state, mode: "governance"});
       document.getElementById("handoff-explanation").hidden = true;
-      // The request ends at its own expiry, even with the page open.
+      // At its expiry the page asks the signer again: only the signer's own
+      // answer can say the request expired undecided.
       expiresAt = state.expires_at;
-      expiresAtMs = Date.parse(state.expires_at);
-      const left = expiresAtMs - Date.now();
-      setTimeout(() => linkExpired(state.expires_at), Math.max(0, Math.min(left, 2 ** 31 - 1)));
+      checkAt(Date.parse(state.expires_at) - Date.now());
     } catch (error) {
       if (error.status === 410) linkExpired(nonempty(error.expiresAt) ? error.expiresAt : undefined);
       else linkUnavailable();
@@ -285,6 +302,7 @@ import { operationTable } from "/handoff-assets/operations.mjs";
 
   async function decide(decision) {
     const pressed = decision === "reject" ? deny : action;
+    inFlight = true;
     action.disabled = true;
     deny.disabled = true;
     document.body.dataset.handoffState = "verifying";
@@ -308,12 +326,14 @@ import { operationTable } from "/handoff-assets/operations.mjs";
         action.disabled = false;
         deny.disabled = false;
         document.body.dataset.handoffState = "ready";
+        inFlight = false;
         pressed.focus();
       } else if (sent) {
         document.body.dataset.handoffState = "unconfirmed";
         outcome(...unconfirmed);
-      } else if (error.status === 410 || Date.now() >= expiresAtMs) {
-        linkExpired(expiresAt);
+      } else if (error.status === 410) {
+        // The signer itself answered that the request expired undecided.
+        linkExpired(nonempty(error.expiresAt) ? error.expiresAt : expiresAt);
       } else {
         linkUnavailable();
       }

@@ -143,17 +143,34 @@ async def test_a_link_opened_after_its_request_expired_says_so(link_service):
         assert s.prepared.digest not in await page.content()
 
 
-async def test_a_request_that_expires_while_open_turns_into_expired(link_service):
+async def test_a_request_that_expires_while_open_turns_into_expired_when_the_signer_says_so(link_service):
+    from datetime import timedelta
+
     s = link_service
     context, page, _, _ = await open_page(s, 390)
     async with context:
         await page.clock.install()
         await page.goto(s.link)
         await expect(page.locator("#handoff-action")).to_be_enabled()
+        s.world.clock.advance(timedelta(hours=25))
         await page.clock.fast_forward("25:00:00")
         await expect(page.locator("#handoff-title")).to_have_text("Request expired")
         await expect(page.locator("#handoff-status")).to_contain_text("without a decision. Nothing was signed.")
         await expect(page.locator("#handoff-action")).to_be_hidden()
+
+
+async def test_the_browser_clock_alone_never_declares_a_request_expired(link_service):
+    s = link_service
+    context, page, _, _ = await open_page(s, 390)
+    async with context:
+        await page.clock.install()
+        await page.goto(s.link)
+        await expect(page.locator("#handoff-action")).to_be_enabled()
+        # The signer still holds it pending: the page asks and keeps it open.
+        await page.clock.fast_forward("25:00:00")
+        await page.wait_for_timeout(500)
+        await expect(page.locator("#handoff-title")).not_to_have_text("Request expired")
+        await expect(page.locator("#handoff-action")).to_be_enabled()
 
 
 @pytest.fixture

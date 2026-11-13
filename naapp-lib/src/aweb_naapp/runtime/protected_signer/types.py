@@ -26,6 +26,14 @@ class SignerRefused(ValueError):
         super().__init__(code)
 
 
+class RequestExpired(SignerRefused):
+    """operation_expired, told to the link's own approver with its expiry."""
+
+    def __init__(self, expires_at: str):
+        super().__init__("operation_expired")
+        self.expires_at = expires_at
+
+
 _SELF_REMOVAL_SEAL = object()
 
 

@@ -145,3 +145,39 @@ async def test_options_after_expiry_also_answer_gone(link_http):
     response = await client.post(f"/handoff/{prepared.handoff_id}/link/options",
         json={"token": token, "decision": "approve"}, headers=BROWSER)
     assert (response.status_code, response.json()) == (410, {"detail": "operation_expired"})
+
+
+CANARY = "canary-token-5f1c2a9e-never-logged"
+
+
+@pytest.mark.parametrize("suffix, body", [
+    ("", {"token": CANARY}),
+    ("", {"token": CANARY, "extra": 1}),
+    ("/options", {"token": CANARY, "decision": "approve"}),
+    ("/options", {"token": CANARY, "decision": "maybe"}),
+    ("/decide", {"token": CANARY, "decision": "approve", "assertion": "not-an-object"}),
+    ("/decide", {"token": CANARY, "decision": "reject", "assertion": {"id": CANARY}}),
+])
+async def test_a_token_never_reaches_a_log_or_an_answer(link_http, caplog, suffix, body):
+    import json
+    import logging
+
+    world, client, prepared, _ = link_http
+    caplog.set_level(logging.DEBUG)
+    raw = json.dumps(body)
+    for content in (raw, raw[:-1], raw + " " * 70000):  # valid, malformed, oversized
+        response = await client.post(f"/handoff/{prepared.handoff_id}/link{suffix}", content=content,
+            headers={**BROWSER, "Content-Type": "application/json"})
+        assert response.status_code in (400, 401, 403, 413), (suffix, response.status_code, response.text)
+        assert CANARY not in response.text and CANARY not in str(response.headers)
+    assert CANARY not in caplog.text
+    assert all(CANARY not in str(record.__dict__) for record in caplog.records)
+
+
+def test_the_canary_capture_sees_a_logged_token(caplog):
+    import logging
+
+    # Control for the test above: the same capture does see a token that is logged.
+    caplog.set_level(logging.DEBUG)
+    logging.getLogger("uvicorn.error").debug("body %s", CANARY)
+    assert CANARY in caplog.text
