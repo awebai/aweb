@@ -8,6 +8,7 @@ The cross-contract test pins every row to the public frozen catalog.
 
 from copy import deepcopy
 from dataclasses import dataclass
+from datetime import datetime, timedelta
 from types import MappingProxyType
 from typing import Literal
 
@@ -41,6 +42,23 @@ class OperationDefinition:
     codec: OperationCodec
     effect: OperationEffect
     consumer_available: bool = True
+    prepared_fields: frozenset[str] = frozenset()
+    signing_port: str = "sign_operation"
+    finalize_execution_refusal: bool = False
+    receipt_uv_expiry: bool = False
+    supports_self_removal: bool = False
+    request_window: tuple[tuple[str, ...], int] | None = None
+
+    def effect_deadline(self, artifact, deadline):
+        if "expires_at" in artifact:
+            deadline = min(deadline, datetime.fromisoformat(artifact["expires_at"].replace("Z", "+00:00")))
+        if self.request_window is not None:
+            path, seconds = self.request_window
+            stamp = artifact
+            for field in path:
+                stamp = stamp[field]
+            deadline = min(deadline, datetime.fromisoformat(stamp.replace("Z", "+00:00")) + timedelta(seconds=seconds))
+        return deadline
 
     @property
     def needs_human(self) -> bool:
@@ -72,6 +90,10 @@ _ROWS = (
         ),
         codec=REMOVAL_CODEC,
         effect=REVOKED_MEMBERSHIP,
+        prepared_fields=frozenset({"requester_key"}),
+        finalize_execution_refusal=True,
+        supports_self_removal=True,
+        request_window=(("request", "timestamp"), 300),
     ),
     OperationDefinition(
         "identity.root.endorse",
@@ -107,6 +129,9 @@ _ROWS = (
         ),
         codec=ROOT_CODEC,
         effect=ENDORSEMENT,
+        prepared_fields=frozenset({"registry", "expected_head", "responsibility_statement", "admission_policy"}),
+        finalize_execution_refusal=True,
+        receipt_uv_expiry=True,
     ),
     OperationDefinition(
         "team.agent.admit",
@@ -144,6 +169,8 @@ _ROWS = (
         ),
         codec=ADMISSION_CODEC,
         effect=REGISTERED_MEMBERSHIP,
+        prepared_fields=frozenset({"request_id", "admission_policy_version"}),
+        finalize_execution_refusal=True,
     ),
     OperationDefinition(
         "human-role.revoke",
@@ -160,6 +187,7 @@ _ROWS = (
         ),
         codec=REVOKE_CODEC,
         effect=LOCAL_SIGNATURE,
+        signing_port="sign_owner_act",
     ),
 )
 

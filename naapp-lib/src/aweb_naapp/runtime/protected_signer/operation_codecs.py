@@ -28,6 +28,7 @@ class OperationCodec:
     signing_bytes: Callable
     authority_field: str
     subject_schema: dict | None = None
+    decode_intent: Callable | None = None
 
 
 def _stamp(now):
@@ -70,6 +71,23 @@ def _owner_signing(operation, artifact):
     return owner_act_signing_bytes(artifact)
 
 
+def catalog_intent(body, context, redirect):
+    from .types import CatalogOperation
+
+    return CatalogOperation(body["operation_id"], context, body["audience"], body["operation"],
+        body["variant"], body["subject"], redirect)
+
+
+def revoke_intent(body, context, redirect):
+    from .types import RevokeHumanRole, owner_act_operation
+
+    subject = body["subject"]
+    legacy = RevokeHumanRole(body["operation_id"], context, body["audience"], subject["app_id"],
+        subject["installation_id"], subject["role"], subject["principal"], redirect)
+    owner_act_operation(legacy)
+    return legacy
+
+
 ROOT_CODEC = OperationCodec(validate_root_subject, _root, root_signing_bytes, "issuer_key", {
     "fields": {
         "domain": {"pattern": r"[a-z0-9.-]+"},
@@ -78,10 +96,10 @@ ROOT_CODEC = OperationCodec(validate_root_subject, _root, root_signing_bytes, "i
         "teams": {"pattern": r"[^\s:]+:[^\s:]+", "list": True, "maxItems": 4096},
         "deployment_label": {"pattern": r"[^\x00-\x1f]{1,128}"},
     }, "required": ["domain", "root_id", "root_key", "teams", "deployment_label"],
-})
-ADMISSION_CODEC = OperationCodec(validate_admission_subject, _admission, admission_signing_bytes, "team_did_key")
-REMOVAL_CODEC = OperationCodec(validate_removal_subject, _removal, removal_signing_bytes, "controller_did")
+}, decode_intent=catalog_intent)
+ADMISSION_CODEC = OperationCodec(validate_admission_subject, _admission, admission_signing_bytes, "team_did_key", decode_intent=catalog_intent)
+REMOVAL_CODEC = OperationCodec(validate_removal_subject, _removal, removal_signing_bytes, "controller_did", decode_intent=catalog_intent)
 REVOKE_CODEC = OperationCodec(_revoke_subject, _owner_artifact, _owner_signing, "team_key_did", {
     "fields": {field: {"pattern": r"[\s\S]+"} for field in sorted(_REVOKE_FIELDS)},
     "required": sorted(_REVOKE_FIELDS),
-})
+}, decode_intent=revoke_intent)
