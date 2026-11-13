@@ -32,7 +32,12 @@ from aweb.hook_times import format_hook_time
 from aweb.routes.apps import _caller
 from aweb.service_errors import ServiceError
 from aweb.team_auth_deps import get_team_identity
-from aweb.team_key_pins import TeamKeyUnverified, pinned_team_key, team_key_unverified_exception
+from aweb.team_key_pins import (
+    TeamKeyUnverified,
+    pinned_team_key,
+    team_key_unverified_exception,
+    txt_resolver_for,
+)
 
 # The owner act's record is the binding row, which keeps the act's SHA-256.
 # The hook_binding.activated / .revoked events of §A3 are enqueued through the
@@ -140,7 +145,7 @@ async def _owner_act_route(request: Request, db_infra: DatabaseInfra, binding_id
         async def pin_team_key(team_id: str, served_key: str) -> str:
             return await pinned_team_key(
                 db=db_infra.get_manager("aweb"), registry_client=registry_client,
-                txt_resolver=request.app.state.awid_txt_resolver, team_id=team_id, served_key=served_key,
+                txt_resolver=txt_resolver_for(request.app.state), team_id=team_id, served_key=served_key,
             )
 
         verifier = core_owner_act_verifier(

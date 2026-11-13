@@ -206,3 +206,13 @@ async def test_before_enforcement_a_mismatch_is_logged_and_the_pin_kept(pinning,
     assert mismatches and set(mismatches) == {
         f"team_key_pin_mismatch team={TEAM} pinned={env.team_did} served={substituted_did} reason=no_act enforced=false",
     }
+
+
+@pytest.mark.asyncio
+async def test_an_embedding_app_without_a_resolver_still_authenticates(pinning):
+    # An embedding host may mount aweb's team auth in an app create_app did not build.
+    env = pinning
+    del env.app.state.awid_txt_resolver
+    bob = env.actors["bob"]
+    response = await env.client.get("/v1/agents", headers=_signed_team_headers(bob.sk, bob.did, TEAM, bob.certificate))
+    assert response.status_code == 200, response.text

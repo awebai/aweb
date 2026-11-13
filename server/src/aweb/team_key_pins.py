@@ -19,6 +19,7 @@ from typing import Any
 
 from fastapi import HTTPException, Request
 
+from awid.external_authority import SystemTXTOutcomeResolver
 from awid.team_ids import parse_team_id
 from awid.team_key_acts import TeamKeyPin, TeamKeyUnverified, pinned_team_key as pin_team_key
 
@@ -28,6 +29,7 @@ from aweb.config import enforce_team_key_pins
 logger = logging.getLogger(__name__)
 
 TEAM_KEY_UNVERIFIED = "team_key_unverified"
+_SYSTEM_TXT_RESOLVER = SystemTXTOutcomeResolver()
 
 __all__ = [
     "TEAM_KEY_UNVERIFIED",
@@ -36,6 +38,7 @@ __all__ = [
     "pinned_team_key",
     "pinned_team_key_for_request",
     "team_key_unverified_exception",
+    "txt_resolver_for",
 ]
 
 
@@ -69,6 +72,13 @@ class AdmittedTeamKeys:
         return moved is not None
 
 
+def txt_resolver_for(state: Any) -> Any:
+    """The app's DNS resolver for ``_awid`` records; system DNS when the app
+    state has none (an embedding host that mounts aweb's auth in its own app)."""
+    resolver = getattr(state, "awid_txt_resolver", None)
+    return resolver if resolver is not None else _SYSTEM_TXT_RESOLVER
+
+
 def team_key_unverified_exception() -> HTTPException:
     return HTTPException(status_code=401, detail=TEAM_KEY_UNVERIFIED)
 
@@ -99,7 +109,7 @@ async def pinned_team_key_for_request(request: Request, team_id: str, served_key
         return await pinned_team_key(
             db=state.db.get_manager("aweb"),
             registry_client=state.awid_registry_client,
-            txt_resolver=state.awid_txt_resolver,
+            txt_resolver=txt_resolver_for(state),
             team_id=team_id,
             served_key=served_key,
         )
