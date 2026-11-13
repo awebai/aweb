@@ -173,7 +173,7 @@ async def test_genuine_b3_owner_act_reaches_protected_sql_consumer(world, tmp_pa
         options = await w.app.signer.approval_options(prepared.operation_id, human=w.human)
         result = await w.app.signer.execute(prepared.operation_id, w.device.get(dict(options)), human=w.human)
         if unconfirmed:
-            assert result.state == "unknown" and result.code == "external_effect_unresolved"
+            assert result.state == "pending" and result.code == "effect_in_progress"
         else:
             assert result.state == "committed" and result.result["v"] == 2
         assert await db.fetch_value("SELECT count(*) FROM holding") == 0
@@ -202,6 +202,8 @@ async def test_genuine_b3_owner_act_reaches_protected_sql_consumer(world, tmp_pa
             monkeypatch.setattr(w.app.signer, "clock", lambda: original_clock() + timedelta(days=2))
             with pytest.raises(SignerRefused, match="scope_refused"):
                 await w.app.signer.link_view(prepared.handoff_id, token)
+            historical = await w.app.signer.receipt(prepared.operation_id, reader=w.human)
+            assert historical.state == "unknown" and historical.code == "external_effect_unresolved"
             reread = await w.db.fetch_one(
                 "SELECT retained_effect FROM {{tables.protected_signer_operations}} WHERE operation_id=$1", prepared.operation_id)
             assert json.loads(reread["retained_effect"]) == retained
