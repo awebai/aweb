@@ -312,6 +312,10 @@ def _is_allowed_external_ip(value: str) -> bool:
         return False
     if address.version == 6 and address.ipv4_mapped is not None:
         address = address.ipv4_mapped
+    # Deprecated IPv6 site-local fec0::/10 is not globally routable, though
+    # ipaddress reports it global.
+    if address.version == 6 and address.is_site_local:
+        return False
     return (
         address.is_global
         and not address.is_multicast
