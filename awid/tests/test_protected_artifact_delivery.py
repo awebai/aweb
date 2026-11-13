@@ -74,11 +74,12 @@ async def test_artifact_delivery_accepts_each_pinned_origin_only(
     signature = sign_message(env.team[0], signing)
     body = canonical_json_bytes({"record": record, "signature": signature})
     path = "/v1/namespaces/local/teams/base/server"
+    operation_id = str(uuid4())
     proof = issue_proof({
         "v": 1, "type": "aweb.protected-effect", "service_id": "test-service",
         "team_id": "base:local", "history_id": history_id, "generation": 1,
         "controller_did_key": env.team[1], "operation": "team.server-record.publish",
-        "variant": "default", "operation_id": str(uuid4()),
+        "variant": "default", "operation_id": operation_id,
         "artifact_type": "team-server-record",
         "artifact_sha256": artifact_digest(signing, signature),
         "consumer": http_consumer(audience=audience, method="PUT", path=path, body=body),
@@ -97,3 +98,11 @@ async def test_artifact_delivery_accepts_each_pinned_origin_only(
     assert await env.db.fetch_value(
         "SELECT count(*) FROM {{tables.team_server_records}}"
     ) == int(applied)
+    receipt_path = "/.well-known/aweb-protected-effect-receipts/" + operation_id
+    current += timedelta(hours=2)
+    receipt = await env.client.get(receipt_path, headers={HEADER: encode_proofs([proof])})
+    assert receipt.status_code == (200 if applied else 404), receipt.text
+    if applied:
+        assert receipt.json() == {"v": 1, "operation_id": operation_id,
+            "artifact_sha256": artifact_digest(signing, signature)}
+        assert (await env.client.get(receipt_path, headers={HEADER: "different"})).status_code == 404
