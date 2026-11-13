@@ -158,21 +158,22 @@ func TestAHolderExportStillRefusesAMalformedOrTamperedChain(t *testing.T) {
 	first := func(doc map[string]any) map[string]any {
 		return doc["id_chain"].(map[string]any)["certificates"].([]any)[0].(map[string]any)
 	}
-	for name, edit := range map[string]func(map[string]any){
-		"a fractional chain version": func(doc map[string]any) {
+	for name, tc := range map[string]struct {
+		edit   func(map[string]any)
+		reason string
+	}{
+		"a fractional chain version": {func(doc map[string]any) {
 			doc["id_chain"].(map[string]any)["v"] = json.Number("1.5")
-		},
-		"a fractional certificate version": func(doc map[string]any) {
+		}, "invalid_shape"},
+		"a fractional certificate version": {func(doc map[string]any) {
 			first(doc)["certificate"].(map[string]any)["v"] = json.Number("1.0")
-		},
-		"a certificate changed after signing": func(doc map[string]any) {
+		}, "invalid_shape"},
+		"a certificate changed after signing": {func(doc map[string]any) {
 			first(doc)["certificate"].(map[string]any)["kind"] = "agent"
-		},
+		}, "invalid_signature"},
 	} {
-		if reason := readBackChainReason(t, edit); reason == "evidence_unavailable" {
-			t.Errorf("%s: reached the evidence step", name)
-		} else {
-			t.Logf("%s: %s", name, reason)
+		if reason := readBackChainReason(t, tc.edit); reason != tc.reason {
+			t.Errorf("%s: reason %q, want %q", name, reason, tc.reason)
 		}
 	}
 }
