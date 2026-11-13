@@ -462,3 +462,80 @@ async def test_two_concurrent_activations_of_one_binding_activate_it_once(env):
     assert sorted(type(result).__name__ for result in results) == ["ConflictError", "HookBinding"]
     assert [str(r) for r in results if isinstance(r, ConflictError)] == ["the binding is not pending"]
     assert await env.db.fetch_value("SELECT COUNT(*) FROM {{tables.owner_act_nonces}}") == 1
+
+
+@pytest.mark.asyncio
+async def test_exact_activation_retry_acknowledges_one_effect_after_a_lost_answer(env):
+    await _install(env.db)
+    registration, _ = await _bindings(env)
+    # This legacy fixture normally decouples installation identity from storage
+    # tests; replay admission pins the actual current installation as production does.
+    await env.db.execute(
+        "UPDATE {{tables.team_app_installs}} SET installation_id=$1,generation=$2 WHERE team_id=$3 AND app_id='logs'",
+        registration.installation_id, registration.generation, TEAM,
+    )
+    signing, signature = env.owner.sign("hook-binding.activate", registration)
+    effects = []
+
+    async def counted(tx):
+        effects.append(1)
+
+    first = await activate_binding(env.db, env.verifier, team_id=TEAM, binding_id=registration.binding_id,
+                                   signing=signing, signature=signature, in_transaction=counted)
+    second = await activate_binding(env.db, env.verifier, team_id=TEAM, binding_id=registration.binding_id,
+                                    signing=signing, signature=signature, in_transaction=counted)
+    assert second == first and effects == [1]
+    assert await env.db.fetch_value("SELECT COUNT(*) FROM {{tables.owner_act_nonces}}") == 1
+    # Another valid act for this binding is not the act which took effect.
+    other, other_signature = env.owner.sign("hook-binding.activate", registration)
+    with pytest.raises(ConflictError):
+        await activate_binding(env.db, env.verifier, team_id=TEAM, binding_id=registration.binding_id,
+                               signing=other, signature=other_signature)
+    await env.db.execute("DELETE FROM {{tables.owner_act_nonces}}")
+    with pytest.raises(ConflictError, match="no exact committed nonce"):
+        await activate_binding(env.db, env.verifier, team_id=TEAM, binding_id=registration.binding_id,
+                               signing=signing, signature=signature)
+    await env.db.execute("UPDATE {{tables.team_app_installs}} SET generation=generation+1 WHERE team_id=$1 AND app_id='logs'", TEAM)
+    with pytest.raises(ConflictError, match="installation changed"):
+        await activate_binding(env.db, env.verifier, team_id=TEAM, binding_id=registration.binding_id,
+                               signing=signing, signature=signature)
+
+
+@pytest.mark.asyncio
+async def test_activation_retry_still_checks_the_current_controller_key(env):
+    await _install(env.db)
+    registration, _ = await _bindings(env)
+    signing, signature = env.owner.sign("hook-binding.activate", registration)
+    await activate_binding(env.db, env.verifier, team_id=TEAM, binding_id=registration.binding_id,
+                           signing=signing, signature=signature)
+    await env.registry_db.execute("UPDATE {{tables.teams}} SET team_did_key=$1 WHERE domain='acme.com' AND name='backend'",
+                                  _did(SigningKey.generate()))
+    with pytest.raises(ForbiddenError):
+        await activate_binding(env.db, env.verifier, team_id=TEAM, binding_id=registration.binding_id,
+                               signing=signing, signature=signature)
+
+
+@pytest.mark.asyncio
+async def test_activation_rolls_back_when_the_last_effect_await_outlasts_authority(env):
+    from aweb_naapp.hooks.owner_act_nonces import OwnerActVerifier
+
+    await _install(env.db)
+    registration, _ = await _bindings(env)
+    signing, signature = env.owner.sign("hook-binding.activate", registration)
+    clock = [datetime.now(UTC)]
+
+    async def team_key(team):
+        return _did(env.owner.key)
+
+    verifier = OwnerActVerifier(scope="aweb", audience=AUDIENCE, acts=("hook-binding.activate",),
+                                team_key_for=team_key, clock=lambda: clock[0])
+
+    async def delayed_effect(tx):
+        clock[0] += timedelta(minutes=6)
+
+    with pytest.raises(ForbiddenError, match="prepared too long"):
+        await activate_binding(env.db, verifier, team_id=TEAM, binding_id=registration.binding_id,
+                               signing=signing, signature=signature, in_transaction=delayed_effect)
+    assert await env.db.fetch_value("SELECT state FROM {{tables.app_hook_bindings}} WHERE binding_id=$1",
+                                    registration.binding_id) == "pending"
+    assert await env.db.fetch_value("SELECT COUNT(*) FROM {{tables.owner_act_nonces}}") == 0

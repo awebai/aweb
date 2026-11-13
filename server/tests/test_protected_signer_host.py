@@ -261,3 +261,17 @@ async def test_notification_adapter_reuses_b3_and_b2_mail_boundary(mail_fails):
         assert "/handoff/00000000-0000-0000-0000-000000000001" in mail.messages[1].text
         assert "candidate-secret" not in repr(mail.messages[1])
         assert all(message.to == approver.contact for message in mail.messages)
+
+
+def test_only_the_protected_host_allows_an_empty_member_key_manifest(tmp_path):
+    from aweb.config import load_member_signing_keys
+    from aweb.protected_signing.host import _member_keys
+
+    path = tmp_path / "members.json"
+    path.write_text("{}")
+    assert _member_keys(path) == {}
+    with pytest.raises(ValueError, match="nonempty"):
+        load_member_signing_keys(path)
+    path.write_text("[]")
+    with pytest.raises(ValueError, match="protected_member_keys_invalid"):
+        _member_keys(path)
