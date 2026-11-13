@@ -463,3 +463,84 @@ func TestRecordingAnInstalledCertificateWithNoRegistryKeepsTheMembershipsRegistr
 		t.Fatalf("membership %+v, %v; want registry %s kept", state, err, registry.server.URL)
 	}
 }
+
+// Two installs of different teams' certificates into one local home, both
+// past the read-only check before either writes, install exactly one.
+func TestConcurrentInstallsOfTwoTeamsIntoOneLocalHomeInstallOnlyOne(t *testing.T) {
+	_, teamKey, _ := awid.GenerateKeypair()
+	home, didKey := keyOnlyHome(t)
+	certs, paths := map[string]*awid.TeamCertificate{}, map[string]string{}
+	for _, name := range []string{"frontend", "backend"} {
+		cert, err := awid.SignTeamCertificate(teamKey, awid.TeamCertificateFields{Team: name + ":example.com", MemberDIDKey: didKey,
+			Alias: "worker", IdentityScope: awid.IdentityModeLocal})
+		if err != nil {
+			t.Fatal(err)
+		}
+		certs[name], paths[name] = cert, certificateFile(t, cert)
+	}
+	reached, release := make(chan string, 2), make(chan struct{})
+	var releaseOnce sync.Once
+	unblock := func() { releaseOnce.Do(func() { close(release) }) }
+	defer unblock()
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		name, rest, _ := strings.Cut(strings.TrimPrefix(r.URL.Path, "/v1/namespaces/example.com/teams/"), "/")
+		cert := certs[name]
+		if cert == nil {
+			http.NotFound(w, r)
+			return
+		}
+		if rest == "" {
+			reached <- name
+			<-release
+			_ = json.NewEncoder(w).Encode(awid.RegistryTeam{TeamID: cert.Team, Domain: "example.com", Name: name, TeamDIDKey: cert.TeamDIDKey})
+			return
+		}
+		_ = json.NewEncoder(w).Encode(map[string]any{"certificates": []awid.RegistryCertificate{{CertificateID: cert.CertificateID, TeamID: cert.Team,
+			MemberDIDKey: didKey, Alias: cert.Alias, IdentityScope: cert.IdentityScope, IssuedAt: cert.IssuedAt}}, "has_more": false})
+	}))
+	defer func() { unblock(); server.Close() }()
+	errs := make(chan error, 2)
+	for _, name := range []string{"frontend", "backend"} {
+		client, err := newConfiguredRegistryClient(nil)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if err := client.TrustRegistryOrigin(server.URL); err != nil {
+			t.Fatal(err)
+		}
+		request := teamCertificateInstall{WorkingDir: t.TempDir(), Home: home, CertificatePath: paths[name], RegistryURL: server.URL, Registry: client}
+		go func() {
+			_, err := installTeamCertificateFile(context.Background(), request)
+			errs <- err
+		}()
+	}
+	for range 2 {
+		select {
+		case <-reached:
+		case <-time.After(10 * time.Second):
+			t.Fatal("both installs did not pass the read-only check")
+		}
+	}
+	unblock()
+	installed, refused := 0, 0
+	for range 2 {
+		switch err := <-errs; {
+		case err == nil:
+			installed++
+		case errorCodeOf(err) == "certificate_conflict":
+			refused++
+		default:
+			t.Errorf("unexpected error %v", err)
+		}
+	}
+	stored := 0
+	for _, cert := range certs {
+		if got, err := awconfig.LoadTeamCertificateForTeamFromIdentityHome(home, cert.Team); err == nil && got.CertificateID == cert.CertificateID {
+			stored++
+		}
+	}
+	if installed != 1 || refused != 1 || stored != 1 {
+		t.Fatalf("installed %d, refused %d, stored %d; want one of each", installed, refused, stored)
+	}
+}

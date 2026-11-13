@@ -90,28 +90,24 @@ func installTeamCertificateFile(ctx context.Context, c teamCertificateInstall) (
 		return nil, installRefusal("member_mismatch", "the certificate names member %s %s (%s), not this home's identity %s %s (%s)",
 			cert.MemberDIDKey, cert.MemberDIDAW, cert.IdentityScope, didKey, identity.StableID, identity.IdentityScope)
 	}
-	if identity.IdentityScope == awid.IdentityModeLocal {
-		if err := localHomeOfOtherTeam(c.Home, cert.Team); err != nil {
-			return nil, err
-		}
+	local := identity.IdentityScope == awid.IdentityModeLocal
+	// Decided read-only first, so a refused home is left exactly as it was,
+	// then again under the home's install lock, so a concurrent install of
+	// another certificate cannot slip in between the decision and the write.
+	if _, err := homeInstallStatus(c.Home, cert, local); err != nil {
+		return nil, err
 	}
 	if err := checkCurrentTeamCertificate(ctx, c, cert, key); err != nil {
 		return nil, err
 	}
-	status := "installed"
-	existing, err := awconfig.LoadTeamCertificateForTeamFromIdentityHome(c.Home, cert.Team)
-	switch {
-	case err == nil:
-		same, sameErr := sameTeamCertificate(existing, cert)
-		if sameErr != nil {
-			return nil, sameErr
-		}
-		if !same {
-			return nil, installRefusal("certificate_conflict", "%s already holds certificate %s for %s", c.Home, existing.CertificateID, cert.Team)
-		}
-		status = "already_installed"
-	case !os.IsNotExist(err):
-		return nil, installRefusal("certificate_conflict", "%s holds a certificate for %s that cannot be read: %v", c.Home, cert.Team, err)
+	lock, err := awconfig.LockExclusive(filepath.Join(c.Home, teamCertificateInstallLock))
+	if err != nil {
+		return nil, err
+	}
+	defer lock.Close()
+	status, err := homeInstallStatus(c.Home, cert, local)
+	if err != nil {
+		return nil, err
 	}
 	if err := recordTeamCertificate(c.WorkingDir, c.Home, cert, c.RegistryURL, status); err != nil {
 		return nil, err
@@ -122,6 +118,36 @@ func installTeamCertificateFile(ctx context.Context, c teamCertificateInstall) (
 		result["did_aw"] = identity.StableID
 	}
 	return result, nil
+}
+
+// teamCertificateInstallLock serializes installs into one identity home.
+const teamCertificateInstallLock = "team-certificate-install.lock"
+
+// homeInstallStatus is how home takes cert: installed when it holds none for
+// cert's team, already_installed when it holds exactly cert. It refuses
+// certificate_conflict when home holds another certificate for the team, or,
+// for a local identity, any trace of another team.
+func homeInstallStatus(home string, cert *awid.TeamCertificate, local bool) (string, error) {
+	if local {
+		if err := localHomeOfOtherTeam(home, cert.Team); err != nil {
+			return "", err
+		}
+	}
+	existing, err := awconfig.LoadTeamCertificateForTeamFromIdentityHome(home, cert.Team)
+	switch {
+	case os.IsNotExist(err):
+		return "installed", nil
+	case err != nil:
+		return "", installRefusal("certificate_conflict", "%s holds a certificate for %s that cannot be read: %v", home, cert.Team, err)
+	}
+	same, err := sameTeamCertificate(existing, cert)
+	if err != nil {
+		return "", err
+	}
+	if !same {
+		return "", installRefusal("certificate_conflict", "%s already holds certificate %s for %s", home, existing.CertificateID, cert.Team)
+	}
+	return "already_installed", nil
 }
 
 // localHomeOfOtherTeam refuses a local identity's home that holds any
