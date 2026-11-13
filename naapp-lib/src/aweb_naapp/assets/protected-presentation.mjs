@@ -73,27 +73,37 @@ export async function validateProtectedPresentation(state, handoffId, table) {
       !spec || !spec.consumer_available || spec.rule !== "live_floor" ||
       request?.scope?.authority?.kind !== spec.key_role) refused();
   if (!validSubject(subject, spec.subject_schema)) refused();
-  if (spec.family === "owner_act") {
-    if (artifact?.v !== 1 || artifact?.type !== "aweb.owner-act" ||
-        artifact.act !== request.operation || artifact.team_id !== request.scope.authority.id ||
-        artifact.aud !== request.audience || !object(artifact.subject) ||
-        canonical(subject) !== canonical(artifact.subject)) refused();
-  } else if (spec.family === "id_certificate" && request.operation === "identity.root.endorse") {
-    const authority = request.scope.authority;
-    if (!exact(artifact,["v","type","id","domain","parent","kind","issuer_key","issued_at"]) ||
-        artifact.v !== 1 || artifact.type !== "aweb.id-certificate" || artifact.kind !== "agent" ||
-        artifact.id !== subject.root_id || artifact.domain !== subject.domain ||
-        subject.domain !== authority.domain || authority.id !== request.scope.human?.id ||
-        !exact(artifact.parent,["kind","id"]) || artifact.parent.kind !== "identity" || artifact.parent.id !== authority.id ||
-        !nonempty(artifact.issuer_key) || !Number.isFinite(Date.parse(artifact.issued_at)) ||
-        request.registry !== request.audience ||
-        !(request.expected_head === null || /^sha256:[0-9a-f]{64}$/.test(request.expected_head)) ||
-        request.responsibility_statement !== "Everything this root spawns counts as yours for human responsibility; this grants no resource permissions." ||
-        !(await validAdmissionPolicy(request.admission_policy,request.scope.service_id,subject.teams))) refused();
-  } else {
-    // A new family must provide its actual typed codec/presentation binding;
-    // registering a name in the table alone never enables an approval button.
-    refused();
+  const guard = spec.presentation;
+  if (!object(guard)) refused();
+  const read = path => {
+    let value = request;
+    for (const part of path.split("/").slice(1)) {
+      if (!object(value) || !Object.hasOwn(value, part)) refused();
+      value = value[part];
+    }
+    return value;
+  };
+  for (const [path, names] of Object.entries(guard.exact ?? {})) {
+    if (!exact(read(path), names)) refused();
+  }
+  for (const [path, value] of Object.entries(guard.constants ?? {})) {
+    if (canonical(read(path)) !== canonical(value)) refused();
+  }
+  for (const [left, right] of guard.equals ?? []) {
+    if (canonical(read(left)) !== canonical(read(right))) refused();
+  }
+  for (const path of guard.nonempty ?? []) if (!nonempty(read(path))) refused();
+  for (const path of guard.timestamps ?? []) {
+    if (!nonempty(read(path)) || !Number.isFinite(Date.parse(read(path)))) refused();
+  }
+  for (const [path, pattern] of Object.entries(guard.nullable_patterns ?? {})) {
+    const value = read(path);
+    if (value !== null && (typeof value !== "string" || new RegExp(pattern).exec(value)?.[0] !== value)) refused();
+  }
+  if (guard.statement && read(guard.statement) !== spec.responsibility_statement) refused();
+  if (guard.admission_policy) {
+    const [policy, service, teams] = guard.admission_policy.map(read);
+    if (!(await validAdmissionPolicy(policy, service, teams))) refused();
   }
   if (await coveredRequestDigest(payload) !== digest) refused();
   return {request, subject, artifact};

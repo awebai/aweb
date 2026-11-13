@@ -340,6 +340,7 @@ class ProtectedSigner:
                 "artifact": fields,
                 **additions,
             }
+            typed.spec.bound_values(request)
             if typed.spec.needs_human:
                 pending = await self.approvals.mint(
                     request=request,
@@ -1091,6 +1092,6 @@ class ProtectedSigner:
                 if self.clock() >= deadline:
                     return await self._execution_refusal(operation_id, reader, SignerRefused("approval_expired"),
                         human_session=human_session)
-        if self.admission is not None and row["signed_result"] is not None and row["result"] is None and type(reader) is ReceiptReader:
+        if row["signed_result"] is not None and row["result"] is None and type(reader) is ReceiptReader:
             return await self._reconcile_admission(operation_id, reader, may_send=False)
         return self._receipt(row)

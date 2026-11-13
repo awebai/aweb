@@ -650,3 +650,14 @@ func TestAnUnservedPrepareKeepsItsCodeAndExplainsTheServiceUpgrade(t *testing.T)
 		})
 	}
 }
+
+func TestAnUndefinedOperationCannotBorrowTheOwnerActPreparedShape(t *testing.T) {
+	stub := newSignerStub(t, `{"state":"committed","result":{"signing":"x","signature":"y"}}`)
+	intent := revokeIntent()
+	intent["operation"] = "operation.without.a.pinned.definition"
+	var opened string
+	_, err := Approve(context.Background(), stub.options(&opened), "11111111-1111-4111-8111-111111111111", intent)
+	if ErrorCode(err) != "operation_mismatch" || opened != "" {
+		t.Fatalf("undefined prepared operation accepted: opened=%q err=%v", opened, err)
+	}
+}

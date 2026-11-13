@@ -29,6 +29,8 @@ class OperationCodec:
     authority_field: str
     subject_schema: dict | None = None
     decode_intent: Callable | None = None
+    go_verifier: str = ""
+    presentation: dict | None = None
 
 
 def _stamp(now):
@@ -96,10 +98,26 @@ ROOT_CODEC = OperationCodec(validate_root_subject, _root, root_signing_bytes, "i
         "teams": {"pattern": r"[^\s:]+:[^\s:]+", "list": True, "maxItems": 4096},
         "deployment_label": {"pattern": r"[^\x00-\x1f]{1,128}"},
     }, "required": ["domain", "root_id", "root_key", "teams", "deployment_label"],
-}, decode_intent=catalog_intent)
-ADMISSION_CODEC = OperationCodec(validate_admission_subject, _admission, admission_signing_bytes, "team_did_key", decode_intent=catalog_intent)
-REMOVAL_CODEC = OperationCodec(validate_removal_subject, _removal, removal_signing_bytes, "controller_did", decode_intent=catalog_intent)
+}, decode_intent=catalog_intent, go_verifier="endorsementDiffers", presentation={
+    "exact": {"/artifact": ["v", "type", "id", "domain", "parent", "kind", "issuer_key", "issued_at"],
+        "/artifact/parent": ["kind", "id"]},
+    "constants": {"/artifact/v": 1, "/artifact/type": "aweb.id-certificate",
+        "/artifact/kind": "agent", "/artifact/parent/kind": "identity"},
+    "equals": [["/artifact/id", "/subject/root_id"], ["/artifact/domain", "/subject/domain"],
+        ["/subject/domain", "/scope/authority/domain"], ["/scope/authority/id", "/scope/human/id"],
+        ["/artifact/parent/id", "/scope/authority/id"], ["/registry", "/audience"]],
+    "nonempty": ["/artifact/issuer_key"], "timestamps": ["/artifact/issued_at"],
+    "nullable_patterns": {"/expected_head": "sha256:[0-9a-f]{64}"},
+    "statement": "/responsibility_statement",
+    "admission_policy": ["/admission_policy", "/scope/service_id", "/subject/teams"],
+})
+ADMISSION_CODEC = OperationCodec(validate_admission_subject, _admission, admission_signing_bytes, "team_did_key", decode_intent=catalog_intent, go_verifier="admissionArtifactDiffers")
+REMOVAL_CODEC = OperationCodec(validate_removal_subject, _removal, removal_signing_bytes, "controller_did", decode_intent=catalog_intent, go_verifier="removalArtifactDiffers")
 REVOKE_CODEC = OperationCodec(_revoke_subject, _owner_artifact, _owner_signing, "team_key_did", {
     "fields": {field: {"pattern": r"[\s\S]+"} for field in sorted(_REVOKE_FIELDS)},
     "required": sorted(_REVOKE_FIELDS),
-}, decode_intent=revoke_intent)
+}, decode_intent=revoke_intent, go_verifier="ownerActArtifactDiffers", presentation={
+    "constants": {"/artifact/v": 1, "/artifact/type": "aweb.owner-act"},
+    "equals": [["/artifact/act", "/operation"], ["/artifact/team_id", "/scope/authority/id"],
+        ["/artifact/aud", "/audience"], ["/artifact/subject", "/subject"]],
+})

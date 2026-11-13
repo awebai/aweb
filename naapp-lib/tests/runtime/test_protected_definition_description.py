@@ -33,3 +33,29 @@ def test_published_description_and_go_table_are_exactly_generated_from_the_curre
     result = subprocess.run([sys.executable, "scripts/generate_protected_operations.py", "--check"],
         cwd=root, capture_output=True, text=True, timeout=20)
     assert result.returncode == 0, result.stdout + result.stderr
+
+
+def test_binding_paths_are_required_and_projected_from_the_actual_frozen_request():
+    import copy
+
+    import pytest
+
+    from aweb_naapp.runtime.protected_signer import SignerRefused
+    from aweb_naapp.runtime.protected_signer.codecs import artifact_for
+    from tests.runtime.test_protected_identity_artifacts import HKEY, NOW, operation
+
+    op = operation("team.agent.admit")
+    request = {**op.intent(), "artifact": artifact_for(op, HKEY, NOW),
+        "request_id": op.operation_id, "admission_policy_version": op.subject["expected_policy_version"]}
+    values = op.spec.bound_values(request)
+    assert values["certificate_fields"] == request["artifact"]
+    assert values["request_id"] == op.operation_id and values["service_id"] == op.context.service_id
+    for path in op.spec.bindings().values():
+        changed = copy.deepcopy(request)
+        target = changed
+        parts = path.split("/")[1:]
+        for part in parts[:-1]:
+            target = target[part]
+        del target[parts[-1]]
+        with pytest.raises(SignerRefused, match="operation_mismatch"):
+            op.spec.bound_values(changed)
