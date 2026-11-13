@@ -78,7 +78,7 @@ def owner_act_delivery(operation, artifact, signing, signature, timestamp):
     controller = _verified(operation, artifact, signing, signature)
     body = canonical_json_bytes({"signing": base64.b64encode(signing).decode(), "signature": _raw(signature)})
     return DeliveryPlan(operation.audience, "POST", "/.well-known/aweb-owner-act", body,
-        "aweb.owner-act", controller)
+        "owner-act", controller)
 
 
 def certificate_delivery(operation, artifact, signing, signature, timestamp):
@@ -94,7 +94,7 @@ def certificate_delivery(operation, artifact, signing, signature, timestamp):
     envelope = covering_payload(aud=operation.audience, path=path, domain=domain,
         operation="register_certificate", body=body, timestamp=timestamp,
         claims={"team_name": name, "certificate_id": artifact["certificate_id"]})
-    return DeliveryPlan(operation.audience, "POST", path, body, "aweb.team-certificate", controller, envelope)
+    return DeliveryPlan(operation.audience, "POST", path, body, "team-certificate", controller, envelope)
 
 
 def revocation_delivery(operation, artifact, signing, signature, timestamp):
@@ -103,4 +103,4 @@ def revocation_delivery(operation, artifact, signing, signature, timestamp):
     # The artifact already IS the exact covering-v2 revoke envelope. Preserve
     # its timestamp/signature even when a later retention call supplies now.
     return DeliveryPlan(operation.audience, "POST", artifact["request"]["path"], body,
-        "aweb.awid-controller-request", controller, signing)
+        "controller-request", controller, signing)
