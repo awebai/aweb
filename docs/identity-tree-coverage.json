@@ -493,10 +493,6 @@
         "reason": "Existing freeze human channels profile test support or fixture signatures; not an identity-tree verifier."
       },
       {
-        "file": "scripts/spikes/human_channels_e2ee.py",
-        "reason": "Existing human channels e2ee test support or fixture signatures; not an identity-tree verifier."
-      },
-      {
         "file": "server/src/aweb/e2ee_messages.py",
         "reason": "Released e2ee messages signing/key custody; ID-certificate verification uses the shared verifier."
       },

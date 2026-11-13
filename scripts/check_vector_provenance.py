@@ -157,9 +157,6 @@ ROOT_CONSUMERS = {
     PurePosixPath("cli/go/awid/human_channels_presence_test.go"): _consumer(
         "human-channels-presence-v1.json", '"../../../docs/vectors/human-channels-presence-v1.json"',
     ),
-    PurePosixPath("server/tests/test_human_channels_e2ee_spike.py"): _consumer(
-        "human-channels-e2ee-spike.json", "ROOT / 'docs/vectors/human-channels-e2ee-spike.json'",
-    ),
     PurePosixPath("cli/go/awid/human_channels_e2ee_spike_test.go"): _consumer(
         "human-channels-e2ee-spike.json", '"../../../docs/vectors/human-channels-e2ee-spike.json"',
     ),
@@ -808,9 +805,6 @@ NON_CONSUMING_CODE_REFERENCES = {
     ),
     PurePosixPath("scripts/freeze_human_channels_presence.py"): (
         "docs/vectors/human-channels-presence-v1.json",
-    ),
-    PurePosixPath("scripts/spikes/human_channels_e2ee.py"): (
-        "docs/vectors/human-channels-e2ee-spike.json",
     ),
     PurePosixPath("scripts/freeze_human_channels_profile.py"): (
         "docs/vectors/human-channels-profile-v1.json",
