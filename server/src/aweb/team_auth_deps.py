@@ -13,7 +13,7 @@ from dataclasses import dataclass
 from awid.dns_auth import enforce_timestamp_skew, parse_didkey_auth, require_timestamp
 from awid.signing import verify_did_key_signature
 from awid.team_certificate import TeamCertificateError, decode_team_certificate
-from awid.team_ids import parse_team_id
+from awid.team_ids import build_team_id, parse_team_id
 from fastapi import Depends, HTTPException, Request
 from pgdbm import AsyncDatabaseManager
 
@@ -24,6 +24,9 @@ from aweb.awid_error_handling import (
     AWID_DEPENDENCY_ERRORS,
     awid_dependency_http_exception,
     awid_registry_not_configured_exception,
+    is_private_team_refusal,
+    serves_team,
+    team_not_served_exception,
 )
 from aweb.config import require_registered_certificates
 from aweb.deps import get_db
@@ -387,6 +390,19 @@ def team_identity_with_grant_scope(scope: str):
 # ---------------------------------------------------------------------------
 
 
+def _team_read_failure(exc: Exception, registry_client, team_id: str, *, operation: str, reading: str) -> HTTPException:
+    """The answer to a failed registry read of one team's records.
+
+    A private team this server holds no credential for is a team it does not
+    serve: its members are refused with 403, and that is not a registry fault.
+    """
+    if is_private_team_refusal(exc) and not serves_team(registry_client, team_id):
+        logger.info("Refused %s for team %s, which this server does not serve", reading, team_id)
+        return team_not_served_exception(team_id, operation=operation)
+    logger.warning("AWID registry dependency failed for %s: %s", reading, team_id, exc_info=True)
+    return awid_dependency_http_exception(exc, operation=operation, team_id=team_id)
+
+
 async def _resolve_team_key(request: Request, team_id: str) -> str:
     """Resolve team public key from awid registry.
 
@@ -406,8 +422,10 @@ async def _resolve_team_key(request: Request, team_id: str) -> str:
         key = await registry_client.get_team_public_key(domain, team_name)
         return key or ""
     except AWID_DEPENDENCY_ERRORS as exc:
-        logger.warning("AWID registry dependency failed for team key resolution: %s", team_id, exc_info=True)
-        raise awid_dependency_http_exception(exc, operation="AWID team key resolution") from exc
+        raise _team_read_failure(
+            exc, registry_client, build_team_id(domain, team_name),
+            operation="AWID team key resolution", reading="team key resolution",
+        ) from exc
     except Exception as exc:
         logger.exception("Unexpected AWID registry dependency error for team key resolution: %s", team_id)
         raise awid_dependency_http_exception(exc, operation="AWID team key resolution") from exc
@@ -439,8 +457,10 @@ async def revoked_certificates(registry_client, team_id: str, *, fresh: bool = F
             return await registry_client.get_team_revocations_fresh(domain, team_name)
         return await registry_client.get_team_revocations(domain, team_name)
     except AWID_DEPENDENCY_ERRORS as exc:
-        logger.warning("AWID registry dependency failed for revocation check: %s", team_id, exc_info=True)
-        raise awid_dependency_http_exception(exc, operation="AWID team revocation check") from exc
+        raise _team_read_failure(
+            exc, registry_client, build_team_id(domain, team_name),
+            operation="AWID team revocation check", reading="revocation check",
+        ) from exc
     except Exception as exc:
         logger.exception("Unexpected AWID registry dependency error for revocation check: %s", team_id)
         raise awid_dependency_http_exception(exc, operation="AWID team revocation check") from exc
@@ -483,10 +503,10 @@ async def registered_certificates(registry_client, team_id: str) -> set[str]:
             # the revocation read's 404-means-empty behavior rather than
             # treating a definitive answer as an outage.
             return set()
-        logger.warning(
-            "AWID registry dependency failed for certificate existence check: %s", team_id, exc_info=True
-        )
-        raise awid_dependency_http_exception(exc, operation="AWID certificate existence check") from exc
+        raise _team_read_failure(
+            exc, registry_client, build_team_id(domain, team_name),
+            operation="AWID certificate existence check", reading="certificate existence check",
+        ) from exc
     except Exception as exc:
         logger.exception(
             "Unexpected AWID registry dependency error for certificate existence check: %s", team_id
