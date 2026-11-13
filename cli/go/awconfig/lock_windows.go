@@ -14,18 +14,24 @@ type fileLock struct {
 }
 
 func LockExclusive(lockPath string) (*fileLock, error) {
-	return lockExclusive(lockPath, false, true)
+	return lockFile(lockPath, false, true, true)
 }
 
 func TryLockExclusive(lockPath string) (*fileLock, error) {
-	return lockExclusive(lockPath, true, true)
+	return lockFile(lockPath, true, true, true)
 }
 
 func TryLockExistingExclusive(lockPath string) (*fileLock, error) {
-	return lockExclusive(lockPath, true, false)
+	return lockFile(lockPath, true, false, true)
 }
 
-func lockExclusive(lockPath string, nonBlocking, create bool) (*fileLock, error) {
+// TryLockShared takes lockPath's lock shared, alongside other shared holders
+// and never alongside an exclusive one, without waiting.
+func TryLockShared(lockPath string) (*fileLock, error) {
+	return lockFile(lockPath, true, true, false)
+}
+
+func lockFile(lockPath string, nonBlocking, create, exclusive bool) (*fileLock, error) {
 	openFlags := os.O_RDWR
 	if create {
 		if err := os.MkdirAll(filepath.Dir(lockPath), 0o700); err != nil {
@@ -40,7 +46,10 @@ func lockExclusive(lockPath string, nonBlocking, create bool) (*fileLock, error)
 
 	handle := windows.Handle(f.Fd())
 	var ol windows.Overlapped
-	lockFlags := uint32(windows.LOCKFILE_EXCLUSIVE_LOCK)
+	lockFlags := uint32(0)
+	if exclusive {
+		lockFlags = windows.LOCKFILE_EXCLUSIVE_LOCK
+	}
 	if nonBlocking {
 		lockFlags |= windows.LOCKFILE_FAIL_IMMEDIATELY
 	}

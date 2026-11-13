@@ -145,6 +145,16 @@ func TestAnAdmittedLocalCertificateIsInstalledIntoAKeyOnlyHome(t *testing.T) {
 	if err != nil || state.Membership(installTeamID) == nil {
 		t.Fatalf("membership %+v, %v", state, err)
 	}
+	assertCredentialGeneration(t, home, 1)
+}
+
+// assertCredentialGeneration requires home's committed credential generation
+// to be want, with no update incomplete.
+func assertCredentialGeneration(t *testing.T, home string, want int64) {
+	t.Helper()
+	if state, err := awconfig.ReadCredentialState(home); err != nil || state.Generation != want || state.Marker != nil {
+		t.Fatalf("credential state %+v err %v, want generation %d", state, err, want)
+	}
 }
 
 func TestReinstallingTheSameCertificateReportsItAndChangesNothing(t *testing.T) {
@@ -186,6 +196,7 @@ func TestAnInstallKilledBeforeItsMembershipIsCompletedByTheRerun(t *testing.T) {
 	if err != nil || state.Membership(installTeamID) == nil {
 		t.Fatalf("membership %+v, %v", state, err)
 	}
+	assertCredentialGeneration(t, home, 1)
 }
 
 func TestACertificateThatIsNotThisHomesCurrentMembershipIsRefusedAndNothingInstalled(t *testing.T) {
@@ -468,7 +479,7 @@ func TestRecordingAnInstalledCertificateWithNoRegistryKeepsTheMembershipsRegistr
 	if _, err := installTeamCertificateFile(context.Background(), installRequest(t, registry, home, certificateFile(t, cert))); err != nil {
 		t.Fatal(err)
 	}
-	if err := recordTeamCertificate(t.TempDir(), home, cert, "", "already_installed"); err != nil {
+	if _, err := commitTeamCertificate(t.TempDir(), home, "fetch-cert", cert, "", func() (string, error) { return "already_installed", nil }); err != nil {
 		t.Fatal(err)
 	}
 	state, err := awconfig.LoadTeamStateFromIdentityHome(home)

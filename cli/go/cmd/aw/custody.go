@@ -23,6 +23,7 @@ import (
 	"github.com/awebai/aw/awconfig"
 	"github.com/awebai/aw/awid"
 	"github.com/spf13/cobra"
+	"gopkg.in/yaml.v3"
 )
 
 var custodyCmd = &cobra.Command{Use: "custody", Short: "Local resident custody service"}
@@ -111,7 +112,20 @@ type custodyService struct {
 	// connectClient selects the resident's team and builds its aweb client.
 	// With AWEB_URL set it probes the server for the API base, so custody
 	// calls it on the first request that needs the client, never at start.
-	connectClient func(context.Context) (*awconfig.Selection, *aweb.Client, error)
+	// connectClient builds from home, a capture of the resident home's
+	// credentials, never from the resident home itself.
+	connectClient func(ctx context.Context, home awconfig.IdentityHome) (*awconfig.Selection, *aweb.Client, error)
+	// workingDir is the directory the service was started from.
+	workingDir string
+	// The published snapshot: the credential generation and projection the
+	// client and its derived functions were built from, and the team
+	// certificates that capture held. identityChanged is set, until restart,
+	// once the resident home holds another identity than this service started
+	// with.
+	snapshotGeneration int64
+	snapshotProjection string
+	snapshotTeams      []awconfig.StoredTeamCertificate
+	identityChanged    bool
 	// clientMu serializes building the client and guards the client, the
 	// functions derived from it, the selection-derived fields and the last
 	// failure.
@@ -170,12 +184,13 @@ func newCustodyService(home awconfig.IdentityHome) (*custodyService, error) {
 	}
 	serviceID, _ := awid.GenerateUUID4()
 	svc := &custodyService{residentHome: home.Root, socketPath: awconfig.CustodySocketPath(home.Root), identity: identity, signingKey: key, e2eeAssertion: e2eeAssertion, e2eePrivateKey: e2eePrivateKey, e2eeKeyError: e2eeKeyError, serviceID: serviceID, now: time.Now, replay: map[string]string{}, replayAt: map[string]time.Time{}, results: map[string]any{}}
-	svc.connectClient = func(ctx context.Context) (*awconfig.Selection, *aweb.Client, error) {
-		sel, err := resolveSelectionAtIdentityHome(wd, "", home)
+	svc.workingDir = wd
+	svc.connectClient = func(ctx context.Context, captured awconfig.IdentityHome) (*awconfig.Selection, *aweb.Client, error) {
+		sel, err := resolveSelectionAtIdentityHome(wd, "", captured)
 		if err != nil {
 			return nil, nil, err
 		}
-		client, _, err := buildClientForSelectionAtIdentityHome(ctx, wd, externalIdentityHomeRoot(home), sel, resolveAuthenticatedBaseURLContext)
+		client, _, err := buildClientForSelectionAtIdentityHome(ctx, wd, externalIdentityHomeRoot(captured), sel, resolveAuthenticatedBaseURLContext)
 		return sel, client, err
 	}
 	// Selection reads local configuration only. Keep it even when it later
@@ -186,6 +201,7 @@ func newCustodyService(home awconfig.IdentityHome) (*custodyService, error) {
 	} else {
 		svc.applySelectionLocked(sel)
 	}
+	svc.bootstrapCredentials()
 	return svc, nil
 }
 
@@ -208,24 +224,185 @@ type custodyClientDeps struct {
 	appDeniedOrigins    []string
 }
 
-// clientDeps returns the client-derived functions, building the aweb client on
-// the first request that needs it. A failure is logged and reported by status
-// and nothing is kept, so the next request tries again.
+// admittedDepsKey carries a request's admitted client-derived functions.
+type admittedDepsKey struct{}
+
+// admit returns ctx carrying the client-derived functions admitted for one
+// request, so every part of the request uses the same snapshot.
+func (s *custodyService) admit(ctx context.Context) context.Context {
+	return context.WithValue(ctx, admittedDepsKey{}, s.clientDeps(ctx))
+}
+
+// admitted wraps a credential-using handler so its request is admitted once.
+func (s *custodyService) admitted(handler http.HandlerFunc) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		handler(w, r.WithContext(s.admit(r.Context())))
+	}
+}
+
+// custodyCaptureWait bounds how long admission waits for a credential update
+// of the resident home to finish.
+const custodyCaptureWait = 2 * time.Second
+
+// clientDeps returns the client-derived functions for a request: those its
+// admission took, or, admitting it now, the published snapshot after
+// capturing the resident home's credentials once. A capture that holds
+// another identity than this service started with latches identity_changed
+// until restart; one with an incomplete update, or changed without a
+// published generation, admits no client. A capture of another projection
+// than the snapshot's is built, from that capture and nothing else, and
+// published only if no newer snapshot was published meanwhile. A failure is
+// logged and reported by status; the next request tries again.
 func (s *custodyService) clientDeps(ctx context.Context) custodyClientDeps {
+	if deps, ok := ctx.Value(admittedDepsKey{}).(custodyClientDeps); ok {
+		return deps
+	}
+	if s.connectClient == nil {
+		// Given fixed client functions, the service builds nothing from the
+		// resident home, so there is nothing to admit against it.
+		s.clientMu.Lock()
+		defer s.clientMu.Unlock()
+		return s.depsLocked()
+	}
+	capture, captureErr := s.captureCredentials()
 	s.clientMu.Lock()
 	defer s.clientMu.Unlock()
-	if s.client == nil && s.connectClient != nil {
-		sel, client, err := s.connectClient(ctx)
-		if err == nil && client == nil {
-			err = errors.New("no aweb client for the selected team")
+	return s.admitCaptureLocked(ctx, capture, captureErr)
+}
+
+// admitCaptureLocked admits a request on capture, the resident home's
+// credentials as its admission read them.
+func (s *custodyService) admitCaptureLocked(ctx context.Context, capture *awconfig.CredentialCapture, captureErr error) custodyClientDeps {
+	switch {
+	case s.identityChanged:
+		return custodyClientDeps{}
+	case captureErr != nil:
+		s.reportFailureLocked("load credentials", "credential_update_incomplete", captureErr)
+		return custodyClientDeps{}
+	}
+	if err := s.checkPinLocked(capture); err != nil {
+		s.identityChanged = true
+		s.detachClientLocked()
+		s.reportFailureLocked("load credentials", "identity_changed", err)
+		return custodyClientDeps{}
+	}
+	if !capture.State.Published() {
+		code := awconfig.ErrCredentialUpdateUnpublished.Error()
+		if capture.State.Marker != nil && !capture.State.Committed() {
+			code = awconfig.ErrCredentialUpdateIncomplete.Error()
 		}
+		s.detachClientLocked()
+		s.reportFailureLocked("load credentials", code, fmt.Errorf("the resident home's credentials are not a published generation"))
+		return custodyClientDeps{}
+	}
+	if s.client == nil || capture.Projection != s.snapshotProjection {
+		if s.client != nil && capture.State.Generation < s.snapshotGeneration {
+			return s.depsLocked()
+		}
+		s.buildLocked(ctx, capture)
+	}
+	return s.depsLocked()
+}
+
+// captureCredentials reads the resident home's credentials once, under the
+// shared side of its credential lock, waiting at most custodyCaptureWait for
+// an update to finish.
+func (s *custodyService) captureCredentials() (*awconfig.CredentialCapture, error) {
+	deadline := time.Now().Add(custodyCaptureWait)
+	for {
+		lock, err := awconfig.LockCredentialsShared(s.residentHome)
+		if err == nil {
+			defer lock.Close()
+			return awconfig.CaptureCredentials(s.residentHome)
+		}
+		if !errors.Is(err, awconfig.ErrLockUnavailable) || time.Now().After(deadline) {
+			return nil, fmt.Errorf("the resident home's credentials are being updated: %w", err)
+		}
+		time.Sleep(20 * time.Millisecond)
+	}
+}
+
+// checkPinLocked refuses a capture whose identity or signing key is not the
+// one this service started with.
+func (s *custodyService) checkPinLocked(capture *awconfig.CredentialCapture) error {
+	if s.identity == nil {
+		return nil
+	}
+	pinned := strings.TrimSpace(s.identity.DID)
+	var identity awconfig.WorktreeIdentity
+	if err := yaml.Unmarshal(capture.Files["identity.yaml"], &identity); err != nil {
+		return fmt.Errorf("the resident home's identity cannot be read: %w", err)
+	}
+	if did := strings.TrimSpace(identity.DID); did != "" && did != pinned {
+		return fmt.Errorf("the resident home now holds %s, not %s; restart the custody service", did, pinned)
+	}
+	if data, ok := capture.Files["signing.key"]; ok {
+		key, err := awid.ParseSigningKey(data)
 		if err != nil {
-			s.reportFailureLocked("connect to aweb", custodyClientInitializationErrorCode(err), err)
-		} else {
-			s.applySelectionLocked(sel)
-			s.attachClientLocked(client)
+			return fmt.Errorf("the resident home's signing key cannot be read: %w", err)
+		}
+		if did := awid.ComputeDIDKey(key.Public().(ed25519.PublicKey)); did != pinned {
+			return fmt.Errorf("the resident home's signing key is %s, not %s; restart the custody service", did, pinned)
 		}
 	}
+	return nil
+}
+
+// buildLocked builds the client from capture, written to a private directory
+// in the resident home that is removed as soon as the client is built: the
+// built client keeps no path into it.
+func (s *custodyService) buildLocked(ctx context.Context, capture *awconfig.CredentialCapture) {
+	dir, err := s.writeCaptureLocked(capture)
+	if dir != "" {
+		defer os.RemoveAll(dir)
+	}
+	if err != nil {
+		s.reportFailureLocked("load credentials", "credential_update_incomplete", err)
+		return
+	}
+	captured := awconfig.IdentityHome{Root: dir, Source: awconfig.IdentityHomeFlag}
+	sel, client, err := s.connectClient(ctx, captured)
+	if err == nil && client == nil {
+		err = errors.New("no aweb client for the selected team")
+	}
+	if err != nil {
+		s.reportFailureLocked("connect to aweb", custodyClientInitializationErrorCode(err), err)
+		return
+	}
+	teams, _ := awconfig.ListTeamCertificatesFromIdentityHome(dir)
+	s.applySelectionLocked(sel)
+	s.attachClientLocked(client)
+	s.snapshotGeneration, s.snapshotProjection, s.snapshotTeams = capture.State.Generation, capture.Projection, teams
+}
+
+// custodyCaptureDir holds the resident home's private credential captures
+// while a client is built from one.
+const custodyCaptureDir = ".custody-captures"
+
+func (s *custodyService) writeCaptureLocked(capture *awconfig.CredentialCapture) (string, error) {
+	root := filepath.Join(s.residentHome, custodyCaptureDir)
+	if err := os.MkdirAll(root, 0o700); err != nil {
+		return "", err
+	}
+	if err := os.Chmod(root, 0o700); err != nil {
+		return "", err
+	}
+	dir, err := os.MkdirTemp(root, "capture-")
+	if err != nil {
+		return "", err
+	}
+	if err := os.Remove(dir); err != nil {
+		return "", err
+	}
+	return dir, capture.WriteTo(dir)
+}
+
+// removeCaptures removes captures a stopped service left behind.
+func removeCaptures(residentHome string) error {
+	return os.RemoveAll(filepath.Join(residentHome, custodyCaptureDir))
+}
+
+func (s *custodyService) depsLocked() custodyClientDeps {
 	return custodyClientDeps{
 		client: s.client, grantStatus: s.grantStatus, readinessCheck: s.readinessCheck,
 		readStoredEnvelope: s.readStoredEnvelope, readStoredMailReply: s.readStoredMailReply,
@@ -233,11 +410,21 @@ func (s *custodyService) clientDeps(ctx context.Context) custodyClientDeps {
 	}
 }
 
+// detachClientLocked drops the client and every function derived from it.
+func (s *custodyService) detachClientLocked() {
+	s.client, s.grantStatus, s.readStoredEnvelope, s.readStoredMailReply, s.resolveRecipient, s.readinessCheck = nil, nil, nil, nil, nil, nil
+	s.snapshotProjection = ""
+}
+
 func (s *custodyService) attachClientLocked(client *aweb.Client) {
 	s.client = client
 	s.grantStatus = grantStatusViaClient(client)
-	s.readStoredEnvelope = s.storedE2EEEnvelopeViaClient
-	s.readStoredMailReply = s.storedMailReplyViaClient
+	s.readStoredEnvelope = func(ctx context.Context, kind, messageID, conversationID string) (*awid.E2EEMessageEnvelope, error) {
+		return s.storedE2EEEnvelopeViaClient(ctx, client, kind, messageID, conversationID)
+	}
+	s.readStoredMailReply = func(ctx context.Context, messageID string) (*awid.InboxMessage, error) {
+		return s.storedMailReplyViaClient(ctx, client, messageID)
+	}
 	s.resolveRecipient = client.ResolveIdentity
 	s.readinessCheck = func(ctx context.Context) (string, error) {
 		return client.ProbeIdentityGrantStatus(ctx)
@@ -311,6 +498,53 @@ func runCustodyServe(ctx context.Context) error {
 	return svc.serve(ctx)
 }
 
+// bootstrapCredentials runs once as the service starts: it removes captures a stopped
+// service left behind, and adopts the resident home's current credentials as
+// its next generation when they are valid and not already the published ones.
+// An interrupted update or an invalid home is not adopted; requests then fail
+// closed until a supported update or a restart resolves it.
+func (s *custodyService) bootstrapCredentials() {
+	if err := removeCaptures(s.residentHome); err != nil {
+		s.reportFailure("remove credential captures", "credential_update_incomplete", err)
+	}
+	if _, err := awconfig.AdoptCredentials(s.residentHome, s.validateCapture); err != nil {
+		code := awconfig.ErrCredentialUpdateUnpublished.Error()
+		if errors.Is(err, awconfig.ErrCredentialUpdateIncomplete) {
+			code = awconfig.ErrCredentialUpdateIncomplete.Error()
+		}
+		s.reportFailure("adopt credentials", code, err)
+	}
+}
+
+// validateCapture accepts a capture whose identity and signing key are this
+// service's and whose selected team certificate, when the home selects one,
+// names that key. A home with no selection yet is a readiness state, not an
+// invalid one.
+func (s *custodyService) validateCapture(capture *awconfig.CredentialCapture) error {
+	if err := s.checkPinLocked(capture); err != nil {
+		return err
+	}
+	dir, err := s.writeCaptureLocked(capture)
+	if dir != "" {
+		defer os.RemoveAll(dir)
+	}
+	if err != nil {
+		return err
+	}
+	sel, err := resolveSelectionAtIdentityHome(s.workingDir, "", awconfig.IdentityHome{Root: dir, Source: awconfig.IdentityHomeFlag})
+	if err != nil {
+		return nil
+	}
+	cert, err := loadSelectedTeamCertificate(sel)
+	if err != nil {
+		return nil
+	}
+	if s.identity != nil && cert.MemberDIDKey != strings.TrimSpace(s.identity.DID) {
+		return fmt.Errorf("the selected team certificate names %s, not this service's key %s", cert.MemberDIDKey, s.identity.DID)
+	}
+	return nil
+}
+
 func (s *custodyService) serve(ctx context.Context) error {
 	if err := validateCustodySocketPathLength(s.socketPath); err != nil {
 		return err
@@ -346,10 +580,10 @@ func (s *custodyService) serve(ctx context.Context) error {
 	mux := http.NewServeMux()
 	mux.HandleFunc("/ping", s.handlePing)
 	mux.HandleFunc("/status", s.handleStatus)
-	mux.HandleFunc("/sign_plain_message", s.handleSignPlainMessage)
-	mux.HandleFunc("/create_e2ee_envelope", s.handleCreateE2EEEnvelope)
-	mux.HandleFunc("/unwrap_e2ee_message", s.handleUnwrapE2EEMessage)
-	mux.HandleFunc("/sign_app_request", s.handleSignAppRequest)
+	mux.HandleFunc("/sign_plain_message", s.admitted(s.handleSignPlainMessage))
+	mux.HandleFunc("/create_e2ee_envelope", s.admitted(s.handleCreateE2EEEnvelope))
+	mux.HandleFunc("/unwrap_e2ee_message", s.admitted(s.handleUnwrapE2EEMessage))
+	mux.HandleFunc("/sign_app_request", s.admitted(s.handleSignAppRequest))
 	mux.HandleFunc("/stop", s.handleStop)
 
 	renewalCtx, stopRenewal := context.WithCancel(ctx)
@@ -424,12 +658,21 @@ func (s *custodyService) status(ctx context.Context, status string, errs []strin
 	return out
 }
 func (s *custodyService) teamReadiness(grantStatusReady bool) ([]map[string]any, []string) {
-	if strings.TrimSpace(s.residentHome) == "" {
-		return nil, nil
-	}
-	certs, err := awconfig.ListTeamCertificatesFromIdentityHome(s.residentHome)
-	if err != nil {
-		return nil, []string{"team_certificates_unavailable"}
+	// A service that builds its client from the resident home reports the
+	// teams of the snapshot it serves; one given fixed client functions has no
+	// snapshot and reports the home's certificates.
+	s.clientMu.Lock()
+	certs, fixed := s.snapshotTeams, s.connectClient == nil
+	s.clientMu.Unlock()
+	if fixed {
+		if strings.TrimSpace(s.residentHome) == "" {
+			return nil, nil
+		}
+		listed, err := awconfig.ListTeamCertificatesFromIdentityHome(s.residentHome)
+		if err != nil {
+			return nil, []string{"team_certificates_unavailable"}
+		}
+		certs = listed
 	}
 	teams := make([]map[string]any, 0, len(certs))
 	for _, cert := range certs {
@@ -1132,8 +1375,7 @@ func (s *custodyService) verifyE2EERecipients(ctx context.Context, recipients []
 	return nil
 }
 
-func (s *custodyService) storedMailReplyViaClient(ctx context.Context, messageID string) (*awid.InboxMessage, error) {
-	client := s.clientDeps(ctx).client
+func (s *custodyService) storedMailReplyViaClient(ctx context.Context, client *aweb.Client, messageID string) (*awid.InboxMessage, error) {
 	if client == nil {
 		return nil, fmt.Errorf("stored_message_unavailable")
 	}
@@ -1148,8 +1390,7 @@ func (s *custodyService) storedMailReplyViaClient(ctx context.Context, messageID
 	return &message, nil
 }
 
-func (s *custodyService) storedE2EEEnvelopeViaClient(ctx context.Context, kind, messageID, conversationID string) (*awid.E2EEMessageEnvelope, error) {
-	client := s.clientDeps(ctx).client
+func (s *custodyService) storedE2EEEnvelopeViaClient(ctx context.Context, client *aweb.Client, kind, messageID, conversationID string) (*awid.E2EEMessageEnvelope, error) {
 	if client == nil {
 		return nil, fmt.Errorf("stored_message_unavailable")
 	}

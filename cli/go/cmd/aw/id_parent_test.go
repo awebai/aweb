@@ -3,6 +3,7 @@ package main
 import (
 	"bytes"
 	"context"
+	"crypto/ed25519"
 	"encoding/json"
 	"errors"
 	"os"
@@ -168,6 +169,9 @@ func (p *parentRun) assertOutstanding(t *testing.T, requestID string) {
 	if installed, err := awconfig.LoadInstalledIDChain(dir); err != nil || installed != nil {
 		t.Fatalf("a chain was installed: %v %v", installed, err)
 	}
+	if state, err := awconfig.ReadCredentialState(dir); err != nil || state.Generation != 0 || state.Marker != nil {
+		t.Fatalf("a refused import published %+v (%v)", state, err)
+	}
 	if rec, err := awconfig.LoadHumanRecord("example.com", p.human.ID); err != nil || rec.State != awconfig.HumanPrepared || rec.RegisteredAt != "" {
 		t.Fatalf("human record %+v (%v)", rec, err)
 	}
@@ -272,5 +276,23 @@ func TestParentRequestAsAHumanNeedsThatHumanPreparedForARequest(t *testing.T) {
 	}
 	if p.prompts != 0 {
 		t.Fatalf("the human was asked to sign %d times", p.prompts)
+	}
+}
+
+// An imported chain is installed as the home's next credential generation, so
+// a running custody service rebuilds from it.
+func TestAnImportedChainIsInstalledAsTheNextCredentialGeneration(t *testing.T) {
+	home := t.TempDir()
+	_, humanKey, _ := ed25519.GenerateKey(nil)
+	bundle := map[string]any{"v": 1, "type": "aweb.id-chain", "certificates": []any{signedHumanCertificate(t, humanKey)}}
+	if err := installImportedChain(home, "request-1", []byte("response"), bundle); err != nil {
+		t.Fatal(err)
+	}
+	installed, err := awconfig.LoadInstalledIDChain(home)
+	if err != nil || installed == nil {
+		t.Fatalf("installed %v, %v", installed, err)
+	}
+	if state, err := awconfig.ReadCredentialState(home); err != nil || state.Generation != 1 || state.Marker != nil {
+		t.Fatalf("credential state %+v err %v", state, err)
 	}
 }
