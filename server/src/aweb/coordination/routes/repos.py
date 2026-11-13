@@ -8,7 +8,6 @@ from __future__ import annotations
 
 import logging
 import re
-import uuid as uuid_module
 from datetime import datetime
 from typing import Optional
 from urllib.parse import urlparse
@@ -99,87 +98,6 @@ def canonicalize_git_url(origin_url: str) -> str:
 def extract_repo_name(canonical_origin: str) -> str:
     """Extract repo name from canonical origin (last path component)."""
     return canonical_origin.rsplit("/", 1)[-1]
-
-
-class RepoLookupRequest(BaseModel):
-    origin_url: str = Field(..., min_length=1, max_length=2048)
-
-    @field_validator("origin_url")
-    @classmethod
-    def validate_origin_url(cls, v: str) -> str:
-        try:
-            canonicalize_git_url(v)
-        except ValueError as e:
-            raise ValueError(f"Invalid origin_url: {e}")
-        return v
-
-
-class RepoLookupResponse(BaseModel):
-    repo_id: str
-    team_id: str
-    canonical_origin: str
-    name: str
-
-
-class RepoLookupCandidate(BaseModel):
-    repo_id: str
-    team_id: str
-
-
-@router.post("/lookup")
-async def lookup_repo(
-    request: Request,
-    payload: RepoLookupRequest,
-    db: DatabaseInfra = Depends(get_db_infra),
-    identity: TeamIdentity = Depends(team_identity_with_grant_scope("coord.read")),
-) -> RepoLookupResponse:
-    """Look up a repo by origin URL. Returns the repo and its team if found."""
-    aweb_db = db.get_manager("aweb")
-
-    canonical_origin = canonicalize_git_url(payload.origin_url)
-
-    results = await aweb_db.fetch_all(
-        """
-        SELECT id as repo_id, canonical_origin, name, team_id
-        FROM {{tables.repos}}
-        WHERE canonical_origin = $1 AND deleted_at IS NULL
-        ORDER BY team_id
-        """,
-        canonical_origin,
-    )
-
-    if not results:
-        raise HTTPException(
-            status_code=404,
-            detail=f"Repo not found: {canonical_origin}",
-        )
-
-    if len(results) == 1:
-        result = results[0]
-        return RepoLookupResponse(
-            repo_id=str(result["repo_id"]),
-            team_id=result["team_id"],
-            canonical_origin=result["canonical_origin"],
-            name=result["name"],
-        )
-
-    candidates = [
-        RepoLookupCandidate(
-            repo_id=str(r["repo_id"]),
-            team_id=r["team_id"],
-        )
-        for r in results
-    ]
-    team_ids = [c.team_id for c in candidates]
-
-    raise HTTPException(
-        status_code=409,
-        detail={
-            "message": f"Repo {canonical_origin} exists in multiple teams: {', '.join(team_ids)}.",
-            "canonical_origin": canonical_origin,
-            "candidates": [c.model_dump() for c in candidates],
-        },
-    )
 
 
 class RepoEnsureRequest(BaseModel):

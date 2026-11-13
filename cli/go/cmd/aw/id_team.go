@@ -708,7 +708,7 @@ func runTeamCreate(cmd *cobra.Command, args []string) error {
 		return usageError("--request-id and --show-token require hosted creation; use --hosted")
 	}
 
-	registry, err := newConfiguredRegistryClient(nil, "")
+	registry, err := newConfiguredRegistryClient(nil)
 	if err != nil {
 		return err
 	}
@@ -1454,7 +1454,7 @@ func runTeamMembers(cmd *cobra.Command, args []string) error {
 	if err != nil {
 		return err
 	}
-	registry, err := newConfiguredRegistryClient(nil, "")
+	registry, err := newConfiguredRegistryClient(nil)
 	if err != nil {
 		return err
 	}
@@ -1910,7 +1910,7 @@ func acceptTeamInviteWithDetails(workingDir, token string, opts teamAcceptInvite
 		return nil, fmt.Errorf("local team controller key for %s not found: %w (cross-machine joins should use `aw id team request`, controller-side `aw id team add-member`, then invitee-side `aw id team fetch-cert`)", teamID, err)
 	}
 
-	registry, err := newConfiguredRegistryClient(nil, "")
+	registry, err := newConfiguredRegistryClient(nil)
 	if err != nil {
 		return nil, err
 	}
@@ -2215,7 +2215,7 @@ func acceptHostedTeamInviteWithDetails(workingDir, token string, opts teamAccept
 	registry := opts.Registry
 	if treeRequest != nil && treeRequest.IDChain != nil {
 		if registry == nil {
-			registry, err = newConfiguredRegistryClient(nil, awebURL)
+			registry, err = newConfiguredRegistryClient(nil)
 			if err != nil {
 				return nil, err
 			}
@@ -2227,7 +2227,7 @@ func acceptHostedTeamInviteWithDetails(workingDir, token string, opts teamAccept
 	registryURL := ""
 	var atomicAddressClaim *awid.AtomicAddressClaimIdentityProof
 	if creation.ResponseJSON == "" && scope == awid.IdentityModeGlobal && memberAddress != "" {
-		registry, err := newConfiguredRegistryClient(nil, awebURL)
+		registry, err := newConfiguredRegistryClient(nil)
 		if err != nil {
 			return nil, err
 		}
@@ -2320,7 +2320,7 @@ func acceptHostedTeamInviteWithDetails(workingDir, token string, opts teamAccept
 		return nil, err
 	}
 	if registry == nil && resp.IDChain != nil {
-		registry, err = newConfiguredRegistryClient(nil, awebURL)
+		registry, err = newConfiguredRegistryClient(nil)
 		if err != nil {
 			return nil, err
 		}
@@ -2509,12 +2509,11 @@ func validateHostedTeamInviteAcceptResponse(resp *awid.SpawnAcceptInviteResponse
 	if err != nil {
 		return nil, "", fmt.Errorf("decode hosted team invite certificate: %w", err)
 	}
-	teamPub, err := awid.ExtractPublicKey(strings.TrimSpace(cert.TeamDIDKey))
-	if err != nil {
+	if _, err := awid.ExtractPublicKey(strings.TrimSpace(cert.TeamDIDKey)); err != nil {
 		return nil, "", fmt.Errorf("hosted team invite certificate has invalid team_did_key %q: %w", cert.TeamDIDKey, err)
 	}
-	if err := awid.VerifyTeamCertificate(cert, teamPub); err != nil {
-		return nil, "", fmt.Errorf("hosted team invite certificate signature verification failed: %w", err)
+	if err := awid.CheckDecodedTeamCertificate(cert, strings.TrimSpace(cert.TeamDIDKey)); err != nil {
+		return nil, "", fmt.Errorf("hosted team invite certificate is invalid: %w", err)
 	}
 	if strings.TrimSpace(cert.MemberDIDKey) != strings.TrimSpace(didKey) {
 		return nil, "", fmt.Errorf("hosted team invite certificate member_did_key %q does not match generated did:key %q", cert.MemberDIDKey, didKey)
@@ -2561,7 +2560,7 @@ func revokeAcceptedTeamCertificate(accepted *acceptedTeamInvite) error {
 		return nil
 	}
 
-	registry, err := newConfiguredRegistryClient(nil, "")
+	registry, err := newConfiguredRegistryClient(nil)
 	if err != nil {
 		return err
 	}
@@ -2688,6 +2687,11 @@ func resolveTeamAddMemberScope(cmd *cobra.Command) (string, error) {
 	return requestedScope, nil
 }
 
+// teamAddMemberRegistryClient is the registry client add-member uses.
+var teamAddMemberRegistryClient = func() (*awid.RegistryClient, error) {
+	return newConfiguredRegistryClient(nil)
+}
+
 func runTeamAddMember(cmd *cobra.Command, args []string) error {
 	team := strings.ToLower(strings.TrimSpace(teamAddTeam))
 	domain := awconfig.NormalizeDomain(teamAddNamespace)
@@ -2737,9 +2741,15 @@ func runTeamAddMember(cmd *cobra.Command, args []string) error {
 	ctx, cancel := commandAPIContext(cmd)
 	defer cancel()
 
-	registry, err := newConfiguredRegistryClient(nil, "")
+	registry, err := teamAddMemberRegistryClient()
 	if err != nil {
 		return err
+	}
+	// The certificate belongs at the team namespace's own registry: the one
+	// AWID_REGISTRY_URL names, or the one its _awid record names.
+	teamRegistryURL, err := registry.DiscoverRegistry(ctx, domain)
+	if err != nil {
+		return fmt.Errorf("resolve the registry for namespace %s: %w", domain, err)
 	}
 
 	if member != "" {
@@ -2757,11 +2767,15 @@ func runTeamAddMember(cmd *cobra.Command, args []string) error {
 		if err != nil {
 			return err
 		}
+		memberRegistryURL, err := registry.DiscoverRegistry(ctx, memberDomain)
+		if err != nil {
+			return fmt.Errorf("resolve the registry for member namespace %s: %w", memberDomain, err)
+		}
 		var address *awid.RegistryAddress
 		if lookupSigningKey != nil {
-			address, _, err = registry.GetNamespaceAddressAtSigned(ctx, strings.TrimSpace(registry.DefaultRegistryURL), memberDomain, memberName, lookupSigningKey)
+			address, _, err = registry.GetNamespaceAddressAtSigned(ctx, memberRegistryURL, memberDomain, memberName, lookupSigningKey)
 		} else {
-			address, _, err = registry.GetNamespaceAddressAt(ctx, strings.TrimSpace(registry.DefaultRegistryURL), memberDomain, memberName)
+			address, _, err = registry.GetNamespaceAddressAt(ctx, memberRegistryURL, memberDomain, memberName)
 		}
 		if err != nil {
 			return fmt.Errorf("resolve member address %s: %w", member, err)
@@ -2784,7 +2798,15 @@ func runTeamAddMember(cmd *cobra.Command, args []string) error {
 		if err != nil {
 			return err
 		}
-		if err := validateMemberAddressForCertificate(ctx, registry, strings.TrimSpace(registry.DefaultRegistryURL), memberAddress, memberDIDAW, memberDID, lookupSigningKey); err != nil {
+		addressDomain, _, err := parseAddress(memberAddress)
+		if err != nil {
+			return err
+		}
+		addressRegistryURL, err := registry.DiscoverRegistry(ctx, addressDomain)
+		if err != nil {
+			return fmt.Errorf("resolve the registry for member namespace %s: %w", addressDomain, err)
+		}
+		if err := validateMemberAddressForCertificate(ctx, registry, addressRegistryURL, memberAddress, memberDIDAW, memberDID, lookupSigningKey); err != nil {
 			return err
 		}
 	}
@@ -2802,7 +2824,7 @@ func runTeamAddMember(cmd *cobra.Command, args []string) error {
 	}
 
 	// Register at awid
-	if err := registry.RegisterCertificate(ctx, strings.TrimSpace(registry.DefaultRegistryURL), domain, team, cert, teamKey); err != nil {
+	if err := registry.RegisterCertificate(ctx, teamRegistryURL, domain, team, cert, teamKey); err != nil {
 		return fmt.Errorf("register certificate: %w", err)
 	}
 
@@ -2855,16 +2877,7 @@ func runTeamFetchCert(cmd *cobra.Command, args []string) error {
 	existingCert, existingErr := loadTeamCertificateAt(workingDir, identityRoot, teamID)
 	if existingErr == nil && existingCert != nil {
 		if strings.TrimSpace(existingCert.CertificateID) == certificateID {
-			certPath := awconfig.TeamCertificateRelativePath(teamID)
-			if err := upsertAcceptedTeamMembershipState(workingDir, &teamAcceptInviteOutput{
-				Status:   "already_installed",
-				TeamID:   teamID,
-				Alias:    strings.TrimSpace(existingCert.Alias),
-				CertPath: certPath,
-			}, existingCert, "", "", false, identityRoot); err != nil {
-				return err
-			}
-			if err := ensureAndPublishLocalIdentityEncryptionKeyForDir(workingDir, currentEncryptionKeyIdentityHome()); err != nil {
+			if err := recordTeamCertificate(workingDir, identityRoot, existingCert, "", "already_installed"); err != nil {
 				return err
 			}
 			printOutput(teamFetchCertOutput{
@@ -2872,7 +2885,7 @@ func runTeamFetchCert(cmd *cobra.Command, args []string) error {
 				TeamID:        teamID,
 				Alias:         strings.TrimSpace(existingCert.Alias),
 				CertificateID: strings.TrimSpace(existingCert.CertificateID),
-				CertPath:      certPath,
+				CertPath:      awconfig.TeamCertificateRelativePath(teamID),
 			}, formatTeamFetchCert)
 			return nil
 		}
@@ -2893,7 +2906,7 @@ func runTeamFetchCert(cmd *cobra.Command, args []string) error {
 		return fmt.Errorf("load local signing key: %w (run `aw id create` first on this machine)", err)
 	}
 
-	registry, err := newConfiguredRegistryClient(nil, "")
+	registry, err := newConfiguredRegistryClient(nil)
 	if err != nil {
 		return err
 	}
@@ -2917,19 +2930,7 @@ func runTeamFetchCert(cmd *cobra.Command, args []string) error {
 		return fmt.Errorf("fetched certificate team_id %q does not match requested %q", cert.Team, teamID)
 	}
 
-	certPath, err := saveAcceptedTeamCertificate(workingDir, identityRoot, teamID, cert)
-	if err != nil {
-		return err
-	}
-	if err := upsertAcceptedTeamMembershipState(workingDir, &teamAcceptInviteOutput{
-		Status:   "installed",
-		TeamID:   teamID,
-		Alias:    strings.TrimSpace(cert.Alias),
-		CertPath: certPath,
-	}, cert, registryURL, "", false, identityRoot); err != nil {
-		return err
-	}
-	if err := ensureAndPublishLocalIdentityEncryptionKeyForDir(workingDir, currentEncryptionKeyIdentityHome()); err != nil {
+	if err := recordTeamCertificate(workingDir, identityRoot, cert, registryURL, "installed"); err != nil {
 		return err
 	}
 
@@ -2938,7 +2939,7 @@ func runTeamFetchCert(cmd *cobra.Command, args []string) error {
 		TeamID:        teamID,
 		Alias:         strings.TrimSpace(cert.Alias),
 		CertificateID: strings.TrimSpace(cert.CertificateID),
-		CertPath:      certPath,
+		CertPath:      awconfig.TeamCertificateRelativePath(teamID),
 	}, formatTeamFetchCert)
 	return nil
 }
@@ -2971,7 +2972,7 @@ func runTeamRemoveMember(cmd *cobra.Command, args []string) error {
 		return fmt.Errorf("load team key for %s: %w", teamID, err)
 	}
 
-	registry, err := newConfiguredRegistryClient(nil, "")
+	registry, err := newConfiguredRegistryClient(nil)
 	if err != nil {
 		return err
 	}
@@ -3656,7 +3657,7 @@ func newTeamCloudHTTPClient() *http.Client {
 }
 
 func verifyTeamRegisterLocalKey(ctx context.Context, teamKey ed25519.PrivateKey, domain, teamName, registryURL string) error {
-	registry, err := newConfiguredRegistryClient(nil, "")
+	registry, err := newConfiguredRegistryClient(nil)
 	if err != nil {
 		return err
 	}

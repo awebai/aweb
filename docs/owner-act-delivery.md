@@ -4,7 +4,8 @@ Status: **specified, not shipped**. Owner: the aweb OSS hooks lane
 (aweb-acgh.16.38, with the [human-role holders](design/human-role-holders.md)
 design that Juan ruled). This document is the source of truth for how a client
 delivers an app's human-role owner act (`human-role.designate`,
-`human-role.revoke` and `human-credential.replace`, defined in
+`human-role.revoke`, `human-credential.replace` and
+`human-credential.cap-set`, defined in
 [the owner-act contract](owner-act.md)) to the naapp that verifies it, with no
 per-app code in the client. Its vector is
 `docs/vectors/owner-act-delivery-v1.json`.
@@ -72,7 +73,8 @@ fixes its validation codes. An app with no owner-designated role omits it.
   host, an optional port, and no path, trailing slash, query, fragment or
   userinfo. Its hostname differs from `app.origin`'s. It is the `aud` of every
   act for this app, compared byte for byte, so a declaration that no signer
-  could put in `aud` is refused.
+  could put in `aud` is refused. A port or a trailing dot does not make two
+  hostnames differ.
 - `roles` has 1 to 16 entries, unique by `name`.
   - `name` follows the designatable role grammar (dot-separated lowercase
     segments, at least two, `[a-z0-9][a-z0-9_-]*` each), begins with a letter,
@@ -81,10 +83,14 @@ fixes its validation codes. An app with no owner-designated role omits it.
   - `label` and the optional `description` follow the rules of the version 2
     `roles` field: 1 to 128 and 1 to 512 characters, with no C0, C1 or bidi
     control. Every surface that shows the role shows the pair of app and name.
-  - `acts` is a nonempty set of the three human-role acts, ascending by code
-    point with no repeat.
+  - `acts` is a nonempty set of the human-role acts
+    (`human-credential.cap-set`, `human-credential.replace`,
+    `human-role.designate` and `human-role.revoke`), ascending by code point
+    with no repeat.
   - `notice_contact` is `true` when designate and replace name a notice
     contact for the holder, and `false` when they name none.
+- `session_actions`, optional, declares the human-origin actions `aw` drives
+  in a holder's session ([Session actions](design/human-confirmation-from-aw.md#session-actions-what-aw-drives)).
 - `owner_acts` and the version 2 `roles` field are separate. The version 2
   field declares roles a team admin designates; `owner_acts` declares roles
   only an owner act designates.
@@ -159,7 +165,15 @@ Body, a JSON object with exactly these fields:
 - `credential`: the credential object above, with exactly its three fields,
   required for designate and replace and refused otherwise;
 - `notice_contact`: the notice contact, a nonempty string, required for
-  designate and replace of a role that declares one and refused otherwise.
+  designate and replace of a role that declares one and refused otherwise;
+- `certificate`: the principal's team certificate, a nonempty string in the
+  encoding team-auth's `X-AWID-Team-Certificate` uses, for designate and
+  replace, and refused for revoke. A designate or replace without one is
+  refused in stage 3 with `principal_not_member`
+  ([membership evidence](design/human-confirmation-from-aw.md#membership-evidence)).
+
+A cap-set body carries `signing` and `signature` only; any other field is
+`400 request_invalid`.
 
 The route authenticates the act before any check that depends on the app's
 state, so no refusal before authentication can tell an anonymous caller
@@ -169,7 +183,8 @@ whether a holding or installation exists. It checks in three stages:
    parse, fields and subject shape; its audience against `owner_acts.origin`;
    its role, declared in `owner_acts`, and its act, in that role's `acts`;
    then whether the body carries `credential` and `notice_contact` exactly as
-   the act and the role's `notice_contact` require; then its lifetime and
+   the act and the role's `notice_contact` require, and no `certificate` for
+   revoke; then its lifetime and
    expiry. These need no read.
 2. **Authentication:** the current controller key of the act's `team_id`,
    read from the registry (cached at most 60 seconds), and the signature under
@@ -183,18 +198,36 @@ whether a holding or installation exists. It checks in three stages:
       parameters, by B3's retention check, and an `rp_id` that is the hostname
       of the act's `aud` or, where the app enables the optional security key,
       exactly `aweb:`;
-   3. the holding of (installation, role, principal): designate requires that
-      none is current, and replace and revoke require that one is;
-   4. for designate and replace, the principal: it holds a current certificate
+   3. before preparing the effect, the retained nonce for `(scope, team_id,
+      nonce)`, under the installation fence. An existing row with the SHA-256
+      of these exact authenticated signing bytes answers `409 applied_earlier`.
+      This records no new effect, prepares no holding and sends no notice. A
+      different signed act under that nonce refuses. The original controller
+      proof and act deadlines and the held installation fence are checked
+      after the final awaited read; they are never renewed for this answer;
+   4. the holding of (installation, role, principal): designate requires that
+      none is current, and replace and revoke require that one is. Cap-set
+      names a role, not a holder, and reads no holding;
+   5. for designate and replace, the principal: it holds a current certificate
       of that team, and its own registered ID kind is `human`. The kind is the
       subject's own, never the kind of its nearest human ancestor or a label.
-      These reads reuse the 60-second team-facts cache where it applies;
-   5. in the transaction that applies the effect, the act against the expected
+      These reads reuse the 60-second team-facts cache where it applies. The
+      certificate is the body's: it verifies under the team's current key,
+      names the act's `team_id` and `principal` and the principal's current
+      member key, and its status is published and not revoked
+      ([membership evidence](design/human-confirmation-from-aw.md#membership-evidence)).
+      An absent or failing certificate is `principal_not_member`. The app
+      retains a verified certificate with the holding;
+   6. in the transaction that applies the effect, the act against the expected
       subject, and its nonce, consumed. The expected subject is the app's own
-      `app_id`, the installation, the act's `role` and `principal` and, for
+      `app_id`, the installation, the act's `role`, its `principal` or, for
+      cap-set, its `cap`, and, for
       designate and replace, the SHA-256 of the body's `credential` and of its
-      `notice_contact` when the role declares one. The holding is re-read under
-      the transaction's lock.
+      `notice_contact` when the role declares one. For holder acts, the holding
+      is re-read under the transaction's lock. For every act, `expires_at` is
+      checked again against the clock read after the effect's locks: an act
+      that expired while stage 3 waited is refused and the transaction rolls
+      back.
 
 Revoke checks no membership or kind. It targets the stored holding, so a
 controller act can retire a holder whose membership has already ended, and a
@@ -215,13 +248,18 @@ Response `200`:
 ```
 
 `effective_at` is when the effect holds; a replacement names the end of its
-cooling-off period.
+cooling-off period. A cap-set response names `cap` in place of `principal`:
+
+```json
+{"act": "human-credential.cap-set", "role": "secrets.owner", "cap": 3, "effective_at": "2026-11-07T12:01:00Z"}
+```
 
 | Status | `detail` | When |
 | --- | --- | --- |
 | 415 | `json_required` | The content type is not `application/json`. |
-| 400 | `request_invalid` | The body has a field outside the four above, `signing` is not base64, a credential field is not in its encoding, the bytes yield no act, installation id and role to look up, or, for a declared role and act, the body does not carry `credential` and `notice_contact` exactly as they require. |
-| 403 | `owner_required` | Every other fault of the act, its credential or its holding: any owner-act verification code, an undeclared role or act, a credential refused in stage 3, a holding in the wrong state, a credential or notice contact that does not match the act, a reused nonce. |
+| 400 | `request_invalid` | The body has a field outside the five above, a `certificate` for revoke, `signing` is not base64, a credential field is not in its encoding, the bytes yield no act, installation id and role to look up, or, for a declared role and act, the body does not carry `credential` and `notice_contact` exactly as they require. |
+| 403 | `owner_required` | Every other fault of the act, its credential or its holding: any owner-act verification code, an undeclared role or act, a credential refused in stage 3, a holding in the wrong state, a credential or notice contact that does not match the act, or a reused nonce carrying different signing bytes. |
+| 409 | `applied_earlier` | The current controller still verifies the unexpired act, the installation is admitted and its fence remains fresh, and the retained nonce row matches the exact signing hash. No new effect or notice. |
 | 503 | `team_key_unavailable` | Stage 2 cannot read the team's current key. Nothing took effect. |
 | as given | the installation's code | An authenticated act names an installation that is not admitted. |
 | 403 | `principal_not_member` | Designate or replace names a principal that holds no current certificate of the team. |
@@ -237,7 +275,9 @@ holdings or installations exist. The principal is public, so
 `principal_not_member` and `principal_not_human` reveal nothing, and they tell
 the owner what to fix. The two `503`s are retryable; the `403`s are final for
 that act. A failed effect rolls back the nonce, so the owner may deliver the
-same act again until it expires.
+same act again until it expires. If the committed response was lost, an exact
+replay returns `409` with `{"detail":"applied_earlier"}`. A later distinct
+revoke of an absent holding still returns `owner_required`.
 
 **Effects:**
 
@@ -250,9 +290,16 @@ same act again until it expires.
   in effect at the end of the cooling-off period. Until then, the holder's
   approvals and the widening changes they gate are frozen.
 - **Revoke** ends the holding.
+- **Cap-set** sets the most active credentials one holding of the role may
+  have. It is B3's per-holding credential cap, 5 by default. A holding at the
+  cap refuses another credential, and none is evicted; a lower cap leaves an
+  existing larger set in place, and the holding adds none until it is under
+  the cap. Replacing one credential keeps the count, so it succeeds at or
+  above the cap when at least one usable credential remains.
 
 Each emits `post-governance-hook` with `authority: owner_act`, and the app
-sends no enrolment link.
+sends no enrolment link. Cap-set emits `policy.changed`, a widening act
+whichever way the cap moves.
 
 ## Rollout of manifest version 3
 

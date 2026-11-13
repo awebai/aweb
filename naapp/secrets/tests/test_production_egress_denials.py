@@ -43,7 +43,9 @@ async def scoped_request(root, url, host, port):
     policy = Policy.from_body({**POLICY_BODY, "approval": "none", "approvers": []})
     async with db.transaction() as tx:
         await records.revoke_grant(tx, installed["installation_id"], "grt_root_dispatch")
-        await records.create_policy(tx, installed["installation_id"], policy)
+        await records.create_policy(
+            tx, installed["installation_id"], policy, team_id=member.team_id
+        )
         await records.create_grant(
             tx,
             installed["installation_id"],
@@ -53,7 +55,10 @@ async def scoped_request(root, url, host, port):
                     "v": 1,
                     "grant_id": "grt_deployment_egress",
                     "secret_id": SECRET["secret_id"],
-                    "subject": {"principal": member.did_key},
+                    # The caller's canonical principal: approval_request's
+                    # owner enrolment gives the member's certificate a
+                    # member_did_aw, and a certificate with one acts as it.
+                    "subject": {"principal": member.extra_cert_fields["member_did_aw"]},
                     "capability": "use",
                     "operations": [],
                     "open_request": True,

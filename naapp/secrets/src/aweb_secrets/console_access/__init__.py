@@ -1,9 +1,11 @@
 """Owner-scoped configured access: which agent can use which secret, and on what terms.
 
-Read-only. One REPEATABLE READ transaction holds the owner's F6, OWNER, LOGIN
-and S4 authority before any configuration read, reads custody's confirmed
+Read-only. Cookie reads use REPEATABLE READ; signed reads use READ COMMITTED
+with a configuration-revision check around the projection. The transaction
+holds the owner's F6, OWNER, LOGIN and S4 authority before configuration reads,
+reads custody's confirmed
 candidates for each configured principal with that principal's own secrets
-roles, and ends with the live F6 and session-expiry checks. Coverage is
+roles, and ends with the live F6 and session/proof checks. Coverage is
 admission's own predicate. A listed row is configured access with its
 conditions, never a promise that a future request will be admitted.
 """
@@ -19,8 +21,13 @@ from typing import Any
 from urllib.parse import quote
 
 import asyncpg
-from aweb_naapp.console import ConsoleRoute, ConsoleSession, session_is_current
-from aweb_naapp.roles import PrincipalKey, hold_role, members_of, roles_of
+from aweb_naapp.console import (
+    ConsoleRoute,
+    ConsoleSession,
+    KeyBoundConsoleSession,
+    session_is_current,
+)
+from aweb_naapp.roles import PrincipalKey, members_of, roles_of
 from aweb_naapp.runtime.installation import AdmittedInstallation
 from fastapi import APIRouter, HTTPException, Request
 from fastapi.responses import HTMLResponse, Response
@@ -32,7 +39,8 @@ from aweb_secrets.console import OwnerConsole
 from aweb_secrets.console_changes import _errors
 from aweb_secrets.console_ui import _login_redirect, console_page, recovery_page
 from aweb_secrets.grant import is_secrets_role
-from aweb_secrets.owners import OWNER_ROLE, owner_scope
+from aweb_secrets.owners import hold_owner as hold_owner_holding
+from aweb_secrets.owners import owner_binding, owner_scope
 from aweb_secrets.principal_display import observed_principal_alias, principal_html
 from aweb_secrets.revisions import config_revision
 from aweb_secrets.run_planner import run_grant_covers_job
@@ -196,10 +204,7 @@ async def owner_installation(
     console: OwnerConsole, current: ConsoleSession
 ) -> tuple[str, AdmittedInstallation]:
     """The installation this console session's owner scope belongs to, admitted."""
-    row = await console.db.fetch_one(
-        "SELECT installation_id,team_id FROM {{tables.owner_principals}} WHERE scope=$1",
-        current.scope,
-    )
+    row = await owner_binding(console.db, current.scope)
     if row is None:
         raise HTTPException(403, "owner_required")
     return row["installation_id"], await console.installation(
@@ -223,14 +228,16 @@ async def hold_owner(
         or owner.team_id != admitted.team_id
         or admitted.installation_id != installation_id
         or current.scope != owner_scope(installation_id, admitted.team_id, owner.principal_did)
-        or not await hold_role(tx, owner, OWNER_ROLE)
+        or not await hold_owner_holding(tx, owner, installation_id=admitted.installation_id)
     ):
         raise HTTPException(403, "owner_required")
+    await console.prepare_session(tx, current, approver_pairs=[(current.scope, current.subject)])
+    signed = isinstance(current, KeyBoundConsoleSession)
     if not await console.passkeys.login_evidence_is_current(
-        current.scope, current.subject, current.evidence_ref, tx=tx
+        current.scope, current.subject, current.evidence_ref, tx=tx, hold=not signed
     ):
         raise HTTPException(401, "console_session_required")
-    if not await session_is_current(tx, current, hold=True):
+    if not await session_is_current(tx, current, hold=not signed):
         raise HTTPException(401, "console_session_required")
 
 
@@ -242,8 +249,17 @@ class ConsoleAccess:
         installation_id, admitted = await owner_installation(self.console, current)
         try:
             async with self.console.db.transaction() as tx:
-                await tx.execute("SET TRANSACTION ISOLATION LEVEL REPEATABLE READ")
+                signed = isinstance(current, KeyBoundConsoleSession)
+                if not signed:
+                    await tx.execute("SET TRANSACTION ISOLATION LEVEL REPEATABLE READ")
                 await hold_owner(self.console, tx, current, admitted, installation_id)
+                # The canonical signed authority requires READ COMMITTED.
+                # Detect configuration commits across its multi-query view.
+                before_revision = (
+                    await config_revision(tx, installation_id, team_id=admitted.team_id)
+                    if signed
+                    else None
+                )
                 secret_id = None
                 if secret_ref is not None:
                     stored = await records.secret_by_ref(
@@ -253,8 +269,11 @@ class ConsoleAccess:
                         raise HTTPException(404, "secret_not_found")
                     secret_id = stored.record.secret_id
                 agents = await self._agents(tx, admitted, secret_id)
-                revision = await config_revision(tx, installation_id)
+                revision = await config_revision(tx, installation_id, team_id=admitted.team_id)
+                if before_revision is not None and revision != before_revision:
+                    raise HTTPException(409, "access_changed", headers={"Retry-After": "0"})
                 await self.console.fence.check(tx, admitted)
+                await self.console.check_key_bound(tx, current)
                 # No awaited work follows the final live F6 and S4 deadline samples.
                 if current.expires_at <= datetime.now(UTC):
                     raise HTTPException(401, "console_session_required")
@@ -451,7 +470,7 @@ def _grant(view: AccessView, agent: AgentAccess, grant: GrantAccess, *, removabl
     )
 
 
-def _render(view: AccessView) -> str:
+def _render(view: AccessView, *, live_names: bool = False) -> str:
     if view.secret_ref is None:
         heading = "<h1>Access</h1>"
         intro = "Which agents can use your team’s secrets, and on what terms."
@@ -465,6 +484,11 @@ def _render(view: AccessView) -> str:
         f" (revision {view.revision}). Every request is still checked when it is made,"
         " including approvals, rate limits and allowed times.</p>",
     ]
+    if live_names:
+        parts.append(
+            '<p class="access-note">Names and aliases may include updates made while this'
+            ' view was loading. <a href="">Refresh this view</a> to check again.</p>'
+        )
     if not view.agents:
         parts.append('<p id="access-empty">No agent can use these secrets.</p>')
     for agent in view.agents:
@@ -526,7 +550,11 @@ def console_access_router(*, services: ConsoleAccess) -> APIRouter:
         except HTTPException as refused:
             return _recovery(refused)
         title = "Access" if secret_ref is None else f"Access to {secret_ref}"
-        return console_page(title=title, body_html=_render(view), session=current)
+        return console_page(
+            title=title,
+            body_html=_render(view, live_names=isinstance(current, KeyBoundConsoleSession)),
+            session=current,
+        )
 
     @router.get("/access", response_class=HTMLResponse)
     async def agents(request: Request) -> Response:

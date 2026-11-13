@@ -495,12 +495,53 @@ never populate an entry later served to an unsigned or differently authorized
 caller.
 
 **Team-key rotation.** AWID rotates a team key at
-`POST /v1/namespaces/{domain}/teams/{name}/rotate`. With the Redis cache, aweb
-may continue reading the old key for up to 20 minutes. Old-key certificates may
-continue to verify during that stale interval, while certificates signed by the
-new key fail closed until refresh. Deleting that team's exact metadata and
-revocation cache entries is the operator's immediate invalidation mechanism;
-this contract does not promise a broad key-prefix flush command.
+`POST /v1/namespaces/{domain}/teams/{name}/rotate`. The controller-key cache
+refreshes synchronously after 60 seconds, independently of the longer-lived
+team metadata cache. Old-key certificates retain this freshness behavior and
+the existing registry-outage grace; a successful cached-key verification adds
+no signature-failure refresh reads.
+
+Only a certificate signature failure under the registry-resolved cached key
+may trigger an early `get_team_public_key_fresh` read. An unchanged key, a
+failed read, or a suppressed attempt keeps the original 401 and never renews
+the cached key's fetch timestamp. A changed key is cached at its fetch time;
+the certificate is checked again under that key. Only if those checks pass is
+the team's revocation set read fresh and checked before admission. A malformed
+certificate, member-key mismatch, unknown team or revoked certificate does
+not trigger a signature-failure refresh. The certificate's claimed key never
+establishes authority.
+
+The cached client shares each team's in-flight refresh among its callers,
+even when an attempt lasts longer than the cooldown. A five-second Redis
+`SET NX` admission window, starting before the attempt, bounds added key
+refresh reads across workers to **12 per team per minute**. Redis admission
+failure suppresses the refresh. This is per discoverable real team: a normal
+cache miss can discover and cache a team's key before signature verification.
+Those existing normal cache reads are separate from the added refresh budget.
+The OSS request middleware does not impose a per-client limit before team
+authentication, so an auth-failing request is not counted by a global client
+rate limiter here. Hosted proxy admission is deployment policy.
+
+**Registered-certificate cache misses.** In strict registration mode, a
+correctly signed, unrevoked presented certificate absent from the cached
+all-certificates list gets one fresh list read and one verification retry.
+A completed read that still omits it answers 401 `unregistered`. Suppressed
+admission, Redis failure, timeout or failed fresh authority answers transient
+503; the old cached omission is not current proof of absence. The successful
+read replaces only the existing registry/team/reader cache partition, with
+its ordinary TTL and retention. Already registered certificates take the
+existing path without a new admission check.
+
+The fresh-list producer and its waiters each retain the registry client's
+total timeout; cancellation of a waiter propagates immediately and cannot
+extend the bounded producer. Concurrent callers in one client share that
+producer. Across clients, a separate five-second per-registry/team Redis
+`SET NX` window bounds added list refreshes to 12 attempts per minute.
+Bad request signatures spend neither refresh budget; bad certificate
+signatures spend only the existing key-refresh budget. A newly valid
+certificate after key rotation still requires fresh revocations, including
+when that certificate also misses the registered list. This changes no
+registration-mode activation or revocation freshness policy.
 
 **Revocation.** Against an honest, available registry, a newly revoked
 certificate may continue to verify for at most the 120-second fresh-plus-stale
@@ -565,6 +606,23 @@ migrations needs the same file in that copy.
 to its table, and not reads, until the migration's transaction commits. No
 server code depends on the indexes. A hosted deployment that keeps its own copy
 of the aweb migrations needs the same file in that copy.
+
+**Migration 050 (`050_one_active_team_document.sql`).** It adds a partial
+unique index on `team_roles (team_id)` and on `team_instructions (team_id)`
+where `is_active`, so a team has at most one active version of each whoever
+writes the row. It first counts the teams that already have more than one
+active row in either table and, if there are any, stops with the count and
+changes nothing: which version stays active is a decision about that team's
+data. Deactivate all but one active version for those teams, then run it again.
+A hosted deployment that keeps its own copy of the aweb migrations needs the
+same file in that copy.
+
+Creation of a team's instructions or roles version takes the same per-team
+transaction advisory lock as activation (`team-instructions-activation` or
+`team-roles-activation`). Version allocation and the optional active-base check
+run after taking that lock, so concurrent creators allocate distinct ordered
+versions rather than racing on `MAX(version) + 1`. The database's one-active
+indexes remain the final invariant for every writer.
 
 ### Current table inventory
 
@@ -797,11 +855,37 @@ a stored participant route, so the transport admits it before any connection:
 the origin is `https` and named by host, the host is resolved once, and every
 answer is a public address (loopback, private, link-local, shared CGNAT,
 unique-local, multicast, reserved, unspecified and IPv4-mapped forms of those
-are refused, and one refused answer refuses the name). The connection goes to an
+are refused; one refused answer refuses the name). Both readers apply the same
+explicit tables, which are conservative rather than a restatement of the IANA
+classification. An IPv4 answer is refused in `0.0.0.0/8`, `10.0.0.0/8`,
+`100.64.0.0/10`, `127.0.0.0/8`, `169.254.0.0/16`, `172.16.0.0/12`,
+`192.0.0.0/24` (except `192.0.0.9` and `192.0.0.10`), `192.0.2.0/24`,
+`192.168.0.0/16`, `198.18.0.0/15`, `198.51.100.0/24`, `203.0.113.0/24`,
+`224.0.0.0/4` and `240.0.0.0/4`. An IPv6 answer is admitted only inside
+`2000::/3`, and refused there in `2001::/23` (except `2001:1::1`,
+`2001:1::2`, `2001:3::/32`, `2001:4:112::/48`, `2001:20::/28` and
+`2001:30::/28`), `2001:db8::/32`, `2002::/16` and `3fff::/20`; so the
+transition prefixes that embed an IPv4 address (NAT64 `64:ff9b::/96` and
+`64:ff9b:1::/48`, 6to4, Teredo) and site-local `fec0::/10` are refused. The connection goes to an
 admitted address, trying the answers in order until one accepts a connection,
 while TLS verification, SNI and `Host` name the origin; proxy
 settings in the environment are not read, redirects are not followed, each
 delivery resolves and checks again, and no connection outlives its response.
+Before the transport is used, `deliver_federated_message`, which every federated
+mail and chat send calls, applies the operator's `AWEB_FEDERATION_OUTBOUND`
+(`aweb.config.get_federation_outbound`):
+- unset or empty delivers wherever the transport admits, as before the setting
+  existed;
+- `off` delivers nowhere;
+- a comma-separated list of origins, canonicalised as delivery origins are and
+  compared for equality, delivers only to those.
+A refused send raises `FederatedDeliveryRefused`, which reaches the sender as
+`403` with `Federated delivery to <origin> is refused: AWEB_FEDERATION_OUTBOUND
+is off` (or `does not list this origin`), before any resolution or connection.
+An unreadable value refuses start-up through `get_settings` naming the entry,
+and refuses every send (`is not a valid setting`) where settings were never
+loaded.
+
 Routes and MCP tools both take the transport from the federation authority, which
 shares its resolver, origin policy and trust anchors with strict registry reads
 (`docs/vectors/federation-origin-ip-v1.json`). `http` origins, address literals
@@ -1972,7 +2056,8 @@ AWEB_APP_GRANT_MAX_AGE_SECONDS=60
 AWEB_HOOK_PRODUCER_KEYS=
 ```
 
-`AWEB_REDIS_URL` falls back to `REDIS_URL`, `AWEB_DATABASE_USES_TRANSACTION_POOLER`
+`AWEB_REDIS_URL` falls back to `REDIS_URL`, and `AWEB_REDIS_URL_FILE` names a
+file that holds the whole URL instead (never both); `AWEB_DATABASE_USES_TRANSACTION_POOLER`
 falls back to `DATABASE_USES_TRANSACTION_POOLER`, and
 `AWEB_DATABASE_STATEMENT_CACHE_SIZE` falls back to
 `DATABASE_STATEMENT_CACHE_SIZE`.

@@ -843,12 +843,11 @@ func verifyAPIKeyBootstrapCertificate(cert *awid.TeamCertificate) error {
 	if teamDIDKey == "" {
 		return fmt.Errorf("workspace init team cert is missing team_did_key")
 	}
-	teamPub, err := awid.ExtractPublicKey(teamDIDKey)
-	if err != nil {
+	if _, err := awid.ExtractPublicKey(teamDIDKey); err != nil {
 		return fmt.Errorf("workspace init team cert has invalid team_did_key %q: %w", teamDIDKey, err)
 	}
-	if err := awid.VerifyTeamCertificate(cert, teamPub); err != nil {
-		return fmt.Errorf("workspace init team cert signature verification failed: %w", err)
+	if err := awid.CheckDecodedTeamCertificate(cert, teamDIDKey); err != nil {
+		return fmt.Errorf("workspace init team cert is invalid: %w", err)
 	}
 	return nil
 }

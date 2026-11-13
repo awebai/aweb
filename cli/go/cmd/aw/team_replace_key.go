@@ -225,7 +225,7 @@ func runTeamHumanReplaceKey(cmd *cobra.Command, args []string) (runErr error) {
 	if registryURL == "" {
 		return usageError("no AWID registry URL is recorded for team %s; pass --registry", teamID)
 	}
-	registry := awid.NewAWIDRegistryClient(nil, nil)
+	registry := newAWIDRegistryClient(nil, nil)
 	if err := registry.SetFallbackRegistryURL(registryURL); err != nil {
 		return fmt.Errorf("invalid registry URL: %w", err)
 	}

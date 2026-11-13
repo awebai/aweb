@@ -81,6 +81,28 @@ print('Expected DNS refusal; child successful', flush=True)
         absent = subprocess.run(['docker', 'inspect', receipt['container']], capture_output=True)
         self.assertNotEqual(absent.returncode, 0)
 
+    def test_governance_alias_resolves_only_to_runner_loopback(self):
+        evidence = EVIDENCE / self._testMethodName
+        child = ("import socket\n"
+                 "answers = {a[4][0] for a in socket.getaddrinfo('signer.example.com', 443)}\n"
+                 "assert answers == {'127.0.0.1'}, answers\n"
+                 "print('Governance driver alias resolves to literal loopback', flush=True)\n")
+        result = subprocess.run(
+            ['python3', str(ROOT / 'scripts/test-egress/docker.py'),
+             '--evidence', str(evidence), '--image', IMAGE,
+             '--command', 'python3', '-c', child],
+            text=True, stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
+        )
+        print(result.stdout, flush=True)
+        (evidence / 'qualification.log').write_text(result.stdout)
+        self.assertEqual(result.returncode, 0, result.stdout)
+        self.assertIn('Governance driver alias resolves to literal loopback',
+                      (evidence / 'suite.log').read_text())
+        self.assertEqual((evidence / 'dns-denied.log').read_text(), '')
+        report = evidence / 'dns-denied.log.reported'
+        if report.exists():
+            self.assertEqual(report.read_text(), '')
+
     def test_reserved_lookup_ignores_inherited_search(self):
         status, evidence = self.qualify('override.test')
         self.assertEqual(status, 0)

@@ -131,6 +131,21 @@ func (r stubIdentityResolver) Resolve(ctx context.Context, identifier string) (*
 	return r.resolve(ctx, identifier)
 }
 
+// registryNamingSender is a registry in which the address belongs to the key,
+// and no other address resolves.
+func registryNamingSender(address, did string) stubIdentityResolver {
+	return stubIdentityResolver{
+		resolve: func(_ context.Context, identifier string) (*awid.ResolvedIdentity, error) {
+			if identifier != address {
+				return nil, errors.New("not the sender's address")
+			}
+			return &awid.ResolvedIdentity{
+				DID: did, Address: address, IdentityScope: awid.IdentityModeGlobal, ResolvedVia: "registry",
+			}, nil
+		},
+	}
+}
+
 func (r stubIdentityResolver) VerifyStableIdentity(ctx context.Context, address, stableID string) *awid.StableIdentityVerification {
 	if r.verify == nil {
 		return nil
@@ -1931,7 +1946,7 @@ func TestSendWithExtendWaitPrefersStableIDOverParticipantDIDInCallbacks(t *testi
 
 			hangOnData, _ := json.Marshal(map[string]any{
 				"type": "message", "message_id": "msg-hangon", "from_did": senderDID, "from_stable_id": stableID,
-				"body": "thinking...", "hang_on": true, "extends_wait_seconds": 300,
+				"body": "thinking...", "hang_on": true, "extends_wait_seconds": 1,
 			})
 			fmt.Fprintf(w, "event: message\ndata: %s\n\n", hangOnData)
 			if flusher != nil {
@@ -4264,6 +4279,7 @@ func TestSendUsesSignedPayloadRecipientBindingForSSEIdentityMismatch(t *testing.
 
 	client := mustIdentityClient(t, server.URL)
 	client.SetAddress("myteam/implementer")
+	client.SetResolver(registryNamingSender("myteam/architect", senderDID))
 
 	result, err := Send(context.Background(), client, "implementer", []string{"architect"}, "hello", SendOptions{Wait: 5}, nil)
 	if err != nil {
@@ -4381,6 +4397,7 @@ func TestSendUsesStableRecipientBindingForSSEAfterLocalKeyRotation(t *testing.T)
 	}
 	client.SetAddress("myteam/implementer")
 	client.SetStableID(receiverStableID)
+	client.SetResolver(registryNamingSender("myteam/architect", senderDID))
 
 	result, err := Send(context.Background(), client, "implementer", []string{"architect"}, "hello", SendOptions{Wait: 5}, nil)
 	if err != nil {
@@ -4406,7 +4423,7 @@ func TestWaitForMessageTreatsInitialEOFAsTimeout(t *testing.T) {
 	result, err := waitForMessage(
 		context.Background(),
 		mustClient(t, server.URL),
-		func(context.Context, string, time.Time, *time.Time) (*awid.SSEStream, error) {
+		func(context.Context, string, time.Time, *time.Time, int64) (*awid.SSEStream, error) {
 			return nil, io.EOF
 		},
 		"s1",
@@ -4438,7 +4455,7 @@ func TestWaitForMessageTreatsWrappedEOFAsTimeout(t *testing.T) {
 	result, err := waitForMessage(
 		context.Background(),
 		mustClient(t, server.URL),
-		func(context.Context, string, time.Time, *time.Time) (*awid.SSEStream, error) {
+		func(context.Context, string, time.Time, *time.Time, int64) (*awid.SSEStream, error) {
 			return nil, &url.Error{Op: "Get", URL: server.URL + "/v1/chat/sessions/s1/stream", Err: io.EOF}
 		},
 		"s1",
@@ -4469,7 +4486,7 @@ func TestWaitForMessagePropagatesContextCancellationOnOpen(t *testing.T) {
 	_, err := waitForMessage(
 		ctx,
 		mustClient(t, server.URL),
-		func(context.Context, string, time.Time, *time.Time) (*awid.SSEStream, error) {
+		func(context.Context, string, time.Time, *time.Time, int64) (*awid.SSEStream, error) {
 			return nil, context.Canceled
 		},
 		"s1",
@@ -4494,7 +4511,7 @@ func TestWaitForMessageDoesNotTreatUnexpectedEOFAsTimeout(t *testing.T) {
 	_, err := waitForMessage(
 		context.Background(),
 		mustClient(t, server.URL),
-		func(context.Context, string, time.Time, *time.Time) (*awid.SSEStream, error) {
+		func(context.Context, string, time.Time, *time.Time, int64) (*awid.SSEStream, error) {
 			return nil, &url.Error{Op: "Get", URL: server.URL + "/v1/chat/sessions/s1/stream", Err: io.ErrUnexpectedEOF}
 		},
 		"s1",

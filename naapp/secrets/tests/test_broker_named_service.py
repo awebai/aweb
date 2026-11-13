@@ -16,7 +16,7 @@ from tests.test_admission import ALICE, POLICY_BODY, SECRET, TEAM
 from tests.test_broker_audit import INSTALLATION
 from tests.test_broker_audit import db as db
 from tests.test_broker_audit import fence as fence
-from tests.test_broker_service import setup, submission
+from tests.test_broker_service import completed_receipt, setup, submission
 from tests.test_operation_record import REFUND
 
 
@@ -76,7 +76,7 @@ async def test_named_effects_are_pinned_but_terminal_replay_never_renders_an_edi
         policy = Policy.from_body({**POLICY_BODY, "operations": [pin], "open_request": False})
         async with db.transaction() as tx:
             await records.create_operation(tx, INSTALLATION, TEAM, operation)
-            await records.create_policy(tx, INSTALLATION, policy)
+            await records.create_policy(tx, INSTALLATION, policy, team_id=TEAM)
             await records.create_grant(
                 tx,
                 INSTALLATION,
@@ -112,7 +112,8 @@ async def test_named_effects_are_pinned_but_terminal_replay_never_renders_an_edi
             await records.create_operation(
                 tx, INSTALLATION, TEAM, OperationTemplate.from_after({**after, "timeout_s": 19})
             )
-        assert await service.submit(secret=SECRET["ref"], submission=original) == first
+        receipt = await completed_receipt(db, first)
+        assert await service.submit(secret=SECRET["ref"], submission=original) == receipt
         changed = await service.submit(secret=SECRET["ref"], submission=named(upstream, amount=11))
         assert changed.status == 409 and changed.body["code"] == "idempotency_conflict"
         fresh = await service.submit(

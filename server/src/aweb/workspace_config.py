@@ -83,18 +83,3 @@ def _get_config_field(
 def get_workspace_id(override: str | None = None, path: Path | None = None) -> str | None:
     """Get workspace_id, preferring explicit override over .aw/workspace.yaml."""
     return _get_config_field("workspace_id", override, path)
-
-
-def get_human_name(override: str | None = None, path: Path | None = None) -> str | None:
-    """Get human_name, preferring explicit override over .aw/workspace.yaml."""
-    return _get_config_field("human_name", override, path)
-
-
-def get_alias(override: str | None = None, path: Path | None = None) -> str | None:
-    """Get alias, preferring explicit override over .aw/workspace.yaml."""
-    return _get_config_field("alias", override, path)
-
-
-def get_repo_origin(override: str | None = None, path: Path | None = None) -> str | None:
-    """Get repo_origin, preferring explicit override over .aw/workspace.yaml."""
-    return _get_config_field("repo_origin", override, path)

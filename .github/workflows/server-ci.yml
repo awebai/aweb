@@ -89,3 +89,16 @@ jobs:
           POSTGRES_PASSWORD: testpass
           AWID_SERVICE_TOKEN: ci-compose-validation-only
         run: docker compose config
+
+      - name: Validate the customer compose file
+        working-directory: server
+        env:
+          AWEB_PUBLIC_ORIGIN: https://aweb.example.com
+          SECRETS_DIR: /etc/aweb-secrets
+        run: docker compose -f docker-compose.customer.yml config
+
+      - name: Validate the team deployment compose file
+        working-directory: server
+        run: |
+          uv run python ../deploy/team/render_env.py ../deploy/team/deployment.example.yaml > "$RUNNER_TEMP/team.env"
+          docker compose --env-file "$RUNNER_TEMP/team.env" -f ../deploy/team/compose.yaml config

@@ -93,68 +93,22 @@ func SignTeamCertificate(teamKey ed25519.PrivateKey, fields TeamCertificateField
 	}, nil
 }
 
-// VerifyTeamCertificate checks the certificate signature against the team's
-// public key. Returns nil if valid, an error describing the failure otherwise.
-func VerifyTeamCertificate(cert *TeamCertificate, teamPub ed25519.PublicKey) error {
-	if cert == nil {
-		return fmt.Errorf("nil certificate")
-	}
-	if teamPub == nil {
-		return fmt.Errorf("nil team public key")
-	}
-
-	sig, err := base64.RawStdEncoding.DecodeString(cert.Signature)
-	if err != nil {
-		return fmt.Errorf("decode certificate signature: %w", err)
-	}
-
-	identityScope := NormalizeIdentityScope(cert.IdentityScope)
-	if identityScope != IdentityModeGlobal && identityScope != IdentityModeLocal {
-		return fmt.Errorf("certificate identity_scope is invalid")
-	}
-	cert.IdentityScope = identityScope
-
-	payload := canonicalCertificatePayload(
-		cert.CertificateID,
-		cert.Team,
-		cert.TeamDIDKey,
-		cert.MemberDIDKey,
-		cert.MemberDIDAW,
-		cert.MemberAddress,
-		cert.Alias,
-		identityScope,
-		cert.IssuedAt,
-		false,
-	)
-
-	if !ed25519.Verify(teamPub, []byte(payload), sig) {
-		legacyPayload := canonicalCertificatePayload(
-			cert.CertificateID,
-			cert.Team,
-			cert.TeamDIDKey,
-			cert.MemberDIDKey,
-			cert.MemberDIDAW,
-			cert.MemberAddress,
-			cert.Alias,
-			cert.legacyLifetime,
-			cert.IssuedAt,
-			true,
-		)
-		if !ed25519.Verify(teamPub, []byte(legacyPayload), sig) {
-			return fmt.Errorf("certificate signature verification failed")
-		}
-	}
-	return nil
-}
-
 // SaveTeamCertificate writes a certificate to disk as JSON with 0600 permissions.
 func SaveTeamCertificate(path string, cert *TeamCertificate) error {
+	data, err := EncodeTeamCertificateFile(cert)
+	if err != nil {
+		return err
+	}
+	return atomicWriteFile(path, data)
+}
+
+// EncodeTeamCertificateFile is cert as a certificate file holds it.
+func EncodeTeamCertificateFile(cert *TeamCertificate) ([]byte, error) {
 	data, err := json.MarshalIndent(cert, "", "  ")
 	if err != nil {
-		return fmt.Errorf("marshal certificate: %w", err)
+		return nil, fmt.Errorf("marshal certificate: %w", err)
 	}
-	data = append(data, '\n')
-	return atomicWriteFile(path, data)
+	return append(data, '\n'), nil
 }
 
 // LoadTeamCertificate reads a certificate from disk.

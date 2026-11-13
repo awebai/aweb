@@ -42,7 +42,6 @@ class AuthContext:
     address: str | None = None
     workspace_id: str | None = None
     request: Request | None = None
-    human_channels_service: Any = None
     trusted_proxy: bool = False
     identity_scope: str | None = None
     # Evidence from get_team_identity verifying the presented certificate,
@@ -93,10 +92,9 @@ def get_auth() -> AuthContext:
 class MCPAuthMiddleware:
     """ASGI middleware that resolves identity for MCP requests."""
 
-    def __init__(self, app: ASGIApp, db_infra: Any, human_channels_service=None) -> None:
+    def __init__(self, app: ASGIApp, db_infra: Any) -> None:
         self.app = app
         self.db_infra = db_infra
-        self.human_channels_service = human_channels_service
 
     async def __call__(self, scope: Scope, receive: Receive, send: Send) -> None:
         if scope["type"] != "http":
@@ -127,7 +125,6 @@ class MCPAuthMiddleware:
         # The mounted inner Starlette app mutates scope["app"]. Keep the
         # authenticated parent policy/registry context stable for tool reads.
         ctx.request = Request(dict(request.scope))
-        ctx.human_channels_service = self.human_channels_service
         cv_token = _auth_context.set(ctx)
         mutation_token = set_mutation_callback(mutation_callback_from_scope(scope))
         try:

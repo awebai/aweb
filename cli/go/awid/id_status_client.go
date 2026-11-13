@@ -88,7 +88,7 @@ func (c *IDStatusClient) FetchIDCertificateStatus(ctx context.Context, domain st
 	if err != nil {
 		return nil, err
 	}
-	resp, err := DoNoRedirectWithTimeout(c.Registry.httpClient(), req, APITimeout())
+	resp, err := DoNoRedirectWithTimeout(c.Registry.httpClientFor(registryURL), req, APITimeout())
 	if err != nil {
 		return nil, err
 	}

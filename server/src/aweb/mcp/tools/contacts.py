@@ -7,14 +7,13 @@ from uuid import UUID
 
 from awid.federation_errors import FederationAuthorityError
 from aweb.identity_auth_deps import participant_dids
-from aweb.mcp.auth import auth_dids, get_auth, primary_auth_did
+from aweb.mcp.auth import get_auth, primary_auth_did
 from aweb.mcp.signing import HostedMessageEncryptor, HostedMessageSigner
 from aweb.mcp.tools.chat import chat_send
 from aweb.mcp.tools.federation import registry_delivery_origin
 from aweb.mcp.tools.mail import mcp_mail_message_from_row, send_mail
 from aweb.messaging.alias_targets import (
     AmbiguousLocalAddressError,
-    derive_team_address,
     get_agent_by_namespace_alias,
 )
 from aweb.messaging.handle_addresses import normalize_hosted_handle_reference
@@ -442,13 +441,10 @@ async def _read_mail_messages_from_target(db_infra, *, target: dict, limit: int)
             JOIN {{tables.conversation_participants}} cb
               ON cb.conversation_id = c.conversation_id
             WHERE c.conversation_type = 'mail'
+              AND ca.did = ANY($1::text[])
               AND (
-                    ca.did = ANY($1::text[])
-                 OR ($2::text IS NOT NULL AND ca.address = $2)
-              )
-              AND (
-                    ($3::text[] <> '{}'::text[] AND cb.did = ANY($3::text[]))
-                 OR ($4::text[] <> '{}'::text[] AND cb.address = ANY($4::text[]))
+                    ($2::text[] <> '{}'::text[] AND cb.did = ANY($2::text[]))
+                 OR ($3::text[] <> '{}'::text[] AND cb.address = ANY($3::text[]))
               )
               AND ca.did <> cb.did
         )
@@ -459,10 +455,9 @@ async def _read_mail_messages_from_target(db_infra, *, target: dict, limit: int)
         FROM {{tables.messages}} m
         WHERE m.conversation_id IN (SELECT conversation_id FROM matching_conversations)
         ORDER BY m.created_at DESC, m.message_id DESC
-        LIMIT $5
+        LIMIT $4
         """,
         actor_dids,
-        (auth.address or "").strip() or derive_team_address(auth.team_id, auth.alias),
         target_dids,
         target_addresses,
         limit,
@@ -484,13 +479,10 @@ async def _read_chat_messages_from_target(db_infra, *, target: dict, limit: int)
             FROM {{tables.chat_participants}} ca
             JOIN {{tables.chat_participants}} cb
               ON cb.session_id = ca.session_id
-            WHERE (
-                    ca.did = ANY($1::text[])
-                 OR ($2::text IS NOT NULL AND ca.address = $2)
-              )
+            WHERE ca.did = ANY($1::text[])
               AND (
-                    ($3::text[] <> '{}'::text[] AND cb.did = ANY($3::text[]))
-                 OR ($4::text[] <> '{}'::text[] AND cb.address = ANY($4::text[]))
+                    ($2::text[] <> '{}'::text[] AND cb.did = ANY($2::text[]))
+                 OR ($3::text[] <> '{}'::text[] AND cb.address = ANY($3::text[]))
               )
               AND ca.did <> cb.did
         )
@@ -500,10 +492,9 @@ async def _read_chat_messages_from_target(db_infra, *, target: dict, limit: int)
         FROM {{tables.chat_messages}} m
         WHERE m.session_id IN (SELECT session_id FROM matching_sessions)
         ORDER BY m.created_at DESC, m.message_id DESC
-        LIMIT $5
+        LIMIT $4
         """,
         actor_dids,
-        (auth.address or "").strip() or derive_team_address(auth.team_id, auth.alias),
         target_dids,
         target_addresses,
         limit,

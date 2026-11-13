@@ -22,10 +22,15 @@ from contextlib import asynccontextmanager
 from datetime import UTC, datetime, timedelta
 from typing import Any, Literal, Protocol
 
-from aweb_naapp.console import ConsoleRoute, ConsoleSession
+from aweb_naapp.console import (
+    ConsoleRoute,
+    ConsoleSession,
+    KeyBoundConsoleSession,
+    session_is_current,
+)
+from aweb_naapp.console.handoff_sessions import ConsoleHandoffs
 from aweb_naapp.hooks.producer import Registrations
 from aweb_naapp.hooks.strictjson import Refused as HookRefused
-from aweb_naapp.roles import hold_role
 from aweb_naapp.runtime.approvals import (
     Approval,
     ApprovalRefused,
@@ -51,7 +56,8 @@ from aweb_secrets.change_sets import (
 from aweb_secrets.console import OwnerConsole, _body, _require_json, _text
 from aweb_secrets.console_results import confirmation_receipt, owner_confirmation_result
 from aweb_secrets.custody import SealContext
-from aweb_secrets.owners import OWNER_ROLE, owner_scope
+from aweb_secrets.owners import hold_owner as hold_owner_holding
+from aweb_secrets.owners import owner_binding, owner_scope
 from aweb_secrets.revisions import config_revision
 from aweb_secrets.use_audit import UseAuditUnavailable
 
@@ -87,6 +93,7 @@ class ConsoleChanges:
         registrations: Registrations,
         after_commit: AfterCommit,
         approval_kind: ApprovalKindLookup,
+        handoffs: ConsoleHandoffs | None = None,
     ) -> None:
         self.console = console
         self.changes = changes
@@ -94,6 +101,7 @@ class ConsoleChanges:
         self.registrations = registrations
         self.after_commit = after_commit
         self.approval_kind = approval_kind
+        self.handoffs = handoffs
 
     async def _installation(
         self, current: ConsoleSession, installation_id: str
@@ -136,7 +144,7 @@ class ConsoleChanges:
             or owner.team_id != admitted.team_id
             or current.scope
             != owner_scope(admitted.installation_id, admitted.team_id, owner.principal_did)
-            or not await hold_role(tx, owner, OWNER_ROLE)
+            or not await hold_owner_holding(tx, owner, installation_id=admitted.installation_id)
         ):
             raise HTTPException(403, "owner_required")
         self._unexpired(current)
@@ -145,7 +153,7 @@ class ConsoleChanges:
         self, tx: TransactionManager, admitted: AdmittedInstallation, change_id: str
     ) -> Any:
         row = await tx.fetch_one(
-            "SELECT approval_id,request,state FROM {{tables.change_sets}}"
+            "SELECT approval_id,request,state,confirm_in_aw FROM {{tables.change_sets}}"
             " WHERE change_id=$1 AND installation_id=$2 AND team_id=$3",
             change_id,
             admitted.installation_id,
@@ -158,6 +166,22 @@ class ConsoleChanges:
         )
         self._supported(change["changes"])
         return row
+
+    async def _prepare_bound(self, tx: TransactionManager, current: ConsoleSession) -> None:
+        if not isinstance(current, KeyBoundConsoleSession):
+            return
+        if self.handoffs is None:
+            raise HTTPException(401, "console_session_required")
+        # The same factory retains the canonical issued handle on this original
+        # request binding. No copied target or earlier borrowed B3 guard enters.
+        await self.handoffs.prepare(tx, current, approver_pairs=[(current.scope, current.subject)])
+
+    @staticmethod
+    async def _bound_current(tx: TransactionManager, current: ConsoleSession) -> None:
+        if isinstance(current, KeyBoundConsoleSession) and not await session_is_current(
+            tx, current, hold=False
+        ):
+            raise HTTPException(401, "console_session_required")
 
     async def draft(
         self, current: ConsoleSession, installation_id: str, body: dict[str, Any]
@@ -184,11 +208,13 @@ class ConsoleChanges:
         issued = datetime.now(UTC).replace(microsecond=0)
         async with self.console.db.transaction() as tx:
             await self._owner(tx, current, admitted)
+            await self._prepare_bound(tx, current)
             if not await self.console.passkeys.login_evidence_is_current(
                 current.scope,
                 current.subject,
                 current.evidence_ref,
                 tx=tx,
+                hold=not isinstance(current, KeyBoundConsoleSession),
             ):
                 raise HTTPException(401, "console_session_required")
             change = {
@@ -199,14 +225,22 @@ class ConsoleChanges:
                 "install_generation": admitted.generation,
                 "team_id": admitted.team_id,
                 "drafter": {"via": "console", "scope": current.scope, "subject": current.subject},
-                "base_revision": await config_revision(tx, admitted.installation_id),
+                "base_revision": await config_revision(
+                    tx, admitted.installation_id, team_id=admitted.team_id
+                ),
                 "changes": body["changes"],
                 "reason": body["reason"],
                 "issued_at": issued.strftime("%Y-%m-%dT%H:%M:%SZ"),
                 "expires_at": (issued + timedelta(minutes=10)).strftime("%Y-%m-%dT%H:%M:%SZ"),
             }
-            pending = await self.changes.draft(tx, change, sealed=sealed)
+            pending = await self.changes.draft(
+                tx,
+                change,
+                sealed=sealed,
+                confirm_in_aw=isinstance(current, KeyBoundConsoleSession),
+            )
             await self.console.fence.check(tx, admitted)
+            await self._bound_current(tx, current)
             self._unexpired(current)
         await self.approvals.deliver(pending)
         return {
@@ -244,10 +278,8 @@ class ConsoleChanges:
 
     async def installation_for_session(self, current: ConsoleSession) -> str:
         """Resolve an owner page from its stored scope; never parse an opaque locator."""
-        installation_id = await self.console.db.fetch_value(
-            "SELECT installation_id FROM {{tables.owner_principals}} WHERE scope=$1",
-            current.scope,
-        )
+        _owner_binding = await owner_binding(self.console.db, current.scope)
+        installation_id = None if _owner_binding is None else _owner_binding["installation_id"]
         if installation_id is None:
             raise HTTPException(403, "owner_required")
         admitted = await self._installation(current, installation_id)
@@ -405,7 +437,9 @@ class ConsoleChanges:
         async with self.console.db.transaction() as tx:
             await self._owner(tx, current, admitted)
             row = await self._row(tx, admitted, change_id)
-            approval = await self.approvals.get(row["approval_id"])
+            if row["confirm_in_aw"] and not isinstance(current, KeyBoundConsoleSession):
+                raise HTTPException(409, "confirm_in_aw")
+            approval = await self.approvals.get(row["approval_id"], tx=tx)
             if approval is None or approval.decided_by is None:
                 raise HTTPException(409, "change_not_approved")
             if (approval.decided_by.scope, approval.decided_by.subject) != (
@@ -420,8 +454,14 @@ class ConsoleChanges:
                 fence=self.console.fence,
                 admitted=admitted,
                 governance_view=view,
+                before_approvals=(
+                    (lambda prepared_tx: self._prepare_bound(prepared_tx, current))
+                    if isinstance(current, KeyBoundConsoleSession)
+                    else None
+                ),
             )
             await self.console.fence.check(tx, admitted)
+            await self._bound_current(tx, current)
             self._unexpired(current)
         await self.changes.deliver(confirmation)
         try:
@@ -432,6 +472,23 @@ class ConsoleChanges:
             # Authority already moved. Eviction is cleanup; never replay the effect.
             _LOG.warning("post-confirmation cache cleanup unavailable")
         return confirmation
+
+    async def confirmation_result(
+        self, confirmation: Confirmation, current: ConsoleSession
+    ) -> dict[str, Any]:
+        if not isinstance(current, KeyBoundConsoleSession):
+            return await owner_confirmation_result(
+                self.console.db, self.console.directory, confirmation, current
+            )
+        # The effect committed already. Reuse the original verified request and
+        # deadline without consuming its HTTP nonce or acquiring remote evidence.
+        async with self.console.db.transaction() as tx:
+            await self._prepare_bound(tx, current)
+            result = await owner_confirmation_result(
+                tx, self.console.directory, confirmation, current
+            )
+            await self._bound_current(tx, current)
+            return result
 
 
 @asynccontextmanager
@@ -530,6 +587,22 @@ def console_changes_router(services: ConsoleChanges, *, prefix: str = "") -> API
                 "state": "applied",
                 "reauth_required": True,
             }
+            if isinstance(current, KeyBoundConsoleSession):
+                try:
+                    return await services.confirmation_result(confirmation, current)
+                except InstallationRefused:
+                    return JSONResponse(applied_receipt)
+                except HTTPException as refused:
+                    if refused.status_code not in {401, 403} and not (
+                        refused.status_code == 503
+                        and refused.detail == "principal_status_unavailable"
+                    ):
+                        raise
+                    return JSONResponse(applied_receipt, headers=refused.headers)
+                except ChangeRefused as refused:
+                    if refused.code != "owner_required":
+                        raise
+                    return JSONResponse(applied_receipt)
             # Recheck S4 after commit before releasing one-time runner codes.
             try:
                 current = await services.console.sessions.current(request)
@@ -540,9 +613,7 @@ def console_changes_router(services: ConsoleChanges, *, prefix: str = "") -> API
                 # client must not mistake loss of its result session for rollback.
                 return JSONResponse(applied_receipt, headers=refused.headers)
             try:
-                return await owner_confirmation_result(
-                    services.console.db, services.console.directory, confirmation, current
-                )
+                return await services.confirmation_result(confirmation, current)
             except ChangeRefused as refused:
                 if refused.code != "owner_required":
                     raise

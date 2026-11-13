@@ -85,6 +85,26 @@ class PasskeyProofUnavailable(AuthenticationFailed):
         super().__init__(self.code)
 
 
+def is_public_cose_key(cose: bytes) -> bool:
+    """Whether ``cose`` is exactly one complete COSE key with public
+    parameters only. py_webauthn reads public values only, so a key that also
+    carries private parameters would pass its decoder; it must not be kept."""
+    # Decode exactly one complete COSE object without rewriting its bytes.
+    stream = io.BytesIO(cose)
+    try:
+        key = cbor2.CBORDecoder(stream, allow_duplicate_keys=False).decode()
+    except cbor2.CBORDecodeError:
+        return False
+    if not isinstance(key, dict) or stream.tell() != len(cose) or type(key.get(1)) is not int:
+        return False
+    if key[1] in (1, 2):  # OKP and EC2: d is private.
+        return -4 not in key
+    if key[1] == 3:  # RSA: only n/e are public negative-label parameters.
+        return not any(label in key for label in (-3, -4, -5, -6, -7, -8, -9))
+    # Any other type, symmetric (4) included, has no public-only form here.
+    return False
+
+
 def _require(condition: bool) -> None:
     if not condition:
         raise PasskeyProofUnavailable()
@@ -123,8 +143,69 @@ class PasskeyInstallationContext:
         )
 
 
+@dataclass(frozen=True)
+class ProtectedKeyContext:
+    """Versioned preinstallation authority context; never a fake installation."""
+
+    service_id: str
+    authority_kind: str
+    authority_id: str
+    authority_domain: str
+    human_id: str
+    human_domain: str
+    generation: int
+
+    def __post_init__(self) -> None:
+        if (
+            self.authority_kind not in {"human_identity", "namespace_controller", "team_controller"}
+            or not all(
+                _text(v)
+                for v in (
+                    self.service_id,
+                    self.authority_id,
+                    self.authority_domain,
+                    self.human_id,
+                    self.human_domain,
+                )
+            )
+            or not _integer(self.generation, 1)
+        ):
+            raise ProofContextUnavailable()
+
+    def fields(self) -> dict[str, Any]:
+        return {
+            "v": 1,
+            "kind": "protected_key",
+            "service_id": self.service_id,
+            "authority": {
+                "kind": self.authority_kind,
+                "id": self.authority_id,
+                "domain": self.authority_domain,
+            },
+            "human": {"id": self.human_id, "domain": self.human_domain},
+            "generation": self.generation,
+        }
+
+
+PasskeyContext = PasskeyInstallationContext | ProtectedKeyContext
+PROTECTED_CONTEXT_FIELDS = {
+    "v",
+    "kind",
+    "service_id",
+    "authority",
+    "human",
+    "generation",
+    "scope",
+    "origin",
+    "rp_id",
+    "require_up",
+    "require_uv",
+    "binding_kind",
+}
+
+
 class ProofContextResolver(Protocol):
-    async def __call__(self, scope: str, *, tx: TransactionManager) -> PasskeyInstallationContext:
+    async def __call__(self, scope: str, *, tx: TransactionManager) -> PasskeyContext:
         """Read the exact authoritative scope binding; take no authority locks."""
         ...
 
@@ -271,12 +352,38 @@ def _checked(proof: RetainedPasskeyProof) -> tuple[dict[str, Any], dict[str, Any
     metadata = parse_request_json(proof.metadata_canonical)
     _require(canonical_json_bytes(context) == proof.context_canonical)
     _require(canonical_json_bytes(metadata) == proof.metadata_canonical)
-    _require(set(context) == CONTEXT_FIELDS)
+    protected = context.get("kind") == "protected_key"
+    if protected:
+        _require(set(context) == PROTECTED_CONTEXT_FIELDS)
+        _require(type(context["v"]) is int and context["v"] == 1)
+        authority, human = context["authority"], context["human"]
+        _require(isinstance(authority, dict) and set(authority) == {"kind", "id", "domain"})
+        _require(isinstance(human, dict) and set(human) == {"id", "domain"})
+        try:
+            original = ProtectedKeyContext(
+                context["service_id"],
+                authority["kind"],
+                authority["id"],
+                authority["domain"],
+                human["id"],
+                human["domain"],
+                context["generation"],
+            )
+        except ProofContextUnavailable:
+            raise PasskeyProofUnavailable() from None
+        _require(all(context[k] == v for k, v in original.fields().items()))
+        _require(all(_text(context[k]) for k in ("scope", "origin", "rp_id", "binding_kind")))
+    else:
+        _require(set(context) == CONTEXT_FIELDS)
     _require(METADATA_FIELDS <= set(metadata) <= METADATA_FIELDS | APPROVAL_FIELDS)
     _require(all(value is not None for value in metadata.values()))
-    _require(
-        all(_text(context[k]) for k in CONTEXT_FIELDS - {"generation", "require_up", "require_uv"})
-    )
+    if not protected:
+        _require(
+            all(
+                _text(context[k])
+                for k in CONTEXT_FIELDS - {"generation", "require_up", "require_uv"}
+            )
+        )
     _require(_integer(context["generation"], 1))
     _require(context["require_up"] is True and context["require_uv"] is True)
     _require(all(_text(metadata[k]) for k in ("evidence_ref", "subject", "purpose")))
@@ -364,7 +471,10 @@ def _checked(proof: RetainedPasskeyProof) -> tuple[dict[str, Any], dict[str, Any
             and policy["version"] == metadata["policy_version"]
         )
         request = wrapper["request"]
-        if isinstance(request, dict):
+        if protected:
+            _require(isinstance(request, dict))
+            _require(request.get("scope") == original.fields())
+        elif isinstance(request, dict):
             for key, value in (
                 ("team_id", context["team_id"]),
                 ("installation_id", context["installation_id"]),
@@ -392,20 +502,7 @@ def _checked(proof: RetainedPasskeyProof) -> tuple[dict[str, Any], dict[str, Any
     _require(hashlib.sha256(proof.challenge_preimage).digest() == proof.expected_challenge)
     rp = RelyingParty(context["origin"], "retained proof")
     _require(rp.rp_id == context["rp_id"])
-    # Decode exactly one complete COSE object without rewriting its bytes.
-    stream = io.BytesIO(proof.credential_public_key_cose)
-    try:
-        key = cbor2.CBORDecoder(stream, allow_duplicate_keys=False).decode()
-    except cbor2.CBORDecodeError:
-        raise PasskeyProofUnavailable() from None
-    _require(isinstance(key, dict) and stream.tell() == len(proof.credential_public_key_cose))
-    # py_webauthn intentionally reads public values only. Retention must also
-    # reject private key parameters that its decoder would otherwise ignore.
-    _require(type(key.get(1)) is int)
-    if key[1] in (1, 2):  # OKP and EC2: d is private.
-        _require(-4 not in key)
-    elif key[1] == 3:  # RSA: only n/e are public negative-label parameters.
-        _require(not any(label in key for label in (-3, -4, -5, -6, -7, -8, -9)))
+    _require(is_public_cose_key(proof.credential_public_key_cose))
 
     def b64(value):
         return base64.urlsafe_b64encode(value).rstrip(b"=").decode("ascii")

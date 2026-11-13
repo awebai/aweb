@@ -24,7 +24,9 @@ The service (`aweb_secrets.app.create_app`) runs on the shared naapp runtime,
   covered by the team's installed grant and allowed by secrets' policy. This
   origin never reads or sets a cookie.
 - **The console origin** (`SECRETS_CONSOLE_ORIGIN`) serves people in a browser.
-  It refuses any request carrying team-auth, and serves no tool.
+  It refuses any request carrying team-auth, and serves no tool. Owners'
+  passkeys are bound to its hostname, so a human-role act's audience must be
+  this origin; a credential bound to any other host is refused.
 
 No tool reads, sets or exports a secret value. `/health` and `/ready` report the
 build commit (`SECRETS_GIT_SHA`, or Render's), the database, the KMS canary and
@@ -33,6 +35,32 @@ Both answer 503 while the database or the KMS canary fails; the outbox age
 fails nothing. `/live` checks nothing and is what the image's `HEALTHCHECK`
 probes. The database is the app's own pgdbm schema: the shared runtime's
 migrations first, then `src/aweb_secrets/migrations/` (module `aweb_secrets`).
+
+Owner migration `002_shared_holdings.sql` moves existing owner scope records to
+`aweb_naapp.roles` in one transaction. It preserves B3 scopes, subjects,
+credentials and role-assignment timestamps, with a NULL retained certificate
+until the owner refreshes through the authenticated handoff. A legacy non-did:aw
+owner or an inconsistent scope refuses the entire migration; the migration never
+guesses an identity. Owner authorization and holds then use only that shared
+store. The former owner contact-binding and recovery endpoint refuses all scopes.
+
+This read cutover (16.43a) and the shared human-role delivery/effect mount
+(16.43b) form one deployment boundary: do not install between them. Canonical
+holder setup in component tests does not provide a replacement bootstrap route.
+Captured migration history and its deliberate generator live in
+`tests/fixtures/owner_holding_cutover/`.
+
+Installation-scoped configuration revisions, change-set settings, policies,
+grant templates and secret references are keyed by both team and installation.
+Two teams reporting the same installation id keep separate state. Policy
+references from grants, intents and derived secrets must name that same team.
+
+The ordered `008_team_installation_keys.sql` records migration and the `002`
+revision/settings migrations retain legacy state only when the installation has
+one team in retained scoped records or installation fences. They stop with a
+count if attribution is missing or ambiguous and roll back that migration;
+they never choose a team from a request or the first matching record. A populated
+deployment must resolve such attribution explicitly before it can upgrade.
 
 The manifest's authoring source is `src/aweb_secrets/manifest.py`. The committed
 `aweb-app.json` is a canonical v2 template. The shared runtime fills the served

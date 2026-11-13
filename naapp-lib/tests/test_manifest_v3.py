@@ -13,7 +13,7 @@ from aweb_naapp.manifest import (
     load_manifest,
     select_variant,
 )
-from tests.test_manifest_v2_vectors import RESERVED, V2, _manifest_bytes
+from tests.test_manifest_v2_vectors import RESERVED, V2, _manifest_bytes, _read
 
 AWEB_ROOT = Path(__file__).resolve().parents[2]
 VECTOR_PATH = AWEB_ROOT / "docs" / "vectors" / "owner-act-delivery-v1.json"
@@ -158,16 +158,63 @@ def test_v3_keeps_v2_load_verdicts(case):
     expected = case["expected"]
     if expected["accepted"]:
         resolved = {**expected["resolved"], "manifest_version": 3}
-        assert load_manifest(canonical_bytes(value), reserved_names=RESERVED).view() == resolved
+        assert _read(canonical_bytes(value)).view() == resolved
     else:
         with pytest.raises(ManifestError) as caught:
-            load_manifest(canonical_bytes(value), reserved_names=RESERVED)
+            _read(canonical_bytes(value))
         assert caught.value.code == expected["error"]
 
 
 def test_owner_origin_does_not_bypass_hostname_separation_with_app_whitespace():
     value = document(CASES[0])
     value["app"]["origin"] = " " + value["owner_acts"]["origin"] + " "
+    with pytest.raises(ManifestError) as caught:
+        load_manifest(canonical_bytes(value))
+    assert caught.value.code == "owner_acts_invalid"
+
+
+def session_actions_document():
+    case = next(case for case in CASES if case["name"] == "session_actions_of_secrets")
+    return document(case)
+
+
+def test_session_actions_never_grant_agent_tools_or_install_scopes():
+    manifest = load_manifest(canonical_bytes(session_actions_document()))
+    assert manifest.owner_acts["session_actions"]
+    assert manifest.tools_by_name() == {}
+    assert manifest.agent_tools == manifest.surface_tools == manifest.hook_tools == ()
+    assert manifest.install_scopes == ()
+
+
+def test_completion_cannot_read_another_roles_action():
+    value = session_actions_document()
+    owner = value["owner_acts"]
+    owner["roles"].append({**owner["roles"][0], "name": "example.issuer"})
+    owner["session_actions"][0]["role"] = "example.issuer"
+    with pytest.raises(ManifestError) as caught:
+        load_manifest(canonical_bytes(value))
+    assert caught.value.code == "owner_acts_invalid"
+
+
+@pytest.mark.parametrize("values", [[True, 1, False, 0], ["1", 1]])
+def test_predicate_values_preserve_json_types(values):
+    value = session_actions_document()
+    value["owner_acts"]["session_actions"][-1]["completion"]["ready"]["in"] = values
+    assert load_manifest(canonical_bytes(value)).owner_acts == value["owner_acts"]
+
+
+@pytest.mark.parametrize(
+    "field,content",
+    [
+        ("path", "/staged/%2e%2e/value"),
+        ("path", "/staged/../value"),
+        ("params", [{"name": "undeclared", "in": "query"}]),
+        ("params", [{"name": "installation_id", "in": "query"}]),
+    ],
+)
+def test_session_action_reuses_v2_mapping_refusals(field, content):
+    value = session_actions_document()
+    value["owner_acts"]["session_actions"][1][field] = content
     with pytest.raises(ManifestError) as caught:
         load_manifest(canonical_bytes(value))
     assert caught.value.code == "owner_acts_invalid"

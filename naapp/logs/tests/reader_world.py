@@ -16,26 +16,30 @@ import httpx
 import pytest
 from aweb_naapp.console import CONSOLE_HEADERS
 from aweb_naapp.hooks.envelope import verify
-from aweb_naapp.hooks.owner_act import APP_ACTS, LOGS_ACTS
+from aweb_naapp.hooks.owner_act import APP_ACTS, HUMAN_ROLE_ACTS, LOGS_ACTS, HumanCredential
 from aweb_naapp.hooks.owner_act_nonces import apply_owner_act_migrations
 from aweb_naapp.hooks.producer import HookProducer, Registration, RegistrationView, ServerProducer
 from aweb_naapp.outbox import apply_outbox_migrations
+from aweb_naapp.roles import apply_roles_migrations, holding_scope, is_holding_scope
 from aweb_naapp.runtime.approvals import DeliveryStatus
 from aweb_naapp.runtime.authorization import Grant
 from aweb_naapp.runtime.clock import seconds_to_ns
 from aweb_naapp.runtime.credential_audit import CredentialAudit
 from aweb_naapp.runtime.installation import InstallationFence, apply_installation_migrations
-from aweb_naapp.runtime.passkeys import Passkeys, RelyingParty, contact_sha256
+from aweb_naapp.runtime.passkeys import Passkeys, RelyingParty
 from aweb_naapp_testing.owner_acts import APP_ID, INSTALLATION_ID, TEAM_ID, TeamOwner, team_owner
 from aweb_naapp_testing.webauthn import SoftAuthenticator
-from awid_service.testing import running_registry
+from awid_service.testing import Registry, running_registry
 from nacl.signing import SigningKey
 from pgdbm import AsyncDatabaseManager, AsyncMigrationManager
 
 from aweb_logs import MIGRATIONS_MODULE, MIGRATIONS_PATH
 from aweb_logs.governance import SELF_RECORDED_ACTS, LogsGovernance
 from aweb_logs.ledger import LogsSigner
-from aweb_logs.readers import ReaderDesignations, ReaderDirectory, ReaderRemovals
+from aweb_logs.purge_ledger import PurgeLedger
+from aweb_logs.readers import READER_ROLE, ReaderDirectory, ReaderRemovals
+
+from .fixtures import purge_ledger
 
 LOGS = "https://logs.example.test"
 
@@ -43,10 +47,15 @@ LOGS = "https://logs.example.test"
 CONSOLE = "https://console.logs.example.test"
 
 
-CONTACT = "reader@example.com"
+READER = "did:aw:2Wq7mXn4kP9rT1vY5zA8bC3dE6"
 
 
-OTHER_CONTACT = "someone-else@example.com"
+OTHER_READER = "did:aw:3Xr8nYo5mQ1sU2wZ6aB9cD4eF7"
+
+
+# The member's team certificate a designation retains; the reads here never
+# check it.
+CERTIFICATE = b'{"certificate_id":"cert-reader"}'
 
 
 class Installations:
@@ -118,7 +127,9 @@ class World:
     registered: list[bool]
     grant: Grant
     fence: InstallationFence
-    designations: ReaderDesignations = field(init=False)
+    # The running AWID the owner's team is registered in.
+    registry: Registry = field(init=False)
+    purges: PurgeLedger = field(init=False)
     governance: LogsGovernance = field(init=False)
     removals: ReaderRemovals = field(init=False)
     recorder: CredentialAudit = field(init=False)
@@ -137,6 +148,7 @@ async def world_fixture(test_db_factory) -> AsyncIterator[World]:
         apply_owner_act_migrations,
         apply_installation_migrations,
         apply_outbox_migrations,
+        apply_roles_migrations,
     ):
         await migrate(db)
     await AsyncMigrationManager(
@@ -155,7 +167,6 @@ async def world_fixture(test_db_factory) -> AsyncIterator[World]:
         )
     )
     signer = LogsSigner(logs_origin=LOGS, kid="logs-chain", signing_key=SigningKey.generate())
-    directory = ReaderDirectory(db)
     registered = [True]
 
     async def view(team_id: str) -> RegistrationView | None:
@@ -163,7 +174,9 @@ async def world_fixture(test_db_factory) -> AsyncIterator[World]:
 
     async with running_registry(registry_db.config.get_dsn()) as registry:
         owner = await team_owner(registry, team_id=TEAM_ID, acts=APP_ACTS + LOGS_ACTS)
+        directory = ReaderDirectory(db, app_id=APP_ID, passkeys=lambda: state.passkeys)
         state = World(db, owner, signer, directory, Inbox(), registered, installations.grant, fence)
+        state.registry = registry
         append_own = directory.appender(signer)
 
         async def append(tx, event_id) -> None:
@@ -184,6 +197,7 @@ async def world_fixture(test_db_factory) -> AsyncIterator[World]:
             migration_module="aweb_logs_credential_audit",
             after_enqueue=append,
             ungated_acts=SELF_RECORDED_ACTS,
+            human_roles=frozenset({READER_ROLE}),
         )
         await state.recorder.migrate()
         state.passkeys = Passkeys(
@@ -195,42 +209,22 @@ async def world_fixture(test_db_factory) -> AsyncIterator[World]:
             enrolment_ttl=timedelta(hours=1),
             challenge_ttl=timedelta(minutes=5),
             proof_context=directory.proof_context(app_id=APP_ID),
+            holding_scopes=is_holding_scope,
         )
         await state.passkeys.migrate()
-        state.designations = ReaderDesignations(
-            directory,
+        state.purges = await purge_ledger(test_db_factory, db)
+        state.governance = LogsGovernance(
+            db,
+            purges=state.purges,
             fence=fence,
             verifier=owner.verifier,
-            passkeys=state.passkeys,
             recorder=state.recorder,
-        )
-        state.governance = LogsGovernance(
-            db, fence=fence, verifier=owner.verifier, recorder=state.recorder, logs_origin=LOGS
+            logs_origin=LOGS,
         )
         state.removals = ReaderRemovals(
             directory, fence=fence, passkeys=state.passkeys, recorder=state.recorder
         )
         yield state
-
-
-async def slot(world: World, contact: str = CONTACT) -> str:
-    async with world.db.transaction() as tx:
-        issued = await world.directory.create_slot(
-            tx,
-            installation_id=INSTALLATION_ID,
-            team_id=TEAM_ID,
-            contact_sha256=contact_sha256(contact),
-        )
-    return issued.scope
-
-
-def designation(scope: str, contact: str = CONTACT) -> dict:
-    return {
-        "app_id": APP_ID,
-        "installation_id": INSTALLATION_ID,
-        "role": scope,
-        "contact_sha256": contact_sha256(contact),
-    }
 
 
 async def chained(world: World) -> list[dict]:
@@ -257,54 +251,11 @@ async def count(world: World, table: str) -> int:
     return await world.db.fetch_value(f"SELECT count(*) FROM {{{{tables.{table}}}}}")
 
 
-async def nothing_took_effect(world: World, scope: str) -> None:
-    assert await world.directory.reader(scope) is None
-    assert world.inbox.enrolments == {}
-    assert await count(world, "outbox_events") == 0
-    assert await count(world, "owner_act_nonces") == 0
-    assert await chained(world) == []
-
-
-async def designated_reader(world: World, contact: str = CONTACT) -> tuple[str, str]:
-    """A reader the owner designated that has not enrolled yet: its scope and holder."""
-    scope = await slot(world, contact)
-    signing, signature = world.owner.sign("app-role.designate", designation(scope, contact))
-    await world.designations.designate(
-        signing=signing, signature=signature, scope=scope, contact=contact
-    )
-    return scope, await holder(world, scope)
-
-
-async def enrolled_reader(world: World, contact: str = CONTACT) -> tuple[str, str]:
-    """A designated reader that has enrolled its passkey: its scope and holder."""
-    scope, _ = await designated_reader(world, contact)
-    token = world.inbox.enrolments[contact][-1]
-    device = SoftAuthenticator(CONSOLE)
-    enrolment = await world.recorder.prepare_enrolment(token)
-    with world.recorder.prepared(enrolment):
-        await world.passkeys.complete_enrolment(
-            token,
-            device.create(await world.passkeys.enrolment_options(token)),
-            fence=enrolment,
-        )
-    world.devices[scope] = device
-    return scope, await holder(world, scope)
-
-
 async def holder(world: World, scope: str) -> str | None:
     return await world.db.fetch_value(
         "SELECT subject FROM {{tables.passkey_approvers}} WHERE scope = $1 AND superseded_at IS NULL",
         scope,
     )
-
-
-def revocation(scope: str, subject_ref: str) -> dict:
-    return {
-        "app_id": APP_ID,
-        "installation_id": INSTALLATION_ID,
-        "role": scope,
-        "subject_ref": subject_ref,
-    }
 
 
 def act_body(signing: bytes, signature: str, **fields) -> dict:
@@ -313,3 +264,95 @@ def act_body(signing: bytes, signature: str, **fields) -> dict:
 
 def console_headed(response: httpx.Response) -> bool:
     return all(response.headers.get(name) == value for name, value in CONSOLE_HEADERS.items())
+
+
+def reader_scope(principal: str = READER) -> str:
+    return holding_scope(INSTALLATION_ID, TEAM_ID, READER_ROLE, principal)
+
+
+def _credential(world: World) -> tuple[SoftAuthenticator, dict[str, str]]:
+    """A new authenticator with a credential for logs' relying party."""
+    rp = world.passkeys.rp
+    device = SoftAuthenticator(rp.origin)
+    return device, device.bind(rp.rp_id)
+
+
+def _holding_subject(principal: str, credential: dict[str, str] | None) -> dict:
+    subject = {
+        "app_id": APP_ID,
+        "installation_id": INSTALLATION_ID,
+        "role": READER_ROLE,
+        "principal": principal,
+    }
+    if credential is not None:
+        subject["credential_sha256"] = HumanCredential.parse(credential).sha256
+    return subject
+
+
+async def _owner_act(world: World, act: str, subject: dict, apply) -> object:
+    """Consume the owner's ``act`` and apply it, in one transaction under the
+    installation's fence, as logs' owner-act routes do."""
+    # Addressed to logs' human origin, whose host is the credential's relying party.
+    signer = world.owner.for_acts(HUMAN_ROLE_ACTS, audience=world.passkeys.rp.origin)
+    signing, signature = signer.sign(act, subject)
+    admitted = (await world.fence.permit(TEAM_ID)).admitted
+    prepared = await signer.verifier.prepare(signing, signature, team_id=TEAM_ID)
+    context = await world.recorder.prepare_owner_act(admitted, signing=signing, signature=signature)
+    with world.recorder.prepared(context):
+        async with world.db.transaction() as tx:
+            await world.fence.check(tx, admitted)
+            verified = await signer.verifier.consume_in(tx, prepared, expected_subject=subject)
+            result = await apply(tx, verified)
+            await world.fence.check(tx, admitted)
+    return result
+
+
+async def held_reader(world: World, principal: str = READER) -> tuple[str, str]:
+    """A reader the owner designated by a human-role act, with its credential
+    bound and in effect: its scope and holder."""
+    device, credential = _credential(world)
+
+    async def designate(tx, act):
+        return await world.passkeys.designate_holder(
+            tx,
+            act=act,
+            credential=HumanCredential.parse(credential),
+            certificate=CERTIFICATE,
+            notice_contact=None,
+        )
+
+    await _owner_act(
+        world, "human-role.designate", _holding_subject(principal, credential), designate
+    )
+    scope = reader_scope(principal)
+    world.devices[scope] = device
+    current = await holder(world, scope)
+    assert current is not None
+    return scope, current
+
+
+async def replaced_reader(world: World, principal: str = READER) -> None:
+    """The owner replaces the reader's credential: the new one is not in effect
+    until the cooling-off ends."""
+    device, credential = _credential(world)
+
+    async def replace(tx, act):
+        return await world.passkeys.replace_holder_credential(
+            tx,
+            act=act,
+            credential=HumanCredential.parse(credential),
+            certificate=CERTIFICATE,
+            notice_contact=None,
+        )
+
+    await _owner_act(
+        world, "human-credential.replace", _holding_subject(principal, credential), replace
+    )
+    world.devices[reader_scope(principal)] = device
+
+
+async def revoked_reader(world: World, principal: str = READER) -> None:
+    async def revoke(tx, act):
+        await world.passkeys.revoke_holder(tx, act=act)
+
+    await _owner_act(world, "human-role.revoke", _holding_subject(principal, None), revoke)

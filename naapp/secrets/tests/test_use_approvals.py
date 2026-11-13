@@ -56,7 +56,6 @@ from aweb_secrets.use_approvals import (
 from tests.governance import view
 from tests.test_change_sets import (
     ALICE,
-    ORIGIN,
     TEAM,
     Installations,
     World,
@@ -125,7 +124,7 @@ async def designate(uses: Uses, ref: str, contact: str, *, principal: str | None
     change = change_set(
         drafter=by_member(ALICE),
         changes=[designate_approver(ref, contact, [SECRET_ID], principal)],
-        base_revision=await config_revision(w.db, INSTALLATION_ID),
+        base_revision=await config_revision(w.db, INSTALLATION_ID, team_id=TEAM),
     )
     await decide(w, await draft(w, change), "alice@acme.com")
     async with w.db.transaction() as tx:
@@ -139,7 +138,7 @@ async def designate(uses: Uses, ref: str, contact: str, *, principal: str | None
         )
     await w.change_sets.deliver(confirmation)
     token = w.inbox.enrolments[contact][-1]
-    device = SoftAuthenticator(ORIGIN)
+    device = SoftAuthenticator(w.passkeys.rp.origin)
     prepared = await w.credential_audit.prepare_enrolment(token)
     with w.credential_audit.prepared(prepared):
         await w.passkeys.complete_enrolment(
@@ -181,7 +180,7 @@ async def install(uses: Uses, **policy_changes) -> Policy:
         if await records.secret_by_ref(tx, INSTALLATION_ID, TEAM, record.ref) is None:
             await records.create_secret(tx, INSTALLATION_ID, TEAM, record)
             await records.set_active_version(tx, INSTALLATION_ID, TEAM, SECRET_ID, 4)
-        await records.create_policy(tx, INSTALLATION_ID, policy)
+        await records.create_policy(tx, INSTALLATION_ID, policy, team_id=TEAM)
         grant_id = f"grt_{policy.digest[:10]}"
         await records.create_grant(
             tx,
@@ -501,11 +500,15 @@ async def test_no_eligible_approver_is_refused_at_request_and_nothing_is_minted(
 
 async def test_a_listed_owner_is_a_candidate_and_an_unlisted_one_is_not(uses):
     await install(uses, approvers=[f"owner:{ALICE.principal_did}"])
-    _, _, pending = await request(uses)
+    admission, _, pending = await request(uses)
     assert [c.principal_did for c in pending.pending.approval.candidates] == [ALICE.principal_did]
     await install(uses, approvers=["finance"])  # a second policy and grant, no owner listed
-    with pytest.raises(UseApprovalRefused):
+    # Installing another grant does not withdraw the first grant's policy.
+    async with uses.world.db.transaction() as tx:
+        await records.revoke_grant(tx, INSTALLATION_ID, admission.grant_id)
+    with pytest.raises(UseApprovalRefused) as refused:
         await request(uses, "req_2")
+    assert refused.value.code == "no_eligible_approver"
 
 
 async def test_resubmitting_the_same_request_mints_nothing_new(uses):

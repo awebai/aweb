@@ -5,6 +5,7 @@ import json
 import secrets
 from dataclasses import replace
 from datetime import UTC, datetime, timedelta
+from types import SimpleNamespace
 from uuid import uuid4
 
 import asyncpg
@@ -43,6 +44,20 @@ INSTALLATION = "1b4e28ba-2fa1-4d3b-a3f5-ef19b5a7633b"
 class Installed:
     async def grant_for(self, team_id, certificate_id=None):
         return _grant_source_grant(installation_id=INSTALLATION) if team_id == TEAM else None
+
+    async def status_for(self, team_id):
+        grant = await self.grant_for(team_id)
+        if grant is None:
+            return None
+        return SimpleNamespace(
+            team_id=grant.team_id,
+            app_id="secrets",
+            state="active",
+            installation_id=grant.installation_id,
+            generation=grant.generation,
+            granted_scopes=grant.scopes,
+            fresh_until=grant.fresh_until,
+        )
 
 
 @pytest.fixture
@@ -253,9 +268,9 @@ async def test_post_dispatch_recording_survives_target_loss_without_authorizing_
     )
     async with db.transaction() as tx:
         if outcome == "reconciled":
-            await recorder.outcome_unknown(tx, dispatch_id, {"state": "unknown"})
+            await recorder.outcome_unknown(tx, dispatch_id, {"state": "outcome_unknown"})
             await recorder.reconcile(
-                tx, dispatch_id, State.RECONCILED_COMPLETED, {"state": "owner_resolved"}
+                tx, dispatch_id, State.RECONCILED_COMPLETED, {"state": "reconciled_completed"}
             )
         else:
             method = recorder.complete if outcome == "completed" else getattr(recorder, outcome)
@@ -309,7 +324,7 @@ async def test_failed_post_dispatch_outbox_insert_preserves_dispatching_for_reco
     )
     with pytest.raises(asyncpg.CheckViolationError):
         async with db.transaction() as tx:
-            await recorder.complete(tx, dispatch_id, {"state": "withheld"})
+            await recorder.complete(tx, dispatch_id, {"state": "result_withheld"})
     async with db.transaction() as tx:
         assert (await recorder.get(tx, dispatch_id)).state is State.DISPATCHING
     assert len(await envelopes(db)) == 2
@@ -689,3 +704,18 @@ async def test_outer_admission_trace_input_is_not_retained_as_free_text(db, fenc
     (event,) = await envelopes(db)
     assert event["trace"]["origin"] == "producer"
     assert canary not in json.dumps(event)
+
+
+@pytest.mark.parametrize(
+    "table", ["broker_audit_contexts", "broker_use_events", "use_contexts", "intents"]
+)
+@pytest.mark.parametrize("operation", ["DELETE FROM", "TRUNCATE TABLE"])
+async def test_durable_broker_history_refuses_deletion_and_truncation(db, fence, table, operation):
+    request, admitted, dispatch_id, state = await prepared(db, fence)
+    async with db.transaction() as tx:
+        await state.admit(tx, dispatch_id, fence=authority(fence, admitted, request, dispatch_id))
+    with pytest.raises(asyncpg.RaiseError):
+        async with db.transaction() as tx:
+            suffix = " CASCADE" if operation == "TRUNCATE TABLE" else ""
+            await tx.execute(f"{operation} {{{{tables.{table}}}}}{suffix}")
+    assert await db.fetch_value(f"SELECT count(*) FROM {{{{tables.{table}}}}}") > 0

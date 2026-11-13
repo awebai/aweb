@@ -65,7 +65,7 @@ func TestAppApprovalBinaryMintAndDispatchMatrix(t *testing.T) {
 					data, _ := io.ReadAll(r.Body)
 					r.Body = io.NopCloser(bytes.NewReader(data))
 					certificate, certErr := awid.DecodeTeamCertificateHeader(r.Header.Get("X-AWID-Team-Certificate"))
-					if certErr != nil || awid.VerifyTeamCertificate(certificate, f.app.teamPub) != nil || certificate.Team != team || certificate.MemberDIDKey != f.residentDID {
+					if certErr != nil || awid.CheckDecodedTeamCertificate(certificate, awid.ComputeDIDKey(f.app.teamPub)) != nil || certificate.Team != team || certificate.MemberDIDKey != f.residentDID {
 						t.Error("mint certificate validation failed")
 						http.Error(w, "auth", 401)
 						return

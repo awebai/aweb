@@ -15,12 +15,12 @@ from pgdbm.errors import QueryError
 from pydantic import BaseModel, Field, model_validator
 
 from aweb.audit import OperatorAuditRoute, audit_success
-from aweb.service_errors import RESOURCE_NOT_FOUND_DETAIL
 from aweb.team_auth_deps import TeamIdentity, get_team_identity, team_identity_with_grant_scope
 
 from ...db import DatabaseInfra, get_db_infra
 from ...role_name_compat import normalize_optional_role_name, resolve_role_name_aliases
 from ..defaults import get_default_bundle
+from ..team_documents import activate_team_document, serialized_team_document
 
 logger = logging.getLogger(__name__)
 
@@ -142,39 +142,45 @@ async def create_team_roles_version(
     created_by_alias: Optional[str],
 ) -> TeamRolesVersion:
     """Create a versioned team roles record for a team."""
-    result = await db.fetch_one(
-        """
-        WITH active_check AS (
-            SELECT id
-            FROM {{tables.team_roles}}
-            WHERE team_id = $1 AND is_active = true
-        ),
-        base_check AS (
-            SELECT 1 AS ok
-            WHERE $4::TEXT IS NULL
-               OR EXISTS (SELECT 1 FROM active_check WHERE id::text = $4)
-        ),
-        next_version AS (
-            SELECT COALESCE(MAX(version), 0) + 1 AS version
-            FROM {{tables.team_roles}}
-            WHERE team_id = $1
+    serialized = serialized_team_document(bundle)
+    async with db.transaction() as tx:
+        await tx.fetch_value(
+            "SELECT pg_advisory_xact_lock(hashtextextended($1, 0))",
+            f"team-roles-activation:{team_id}",
         )
-        INSERT INTO {{tables.team_roles}} (
+        result = await tx.fetch_one(
+            """
+            WITH active_check AS (
+                SELECT id
+                FROM {{tables.team_roles}}
+                WHERE team_id = $1 AND is_active = true
+            ),
+            base_check AS (
+                SELECT 1 AS ok
+                WHERE $4::TEXT IS NULL
+                   OR EXISTS (SELECT 1 FROM active_check WHERE id::text = $4)
+            ),
+            next_version AS (
+                SELECT COALESCE(MAX(version), 0) + 1 AS version
+                FROM {{tables.team_roles}}
+                WHERE team_id = $1
+            )
+            INSERT INTO {{tables.team_roles}} (
+                team_id,
+                version,
+                bundle_json,
+                created_by_alias
+            )
+            SELECT $1, nv.version, $2::jsonb, $3
+            FROM next_version nv, base_check bc
+            RETURNING id, team_id, version, bundle_json,
+                      created_by_alias, created_at, updated_at
+            """,
             team_id,
-            version,
-            bundle_json,
-            created_by_alias
+            serialized,
+            created_by_alias,
+            base_roles_id,
         )
-        SELECT $1, nv.version, $2::jsonb, $3
-        FROM next_version nv, base_check bc
-        RETURNING id, team_id, version, bundle_json,
-                  created_by_alias, created_at, updated_at
-        """,
-        team_id,
-        json.dumps(bundle),
-        created_by_alias,
-        base_roles_id,
-    )
 
     if not result:
         active = await db.fetch_one(
@@ -224,38 +230,12 @@ async def activate_team_roles(
     roles_id: str,
 ) -> bool:
     """Set the active team roles bundle for a team."""
-    target = await db.fetch_one(
-        """
-        SELECT id, team_id
-        FROM {{tables.team_roles}}
-        WHERE id = $1
-        """,
-        roles_id,
-    )
-    if not target:
-        raise HTTPException(status_code=404, detail=RESOURCE_NOT_FOUND_DETAIL)
-
-    if target["team_id"] != team_id:
-        raise HTTPException(status_code=404, detail=RESOURCE_NOT_FOUND_DETAIL)
-
-    # Deactivate the currently active version (if any)
-    await db.execute(
-        """
-        UPDATE {{tables.team_roles}}
-        SET is_active = false
-        WHERE team_id = $1 AND is_active = true
-        """,
-        team_id,
-    )
-
-    # Activate the target version
-    await db.execute(
-        """
-        UPDATE {{tables.team_roles}}
-        SET is_active = true
-        WHERE id = $1
-        """,
-        roles_id,
+    await activate_team_document(
+        db,
+        table="{{tables.team_roles}}",
+        lock_name="team-roles-activation",
+        team_id=team_id,
+        document_id=roles_id,
     )
 
     logger.info("Activated team roles %s for team %s", roles_id, team_id)

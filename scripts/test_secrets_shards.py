@@ -110,6 +110,9 @@ class ActualCollection(unittest.TestCase):
             manifest = root / 'shards.json'
             manifest.write_text(json.dumps({'version': 1, 'shards': [
                 ['tests/test_a.py'], ['tests/test_b.py']]}))
+            (root / 'pytest.ini').write_text('[pytest]\nmarkers = e2e: separate Docker lane\n')
+            (root / 'tests/test_owner_acts.py').write_text(
+                'import pytest\n@pytest.mark.e2e\ndef test_separate_lane(): assert False\n')
             command = [str(ROOT / 'naapp/secrets/.venv/bin/python'), '-m', 'pytest']
             qualify(root, manifest, root / 'good', command=command)
             receipt = json.loads((root / 'good/summary.json').read_text())

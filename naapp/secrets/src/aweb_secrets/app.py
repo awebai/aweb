@@ -1,6 +1,6 @@
 """The secrets service: one process on two origins, on the shared naapp runtime.
 
-The agent API origin (``public_origin``) serves the manifest, health and the
+The agent API origin (``public_origin``) serves public docs, the manifest, health and the
 manifest's tools. Every tool route is admitted only through the runtime's
 team-auth guard (B1): signed by a team member, declared by the served
 manifest, covered by the team's installed grant and allowed by secrets'
@@ -12,9 +12,12 @@ accepts team-auth. It serves no tool.
 
 from __future__ import annotations
 
+import json
+import logging
 from collections.abc import Awaitable, Callable, Mapping, Sequence
 from contextlib import AbstractAsyncContextManager, AsyncExitStack, asynccontextmanager
 from enum import StrEnum
+from functools import partial
 from ipaddress import IPv4Network, IPv6Network
 from pathlib import Path
 
@@ -22,8 +25,8 @@ import httpx
 from aweb_naapp.egress import Egress
 from aweb_naapp.idempotency import apply_idempotency_migrations
 from aweb_naapp.ratelimit import apply_ratelimit_migrations
-from aweb_naapp.roles import apply_roles_migrations, purge_team
-from aweb_naapp.runtime.app import NaappRuntime, mount_manifest_routes
+from aweb_naapp.roles import apply_roles_migrations
+from aweb_naapp.runtime.app import NaappRuntime
 from aweb_naapp.runtime.authorization import ActionPolicy, Authorization, GrantSource
 from aweb_naapp.runtime.health import HealthCheck, mount_health
 from aweb_naapp.runtime.installation import (
@@ -32,16 +35,21 @@ from aweb_naapp.runtime.installation import (
     apply_installation_migrations,
 )
 from aweb_naapp.runtime.origins import OriginApps
+from awid.dns_verify import DomainVerifier
 from fastapi import APIRouter, Depends, FastAPI, HTTPException
 from fastapi.routing import APIRoute
 from pgdbm import AsyncDatabaseManager
+from starlette.types import Message, Receive, Scope, Send
 
 from aweb_secrets.config import SecretsSettings
-from aweb_secrets.manifest import MANIFEST_PATH
+from aweb_secrets.manifest import MANIFEST_PATH, OWNER_ACTS
+from aweb_secrets.retirement import retire_team
 from aweb_secrets.revisions import apply_revision_migrations
+from aweb_secrets.surfaces import mount_public_surfaces
 
 MIGRATIONS_PATH = Path(__file__).resolve().parent / "migrations"
 MODULE_NAME = "aweb_secrets"
+_PROBE_LOGGER = logging.getLogger("uvicorn.error")
 
 Authorized = Callable[..., Awaitable[Authorization]]
 ToolRouter = Callable[[NaappRuntime, Authorized], APIRouter]
@@ -63,6 +71,34 @@ class SecretsService(OriginApps):
             human_origin=settings.console_origin,
         )
         self.runtime = runtime
+
+    async def __call__(self, scope: Scope, receive: Receive, send: Send) -> None:
+        if scope["type"] != "http" or scope["path"] not in {"/ready", "/live"}:
+            await super().__call__(scope, receive, send)
+            return
+
+        async def probe_send(message: Message) -> None:
+            await send(message)
+            if message["type"] == "http.response.start":
+                # Uvicorn's configured error logger reaches container logs while
+                # its global access log remains off. JSON escapes untrusted query
+                # bytes into one line; headers and bodies never enter the record.
+                _PROBE_LOGGER.info(
+                    "probe_request %s",
+                    json.dumps(
+                        {
+                            "method": scope["method"],
+                            "path": scope["path"],
+                            "query": scope.get("query_string", b"").decode(
+                                "ascii", errors="backslashreplace"
+                            ),
+                            "status": message["status"],
+                        },
+                        ensure_ascii=True,
+                    ),
+                )
+
+        await super().__call__(scope, receive, probe_send)
 
 
 async def not_implemented() -> None:
@@ -89,10 +125,12 @@ def installation_fence(
     """The service's installation fence.
 
     Retiring an installation, on a confirmed uninstall or when a new
-    installation id is admitted, purges the team's role assignments in the
-    same transaction, so a reinstall starts with no roles (decision 48b).
+    installation id is admitted, purges roles and live credential material with
+    a value-free destruction receipt in the same transaction (decision 48b).
     """
-    return InstallationFence(db, app_id=app_id, grants=grants, on_retire=purge_team)
+    return InstallationFence(
+        db, app_id=app_id, grants=grants, on_retire=partial(retire_team, app_id=app_id)
+    )
 
 
 def create_app(
@@ -103,6 +141,7 @@ def create_app(
     kms: HealthCheck,
     health_labels: Mapping[str, StrEnum] | None = None,
     awid_transport: httpx.AsyncBaseTransport | None = None,
+    awid_domain_verifier: DomainVerifier | None = None,
     team_server_transport: httpx.AsyncBaseTransport | None = None,
     hook_egress: Egress | None = None,
     hook_internal_cidr: IPv4Network | IPv6Network | None = None,
@@ -111,6 +150,7 @@ def create_app(
     prepare: Prepare | None = None,
     console_routers: Sequence[ConsoleRouter] = (),
     runner_routers: Sequence[RunnerRouter] = (),
+    handoff_router: ConsoleRouter | None = None,
 ) -> SecretsService:
     """The secrets service. ``grants`` is the team-server grant authority,
     ``policy`` secrets' admission policy and ``kms`` its KMS canary.
@@ -122,13 +162,19 @@ def create_app(
     adapters under /runner/v1/ on the API origin outside B1; their existing
     protocol validates runner authority. Prepared services close before the
     database disconnects; composed routes are removed on failure and shutdown.
+    The shared handoff start mounts POST /handoffs on the API origin outside
+    B1; it authenticates the exact member signature itself, before any holding
+    or session admission. Its human routes are separate console factories.
     """
     runtime = NaappRuntime(
         settings,
         module_name=MODULE_NAME,
         migrations_path=MIGRATIONS_PATH,
         manifest_path=MANIFEST_PATH,
+        owner_acts=OWNER_ACTS,
+        owner_acts_origin=settings.console_origin,
         awid_transport=awid_transport,
+        awid_domain_verifier=awid_domain_verifier,
         team_server_transport=team_server_transport,
         hook_egress=hook_egress,
         hook_internal_cidr=hook_internal_cidr,
@@ -197,6 +243,16 @@ def create_app(
                                 raise ValueError("a runner route is composed more than once")
                             runner_paths.add(runner_path)
                         api.include_router(router)
+                    if handoff_router is not None:
+                        router = handoff_router(runtime)
+                        if len(router.routes) != 1 or any(
+                            not isinstance(route, APIRoute)
+                            or route.methods != {"POST"}
+                            or route.path != "/handoffs"
+                            for route in router.routes
+                        ):
+                            raise ValueError("handoff router contains only POST /handoffs")
+                        api.include_router(router)
                     for console_factory in console_routers:
                         console.include_router(console_factory(runtime))
                     # The runtime validates its static routes before opening
@@ -208,6 +264,11 @@ def create_app(
             console.router.routes[:] = console_routes
 
     api = FastAPI(lifespan=lifespan, docs_url=None, redoc_url=None, openapi_url=None)
-    mount_manifest_routes(api, runtime=runtime)
-    mount_health(api, settings, checks=checks, labels=health_labels)
+    mount_public_surfaces(
+        api,
+        runtime=runtime,
+        health_checks=checks,
+        console_origin=settings.console_origin,
+        health_labels=health_labels,
+    )
     return SecretsService(runtime, api, console)

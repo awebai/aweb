@@ -24,7 +24,7 @@ from pgdbm.core import TransactionManager
 from aweb_secrets import records, tool_results
 from aweb_secrets.grant import is_secrets_role
 from aweb_secrets.member_types import ToolReply
-from aweb_secrets.owners import OWNER_ROLE
+from aweb_secrets.owners import OWNER_ROLE, hold_owner
 from aweb_secrets.run_status import RunStatus
 
 _APPROVAL_STATES = {
@@ -71,9 +71,12 @@ class UseStatus:
                 key = principal_key(principal)
                 roles = []
                 for role in sorted(await roles_of(tx, key)):
-                    if (role == OWNER_ROLE or is_secrets_role(role)) and await hold_role(
-                        tx, key, role
-                    ):
+                    retained = (
+                        await hold_owner(tx, key, installation_id=scope.installation_id)
+                        if role == OWNER_ROLE
+                        else is_secrets_role(role) and await hold_role(tx, key, role)
+                    )
+                    if retained:
                         roles.append(role)
                 row = await tx.fetch_one(
                     "SELECT i.*,c.dispatch_id,d.state,d.result FROM {{tables.intents}} i"
@@ -146,7 +149,7 @@ class UseStatus:
                 return self._unavailable(receipt)
             try:
                 view = await self._approvals.requester_view(
-                    link["approval_ref"], row["principal_did"]
+                    link["approval_ref"], row["principal_did"], tx=tx
                 )
             except ApprovalRefused:
                 return self._unavailable(receipt)

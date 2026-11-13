@@ -1,25 +1,33 @@
-"""First owner and member requests go through the actual production root."""
+"""Existing canonical owners and member requests use the production root.
+
+Owner setup is a shared-writer component; the old HTTP binding path refuses.
+"""
 
 import asyncio
 import base64
 import json
+import secrets
 from dataclasses import dataclass, replace
 from datetime import UTC, datetime, timedelta
 from urllib.parse import parse_qs, urlsplit
 from uuid import uuid4
 
+import dns.asyncresolver as dns_api
 import httpx
 import pytest
 from aweb_naapp.egress import DnsResolver, InternalDestinations
 from aweb_naapp.hooks.envelope import KID_PATTERN, verify
 from aweb_naapp.roles import PrincipalKey, unassign
 from aweb_naapp.runtime.passkeys import contact_sha256
+from aweb_naapp.runtime.settings import AWIDMemberCredentialFiles
 from aweb_naapp_testing import Member
 from aweb_naapp_testing.network import DnsServer
 from aweb_naapp_testing.owner_acts import AUDIENCE, TeamOwner
 from aweb_naapp_testing.smtp import SmtpServer
 from aweb_naapp_testing.webauthn import SoftAuthenticator
 from awid.did import did_from_public_key
+from awid.dns_verify import DnsVerificationError
+from awid_service.deps import get_domain_verifier
 from awid_service.testing import SERVICE_TOKEN
 from cryptography.hazmat.primitives.asymmetric.x25519 import X25519PrivateKey
 from nacl.signing import SigningKey
@@ -33,6 +41,7 @@ from aweb_secrets.manifest import MANIFEST_PATH
 from aweb_secrets.owners import OWNER_ROLE, owner_scope
 from aweb_secrets.policy import Policy
 from aweb_secrets.secret import SecretRecord
+from tests.human_owner import apply_holder, fixture_principal, member_key
 from tests.production_authority import authority, install, install_audit_receiver, no_dns_override
 from tests.test_composition import settings
 from tests.test_console_bootstrap import delivered_url
@@ -53,9 +62,22 @@ async def envelopes(db, team_id):
 
 
 @pytest.fixture
-async def root(test_db_factory, registry, tmp_path):
-    member = Member(team_id="root:example.com")
-    async with authority(test_db_factory, registry, member) as (aweb_db, transport):
+async def root(test_db_factory, registry, tmp_path, request, monkeypatch):
+    member = Member(team_id="root:example.com", member_key=member_key("alice"))
+    options = getattr(request, "param", {})
+
+    async def domain_authority(domain):
+        # Forward the test registry's actual namespace authority, never a
+        # fabricated record or fallback to the public example.com DNS.
+        configured = registry.app.dependency_overrides.get(get_domain_verifier)
+        if configured is None:
+            raise DnsVerificationError("the test registry has no namespace verifier")
+        return await configured()(domain)
+
+    private = options.get("private_team", False)
+    async with authority(
+        test_db_factory, registry, member, visibility="private" if private else "public"
+    ) as (aweb_db, transport):
         database = await test_db_factory.create_db(suffix="production_bootstrap")
         with SmtpServer(tmp_path / "smtp") as smtp:
             configured = settings(database, tmp_path, smtp).model_copy(
@@ -64,9 +86,41 @@ async def root(test_db_factory, registry, tmp_path):
                     "awid_service_token": SERVICE_TOKEN,
                 }
             )
+            service_member = None
+            if private:
+                # An ordinary, separate service seat reads this private team.
+                # The production loader consumes its files, never test injection.
+                service_member = Member(
+                    team_id=member.team_id,
+                    team_key=member.team_key,
+                    certificate_id="secrets-service",
+                    alias="secrets-service",
+                )
+                await registry.add_certificate(service_member.certificate())
+                key_file = tmp_path / "service-member.key"
+                key_file.write_text(
+                    "-----BEGIN ED25519 PRIVATE KEY-----\n"
+                    + base64.b64encode(bytes(service_member.member_key)).decode()
+                    + "\n-----END ED25519 PRIVATE KEY-----\n"
+                )
+                key_file.chmod(0o600)
+                cert_file = tmp_path / "service-member.pem"
+                cert_file.write_text(json.dumps(service_member.certificate()))
+                cert_file.chmod(0o600)
+                configured = configured.model_copy(
+                    update={
+                        "awid_service_token": None,
+                        "awid_member_credentials": {
+                            member.team_id: AWIDMemberCredentialFiles(
+                                signing_key_file=key_file, certificate_file=cert_file
+                            )
+                        },
+                    }
+                )
             service = create_service(
                 configured,
                 awid_transport=registry.transport,
+                awid_domain_verifier=None if options.get("real_identity_dns") else domain_authority,
                 team_server_transport=transport,
             )
             service.runtime.team_server_directory()._registry_override = no_dns_override
@@ -75,6 +129,12 @@ async def root(test_db_factory, registry, tmp_path):
             # a real local NXDOMAIN answer instead of querying public DNS.
             dns = DnsServer()
             await dns.start()
+            # The SDK's AWID authority lookups read TXT through dnspython's
+            # default resolver. Point it at the same private server, so a test
+            # publishes the TXT evidence it needs and nothing reaches public DNS.
+            resolver = dns_api.Resolver(configure=False)
+            resolver.nameservers, resolver.port = ["127.0.0.1"], dns.port
+            monkeypatch.setattr(dns_api, "default_resolver", resolver)
             hook_transport = service.runtime._hooks.transport
             assert hook_transport is not None
             hook_transport._egress = replace(
@@ -84,7 +144,10 @@ async def root(test_db_factory, registry, tmp_path):
             try:
                 async with service.api_app.router.lifespan_context(service.api_app):
                     async with httpx.AsyncClient(transport=httpx.ASGITransport(service)) as client:
-                        manifest = await client.get(AUDIENCE + "/manifests/v2.json")
+                        client.owner_fixture_registry = registry
+                        client.service_fixture_member = service_member
+                        version = getattr(request, "param", {}).get("manifest_version", 2)
+                        manifest = await client.get(AUDIENCE + f"/manifests/v{version}.json")
                         assert manifest.status_code == 200
                         installed = await install(
                             aweb_db,
@@ -128,47 +191,107 @@ def owner_body(configured, member, installation_id):
     }
 
 
-async def signed_in_owner(root):
-    """The first owner, enrolled from the delivered email, signed in to the console."""
+@dataclass(frozen=True, repr=False)
+class EnrolledOwner:
+    scope: str
+    body: dict
+    token: str | None
+    device: SoftAuthenticator
+    csrf_token: str
+
+
+def mounted_owner_console(service):
+    """Find the one original dependency through pinned FastAPI's lazy includes."""
+    import inspect
+
+    from fastapi.routing import APIRoute, _IncludedRouter
+
+    def original_routes(routes):
+        for route in routes:
+            if isinstance(route, _IncludedRouter):
+                yield from original_routes(route.original_router.routes)
+            elif isinstance(route, APIRoute):
+                yield route
+
+    [route] = [
+        route
+        for route in original_routes(service.console_app.routes)
+        if route.path == "/installations/{installation_id}/owner-acts" and "POST" in route.methods
+    ]
+    return inspect.getclosurevars(route.endpoint).nonlocals["services"]
+
+
+async def enrolled_owner(root):
+    """Existing-holder component setup, followed by real production LOGIN.
+
+    This does not claim a supported bootstrap journey between16.43a and b.
+    The retired owner-acts HTTP route is tested independently for refusal.
+    """
+    from types import SimpleNamespace
+
     service, client, configured, member, installed, smtp, transport, dns = root
-    installation_id = installed["installation_id"]
-    scope, body = owner_body(configured, member, installation_id)
+    # Read the actual mounted dependency; do not build a second app service or
+    # replace its verifier, audit sink, installation lookup or Passkeys.
+    console = mounted_owner_console(service)
+    fixture = getattr(client, "owner_fixture", None)
+    principal = fixture_principal(member.team_id, "alice")
+    member.extra_cert_fields = {"member_did_aw": principal.principal_did}
+    if fixture is None:
+        admitted = await console.installation(installed["installation_id"], team_id=member.team_id)
+        owner = TeamOwner(
+            member.team_key, console.verifier, member.team_id, console.verifier._team_key_for
+        )
+        fixture = SimpleNamespace(
+            db=console.db,
+            console=console,
+            passkeys=console.passkeys,
+            admitted=admitted,
+            owner=owner,
+            credential_audit=console.credential_audit,
+            registry=client.owner_fixture_registry,
+        )
+        designation = await apply_holder(
+            fixture, "human-role.designate", principal, "owner@example.com"
+        )
+        fixture.scope = designation.approver.scope
+        client.owner_fixture = fixture
+    scope = fixture.scope
+    device = fixture.devices["owner@example.com"]
     human = configured.console_origin
-    response = await client.post(human + f"/installations/{installation_id}/owner-acts", json=body)
-    assert response.status_code == 200, (response.status_code, response.text)
-    url = delivered_url(smtp.received, contact=body["contact"], path="/enrolment")
-    assert (await client.get(url)).status_code == 200
-    [token] = parse_qs(urlsplit(url).fragment)["token"]
-    device = SoftAuthenticator(human)
-    options = await client.post(human + "/enrolment/options", json={"link_token": token})
-    assert options.status_code == 200
-    enrolled = await client.post(
-        human + "/enrolment",
-        json={"link_token": token, "credential": device.create(options.json())},
-    )
-    assert enrolled.status_code == 200, enrolled.text
     options = await client.post(human + "/login/options", json={"scope": scope})
     assert options.status_code == 200
     logged = await client.post(
         human + "/login", json={"scope": scope, "assertion": device.get(options.json())}
     )
     assert logged.status_code == 200, logged.text
-    return scope, body, token
+    return EnrolledOwner(
+        scope,
+        {"principal": principal.principal_did, "contact": "owner@example.com"},
+        None,
+        device,
+        logged.json()["csrf_token"],
+    )
 
 
-async def test_first_owner_enrols_from_actual_smtp_and_logs_into_production_console(root):
+async def signed_in_owner(root):
+    """The existing three-field owner helper for consumers that need no decision."""
+    owner = await enrolled_owner(root)
+    return owner.scope, owner.body, owner.token
+
+
+async def test_a_canonical_component_holder_logs_into_the_production_console(root):
     service, client, configured, member, installed, smtp, transport, dns = root
     human = configured.console_origin
-    scope, body, token = await signed_in_owner(root)
+    scope, body, _ = await signed_in_owner(root)
     home = await client.get(human + "/")
     assert home.status_code == 200 and "Secrets console" in home.text
     assert (await client.get(AUDIENCE + "/enrolment")).status_code == 404
     db = service.runtime.db()
-    assert await db.fetch_value("SELECT count(*) FROM owner_principals") == 1
+    assert await db.fetch_value("SELECT count(*) FROM owner_principals") == 0
+    assert await db.fetch_value("SELECT count(*) FROM role_holdings") == 1
     assert await db.fetch_value("SELECT count(*) FROM console_sessions") == 1
     assert [event["payload"]["act"] for event in await envelopes(db, member.team_id)] == [
         "role.designated",
-        "credential.enrolled",
     ]
     assert any(call.url.path.endswith("/self/grant") for call in transport.calls)
     assert any(
@@ -181,9 +304,17 @@ async def test_first_owner_enrols_from_actual_smtp_and_logs_into_production_cons
     assert listed.status_code == 200, listed.text
     assert listed.json()["result"]["secrets"] == []
     assert (await client.get(AUDIENCE + "/v1/secrets")).status_code == 401
-    assert (
-        await client.post(human + "/enrolment/options", json={"link_token": token})
-    ).status_code == 403
+    # No enrolment link exists after the cutover: none is stored, a
+    # well-formed token B3 never issued is refused, and governance records
+    # nothing.
+    assert await db.fetch_value("SELECT count(*) FROM passkey_enrolments") == 0
+    refused = await client.post(
+        human + "/enrolment/options", json={"link_token": secrets.token_urlsafe(32)}
+    )
+    assert (refused.status_code, refused.json()["detail"]) == (403, "enrolment_refused")
+    assert [event["payload"]["act"] for event in await envelopes(db, member.team_id)] == [
+        "role.designated",
+    ]
     async with asyncio.timeout(5):
         while dns.queries[("logs.example", "A")] == 0:
             await asyncio.sleep(0.01)
@@ -284,7 +415,7 @@ async def test_bootstrap_authority_controls_leave_no_owner_nonce_or_audit(root, 
 
 @dataclass(repr=False)
 class ProductionRequest:
-    token: str
+    token: str | None
     device: SoftAuthenticator
     path: str
     raw: bytes
@@ -304,22 +435,11 @@ async def approval_request(root, kind):
     """
     service, client, configured, member, installed, smtp, _, _ = root
     installation_id = installed["installation_id"]
-    scope, body = owner_body(configured, member, installation_id)
-    human = configured.console_origin
-    designated = await client.post(
-        human + f"/installations/{installation_id}/owner-acts", json=body
+    holder = await enrolled_owner(root)
+    body, device = holder.body, holder.device
+    policy = Policy.from_body(
+        {**POLICY_BODY, "approvers": ["owner:" + member.extra_cert_fields["member_did_aw"]]}
     )
-    assert designated.status_code == 200
-    url = delivered_url(smtp.received, contact=body["contact"], path="/enrolment")
-    [token] = parse_qs(urlsplit(url).fragment)["token"]
-    options = await client.post(human + "/enrolment/options", json={"link_token": token})
-    device = SoftAuthenticator(human)
-    enrolled = await client.post(
-        human + "/enrolment",
-        json={"link_token": token, "credential": device.create(options.json())},
-    )
-    assert enrolled.status_code == 200
-    policy = Policy.from_body({**POLICY_BODY, "approvers": ["owner:" + member.did_key]})
     db = service.runtime.db()
     custody = Custody(LocalKeyFileProvider(configured.custody_key_file), db)
     job_body = job_after()
@@ -331,7 +451,7 @@ async def approval_request(root, kind):
     runner_encryption_key = X25519PrivateKey.generate()
     credential = uuid4().hex
     async with db.transaction() as tx:
-        await records.create_policy(tx, installation_id, policy)
+        await records.create_policy(tx, installation_id, policy, team_id=member.team_id)
         await records.create_secret(
             tx, installation_id, member.team_id, SecretRecord.from_after(SECRET)
         )
@@ -354,7 +474,7 @@ async def approval_request(root, kind):
                     "v": 1,
                     "grant_id": "grt_root_dispatch",
                     "secret_id": SECRET["secret_id"],
-                    "subject": {"principal": member.did_key},
+                    "subject": {"principal": member.extra_cert_fields["member_did_aw"]},
                     "capability": "use" if kind == "use" else "run",
                     "operations": [],
                     "open_request": kind == "use",

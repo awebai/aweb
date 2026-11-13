@@ -44,6 +44,7 @@ func TestRegistryMemberReadAuthentication(t *testing.T) {
 			}))
 			defer server.Close()
 			resolver := NewRegistryResolver(server.Client(), nil)
+			routeUntrustedResolverRegistriesToInjectedClient(resolver)
 			resolver.TeamReadSigningKey = tc.key
 			if err := resolver.SetFallbackRegistryURL(server.URL); err != nil {
 				t.Fatal(err)
@@ -114,6 +115,7 @@ func TestMailAndChatPrivateTeamRecipientBinding(t *testing.T) {
 				}))
 				defer server.Close()
 				resolver := NewRegistryResolver(server.Client(), nil)
+				routeUntrustedResolverRegistriesToInjectedClient(resolver)
 				if signed {
 					resolver.TeamReadSigningKey = callerKey
 				}

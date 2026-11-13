@@ -9,13 +9,18 @@ from __future__ import annotations
 
 import logging
 from collections.abc import Mapping
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from types import MappingProxyType
 from typing import Any, Literal
 
 from awid.did import stable_id_from_did_key
 from awid.id_certificates import IDCertificateError, status_request, verify_id_chain
-from awid.registry_types import DIDKeyNotFoundError, IDTreeEnrollment, RegistryError
+from awid.registry_types import (
+    DIDKeyNotFoundError,
+    IDTreeEnrollment,
+    RegistryError,
+    RegistryThrottled,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -24,11 +29,17 @@ class IdentityObservationRefused(ValueError):
     """A binding mismatch or unavailable evidence; no web-framework dependency."""
 
     def __init__(
-        self, code: Literal["identity_binding_mismatch", "identity_binding_unavailable"]
+        self, code: Literal["identity_binding_mismatch", "identity_binding_unavailable"],
+        *, retry_after_seconds: float | None = None,
     ) -> None:
         if code not in ("identity_binding_mismatch", "identity_binding_unavailable"):
             raise ValueError("unknown identity observation refusal")
         self.code = code
+        # Only dependency unavailability can carry a typed upstream retry hint.
+        # HTTP adapters retain their own safe serialization policy.
+        self.retry_after_seconds = (
+            retry_after_seconds if code == "identity_binding_unavailable" else None
+        )
         super().__init__(code)
 
 
@@ -92,7 +103,12 @@ async def observe_identity_binding(
         if exc.status_code == 404:
             raise IdentityObservationRefused("identity_binding_mismatch") from exc
         logger.warning("Identity binding registry dependency failed", exc_info=True)
-        raise IdentityObservationRefused("identity_binding_unavailable") from exc
+        raise IdentityObservationRefused(
+            "identity_binding_unavailable",
+            retry_after_seconds=(
+                exc.retry_after_seconds if isinstance(exc, RegistryThrottled) else None
+            ),
+        ) from exc
     except Exception as exc:
         logger.warning("Identity binding registry dependency failed", exc_info=True)
         raise IdentityObservationRefused("identity_binding_unavailable") from exc
@@ -113,6 +129,9 @@ class IdentityKindObservation:
     did_key: str
     did_aw: str
     result: Mapping[str, Any]
+    # Original producer age, for consumers carrying evidence across authority
+    # waits. This in-process metadata changes neither classification nor equality.
+    evidence_age_seconds: float | None = field(default=None, compare=False)
 
     @property
     def is_human(self) -> bool:
@@ -143,6 +162,7 @@ async def observe_identity_kind(
     team/address inference is performed here.
     """
     subject = {"id": binding.did_aw or binding.did_key, "did_key": binding.did_key}
+    evidence_age_seconds = None
     try:
         enrollment = binding.id_tree
         if binding.did_aw and enrollment is None:
@@ -171,11 +191,13 @@ async def observe_identity_kind(
                         )
                     except Exception:
                         logger.warning("ID-tree cached evidence failed", exc_info=True)
+            if evidence is not None:
+                evidence_age_seconds = evidence.age_seconds
             result = verify_id_chain(
                 bundle, subject=subject, evidence=evidence, domain=domain
             )
     except IDCertificateError as exc:
         result = unverified_kind(exc.code)
     return IdentityKindObservation(
-        binding.did_key, binding.did_aw, MappingProxyType(result)
+        binding.did_key, binding.did_aw, MappingProxyType(result), evidence_age_seconds
     )

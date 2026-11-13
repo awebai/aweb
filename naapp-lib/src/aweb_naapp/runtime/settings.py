@@ -8,10 +8,16 @@ defaults; everything else here is common to every naapp.
 from __future__ import annotations
 
 from pathlib import Path
-from typing import Self
+from typing import Any, Self
 
-from pydantic import Field, SecretStr, field_validator, model_validator
-from pydantic_settings import BaseSettings, SettingsConfigDict
+from pydantic import BaseModel, ConfigDict, Field, SecretStr, field_validator, model_validator
+from pydantic.fields import FieldInfo
+from pydantic_settings import (
+    BaseSettings,
+    EnvSettingsSource,
+    PydanticBaseSettingsSource,
+    SettingsConfigDict,
+)
 
 from aweb_naapp.outbox import MAX_CALL_TIMEOUT_SECONDS
 from aweb_naapp.runtime.team_auth import (
@@ -19,10 +25,61 @@ from aweb_naapp.runtime.team_auth import (
     MAX_TIMESTAMP_SKEW_SECONDS,
     DidAwProfile,
 )
+from aweb_naapp.settings import mounted_value
+
+
+class _MountedEnvSource(EnvSettingsSource):
+    def get_field_value(self, field: FieldInfo, field_name: str) -> tuple[Any, str, bool]:
+        for key, name, complex_value in self._extract_field_info(field, field_name):
+            path = self.env_vars.get(self._apply_case_sensitive(name + "_FILE"))
+            if path is not None:
+                return (
+                    mounted_value(name.upper(), self.env_vars.get(name), path),
+                    key,
+                    complex_value,
+                )
+        return super().get_field_value(field, field_name)
+
+
+class AWIDMemberCredentialFiles(BaseModel):
+    """An ordinary member certificate of one team and its signing key, in the
+    files ``aw`` writes: the signing key as its ``ED25519 PRIVATE KEY`` PEM
+    block, and the team certificate as JSON."""
+
+    model_config = ConfigDict(extra="forbid", frozen=True)
+
+    signing_key_file: Path
+    certificate_file: Path
 
 
 class NaappSettings(BaseSettings):
-    model_config = SettingsConfigDict(env_file=".env", extra="ignore")
+    model_config = SettingsConfigDict(env_file=".env", extra="ignore", hide_input_in_errors=True)
+
+    @classmethod
+    def settings_customise_sources(
+        cls,
+        settings_cls: type[BaseSettings],
+        init_settings: PydanticBaseSettingsSource,
+        env_settings: PydanticBaseSettingsSource,
+        dotenv_settings: PydanticBaseSettingsSource,
+        file_secret_settings: PydanticBaseSettingsSource,
+    ) -> tuple[PydanticBaseSettingsSource, ...]:
+        assert isinstance(env_settings, EnvSettingsSource)
+        return (
+            init_settings,
+            _MountedEnvSource(
+                settings_cls,
+                case_sensitive=env_settings.case_sensitive,
+                env_prefix=env_settings.env_prefix,
+                env_nested_delimiter=env_settings.env_nested_delimiter,
+                env_nested_max_split=env_settings.env_nested_max_split,
+                env_ignore_empty=env_settings.env_ignore_empty,
+                env_parse_none_str=env_settings.env_parse_none_str,
+                env_parse_enums=env_settings.env_parse_enums,
+            ),
+            dotenv_settings,
+            file_secret_settings,
+        )
 
     database_url: str
     # The schema the app's tables live in, pinned on every connection so the
@@ -32,6 +89,10 @@ class NaappSettings(BaseSettings):
     app_id: str
     awid_registry_url: str = Field(default="https://api.awid.ai")
     awid_service_token: str | None = Field(default=None, repr=False)
+    # A customer-hosted app's own member certificate per team, with which it
+    # path-signs that team's gated AWID reads; the service token, when set,
+    # takes precedence (a hosted deployment).
+    awid_member_credentials: dict[str, AWIDMemberCredentialFiles] = Field(default_factory=dict)
     # The verifier's own limits: a deployment cannot configure past them.
     auth_cache_ttl_seconds: int = Field(
         default=MAX_TEAM_FACTS_TTL_SECONDS, ge=1, le=MAX_TEAM_FACTS_TTL_SECONDS

@@ -15,9 +15,9 @@ from datetime import UTC, datetime, timedelta
 from typing import TYPE_CHECKING, Any, Protocol
 from uuid import UUID
 
-from aweb_naapp.console import ConsoleSession, session_is_current
+from aweb_naapp.console import ConsoleSession, KeyBoundConsoleSession, session_is_current
 from aweb_naapp.idempotency import IdempotencyConflict, IdempotencyExpired, claim
-from aweb_naapp.roles import PrincipalKey, hold_role, principal_key, unassign
+from aweb_naapp.roles import PrincipalKey, principal_key, unassign
 from aweb_naapp.runtime.approvals import Approvals
 from aweb_naapp.runtime.authorization import Grant
 from aweb_naapp.runtime.installation import AdmittedInstallation, InstallationFence
@@ -26,17 +26,20 @@ from aweb_naapp.runtime.passkeys import (
     PasskeyProofUnavailable,
     Passkeys,
     RetirementRefused,
+    prepare_retirement,
 )
 from aweb_naapp.runtime.team_auth import Principal
 from pgdbm import AsyncDatabaseManager
 from pgdbm.core import TransactionManager
 
-from aweb_secrets import derived_lineage, use_approvals
+from aweb_secrets import derived_lineage, run_pin_store, use_approvals
+from aweb_secrets.console import KeyBoundPreparation
 from aweb_secrets.containment_state import ContainmentRefused
 from aweb_secrets.containment_state import require_enabled as require_enabled
 from aweb_secrets.custody import Custody, SealContext
 from aweb_secrets.grant import is_secrets_role
-from aweb_secrets.owners import OWNER_ROLE, OwnerDirectory, owner_scope
+from aweb_secrets.owners import OwnerDirectory, owner_binding, owner_scope
+from aweb_secrets.owners import hold_owner as hold_owner_holding
 from aweb_secrets.principal import is_principal
 from aweb_secrets.revisions import bump_config_revision
 from aweb_secrets.tokens import TokenCache
@@ -132,6 +135,9 @@ async def disable_secret_tree(
         revoked_by=revoked_by,
         reason="secret_disabled",
     )
+    await run_pin_store.prepare_secrets(
+        tx, installation_id=installation_id, team_id=team_id, secret_ids=ids
+    )
     await _disable(
         tx,
         custody,
@@ -139,7 +145,7 @@ async def disable_secret_tree(
         team_id=team_id,
         secret_ids=ids,
     )
-    await bump_config_revision(tx, installation_id)
+    await bump_config_revision(tx, installation_id, team_id=team_id)
     return ids
 
 
@@ -213,6 +219,8 @@ async def disable_installation(
         revoked_by=revoked_by,
         reason="installation_disabled",
     )
+    await run_pin_store.prepare_installation(tx, installation_id=installation_id, team_id=team_id)
+    await run_pin_store.discard_installation(tx, installation_id=installation_id, team_id=team_id)
     await tx.execute(
         "INSERT INTO {{tables.containment_installations}} (installation_id, team_id, disabled_at)"
         " VALUES ($1,$2,NOW()) ON CONFLICT (installation_id, team_id)"
@@ -220,7 +228,7 @@ async def disable_installation(
         installation_id,
         team_id,
     )
-    await bump_config_revision(tx, installation_id)
+    await bump_config_revision(tx, installation_id, team_id=team_id)
     return ids
 
 
@@ -241,6 +249,7 @@ ACTIONS = {
     "deregister-runner": "runner.deregistered",
 }
 GovernanceEnqueue = Callable[..., Awaitable[UUID]]
+BeforeApprovals = Callable[[TransactionManager], Awaitable[None]]
 
 
 class RunnerDeregistration(Protocol):
@@ -271,6 +280,7 @@ class Containment:
         governance: GovernanceEnqueue,
         credential_audit: "CredentialAudit",
         deregister_runner: RunnerDeregistration | None = None,
+        prepare_key_bound: KeyBoundPreparation | None = None,
     ) -> None:
         self.db = db
         self.fence = fence
@@ -282,6 +292,7 @@ class Containment:
         self.governance = governance
         self.credential_audit = credential_audit
         self.deregister_runner = deregister_runner
+        self._prepare_key_bound = prepare_key_bound
 
     async def evict(self, installation_id: str, team_id: str, ids: tuple[str, ...]) -> None:
         for secret_id in ids:
@@ -318,7 +329,9 @@ class Containment:
             actor["did_aw"] = principal.did_aw
         async with self.db.transaction() as tx:
             installed = await self.fence.admit(tx, grant)
-            if not await hold_role(tx, key, OWNER_ROLE):
+            if action == "revoke-approver":
+                await prepare_retirement(tx, installation=installed)
+            if not await hold_owner_holding(tx, key, installation_id=installed.installation_id):
                 if action != "revoke-approvals" or target is None:
                     raise ContainmentRefused("owner_required")
                 await self._authorize_member_approver(
@@ -419,8 +432,8 @@ class Containment:
                     actor={"authority_mode": "system", "attestations": []},
                     evidence_sha256=commitment,
                 )
-            await self._session_current(tx, session)
             await self.fence.check(tx, admitted)
+            await self._session_current(tx, session)
             self._session_unexpired(session)
         try:
             await self.evict(admitted.installation_id, admitted.team_id, result.affected_secret_ids)
@@ -440,7 +453,9 @@ class Containment:
         # F6, application authority and exact LOGIN credential precede this
         # session lock. Logout only updates the session row. Holding it makes
         # logout serialize with the effect, while a completed logout is seen.
-        if not await session_is_current(tx, session, hold=True):
+        if not await session_is_current(
+            tx, session, hold=not isinstance(session, KeyBoundConsoleSession)
+        ):
             raise ContainmentRefused("console_session_required", 401)
 
     @staticmethod
@@ -545,7 +560,7 @@ class Containment:
                 await unassign(tx, PrincipalKey(team_id, member_principal), target)
             # Every fresh narrowing act invalidates drafts, including an
             # observed no-op. Exact receipt replays returned above.
-            await bump_config_revision(tx, installation_id)
+            await bump_config_revision(tx, installation_id, team_id=team_id)
             if role_present:
                 await self.credential_audit.record_role_revoked(
                     tx,
@@ -724,6 +739,7 @@ class Containment:
         secret_ids: tuple[str, ...],
         approval_ids: tuple[str, ...] = (),
         job_ids: Sequence[str] = (),
+        before_approvals: BeforeApprovals | None = None,
     ) -> None:
         """Lock the complete replacement/reenable forest before B2 consumption.
 
@@ -795,9 +811,16 @@ class Containment:
             team_id=team_id,
             secret_ids=tuple(affected),
         )
+        if before_approvals is not None:
+            await before_approvals(tx)
         await self.approvals.lock_many(
             tx,
             [*approval_ids, *associated_ids],
+        )
+        # App's trusted B3 callback stays before B2. Prepare the ENTIRE
+        # affected S3/pin union only after B2, before revision or item effects.
+        await run_pin_store.prepare_secrets(
+            tx, installation_id=installation_id, team_id=team_id, secret_ids=affected
         )
 
     async def reenable(
@@ -885,13 +908,7 @@ class Containment:
         credential_id: bytes | None,
         authorized_by: str,
     ) -> None:
-        owner = await tx.fetch_one(
-            "SELECT scope, principal_did FROM {{tables.owner_principals}}"
-            " WHERE installation_id=$1 AND team_id=$2 AND scope=$3",
-            installation_id,
-            team_id,
-            target,
-        )
+        owner = await owner_binding(tx, target, installation_id=installation_id, team_id=team_id)
         approver = await tx.fetch_one(
             "SELECT scope FROM {{tables.approvers}}"
             " WHERE installation_id=$1 AND team_id=$2 AND (approver_ref=$3 OR scope=$3)"
@@ -958,7 +975,7 @@ class Containment:
                 await self.passkeys.revoke_passkey_in(tx, credential_id=credential_id, **kwargs)
         except RetirementRefused as refused:
             raise ContainmentRefused(refused.reason) from None
-        await bump_config_revision(tx, installation_id)
+        await bump_config_revision(tx, installation_id, team_id=team_id)
 
     async def authorize_console(
         self,
@@ -973,6 +990,10 @@ class Containment:
 
         The caller admits the installation first and uses S4 for session expiry
         and CSRF. Application authority locks precede B3's scope/credential locks.
+        For retirement, enter with F6 already held and before any actor/target
+        role, B3 or S4 holds: this call takes the shared retirement entry gate.
+        Do not refresh or upgrade F6 afterward; recheck the original evidence
+        deadline after waits and at the final effect fence.
         Return whether the authorized caller is an owner.
         """
         owner, _ = await self._authorize_console(
@@ -995,6 +1016,8 @@ class Containment:
         target: str | None,
         member_principal: str | None,
     ) -> tuple[bool, bool]:
+        if action == "revoke-approver":
+            await prepare_retirement(tx, installation=admitted)
         owner = await self._console_authority(
             tx,
             admitted=admitted,
@@ -1007,11 +1030,19 @@ class Containment:
         role_present = action == "remove-role-member" and await self._lock_role_member(
             tx, admitted, target, member_principal
         )
+        signed = isinstance(session, KeyBoundConsoleSession)
+        if signed:
+            if self._prepare_key_bound is None:
+                raise ContainmentRefused("console_session_required", 401)
+            await self._prepare_key_bound(
+                tx, session, approver_pairs=[(session.scope, session.subject)]
+            )
         if not await self.passkeys.login_evidence_is_current(
             session.scope,
             session.subject,
             session.evidence_ref,
             tx=tx,
+            hold=not signed,
         ):
             raise ContainmentRefused("login_evidence_unavailable", 401)
         return owner, role_present
@@ -1048,7 +1079,7 @@ class Containment:
             and owner.team_id == admitted.team_id
             and session.scope
             == owner_scope(admitted.installation_id, owner.team_id, owner.principal_did)
-            and await hold_role(tx, owner, OWNER_ROLE)
+            and await hold_owner_holding(tx, owner, installation_id=admitted.installation_id)
         ):
             # Pre-acquire normal resource authority before B3 login evidence.
             await self._prepare_action(tx, admitted, action, target)
@@ -1150,14 +1181,14 @@ class Containment:
         # and holder AFTER acquiring it, so a completed retirement is seen and
         # a concurrent retirement commits after this narrowing action.
         await self.approvals.lock_many(tx, [approval_id])
-        approval = await self.approvals.get(approval_id)
+        approval = await self.approvals.get(approval_id, tx=tx)
         if approval is not None:
             current_scopes = set()
             for candidate in approval.candidates:
                 if (
                     candidate.principal_did == principal_did
                     and candidate.retired_at is None
-                    and await self.passkeys.is_current(candidate.scope, candidate.subject)
+                    and await self.passkeys.is_current(candidate.scope, candidate.subject, tx=tx)
                 ):
                     current_scopes.add(candidate.scope)
             if all(scopes.intersection(current_scopes) for scopes in scope_sets):

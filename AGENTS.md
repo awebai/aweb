@@ -2,10 +2,9 @@ We use main as the sync branch.
 
 Work is done in worktrees.
 
-Every landing goes through the coordinator's per-repository train. Get an
-independent review ACK, push your branch, and send a landing request with the
-exact head SHA, non-merge commit count and ACK message IDs. The review and
-handoff requirements are detailed below; active team instructions govern.
+Landing follows the active team instructions (`aw instructions show`): get an
+independent review ACK on the exact head, push your branch, and send the
+coordinator a landing request. Authors do not merge to main.
 
 Do not copy teammate names, presence timestamps, or current availability into
 repository or profile instructions. Resolve current responsibility and
@@ -36,53 +35,27 @@ rather than choosing silently.
 Never make work-in-progress or temporary branches. Stay on the worktree and
 branch assigned to you.
 
-When you finish a task, review your change and get one independent review ACK
-on the exact head SHA, with the number of non-merge commits read. Add Athena
-when the change touches security, auth, identity or data, and UX when
-user-visible screens or words change. Test-only, config-only and tooling
-changes need one reviewer.
-
-**Every landing goes through the coordinator's per-repository train.** Authors
-push their reviewed branch and send the coordinator a landing request with:
-
-- Repository and branch.
-- Exact head SHA and number of non-merge commits over `origin/main`.
-- Review ACK message IDs.
-- Any required landing order or dependencies.
-
-Resolve the coordinator from active team instructions and `aw workspace status`.
-Authors do not merge to main or queue individual whole-suite runs. Focused tests
-remain the author's responsibility; whole suites run only in trains under the
-shared suite lock. Never hand off unreviewed work.
-
-Merge `origin/main` into your branch before handing off. If the reviewed files
-are unchanged, no new ACK is needed; otherwise the same reviewer reads the
-delta. The coordinator merges ACKed heads onto current `origin/main` in a
-separate integration worktree, checks the three-dot diff matches the reviewed
-change and that no main commits are lost, and runs one covering gate for the
-repository. A green train lands the heads and reports each landed SHA; a
-failing head returns to its author for a fix.
-
-The exact SHA alone does not establish what lands after main moves. Follow
-"Before you push to main" in the active team instructions for the coordinator's
-integration checks.
+When you finish a task, review your change, get an independent review ACK on
+the exact head SHA, push your branch and send the coordinator a landing
+request. Authors do not merge to main. Who reviews, what the landing request
+carries, the checks you run on the exact head before sending it, and how the
+coordinator lands it and gates main are set in the "Branches and code reviews"
+section of the active team instructions (`aw instructions show`). Follow them
+there; this file does not restate them.
 
 ## Start Here
 
-Run these before claiming new work. The order is deliberate.
+Run these at the start of each session. Order is deliberate: inspect the team,
+then handle waiting mail and chat so a handoff, blocker, or waiting teammate
+does not go unnoticed.
 
 ```bash
-aw workspace status   # who is online, active team, identity, claims, locks
-aw mail inbox         # async handoffs, reviews, blockers - process first
+aw workspace status   # who is online, active team, identity, locks
+aw mail inbox         # async handoffs, reviews, blockers — process first
 aw chat pending       # someone may be blocked waiting on you
-aw work ready         # only after the above; pick the smallest actionable item
 ```
 
-Your inbox and your waiting chats come before the work queue because claiming
-first means taking a task while a blocking message or a waiting teammate sits
-unread. `aw mail inbox` shows unread only by default, so an empty inbox and an
-unreachable one look identical without `--show-all`; `aw chat pending` lists
-only waiting conversations, so open each one.
+If `aw workspace status` reports the directory is not bound to a team (no `.aw/workspace.yaml`, no certificate, etc.), stop and load `aweb-team-membership` before doing coordination work.
 
 The canonical source for this order is the `aweb-coordination` skill. This block
 reproduces it so it is available without loading the skill. If the two ever
@@ -91,10 +64,13 @@ than choosing silently. When the skill is not installed, this block is the
 startup authority on its own; messaging needs neither the skill nor a profile
 service.
 
+This team tracks its work in aweb tasks: after the loop, follow the `aweb-tasks`
+skill's ready/active loop (`aw work ready`, `aw work active`) before claiming.
+
 ## Shared Rules
 
 - Use `aw` for coordination work.
-- Treat `.aw/workspace.yaml` as the repo-local coordination identity for this worktree.
+- Select the acting identity with `--identity-home`, then `AWEB_IDENTITY_HOME`, then the current directory's `.aw`.
 - Default to mail for non-blocking coordination: `aw mail send --to <agent> --subject "<subject>" --body-file <body-path>` starts a new thread; answer in the conversation with `aw mail reply <message-id> --body-file <body-path>`.
 - Use chat when you need a synchronous answer: `aw chat pending`, then `aw chat send-and-wait <agent> --body-file <body-path>`.
 - Respond promptly to waiting conversations.
@@ -157,12 +133,15 @@ aw chat extend-wait <alias> --body-file <body-path>
 
 ## Identity
 
-Never run `aw` from another workspace or worktree when doing coordination work.
+`aw` selects the acting identity from `--identity-home`, otherwise
+`AWEB_IDENTITY_HOME`, otherwise the current directory's `.aw`. A selected
+identity that cannot be loaded fails; it never falls back to the checkout's
+identity. See `docs/cli-identity-selection.md` for the full contract.
 
-`aw` derives coordination context from `.aw/workspace.yaml` in the current
-worktree. Running it from another repo or worktree can impersonate that
-workspace's agent, causing messages from the wrong agent, work claimed under the
-wrong identity, and coordination confusion.
+In an OATS seat, run `aw` from the assigned instance home. Use `--identity-home`
+only when deliberately acting through another authorized identity. Repository
+work stays in the assigned worktree. Check `aw whoami` and `aw workspace status`
+before coordinating.
 
 ## Teamwork
 

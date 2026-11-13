@@ -19,7 +19,7 @@ to refresh it.
 | Identity | `auth`, `custody`, `id`, `mcp-config`, `org`, `team`, `whoami` |
 | Messaging & Network | `a2a`, `beads-mail`, `chat`, `contacts`, `control`, `directory`, `events`, `gc-mail`, `heartbeat`, `inbound-mode`, `log`, `mail`, `room`, `wake` |
 | Coordination & Runtime | `activity`, `agent`, `instructions`, `lock`, `notify`, `role-name`, `roles`, `run`, `status`, `status-host`, `task`, `work` |
-| Utility | `completion`, `doctor`, `help`, `hooks`, `plugin`, `upgrade`, `version` |
+| Utility | `app`, `audit`, `completion`, `doctor`, `help`, `hooks`, `plugin`, `upgrade`, `version` |
 | Additional Commands | `blueprint`, `session`, `who` |
 
 ## Global Flags
@@ -410,6 +410,7 @@ Subcommands:
 - `child` Invite, receive and approve requests from children you issue
 - `create` Create a global identity by claiming a namespace address
 - `encryption-key` Manage local E2E encryption keys for this self-custodial identity
+- `endorse` Have a human endorse this agent as the deployment's root, through the protected service
 - `grant` Scoped, revocable session grants derived from this identity
 - `human` Human identities in a namespace's identity tree
 - `log` Show a global AWID DID log
@@ -610,7 +611,9 @@ Flags:
 - `-h, --help help for create`
 - `--human-parent string did:aw of the issuing human (local key, or a registered account human with --org)`
 - `--inbound-mode string Hosted inbound delivery mode (default team-and-contacts; requires --org)`
+- `--local Create a key-only local identity (a did:key registered nowhere) in an explicit fresh --identity-home; resumable, and a rerun returns it`
 - `--name string Global identity name (address name under --domain)`
+- `--no-address Create a registered identity with no address in an explicit fresh --identity-home, registering its own did:aw at --registry; resumable`
 - `--org string Hosted organization slug or ID (human CLI login or explicit owner principal)`
 - `--owner-identity-home string Authorize --org creation with this owner's absolute native credential directory`
 - `--registry string Registry origin override (default: api.awid.ai)`
@@ -658,6 +661,31 @@ Show local E2E encryption key state
 
 Flags:
 - `-h, --help help for show`
+
+## `id endorse`
+
+### `id endorse`
+
+Ask the protected service named by --protected-profile to have --human endorse
+this registered agent as the deployment's root for --team. The human approves the
+exact act on the service's page; nothing is signed here. Before the page is shown,
+aw checks the admission policy the service froze against its own read of every
+team's policy. Endorsement grants no resource permissions and creates no policy.
+
+--operation-id is the caller's UUID, kept before anything is sent. Running again
+with the same id and inputs resumes that operation; changed inputs refuse
+operation_conflict. Once the endorsement commits, aw registers the root's new
+certificate at the pinned registry and reads it back.
+
+Flags:
+- `--deployment-label string The deployment's name, shown to the human`
+- `-h, --help help for endorse`
+- `--human string The did:aw of the human who endorses this root`
+- `--no-browser Do not open a browser; the page is only reported`
+- `--no-wait Show the approval page and exit without waiting for the human; rerun with the same --operation-id to finish`
+- `--operation-id string The caller's UUID for this endorsement; the same id resumes it`
+- `--protected-profile string The operator-provisioned protected-service profile`
+- `--team stringArray A team (name:domain) the root will admit agents to; repeat for each`
 
 ## `id grant`
 
@@ -1097,17 +1125,21 @@ holders, service projection, or diagnostics.
 Subcommands:
 - `accept-invite` Accept a team invite and receive a membership certificate
 - `add-member` Protocol/admin: add a member by signing a team certificate
+- `admission-policy` Read a protected team's agent admission policy from its protected service
+- `admit` Admit an agent to a protected team through its protected service, as the endorsed root
 - `cleanup-cloud` Protocol/admin: delete aweb Cloud's BYOT projection after registry team deletion
 - `create` Create a hosted sibling team or a customer-controlled AWID team
 - `delete` Protocol/admin: delete an AWID team using the namespace controller key
 - `fetch-cert` Protocol/admin bridge: fetch and install an approved team certificate
 - `import-request` Protocol/admin: create a signed BYOT import request for aweb cloud
+- `install-cert` Install an issued team certificate file into an identity home
 - `invite` Generate an invite token for a team
 - `leave` Remove a team membership from this identity
 - `list` List team memberships for this identity
 - `members` List a team's members from AWID certificates
 - `register` Protocol/admin: register or sync a customer-controlled team with a service
 - `reissue-cert` Protocol/admin: mint and register a fresh certificate for the same member key
+- `remove-agent` Remove an admitted agent from a protected team through its protected service, as the endorsed root
 - `remove-member` Protocol/admin: remove a member by revoking a team certificate
 - `request` Protocol/admin bridge: print the add-member command the team owner should run
 - `rotate-key` Rotate the team controller key, re-signing the team's AWID records with it
@@ -1180,6 +1212,51 @@ Flags:
 - `--name string Member name to use with --did`
 - `--namespace string Namespace domain`
 - `--team string Team name`
+
+## `id team admission-policy`
+
+### `id team admission-policy`
+
+Read a team's agent admission policy from the protected service named by
+--protected-profile, proving this identity's current key.
+
+The answer says whether the team is protected or legacy and, for a protected
+team, the immutable policy version and digest an admission binds. A protected
+team without a policy refuses admission_policy_missing: the operator provisions
+or approves one; aw never creates it. A read that cannot be answered refuses
+receipt_unavailable and never means the team has no policy.
+
+Flags:
+- `-h, --help help for admission-policy`
+- `--protected-profile string The operator-provisioned protected-service profile to read the policy from`
+- `--team string The team (name:domain) whose policy to read; the profile must bind its controller`
+
+## `id team admit`
+
+### `id team admit`
+
+Admit one agent to a protected team as an ordinary member, through the protected
+service named by --protected-profile, proving this identity's key as the
+deployment's endorsed root. No human approves it: the service admits only within
+the team's admission policy, whose version and digest the caller names as read
+from aw id team admission-policy.
+
+--operation-id is the caller's UUID, kept before anything is sent. Running again
+with the same id and the same inputs resumes that operation and returns its
+original certificate; changed inputs under the id refuse operation_conflict. The
+verified membership certificate is written to --certificate-out.
+
+Flags:
+- `--alias string The agent's member alias`
+- `--certificate-out string Where to write the agent's membership certificate`
+- `-h, --help help for admit`
+- `--member-id string The agent's did:aw, when it is a registered identity; omit for a local agent`
+- `--member-key string The agent's did:key`
+- `--operation-id string The caller's UUID for this admission; the same id resumes it`
+- `--policy-digest string The admission policy digest the caller read (sha256:<hex>)`
+- `--policy-version int The admission policy version the caller read`
+- `--protected-profile string The operator-provisioned protected-service profile`
+- `--team string The protected team (name:domain)`
 
 ## `id team cleanup-cloud`
 
@@ -1289,6 +1366,33 @@ Flags:
 - `--organization-id string AC organization id for a new imported team`
 - `--team string Team name`
 - `--timestamp string RFC3339 timestamp to sign (defaults to now; accepted for five minutes by cloud)`
+
+## `id team install-cert`
+
+### `id team install-cert`
+
+Install a team membership certificate file, such as the one `aw id team admit`
+wrote with --certificate-out, into the explicit --identity-home whose identity it
+names. The certificate is checked against the registry before anything is
+written; then `aw service init` connects the home's workspace.
+
+Running it again with the same certificate reports already_installed and
+completes an install that was interrupted. Refusals, with their --json codes:
+  certificate_invalid        the file is not a team certificate, or the registry reports
+                             a status for it that aw does not know
+  member_mismatch            it names another key, did:aw or scope than the home's identity
+  team_key_not_current       it is signed by a key that is not the team's current key
+  certificate_bad_signature  its signature does not verify under that key
+  certificate_revoked        the registry has revoked it
+  certificate_unregistered   the registry does not hold it for this member
+  certificate_conflict       the home holds another certificate for the team, or, for a
+                             local identity, any membership of another team
+  registry_unavailable       the registry could not be read; retrying may succeed
+
+Flags:
+- `--certificate string Certificate file to install`
+- `-h, --help help for install-cert`
+- `--registry string Registry origin the team is read from (default: the configured registry)`
 
 ## `id team invite`
 
@@ -1411,6 +1515,26 @@ Flags:
 - `--namespace string Namespace domain`
 - `--registry string Registry origin override`
 - `--team string Team name`
+
+## `id team remove-agent`
+
+### `id team remove-agent`
+
+Remove one agent's membership of a protected team, through the protected service
+named by --protected-profile, proving this identity's key as the deployment's
+endorsed root that admitted it. The membership is the one --certificate names:
+the certificate file aw id team admit wrote, or the agent home's installed copy.
+No human approves it, and nothing in the agent's home is changed.
+
+--operation-id is the caller's UUID, kept before anything is sent. Running again
+with the same id and the same inputs resumes that operation and returns its
+receipt; changed inputs under the id refuse operation_conflict.
+
+Flags:
+- `--certificate string The agent's team certificate file`
+- `-h, --help help for remove-agent`
+- `--operation-id string The caller's UUID for this removal; the same id resumes it`
+- `--protected-profile string The operator-provisioned protected-service profile`
 
 ## `id team remove-member`
 
@@ -1783,6 +1907,7 @@ Subcommands:
 - `refresh` Refresh a team member's profile and existing team-instructions block
 - `up` Launch local team agents in tmux
 - `agent-status` Read whether an agent still holds a certificate, a workspace, or task claims
+- `log-key` Manage the owner key that agents' local message logs are sealed to
 - `remove-agent` Retire an agent: release its claims, then revoke its certificate
 - `replace-key` Replace a local agent identity key under team-controller authority
 
@@ -1934,6 +2059,77 @@ retired comes from somewhere other than the command that retired it.
 Flags:
 - `-h, --help help for agent-status`
 - `--team-id string Canonical team id (<name>:<namespace>) to read from (defaults to active team)`
+
+## `team admin log-key`
+
+### `team admin log-key`
+
+Manage the owner key that agents' local message logs are sealed to
+
+Subcommands:
+- `create` Create (or rotate) the team's owner log key; prints its unsigned public record
+- `install` Install the team's owner log key record on this host; local logs are then sealed to it
+- `sign` Sign a log key record, or attach a signature made elsewhere
+- `signing-bytes` Print the exact bytes a team key signs for a log key record
+
+Flags:
+- `-h, --help help for log-key`
+- `--team string Override the selected team_id for this command`
+
+## `team admin log-key create`
+
+### `team admin log-key create`
+
+Create a new log key for the team on the machine where the owner reads the logs. The
+private key is kept in the OS keychain under a passphrase. The public record is written
+to --out (or stdout) unsigned: sign it with `aw team admin log-key sign` wherever the
+team controller key is held, then install it with `aw team admin log-key install` on
+each agent host. Running it again rotates the key; earlier keys stay in the keychain.
+
+Flags:
+- `-h, --help help for create`
+- `--out string Write the unsigned public record to this file instead of stdout`
+
+## `team admin log-key install`
+
+### `team admin log-key install`
+
+Install the team's owner log key record on this host; local logs are then sealed to it
+
+Flags:
+- `-h, --help help for install`
+
+## `team admin log-key sign`
+
+### `team admin log-key sign`
+
+Complete a log key record through exactly one route:
+  --team-key-did and --signature attach a signature produced elsewhere, such as by the
+  deployment's protected signer, after verifying it over the record's signing bytes;
+  --offline-controller-key signs with the team controller key in ~/.awid/team-keys/ on
+  this machine, which is outside the route of a deployment whose signer holds that key.
+With no route, or both, it refuses. The signed record is written to --out (or stdout).
+
+Flags:
+- `-h, --help help for sign`
+- `--offline-controller-key Sign with the team controller key in ~/.awid/team-keys/ on this machine`
+- `--out string Write the signed record to this file instead of stdout`
+- `--record string The log key record to sign`
+- `--signature string A signature produced elsewhere: unpadded standard base64 of the 64 Ed25519 bytes`
+- `--team-key-did string The did:key of the team key that produced --signature`
+
+## `team admin log-key signing-bytes`
+
+### `team admin log-key signing-bytes`
+
+Print, with no trailing newline, the bytes the team controller key --team-key-did signs
+for the record: the aweb.log-key/1 prefix and the canonical JSON of its unsigned fields.
+Use it to cross-check what any signer is asked to sign.
+
+Flags:
+- `-h, --help help for signing-bytes`
+- `--record string The log key record`
+- `--team-key-did string The did:key of the team key that will sign`
 
 ## `team admin remove-agent`
 
@@ -2934,12 +3130,24 @@ Flags:
 
 Show local communication log
 
+Subcommands:
+- `read` Read sealed local logs with the owner's log keys from this machine's keychain
+
 Flags:
 - `--channel string Filter by channel (mail, chat, dm)`
 - `--from string Filter by sender (substring match)`
 - `-h, --help help for log`
 - `--limit int Max entries to show (default 20)`
 - `--team string Override the selected team_id for this command`
+
+## `log read`
+
+### `log read`
+
+Read sealed local logs with the owner's log keys from this machine's keychain
+
+Flags:
+- `-h, --help help for read`
 
 ## `mail`
 
@@ -3206,7 +3414,10 @@ the instance present; pending errors are tolerated until the 30-minute expiry.
 
 Exit 0 means the registration was written durably: over the daemon's socket
 when it is up, and straight to the state directory when it is not, so a hook
-never fails because the broker is restarting. A non-zero exit means refused —
+never fails because the broker is restarting. It does not mean a broker is
+running: when none answered, register says so on stderr, and the instance is
+not woken until one starts. aw wake status reports whether a broker runs
+(daemon_running with --json). A non-zero exit means refused —
 a missing --delivery session, a relative path, or an unreadable identity home.
 
 --identity-home here names the instance's own identity home, and shadows the
@@ -3705,6 +3916,7 @@ Flags:
 - `--provider-pty Run the provider subprocess inside a pseudo-terminal instead of plain pipes when interactive controls are available`
 - `--team string Override the selected team_id for this command`
 - `--trip-on-danger Remove provider bypass flags and use native provider safety checks`
+- `--trust-config Trust this directory's .aw/run.json as it is now, so its prompts and services are used; a file that changes afterwards is ignored until trusted again`
 - `--wait int Idle seconds per wake-stream wait cycle (default 20)`
 - `--work-prompt-suffix string Override the configured work cycle prompt suffix for this run`
 
@@ -4012,6 +4224,163 @@ List ready tasks that are not already claimed by other workspaces
 
 Flags:
 - `-h, --help help for ready`
+
+## `app`
+
+### `app`
+
+Roles that an app's manifest declares under owner_acts are held by human members of the team.
+The team owner binds and unbinds holders with signed acts; a holder registers a passkey
+at the app's human origin in a browser that aw opens.
+
+Subcommands:
+- `credential` Register or replace a holder's passkey for an app role
+- `human` Run an action an app declares for its role holders, in a passkey session
+- `role` Designate or revoke a holder of an app role, as the team owner
+
+Flags:
+- `-h, --help help for app`
+
+## `app credential`
+
+### `app credential`
+
+Register or replace a holder's passkey for an app role
+
+Subcommands:
+- `register` Register a passkey for an app role, as the holder, and export it for the team owner
+- `replace` Replace a holder's passkey, as the team owner
+
+Flags:
+- `-h, --help help for credential`
+
+## `app credential register`
+
+### `app credential register`
+
+Opens the app's human origin in a browser, where you create a passkey, and writes the public
+credential with your team certificate to --out (or stdout). Read its fingerprint to the team
+owner over a channel your custodian does not control, such as in person or a call.
+
+Flags:
+- `-h, --help help for register`
+- `--out string Write the export to this file instead of stdout`
+- `--role string The app role, as its manifest names it`
+
+## `app credential replace`
+
+### `app credential replace`
+
+Signs human-credential.replace with the team's controller key. The current passkey is retired
+at once and the replacement takes effect after the app's cooling-off period.
+
+Flags:
+- `--credential string The holder's export from aw app credential register`
+- `-h, --help help for replace`
+- `--notice-contact string The notice contact, for a role that declares one`
+- `--principal string The holder's did:aw`
+- `--role string The app role, as its manifest names it`
+- `--yes Sign what is shown without asking`
+
+## `app human`
+
+### `app human`
+
+Runs one of the session actions an app's manifest declares under owner_acts.session_actions,
+in a console session that a browser passkey login opens for your holding of the action's role.
+`aw app human <app> --help` lists the declared actions. A protected field is typed at the
+terminal with echo off and has no flag; a one-time output is written only to the terminal.
+
+Flags:
+- `-h, --help help for human`
+
+## `app role`
+
+### `app role`
+
+Designate or revoke a holder of an app role, as the team owner
+
+Subcommands:
+- `designate` Designate a human member as a holder of an app role
+- `resume` Resume a protected role act whose prepare answer was lost, from its saved request
+- `revoke` End a holder's holding of an app role
+
+Flags:
+- `-h, --help help for role`
+
+## `app role designate`
+
+### `app role designate`
+
+Signs human-role.designate with the team's controller key. Pass the holder's export with
+--credential and sign only after both clients show the same fingerprint. Without --credential,
+you are the holder: aw registers your passkey first, then signs.
+
+Flags:
+- `--credential string The holder's export from aw app credential register`
+- `-h, --help help for designate`
+- `--notice-contact string The notice contact, for a role that declares one`
+- `--principal string The holder's did:aw`
+- `--role string The app role, as its manifest names it`
+- `--yes Sign what is shown without asking`
+
+## `app role resume`
+
+### `app role resume`
+
+Resume a protected role act whose prepare answer was lost, from its saved request
+
+Flags:
+- `-h, --help help for resume`
+- `--protected-profile string The profile the operation was prepared through`
+
+## `app role revoke`
+
+### `app role revoke`
+
+End a holder's holding of an app role
+
+Flags:
+- `--approver string With --protected-profile, the did:aw of the human who approves the act`
+- `-h, --help help for revoke`
+- `--principal string The holder's did:aw`
+- `--protected-profile string Prepare the act at the protected service this operator-provisioned profile names; the controlling human approves it there`
+- `--role string The app role, as its manifest names it`
+- `--yes Sign what is shown without asking`
+
+## `audit`
+
+### `audit`
+
+A team's audit log
+
+Subcommands:
+- `verify` Verify an exported team log offline
+
+Flags:
+- `-h, --help help for audit`
+
+## `audit verify`
+
+### `audit verify`
+
+Verify an exported team log (aweb.logs-export/1) offline, against the receipt and
+checkpoint keys you accept and the receipts and checkpoints you hold yourself.
+
+It reads only the files it is given: no workspace, identity or server.
+Give each key you accept, for receipts and for checkpoints; a key that signs
+both is given to both. Each --witness file holds one receipt or checkpoint per
+line, in an export's own line shape. --bundle - reads the export from stdin.
+
+Exits 0 when the bundle is intact, 1 when it is verified and not intact, and 2
+when it could not be verified.
+
+Flags:
+- `--bundle string The export to verify, or - for stdin`
+- `--checkpoint-key stringArray A did:key you accept for checkpoints (repeatable)`
+- `-h, --help help for verify`
+- `--receipt-key stringArray A did:key you accept for receipts (repeatable)`
+- `--witness stringArray A file of receipts and checkpoints you hold (repeatable)`
 
 ## `completion`
 

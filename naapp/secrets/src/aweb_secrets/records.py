@@ -15,6 +15,7 @@ from dataclasses import dataclass
 from aweb_naapp.egress import InternalDestinations
 from pgdbm.core import TransactionManager
 
+from aweb_secrets import run_pin_store
 from aweb_secrets.destination import DestinationRecord
 from aweb_secrets.grant import GrantRecord, GrantTemplate
 from aweb_secrets.operation import OperationTemplate
@@ -123,25 +124,39 @@ async def set_active_version(
     if updated is None:
         raise RecordMissing("no such secret in this installation")
 
+    await run_pin_store.discard_secret(
+        tx,
+        installation_id=installation_id,
+        team_id=team_id,
+        secret_id=secret_id,
+        keep_version=version,
+    )
 
-async def create_policy(tx: TransactionManager, installation_id: str, policy: Policy) -> None:
+
+async def create_policy(
+    tx: TransactionManager, installation_id: str, policy: Policy, *, team_id: str
+) -> None:
     """Store ``policy``; storing the same digest again is the same policy and changes nothing."""
     await tx.execute(
         """
-        INSERT INTO {{tables.policies}} (installation_id, digest, body) VALUES ($1, $2, $3)
-        ON CONFLICT (installation_id, digest) DO NOTHING
+        INSERT INTO {{tables.policies}} (installation_id, digest, body, team_id) VALUES ($1, $2, $3, $4)
+        ON CONFLICT (installation_id, team_id, digest) DO NOTHING
         """,
         installation_id,
         policy.digest,
         json.dumps(dict(policy.body)),
+        team_id,
     )
 
 
-async def policy(tx: TransactionManager, installation_id: str, digest: str) -> Policy | None:
+async def policy(
+    tx: TransactionManager, installation_id: str, digest: str, *, team_id: str
+) -> Policy | None:
     body = await tx.fetch_value(
-        "SELECT body FROM {{tables.policies}} WHERE installation_id = $1 AND digest = $2",
+        "SELECT body FROM {{tables.policies}} WHERE installation_id = $1 AND digest = $2 AND team_id = $3",
         installation_id,
         digest,
+        team_id,
     )
     return None if body is None else Policy.from_body(json.loads(body))
 
@@ -190,13 +205,13 @@ async def revoke_grant(tx: TransactionManager, installation_id: str, grant_id: s
         """
         UPDATE {{tables.grants}} SET revoked_at = NOW()
         WHERE installation_id = $1 AND grant_id = $2 AND revoked_at IS NULL
-        RETURNING grant_id
+        RETURNING team_id
         """,
         installation_id,
         grant_id,
     )
     if revoked is not None:
-        await bump_config_revision(tx, installation_id)
+        await bump_config_revision(tx, installation_id, team_id=revoked)
 
 
 async def active_grants(
@@ -232,31 +247,33 @@ async def active_grants(
 
 
 async def set_grant_template(
-    tx: TransactionManager, installation_id: str, template: GrantTemplate
+    tx: TransactionManager, installation_id: str, template: GrantTemplate, *, team_id: str
 ) -> None:
     await tx.execute(
         """
-        INSERT INTO {{tables.grant_templates}} (installation_id, grant_template_id, record)
-        VALUES ($1, $2, $3)
-        ON CONFLICT (installation_id, grant_template_id)
+        INSERT INTO {{tables.grant_templates}} (installation_id, grant_template_id, record, team_id)
+        VALUES ($1, $2, $3, $4)
+        ON CONFLICT (installation_id, team_id, grant_template_id)
         DO UPDATE SET record = EXCLUDED.record, updated_at = NOW()
         """,
         installation_id,
         template.grant_template_id,
         json.dumps(template.after),
+        team_id,
     )
 
 
 async def grant_template(
-    tx: TransactionManager, installation_id: str, grant_template_id: str
+    tx: TransactionManager, installation_id: str, grant_template_id: str, *, team_id: str
 ) -> GrantTemplate | None:
     record = await tx.fetch_value(
         """
         SELECT record FROM {{tables.grant_templates}}
-        WHERE installation_id = $1 AND grant_template_id = $2
+        WHERE installation_id = $1 AND grant_template_id = $2 AND team_id = $3
         """,
         installation_id,
         grant_template_id,
+        team_id,
     )
     return None if record is None else GrantTemplate.from_after(json.loads(record))
 
@@ -313,13 +330,13 @@ async def remove_destination(
         """
         DELETE FROM {{tables.destinations}}
         WHERE installation_id = $1 AND destination_id = $2
-        RETURNING destination_id
+        RETURNING team_id
         """,
         installation_id,
         destination_id,
     )
     if removed is not None:
-        await bump_config_revision(tx, installation_id)
+        await bump_config_revision(tx, installation_id, team_id=removed)
 
 
 async def create_operation(

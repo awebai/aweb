@@ -17,13 +17,13 @@ from aweb_naapp.console import apply_console_migrations
 from aweb_naapp.roles import unassign
 from aweb_naapp.runtime.origins import split_origins
 from aweb_naapp_testing.owner_acts import INSTALLATION_ID
-from aweb_naapp_testing.webauthn import SoftAuthenticator
 from fastapi import FastAPI
 
 from aweb_secrets.change_policy import require_four_eyes
 from aweb_secrets.console import OwnerConsole, owner_console_router
 from aweb_secrets.owners import OWNER_ROLE, owner_scope
-from tests.test_change_sets import ALICE, BOB, CAROL, ORIGIN, TEAM, World, enrol_owner
+from tests.human_owner import fixture_principal
+from tests.test_change_sets import ALICE, BOB, ORIGIN, TEAM, World, enrol_owner
 from tests.test_change_sets import world as _world
 
 world = _world
@@ -113,7 +113,7 @@ async def test_bodiless_console_logout_requires_csrf_and_ends_the_session(world:
         assert (await human.get("/session")).status_code == 401
 
 
-async def test_owner_bootstrap_uses_the_installations_team_and_never_returns_the_link(world: World):
+async def test_the_retired_owner_entry_uses_the_team_lookup_and_grants_nothing(world: World):
     contact = "alice@acme.com"
     scope = owner_scope(INSTALLATION_ID, TEAM, ALICE.principal_did)
     subject = {
@@ -138,26 +138,18 @@ async def test_owner_bootstrap_uses_the_installations_team_and_never_returns_the
         ).status_code == 403
         assert (await agent.post(path, json=body)).status_code == 404
         response = await human.post(path, json=body)
-        assert response.status_code == 200
-        assert response.json()["scope"] == scope
+        assert response.status_code == 403
+        assert response.json() == {"detail": "owner_required"}
         assert hints == ["other:example.com", TEAM]
-        token = world.inbox.enrolments[contact][-1]
-        assert token not in response.text
-        assert (await human.post(path, json=body)).status_code == 403
-        options = await human.post("/enrolment/options", json={"link_token": token})
-        assert options.status_code == 200
-        device = SoftAuthenticator(ORIGIN)
-        credential = device.create(options.json())
-        enrolled = await human.post(
-            "/enrolment", json={"link_token": token, "credential": credential}
-        )
-        assert enrolled.status_code == 200
-        assert token not in enrolled.text
-        world.devices[contact] = device
-        assert (await login(world, human, scope)).status_code == 200
-        assert (
-            await human.post("/enrolment/options", json={"link_token": token})
-        ).status_code == 403
+        assert not world.inbox.enrolments
+        for table in (
+            "owner_act_nonces",
+            "role_assignments",
+            "role_holdings",
+            "owner_principals",
+            "passkey_approvers",
+        ):
+            assert await world.db.fetch_value("SELECT count(*) FROM {{tables." + table + "}}") == 0
 
 
 async def test_team_auth_never_reaches_the_console_routes(world: World):
@@ -189,11 +181,13 @@ async def test_unknown_contact_proof_is_refused(world: World):
 
 
 @pytest.mark.parametrize("owners", [2, 3])
-async def test_recovery_counts_the_recovering_owner_out_of_four_eyes(world: World, owners: int):
+async def test_retired_legacy_recovery_refuses_with_two_or_three_current_holders(
+    world: World, owners: int
+):
     alice = await enrol_owner(world, ALICE, "alice@acme.com")
     await enrol_owner(world, BOB, "bob@acme.com")
     if owners == 3:
-        await enrol_owner(world, CAROL, "carol@acme.com")
+        await enrol_owner(world, fixture_principal(TEAM, "carol"), "carol@acme.com")
     async with world.db.transaction() as tx:
         await require_four_eyes(
             tx, installation_id=INSTALLATION_ID, team_id=TEAM, directory=world.directory
@@ -215,12 +209,10 @@ async def test_recovery_counts_the_recovering_owner_out_of_four_eyes(world: Worl
     }
     async with clients(world) as (human, _):
         response = await human.post(f"/installations/{INSTALLATION_ID}/owner-acts", json=body)
-        assert response.status_code == (403 if owners == 2 else 200)
-        if owners == 2:
-            assert response.json() == {"detail": "four_eyes_needs_two_owners"}
-            assert await world.passkeys.login_options(alice)
-        else:
-            assert world.inbox.notices["alice@acme.com"]
+        assert response.status_code == 403
+        assert response.json() == {"detail": "owner_required"}
+        assert await world.passkeys.login_options(alice)
+        assert not world.inbox.notices
 
 
 async def test_a_non_controller_signature_cannot_bootstrap_an_owner(world: World):
@@ -327,8 +319,11 @@ async def test_owner_acts_preserve_typed_fence_refusals(world: World, failure, s
                 await invalidate()
                 continue_lookup.set()
                 response = await asyncio.wait_for(task, 5)
-            assert response.status_code == status
-            assert response.json()["detail"] == code
+            expected_status, expected_code = (
+                (403, "owner_required") if stage == "transaction" else (status, code)
+            )
+            assert response.status_code == expected_status
+            assert response.json()["detail"] == expected_code
             for table in (
                 "role_assignments",
                 "owner_principals",

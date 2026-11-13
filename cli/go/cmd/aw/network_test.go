@@ -117,7 +117,7 @@ func TestMailSendToAddressUsesUnifiedEndpoint(t *testing.T) {
 	writeKnownAgentPinForTest(t, tmp, "acme.example/researcher", registryServer.URL)
 
 	run := exec.CommandContext(ctx, bin, "mail", "send", "--subject", "Test thread", "--plaintext", "--to-address", "acme.example/researcher", "--body", "hello network", "--json")
-	run.Env = testCommandEnv(tmp)
+	run.Env = append(testCommandEnv(tmp), "AWID_REGISTRY_URL="+registryServer.URL)
 	run.Dir = tmp
 	out, err := run.CombinedOutput()
 	if err != nil {
@@ -208,7 +208,7 @@ func TestMailSendToFlagAutoDetectsFullAddress(t *testing.T) {
 	// Use --to with a full address (contains /). Should auto-detect as address
 	// and route to the identity messaging endpoint, not the team-scoped alias endpoint.
 	run := exec.CommandContext(ctx, bin, "mail", "send", "--subject", "Test thread", "--plaintext", "--to", "acme.example/researcher", "--body", "hello auto-detect", "--json")
-	run.Env = testCommandEnv(tmp)
+	run.Env = append(testCommandEnv(tmp), "AWID_REGISTRY_URL="+registryServer.URL)
 	run.Dir = tmp
 	out, err := run.CombinedOutput()
 	if err != nil {

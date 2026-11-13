@@ -80,6 +80,8 @@ authority.
   operations around encrypted messages.
 - [E2E legacy plaintext and no-downgrade policy](e2e-legacy-plaintext-policy.md)
   — mixed-version compatibility rules.
+- [Security model](security-model.md) — who can do what on whose signature, and what
+  a server or registry operator holds.
 - [Trust model](trust-model.md) — key authority, custody, verification, and
   recovery boundaries.
 - [Team-auth request envelope v2](team-auth-envelope-v2.md) — signed relying-party
@@ -189,7 +191,7 @@ presented as shipped.
   owner-only governance acts: the server and naapps verify it; the `aw` commands
   that sign it are open.
 - [Owner-act delivery](owner-act-delivery.md) — specified contract for how a
-  client prepares and delivers an app owner act to the app's declared human
+  client delivers an app's human-role owner act to the app's declared human
   origin; not shipped.
 - [App manifest](app-manifest.md) — current experimental manifest versions 1
   and 2, version 3 specified but not shipped, variant discovery, and the

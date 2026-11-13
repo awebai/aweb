@@ -506,6 +506,69 @@ async def test_send_message_to_local_alias_creates_conversation(aweb_cloud_db):
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "ingress_headers",
+    [
+        {
+            "X-AWEB-Ingress-Namespace": "client",
+            "X-AWEB-Ingress-Key": "event1",
+            "X-AWEB-Ingress-Input-Hash": "sha256:" + "55" * 32,
+        },
+        {"X-AWEB-Ingress-Key": "event1"},
+    ],
+    ids=["all", "partial"],
+)
+async def test_send_message_with_ingress_headers_is_an_ordinary_send(aweb_cloud_db, ingress_headers):
+    alice_sk, _, alice_did_key = _make_keypair()
+    _, _, bob_did_key = _make_keypair()
+    await _insert_team(aweb_cloud_db.aweb_db, "backend:acme.com")
+    alice_agent_id = await _insert_agent(
+        aweb_cloud_db.aweb_db,
+        team_id="backend:acme.com",
+        alias="alice",
+        did_key=alice_did_key,
+        did_aw="did:aw:alice",
+        address="acme.com/alice",
+    )
+    await _insert_agent(
+        aweb_cloud_db.aweb_db,
+        team_id="backend:acme.com",
+        alias="bob",
+        did_key=bob_did_key,
+        did_aw="did:aw:bob",
+        address="acme.com/bob",
+    )
+    app = _build_test_app(aweb_cloud_db.aweb_db, AsyncMock())
+
+    async def _auth():
+        return MessagingAuth(
+            did_key=alice_did_key,
+            did_aw="did:aw:alice",
+            address="acme.com/alice",
+            team_id="backend:acme.com",
+            alias="alice",
+            agent_id=alice_agent_id,
+        )
+
+    app.dependency_overrides[get_messaging_auth] = _auth
+    payload = {"to_alias": "bob", "subject": "with ingress headers", "body": "hello"}
+    body_bytes = json.dumps(payload).encode()
+    headers = {
+        **_signed_identity_headers(alice_sk, alice_did_key, "did:aw:alice", body_bytes),
+        **ingress_headers,
+        "Content-Type": "application/json",
+    }
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+        resp = await client.post("/v1/messages", content=body_bytes, headers=headers)
+
+    assert resp.status_code == 200, resp.text
+    row = await aweb_cloud_db.aweb_db.fetch_one(
+        "SELECT conversation_id FROM {{tables.messages}} WHERE subject = 'with ingress headers'"
+    )
+    assert str(row["conversation_id"]) == resp.json()["conversation_id"]
+
+
+@pytest.mark.asyncio
 async def test_inbox_pagination_returns_every_message_without_overlap(aweb_cloud_db):
     _, _, bob_did_key = _make_keypair()
     await _insert_team(aweb_cloud_db.aweb_db, "backend:acme.com")

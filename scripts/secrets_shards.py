@@ -57,7 +57,7 @@ def collect(package, modules, evidence, name, command):
     env = dict(os.environ, AWEB_COLLECTION_RECEIPT=str(receipt))
     env['PYTHONPATH'] = os.pathsep.join(filter(None, [
         str(Path(__file__).resolve().parent), env.get('PYTHONPATH')]))
-    args = [*command, '--collect-only', '-q', '-p', 'secrets_shards',
+    args = [*command, '--collect-only', '-q', '-m', 'not e2e', '-p', 'secrets_shards',
             f'--basetemp={evidence / name / "pytest"}', '-o',
             f'cache_dir={evidence / name / "cache"}', *modules]
     with (evidence / f'{name}.log').open('w') as log:

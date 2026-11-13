@@ -10,7 +10,7 @@ from __future__ import annotations
 from aweb_naapp.runtime.approvals import Approvals
 from pgdbm.core import TransactionManager
 
-from aweb_secrets import derived_lineage, records
+from aweb_secrets import derived_lineage, records, run_pin_store
 from aweb_secrets.custody import Custody
 from aweb_secrets.revisions import bump_config_revision
 from aweb_secrets.use_approvals import revoke_use_approvals
@@ -96,6 +96,18 @@ async def revoke_grant_tree(
         revoked_by=revoked_by,
         reason="grant_revoked",
     )
+    await run_pin_store.prepare_secrets(
+        tx, installation_id=installation_id, team_id=team_id, secret_ids=(source, *ids)
+    )
+    # The ordinary root may stay enabled: dispose only its originals bound
+    # to this grant. Descendant disable below disposes all of their pins.
+    await run_pin_store.discard_grant(
+        tx,
+        installation_id=installation_id,
+        team_id=team_id,
+        secret_id=source,
+        grant_id=grant_id,
+    )
     await records.revoke_grant(tx, installation_id, grant_id)
     for secret_id in ids:
         await tx.execute(
@@ -112,5 +124,5 @@ async def revoke_grant_tree(
             secret_id=secret_id,
         )
     if ids:
-        await bump_config_revision(tx, installation_id)
+        await bump_config_revision(tx, installation_id, team_id=team_id)
     return ids

@@ -1,0 +1,28 @@
+# The protected signer of one team's deployment, in the model only when
+# deployment.yaml has a signer section: the rendered COMPOSE_FILE names it.
+services:
+  # The protected host: human approval with passkeys. Its secrets directory
+  # holds private-controller/, a real directory owned by uid 1001 with mode
+  # 0700, and controller.key in it with mode 0400 or 0600; the bind mount keeps
+  # both, and the signer refuses to start without them.
+  signer:
+    extends:
+      file: ../../server/compose.signer.yaml
+      service: signer
+    image: ${SIGNER_IMAGE:?SIGNER_IMAGE is required, signer.image}
+    networks: [services]
+    ports:
+      - "${SIGNER_BIND_ADDRESS:-127.0.0.1}:${SIGNER_PORT:-8080}:8080"
+    environment:
+      # Passed only when the env file has it: without a private SMTP authority
+      # the signer trusts the system roots.
+      AWEB_PROTECTED_EMAIL_CA_FILE:
+    volumes:
+      - "${SECRETS_DIR:?SECRETS_DIR is required, compose.secretsDir}/${SIGNER_SECRETS:-signer}:/run/secrets/signer:ro"
+      - "${SIGNER_PROFILE_SOURCE:?SIGNER_PROFILE_SOURCE is required, signer.profileFile}:/etc/aweb/signer/profile.json:ro"
+      - "${SIGNER_SCOPE_SOURCE:?SIGNER_SCOPE_SOURCE is required, signer.scopeFile}:/etc/aweb/signer/scope.json:ro"
+      - "${SIGNER_EMAIL_CA_SOURCE:-/dev/null}:/etc/aweb/signer/email-ca.pem:ro"
+    depends_on:
+      postgres:
+        condition: service_healthy
+        required: false

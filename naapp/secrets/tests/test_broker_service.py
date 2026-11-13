@@ -3,6 +3,7 @@
 import asyncio
 import json
 import os
+import re
 from dataclasses import replace
 from datetime import UTC, datetime, timedelta
 
@@ -26,7 +27,7 @@ from aweb_secrets.custody import (
 )
 from aweb_secrets.custody.opening import UseSecretOpener
 from aweb_secrets.destination import DestinationRecord
-from aweb_secrets.member_types import MemberSubmission
+from aweb_secrets.member_types import MemberSubmission, ToolReply
 from aweb_secrets.response_audit import ResponseKey
 from aweb_secrets.tokens import ProcessTokenCache
 from aweb_secrets.use_approvals import apply_use_approval_migrations
@@ -165,6 +166,55 @@ async def _view(team_id):
     return view()
 
 
+async def completed_receipt(db, live: ToolReply) -> ToolReply:
+    """Expected §11.2 receipt, bound to the live response and signed audit.
+
+    Do not use the production receipt projector as the test oracle: a body or
+    header leaking through that projector must fail the exact comparisons.
+    """
+    assert live.status == 200 and live.body["state"] == "completed"
+    result = live.body["result"]
+    assert isinstance(result["body"], str) and result["body"]
+    assert result["headers"] and result["body_encoding"] == "utf8"
+    [audit] = [
+        event["payload"]
+        for event in await envelopes(db)
+        if event["hook"] == "post-secret-use-hook"
+        and event["payload"]["action"] == "completed"
+        and event["payload"]["use_ref"] == live.body["request_ref"]
+    ]
+    assert audit["upstream_status_code"] == result["status"]
+    assert audit["upstream_bytes"] == result["upstream_bytes"]
+    assert audit["redaction_count"] == result["redaction_count"]
+    assert audit["disposition"] == "returned"
+    assert audit["undeclared_credential"] is False
+    assert audit["upstream_truncated"] is False
+    for field in ("upstream_response_hmac", "returned_hmac"):
+        assert re.fullmatch(r"[A-Za-z0-9_-]{43}", audit[field])
+    return ToolReply(
+        live.status,
+        {
+            "state": "completed",
+            "request_id": live.body["request_id"],
+            "request_ref": live.body["request_ref"],
+            "result": {
+                "body": None,
+                "headers": None,
+                "status": result["status"],
+                "truncated": result["truncated"],
+                "upstream_bytes": result["upstream_bytes"],
+                "redaction_count": result["redaction_count"],
+                "disposition": "returned",
+                "undeclared_credential": False,
+                "upstream_truncated": False,
+                "upstream_response_hmac": audit["upstream_response_hmac"],
+                "returned_hmac": audit["returned_hmac"],
+            },
+        },
+        live.headers,
+    )
+
+
 async def test_fresh_authenticated_submission_sends_once_and_replays_stored_result(
     db, fence, tmp_path
 ):
@@ -185,7 +235,12 @@ async def test_fresh_authenticated_submission_sends_once_and_replays_stored_resu
             ),
         )
         second = await service.submit(secret=SECRET["ref"], submission=renewed)
-        assert second == first
+        assert second.body["state"] == first.body["state"]
+        assert second.body["request_ref"] == first.body["request_ref"]
+        assert second.body["result"]["body"] is None
+        assert second.body["result"]["headers"] is None
+        for field in ("status", "truncated", "upstream_bytes", "redaction_count"):
+            assert second.body["result"][field] == first.body["result"][field]
         assert upstream.paths == ["/bearer/echo"]
         assert await db.fetch_value("SELECT count(*) FROM {{tables.intents}}") == 1
         assert await db.fetch_value("SELECT count(*) FROM {{tables.dispatches}}") == 1

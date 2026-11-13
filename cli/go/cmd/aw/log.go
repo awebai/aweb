@@ -1,7 +1,6 @@
 package main
 
 import (
-	"bufio"
 	"encoding/json"
 	"fmt"
 	"os"
@@ -29,6 +28,9 @@ var logCmd = &cobra.Command{
 		}
 		logsDir := defaultLogsDir()
 		path := commLogPath(logsDir, commLogNameForSelection(sel))
+		if localLogPolicyForSelection(sel).sealing() {
+			return withErrorCode("local_log_sealed", fmt.Errorf("the local log of team %s is sealed to the team's owner log key; the owner reads it with `aw log read %s` on the machine that holds that key", sel.TeamID, path))
+		}
 
 		entries, err := readCommLog(path, logLimit)
 		if err != nil {
@@ -61,31 +63,25 @@ var logCmd = &cobra.Command{
 	},
 }
 
-// readCommLog reads JSONL entries from a log file.
+// readCommLog reads the plaintext JSONL entries of a log file; sealed lines
+// are for the owner and are skipped.
 // If limit > 0, returns only the last `limit` entries.
 func readCommLog(path string, limit int) ([]CommLogEntry, error) {
-	f, err := os.Open(path)
+	lines, err := readLocalLogLines(path, 0)
 	if err != nil {
 		return nil, err
 	}
-	defer f.Close()
 
 	var entries []CommLogEntry
-	scanner := bufio.NewScanner(f)
-	scanner.Buffer(make([]byte, 1024*1024), 1024*1024)
-	for scanner.Scan() {
-		line := scanner.Text()
-		if strings.TrimSpace(line) == "" {
+	for _, line := range lines {
+		if isSealedLogLine(line) {
 			continue
 		}
 		var e CommLogEntry
-		if err := json.Unmarshal([]byte(line), &e); err != nil {
+		if err := json.Unmarshal(line, &e); err != nil {
 			continue
 		}
 		entries = append(entries, e)
-	}
-	if err := scanner.Err(); err != nil {
-		return nil, err
 	}
 
 	if limit > 0 && len(entries) > limit {
@@ -112,12 +108,17 @@ func filterCommLog(entries []CommLogEntry, channel, from string) []CommLogEntry 
 	return out
 }
 
+// formatLogTimestamp shows an RFC 3339 log timestamp as local-log text.
+func formatLogTimestamp(ts string) string {
+	if t, err := time.Parse(time.RFC3339, ts); err == nil {
+		return t.Format("2006-01-02 15:04:05")
+	}
+	return ts
+}
+
 // formatLogLine formats one log entry for human display.
 func formatLogLine(e *CommLogEntry) string {
-	ts := e.Timestamp
-	if t, err := time.Parse(time.RFC3339, ts); err == nil {
-		ts = t.Format("2006-01-02 15:04:05")
-	}
+	ts := termtext.Line(formatLogTimestamp(e.Timestamp))
 
 	arrow := "←"
 	peer := e.From
@@ -129,7 +130,7 @@ func formatLogLine(e *CommLogEntry) string {
 	// Chat is the most common channel; only tag mail/dm to reduce noise.
 	chTag := ""
 	if e.Channel != "" && e.Channel != "chat" {
-		chTag = " (" + e.Channel + ")"
+		chTag = " (" + termtext.Line(e.Channel) + ")"
 	}
 
 	subj := ""

@@ -220,7 +220,7 @@ def main() -> None:
         authority = checkout / "cli" / "go" / "awid" / "federation_authority.go"
         replace_exact(
             authority,
-            '\tnetip.MustParsePrefix("100.64.0.0/10"),\n',
+            '"100.64.0.0/10", ',
             "",
         )
         require_killed(
@@ -445,7 +445,9 @@ def main() -> None:
                     current_did_key=envelope.sender_current_did_key,
                     delivery_origin=sender_origin or "",
                 ),
-                source_ip=str(request.client.host if request.client else "unknown"),
+                source_ip=ClientIdentity(
+                    trusted_header=os.getenv("AWEB_CLIENT_ADDRESS_HEADER", "").strip() or None,
+                ).of(request) or "unknown",
             )
 """,
             """            authorized = await registry_client.resolve_key(

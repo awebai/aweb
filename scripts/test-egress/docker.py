@@ -166,6 +166,7 @@ def main():
         runner = start_container(containers, 'run', '-d', '--init', '--user', '1000:1000', '--network', token, '--dns', dns_ip,
                         '--dns-search', '.',  # Do not expand reserved fixtures using the host's search suffix.
                         '--add-host', '127.0.0.1.nip.io:127.0.0.1',
+                        '--add-host', 'signer.example.com:127.0.0.1',
                         '--name', token + '-runner', *resource_args(limits['runner']),
                         '-e', f'GOMAXPROCS={gomaxprocs}',
                         '-e', 'AWEB_UNIT_REPORT_DIR=/tmp/aweb-unit-reports',

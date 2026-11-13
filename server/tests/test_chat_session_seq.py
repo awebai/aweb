@@ -65,17 +65,26 @@ async def test_a_supplied_seq_is_replaced_by_the_sessions_next_number(aweb_cloud
 async def test_concurrent_inserts_in_a_session_are_numbered_in_commit_order(aweb_cloud_db):
     db = aweb_cloud_db.aweb_db
     session_id = await _session(db)
+    second_pid: asyncio.Future[int] = asyncio.get_running_loop().create_future()
     async with db.transaction() as first_writer:
         first = await _insert_message(first_writer, session_id, "first")
+        first_pid = await first_writer.fetch_value("SELECT pg_backend_pid()")
 
         async def second_writer() -> UUID:
             async with db.transaction() as tx:
+                # The wait below is bounded by this test, not by the pool's
+                # lock_timeout: a stalled host must not cancel it.
+                await tx.execute("SET LOCAL lock_timeout = 0")
+                second_pid.set_result(await tx.fetch_value("SELECT pg_backend_pid()"))
                 return await _insert_message(tx, session_id, "second")
 
         waiting = asyncio.create_task(second_writer())
-        # The second writer needs the session row the first one holds.
-        done, _ = await asyncio.wait({waiting}, timeout=0.5)
-        assert not done
+        # The second writer waits for the session row the first one holds.
+        async with asyncio.timeout(LOCK_WAIT_BOUND_SECONDS):
+            pid = await second_pid
+            while first_pid not in (await db.fetch_value("SELECT pg_blocking_pids($1)", pid) or []):
+                assert not waiting.done(), waiting
+                await asyncio.sleep(0.01)
     async with asyncio.timeout(LOCK_WAIT_BOUND_SECONDS):
         second = await waiting
     assert [await _seq(db, first), await _seq(db, second)] == [1, 2]

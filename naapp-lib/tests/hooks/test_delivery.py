@@ -19,7 +19,7 @@ from aweb_naapp.hooks.envelope import Refused
 
 AWEB_ROOT = Path(__file__).resolve().parents[3]
 VECTOR = json.loads(
-    (AWEB_ROOT / "docs" / "vectors" / "hook-delivery-credential-v1.json").read_bytes()
+    (AWEB_ROOT / "docs" / "vectors" / "hook-delivery-credential-v2.json").read_bytes()
 )
 
 
@@ -36,6 +36,8 @@ def _options(receive: dict) -> ReceiveOptions:
         audience=receive["audience"],
         binding_id=receive["binding_id"],
         team_key_did=receive.get("team_key_did", ""),
+        revoked_certificate_ids=receive.get("revoked_certificate_ids", ()),
+        registered_certificate_ids=receive.get("registered_certificate_ids"),
         now=_time(receive["now"]),
     )
 
@@ -146,3 +148,11 @@ def test_a_deeply_nested_client_certificate_is_refused_not_a_crash(depth) -> Non
             "POST", "/hooks/ingest", headers, case["body"].encode(), _options(case["receive"])
         )
     assert refused.value.code == "certificate_invalid"
+
+
+def test_a_client_delivery_without_the_registered_certificates_is_refused() -> None:
+    case = next(c for c in VECTOR["positive_cases"] if "certificate" in c)
+    receive = {k: v for k, v in case["receive"].items() if k != "registered_certificate_ids"}
+    with pytest.raises(Refused) as refused:
+        verify_delivery("POST", "/hooks/ingest", case["headers"], case["body"].encode(), _options(receive))
+    assert refused.value.code == "verifier_misconfigured"

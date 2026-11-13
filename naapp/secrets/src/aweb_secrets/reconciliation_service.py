@@ -8,13 +8,12 @@ looks up targets or rearms an approval. Delivery is an explicit postcommit call.
 
 from __future__ import annotations
 
-import json
 from collections.abc import Callable, Sequence
 from datetime import UTC, datetime
 from typing import Literal, cast
 from uuid import uuid4
 
-from aweb_naapp.dispatch import InvalidTransition, State
+from aweb_naapp.dispatch import InvalidTransition, State, settlement_result
 from aweb_naapp.runtime.approvals import (
     ActionPolicy,
     Approval,
@@ -37,7 +36,7 @@ from aweb_naapp.runtime.passkeys import (
 from pgdbm.core import TransactionManager
 
 from aweb_secrets.broker_service import BrokerRequests
-from aweb_secrets.owners import owner_scope
+from aweb_secrets.owners import owner_binding, owner_scope
 from aweb_secrets.reconciliation_control_audit import ReconciliationAudit
 from aweb_secrets.reconciliation_policy import (
     CONTROL_TTL,
@@ -183,12 +182,13 @@ class ReconciliationControls:
         self._backend(view.original)
         if view.state is not State.OUTCOME_UNKNOWN:
             raise ReconciliationRefused("reconciliation_conflict")
-        owner = await tx.fetch_value(
-            "SELECT principal_did FROM {{tables.owner_principals}} WHERE scope=$1 AND installation_id=$2 AND team_id=$3",
+        _owner_binding = await owner_binding(
+            tx,
             fence.owner_scope,
-            fence.scope.installation_id,
-            fence.scope.team_id,
+            installation_id=fence.scope.installation_id,
+            team_id=fence.scope.team_id,
         )
+        owner = None if _owner_binding is None else _owner_binding["principal_did"]
         if (
             owner is None
             or owner_scope(fence.scope.installation_id, fence.scope.team_id, owner)
@@ -248,7 +248,7 @@ class ReconciliationControls:
         ):
             raise ReconciliationRefused("reconciliation_conflict")
         [delivery] = pending.deliveries
-        linked = await self._approvals.open_link(delivery.link_token)
+        linked = await self._approvals.open_link(delivery.link_token, tx=tx)
         if (
             linked.approval.approval_id != control.approval_id
             or len(linked.approval.candidates) != 1
@@ -334,17 +334,13 @@ class ReconciliationControls:
         try:
             async with tx.transaction():
                 row = await tx.fetch_one(
-                    "SELECT state,result FROM {{tables.dispatches}} WHERE dispatch_id=$1",
+                    "SELECT state FROM {{tables.dispatches}} WHERE dispatch_id=$1",
                     control.original.dispatch_id,
                 )
                 if row is None:
                     raise UseAuditUnavailable()
                 if row["state"] != State.OUTCOME_UNKNOWN:
-                    stored = (
-                        json.loads(row["result"])
-                        if isinstance(row["result"], str)
-                        else row["result"]
-                    )
+                    stored = await settlement_result(tx, control.original.dispatch_id)
                     if row["state"] != receipt.state or stored != result:
                         raise ReconciliationRefused("reconciliation_conflict")
                     prior = await self._audit.approval_in(tx, approval_id)

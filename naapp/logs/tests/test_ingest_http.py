@@ -77,6 +77,8 @@ class World:
     bindings: dict[str, str]
     now: datetime
     client: httpx.AsyncClient
+    runtime: object = None
+    ledger: object = None
 
     def event(self, kind, *, event_id=None, payload=None, producer=None, occurred_at=None, hook=None):
         signing, _ = signed_event(kind, team_id=self.member.team_id, event_id=event_id or str(uuid4()))
@@ -117,8 +119,35 @@ class World:
         )
 
 
-@pytest.fixture
-async def world(coordination, test_db_factory, tmp_path, monkeypatch, request):
+SERVICE_CERTIFICATE_ID = "logs-service"
+
+
+async def customer_hosted_credential(coordination, member, directory) -> dict[str, str]:
+    """Make ``member``'s team private and issue Logs its own member certificate,
+    written as ``aw`` writes it: the files the credential setting names."""
+    service = Member(
+        team_id=member.team_id, team_key=member.team_key,
+        certificate_id=SERVICE_CERTIFICATE_ID, alias="logs-service",
+    )
+    await coordination.registry.add_certificate(service.certificate())
+    name, domain = member.team_id.split(":", 1)
+    await coordination.registry.db.execute(
+        "UPDATE {{tables.teams}} SET visibility = 'private' WHERE domain = $1 AND name = $2", domain, name,
+    )
+    directory.mkdir(parents=True, exist_ok=True)
+    key = directory / "signing.key"
+    key.write_text(
+        "-----BEGIN ED25519 PRIVATE KEY-----\n" + base64.b64encode(bytes(service.member_key)).decode()
+        + "\n-----END ED25519 PRIVATE KEY-----\n"
+    )
+    key.chmod(0o600)
+    certificate = directory / "team.pem"
+    certificate.write_text(json.dumps(service.certificate()))
+    return {"signing_key_file": str(key), "certificate_file": str(certificate)}
+
+
+@pytest.fixture(name="world")
+async def world_fixture(coordination, test_db_factory, tmp_path, monkeypatch, request):
     now = datetime.now(UTC).replace(microsecond=0)
     member = Member(
         team_id=f"logs-{uuid4().hex[:12]}:ingest.example", certificate_id="c_41",
@@ -132,13 +161,23 @@ async def world(coordination, test_db_factory, tmp_path, monkeypatch, request):
         "valid_from": "2026-01-01T00:00:00Z", "valid_until": None,
     }]))
     db = await test_db_factory.create_db(suffix="logs_http")
+    ledger = await test_db_factory.create_db(suffix="logs_http_purge_ledger")
     server_db = coordination.server.db.get_manager("aweb")
+    overrides = dict(getattr(request, "param", {}))
+    awid_authority: dict = {"awid_service_token": SERVICE_TOKEN}
+    if overrides.pop("customer_hosted", False):
+        # A customer-hosted Logs: its team is private, and Logs holds an
+        # ordinary member certificate of its own instead of the service token.
+        awid_authority = {"awid_member_credentials": {
+            member.team_id: await customer_hosted_credential(coordination, member, tmp_path / "aw"),
+        }}
     settings = LogsSettings(
         _env_file=None, database_url=db.config.get_dsn(), db_schema=db.schema,
+        purge_ledger_database_url=ledger.config.get_dsn(),
         app_id=TEST_APP_ID, public_origin=ORIGIN, console_origin=CONSOLE,
-        awid_registry_url=REGISTRY_URL, awid_service_token=SERVICE_TOKEN,
+        awid_registry_url=REGISTRY_URL, **awid_authority,
         app_key_files=write_key_files(tmp_path),
-        **{"client_events_per_minute": 1, **getattr(request, "param", {})},
+        **{"client_events_per_minute": 1, **overrides},
     )
     await _install(server_db, member.team_id, served_manifest(settings.app_key_files, origin=ORIGIN))
     producer_manifest = {
@@ -169,7 +208,10 @@ async def world(coordination, test_db_factory, tmp_path, monkeypatch, request):
     )
     async with service.api_app.router.lifespan_context(service.api_app):
         async with httpx.AsyncClient(transport=httpx.ASGITransport(app=service), base_url=ORIGIN) as client:
-            yield World(coordination, db, server_db, member, settings, installation, bindings, now, client)
+            yield World(
+                coordination, db, server_db, member, settings, installation, bindings, now, client,
+                service.api_app.state.runtime, ledger,
+            )
 
 
 def _code(response):
@@ -331,10 +373,10 @@ async def test_schema_refusal_follows_valid_authority(world):
     assert _code(response).startswith("schema_")
 
 
-async def test_a_revoked_client_certificate_is_refused_by_shared_publication_policy(world):
+async def test_a_revoked_client_certificate_is_refused_by_the_certificate_check(world):
     await world.coordination.registry.revoke(world.member.certificate_id)
     response = await world.send(world.delivery("client"))
-    assert (response.status_code, _code(response)) == (401, "provenance_client_certificate")
+    assert (response.status_code, _code(response)) == (401, "transport_certificate_invalid")
 
 
 async def test_client_certificate_verification_reads_the_controller_key_fresh(world):
@@ -349,6 +391,47 @@ async def test_a_client_cannot_use_a_warm_key_cache_during_a_registry_outage(wor
     world.coordination.registry.transport.down = True
     response = await world.send(world.delivery("client"))
     assert (response.status_code, _code(response)) == (503, "client_authority_unavailable")
+
+
+@pytest.mark.parametrize("world", [{"customer_hosted": True}], indirect=True)
+async def test_a_customer_hosted_logs_reads_its_private_teams_key_with_its_own_certificate(world):
+    assert (await world.send(world.delivery("client"))).status_code == 200
+    team_path = "/v1/namespaces/{}/teams/{}".format(*reversed(world.member.team_id.split(":", 1)))
+    signed = [
+        r for r in world.coordination.registry.transport.calls
+        if r.url.path == team_path and r.headers.get("Authorization", "").startswith("DIDKey ")
+    ]
+    assert signed
+    assert all("X-AWID-Service-Token" not in r.headers for r in signed)
+
+
+@pytest.mark.parametrize("world", [{"customer_hosted": True}], indirect=True)
+async def test_revoking_logs_own_certificate_stops_its_reads_of_the_private_team(world):
+    await world.coordination.registry.revoke(SERVICE_CERTIFICATE_ID)
+    response = await world.send(world.delivery("client"))
+    assert (response.status_code, _code(response)) == (403, "team_private_unreadable")
+
+
+@pytest.mark.parametrize("world", [{"customer_hosted": True}], indirect=True)
+async def test_a_private_team_unreadable_at_the_certificate_read_is_refused_like_at_the_key_read(world):
+    """The same condition gets the same code at either read: the key read
+    succeeds, and the read of the team's certificates that follows finds the
+    team unreadable."""
+    reads = []
+
+    def private(request: httpx.Request, response: httpx.Response):
+        signed_by_logs = request.headers.get("Authorization", "").startswith("DIDKey ")
+        if not (signed_by_logs and request.url.path.endswith("/certificates")):
+            return None
+        reads.append(request)
+        return httpx.Response(
+            403, json={"detail": {"code": "team_private", "message": "private"}}, request=request
+        )
+
+    world.coordination.registry.transport.fault = private
+    response = await world.send(world.delivery("client"))
+    assert (response.status_code, _code(response)) == (403, "team_private_unreadable")
+    assert len(reads) == 1
 
 
 async def test_identical_redelivery_returns_the_original_receipt_without_spending_quota(world):

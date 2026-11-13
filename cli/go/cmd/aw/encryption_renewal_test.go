@@ -152,6 +152,7 @@ func TestCustodyRenewsExpiredAssertionWithoutGrantActivity(t *testing.T) {
 		published <- &a
 		_ = json.NewEncoder(w).Encode(map[string]any{"encryption_key": a})
 	}))
+	t.Setenv("AWID_REGISTRY_URL", server.URL)
 	writeMessagingPrincipalForTest(t, root, server.URL, "alice", did, key)
 	writeIdentityForTest(t, root, awconfig.WorktreeIdentity{DID: did, StableID: stableID, Address: "example.test/alice", Custody: awid.CustodySelf, IdentityScope: awid.IdentityModeGlobal, RegistryURL: server.URL, RegistryStatus: "registered"})
 	home := filepath.Join(root, ".aw")

@@ -95,7 +95,7 @@ async def _granted_policy(
         team_id,
         digest,
     )
-    return await records.policy(tx, installation_id, digest) if current else None
+    return await records.policy(tx, installation_id, digest, team_id=team_id) if current else None
 
 
 async def _action_policy(tx: TransactionManager, policy_ref: str) -> ActionPolicy | None:
@@ -133,13 +133,17 @@ class UsePolicies:
     def __init__(self, db: AsyncDatabaseManager) -> None:
         self._db = db
 
-    async def current(self, policy_ref: str) -> ActionPolicy | None:
-        async with self._db.transaction() as tx:
-            if policy_ref.startswith("secrets.run|"):
-                from aweb_secrets.run_approvals import current_run_policy
+    async def current(
+        self, policy_ref: str, *, tx: TransactionManager | None = None
+    ) -> ActionPolicy | None:
+        if tx is None:
+            async with self._db.transaction() as own:
+                return await self.current(policy_ref, tx=own)
+        if policy_ref.startswith("secrets.run|"):
+            from aweb_secrets.run_approvals import current_run_policy
 
-                return await current_run_policy(tx, policy_ref)
-            return await _action_policy(tx, policy_ref)
+            return await current_run_policy(tx, policy_ref)
+        return await _action_policy(tx, policy_ref)
 
 
 class UseApprovers:
@@ -155,34 +159,44 @@ class UseApprovers:
         self._passkeys = passkeys
         self._owners = owners
 
-    async def candidates(self, policy: ActionPolicy, request: Mapping[str, Any]) -> list[Approver]:
+    async def candidates(
+        self,
+        policy: ActionPolicy,
+        request: Mapping[str, Any],
+        *,
+        tx: TransactionManager | None = None,
+    ) -> list[Approver]:
         if request.get("type") != REQUEST_TYPE:
             return []
-        async with self._db.transaction() as tx:
-            ids = await derived_lineage.ancestry_ids(
-                tx, request["installation_id"], request["team_id"], request["secret"]["secret_id"]
-            )
-            covering = await approvers_for_secrets(
-                tx,
-                installation_id=request["installation_id"],
-                team_id=request["team_id"],
-                secret_ids=ids,
-            )
+        if tx is None:
+            async with self._db.transaction() as own:
+                return await self.candidates(policy, request, tx=own)
+        ids = await derived_lineage.ancestry_ids(
+            tx, request["installation_id"], request["team_id"], request["secret"]["secret_id"]
+        )
+        covering = await approvers_for_secrets(
+            tx,
+            installation_id=request["installation_id"],
+            team_id=request["team_id"],
+            secret_ids=ids,
+        )
         found: list[Approver] = []
         for record in covering:
-            approver = await self._passkeys.designated_approver(record.scope)
+            approver = await self._passkeys.designated_approver(record.scope, tx=tx)
             if approver is not None:
                 found.append(replace(approver, principal_did=record.principal_did))
         owners = tuple(scope for scope in policy.approver_scopes if is_owner_scope(scope))
         if owners:
             owner_policy = replace(policy, approver_scopes=owners, allow_requester_approval=True)
-            found.extend(await self._owners.candidates(owner_policy, request))
+            found.extend(await self._owners.candidates(owner_policy, request, tx=tx))
         return found
 
-    async def is_current(self, scope: str, subject: str) -> bool:
+    async def is_current(
+        self, scope: str, subject: str, *, tx: TransactionManager | None = None
+    ) -> bool:
         if is_owner_scope(scope):
-            return await self._owners.is_current(scope, subject)
-        return await self._passkeys.is_current(scope, subject)
+            return await self._owners.is_current(scope, subject, tx=tx)
+        return await self._passkeys.is_current(scope, subject, tx=tx)
 
 
 @dataclass(frozen=True)
@@ -289,10 +303,10 @@ async def request_use_approval(
         admission.intent_id,
     )
     if existing is not None:
-        approval = await approvals.get(existing["approval_id"])
+        approval = await approvals.get(existing["approval_id"], tx=tx)
         assert approval is not None
         view = await approvals.requester_view(
-            existing["approval_ref"], principal_key(principal).principal_did
+            existing["approval_ref"], principal_key(principal).principal_did, tx=tx
         )
         return PendingUseApproval(
             pending=PendingApproval(view=view, approval=approval, deliveries=()),
@@ -473,7 +487,7 @@ async def admit_approved_use(
         retrieved = await approvals.retrieve(approval_id, request, str(dispatch_id), tx=tx)
         if retrieved is not None:
             return UseAdmission(admission=retrieved, refusal=None)
-        approval = await approvals.get(approval_id)
+        approval = await approvals.get(approval_id, tx=tx)
         assert approval is not None
         if approval.state in (
             ApprovalState.PENDING,
@@ -530,7 +544,7 @@ async def _refusal(
     if reason is Refusal.EXPIRED:
         return "approval_expired"
     if reason is Refusal.NOT_APPROVED:
-        approval = await approvals.get(approval_id)
+        approval = await approvals.get(approval_id, tx=tx)
         assert approval is not None
         return _STATE_REFUSALS.get(approval.state, "approval_revoked")
     return "approval_revoked"

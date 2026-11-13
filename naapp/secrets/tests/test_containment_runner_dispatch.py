@@ -76,7 +76,9 @@ async def independent_run(root, original):
     policy = Policy.from_body({**POLICY_BODY, "approval": "none", "approvers": []})
     async with db.transaction() as tx:
         await jobs.create_job(tx, installed["installation_id"], member.team_id, job)
-        await records.create_policy(tx, installed["installation_id"], policy)
+        await records.create_policy(
+            tx, installed["installation_id"], policy, team_id=member.team_id
+        )
         await records.create_grant(
             tx,
             installed["installation_id"],
@@ -86,7 +88,7 @@ async def independent_run(root, original):
                     "v": 1,
                     "grant_id": "grt_other_runner",
                     "secret_id": SECRET["secret_id"],
-                    "subject": {"principal": member.did_key},
+                    "subject": {"principal": member.extra_cert_fields["member_did_aw"]},
                     "capability": "run",
                     "operations": [],
                     "open_request": False,

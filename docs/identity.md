@@ -16,7 +16,7 @@ The [identity certificates v1 candidate](id-certificates.md) defines a
 parent-signed human/agent tree rooted in DNS namespace authority, alongside
 unchanged team certificates. The nearest human answers for an agent;
 membership, roles and custody stay separate. Implementation follows contract
-review. The former [email attribution candidate](member-attribution.md) is
+review. The former [email attribution candidate](drafts/member-attribution.md) is
 superseded and must not be implemented.
 
 ## Entities
@@ -578,6 +578,13 @@ identity's `signing.key`). A process pointed at that directory (via
 normally; requests are signed per-request with the session key and the server
 attributes the results to the identity.
 
+`grant.yaml` also records `team_did_key`: the team key named by the resident's
+team certificate when the grant was minted. A grant home holds no team
+certificate, and this field is read only to verify the team's owner log-key
+record for sealed local logs (see [Local Message Logs](configuration.md#local-message-logs)).
+It grants nothing. A grant minted before the field existed cannot verify that
+record and stops local logging until it is minted again.
+
 When a grant-backed worker also needs plaintext mail/chat messages to carry the
 resident identity's ordinary message signature, run local resident custody from
 the resident home with `aw custody serve`. Local API-key workspaces created by
@@ -707,9 +714,10 @@ CLI reports verification status on reads such as `aw mail inbox` and
 `aw chat open`.
 
 The clients use Trust on First Use (TOFU) pinning for globally addressed peer
-continuity. A stable identity is pinned by `did:aw` when available, together
-with its observed current key and durable DID-log checkpoint; otherwise the
-first verified contact is pinned by `did:key`. Future changes require verified
+continuity. A sender is pinned only after the registry confirms that its
+address belongs to it: by `did:aw` when a stable identity is available,
+together with its current key and durable DID-log checkpoint, otherwise by
+`did:key`. Future changes require verified
 DID-log/rotation continuity or a namespace-controller-signed address
 replacement. Local single-team identities are refreshed against the live team
 roster rather than persisted as global address pins. See

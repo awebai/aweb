@@ -111,14 +111,14 @@ async def current_run_policy(tx: TransactionManager, policy_ref: str) -> ActionP
     combined = _b2_policy(policy_ref, installation, team, parent)
     if combined is None or template_id == "-":
         return combined
-    template = await records.grant_template(tx, installation, template_id)
+    template = await records.grant_template(tx, installation, template_id, team_id=team)
     if (
         template is None
         or template.digest != template_digest
         or template.terms["policy_digest"] != child_digest
     ):
         return None
-    child = await records.policy(tx, installation, child_digest)
+    child = await records.policy(tx, installation, child_digest, team_id=team)
     other = None if child is None else _b2_policy(policy_ref, installation, team, child)
     if other is None:
         return None
@@ -450,7 +450,7 @@ async def admit_run_approvals(
         policy = policies[row["ordinal"]]
         if policy is None:
             refusal = refusal or "grant_revoked"
-        approval = await approvals.get(row["approval_id"])
+        approval = await approvals.get(row["approval_id"], tx=tx)
         assert approval is not None
         eligible = scopes[row["ordinal"]]
         if (approval.decided_by is not None and approval.decided_by.scope not in eligible) or (

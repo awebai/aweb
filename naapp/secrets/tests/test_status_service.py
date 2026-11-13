@@ -5,16 +5,18 @@ import secrets
 from dataclasses import replace
 
 import pytest
-from aweb_naapp.roles import assign, principal_key, unassign
+from aweb_naapp.roles import principal_key, unassign
 from aweb_naapp.runtime.authorization import Authorization, DeclaredTool
 
 from aweb_secrets import records, tool_results
 from aweb_secrets.broker_audit import BrokerAudit
-from aweb_secrets.member_types import broker_result_reply
+from aweb_secrets.broker_outcomes import durable_broker_receipt
+from aweb_secrets.member_types import ToolReply, broker_result_reply
 from aweb_secrets.redaction import KnownValues
 from aweb_secrets.responses import handle_response
 from aweb_secrets.status_service import UseStatus
 from aweb_secrets.use_approvals import apply_use_approval_migrations
+from tests.human_owner import bind_owner
 from tests.test_admission import ALICE, BOB, _grant_source_grant
 from tests.test_broker_audit import INSTALLATION, machine, prepared, source, view
 from tests.test_broker_audit import db as db
@@ -129,22 +131,23 @@ async def test_renewed_certificate_keeps_read_access_but_does_not_rewrite_origin
     assert await snapshot(db) == before
 
 
-async def test_current_grant_and_owner_role_are_required_for_retrieval(db, fence):  # noqa: F811
+async def test_current_grant_and_owner_role_are_required_for_retrieval(db, fence, registry):  # noqa: F811
     _, admission, _, _ = await prepared(db, fence)
     service = UseStatus(db, fence=fence)
     async with db.transaction() as tx:
         await records.revoke_grant(tx, INSTALLATION, admission.grant_id)
     assert (await service.get(ref=admission.intent_id, authorization=authorization())).status == 404
-    async with db.transaction() as tx:
-        await assign(tx, principal_key(BOB), "secrets.owner")
-    owner = await service.get(ref=admission.intent_id, authorization=authorization(BOB))
+    holder = await bind_owner(db, fence, registry, team_id=ALICE.team_id)
+    owner = await service.get(ref=admission.intent_id, authorization=authorization(holder))
     assert owner.status == 200 and owner.body["request_id"] == "broker-request"
     # Caller-chosen request IDs never become an owner's cross-principal lookup.
-    assert (await service.get(ref="broker-request", authorization=authorization(BOB))).status == 404
-    async with db.transaction() as tx:
-        await unassign(tx, principal_key(BOB), "secrets.owner")
     assert (
-        await service.get(ref=admission.intent_id, authorization=authorization(BOB))
+        await service.get(ref="broker-request", authorization=authorization(holder))
+    ).status == 404
+    async with db.transaction() as tx:
+        await unassign(tx, principal_key(holder), "secrets.owner")
+    assert (
+        await service.get(ref=admission.intent_id, authorization=authorization(holder))
     ).status == 404
 
 
@@ -274,7 +277,24 @@ def test_withheld_reply_keeps_safe_counts_and_status_without_an_encoded_body():
         raise AssertionError("withheld entity appeared in tool reply")
 
 
-async def test_terminal_status_returns_only_the_stored_sanitized_envelope(db, fence):  # noqa: F811
+async def _store_terminal(db, dispatch_id, receipt):
+    # Seed the read-side terminal fixture using the canonical append-only
+    # fact, rather than overwriting S3's protected projection columns.
+    async with db.transaction() as tx:
+        await tx.execute(
+            "INSERT INTO {{tables.dispatch_observations}}"
+            " (dispatch_id,attempt,kind,state,result,provenance)"
+            " VALUES ($1,1,'outcome','completed',$2::jsonb,'live')",
+            dispatch_id,
+            json.dumps(receipt),
+        )
+        await tx.execute(
+            "UPDATE {{tables.dispatches}} SET state='completed',attempts=1 WHERE dispatch_id=$1",
+            dispatch_id,
+        )
+
+
+async def test_terminal_status_returns_only_the_stored_value_free_receipt(db, fence):  # noqa: F811
     _, admission, dispatch_id, _ = await prepared(db, fence)
     sanitized = {
         "state": "completed",
@@ -282,19 +302,14 @@ async def test_terminal_status_returns_only_the_stored_sanitized_envelope(db, fe
         "request_ref": admission.intent_id,
         "result": {
             "status": 200,
-            "headers": [],
-            "body": "safe",
-            "body_encoding": "utf8",
+            "headers": None,
+            "body": None,
             "truncated": False,
             "upstream_bytes": 4,
             "redaction_count": 0,
         },
     }
-    await db.execute(
-        "UPDATE {{tables.dispatches}} SET state='completed', result=$2::jsonb WHERE dispatch_id=$1",
-        dispatch_id,
-        json.dumps({**sanitized, "upstream_response_hmac": "restricted"}),
-    )
+    await _store_terminal(db, dispatch_id, sanitized)
     before = await snapshot(db)
     reply = await UseStatus(db, fence=fence).get(
         ref=admission.intent_id, authorization=authorization()
@@ -305,53 +320,45 @@ async def test_terminal_status_returns_only_the_stored_sanitized_envelope(db, fe
 
 async def test_stored_result_identity_cannot_override_the_current_scoped_receipt(db, fence):  # noqa: F811
     _, admission, dispatch_id, _ = await prepared(db, fence)
-    await db.execute(
-        "UPDATE {{tables.dispatches}} SET state='completed', result=$2::jsonb WHERE dispatch_id=$1",
+    await _store_terminal(
+        db,
         dispatch_id,
-        json.dumps(
-            {
-                "state": "completed",
-                "request_id": "other",
-                "request_ref": "int_other",
-                "result": {"body": "must-not-return"},
-            }
-        ),
+        {
+            "state": "completed",
+            "request_id": "other",
+            "request_ref": "int_other",
+            "result": {"body": None, "headers": None},
+        },
     )
     reply = await UseStatus(db, fence=fence).get(
         ref=admission.intent_id, authorization=authorization()
     )
-    assert reply.status == 503 and "must-not-return" not in json.dumps(reply.body)
+    assert reply.status == 503 and "result" not in reply.body
 
 
-async def test_owner_inspection_does_not_disclose_another_members_projected_entity(db, fence):  # noqa: F811
+@pytest.mark.parametrize("state", ["result_withheld", "completed"])
+async def test_owner_inspection_does_not_disclose_another_members_result_metadata(
+    db, fence, registry, state
+):  # noqa: F811
     _, admission, dispatch_id, _ = await prepared(db, fence)
-    sanitized = {
-        "state": "result_withheld",
-        "request_id": "broker-request",
-        "request_ref": admission.intent_id,
-        "code": "credential_shaped",
-        "result": {"status": 201, "body": None, "upstream_bytes": 40},
-    }
-    await db.execute(
-        "UPDATE {{tables.dispatches}} SET state='completed', result=$2::jsonb WHERE dispatch_id=$1",
-        dispatch_id,
-        json.dumps(sanitized),
+    sanitized = durable_broker_receipt(
+        ToolReply(
+            200,
+            {
+                "state": state,
+                "request_id": "broker-request",
+                "request_ref": admission.intent_id,
+                "result": {"status": 201, "body": None, "upstream_bytes": 40},
+                **({"code": "credential_shaped"} if state == "result_withheld" else {}),
+            },
+        )
     )
-    async with db.transaction() as tx:
-        await assign(tx, principal_key(BOB), "secrets.owner")
+    await _store_terminal(db, dispatch_id, sanitized)
+    owner = await bind_owner(db, fence, registry, team_id=ALICE.team_id)
     service = UseStatus(db, fence=fence)
-    for state in ("result_withheld", "completed"):
-        if state == "completed":
-            sanitized = {**sanitized, "state": state, "result": {"body": "requester-only-entity"}}
-            sanitized.pop("code")
-            await db.execute(
-                "UPDATE {{tables.dispatches}} SET result=$2::jsonb WHERE dispatch_id=$1",
-                dispatch_id,
-                json.dumps(sanitized),
-            )
-        own = await service.get(ref=admission.intent_id, authorization=authorization())
-        assert own.body == sanitized
-        inspection = await service.get(ref=admission.intent_id, authorization=authorization(BOB))
-        assert inspection.status == 200 and inspection.body["state"] == state
-        assert "result" not in inspection.body
-        assert inspection.body.get("code") == sanitized.get("code")
+    own = await service.get(ref=admission.intent_id, authorization=authorization())
+    assert own.body == sanitized
+    inspection = await service.get(ref=admission.intent_id, authorization=authorization(owner))
+    assert inspection.status == 200 and inspection.body["state"] == state
+    assert "result" not in inspection.body
+    assert inspection.body.get("code") == sanitized.get("code")

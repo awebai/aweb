@@ -87,8 +87,13 @@ var rootCmd = &cobra.Command{
 			activeIdentityHome = home
 		}
 		restoreIdentityHomeAfterCommand(cmd, identityHomeEnv, hadIdentityHomeEnv, previousActiveIdentityHome)
-		if cmd == idCreateCmd && (cmd.Flags().Changed("org") || cmd.Flags().Changed("owner-identity-home")) {
+		if cmd == idCreateCmd && (cmd.Flags().Changed("org") || cmd.Flags().Changed("owner-identity-home") || cmd.Flags().Changed("no-address") || cmd.Flags().Changed("local")) {
 			// Validate the original creation association before any key renewal or network work.
+			return nil
+		}
+		if cmd == teamInstallCertCmd {
+			// Check the certificate before any key renewal or network work; a
+			// verified install ensures the encryption key itself.
 			return nil
 		}
 		if isAgentStatusCommand(cmd) || isActivityCommand(cmd) {
@@ -327,6 +332,9 @@ func Execute() {
 }
 
 func activateIdentityHomeForPluginDispatch(args []string) (func(), error) {
+	if namesOfflineCommand(args) {
+		return func() {}, nil
+	}
 	previous, existed := os.LookupEnv(awconfig.IdentityHomeEnv)
 	explicit := identityHomeForPluginDispatch(args)
 	home, err := awconfig.ResolveIdentityHome("", explicit)

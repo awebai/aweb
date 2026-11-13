@@ -6,27 +6,87 @@ import json
 from datetime import UTC, datetime, timedelta
 from uuid import uuid4
 
+import asyncpg
 import pytest
 from aweb_naapp.hooks.envelope import verify
 from aweb_naapp.hooks.producer import Registration, RegistrationView
 from aweb_naapp.hooks.strictjson import Refused
-from aweb_naapp.roles import assign
 from aweb_naapp.runtime.approvals import PgApprovalStore
 from aweb_naapp.runtime.credential_audit import CredentialAudit, GovernanceUnavailable
 from aweb_naapp.runtime.passkeys import EnrolmentRefused, contact_sha256
 from aweb_naapp_testing.owner_acts import INSTALLATION_ID
 from aweb_naapp_testing.webauthn import SoftAuthenticator
 
+from aweb_secrets.approvers import record_approver
 from aweb_secrets.credential_governance import (
     CREDENTIAL_AUDIT_MIGRATIONS,
     ChangeApprovals,
     credential_role,
 )
-from aweb_secrets.owners import OWNER_ROLE, owner_scope, record_owner
-from tests.test_change_sets import ALICE, APP_ID, ORIGIN, TEAM
-from tests.test_change_sets import world as _world
+from aweb_secrets.owners import OWNER_ROLE, approver_scope
+from tests.test_change_sets import (
+    ALICE,
+    APP_ID,
+    ORIGIN,
+    TEAM,
+    build_world,
+    by_member,
+    change_set,
+    designate_approver,
+    enrol_owner,
+)
 
-world = _world
+
+@pytest.fixture
+async def world(test_db_factory, tmp_path):
+    async with build_world(test_db_factory, tmp_path) as built:
+        await enrol_owner(built, ALICE, "owner@example.com")
+        # The contact-model tests exercise an ordinary approver, never a new
+        # legacy owner. Its app binding refers to a real B2 draft.
+        request = change_set(
+            drafter=by_member(ALICE),
+            changes=[designate_approver("audit-contact", "audit@example.com", ["sec_19ab42"])],
+        )
+        async with built.db.transaction() as tx:
+            await built.change_sets.draft(tx, request)
+        built.audit_change_id = request["change_id"]
+        built.audit_event_start = await built.db.fetch_value(
+            "SELECT COALESCE(max(position),0) FROM {{tables.outbox_events}}"
+        )
+        built.audit_baseline = {
+            table: await built.db.fetch_value("SELECT count(*) FROM {{tables." + table + "}}")
+            for table in (
+                "passkey_approvers",
+                "passkey_credentials",
+                "passkey_enrolments",
+                "owner_act_nonces",
+                "outbox_events",
+                "owner_principals",
+            )
+        }
+        yield built
+
+
+async def artifact_count(world, table):
+    return (
+        await world.db.fetch_value("SELECT count(*) FROM {{tables." + table + "}}")
+        - world.audit_baseline[table]
+    )
+
+
+@pytest.mark.parametrize("operation", ["DELETE FROM", "TRUNCATE TABLE"])
+async def test_credential_audit_refuses_deletion_and_truncation(world, operation):
+    audit = await audit_for(world)
+    await designate(world, audit)
+    before = await world.db.fetch_value("SELECT count(*) FROM {{tables.credential_audit_events}}")
+    assert before > 0
+    with pytest.raises(asyncpg.RaiseError):
+        async with world.db.transaction() as tx:
+            await tx.execute(f"{operation} {{{{tables.credential_audit_events}}}}")
+    assert (
+        await world.db.fetch_value("SELECT count(*) FROM {{tables.credential_audit_events}}")
+        == before
+    )
 
 
 def target():
@@ -67,6 +127,7 @@ async def audit_for(world, *, registration_view=None, shared_producer=None):
         producer=shared_producer or world.credential_audit._producer,
         passkeys=lambda: world.passkeys,
         role_of=credential_role,
+        human_roles=frozenset({OWNER_ROLE}),
         approvals=ChangeApprovals(approval),
         registration_view=registration_view or default_view,
         max_backlog_age=timedelta(minutes=5),
@@ -95,7 +156,7 @@ async def designate(
     act_kind="app-role.designate",
     contact="owner@example.com",
 ):
-    scope = owner_scope(INSTALLATION_ID, TEAM, ALICE.principal_did)
+    scope = approver_scope(INSTALLATION_ID, TEAM, "audit-contact")
     subject = {
         "app_id": APP_ID,
         "installation_id": INSTALLATION_ID,
@@ -116,8 +177,17 @@ async def designate(
         async with world.db.transaction() as tx:
             await world.fence.check(tx, world.admitted)
             consumed = await world.owner.verifier.consume_in(tx, act, expected_subject=subject)
-            await record_owner(tx, installation_id=INSTALLATION_ID, principal=ALICE)
-            await assign(tx, ALICE, OWNER_ROLE)
+            if not await tx.fetch_value("SELECT 1 FROM {{tables.approvers}} WHERE scope=$1", scope):
+                await record_approver(
+                    tx,
+                    installation_id=INSTALLATION_ID,
+                    team_id=TEAM,
+                    approver_ref="audit-contact",
+                    scope=scope,
+                    covers=["sec_19ab42"],
+                    principal_did=None,
+                    change_id=world.audit_change_id,
+                )
             designation = await world.passkeys.designate(
                 tx, scope=scope, contact=contact, evidence=consumed
             )
@@ -170,7 +240,7 @@ async def test_missing_or_mismatched_context_rolls_back_designation_nonce_and_ho
             world, audit, prepare=problem != "missing", wrong_artifact=problem == "another-artifact"
         )
     for table in ("passkey_approvers", "owner_act_nonces", "outbox_events", "owner_principals"):
-        assert await world.db.fetch_value("SELECT count(*) FROM {{tables." + table + "}}") == 0
+        assert await artifact_count(world, table) == 0
 
 
 async def test_completion_without_a_current_audit_target_rolls_back_then_retries(world):
@@ -190,7 +260,7 @@ async def test_completion_without_a_current_audit_target_rolls_back_then_retries
     with pytest.raises(Refused) as refused, audit.prepared(prepared):
         await world.passkeys.complete_enrolment(token, device.create(options), fence=prepared)
     assert refused.value.code == "audit_target_unavailable"
-    assert await world.db.fetch_value("SELECT count(*) FROM {{tables.passkey_credentials}}") == 0
+    assert await artifact_count(world, "passkey_credentials") == 0
     assert (
         await world.db.fetch_value(
             "SELECT count(*) FROM {{tables.passkey_enrolments}} WHERE used_at IS NOT NULL"
@@ -215,7 +285,7 @@ async def test_context_without_effect_fence_cannot_commit_completion(world):
     prepared = await audit.prepare_enrolment(token)
     with pytest.raises(GovernanceUnavailable), audit.prepared(prepared):
         await world.passkeys.complete_enrolment(token, device.create(options))
-    assert await world.db.fetch_value("SELECT count(*) FROM {{tables.passkey_credentials}}") == 0
+    assert await artifact_count(world, "passkey_credentials") == 0
     assert len(await events(world)) == 1
 
 
@@ -237,7 +307,7 @@ async def test_final_f6_expiry_after_signed_enqueue_rolls_back_completion(world)
     prepared = await audit.prepare_enrolment(token)
     with pytest.raises(EnrolmentRefused), audit.prepared(prepared):
         await world.passkeys.complete_enrolment(token, device.create(options), fence=prepared)
-    assert await world.db.fetch_value("SELECT count(*) FROM {{tables.passkey_credentials}}") == 0
+    assert await artifact_count(world, "passkey_credentials") == 0
     assert (
         await world.db.fetch_value(
             "SELECT count(*) FROM {{tables.passkey_enrolments}} WHERE used_at IS NOT NULL"
@@ -253,11 +323,10 @@ async def approved_designation(world):
 
     from aweb_secrets.approvers import record_approver
     from aweb_secrets.owners import approver_scope
-    from tests.test_change_sets import by_member, change_set, enrol_owner
+    from tests.test_change_sets import by_member, change_set
     from tests.test_use_approvals import designate_approver
 
     owner_contact, target_contact = "owner@example.com", "finance@example.com"
-    await enrol_owner(world, ALICE, owner_contact)
     audit = await audit_for(world)
     request = change_set(
         drafter=by_member(ALICE),
@@ -410,5 +479,5 @@ async def test_parallel_completion_consumes_one_link_without_a_second_key_or_hoo
         not isinstance(result, Exception) or isinstance(result, EnrolmentRefused)
         for result in results
     )
-    assert await world.db.fetch_value("SELECT count(*) FROM {{tables.passkey_credentials}}") == 1
+    assert await artifact_count(world, "passkey_credentials") == 1
     assert len(await events(world)) == 2

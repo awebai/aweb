@@ -19,7 +19,7 @@ app on the customer team server. Changing these later does not migrate an
 installation. Publish and install the manifest served by this deployment,
 not another service's manifest.
 
-Create a private operator environment file (0600) and a key directory readable
+Create an operator environment file containing only non-secret configuration and file paths, and a key directory readable
 only by UID 10001. Mount that directory read-only at `/run/keys`. Supply every
 required key separately; generate key material with an approved local secure
 random source and never place it in a Dockerfile, build argument, image layer,
@@ -29,11 +29,12 @@ environment variables only; it does not load a checkout's `.env`.
 
 | Input | Required setting |
 | --- | --- |
-| `SECRETS_DATABASE_URL` | Customer PostgreSQL DSN; migrations run on startup. Keep the DSN in the private environment file. |
+| `SECRETS_DATABASE_URL_FILE` | Mounted UTF-8 file containing the whole customer PostgreSQL DSN, including its role password; migrations run on startup. No DSN value in the environment file. |
 | `SECRETS_DB_SCHEMA` | App schema, default `public`; use an app-owned database role. |
 | `SECRETS_APP_ID` | Stable customer app ID, chosen before installation. |
 | `SECRETS_PUBLIC_ORIGIN` | HTTPS agent API origin. |
 | `SECRETS_CONSOLE_ORIGIN` | Distinct HTTPS console origin. |
+| `SECRETS_CLIENT_ADDRESS_HEADER` | Optional header overwritten by a trusted proxy. The console login limiter uses its last comma-separated entry; a missing header or an unset setting uses the peer address. Leave unset unless the proxy controls this header. |
 | `SECRETS_AWID_REGISTRY_URL` | Customer registry origin, matching the namespace's `_awid` TXT `registry=` selection. |
 | `SECRETS_KMS_KEY_ID`, `SECRETS_KMS_REGION` | Recommended custody: customer AWS KMS key and region. Give the runtime's AWS role the required key operations; no static AWS keys in the image. |
 | `SECRETS_CUSTODY_KEY_FILE` | Mounted local custody key, allowed in production and lab deployments. Configure exactly one of this or KMS. Keep the file private to the Secrets service account. |
@@ -45,10 +46,12 @@ environment variables only; it does not load a checkout's `.env`.
 | `SECRETS_MANIFEST_REQUEST_KEY_FILE` | Independent mounted single-purpose manifest-hook HMAC key. |
 | `SECRETS_EMAIL_SMTP_HOST`, `SECRETS_EMAIL_SMTP_PORT` | Transactional SMTP server and port (default 587). |
 | `SECRETS_EMAIL_TLS` | `starttls` (default) or `implicit`; TLS is required. |
-| `SECRETS_EMAIL_USERNAME`, `SECRETS_EMAIL_PASSWORD_FILE`, `SECRETS_EMAIL_FROM` | Provider login, mounted password file and sender address. |
+| `SECRETS_EMAIL_USERNAME_FILE`, `SECRETS_EMAIL_PASSWORD_FILE`, `SECRETS_EMAIL_FROM` | Mounted provider-login file, existing mounted password file and plain sender address. |
 | `SECRETS_EMAIL_CA_FILE` | Optional mounted SMTP CA. |
 | `SECRETS_EGRESS_DENIED_NETWORKS` | JSON array of deployment egress/metadata IP addresses or strict CIDRs; explicitly use `[]` if there are no additional ranges. Applies to broker **and hook** egress. |
 | `SECRETS_GIT_SHA` | Set in the image from the required full 40-character `SOURCE_COMMIT` build argument; keep it unchanged at runtime. |
+
+Behind a proxy chain (for example, CDN then load balancer), an appending `X-Forwarded-For` ends in the CDN's egress address; use a single-value client-IP header that the edge sets and overwrites, or use `X-Forwarded-For` only when exactly one trusted proxy appends to it.
 
 The app-key mapping uses paths, never key values:
 
@@ -149,8 +152,13 @@ container logs or private environment files as acceptance evidence.
 After building the image, from `naapp/secrets`, under the team's suite lock:
 
 ```sh
-uv run --frozen --no-sync python e2e/package_lab.py --image customer-secrets:reviewed
+uv run --frozen --no-sync python e2e/package_lab.py --image customer-secrets:reviewed --source-commit "$(git rev-parse HEAD)"
 ```
+
+Pass the commit used to build the image; the command assumes this checkout
+still matches it. The lab checks the image's default UID/GID without a user
+override, then requires its revision label and served build SHA to match that
+commit. The mounted-fixture service processes continue to use the host UID.
 
 This creates an internal Docker network, real PostgreSQL/Redis/AWID, an
 answering TXT DNS server and a TLS registry, all with generated synthetic lab
@@ -168,3 +176,33 @@ Their [Logs fixture](../tests/production_logs.py) uses the existing S19 serving
 lifecycle and actual served Logs manifest. Receiver installation and activated
 bindings are external fixture preconditions; the owner activation ceremony and
 designated-reader journey remain separate acceptance.
+
+Runner sizing: see [1Password quota and exhaustion guidance](OPERATIONS.md#1password-runner-quota).
+
+## Mounted service secrets in the shared deployment
+
+The canonical service descriptor is [deploy/team/descriptors/secrets.md](../../../deploy/team/descriptors/secrets.md).
+Helm and Compose use the same image and setting names. Configuration holds
+references, never credential bytes. Mount this service's files read-only under
+`/run/secrets/secrets/`, readable by UID 10001 (mode 0400), or by its
+service-only group 10001 (root-owned mode 0440). Never mount them into agents.
+
+The shared settings source accepts `NAME_FILE` for a scalar setting, including
+`SECRETS_DATABASE_URL_FILE` and `SECRETS_EMAIL_USERNAME_FILE`.
+Each holds UTF-8 text, at most 1 KiB; one trailing LF is removed. A missing,
+empty, oversized, non-regular or group/world-writable file refuses startup;
+projected Secret symlinks are supported. Supplying both `NAME` and `NAME_FILE`
+refuses instead of choosing one. Explicit constructor inputs retain precedence.
+`EMAIL_PASSWORD_FILE` remains the existing password reader; never supply raw
+`EMAIL_PASSWORD`. Other key and certificate settings continue to carry paths.
+
+Set `SECRETS_AWID_MEMBER_CREDENTIALS` to a JSON map from the customer team
+ID to `signing_key_file` and `certificate_file` paths under this service's
+secret mount. The signing key is the ordinary member's aw-compatible PEM and
+the certificate is JSON. Provision them through the supported team authority,
+not by writing public-registry records. Leave `SECRETS_AWID_SERVICE_TOKEN`
+absent. `SECRETS_AWID_REGISTRY_URL` must match DNS-selected customer AWID.
+The mounted DSN file contains the entire URL and password; no wrapper expands
+a password into an environment value. Plain origins and path references can
+remain environment configuration; the earlier environment-valued DSN form
+does not satisfy the no-environment-secrets requirement.

@@ -1,6 +1,6 @@
 [project]
 name = "aweb"
-version = "1.27.51"
+version = "1.27.51rc2"
 description = "Agent Web: self-hostable coordination server for AI agents (identity, presence, mail, chat, tasks, locks)"
 readme = "README.md"
 license = "MIT"
@@ -19,9 +19,9 @@ classifiers = [
     "Topic :: Software Development :: Libraries :: Application Frameworks",
 ]
 dependencies = [
-    "awid-service>=0.5.39",
+    "awid-service>=0.5.40rc2",
     # Shared origin egress, manifest reader and hooks; no runtime extra.
-    "aweb-naapp[egress,hooks]>=0.5.1",
+    "aweb-naapp[egress,hooks]>=0.5.2rc2",
     "base58>=2.1.1",
     "cryptography>=45.0.6",
     "dnspython>=2.8.0",
@@ -39,6 +39,11 @@ dependencies = [
     "uvicorn[standard]>=0.35.0",
     "prometheus-client>=0.22.1",
 ]
+
+[project.optional-dependencies]
+# The independent protected-host entry point uses the shared B2/B3 runtime.
+# Release source/package pins are composed by the repository train.
+protected = ["aweb-naapp[runtime]>=0.5.1"]
 
 [tool.uv.sources]
 awid-service = { path = "../awid", editable = true }

@@ -10,6 +10,12 @@ version. It validates them exactly as the aw CLI does and resolves what a
 consumer acts on: tool invocation contexts, surfaces, usage, lifecycle, the
 hooks slot and purpose-split app keys. Both implementations pass the shared
 vectors in ``test-vectors/app-manifests/``; their error codes are the contract.
+
+This module is standard library only, so a declared did:key is checked for its
+shape alone: the ``did:key:z`` prefix, awid's encoded-length bound and the
+base58 alphabet. It is never decoded here. Whether it is an Ed25519 key is
+checked by :func:`aweb_naapp.manifest_keys.check_manifest_keys`, which every
+consumer that acts on a manifest's keys calls; the aw CLI checks both at load.
 """
 
 from __future__ import annotations
@@ -23,6 +29,8 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 from urllib.parse import unquote, urlsplit
+
+from aweb_naapp.did_key import DID_KEY_ENCODED_MAX
 
 
 def canonical_bytes(obj: Any) -> bytes:
@@ -203,7 +211,7 @@ _KEY_ID = re.compile(r"[A-Za-z0-9][A-Za-z0-9._:-]{0,127}")
 _HOOK_NAME = re.compile(r"[A-Za-z0-9][A-Za-z0-9._:-]{0,127}")
 _SCOPE_NAME = re.compile(r"[A-Za-z0-9][A-Za-z0-9:._/-]{0,127}")
 _DIGEST = re.compile(r"sha256:[0-9a-f]{64}")
-_B58 = "123456789ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnopqrstuvwxyz"
+_DID_KEY_SHAPE = re.compile(f"did:key:z[1-9A-HJ-NP-Za-km-z]{{1,{DID_KEY_ENCODED_MAX}}}")
 
 
 class ManifestError(ValueError):
@@ -528,25 +536,8 @@ def _decode(doc: Any) -> dict[str, Any]:
     return out
 
 
-def _b58decode(text: str) -> bytes:
-    number = 0
-    for char in text:
-        digit = _B58.find(char)
-        if digit < 0:
-            raise ValueError("invalid base58 character")
-        number = number * 58 + digit
-    body = number.to_bytes((number.bit_length() + 7) // 8, "big") if number else b""
-    return b"\x00" * (len(text) - len(text.lstrip("1"))) + body
-
-
-def _is_ed25519_did_key(value: str) -> bool:
-    if not value.startswith("did:key:z"):
-        return False
-    try:
-        decoded = _b58decode(value[len("did:key:z"):])
-    except ValueError:
-        return False
-    return len(decoded) == 34 and decoded[:2] == b"\xed\x01"
+def _is_did_key_shaped(value: str) -> bool:
+    return _DID_KEY_SHAPE.fullmatch(value) is not None
 
 
 def _valid_origin(raw: str) -> bool:
@@ -696,8 +687,8 @@ def _validate_common(d: dict[str, Any], reserved: frozenset[str]) -> str:
         seen.add(kid)
         if not did_key:
             raise _invalid("event_emitters[].did_key is required")
-        if not _is_ed25519_did_key(did_key):
-            raise _invalid(f"event emitter kid {kid!r} did_key is not an Ed25519 did:key")
+        if not _is_did_key_shaped(did_key):
+            raise _invalid(f"event emitter kid {kid!r} did_key is not a well-formed did:key")
     return app_id
 
 
@@ -708,23 +699,7 @@ def _refuse(code: str, message: str) -> ManifestError:
 def _validate_v2(d: dict[str, Any], app_id: str, tools: dict[str, _Tool]) -> None:
     if "event_emitters" in d["present"]:
         raise _invalid("event_emitters is replaced by app_keys in manifest_version 2")
-    if len(d["tools"]) > _MAX_V2_TOOLS:
-        raise _invalid(f"a manifest_version 2 manifest declares at most {_MAX_V2_TOOLS} tools")
-    names = [_go_trim(tool.name) for tool in d["tools"]]
-    if len(set(names)) != len(names):
-        raise _invalid("tool names must be unique")
-    for tool in d["tools"]:
-        if "%" in tool.path:
-            raise _invalid(f"tool {tool.name!r} path must not carry percent-encoding")
-        if len([segment for segment in tool.path.split("/") if segment]) > _MAX_V2_PATH_SEGMENTS:
-            raise _invalid(f"tool {tool.name!r} path has more than {_MAX_V2_PATH_SEGMENTS} segments")
-    for tool in d["tools"]:
-        if tool.contexts is None:
-            continue
-        if not tool.contexts:
-            raise _refuse("tool_contexts_invalid", f"tool {tool.name!r} invocation_contexts must not be empty")
-        if any(c not in _CONTEXTS for c in tool.contexts) or len(set(tool.contexts)) != len(tool.contexts):
-            raise _refuse("tool_contexts_invalid", f"tool {tool.name!r} invocation_contexts are invalid")
+    _validate_v2_tools(d["tools"])
     _validate_app_keys(d["app_keys"])
     _validate_surfaces(d, app_id, tools)
     _validate_answer_routes(d, tools)
@@ -733,6 +708,26 @@ def _validate_v2(d: dict[str, Any], app_id: str, tools: dict[str, _Tool]) -> Non
     _validate_lifecycle(d["lifecycle"], tools)
     _validate_hooks(d["hooks"], tools)
     _parse_roles(d["roles"])
+
+
+def _validate_v2_tools(declared: list[_Tool]) -> None:
+    if len(declared) > _MAX_V2_TOOLS:
+        raise _invalid(f"a manifest_version 2 manifest declares at most {_MAX_V2_TOOLS} tools")
+    names = [_go_trim(tool.name) for tool in declared]
+    if len(set(names)) != len(names):
+        raise _invalid("tool names must be unique")
+    for tool in declared:
+        if "%" in tool.path:
+            raise _invalid(f"tool {tool.name!r} path must not carry percent-encoding")
+        if len([segment for segment in tool.path.split("/") if segment]) > _MAX_V2_PATH_SEGMENTS:
+            raise _invalid(f"tool {tool.name!r} path has more than {_MAX_V2_PATH_SEGMENTS} segments")
+    for tool in declared:
+        if tool.contexts is None:
+            continue
+        if not tool.contexts:
+            raise _refuse("tool_contexts_invalid", f"tool {tool.name!r} invocation_contexts must not be empty")
+        if any(c not in _CONTEXTS for c in tool.contexts) or len(set(tool.contexts)) != len(tool.contexts):
+            raise _refuse("tool_contexts_invalid", f"tool {tool.name!r} invocation_contexts are invalid")
 
 
 def _validate_app_keys(keys: list[tuple[str, str, list[str]]]) -> None:
@@ -745,8 +740,8 @@ def _validate_app_keys(keys: list[tuple[str, str, list[str]]]) -> None:
         if kid in kids:
             raise _refuse("app_keys_invalid", f"duplicate app key kid {kid!r}")
         kids.add(kid)
-        if not _is_ed25519_did_key(did_key):
-            raise _refuse("app_keys_invalid", f"app key {kid!r} did_key is not an Ed25519 did:key")
+        if not _is_did_key_shaped(did_key):
+            raise _refuse("app_keys_invalid", f"app key {kid!r} did_key is not a well-formed did:key")
         if not 1 <= len(purposes) <= 8:
             raise _refuse("app_keys_invalid", f"app key {kid!r} must declare 1 to 8 purposes")
         if not all(_PURPOSE.fullmatch(p) for p in purposes) or len(set(purposes)) != len(purposes):
@@ -1007,7 +1002,8 @@ def _parse_owner_acts(raw: Any, app_origin: str) -> Mapping[str, Any] | None:
     def invalid() -> ManifestError:
         return _refuse("owner_acts_invalid", "invalid owner-designated human roles or origin")
 
-    if not isinstance(raw, dict) or set(raw) != {"origin", "roles"}:
+    if (not isinstance(raw, dict) or not {"origin", "roles"} <= set(raw)
+            or set(raw) - {"origin", "roles", "session_actions"}):
         raise invalid()
     origin, roles = raw["origin"], raw["roles"]
     if not isinstance(origin, str) or not _OWNER_ORIGIN.fullmatch(origin):
@@ -1036,7 +1032,114 @@ def _parse_owner_acts(raw: Any, app_origin: str) -> Mapping[str, Any] | None:
                 or not all(isinstance(act, str) and act in _HUMAN_ROLE_ACTS for act in acts)
                 or acts != sorted(set(acts)) or type(role.get("notice_contact")) is not bool):
             raise invalid()
+    if "session_actions" in raw:
+        _validate_session_actions(raw["session_actions"], names)
     return copy.deepcopy(raw)
+
+
+_SESSION_ACTION_FIELDS = (_TOOL - {"scopes", "mutation", "invocation_contexts", "auth"}) | {
+    "role", "kind", "terminal_output", "completion"
+}
+
+
+def _validate_session_actions(raw: Any, roles: set[str]) -> None:
+    """Reuse V2 mappings without adding session actions to the agent tools."""
+    try:
+        _check_session_actions(raw, roles)
+    except ManifestError as exc:
+        raise _refuse("owner_acts_invalid", "invalid human-session action declaration") from exc
+
+
+def _check_session_actions(raw: Any, roles: set[str]) -> None:
+    def refuse() -> None:
+        raise _invalid("invalid session action")
+
+    if not isinstance(raw, list) or not 1 <= len(raw) <= 64:
+        refuse()
+    decoded: dict[str, _Tool] = {}
+    actions: dict[str, dict[str, Any]] = {}
+    for action in raw:
+        if not isinstance(action, dict) or set(action) - _SESSION_ACTION_FIELDS:
+            refuse()
+        role, kind = action.get("role"), action.get("kind")
+        if not isinstance(role, str) or role not in roles or kind not in ("read", "stage", "draft", "confirm"):
+            refuse()
+        tool_raw = {key: value for key, value in action.items() if key in _TOOL}
+        params = tool_raw.get("params")
+        if isinstance(params, list):
+            tool_raw["params"] = []
+            for param in params:
+                if isinstance(param, dict):
+                    if "protected" in param and (param["protected"] is not True
+                            or kind != "stage" or not isinstance(param.get("in"), str)
+                            or _go_trim(param["in"]) != "body"):
+                        refuse()
+                    param = {key: value for key, value in param.items() if key != "protected"}
+                tool_raw["params"].append(param)
+        tool = _decode_tool(tool_raw, "session action")
+        _validate_tool(tool)
+        if _go_trim(tool.method).upper() != ("GET" if kind == "read" else "POST"):
+            refuse()
+        if kind == "read" and ("body" in action
+                or any(_go_trim(placement) == "body" for _, placement in tool.params)):
+            refuse()
+        if kind != "read" and (_go_trim(tool.body[0]) or "json") != "json":
+            refuse()
+        if "terminal_output" in action:
+            pointers = action["terminal_output"]
+            if kind != "confirm" or not isinstance(pointers, list) or not 1 <= len(pointers) <= 16:
+                refuse()
+            if (not all(_valid_terminal_pointer(pointer) for pointer in pointers)
+                    or len(set(pointers)) != len(pointers)):
+                refuse()
+        if ("completion" in action) != (kind == "confirm"):
+            refuse()
+        name = _go_trim(tool.name)
+        if name in decoded:
+            refuse()
+        decoded[name], actions[name] = tool, action
+    _validate_v2_tools(list(decoded.values()))
+    for name, action in actions.items():
+        if action["kind"] != "confirm":
+            continue
+        completion = action["completion"]
+        if not isinstance(completion, dict) or set(completion) != {"read", "ready", "done", "stop"}:
+            refuse()
+        read = completion["read"]
+        if not isinstance(read, str):
+            refuse()
+        read = _go_trim(read)
+        if (read not in actions or actions[read]["kind"] != "read"
+                or actions[read]["role"] != action["role"]):
+            refuse()
+        read_inputs = {_go_trim(param) for param, _ in decoded[read].params}
+        confirm_inputs = {_go_trim(param) for param, _ in decoded[name].params}
+        if not read_inputs <= confirm_inputs:
+            refuse()
+        stops = completion["stop"]
+        if not isinstance(stops, list) or not 1 <= len(stops) <= 8:
+            refuse()
+        for predicate in [completion["ready"], completion["done"], *stops]:
+            if (not isinstance(predicate, dict) or set(predicate) != {"member", "in"}
+                    or not isinstance(predicate["member"], str)
+                    or not _FIELD_NAME.fullmatch(predicate["member"])):
+                refuse()
+            values = predicate["in"]
+            if not isinstance(values, list) or not 1 <= len(values) <= 16:
+                refuse()
+            if not all(type(value) in (str, bool, int) for value in values):
+                refuse()
+            if (any(type(value) is int and abs(value) > (1 << 53) - 1 for value in values)
+                    or len({(type(value), value) for value in values}) != len(values)):
+                refuse()
+
+
+def _valid_terminal_pointer(value: Any) -> bool:
+    if not isinstance(value, str) or not value.startswith("/"):
+        return False
+    segments = value[1:].split("/")
+    return (1 <= len(segments) <= 8 and _FIELD_NAME.fullmatch(segments[-1]) is not None
+            and all(segment == "*" or _FIELD_NAME.fullmatch(segment) for segment in segments))
 
 
 def _is_bidi_control(code: int) -> bool:
@@ -1392,6 +1495,18 @@ def _same(a: Any, b: Any) -> bool:
 
 
 _MAPPED_TOOL_FIELDS = ("method", "path", "params", "input_schema", "body", "scopes", "auth", "mutation")
+
+
+def check_v2_variant(v2: bytes, v3: bytes) -> None:
+    """V3 adds only owner_acts; all other declarations must match its v2 variant."""
+    old, new = load_manifest(v2), load_manifest(v3)
+    if old.manifest_version != 2 or new.manifest_version != 3:
+        raise ManifestError("v2_variant_incompatible", "variants must be manifest versions 2 and 3")
+    common = dict(new.document)
+    common.pop("owner_acts", None)
+    common["manifest_version"] = 2
+    if not _same(dict(old.document), common):
+        raise ManifestError("v2_variant_incompatible", "v2 and v3 common declarations differ")
 
 
 def check_v1_variant(v1: bytes, v2: bytes) -> None:

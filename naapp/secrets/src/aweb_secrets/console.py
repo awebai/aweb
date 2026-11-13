@@ -12,6 +12,7 @@ the fenced transaction; registration and login use B3's distinct ceremonies.
 """
 
 import base64
+from collections.abc import Awaitable, Callable, Sequence
 from datetime import timedelta
 from typing import TYPE_CHECKING, Annotated, Any, Protocol
 
@@ -20,17 +21,20 @@ from aweb_naapp.console import (
     ConsoleRoute,
     ConsoleSession,
     ConsoleSessions,
+    KeyBoundConsoleSession,
     LoginLimiter,
     console_assets_router,
     console_login_router,
     credential_router,
+    session_is_current,
 )
 from aweb_naapp.console import exact_body as _body
 from aweb_naapp.console import require_json as _require_json
 from aweb_naapp.console import text_field as _text
+from aweb_naapp.console.handoff_authority import PreparedSessionTarget
 from aweb_naapp.hooks.owner_act_nonces import OwnerActVerifier
 from aweb_naapp.hooks.strictjson import Refused
-from aweb_naapp.roles import PrincipalKey, assign, hold_role
+from aweb_naapp.roles import PrincipalKey
 from aweb_naapp.runtime.credential_audit import GovernanceUnavailable
 from aweb_naapp.runtime.installation import (
     AdmittedInstallation,
@@ -39,16 +43,20 @@ from aweb_naapp.runtime.installation import (
 )
 from aweb_naapp.runtime.passkeys import (
     Designation,
-    DesignationRefused,
     Passkeys,
-    contact_sha256,
+    PreparedCurrentApprovers,
 )
 from fastapi import APIRouter, Depends, HTTPException, Request
 from pgdbm import AsyncDatabaseManager
+from pgdbm.core import TransactionManager
 
 from aweb_secrets.change import ChangeRefused
-from aweb_secrets.change_policy import keep_four_eyes_owners
-from aweb_secrets.owners import OWNER_ROLE, OwnerDirectory, OwnerRequired, owner_scope, record_owner
+from aweb_secrets.owners import (
+    OwnerDirectory,
+    OwnerRequired,
+    owner_binding,
+    owner_scope,
+)
 from aweb_secrets.principal import is_principal
 
 if TYPE_CHECKING:
@@ -63,15 +71,25 @@ class InstallationLookup(Protocol):
         ...
 
 
+class KeyBoundPreparation(Protocol):
+    async def __call__(
+        self,
+        tx: TransactionManager,
+        current: KeyBoundConsoleSession,
+        *,
+        approver_pairs: Sequence[tuple[str, str]],
+    ) -> PreparedSessionTarget: ...
+
+
 class OwnerConsole:
     """Shared services of the owner console; the app owns their lifecycle.
 
     Mount with owner_console_router. Apply S4 console migrations before serving.
     The installation lookup refreshes F6 outside any write transaction and must
     return its authoritative installation identity, or refuse an unavailable one.
-    For first-owner bootstrap it receives an untrusted team lookup hint before
-    any local F6 row exists. Every other call names the team of the session or
-    record it acts for, so another team's installation id is never resolved.
+    The retired owner binding route receives only an untrusted lookup hint and
+    refuses its effect. Other calls name the team of the session or record they
+    act for, so another team's installation id is never resolved.
     """
 
     def __init__(
@@ -84,7 +102,10 @@ class OwnerConsole:
         verifier: OwnerActVerifier,
         installation: InstallationLookup,
         credential_audit: "CredentialAudit",
+        client_address_header: str | None = None,
         limiter: LoginLimiter | None = None,
+        key_bound: Callable[[Request], Awaitable[ConsoleSession]] | None = None,
+        prepare_key_bound: KeyBoundPreparation | None = None,
     ) -> None:
         self.db = db
         self.passkeys = passkeys
@@ -93,10 +114,44 @@ class OwnerConsole:
         self.verifier = verifier
         self.installation = installation
         self.credential_audit = credential_audit
-        self.sessions = ConsoleSessions(db, passkeys=passkeys, scopes=self.admits_scope)
-        self.limiter = limiter or LoginLimiter(
-            db, client_identity=ClientIdentity(), limit=12, window=timedelta(minutes=1)
+        self._prepare_key_bound = prepare_key_bound
+        self.sessions = ConsoleSessions(
+            db, passkeys=passkeys, scopes=self.admits_scope, key_bound=key_bound
         )
+        self.limiter = limiter or LoginLimiter(
+            db,
+            client_identity=ClientIdentity(trusted_header=client_address_header),
+            limit=12,
+            window=timedelta(minutes=1),
+        )
+
+    async def prepare_session(
+        self,
+        tx: TransactionManager,
+        current: ConsoleSession,
+        *,
+        approver_pairs: Sequence[tuple[str, str]],
+    ) -> PreparedCurrentApprovers | None:
+        """Prepare the complete signed authority after app locks, before B2/S3.
+
+        Cookie callers keep their existing B3 preparation. The trusted callback
+        is the same factory that verified this request; it retains the original
+        app handle and deadline. Return its canonical B3 union for caller reuse.
+        """
+        if not isinstance(current, KeyBoundConsoleSession):
+            return None
+        if self._prepare_key_bound is None:
+            raise HTTPException(401, "console_session_required")
+        held = await self._prepare_key_bound(tx, current, approver_pairs=approver_pairs)
+        return held.approvers
+
+    @staticmethod
+    async def check_key_bound(tx: TransactionManager, current: ConsoleSession) -> None:
+        """Final local check after the last protected read; never prepare again."""
+        if isinstance(current, KeyBoundConsoleSession) and not await session_is_current(
+            tx, current, hold=False
+        ):
+            raise HTTPException(401, "console_session_required")
 
     async def admits_scope(self, scope: str) -> bool:
         # B3's login alone does not check application roles. The same predicate
@@ -119,10 +174,13 @@ class OwnerConsole:
         """The installation as the session's own team holds it. The team is the
         one the session's scope was enrolled under, as an owner or an approver;
         an id that team does not hold raises LookupError, as an unknown id does."""
-        team_id = await self.db.fetch_value(
-            "SELECT team_id FROM {{tables.owner_principals}} WHERE scope=$1", current.scope
-        ) or await self.db.fetch_value(
-            "SELECT team_id FROM {{tables.approvers}} WHERE scope=$1", current.scope
+        record = await owner_binding(self.db, current.scope)
+        team_id = (
+            record["team_id"]
+            if record is not None
+            else await self.db.fetch_value(
+                "SELECT team_id FROM {{tables.approvers}} WHERE scope=$1", current.scope
+            )
         )
         if team_id is None:
             raise LookupError("installation not found")
@@ -137,59 +195,8 @@ class OwnerConsole:
         principal: PrincipalKey,
         contact: str,
     ) -> Designation:
-        """Apply bootstrap/recovery through the console's single guarded path.
-
-        The caller obtains admitted from authoritative installation lookup.
-        Order: installation fence, role hold, B3 candidate, four-eyes setting.
-        Deliver the returned designation only after this transaction commits.
-        """
-        if principal.team_id != admitted.team_id:
-            raise OwnerRequired("owner_required")
-        scope = owner_scope(admitted.installation_id, admitted.team_id, principal.principal_did)
-        expected = {
-            "app_id": admitted.app_id,
-            "installation_id": admitted.installation_id,
-            "role": scope,
-            "contact_sha256": contact_sha256(contact),
-        }
-        try:
-            prepared = await self.verifier.prepare(signing, signature, team_id=admitted.team_id)
-        except Refused:
-            raise OwnerRequired("owner_required") from None
-        context = await self.credential_audit.prepare_owner_act(
-            admitted, signing=signing, signature=signature
-        )
-        with self.credential_audit.prepared(context):
-            try:
-                async with self.db.transaction() as tx:
-                    await self.fence.check(tx, admitted)
-                    try:
-                        act = await self.verifier.consume_in(
-                            tx, prepared, expected_subject=expected
-                        )
-                    except Refused:
-                        raise OwnerRequired("owner_required") from None
-                    await assign(tx, principal, OWNER_ROLE)
-                    if not await hold_role(tx, principal, OWNER_ROLE):
-                        raise OwnerRequired("owner_required")
-                    await record_owner(
-                        tx, installation_id=admitted.installation_id, principal=principal
-                    )
-                    designation = await self.passkeys.designate(
-                        tx, scope=scope, contact=contact, evidence=act
-                    )
-                    if prepared.act_name == "app-credential.recover":
-                        await keep_four_eyes_owners(
-                            tx,
-                            installation_id=admitted.installation_id,
-                            team_id=admitted.team_id,
-                            directory=self.directory,
-                            excluding=principal,
-                        )
-                    await self.fence.check(tx, admitted)
-                    return designation
-            except DesignationRefused:
-                raise OwnerRequired("owner_required") from None
+        """Legacy owner bindings and recovery are retired for every scope."""
+        raise OwnerRequired("owner_required")
 
 
 def owner_console_router(services: OwnerConsole, *, prefix: str = "") -> APIRouter:

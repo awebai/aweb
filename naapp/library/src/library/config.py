@@ -5,6 +5,12 @@ from typing import Self
 from pydantic import Field, field_validator, model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
+# The verifier's own limits. A revoked certificate is accepted for as long as
+# its team's facts stay cached, and a captured request for as long as the
+# clock skew allows.
+MAX_TIMESTAMP_SKEW_SECONDS = 300
+MAX_TEAM_FACTS_TTL_SECONDS = 60
+
 
 class Settings(BaseSettings):
     """Runtime configuration for library."""
@@ -15,16 +21,16 @@ class Settings(BaseSettings):
     awid_registry_url: str = Field(default="https://api.awid.ai")
     awid_service_token: str | None = Field(default=None, repr=False)
     public_origin: str = Field(default="https://library.aweb.ai")
-    auth_cache_ttl_seconds: int = Field(default=600, ge=1)
-    timestamp_skew_seconds: int = Field(default=300, ge=1)
+    # The verifier's own limits: a deployment cannot configure past them.
+    auth_cache_ttl_seconds: int = Field(
+        default=MAX_TEAM_FACTS_TTL_SECONDS, ge=1, le=MAX_TEAM_FACTS_TTL_SECONDS
+    )
+    timestamp_skew_seconds: int = Field(
+        default=MAX_TIMESTAMP_SKEW_SECONDS, ge=1, le=MAX_TIMESTAMP_SKEW_SECONDS
+    )
     db_pool_min_connections: int = Field(default=1, ge=1)
     db_pool_max_connections: int = Field(default=5, ge=1)
     db_statement_cache_size: int = Field(default=0, ge=0)
-    app_id: str = Field(default="library")
-    app_events_origin: str | None = None
-    app_emit_kid: str | None = None
-    app_emit_key_seed_hex: str | None = None
-    app_emit_timeout_seconds: float = Field(default=3.0, gt=0)
 
     @field_validator("awid_service_token")
     @classmethod

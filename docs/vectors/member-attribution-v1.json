@@ -1,7 +1,7 @@
 {
   "version": 1,
   "status": "contract-only; no implementation consumer yet",
-  "description": "Synthetic Ed25519 seeds only. Public authority for docs/member-attribution.md; existing certificate/message vectors unchanged. record cases sign exact canonical bytes under a distinct prefix.",
+  "description": "Synthetic Ed25519 seeds only. Public authority for docs/drafts/member-attribution.md; existing certificate/message vectors unchanged. record cases sign exact canonical bytes under a distinct prefix.",
   "keys": {
     "team": {
       "seed_hex": "0101010101010101010101010101010101010101010101010101010101010101",

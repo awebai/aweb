@@ -18,6 +18,8 @@ nonce and its exact subject.
 
 from __future__ import annotations
 
+import base64
+import hashlib
 import re
 from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass
@@ -40,6 +42,7 @@ __all__ = [
     "APP_ACTS",
     "CORE_ACTS",
     "HUMAN_ROLE_ACTS",
+    "HumanCredential",
     "LOGS_ACTS",
     "PREFIX",
     "Refused",
@@ -60,6 +63,62 @@ APP_ACTS = ("app-role.designate", "app-role.revoke", "app-credential.recover")
 # owner-act delivery route.
 HUMAN_ROLE_ACTS = ("human-credential.replace", "human-role.designate", "human-role.revoke")
 LOGS_ACTS = ("logs.retention.set", "logs.erase", "logs.legal-hold.set", "logs.legal-hold.release")
+CREDENTIAL_PREFIX = b"aweb.human-credential/1\n"
+
+
+_CREDENTIAL_FIELDS = frozenset({"credential_id", "public_key", "rp_id"})
+
+
+def _base64url(data: bytes) -> str:
+    return base64.urlsafe_b64encode(data).rstrip(b"=").decode("ascii")
+
+
+def _unpadded_base64url(value: Any) -> bytes:
+    if not isinstance(value, str) or not re.fullmatch(r"[A-Za-z0-9_-]+", value):
+        raise ValueError("a credential field is not unpadded base64url")
+    decoded = base64.urlsafe_b64decode(value + "=" * (-len(value) % 4))
+    if _base64url(decoded) != value:
+        raise ValueError("a credential field is not unpadded base64url")
+    return decoded
+
+
+@dataclass(frozen=True)
+class HumanCredential:
+    """The credential a human-role act binds: exactly ``credential_id`` and
+    ``public_key`` (each unpadded base64url) and ``rp_id``. ``sha256`` is the
+    ``credential_sha256`` an act names it by: the SHA-256 of the prefix and the
+    credential's canonical JSON, always of these fields."""
+
+    credential_id: bytes
+    public_key: bytes
+    rp_id: str
+
+    @property
+    def sha256(self) -> str:
+        fields = {
+            "credential_id": _base64url(self.credential_id),
+            "public_key": _base64url(self.public_key),
+            "rp_id": self.rp_id,
+        }
+        return hashlib.sha256(CREDENTIAL_PREFIX + canonical(fields)).hexdigest()
+
+    @classmethod
+    def parse(cls, value: Any) -> HumanCredential:
+        """The credential of a delivery body; ValueError unless it has exactly
+        its three fields, each in its encoding."""
+        if not isinstance(value, Mapping) or set(value) != _CREDENTIAL_FIELDS:
+            raise ValueError("a credential has exactly credential_id, public_key and rp_id")
+        rp_id = value["rp_id"]
+        if not isinstance(rp_id, str) or not rp_id:
+            raise ValueError("a credential's rp_id is a nonempty string")
+        # An rp_id canonical JSON refuses (ValueError) is refused here.
+        canonical({"rp_id": rp_id})
+        return cls(
+            _unpadded_base64url(value["credential_id"]),
+            _unpadded_base64url(value["public_key"]),
+            rp_id,
+        )
+
 
 _TIME = "%Y-%m-%dT%H:%M:%SZ"
 _MAX_ITEMS = 64
@@ -389,13 +448,7 @@ def _check_owner_act(
         raise Refused("audience_mismatch", f"act for {act.audience}")
     if act.act not in acts:
         raise Refused("act_not_allowed", f"{act.act} is not in this verifier's vocabulary")
-    if act.expires_at - act.issued_at > MAX_LIFETIME:
-        raise Refused("lifetime_too_long", "an owner act lives at most ten minutes")
-    moment = _utc(now)
-    if act.issued_at > moment + CLOCK_SKEW:
-        raise Refused("not_yet_valid", f"issued at {act.fields['issued_at']}")
-    if moment >= act.expires_at:
-        raise Refused("expired", f"expired at {act.fields['expires_at']}")
+    _require_valid_time(act, now)
     if act.fields["team_key_did"] != current_team_key_did:
         raise Refused("owner_required", "not signed for the team's current controller key")
     try:
@@ -408,6 +461,17 @@ def _check_owner_act(
     except BadSignatureError:
         raise Refused("bad_signature", "signature does not verify under the team key") from None
     return act
+
+
+def _require_valid_time(act: _CheckedAct, now: datetime) -> None:
+    """The same stateless lifetime check for delivery and signature verification."""
+    if act.expires_at - act.issued_at > MAX_LIFETIME:
+        raise Refused("lifetime_too_long", "an owner act lives at most ten minutes")
+    moment = _utc(now)
+    if act.issued_at > moment + CLOCK_SKEW:
+        raise Refused("not_yet_valid", f"issued at {act.fields['issued_at']}")
+    if moment >= act.expires_at:
+        raise Refused("expired", f"expired at {act.fields['expires_at']}")
 
 
 def _verify_owner_act(

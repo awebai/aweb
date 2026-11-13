@@ -47,7 +47,7 @@ from typing import TYPE_CHECKING, Any
 from aweb_naapp.egress import InternalDestinations
 from aweb_naapp.hooks.producer import RegistrationView
 from aweb_naapp.hooks.strictjson import Refused as HookRefused
-from aweb_naapp.roles import PrincipalKey, assign, hold_role
+from aweb_naapp.roles import PrincipalKey, assign
 from aweb_naapp.runtime.approvals import (
     ActionPolicy,
     ApprovalRefused,
@@ -84,7 +84,7 @@ from aweb_secrets.change import (
     validate_change,
 )
 from aweb_secrets.change_policy import four_eyes, lock_four_eyes, relax_four_eyes
-from aweb_secrets.containment import Containment, ContainmentRefused
+from aweb_secrets.containment import BeforeApprovals, Containment, ContainmentRefused
 from aweb_secrets.custody import Custody, SealContext
 from aweb_secrets.custody.store import BACKEND_CREDENTIAL_ID
 from aweb_secrets.destination import DestinationInvalid, DestinationRecord
@@ -92,6 +92,7 @@ from aweb_secrets.grant import GrantRecord, GrantTemplate
 from aweb_secrets.job_changes import apply_job_change, job_prelock_ids
 from aweb_secrets.operation import CAPTURE_FIELDS, OperationTemplate
 from aweb_secrets.owners import OWNER_ROLE, OwnerDirectory, approver_scope, owner_scope
+from aweb_secrets.owners import hold_owner as hold_owner_holding
 from aweb_secrets.policy import Policy
 from aweb_secrets.revisions import claim_config_revision, config_revision
 from aweb_secrets.runner_protocol import RunnerRefused
@@ -204,12 +205,17 @@ class ChangeSetPolicies:
         self._db = db
         self._directory = directory
 
-    async def current(self, policy_ref: str) -> ActionPolicy | None:
+    async def current(
+        self, policy_ref: str, *, tx: TransactionManager | None = None
+    ) -> ActionPolicy | None:
         parts = policy_ref.split("|")
         if parts[0] != POLICY_PREFIX or len(parts) not in (3, 4):
             return None
         installation_id, team_id = parts[1], parts[2]
-        allow_requester = await four_eyes(self._db, installation_id) == "not_required"
+        reader = tx or self._db
+        allow_requester = (
+            await four_eyes(reader, installation_id, team_id=team_id) == "not_required"
+        )
         if len(parts) == 4 and allow_requester:
             scopes: tuple[str, ...] = (parts[3],)
         else:
@@ -217,7 +223,7 @@ class ChangeSetPolicies:
             # instead needs another owner; OwnerDirectory excludes the drafter
             # from these current enrolled owners, as for a member draft.
             owners = await self._directory.enrolled_owners(
-                self._db, installation_id=installation_id, team_id=team_id
+                reader, installation_id=installation_id, team_id=team_id
             )
             scopes = tuple(owner_scope(installation_id, team_id, o.principal_did) for o in owners)
         if not scopes:
@@ -306,10 +312,15 @@ class ChangeSets:
         change: Mapping[str, Any],
         *,
         sealed: Sequence[SealContext] = (),
+        confirm_in_aw: bool = False,
     ) -> PendingApproval:
         """Record a draft and mint its approval in ``tx``. Deliver the returned
         approval with ``Approvals.deliver`` after the commit."""
         validate_change(change)
+        if type(confirm_in_aw) is not bool or (
+            confirm_in_aw and change["drafter"]["via"] != "console"
+        ):
+            raise ChangeRefused("invalid confirmation channel", code="confirm_in_aw")
         for index, item in enumerate(change["changes"]):
             if item["kind"] not in APPLICABLE_KINDS:
                 raise ChangeRefused(
@@ -366,7 +377,7 @@ class ChangeSets:
         for index, item in enumerate(change["changes"]):
             if item["kind"] == "destination":
                 self._destination(item["after"], f"change.changes[{index}]")
-        if change["base_revision"] != await config_revision(tx, installation_id):
+        if change["base_revision"] != await config_revision(tx, installation_id, team_id=team_id):
             raise ChangeRefused(
                 "the configuration changed after this change set was drafted",
                 code="base_revision_stale",
@@ -392,8 +403,8 @@ class ChangeSets:
         await tx.execute(
             """
             INSERT INTO {{tables.change_sets}} (change_id, installation_id, team_id,
-                base_revision, request, via, drafted_by, approval_id, expires_at)
-            VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
+                base_revision, request, via, drafted_by, approval_id, expires_at, confirm_in_aw)
+            VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
             """,
             change["change_id"],
             installation_id,
@@ -404,6 +415,7 @@ class ChangeSets:
             drafted_by,
             pending.approval.approval_id,
             parse_utc_seconds(change["expires_at"]),
+            confirm_in_aw,
         )
         for context in sealed:
             await tx.execute(
@@ -846,6 +858,7 @@ class ChangeSets:
         fence: InstallationFence,
         admitted: AdmittedInstallation,
         governance_view: RegistrationView | None = None,
+        before_approvals: BeforeApprovals | None = None,
     ) -> Confirmation:
         """Apply a decided change set in ``tx``, for the installation the
         caller admitted from its installation record. Deliver the returned
@@ -862,20 +875,40 @@ class ChangeSets:
         )
         if drafted is None:
             raise ChangeRefused("the change set is not pending", code="change_not_pending")
-        decided = await self._approvals.get(drafted)
+        decided = await self._approvals.get(drafted, tx=tx)
         decided_by = decided.decided_by if decided is not None else None
         if decided_by is None:
             raise ChangeRefused("no owner has decided the change set", code="change_not_approved")
         confirmer = await self._directory.owner_of(tx, decided_by.scope)
-        if confirmer is None or not await hold_role(tx, confirmer, OWNER_ROLE):
+        if confirmer is None or not await hold_owner_holding(
+            tx, confirmer, installation_id=admitted.installation_id
+        ):
             raise ChangeRefused("the deciding owner is no longer an owner", code="owner_required")
         row = await tx.fetch_one(
-            "SELECT * FROM {{tables.change_sets}} WHERE change_id = $1 FOR UPDATE", change_id
+            "SELECT * FROM {{tables.change_sets}} WHERE change_id = $1", change_id
         )
         if row is None or row["state"] != "pending":
             raise ChangeRefused("the change set is not pending", code="change_not_pending")
+        if row["confirm_in_aw"] and before_approvals is None:
+            raise ChangeRefused("confirmation belongs to aw", code="confirm_in_aw")
         change = _request(row["request"])
-        await self._prepare_containment(tx, row, change, admitted)
+        await self._prepare_containment(
+            tx, row, change, admitted, before_approvals=before_approvals
+        )
+        # Both cookie and key-bound callers take the same order: app forest,
+        # prepared session authority when present, complete B2 union, change row.
+        # A competing confirmation/expiry may have closed it during preparation.
+        locked = await tx.fetch_one(
+            "SELECT * FROM {{tables.change_sets}} WHERE change_id=$1 FOR UPDATE", change_id
+        )
+        if (
+            locked is None
+            or locked["state"] != "pending"
+            or locked["approval_id"] != row["approval_id"]
+            or _request(locked["request"]) != change
+        ):
+            raise ChangeRefused("the change set is not pending", code="change_not_pending")
+        row = locked
         try:
             evidence = await self._passkeys.owner_approval(
                 tx,
@@ -889,13 +922,13 @@ class ChangeSets:
         if evidence.approver_scope != decided_by.scope:
             raise ChangeRefused("the admitted decision changed", code="change_not_approved")
         installation_id = change["installation_id"]
-        distinct_approver = await lock_four_eyes(tx, installation_id)
+        distinct_approver = await lock_four_eyes(tx, installation_id, team_id=admitted.team_id)
         check_confirmable(
             change,
             installation_id=admitted.installation_id,
             install_generation=admitted.generation,
             team_id=admitted.team_id,
-            current_revision=await config_revision(tx, installation_id),
+            current_revision=await config_revision(tx, installation_id, team_id=admitted.team_id),
             now=datetime.now(UTC),
         )
         drafter = change["drafter"]
@@ -953,7 +986,9 @@ class ChangeSets:
                 raise ChangeRefused(
                     "approval proof unavailable", code="passkey_proof_unavailable"
                 ) from None
-        revision = await claim_config_revision(tx, installation_id, change["base_revision"])
+        revision = await claim_config_revision(
+            tx, installation_id, change["base_revision"], team_id=admitted.team_id
+        )
         designations: list[Designation] = []
         contact_changes: list[ContactChange] = []
         runner_registrations: list[RunnerRegistration] = []
@@ -1007,6 +1042,8 @@ class ChangeSets:
         row: Mapping[str, Any],
         change: Mapping[str, Any],
         admitted: AdmittedInstallation,
+        *,
+        before_approvals: BeforeApprovals | None = None,
     ) -> None:
         if (change["installation_id"], change["install_generation"], change["team_id"]) != (
             admitted.installation_id,
@@ -1082,6 +1119,7 @@ class ChangeSets:
                 secret_ids=tuple(sorted(roots)),
                 approval_ids=(row["approval_id"],),
                 job_ids=job_prelock_ids(change["changes"]),
+                before_approvals=before_approvals,
             )
         except ContainmentRefused as refused:
             raise ChangeRefused("containment preparation refused", code=refused.code) from None
@@ -1196,7 +1234,7 @@ class ChangeSets:
             except ContactChangeRefused as refused:
                 raise ChangeRefused(str(refused), code=refused.reason) from None
         if item["kind"] == "change_set_policy":
-            await relax_four_eyes(tx, installation_id=installation_id)
+            await relax_four_eyes(tx, installation_id=installation_id, team_id=team_id)
             return []
         if item["kind"] in RECORD_KINDS:
             await self._apply_record(tx, change, item)
@@ -1281,7 +1319,10 @@ class ChangeSets:
             elif kind == "grant":
                 grant = GrantRecord.from_after(after)
                 await _require_secret(tx, installation_id, team_id, grant.secret_id)
-                if await records.policy(tx, installation_id, grant.policy_digest) is None:
+                if (
+                    await records.policy(tx, installation_id, grant.policy_digest, team_id=team_id)
+                    is None
+                ):
                     raise records.RecordMissing(f"no policy {grant.policy_digest}")
                 if await tx.fetch_value(
                     "SELECT 1 FROM {{tables.grants}} WHERE grant_id = $1", grant.grant_id
@@ -1291,18 +1332,19 @@ class ChangeSets:
             elif kind == "grant_template":
                 template = GrantTemplate.from_after(after)
                 stored = await records.grant_template(
-                    tx, installation_id, template.grant_template_id
+                    tx, installation_id, template.grant_template_id, team_id=team_id
                 )
                 if op == "create" and stored is not None:
                     raise _exists(kind, template.grant_template_id)
                 if op == "update" and stored is None:
                     raise records.RecordMissing(f"no grant template {template.grant_template_id}")
-                await records.set_grant_template(tx, installation_id, template)
+                await records.set_grant_template(tx, installation_id, template, team_id=team_id)
             else:
                 await records.create_policy(
                     tx,
                     installation_id,
                     Policy.from_body({k: v for k, v in after.items() if k != "v"}),
+                    team_id=team_id,
                 )
         except records.RecordRefused as refused:
             raise ChangeRefused(str(refused), code=refused.code) from None
@@ -1404,28 +1446,45 @@ class ChangeSets:
         """Withdraw a pending change set: its approval is revoked and its sealed
         values destroyed."""
         row = await tx.fetch_one(
-            "SELECT * FROM {{tables.change_sets}} WHERE change_id = $1 FOR UPDATE", change_id
+            "SELECT * FROM {{tables.change_sets}} WHERE change_id = $1", change_id
         )
         if row is None or row["state"] != "pending":
             raise ChangeRefused("the change set is not pending", code="change_not_pending")
-        await self._close(tx, row, state="cancelled", by=cancelled_by)
+        # Match confirm: the bound B2 approval precedes the change row. The
+        # discovery above grants nothing; a confirmer may win while we wait.
+        await self._approvals.lock_many(tx, [row["approval_id"]])
+        locked = await tx.fetch_one(
+            "SELECT * FROM {{tables.change_sets}} WHERE change_id = $1 FOR UPDATE", change_id
+        )
+        if (
+            locked is None
+            or locked["state"] != "pending"
+            or locked["approval_id"] != row["approval_id"]
+        ):
+            raise ChangeRefused("the change set is not pending", code="change_not_pending")
+        await self._close(tx, locked, state="cancelled", by=cancelled_by)
 
     async def expire(self, *, now: datetime) -> int:
         """Close every pending change set past its expiry. Returns how many."""
         due = await self._db.fetch_all(
-            "SELECT change_id FROM {{tables.change_sets}}"
+            "SELECT change_id, approval_id FROM {{tables.change_sets}}"
             " WHERE state = 'pending' AND expires_at <= $1",
             now,
         )
         expired = 0
         for change in due:
             async with self._db.transaction() as tx:
+                await self._approvals.lock_many(tx, [change["approval_id"]])
                 row = await tx.fetch_one(
                     "SELECT * FROM {{tables.change_sets}}"
                     " WHERE change_id = $1 AND state = 'pending' FOR UPDATE SKIP LOCKED",
                     change["change_id"],
                 )
-                if row is None:
+                if (
+                    row is None
+                    or row["approval_id"] != change["approval_id"]
+                    or row["expires_at"] > now
+                ):
                     continue
                 await self._close(tx, row, state="expired", by="change_set_expiry")
                 expired += 1

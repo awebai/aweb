@@ -2,6 +2,310 @@
 
 ## Unreleased
 
+- `aw id endorse` installs the endorsed root's chain (the human's supporting
+  chain and the signed certificate it registered) in the root's home once
+  the registry read-back confirms it, so the root can issue children with
+  `aw id child invite`. A rerun of the committed endorsement installs it when
+  it is missing; `--json` reports `chain_installed`.
+
+- `aw id team remove-agent --protected-profile P --certificate F --operation-id U`
+  removes, as the deployment's endorsed root, the agent membership that
+  certificate file names, through the protected service's bounded
+  `team.agent.remove`. aw checks that the service signs exactly the registry's
+  revocation of that certificate under the profile's pinned controller key,
+  and changes nothing in the agent's home. The same `--operation-id` resumes
+  the removal; changed inputs refuse `operation_conflict`.
+
+- `aw id team install-cert --identity-home H --certificate F` installs a team
+  certificate file, such as the one `aw id team admit --certificate-out`
+  wrote, into the home whose identity it names, after checking it at the
+  registry: signed by the team's current key, registered and not revoked. It
+  reads the certificate's public status, which needs no member authority, so
+  a revoked member of a private team is refused `certificate_revoked`. A local identity takes certificates of one team only. Then
+  `aw service init` connects the home. A rerun reports `already_installed`
+  and completes an interrupted install. Refusals carry
+  the codes listed in `--help`; only `registry_unavailable` is worth retrying.
+
+- `aw id create --local --identity-home H` creates a key-only local identity
+  (a did:key registered nowhere, with no address or membership) in a fresh
+  home, for an agent a parent issues and a team admits. `--json` reports
+  `status` and `did_key`. A killed run resumes with the same key, and a rerun
+  on the finished home returns `already_exists` with the same `did_key`;
+  any other home is refused with `identity_exists` and left unchanged.
+
+- `aw id endorse --no-wait` shows the approval page and exits instead of
+  waiting for the human: `--json` reports `operation_id`, `state`, `page`,
+  `digest`, `fingerprint` and `expires_at`. Running the same command again
+  with the same `--operation-id` resumes it, and once the human has approved,
+  finishes the endorsement, registering and reading back the certificate.
+  `--no-browser` reports the page without opening a browser, for setup an
+  agent drives.
+
+- `aw id create --no-address --registry R --identity-home H` creates a
+  registered identity with no address: a fresh self-custodial key registers
+  its own did:aw at R and is read back, with no namespace controller key
+  involved. It is how a deployment root is created before a human endorses
+  it. Creation is resumable: the key is kept privately before anything is
+  sent, so a rerun completes an interrupted creation with the same key. A
+  home that already holds an identity, or anything else, refuses
+  `identity_exists`. `--json` carries `did_aw` and `did_key`.
+
+- aw no longer blind-retries a `503` that carries `Retry-After`: the request
+  returns at once with the service's hint, since a retry before it cannot
+  succeed and repeats what the service asked to wait for. A bare `503` keeps
+  its three brief retries. A protected `aw app role revoke` waits out an
+  explicit delta-seconds hint on its installation lookup within that step's
+  own two-minute bound, then reads again; the prepare that follows has a
+  fresh two-minute bound of its own, so the act can wait up to about four
+  minutes on hints, and the command's own earlier deadline or cancellation
+  always ends it first. An inactive, mismatched or otherwise refused
+  installation still refuses at once, and nothing is prepared until the
+  lookup succeeds.
+
+- aweb server keeps a registry throttling hint on `503 identity_binding_unavailable`
+  responses as `Retry-After`, including authenticated installation lookups.
+  Identity mismatches and ordinary dependency failures retain their existing
+  refusal behavior; the server adds no wait or retry.
+
+- `aw id team admission-policy --team T --protected-profile P` reads a
+  protected team's agent admission policy from its protected service, proving
+  this identity's key. `--json` carries the mode and the complete policy,
+  including the version and digest an admission binds; aw checks the digest
+  against the policy itself. A protected team without a policy refuses
+  `admission_policy_missing`, and a read that cannot be answered refuses
+  `receipt_unavailable`, never "no policy".
+- `aw id team admit` lets a deployment's endorsed root admit an agent to a
+  protected team through its protected service, with no human present, within
+  the admission policy version and digest the caller names. The caller supplies
+  `--operation-id`; the same id with the same inputs resumes the admission and
+  returns its original certificate, and changed inputs refuse
+  `operation_conflict`. The membership certificate is written to
+  `--certificate-out` only once it is the one the service froze, signed by the
+  team key the profile pins, for exactly the requested member.
+- `aw id endorse` asks a human, through the protected service, to endorse this
+  registered agent as the deployment's root for the listed teams. Before the
+  approval page is shown, aw compares the admission policy the service froze
+  with its own read of every team's policy. Once the human approves, aw
+  verifies the signed certificate, registers it with the root's own key at the
+  pinned registry on the human's verified chain, and reads it back.
+
+- `aw id team add-member` registers the certificate at the team namespace's
+  own registry: the one `AWID_REGISTRY_URL` names, or else the one the
+  namespace's `_awid` record names, as the namespace commands do. A member
+  address is looked up at its own namespace's registry the same way. When DNS
+  cannot answer, nothing is sent. It previously used the default registry
+  whatever the team's namespace said.
+- aweb server: `AWEB_APP_INTERNAL_ORIGINS` (a JSON list of exact HTTPS app
+  origins) with `AWEB_APP_INTERNAL_CIDR` (their one network) lets a self-hosted
+  server install apps that run on internal addresses beside it. Only listed
+  origins, and only addresses inside that network, are fetched as internal;
+  every other app origin stays public. Unset, behaviour is unchanged.
+- Naapp runtime publishes compatible v2/v3 manifests from one v2 template and
+  an owner-role declaration with a configured human origin. Its shared anonymous
+  owner-act route authenticates before app reads and commits the single-use act,
+  effect and governance together, rechecking original authority deadlines after
+  effect waits. Existing exact v2 installation pins remain readable.
+- **An operator can stop the server delivering federated mail and chat to
+  other servers, or limit it to listed servers.** `AWEB_FEDERATION_OUTBOUND=off`
+  delivers to no other server, and a comma-separated list of origins delivers
+  only to those. A refused send answers `403` naming the setting, before the
+  server resolves or connects to the origin. Unset, delivery is unchanged. An
+  entry that is not an origin refuses start-up.
+
+- Chat sends return not-found when the sender leaves the session after target
+  resolution, matching the response for an absent session.
+
+- Secrets keeps installation-scoped state separate by team, even when two teams
+  report the same installation id. Upgrading existing state requires an
+  unambiguous retained team binding; missing or conflicting bindings stop the
+  migration for an explicit attribution decision.
+- Concurrent team instructions and roles version creation allocates distinct
+  version numbers under the same per-team lock as activation.
+
+- The Python registry client checks and pins the addresses of DNS-selected
+  registry overrides, retaining the original hostname for TLS. Registry list
+  scans stop after 500 pages with an explicit error instead of accumulating
+  unbounded results.
+
+- **`aw chat send-and-wait` and `aw chat listen` keep waiting when the server
+  ends the chat stream at its 300-second lifetime cap.** A wait extended by a
+  read receipt or a hang-on, or given with `--wait` above 300, used to end
+  then as a timeout while the other agent was still writing. The client now
+  reopens the stream after the last message or read receipt it saw, so nothing
+  is lost or presented twice, until its own wait ends. The server cap is
+  unchanged.
+
+- **One unreadable file in the `aw wake` registry no longer stops waking for
+  every other registered home.** A registry file that does not parse, or names
+  an empty or relative home, is skipped and logged; `aw wake status` (text and
+  `--json` as `registration_faults`) lists it, with the daemon running or down,
+  and `aw wake register` for another home succeeds beside it. A home whose own
+  file became unreadable keeps its last-good delivery and shows the error.
+
+- **A team deployment answers a member of a private team it does not serve
+  with 403 "team <id> is not served by this server".** A server that reads the
+  registry with member keys, and holds no registry service token, used to
+  answer such a connect with 503 and tell the operator to install
+  `AWID_SERVICE_TOKEN`, which a team deployment must never hold because it
+  reads every private team's roster. When the registry refuses a member key
+  for a team the server does serve, the 503 now names that team and the
+  current member certificate its controller must issue. Only a server
+  configured with the service token is still told to fix that token.
+
+- Human handoffs retain their authenticated team for credential collection and
+  console session requests. Existing key-bound console sessions without retained
+  team context are refused after migration and require signing in again; there
+  is no compatibility fallback or installation-wide team discovery.
+
+- **`aw` and the channel client (the Claude Code plugin, the Pi extension and
+  `aw wake`) no longer report a plaintext mail or chat message as verified
+  unless its signed payload is a message.** The payload must carry `type`,
+  `body` and `from_did`, and `subject` for mail. Until now a displayed field
+  the payload did not carry was not compared, so a document the sender's key
+  had signed for another purpose, such as the request envelope a server
+  receives with every request, could be presented as the signed payload of a
+  message with any body and be reported verified. Such a message is now
+  presented with trust status `failed`. Every released message signer signs
+  these fields, so no genuine message changes status. Encrypted messages and
+  room posts were not affected.
+- **`aw` and the channel client report the first message from an address as
+  verified, and remember the sender, only after the registry confirms the
+  address belongs to the signing key.** Until now the first key seen for an
+  address was pinned and the message reported verified whatever the registry
+  said: in `aw` even when the registry named a different key or could not be
+  reached, in the channel client when the registry named a different key. Now
+  a first message is `identity_mismatch` when the registry names another key
+  or has no such address, and `verification_stale` when the registry cannot be
+  asked or the stable-identity check cannot be made; the next read asks again.
+  You will see fewer `verified` first contacts, and during a registry outage
+  the first message from a new address is not verified until the registry is
+  back. Senders already known keep verifying by their pin through an outage,
+  in the channel client too, which used to report them stale. A known sender
+  is an `identity_mismatch` once the registry names another key for its
+  address. New pins record `confirmed_by: registry` in `known_agents.yaml`;
+  existing pins are left as they are.
+- **`aw run` no longer uses a directory's `.aw/run.json` unless you trusted
+  that exact file.** The file can set the agent's prompts and start shell
+  commands as background services, and it was read from whatever directory
+  `aw run` was started in, so a cloned repository could run commands. Now it
+  is ignored, with a message naming it, until you run
+  `aw run <provider> --trust-config`, which records the digest of its content
+  in `~/.config/aw/run-trusted.json`; a file that changes afterwards is
+  ignored until trusted again. If you rely on a directory's `run.json`, trust
+  it once after upgrading. `aw run` also tells the agent, next to each mail or
+  chat message it hands over, when the sender was not verified, and to treat
+  that text as untrusted; before, only a stale verification was mentioned.
+- **Team instructions and team roles: a size limit, an audit trail for
+  instructions, and one activation at a time for roles.** A version of either
+  document larger than 256 KiB of JSON is refused with 413. Creating,
+  activating and resetting team instructions now write `instructions.create`,
+  `instructions.activate` and `instructions.reset` rows to the operator audit
+  log, as the same operations on roles already do, and an instruction change
+  whose audit row cannot be written is not made. Activating a roles bundle now
+  takes the lock and the single transaction that activating instructions
+  takes, so two concurrent activations leave one active bundle and a failed
+  one leaves the previous bundle active. Migration
+  `050_one_active_team_document.sql` adds a unique index that allows one
+  active version of each per team; it stops, naming the count, if any team
+  already has two, and those must be reduced to one before upgrading. Both
+  documents remain editable by any team member.
+- **`aw wake register` says when no wake broker is running.** The registration
+  is still stored and the command still exits 0, so a hook does not fail while
+  a broker restarts. But with no broker answering it now prints on stderr that
+  the instance is registered and will not be woken until one starts, and its
+  help says that exit 0 means the registration was stored, not that a broker
+  runs. `aw wake status --json` reports `daemon_running`.
+- **awid-service no longer ships `awid.http_didkey`.** The module verified a
+  request envelope of body hash, method, path and timestamp, and no route of
+  the registry called it; the registry's routes verify the envelopes in
+  `awid.dns_auth`, `awid.controller_request` and `awid.id_tree_requests`.
+  Nothing in aweb or aweb Cloud imported it. Code outside this repository
+  that imported `build_http_didkey_payload` or `verify_http_didkey_request`
+  from awid-service must carry its own copy.
+- **Security: the library service sees a revoked certificate within a minute.**
+  It cached a team's key and revocations for `LIBRARY_AUTH_CACHE_TTL_SECONDS`,
+  10 minutes by default and with no upper limit, so a revoked member
+  certificate kept working there for that long; the server and the other
+  apps cap the same cache at 60 seconds. The library now has the same
+  limits: 60 seconds for that cache, its new default, and 300 for the
+  accepted clock skew (`LIBRARY_TIMESTAMP_SKEW_SECONDS`). **Self-hosters: a
+  library configured past either limit no longer starts.** The error names
+  the setting and the limit. The shipped `.env.example` set
+  `LIBRARY_AUTH_CACHE_TTL_SECONDS=600`; a deployment made from it must lower
+  it to 60 or remove the line before upgrading.
+- **The server reads its database URL from a file.** `AWEB_DATABASE_URL_FILE`
+  names a file that holds the URL, so the database password need not be in
+  the environment. Setting it together with `AWEB_DATABASE_URL` or
+  `DATABASE_URL` is refused at startup.
+- **A Compose file for a customer's own server.**
+  `server/docker-compose.customer.yml` runs aweb with PostgreSQL and Redis
+  against the public AWID registry, with ordinary member keys mounted
+  read-only and no service token or registry of its own. The self-hosting
+  guide's customer-server section shows how to start it.
+- **A hook delivery from a client is checked with the one team-certificate
+  check, in Python and in Go.** The receiver (`aweb_naapp.hooks.delivery`,
+  `cli/go/hookevent`) takes the team's revoked and registered certificate ids
+  beside its current key, and refuses a revoked or unregistered certificate
+  itself as `certificate_invalid`. The `team_did_key` a certificate carries is
+  no longer compared with the registry's key: the signature under the
+  registry's key is the check. The delivery vectors are
+  `hook-delivery-credential-v2.json`; version 1 is removed. Logs' ingest
+  answers a revoked or unregistered client certificate with 401
+  `transport_certificate_invalid`, where it answered
+  `provenance_client_certificate`. A team id that is not one is 401
+  `invalid_field: team_id` in the naapp runtime.
+- **The team-certificate check refuses what two encoders could write
+  differently, in Python and in Go.** `check_team_certificate` and the new
+  Go `awid.CheckTeamCertificate` give every case of
+  `docs/vectors/team-certificate-verification-v1.json` the same verdict. A
+  certificate is `malformed` when its signature is not unpadded standard
+  base64, when a string in it holds a control character below U+0020, when a
+  number in it is not an integer or is -0, or when it holds NaN or Infinity. No issuer
+  writes any of these.
+- **Changed: the naapp runtime verifier (`aweb_naapp.runtime.team_auth`)
+  checks a team certificate with awid's one check.** Apps built on naapp-lib
+  now refuse a certificate whose `version` is not the integer 1 and one whose
+  `alias` is not a string, which they accepted. A certificate that fails is
+  401 with the check's reason as the detail (`malformed`,
+  `unsupported_version`, `invalid_field: <field>`, `member_key_mismatch`,
+  `bad_signature`, `revoked`, `unregistered`) where the detail was a
+  sentence; a registry key that does not decode is 503
+  `authority_unavailable`. The reason-to-status table is awid's
+  (`awid.team_certificate.refusal_answer`), shared with the server.
+  `AWIDTeamCache` refuses a lifetime above 60 seconds at construction, where
+  it read a larger one as 60; the settings already refused it.
+- **Changed: the server checks a team certificate with awid's one check, and
+  its refusals change.** Every team-authenticated request, app task
+  authorization and room read now calls
+  `awid.team_certificate.check_team_certificate`.
+  - **Newly refused:** a certificate whose `version` is `true`, and one whose
+    `alias` is absent, empty or not a string. Production holds no such
+    certificate.
+  - **One answer per reason.** A certificate that fails is 401 with the
+    reason as the detail: `malformed`, `unsupported_version`,
+    `invalid_field: <field>`, `member_key_mismatch`, `bad_signature`,
+    `revoked`, `unregistered`; an unknown team is 401 `unknown_team`. The
+    details no longer carry the team id, the certificate id or the version
+    presented. A registry key that does not decode is 503
+    `authority_unavailable`.
+  - **Status changes:** a certificate that is not registered, with
+    `AWEB_REQUIRE_REGISTERED_CERTIFICATES` on, was 403 and is 401; a room
+    read with a certificate that fails was 403 and is 401 ("Room membership
+    changed" stays 403); app task requests answer `revoked` where they
+    answered `certificate_revoked`, and the certificate's own reason where
+    they answered `signature_invalid` for it.
+  - With the registered-certificate requirement on, the registered set is
+    read with the revoked set, before the check, where it was read after.
+- **awid-service has one check for a team certificate,
+  `awid.team_certificate.check_team_certificate`.** It takes the header, the
+  key the certificate must name, the team's current key, and the team's
+  revoked and registered certificate ids, all required, and refuses with one
+  of seven reasons: `malformed`, `unsupported_version`, `invalid_field` (with
+  the field), `member_key_mismatch`, `bad_signature`, `revoked`,
+  `unregistered`. `docs/vectors/team-certificate-verification-v1.json` holds
+  the cases it answers. No verifier calls it yet; the server, the naapp
+  runtime, the hook receiver and the library each still run their own check,
+  and the vector file records what each answers today.
 - **A customer-run aweb server can read its private team at the public
   registry without the registry-wide `AWID_SERVICE_TOKEN`.** Give the server
   an ordinary member certificate in each team it serves
@@ -287,6 +591,17 @@
   sets to the client address it saw, and keeps the console login limit per that
   address. Unset, the limit is kept per TCP peer, which behind a proxy is one
   limit for every reader.
+- App manifest did:keys: `aweb_naapp.manifest.load_manifest` checks a declared
+  v1 `event_emitters[].did_key` or v2 `app_keys[].did_key` for its shape only
+  (the `did:key:z` prefix, at most 47 base58 characters, the base58 alphabet)
+  and decodes nothing, so an over-long key is refused unread. Each key is
+  validated as a canonical prime-order Ed25519 key with awid by
+  `aweb_naapp.manifest_keys.check_manifest_keys` where it is used: the
+  server's manifest fetch and its install, update and reseed registration.
+  The refusal codes are unchanged (`manifest_invalid` for v1,
+  `app_keys_invalid` for v2); a small-order key is now refused there too.
+  naapp-lib's `runtime` and `hooks` extras and the server require
+  `awid-service>=0.5.38`.
 
 - `aw` writes U+2028 (line separator) and U+2029 (paragraph separator) as UTF-8
   in the canonical JSON it signs, as the Python reference

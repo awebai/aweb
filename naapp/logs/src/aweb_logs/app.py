@@ -32,19 +32,34 @@ from aweb_naapp.runtime.hook_egress import HookEgress
 from aweb_naapp.runtime.origins import OriginApps
 from aweb_naapp.runtime.passkeys.email import PasskeyEmailDelivery
 from aweb_naapp.runtime.team_auth import Principal
-from awid.registry import RegistryClient
+from awid.dns_verify import DomainVerifier
 from fastapi import FastAPI, HTTPException, Request
-from pgdbm import AsyncDatabaseManager
+from pgdbm import AsyncDatabaseManager, DatabaseConfig
 
 from aweb_logs import MANIFEST_PATH, MIGRATIONS_MODULE, MIGRATIONS_PATH
 from aweb_logs.chain import CHECKPOINT_PURPOSE, RECEIPT_PURPOSE
 from aweb_logs.config import LogsSettings
 from aweb_logs.ingest import Ingestor, IngestRefused
 from aweb_logs.ledger import LogsSigner, checkpoint_moved_heads
+from aweb_logs.purge_ledger import (
+    PurgeLedger,
+    apply_purge_ledger_migrations,
+    record_existing_purges,
+)
+from aweb_logs.reader_acts import OWNER_ACTS
 from aweb_logs.reader_service import reader_service
-from aweb_logs.retention import run_retention
+from aweb_logs.retention import reapply_purges, run_retention
 
 logger = logging.getLogger(__name__)
+
+
+@asynccontextmanager
+async def connected(db: AsyncDatabaseManager) -> AsyncIterator[AsyncDatabaseManager]:
+    await db.connect()
+    try:
+        yield db
+    finally:
+        await db.disconnect()
 
 
 def chain_signer(settings: LogsSettings, manifest: Manifest) -> LogsSigner:
@@ -86,6 +101,32 @@ async def admit_members(request: Request, principal: Principal, tool: DeclaredTo
     return True
 
 
+def create_runtime(
+    settings: LogsSettings,
+    hooks: HookEgress,
+    *,
+    awid_transport: httpx.AsyncBaseTransport | None = None,
+    team_server_transport: httpx.AsyncBaseTransport | None = None,
+    awid_domain_verifier: DomainVerifier | None = None,
+) -> NaappRuntime:
+    """logs' runtime: its schema, its manifest, with the reader role its owner
+    designates on the console origin, and its hook events leaving through ``hooks``."""
+    return NaappRuntime(
+        settings,
+        module_name=MIGRATIONS_MODULE,
+        migrations_path=MIGRATIONS_PATH,
+        manifest_path=MANIFEST_PATH,
+        owner_acts=OWNER_ACTS,
+        owner_acts_origin=settings.console_origin,
+        awid_transport=awid_transport,
+        awid_domain_verifier=awid_domain_verifier,
+        team_server_transport=team_server_transport,
+        hook_egress=hooks.egress,
+        hook_internal_cidr=hooks.internal_cidr,
+        hook_internal_origins=hooks.internal_origins,
+    )
+
+
 def create_app(
     settings: LogsSettings,
     *,
@@ -93,22 +134,20 @@ def create_app(
     awid_transport: httpx.AsyncBaseTransport | None = None,
     team_server_transport: httpx.AsyncBaseTransport | None = None,
     resolver: Resolver | None = None,
+    awid_domain_verifier: DomainVerifier | None = None,
     now: Callable[[], datetime] = lambda: datetime.now(UTC),
 ) -> OriginApps:
     """logs on its public origin and its console origin. ``email`` sends the
     enrolment links of designated readers. Hook events leave through the guard
-    the settings configure; ``resolver`` replaces its DNS resolver."""
+    the settings configure; ``resolver`` replaces its DNS resolver, and
+    ``awid_domain_verifier`` the DNS check of an AWID domain's authority."""
     hooks = HookEgress.from_settings(settings, resolver=resolver)
-    runtime = NaappRuntime(
+    runtime = create_runtime(
         settings,
-        module_name=MIGRATIONS_MODULE,
-        migrations_path=MIGRATIONS_PATH,
-        manifest_path=MANIFEST_PATH,
+        hooks,
         awid_transport=awid_transport,
         team_server_transport=team_server_transport,
-        hook_egress=hooks.egress,
-        hook_internal_cidr=hooks.internal_cidr,
-        hook_internal_origins=hooks.internal_origins,
+        awid_domain_verifier=awid_domain_verifier,
     )
     signer = chain_signer(settings, runtime.manifest)
     authorized = runtime.authorized(grants=runtime.installation_grants(), policy=admit_members)
@@ -119,15 +158,18 @@ def create_app(
         link_text="Open Logs",
     )
 
-    async def configured_registry(domain: str) -> str:
-        # Match the runtime verifier's configured authority; no event selects a registry.
-        return settings.awid_registry_url
-
-    registry = RegistryClient(
-        registry_url=settings.awid_registry_url, service_token=settings.awid_service_token,
-        transport=awid_transport, domain_registry_resolver=configured_registry,
+    purges = PurgeLedger(
+        AsyncDatabaseManager(
+            DatabaseConfig(
+                connection_string=settings.purge_ledger_database_url,
+                schema=settings.db_schema,
+                min_connections=settings.db_pool_min_connections,
+                max_connections=settings.db_pool_max_connections,
+                statement_cache_size=settings.db_statement_cache_size,
+            )
+        )
     )
-    ingestor = Ingestor(runtime, signer, packaged_catalog(), settings.client_quota, registry=registry)
+    ingestor = Ingestor(runtime, signer, packaged_catalog(), settings.client_quota, purges)
     console = FastAPI(docs_url=None, redoc_url=None, openapi_url=None)
 
     @asynccontextmanager
@@ -135,7 +177,12 @@ def create_app(
         api_routes, console_routes = list(api.routes), list(console.routes)
         try:
             await hooks.preflight()
-            async with runtime.lifespan(api):
+            async with runtime.lifespan(api), connected(purges.db):
+                # Before anything is served: a restored content database
+                # holds no content purged after its backup.
+                await apply_purge_ledger_migrations(runtime.db(), purges.db)
+                await record_existing_purges(runtime.db(), purges)
+                await reapply_purges(runtime.db(), purges)
                 readers = await reader_service(
                     runtime,
                     signer=signer,
@@ -143,8 +190,10 @@ def create_app(
                     client_address_header=settings.client_address_header,
                     delivery=delivery,
                     backlog_age=timedelta(seconds=settings.hook_events_stalled_after_seconds),
+                    purges=purges,
                 )
                 api.include_router(readers.agent_router(authorized))
+                api.include_router(readers.handoff_router)
                 console.include_router(readers.console_router)
                 runtime.check_authorized_routes(api)
                 stop = asyncio.Event()
@@ -159,6 +208,7 @@ def create_app(
                 retention = asyncio.create_task(
                     run_retention(
                         runtime.db(),
+                        purges,
                         interval_seconds=settings.retention_interval_seconds,
                         logs_origin=settings.public_origin,
                         stop=stop,
@@ -173,9 +223,10 @@ def create_app(
         finally:
             api.router.routes[:] = api_routes
             console.router.routes[:] = console_routes
-            await registry.aclose()
 
     api = FastAPI(lifespan=lifespan, docs_url=None, redoc_url=None, openapi_url=None)
+    # The composed runtime, reachable from the ASGI app (tests reach its team cache).
+    api.state.runtime = runtime
     mount_manifest_routes(api, runtime=runtime)
     mount_health(api, settings, checks=runtime.health_checks())
 
@@ -192,6 +243,7 @@ def create_app(
 
 
 def serve() -> OriginApps:
-    """The service for this deployment, configured from its ``LOGS_`` environment,
-    its mail from ``LOGS_EMAIL_*``: ``uvicorn aweb_logs.app:serve --factory``."""
-    return create_app(LogsSettings(), email=EmailSettings.from_env("LOGS_"))
+    """The service for this deployment, configured from its ``LOGS_`` environment
+    only, never a ``.env`` file, its mail from ``LOGS_EMAIL_*``:
+    ``uvicorn aweb_logs.app:serve --factory``."""
+    return create_app(LogsSettings(_env_file=None), email=EmailSettings.from_env("LOGS_"))

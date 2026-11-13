@@ -55,6 +55,8 @@ describe("displayed fields are bound to the signed claims", () => {
           } else if (mode === "absent") {
             delete signed[field];
             if (field === "conversation_id") want = "verified_legacy";
+            // A payload without these does not say what the reader is shown.
+            if (["body", "from_did", "subject"].includes(field)) want = "failed";
           } else if (mode === "empty_match") {
             signed[field] = "";
             outer[field] = "";
@@ -116,7 +118,7 @@ describe("a displayed stable identity stands for the signed key only when it is 
     for (const side of ["from", "to"] as const) {
       for (const mode of ["signed", "unrelated", "unsigned", "swapped", "changed_body"] as const) {
         test(`${kind}/${side}/${mode}`, async () => {
-          const signed: Fields = { type: kind, from_did: did, to_did: did, from_stable_id: "did:aw:sender", to_stable_id: "did:aw:recipient", body: "signed body", conversation_id: "conversation" };
+          const signed: Fields = { type: kind, from_did: did, to_did: did, from_stable_id: "did:aw:sender", to_stable_id: "did:aw:recipient", subject: "", body: "signed body", conversation_id: "conversation" };
           let outerDID = side === "from" ? "did:aw:sender" : "did:aw:recipient";
           if (mode === "unrelated") outerDID = "did:aw:unrelated";
           if (mode === "unsigned") delete signed[`${side}_stable_id`];

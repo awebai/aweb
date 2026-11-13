@@ -20,7 +20,7 @@ def response(packet, receipt):
     name = '.'.join(labels).lower()
     end = cursor + 5
     kind, klass = struct.unpack('!HH', packet[cursor + 1:end])
-    allowed = name in ('localhost', '127.0.0.1.nip.io')
+    allowed = name in ('localhost', '127.0.0.1.nip.io', 'signer.example.com')
     if not allowed:
         report = receipt.with_suffix(receipt.suffix + '.reported') if reserved(name) or denied_read(name, 'GET') else receipt
         with report.open('a') as out:

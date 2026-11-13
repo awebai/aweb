@@ -256,6 +256,11 @@ with previous- and new-key proofs. This is new work; the released PUT remains
 key-loss recovery. Its epoch and pre-upgrade first-registration rules are fixed
 in that contract.
 
+PUT recovery requires proof of the new controller key plus DNS evidence for
+that key or valid parent-controller authorization. `AWID_SKIP_DNS_VERIFY=1`
+can bootstrap a first namespace registration; it never substitutes for either
+recovery proof when replacing an existing controller.
+
 AWID keeps each domain's root-key history in `id_namespace_epochs`. Every
 epoch was proven by exact `_awid.<domain>` DNS on an explicit act. The first
 registration, re-registration after deletion, and an exact-DNS PUT to a key
@@ -1277,6 +1282,23 @@ which raises.
   so a write to one ID may change any entry in its domain. Removing the entry
   before the write also covers a write whose answer is lost after AWID
   committed it. Other domains' entries are kept.
+
+### Registry client outbound bounds
+
+When `RegistryClient` follows a domain-selected registry override without an
+injected transport, each request resolves the registry host once, refuses the
+whole answer if any address is nonpublic, and connects only to an admitted IP.
+The original hostname and port remain in `Host`, and TLS verification and SNI
+name the original hostname. These requests ignore environment proxies and do
+not follow redirects. The configured home registry and explicitly injected
+transports retain their operator-selected policy; the home service credential
+is never sent to an override. Lookup, connection and response reading share the
+request timeout.
+
+Certificate, team, address and revocation scans read at most 500 pages, including
+legacy timestamp-paged revocations. A final page at that limit succeeds. A
+registry that still has more data raises `RegistryError(status_code=502)` with
+`pagination exceeded 500 pages`; a partial scan is never returned as complete.
 
 ### Public identity-tree write client
 

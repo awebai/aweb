@@ -39,6 +39,7 @@ var (
 	runTripOnDanger  bool
 	runAutofeedWork  bool
 	runInitConfig    bool
+	runTrustConfig   bool
 )
 
 var (
@@ -101,6 +102,7 @@ func init() {
 	runCmd.Flags().BoolVar(&runTripOnDanger, "trip-on-danger", false, "Remove provider bypass flags and use native provider safety checks")
 	runCmd.Flags().BoolVar(&runAutofeedWork, "autofeed-work", false, "Wake for work-related events in addition to incoming mail/chat")
 	runCmd.Flags().BoolVar(&runInitConfig, "init", false, "Prompt for ~/.config/aw/run.json values and write them")
+	runCmd.Flags().BoolVar(&runTrustConfig, "trust-config", false, "Trust this directory's .aw/run.json as it is now, so its prompts and services are used; a file that changes afterwards is ignored until trusted again")
 
 	rootCmd.AddCommand(runCmd)
 }
@@ -115,9 +117,23 @@ func runRun(cmd *cobra.Command, args []string) error {
 		return err
 	}
 
+	if runTrustConfig {
+		trusted, digest, err := awrun.TrustLocalConfig(workingDir)
+		if err != nil {
+			return err
+		}
+		fmt.Fprintf(cmd.ErrOrStderr(), "aw run: trusted %s as it is now (%s).\n", trusted, digest)
+	}
 	runCfg, err := runLoadUserConfig(workingDir)
 	if err != nil {
 		return err
+	}
+	localConfigPath, localConfigState, err := awrun.LocalConfig(workingDir)
+	if err != nil {
+		return err
+	}
+	if note := localConfigState.IgnoredNote(localConfigPath); note != "" {
+		fmt.Fprintln(cmd.ErrOrStderr(), note)
 	}
 	if runInitConfig {
 		return runInitUserConfig(cmd.InOrStdin(), cmd.OutOrStdout(), runCfg)
@@ -185,15 +201,16 @@ func runRun(cmd *cobra.Command, args []string) error {
 	loop.OnBuildCommand = func(_ []string, opts awrun.BuildOptions) {
 		lastBuildOptions = opts
 	}
+	logPolicy := localLogPolicyForSelection(sel)
 	loop.OnUserPrompt = func(text string) {
-		appendInteractionLogForDir(workingDir, &InteractionEntry{
+		appendInteractionLogForDir(workingDir, logPolicy, &InteractionEntry{
 			Timestamp: time.Now().UTC().Format(time.RFC3339),
 			Kind:      interactionKindUser,
 			Text:      text,
 		})
 	}
 	loop.OnRunComplete = func(summary awrun.RunSummary) {
-		appendInteractionLogForDir(workingDir, &InteractionEntry{
+		appendInteractionLogForDir(workingDir, logPolicy, &InteractionEntry{
 			Timestamp: time.Now().UTC().Format(time.RFC3339),
 			Kind:      interactionKindAgent,
 			SessionID: summary.SessionID,
@@ -201,7 +218,8 @@ func runRun(cmd *cobra.Command, args []string) error {
 		})
 	}
 
-	if runContinueMode {
+	// A log sealed to the owner log key is not the agent's to read back.
+	if runContinueMode && !logPolicy.sealing() {
 		if recap := loadRunContinueRecap(workingDir, cmd.OutOrStdout()); recap != "" {
 			fmt.Fprint(cmd.OutOrStdout(), recap)
 		}
@@ -349,6 +367,7 @@ func initRunCommandVars() {
 	runProviderPTY = false
 	runAutofeedWork = false
 	runInitConfig = false
+	runTrustConfig = false
 }
 
 func setRunCommandIO(cmd *cobra.Command, in io.Reader, out io.Writer, errOut io.Writer) {

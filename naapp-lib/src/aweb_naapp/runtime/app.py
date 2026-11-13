@@ -27,13 +27,16 @@ may also supply its own font directory; its licensing remains with that app.
 from __future__ import annotations
 
 import asyncio
+import base64
+import copy
 import hashlib
 import json
 import logging
 from collections.abc import AsyncIterator, Awaitable, Callable, Mapping, Sequence
-from contextlib import asynccontextmanager
+from contextlib import aclosing, asynccontextmanager
 from dataclasses import replace
 from datetime import UTC, datetime
+from enum import StrEnum
 from ipaddress import IPv4Network, IPv6Network
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
@@ -41,6 +44,8 @@ from urllib.parse import urlsplit
 from uuid import UUID
 
 import httpx
+from awid.dns_verify import DomainVerifier
+from awid.registry import RegistryClient
 from fastapi import FastAPI, HTTPException, Request
 from fastapi.dependencies.models import Dependant
 from fastapi.responses import HTMLResponse, PlainTextResponse, Response
@@ -58,6 +63,7 @@ from aweb_naapp.manifest import (
     Manifest,
     ManifestError,
     canonical_bytes,
+    check_v2_variant,
     fill_manifest,
     load_manifest,
 )
@@ -83,11 +89,18 @@ from aweb_naapp.runtime.authorization import (
     authorize_request,
     is_placeholder,
 )
+from aweb_naapp.runtime.awid_member_credentials import read_member_credentials
 from aweb_naapp.runtime.db import NaappDatabase, Store
 from aweb_naapp.runtime.event_emit import AppEvents, is_loopback_host
 from aweb_naapp.runtime.health import CheckResult, HealthCheck, mount_health
 from aweb_naapp.runtime.hook_resolver import HookResolver
 from aweb_naapp.runtime.hooks import RuntimeHooks
+from aweb_naapp.runtime.human_member import (
+    HumanMemberProof,
+)
+from aweb_naapp.runtime.human_member import (
+    check_human_member as observe_human_member,
+)
 from aweb_naapp.runtime.installation import InstallationFence
 from aweb_naapp.runtime.manifest_hooks import ManifestEvidence, bounded_body, prepare
 from aweb_naapp.runtime.settings import NaappSettings
@@ -106,11 +119,13 @@ if TYPE_CHECKING:
     from pgdbm.core import TransactionManager
 
     from aweb_naapp.egress import Egress
+    from aweb_naapp.runtime.owner_act_delivery import CheckedHumanRoleMember
 
 logger = logging.getLogger(__name__)
 
 # Where a version 2 manifest's bytes are served, as its catalog lists them.
 MANIFEST_V2_PATH = "/manifests/v2.json"
+MANIFEST_V3_PATH = "/manifests/v3.json"
 
 NOINDEX_ROBOTS_HEADER = "noindex, nofollow, noarchive"
 # The outbox check abandons its backlog read after this bound, inside the
@@ -144,8 +159,11 @@ class NaappRuntime:
         module_name: str,
         migrations_path: Path,
         manifest_path: Path,
+        owner_acts: Mapping[str, Any] | None = None,
+        owner_acts_origin: str | None = None,
         root_path: str = "",
         awid_transport: httpx.AsyncBaseTransport | None = None,
+        awid_domain_verifier: DomainVerifier | None = None,
         team_server_transport: httpx.AsyncBaseTransport | None = None,
         stores: Sequence[Store] = (),
         hook_egress: Egress | None = None,
@@ -159,6 +177,8 @@ class NaappRuntime:
         self.migrations_path = migrations_path
         self.stores = tuple(stores)
         self._awid_transport = awid_transport
+        self._awid_domain_verifier = awid_domain_verifier
+        self._registry_client: RegistryClient | None = None
         self._database: NaappDatabase | None = None
         self._attestation_records: AWIDAttestationRecords | None = None
         template = json.loads(manifest_path.read_bytes())
@@ -170,19 +190,45 @@ class NaappRuntime:
             did_keys=declared_did_keys(settings, template),
         )
         self._manifest = load_manifest(self._manifest_bytes)
+        self._manifest_variants = {self._manifest.manifest_version: self._manifest_bytes}
+        if owner_acts is not None:
+            if self._manifest.manifest_version != 2 or not owner_acts_origin:
+                raise ValueError("owner acts require a v2 template and a configured human origin")
+            v3 = copy.deepcopy(template)
+            v3["manifest_version"] = 3
+            v3["owner_acts"] = {**copy.deepcopy(dict(owner_acts)), "origin": owner_acts_origin}
+            self._manifest_bytes = fill_manifest(
+                v3, app_id=settings.app_id, origin=settings.public_origin,
+                did_keys=declared_did_keys(settings, v3),
+            )
+            self._manifest = load_manifest(self._manifest_bytes)
+            check_v2_variant(self._manifest_variants[2], self._manifest_bytes)
+            self._manifest_variants[3] = self._manifest_bytes
+        elif owner_acts_origin is not None:
+            raise ValueError("a human origin requires an owner-acts declaration")
+        elif self._manifest.manifest_version == 3:
+            if self._manifest.owner_acts is None:
+                raise ValueError("a v3 publication requires owner-designated roles")
+            v2 = json.loads(self._manifest_bytes)
+            v2.pop("owner_acts", None)
+            v2["manifest_version"] = 2
+            self._manifest_variants[2] = canonical_bytes(v2)
+            check_v2_variant(self._manifest_variants[2], self._manifest_bytes)
         self._catalog_bytes = (
-            _catalog_bytes(self._manifest, self._manifest_bytes)
-            if self._manifest.manifest_version == 2
+            _catalog_bytes(self._manifest, self._manifest_variants)
+            if self._manifest.manifest_version >= 2
             else None
         )
         self._declared_tools = DeclaredTools.from_manifest(self._manifest)
         self._app_events = AppEvents.from_settings(settings, self._manifest)
         # Configuration only: these objects perform no I/O until a request.
         # Grant sources and guards must be wired before lifespan validation.
+        self._awid_member_credentials = read_member_credentials(settings.awid_member_credentials)
         self._team_cache = AWIDTeamCache(
             registry_url=settings.awid_registry_url,
             ttl_seconds=settings.auth_cache_ttl_seconds,
             service_token=settings.awid_service_token,
+            member_credentials=self._awid_member_credentials,
             transport=awid_transport,
         )
         self._team_server_directory = TeamServerDirectory(
@@ -195,7 +241,11 @@ class NaappRuntime:
             self._installation_grants = TeamGrantSource(
                 identity=AppIdentity(app_id=self.manifest.app_id,
                     origin=self.manifest.document["app"]["origin"],
-                    digest="sha256:" + hashlib.sha256(self.manifest_bytes).hexdigest()),
+                    digest="sha256:" + hashlib.sha256(self.manifest_bytes).hexdigest(),
+                    manifest_digests=tuple(
+                        (version, "sha256:" + hashlib.sha256(data).hexdigest())
+                        for version, data in sorted(self._manifest_variants.items())
+                    )),
                 signer=AppCredentialSigner(app_id=self.manifest.app_id, key=key, purpose=APP_GRANT_READ),
                 discovery=self.team_server_directory(), transport=team_server_transport,
             )
@@ -228,10 +278,14 @@ class NaappRuntime:
 
     @property
     def catalog_bytes(self) -> bytes | None:
-        """The manifest catalog served for a version 2 manifest, fixed at
+        """The manifest catalog served for v2/v3 variants, fixed at
         construction; ``None`` for a version 1 manifest, which consumers
         discover at the legacy path."""
         return self._catalog_bytes
+
+    def manifest_variant_bytes(self, version: int) -> bytes:
+        """One exact published variant, fixed and validated at construction."""
+        return self._manifest_variants[version]
 
     @property
     def manifest(self) -> Manifest:
@@ -251,6 +305,9 @@ class NaappRuntime:
     @asynccontextmanager
     async def lifespan(self, app: FastAPI) -> AsyncIterator[None]:
         self.check_authorized_routes(app)
+        # A configured member credential AWID does not currently publish is the
+        # operator's misconfiguration: refuse to start, naming it.
+        await self._team_cache.check_member_credentials()
         database = NaappDatabase(
             self.settings,
             module_name=self.module_name,
@@ -275,18 +332,51 @@ class NaappRuntime:
             asyncio.create_task(run_drain(database.db, stop=stop, **self._hooks.drain_options()))
             if self._hooks.key is not None else None
         )
+        registry_client: RegistryClient | None = None
         try:
+            registry_client = self._new_registry_client()
+            self._registry_client = registry_client
             yield
         finally:
-            stop.set()
-            drains = [task for task in (app_events_drain, hooks_drain) if task is not None]
-            if drains:
-                await asyncio.gather(*drains)
-            await client.aclose()
-            self._installation_fence = None
-            self._database = None
-            self._attestation_records = None
-            await database.disconnect()
+            try:
+                stop.set()
+                drains = [task for task in (app_events_drain, hooks_drain) if task is not None]
+                if drains:
+                    await asyncio.gather(*drains)
+                await client.aclose()
+                self._installation_fence = None
+                self._database = None
+                self._attestation_records = None
+                await database.disconnect()
+            finally:
+                self._registry_client = None
+                if registry_client is not None:
+                    await registry_client.aclose()
+
+    def _new_registry_client(self) -> RegistryClient:
+        return RegistryClient(
+            self.settings.awid_registry_url,
+            transport=self._awid_transport,
+            service_token=self.settings.awid_service_token,
+            member_signing_keys={
+                team_id: credential.signing_key
+                for team_id, credential in self._awid_member_credentials.items()
+            },
+            domain_verifier=self._awid_domain_verifier,
+        )
+
+    def registry_client(self) -> RegistryClient:
+        """The lifespan-owned plain SDK client, ready before the app yields.
+
+        Connection reuse does not cache identity/status observations. Reads
+        use the runtime's configured registry, transport and read credentials.
+        Library hosts may pass awid_domain_verifier beside awid_transport;
+        production defaults to the SDK's normal DNS authority verification.
+        The runtime closes this client on shutdown or a later startup failure.
+        """
+        if self._registry_client is None:
+            raise RuntimeError("naapp registry client is not initialized")
+        return self._registry_client
 
     def connected_db(self) -> AsyncDatabaseManager | None:
         """The database while the app is running, or None, for surfaces that
@@ -415,6 +505,93 @@ class NaappRuntime:
         return await self.team_cache().check_current_member(
             team_id, certificate_id=certificate_id, team_did_key=team_did_key
         )
+
+    async def check_human_role_member(
+        self,
+        team_id: str,
+        *,
+        principal: str,
+        certificate: bytes,
+        identity_client: RegistryClient | None = None,
+    ) -> CheckedHumanRoleMember:
+        """Retain exact signed JSON bytes with the existing exact-subject H2 proof.
+
+        Run before effect locks. A malformed certificate, or one naming another
+        team or principal, is no membership evidence: principal_not_member, as
+        is definite loss; non-human kind and unavailability retain their
+        distinct typed outcomes. No HTTP response
+        is built here, and no certificate is fetched or re-encoded for storage.
+        """
+        from awid.team_certificate import (
+            MAX_HEADER_BYTES,
+            TeamCertificateError,
+            decode_team_certificate,
+        )
+
+        from aweb_naapp.runtime.owner_act_delivery import (
+            CheckedHumanRoleMember,
+            OwnerActDeliveryCode,
+            OwnerActDeliveryRefused,
+        )
+
+        try:
+            if not isinstance(certificate, bytes) or len(certificate) > MAX_HEADER_BYTES:
+                raise TeamCertificateError("malformed")
+            # Reuse AWID's one bounded signed-artifact decoder. Retain the
+            # original bytes below, never the reconstructed transport encoding.
+            decoded = decode_team_certificate(base64.b64encode(certificate).decode("ascii"))
+            if decoded.get("team_id") != team_id or decoded.get("member_did_aw") != principal:
+                raise TeamCertificateError("malformed")
+        except TeamCertificateError:
+            raise OwnerActDeliveryRefused("principal_not_member") from None
+        try:
+            proof = await self.check_human_member(
+                team_id,
+                principal=principal,
+                certificate=decoded,
+                identity_client=identity_client,
+            )
+        except HTTPException as exc:
+            code: OwnerActDeliveryCode
+            if exc.status_code == 403 and exc.detail == "principal_not_member":
+                code = "principal_not_member"
+            elif exc.status_code == 403 and exc.detail == "principal_not_human":
+                code = "principal_not_human"
+            else:
+                code = "principal_status_unavailable"
+            raise OwnerActDeliveryRefused(code) from None
+        except Exception:
+            # The delivery boundary cannot turn an unclassified dependency
+            # failure into a definitive non-member result or expose its detail.
+            # Cancellation inherits BaseException and still propagates.
+            raise OwnerActDeliveryRefused("principal_status_unavailable") from None
+        return CheckedHumanRoleMember(certificate, proof)
+
+    async def check_human_member(
+        self, team_id: str, *, principal: str, certificate: Mapping[str, Any],
+        identity_client: RegistryClient | None = None,
+    ) -> HumanMemberProof:
+        """Current certificate/key and the exact subject's own human kind.
+
+        This is an explicit human-role call, never part of ordinary agent
+        authentication. Without an existing caller-owned SDK client it uses
+        the lifespan's plain SDK client, or a short-lived plain client before
+        startup. Neither caches identity observations. An injected CachedRegistryClient
+        retains its own bounded cache/lifecycle. No Redis setting is required.
+        App holdings, B3 admission and the caller's effect fence stay separate.
+        """
+        if identity_client is None:
+            identity_client = self._registry_client
+        if identity_client is not None:
+            return await observe_human_member(
+                self.team_cache(), identity_client, team_id=team_id,
+                principal=principal, certificate=certificate,
+            )
+        async with aclosing(self._new_registry_client()) as client:
+            return await observe_human_member(
+                self.team_cache(), client, team_id=team_id,
+                principal=principal, certificate=certificate,
+            )
 
     async def principal(self, request: Request) -> Principal:
         """FastAPI dependency: the team member who signed this request.
@@ -629,16 +806,16 @@ def _refuse_the_hosted_app_id_elsewhere(settings: NaappSettings, template: Mappi
         )
 
 
-def _catalog_bytes(manifest: Manifest, variant_bytes: bytes) -> bytes:
-    """The manifest catalog listing ``variant_bytes`` as the app's version 2 variant."""
+def _catalog_bytes(manifest: Manifest, variants: Mapping[int, bytes]) -> bytes:
+    """The catalog pins every exact filled variant published by the runtime."""
     return canonical_bytes({
         "catalog_version": 1,
         "app_id": manifest.app_id,
         "variants": [{
-            "manifest_version": 2,
-            "url": MANIFEST_V2_PATH,
-            "digest": "sha256:" + hashlib.sha256(variant_bytes).hexdigest(),
-        }],
+            "manifest_version": version,
+            "url": f"/manifests/v{version}.json",
+            "digest": "sha256:" + hashlib.sha256(data).hexdigest(),
+        } for version, data in sorted(variants.items())],
     })
 
 
@@ -678,7 +855,12 @@ def mount_manifest_routes(app: FastAPI, *, runtime: NaappRuntime) -> None:
 
         @app.get(MANIFEST_V2_PATH)
         async def manifest_v2_route() -> Response:
-            return await _manifest_response()
+            return Response(content=runtime.manifest_variant_bytes(2), media_type="application/json", headers=_NOSNIFF)
+
+        if runtime.manifest.manifest_version == 3:
+            @app.get(MANIFEST_V3_PATH)
+            async def manifest_v3_route() -> Response:
+                return await _manifest_response()
 
     @app.get("/aweb-app.json")
     async def aweb_app_manifest_route() -> Response:
@@ -698,6 +880,7 @@ def mount_naapp_routes(
     robots_disallow: Sequence[str] = (),
     noindex_paths: Sequence[str] = (),
     health_checks: Mapping[str, HealthCheck] | None = None,
+    health_labels: Mapping[str, StrEnum] | None = None,
 ) -> None:
     """Serve the standard naapp public surface.
 
@@ -781,4 +964,9 @@ def mount_naapp_routes(
         return PlainTextResponse(skill, headers=_NOSNIFF)
 
     mount_manifest_routes(app, runtime=runtime)
-    mount_health(app, settings, checks={**runtime.health_checks(), **(health_checks or {})})
+    mount_health(
+        app,
+        settings,
+        checks={**runtime.health_checks(), **(health_checks or {})},
+        labels=health_labels,
+    )

@@ -10,7 +10,6 @@ from urllib.parse import quote
 import asyncpg
 from aweb_naapp.console import ConsoleRoute, ConsoleSession, session_is_current
 from aweb_naapp.dispatch import State
-from aweb_naapp.roles import hold_role
 from aweb_naapp.runtime.approvals import (
     ApprovalRefused,
     Approvals,
@@ -27,7 +26,8 @@ from aweb_secrets.console_changes import _errors
 from aweb_secrets.console_reconciliation.authority import ConsoleReconciliationFence
 from aweb_secrets.console_ui import _login_redirect, _page, console_page, recovery_page
 from aweb_secrets.console_use_approvals import _decision, _proof
-from aweb_secrets.owners import OWNER_ROLE, owner_scope
+from aweb_secrets.owners import hold_owner as hold_owner_holding
+from aweb_secrets.owners import owner_binding, owner_scope
 from aweb_secrets.reconciliation_policy import (
     POLICY_VERSION,
     reconciliation_policy_ref,
@@ -74,15 +74,10 @@ class ConsoleReconciliation:
         )
 
     async def _scope(self, scope):
-        row = await self.console.db.fetch_one(
-            "SELECT installation_id,team_id FROM {{tables.owner_principals}} WHERE scope=$1",
-            scope,
-        )
+        row = await owner_binding(self.console.db, scope)
         if row is None:
             raise HTTPException(403, "owner_required")
-        admitted = await self.console.installation(
-            row["installation_id"], team_id=row["team_id"]
-        )
+        admitted = await self.console.installation(row["installation_id"], team_id=row["team_id"])
         if (admitted.installation_id, admitted.team_id) != (row["installation_id"], row["team_id"]):
             raise HTTPException(403, "owner_required")
         return admitted
@@ -104,7 +99,7 @@ class ConsoleReconciliation:
             or owner.team_id != admitted.team_id
             or owner_scope(admitted.installation_id, owner.team_id, owner.principal_did)
             != current.scope
-            or not await hold_role(tx, owner, OWNER_ROLE)
+            or not await hold_owner_holding(tx, owner, installation_id=admitted.installation_id)
         ):
             raise HTTPException(403, "owner_required")
         await self._end(tx, current, admitted)
@@ -243,14 +238,17 @@ class ConsoleReconciliation:
 
     async def decide(self, current, token, proof, decision):
         approval_id, _, admitted = await self._candidate(current, token)
-        # No credential-holding caller fence spans B3's fresh decision verify.
-        # The dedicated shared control audit is local and has no target gate.
-        async with self.console.db.transaction() as tx:
-            await self._owner(tx, current, admitted)
-            approval = await self.approvals.decide(
-                approval_id, decision, Assurance.PASSKEY, proof, link_token=token, tx=tx
-            )
-            await self._end(tx, current, admitted)
+        authority = ConsoleReconciliationFence(
+            console=self.console, current=current, scope=admitted
+        )
+        approval = await self.approvals.decide(
+            approval_id,
+            decision,
+            Assurance.PASSKEY,
+            proof,
+            link_token=token,
+            fence=authority.for_decision(),
+        )
         return {
             "approval_id": approval_id,
             "state": approval.state.value,

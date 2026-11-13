@@ -59,6 +59,7 @@ class RunWorld:
     submission: MemberSubmission
     available: list[bool]
     origin: str = ORIGIN
+    secondary: tuple[SecretRecord, str] | None = None
 
     def signed(self, target, body=b"{}", *, key=None):
         key = key or self.signing_key
@@ -93,7 +94,16 @@ class RunInstallations(Installations):
         )
 
 
-async def setup(uses, *, approval_required=False, producer_clock=None):
+async def setup(
+    uses,
+    *,
+    approval_required=False,
+    producer_clock=None,
+    job_timeout_s=None,
+    variant="",
+    reuse_source=None,
+    paired=False,
+):
     db, scope = uses.world.db, uses.world.admitted
     for migration in (
         apply_dispatch_migrations,
@@ -107,9 +117,31 @@ async def setup(uses, *, approval_required=False, producer_clock=None):
         await migration(db)
     if approval_required:
         await designate(uses, "finance", "finance@acme.com")
+    record = {**SECRET}
     body = after()
-    body["credentials"][0]["secret_ref"] = SECRET["ref"]
-    body["env"] = {"DB_ADMIN": {"$credential": SECRET["ref"], "field": "value"}}
+    if variant:
+        if reuse_source is None:
+            record.update(secret_id="sec_run_" + variant, ref="run-" + variant)
+        body["job_id"] += "-" + variant
+    if job_timeout_s is not None:
+        body["timeout_s"] = job_timeout_s
+    body["credentials"][0]["secret_ref"] = record["ref"]
+    body["env"] = {"DB_ADMIN": {"$credential": record["ref"], "field": "value"}}
+    secondary = None
+    if paired:
+        assert reuse_source is None
+        second_record = SecretRecord.from_after(
+            {
+                **SECRET,
+                "secret_id": "sec_secondary001" + variant,
+                "ref": "secondary-api" + variant,
+            }
+        )
+        secondary = (second_record, secrets.token_urlsafe(32))
+        body["credentials"].append(
+            {"secret_ref": second_record.ref, "delivery": "durable", "mint": None}
+        )
+        body["env"]["SECOND_ADMIN"] = {"$credential": second_record.ref, "field": "value"}
     body["output"]["projection"] = ["/exit_code", "/stderr", "/stdout"]
     job = jobs.JobDefinition.from_after(body)
     policy = Policy.from_body(
@@ -119,7 +151,7 @@ async def setup(uses, *, approval_required=False, producer_clock=None):
             "approvers": ["finance"] if approval_required else [],
         }
     )
-    credential = secrets.token_urlsafe(32)
+    credential = secrets.token_urlsafe(32) if reuse_source is None else reuse_source.credential
     signing_key, encryption_key = SigningKey.generate(), X25519PrivateKey.generate()
     runner = runners.RunnerRecord.from_after(
         {
@@ -130,38 +162,41 @@ async def setup(uses, *, approval_required=False, producer_clock=None):
         }
     )
     async with db.transaction() as tx:
-        await records.create_policy(tx, scope.installation_id, policy)
-        await records.create_secret(
-            tx, scope.installation_id, TEAM, SecretRecord.from_after(SECRET)
-        )
-        version = await uses.world.custody.sealer.ingest(
-            tx,
-            installation_id=scope.installation_id,
-            team_id=TEAM,
-            secret_id=SECRET["secret_id"],
-            value=encode_value("bearer", {"value": credential}),
-        )
-        await records.set_active_version(
-            tx, scope.installation_id, TEAM, SECRET["secret_id"], version
-        )
-        await records.create_grant(
-            tx,
-            scope.installation_id,
-            TEAM,
-            GrantRecord.from_after(
-                {
-                    "v": 1,
-                    "grant_id": "grt_durable001",
-                    "secret_id": SECRET["secret_id"],
-                    "subject": {"principal": REQUESTER.did_aw},
-                    "capability": "run",
-                    "operations": [],
-                    "open_request": False,
-                    "jobs": [{"job_id": job.job_id, "digest": job.digest}],
-                    "policy_digest": policy.digest,
-                }
-            ),
-        )
+        await records.create_policy(tx, scope.installation_id, policy, team_id=TEAM)
+        sources = [(SecretRecord.from_after(record), credential, "grt_durable001" + variant)]
+        if secondary is not None:
+            sources.append((*secondary, "grt_durable002" + variant))
+        for source_record, source_value, grant_id in sources:
+            if reuse_source is None:
+                await records.create_secret(tx, scope.installation_id, TEAM, source_record)
+                version = await uses.world.custody.sealer.ingest(
+                    tx,
+                    installation_id=scope.installation_id,
+                    team_id=TEAM,
+                    secret_id=source_record.secret_id,
+                    value=encode_value("bearer", {"value": source_value}),
+                )
+                await records.set_active_version(
+                    tx, scope.installation_id, TEAM, source_record.secret_id, version
+                )
+            await records.create_grant(
+                tx,
+                scope.installation_id,
+                TEAM,
+                GrantRecord.from_after(
+                    {
+                        "v": 1,
+                        "grant_id": grant_id,
+                        "secret_id": source_record.secret_id,
+                        "subject": {"principal": REQUESTER.did_aw},
+                        "capability": "run",
+                        "operations": [],
+                        "open_request": False,
+                        "jobs": [{"job_id": job.job_id, "digest": job.digest}],
+                        "policy_digest": policy.digest,
+                    }
+                ),
+            )
         await jobs.create_job(tx, scope.installation_id, TEAM, job)
         code = await runners.create_runner(
             tx, scope.installation_id, TEAM, runner, now=uses.clock()
@@ -221,6 +256,7 @@ async def setup(uses, *, approval_required=False, producer_clock=None):
         return targets(uses.clock()) if available[0] else None
 
     arguments = dict(
+        pins=uses.world.custody.run_pins,
         fence=InstallationFence(db, app_id="secrets", grants=RunInstallations()),
         opener=UseSecretOpener(
             db,
@@ -255,7 +291,7 @@ async def setup(uses, *, approval_required=False, producer_clock=None):
             (b"application/json",),
             canonical(
                 {
-                    "request_id": "durable-1",
+                    "request_id": "durable-1" + variant,
                     "runner": runner.runner_id,
                     "params": {"database": "orders"},
                 }
@@ -272,4 +308,5 @@ async def setup(uses, *, approval_required=False, producer_clock=None):
         arguments,
         submission,
         available,
+        secondary=secondary,
     )

@@ -1,18 +1,17 @@
 """Token-dependent roots invalidate without fabricating a replacement version."""
 
 import pytest
-from aweb_naapp.roles import hold_role, principal_key
 from aweb_naapp.runtime.approvals import ApprovalState
 from aweb_naapp_testing.owner_acts import INSTALLATION_ID
 
 from aweb_secrets import records
 from aweb_secrets.custody import CustodyUnavailable
-from aweb_secrets.owners import OWNER_ROLE
-from tests.test_change_sets import TEAM, world  # noqa: F401
+from aweb_secrets.owners import hold_owner
+from tests.test_change_sets import ALICE, TEAM, world  # noqa: F401
 from tests.test_containment import seal
 from tests.test_containment_service import service
 from tests.test_use_approval_lineage import child, request_child, seed
-from tests.test_use_approvals import REQUESTER, approve
+from tests.test_use_approvals import approve
 from tests.test_use_approvals import uses as _uses
 
 uses = _uses
@@ -48,7 +47,7 @@ async def test_invalidation_all_versions_and_descendants_preserves_root_and_sibl
     try:
         async with uses.world.db.transaction() as tx:
             await uses.world.fence.admit(tx, uses.grant)
-            assert await hold_role(tx, principal_key(REQUESTER), OWNER_ROLE)
+            assert await hold_owner(tx, ALICE, installation_id=INSTALLATION_ID)
             await svc.prepare_replacements(
                 tx, installation_id=INSTALLATION_ID, team_id=TEAM, secret_ids=(root.secret_id,)
             )

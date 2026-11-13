@@ -42,8 +42,11 @@ from typing import TYPE_CHECKING, Any, Literal
 from pgdbm import AsyncDatabaseManager, AsyncMigrationManager
 from pgdbm.core import TransactionManager
 
+from aweb_secrets import run_pin_store
 from aweb_secrets.secret import SecretRecord, sealed_shape
 
+from .providers import AwsKmsProvider, LocalKeyFileProvider
+from .run_pins import RunPins
 from .sealing import (
     CustodyUnavailable,
     KeyProvider,
@@ -345,6 +348,7 @@ class Custody:
         self.opener = SecretOpener(provider, db)
         self.backend_credential_opener = BackendCredentialOpener(provider, db)
         self.backend_credential_preview = BackendCredentialPreview(provider, db)
+        self.run_pins = RunPins(provider)
 
     async def stage_backend_credential(
         self,
@@ -714,7 +718,14 @@ class Custody:
     async def disable(
         self, tx: TransactionManager, *, installation_id: str, team_id: str, secret_id: str
     ) -> None:
-        """Refuse every open and ingest of the secret from now on."""
+        """Refuse every open/ingest; caller prepares affected S3/pins before effects."""
+        await run_pin_store.discard_secret(
+            tx,
+            installation_id=installation_id,
+            team_id=team_id,
+            secret_id=secret_id,
+            backend_credential=secret_id == BACKEND_CREDENTIAL_ID,
+        )
         await tx.execute(
             "UPDATE {{tables.custody_secrets}} SET disabled_at = NOW()"
             " WHERE installation_id = $1 AND team_id = $2 AND secret_id = $3"
@@ -748,7 +759,16 @@ class Custody:
         Copies in backups and the write-ahead log stay decryptable until they
         expire or the key-encryption key is retired. A reference's monotonic
         allocator and opaque local version handle survive its destruction;
-        no provider write or deletion is performed."""
+        no provider write or deletion is performed. The caller prepares the
+        complete affected S3/pin union before revision or per-secret effects."""
+        await run_pin_store.discard_secret(
+            tx,
+            installation_id=context.installation_id,
+            team_id=context.team_id,
+            secret_id=context.secret_id,
+            version=context.version,
+            backend_credential=context.secret_id == BACKEND_CREDENTIAL_ID,
+        )
         await tx.execute(
             "DELETE FROM {{tables.sealed_versions}}"
             " WHERE installation_id = $1 AND team_id = $2 AND secret_id = $3 AND version = $4",
@@ -768,9 +788,28 @@ class Custody:
         )
 
     async def health(self) -> Health:
-        """Whether a probe seals and unseals with the deployment's key provider."""
+        """Probe the provider and refuse incompatible retained ciphertext.
+
+        The local provider reads its key once. After restart, a valid but
+        different key can round-trip a fresh canary while every old value is
+        unreadable. Include inert candidates and private backend credentials;
+        no activation or current-version filter may hide retained ciphertext.
+        A KMS provider cannot open local ciphertext either. Local providers
+        also refuse KMS rows; KMS-to-KMS identifiers retain the provider's own
+        decrypt semantics (a configured alias need not equal its returned ARN).
+        """
         try:
             await asyncio.to_thread(seal_canary, self._provider)
         except CustodyUnavailable as exc:
             return Health(ok=False, reason=str(exc))
+        provider = self._provider
+        if isinstance(
+            provider, (LocalKeyFileProvider, AwsKmsProvider)
+        ) and await self._db.fetch_value(
+            "SELECT EXISTS (SELECT 1 FROM {{tables.sealed_versions}} "
+            "WHERE key_id <> $1 AND ($2 OR key_id LIKE 'local:%'))",
+            provider.key_id,
+            isinstance(provider, LocalKeyFileProvider),
+        ):
+            return Health(ok=False, reason="retained ciphertext requires another custody key")
         return Health(ok=True)

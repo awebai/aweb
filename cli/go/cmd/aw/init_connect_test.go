@@ -97,8 +97,6 @@ func TestInitCertificateConnectRecordsExternalIdentityHomeInMachineIndex(t *test
 }
 
 func TestInitWithCertificateConnectsToServer(t *testing.T) {
-	t.Parallel()
-
 	teamPub, teamKey, err := awid.GenerateKeypair()
 	if err != nil {
 		t.Fatal(err)
@@ -165,6 +163,7 @@ func TestInitWithCertificateConnectsToServer(t *testing.T) {
 	buildAwBinary(t, ctx, bin)
 
 	registryURL := realAWIDFixture(t)
+	t.Setenv("AWID_REGISTRY_URL", registryURL)
 	registry := awid.NewAWIDRegistryClient(nil, nil)
 	if _, err := registry.RegisterIdentity(ctx, registryURL, memberDIDKey, awid.ComputeStableID(memberPub), memberKey); err != nil {
 		t.Fatalf("register real AWID fixture identity: %v", err)
@@ -523,8 +522,6 @@ func TestCanonicalizeGitOriginSSHWithPort(t *testing.T) {
 }
 
 func TestInitWithCertificatePreservesExplicitAPIPath(t *testing.T) {
-	t.Parallel()
-
 	teamPub, teamKey, err := awid.GenerateKeypair()
 	if err != nil {
 		t.Fatal(err)
@@ -584,6 +581,7 @@ func TestInitWithCertificatePreservesExplicitAPIPath(t *testing.T) {
 	buildAwBinary(t, ctx, bin)
 
 	registryURL := realAWIDFixture(t)
+	t.Setenv("AWID_REGISTRY_URL", registryURL)
 	registry := awid.NewAWIDRegistryClient(nil, nil)
 	if _, err := registry.RegisterIdentity(ctx, registryURL, memberDIDKey, awid.ComputeStableID(memberPub), memberKey); err != nil {
 		t.Fatalf("register real AWID fixture identity: %v", err)

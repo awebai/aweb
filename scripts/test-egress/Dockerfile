@@ -9,14 +9,15 @@ RUN uv sync --frozen --project server && uv sync --frozen --project awid \
     && cd cli/go && go mod download
 # The isolated runner's Postgres is 17, and pg_dump refuses a newer server, so
 # the tests get the client of the same major version from PGDG.
-RUN curl -fsSL https://www.postgresql.org/media/keys/ACCC4CF8.asc \
-       | gpg --dearmor -o /etc/apt/keyrings/pgdg.gpg \
+RUN bash /src/scripts/test-egress/install-pgdg-key.sh \
+       /src/scripts/test-egress/keys/ACCC4CF8.asc /etc/apt/keyrings/pgdg.gpg \
     && echo "deb [signed-by=/etc/apt/keyrings/pgdg.gpg] https://apt.postgresql.org/pub/repos/apt bookworm-pgdg main" \
        > /etc/apt/sources.list.d/pgdg.list \
     && apt-get update \
     && apt-get install -y --no-install-recommends postgresql-client-17 redis-server \
     && rm -rf /var/lib/apt/lists/* \
-    && pg_dump --version | grep -q ' 17\.'
+    && pg_dump --version | grep -q ' 17\.' \
+    && python3 scripts/test-egress/test_pgdg_key.py -v
 RUN make naapp-sync
 # Headless Chromium for naapp-lib's browser tests, installed by the Playwright
 # version naapp-lib locks, with its system libraries. The tests run headless,
