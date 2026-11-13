@@ -145,24 +145,77 @@ async def resolve_registered_membership(registry, observation, certificate_id):
     return record
 
 
-async def verify_retained_membership(
-    registry, observation, *, certificate_id, member_did_key, certificate_sha256
+def check_retained_membership_record(
+    observation,
+    record,
+    *,
+    certificate_id,
+    member_did_key,
+    alias,
+    identity_scope,
+    member_did_aw,
+    member_address,
+    certificate_sha256=None,
 ):
-    """Match a retained exact-artifact reference; an ID-only reference refuses.
+    """Pure check of EVERY membership field a retained consumer uses.
 
-    Persist the digest when full-certificate admission is verified, in the
-    same local effect transaction. Existing protected candidates require .8's
-    exact baseline/re-endorsement; absence never acquires a guessed digest.
+    This carries no HTTP/runtime dependency. A known original digest is also
+    compared. A pre-cutover projection without one is eligible only under .8's
+    explicitly inventoried field-exact historical baseline, never by guessing
+    or writing a digest into that original evidence. The authoritative row must
+    itself have a full retained certificate digest, even for that baseline.
+    Independent grant/resource rights remain with their original verifier.
     """
     observation.require_fresh()
     if not observation.protected:
-        return None
-    if not certificate_sha256:
+        return
+    if record is None or record.certificate_id != certificate_id:
+        raise TeamCertificateError("unregistered")
+    if record.revoked_at:
+        raise TeamCertificateError("revoked")
+    if getattr(record, "certificate_sha256", None) is None:
+        raise EffectRefused("protected_state_unavailable")
+    expected = {
+        "member_did_key": member_did_key,
+        "alias": alias,
+        "identity_scope": identity_scope,
+        "member_did_aw": member_did_aw or "",
+        "member_address": member_address or "",
+    }
+    if any((getattr(record, key) or "") != value for key, value in expected.items()):
         raise TeamCertificateError("certificate_binding_mismatch")
-    record = await resolve_registered_membership(registry, observation, certificate_id)
     if (
-        record.member_did_key != member_did_key
-        or record.certificate_sha256 != certificate_sha256
+        certificate_sha256 is not None
+        and record.certificate_sha256 != certificate_sha256
     ):
         raise TeamCertificateError("certificate_binding_mismatch")
+
+
+async def verify_retained_membership(
+    registry,
+    observation,
+    *,
+    certificate_id,
+    member_did_key,
+    alias,
+    identity_scope,
+    member_did_aw,
+    member_address,
+    certificate_sha256=None,
+):
+    observation.require_fresh()
+    if not observation.protected:
+        return None
+    record = await resolve_registered_membership(registry, observation, certificate_id)
+    check_retained_membership_record(
+        observation,
+        record,
+        certificate_id=certificate_id,
+        member_did_key=member_did_key,
+        alias=alias,
+        identity_scope=identity_scope,
+        member_did_aw=member_did_aw,
+        member_address=member_address,
+        certificate_sha256=certificate_sha256,
+    )
     return record
