@@ -9,6 +9,7 @@ the namespace controller is checked against, is the one answer the tests supply.
 
 from __future__ import annotations
 
+import logging
 from datetime import UTC, datetime
 from pathlib import Path
 
@@ -46,11 +47,12 @@ def namespace_key() -> SigningKey:
 def team_cache(request, registry, pins_db, namespace_key):
     service_token = SERVICE_TOKEN if request.param == "team_history" else None
 
-    def make() -> AWIDTeamCache:
+    def make(*, enforce: bool = True) -> AWIDTeamCache:
         return AWIDTeamCache(
             registry_url=REGISTRY_URL, ttl_seconds=60, transport=registry.transport, service_token=service_token,
             team_key_pins=DatabaseTeamKeyPins(lambda: pins_db),
             txt_resolver=dns_naming("example.com", namespace_key),
+            enforce_team_key_pins=enforce,
         )
 
     return make
@@ -137,3 +139,23 @@ async def test_rotation_by_a_controller_dns_does_not_name_is_refused(registry, t
     assert forged.json()["detail"] == "team_key_unverified"
     pinned = await pins_db.fetch_value("SELECT team_did_key FROM {{tables.team_key_pins}} WHERE team_id = $1", TEAM_ID)
     assert pinned == member.team_did_key
+
+
+async def test_before_enforcement_a_mismatch_is_logged_and_the_pin_kept(registry, team_cache, pins_db, caplog):
+    member = await _admitted(registry, team_cache)
+    substituted = Member(team_id=TEAM_ID, alias="measured", certificate_id="measured-1")
+    await registry.rotate_team_key(TEAM_ID, substituted.team_did_key)
+    await registry.add_certificate(substituted.certificate())
+
+    with caplog.at_level(logging.WARNING, logger="awid.team_key_acts"):
+        # The staged measuring mode serves the registry's key, as before pinning.
+        response = await _get(registry, team_cache(enforce=False), substituted)
+
+    assert response.status_code == 200, response.text
+    pinned = await pins_db.fetch_value("SELECT team_did_key FROM {{tables.team_key_pins}} WHERE team_id = $1", TEAM_ID)
+    assert pinned == member.team_did_key
+    mismatches = {r.getMessage() for r in caplog.records if r.getMessage().startswith("team_key_pin_mismatch")}
+    assert mismatches == {
+        f"team_key_pin_mismatch team={TEAM_ID} pinned={member.team_did_key} "
+        f"served={substituted.team_did_key} reason=no_act enforced=false",
+    }

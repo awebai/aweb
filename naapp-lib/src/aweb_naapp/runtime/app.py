@@ -204,6 +204,7 @@ class NaappRuntime:
             transport=awid_transport,
             team_key_pins=DatabaseTeamKeyPins(self.db),
             txt_resolver=awid_txt_resolver,
+            enforce_team_key_pins=settings.enforce_team_key_pins,
         )
         self._team_server_directory = TeamServerDirectory(
             team_cache=self._team_cache, transport=awid_transport,

@@ -56,6 +56,9 @@ class NaappSettings(BaseSettings):
     )
     # An app already serving released callers observes before it requires.
     did_aw_profile: DidAwProfile = DidAwProfile.REQUIRE
+    # Staged team-key pin enforcement, one name for every naapp and the aweb
+    # server: OFF logs team_key_pin_mismatch and serves the registry's key.
+    enforce_team_key_pins: bool = Field(default=False, validation_alias="AWEB_ENFORCE_TEAM_KEY_PINS")
     db_pool_min_connections: int = Field(default=1, ge=1)
     db_pool_max_connections: int = Field(default=5, ge=1)
     db_statement_cache_size: int = Field(default=0, ge=0)

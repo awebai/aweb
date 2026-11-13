@@ -7,6 +7,7 @@ trust beyond the bytes it returns.
 from __future__ import annotations
 
 import base64
+import logging
 from datetime import datetime, timedelta, timezone
 
 import httpx
@@ -270,7 +271,7 @@ async def test_a_team_never_seen_is_pinned_to_the_first_key():
     pins = MemoryTeamKeyPins()
     _, team = keypair()
     resolver = TXTAnswers({})
-    assert await pinned_team_key(TEAM_ID, team, pins=pins, fetch_act=_fetch(None), resolver=resolver) == team
+    assert await pinned_team_key(TEAM_ID, team, pins=pins, fetch_act=_fetch(None), resolver=resolver, enforce=True) == team
     assert await pins.pin(TEAM_ID) == TeamKeyPin(team, None)
 
 
@@ -287,7 +288,7 @@ async def test_a_different_key_without_a_valid_act_is_refused(record):
     with pytest.raises(TeamKeyUnverified) as refused:
         await pinned_team_key(
             TEAM_ID, served, pins=pins, fetch_act=_fetch(record),
-            resolver=_dns('_awid.team.example.com', controller[1]),
+            resolver=_dns('_awid.team.example.com', controller[1]), enforce=True,
         )
     assert refused.value.reason == ('no_act' if record is None else 'key_mismatch')
     assert await pins.pin(TEAM_ID) == TeamKeyPin(pinned, None)
@@ -303,6 +304,7 @@ async def test_a_valid_act_moves_the_pin():
     record = _example_act(controller, served)
     key = await pinned_team_key(
         TEAM_ID, served, pins=pins, fetch_act=_fetch(record), resolver=_dns('_awid.team.example.com', controller[1]),
+        enforce=True,
     )
     assert key == served
     moved = await pins.pin(TEAM_ID)
@@ -327,7 +329,39 @@ async def test_a_pin_that_moved_elsewhere_meanwhile_is_not_overwritten():
     with pytest.raises(TeamKeyUnverified) as refused:
         await pinned_team_key(
             TEAM_ID, served, pins=pins, fetch_act=_fetch(_example_act(controller, served)),
-            resolver=_dns('_awid.team.example.com', controller[1]),
+            resolver=_dns('_awid.team.example.com', controller[1]), enforce=True,
         )
     assert refused.value.reason == 'pin_moved'
     assert (await pins.pin(TEAM_ID)).team_did_key == elsewhere
+
+
+@pytest.mark.asyncio
+async def test_without_enforcement_a_mismatch_is_logged_served_and_the_pin_kept(caplog):
+    pins = MemoryTeamKeyPins()
+    _, pinned = keypair()
+    _, served = keypair()
+    await pins.first_sight(TEAM_ID, pinned)
+    with caplog.at_level(logging.WARNING, logger='awid.team_key_acts'):
+        key = await pinned_team_key(
+            TEAM_ID, served, pins=pins, fetch_act=_fetch(None), resolver=TXTAnswers({}), enforce=False,
+        )
+    assert key == served
+    assert await pins.pin(TEAM_ID) == TeamKeyPin(pinned, None)
+    assert [r.getMessage() for r in caplog.records] == [
+        f'team_key_pin_mismatch team={TEAM_ID} pinned={pinned} served={served} reason=no_act enforced=false',
+    ]
+
+
+@pytest.mark.asyncio
+async def test_with_enforcement_the_refusal_logs_the_same_line(caplog):
+    pins = MemoryTeamKeyPins()
+    _, pinned = keypair()
+    _, served = keypair()
+    await pins.first_sight(TEAM_ID, pinned)
+    with caplog.at_level(logging.WARNING, logger='awid.team_key_acts'), pytest.raises(TeamKeyUnverified):
+        await pinned_team_key(
+            TEAM_ID, served, pins=pins, fetch_act=_fetch(None), resolver=TXTAnswers({}), enforce=True,
+        )
+    assert [r.getMessage() for r in caplog.records] == [
+        f'team_key_pin_mismatch team={TEAM_ID} pinned={pinned} served={served} reason=no_act enforced=true',
+    ]

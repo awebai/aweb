@@ -201,11 +201,15 @@ async def pinned_team_key(
     pins: TeamKeyPinStore,
     fetch_act: Callable[[], Awaitable[Any]],
     resolver: TXTOutcomeResolver,
+    enforce: bool,
 ) -> str:
     """``served_key`` when it is the team's pinned key, or when the namespace
     controller's act (``fetch_act()``, None when the registry has none) moves
-    the pin to it; raises TeamKeyUnverified otherwise. A team never seen is
-    pinned to ``served_key``. Registry read errors from ``fetch_act`` propagate."""
+    the pin to it. Otherwise the mismatch is logged as
+    ``team_key_pin_mismatch`` and, with ``enforce``, refused with
+    TeamKeyUnverified; without it (the staged measuring mode) ``served_key``
+    is returned and the pin stays. A team never seen is pinned to
+    ``served_key``. Registry read errors from ``fetch_act`` propagate."""
     pin = await pins.pin(team_id)
     if pin is None:
         pin = await pins.first_sight(team_id, served_key)
@@ -220,19 +224,27 @@ async def pinned_team_key(
             record, domain=domain, name=name, team_did_key=served_key, pinned_at=pin.act_at, resolver=resolver,
         )
     except TeamKeyActError as exc:
-        logger.warning(
-            "refusing registry team key for %s: pinned %s, registry serves %s (%s)",
-            team_id, pin.team_did_key, served_key, exc,
-        )
-        raise TeamKeyUnverified(team_id, exc.reason) from None
+        return _mismatch(team_id, pin.team_did_key, served_key, exc.reason, enforce=enforce)
     if not await pins.move(team_id, expected=pin, new=TeamKeyPin(served_key, act.signed_at)):
         current = await pins.pin(team_id)
         if current is None or current.team_did_key != served_key:
-            logger.warning("team key pin for %s moved concurrently; refusing %s", team_id, served_key)
-            raise TeamKeyUnverified(team_id, "pin_moved")
+            pinned = current.team_did_key if current is not None else pin.team_did_key
+            return _mismatch(team_id, pinned, served_key, "pin_moved", enforce=enforce)
         return served_key
     logger.warning(
         "team key pin for %s moved from %s to %s by the namespace controller act signed %s by %s",
         team_id, pin.team_did_key, served_key, act.signed_at.isoformat(), act.signer_did_key,
     )
     return served_key
+
+
+def _mismatch(team_id: str, pinned: str, served: str, reason: str, *, enforce: bool) -> str:
+    """Log the one ``team_key_pin_mismatch`` line; refuse when enforcing,
+    else serve the registry's key and leave the pin."""
+    logger.warning(
+        "team_key_pin_mismatch team=%s pinned=%s served=%s reason=%s enforced=%s",
+        team_id, pinned, served, reason, "true" if enforce else "false",
+    )
+    if enforce:
+        raise TeamKeyUnverified(team_id, reason)
+    return served

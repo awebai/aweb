@@ -213,6 +213,7 @@ class AWIDTeamCache:
         transport: httpx.AsyncBaseTransport | None = None,
         team_key_pins: TeamKeyPinStore | None = None,
         txt_resolver: TXTOutcomeResolver | None = None,
+        enforce_team_key_pins: bool = False,
     ) -> None:
         """Gated reads of a private team use the service token when there is
         one (a hosted deployment), else that team's member credential; any
@@ -221,7 +222,9 @@ class AWIDTeamCache:
         A team's key is held to its pin (``team_key_pins``; pins held for the
         process when none is given): the registry alone cannot change it, only
         the namespace controller's act, checked against the controller
-        ``txt_resolver`` (system DNS by default) names."""
+        ``txt_resolver`` (system DNS by default) names. Enforcement is
+        staged: until ``enforce_team_key_pins``, a mismatch is logged as
+        ``team_key_pin_mismatch`` and the registry's key is served."""
         self.registry_url = registry_url.rstrip("/")
         self.registry_origin = canonical_server_origin(self.registry_url)
         if ttl_seconds > MAX_TEAM_FACTS_TTL_SECONDS:
@@ -250,10 +253,12 @@ class AWIDTeamCache:
         self._transport = transport
         self._team_key_pins = team_key_pins if team_key_pins is not None else MemoryTeamKeyPins()
         self._txt_resolver = txt_resolver if txt_resolver is not None else SystemTXTOutcomeResolver()
+        self._enforce_team_key_pins = enforce_team_key_pins
 
     async def _pinned_team_key(self, team_id: str, served_key: str) -> str:
-        """``served_key`` held to the team's pin (awid.team_key_acts); 401
-        team_key_unverified when no namespace-controller act establishes it."""
+        """``served_key`` held to the team's pin (awid.team_key_acts); while
+        enforcing, 401 team_key_unverified when no namespace-controller act
+        establishes it."""
         domain, team_name = parse_team_id(team_id)
 
         async def fetch_act() -> Any:
@@ -276,6 +281,7 @@ class AWIDTeamCache:
         try:
             return await pinned_team_key(
                 team_id, served_key, pins=self._team_key_pins, fetch_act=fetch_act, resolver=self._txt_resolver,
+                enforce=self._enforce_team_key_pins,
             )
         except TeamKeyUnverified:
             raise HTTPException(status_code=401, detail="team_key_unverified") from None

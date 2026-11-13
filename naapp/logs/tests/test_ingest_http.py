@@ -156,6 +156,8 @@ async def world(coordination, test_db_factory, tmp_path, monkeypatch, request):
     await coordination.add_member(member)
     await coordination.publish_server(member)
     await coordination.connect(member)
+    # Ingest runs with team-key pins enforced, the state the staged flag ends in.
+    monkeypatch.setenv("AWEB_ENFORCE_TEAM_KEY_PINS", "true")
     monkeypatch.setenv("AWEB_HOOK_PRODUCER_KEYS", json.dumps([{
         "kid": "hook-2026-10", "did_key": did_key(CORE_SEED),
         "valid_from": "2026-01-01T00:00:00Z", "valid_until": None,

@@ -97,6 +97,7 @@ def verifier(registry, *, clock=None) -> OwnerActVerifier:
         service_token=SERVICE_TOKEN,
         transport=registry.transport,
         txt_resolver=dns_naming(parse_team_id(TEAM_ID)[0], NAMESPACE_KEY),
+        enforce_team_key_pins=True,
     )
 
     async def current_team_key(team_id: str) -> str:
