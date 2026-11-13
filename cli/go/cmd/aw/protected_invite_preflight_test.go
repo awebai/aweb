@@ -23,6 +23,10 @@ func serveExplicitLegacyInviteTeam(t *testing.T, w http.ResponseWriter, r *http.
 		return false
 	}
 	credential := strings.Fields(r.Header.Get("Authorization"))
+	if len(credential) == 0 {
+		// Unsigned reachability/creation probes keep the fixture's own reply.
+		return false
+	}
 	if len(credential) != 3 || credential[0] != "DIDKey" {
 		t.Fatalf("expected signed controller read, got %q", r.Header.Get("Authorization"))
 	}
