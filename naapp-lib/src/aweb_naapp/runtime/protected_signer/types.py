@@ -340,8 +340,6 @@ class CatalogOperation:
         from .codecs import validate_subject
 
         spec = operation_spec(self.operation, self.variant)
-        if not spec.consumer_available:
-            raise SignerRefused("operation_refused")
         if self.context.authority_kind != spec.key_role:
             raise SignerRefused("scope_refused")
         try:

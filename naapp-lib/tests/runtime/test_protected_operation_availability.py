@@ -22,8 +22,12 @@ from awid.signing import canonical_json_bytes, sign_message
 from fastapi import FastAPI
 from nacl.signing import SigningKey
 
-from aweb_naapp.runtime.protected_signer import ProtectedKeyContext, ProtectedSigner, RestrictedRequester
-from aweb_naapp.runtime.protected_signer import catalog
+from aweb_naapp.runtime.protected_signer import (
+    ProtectedKeyContext,
+    ProtectedSigner,
+    RestrictedRequester,
+    catalog,
+)
 from aweb_naapp.runtime.protected_signer.http import ProtectedOperationsHTTP
 
 CASES = json.loads((Path(__file__).resolve().parents[3] / "docs/vectors/protected-operation-availability-v1.json").read_bytes())["scenarios"]
@@ -58,7 +62,9 @@ async def test_prepare_availability_before_any_pending_state(case, monkeypatch):
         monkeypatch.setattr(catalog, "OPERATIONS", MappingProxyType(definitions))
 
     signer = object.__new__(ProtectedSigner)
-    signer.db, signer.admission, signer.custody = NoStore(), None, NoStore()
+    signer.db = NoStore()
+    signer.admission = NoStore() if case.get("adapter_present") else None
+    signer.custody = SimpleNamespace()
     signer.passkeys = SimpleNamespace(rp=SimpleNamespace(origin="https://human.example"))
     checks = []
 

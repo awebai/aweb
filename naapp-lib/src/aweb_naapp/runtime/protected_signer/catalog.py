@@ -155,10 +155,15 @@ OPERATIONS = MappingProxyType({(spec.operation, spec.variant): spec for spec in 
 
 
 def operation_spec(operation: str, variant: str = "default") -> OperationSpec:
+    if type(operation) is not str or not operation or type(variant) is not str or not variant:
+        raise SignerRefused("request_invalid")
     try:
-        return OPERATIONS[(operation, variant)]
-    except (KeyError, TypeError):
-        raise SignerRefused("operation_refused") from None
+        definition = OPERATIONS[(operation, variant)]
+    except KeyError:
+        raise SignerRefused("operation_not_served") from None
+    if not definition.consumer_available:
+        raise SignerRefused("operation_not_served")
+    return definition
 
 
 def presentation_catalog() -> dict[str, dict]:

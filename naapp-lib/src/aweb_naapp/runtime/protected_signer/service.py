@@ -276,13 +276,12 @@ class ProtectedSigner:
     ) -> PreparedOperation:
         typed = owner_act_operation(operation)
         if typed.operation in {"identity.root.endorse", "team.agent.admit", "team.agent.remove"} and self.admission is None:
-            raise SignerRefused("operation_refused")
+            raise SignerRefused("operation_not_served")
         # Existing owner-act-only embeddings retain their released port. A
         # missing adapter for a new family refuses before creating B2 state.
-        if typed.spec.family != "owner_act" and not callable(
-            getattr(self.custody, "sign_operation", None)
-        ):
-            raise SignerRefused("operation_refused")
+        signing_port = "sign_owner_act" if typed.spec.family == "owner_act" else "sign_operation"
+        if not callable(getattr(self.custody, signing_port, None)):
+            raise SignerRefused("operation_not_served")
         if type(requester) is not RestrictedRequester:
             raise SignerRefused("operation_refused")
         if requester.context != operation.context or not requester.principal:
@@ -688,7 +687,7 @@ class ProtectedSigner:
         if operation.spec.needs_human:
             raise SignerRefused("live_approval_required")
         if operation.operation not in {"team.agent.admit", "team.agent.remove"} or self.admission is None:
-            raise SignerRefused("operation_refused")
+            raise SignerRefused("operation_not_served")
         if row["result"] is not None or row["refusal_code"] is not None:
             return self._receipt(row)
         cap = _checked_self_removal(requester, operation=operation)
@@ -806,7 +805,7 @@ class ProtectedSigner:
     def _sign_artifact(self, operation, artifact):
         adapter = getattr(self.custody, "sign_operation", None)
         if not callable(adapter):
-            raise SignerRefused("operation_refused")
+            raise SignerRefused("operation_not_served")
         return adapter(operation, artifact)
 
     async def _claim_verification(self, operation_id, human, *, human_session=None):

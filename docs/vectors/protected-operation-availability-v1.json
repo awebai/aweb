@@ -6,6 +6,8 @@
     {"id": "unknown-variant", "change": {"variant": "unserved"}, "expected": {"status": 400, "detail": "operation_not_served", "requester_checks": 0}},
     {"id": "defined-but-disabled", "change": {}, "disable_definition": true, "expected": {"status": 400, "detail": "operation_not_served", "requester_checks": 0}},
     {"id": "defined-but-no-adapter", "change": {"operation": "team.agent.admit"}, "expected": {"status": 400, "detail": "operation_not_served", "requester_checks": 1}},
+    {"id": "defined-but-no-owner-signer", "change": {}, "expected": {"status": 400, "detail": "operation_not_served", "requester_checks": 1}},
+    {"id": "defined-but-no-typed-signer", "change": {"operation": "team.agent.admit"}, "adapter_present": true, "expected": {"status": 400, "detail": "operation_not_served", "requester_checks": 1}},
     {"id": "malformed-selector", "change": {"operation": null}, "expected": {"status": 400, "detail": "request_invalid", "requester_checks": 0}},
     {"id": "malformed-known-subject", "change": {"subject": {}}, "expected": {"status": 400, "detail": "request_invalid", "requester_checks": 0}},
     {"id": "wrong-request-origin", "change": {}, "host": "other.example", "expected": {"status": 403, "detail": "scope_refused", "requester_checks": 0}}

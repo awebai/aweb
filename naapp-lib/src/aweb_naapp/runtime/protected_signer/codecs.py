@@ -10,8 +10,6 @@ from .types import SignerRefused, owner_act_operation
 
 def validate_subject(operation, variant, subject):
     definition = operation_spec(operation, variant)
-    if not definition.consumer_available:
-        raise SignerRefused("operation_refused")
     try:
         return definition.codec.parse_subject(subject)
     except (ValueError, TypeError, KeyError):

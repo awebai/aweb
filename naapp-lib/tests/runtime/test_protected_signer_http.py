@@ -175,7 +175,7 @@ async def test_prepare_payload_is_the_exact_existing_b2_digest_wrapper_and_recei
     [
         ({"extra": "ignored"}, "request_invalid"),
         ({"redirect_uri": "https://attacker.example/callback"}, "redirect_uri_refused"),
-        ({"operation": "raw.sign"}, "operation_refused"),
+        ({"operation": "raw.sign"}, "operation_not_served"),
     ],
 )
 async def test_invalid_or_unsupported_prepare_cannot_mint(http_world, mutation, code):
