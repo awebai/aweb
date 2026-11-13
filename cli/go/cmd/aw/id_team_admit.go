@@ -46,8 +46,9 @@ var teamAdmitCmd = &cobra.Command{
 		"deployment's endorsed root. No human approves it: the service admits only within\n" +
 		"the team's admission policy, whose version and digest the caller names as read\n" +
 		"from aw id team admission-policy.\n\n" +
-		"--operation-id is the caller's UUID, kept before anything is sent. Running again\n" +
-		"with the same id and the same inputs resumes that operation and returns its\n" +
+		"Without --operation-id, aw keeps a new UUID before anything is sent, and running\n" +
+		"the same command again continues that request. With --operation-id, running\n" +
+		"again with the same id and the same inputs resumes that operation and returns its\n" +
 		"original certificate; changed inputs under the id refuse operation_conflict. The\n" +
 		"verified membership certificate is written to --certificate-out.",
 	Args: cobra.NoArgs,
@@ -62,9 +63,9 @@ func init() {
 	flags.StringVar(&teamAdmitAliasFlag, "alias", "", "The agent's member alias")
 	flags.Int64Var(&teamAdmitPolicyVersionFlag, "policy-version", 0, "The admission policy version the caller read")
 	flags.StringVar(&teamAdmitPolicyDigestFlag, "policy-digest", "", "The admission policy digest the caller read (sha256:<hex>)")
-	flags.StringVar(&teamAdmitOperationIDFlag, "operation-id", "", "The caller's UUID for this admission; the same id resumes it")
+	flags.StringVar(&teamAdmitOperationIDFlag, "operation-id", "", "The UUID for this admission; by default aw continues the same unfinished request or starts a new one")
 	flags.StringVar(&teamAdmitCertificateOutFlag, "certificate-out", "", "Where to write the agent's membership certificate")
-	flags.StringVar(&appProtectedProfileFlag, "protected-profile", "", "The operator-provisioned protected-service profile")
+	flags.StringVar(&appProtectedProfileFlag, "protected-profile", "", "The operator-provisioned protected-service profile (default: AWEB_PROTECTED_PROFILE, else protected-profile.json in the identity home)")
 	teamCmd.AddCommand(teamAdmitCmd)
 }
 
@@ -185,7 +186,7 @@ func admitMember(ctx context.Context, opts handoff.GovernanceOptions, profile *h
 	}
 	if err != nil {
 		if code := handoff.ErrorCode(err); code != "" {
-			return nil, withErrorCode(code, fmt.Errorf("operation %s: %w", request.OperationID, err))
+			return nil, withErrorCode(code, fmt.Errorf("%w (operation %s)", err, request.OperationID))
 		}
 		return nil, fmt.Errorf("operation %s: %w", request.OperationID, err)
 	}
@@ -337,9 +338,6 @@ func runTeamAdmit(cmd *cobra.Command, _ []string) error {
 	if request.PolicyVersion < 1 {
 		return usageError("--policy-version must be the positive version aw id team admission-policy reported")
 	}
-	if err := validOperationID(request.OperationID); err != nil {
-		return err
-	}
 	profile, err := loadProtectedProfile()
 	if err != nil {
 		return err
@@ -356,6 +354,9 @@ func runTeamAdmit(cmd *cobra.Command, _ []string) error {
 		return usageError("only a registered root (with a did:aw) can request an admission")
 	}
 	request.RootID, request.RootKey = identity.StableID, identity.DIDKey
+	if err := announceOperationID(cmd, &request.OperationID, profile, admissionBody(profile, binding, request)); err != nil {
+		return err
+	}
 	opts := handoff.GovernanceOptions{
 		Request: profile.RequestOrigin, Human: profile.HumanOrigin,
 		Sign: protectedRequesterSigner(profile, binding.Scope, identity), Notify: cmd.ErrOrStderr(),

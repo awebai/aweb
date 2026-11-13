@@ -401,7 +401,7 @@ func finalError(receipt *Receipt) error {
 	if receipt.State == "committed" {
 		return nil
 	}
-	return coded(receipt.Code, fmt.Errorf("operation %s is %s: %s", receipt.OperationID, receipt.State, receipt.Code))
+	return told(receipt.Code, fmt.Errorf("operation %s is %s: %s", receipt.OperationID, receipt.State, receipt.Code), Facts{})
 }
 
 func unresolvedReceipt(operationID, code string) *Receipt {

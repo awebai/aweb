@@ -21,9 +21,22 @@ type Error struct {
 	// given. It never extends an operation's deadline.
 	RetryAfter time.Duration
 	Hinted     bool
+	// Facts, when set, make the error read as the code's sentence for
+	// people (Sentence); the code stays the stable contract.
+	Facts *Facts
 }
 
-func (e *Error) Error() string { return e.Code + ": " + e.Err.Error() }
+func (e *Error) Error() string {
+	if e.Facts != nil {
+		return Sentence(e.Code, *e.Facts)
+	}
+	return e.Code + ": " + e.Err.Error()
+}
+
+// told is err as code's sentence, told with facts.
+func told(code string, err error, facts Facts) error {
+	return &Error{Code: code, Err: err, Facts: &facts}
+}
 func (e *Error) Unwrap() error { return e.Err }
 
 func coded(code string, err error) error { return &Error{Code: code, Err: err} }
@@ -69,6 +82,9 @@ func hinted(err error, resp *http.Response) error {
 		e.RetryAfter = time.Duration(math.MaxInt64)
 	} else {
 		e.RetryAfter = time.Duration(seconds) * time.Second
+	}
+	if e.Facts != nil && seconds <= uint64(math.MaxInt64/int64(time.Second)) {
+		e.Facts.RetryAt = now().Add(e.RetryAfter)
 	}
 	return err
 }
