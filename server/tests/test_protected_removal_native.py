@@ -15,6 +15,7 @@ from uuid import uuid4
 import pytest
 from aweb_naapp.runtime.protected_signer import CatalogOperation, SignerRefused
 from awid.signing import canonical_json_bytes, sign_message
+from awid.registry_types import RegistryError
 from nacl.signing import SigningKey
 
 from tests.test_independent_protected_signer import DOMAIN, TEAM, did
@@ -210,16 +211,53 @@ async def test_lost_revocation_answer_keeps_capacity_until_read_reconciliation_a
 
 
 @pytest.mark.asyncio
-async def test_root_and_self_concurrent_removal_do_not_free_or_charge_the_bucket_twice(admissions):
+async def test_root_and_self_concurrent_removal_do_not_free_or_charge_the_bucket_twice(admissions, monkeypatch):
     a = admissions
     await endorse(a)
     key, certificate = await admitted(a)
     root, own = removal(a, certificate), removal(a, certificate, self_remove=True)
     assert (await prepare(a, root)).status_code == 200
     assert (await self_call(a, key, certificate, own)).status_code == 200
-    responses = await asyncio.gather(execute(a, root), self_call(a, key, certificate, own, purpose="execute"))
-    assert responses[0].status_code == 200 and responses[0].json()["state"] == "committed", responses[0].text
-    assert responses[1].status_code == 403 or (responses[1].status_code == 200 and responses[1].json()["state"] == "committed"), responses[1].text
+    frozen = {op.operation_id: await a.w.db.fetch_one(
+        "SELECT intent,expires_at FROM {{tables.protected_signer_operations}} WHERE operation_id=$1", op.operation_id)
+        for op in (root, own)}
+    custody = a.w.app.authority.custody
+    original, entered, attempts, registry_answers = custody.remove_member, asyncio.Event(), [], []
+
+    async def overlap(registry, operation, artifact, result):
+        attempts.append(operation.operation_id)
+        if len(attempts) == 2:
+            entered.set()
+        # Both have observed the active record and retained their own signature
+        # and delivery claim before either real registry mutation is released.
+        await entered.wait()
+        try:
+            await original(registry, operation, artifact, result)
+            registry_answers.append(200)
+        except RegistryError as error:
+            registry_answers.append(error.status_code)
+            raise
+
+    monkeypatch.setattr(custody, "remove_member", overlap)
+    responses = await asyncio.wait_for(asyncio.gather(
+        execute(a, root), self_call(a, key, certificate, own, purpose="execute")), timeout=30)
+    assert sorted(registry_answers) == [200, 409]
+    assert sorted(response.status_code for response in responses) == [200, 503]
+    for operation, response in zip((root, own), responses, strict=True):
+        if response.status_code == 503:
+            if operation is own:
+                response = await self_call(a, key, certificate, own, purpose="receipt")
+            else:
+                path = "/protected-operations/" + root.operation_id
+                response = await a.client.get(path, headers=headers(a, path=path, method="GET", label="protected_operation_receipt"))
+        assert response.status_code == 200 and response.json()["state"] == "committed", response.text
+        assert await signature_count(a, operation) == 1
+        retained = await a.w.db.fetch_one(
+            "SELECT intent,expires_at FROM {{tables.protected_signer_operations}} WHERE operation_id=$1", operation.operation_id)
+        assert retained == frozen[operation.operation_id]
+    assert sorted(attempts) == sorted([root.operation_id, own.operation_id])
+    records = await a.w.registry.list_team_certificates_fresh(DOMAIN, "engineering", active_only=False)
+    assert next(r for r in records if r.certificate_id == certificate["certificate_id"]).revoked_at is not None
     assert await a.w.db.fetch_value("SELECT count(*) FROM {{tables.protected_root_admissions}} WHERE state='removed'") == 1
     assert await a.w.db.fetch_value("SELECT count(*) FROM {{tables.protected_root_admissions}}") == 1
 
