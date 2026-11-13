@@ -26,6 +26,7 @@ async def logs_receiver(test_db_factory, registry, transport, directory, host, n
     No runtime transports, discovery functions or ledger writers are replaced.
     """
     database = await test_db_factory.create_db(suffix="production_logs_receiver")
+    purge_ledger = await test_db_factory.create_db(suffix="production_logs_purge_ledger")
     keys = {}
     for index, entry in enumerate(json.loads(MANIFEST_PATH.read_bytes())["app_keys"]):
         path = directory / f"logs-key-{index}"
@@ -40,6 +41,7 @@ async def logs_receiver(test_db_factory, registry, transport, directory, host, n
             LogsSettings(
                 _env_file=None,
                 database_url=database.config.get_dsn(),
+                purge_ledger_database_url=purge_ledger.config.get_dsn(),
                 db_schema=database.schema,
                 app_id="logs-hook-network",
                 public_origin=f"https://{name}:{ports[0]}",
