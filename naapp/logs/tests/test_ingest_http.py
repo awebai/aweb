@@ -502,3 +502,66 @@ async def test_invalid_observed_value_refusal_uses_the_packaged_catalog(world):
         "secret_version": 4, "secret_backend": "onepassword", "refusal_code": "secret_value_invalid",
     }))
     assert response.status_code == 200, response.text
+
+
+@pytest.mark.parametrize("change", ["genuine", "alias", "null-blob"])
+async def test_protected_client_ingest_binds_the_exact_registered_certificate(world, change):
+    from dataclasses import replace
+
+    registry = world.coordination.registry
+    certificate = world.member.certificate()
+    await registry.db.execute(
+        "UPDATE {{tables.team_certificates}} SET certificate=$1 WHERE certificate_id=$2",
+        base64.b64encode(json.dumps(certificate).encode()).decode(), world.member.certificate_id,
+    )
+    name, domain = world.member.team_id.split(":", 1)
+    await registry.db.execute(
+        "INSERT INTO {{tables.team_protection}} "
+        "(domain,name,service_id,service_did_key,generation) VALUES ($1,$2,'test-signer',$3,1)",
+        domain, name, Member(team_id=world.member.team_id).did_key,
+    )
+    # Synthetic cutover drains/invalidate the fixture's pre-cutover cache.
+    cache = world.runtime.team_cache()
+    cache._cache.clear()
+    cache._certificate_cache.clear()
+    if change == "alias":
+        world.member = replace(world.member, alias="impostor")
+    elif change == "null-blob":
+        await registry.db.execute("UPDATE {{tables.team_certificates}} SET certificate=NULL")
+    response = await world.send(world.delivery("client"))
+    assert response.status_code == {"genuine": 200, "alias": 401, "null-blob": 503}[change], response.text
+    assert await world.db.fetch_value("SELECT count(*) FROM {{tables.chain_events}}") == (change == "genuine")
+
+
+async def test_protected_client_original_deadline_is_checked_after_final_append_await(world, monkeypatch):
+    from awid import protected_membership
+
+    from aweb_logs import read_store
+
+    registry = world.coordination.registry
+    await registry.db.execute(
+        "UPDATE {{tables.team_certificates}} SET certificate=$1 WHERE certificate_id=$2",
+        base64.b64encode(json.dumps(world.member.certificate()).encode()).decode(), world.member.certificate_id,
+    )
+    name, domain = world.member.team_id.split(":", 1)
+    await registry.db.execute(
+        "INSERT INTO {{tables.team_protection}} "
+        "(domain,name,service_id,service_did_key,generation) VALUES ($1,$2,'test-signer',$3,1)",
+        domain, name, Member(team_id=world.member.team_id).did_key,
+    )
+    cache = world.runtime.team_cache()
+    cache._cache.clear()
+    cache._certificate_cache.clear()
+    project = read_store.project_batch
+    clock = protected_membership.monotonic
+
+    async def final_await(*args, **kwargs):
+        result = await project(*args, **kwargs)
+        monkeypatch.setattr(protected_membership, "monotonic", lambda: clock() + 61)
+        return result
+
+    monkeypatch.setattr(read_store, "project_batch", final_await)
+    response = await world.send(world.delivery("client"))
+    assert response.status_code == 503, response.text
+    assert await world.db.fetch_value("SELECT count(*) FROM {{tables.chain_events}}") == 0
+    assert await world.db.fetch_value("SELECT count(*) FROM {{tables.client_ingest_usage}}") == 0
