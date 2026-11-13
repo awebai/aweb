@@ -209,3 +209,26 @@ async def test_a_signed_but_unconfirmed_request_is_never_reported_expired_to_its
     # The signer's own receipt keeps it unresolved, not expired.
     receipt = await world.signer.receipt(prepared.operation_id, reader=world.reader)
     assert (receipt.state, receipt.code) == ("unknown", "external_effect_unresolved")
+
+
+async def test_a_signing_after_the_authorized_read_still_spends_the_link(mailing, monkeypatch):
+    """Barrier at the authorized-read boundary: the effect is signed after
+    that read released its lock and the request then expires, before link_view
+    classifies it. The classification must see the signed row, not the
+    snapshot, so the link never answers 410 (nothing was signed)."""
+    world, contacts = mailing
+    prepared, token = await mailed(world, contacts)
+    authorized = world.signer._authorized
+
+    async def then_signed_and_expired(operation_id, actor, purpose, **kwargs):
+        row = await authorized(operation_id, actor, purpose, **kwargs)
+        await world.passkeys.db.execute(
+            "UPDATE {{tables.protected_signer_operations}} SET signed_result=$2::jsonb WHERE operation_id=$1",
+            operation_id, '{"signing":"c2lnbmVk","signature":"c2lnbmF0dXJl"}')
+        world.clock.advance(timedelta(hours=25))
+        return row
+
+    monkeypatch.setattr(world.signer, "_authorized", then_signed_and_expired)
+    with pytest.raises(SignerRefused) as refused:
+        await world.signer.link_view(prepared.handoff_id, token)
+    assert refused.value.code == "scope_refused"
