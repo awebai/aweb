@@ -89,7 +89,7 @@ func logKeyVerificationTeamKey(sel *awconfig.Selection) (string, error) {
 		}
 		return grantLogKeyTeamKey(grant, sel.TeamID)
 	}
-	cert, err := loadTeamCertificateAt(sel.WorkingDir, sel.IdentityHome, sel.TeamID)
+	cert, err := loadSelectedTeamCertificate(sel)
 	if err != nil {
 		return "", fmt.Errorf("load the team certificate to verify the log key: %w", err)
 	}
