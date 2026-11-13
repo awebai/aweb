@@ -472,7 +472,7 @@ it. The canonical Cloud graph additionally names O2/O3/O4 and exact C gates.
 
 F0 records sanitized resource names/owners and permission scopes; credential
 locations/access are supplied out of band, never secrets in git/mail. Resources are not created by this
-plan. No production/customer/nactiva or commandodev work is authorized here;
+plan. No production or customer work is authorized here;
 operations supplies the approved staging/test targets. If a resource is absent,
 mark the exact live gate blocked while continuing independent tasks above.
 

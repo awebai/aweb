@@ -442,6 +442,63 @@ def publish_aw_npm(root: Path, version: str, source_sha: str, *, staged_final: b
     print("npm CLI packages published; hosted binary release assets can be resumed later")
 
 
+OCI_REPOSITORIES = {
+    "server-v": "ghcr.io/awebai/aweb-server",
+    "awid-v": "ghcr.io/awebai/awid",
+    "a2a-gw-v": "ghcr.io/awebai/a2a-gateway",
+    "secrets-v": "ghcr.io/awebai/secrets",
+    "logs-v": "ghcr.io/awebai/logs",
+}
+
+
+def build_oci_archive(root: Path, prefix: str, version: str, source_sha: str, archive: Path) -> None:
+    """Build the release bytes once; usable by platform qualification without publishing."""
+    if prefix == "server-v":
+        build = [
+            "docker", "buildx", "build", "--file", "server/Dockerfile",
+            "--platform", "linux/amd64,linux/arm64", "--provenance=false", "--sbom=false",
+            "--label", "org.opencontainers.image.title=aweb server",
+            "--label", f"org.opencontainers.image.version={version}",
+            "--label", f"org.opencontainers.image.revision={source_sha}",
+            "--output", f"type=oci,dest={archive}", ".",
+        ]
+    elif prefix == "awid-v":
+        build = [
+            "docker", "buildx", "build", "--file", "awid/Dockerfile.release",
+            "--platform", "linux/amd64,linux/arm64", "--provenance=false", "--sbom=false",
+            "--label", "org.opencontainers.image.title=awid",
+            "--label", "org.opencontainers.image.description=Thin awid.ai registry service wrapper around aweb",
+            "--label", f"org.opencontainers.image.version={version}",
+            "--label", f"org.opencontainers.image.revision={source_sha}",
+            "--output", f"type=oci,dest={archive}", ".",
+        ]
+    elif prefix in {"secrets-v", "logs-v"}:
+        service = "secrets" if prefix == "secrets-v" else "logs"
+        build = [
+            "docker", "buildx", "build", "--file", f"naapp/{service}/Dockerfile",
+            "--platform", "linux/amd64,linux/arm64", "--provenance=false", "--sbom=false",
+            "--build-arg", f"SOURCE_COMMIT={source_sha}",
+            "--label", f"org.opencontainers.image.title=aweb {service}",
+            "--label", f"org.opencontainers.image.version={version}",
+            "--label", f"org.opencontainers.image.revision={source_sha}",
+            "--output", f"type=oci,dest={archive}", ".",
+        ]
+    else:
+        build = [
+            "docker", "buildx", "build", "--file", "cli/go/Dockerfile.a2a-gw",
+            "--platform", "linux/amd64,linux/arm64", "--provenance=false", "--sbom=false",
+            "--build-arg", f"VERSION={version}", "--build-arg", f"RELEASE_TAG=a2a-gw-v{version}",
+            "--build-arg", f"COMMIT={source_sha}", "--build-arg", "COMMIT_REPO=github.com/awebai/aweb",
+            "--build-arg", "DATE=1970-01-01T00:00:00Z",
+            "--label", "org.opencontainers.image.title=aweb A2A Gateway",
+            "--label", "org.opencontainers.image.description=Hosted A2A gateway for aweb agents",
+            "--label", f"org.opencontainers.image.version={version}",
+            "--label", f"org.opencontainers.image.revision={source_sha}",
+            "--output", f"type=oci,dest={archive}", "cli/go",
+        ]
+    run(root, *build, capture=False)
+
+
 def publish_oci(root: Path, prefix: str, version: str, source_sha: str) -> None:
     username = os.environ.get("GHCR_USERNAME", "").strip() or os.environ.get(
         "AC_REGISTRY_USERNAME", ""
@@ -453,51 +510,12 @@ def publish_oci(root: Path, prefix: str, version: str, source_sha: str) -> None:
         raise PublishRefusal("GHCR_USERNAME and GHCR_TOKEN are required")
     if not shutil.which("skopeo"):
         raise PublishRefusal("skopeo is required for exact OCI publication")
-    repository = {
-        "awid-v": "ghcr.io/awebai/awid",
-        "a2a-gw-v": "ghcr.io/awebai/a2a-gateway",
-        "secrets-v": "ghcr.io/awebai/secrets",
-        "logs-v": "ghcr.io/awebai/logs",
-    }[prefix]
+    repository = OCI_REPOSITORIES[prefix]
     with tempfile.TemporaryDirectory(prefix="aweb-oci-") as temporary:
         staging = Path(temporary)
         archive = staging / "image.oci.tar"
         identities = staging / "identities.json"
-        if prefix == "awid-v":
-            build = [
-                "docker", "buildx", "build", "--file", "awid/Dockerfile.release",
-                "--platform", "linux/amd64,linux/arm64", "--provenance=false", "--sbom=false",
-                "--label", "org.opencontainers.image.title=awid",
-                "--label", "org.opencontainers.image.description=Thin awid.ai registry service wrapper around aweb",
-                "--label", f"org.opencontainers.image.version={version}",
-                "--label", f"org.opencontainers.image.revision={source_sha}",
-                "--output", f"type=oci,dest={archive}", ".",
-            ]
-        elif prefix in {"secrets-v", "logs-v"}:
-            service = "secrets" if prefix == "secrets-v" else "logs"
-            build = [
-                "docker", "buildx", "build", "--file", f"naapp/{service}/Dockerfile",
-                "--platform", "linux/amd64,linux/arm64", "--provenance=false", "--sbom=false",
-                "--build-arg", f"SOURCE_COMMIT={source_sha}",
-                "--label", f"org.opencontainers.image.title=aweb {service}",
-                "--label", f"org.opencontainers.image.version={version}",
-                "--label", f"org.opencontainers.image.revision={source_sha}",
-                "--output", f"type=oci,dest={archive}", ".",
-            ]
-        else:
-            build = [
-                "docker", "buildx", "build", "--file", "cli/go/Dockerfile.a2a-gw",
-                "--platform", "linux/amd64,linux/arm64", "--provenance=false", "--sbom=false",
-                "--build-arg", f"VERSION={version}", "--build-arg", f"RELEASE_TAG=a2a-gw-v{version}",
-                "--build-arg", f"COMMIT={source_sha}", "--build-arg", "COMMIT_REPO=github.com/awebai/aweb",
-                "--build-arg", "DATE=1970-01-01T00:00:00Z",
-                "--label", "org.opencontainers.image.title=aweb A2A Gateway",
-                "--label", "org.opencontainers.image.description=Hosted A2A gateway for aweb agents",
-                "--label", f"org.opencontainers.image.version={version}",
-                "--label", f"org.opencontainers.image.revision={source_sha}",
-                "--output", f"type=oci,dest={archive}", "cli/go",
-            ]
-        run(root, *build, capture=False)
+        build_oci_archive(root, prefix, version, source_sha, archive)
         run(
             root, "bash", "scripts/oci-exact-publish.sh", "inspect-staged",
             "--archive", str(archive), "--version", version,
@@ -512,7 +530,8 @@ def publish_oci(root: Path, prefix: str, version: str, source_sha: str) -> None:
         tags = listing.get("Tags")
         if not isinstance(tags, list):
             raise PublishRefusal("GHCR returned a malformed tag listing")
-        for image_tag in (version, "latest"):
+        version_only = prefix == "server-v" and "rc" in version
+        for image_tag in ((version,) if version_only else (version, "latest")):
             remote = ""
             if image_tag in tags:
                 raw = subprocess.run(
@@ -536,12 +555,18 @@ def publish_oci(root: Path, prefix: str, version: str, source_sha: str) -> None:
             root, "bash", "scripts/oci-exact-publish.sh", "verify-published",
             "--archive", str(archive), "--version", version,
             "--source-sha", source_sha, "--repository", repository,
+            *(["--version-only"] if version_only else []),
         )
         print(f"release-index={json.dumps({'digest': staged, 'source_sha': source_sha, 'version': version}, sort_keys=True, separators=(',', ':'))}")
 
 
-def publish(root: Path, tag: str) -> None:
+def publish(root: Path, tag: str, *, only: str | None = None) -> None:
     prefix, version, source_sha = tag_identity(root, tag)
+    if only is not None and not (
+        (only == "pypi" and prefix in PYPI_LANES)
+        or (only == "oci" and prefix in OCI_REPOSITORIES)
+    ):
+        raise PublishRefusal(f"{tag} does not publish to {only}")
     # The annotated release tag carries the choice across the distribution
     # repository too; an ambient environment override would be lost there.
     staged_final = False
@@ -553,14 +578,14 @@ def publish(root: Path, tag: str) -> None:
         checkout = Path(temporary) / "source"
         run(root, "git", "worktree", "add", "--detach", str(checkout), source_sha, timeout=120)
         try:
-            if prefix in PYPI_LANES:
+            if prefix in PYPI_LANES and only != "oci":
                 publish_pypi(checkout, prefix, version)
+            if prefix in OCI_REPOSITORIES and only != "pypi":
+                publish_oci(checkout, prefix, version, source_sha)
             elif prefix in NPM_LANES:
                 publish_npm(checkout, prefix, version)
             elif prefix == "aw-v":
                 publish_aw_npm(checkout, version, source_sha, staged_final=staged_final)
-            else:
-                publish_oci(checkout, prefix, version, source_sha)
         finally:
             run(root, "git", "worktree", "remove", "--force", str(checkout), timeout=120)
 
@@ -568,13 +593,14 @@ def publish(root: Path, tag: str) -> None:
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--check-tag", action="store_true", help="validate tag/tree identity without publishing")
+    parser.add_argument("--only", choices=("pypi", "oci"), help="publish only this artifact lane")
     parser.add_argument("tag")
     arguments = parser.parse_args(argv)
     try:
         if arguments.check_tag:
             tag_identity(Path.cwd().resolve(), arguments.tag)
         else:
-            publish(Path.cwd().resolve(), arguments.tag)
+            publish(Path.cwd().resolve(), arguments.tag, only=arguments.only)
     except (
         PublishRefusal,
         OSError,

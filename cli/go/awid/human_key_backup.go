@@ -52,6 +52,12 @@ func HumanKeyBackupErrorCode(err error) string {
 // fresh random salt and IV. The library's defaults are below the floor and
 // are never used.
 func ExportHumanKeyBackup(key ed25519.PrivateKey, passphrase []byte) ([]byte, error) {
+	return exportKeyBackup(key, passphrase)
+}
+
+// exportKeyBackup writes key, an Ed25519 or X25519 private key, as one
+// encrypted backup in the frozen format.
+func exportKeyBackup(key any, passphrase []byte) ([]byte, error) {
 	// Without a passphrase the library writes the key unencrypted.
 	if len(passphrase) == 0 {
 		return nil, humanKeyBackupRefusal("passphrase_required")
@@ -78,6 +84,20 @@ func ExportHumanKeyBackup(key ed25519.PrivateKey, passphrase []byte) ([]byte, er
 // work factor are checked before any key derivation, so a weak backup
 // refuses even when the passphrase would decrypt it.
 func ImportHumanKeyBackup(backup, passphrase []byte) (ed25519.PrivateKey, error) {
+	parsed, err := importKeyBackup(backup, passphrase)
+	if err != nil {
+		return nil, err
+	}
+	key, ok := parsed.(ed25519.PrivateKey)
+	if !ok {
+		return nil, humanKeyBackupRefusal("unsupported_backup")
+	}
+	return key, nil
+}
+
+// importKeyBackup decrypts one encrypted backup and returns the private key
+// it holds, whatever its type; callers accept only their own key type.
+func importKeyBackup(backup, passphrase []byte) (any, error) {
 	if len(passphrase) == 0 {
 		return nil, humanKeyBackupRefusal("passphrase_required")
 	}
@@ -92,11 +112,7 @@ func ImportHumanKeyBackup(backup, passphrase []byte) (ed25519.PrivateKey, error)
 	if err != nil {
 		return nil, humanKeyBackupRefusal("backup_decryption_failed")
 	}
-	key, ok := parsed.(ed25519.PrivateKey)
-	if !ok {
-		return nil, humanKeyBackupRefusal("unsupported_backup")
-	}
-	return key, nil
+	return parsed, nil
 }
 
 // ValidateHumanKeyBackup checks, without the passphrase, that blob is

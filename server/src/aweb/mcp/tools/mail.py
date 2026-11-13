@@ -47,7 +47,6 @@ from aweb.messaging.verification import (
     message_verification_status,
 )
 from aweb.messaging.mail_routing import (
-    ParticipantRetiredError,
     participant_is_remote,
     recipient_for_conversation_participant,
     remote_recipient_from_participant,
@@ -201,34 +200,6 @@ async def send_mail(
 ) -> str:
     """Send an async message by alias, did:aw, or address."""
     auth = get_auth()
-    from aweb.human_channels.http import ingress_requested
-
-    if auth.request is not None and ingress_requested(auth.request):
-        from aweb.human_channels.mcp import send_mcp_native
-        from aweb.human_channels.contract import ContractError
-
-        try:
-            return json.dumps(
-                await send_mcp_native(
-                    db_infra,
-                    auth,
-                    kind="mail",
-                    arguments=dict(
-                        to=to,
-                        conversation_id=conversation_id,
-                        subject=subject,
-                        body=body,
-                        priority=priority,
-                        plaintext=plaintext,
-                    ),
-                    hosted_signer=hosted_signer,
-                    hosted_encryptor=hosted_encryptor,
-                )
-            )
-        except ParticipantRetiredError as error:
-            return json.dumps({"error": error.detail, "effects": "none"})
-        except ContractError as error:
-            return json.dumps({"error": error.code, "effects": "none"})
     sender_address = _sender_address(auth)
     if priority not in VALID_PRIORITIES:
         return json.dumps(

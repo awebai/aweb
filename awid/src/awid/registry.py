@@ -25,7 +25,7 @@ from redis.asyncio import Redis
 from redis.exceptions import RedisError
 
 from awid.contract import normalize_identity_scope
-from awid.did import did_key_from_signing_key, stable_id_from_did_key
+from awid.did import did_key_from_signing_key
 from awid.dns_verify import DomainVerifier
 from awid.id_certificates import (
     IDCertificateError,
