@@ -172,6 +172,7 @@ async def deployment(
     await coordination.publish_server(member)
     await coordination.connect(member)
     db = await test_db_factory.create_db(suffix="logs_reader_service")
+    ledger = await test_db_factory.create_db(suffix="logs_reader_service_purge_ledger")
     key_files = {
         entry["kid"]: write_key_file(tmp_path / f"key-{index}")
         for index, entry in enumerate(template()["app_keys"])
@@ -180,6 +181,7 @@ async def deployment(
     settings = LogsSettings(
         _env_file=None,
         database_url=db.config.get_dsn(),
+        purge_ledger_database_url=ledger.config.get_dsn(),
         db_schema=db.schema or "public",
         app_id=TEST_APP_ID,
         public_origin=ORIGIN,

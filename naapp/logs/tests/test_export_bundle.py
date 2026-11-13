@@ -96,11 +96,11 @@ async def test_a_teams_whole_log_exports_as_a_bundle_that_verifies(db) -> None:
     assert report["witnesses"] == {"contradicted": []}
 
 
-async def test_a_purged_event_is_exported_by_its_skeleton_and_purge_act(db) -> None:
+async def test_a_purged_event_is_exported_by_its_skeleton_and_purge_act(db, purges) -> None:
     for seq in (1, 2):
         await appended(db, seq)
     async with db.transaction() as tx:
-        await purge(tx, TEAM_ID, [(1, 1)], act="logs.erase:7d0e3f1a")
+        await purge(tx, purges, TEAM_ID, [(1, 1)], act="logs.erase:7d0e3f1a")
 
     lines = await exported(db)
 
@@ -157,14 +157,14 @@ async def test_an_append_goes_ahead_while_an_export_waits_on_its_reader(db) -> N
     await export.aclose()
 
 
-async def test_an_event_purged_mid_export_is_exported_purged_and_still_verifies(db) -> None:
+async def test_an_event_purged_mid_export_is_exported_purged_and_still_verifies(db, purges) -> None:
     for seq in (1, 2, 3):
         await appended(db, seq)
     export = export_bundle(db, TEAM_ID, page=1)
     lines = [await anext(export), await anext(export), await anext(export)]
 
     async with db.transaction() as tx:
-        await purge(tx, TEAM_ID, [(1, 3)], act="logs.retention.set:5b1c9e0d")
+        await purge(tx, purges, TEAM_ID, [(1, 3)], act="logs.retention.set:5b1c9e0d")
     lines += [line async for line in export]
 
     events = [json.loads(line)["event"] for line in lines if line.startswith(b'{"event"')]

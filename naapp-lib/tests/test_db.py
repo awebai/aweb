@@ -256,3 +256,22 @@ async def test_the_runtime_migrates_into_its_schema_whatever_the_roles_search_pa
             )
     finally:
         await database.disconnect()
+
+
+async def test_a_deletion_ledger_must_be_a_database_of_its_own(test_db_factory) -> None:
+    content = await test_db_factory.create_db(suffix="content")
+    ledger = await test_db_factory.create_db(suffix="ledger")
+    await runtime_db.require_separate_database(content, ledger, ledger_name="example ledger")
+
+    with pytest.raises(ValueError, match="example ledger must be outside"):
+        await runtime_db.require_separate_database(content, content, ledger_name="example ledger")
+    # Another schema, or another manager, of the content database is that database.
+    same = AsyncDatabaseManager(
+        DatabaseConfig(connection_string=content.config.get_dsn(), schema="other_schema")
+    )
+    await same.connect()
+    try:
+        with pytest.raises(ValueError, match="example ledger must use a separate database"):
+            await runtime_db.require_separate_database(content, same, ledger_name="example ledger")
+    finally:
+        await same.disconnect()

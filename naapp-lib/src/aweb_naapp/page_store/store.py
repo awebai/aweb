@@ -26,6 +26,7 @@ from aweb_naapp.page_store.lifecycle import LifecycleMixin
 from aweb_naapp.page_store.models import Access, RetentionPolicy, Scope, StoreError
 from aweb_naapp.page_store.support import canonical, decoded, identity, validated, widgets
 from aweb_naapp.pages import PAGE_SCHEMA, inline_schema_errors, inline_value_valid
+from aweb_naapp.runtime.db import require_separate_database
 
 if TYPE_CHECKING:
     from aweb_naapp.runtime.team_auth import Principal
@@ -68,13 +69,7 @@ def _projection_names(values, *, minimum, maximum) -> None:
 async def apply_page_store_migrations(
     db: AsyncDatabaseManager, ledger: AsyncDatabaseManager
 ) -> None:
-    if db is ledger:
-        raise ValueError("the deletion ledger must be outside the content restore database")
-    # Distinct managers pointing at the same database are also refused.
-    content_id = await db.fetch_value("SELECT current_database()")
-    ledger_id = await ledger.fetch_value("SELECT current_database()")
-    if content_id == ledger_id:
-        raise ValueError("the deletion ledger must use a separate database")
+    await require_separate_database(db, ledger, ledger_name="deletion ledger")
     await apply_idempotency_migrations(db)
     await apply_idempotency_migrations(ledger)
     await apply_outbox_migrations(db)

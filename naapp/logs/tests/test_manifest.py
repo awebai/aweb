@@ -66,6 +66,7 @@ def test_owners_designate_log_readers_on_the_console_origin(tmp_path: Path) -> N
     settings = LogsSettings(
         _env_file=None,
         database_url="postgresql://localhost/logs",
+        purge_ledger_database_url="postgresql://localhost/logs_purges",
         public_origin=ORIGIN,
         console_origin=CONSOLE,
         app_id=TEST_APP_ID,
@@ -137,6 +138,7 @@ def test_kids_and_purposes_come_from_the_file_and_keys_from_configuration(
     settings = LogsSettings(
         _env_file=None,
         database_url="postgresql://localhost/logs",
+        purge_ledger_database_url="postgresql://localhost/logs_purges",
         public_origin=ORIGIN,
         console_origin="https://console.logs.example.test",
         app_key_files=key_files,

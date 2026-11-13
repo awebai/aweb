@@ -34,6 +34,7 @@ from pgdbm.core import TransactionManager
 
 from aweb_logs import read_store
 from aweb_logs.ledger import lock_head
+from aweb_logs.purge_ledger import PurgeLedger
 from aweb_logs.retention import (
     ALL_EVENTS,
     GOVERNANCE_HOOK,
@@ -88,6 +89,7 @@ class LogsGovernance:
         self,
         db: AsyncDatabaseManager,
         *,
+        purges: PurgeLedger,
         fence: InstallationFence,
         verifier: OwnerActVerifier,
         recorder: CredentialAudit,
@@ -95,6 +97,7 @@ class LogsGovernance:
         now: Callable[[], datetime] = lambda: datetime.now(UTC),
     ) -> None:
         self.db = db
+        self.purges = purges
         self.fence = fence
         self.verifier = verifier
         self.recorder = recorder
@@ -202,7 +205,7 @@ class LogsGovernance:
             record = {"act": "logs.erased", "direction": "narrowing", **fields}
             record["erased_count"] = len(covered)
             event_id = await self._record(tx, act, record)
-            return await purge(tx, team_id, covered, act=f"logs.erase:{event_id}")
+            return await purge(tx, self.purges, team_id, covered, act=f"logs.erase:{event_id}")
 
         return await self._apply(team_id, signing, signature, fields, effect)
 

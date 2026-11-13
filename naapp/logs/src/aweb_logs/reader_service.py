@@ -46,6 +46,7 @@ from pgdbm.core import TransactionManager
 from aweb_logs.console_ui import console_pages_router
 from aweb_logs.governance import SELF_RECORDED_ACTS, LogsGovernance
 from aweb_logs.ledger import LogsSigner
+from aweb_logs.purge_ledger import PurgeLedger
 from aweb_logs.read_routes import ReaderReads, reader_read_router, reader_removal_router
 from aweb_logs.reader_acts import reader_acts
 from aweb_logs.readers import READER_ROLE, ReaderDirectory, ReaderRemovals
@@ -153,6 +154,7 @@ async def reader_service(
     client_address_header: str | None,
     delivery: PasskeyDelivery,
     backlog_age: timedelta,
+    purges: PurgeLedger,
 ) -> ReaderService:
     """Apply the stores the readers need and compose their services. Call
     once the runtime's database is open, inside its lifespan."""
@@ -264,6 +266,7 @@ async def reader_service(
         chain_keys=frozenset({signer.did_key}),
         governance=LogsGovernance(
             db,
+            purges=purges,
             fence=fence,
             verifier=verifier,
             recorder=recorder,

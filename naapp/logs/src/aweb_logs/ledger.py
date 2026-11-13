@@ -99,6 +99,7 @@ async def append(
     key_evidence: Mapping[str, Any],
     received_at: datetime,
     before_append: Callable[[Any], Awaitable[None]] | None = None,
+    purge_act: str | None = None,
 ) -> Appended | Conflicted:
     """Append a verified event in a new transaction.
 
@@ -109,6 +110,7 @@ async def append(
         return await append_on(
             tx, signer, event=event, signing_bytes=signing_bytes, signature=signature,
             key_evidence=key_evidence, received_at=received_at, before_append=before_append,
+            purge_act=purge_act,
         )
 
 
@@ -122,6 +124,7 @@ async def append_on(
     key_evidence: Mapping[str, Any],
     received_at: datetime,
     before_append: Callable[[Any], Awaitable[None]] | None = None,
+    purge_act: str | None = None,
 ) -> Appended | Conflicted:
     """Append a verified event using the caller's transaction, without committing it.
 
@@ -134,6 +137,10 @@ async def append_on(
     quotas there, so duplicates/conflicts spend nothing and a refusal rolls
     back the charge with the append. Purged bytes are compared only on the
     retained hook and producer origin.
+
+    ``purge_act`` appends the event already purged by that act: its link and
+    commitment are those of its content, which is never stored. Ingest passes
+    it for a redelivered event the purge ledger holds a tombstone for.
     """
     event_id = uuid.UUID(event.event_id)
     head = await _locked_head(tx, signer, event.team_id, received_at)
@@ -214,8 +221,9 @@ async def append_on(
         "INSERT INTO {{tables.chain_events}}"
         " (team_id, chain_epoch, team_seq, event_id, prev_event_hash, event_hash,"
         "  received_at, hook, producer_origin, content_commitment, salt, signing_bytes,"
-        "  signature, key_evidence, receipt_bytes, receipt_signature)"
-        " VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14::jsonb, $15, $16)",
+        "  signature, key_evidence, receipt_bytes, receipt_signature, purge_act)"
+        " VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14::jsonb, $15, $16,"
+        " $17)",
         link.team_id,
         link.chain_epoch,
         link.team_seq,
@@ -226,12 +234,13 @@ async def append_on(
         link.hook,
         link.producer_origin,
         link.content_commitment,
-        salt,
-        signing_bytes,
-        signature,
+        None if purge_act else salt,
+        None if purge_act else signing_bytes,
+        None if purge_act else signature,
         json.dumps(dict(key_evidence), sort_keys=True),
         receipt[0],
         receipt[1],
+        purge_act,
     )
     await _move_head(
         tx, event.team_id, _Head(link.chain_epoch, link.team_seq, event_hash, head.logs_origin)

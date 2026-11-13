@@ -42,7 +42,7 @@ def internal(monkeypatch: pytest.MonkeyPatch, host: str) -> None:
 
 @pytest.mark.parametrize("answer", ["inside", "outside", "mixed", "denied", "dns_failure"])
 async def test_internal_hook_origins_are_checked_before_logs_starts(
-    tmp_path, database, monkeypatch, answer
+    tmp_path, database, purge_ledger_database, monkeypatch, answer
 ) -> None:
     host = local_address()
     records = [host] if answer in {"inside", "denied"} else ["192.0.2.7"]
@@ -55,7 +55,7 @@ async def test_internal_hook_origins_are_checked_before_logs_starts(
         if answer == "denied":
             monkeypatch.setenv("LOGS_EGRESS_DENIED_NETWORKS", json.dumps([host]))
         service = create_app(
-            _deployment_on(tmp_path, database),
+            _deployment_on(tmp_path, database, purge_ledger_database),
             email=no_mail(),
             resolver=DnsResolver(nameservers=["127.0.0.1"], port=dns.port),
         )
@@ -78,23 +78,23 @@ async def test_internal_hook_origins_are_checked_before_logs_starts(
 
 @pytest.mark.parametrize("ca", ["missing", "malformed"])
 def test_logs_refuses_hook_trust_material_it_cannot_load(
-    tmp_path, database, monkeypatch, ca
+    tmp_path, database, purge_ledger_database, monkeypatch, ca
 ) -> None:
     path = tmp_path / "hook-ca.pem"
     if ca == "malformed":
         path.write_text("not a certificate")
     monkeypatch.setenv("LOGS_HOOK_CA_FILE", str(path))
     with pytest.raises(OSError):
-        create_app(_deployment_on(tmp_path, database), email=no_mail())
+        create_app(_deployment_on(tmp_path, database, purge_ledger_database), email=no_mail())
 
 
 @pytest.mark.parametrize(
     "unset", ["LOGS_HOOK_INTERNAL_DESTINATIONS", "LOGS_HOOK_INTERNAL_CIDR", "LOGS_HOOK_INTERNAL_ORIGINS"]
 )
 def test_logs_refuses_internal_hook_settings_given_in_part(
-    tmp_path, database, monkeypatch, unset
+    tmp_path, database, purge_ledger_database, monkeypatch, unset
 ) -> None:
     internal(monkeypatch, local_address())
     monkeypatch.delenv(unset)
     with pytest.raises(ValidationError):
-        _deployment_on(tmp_path, database)
+        _deployment_on(tmp_path, database, purge_ledger_database)

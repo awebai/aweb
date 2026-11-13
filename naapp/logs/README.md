@@ -17,6 +17,9 @@ in [the logs chain](../../docs/logs-chain.md).
 logs reads its settings from `LOGS_`-prefixed environment variables:
 
 - `LOGS_DATABASE_URL` and `LOGS_PUBLIC_ORIGIN`;
+- `LOGS_PURGE_LEDGER_DATABASE_URL`, the purge ledger's database
+  ([restore](#restoring-the-content-database)). It must be a database of its
+  own: logs refuses to start when it names the content database;
 - `LOGS_CONSOLE_ORIGIN`, the plain `https` origin where designated readers enrol,
   sign in and read. It must be on a host of its own, not `LOGS_PUBLIC_ORIGIN`'s:
   readers' passkeys are bound to its hostname. A human-role act's audience must
@@ -86,6 +89,42 @@ narrowing; keeping longer and setting a hold are widening, and only a hold is
 recorded when no hook target would admit it ([hook events](../../docs/hook-events.md#the-audit-critical-gate)).
 **Open (aweb-acgh.16.23):** no route delivers these acts yet; owner-act
 delivery covers only the app-role and credential acts.
+
+## Restoring the content database
+
+Every purge first commits a tombstone for each event it purges to the purge
+ledger, a database of its own keyed by event id, and then purges the content
+(`aweb_logs.purge_ledger`). When logs starts, before it serves anything, it
+purges every event that has a tombstone and still holds its content, naming
+the tombstone's act. A producer's redelivery of an event that has a tombstone
+is appended already purged: its link and receipt are those of its content,
+which is never stored. A restored content database therefore never serves
+content purged after its backup, by reads, export or redelivery.
+
+Each start also tombstones every event the content database already holds
+purged, so purges made before the ledger existed are fenced from then on. That
+baseline comes from the database logs starts on: **the first start of a logs
+with a purge ledger must be on the live content database**, never on a
+restored one.
+
+- **Never restore the purge ledger from a content backup**, and never restore
+  it to an earlier state. Back it up on its own line. Restoring content means:
+  restore the content database only, keep the live ledger, start logs, and
+  wait for it to be ready. Losing the ledger is not survivable for erasure: a
+  restore without it can bring purged content back.
+- **Owner acts made after the backup are not in the restored database:**
+  retention settings, legal holds, and the governance events that erase and
+  retention purges name. Each purge's tombstone still names its act, so verify
+  reports the purge with it, but the act's own record is missing until the
+  owner reissues it.
+- **A restored chain is older than the witnesses producers hold.** logs never
+  re-signs history: verify reports the receipts and checkpoints the restored
+  chain contradicts.
+- **Backups of the content database hold every event's content until they
+  expire.** Keep them within the deployment's disclosed bound; the ledger makes
+  a restore safe, it does not erase backups.
+- A crash between a tombstone's commit and its purge leaves the content in
+  place until the next start, which finishes the purge.
 
 ## Ingestion
 

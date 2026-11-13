@@ -15,6 +15,7 @@ import asyncio
 import logging
 from collections.abc import Callable, Sequence
 from datetime import UTC, datetime, timedelta
+from uuid import UUID
 
 from aweb_naapp.hooks.catalog import packaged_catalog
 from pgdbm import AsyncDatabaseManager
@@ -22,6 +23,7 @@ from pgdbm.core import TransactionManager
 
 from aweb_logs import read_store
 from aweb_logs.chain import format_time
+from aweb_logs.purge_ledger import PurgeLedger
 
 logger = logging.getLogger(__name__)
 
@@ -88,24 +90,34 @@ async def set_retention(
 
 
 async def purge(
-    tx: TransactionManager, team_id: str, positions: Sequence[tuple[int, int]], *, act: str
+    tx: TransactionManager,
+    ledger: PurgeLedger,
+    team_id: str,
+    positions: Sequence[tuple[int, int]],
+    *,
+    act: str,
 ) -> int:
     """Purge the content and projections of the team's events at these
     ``(chain_epoch, team_seq)`` positions, recording ``act`` as the act that
     purged them. An event already purged keeps its first act. Returns how many
-    events this purged."""
+    events this purged.
+
+    Each event's tombstone is committed to the purge ledger before its content
+    is purged in ``tx``, so no purged content is ever left without one."""
     if not positions:
         return 0
+    epochs, seqs = [epoch for epoch, _ in positions], [seq for _, seq in positions]
     # Lock in position order, as catch-up does, so the two never deadlock.
-    await tx.fetch_all(
-        "SELECT 1 FROM {{tables.chain_events}}"
+    locked = await tx.fetch_all(
+        "SELECT event_id, event_hash FROM {{tables.chain_events}}"
         " WHERE team_id = $1 AND purge_act IS NULL"
         " AND (chain_epoch, team_seq) IN (SELECT * FROM unnest($2::int[], $3::bigint[]))"
         " ORDER BY chain_epoch, team_seq FOR UPDATE",
         team_id,
-        [epoch for epoch, _ in positions],
-        [seq for _, seq in positions],
+        epochs,
+        seqs,
     )
+    await ledger.record(team_id, [(row["event_id"], row["event_hash"]) for row in locked], act=act)
     purged = await tx.fetch_all(
         "UPDATE {{tables.chain_events}}"
         " SET salt = NULL, signing_bytes = NULL, signature = NULL, purge_act = $4"
@@ -113,8 +125,8 @@ async def purge(
         " AND (chain_epoch, team_seq) IN (SELECT * FROM unnest($2::int[], $3::bigint[]))"
         " RETURNING chain_epoch, team_seq",
         team_id,
-        [epoch for epoch, _ in positions],
-        [seq for _, seq in positions],
+        epochs,
+        seqs,
         act,
     )
     await read_store.reproject(
@@ -123,8 +135,32 @@ async def purge(
     return len(purged)
 
 
+async def reapply_purges(db: AsyncDatabaseManager, ledger: PurgeLedger) -> int:
+    """Purge every event that has a tombstone and still holds its content, as
+    after a restore of the content database, naming each tombstone's act.
+    Logs runs this before it serves. Returns how many events it purged."""
+    acts: dict[tuple[str, str], list[UUID]] = {}
+    for team_id, event_id, act in await ledger.tombstones():
+        acts.setdefault((team_id, act), []).append(event_id)
+    total = 0
+    for (team_id, act), event_ids in acts.items():
+        async with db.transaction() as tx:
+            unpurged = await tx.fetch_all(
+                "SELECT chain_epoch, team_seq FROM {{tables.chain_events}}"
+                " WHERE team_id = $1 AND purge_act IS NULL AND event_id = ANY($2::uuid[])",
+                team_id,
+                event_ids,
+            )
+            total += await purge(
+                tx, ledger, team_id,
+                [(row["chain_epoch"], row["team_seq"]) for row in unpurged], act=act,
+            )  # fmt: skip
+    return total
+
+
 async def apply_retention(
     db: AsyncDatabaseManager,
+    ledger: PurgeLedger,
     *,
     now: datetime,
     logs_origin: str,
@@ -145,7 +181,7 @@ async def apply_retention(
             break
         try:
             total += await _apply_team(
-                db, row["team_id"], now=now, logs_origin=logs_origin, batch=batch, stop=stop
+                db, ledger, row["team_id"], now=now, logs_origin=logs_origin, batch=batch, stop=stop
             )
         except Exception:
             logger.exception("Retention failed for team %s", row["team_id"])
@@ -154,6 +190,7 @@ async def apply_retention(
 
 async def _apply_team(
     db: AsyncDatabaseManager,
+    ledger: PurgeLedger,
     team_id: str,
     *,
     now: datetime,
@@ -170,6 +207,7 @@ async def _apply_team(
                 expired = await tx.fetch_all(EXPIRED, team_id, hook, cutoff, batch, logs_origin)
                 purged += await purge(
                     tx,
+                    ledger,
                     team_id,
                     [(event["chain_epoch"], event["team_seq"]) for event in expired],
                     act=f"{RETENTION_ACT}:{event_id}",
@@ -205,6 +243,7 @@ async def _expiring_classes(db: AsyncDatabaseManager, team_id: str) -> list[tupl
 
 async def run_retention(
     db: AsyncDatabaseManager,
+    ledger: PurgeLedger,
     *,
     interval_seconds: float,
     logs_origin: str,
@@ -215,7 +254,7 @@ async def run_retention(
     failing pass is logged and tried again at the next interval."""
     while not stop.is_set():
         try:
-            await apply_retention(db, now=now(), logs_origin=logs_origin, stop=stop)
+            await apply_retention(db, ledger, now=now(), logs_origin=logs_origin, stop=stop)
         except Exception:
             logger.exception("Retention pass failed")
         try:
