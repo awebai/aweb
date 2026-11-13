@@ -181,8 +181,11 @@ async def test_replay_does_not_repeat_the_revision_or_governance_effect(root, re
     first = await client.post(settings.console_origin + PATH, json=body)
     assert first.status_code == 200, first.text
     before = await effects(service, installed["installation_id"], member.team_id)
+    # The exact act again is acknowledged as already applied, with no second
+    # revision, holding, nonce or governance effect.
     repeated = await client.post(settings.console_origin + PATH, json=body)
-    assert repeated.status_code == 403
+    assert repeated.status_code == 409, repeated.text
+    assert repeated.json() == {"detail": "applied_earlier"}
     assert await effects(service, installed["installation_id"], member.team_id) == before
 
 
