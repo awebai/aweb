@@ -104,11 +104,12 @@ async def test_library_verifier_and_owned_plain_sdk_preserve_real_h2_admission(
     member, identity, caller_client, _, _ = human
     verifier = caller_client._domain_verifier
     runtime = await make_runtime(tmp_path, test_db_factory, registry, verifier=verifier)
-    # Caller-owned injection remains usable before the runtime lifecycle.
-    before = await runtime.check_human_member(
-        TEAM, principal=identity, certificate=member.certificate(), identity_client=caller_client
-    )
+    # Team authentication reads the app's team-key pins, so it runs in the lifespan.
     async with runtime.lifespan(FastAPI()):
+        # The caller-owned client is used when the caller injects it.
+        before = await runtime.check_human_member(
+            TEAM, principal=identity, certificate=member.certificate(), identity_client=caller_client
+        )
         owned = runtime.registry_client()
         assert owned is not caller_client and owned._domain_verifier is verifier
         current = await runtime.check_human_member(
