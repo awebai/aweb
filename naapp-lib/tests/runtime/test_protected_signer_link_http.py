@@ -10,7 +10,12 @@ import pytest
 import pytest_asyncio
 from fastapi import FastAPI
 
-from aweb_naapp.console import ClientIdentity, ConsoleSessions, LoginLimiter, apply_console_migrations
+from aweb_naapp.console import (
+    ClientIdentity,
+    ConsoleSessions,
+    LoginLimiter,
+    apply_console_migrations,
+)
 from aweb_naapp.runtime.protected_signer.http import ProtectedOperationsHTTP
 from tests.runtime.approvals.test_passkeys import Contacts
 from tests.runtime.test_protected_signer import CONTACT, ORIGIN, SCOPE

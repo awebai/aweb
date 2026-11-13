@@ -21,12 +21,17 @@ from aweb_naapp.console import (
 )
 from aweb_naapp.console.handoff_wire import HandoffWireRefused, loopback_redirect
 from aweb_naapp.hooks.strictjson import Refused
-from aweb_naapp.runtime.approvals import ApprovalRefused, RequestNotCanonical, parse_request_json
+from aweb_naapp.runtime.approvals import (
+    ApprovalRefused,
+    Decision,
+    RequestNotCanonical,
+    parse_request_json,
+)
 from aweb_naapp.runtime.origins import _host, _origin_hosts
 from aweb_naapp.runtime.passkeys import ProofContextUnavailable
 
 from .catalog import operation_spec
-from .service import ProtectedSigner
+from .service import ProtectedSigner, decision_named
 from .types import (
     AdmittedHuman,
     OperationReceipt,
@@ -380,7 +385,7 @@ class ProtectedOperationsHTTP:
             raise SignerRefused("request_invalid")
         return body
 
-    async def _human_body(self, request, fields):
+    async def _human_body(self, request, fields, optional=frozenset()):
         await require_json(request)
         raw = bytearray()
         async for chunk in request.stream():
@@ -388,7 +393,7 @@ class ProtectedOperationsHTTP:
             if len(raw) > 64 * 1024:
                 raise SignerRefused("request_invalid")
         body = parse_request_json(bytes(raw))
-        if not isinstance(body, dict) or set(body) != fields:
+        if not isinstance(body, dict) or set(body) - set(optional) != fields:
             raise SignerRefused("request_invalid")
         return body
 
@@ -420,10 +425,11 @@ class ProtectedOperationsHTTP:
         async def options(handoff_id: str, request: Request):
             try:
                 operation_id, human, session = await self._human(handoff_id, request)
-                await self._human_body(request, set())
+                body = await self._human_body(request, set(), {"decision"})
                 return dict(
                     await self.signer.approval_options(
-                        operation_id, human=human, human_session=session
+                        operation_id, human=human, human_session=session,
+                        decision=decision_named(body.get("decision", "approve")),
                     )
                 )
             except Exception as error:
@@ -475,12 +481,16 @@ class ProtectedOperationsHTTP:
         async def execute(handoff_id: str, request: Request):
             try:
                 operation_id, human, session = await self._human(handoff_id, request)
-                body = await self._human_body(request, {"assertion"})
+                body = await self._human_body(request, {"assertion"}, {"decision"})
                 if not isinstance(body["assertion"], dict):
                     raise SignerRefused("request_invalid")
                 prepared = await self.signer.inspect(
                     operation_id, human=human, human_session=session
                 )
+                if decision_named(body.get("decision", "approve")) is Decision.REJECT:
+                    return receipt_json(await self.signer.reject(
+                        operation_id, body["assertion"], human=human, human_session=session
+                    ))
                 receipt = await self.signer.execute(
                     operation_id, body["assertion"], human=human, human_session=session
                 )

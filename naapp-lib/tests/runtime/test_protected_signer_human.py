@@ -298,3 +298,32 @@ async def test_admitted_browser_session_is_rechecked_across_real_effect_wait(
         assert response.json() == {"detail": "console_session_required"}
         assert row["result"] is None and row["state"] == "approved"
         assert (await w.audit.kinds()).count("protected_operation_signed") == 0
+
+
+async def test_a_signed_in_approver_denies_with_one_exact_act_uv(http_world):
+    w, client, key = http_world
+    operation = await prepared(http_world)
+    path = "/handoff/" + operation["handoff_id"] + "/governance"
+    browser = await login(w, client)
+    options = await client.post(path + "/options", json={"decision": "reject"}, headers=browser)
+    assert options.status_code == 200, options.text
+    result = await client.post(path + "/execute", json={"assertion": w.device.get(options.json()),
+        "decision": "reject"}, headers=browser)
+    assert result.status_code == 200, result.text
+    assert result.json() == {"state": "refused", "code": "human_refused"}
+    assert "redirect_uri" not in result.json()
+    receipt_path = "/protected-operations/" + operation["operation_id"]
+    client.cookies.clear()
+    receipt = await client.get(receipt_path, headers=headers(w, key, "GET", receipt_path))
+    assert receipt.json() == {"state": "refused", "code": "human_refused"}
+    assert "protected_operation_signed" not in await w.audit.kinds()
+
+
+@pytest.mark.parametrize("decision", ["maybe", 1, None])
+async def test_a_governance_decision_is_approve_or_reject_only(http_world, decision):
+    w, client, key = http_world
+    operation = await prepared(http_world)
+    path = "/handoff/" + operation["handoff_id"] + "/governance"
+    browser = await login(w, client)
+    options = await client.post(path + "/options", json={"decision": decision}, headers=browser)
+    assert options.status_code == 400, options.text

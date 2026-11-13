@@ -69,7 +69,7 @@ def _json(value):
 MAILED_APPROVAL_WAIT_CEILING = timedelta(hours=24)
 
 
-def _decision(value) -> Decision:
+def decision_named(value) -> Decision:
     """A link's decision word; anything else refuses."""
     if value == "approve":
         return Decision.APPROVE
@@ -354,8 +354,10 @@ class ProtectedSigner:
             # Pending approval is bounded even for artifacts whose existing
             # consumer wire has no expiry (for example a team server record).
             # B2 additionally caps this deadline by the current policy TTL.
-            mailed = typed.spec.needs_human and self.mailed_approval_wait is not None
-            expires_at = now + (self.mailed_approval_wait if mailed else timedelta(seconds=600))
+            wait = timedelta(seconds=600)
+            if typed.spec.needs_human and self.mailed_approval_wait is not None:
+                wait = self.mailed_approval_wait
+            expires_at = now + wait
             if "expires_at" in fields:
                 expires_at = min(expires_at, _time(fields["expires_at"]))
             if typed.operation == "team.agent.remove":
@@ -523,19 +525,25 @@ class ProtectedSigner:
 
     async def link_options(self, handoff_id: str, token: str, decision: str) -> Mapping[str, Any]:
         operation_id, human = await self._link_human(handoff_id, token)
-        return await self.approval_options(operation_id, human=human, decision=_decision(decision))
+        return await self.approval_options(operation_id, human=human, decision=decision_named(decision))
 
     async def link_decide(self, handoff_id: str, token: str, decision: str, proof) -> OperationReceipt:
         operation_id, human = await self._link_human(handoff_id, token)
-        if _decision(decision) is Decision.APPROVE:
+        if decision_named(decision) is Decision.APPROVE:
             return await self.execute(operation_id, proof, human=human)
         return await self._reject_human(operation_id, proof, human=human)
 
-    async def _reject_human(self, operation_id, proof, *, human: AdmittedHuman) -> OperationReceipt:
+    async def reject(self, operation_id, proof, *, human: AdmittedHuman, human_session=None) -> OperationReceipt:
+        """A signed-in approver's Deny: the same exact-act ceremony as a link's."""
+        if type(human) is not AdmittedHuman:
+            raise SignerRefused("scope_refused")
+        return await self._reject_human(operation_id, proof, human=human, human_session=human_session)
+
+    async def _reject_human(self, operation_id, proof, *, human: AdmittedHuman, human_session=None) -> OperationReceipt:
         """The candidate's exact-act UV with the reject purpose: a final
         refused(human_refused) receipt. A B2 rejection that committed before a
         crash is recorded by the next call, never decided twice."""
-        row = await self._authorized(operation_id, human, "execute")
+        row = await self._authorized(operation_id, human, "execute", human_session=human_session)
         if row["result"] is not None or row["refusal_code"] is not None:
             return self._receipt(row)
         link = self._link(row, human)
@@ -543,7 +551,7 @@ class ProtectedSigner:
         if approval is None:
             raise SignerRefused("approval_spent")
         if approval.state is ApprovalState.PENDING:
-            claim, phase = await self._claim_verification(operation_id, human)
+            claim, phase = await self._claim_verification(operation_id, human, human_session=human_session)
             if claim is None:
                 return self._receipt(phase)
             try:
@@ -571,6 +579,7 @@ class ProtectedSigner:
         async with self.db.transaction() as tx:
             row = await self._lock(tx, operation_id)
             await fence.prepare(tx, human)
+            await self._hold_session(tx, human, human_session)
             if row["result"] is None and row["refusal_code"] is None:
                 await tx.execute(
                     "UPDATE {{tables.protected_signer_operations}} SET refusal_code='human_refused',"
@@ -579,8 +588,10 @@ class ProtectedSigner:
                     decided.evidence_ref,
                 )
                 await self._emit(AuditKind.PROTECTED_OPERATION_REFUSED, tx, row, human.principal, refusal="human_refused")
+            await self._check_session(tx, human_session)
             await fence.check(tx, human)
             fence.require_fresh()
+            self._session_fresh(human_session)
             row = await self._lock(tx, operation_id)
             return self._receipt(row)
 
