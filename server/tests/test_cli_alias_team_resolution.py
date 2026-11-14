@@ -200,7 +200,14 @@ async def test_bare_alias_never_changes_team_on_unknown_roster(privacy_app, tmp_
         assert stored["message_id"] == UUID(result["message_id"])
         assert stored["team_id"] == (world.beta if selected_beta else TEAM), dict(stored)
         assert stored["from_agent_id"] == (world.beta_sender if selected_beta else world.alpha_sender), dict(stored)
-        assert stored["to_did"] == expected.did and stored["to_agent_id"] == expected.id, dict(stored)
+        assert stored["to_did"] == expected.did, dict(stored)
+        if condition == "available":
+            # The live human lookup becomes a direct-DID send: participants
+            # are literal identities, not actor pointers (canonical contract:
+            # docs/identity-messaging-contract.md:77-82,113-120).
+            assert stored["to_agent_id"] is None, dict(stored)
+        else:
+            assert stored["to_agent_id"] == expected.id, dict(stored)
         assert [str(row["message_id"]) for row in (beta_inbox if selected_beta else alpha_inbox)] == [result["message_id"]]
         assert not (alpha_inbox if selected_beta else beta_inbox)
         if selected_beta:
