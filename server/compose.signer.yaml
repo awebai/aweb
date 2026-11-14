@@ -29,6 +29,12 @@ services:
       # No value means Compose passes this only when x-env rendered it.
       # An absent optional header must stay absent, not become an empty name.
       AWEB_PROTECTED_TRUSTED_CLIENT_HEADER:
+      # Service-owned owner-act delivery: the attestation key beside the
+      # controller's in private-controller/, the pinned consumer origins, and
+      # those whose receipt route is deployed. Each is off unless rendered.
+      AWEB_PROTECTED_SERVICE_KEY_FILE:
+      AWEB_PROTECTED_OWNER_ACT_ORIGINS:
+      AWEB_PROTECTED_EFFECT_RECEIPT_ORIGINS:
       AWEB_PROTECTED_EMAIL_SMTP_HOST: ${AWEB_PROTECTED_EMAIL_SMTP_HOST:?AWEB_PROTECTED_EMAIL_SMTP_HOST is required, signer.emailSmtpHost}
       AWEB_PROTECTED_EMAIL_SMTP_PORT: ${AWEB_PROTECTED_EMAIL_SMTP_PORT:?AWEB_PROTECTED_EMAIL_SMTP_PORT is required, signer.emailSmtpPort}
       AWEB_PROTECTED_EMAIL_USERNAME: ${AWEB_PROTECTED_EMAIL_USERNAME:?AWEB_PROTECTED_EMAIL_USERNAME is required, signer.emailUsername}

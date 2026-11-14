@@ -154,6 +154,59 @@ def test_the_signer_trusts_a_private_smtp_authority_through_a_file_mounted_outsi
     assert "SIGNER_EMAIL_CA_SOURCE" not in rendered and "AWEB_PROTECTED_EMAIL_CA_FILE" not in rendered
 
 
+SERVICE_KEY = "/run/secrets/signer/private-controller/service.key"
+
+
+def test_service_delivery_is_off_unless_the_operator_turns_each_part_on(signer):
+    rendered = render_env.render({**EXAMPLE, "signer": signer})
+    for name in ("AWEB_PROTECTED_SERVICE_KEY_FILE", "AWEB_PROTECTED_OWNER_ACT_ORIGINS",
+                 "AWEB_PROTECTED_EFFECT_RECEIPT_ORIGINS"):
+        assert name not in rendered
+
+
+def test_service_delivery_names_the_custody_key_and_the_pinned_consumer_origins(signer):
+    rendered = render_env.render({**EXAMPLE, "signer": {
+        **signer, "serviceKey": True,
+        "ownerActOrigins": ["https://secrets.example.com", "https://logs.example.com"],
+        "effectReceiptOrigins": ["https://secrets.example.com"]}})
+    # The key sits beside the controller's, in the same private custody volume.
+    assert rendered["AWEB_PROTECTED_SERVICE_KEY_FILE"] == SERVICE_KEY
+    assert json.loads(rendered["AWEB_PROTECTED_OWNER_ACT_ORIGINS"]) == [
+        "https://secrets.example.com", "https://logs.example.com"]
+    assert json.loads(rendered["AWEB_PROTECTED_EFFECT_RECEIPT_ORIGINS"]) == ["https://secrets.example.com"]
+
+
+def test_explicitly_empty_origins_stay_closed(signer):
+    rendered = render_env.render({**EXAMPLE, "signer": {
+        **signer, "serviceKey": True, "ownerActOrigins": [], "effectReceiptOrigins": []}})
+    assert json.loads(rendered["AWEB_PROTECTED_OWNER_ACT_ORIGINS"]) == []
+    assert json.loads(rendered["AWEB_PROTECTED_EFFECT_RECEIPT_ORIGINS"]) == []
+
+
+@pytest.mark.parametrize(
+    ("given", "key"),
+    [
+        ({"serviceKey": "/run/secrets/signer/private-controller/service.key"}, "signer.serviceKey"),
+        ({"serviceKey": "0" * 64}, "signer.serviceKey"),
+        ({"ownerActOrigins": ["http://secrets.example.com"]}, "signer.ownerActOrigins"),
+        ({"ownerActOrigins": ["https://secrets.example.com/path"]}, "signer.ownerActOrigins"),
+        ({"ownerActOrigins": [""]}, "signer.ownerActOrigins"),
+        ({"ownerActOrigins": "https://secrets.example.com"}, "signer.ownerActOrigins"),
+        ({"ownerActOrigins": ["https://secrets.example.com", "https://secrets.example.com"]},
+         "signer.ownerActOrigins"),
+        # Readiness for a consumer aw has no pinned client for could never be used.
+        ({"serviceKey": True, "ownerActOrigins": ["https://logs.example.com"],
+          "effectReceiptOrigins": ["https://secrets.example.com"]}, "signer.effectReceiptOrigins"),
+        # Readiness without the attestation key is a deployment that can only refuse.
+        ({"ownerActOrigins": ["https://secrets.example.com"],
+          "effectReceiptOrigins": ["https://secrets.example.com"]}, "signer.serviceKey"),
+    ],
+)
+def test_a_malformed_service_delivery_setting_is_refused_by_its_key(signer, given, key):
+    with pytest.raises(render_env.Refused, match=key):
+        render_env.render({**EXAMPLE, "signer": {**signer, **given}})
+
+
 @pytest.mark.parametrize(
     ("field", "value", "key"),
     [
