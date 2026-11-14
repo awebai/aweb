@@ -10,15 +10,14 @@ import hashlib
 from dataclasses import asdict
 from unittest.mock import DEFAULT, AsyncMock, Mock
 
-from awid.did import did_from_public_key
+from awid.did import did_key_from_signing_key
 from awid.registry import Team
-from nacl.signing import SigningKey
 
 
 def _legacy_controller_did_key():
     # Preserve the existing named server fixture key when sharing the helper.
     seed = hashlib.sha256(b"aweb-test-did-key:legacy-unit-team").digest()
-    return did_from_public_key(bytes(SigningKey(seed).verify_key))
+    return did_key_from_signing_key(seed)
 
 
 def legacy_team(domain: str, name: str, *, team_did_key: str | None = None) -> Team:
