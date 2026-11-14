@@ -23,7 +23,7 @@ class LiveDeliveryTests(unittest.TestCase):
             [sys.executable, str(Path(__file__).with_name("live_delivery_probe.py")), case],
             text=True, capture_output=True, timeout=65,
         )
-        self.assertEqual(result.returncode, 0, result.stderr[-18000:])
+        self.assertEqual(result.returncode, 0, result.stderr)
         receipts = []
         for line in (result.stdout + "\n" + result.stderr).splitlines():
             try:

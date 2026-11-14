@@ -201,8 +201,10 @@ async def main():
                 lambda data: loop.call_soon_threadsafe(lambda: (HOME / "blocked").write_text(source.chat_id)),
                 {"command": "PRIVATE APPROVAL DETAILS", "pattern_key": "boundary-pending"}))
             result = await pending
-            assert not result["resolved"], "an aweb message resolved a locally owned approval"
+            # resolved means the waiter woke, not that the user consented.
+            # Keep the disposition even when an assertion fails inside a turn.
             prompt_results.append(result)
+            assert result["choice"] is None and result.get("cancelled"), result
         if body in {"require-approval", "require-clarify"}:
             from types import SimpleNamespace
             from gateway.run_turn_runner import TurnRunner
@@ -307,6 +309,10 @@ async def main():
             count = await sql(f"SELECT count(*) FROM aweb.chat_message_reads WHERE message_id IN ({','.join(repr(v) for v in ids)})")
             assert count.strip() == "0", "queued control-shaped content was consumed"
             from tools import approval
+            pending_barrier = {"registry_pending": approval.has_blocking_approval(pending_key),
+                               "thread_pending": not pending.done(), "queued_ids": list(ids),
+                               "read_count": int(count.strip())}
+            assert pending_barrier["registry_pending"], pending_barrier
             approval.unregister_gateway_notify(pending_key)  # LOCAL withdrawal, never an aweb command
             ids.insert(0, first["message_id"])
             await read_chat_inputs(session, ids)
@@ -315,8 +321,10 @@ async def main():
             rows = await read_chat_inputs(session, ids)
             assert_content(ids)
             assert len(prompt_results) == 2 and not prompt_results[-1]["approved"], prompt_results
+            assert prompt_results[0]["choice"] is None and prompt_results[0].get("cancelled"), prompt_results
             assert all("PRIVATE APPROVAL DETAILS" not in r["body"] for r in rows if r.get("from_agent") == "hermes"), rows
-            print(json.dumps({"case": CASE, "rows": rows, "turns": turns, "prompt_results": prompt_results}))
+            print(json.dumps({"case": CASE, "rows": rows, "turns": turns,
+                              "pending_barrier": pending_barrier, "prompt_results": prompt_results}))
         elif CASE == "stop":
             first = await send("/fixturehold")
             session = first["session_id"]

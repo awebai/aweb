@@ -4,6 +4,7 @@ Only aw transport is in memory here. Message construction, base-adapter turn
 scheduling, control predicates, approval notifier and pending registries are real.
 The opt-in gateway probe separately exercises real aw/server transport.
 """
+import ast
 import asyncio
 import importlib.util
 import os
@@ -204,6 +205,59 @@ class ContentBoundaryTests(unittest.IsolatedAsyncioTestCase):
         finally:
             clarify_gateway.clear_session(turn._ctx.session_key)
             await asyncio.wait_for(task, 2)
+
+    async def test_probe_distinguishes_local_withdrawal_from_a_granted_choice(self):
+        # Execute the actual probe observer with the real registry. This catches
+        # a turn-contained observer error that a final count alone cannot locate.
+        tree = ast.parse(Path(__file__).with_name("live_delivery_probe.py").read_text())
+        main = next(n for n in tree.body if isinstance(n, ast.AsyncFunctionDef) and n.name == "main")
+        observer = next(n for n in main.body if isinstance(n, ast.AsyncFunctionDef) and n.name == "ordinary_turn")
+        outer = ast.AsyncFunctionDef(
+            name="bind_observer", args=ast.arguments(posonlyargs=[], args=[], kwonlyargs=[], kw_defaults=[], defaults=[]),
+            body=ast.parse("pending = None\npending_key = None").body + [observer, ast.parse("return ordinary_turn").body[0]],
+            decorator_list=[])
+        module = ast.fix_missing_locations(ast.Module(body=[outer], type_ignores=[]))
+        for grant in (False, True):
+            with self.subTest(grant=grant):
+                marker = Path(self.home.name) / "blocked"
+                marker.unlink(missing_ok=True)
+                event = await self.inbound("chat", "/fixtureapproval")
+                records, forwarded = [], []
+                async def original_turn(adapter, value, source, key, generation):
+                    forwarded.append(value)
+                    return "forwarded"
+                scope = {"CASE": "approval", "asyncio": asyncio, "HOME": Path(self.home.name),
+                         "ingress": {event.message_id: {"body": event.raw_message["body"], "subject": None,
+                                                       "text": event.text, "control": event.allow_gateway_control}},
+                         "turns": [], "prompt_results": records, "original_turn": original_turn}
+                exec(compile(module, "live_delivery_probe.py", "exec"), scope)
+                ordinary = await scope["bind_observer"]()
+                key = "aweb-probe-grant" if grant else "aweb-probe-withdraw"
+                worker = asyncio.create_task(ordinary(self.adapter, event, event.source, key, 0))
+                try:
+                    async with asyncio.timeout(3):
+                        while not marker.exists():
+                            await asyncio.sleep(.01)
+                    self.assertTrue(approval.has_blocking_approval(key))
+                    self.assertFalse(worker.done())
+                    if grant:
+                        self.assertEqual(approval.resolve_gateway_approval(key, "once"), 1)
+                        with self.assertRaises(AssertionError):
+                            await asyncio.wait_for(asyncio.shield(worker), 2)
+                        self.assertEqual(len(records), 1, "keep the failed disposition for diagnosis")
+                        self.assertEqual(records[0]["choice"], "once")
+                        self.assertEqual(forwarded, [])
+                    else:
+                        approval.unregister_gateway_notify(key)
+                        self.assertEqual(await asyncio.wait_for(asyncio.shield(worker), 2), "forwarded")
+                        self.assertEqual(len(records), 1)
+                        self.assertIsNone(records[0]["choice"])
+                        self.assertTrue(records[0].get("cancelled"))
+                        self.assertEqual(forwarded, [event])
+                    self.assertFalse(approval.has_blocking_approval(key))
+                finally:
+                    approval.unregister_gateway_notify(key)
+                    await asyncio.wait_for(asyncio.gather(worker, return_exceptions=True), 2)
 
     async def test_fallback_prompt_refused_but_ordinary_content_still_delivered(self):
         result = await self.adapter.send("chat:conversation", "PRIVATE COMMAND /approve",
