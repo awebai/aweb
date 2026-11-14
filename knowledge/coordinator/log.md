@@ -1,5 +1,10 @@
 # Knowledge log
 
+## 2026-11-14
+* **Harvest**: one proposal from the `servers` coordinator seat.
+* **Creation**: decision [read the context before a long run](read-the-context-before-a-long-run.md) — operator direction (source-reported) to audit the exact head's contracts, fixtures and assertion reachability before a long acceptance run.
+* **Update**: [reproduce the whole test context](reproduce-the-whole-test-context.md) — links the pre-run decision.
+
 ## 2026-11-10
 * **Update**: [operating-continuity](operating-continuity.md) and index — the historical coordinator record (decisions, docs and memory) is named at its location in the private ac repository, under `aweb-team-records/agents/coordinator/`, moved from this repository at `07b554c1f`.
 
