@@ -30,7 +30,9 @@
       "variant": "default",
       "issued_fields": [
         "/issued_at"
-      ]
+      ],
+      "issued_at_semantics": "informational; no registration age limit",
+      "registration": "same retained certificate; fresh subject-proof envelope; current key/head/ancestry checks"
     },
     {
       "operation": "human-role.revoke",
@@ -39,7 +41,9 @@
         "/issued_at",
         "/expires_at"
       ],
-      "consumer_lifetime_seconds": 600
+      "consumer_lifetime_seconds": 600,
+      "delivery": "service_owned_required",
+      "committed_requires": "exact_app_confirmation"
     },
     {
       "operation": "team.agent.remove",
@@ -47,7 +51,8 @@
       "issued_fields": [
         "/request/timestamp"
       ],
-      "consumer_freshness_seconds": 300
+      "consumer_freshness_seconds": 300,
+      "historical_applied_read": "verify issuance history and exact applied reference; no current-clock300s check or local POST"
     }
   ],
   "bounds": {
@@ -290,6 +295,125 @@
         "descriptor_and_frozen_target_visible": true,
         "private_headers_proofs_keys_and_tokens_visible": false,
         "issued_effect_authority_from_view": false
+      }
+    },
+    {
+      "id": "mailed-owner-act-applies-while-aw-is-closed",
+      "given": {
+        "row": "human-role.revoke/default",
+        "aw_running_at_approval": false,
+        "owner_approves_after_seconds": 7200,
+        "service_owned_consumer_ready": true
+      },
+      "expected": {
+        "signer_delivers_within_original_effect_window": true,
+        "applied_receipt_requires_exact_consumer_confirmation": true,
+        "later_aw_read_posts": 0
+      }
+    },
+    {
+      "id": "missing-owner-act-delivery-port-is-not-served",
+      "given": {
+        "row": "human-role.revoke/default",
+        "service_owned_delivery_or_confirmation_capability": false
+      },
+      "expected": {
+        "outcome": "refuse",
+        "detail": "operation_not_served",
+        "pending_created": false,
+        "signatures": 0
+      }
+    },
+    {
+      "id": "late-id-registration-keeps-the-parent-certificate",
+      "given": {
+        "certificate_issued_within_frozen_window": true,
+        "client_resumes_after_seconds": 86400,
+        "fresh_subject_proof": true,
+        "current_key_head_and_ancestry_valid": true
+      },
+      "expected": {
+        "registration_may_succeed": true,
+        "certificate_reissued": false,
+        "certificate_issued_at_age_limit_applied": false
+      }
+    },
+    {
+      "id": "late-applied-removal-read-is-history",
+      "given": {
+        "exact_applied_receipt": true,
+        "timestamp_within_frozen_window": true,
+        "now_minus_artifact_timestamp_seconds": 86400
+      },
+      "expected": {
+        "outcome": "verify_historical_applied",
+        "current_clock300s_freshness_required": false,
+        "local_posts": 0
+      }
+    },
+    {
+      "id": "upgraded-client-never-resends-an-old-saved-body",
+      "given": {
+        "saved_approval_format": null,
+        "receipt": "committed_verifiable_applied"
+      },
+      "expected": {
+        "prepare_calls": 0,
+        "execute_calls": 0,
+        "bounded_nonexecuting_receipt_reads": 1,
+        "outcome": "report_historical_applied",
+        "local_posts": 0
+      }
+    },
+    {
+      "id": "old-saved-signature-alone-is-not-application",
+      "given": {
+        "saved_approval_format": null,
+        "receipt": "historical_signature_only"
+      },
+      "expected": {
+        "outcome": "signing_committed_application_unconfirmed",
+        "local_posts": 0,
+        "automatic_new_operation": false
+      }
+    },
+    {
+      "id": "old-owned-no-effect-refusal-can-retire-the-entry",
+      "given": {
+        "saved_approval_format": null,
+        "owned_final_refusal": true,
+        "no_signature_or_effect": true
+      },
+      "expected": {
+        "prepare_calls": 0,
+        "execute_calls": 0,
+        "saved_active_entry_retired": true,
+        "new_uuid_requires_explicit_new_act": true
+      }
+    },
+    {
+      "id": "old-unknown-operation-keeps-its-pointer",
+      "given": {
+        "saved_approval_format": null,
+        "receipt": "unknown_or_unavailable_or_signed_unconfirmed_or_unverifiable"
+      },
+      "expected": {
+        "prepare_calls": 0,
+        "execute_calls": 0,
+        "original_id_and_body_kept_or_quarantined": true,
+        "automatic_new_operation": false,
+        "misleading_upgrade_aw_loop": false
+      }
+    },
+    {
+      "id": "old-record-not-found-is-not-no-effect-proof",
+      "given": {
+        "saved_approval_format": null,
+        "receipt_http_status": 404
+      },
+      "expected": {
+        "original_operation_pointer_retained": true,
+        "automatic_new_operation": false
       }
     }
   ]

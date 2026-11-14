@@ -1100,7 +1100,10 @@ issuance window. Execution issues only definition-owned time fields, retaining
 one artifact/signature/exact delivery. Mailed pending work can wait up to24h;
 UV and consumer freshness do not grow. Old clients fail closed with
 `upgrade_aw_required`; there is no parallel frozen-artifact execution path.
-The coordinated server/three-client release precedes deployment. These are
+Owner acts require service-owned exact-confirmed delivery; late applied reads
+verify history without another POST. Saved old unfinished operations are never
+resent, and ambiguous outcomes retain their reconciliation pointer. The
+coordinated server/three-client/consumer readiness precedes deployment. These are
 policy scenarios, not served-source or native evidence.
 
 ### `human-assurance-owner-initiation-v1.json` — owner-session prepare

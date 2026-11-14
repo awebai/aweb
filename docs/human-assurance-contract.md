@@ -884,6 +884,14 @@ are execution-issued. An ID-certificate intent freezes the root/key, parent,
 kind, domain, policy and expected head; only `/issued_at` is issued later, and
 the existing root subject-proof registration path remains separate.
 
+The ID certificate's `issued_at` is informational rather than an admission-time
+witness (`id-certificates.md`, section 2). Registration imposes no age limit on
+that field: the client checks it against the frozen issuance window, and may
+register that same retained certificate later using a fresh subject-signed
+covering request. Current root/issuer keys, head, ancestry and registration
+witness checks still apply. The fresh request-authentication timestamp does not
+reissue or alter the certificate or its parent signature.
+
 B2's digest and the exact-act passkey challenge bind this complete intent,
 version, original issuance window and displayed consequences. The signer
 rechecks current eligibility, snapshot, kind partition, authority, action policy,
@@ -916,6 +924,28 @@ window and the existing consumer rules. A safe applied service-owned receipt
 never causes a second local POST. Artifact/signature substitution, a changed
 route/body/certificate or a receipt/reference mismatch refuses.
 
+For `intent_v1` owner acts, delivery is service-owned, not dependent on an
+`aw` process waiting at the terminal. The signer retains and releases the
+one issued act to the pinned app route within the original effect and consumer
+bounds, and commits an applied result only with exact consumer confirmation.
+An unavailable terminal at approval time must not leave the issued act waiting
+for a later client POST after its lifetime. A composition lacking the trusted
+service-owned delivery and exact confirmation capability returns
+`operation_not_served` before pending/page/signature; it cannot silently fall
+back to a sign-only result. Consumer deployment/cutover readiness is therefore
+part of the coordinated rollout, never inferred from publishing aw alone.
+The same condition applies when additional owner-act rows are enabled.
+
+For a historical **applied** receipt, issuance-window/lifetime checks are
+historical checks, not a demand that the artifact remain fresh at read time.
+In particular, aw does not apply the revoke request's 300-second freshness
+window against its current clock while reading an already-confirmed removal.
+The signer and consumer enforce that window at release/application. The client
+still verifies the exact retained signature, frozen template and applied
+operation/artifact reference. A pending, unknown or sign-only receipt grants
+no permission to send an expired effect, renew it, or manufacture an applied
+status. Fresh effect paths retain their current-time checks.
+
 There is no parallel frozen-artifact prepare/execute compatibility path for
 these rows. A missing or unsupported `approval_format` fails before pending
 state, page display, challenge or signature with HTTP 426
@@ -926,6 +956,26 @@ an unrecognized artifact. A previously prepared old-format operation cannot
 be converted in place or acquire a fresh approval/deadline. Preserve historical
 committed receipts and exact read-only reconciliation of already-retained
 effects; these do not authorize old-format execution or another release.
+
+An upgraded aw detects a saved unfinished body without
+`approval_format="intent_v1"` before sending it. It never resends that body
+through Prepare/Execute. It makes one bounded, authenticated, non-executing
+receipt read with release disabled. Existing exact historical confirmation may
+settle the local receipt atomically, but the migration read never signs or
+sends an external effect. Verify a committed historical result under its
+original artifact rules only when retained trusted verification inputs suffice;
+a sign-only historical owner act is not proof of application and is not posted
+by this migration. Report signing/application separately when needed.
+
+A definite owned refusal, or affirmative evidence that nothing was signed and
+old-format execution is prevented, can retire the saved active entry and ask
+the human to start a new UUID. A missing record is not that evidence. Unknown,
+unavailable, signed-unconfirmed, prepare-unconfirmed or unverifiable results
+retain or quarantine the original ID/body for reconciliation; they cannot be
+silently forgotten or automatically replaced by a new operation. Tell an
+already upgraded user that the old operation needs reconciliation or a new act
+after a definite no-effect outcome, rather than repeatedly saying “upgrade aw”.
+This migration guard is not an alternative old-format approval/execution path.
 
 Coordinator `cef58d92` owns rollout: the server and all three aw clients (app
 role revoke, ID endorse, owner-approved remove-agent) land together, and ship
