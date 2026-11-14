@@ -786,8 +786,19 @@ The closed receipt shape is `pending(reason, expires_at)`,
 
 `operation_refused` retains the typed downstream diagnostic for operators;
 clients do not parse prose or infer an alternate operation from it. Parsing
-failures before prepare use HTTP 400 `request_invalid`/`redirect_uri_refused`;
-invalid authentication is 401 `requester_invalid`, scope denial 403
+failures before prepare use HTTP 400 `request_invalid`/`redirect_uri_refused`.
+An unknown or unserved operation/variant uses HTTP 400 `operation_not_served`,
+including a defined operation whose required consumer or signing adapter is
+not installed in this composition. This creates no pending operation or approval
+link. Malformed selectors remain `request_invalid`; a served operation denied
+by current policy/authority keeps its specific refusal code. aw preserves
+`operation_not_served` and explains that the service needs a version supporting
+the operation. A detail-less HTTP failure is not evidence of an unserved
+operation and keeps its generic status code. The
+[`protected-operation-availability-v1.json`](vectors/protected-operation-availability-v1.json)
+controls distinguish these cases from an incorrect request origin.
+
+Invalid authentication is 401 `requester_invalid`, scope denial 403
 `scope_refused`, binding conflict 409 `operation_conflict`. Authenticated
 lookup with no authorized matching record returns 404 `operation_not_found`,
 not proof that a previously sent request never committed. Availability failure

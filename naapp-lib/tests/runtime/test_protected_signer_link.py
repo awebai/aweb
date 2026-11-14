@@ -21,9 +21,7 @@ from aweb_naapp.runtime.approvals import ActionPolicy, Assurance
 from aweb_naapp.runtime.protected_signer import ProtectedSigner, SignerRefused
 from tests.runtime.approvals.support import Policies
 from tests.runtime.approvals.test_passkeys import Contacts
-from tests.runtime.test_protected_signer import CONTACT, SCOPE
-
-pytest_plugins = ("tests.runtime.test_protected_signer",)
+from tests.runtime.protected_signer_support import CONTACT, SCOPE
 
 
 def mailing_signer(world, contacts, *, reveal=True):

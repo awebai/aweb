@@ -332,12 +332,15 @@ separate local-subject checks.
 or another root's admissions on the owner's authority.** Replacing a root's
 requester grants does not transfer its admission bucket. The planned
 `team.agent.remove/owner_approved` variant will require the current owner's
-live passkey approval for an exact agent/service certificate; it is not yet
-implemented. Human membership removal is a separate protected operation.
+live passkey approval for an exact agent/service certificate, including an
+authoritatively unknown legacy kind displayed as "kind not verified"; it is not
+yet implemented. Human membership removal is a separate protected operation.
 The owner's separately protected offline backup and the host operator's ability
 to read the custody file remain; whoever uses the raw key bypasses the signer's
 browser approval, outside the supported workflow. The remaining owner-approved
-and human-removal paths belong to `aweb-acxy.14`, OPEN.
+and human-removal paths belong to `aweb-acxy.14`, OPEN. The shared operation
+definition and generated client description are documented in
+`docs/protected-operation-definitions.md`.
 
 | Remove | Supported path | Effective authority afterwards | Stored state that remains |
 | --- | --- | --- | --- |

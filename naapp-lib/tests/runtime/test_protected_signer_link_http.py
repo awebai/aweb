@@ -18,10 +18,8 @@ from aweb_naapp.console import (
 )
 from aweb_naapp.runtime.protected_signer.http import ProtectedOperationsHTTP
 from tests.runtime.approvals.test_passkeys import Contacts
-from tests.runtime.test_protected_signer import CONTACT, ORIGIN, SCOPE
+from tests.runtime.protected_signer_support import CONTACT, ORIGIN, SCOPE
 from tests.runtime.test_protected_signer_link import mailing_signer
-
-pytest_plugins = ("tests.runtime.test_protected_signer",)
 
 
 @pytest_asyncio.fixture

@@ -8,8 +8,8 @@ from playwright.async_api import expect
 
 from tests.console.test_handoff_governance_page import governance_server, open_page
 from tests.runtime.approvals.test_passkeys import Contacts
-from tests.runtime.test_protected_signer import CONTACT
-from tests.runtime.test_protected_signer import world as world
+from tests.runtime.protected_signer_support import CONTACT
+from tests.runtime.protected_signer_support import world as world
 from tests.runtime.test_protected_signer_link import mailing_signer
 
 
