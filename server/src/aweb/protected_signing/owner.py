@@ -413,9 +413,13 @@ def owner_page_html(view: dict) -> str:
                 f'<p><a href="/handoff/{e(quote(str(item["handoff_id"]), safe=""))}">Check this request</a></p>'
                 if item["state"] == "unresolved" and item.get("handoff_id") else ""
             )
+            decision_time = (
+                f'<p>Decided {_time(item["at"])}.</p>'
+                if item["state"] == "unresolved" and item["at"] else ""
+            )
             parts.append(
                 f'<li{final}>{e(outcome)}{", " + _time(item["at"]) if item["at"] and item["state"] != "unresolved" else ""}: {e(item["title"])}'
-                + reopen + _technical([("Requested by", item["requester"]), ("Operation", item["operation"]),
+                + decision_time + reopen + _technical([("Requested by", item["requester"]), ("Operation", item["operation"]),
                     ("Digest", item["digest"])]) + "</li>"
             )
         parts.append("</ul>")

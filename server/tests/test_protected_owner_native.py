@@ -426,3 +426,19 @@ async def test_history_shows_when_it_was_decided_never_the_expiry(admissions):
     # Without a decision time the row says none, rather than a wrong one.
     html = owner_page_html({**view, "history": [{**entry, "at": None}]})
     assert "Denied by you: Make " in html
+
+
+@pytest.mark.parametrize("decided_at", ["2026-11-14T06:10:00Z", None])
+def test_unresolved_history_shows_its_decision_time_only_when_recorded(decided_at):
+    from aweb.protected_signing.owner import owner_page_html
+
+    view = owner_fixture_view()
+    view["history"] = [{**view["history"][0], "state": "unresolved", "at": decided_at,
+        "handoff_id": "original-handoff", "title": "Remove worker from engineering?"}]
+    history = owner_page_html(view).split("<h2>History</h2>")[1].split("<h2>Who can approve</h2>")[0]
+    assert "Approved, not confirmed yet: Remove worker from engineering?" in history
+    assert 'href="/handoff/original-handoff"' in history
+    if decided_at is None:
+        assert "<time" not in history
+    else:
+        assert f'<time datetime="{decided_at}"' in history
