@@ -197,14 +197,15 @@ func newOwnerActApp(t *testing.T) *ownerActApp {
 	return app
 }
 
-// settleWorld is a committed revoke for an app at app's origin, with its
-// request saved as aw saves it.
+// settleWorld is a revoke approved at signedAt in the intent_v1 format, at an
+// app at app's origin: the verified frozen intent, the binding pinning the
+// team key, the service's applied receipt of the act it issued then, and
+// its id, with the request saved as aw saves it.
 func settleWorld(t *testing.T, app *ownerActApp, signedAt time.Time) (map[string]any, *handoff.ProfileBinding, *handoff.Receipt, string) {
 	t.Helper()
 	t.Setenv("HOME", t.TempDir())
 	key, authority, intent := deliveryWorld(t)
 	intent["audience"] = app.server.URL
-	result := signedReceipt(t, key, "human-role.revoke", "h:example.com", app.server.URL, intent["subject"].(map[string]any), signedAt)
 	const id = "33333333-3333-4333-8333-333333333333"
 	body, _ := json.Marshal(intent)
 	if err := awconfig.SavePendingGovernanceOperation(&awconfig.PendingGovernanceOperation{
@@ -212,8 +213,48 @@ func settleWorld(t *testing.T, app *ownerActApp, signedAt time.Time) (map[string
 	}); err != nil {
 		t.Fatal(err)
 	}
+	act, err := newOwnerAct("human-role.revoke", "h:example.com", app.server.URL, key, intent["subject"].(map[string]any), signedAt)
+	if err != nil {
+		t.Fatal(err)
+	}
+	issued := signedAt.UTC().Truncate(time.Second)
+	act["expires_at"] = issued.Add(600 * time.Second).Format(time.RFC3339)
+	template := map[string]any{}
+	for k, v := range act {
+		if k != "issued_at" && k != "expires_at" {
+			template[k] = v
+		}
+	}
+	frozen := map[string]any{}
+	for k, v := range intent {
+		frozen[k] = v
+	}
+	frozen["operation_id"] = id
+	frozen["artifact"] = map[string]any{"v": 1, "type": "aweb.protected-artifact-intent", "template": template,
+		"delivery":        map[string]any{"audience": app.server.URL, "method": "POST", "path": ownerActDeliveryPath},
+		"issuance_window": map[string]any{"not_before": issued.Add(-time.Hour).Format(time.RFC3339), "not_after": issued.Add(23 * time.Hour).Format(time.RFC3339)}}
+	raw, _ := json.Marshal(frozen)
+	frozen, _ = handoff.DecodeObject(raw)
+	signing, signature, err := awid.SignOwnerAct(key, act)
+	if err != nil {
+		t.Fatal(err)
+	}
+	receipt := &handoff.Receipt{OperationID: id, State: "committed", Result: producerResult(signing, signature)}
+	serviceOwnedReceipt(t, receipt, id)
 	binding := &handoff.ProfileBinding{Scope: intent["scope"].(map[string]any), AuthorityKeyDID: authority}
-	return intent, binding, &handoff.Receipt{OperationID: id, State: "committed", Result: result}, id
+	return frozen, binding, receipt, id
+}
+
+// signOnly is receipt's act as a bare signed pair: signed, with no
+// confirmation that the app applied it.
+func signOnly(t *testing.T, receipt *handoff.Receipt) *handoff.Receipt {
+	t.Helper()
+	var result map[string]any
+	if err := json.Unmarshal(receipt.Result, &result); err != nil {
+		t.Fatal(err)
+	}
+	pair, _ := json.Marshal(result["artifact"])
+	return &handoff.Receipt{OperationID: receipt.OperationID, State: "committed", Result: pair}
 }
 
 func saved(t *testing.T, id string) bool {
@@ -232,53 +273,57 @@ func settleCommand() *cobra.Command {
 	return cmd
 }
 
-func TestADeliveredActForgetsItsSavedRequest(t *testing.T) {
+func TestAnAppliedActForgetsItsSavedRequestAndIsNeverPosted(t *testing.T) {
 	app := newOwnerActApp(t)
-	intent, binding, receipt, id := settleWorld(t, app, time.Now())
-	if err := settleProtectedAct(settleCommand(), id, intent, binding, receipt, nil); err != nil {
+	frozen, binding, receipt, id := settleWorld(t, app, time.Now())
+	if err := settleProtectedAct(settleCommand(), id, frozen, binding, receipt, nil); err != nil {
 		t.Fatal(err)
 	}
-	if len(app.posts) != 1 || app.effects != 1 || saved(t, id) {
-		t.Fatalf("posts %d effects %d saved %v", len(app.posts), app.effects, saved(t, id))
+	if len(app.posts) != 0 || saved(t, id) {
+		t.Fatalf("posts %d saved %v", len(app.posts), saved(t, id))
 	}
 }
 
-func TestAFailedDeliveryKeepsTheSavedRequest(t *testing.T) {
+func TestASignedActWithoutTheServicesApplicationIsNeverPostedAndKeepsItsRequest(t *testing.T) {
+	// The service delivers protected acts; a bare signed act is not proof the
+	// app applied it, and aw never sends it.
 	app := newOwnerActApp(t)
-	app.failWith = http.StatusServiceUnavailable
-	intent, binding, receipt, id := settleWorld(t, app, time.Now())
-	err := settleProtectedAct(settleCommand(), id, intent, binding, receipt, nil)
-	if err == nil || !strings.Contains(err.Error(), "resume") || app.effects != 0 || !saved(t, id) {
-		t.Fatalf("%v effects %d saved %v", err, app.effects, saved(t, id))
+	frozen, binding, receipt, id := settleWorld(t, app, time.Now())
+	for range 2 {
+		err := settleProtectedAct(settleCommand(), id, frozen, binding, signOnly(t, receipt), nil)
+		if errorCodeOf(err) != "application_unconfirmed" || len(app.posts) != 0 || !saved(t, id) {
+			t.Fatalf("%v posts %d saved %v", err, len(app.posts), saved(t, id))
+		}
 	}
 }
 
-func TestALostDeliveryAnswerIsResolvedByDeliveringTheSameActAgainOnce(t *testing.T) {
+func TestAnAppliedActThatIsNotTheApprovedIntentIsRefusedAndKeepsItsRequest(t *testing.T) {
 	app := newOwnerActApp(t)
-	app.dropAnswer = true
-	intent, binding, receipt, id := settleWorld(t, app, time.Now())
-	if err := settleProtectedAct(settleCommand(), id, intent, binding, receipt, nil); err == nil || !saved(t, id) {
-		t.Fatalf("a lost answer settled: %v saved %v", err, saved(t, id))
+	frozen, binding, receipt, id := settleWorld(t, app, time.Now())
+	for name, change := range map[string]func(map[string]any){
+		"another nonce": func(f map[string]any) {
+			f["artifact"].(map[string]any)["template"].(map[string]any)["nonce"] = strings.Repeat("0", 32)
+		},
+		"issued before its window": func(f map[string]any) {
+			f["artifact"].(map[string]any)["issuance_window"].(map[string]any)["not_before"] = time.Now().UTC().Add(time.Hour).Truncate(time.Second).Format(time.RFC3339)
+		},
+	} {
+		changed, _ := handoff.DecodeObject(func() []byte { raw, _ := json.Marshal(frozen); return raw }())
+		change(changed)
+		if err := settleProtectedAct(settleCommand(), id, changed, binding, receipt, nil); errorCodeOf(err) != "signed_act_invalid" || len(app.posts) != 0 || !saved(t, id) {
+			t.Errorf("%s: %v posts %d saved %v", name, err, len(app.posts), saved(t, id))
+		}
 	}
-	// Resume reads the same committed receipt and delivers the same act.
-	if err := settleProtectedAct(settleCommand(), id, intent, binding, receipt, nil); err != nil {
-		t.Fatalf("resume: %v", err)
-	}
-	if app.effects != 1 || len(app.posts) != 2 || !bytes.Equal(app.posts[0], app.posts[1]) || saved(t, id) {
-		t.Fatalf("effects %d posts %d same %v saved %v", app.effects, len(app.posts), len(app.posts) == 2 && bytes.Equal(app.posts[0], app.posts[1]), saved(t, id))
+	if err := settleProtectedAct(settleCommand(), id, nil, binding, receipt, nil); errorCodeOf(err) != "signed_act_invalid" || !saved(t, id) {
+		t.Errorf("never verified: %v saved %v", err, saved(t, id))
 	}
 }
 
-func TestAnInvalidOrExpiredSignedActIsNeverSent(t *testing.T) {
+func TestAnAppliedActSignedByAnotherKeyIsRefused(t *testing.T) {
 	app := newOwnerActApp(t)
-	intent, binding, receipt, id := settleWorld(t, app, time.Now().Add(-time.Hour))
-	err := settleProtectedAct(settleCommand(), id, intent, binding, receipt, nil)
-	if errorCodeOf(err) != "signed_act_invalid" || len(app.posts) != 0 || !saved(t, id) {
-		t.Fatalf("%v posts %d saved %v", err, len(app.posts), saved(t, id))
-	}
-	_, binding, receipt, id = settleWorld(t, app, time.Now())
+	frozen, binding, receipt, id := settleWorld(t, app, time.Now())
 	binding.AuthorityKeyDID = "did:key:z6MkhaXgBZDvotDkL5257faiztiGiC2QtKLGpbnnEGta2doK"
-	if err := settleProtectedAct(settleCommand(), id, intent, binding, receipt, nil); errorCodeOf(err) != "signed_act_invalid" || len(app.posts) != 0 {
+	if err := settleProtectedAct(settleCommand(), id, frozen, binding, receipt, nil); errorCodeOf(err) != "signed_act_invalid" || len(app.posts) != 0 || !saved(t, id) {
 		t.Fatalf("another authority key: %v posts %d", err, len(app.posts))
 	}
 }
@@ -292,15 +337,29 @@ func TestARefusedOperationIsForgottenAndNothingIsSent(t *testing.T) {
 	}
 }
 
-func TestAnAppsRefusalKeepsTheSavedRequestWithItsCode(t *testing.T) {
-	// owner_required is never success: the same signed act stays saved, and
-	// resuming it sends the identical bytes again without re-signing.
+// actDelivery is the owner-act route's body for receipt's signed act, as a
+// local owner act is delivered.
+func actDelivery(t *testing.T, receipt *handoff.Receipt) map[string]any {
+	t.Helper()
+	var result struct {
+		Artifact struct{ Signing, Signature string }
+	}
+	if err := json.Unmarshal(receipt.Result, &result); err != nil {
+		t.Fatal(err)
+	}
+	signing, _ := base64.StdEncoding.DecodeString(result.Artifact.Signing)
+	raw, _ := base64.StdEncoding.DecodeString(result.Artifact.Signature)
+	return humanRoleActRequest{Act: "human-role.revoke"}.deliveryBody(signing, base64.RawStdEncoding.EncodeToString(raw))
+}
+
+func TestAnAppsRefusalOfADeliveredActCarriesItsCode(t *testing.T) {
+	// owner_required is never success, however often the same act is sent.
 	app := newOwnerActApp(t)
 	app.failWith, app.failCode = http.StatusForbidden, "owner_required"
-	intent, binding, receipt, id := settleWorld(t, app, time.Now())
+	_, _, receipt, _ := settleWorld(t, app, time.Now())
 	for range 2 {
-		if err := settleProtectedAct(settleCommand(), id, intent, binding, receipt, nil); errorCodeOf(err) != "owner_required" || !saved(t, id) {
-			t.Fatalf("%v saved %v", err, saved(t, id))
+		if _, err := deliverOwnerAct(settleCommand(), app.server.URL, actDelivery(t, receipt)); errorCodeOf(err) != "owner_required" {
+			t.Fatalf("%v", err)
 		}
 	}
 	if len(app.posts) != 2 || !bytes.Equal(app.posts[0], app.posts[1]) || app.effects != 0 {
@@ -308,18 +367,27 @@ func TestAnAppsRefusalKeepsTheSavedRequestWithItsCode(t *testing.T) {
 	}
 }
 
-func TestOnlyAConflictSayingAppliedEarlierSettlesAnOperation(t *testing.T) {
+func TestOnlyAConflictSayingAppliedEarlierMeansTheActTookEffect(t *testing.T) {
 	// applied_earlier means the act took effect only as the receiver's 409.
 	// The same words in any other answer, such as an ingress error page or a
-	// redirect, leave the act unapplied: its request is kept, with the code.
+	// redirect, are that answer's refusal, with the code.
 	for _, status := range []int{http.StatusForbidden, http.StatusServiceUnavailable, http.StatusFound, http.StatusBadRequest} {
 		app := newOwnerActApp(t)
 		app.failWith, app.failCode = status, "applied_earlier"
-		intent, binding, receipt, id := settleWorld(t, app, time.Now())
-		err := settleProtectedAct(settleCommand(), id, intent, binding, receipt, nil)
-		if err == nil || errorCodeOf(err) != "applied_earlier" || !saved(t, id) || app.effects != 0 {
-			t.Errorf("%d: err %v saved %v effects %d", status, err, saved(t, id), app.effects)
+		_, _, receipt, _ := settleWorld(t, app, time.Now())
+		_, err := deliverOwnerAct(settleCommand(), app.server.URL, actDelivery(t, receipt))
+		if err == nil || errors.Is(err, errOwnerActAppliedEarlier) || app.effects != 0 {
+			t.Errorf("%d: err %v effects %d", status, err, app.effects)
 		}
+	}
+	app := newOwnerActApp(t)
+	_, _, receipt, _ := settleWorld(t, app, time.Now())
+	body := actDelivery(t, receipt)
+	if _, err := deliverOwnerAct(settleCommand(), app.server.URL, body); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := deliverOwnerAct(settleCommand(), app.server.URL, body); !errors.Is(err, errOwnerActAppliedEarlier) || app.effects != 1 {
+		t.Fatalf("the receiver's 409: %v effects %d", err, app.effects)
 	}
 }
 
@@ -342,7 +410,6 @@ func serviceOwnedReceipt(t *testing.T, receipt *handoff.Receipt, id string) {
 func TestServiceOwnedAppliedReceiptAfterExpiryNeverPostsAgain(t *testing.T) {
 	app := newOwnerActApp(t)
 	intent, binding, receipt, id := settleWorld(t, app, time.Now().Add(-time.Hour))
-	serviceOwnedReceipt(t, receipt, id)
 	if err := settleProtectedAct(settleCommand(), id, intent, binding, receipt, nil); err != nil {
 		t.Fatal(err)
 	}
@@ -356,7 +423,6 @@ func TestServiceOwnedReceiptRejectsUnknownModeOrReferenceWithoutLegacyFallback(t
 		t.Run(dimension, func(t *testing.T) {
 			app := newOwnerActApp(t)
 			intent, binding, receipt, id := settleWorld(t, app, time.Now())
-			serviceOwnedReceipt(t, receipt, id)
 			var result map[string]any
 			_ = json.Unmarshal(receipt.Result, &result)
 			delivery := result["delivery"].(map[string]any)
@@ -383,5 +449,23 @@ func TestServiceOwnedReceiptRejectsUnknownModeOrReferenceWithoutLegacyFallback(t
 				t.Fatal("invalid service result posted or forgot original request")
 			}
 		})
+	}
+}
+
+func TestAnOwnerActIsShownOnlyWhenItsIntentNamesThePinnedTeamKey(t *testing.T) {
+	app := newOwnerActApp(t)
+	frozen, binding, _, _ := settleWorld(t, app, time.Now())
+	var kept map[string]any
+	if err := ownerActCheck(binding.AuthorityKeyDID, &kept)(context.Background(), frozen); err != nil || kept == nil {
+		t.Fatalf("err %v kept %v", err, kept)
+	}
+	kept = nil
+	if err := ownerActCheck("did:key:z6MkhaXgBZDvotDkL5257faiztiGiC2QtKLGpbnnEGta2doK", &kept)(context.Background(), frozen); errorCodeOf(err) != "operation_mismatch" || kept != nil {
+		t.Fatalf("another team key: err %v kept %v", err, kept)
+	}
+	old, _ := handoff.DecodeObject(func() []byte { raw, _ := json.Marshal(frozen); return raw }())
+	delete(old, "approval_format")
+	if err := ownerActCheck(binding.AuthorityKeyDID, &kept)(context.Background(), old); err == nil || kept != nil {
+		t.Fatalf("no intent format: err %v kept %v", err, kept)
 	}
 }

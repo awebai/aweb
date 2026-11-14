@@ -2,7 +2,6 @@ package main
 
 import (
 	"bytes"
-	"cmp"
 	"context"
 	"crypto/ed25519"
 	"encoding/base64"
@@ -91,7 +90,7 @@ func protectedBinding(profile *handoff.Profile, teamID, approver string) (*hando
 
 // protectedRoleIntent is the act aw asks the service to prepare.
 func protectedRoleIntent(act string, scope map[string]any, audience string, subject map[string]any) map[string]any {
-	return map[string]any{"operation": act, "variant": "default", "scope": scope, "audience": audience, "subject": subject}
+	return map[string]any{"operation": act, "variant": "default", "approval_format": "intent_v1", "scope": scope, "audience": audience, "subject": subject}
 }
 
 // protectedRequesterSigner sends requests to the profile's request origin as
@@ -137,8 +136,10 @@ func governanceOptions(cmd *cobra.Command, profile *handoff.Profile, scope map[s
 				OperationID: operationID, RequestOrigin: profile.RequestOrigin, HumanOrigin: profile.HumanOrigin, Body: body,
 			})
 		},
-		// The saved request is removed by settleProtectedAct, not on a
-		// committed receipt: a signed act not yet delivered stays resumable.
+		// The saved request is removed by the command once its committed
+		// result verifies, not on any committed receipt: a result not yet
+		// verified, or an act whose application is not confirmed, stays
+		// resumable.
 	}
 }
 
@@ -164,9 +165,11 @@ func runProtectedHumanRoleAct(cmd *cobra.Command, act, teamID string, audience s
 	fmt.Fprintf(cmd.ErrOrStderr(), "%s for %s on %s, approved by %s through %s\n", act, subject["principal"], subject["app_id"], appApproverFlag, profile.ServiceID)
 	ctx, cancel := context.WithCancel(cmd.Context())
 	defer cancel()
-	intent := protectedRoleIntent(act, binding.Scope, audience, subject)
-	receipt, err := handoff.Approve(ctx, governanceOptions(cmd, profile, binding.Scope, identity), operationID, intent)
-	return settleProtectedAct(cmd, operationID, intent, binding, receipt, err)
+	var frozen map[string]any
+	opts := governanceOptions(cmd, profile, binding.Scope, identity)
+	opts.CheckPrepared = ownerActCheck(binding.AuthorityKeyDID, &frozen)
+	receipt, err := handoff.Approve(ctx, opts, operationID, protectedRoleIntent(act, binding.Scope, audience, subject))
+	return settleProtectedAct(cmd, operationID, frozen, binding, receipt, err)
 }
 
 // pendingOperationFor is the saved operation operationID, if profile pins the
@@ -220,21 +223,40 @@ func runProtectedResume(cmd *cobra.Command, operationID string) error {
 	if err != nil {
 		return err
 	}
-	intent, _ := handoff.DecodeObject(saved.Body)
 	ctx, cancel := context.WithCancel(cmd.Context())
 	defer cancel()
-	receipt, err := handoff.Resume(ctx, governanceOptions(cmd, profile, scope, identity), saved.Body)
-	return settleProtectedAct(cmd, operationID, intent, binding, receipt, err)
+	var frozen map[string]any
+	opts := governanceOptions(cmd, profile, scope, identity)
+	opts.CheckPrepared = ownerActCheck(binding.AuthorityKeyDID, &frozen)
+	receipt, err := handoff.Resume(ctx, opts, saved.Body)
+	return settleProtectedAct(cmd, operationID, frozen, binding, receipt, err)
+}
+
+// ownerActCheck accepts a verified prepared owner act only when its intent's
+// template names the team key the profile pins. It keeps the frozen request
+// it accepted in kept.
+func ownerActCheck(teamKeyDID string, kept *map[string]any) func(context.Context, map[string]any) error {
+	return func(_ context.Context, request map[string]any) error {
+		template, err := handoff.IntentTemplate(request)
+		if err != nil {
+			return err
+		}
+		if template["team_key_did"] != teamKeyDID {
+			return withErrorCode("operation_mismatch", errors.New("the prepared act is signed by another team key than the profile pins"))
+		}
+		*kept = request
+		return nil
+	}
 }
 
 // settleProtectedAct ends a protected operation. A refused one is forgotten.
-// A committed one carries the act the service signed: aw checks it is exactly
-// the act it requested, under the authority key the profile pins, and
-// delivers it to the app's owner-act route. The saved request is forgotten
-// only once the app has applied the act, now or on an earlier delivery whose
-// answer was lost; otherwise the same signed act is resumed and delivered
-// again, never re-signed.
-func settleProtectedAct(cmd *cobra.Command, operationID string, intent map[string]any, binding *handoff.ProfileBinding, receipt *handoff.Receipt, err error) error {
+// A committed one is settled only by the service's applied receipt: the app
+// applied, with exact confirmation, the act the service issued under the
+// human's approval of frozen, the verified frozen intent, signed by the team
+// key the profile pins. aw never delivers a protected act itself; a signed
+// act without that confirmation, or one aw cannot verify, keeps the saved
+// request for aw app role resume to read again.
+func settleProtectedAct(cmd *cobra.Command, operationID string, frozen map[string]any, binding *handoff.ProfileBinding, receipt *handoff.Receipt, err error) error {
 	if receipt != nil && receipt.State == "refused" {
 		forgetProtectedOperation(cmd, operationID)
 	}
@@ -247,44 +269,23 @@ func settleProtectedAct(cmd *cobra.Command, operationID string, intent map[strin
 	if receipt == nil || receipt.State != "committed" {
 		return withErrorCode("signed_act_invalid", fmt.Errorf("operation %s has no committed result", operationID))
 	}
-	if result, ok := handoff.DecodeObject(receipt.Result); ok {
-		if _, versioned := result["v"]; versioned {
-			signed, err := appliedActFor(operationID, intent, binding.AuthorityKeyDID, receipt.Result, time.Now())
-			if err != nil {
-				return fmt.Errorf("operation %s: %w", operationID, err)
-			}
-			forgetProtectedOperation(cmd, operationID)
-			printOutput(map[string]any{"operation_id": operationID, "state": "committed", "result": json.RawMessage(receipt.Result), "applied": "service"},
-				func(any) string {
-					return fmt.Sprintf("Operation %s committed; %s was applied by the protected service.\n", operationID, signed.Act)
-				})
-			return nil
-		}
+	if result, ok := handoff.DecodeObject(receipt.Result); !ok || result["v"] == nil {
+		return withErrorCode("application_unconfirmed", fmt.Errorf(
+			"operation %s is signed, but the protected service has not confirmed the app applied it, and aw does not deliver protected acts; its request is kept, and aw app role resume %s reads its receipt again", operationID, operationID))
 	}
-	signed, err := signedActFor(intent, binding.AuthorityKeyDID, receipt.Result, time.Now())
+	signed, err := appliedActFor(operationID, frozen, binding.AuthorityKeyDID, receipt.Result, time.Now())
 	if err != nil {
 		return fmt.Errorf("operation %s: %w", operationID, err)
 	}
-	report := map[string]any{"operation_id": operationID, "state": receipt.State, "result": json.RawMessage(receipt.Result)}
-	applied, err := deliverOwnerAct(cmd, signed.Audience, humanRoleActRequest{Act: signed.Act}.deliveryBody(signed.Signing, signed.Signature))
-	switch {
-	case errors.Is(err, errOwnerActAppliedEarlier):
-		// The app found this exact act (by its signing hash) already applied:
-		// an earlier delivery took effect and its answer was lost.
-		report["applied"] = "earlier"
-	case err != nil:
-		return withErrorCode(cmp.Or(errorCodeOf(err), "owner_act_undelivered"), fmt.Errorf(
-			"operation %s is signed but the app did not apply it: %w; its request is kept, and aw app role resume %s --protected-profile <profile> delivers the same act again", operationID, err, operationID))
-	default:
-		report["applied"] = applied
+	act, _ := handoff.DecodeObject(bytes.TrimPrefix(signed.Signing, []byte(awid.OwnerActPrefix)))
+	if err := handoff.VerifyIssuedArtifact(frozen, act); err != nil {
+		return withErrorCode("signed_act_invalid", fmt.Errorf("operation %s: the applied act is not the act the human approved: %w", operationID, err))
 	}
 	forgetProtectedOperation(cmd, operationID)
-	printOutput(report, func(any) string {
-		if report["applied"] == "earlier" {
-			return fmt.Sprintf("Operation %s committed; %s had already taken effect.\n", operationID, signed.Act)
-		}
-		return fmt.Sprintf("Operation %s committed; %s for %s took effect at %s.\n", operationID, applied["act"], applied["principal"], applied["effective_at"])
-	})
+	printOutput(map[string]any{"operation_id": operationID, "state": "committed", "result": json.RawMessage(receipt.Result), "applied": "service"},
+		func(any) string {
+			return fmt.Sprintf("Operation %s committed; %s was applied by the protected service.\n", operationID, signed.Act)
+		})
 	return nil
 }
 
