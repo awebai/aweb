@@ -8,11 +8,11 @@ Hermes requirement: **v0.22.2 or newer (checked on v0.23.1)**. The checked
 upstream commits are `d923a5eb487a17c0a68801bba9ef0f56c81040a8` (v0.22.2)
 and `3b421578588243f920886e6fe79a6faa87ea026e` (v0.23.1). The earlier
 investigation used `38d55b90dab7b37d7f26f0450b61851463fb1329` on upstream main.
-See [build evidence](../../docs/evidence/hermes-plugin-build-2026-10-18.md) and
-[model/install evidence](../../docs/evidence/hermes-model-acceptance-2026-10-19.md)
+See [build evidence](https://github.com/awebai/aweb/blob/main/docs/evidence/hermes-plugin-build-2026-10-18.md) and
+[model/install evidence](https://github.com/awebai/aweb/blob/main/docs/evidence/hermes-model-acceptance-2026-10-19.md)
 for the separate transport, release and model checks. Telegram is untested.
-The code pin below has a non-author code-review ACK; this documentation/evidence
-delta still requires its own ACK before merging.
+Install from the standalone release channel; development remains in the aweb
+monorepo package.
 
 ## Install
 
@@ -46,18 +46,26 @@ aw --identity-home "$PWD/.aw" workspace status
 
 If this agent already owns a connected native aw workspace, use that folder
 and omit the join command; never copy another agent's `.aw` state. For the full
-team flow, see [add a Hermes agent](../../docs/add-ai-tool.md#hermes).
+team flow, see [add a Hermes agent](https://github.com/awebai/aweb/blob/main/docs/add-ai-tool.md#hermes).
 
 In that same agent folder, with your existing Hermes and selected `HERMES_HOME`:
 
 ```bash
 export AWEB_PLATFORM_ENABLED=true
-hermes plugins install awebai/aweb/packages/hermes-aweb-platform \
-  --ref df0b38022f1a27d22542776f4b93e8456c9e1ba9 --enable
+hermes plugins install awebai/hermes-aweb-platform --enable
 hermes plugins list
 hermes config set AWEB_PLATFORM_ENABLED true
 hermes config set AWEB_PLATFORM_WORKDIR "$PWD"
 hermes config set AWEB_IDENTITY_HOME "$PWD/.aw"
+```
+
+Keep the export before installation: it suppresses the required-environment
+prompt, including when pasting the block. In a terminal, install still prompts
+for optional plugin environment values. Press Enter to skip them; the
+`hermes config set` lines above set them next. To update an existing plugin:
+
+```bash
+hermes plugins update aweb-platform
 ```
 
 `hermes config set` writes these environment settings to `$HERMES_HOME/.env`.
@@ -169,7 +177,9 @@ is separate from this adapter's reply routing.
 
 ## Compatibility checks
 
-Run with the supported release checkout's dependency environment. The public
+For development, run these checks from the root of the
+[aweb source monorepo](https://github.com/awebai/aweb), using the supported
+Hermes checkout's dependency environment. The public
 surfaces used are platform registration, `handle_message`, processing-completion
 hooks, command/clarify helpers and `send_path_degraded`. These pinned private
 boundaries remain because a public final-turn/guard-release receipt is absent:
@@ -212,3 +222,13 @@ and exclusive receiver ownership. They run the actual gateway, aw and server.
 Fixture commands use Hermes's real clarify/approval primitives without a model;
 timing/fault probes hold or drop completed real CLI results, never fabricate
 messages or server events. These checks establish transport behavior only.
+
+## Releases
+
+The package in [the aweb monorepo](https://github.com/awebai/aweb/tree/main/packages/hermes-aweb-platform)
+is the source. After a plugin change lands there with review and a real-gateway
+probe, integrations mirrors that package and the repository LICENSE as one
+commit onto [the release channel](https://github.com/awebai/hermes-aweb-platform)
+main. A reviewer verifies tree identity at the exact source and mirror SHAs
+before the push. The mirror commit is tagged `vX.Y.Z` using the version in
+`plugin.yaml`. Nothing else lands in the release repository.

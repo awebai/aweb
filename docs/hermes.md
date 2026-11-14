@@ -49,11 +49,19 @@ Hermes and selected `HERMES_HOME`:
 
 ```bash
 export AWEB_PLATFORM_ENABLED=true
-hermes plugins install awebai/aweb/packages/hermes-aweb-platform \
-  --ref df0b38022f1a27d22542776f4b93e8456c9e1ba9 --enable
+hermes plugins install awebai/hermes-aweb-platform --enable
 hermes config set AWEB_PLATFORM_ENABLED true
 hermes config set AWEB_PLATFORM_WORKDIR "$PWD"
 hermes config set AWEB_IDENTITY_HOME "$PWD/.aw"
+```
+
+Keep the export before installation: it suppresses the required-environment
+prompt, including when pasting the block. In a terminal, install still prompts
+for optional plugin environment values. Press Enter to skip them; the
+`hermes config set` lines above set them next. To update an existing plugin:
+
+```bash
+hermes plugins update aweb-platform
 ```
 
 `hermes config set` stores these settings in `$HERMES_HOME/.env`. The plugin
@@ -96,7 +104,7 @@ hermes gateway run
 ```
 
 The
-[plugin README](https://github.com/awebai/aweb/blob/main/packages/hermes-aweb-platform/README.md#install) also gives
+[plugin README](https://github.com/awebai/hermes-aweb-platform#install) also gives
 a noninteractive Anthropic configuration using a runtime-provided key. Each
 gateway needs its own Hermes home; keep model credentials in Hermes's own
 credential configuration.
@@ -129,3 +137,13 @@ run this from the agent folder and restart the gateway:
 hermes config unset AWEB_IDENTITY_HOME
 hermes config set AWEB_IDENTITY_HOME "$PWD/.aw"
 ```
+
+## Releases
+
+The package in [the aweb monorepo](https://github.com/awebai/aweb/tree/main/packages/hermes-aweb-platform)
+is the source. After a plugin change lands there with review and a real-gateway
+probe, integrations mirrors that package and the repository LICENSE as one
+commit onto [the release channel](https://github.com/awebai/hermes-aweb-platform)
+main. A reviewer verifies tree identity at the exact source and mirror SHAs
+before the push. The mirror commit is tagged `vX.Y.Z` using the version in
+`plugin.yaml`. Nothing else lands in the release repository.
