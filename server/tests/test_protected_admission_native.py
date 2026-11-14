@@ -389,7 +389,8 @@ async def test_runnable_host_serves_both_private_authorities_and_the_same_three_
     manifest = tmp_path / "controller-keys.json"
     manifest.write_text(json.dumps({did(a.w.controller): str(settings.controller_key_file), did(a.w.human_key): str(human_key)}))
     settings.controller_keys_file = manifest
-    host = create_app(settings, mailer=CapturedMail(), registry_transport=a.w.host.transport)
+    mailer = CapturedMail()
+    host = create_app(settings, mailer=mailer, registry_transport=a.w.host.transport)
     async with host.api_app.router.lifespan_context(host.api_app):
         group = host.api_app.state.composition
         assert len(group.components) == 2
@@ -401,6 +402,12 @@ async def test_runnable_host_serves_both_private_authorities_and_the_same_three_
             response = await client.get(path, headers=headers(a, path=path, method="GET", label="protected_admission_policy_read"))
             assert response.status_code == 200 and response.json()["policy"] == a.policy
             await endorse(a)
+            # The composed host's approval notice for the revealable root
+            # endorsement, under its revealing frozen policy, names the
+            # definition's question in the body; the subject stays generic.
+            [notice] = [m for m in mailer.messages if "#k=" in m.text]
+            assert notice.subject == "A request is waiting for your approval"
+            assert "It asks: Approve " in notice.text and " as the root agent for " in notice.text
             operation = admit_operation(a)
             assert (await prepare(a, operation)).status_code == 200
             response = await execute(a, operation)

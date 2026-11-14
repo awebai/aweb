@@ -768,6 +768,17 @@ approval. The notice and the page show the operation's actual retained
 `expires_at`, never a nominal 24 hours. This is the narrow link-bound route,
 not a general anonymous human API.
 
+For an operation whose complete frozen request is classified revealable and
+whose frozen B2 policy permits link-based request reveal, the notice body may
+include the operation definition's rendered title from that frozen request.
+The subject remains generic. Otherwise the notice remains locator-only. The
+title may be exposed by mail-body previews and notifications; a generic
+subject does not prevent those previews. A later policy never widens an older
+notice. The title is rendered from the same frozen request and definition as
+the page, as plain text and HTML-escaped in the HTML body, never in a header;
+it supplies no approval and replaces neither the page's complete request,
+its fingerprint nor the exact-act UV.
+
 Governance prepare accepts an optional `redirect_uri` under the existing
 literal-loopback parser. Invalid input is HTTP 400 `redirect_uri_refused`.
 Freeze that callback; completion carries only `handoff_id` as a wake hint,

@@ -123,6 +123,13 @@ class IndependentProtectedSigner:
         # other embedding. No synthetic installation or reusable signer unlock.
         from aweb_naapp.runtime.approvals import PgApprovalStore
 
+        from .notifications import ProtectedNotifications
+
+        policies = BindingPolicy(self.authority, policy_version)
+        if isinstance(delivery, ProtectedNotifications):
+            # The notice may name a request only under this signer's own
+            # frozen B2 policy (human-assurance-contract.md, "Mailed approval links").
+            delivery = delivery.with_policies(policies)
         self.passkeys = Passkeys(
             db,
             rp=RelyingParty(human_origin, "Protected signing"),
@@ -136,7 +143,7 @@ class IndependentProtectedSigner:
         self.signer = ProtectedSigner(
             db,
             passkeys=self.passkeys,
-            policies=BindingPolicy(self.authority, policy_version),
+            policies=policies,
             delivery=delivery,
             audit=self.audit,
             authority=self.authority,
