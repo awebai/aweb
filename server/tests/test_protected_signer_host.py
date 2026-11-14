@@ -239,9 +239,9 @@ async def test_notification_adapter_reuses_b3_and_b2_mail_boundary(mail_fails):
         mail.send = refused
 
     class Lookup:
-        async def fetch_value(self, sql, approval_id):
+        async def fetch_one(self, sql, approval_id):
             assert approval_id == "approval-id"
-            return "00000000-0000-0000-0000-000000000001"
+            return {"handoff_id": "00000000-0000-0000-0000-000000000001", "request": "{}"}
 
     delivery = ProtectedNotifications(
         db=Lookup(), mailer=mail, human_origin="https://human.customer.example"
@@ -255,7 +255,8 @@ async def test_notification_adapter_reuses_b3_and_b2_mail_boundary(mail_fails):
     assert (
         await delivery.deliver_approval_link(
             approver, "candidate-secret",
-            SimpleNamespace(approval_id="approval-id", expires_at=expires),
+            SimpleNamespace(approval_id="approval-id", expires_at=expires, policy_ref="aweb.human-assurance/1",
+                policy_version=1),
         )
         == expected
     )
@@ -291,3 +292,75 @@ def test_current_host_composition_calls_the_installed_production_custody_port_wi
         human_origin="https://human.example", request_origin="https://request.example", delivery=object())
     assert component.signer.custody is custody
     assert custody._effect_clients == {registry.registry_url: registry._http_client}
+
+
+def revoke_request(principal="did:aw:holder"):
+    return {"operation": "human-role.revoke", "variant": "default", "requester": "did:aw:requester",
+        "scope": {"authority": {"id": "eng:customer.example"}},
+        "subject": {"app_id": "app", "installation_id": "i", "role": "app.owner", "principal": principal}}
+
+
+def admit_request():
+    return {"operation": "team.agent.admit", "variant": "default", "requester": "did:aw:root",
+        "subject": {"member_alias": "build-1", "team_id": "eng:customer.example"}}
+
+
+class FrozenPolicy:
+    def __init__(self, *, version=1, reveals=True):
+        self.version, self.reveals = version, reveals
+
+    async def current(self, policy_ref, *, tx=None):
+        assert policy_ref == "aweb.human-assurance/1"
+        return SimpleNamespace(version=self.version, reveals_request_on_link=lambda: self.reveals)
+
+
+async def notice_for(request, policies):
+    import json
+
+    mail = CapturedMail()
+
+    class Lookup:
+        async def fetch_one(self, sql, approval_id):
+            return {"handoff_id": "00000000-0000-0000-0000-000000000001", "request": json.dumps(request)}
+
+    delivery = ProtectedNotifications(db=Lookup(), mailer=mail, human_origin="https://human.customer.example",
+        policies=policies)
+    expires = datetime(2026, 11, 14, 9, 30, tzinfo=UTC)
+    status = await delivery.deliver_approval_link(SimpleNamespace(contact="fixture@example.test"), "candidate-secret",
+        SimpleNamespace(approval_id="approval-id", expires_at=expires, policy_ref="aweb.human-assurance/1",
+            policy_version=1))
+    assert status == DeliveryStatus.DELIVERED
+    [notice] = mail.messages
+    # Whatever the body says, the subject stays generic and the actual
+    # expiry and the Deny wording stay.
+    assert notice.subject == "A request is waiting for your approval"
+    assert "2026-11-14 09:30 UTC" in notice.text and "Deny also asks for your passkey" in notice.text
+    return notice
+
+
+@pytest.mark.asyncio
+async def test_a_revealable_request_under_a_revealing_frozen_policy_names_its_question_in_the_body():
+    notice = await notice_for(revoke_request(), FrozenPolicy())
+    assert "Remove did:aw:holder as app.owner of app?" in notice.text
+    assert "Remove did:aw:holder as app.owner of app?" in notice.html
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("request_, policies", [
+    (revoke_request(), FrozenPolicy(reveals=False)),
+    (admit_request(), FrozenPolicy()),
+    (revoke_request(), FrozenPolicy(version=2)),
+    (revoke_request(), None),
+], ids=["policy-denies-reveal", "not-classified-revealable", "later-policy-version", "no-policy-source"])
+async def test_otherwise_the_notice_stays_locator_only(request_, policies):
+    notice = await notice_for(request_, policies)
+    assert "Remove" not in notice.text and "Admit" not in notice.text
+    assert "Remove" not in notice.html and "Admit" not in notice.html
+
+
+@pytest.mark.asyncio
+async def test_a_hostile_label_in_the_title_stays_text():
+    notice = await notice_for(revoke_request('<img src=x onerror="alert(1)">'), FrozenPolicy())
+    assert "<img" not in notice.html
+    assert "&lt;img src=x onerror=&quot;alert(1)&quot;&gt;" in notice.html
+    assert '<img src=x onerror="alert(1)">' in notice.text

@@ -35,6 +35,16 @@ def generated():
                 f'expiry: {json.dumps(issuance["expiry_field"] or "")}, lifetime: {issuance["lifetime_seconds"] or 0}, '
                 f'route: {json.dumps(issuance["fixed_route"] or "")}, routeField: {json.dumps(issuance["route_field"] or "")}}}')
         lines.append(f'{json.dumps(selector)}: {{added: []string{{{added}}}, check: {verifier}, bindings: []string{{{paths}}}{issued}}},')
+    lines.extend(["}", "", "var generatedDisplays = map[string]operationDisplay{"])
+    for row in description["operations"]:
+        display = row["display"]
+        rows = lambda pairs: ", ".join(  # noqa: E731
+            "{" + json.dumps(key) + ", " + json.dumps(source) + "}" for key, source in pairs.items())
+        consequences = ", ".join(json.dumps(line) for line in display["consequences"])
+        refusals = ", ".join(json.dumps(code) + ": " + json.dumps(text) for code, text in display["refusals"].items())
+        lines.append(f'{json.dumps(row["operation"] + "|" + row["variant"])}: {{title: {json.dumps(display["title"])}, '
+            f'consequences: []string{{{consequences}}}, names: []displayRow{{{rows(display["names"])}}}, '
+            f'technical: []displayRow{{{rows(display["technical"])}}}, refusals: map[string]string{{{refusals}}}}},')
     lines.extend(["}", ""])
     # Generated constant is shared with CLI callers of the root codec. Its one
     # authored value lives in the root definition's display metadata.

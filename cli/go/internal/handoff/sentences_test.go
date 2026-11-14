@@ -54,6 +54,7 @@ func TestAnUnknownCodeStillReadsAsASentenceAndNamesTheCode(t *testing.T) {
 }
 
 func TestTheAdmissionLimitSaysWhichLimitAndWhatToDoNow(t *testing.T) {
+	inZone(t, time.UTC)
 	full := Sentence("admission_limit_reached", Facts{Team: "engineering:customer.example",
 		Admission: &AdmissionCounts{Active: 5, MaxActive: 5, InWindow: 2, MaxPerWindow: 10}})
 	for _, want := range []string{"5 of 5", "engineering:customer.example", "aw id team remove-agent"} {
@@ -79,6 +80,7 @@ func TestTheAdmissionLimitSaysWhichLimitAndWhatToDoNow(t *testing.T) {
 }
 
 func TestAnExpiryAndARetrySayWhen(t *testing.T) {
+	inZone(t, time.UTC)
 	at := time.Date(2026, 11, 13, 14, 12, 0, 0, time.UTC)
 	if text := Sentence("operation_expired", Facts{ExpiresAt: at}); !strings.Contains(text, "14:12 UTC") {
 		t.Errorf("%q", text)
@@ -119,6 +121,7 @@ func TestAServiceRefusalErrsWithItsSentence(t *testing.T) {
 }
 
 func TestAHintedRefusalSaysWhenToTryAgain(t *testing.T) {
+	inZone(t, time.UTC)
 	at := time.Date(2026, 11, 13, 14, 3, 20, 0, time.UTC)
 	defer func(saved func() time.Time) { now = saved }(now)
 	now = func() time.Time { return at.Add(-40 * time.Second) }
@@ -126,5 +129,28 @@ func TestAHintedRefusalSaysWhenToTryAgain(t *testing.T) {
 	err := hinted(refusal(429, []byte(`{"detail":"handoff_rate_limited"}`)), resp)
 	if ErrorCode(err) != "handoff_rate_limited" || !strings.Contains(err.Error(), "14:03:20 UTC") {
 		t.Fatalf("%q %q", ErrorCode(err), err.Error())
+	}
+}
+
+// inZone makes the reader's local zone loc for one test.
+func inZone(t *testing.T, loc *time.Location) {
+	t.Helper()
+	saved := time.Local
+	time.Local = loc
+	t.Cleanup(func() { time.Local = saved })
+}
+
+// aw tells times in the reader's own zone, named, as the page and the mail do.
+func TestTimesReadInTheReadersOwnZone(t *testing.T) {
+	inZone(t, time.FixedZone("EST", -5*3600))
+	at := time.Date(2026, 11, 13, 14, 12, 0, 0, time.UTC)
+	if text := Sentence("operation_expired", Facts{ExpiresAt: at}); !strings.Contains(text, "09:12 EST") || strings.Contains(text, "UTC") {
+		t.Errorf("expiry not in the reader's zone: %q", text)
+	}
+	if text := Sentence("signer_unavailable", Facts{RetryAt: at}); !strings.Contains(text, "09:12:00 EST") || strings.Contains(text, "UTC") {
+		t.Errorf("retry time not in the reader's zone: %q", text)
+	}
+	if got := ReaderTime(at, "2006-01-02 15:04"); got != "2026-11-13 09:12 EST" {
+		t.Errorf("ReaderTime = %q", got)
 	}
 }

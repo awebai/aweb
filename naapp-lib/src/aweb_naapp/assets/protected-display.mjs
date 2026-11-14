@@ -6,13 +6,34 @@ import { canonical } from "./canonical-json.mjs";
 const refused = () => { throw new Error("handoff_refused"); };
 const object = value => value !== null && typeof value === "object" && !Array.isArray(value);
 
-function read(request, pointer) {
+function teamName(teamId) {
+  if (typeof teamId !== "string" || teamId.split(":").length !== 2 || !teamId.split(":")[0]) refused();
+  return teamId.split(":")[0];
+}
+
+// A frozen target kind in the words the owner page uses.
+const kinds = {"agent": "agent", "kind not verified": "agent or person not confirmed"};
+
+// "|team" shows a team id ("name:domain") by its name, as the owner page does;
+// "|kind" names a frozen target kind. Any other value refuses.
+function formatted(value, formatter) {
+  if (formatter === "kind") {
+    if (typeof value !== "string" || !Object.hasOwn(kinds, value)) refused();
+    return kinds[value];
+  }
+  if (formatter !== "team") refused();
+  return Array.isArray(value) ? value.map(teamName) : teamName(value);
+}
+
+function read(request, source) {
+  const bar = source.indexOf("|");
+  const pointer = bar < 0 ? source : source.slice(0, bar);
   let value = request;
   for (const part of pointer.split("/").slice(1)) {
     if (!object(value) || !Object.hasOwn(value, part)) refused();
     value = value[part];
   }
-  return value;
+  return bar < 0 ? value : formatted(value, source.slice(bar + 1));
 }
 
 function words(value) {

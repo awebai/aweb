@@ -258,7 +258,7 @@ async def test_fresh_tab_logs_in_then_approves_the_frozen_act_with_two_real_uv_g
         )
         await expect(page.locator("#handoff-act")).to_have_text("human-role.revoke")
         await expect(page.locator("#handoff-title")).to_have_text(
-            f"Remove {s.world.operation.principal} from example.owner?"
+            f"Remove {s.world.operation.principal} as example.owner of example?"
         )
         await expect(page.locator("#handoff-technical")).to_contain_text(
             f"Principal{s.world.operation.principal}"

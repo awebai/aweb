@@ -143,7 +143,7 @@ async def test_genuine_b3_owner_act_reaches_protected_sql_consumer(world, tmp_pa
             async with w.db.transaction() as tx:
                 scope = (await w.app.authority.binding(tx))["b3_scope"]
             for offset in (timedelta(), timedelta(days=2)):
-                view = await owner_view(w.app, scope=scope, now=original_clock() + offset)
+                view = await owner_view(w.app, scope=scope, subject=w.human.subject, now=original_clock() + offset)
                 assert view["pending"] == []
                 assert [(item["operation_id"], item["state"]) for item in view["history"]] == [
                     (prepared.operation_id, "unresolved")]

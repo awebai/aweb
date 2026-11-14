@@ -89,6 +89,7 @@ dev = [
     "aweb-naapp",
     "pytest>=9.0.0",
     "pytest-asyncio>=1.2.0",
+    "playwright==1.63.0",
 ]
 
 [tool.pytest.ini_options]

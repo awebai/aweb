@@ -231,7 +231,8 @@ func prepareRetrying(ctx context.Context, opts GovernanceOptions, operationID st
 	return prepared, err
 }
 
-func approve(ctx context.Context, opts GovernanceOptions, operationID string, body map[string]any, raw []byte, wake *Loopback) (*Receipt, error) {
+func approve(ctx context.Context, opts GovernanceOptions, operationID string, body map[string]any, raw []byte, wake *Loopback) (receipt *Receipt, err error) {
+	defer func() { err = Retell(err, func(f *Facts) { f.Operation = selectorOf(body) }) }()
 	// One retry bound for preparing and for reconciling a lost answer.
 	until := now().Add(retryWithin(opts))
 	prepared, err := prepareRetrying(ctx, opts, operationID, body, raw, until)
@@ -247,14 +248,19 @@ func approve(ctx context.Context, opts GovernanceOptions, operationID string, bo
 	if err := checkPrepared(ctx, opts, prepared); err != nil {
 		return nil, err
 	}
+	question, err := preparedDisplay(prepared, body)
+	if err != nil {
+		return nil, err
+	}
 	page := opts.Human + "/handoff/" + url.PathEscape(prepared.HandoffID)
 	// The prepare answer says nothing about whether the service mails the
 	// approver, so aw claims nothing about it and always names the page, the
 	// public locator where the approver signs in (never a personal link). The
 	// fingerprint stays in sight; the full digest is in --json, and aw has
 	// verified it above (human-assurance-contract.md section 5).
+	fmt.Fprintf(opts.Notify, "Asking the approver: %s\n", question.Title)
 	fmt.Fprintf(opts.Notify, "Waiting for the approver; the request expires at %s. They approve on %s\n  details: operation %s · fingerprint %s\n",
-		prepared.ExpiresAt.UTC().Format("2006-01-02 15:04 UTC"), page, prepared.OperationID, Fingerprint(prepared.Digest))
+		ReaderTime(prepared.ExpiresAt, "2006-01-02 15:04"), page, prepared.OperationID, Fingerprint(prepared.Digest))
 	if opts.Open != nil {
 		if err := opts.Open(page); err != nil {
 			fmt.Fprintf(opts.Notify, "Could not open a browser (%v).\n", err)
@@ -278,6 +284,17 @@ func approve(ctx context.Context, opts GovernanceOptions, operationID string, bo
 		}()
 	}
 	return awaitReceipt(ctx, opts, operationID, prepared.ExpiresAt, woken)
+}
+
+// preparedDisplay is the definition's display of the verified frozen request,
+// the same words the approver's page shows.
+func preparedDisplay(prepared *Prepared, body map[string]any) (RenderedDisplay, error) {
+	payload, ok := decodeObject(prepared.Payload)
+	request, _ := payload["request"].(map[string]any)
+	if !ok || request == nil {
+		return RenderedDisplay{}, errDisplay()
+	}
+	return RenderDisplay(selectorOf(body), request)
 }
 
 // readOnce reads a presented operation's receipt once: pending stays
