@@ -53,6 +53,27 @@ def governance_browser_options():
     return {"args": [*args, "--no-proxy-server"]}
 
 
+def governance_routing_refusal(proxy, addresses):
+    """Why the driver's route.fetch cannot reach the RP host, or None.
+
+    ``addresses`` is what the driver's own lookup of the RP host returns; the
+    Chromium resolver map does not reach it."""
+    if proxy or "127.0.0.1" in addresses:
+        return None
+    return (
+        "signer.example.com does not resolve to 127.0.0.1 for Playwright's driver: run this "
+        "suite under the test egress guard (make test-naapp, or scripts/test-egress/native.py) "
+        "or in the isolated runner."
+    )
+
+
+def driver_addresses(host):
+    try:
+        return {info[4][0] for info in socket.getaddrinfo(host, None)}
+    except socket.gaierror:
+        return set()
+
+
 def test_governance_browser_selects_the_native_guard_for_browser_and_route_fetch(monkeypatch):
     monkeypatch.setenv("HTTPS_PROXY", "http://127.0.0.1:43210")
     options = governance_browser_options()
@@ -60,6 +81,17 @@ def test_governance_browser_selects_the_native_guard_for_browser_and_route_fetch
     assert "signer.example.com" not in options["proxy"]["bypass"]
     assert "--no-proxy-server" not in options["args"]
     assert "--host-resolver-rules=MAP signer.example.com 127.0.0.1" in options["args"]
+
+
+def test_governance_routing_needs_the_guard_or_an_exact_hosts_entry():
+    # The native guard's proxy forwards the RP host for both request paths.
+    assert governance_routing_refusal("http://127.0.0.1:43210", set()) is None
+    # The isolated runner's exact hosts entry answers the driver's lookup.
+    assert governance_routing_refusal(None, {"127.0.0.1"}) is None
+    # Neither: say how to run it, before any request fails on DNS.
+    for addresses in (set(), {"93.184.215.14"}):
+        refusal = governance_routing_refusal(None, addresses)
+        assert "make test-naapp" in refusal and "scripts/test-egress/native.py" in refusal
 
 
 def test_governance_browser_keeps_direct_routing_inside_the_isolated_runner(monkeypatch):
@@ -80,6 +112,9 @@ async def governance_service(world, tmp_path, request):
 async def governance_server(world, tmp_path, *, redirect=True, signer=None):
     """The human origin over real TLS in Chromium, for ``signer`` (by default
     the world's own) with one prepared operation."""
+    proxy = os.environ.get("HTTPS_PROXY")
+    if refusal := governance_routing_refusal(proxy, set() if proxy else driver_addresses("signer.example.com")):
+        pytest.fail(refusal, pytrace=False)
     w = world
     signer = w.signer if signer is None else signer
     w.clock.now = datetime.now(UTC)
