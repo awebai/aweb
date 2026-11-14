@@ -8,9 +8,13 @@ from awid.id_certificates import verify_id_chain
 from awid.registry import CachedRegistryClient
 
 
+def outsider_client(redis):
+    return CachedRegistryClient("https://api.awid.ai", redis)
+
+
 async def main():
     redis = Redis.from_url("redis://redis-b:6379/9")
-    client = CachedRegistryClient("https://api.awid.ai", redis)
+    client = outsider_client(redis)
     try:
         for case in json.load(sys.stdin):
             subject = {"id": case["ID"], "did_key": case["DIDKey"]}
@@ -31,4 +35,5 @@ async def main():
         await redis.aclose()
 
 
-asyncio.run(main())
+if __name__ == "__main__":
+    asyncio.run(main())
