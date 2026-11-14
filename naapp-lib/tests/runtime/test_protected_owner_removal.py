@@ -28,7 +28,8 @@ def test_owner_removal_has_a_closed_subject_live_floor_and_existing_wire():
     assert artifact["request"]["certificate_id"] == op.subject["certificate_id"]
     assert artifact["request"]["operation"] == "revoke_certificate"
     assert signing_bytes(op, artifact)
-    assert "{/target_kind}" in " ".join(op.spec.display.consequences)
+    assert dict(op.spec.display.names)["kind"] == "/target_kind|kind"
+    assert dict(op.spec.display.technical)["kind"] == "/target_kind"
 
 
 @pytest.mark.parametrize("changes", [{"root_id_or_self": "self"}, {"kind": "agent"}, {"owner_uv": True}])
