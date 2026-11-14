@@ -330,12 +330,13 @@ rate history. A pre-cutover or service certificate without an admission record
 can still be revoked; removal must not fabricate a quota record or charge.
 Original operation, authority-observation and UV deadlines never restart.
 
-#### Owner-initiated prepare (proposed extension; not implemented)
+#### Owner-initiated prepare (implementation qualification pending)
 
 Juan 2026-11-13, via coordinator `4d1c282e`: an owner must be able to start
 this removal from the owner page when no terminal or trustworthy root is
-available. This extension requires security text review before its route is
-built. Until that text is ACKed, the owner page lists all current memberships
+available. The route follows the separately ACKed security text; source, visible-page
+composition and native qualification remain separate receipts. Until the
+owner-page action is composed and qualified, it lists all current memberships
 with kind and recorded admission provenance, and offers no removal action.
 A missing signer admission record means "not recorded by this signer", not an
 assertion that the certificate came from a particular pre-cutover process.
@@ -843,7 +844,7 @@ approval. The notice and the page show the operation's actual retained
 `expires_at`, never a nominal 24 hours. This is the narrow link-bound route,
 not a general anonymous human API.
 
-### Frozen intent, execution-time issuance (required amendment; implementation pending)
+### Frozen intent, execution-time issuance (client composition and qualification pending)
 
 Juan 2026-11-13, via coordinator `d03f6a96` and `465f00d3`: a human approves
 the exact frozen intent, and the short-lived artifact is issued at execution

@@ -1,6 +1,6 @@
 {
   "schema_version": 1,
-  "status": "proposed amendment; owner-session prepare unimplemented; no write route until text ACK",
+  "status": "implementation source; policy scenarios, not native evidence; visible action and qualification pending",
   "approval": "Juan 2026-11-13 via coordinator4d1c282e",
   "base": "human-assurance-v1.json",
   "route": {

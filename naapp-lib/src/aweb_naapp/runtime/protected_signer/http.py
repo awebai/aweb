@@ -38,6 +38,7 @@ from .types import (
     AdmittedHuman,
     OperationReceipt,
     OwnerActOperation,
+    PreparedOperation,
     ProtectedKeyContext,
     ReceiptReader,
     RequestExpired,
@@ -194,12 +195,13 @@ class ProtectedOperationsHTTP:
         limiter: LoginLimiter,
         executor: Callable[[Request, str], Awaitable[RestrictedRequester]] | None = None,
         policy_reader: Callable[[Request, str], Awaitable[dict[str, Any]]] | None = None,
+        owner_prepare: Callable[[dict[str, Any], ConsoleSession], Awaitable[PreparedOperation]] | None = None,
         human_sessions: ConsoleSessions | None = None,
         human_csrf_key: str | None = None,
     ):
         require_canonical_server_origin(request_origin)
         self.signer, self.requester, self.reader, self.limiter = signer, requester, reader, limiter
-        self.policy_reader, self.executor = policy_reader, executor
+        self.policy_reader, self.executor, self.owner_prepare = policy_reader, executor, owner_prepare
         self.hosts = _origin_hosts(request_origin)
         if (human_sessions is None) != (human_csrf_key is None):
             raise ValueError("human sessions and CSRF storage key must be configured together")
@@ -324,7 +326,7 @@ class ProtectedOperationsHTTP:
         assert self.human_csrf_key is not None
         return {"b3_scope": retained["login_scope"], "csrf_key": self.human_csrf_key}
 
-    async def _human(self, handoff_id, request):
+    async def _console_session(self, request):
         if self.human_sessions is None:
             raise HTTPException(503, "human_admission_unavailable")
         await self.limiter.admit(request, "protected-human", bucket="protected.human.client")
@@ -341,6 +343,10 @@ class ProtectedOperationsHTTP:
         session = await self.human_sessions.current(request)
         if type(session) is not ConsoleSession:
             raise HTTPException(401, "console_session_required")
+        return session
+
+    async def _human(self, handoff_id, request):
+        session = await self._console_session(request)
         retained = await self.signer.lookup_handoff(handoff_id)
         if retained is None:
             raise SignerRefused("operation_not_found")
@@ -399,6 +405,21 @@ class ProtectedOperationsHTTP:
     def human_router(self) -> APIRouter:
         """Only governance JSON; console owns the existing HTML page and LOGIN."""
         router = APIRouter(route_class=ConsoleRoute)
+
+        @router.post("/governance/operations")
+        async def owner_prepare(request: Request):
+            try:
+                session = await self._console_session(request)
+                body = await self._human_body(request, {"operation_id", "operation", "variant", "team_id", "certificate_id"})
+                if self.owner_prepare is None:
+                    raise SignerRefused("operation_not_served")
+                prepared = await self.owner_prepare(body, session)
+                result = asdict(prepared)
+                frozen = prepared.payload
+                result["payload"] = {"policy": {"ref": frozen["policy_ref"], "version": frozen["policy_version"]}, "request": frozen}
+                return result
+            except Exception as error:
+                raise self._human_error(error) from None
 
         @router.get("/handoff/{handoff_id}/governance")
         async def state(handoff_id: str, request: Request):

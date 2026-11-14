@@ -253,9 +253,15 @@ class IndependentProtectedSigner:
             limiter=limiter,
             executor=self.authenticate_execute,
             policy_reader=self.read_admission_policy,
+            owner_prepare=self.prepare_owner_selection,
             human_sessions=human_sessions,
             human_csrf_key=human_csrf_key,
         )
+
+    async def prepare_owner_selection(self, selection, session):
+        from .owner_removal import prepare_owner_selection
+
+        return await prepare_owner_selection(self, selection, session)
 
     async def read_admission_policy(self, request, team_id):
         """Configuration only, under a named requester's current registered key.

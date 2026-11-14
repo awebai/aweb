@@ -391,6 +391,7 @@
       },
       "key_role": "team_controller",
       "operation": "team.agent.remove",
+      "owner_initiable": true,
       "prepared_fields": [
         "requester_key",
         "target_kind"

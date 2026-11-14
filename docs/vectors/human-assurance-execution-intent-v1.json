@@ -1,6 +1,6 @@
 {
   "schema_version": 1,
-  "status": "proposed amendment; intent_v1 unimplemented; not runtime evidence",
+  "status": "contract scenarios; server issuance source implemented; clients and qualification pending",
   "approval": "Juan 2026-11-13 via coordinator d03f6a96, 465f00d3; coordinated rollout cef58d92",
   "base": "human-assurance-v1.json",
   "approval_format": "intent_v1",

@@ -40,6 +40,7 @@ from .execution_intent import (
     prepare_artifact_intent,
     validate_issued_artifact,
 )
+from .owner_initiation import OwnerInitiation, _checked_owner_initiation
 from .retention import EffectConfirmation, RetainedEffect
 from .types import (
     AdmittedHuman,
@@ -287,6 +288,8 @@ class ProtectedSigner:
                     "operation": _json(row["request"])["operation"],
                     "operation_id": row["operation_id"],
                     "request_sha256": row["digest"],
+                    **({"initiator_subject": row["initiator_subject"], "initiator_scope": row["initiator_scope"]}
+                        if row.get("initiator_subject") is not None else {}),
                     **({"refusal_code": refusal} if refusal is not None else {}),
                     **(
                         {
@@ -302,7 +305,7 @@ class ProtectedSigner:
         )
 
     async def prepare(
-        self, operation: RevokeHumanRole | OwnerActOperation, *, requester: RestrictedRequester
+        self, operation: RevokeHumanRole | OwnerActOperation, *, requester: RestrictedRequester | OwnerInitiation
     ) -> PreparedOperation:
         typed = owner_act_operation(operation)
         provider = self._effect_provider(typed)
@@ -311,13 +314,26 @@ class ProtectedSigner:
         signing_port = typed.spec.signing_port
         if not callable(getattr(self.custody, signing_port, None)):
             raise SignerRefused("operation_not_served")
-        if type(requester) is not RestrictedRequester:
+        initiation = _checked_owner_initiation(requester, operation=typed)
+        if type(requester) is not RestrictedRequester and initiation is None:
             raise SignerRefused("operation_refused")
+        actor = initiation.human if initiation is not None else requester
+        human_session = initiation.session if initiation is not None else None
         if requester.context != operation.context or not requester.principal:
             raise SignerRefused("scope_refused")
         _checked_self_removal(requester, operation_id=operation.operation_id)
         intent = canonical_json_bytes(operation.intent())
         fence = await self.authority.observe(operation.context, purpose="prepare")
+        async def prepare_authority(tx):
+            await fence.prepare(tx, actor)
+            await self._hold_session(tx, actor, human_session)
+
+        async def check_authority(tx):
+            await self._check_session(tx, human_session)
+            await fence.check(tx, actor)
+            fence.require_fresh()
+            self._session_fresh(human_session)
+
         if typed.spec.effect.requires_service_delivery:
             capability = getattr(self.custody, "require_service_delivery", None)
             if not callable(capability):
@@ -330,16 +346,13 @@ class ProtectedSigner:
             # changed child/key/policy under an owned UUID for the wrong reason.
             async with self.db.transaction() as tx:
                 retained = await self._lock(tx, operation.operation_id)
-                await fence.prepare(tx, requester)
+                await prepare_authority(tx)
                 if retained is not None:
-                    if retained["requester"] != requester.principal:
-                        raise SignerRefused("scope_refused")
-                    if bytes(retained["intent"]) != intent:
-                        raise SignerRefused("operation_conflict")
-                    await fence.check(tx, requester)
+                    self._check_prepare_owner(retained, requester, intent=intent)
+                    await check_authority(tx)
                     fence.require_fresh()
                     return self._prepared(retained)
-                await fence.check(tx, requester)
+                await check_authority(tx)
                 fence.require_fresh()
         cap = _checked_self_removal(requester, operation=typed)
         if cap is not None and cap.read_only:
@@ -348,11 +361,10 @@ class ProtectedSigner:
         pending = None
         async with self.db.transaction() as tx:
             row = await self._lock(tx, operation.operation_id)
-            await fence.prepare(tx, requester)
+            await prepare_authority(tx)
             if row is not None:
-                if bytes(row["intent"]) != intent or row["requester"] != requester.principal:
-                    raise SignerRefused("operation_conflict")
-                await fence.check(tx, requester)
+                self._check_prepare_owner(row, requester, intent=intent)
+                await check_authority(tx)
                 fence.require_fresh()
                 return self._prepared(row)
             policy = await self.policies.current(POLICY_REF, tx=tx)
@@ -407,7 +419,8 @@ class ProtectedSigner:
             await tx.execute(
                 "INSERT INTO {{tables.protected_signer_operations}} "
                 "(operation_id,handoff_id,requester,intent,request,digest,approval_id,"
-                "candidate_links,expires_at) VALUES($1,$2,$3,$4,$5,$6,$7,$8::jsonb,$9)",
+                "candidate_links,expires_at,initiator_subject,initiator_scope,initiation_selection) "
+                "VALUES($1,$2,$3,$4,$5,$6,$7,$8::jsonb,$9,$10,$11,$12)",
                 operation.operation_id,
                 str(uuid.uuid4()),
                 requester.principal,
@@ -417,13 +430,16 @@ class ProtectedSigner:
                 approval_id,
                 json.dumps(links),
                 expires_at,
+                initiation.human.subject if initiation is not None else None,
+                initiation.human.b3_scope if initiation is not None else None,
+                initiation._selection if initiation is not None else None,
             )
             row = await self._lock(tx, operation.operation_id)
-            await self._emit(AuditKind.PROTECTED_OPERATION_PREPARED, tx, row, requester.principal)
+            await self._emit(AuditKind.PROTECTED_OPERATION_PREPARED, tx, row, actor.principal)
             if extra is not None:
                 await extra.check(tx, request)
                 extra.require_fresh()
-            await fence.check(tx, requester)
+            await check_authority(tx)
             fence.require_fresh()
             if extra is not None:
                 extra.require_fresh()
@@ -435,6 +451,43 @@ class ProtectedSigner:
             # Each approver's personal link goes to their own recorded contact.
             await self.approvals.deliver(pending)
         return prepared
+
+    def _check_prepare_owner(self, row, requester, *, intent=None):
+        initiation = _checked_owner_initiation(requester)
+        if initiation is None:
+            if row.get("initiator_subject") is not None or row["requester"] != requester.principal:
+                raise SignerRefused("scope_refused")
+            if intent is not None and bytes(row["intent"]) != intent:
+                raise SignerRefused("operation_conflict")
+            return
+        if (row.get("initiator_subject"), row.get("initiator_scope")) != (initiation.human.subject, initiation.human.b3_scope):
+            raise SignerRefused("scope_refused")
+        if row.get("initiation_selection") is None or bytes(row["initiation_selection"]) != initiation._selection:
+            raise SignerRefused("operation_conflict")
+        request = _json(row["request"])
+        if request["scope"] != initiation.context.fields():
+            raise SignerRefused("scope_refused")
+        _checked_owner_initiation(initiation, operation=self._operation(request))
+        # The saved intent wins an owned selection retry, including a race with
+        # the first prepare. A newly fetched snapshot cannot retarget its UUID.
+
+    async def owner_prepared(self, initiation):
+        """Authenticate an owner retry before the host refreshes any target."""
+        if _checked_owner_initiation(initiation) is None:
+            raise SignerRefused("scope_refused")
+        human, session = initiation.human, initiation.session
+        fence = await self.authority.observe(human.context, purpose="prepare")
+        async with self.db.transaction() as tx:
+            row = await self._lock(tx, initiation.operation_id)
+            await fence.prepare(tx, human)
+            await self._hold_session(tx, human, session)
+            if row is not None:
+                self._check_prepare_owner(row, initiation)
+            await self._check_session(tx, session)
+            await fence.check(tx, human)
+            fence.require_fresh()
+            self._session_fresh(session)
+            return self._prepared(row) if row is not None else None
 
     async def _authorized(self, operation_id, actor, purpose, *, human_session=None):
         fence = await self.authority.observe(actor.context, purpose=purpose)

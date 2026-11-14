@@ -15,10 +15,11 @@ class OperationEffect:
     cache_tolerates_unavailable: bool = False
     invalidates_membership: bool = False
     requires_service_delivery: bool = False
+    initiation_prepare: str | None = None
 
 
 LOCAL_SIGNATURE = OperationEffect(delivery_plan=owner_act_delivery, requires_service_delivery=True)
 ENDORSEMENT = OperationEffect("admission", signing_commit="record_endorsement")
 REGISTERED_MEMBERSHIP = OperationEffect("admission", confirmation_commit="confirm", delivery_plan=certificate_delivery, cache_tolerates_unavailable=True, invalidates_membership=True)
 REVOKED_MEMBERSHIP = OperationEffect("admission", confirmation_commit="confirm", delivery_plan=revocation_delivery, invalidates_membership=True)
-OWNER_REVOKED_MEMBERSHIP = OperationEffect("owner_removal", confirmation_commit="confirm", delivery_plan=revocation_delivery, invalidates_membership=True)
+OWNER_REVOKED_MEMBERSHIP = OperationEffect("owner_removal", initiation_prepare="prepare_selection", confirmation_commit="confirm", delivery_plan=revocation_delivery, invalidates_membership=True)

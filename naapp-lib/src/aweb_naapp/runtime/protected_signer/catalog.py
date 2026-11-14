@@ -47,6 +47,7 @@ class OperationDefinition:
     display: OperationDisplay
     binding_paths: tuple[tuple[str, str], ...] = ()
     consumer_available: bool = True
+    owner_initiable: bool = False
     # A whole frozen request is revealable only after its definition's fields
     # have been reviewed as public. A deployment policy cannot widen this.
     link_revealable: bool = False
@@ -148,7 +149,7 @@ _ROWS = (
             (("subject_ineligible", "Verified human memberships require human removal; unavailable kind evidence cannot authorize removal."),
              ("issuer_kind_forbidden", "Only the current owner's exact passkey approval authorizes this removal."))),
         prepared_fields=frozenset({"requester_key", "target_kind"}),
-        finalize_execution_refusal=True, receipt_uv_expiry=True, link_revealable=True,
+        finalize_execution_refusal=True, receipt_uv_expiry=True, link_revealable=True, owner_initiable=True,
         request_window=(("request", "timestamp"), 300),
     ),
     OperationDefinition(
@@ -341,6 +342,7 @@ def presentation_catalog() -> dict[str, dict]:
             "subject_schema": deepcopy(spec.codec.subject_schema),
             "presentation": spec.presentation(),
             **spec.issuance_fields(),
+            **({"owner_initiable": True} if spec.owner_initiable else {}),
             "display": spec.display.fields(),
             "responsibility_statement": spec.display.responsibility_statement,
         }
@@ -356,5 +358,6 @@ def operation_description():
          "subject_schema": deepcopy(spec.codec.subject_schema),
          "prepared_fields": sorted(spec.prepared_fields), "bindings": spec.bindings(),
          "display": spec.display.fields(), "responsibility_statement": spec.display.responsibility_statement,
-         "presentation": spec.presentation(), **spec.issuance_fields()}
+         "presentation": spec.presentation(), **spec.issuance_fields(),
+         **({"owner_initiable": True} if spec.owner_initiable else {})}
         for _, spec in sorted(OPERATIONS.items())]}
