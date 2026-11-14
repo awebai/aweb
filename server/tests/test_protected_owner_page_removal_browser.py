@@ -38,7 +38,7 @@ CSRF_KEY = "aweb.protected.console.csrf"
 
 
 @asynccontextmanager
-async def owner_origin(a, tmp_path):
+async def owner_origin(a, tmp_path, *, headless=True):
     """The team owner's human origin: owner page, approval page, owner-session
     route and passkey login, served over TLS."""
     from aweb.protected_signing.owner import owner_router
@@ -70,7 +70,7 @@ async def owner_origin(a, tmp_path):
                         raise RuntimeError("human origin stopped before startup")
                     await asyncio.sleep(0.01)
             async with async_playwright() as playwright:
-                browser = await playwright.chromium.launch(
+                browser = await playwright.chromium.launch(headless=headless,
                     args=[f"--host-resolver-rules=MAP {HOST} 127.0.0.1", "--no-proxy-server"])
                 try:
                     yield origin, browser
