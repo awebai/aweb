@@ -110,6 +110,7 @@ async def test_each_list_inspects_a_page_however_much_final_history_is_retained(
     for listing, query in LISTS.items():
         [row] = await a.w.db.fetch_all("EXPLAIN (ANALYZE, FORMAT JSON) " + query,
                                        scope, datetime.now(UTC), None, None, page + 1)
-        plan = json.loads(row[0])[0]["Plan"] if isinstance(row[0], str) else row[0][0]["Plan"]
+        explained = row["QUERY PLAN"]
+        plan = (json.loads(explained) if isinstance(explained, str) else explained)[0]["Plan"]
         # A page and its lookahead per branch, never the retained history.
         assert _inspected(plan) <= 4 * (page + 1), (listing, _inspected(plan), json.dumps(plan)[:2000])
