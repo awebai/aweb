@@ -45,9 +45,10 @@ func stableScope(scope any) any {
 }
 
 // unfinishedFor is every saved request at profile's service for intent's act
-// and target that aw would not continue as it is: in another approval format
-// or under another authority generation. It is sorted by operation id.
-func unfinishedFor(profile *handoff.Profile, intent map[string]any) ([]*awconfig.PendingGovernanceOperation, error) {
+// and target, as sameTarget compares their subjects, that aw would not
+// continue as it is: in another approval format or under another authority
+// generation. It is sorted by operation id.
+func unfinishedFor(profile *handoff.Profile, intent map[string]any, sameTarget func(saved, asked any) bool) ([]*awconfig.PendingGovernanceOperation, error) {
 	all, err := awconfig.ListPendingGovernanceOperations()
 	if err != nil {
 		return nil, err
@@ -57,7 +58,7 @@ func unfinishedFor(profile *handoff.Profile, intent map[string]any) ([]*awconfig
 		body, ok := handoff.DecodeObject(saved.Body)
 		if !ok || saved.RequestOrigin != profile.RequestOrigin || saved.HumanOrigin != profile.HumanOrigin ||
 			body["operation"] != intent["operation"] || body["variant"] != intent["variant"] || body["audience"] != intent["audience"] ||
-			!sameCanonical(body["subject"], intent["subject"]) || !sameCanonical(stableScope(body["scope"]), stableScope(intent["scope"])) {
+			!sameTarget(body["subject"], intent["subject"]) || !sameCanonical(stableScope(body["scope"]), stableScope(intent["scope"])) {
 			continue
 		}
 		if body["approval_format"] != intent["approval_format"] || !sameCanonical(body["scope"], intent["scope"]) {
@@ -71,7 +72,7 @@ func unfinishedFor(profile *handoff.Profile, intent map[string]any) ([]*awconfig
 }
 
 // guardUnfinished runs before a command sends intent. For each unfinished
-// request for the same act and target, it reads the receipt once through the
+// request for the same act and target (sameTarget compares subjects), it reads the receipt once through the
 // request's own binding (reader, false when the profile no longer has it).
 // A definite refusal retires that request, and a verified applied effect
 // settles it; either ends this run, settled carrying the applied report.
@@ -79,8 +80,8 @@ func unfinishedFor(profile *handoff.Profile, intent map[string]any) ([]*awconfig
 // stops the run unless replace names it: then the human has chosen a new,
 // separately approved request, and guardUnfinished returns nil, nil.
 func guardUnfinished(ctx context.Context, notify io.Writer, profile *handoff.Profile, reader func(scope map[string]any) (handoff.GovernanceOptions, bool),
-	intent map[string]any, replace string, committed committedReading) (settled map[string]any, err error) {
-	unfinished, err := unfinishedFor(profile, intent)
+	intent map[string]any, sameTarget func(saved, asked any) bool, replace string, committed committedReading) (settled map[string]any, err error) {
+	unfinished, err := unfinishedFor(profile, intent, sameTarget)
 	if err != nil {
 		return nil, err
 	}

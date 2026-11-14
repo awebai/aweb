@@ -469,3 +469,137 @@ func TestAnOwnerActIsShownOnlyWhenItsIntentNamesThePinnedTeamKey(t *testing.T) {
 		t.Fatalf("no intent format: err %v kept %v", err, kept)
 	}
 }
+
+// oldRoleSave is settleWorld's request as an older aw saved it: without the
+// intent format, under the binding's scope.
+func oldRoleSave(t *testing.T, frozen map[string]any, id string) (*awconfig.PendingGovernanceOperation, map[string]any) {
+	t.Helper()
+	body := map[string]any{}
+	for _, name := range []string{"operation", "variant", "scope", "audience", "subject"} {
+		body[name] = frozen[name]
+	}
+	body["operation_id"] = id
+	raw, _ := json.Marshal(body)
+	decoded, _ := handoff.DecodeObject(raw)
+	return &awconfig.PendingGovernanceOperation{OperationID: id, Body: raw}, decoded
+}
+
+func TestAnOldAppliedRoleActSettlesOnlyUnderItsOriginalPinnedKey(t *testing.T) {
+	app := newOwnerActApp(t)
+	frozen, binding, receipt, id := settleWorld(t, app, time.Now().Add(-time.Hour))
+	saved, body := oldRoleSave(t, frozen, id)
+	profile := &handoff.Profile{Bindings: []handoff.ProfileBinding{*binding}}
+	report, facts := roleActReading(profile, time.Now())(saved, body, receipt.Result)
+	if report == nil || facts != nil || report["operation_id"] != id || report["applied"] != "service" {
+		t.Fatalf("report %v facts %+v", report, facts)
+	}
+	changed := &handoff.Profile{Bindings: []handoff.ProfileBinding{{Scope: binding.Scope, AuthorityKeyDID: "did:key:z6MkhaXgBZDvotDkL5257faiztiGiC2QtKLGpbnnEGta2doK"}}}
+	if report, facts := roleActReading(changed, time.Now())(saved, body, receipt.Result); report != nil || facts == nil || facts.Verification != "unverifiable" {
+		t.Fatalf("a changed profile key verified history: report %v facts %+v", report, facts)
+	}
+	if report, facts := roleActReading(&handoff.Profile{}, time.Now())(saved, body, receipt.Result); report != nil || facts == nil {
+		t.Fatalf("no original binding verified history: report %v facts %+v", report, facts)
+	}
+}
+
+func TestAnOldSignedRoleActIsKeptWithItsBytesAndNeverSent(t *testing.T) {
+	app := newOwnerActApp(t)
+	frozen, binding, receipt, id := settleWorld(t, app, time.Now())
+	saved, body := oldRoleSave(t, frozen, id)
+	profile := &handoff.Profile{Bindings: []handoff.ProfileBinding{*binding}}
+	pair := signOnly(t, receipt).Result
+	report, facts := roleActReading(profile, time.Now())(saved, body, pair)
+	if report != nil || facts == nil || facts.State != "committed" || facts.Verification != "signature_verified" || len(facts.Signing) == 0 || len(facts.Signature) != 64 {
+		t.Fatalf("report %v facts %+v", report, facts)
+	}
+	if _, facts := roleActReading(profile, time.Now().Add(time.Hour))(saved, body, pair); facts == nil || facts.Verification != "expired" {
+		t.Fatalf("an act past its lifetime: %+v", facts)
+	}
+	other := &handoff.Profile{Bindings: []handoff.ProfileBinding{{Scope: binding.Scope, AuthorityKeyDID: "did:key:z6MkhaXgBZDvotDkL5257faiztiGiC2QtKLGpbnnEGta2doK"}}}
+	if _, facts := roleActReading(other, time.Now())(saved, body, pair); facts == nil || facts.Verification != "unverifiable" || len(facts.Signing) == 0 {
+		t.Fatalf("a signature under another key: %+v", facts)
+	}
+	if len(app.posts) != 0 {
+		t.Fatal("an old signed act was sent")
+	}
+}
+
+// roleService is a protected service that answers receipts as receipts names
+// them and counts every prepare it is sent.
+func roleService(t *testing.T) (*receiptService, func(map[string]any) (handoff.GovernanceOptions, bool)) {
+	t.Helper()
+	service := newReceiptService(t)
+	return service, func(scope map[string]any) (handoff.GovernanceOptions, bool) {
+		opts, _ := service.reader(scope)
+		return opts, true
+	}
+}
+
+func TestANewRoleActWaitsForAnUnfinishedOldOneForTheSameRole(t *testing.T) {
+	app := newOwnerActApp(t)
+	frozen, binding, _, id := settleWorld(t, app, time.Now())
+	service, optionsFor := roleService(t)
+	profile := &handoff.Profile{RequestOrigin: service.server.URL, HumanOrigin: service.server.URL, Bindings: []handoff.ProfileBinding{*binding}}
+	saved, _ := oldRoleSave(t, frozen, id)
+	saved.RequestOrigin, saved.HumanOrigin = profile.RequestOrigin, profile.HumanOrigin
+	if err := awconfig.SavePendingGovernanceOperation(saved); err != nil {
+		t.Fatal(err)
+	}
+	service.receipts[id] = `{"state":"pending","reason":"awaiting_human","expires_at":"2099-01-01T00:00:00Z"}`
+	subject := frozen["subject"].(map[string]any)
+	err := requestProtectedRoleAct(context.Background(), settleCommand(), profile, binding, optionsFor, "human-role.revoke", app.server.URL, subject, "")
+	if errorCodeOf(err) != "operation_reconciliation_required" || service.others != 0 || len(app.posts) != 0 {
+		t.Fatalf("err %v others %d posts %d", err, service.others, len(app.posts))
+	}
+	// --replace with a new --operation-id: only naming the earlier request
+	// lets a separately approved one be prepared.
+	_ = requestProtectedRoleAct(context.Background(), settleCommand(), profile, binding, optionsFor, "human-role.revoke", app.server.URL, subject, id)
+	if service.others != 1 || savedRecord(t, id) == nil {
+		t.Fatalf("replace: %d prepares, earlier record kept %v", service.others, savedRecord(t, id) != nil)
+	}
+}
+
+func TestResumingAnOldRoleActOnlyReadsItsReceipt(t *testing.T) {
+	app := newOwnerActApp(t)
+	frozen, binding, receipt, id := settleWorld(t, app, time.Now())
+	service, optionsFor := roleService(t)
+	profile := &handoff.Profile{RequestOrigin: service.server.URL, HumanOrigin: service.server.URL, Bindings: []handoff.ProfileBinding{*binding}}
+	saved, _ := oldRoleSave(t, frozen, id)
+	saved.RequestOrigin, saved.HumanOrigin = profile.RequestOrigin, profile.HumanOrigin
+	if err := awconfig.SavePendingGovernanceOperation(saved); err != nil {
+		t.Fatal(err)
+	}
+	pair, _ := json.Marshal(map[string]any{"state": "committed", "result": json.RawMessage(signOnly(t, receipt).Result)})
+	service.receipts[id] = string(pair)
+	err := resumeProtectedRoleAct(context.Background(), settleCommand(), profile, saved, optionsFor)
+	if errorCodeOf(err) != "operation_reconciliation_required" || service.reads != 1 || service.others != 0 || len(app.posts) != 0 {
+		t.Fatalf("err %v reads %d others %d posts %d", err, service.reads, service.others, len(app.posts))
+	}
+	if q := savedRecord(t, id).Quarantine; q == nil || q.Verification != "signature_verified" {
+		t.Fatalf("quarantine %+v", q)
+	}
+	applied, _ := json.Marshal(map[string]any{"state": "committed", "result": json.RawMessage(receipt.Result)})
+	service.receipts[id] = string(applied)
+	if err := resumeProtectedRoleAct(context.Background(), settleCommand(), profile, savedRecord(t, id), optionsFor); err != nil || savedRecord(t, id) != nil || service.others != 0 {
+		t.Fatalf("applied: err %v others %d", err, service.others)
+	}
+}
+
+func TestAQuarantinedRoleActIsNeverResumedEvenInTheCurrentFormat(t *testing.T) {
+	app := newOwnerActApp(t)
+	frozen, binding, _, id := settleWorld(t, app, time.Now())
+	service, optionsFor := roleService(t)
+	profile := &handoff.Profile{RequestOrigin: service.server.URL, HumanOrigin: service.server.URL, Bindings: []handoff.ProfileBinding{*binding}}
+	body := protectedRoleIntent("human-role.revoke", binding.Scope, app.server.URL, frozen["subject"].(map[string]any))
+	body["operation_id"] = id
+	raw, _ := json.Marshal(body)
+	saved := &awconfig.PendingGovernanceOperation{OperationID: id, RequestOrigin: profile.RequestOrigin, HumanOrigin: profile.HumanOrigin, Body: raw,
+		Quarantine: &awconfig.GovernanceQuarantine{State: "unread", Verification: "unread"}}
+	if err := awconfig.SavePendingGovernanceOperation(saved); err != nil {
+		t.Fatal(err)
+	}
+	err := resumeProtectedRoleAct(context.Background(), settleCommand(), profile, saved, optionsFor)
+	if errorCodeOf(err) != "operation_reconciliation_required" || service.reads != 1 || service.others != 0 {
+		t.Fatalf("err %v reads %d others %d", err, service.reads, service.others)
+	}
+}

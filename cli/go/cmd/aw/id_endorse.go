@@ -35,6 +35,7 @@ var (
 	idEndorseOperationFlag string
 	idEndorseNoWaitFlag    bool
 	idEndorseNoBrowserFlag bool
+	idEndorseReplaceFlag   string
 )
 
 var idEndorseCmd = &cobra.Command{
@@ -63,6 +64,7 @@ func init() {
 	flags.StringVar(&appProtectedProfileFlag, "protected-profile", "", "The operator-provisioned protected-service profile (default: AWEB_PROTECTED_PROFILE, else protected-profile.json in the identity home)")
 	flags.BoolVar(&idEndorseNoWaitFlag, "no-wait", false, "Exit without waiting for the approver; run the same command again to finish")
 	flags.BoolVar(&idEndorseNoBrowserFlag, "no-browser", false, "Do not open a browser; the page is only reported")
+	flags.StringVar(&idEndorseReplaceFlag, "replace", "", "The id of an earlier unfinished endorsement of this root, which stays kept, to ask for a separately approved one")
 	identityCmd.AddCommand(idEndorseCmd)
 }
 
@@ -367,6 +369,13 @@ func runIDEndorse(cmd *cobra.Command, _ []string) error {
 	if err != nil {
 		return err
 	}
+	// An earlier endorsement aw cannot continue is read and settled, or
+	// explicitly replaced, before a new one is asked for; its result can
+	// only be kept, never registered by this aw (endorsementReading).
+	if _, err := guardUnfinished(cmd.Context(), cmd.ErrOrStderr(), profile, requesterOptions(cmd, profile, identity), intent, sameCanonical,
+		strings.TrimSpace(idEndorseReplaceFlag), endorsementReading); err != nil {
+		return err
+	}
 	if err := announceOperationID(cmd, &request.OperationID, profile, intent); err != nil {
 		return err
 	}
@@ -446,4 +455,15 @@ func runIDEndorse(cmd *cobra.Command, _ []string) error {
 		return fmt.Sprintf("Operation %s committed; %s is endorsed by %s and registered as certificate %s.\n", request.OperationID, request.RootID, request.Human, certificateID)
 	})
 	return nil
+}
+
+// endorsementReading keeps an unfinished endorsement's committed receipt with
+// the signed bytes it carries: aw no longer holds the certificate that
+// request froze, so it can neither verify nor register it.
+func endorsementReading(_ *awconfig.PendingGovernanceOperation, _ map[string]any, result []byte) (map[string]any, *awconfig.GovernanceQuarantine) {
+	facts := &awconfig.GovernanceQuarantine{State: "committed", Verification: "unverifiable"}
+	if signing, signature, reason := signedResult(result); reason == "" {
+		facts.Signing, facts.Signature = signing, signature
+	}
+	return nil, facts
 }

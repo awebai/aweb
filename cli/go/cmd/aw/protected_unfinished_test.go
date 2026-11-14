@@ -118,7 +118,7 @@ func TestAnUnfinishedOldRequestStopsTheRunAndIsQuarantinedWithWhatWasRead(t *tes
 		service, profile, intent := unfinishedWorld(t)
 		saveUnfinished(t, profile, unfinishedOld, intent, oldFormat)
 		service.receipts[unfinishedOld] = answer
-		settled, err := guardUnfinished(context.Background(), io.Discard, profile, service.reader, intent, "", keepCommitted)
+		settled, err := guardUnfinished(context.Background(), io.Discard, profile, service.reader, intent, sameCanonical, "", keepCommitted)
 		if settled != nil || errorCodeOf(err) != "operation_reconciliation_required" || service.reads != 1 || service.others != 0 {
 			t.Fatalf("%q: settled %v err %v reads %d others %d", answer, settled, err, service.reads, service.others)
 		}
@@ -135,7 +135,7 @@ func TestADefiniteRefusalRetiresTheOldRequestAndStillStartsNothing(t *testing.T)
 	service, profile, intent := unfinishedWorld(t)
 	saveUnfinished(t, profile, unfinishedOld, intent, oldFormat)
 	service.receipts[unfinishedOld] = `{"state":"refused","code":"human_refused"}`
-	settled, err := guardUnfinished(context.Background(), io.Discard, profile, service.reader, intent, "", keepCommitted)
+	settled, err := guardUnfinished(context.Background(), io.Discard, profile, service.reader, intent, sameCanonical, "", keepCommitted)
 	if settled != nil || errorCodeOf(err) != "earlier_operation_refused" || service.others != 0 || savedRecord(t, unfinishedOld) != nil {
 		t.Fatalf("settled %v err %v others %d", settled, err, service.others)
 	}
@@ -148,7 +148,7 @@ func TestAVerifiedAppliedOldRequestSettlesAndEndsTheRun(t *testing.T) {
 	applied := func(saved *awconfig.PendingGovernanceOperation, _ map[string]any, _ []byte) (map[string]any, *awconfig.GovernanceQuarantine) {
 		return map[string]any{"operation_id": saved.OperationID, "state": "committed", "applied": "service"}, nil
 	}
-	settled, err := guardUnfinished(context.Background(), io.Discard, profile, service.reader, intent, "", applied)
+	settled, err := guardUnfinished(context.Background(), io.Discard, profile, service.reader, intent, sameCanonical, "", applied)
 	if err != nil || settled["operation_id"] != unfinishedOld || service.others != 0 || savedRecord(t, unfinishedOld) != nil {
 		t.Fatalf("settled %v err %v others %d", settled, err, service.others)
 	}
@@ -158,14 +158,14 @@ func TestQuarantinedEvidenceSurvivesALaterUnreadableReceipt(t *testing.T) {
 	service, profile, intent := unfinishedWorld(t)
 	saveUnfinished(t, profile, unfinishedOld, intent, oldFormat)
 	service.receipts[unfinishedOld] = `{"state":"committed","result":{"signing":"c2lnbmVk","signature":"c2ln"}}`
-	_, _ = guardUnfinished(context.Background(), io.Discard, profile, service.reader, intent, "", keepCommitted)
+	_, _ = guardUnfinished(context.Background(), io.Discard, profile, service.reader, intent, sameCanonical, "", keepCommitted)
 	first := savedRecord(t, unfinishedOld).Quarantine
 	if first == nil || first.State != "committed" || len(first.Signing) == 0 {
 		t.Fatalf("first observation %+v", first)
 	}
 	for _, later := range []string{"", "404"} {
 		service.receipts[unfinishedOld] = later
-		if _, err := guardUnfinished(context.Background(), io.Discard, profile, service.reader, intent, "", keepCommitted); errorCodeOf(err) != "operation_reconciliation_required" {
+		if _, err := guardUnfinished(context.Background(), io.Discard, profile, service.reader, intent, sameCanonical, "", keepCommitted); errorCodeOf(err) != "operation_reconciliation_required" {
 			t.Fatalf("%q: %v", later, err)
 		}
 		if kept := savedRecord(t, unfinishedOld).Quarantine; kept.State != "committed" || !bytes.Equal(kept.Signing, first.Signing) {
@@ -178,10 +178,10 @@ func TestReplacingAQuarantinedRequestNeedsItsOwnIDAndKeepsItsRecord(t *testing.T
 	service, profile, intent := unfinishedWorld(t)
 	saveUnfinished(t, profile, unfinishedOld, intent, oldFormat)
 	service.receipts[unfinishedOld] = `{"state":"pending","reason":"awaiting_human","expires_at":"2099-01-01T00:00:00Z"}`
-	if _, err := guardUnfinished(context.Background(), io.Discard, profile, service.reader, intent, "66666666-6666-4666-8666-666666666666", keepCommitted); !isUsageError(err) {
+	if _, err := guardUnfinished(context.Background(), io.Discard, profile, service.reader, intent, sameCanonical, "66666666-6666-4666-8666-666666666666", keepCommitted); !isUsageError(err) {
 		t.Fatalf("another id replaced it: %v", err)
 	}
-	settled, err := guardUnfinished(context.Background(), io.Discard, profile, service.reader, intent, unfinishedOld, keepCommitted)
+	settled, err := guardUnfinished(context.Background(), io.Discard, profile, service.reader, intent, sameCanonical, unfinishedOld, keepCommitted)
 	if settled != nil || err != nil || service.others != 0 {
 		t.Fatalf("replace: settled %v err %v others %d", settled, err, service.others)
 	}
@@ -190,7 +190,7 @@ func TestReplacingAQuarantinedRequestNeedsItsOwnIDAndKeepsItsRecord(t *testing.T
 	}
 	// With nothing unfinished for this request, --replace names nothing.
 	if _, err := guardUnfinished(context.Background(), io.Discard, &handoff.Profile{RequestOrigin: "https://other.example", HumanOrigin: "https://other.example"},
-		service.reader, intent, unfinishedOld, keepCommitted); !isUsageError(err) {
+		service.reader, intent, sameCanonical, unfinishedOld, keepCommitted); !isUsageError(err) {
 		t.Fatal("--replace named no unfinished request and was accepted")
 	}
 }
@@ -201,7 +201,7 @@ func TestAnUnfinishedRequestUnderAnotherAuthorityGenerationIsNotHidden(t *testin
 		body["scope"].(map[string]any)["generation"] = 1
 	})
 	service.receipts[unfinishedOld] = `{"state":"pending","reason":"awaiting_human","expires_at":"2099-01-01T00:00:00Z"}`
-	if _, err := guardUnfinished(context.Background(), io.Discard, profile, service.reader, intent, "", keepCommitted); errorCodeOf(err) != "operation_reconciliation_required" {
+	if _, err := guardUnfinished(context.Background(), io.Discard, profile, service.reader, intent, sameCanonical, "", keepCommitted); errorCodeOf(err) != "operation_reconciliation_required" {
 		t.Fatalf("generation change hid it: %v", err)
 	}
 }
@@ -219,14 +219,14 @@ func TestOnlyTheSameRequestAtTheSameServiceIsGuarded(t *testing.T) {
 	} {
 		service, profile, intent := unfinishedWorld(t)
 		saveUnfinished(t, profile, unfinishedOld, intent, change)
-		if settled, err := guardUnfinished(context.Background(), io.Discard, profile, service.reader, intent, "", keepCommitted); settled != nil || err != nil || service.reads != 0 {
+		if settled, err := guardUnfinished(context.Background(), io.Discard, profile, service.reader, intent, sameCanonical, "", keepCommitted); settled != nil || err != nil || service.reads != 0 {
 			t.Errorf("%s: settled %v err %v reads %d", name, settled, err, service.reads)
 		}
 	}
 	service, profile, intent := unfinishedWorld(t)
 	other := &handoff.Profile{RequestOrigin: "https://other-signer.example", HumanOrigin: "https://other-human.example"}
 	saveUnfinished(t, other, unfinishedOld, intent, oldFormat)
-	if settled, err := guardUnfinished(context.Background(), io.Discard, profile, service.reader, intent, "", keepCommitted); settled != nil || err != nil || service.reads != 0 {
+	if settled, err := guardUnfinished(context.Background(), io.Discard, profile, service.reader, intent, sameCanonical, "", keepCommitted); settled != nil || err != nil || service.reads != 0 {
 		t.Errorf("another service: settled %v err %v reads %d", settled, err, service.reads)
 	}
 }
@@ -235,7 +235,7 @@ func TestAnOldRequestWhoseBindingIsGoneIsQuarantinedUnread(t *testing.T) {
 	service, profile, intent := unfinishedWorld(t)
 	saveUnfinished(t, profile, unfinishedOld, intent, oldFormat)
 	gone := func(map[string]any) (handoff.GovernanceOptions, bool) { return handoff.GovernanceOptions{}, false }
-	_, err := guardUnfinished(context.Background(), io.Discard, profile, gone, intent, "", keepCommitted)
+	_, err := guardUnfinished(context.Background(), io.Discard, profile, gone, intent, sameCanonical, "", keepCommitted)
 	if errorCodeOf(err) != "operation_reconciliation_required" || service.reads != 0 {
 		t.Fatalf("err %v reads %d", err, service.reads)
 	}

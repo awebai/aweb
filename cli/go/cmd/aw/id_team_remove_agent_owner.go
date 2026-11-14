@@ -35,6 +35,13 @@ type ownerRemovalRequest struct {
 	CertificateID string
 	RequesterKey  string
 	List          func(ctx context.Context, team string) ([]awid.RegistryCertificate, error)
+	// Replace names an earlier unfinished removal of the same membership
+	// that aw cannot continue, which the human asks to replace.
+	Replace string
+	// Reader gives the options to read an earlier request's receipt under
+	// its own scope, and false when the profile no longer binds it. Without
+	// it, only the current binding's scope is read.
+	Reader func(scope map[string]any) (handoff.GovernanceOptions, bool)
 }
 
 // membershipSubject is the closed subject naming cert's exact membership.
@@ -88,6 +95,17 @@ func removeMemberAsOwner(ctx context.Context, opts handoff.GovernanceOptions, pr
 	binding, err := admissionBinding(profile, team)
 	if err != nil {
 		return nil, err
+	}
+	reader := request.Reader
+	if reader == nil {
+		reader = func(scope map[string]any) (handoff.GovernanceOptions, bool) {
+			return opts, sameCanonical(scope, binding.Scope)
+		}
+	}
+	target := ownerRemovalIntent(profile, binding, &awid.TeamCertificate{Team: team, CertificateID: certificateID})
+	settled, err := guardUnfinished(ctx, opts.Notify, profile, reader, target, sameRemovalTarget, request.Replace, keepUnverifiedRemoval)
+	if err != nil || settled != nil {
+		return settled, err
 	}
 	saved, err := savedOwnerRemovalFor(profile, binding, request.OperationID, team, certificateID, fileCert)
 	if err != nil {
@@ -339,6 +357,7 @@ func runTeamRemoveAgentAsOwner(cmd *cobra.Command) error {
 	request := ownerRemovalRequest{
 		OperationID: strings.TrimSpace(teamRemoveAgentOperationIDFlag), Certificate: strings.TrimSpace(teamRemoveAgentCertificateFlag),
 		Team: strings.TrimSpace(teamRemoveAgentTeamFlag), CertificateID: strings.TrimSpace(teamRemoveAgentCertificateIDFlag),
+		Replace: strings.TrimSpace(teamRemoveAgentReplaceFlag),
 	}
 	if err := ownerRemovalTargetFlags(request.Certificate, request.Team, request.CertificateID); err != nil {
 		return err
@@ -354,7 +373,7 @@ func runTeamRemoveAgentAsOwner(cmd *cobra.Command) error {
 	if identity.StableID == "" {
 		return usageError("only a registered requester (with a did:aw) can request a removal")
 	}
-	request.RequesterKey = identity.DIDKey
+	request.RequesterKey, request.Reader = identity.DIDKey, requesterOptions(cmd, profile, identity)
 	team := request.Team
 	if request.Certificate != "" {
 		cert, err := awid.LoadTeamCertificate(request.Certificate)
@@ -415,4 +434,22 @@ func targetKindText(kind any) string {
 		return "kind not verified"
 	}
 	return "a verified agent"
+}
+
+// sameRemovalTarget compares two removal subjects by team and certificate:
+// a removal's snapshot may be gone from the listing once it took effect.
+func sameRemovalTarget(saved, asked any) bool {
+	a, _ := saved.(map[string]any)
+	b, _ := asked.(map[string]any)
+	return a["team_id"] == b["team_id"] && a["certificate_id"] == b["certificate_id"]
+}
+
+// keepUnverifiedRemoval keeps an unfinished removal's committed receipt: aw
+// no longer holds the intent that request froze, so it cannot verify it.
+func keepUnverifiedRemoval(_ *awconfig.PendingGovernanceOperation, _ map[string]any, result []byte) (map[string]any, *awconfig.GovernanceQuarantine) {
+	facts := &awconfig.GovernanceQuarantine{State: "committed", Verification: "unverifiable"}
+	if signing, signature, reason := retainedSignedResult(result, nil); reason == "" {
+		facts.Signing, facts.Signature = signing, signature
+	}
+	return nil, facts
 }

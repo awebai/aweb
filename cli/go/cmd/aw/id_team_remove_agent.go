@@ -27,6 +27,7 @@ var (
 	teamRemoveAgentCertificateIDFlag string
 	teamRemoveAgentNoWaitFlag        bool
 	teamRemoveAgentNoBrowserFlag     bool
+	teamRemoveAgentReplaceFlag       string
 )
 
 var teamRemoveAgentCmd = &cobra.Command{
@@ -61,6 +62,7 @@ func init() {
 	flags.StringVar(&teamRemoveAgentCertificateIDFlag, "certificate-id", "", "With --owner-approved and --team: the certificate id, selected from the team's active listing")
 	flags.BoolVar(&teamRemoveAgentNoWaitFlag, "no-wait", false, "With --owner-approved: show the approval page and return; run the same command again to continue")
 	flags.BoolVar(&teamRemoveAgentNoBrowserFlag, "no-browser", false, "With --owner-approved: do not open a browser; the page is printed")
+	flags.StringVar(&teamRemoveAgentReplaceFlag, "replace", "", "With --owner-approved: the id of an earlier unfinished removal of this membership, which stays kept, to ask for a separately approved one")
 	flags.StringVar(&teamRemoveAgentOperationIDFlag, "operation-id", "", "The UUID for this removal; by default aw continues the same unfinished request or starts a new one")
 	flags.StringVar(&appProtectedProfileFlag, "protected-profile", "", "The operator-provisioned protected-service profile (default: AWEB_PROTECTED_PROFILE, else protected-profile.json in the identity home)")
 	teamCmd.AddCommand(teamRemoveAgentCmd)
@@ -158,8 +160,8 @@ func runTeamRemoveAgent(cmd *cobra.Command, _ []string) error {
 	if teamRemoveAgentOwnerApprovedFlag {
 		return runTeamRemoveAgentAsOwner(cmd)
 	}
-	if teamRemoveAgentTeamFlag != "" || teamRemoveAgentCertificateIDFlag != "" || teamRemoveAgentNoWaitFlag || teamRemoveAgentNoBrowserFlag {
-		return usageError("--team, --certificate-id, --no-wait and --no-browser apply only with --owner-approved")
+	if teamRemoveAgentTeamFlag != "" || teamRemoveAgentCertificateIDFlag != "" || teamRemoveAgentNoWaitFlag || teamRemoveAgentNoBrowserFlag || teamRemoveAgentReplaceFlag != "" {
+		return usageError("--team, --certificate-id, --no-wait, --no-browser and --replace apply only with --owner-approved")
 	}
 	request := removalRequest{
 		OperationID: strings.TrimSpace(teamRemoveAgentOperationIDFlag), Certificate: strings.TrimSpace(teamRemoveAgentCertificateFlag),

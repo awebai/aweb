@@ -632,3 +632,12 @@ func TestAnEndorsedRootInvitesAnAgentChildWithItsInstalledChain(t *testing.T) {
 		t.Fatalf("parent %v", invited["parent"])
 	}
 }
+
+func TestAnOldCommittedEndorsementIsKeptAndNeverRegistered(t *testing.T) {
+	_, humanKey, _ := ed25519.GenerateKey(nil)
+	result := signedEndorsement(t, humanKey, endorsedArtifact(awid.ComputeDIDKey(humanKey.Public().(ed25519.PublicKey))))
+	report, facts := endorsementReading(&awconfig.PendingGovernanceOperation{OperationID: endorseTestOperation}, nil, result)
+	if report != nil || facts == nil || facts.State != "committed" || facts.Verification != "unverifiable" || len(facts.Signing) == 0 || len(facts.Signature) != 64 {
+		t.Fatalf("report %v facts %+v", report, facts)
+	}
+}

@@ -30,6 +30,7 @@ import (
 var (
 	appProtectedProfileFlag string
 	appApproverFlag         string
+	appRoleReplaceFlag      string
 )
 
 var appRoleResumeCmd = &cobra.Command{
@@ -158,18 +159,55 @@ func runProtectedHumanRoleAct(cmd *cobra.Command, act, teamID string, audience s
 	if err != nil {
 		return err
 	}
+	fmt.Fprintf(cmd.ErrOrStderr(), "%s for %s on %s, approved by %s through %s\n", act, subject["principal"], subject["app_id"], appApproverFlag, profile.ServiceID)
+	ctx, cancel := context.WithCancel(cmd.Context())
+	defer cancel()
+	return requestProtectedRoleAct(ctx, cmd, profile, binding, requesterOptions(cmd, profile, identity), act, audience, subject, strings.TrimSpace(appRoleReplaceFlag))
+}
+
+// requesterOptions are the governance options of a protected operation under
+// scope, with this identity as requester, and false when the profile no
+// longer binds that scope.
+func requesterOptions(cmd *cobra.Command, profile *handoff.Profile, identity *localSigningIdentity) func(map[string]any) (handoff.GovernanceOptions, bool) {
+	return func(scope map[string]any) (handoff.GovernanceOptions, bool) {
+		if _, err := profile.BindingFor(scope); err != nil {
+			return handoff.GovernanceOptions{}, false
+		}
+		return governanceOptions(cmd, profile, scope, identity), true
+	}
+}
+
+// requestProtectedRoleAct prepares act under binding for the human's
+// approval and settles its receipt, after an unfinished earlier request for
+// the same act and subject that aw cannot continue has been read and
+// settled, or explicitly replaced (guardUnfinished).
+func requestProtectedRoleAct(ctx context.Context, cmd *cobra.Command, profile *handoff.Profile, binding *handoff.ProfileBinding,
+	optionsFor func(map[string]any) (handoff.GovernanceOptions, bool), act, audience string, subject map[string]any, replace string) error {
+	intent := protectedRoleIntent(act, binding.Scope, audience, subject)
+	settled, err := guardUnfinished(ctx, cmd.ErrOrStderr(), profile, optionsFor, intent, sameCanonical, replace, roleActReading(profile, time.Now()))
+	if err != nil {
+		return err
+	}
+	if settled != nil {
+		printSettledRoleAct(settled)
+		return nil
+	}
 	operationID, err := awid.GenerateUUID4()
 	if err != nil {
 		return err
 	}
-	fmt.Fprintf(cmd.ErrOrStderr(), "%s for %s on %s, approved by %s through %s\n", act, subject["principal"], subject["app_id"], appApproverFlag, profile.ServiceID)
-	ctx, cancel := context.WithCancel(cmd.Context())
-	defer cancel()
 	var frozen map[string]any
-	opts := governanceOptions(cmd, profile, binding.Scope, identity)
+	opts, _ := optionsFor(binding.Scope)
 	opts.CheckPrepared = ownerActCheck(binding.AuthorityKeyDID, &frozen)
-	receipt, err := handoff.Approve(ctx, opts, operationID, protectedRoleIntent(act, binding.Scope, audience, subject))
+	receipt, err := handoff.Approve(ctx, opts, operationID, intent)
 	return settleProtectedAct(cmd, operationID, frozen, binding, receipt, err)
+}
+
+// printSettledRoleAct reports an earlier request found already applied.
+func printSettledRoleAct(report map[string]any) {
+	printOutput(report, func(any) string {
+		return fmt.Sprintf("The earlier request %s had already committed; %s was applied by the protected service.\n", report["operation_id"], report["act"])
+	})
 }
 
 // pendingOperationFor is the saved operation operationID, if profile pins the
@@ -211,25 +249,47 @@ func runProtectedResume(cmd *cobra.Command, operationID string) error {
 	if err != nil {
 		return err
 	}
-	scope, err := savedScope(profile, saved.Body)
-	if err != nil {
-		return err
-	}
 	identity, err := resolveLocalSigningIdentity()
-	if err != nil {
-		return err
-	}
-	binding, err := profile.BindingFor(scope)
 	if err != nil {
 		return err
 	}
 	ctx, cancel := context.WithCancel(cmd.Context())
 	defer cancel()
+	return resumeProtectedRoleAct(ctx, cmd, profile, saved, requesterOptions(cmd, profile, identity))
+}
+
+// resumeProtectedRoleAct continues saved from its exact bytes. A saved
+// request aw cannot continue (quarantined, in another approval format, or
+// under a binding the profile no longer has) is never sent again: its
+// receipt is read once, and it is settled when that answer is definite.
+func resumeProtectedRoleAct(ctx context.Context, cmd *cobra.Command, profile *handoff.Profile, saved *awconfig.PendingGovernanceOperation,
+	optionsFor func(map[string]any) (handoff.GovernanceOptions, bool)) error {
+	scope, err := savedScope(profile, saved.Body)
+	body, _ := handoff.DecodeObject(saved.Body)
+	if err != nil || saved.Quarantine != nil || body["approval_format"] != "intent_v1" {
+		report, refused, err := reconcileUnfinished(ctx, optionsFor, saved, roleActReading(profile, time.Now()))
+		switch {
+		case err != nil:
+			return err
+		case refused:
+			return withErrorCode("earlier_operation_refused", fmt.Errorf("operation %s was refused, so it took no effect", saved.OperationID))
+		case report != nil:
+			printSettledRoleAct(report)
+			return nil
+		}
+		return withErrorCode("operation_reconciliation_required", fmt.Errorf(
+			"operation %s cannot be continued by this aw and may still have taken effect: %s; check the current state, and to ask for a separately approved act run aw app role revoke again with --replace %s",
+			saved.OperationID, unfinishedState(saved.Quarantine), saved.OperationID))
+	}
+	binding, err := profile.BindingFor(scope)
+	if err != nil {
+		return err
+	}
 	var frozen map[string]any
-	opts := governanceOptions(cmd, profile, scope, identity)
+	opts, _ := optionsFor(scope)
 	opts.CheckPrepared = ownerActCheck(binding.AuthorityKeyDID, &frozen)
 	receipt, err := handoff.Resume(ctx, opts, saved.Body)
-	return settleProtectedAct(cmd, operationID, frozen, binding, receipt, err)
+	return settleProtectedAct(cmd, saved.OperationID, frozen, binding, receipt, err)
 }
 
 // ownerActCheck accepts a verified prepared owner act only when its intent's
@@ -344,4 +404,50 @@ func signedActFor(intent map[string]any, authorityKeyDID string, result []byte, 
 		return nil, invalid("%v", err)
 	}
 	return &signedAct{Act: act, Audience: audience, Signing: signing, Signature: signature}, nil
+}
+
+// roleActReading reads a committed receipt of an unfinished role act aw will
+// not continue. It settles only a service-applied act that verifies under
+// the original rules and the profile's key for the request's own scope, as
+// history; a changed key or a missing binding is not historical
+// verification. A bare signed act is kept with its bytes, its signature
+// checked under those rules, and marked expired once past its lifetime at
+// now; it is never sent.
+func roleActReading(profile *handoff.Profile, now time.Time) committedReading {
+	return func(saved *awconfig.PendingGovernanceOperation, body map[string]any, result []byte) (map[string]any, *awconfig.GovernanceQuarantine) {
+		unverifiable := &awconfig.GovernanceQuarantine{State: "committed", Verification: "unverifiable"}
+		scope, _ := body["scope"].(map[string]any)
+		binding, err := profile.BindingFor(scope)
+		if err != nil {
+			return nil, unverifiable
+		}
+		if fields, ok := handoff.DecodeObject(result); ok && fields["v"] != nil {
+			signed, err := appliedActFor(saved.OperationID, body, binding.AuthorityKeyDID, result, now)
+			if err != nil {
+				return nil, unverifiable
+			}
+			return map[string]any{"operation_id": saved.OperationID, "state": "committed", "act": signed.Act, "applied": "service"}, nil
+		}
+		signing, signature, reason := signedResult(result)
+		if reason != "" {
+			return nil, unverifiable
+		}
+		facts := &awconfig.GovernanceQuarantine{State: "committed", Signing: signing, Signature: signature, Verification: "unverifiable"}
+		act, _ := handoff.DecodeObject(bytes.TrimPrefix(signing, []byte(awid.OwnerActPrefix)))
+		issuedText, _ := act["issued_at"].(string)
+		expiresText, _ := act["expires_at"].(string)
+		issued, errIssued := time.Parse(time.RFC3339, issuedText)
+		expires, errExpires := time.Parse(time.RFC3339, expiresText)
+		if errIssued != nil || errExpires != nil {
+			return nil, facts
+		}
+		if _, err := signedActFor(body, binding.AuthorityKeyDID, result, issued); err != nil {
+			return nil, facts
+		}
+		facts.Verification = "signature_verified"
+		if !now.Before(expires) {
+			facts.Verification = "expired"
+		}
+		return nil, facts
+	}
 }

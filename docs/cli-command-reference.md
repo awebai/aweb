@@ -686,6 +686,7 @@ Flags:
 - `--no-wait Exit without waiting for the approver; run the same command again to finish`
 - `--operation-id string The UUID for this endorsement; by default aw continues the same unfinished request or starts a new one`
 - `--protected-profile string The operator-provisioned protected-service profile (default: AWEB_PROTECTED_PROFILE, else protected-profile.json in the identity home)`
+- `--replace string The id of an earlier unfinished endorsement of this root, which stays kept, to ask for a separately approved one`
 - `--team stringArray A team (name:domain) the root will admit agents to; repeat for each`
 
 ## `id grant`
@@ -1551,6 +1552,7 @@ Flags:
 - `--operation-id string The UUID for this removal; by default aw continues the same unfinished request or starts a new one`
 - `--owner-approved Remove with the team owner's live approval instead of as the endorsed root`
 - `--protected-profile string The operator-provisioned protected-service profile (default: AWEB_PROTECTED_PROFILE, else protected-profile.json in the identity home)`
+- `--replace string With --owner-approved: the id of an earlier unfinished removal of this membership, which stays kept, to ask for a separately approved one`
 - `--team string With --owner-approved and --certificate-id: the team (name:domain) whose membership is removed`
 
 ## `id team remove-member`
@@ -4362,6 +4364,7 @@ Flags:
 - `-h, --help help for revoke`
 - `--principal string The holder's did:aw`
 - `--protected-profile string Prepare the act at the protected service this operator-provisioned profile names; the controlling human approves it there`
+- `--replace string With --protected-profile, the id of an earlier unfinished request for this same act, which stays kept, to ask for a separately approved act`
 - `--role string The app role, as its manifest names it`
 - `--yes Sign what is shown without asking`
 

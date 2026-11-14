@@ -602,16 +602,17 @@ func TestOwnerOnlyFlagsAreRefusedWithoutOwnerApproval(t *testing.T) {
 	t.Setenv("AWEB_PROTECTED_PROFILE", profilePath)
 	teamRemoveAgentCertificateFlag = removeTestCertificate(t, teamKey, "")
 	t.Cleanup(func() {
-		teamRemoveAgentCertificateFlag, teamRemoveAgentTeamFlag, teamRemoveAgentCertificateIDFlag, teamRemoveAgentNoWaitFlag, teamRemoveAgentNoBrowserFlag = "", "", "", false, false
+		teamRemoveAgentCertificateFlag, teamRemoveAgentTeamFlag, teamRemoveAgentCertificateIDFlag, teamRemoveAgentNoWaitFlag, teamRemoveAgentNoBrowserFlag, teamRemoveAgentReplaceFlag = "", "", "", false, false, ""
 	})
 	set := map[string]func(){
 		"team":           func() { teamRemoveAgentTeamFlag = "engineering:customer.example" },
 		"certificate-id": func() { teamRemoveAgentCertificateIDFlag = "d511db2c-430c-41ab-a823-87fe43070cf3" },
 		"no-wait":        func() { teamRemoveAgentNoWaitFlag = true },
 		"no-browser":     func() { teamRemoveAgentNoBrowserFlag = true },
+		"replace":        func() { teamRemoveAgentReplaceFlag = ownerRemoveTestOperation },
 	}
 	for name, apply := range set {
-		teamRemoveAgentTeamFlag, teamRemoveAgentCertificateIDFlag, teamRemoveAgentNoWaitFlag, teamRemoveAgentNoBrowserFlag = "", "", false, false
+		teamRemoveAgentTeamFlag, teamRemoveAgentCertificateIDFlag, teamRemoveAgentNoWaitFlag, teamRemoveAgentNoBrowserFlag, teamRemoveAgentReplaceFlag = "", "", false, false, ""
 		apply()
 		// A usage error, before any profile or identity is read.
 		var usage *cliError
@@ -662,7 +663,13 @@ func TestASavedOperationForAnythingElseIsNeverContinued(t *testing.T) {
 			request.OperationID = ""
 		}
 		report, err := removeMemberAsOwner(context.Background(), service.options(), profile, request)
-		if v.explicitID && errorCodeOf(err) != "operation_conflict" || !v.explicitID && report["operation_id"] == ownerRemoveTestOperation {
+		// The same membership under another authority generation is an
+		// unfinished removal to reconcile, not merely another request.
+		want := "operation_conflict"
+		if name == "another binding" {
+			want = "operation_reconciliation_required"
+		}
+		if v.explicitID && errorCodeOf(err) != want || !v.explicitID && report["operation_id"] == ownerRemoveTestOperation {
 			t.Errorf("%s: report %v, err %v", name, report, err)
 		}
 		for _, sent := range service.prepareBodies {
@@ -692,5 +699,50 @@ func TestASavedOperationIsContinuedFromItsOwnBytes(t *testing.T) {
 		if !bytes.Equal(last, raw) {
 			t.Fatalf("sent %s, saved %s", last, raw)
 		}
+	}
+}
+
+func TestAnOwnerRemovalUnderAnotherAuthorityGenerationIsNeverSilentlyReplaced(t *testing.T) {
+	teamKey, profile, service := ownerRemoveTestSetup(t)
+	certificate := removeTestCertificate(t, teamKey, "")
+	cert, _ := awid.LoadTeamCertificate(certificate)
+	binding := mustAdmissionBinding(t, profile, cert.Team)
+	earlier := ownerRemovalIntent(profile, binding, cert)
+	raw, _ := json.Marshal(earlier)
+	body, _ := handoff.DecodeObject(raw)
+	body["scope"].(map[string]any)["generation"] = 2
+	body["operation_id"] = ownerRemoveTestOperation
+	raw, _ = json.Marshal(body)
+	if err := awconfig.SavePendingGovernanceOperation(&awconfig.PendingGovernanceOperation{OperationID: ownerRemoveTestOperation,
+		RequestOrigin: profile.RequestOrigin, HumanOrigin: profile.HumanOrigin, Body: raw}); err != nil {
+		t.Fatal(err)
+	}
+	// By file, or by selector once the certificate has left the listing: the
+	// earlier request stops the run, and nothing is prepared.
+	for name, request := range map[string]ownerRemovalRequest{
+		"file":     {Certificate: certificate, RequesterKey: removeTestRootKey},
+		"selector": {Team: cert.Team, CertificateID: cert.CertificateID, RequesterKey: removeTestRootKey, List: (&listing{}).list},
+	} {
+		_, err := removeMemberAsOwner(context.Background(), service.options(), profile, request)
+		if errorCodeOf(err) != "operation_reconciliation_required" || len(service.prepareBodies) != 0 {
+			t.Fatalf("%s: err %v after %d prepares", name, err, len(service.prepareBodies))
+		}
+	}
+	// Its receipt is read only through its own binding, which this profile
+	// no longer has.
+	if service.receiptReads != 0 {
+		t.Fatalf("read %d receipts through another generation's binding", service.receiptReads)
+	}
+	// Another membership of the same team is not held up by it.
+	other := removeTestCertificate(t, teamKey, "")
+	if report, err := removeMemberAsOwner(context.Background(), service.options(), profile, ownerRemovalRequest{Certificate: other, RequesterKey: removeTestRootKey}); err != nil || report["state"] != "committed" {
+		t.Fatalf("another membership: %v, %v", report, err)
+	}
+	replace := ownerRemovalRequest{Certificate: certificate, RequesterKey: removeTestRootKey, Replace: ownerRemoveTestOperation}
+	if report, err := removeMemberAsOwner(context.Background(), service.options(), profile, replace); err != nil || report["state"] != "committed" {
+		t.Fatalf("replace: %v, %v", report, err)
+	}
+	if op := savedOwnerRemoval(t, ownerRemoveTestOperation); op == nil || op.Quarantine == nil {
+		t.Fatal("the replaced earlier request is gone")
 	}
 }
