@@ -172,8 +172,12 @@ def test_only_reviewed_operations_may_reveal_their_frozen_request_on_a_link():
     # Each row's whole frozen request was checked to hold only public
     # identifiers, labels and policy (human-assurance-contract.md, "Mailed
     # approval links"); every other row refuses by default.
+    # Whole intent/request classification: security TEXT ACK12faf072;
+    # contract "Frozen intent, execution-time issuance" excludes private
+    # issued artifacts, retained proof/authentication and session/link tokens.
     assert {key for key, spec in OPERATIONS.items() if spec.link_revealable} == {
-        ("identity.root.endorse", "default"), ("human-role.revoke", "default")}
+        ("identity.root.endorse", "default"), ("human-role.revoke", "default"),
+        ("team.agent.remove", "owner_approved")}
 
 
 async def test_an_operation_not_classified_revealable_refuses_the_reveal(mailing, monkeypatch):
