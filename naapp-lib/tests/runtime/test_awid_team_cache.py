@@ -209,7 +209,7 @@ async def test_history_private_denial_is_classified(registry, team):
 
 
 async def test_history_with_a_wrong_token_reads_public_but_not_private_teams(registry, team):
-    cache = history_cache(registry, token="not-the-registry-service-token")
+    cache = history_cache(registry, token="not-the-registry-service-token-32-bytes")
     visibility = (await registry.db.fetch_one("SELECT visibility FROM {{tables.teams}}"))["visibility"]
     if visibility == "public":
         assert (await cache.get(TEAM_ID, "target")).team_did_key == team.team_did_key
@@ -321,8 +321,12 @@ async def test_history_unknown_refresh_limit_is_per_team(registry, team, history
     await registry.add_certificate(other.certificate())
     await cache.get(TEAM_ID, team.certificate_id)
     await cache.get(other.team_id, other.certificate_id)
-    await cache.get(TEAM_ID, "unknown")
-    await cache.get(other.team_id, "also-unknown")
+    for team_id, certificate_id in ((TEAM_ID, "unknown"), (other.team_id, "also-unknown")):
+        # History cache refresh still coalesces per team, but get also requires
+        # a fresh exact-certificate observation: unknown IDs cannot be admitted.
+        with pytest.raises(HTTPException) as refused:
+            await cache.get(team_id, certificate_id)
+        assert refused.value.status_code == 401 and refused.value.detail == "unregistered"
     assert len(team_lookups(registry)) == 2
     assert len(team_lookups(registry, "other")) == 2
 
@@ -358,7 +362,9 @@ async def test_history_cold_outage_coalesces_failures_and_retries_after_window(
 async def test_history_nonexistent_team_flood_does_not_retain_refresh_state(registry, team):
     cache = history_cache(registry)
     await cache.get(TEAM_ID, team.certificate_id)
-    await cache.get(TEAM_ID, "unpublished")
+    with pytest.raises(HTTPException) as refused:
+        await cache.get(TEAM_ID, "unpublished")
+    assert refused.value.status_code == 401 and refused.value.detail == "unregistered"
     locks_before = dict(cache._team_refresh_locks)
     attempts_before = dict(cache._unknown_refresh_at)
     ghosts = [Member(team_id=f"missing-{i}:example.com") for i in range(16)]
@@ -405,9 +411,12 @@ async def test_status_path_verifies_without_a_token_and_reuses_for_at_most_a_min
     cache = status_cache(registry)
     async with relying_app(registry, public_origin=ORIGIN, cache=cache) as (client, _):
         assert (await client.get("/v1/items", headers=get_items(team))).status_code == 200
-        assert [r.url.path for r in registry.transport.calls] == [
-            "/v1/namespaces/example.com/teams/backend/certificates/target/status"
-        ]
+        status_path = "/v1/namespaces/example.com/teams/backend/certificates/target/status"
+        # Ordinary cached status and the original fresh protection observation
+        # are distinct reads. Both stay on the anonymous fixed status route.
+        assert [(r.url.path, r.url.params.get("protection")) for r in registry.transport.calls] == [
+            (status_path, None), (status_path, "1")]
+
         assert "X-AWID-Service-Token" not in registry.transport.calls[0].headers
         cached = cache._certificate_cache[(TEAM_ID, "target")]
         assert 0 < cached.expires_at - time.monotonic_ns() <= seconds_to_ns(60)
@@ -432,7 +441,8 @@ async def test_status_cache_is_per_certificate(registry, team):
     with pytest.raises(HTTPException) as caught:
         await cache.get(TEAM_ID, "unpublished")
     assert caught.value.status_code == 401
-    assert len(registry.transport.calls) == 2
+    assert [(r.url.path.rsplit("/", 2)[-2], r.url.params.get("protection"))
+        for r in registry.transport.calls] == [("target", None), ("target", "1"), ("unpublished", None)]
 
 
 async def test_without_a_certificate_id_the_team_key_is_a_plain_read(registry, team):
