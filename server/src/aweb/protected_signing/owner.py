@@ -95,6 +95,20 @@ LISTS = {
 }
 
 
+async def final_operations(composition, *, scope: str, operation_ids: list[str]) -> list[str]:
+    """Of ``operation_ids``, those whose stored outcome in this scope is final:
+    committed or refused. An expiry the clock alone shows, a signed but
+    unconfirmed row, another scope's row or an unknown id is not."""
+    c = await _component_for(composition, scope)
+    rows = await c.db.fetch_all(
+        "SELECT operation_id FROM {{tables.protected_signer_operations}} "
+        "WHERE scope=$1::jsonb AND operation_id = ANY($2::text[]) "
+        "AND (result IS NOT NULL OR refusal_code IS NOT NULL)",
+        json.dumps(c.context.fields()), operation_ids)
+    final = {row["operation_id"] for row in rows}
+    return [i for i in operation_ids if i in final]
+
+
 def _cursor(row) -> str:
     return row["expires_at"].astimezone(UTC).isoformat() + "|" + row["operation_id"]
 

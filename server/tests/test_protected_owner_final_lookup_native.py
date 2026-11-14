@@ -66,7 +66,6 @@ async def test_a_malformed_lookup_is_refused(admissions, tmp_path, ids):
 @pytest.mark.asyncio
 async def test_the_lookup_needs_the_signed_in_owner(admissions, tmp_path):
     async with owner_http(admissions, tmp_path) as (client, headers, _):
-        answer = await client.post(FINAL, json={"operation_ids": [str(uuid.uuid4())]},
-                                   headers={k: v for k, v in headers.items() if k.lower() != "cookie"},
-                                   cookies={})
+        client.cookies.clear()  # no console session
+        answer = await client.post(FINAL, json={"operation_ids": [str(uuid.uuid4())]}, headers=headers)
         assert answer.status_code == 401, answer.text

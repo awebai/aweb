@@ -128,5 +128,18 @@ const lost = () => { throw new TypeError('Failed to fetch'); };
   const forgotten = page({finals: ['op-final'], stored: {[key]: saved, [other]: saved}, answers: []});
   assert.ok(!forgotten.store.has(key), 'a final operation was not forgotten');
   assert.ok(forgotten.store.has(other), 'another approver or team lost its saved selection');
+  // A selection older than the page's History: the page asks by exact id, and
+  // only the signer's answer that it is final forgets it.
+  const settle = () => new Promise(resolve => setImmediate(resolve));
+  const asked = page({stored: {[key]: saved}, answers: [() => ({final: ['op-final']})]});
+  await settle();
+  assert.deepEqual(asked.sent, [['/governance/operations/final', {operation_ids: ['op-final']}]]);
+  assert.ok(!asked.store.has(key), 'a final operation the lookup named was not forgotten');
+  const notFinal = page({stored: {[key]: saved}, answers: [() => ({final: []})]});
+  await settle();
+  assert.ok(notFinal.store.has(key), 'a selection the lookup did not name final was forgotten');
+  const failed = page({stored: {[key]: saved}, answers: [lost]});
+  await settle();
+  assert.ok(failed.store.has(key), 'a failed lookup forgot a selection');
   console.log('owner removal probe passed');
 })().catch(error => { console.error(error.message); process.exitCode = 1; });

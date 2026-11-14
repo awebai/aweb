@@ -5,8 +5,10 @@
 // The selection is saved in this tab before it is sent, under this team and
 // this signed-in approver, and a retry sends exactly the same request. No
 // answer from the prepare route proves that nothing was prepared, so no error
-// clears it; only a final entry for its operation in this page's History does
-// (human-assurance-contract.md, owner-session initiation).
+// clears it; only the signer's stored final outcome for its operation does: a
+// final entry in this page's History, or, for one older than the page shows,
+// the signer's answer to an exact-id lookup (human-assurance-contract.md,
+// owner-session initiation).
 (() => {
   const list = document.getElementById("owner-members");
   const status = document.getElementById("owner-remove-status");
@@ -24,10 +26,23 @@
 
   const final = new Set();
   for (const item of document.querySelectorAll("[data-final-operation]")) final.add(item.dataset.finalOperation);
-  const keys = [];
-  for (let index = 0; index < sessionStorage.length; index++) keys.push(sessionStorage.key(index));
-  for (const key of keys) {
-    if (key && key.startsWith(prefix) && final.has(saved(key)?.operation_id)) sessionStorage.removeItem(key);
+  function held() {
+    const keys = [];
+    for (let index = 0; index < sessionStorage.length; index++) keys.push(sessionStorage.key(index));
+    return keys.filter((key) => key && key.startsWith(prefix) && typeof saved(key)?.operation_id === "string");
+  }
+  function retire() {
+    for (const key of held()) if (final.has(saved(key).operation_id)) sessionStorage.removeItem(key);
+  }
+  retire();
+  // Selections whose operation this page's History does not show: ask by exact
+  // id. Any failure keeps them; only a stored final outcome retires one.
+  const unknown = held().map((key) => saved(key).operation_id).filter((id) => !final.has(id)).slice(0, 50);
+  if (unknown.length) {
+    window.awebConsole.post("/governance/operations/final", {operation_ids: unknown}).then((result) => {
+      for (const id of Array.isArray(result?.final) ? result.final : []) final.add(id);
+      retire();
+    }).catch(() => {});
   }
 
   // A refusal the signer names says only why: retrying gets the same answer.

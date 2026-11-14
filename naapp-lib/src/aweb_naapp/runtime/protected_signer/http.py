@@ -135,6 +135,17 @@ def _gone_when_expired():
 
 logger = logging.getLogger(__name__)
 
+# How many held operations one final lookup may name: a tab holds one per
+# member it started removing.
+FINAL_LOOKUP_LIMIT = 50
+
+
+def _canonical_uuid(value: str) -> str | None:
+    try:
+        return str(uuid.UUID(value))
+    except ValueError:
+        return None
+
 
 def _log_unexpected(error: Exception, request: Request | None) -> None:
     """Name an unexpected failure for the operator by its route template, the
@@ -219,12 +230,14 @@ class ProtectedOperationsHTTP:
         executor: Callable[[Request, str], Awaitable[RestrictedRequester]] | None = None,
         policy_reader: Callable[[Request, str], Awaitable[dict[str, Any]]] | None = None,
         owner_prepare: Callable[[dict[str, Any], ConsoleSession], Awaitable[PreparedOperation]] | None = None,
+        owner_final: Callable[[list[str], ConsoleSession], Awaitable[list[str]]] | None = None,
         human_sessions: ConsoleSessions | None = None,
         human_csrf_key: str | None = None,
     ):
         require_canonical_server_origin(request_origin)
         self.signer, self.requester, self.reader, self.limiter = signer, requester, reader, limiter
         self.policy_reader, self.executor, self.owner_prepare = policy_reader, executor, owner_prepare
+        self.owner_final = owner_final
         self.hosts = _origin_hosts(request_origin)
         if (human_sessions is None) != (human_csrf_key is None):
             raise ValueError("human sessions and CSRF storage key must be configured together")
@@ -428,6 +441,22 @@ class ProtectedOperationsHTTP:
     def human_router(self) -> APIRouter:
         """Only governance JSON; console owns the existing HTML page and LOGIN."""
         router = APIRouter(route_class=ConsoleRoute)
+
+        @router.post("/governance/operations/final")
+        async def owner_final(request: Request):
+            """Which of the operations a signed-in owner's tab holds are final
+            in their scope: an exact-id read that grants and changes nothing."""
+            try:
+                session = await self._console_session(request)
+                ids = (await self._human_body(request, {"operation_ids"}))["operation_ids"]
+                if (type(ids) is not list or not 0 < len(ids) <= FINAL_LOOKUP_LIMIT
+                        or any(type(i) is not str or _canonical_uuid(i) != i for i in ids)):
+                    raise SignerRefused("request_invalid")
+                if self.owner_final is None:
+                    raise SignerRefused("operation_not_served")
+                return {"final": await self.owner_final(ids, session)}
+            except Exception as error:
+                raise self._human_error(error, request) from None
 
         @router.post("/governance/operations")
         async def owner_prepare(request: Request):

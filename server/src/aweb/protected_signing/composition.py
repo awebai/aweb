@@ -261,9 +261,15 @@ class IndependentProtectedSigner:
             executor=self.authenticate_execute,
             policy_reader=self.read_admission_policy,
             owner_prepare=self.prepare_owner_selection,
+            owner_final=self.final_owner_operations,
             human_sessions=human_sessions,
             human_csrf_key=human_csrf_key,
         )
+
+    async def final_owner_operations(self, operation_ids, session):
+        from .owner import final_operations
+
+        return await final_operations(self, scope=session.scope, operation_ids=operation_ids)
 
     async def prepare_owner_selection(self, selection, session):
         from .owner_removal import prepare_owner_selection
