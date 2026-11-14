@@ -142,18 +142,19 @@ async def inbox(env, actor):
 @pytest.mark.parametrize("condition,kind", [
     ("available", "mail"), ("unreachable", "mail"), ("pin_refused", "mail"),
     ("revoked_unreachable", "mail"), ("not_found", "mail"),
+    ("unreachable_not_found", "mail"),
     ("available", "chat"), ("unreachable", "chat"),
 ])
 async def test_bare_alias_never_changes_team_on_unknown_roster(privacy_app, tmp_path, condition, kind):
     env = privacy_app
     async with _registry_http(env.registry_app) as (registry_url, _), unavailable_origin() as down:
-        world = await memberships(env, tmp_path, registry_url, missing=condition == "not_found")
+        world = await memberships(env, tmp_path, registry_url, missing=condition in ("not_found", "unreachable_not_found"))
         if condition == "revoked_unreachable":
             await env.app.state.awid_registry_client.revoke_team_certificate(
                 "example.test", TEAM.split(":", 1)[0], team_controller_signing_key=env.team_sk,
                 certificate_id=world.human["certificate_id"],
             )
-        if condition in ("unreachable", "revoked_unreachable"):
+        if condition in ("unreachable", "revoked_unreachable", "unreachable_not_found"):
             world.env["AWID_REGISTRY_URL"] = down
             world.entries[0]["registry_url"] = down
         elif condition == "pin_refused":
@@ -166,7 +167,7 @@ async def test_bare_alias_never_changes_team_on_unknown_roster(privacy_app, tmp_
             else ["chat", "send-and-leave", "reviewer", "--start-conversation"])
         # Observe the actual CLI registry-read failure independently of the
         # messaging selector, without substituting registry responses.
-        if condition in ("unreachable", "pin_refused", "revoked_unreachable"):
+        if condition in ("unreachable", "pin_refused", "revoked_unreachable", "unreachable_not_found"):
             roster_code, roster, roster_error = await run_aw(
                 binary, tmp_path, world.env, "id", "team", "members", "--team-id", TEAM,
             )
@@ -174,12 +175,18 @@ async def test_bare_alias_never_changes_team_on_unknown_roster(privacy_app, tmp_
         code, result, stderr = await run_aw(binary, tmp_path, world.env, *command, "--plaintext", "--body-file", str(body))
         rows = await env.db.fetch_all("SELECT * FROM {{tables.messages}} ORDER BY created_at")
         alpha_inbox, beta_inbox = await inbox(env, env.actors["alice"]), await inbox(env, env.actors["carol"])
-        if kind == "chat" or condition == "revoked_unreachable":
+        if kind == "chat" or condition in ("revoked_unreachable", "unreachable_not_found"):
             assert code != 0, (result, stderr)
             assert not rows and not alpha_inbox and not beta_inbox, (rows, alpha_inbox, beta_inbox)
             assert await env.db.fetch_value("SELECT count(*) FROM {{tables.chat_messages}}") == 0
             if kind == "chat":
                 assert result["error"]["reason"] == "recipient_human_mail_only", (result, stderr)
+            if condition == "unreachable_not_found":
+                # A real HTTP not-found answer establishes that the send
+                # reached the selected service, rather than refusing locally
+                # because its separate client-side AWID read was unavailable.
+                assert result["error"]["http_status"] == 404, (result, stderr)
+                assert "Recipient agent not found" in result["error"]["message"], (result, stderr)
             return
         assert code == 0, (result, stderr)
         assert len(rows) == 1, rows
@@ -192,4 +199,6 @@ async def test_bare_alias_never_changes_team_on_unknown_roster(privacy_app, tmp_
         assert stored["to_did"] == expected.did and stored["to_agent_id"] == expected.id, dict(stored)
         assert [str(row["message_id"]) for row in (beta_inbox if selected_beta else alpha_inbox)] == [result["message_id"]]
         assert not (alpha_inbox if selected_beta else beta_inbox)
+        if selected_beta:
+            assert world.beta in stderr, (result, stderr)
         assert json.loads((world.home / "teams.yaml").read_text())["active_team"] == TEAM
