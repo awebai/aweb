@@ -11,7 +11,7 @@ from aweb_naapp.runtime.protected_signer.retention import (
     FrozenDelivery,
     RetainedEffect,
 )
-from .legacy_delivery import _invalidate, authenticate_plan, delivery_plan
+from .legacy_delivery import _invalidate
 from awid.protected_effect import (
     HEADER,
     artifact_digest,
@@ -97,8 +97,7 @@ class ProtectedEffectCustody:
         until = expires_at.astimezone(UTC).replace(microsecond=0)
         if now >= until:
             raise SignerRefused("operation_expired")
-        plan = delivery_plan(self, operation, artifact, signing, signature, _stamp(now))
-        delivery = authenticate_plan(self, plan, signing=signing, signature=signature)
+        plan, delivery = self.authenticate_delivery(operation, artifact, signing, signature)
         digest = artifact_digest(signing, _raw(signature))
         fields = {
             "v": 1,

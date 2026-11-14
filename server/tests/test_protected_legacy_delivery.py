@@ -154,10 +154,12 @@ async def test_a_resolved_registry_mismatch_does_not_invalidate_or_send():
 
 @pytest.mark.asyncio
 async def test_a_changed_signed_result_never_reaches_a_cache_or_delivery_port():
+    from aweb_naapp.runtime.protected_signer import SignerRefused
+
     op, artifact, result, custody, _ = fixture("team.agent.remove")
     client = ObservedCachedRegistry()
     try:
-        with pytest.raises(ValueError, match="signed artifact"):
+        with pytest.raises(SignerRefused, match="operation_mismatch"):
             await deliver_legacy(custody, client, op, artifact,
                 {**result, "signing": base64.b64encode(b"changed").decode()})
         assert client.events == [] and client.sent == []
@@ -170,13 +172,11 @@ async def test_a_changed_signed_result_never_reaches_a_cache_or_delivery_port():
 @pytest.mark.parametrize("name", ["team.agent.admit", "team.agent.remove"])
 @pytest.mark.parametrize("lost", [False, True])
 async def test_service_owned_send_preserves_sdk_cache_fences(name, lost):
-    from aweb.protected_signing.legacy_delivery import delivery_plan, authenticate_plan
     from aweb_naapp.runtime.protected_signer.retention import FrozenDelivery, RetainedEffect
     from awid.protected_effect import HEADER, artifact_digest
     op, artifact, result, custody, calls = fixture(name)
     signing, signature = base64.b64decode(result["signing"]), base64.b64decode(result["signature"])
-    plan = delivery_plan(custody, op, artifact, signing, signature, NOW.strftime("%Y-%m-%dT%H:%M:%SZ"))
-    delivery = authenticate_plan(custody, plan, signing=signing, signature=signature)
+    _, delivery = custody.authenticate_delivery(op, artifact, signing, signature)
     frozen = FrozenDelivery(delivery.audience, delivery.method, delivery.path,
         {**delivery.headers, HEADER: "transport-only-fixture"}, delivery.body)
     retained = RetainedEffect(op.operation_id, signing, signature,

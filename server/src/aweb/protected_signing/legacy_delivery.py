@@ -1,7 +1,6 @@
 """Legacy registry delivery through the definition's closed request plan."""
 
 import base64
-from datetime import UTC, datetime
 
 from awid.registry import CachedRegistryClient
 
@@ -24,18 +23,6 @@ def delivery_plan(custody, operation, artifact, signing, signature, timestamp):
     return plan
 
 
-def authenticate_plan(custody, plan, *, signing, signature):
-    # A revoke artifact already is its exact controller-auth envelope. Reuse
-    # its original signature instead of performing another key operation.
-    if plan.controller_envelope is None:
-        authentication = None
-    elif plan.controller_envelope == signing:
-        authentication = signature
-    else:
-        authentication = custody._key.sign(plan.controller_envelope).signature
-    return plan.authenticate(authentication)
-
-
 async def _invalidate(client, operation, domain, name):
     # Preserve the SDK's existing registration tolerance, separately from the
     # strict prepared-revocation invalidation port. No alternate cache exists.
@@ -50,11 +37,9 @@ async def deliver_legacy(custody, registry, operation, artifact, result):
         raise SignerRefused("operation_mismatch")
     signature = base64.b64decode(result["signature"], validate=True)
     signing = base64.b64decode(result["signing"], validate=True)
-    timestamp = datetime.now(UTC).strftime("%Y-%m-%dT%H:%M:%SZ")
-    plan = delivery_plan(custody, operation, artifact, signing, signature, timestamp)
+    plan, delivery = custody.authenticate_delivery(operation, artifact, signing, signature)
     if plan.audience != registry.registry_url:
         raise SignerRefused("scope_refused")
-    delivery = authenticate_plan(custody, plan, signing=signing, signature=signature)
     client = getattr(registry, "client", registry)
     typed = owner_act_operation(operation)
     origin = await client._registry_url_for_domain(custody.domain)
