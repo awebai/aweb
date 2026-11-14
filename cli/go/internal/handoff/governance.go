@@ -655,6 +655,13 @@ func endorsementDiffers(sent, request, artifact map[string]any) string {
 // names the key that authenticated it, and its artifact is a controller and
 // the covering-v2 registry request revoking exactly the certificate aw named,
 // of its team, at the audience registry (docs/protected-team-removal.md).
+func ownerRemovalArtifactDiffers(sent, request, artifact map[string]any) string {
+	if request["target_kind"] != "agent" && request["target_kind"] != "kind not verified" {
+		return "its target classification is not supported"
+	}
+	return removalArtifactDiffers(sent, request, artifact)
+}
+
 func removalArtifactDiffers(sent, request, artifact map[string]any) string {
 	if key, _ := request["requester_key"].(string); key == "" {
 		return "it names no requester key"

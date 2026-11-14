@@ -70,8 +70,10 @@ unknown-kind membership outside a root's admission bucket, including
 pre-cutover and retired-root members. Unknown kind displays "kind not verified";
 verified humans use `team.human.remove` exclusively. The unchanged base
 inventory remains in `human-assurance-v1.json`.
-These additional scenarios specify the `owner_approved` variant before its
-implementation; they do not claim a served route or successful native run.
+The definition implements this additive `owner_approved` row. These policy
+scenarios do not themselves establish a successful native run. The frozen
+classification has exactly two values: `agent` (including service agents) and
+`kind not verified`; requester-key provenance never substitutes for owner UV.
 
 ### `protected-operation-availability-v1.json` — prepare availability
 

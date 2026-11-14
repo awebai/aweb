@@ -7,6 +7,8 @@ const object = value => value !== null && typeof value === "object" && !Array.is
 const refused = () => { throw new Error("handoff_refused"); };
 
 function fieldValid(value, schema) {
+  if (value === null && schema.nullable === true) return true;
+  if (schema.object) return validSubject(value, schema.object);
   if (schema.integer) {
     return Number.isSafeInteger(value) && value >= schema.integer[0] && value <= schema.integer[1];
   }
@@ -85,6 +87,18 @@ export async function validateProtectedPresentation(state, handoffId, table) {
   };
   for (const [path, names] of Object.entries(guard.exact ?? {})) {
     if (!exact(read(path), names)) refused();
+  }
+  for (const [path, choices] of Object.entries(guard.enums ?? {})) {
+    if (!choices.includes(read(path))) refused();
+  }
+  for (const [path, template] of Object.entries(guard.templates ?? {})) {
+    const expected = template.replace(/\{(\/[^}]+)\}/g, (_, source) => read(source));
+    if (read(path) !== expected) refused();
+  }
+  for (const [path, fields] of Object.entries(guard.json_sha256 ?? {})) {
+    const value = Object.fromEntries(Object.entries(fields).map(([key, source]) => [key, read(source)]));
+    const sum = new Uint8Array(await crypto.subtle.digest("SHA-256", new TextEncoder().encode(canonical(value))));
+    if (read(path) !== Array.from(sum, b => b.toString(16).padStart(2, "0")).join("")) refused();
   }
   for (const [path, value] of Object.entries(guard.constants ?? {})) {
     if (canonical(read(path)) !== canonical(value)) refused();

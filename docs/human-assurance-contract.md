@@ -266,8 +266,8 @@ Juan 2026-11-13, via coordinator: `team.agent.remove/owner_approved` is a
 `team_controller` / `live_floor` signer operation. It is an additive row;
 the frozen base inventory is unchanged. Its policy scenarios are in
 [`human-assurance-owner-removal-v1.json`](vectors/human-assurance-owner-removal-v1.json).
-This specifies the next implementation; it does not claim the runtime serves
-the variant yet.
+The operation definition serves this additive variant; native qualification
+remains a separate implementation receipt.
 
 The current team owner's fresh exact-act passkey approval may remove any
 agent/service membership or membership whose kind is not verified, including one admitted
@@ -275,6 +275,15 @@ before cutover, one outside the requesting root's admission bucket, or one
 whose admitting root has been replaced or revoked. A working root, membership
 certificate or operator credential alone does not authorize this variant.
 The default root/self variant keeps its existing narrower authority.
+
+Prepare still requires an authenticated requester with a current grant for
+this protected team scope. The frozen `requester_key` is that requester's
+key, not the held controller key or an arbitrary team member's key; it is
+provenance only and cannot satisfy the owner's B3/current-credential/UV checks.
+The frozen server-derived `target_kind` is exactly `"agent"` or
+`"kind not verified"`. A verified service-agent membership and a local service
+certificate use `"agent"`; a legacy service membership with authoritative
+unknown kind uses `"kind not verified"`. Service is not another identity kind.
 
 The closed subject is `{team_id, member_id, certificate_id,
 expected_membership}`. `member_id` is the certificate's `member_did_aw`, or
@@ -293,7 +302,10 @@ an unknown kind belongs to `team.agent.remove/owner_approved`. For unknown
 kind, including a registered but unenrolled legacy member, the frozen approval
 display says plainly **"kind not verified"**. The server derives this
 classification from current authoritative facts, never a requester-supplied
-kind label. The owner's live exact-act approval authorizes removal in either
+kind label. The same classification is required at release: an unknown target
+that becomes a verified human must refuse, without switching operations or
+reusing the earlier display/UV. Unavailable evidence never becomes unknown.
+The owner's live exact-act approval authorizes removal in either
 operation; the unknown case does not assert verified agent kind.
 
 This exception is exclusive to the owner-approved variant. Root/self unattended

@@ -17,7 +17,12 @@ from .identity_artifacts import (
     validate_admission_subject,
     validate_root_subject,
 )
-from .removal import removal_artifact, removal_signing_bytes, validate_removal_subject
+from .removal import (
+    removal_artifact,
+    removal_signing_bytes,
+    validate_owner_removal_subject,
+    validate_removal_subject,
+)
 from .types import SignerRefused
 
 
@@ -113,6 +118,32 @@ ROOT_CODEC = OperationCodec(validate_root_subject, _root, root_signing_bytes, "i
 })
 ADMISSION_CODEC = OperationCodec(validate_admission_subject, _admission, admission_signing_bytes, "team_did_key", decode_intent=catalog_intent, go_verifier="admissionArtifactDiffers")
 REMOVAL_CODEC = OperationCodec(validate_removal_subject, _removal, removal_signing_bytes, "controller_did", decode_intent=catalog_intent, go_verifier="removalArtifactDiffers")
+OWNER_REMOVAL_CODEC = OperationCodec(validate_owner_removal_subject, _removal, removal_signing_bytes, "controller_did", {
+    "fields": {
+        "team_id": {"pattern": r"[^\s:]+:[^\s:]+"},
+        "member_id": {"pattern": r"did:(aw:[1-9A-HJ-NP-Za-km-z]+|key:z[1-9A-HJ-NP-Za-km-z]+)"},
+        "certificate_id": {"pattern": r"[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}"},
+        "expected_membership": {"object": {"fields": {
+            "member_did_key": {"pattern": r"did:key:z[1-9A-HJ-NP-Za-km-z]+"},
+            "member_did_aw": {"nullable": True, "pattern": r"did:aw:[1-9A-HJ-NP-Za-km-z]+"},
+            "member_address": {"nullable": True, "pattern": r"[\s\S]{1,512}"},
+            "alias": {"pattern": r"[^\x00-\x1f]{1,128}"},
+            "identity_scope": {"enum": ["local", "global"]}},
+            "required": ["member_did_key", "member_did_aw", "member_address", "alias", "identity_scope"]}},
+    }, "required": ["team_id", "member_id", "certificate_id", "expected_membership"],
+}, decode_intent=catalog_intent, go_verifier="ownerRemovalArtifactDiffers", presentation={
+    "exact": {"/artifact": ["controller_did", "request"],
+        "/artifact/request": ["v", "type", "aud", "method", "path", "domain", "operation", "team_name", "certificate_id", "timestamp", "body_sha256"]},
+    "constants": {"/artifact/request/v": 2, "/artifact/request/type": "aweb.awid-controller-request",
+        "/artifact/request/method": "POST", "/artifact/request/operation": "revoke_certificate"},
+    "equals": [["/artifact/request/aud", "/audience"], ["/subject/team_id", "/scope/authority/id"],
+        ["/artifact/request/domain", "/scope/authority/domain"], ["/artifact/request/certificate_id", "/subject/certificate_id"]],
+    "enums": {"/target_kind": ["agent", "kind not verified"]},
+    "templates": {"/subject/team_id": "{/artifact/request/team_name}:{/artifact/request/domain}",
+        "/artifact/request/path": "/v1/namespaces/{/artifact/request/domain}/teams/{/artifact/request/team_name}/certificates/revoke"},
+    "json_sha256": {"/artifact/request/body_sha256": {"certificate_id": "/subject/certificate_id"}},
+    "nonempty": ["/artifact/controller_did", "/requester_key"], "timestamps": ["/artifact/request/timestamp"],
+})
 REVOKE_CODEC = OperationCodec(_revoke_subject, _owner_artifact, _owner_signing, "team_key_did", {
     "fields": {field: {"pattern": r"[\s\S]+"} for field in sorted(_REVOKE_FIELDS)},
     "required": sorted(_REVOKE_FIELDS),

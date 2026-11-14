@@ -314,6 +314,165 @@
       "rule": "bounded_unattended",
       "subject_schema": null,
       "variant": "default"
+    },
+    {
+      "bindings": {
+        "certificate_id": "/subject/certificate_id",
+        "expected_membership": "/subject/expected_membership",
+        "member_id": "/subject/member_id",
+        "target_kind": "/target_kind",
+        "team_id": "/subject/team_id"
+      },
+      "display": {
+        "consequences": [
+          "This revokes the exact team membership certificate.",
+          "Target kind: {/target_kind}.",
+          "This removal does not revoke its identity or remove a human role."
+        ],
+        "names": {
+          "member": "/subject/expected_membership/alias",
+          "team": "/subject/team_id"
+        },
+        "refusals": {
+          "issuer_kind_forbidden": "Only the current owner's exact passkey approval authorizes this removal.",
+          "subject_ineligible": "Verified human memberships require human removal; unavailable kind evidence cannot authorize removal."
+        },
+        "technical": {
+          "certificate": "/subject/certificate_id",
+          "member": "/subject/member_id",
+          "requester": "/requester"
+        },
+        "title": "Remove {/subject/expected_membership/alias} from {/subject/team_id}?"
+      },
+      "family": "member_revocation",
+      "key_role": "team_controller",
+      "operation": "team.agent.remove",
+      "prepared_fields": [
+        "requester_key",
+        "target_kind"
+      ],
+      "presentation": {
+        "constants": {
+          "/artifact/request/method": "POST",
+          "/artifact/request/operation": "revoke_certificate",
+          "/artifact/request/type": "aweb.awid-controller-request",
+          "/artifact/request/v": 2
+        },
+        "enums": {
+          "/target_kind": [
+            "agent",
+            "kind not verified"
+          ]
+        },
+        "equals": [
+          [
+            "/artifact/request/aud",
+            "/audience"
+          ],
+          [
+            "/subject/team_id",
+            "/scope/authority/id"
+          ],
+          [
+            "/artifact/request/domain",
+            "/scope/authority/domain"
+          ],
+          [
+            "/artifact/request/certificate_id",
+            "/subject/certificate_id"
+          ]
+        ],
+        "exact": {
+          "/artifact": [
+            "controller_did",
+            "request"
+          ],
+          "/artifact/request": [
+            "v",
+            "type",
+            "aud",
+            "method",
+            "path",
+            "domain",
+            "operation",
+            "team_name",
+            "certificate_id",
+            "timestamp",
+            "body_sha256"
+          ]
+        },
+        "json_sha256": {
+          "/artifact/request/body_sha256": {
+            "certificate_id": "/subject/certificate_id"
+          }
+        },
+        "nonempty": [
+          "/artifact/controller_did",
+          "/requester_key"
+        ],
+        "templates": {
+          "/artifact/request/path": "/v1/namespaces/{/artifact/request/domain}/teams/{/artifact/request/team_name}/certificates/revoke",
+          "/subject/team_id": "{/artifact/request/team_name}:{/artifact/request/domain}"
+        },
+        "timestamps": [
+          "/artifact/request/timestamp"
+        ]
+      },
+      "responsibility_statement": null,
+      "rule": "live_floor",
+      "subject_schema": {
+        "fields": {
+          "certificate_id": {
+            "pattern": "[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}"
+          },
+          "expected_membership": {
+            "object": {
+              "fields": {
+                "alias": {
+                  "pattern": "[^\\x00-\\x1f]{1,128}"
+                },
+                "identity_scope": {
+                  "enum": [
+                    "local",
+                    "global"
+                  ]
+                },
+                "member_address": {
+                  "nullable": true,
+                  "pattern": "[\\s\\S]{1,512}"
+                },
+                "member_did_aw": {
+                  "nullable": true,
+                  "pattern": "did:aw:[1-9A-HJ-NP-Za-km-z]+"
+                },
+                "member_did_key": {
+                  "pattern": "did:key:z[1-9A-HJ-NP-Za-km-z]+"
+                }
+              },
+              "required": [
+                "member_did_key",
+                "member_did_aw",
+                "member_address",
+                "alias",
+                "identity_scope"
+              ]
+            }
+          },
+          "member_id": {
+            "pattern": "did:(aw:[1-9A-HJ-NP-Za-km-z]+|key:z[1-9A-HJ-NP-Za-km-z]+)"
+          },
+          "team_id": {
+            "pattern": "[^\\s:]+:[^\\s:]+"
+          }
+        },
+        "required": [
+          "team_id",
+          "member_id",
+          "certificate_id",
+          "expected_membership"
+        ]
+      },
+      "variant": "owner_approved"
     }
   ],
   "type": "aweb.protected-operations",

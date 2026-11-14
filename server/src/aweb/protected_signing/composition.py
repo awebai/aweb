@@ -147,6 +147,9 @@ class IndependentProtectedSigner:
         from .admission import AdmissionEffects
 
         self.signer.admission = AdmissionEffects(self)
+        from .owner_removal import OwnerRemovalEffects
+
+        self.signer.owner_removal = OwnerRemovalEffects(self)
 
     @classmethod
     def from_profile(cls, db, *, profile, scope, registry_client, custody, delivery, proof_context=None):
@@ -181,7 +184,7 @@ class IndependentProtectedSigner:
         ):
             raise SignerRefused("scope_refused")
         if operation.intent()["operation"] == "team.agent.remove":
-            if operation.intent()["subject"]["root_id_or_self"] == "self":
+            if operation.spec.supports_self_removal and operation.intent()["subject"]["root_id_or_self"] == "self":
                 from .self_removal import self_requester
 
                 return await self_requester(self, request, operation, purpose="prepare")
@@ -199,7 +202,7 @@ class IndependentProtectedSigner:
         if operation is None:
             raise SignerRefused("operation_not_found")
         if operation.intent()["operation"] == "team.agent.remove":
-            if operation.intent()["subject"]["root_id_or_self"] == "self":
+            if operation.spec.supports_self_removal and operation.intent()["subject"]["root_id_or_self"] == "self":
                 from .self_removal import self_requester
 
                 return await self_requester(self, request, operation, purpose=purpose)

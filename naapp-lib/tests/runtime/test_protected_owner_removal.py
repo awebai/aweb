@@ -34,3 +34,87 @@ def test_owner_removal_has_a_closed_subject_live_floor_and_existing_wire():
 def test_owner_subject_never_supplies_its_authority_or_classification(changes):
     with pytest.raises(SignerRefused, match="request_invalid"):
         owner_operation(**changes)
+
+
+def test_generated_page_accepts_owner_removal_and_refuses_frozen_substitutions():
+    import json
+    import subprocess
+    from pathlib import Path
+
+    from aweb_naapp.runtime.protected_signer.catalog import presentation_catalog
+
+    op = owner_operation()
+    request = {**op.intent(), "artifact": artifact_for(op, CONTROLLER, datetime.now(UTC)),
+        "requester_key": CONTROLLER, "target_kind": "kind not verified"}
+    script = r'''
+import assert from 'node:assert/strict';
+import {readFileSync} from 'node:fs';
+import {validateProtectedPresentation} from './src/aweb_naapp/assets/protected-presentation.mjs';
+import {coveredRequestDigest} from './src/aweb_naapp/assets/canonical-json.mjs';
+const {request,table}=JSON.parse(readFileSync(0,'utf8'));
+const state={mode:'governance',handoff_id:'handoff',state:'pending',operation_id:request.operation_id,
+ expires_at:'2026-11-13T12:10:00Z',payload:{policy:{ref:'aweb.human-assurance/1',version:1},request}};
+for (const kind of ['agent','kind not verified']) {
+ state.payload.request.target_kind=kind;
+ state.digest=await coveredRequestDigest(state.payload);
+ await validateProtectedPresentation(state,'handoff',table);
+}
+for (const mutate of [
+ r=>r.target_kind='human', r=>r.target_kind='service',
+ r=>r.subject.expected_membership.owner=true,
+ r=>delete r.subject.expected_membership.member_did_aw,
+ r=>r.artifact.request.certificate_id='another',
+ r=>r.artifact.request.body_sha256='0'.repeat(64),
+ r=>r.artifact.request.path='/wrong', r=>r.artifact.request.aud='https://wrong.example',
+]) {
+ const changed=structuredClone(state); mutate(changed.payload.request);
+ changed.digest=await coveredRequestDigest(changed.payload);
+ await assert.rejects(validateProtectedPresentation(changed,'handoff',table));
+}
+'''
+    result = subprocess.run(["node", "--input-type=module", "-e", script],
+        input=json.dumps({"request": request, "table": presentation_catalog()}),
+        cwd=Path(__file__).resolve().parents[2], capture_output=True, text=True, timeout=20)
+    assert result.returncode == 0, result.stdout + result.stderr
+
+
+@pytest.mark.asyncio
+async def test_requester_key_never_replaces_the_owner_live_floor():
+    from aweb_naapp.runtime.protected_signer import ProtectedSigner, RestrictedRequester
+
+    op = owner_operation()
+    requester = RestrictedRequester("requester", op.context, CONTROLLER)
+    service = object.__new__(ProtectedSigner)
+
+    async def authorized(operation_id, actor, purpose):
+        assert operation_id == op.operation_id and actor is requester and purpose == "execute"
+        return {"request": op.intent()}
+
+    service._authorized = authorized
+    with pytest.raises(SignerRefused, match="live_approval_required"):
+        await service._execute_request(op.operation_id, requester=requester)
+
+
+@pytest.mark.asyncio
+async def test_human_delivery_keeps_the_original_uv_deadline_not_the_retry_time():
+    from datetime import timedelta
+    from types import SimpleNamespace
+
+    from aweb_naapp.runtime.protected_signer import ProtectedSigner
+
+    issued = datetime(2026, 11, 13, 12, tzinfo=UTC)
+    row = {"expires_at": issued + timedelta(hours=24), "evidence_ref": "retained",
+        "approval_id": "exact", "digest": "frozen"}
+    metadata = {"purpose": "approve", "approval_id": "exact", "request_sha256": "frozen",
+        "challenge_issued_at": issued.isoformat(), "challenge_expires_at": (issued + timedelta(minutes=10)).isoformat()}
+
+    async def retained(reference):
+        assert reference == "retained"
+        return SimpleNamespace(metadata=metadata)
+
+    service = object.__new__(ProtectedSigner)
+    service.passkeys = SimpleNamespace(retained_proof=retained)
+    assert await service._signed_deadline(row) == issued + timedelta(seconds=300)
+    metadata["request_sha256"] = "another request"
+    with pytest.raises(SignerRefused, match="evidence_unavailable"):
+        await service._signed_deadline(row)

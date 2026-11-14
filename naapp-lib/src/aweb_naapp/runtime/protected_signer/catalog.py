@@ -14,6 +14,7 @@ from typing import Literal
 
 from .operation_codecs import (
     ADMISSION_CODEC,
+    OWNER_REMOVAL_CODEC,
     REMOVAL_CODEC,
     REVOKE_CODEC,
     ROOT_CODEC,
@@ -23,6 +24,7 @@ from .operation_display import OperationDisplay
 from .operation_effects import (
     ENDORSEMENT,
     LOCAL_SIGNATURE,
+    OWNER_REVOKED_MEMBERSHIP,
     REGISTERED_MEMBERSHIP,
     REVOKED_MEMBERSHIP,
     OperationEffect,
@@ -93,6 +95,25 @@ OperationSpec = OperationDefinition
 
 
 _ROWS = (
+    OperationDefinition(
+        "team.agent.remove", "owner_approved", "team_controller", "live_floor", "member_revocation",
+        ("team_id", "member_id", "certificate_id", "expected_membership", "target_kind"),
+        ("Current owner's exact live UV; no root admission bucket prerequisite",
+         "Verified agent or authoritative unknown only; never verified human or unavailable evidence",
+         "Exact membership and frozen classification rechecked before release"),
+        codec=OWNER_REMOVAL_CODEC, effect=OWNER_REVOKED_MEMBERSHIP,
+        binding_paths=(("target_kind", "/target_kind"),),
+        display=OperationDisplay("Remove {/subject/expected_membership/alias} from {/subject/team_id}?",
+            ("This revokes the exact team membership certificate.", "Target kind: {/target_kind}.",
+             "This removal does not revoke its identity or remove a human role."),
+            (("member", "/subject/expected_membership/alias"), ("team", "/subject/team_id")),
+            (("member", "/subject/member_id"), ("certificate", "/subject/certificate_id"), ("requester", "/requester")),
+            (("subject_ineligible", "Verified human memberships require human removal; unavailable kind evidence cannot authorize removal."),
+             ("issuer_kind_forbidden", "Only the current owner's exact passkey approval authorizes this removal."))),
+        prepared_fields=frozenset({"requester_key", "target_kind"}),
+        finalize_execution_refusal=True, receipt_uv_expiry=True, link_revealable=True,
+        request_window=(("request", "timestamp"), 300),
+    ),
     OperationDefinition(
         "team.agent.remove",
         "default",
