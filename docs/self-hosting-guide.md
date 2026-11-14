@@ -664,3 +664,16 @@ refresh removing that entry. To recover, issue a replacement ordinary member
 certificate (and configure its key if it changed), then restart the server.
 The public registry's existing read rate limits still apply; member signing
 does not grant the service-token rate-limit exemption.
+
+For private teams, certificate status remains public to callers who know a
+certificate ID. `?protection=1` adds the protection binding and certificate hash,
+without member fields or the signed blob; private team metadata stays gated.
+The non-negotiated status response keeps its existing four fields.
+
+Before an authorized cutover to protected governance, the registry operator must
+configure `AWID_PUBLIC_ORIGINS` with the registry's canonical external origins,
+or an embedding must supply its explicit origins. Protected mutations fail
+closed without this setting; request/proxy headers never supply the authority.
+Once any team is provisioned, registry binary/schema rollback is unsupported
+even after forward deprotection. See the [registry operator notes](../awid/README.md#registry-first-upgrades-and-rollback-limits)
+for the measured 0.5.39 startup compatibility and the enforcement/history limits.

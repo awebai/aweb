@@ -2,6 +2,26 @@
 
 ## Unreleased
 
+- `aw id operation status --operation-id <UUID>` reads a protected
+  operation's receipt once, as its requester, without performing it.
+  Before this, the only way to learn the outcome of a prepared operation
+  whose answer was never seen was to resume it.
+  - It reports the receipt's state: `pending` (with its reason and deadline),
+    `committed` (its result, not verified by the read), `refused` or
+    `unknown` (with a code). It reports `none` when the service holds no such
+    operation for this requester in that scope.
+  - It prepares, executes and settles nothing, and leaves aw's saved request
+    as it was.
+  - A saved request is read under the profile's one binding for its scope.
+    Without a saved request, the profile must have exactly one binding.
+  - A refused or failed read is an error, never a state.
+- Upgrade protection-aware releases in this order: AWID registry, then aweb
+  server, then `aw`. Registry startup on an additive schema is not rollback
+  approval: after any team is provisioned, registry binary/schema rollback is
+  unsupported, including after forward deprotection. See the [registry operator
+  notes](awid/README.md#registry-first-upgrades-and-rollback-limits) for the
+  measured compatibility, public status contract and pinned-origin requirements.
+
 - The team deployment bundle can turn on the protected signer's service-owned
   delivery, which `human-role.revoke` requires: `signer.serviceKey` names the
   distinct attestation key at `private-controller/service.key` (recovered

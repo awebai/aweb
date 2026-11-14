@@ -78,12 +78,26 @@ async def namespace_guard(tx, domain, *, exclusive=False):
     await tx.execute(f"SELECT {function}($1::bigint)", _lock_key("namespace", domain))
 
 
-async def team_guard(tx, domain, name):
+async def team_guard(tx, domain, name, *, exclusive=True):
     await namespace_guard(tx, domain)
+    function = "pg_advisory_xact_lock" if exclusive else "pg_advisory_xact_lock_shared"
     await tx.execute(
-        "SELECT pg_advisory_xact_lock($1::bigint)",
+        f"SELECT {function}($1::bigint)",
         _lock_key("team", build_team_id(domain, name)),
     )
+
+
+def project_protection(row):
+    """Validate one authoritative row, including an explicit absent-row legacy."""
+    try:
+        if row is None or row["mode"] == "legacy":
+            return {"mode": "legacy"}
+        binding = {key: row[key] for key in ("mode", "service_id", "service_did_key", "history_id", "generation")}
+        binding["history_id"] = str(binding["history_id"])
+        return validate_binding(binding)
+    except Exception:
+        logger.exception("Authoritative protected-team binding unavailable")
+        raise refusal("protected_state_unavailable") from None
 
 
 async def protection(tx, domain, name):
@@ -95,14 +109,10 @@ async def protection(tx, domain, name):
             domain,
             name,
         )
-        if row is None or row["mode"] == "legacy":
-            return {"mode": "legacy"}
-        binding = dict(row)
-        binding["history_id"] = str(binding["history_id"])
-        return validate_binding(binding)
     except Exception:
         logger.exception("Authoritative protected-team binding unavailable")
         raise refusal("protected_state_unavailable") from None
+    return project_protection(row)
 
 
 async def _request_body(request):

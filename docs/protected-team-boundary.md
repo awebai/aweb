@@ -38,6 +38,12 @@ older registry or failed lookup is unavailable evidence, never inferred legacy.
 Upgrade the selected registry before protected consumers/cutover. Existing
 callers that ignore the additive metadata keep working on unmarked teams.
 
+Team and negotiated certificate-status reads take shared canonical-team guards;
+controller effects retain exclusive guards. Team listings obtain their page and
+protection projections in one bounded query. Unavailable or malformed protection
+evidence refuses the whole page with 503 `protected_state_unavailable`, without
+omitting individual teams or inferring legacy.
+
 Every AWID controller effect takes the namespace guard then canonical-team
 guards in lexical order, including when a protection row is absent. Team effects
 and activation share the namespace guard; namespace cascade takes it exclusively.
@@ -55,6 +61,12 @@ cutover. Governance uses fresh authoritative observations with the original
 last await. This is coordinated cutover, not distributed atomicity. Package .8
 owns each installation's authorization, historical baseline, restore and rollback
 limits; a restored database counter alone cannot establish safe history.
+
+After any provisioning transition, registry binary and schema rollback are
+unsupported, including after forward deprotection. An older registry may start
+on the additive schema while silently dropping protection enforcement and
+generation/history maintenance. Restoring a pre-cutover registry backup is not
+a way to undo provisioning; recovery must preserve history and move forward.
 
 Core certificate authentication first verifies the presented certificate through
 its existing controller-key cache, bounded signature-failure refresh, revocation
