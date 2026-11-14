@@ -454,6 +454,15 @@ isolated host (a loopback address, `localhost`, `*.localhost`, `*.test`,
 `*.test.local` or a single-label name) may also be reached over `http` or at a
 non-public address. No other host gains anything in that mode.
 
+Python's `RegistryClient` and `CachedRegistryClient` keep production address
+policy for DNS-selected registries regardless of process environment. An isolated
+local test may explicitly supply `registry_origin_context=OriginContext(...)`
+(from `awid.external_authority`), with `app_env="development"`,
+`federation_test_enabled=True`, and its isolated `listener_origin`. Both the
+listener and destination must satisfy the existing isolated-host rule; public
+hostnames gain no private-address exception. The cross-registry Python outsider
+uses this argument; ordinary clients leave it unset.
+
 So wherever `aw` uses a private self-hosted registry, set
 `AWID_REGISTRY_URL` to it in that process's environment, as in the examples
 above; for the gateway, its configured `registry_url` is enough. `aw doctor

@@ -71,6 +71,34 @@ Projection updates and grant mint/revoke effects check it inside their
 transaction after the final await, so expiry rolls back their writes. A later
 read never renews evidence already used by the operation.
 
+## Embedding authenticated team identities
+
+An embedding that replaces the core certificate/grant dependency or its returned
+identity object must preserve the in-process `TeamIdentity` contract, including
+synchronous `require_fresh()`. Certificate and grant authentication carry their
+original `TeamProtectionObservation` on `protection_observation`; reconstructing
+an identity from its scalar team/member fields must not discard that observation.
+This includes explicit legacy observations: legacy mode preserves membership
+rules, not an unlimited evidence lifetime.
+
+The check delegates to `aweb.membership.require_fresh(observation)`, which maps
+expired protection evidence to HTTP 503 with `protected_state_unavailable`.
+It performs no HTTP lookup, signs nothing and does not renew a deadline. The
+observation is trusted in-process evidence with a monotonic deadline, not a
+request field or a persisted identity attribute. An optional constructor field
+is not evidence that a team is legacy and must not turn missing required
+verification into a successful no-op.
+
+The host retains the original observation through its authentication and
+projection awaits. Consumers call the synchronous fence after their final
+await, inside the transaction whose writes must roll back on expiry; the grant
+mint route, for example, checks after the grant insert. Other credential types
+retain their independent authority rules: adding the method grants no authority
+and cannot erase protection evidence already used by authentication.
+`HumanMemberProof.require_fresh()` and `PreparedOwnerAct.require_fresh()` fence
+their own distinct evidence; they do not replace the authenticated team identity
+or its original membership observation.
+
 ## Detached proof
 
 `X-AWEB-Protected-Effect` contains unpadded base64url of canonical JSON

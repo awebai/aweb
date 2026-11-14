@@ -138,13 +138,66 @@ compose() {
   docker compose -p "$PROJECT" --env-file .env.e2e "$@"
 }
 
-# A customer's own server: the shipped customer Compose file, with one
-# override that points it at this journey's registry in place of the public one.
+# A customer's own server: the shipped customer Compose file as its own
+# project, pointed at this journey's registry in place of the public one.
 CUSTOMER_PROJECT="$PROJECT-customer"
 CUSTOMER_PORT_ALLOCATOR=""
 customer_compose() {
   docker compose -p "$CUSTOMER_PROJECT" --env-file "$CUSTOMER_DIR/.env" \
-    -f "$SERVER_DIR/docker-compose.customer.yml" -f "$CUSTOMER_DIR/journey-registry.yml" "$@"
+    -f "$SERVER_DIR/docker-compose.customer.yml" "$@"
+}
+
+allocate_customer_port() {
+  if [[ -n "${CANDIDATE_RUNNER_NAME:-}" ]]; then
+    CUSTOMER_PORT=8000
+    return 0
+  fi
+  CUSTOMER_PORT_ALLOCATOR="$CUSTOMER_PROJECT-port"
+  docker run -d --name "$CUSTOMER_PORT_ALLOCATOR" \
+    --label "aweb.e2e.project=$PROJECT" \
+    --cpus .1 --memory 32m --pids-limit 16 \
+    -p "0:8000" \
+    --entrypoint /bin/sleep redis:7-alpine infinity >/dev/null
+  CUSTOMER_PORT="$(docker inspect --format '{{(index (index .NetworkSettings.Ports "8000/tcp") 0).HostPort}}' "$CUSTOMER_PORT_ALLOCATOR")"
+}
+
+release_customer_port() {
+  if [[ -n "$CUSTOMER_PORT_ALLOCATOR" ]]; then
+    docker rm -fv "$CUSTOMER_PORT_ALLOCATOR" >/dev/null || return
+    CUSTOMER_PORT_ALLOCATOR=""
+  fi
+}
+
+write_customer_server_env() {
+  printf '%s\n' \
+    "AWEB_PUBLIC_ORIGIN=$CUSTOMER_URL" \
+    "SECRETS_DIR=$CUSTOMER_SECRETS_DIR" \
+    "AWEB_PORT=$CUSTOMER_PORT" \
+    "AWEB_BIND_ADDRESS=$DOCKER_BIND_ADDRESS" \
+    "AWID_REGISTRY_URL=http://awid:8010" \
+    "APP_ENV=development" \
+    > "$CUSTOMER_DIR/.env"
+}
+
+# The registry is this journey's awid service. The customer's aweb joins the
+# journey's project network once Compose has created it and before it starts,
+# so its first registry read already resolves awid. Each project still owns
+# only its own networks: the candidate gate refuses a caller-declared external
+# network, and the customer's down removes its container's endpoint.
+start_customer_server() {
+  local aweb_container
+  customer_compose up --build --no-start || return
+  aweb_container="$(customer_compose ps -aq aweb)" || return
+  if [[ -z "$aweb_container" ]]; then
+    echo "customer aweb container was not created" >&2
+    return 1
+  fi
+  docker network connect "${PROJECT}_default" "$aweb_container" || return
+  customer_compose up -d || return
+  if [[ "$(customer_compose ps -q aweb)" != "$aweb_container" ]]; then
+    echo "customer aweb is not the container joined to ${PROJECT}_default" >&2
+    return 1
+  fi
 }
 
 # Isolated temp dirs
@@ -245,10 +298,8 @@ cleanup() {
   echo "--- Cleanup ---"
   stop_quickstart_bridges
   release_service_ports || status=1
-  if [[ -n "$CUSTOMER_PORT_ALLOCATOR" ]]; then
-    docker rm -fv "$CUSTOMER_PORT_ALLOCATOR" >/dev/null 2>&1 || status=1
-  fi
-  if [[ -f "$CUSTOMER_DIR/journey-registry.yml" ]]; then
+  release_customer_port 2>/dev/null || status=1
+  if [[ -f "$CUSTOMER_DIR/.env" ]]; then
     customer_compose down -v --rmi local --remove-orphans >/dev/null 2>&1 || status=1
     for kind in container network volume image; do
       if [[ "$kind" == container ]]; then
@@ -1501,39 +1552,17 @@ run_success "customer server fetch cert" run_aw_with_home_in "$CUSTOMER_IDENTITY
 
 stage_customer_secrets || exit 1
 
-CUSTOMER_PORT_ALLOCATOR="$CUSTOMER_PROJECT-port"
-docker run -d --name "$CUSTOMER_PORT_ALLOCATOR" \
-  --label "aweb.e2e.project=$PROJECT" \
-  --cpus .1 --memory 32m --pids-limit 16 \
-  -p "0:8000" \
-  --entrypoint /bin/sleep redis:7-alpine infinity >/dev/null
-CUSTOMER_PORT="$(docker inspect --format '{{(index (index .NetworkSettings.Ports "8000/tcp") 0).HostPort}}' "$CUSTOMER_PORT_ALLOCATOR")"
-CUSTOMER_URL="http://$DOCKER_PUBLISHED_HOST:$CUSTOMER_PORT"
-
-printf '%s\n' \
-  "AWEB_PUBLIC_ORIGIN=$CUSTOMER_URL" \
-  "SECRETS_DIR=$CUSTOMER_SECRETS_DIR" \
-  "AWEB_PORT=$CUSTOMER_PORT" \
-  "AWEB_BIND_ADDRESS=$DOCKER_BIND_ADDRESS" \
-  "AWID_REGISTRY_URL=http://awid:8010" \
-  "APP_ENV=development" \
-  > "$CUSTOMER_DIR/.env"
-printf '%s\n' \
-  "services:" \
-  "  aweb:" \
-  "    networks: [default, journey]" \
-  "networks:" \
-  "  journey:" \
-  "    name: ${PROJECT}_default" \
-  "    external: true" \
-  > "$CUSTOMER_DIR/journey-registry.yml"
+allocate_customer_port
+CUSTOMER_URL="$(journey_url "$CUSTOMER_PROJECT" aweb 8000 "http://$DOCKER_PUBLISHED_HOST:$CUSTOMER_PORT")"
+write_customer_server_env
 
 customer_config="$(customer_compose config)"
 assert_not_contains "customer server is given no service token" "$customer_config" "AWID_SERVICE_TOKEN"
 
-docker rm -fv "$CUSTOMER_PORT_ALLOCATOR" >/dev/null
-CUSTOMER_PORT_ALLOCATOR=""
-customer_compose up --build -d
+release_customer_port
+if start_customer_server; then customer_started=0; else customer_started=$?; fi
+assert_eq "customer server starts joined to the journey network" "0" "$customer_started"
+[[ "$customer_started" == 0 ]] || exit 1
 customer_ready=1
 for _ in $(seq 1 90); do
   if curl -sf "$CUSTOMER_URL/ready" >/dev/null 2>&1; then
@@ -1604,7 +1633,7 @@ assert_contains "the revoked server could not read its team at the registry" \
   "$(customer_compose logs --no-color aweb 2>&1)" "AWID registry dependency failed for team key resolution: customerteam:test.local"
 
 customer_compose down -v --rmi local --remove-orphans >/dev/null 2>&1
-rm -f "$CUSTOMER_DIR/journey-registry.yml"
+rm -f "$CUSTOMER_DIR/.env"
 
 # ---------------------------------------------------------------------------
 # Phase 11c: External AWID team registers with aweb service

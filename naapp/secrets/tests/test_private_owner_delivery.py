@@ -39,7 +39,7 @@ async def test_tokenless_private_team_first_owner_uses_the_service_members_signe
     )
 
 
-async def test_tokenless_unknown_team_returns_key_unavailable_before_any_app_effect(root, registry):
+async def test_tokenless_unknown_team_returns_protection_unavailable_before_any_app_effect(root, registry):
     service, client, settings, member, installed, _, coordination, _ = root
     body, _, _ = await delivery(root, registry)
     fields = json.loads(base64.b64decode(body["signing"]).split(b"\n", 1)[1])
@@ -52,7 +52,10 @@ async def test_tokenless_unknown_team_returns_key_unavailable_before_any_app_eff
     before = await effects(service, installed["installation_id"], member.team_id)
     before_app_reads = len(coordination.calls)
     response = await client.post(settings.console_origin + PATH, json=body)
-    assert (response.status_code, response.json()["detail"]) == (503, "team_key_unavailable")
+    # An absent team has no authoritative protection projection. The shared
+    # verifier must report that missing current evidence before key/app reads,
+    # rather than infer legacy membership from an unknown team.
+    assert (response.status_code, response.json()["detail"]) == (503, "protected_state_unavailable")
     assert await effects(service, installed["installation_id"], member.team_id) == before
     assert len(coordination.calls) == before_app_reads
     # A missing team must reach real AWID, rather than failing locally because

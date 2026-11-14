@@ -196,7 +196,7 @@ class WaitingSQLAuthority:
 
             async def wait(self, tx, phase):
                 row = await tx.fetch_one(
-                    "SELECT a.state, o.result IS NOT NULL AS signed "
+                    "SELECT a.state, (o.result IS NOT NULL OR o.signed_result IS NOT NULL) AS signed "
                     "FROM {{tables.protected_signer_operations}} o "
                     "JOIN {{tables.approvals}} a ON a.approval_id=o.approval_id "
                     "WHERE o.operation_id=$1",
@@ -283,7 +283,8 @@ async def test_admitted_browser_session_is_rechecked_across_real_effect_wait(
             task.cancel()
             await asyncio.gather(task, return_exceptions=True)
     row = await w.passkeys.db.fetch_one(
-        "SELECT o.result,a.state FROM {{tables.protected_signer_operations}} o "
+        "SELECT o.result,o.signed_result,o.retained_effect,o.issued_artifact,o.delivery_claim,a.state "
+        "FROM {{tables.protected_signer_operations}} o "
         "JOIN {{tables.approvals}} a ON a.approval_id=o.approval_id WHERE o.operation_id=$1",
         operation["operation_id"],
     )
@@ -296,6 +297,9 @@ async def test_admitted_browser_session_is_rechecked_across_real_effect_wait(
         assert response.status_code == 401, response.text
         assert response.json() == {"detail": "console_session_required"}
         assert row["result"] is None and row["state"] == "approved"
+        assert all(row[name] is None for name in (
+            "signed_result", "retained_effect", "issued_artifact", "delivery_claim"))
+        assert operation["operation_id"] not in w.signer.custody.applied
         assert (await w.audit.kinds()).count("protected_operation_signed") == 0
 
 
