@@ -55,6 +55,30 @@ def capability(tmp_path):
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize("ready", [False, True])
+async def test_production_composition_forwards_readiness_to_actual_custody(capability, ready):
+    from aweb.protected_signing.composition import IndependentProtectedSigner
+
+    class NoDatabaseIO:
+        def __getattr__(self, name):
+            pytest.fail("constructing the composition cannot open the database")
+
+    c = capability
+    async with httpx.AsyncClient() as client:
+        registry = SimpleNamespace(registry_url="https://registry.example", _http_client=client)
+        app = IndependentProtectedSigner(NoDatabaseIO(), context=c.operation.context,
+            registry=registry, custody=c.custody, human_origin="https://human.example",
+            request_origin="https://request.example", delivery=object(),
+            consumer_clients={ORIGIN: client}, receipt_origins=frozenset({ORIGIN}) if ready else frozenset())
+        assert app.signer.custody is c.custody
+        if ready:
+            assert c.custody.require_service_delivery(operation=c.operation, authority=c.authority) is None
+        else:
+            with pytest.raises(SignerRefused, match="operation_not_served"):
+                c.custody.require_service_delivery(operation=c.operation, authority=c.authority)
+
+
+@pytest.mark.asyncio
 @pytest.mark.parametrize("case", ["ready", "no_receipt", "default_receipt", "no_client", "closed_client", "legacy",
     "wrong_service", "wrong_service_key", "wrong_controller", "wrong_team", "wrong_context",
     "missing_key", "no_protection", "stale", "final_stale"])
