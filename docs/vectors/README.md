@@ -1092,3 +1092,46 @@ derivation; they are never message/provenance fields. Author projections test
 exact session/subject/signer binding and external/untrusted guest assurance.
 They assume independently verified signer facts and do not authorize membership
 or activate managed chat. See [P3 readiness](../human-channels-participants.md).
+
+### `human-assurance-execution-intent-v1.json` — execution-issued artifacts
+
+Proposed `intent_v1` approval binds one static artifact template and original
+issuance window. Execution issues only definition-owned time fields, retaining
+one artifact/signature/exact delivery. Mailed pending work can wait up to24h;
+UV and consumer freshness do not grow. Old clients fail closed with
+`upgrade_aw_required`; there is no parallel frozen-artifact execution path.
+Owner acts require service-owned exact-confirmed delivery; late applied reads
+verify history without another POST. Saved old unfinished operations are never
+resent, and ambiguous outcomes retain their reconciliation pointer. The
+coordinated server/three-client/consumer readiness precedes deployment. These are
+policy scenarios, not served-source or native evidence.
+
+### `human-assurance-owner-initiation-v1.json` — owner-session prepare
+
+Proposed human-origin/CSRF write creates one pending exact intent from a current
+B3 owner session, independently of an agent/terminal. Host requester identity
+is provenance only; the same executor still requires one fresh exact-act UV.
+No write route is built before security text ACK. Until then the all-current-
+members inventory is read-only. These scenarios do not claim implementation.
+
+## Protected team verifier boundary
+
+`protected-effect-v1.json` freezes the detached proof encoding and exact
+artifact/controller-signature digest for the approved opt-in
+[protected team boundary](../protected-team-boundary.md). Python verifies the
+proof and wrong-service/history/generation controls; Go independently verifies
+the artifact digest. All authority is synthetic fixture data. These codec
+controls do not establish actual protected custody, B3 approval, remote effect
+application or team cutover; those require native executor/consumer evidence.
+
+`protected-membership-v1.json` deliberately adds the protected presentation
+reason `certificate_binding_mismatch` without changing the legacy certificate
+vectors. It freezes an exact admitted-member positive, controller-signed key,
+alias and rights replacements under an active ID, unsigned alteration, unknown
+ID and unavailable historical-blob controls. Its baseline and authority are
+synthetic; it does not establish protected executor issuance or activation.
+
+
+`protected-effect-receipt-v1.json` freezes the proof-gated consumer confirmation
+route, complete header channel, minimal exact response, no-store policy and
+404/503 distinction. Historical receipt reads grant no renewed effect authority.

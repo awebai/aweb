@@ -425,3 +425,52 @@ The command returns the public service/H/root/key/team/scope selection and
 replacement ID. It emits no private key or enrollment link. It does not
 implement the separate backup/restore anti-rollback or controller-rotation
 work tracked under the queued restore/catalog operations.
+
+For an explicitly cut-over team, provision a distinct attestation key in the
+same protected OS/custody volume and configure `AWEB_PROTECTED_SERVICE_KEY_FILE`.
+It uses the controller key reader's strict ownership/mode/symlink checks. The
+host refuses reuse of any configured controller, namespace, human or ordinary
+member key for this role. Omitting it preserves legacy composition; it cannot
+produce a protected-team service attestation or authorize cutover.
+
+The registry host's local administrator transition is
+`awid_service.protected_teams.provision_team_protection` inside a database
+transaction, with the expected current generation and explicit approval/cutover
+reference. It has no worker HTTP route. Package .8 must establish authorization,
+real custody isolation, consumer drains/invalidation, exact historical baseline
+and rollback limits before invoking it. Build/install/test authorization never
+invokes that transition automatically.
+
+
+Service-owned owner-act delivery additionally pins consumer origins in
+`AWEB_PROTECTED_OWNER_ACT_ORIGINS` (a JSON array of canonical HTTPS origins).
+The registry origin already comes from the selected profile. Only host-owned
+clients for these configured origins may send a retained effect or read its
+fixed confirmation route. No worker-selected URL, redirect or regenerated
+authentication is accepted. Consumers must install the shared hooks ordered
+migrations and record the reference after their actual effect in its transaction.
+Their fixed receipt route must redact the proof header from all proxy/application
+logs and traces and return no-store; it exposes no private delivery headers.
+
+
+### Execution-intent owner-act delivery readiness
+
+`AWEB_PROTECTED_EFFECT_RECEIPT_ORIGINS` is an explicit list of canonical pinned
+consumer origins whose protected effect verifier and exact historical receipt
+route have been deployed and checked by the operator. It defaults to empty.
+It does not configure a client, discover a consumer or cut a team over. An
+owner-act origin also needs its pinned `AWEB_PROTECTED_OWNER_ACT_ORIGINS` client,
+current authoritative protection binding and the matching isolated service key.
+A protected intent requiring service-owned delivery refuses
+`operation_not_served` before creating a pending approval when those capabilities
+are absent. Publishing a client or server alone does not establish readiness.
+
+Live approvals use the single `approval_format="intent_v1"` prepare form. The
+frozen descriptor contains the exact static template, delivery target and original
+issuance window. One concrete artifact is issued under fresh exact-act UV and
+stored privately with its signature and complete retained request before release.
+A historical read reuses those bytes and cannot renew the issuance window. Old
+prepare/execute forms fail `upgrade_aw_required`; old receipts remain available
+for non-executing reconciliation. Deploy this format only after the coordinated
+matching aw/server publication and affected installations' actual pin/restart
+and consumer-readiness evidence described in the human-assurance contract.

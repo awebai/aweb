@@ -7,6 +7,7 @@ from fastapi import HTTPException, Request
 from pydantic import BaseModel
 
 from aweb.team_auth_deps import _get_revoked_certificates
+from aweb.membership import verify_retained, require_fresh
 
 
 class SenderMembership(BaseModel):
@@ -33,10 +34,11 @@ async def sender_memberships(
     if not ids:
         return result
     members = member_rows if member_rows is not None else await db.get_manager("aweb").fetch_all(
-        "SELECT agent_id, team_id, CASE WHEN did_aw_verified_key = did_key THEN did_aw END AS did_aw, status, deleted_at, certificate_id "
+        "SELECT agent_id, team_id, CASE WHEN did_aw_verified_key = did_key THEN did_aw END AS did_aw, did_key, alias, identity_scope, address, status, deleted_at, certificate_id "
         "FROM {{tables.agents}} WHERE agent_id = ANY($1::uuid[])", ids,
     )
     revocations = {}
+    checked = []
     for member in members:
         key = (str(member["team_id"]), str(member["agent_id"]))
         if key not in result:
@@ -62,5 +64,22 @@ async def sender_memberships(
                 revocations[team] = None
         revoked = revocations[team]
         if revoked is not None:
-            projection.state = "inactive" if certificate_id in revoked else "active"
+            if certificate_id in revoked:
+                projection.state = "inactive"
+                continue
+            try:
+                observation = await verify_retained(
+                    getattr(request.app.state, "awid_registry_client", None), member,
+                )
+                require_fresh(observation)
+            except HTTPException as exc:
+                projection.state = "inactive" if exc.status_code == 401 else "unknown"
+            else:
+                projection.state = "active"
+                checked.append((projection, observation))
+    for projection, observation in checked:
+        try:
+            require_fresh(observation)
+        except HTTPException:
+            projection.state = "unknown"
     return result

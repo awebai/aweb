@@ -81,8 +81,32 @@ class SQLAuthority:
 class ControllerCustody:
     """The protected server's existing controller key; only a named operation."""
 
-    def __init__(self, key):
-        self.key = key
+    def __init__(self, key, clock):
+        self.key, self.clock = key, clock
+        self.applied = set()
+
+    def require_service_delivery(self, **kwargs):
+        pass  # Explicit transport double; not protected-consumer readiness evidence.
+
+    def retain_authorized_effect(self, **kw):
+        from aweb_naapp.runtime.protected_signer import FrozenDelivery, RetainedEffect
+        from aweb_naapp.runtime.protected_signer.execution_intent import validate_issued_artifact
+
+        assert validate_issued_artifact(kw["operation"], kw["request"]["artifact"], kw["artifact"]) == kw["signing"]
+        return RetainedEffect(kw["operation"].operation_id, kw["signing"], kw["signature"], "a" * 64,
+            kw["expires_at"], FrozenDelivery(kw["operation"].audience, "POST", "/.well-known/aweb-owner-act",
+                {"Authorization": "transport-double"}, kw["signing"]), "transport-double-not-a-proof")
+
+    async def deliver_retained(self, operation, retained):
+        assert self.clock() < retained.expires_at and operation.operation_id not in self.applied
+        self.applied.add(operation.operation_id)
+
+    async def confirm_retained(self, operation, retained):
+        from aweb_naapp.runtime.protected_signer import EffectConfirmation
+
+        if operation.operation_id in self.applied:
+            return EffectConfirmation(operation.operation_id, retained.artifact_sha256, self.clock() + timedelta(seconds=60))
+        return None
 
     def sign_owner_act(self, operation, fields):
         assert isinstance(operation, RevokeHumanRole)
@@ -181,7 +205,7 @@ async def world(test_db_factory):
         delivery=contacts,
         audit=audit,
         authority=SQLAuthority(db, context, subject, did_key(key), clock),
-        custody=ControllerCustody(key),
+        custody=ControllerCustody(key, clock),
         clock=clock,
     )
     await signer.migrate()

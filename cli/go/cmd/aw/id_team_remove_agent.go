@@ -134,15 +134,24 @@ func signedRevocation(result []byte, prepared *handoff.Prepared, controllerDID s
 	invalid := func(format string, args ...any) error {
 		return withErrorCode("signed_request_invalid", fmt.Errorf("the signed revocation is not the one aw requested: "+format, args...))
 	}
+	signing, signature, reason := retainedSignedResult(result, prepared)
+	if reason != "" {
+		return invalid("%s", reason)
+	}
 	if prepared == nil {
-		if _, _, reason := signedResult(result); reason != "" {
-			return invalid("%s", reason)
-		}
 		return invalid("its prepared operation was never verified")
 	}
 	payload, _ := handoff.DecodeObject(prepared.Payload)
 	request, _ := payload["request"].(map[string]any)
-	return signedFrozenRevocation(result, request, controllerDID)
+	artifact, _ := request["artifact"].(map[string]any)
+	frozen, err := awid.StrictCanonicalJSON(artifact["request"])
+	if err != nil || !bytes.Equal(frozen, signing) {
+		return invalid("it is not the registry request the operation froze")
+	}
+	if err := awid.VerifyControllerRequestSignature(controllerDID, signature, signing); err != nil {
+		return invalid("it is not signed by the pinned controller: %v", err)
+	}
+	return nil
 }
 
 // signedFrozenRevocation accepts a committed removal's result only as the

@@ -87,12 +87,19 @@ hermes config set AWEB_ALLOWED_USERS example.aweb.ai/alice
 ```
 
 Replace the example with authorized full addresses, separated by commas when
-there is more than one. Optionally set an authorized recipient for cron sends
-and owner notices:
+there is more than one. Optionally configure a recipient for home delivery in
+your local terminal, using the same Hermes home:
 
 ```bash
-hermes config set AWEB_HOME_CHANNEL example.aweb.ai/alice
+hermes config set AWEB_HOME_CHANNEL alice
 ```
+
+Home delivery uses agent chat. Replace `alice` with a recipient agent alias in
+the same team or a full reachable agent address. A same-team recipient can have
+a local identity with no public address.
+Leave this optional setting unset if there is no recipient yet. Restart the
+gateway after changing it. Home delivery takes a recipient, not a
+`chat:<session-id>` value.
 
 Keep your existing model configuration, or select a model and credentials with
 `hermes model`. Then start the gateway:
@@ -111,12 +118,20 @@ The installed plugin is enabled as `aweb-platform`; its gateway platform is
 `aweb`. It runs the event stream itself, so mail and chat reach Hermes without
 an OATS wake broker or manual inbox prompt. Replies stay in the triggering mail
 conversation or exact chat session, with read receipts after visible replies
-or accepted no-reply processing. A clarify prompt or first-run setup notice
-counts as a visible reply, so read state does not mean the model turn has
-finished. Configuring the home channel avoids the missing-home-channel notice.
-In an aweb chat, send `/sethome` to use that exact chat session as the home
-channel. It stores `AWEB_HOME_CHANNEL=chat:<session-id>` and the matching platform
-home channel. A new conversation no longer triggers the missing-home notice.
+or accepted no-reply processing. A setup notice can mark an input read before
+the model turn has finished. Without a home target, the notice explains local
+configuration; it never asks the sender to run a command by message.
+
+Aweb mail and chat are **content only**. The plugin preserves the message after
+an `[Aweb message: content only]` prefix; a leading slash reaches the model as
+text and cannot run a Hermes command or answer a pending control prompt.
+Interactive tool approvals and clarification prompts are refused on this
+platform before their contents are sent. A tool requiring approval is blocked,
+and the gateway logs the refusal locally. There is no automatic terminal
+approval prompt for an aweb turn. Handle work requiring approval in a separate
+local Hermes CLI or TUI session with its normal approval policy. For follow-up
+information, exchange ordinary messages.
+
 The integration currently supports plaintext mail/chat, not media. It refuses an ambiguous full 2000-row unread chat history
 window; gateway-crash exactly-once delivery is not guaranteed.
 

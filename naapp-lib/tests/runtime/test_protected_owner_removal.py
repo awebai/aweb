@@ -1,12 +1,13 @@
 """Additive owner row: a closed target and the existing revocation wire."""
 
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from uuid import uuid4
 
 import pytest
 
 from aweb_naapp.runtime.protected_signer import CatalogOperation, SignerRefused
 from aweb_naapp.runtime.protected_signer.codecs import artifact_for, signing_bytes
+from aweb_naapp.runtime.protected_signer.execution_intent import prepare_artifact_intent
 from tests.runtime.test_protected_member_removal import CONTROLLER, operation, subject
 
 
@@ -44,7 +45,7 @@ def test_generated_page_accepts_owner_removal_and_refuses_frozen_substitutions()
     from aweb_naapp.runtime.protected_signer.catalog import presentation_catalog
 
     op = owner_operation()
-    request = {**op.intent(), "artifact": artifact_for(op, CONTROLLER, datetime.now(UTC)),
+    request = {**op.intent(), "artifact": prepare_artifact_intent(op, CONTROLLER, datetime.now(UTC).replace(microsecond=0), datetime.now(UTC).replace(microsecond=0) + timedelta(minutes=10)),
         "requester_key": CONTROLLER, "target_kind": "kind not verified"}
     script = r'''
 import assert from 'node:assert/strict';
@@ -63,9 +64,9 @@ for (const mutate of [
  r=>r.target_kind='human', r=>r.target_kind='service',
  r=>r.subject.expected_membership.owner=true,
  r=>delete r.subject.expected_membership.member_did_aw,
- r=>r.artifact.request.certificate_id='another',
- r=>r.artifact.request.body_sha256='0'.repeat(64),
- r=>r.artifact.request.path='/wrong', r=>r.artifact.request.aud='https://wrong.example',
+ r=>r.artifact.template.request.certificate_id='another',
+ r=>r.artifact.template.request.body_sha256='0'.repeat(64),
+ r=>r.artifact.template.request.path='/wrong', r=>r.artifact.template.request.aud='https://wrong.example',
 ]) {
  const changed=structuredClone(state); mutate(changed.payload.request);
  changed.digest=await coveredRequestDigest(changed.payload);
@@ -114,7 +115,52 @@ async def test_human_delivery_keeps_the_original_uv_deadline_not_the_retry_time(
 
     service = object.__new__(ProtectedSigner)
     service.passkeys = SimpleNamespace(retained_proof=retained)
+    op = owner_operation()
+    from aweb_naapp.runtime.protected_signer.execution_intent import (
+        materialize_artifact,
+        prepare_artifact_intent,
+    )
+
+    descriptor = prepare_artifact_intent(op, CONTROLLER, issued, row["expires_at"])
+    row.update(request={**op.intent(), "artifact": descriptor},
+        issued_artifact=materialize_artifact(op, descriptor, issued))
     assert await service._signed_deadline(row) == issued + timedelta(seconds=300)
     metadata["request_sha256"] = "another request"
     with pytest.raises(SignerRefused, match="evidence_unavailable"):
         await service._signed_deadline(row)
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("human_reader", [False, True])
+@pytest.mark.parametrize("expired", [False, True])
+async def test_composed_historical_receipt_guard_covers_owner_and_requester(human_reader, expired):
+    import json
+    from datetime import timedelta
+
+    from aweb_naapp.runtime.protected_signer import AdmittedHuman, ProtectedSigner, ReceiptReader
+
+    op = owner_operation()
+    assert op.spec.effect.invalidates_membership is True
+    actor = (AdmittedHuman(op.context.human_id, "owner-subject", "owner-scope", op.context)
+        if human_reader else ReceiptReader("requester", op.context, CONTROLLER))
+    now = datetime.now(UTC)
+    row = {"operation_id": op.operation_id, "request": json.dumps(op.intent()),
+        "result": None, "signed_result": {"retained": "historical row"}, "refusal_code": None,
+        "retained_effect": None, "approval_id": None, "verification_claim": None,
+        "expires_at": now + timedelta(seconds=-1 if expired else 60)}
+    service = object.__new__(ProtectedSigner)
+    service.clock = lambda: now
+    service.owner_removal = None
+
+    async def authorized(operation_id, reader, purpose, **kwargs):
+        assert (operation_id, reader, purpose) == (op.operation_id, actor, "receipt")
+        return row
+
+    async def unavailable(*args, **kwargs):
+        pytest.fail("absent-provider history must not enter reconciliation or delivery")
+
+    service._authorized, service._reconcile_admission = authorized, unavailable
+    receipt = await service.receipt(op.operation_id, reader=actor)
+    assert (receipt.state, receipt.code) == (("unknown", "external_effect_unresolved")
+        if expired else ("pending", "effect_in_progress"))
+    assert receipt.result is None and row["result"] is None

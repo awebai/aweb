@@ -37,6 +37,7 @@ from aweb_naapp.runtime.hook_resolver import (
 from aweb_naapp.runtime.manifest_hooks import bounded_body
 from aweb_naapp.runtime.team_auth import CachedTeamFacts, raw_request_target
 from awid.log import canonical_server_origin
+from awid.protected_effect import EffectRefused
 from awid.team_certificate import decode_team_certificate
 from fastapi import HTTPException, Request
 
@@ -175,6 +176,7 @@ class Ingestor:
             received = verify_delivery(
                 request.method, raw_request_target(request), headers, body,
                 ReceiveOptions(
+                    protection_observation=client_facts.protection_observation if client_facts else None,
                     audience=self.runtime.settings.public_origin, binding_id=binding_id,
                     now=received_at, team_key_did=team_key_did,
                     revoked_certificate_ids=client_facts.revoked_certificate_ids if client_facts else (),
@@ -188,6 +190,8 @@ class Ingestor:
             if client_facts is not None and client_facts.team_did_key != team_key_did:
                 raise IngestRefused(503, "client_authority_changed")
         except Refused as refused:
+            if refused.code == "protected_state_unavailable":
+                raise IngestRefused(503, refused.code) from refused
             raise IngestRefused(401, f"transport_{refused.code}") from refused
         except (ValueError, TypeError) as exc:
             raise IngestRefused(401, "transport_invalid_value") from exc
@@ -224,7 +228,10 @@ class Ingestor:
                 signature=content["signature"], key_evidence=evidence, received_at=received_at,
                 before_append=charge if event.producer_kind == "client" else None,
                 purge_act=purge_act,
+                authority_fence=client_facts.protection_observation.require_fresh if client_facts else None,
             )
+        except EffectRefused as exc:
+            raise IngestRefused(503, exc.code) from exc
         except OriginMismatch as exc:
             raise IngestRefused(503, "chain_origin_mismatch") from exc
         if isinstance(result, Conflicted):

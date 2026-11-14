@@ -31,6 +31,9 @@ class EffectPort:
         self.applied = False
         self.drop_answer = self.expire_before_claim = self.change_policy = False
 
+    def require_service_delivery(self, **kw):
+        self.original.require_service_delivery(**kw)
+
     def sign_owner_act(self, operation, artifact):
         return self.original.sign_owner_act(operation, artifact)
 
@@ -38,7 +41,9 @@ class EffectPort:
         self.retains += 1
         self.w.key.verify_key.verify(kw["signing"], kw["signature"])
         assert kw["operation"].spec.effect.provider is None
-        assert kw["request"]["artifact"] == kw["artifact"]
+        from aweb_naapp.runtime.protected_signer.execution_intent import validate_issued_artifact
+
+        assert validate_issued_artifact(kw["operation"], kw["request"]["artifact"], kw["artifact"]) == kw["signing"]
         body = canonical_json_bytes({"signing": base64.b64encode(kw["signing"]).decode(),
             "signature": base64.b64encode(kw["signature"]).rstrip(b"=").decode()})
         return RetainedEffect(kw["operation"].operation_id, kw["signing"], kw["signature"], "a" * 64,
@@ -115,7 +120,7 @@ async def test_lost_answer_recovers_identical_effect_after_expiry_without_anothe
     recovered = await world.signer.receipt(prepared.operation_id, reader=world.reader)
     assert recovered.state == "committed" and recovered.result["artifact"] == json.loads(before["signed_result"])
     after = await row_for(world, prepared.operation_id)
-    for field in ("intent", "request", "signed_result", "retained_effect", "delivery_claim", "expires_at"):
+    for field in ("intent", "request", "issued_artifact", "signed_result", "retained_effect", "delivery_claim", "expires_at"):
         assert after[field] == before[field]
     assert port.retains == port.posts == 1 and await counts(world) == (1, 1)
 

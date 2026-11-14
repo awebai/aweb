@@ -58,6 +58,8 @@ class OperationDefinition:
     request_window: tuple[tuple[str, ...], int] | None = None
 
     def effect_deadline(self, artifact, deadline):
+        if self.needs_human and self.codec.issuance is not None and artifact.get("type") == "aweb.protected-artifact-intent":
+            return min(deadline, datetime.fromisoformat(artifact["issuance_window"]["not_after"].replace("Z", "+00:00")))
         if "expires_at" in artifact:
             deadline = min(deadline, datetime.fromisoformat(artifact["expires_at"].replace("Z", "+00:00")))
         if self.request_window is not None:
@@ -68,9 +70,44 @@ class OperationDefinition:
             deadline = min(deadline, datetime.fromisoformat(stamp.replace("Z", "+00:00")) + timedelta(seconds=seconds))
         return deadline
 
+    def presentation(self):
+        """Project the existing closed codec guard onto its unsigned intent template."""
+        guard = deepcopy(self.codec.presentation)
+        issuance = self.codec.issuance if self.needs_human else None
+        if issuance is None or guard is None:
+            return guard
+        omitted = (*issuance.issued_fields, *((issuance.expiry_field,) if issuance.expiry_field else ()))
+        for path in omitted:
+            parent = "/artifact" + ("/" + "/".join(path[:-1]) if len(path) > 1 else "")
+            names = guard.get("exact", {}).get(parent)
+            if names is not None and path[-1] in names:
+                names.remove(path[-1])
+        absent = {"/artifact/" + "/".join(path) for path in omitted}
+        guard["timestamps"] = [path for path in guard.get("timestamps", []) if path not in absent]
+
+        def project(value):
+            if isinstance(value, str):
+                return value.replace("/artifact", "/artifact/template")
+            if isinstance(value, list):
+                return [project(item) for item in value]
+            if isinstance(value, dict):
+                return {project(key): project(item) for key, item in value.items()}
+            return value
+
+        return project(guard)
+
+    def issuance_fields(self):
+        if not self.needs_human or self.codec.issuance is None:
+            return {}
+        return {"approval_format": "intent_v1", "issuance": self.codec.issuance.fields()}
+
     def bindings(self):
         overrides = dict(self.binding_paths)
-        return {name: overrides.get(name, "/subject/" + name) for name in self.payload_binding}
+        paths = {name: overrides.get(name, "/subject/" + name) for name in self.payload_binding}
+        if self.needs_human and self.codec.issuance is not None:
+            paths = {name: path.replace("/artifact", "/artifact/template", 1) if path.startswith("/artifact") else path
+                for name, path in paths.items()}
+        return paths
 
     def bound_values(self, request):
         """Make the frozen catalog bindings actual required request projections."""
@@ -302,7 +339,8 @@ def presentation_catalog() -> dict[str, dict]:
             "rule": spec.rule,
             "consumer_available": spec.consumer_available,
             "subject_schema": deepcopy(spec.codec.subject_schema),
-            "presentation": deepcopy(spec.codec.presentation),
+            "presentation": spec.presentation(),
+            **spec.issuance_fields(),
             "display": spec.display.fields(),
             "responsibility_statement": spec.display.responsibility_statement,
         }
@@ -318,5 +356,5 @@ def operation_description():
          "subject_schema": deepcopy(spec.codec.subject_schema),
          "prepared_fields": sorted(spec.prepared_fields), "bindings": spec.bindings(),
          "display": spec.display.fields(), "responsibility_statement": spec.display.responsibility_statement,
-         "presentation": deepcopy(spec.codec.presentation)}
+         "presentation": spec.presentation(), **spec.issuance_fields()}
         for _, spec in sorted(OPERATIONS.items())]}

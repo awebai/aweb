@@ -74,6 +74,34 @@ export async function validateProtectedPresentation(state, handoffId, table) {
       !nonempty(payload?.policy?.ref) || !Number.isSafeInteger(payload?.policy?.version) || payload.policy.version < 1 ||
       !spec || !spec.consumer_available || spec.rule !== "live_floor" ||
       request?.scope?.authority?.kind !== spec.key_role) refused();
+  if (request.approval_format !== "intent_v1" || spec.approval_format !== "intent_v1" || !object(spec.issuance) ||
+      !exact(artifact, ["v", "type", "template", "delivery", "issuance_window"]) || artifact.v !== 1 ||
+      artifact.type !== "aweb.protected-artifact-intent" || !object(artifact.template) ||
+      !exact(artifact.delivery, ["audience", "method", "path"]) || artifact.delivery.audience !== request.audience ||
+      artifact.delivery.method !== "POST" || !exact(artifact.issuance_window, ["not_before", "not_after"])) refused();
+  const stamp = value => typeof value === "string" && /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d{1,6})?Z$/.test(value) && Number.isFinite(Date.parse(value)) && new Date(value).toISOString().slice(0,19) === value.slice(0,19);
+  const {not_before:start, not_after:until} = artifact.issuance_window;
+  if (!stamp(start) || !stamp(until) || !(Date.parse(start) < Date.parse(until)) ||
+      Date.parse(until) - Date.parse(start) > 86400000 || Date.parse(state.expires_at) > Date.parse(until)) refused();
+  const templateRead = path => {
+    let value = artifact.template;
+    for (const part of path.split("/").slice(1)) {
+      if (!object(value) || !Object.hasOwn(value, part)) refused();
+      value = value[part];
+    }
+    return value;
+  };
+  const route = spec.issuance.fixed_route ?? templateRead(spec.issuance.route_field);
+  if (artifact.delivery.path !== route) refused();
+  for (const path of [...spec.issuance.issued_fields, ...(spec.issuance.expiry_field ? [spec.issuance.expiry_field] : [])]) {
+    const parts = path.split("/").slice(1);
+    let value = artifact.template;
+    for (const part of parts.slice(0, -1)) {
+      if (!object(value) || !object(value[part])) refused();
+      value = value[part];
+    }
+    if (Object.hasOwn(value, parts.at(-1))) refused();
+  }
   if (!validSubject(subject, spec.subject_schema)) refused();
   const guard = spec.presentation;
   if (!object(guard)) refused();

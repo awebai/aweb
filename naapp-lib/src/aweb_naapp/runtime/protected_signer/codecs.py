@@ -29,6 +29,8 @@ def signing_bytes(operation, artifact):
 
 def authority_key(operation, artifact):
     operation = owner_act_operation(operation)
+    if operation.spec.needs_human and artifact.get("type") == "aweb.protected-artifact-intent":
+        artifact = artifact["template"]
     return artifact.get(operation.spec.codec.authority_field)
 
 

@@ -1,0 +1,64 @@
+{
+  "schema_version": 1,
+  "contract": "docs/protected-team-boundary.md",
+  "status": "approved opt-in implementation contract; synthetic fixtures, not deployment authority",
+  "now": "2026-11-13T12:00:30Z",
+  "binding": {
+    "mode": "protected",
+    "service_id": "fixture-signer",
+    "service_did_key": "did:key:z6Mko9hTggMwjSTEaJaPUfE6tqcy2xvU6BnNq3e3o8qVBiyH",
+    "history_id": "22222222-2222-4222-8222-222222222222",
+    "generation": 7
+  },
+  "fields": {
+    "v": 1,
+    "type": "aweb.protected-effect",
+    "service_id": "fixture-signer",
+    "team_id": "engineering:example.test",
+    "history_id": "22222222-2222-4222-8222-222222222222",
+    "generation": 7,
+    "controller_did_key": "did:key:z6Mkon3Necd6NkkyfoGoHxid2znGc59LU3K7mubaRcFbLfLX",
+    "operation": "team.agent.remove",
+    "variant": "default",
+    "operation_id": "33333333-3333-4333-8333-333333333333",
+    "artifact_type": "controller-request",
+    "artifact_sha256": "c870dc0f7492e13223354b5af18600069a649f8f2c4acc4b7c01dda2860d4028",
+    "consumer": {
+      "kind": "http",
+      "audience": "https://registry.example",
+      "method": "POST",
+      "path": "/v1/namespaces/example.test/teams/engineering/certificates/revoke",
+      "body_sha256": "c0b82a49ea307751ffdc86bd326015bbb9493faabb3e8f63b38da6e55ac8f6b6",
+      "controller_envelope_sha256": "400e2a51c95f0f8b80273e6bd44929c302f0fa9487c3e997f411b339399213b4"
+    },
+    "issued_at": "2026-11-13T12:00:00Z",
+    "expires_at": "2026-11-13T12:05:00Z"
+  },
+  "artifact_signing_b64": "eyJhdWQiOiJodHRwczovL3JlZ2lzdHJ5LmV4YW1wbGUiLCJib2R5X3NoYTI1NiI6ImMwYjgyYTQ5ZWEzMDc3NTFmZmRjODZiZDMyNjAxNWJiYjk0OTNmYWFiYjNlOGY2M2IzOGRhNmU1NWFjOGY2YjYiLCJjZXJ0aWZpY2F0ZV9pZCI6IjExMTExMTExLTExMTEtNDExMS04MTExLTExMTExMTExMTExMSIsImRvbWFpbiI6ImV4YW1wbGUudGVzdCIsIm1ldGhvZCI6IlBPU1QiLCJvcGVyYXRpb24iOiJyZXZva2VfY2VydGlmaWNhdGUiLCJwYXRoIjoiL3YxL25hbWVzcGFjZXMvZXhhbXBsZS50ZXN0L3RlYW1zL2VuZ2luZWVyaW5nL2NlcnRpZmljYXRlcy9yZXZva2UiLCJ0ZWFtX25hbWUiOiJlbmdpbmVlcmluZyIsInRpbWVzdGFtcCI6IjIwMjYtMTEtMTNUMTI6MDA6MDBaIiwidHlwZSI6ImF3ZWIuYXdpZC1jb250cm9sbGVyLXJlcXVlc3QiLCJ2IjoyfQ==",
+  "artifact_signature": "tuC+2D9aYx5jMWN+yVqSITgQ2YM2jOYeAcWp4GXDSk8evP4GR+fxkD75El6vgwo102js8ehwo0t59uNT1SwJDg",
+  "artifact_sha256": "c870dc0f7492e13223354b5af18600069a649f8f2c4acc4b7c01dda2860d4028",
+  "proof": {
+    "payload": "eyJhcnRpZmFjdF9zaGEyNTYiOiJjODcwZGMwZjc0OTJlMTMyMjMzNTRiNWFmMTg2MDAwNjlhNjQ5ZjhmMmM0YWNjNGI3YzAxZGRhMjg2MGQ0MDI4IiwiYXJ0aWZhY3RfdHlwZSI6ImNvbnRyb2xsZXItcmVxdWVzdCIsImNvbnN1bWVyIjp7ImF1ZGllbmNlIjoiaHR0cHM6Ly9yZWdpc3RyeS5leGFtcGxlIiwiYm9keV9zaGEyNTYiOiJjMGI4MmE0OWVhMzA3NzUxZmZkYzg2YmQzMjYwMTViYmI5NDkzZmFhYmIzZThmNjNiMzhkYTZlNTVhYzhmNmI2IiwiY29udHJvbGxlcl9lbnZlbG9wZV9zaGEyNTYiOiI0MDBlMmE1MWM5NWYwZjhiODAyNzNlNmJkNDQ5MjljMzAyZjBmYTk0ODdjM2U5OTdmNDExYjMzOTM5OTIxM2I0Iiwia2luZCI6Imh0dHAiLCJtZXRob2QiOiJQT1NUIiwicGF0aCI6Ii92MS9uYW1lc3BhY2VzL2V4YW1wbGUudGVzdC90ZWFtcy9lbmdpbmVlcmluZy9jZXJ0aWZpY2F0ZXMvcmV2b2tlIn0sImNvbnRyb2xsZXJfZGlkX2tleSI6ImRpZDprZXk6ejZNa29uM05lY2Q2TmtreWZvR29IeGlkMnpuR2M1OUxVM0s3bXViYVJjRmJMZkxYIiwiZXhwaXJlc19hdCI6IjIwMjYtMTEtMTNUMTI6MDU6MDBaIiwiZ2VuZXJhdGlvbiI6NywiaGlzdG9yeV9pZCI6IjIyMjIyMjIyLTIyMjItNDIyMi04MjIyLTIyMjIyMjIyMjIyMiIsImlzc3VlZF9hdCI6IjIwMjYtMTEtMTNUMTI6MDA6MDBaIiwib3BlcmF0aW9uIjoidGVhbS5hZ2VudC5yZW1vdmUiLCJvcGVyYXRpb25faWQiOiIzMzMzMzMzMy0zMzMzLTQzMzMtODMzMy0zMzMzMzMzMzMzMzMiLCJzZXJ2aWNlX2lkIjoiZml4dHVyZS1zaWduZXIiLCJ0ZWFtX2lkIjoiZW5naW5lZXJpbmc6ZXhhbXBsZS50ZXN0IiwidHlwZSI6ImF3ZWIucHJvdGVjdGVkLWVmZmVjdCIsInYiOjEsInZhcmlhbnQiOiJkZWZhdWx0In0",
+    "signature": "AT/g9mG+DflkhdOGeiEiehKVSat+rF1x7/QYUJ9/+zso9cQ4zhu8bZ3GSTh4OlxKs0S7ZowtXqJJ/lq1ChphDA"
+  },
+  "invalid": [
+    {
+      "name": "previous_generation",
+      "binding_override": {
+        "generation": 8
+      }
+    },
+    {
+      "name": "other_history",
+      "binding_override": {
+        "history_id": "44444444-4444-4444-8444-444444444444"
+      }
+    },
+    {
+      "name": "other_service",
+      "binding_override": {
+        "service_id": "other-service"
+      }
+    }
+  ]
+}

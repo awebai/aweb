@@ -1,6 +1,7 @@
 {
   "operations": [
     {
+      "approval_format": "intent_v1",
       "bindings": {
         "app_id": "/subject/app_id",
         "installation_id": "/subject/installation_id",
@@ -29,32 +30,58 @@
         "title": "Remove {/subject/principal} from {/subject/role}?"
       },
       "family": "owner_act",
+      "issuance": {
+        "expiry_field": "/expires_at",
+        "fixed_route": "/.well-known/aweb-owner-act",
+        "issued_fields": [
+          "/issued_at"
+        ],
+        "lifetime_seconds": 600,
+        "route_field": null
+      },
       "key_role": "team_controller",
       "operation": "human-role.revoke",
       "prepared_fields": [],
       "presentation": {
         "constants": {
-          "/artifact/type": "aweb.owner-act",
-          "/artifact/v": 1
+          "/artifact/template/type": "aweb.owner-act",
+          "/artifact/template/v": 1
         },
         "equals": [
           [
-            "/artifact/act",
+            "/artifact/template/act",
             "/operation"
           ],
           [
-            "/artifact/team_id",
+            "/artifact/template/team_id",
             "/scope/authority/id"
           ],
           [
-            "/artifact/aud",
+            "/artifact/template/aud",
             "/audience"
           ],
           [
-            "/artifact/subject",
+            "/artifact/template/subject",
             "/subject"
           ]
-        ]
+        ],
+        "exact": {
+          "/artifact/template": [
+            "v",
+            "type",
+            "act",
+            "team_id",
+            "team_key_did",
+            "aud",
+            "subject",
+            "nonce"
+          ]
+        },
+        "nonempty": [
+          "/artifact/template/team_key_did",
+          "/artifact/template/nonce"
+        ],
+        "timestamps": []
       },
       "responsibility_statement": null,
       "rule": "live_floor",
@@ -83,14 +110,15 @@
       "variant": "default"
     },
     {
+      "approval_format": "intent_v1",
       "bindings": {
-        "certificate": "/artifact",
+        "certificate": "/artifact/template",
         "default_admission_policy_digest": "/admission_policy/digest",
         "default_admission_policy_version": "/admission_policy/version",
         "deployment_label": "/subject/deployment_label",
         "domain": "/subject/domain",
         "expected_head": "/expected_head",
-        "parent": "/artifact/parent",
+        "parent": "/artifact/template/parent",
         "registry": "/registry",
         "responsibility_statement": "/responsibility_statement",
         "root_id": "/subject/root_id",
@@ -121,6 +149,15 @@
         "title": "Approve {/subject/deployment_label} as the root agent for {/subject/teams}?"
       },
       "family": "id_certificate",
+      "issuance": {
+        "expiry_field": null,
+        "fixed_route": "/v1/id-certificates/register",
+        "issued_fields": [
+          "/issued_at"
+        ],
+        "lifetime_seconds": null,
+        "route_field": null
+      },
       "key_role": "human_identity",
       "operation": "identity.root.endorse",
       "prepared_fields": [
@@ -136,18 +173,18 @@
           "/subject/teams"
         ],
         "constants": {
-          "/artifact/kind": "agent",
-          "/artifact/parent/kind": "identity",
-          "/artifact/type": "aweb.id-certificate",
-          "/artifact/v": 1
+          "/artifact/template/kind": "agent",
+          "/artifact/template/parent/kind": "identity",
+          "/artifact/template/type": "aweb.id-certificate",
+          "/artifact/template/v": 1
         },
         "equals": [
           [
-            "/artifact/id",
+            "/artifact/template/id",
             "/subject/root_id"
           ],
           [
-            "/artifact/domain",
+            "/artifact/template/domain",
             "/subject/domain"
           ],
           [
@@ -159,7 +196,7 @@
             "/scope/human/id"
           ],
           [
-            "/artifact/parent/id",
+            "/artifact/template/parent/id",
             "/scope/authority/id"
           ],
           [
@@ -168,31 +205,28 @@
           ]
         ],
         "exact": {
-          "/artifact": [
+          "/artifact/template": [
             "v",
             "type",
             "id",
             "domain",
             "parent",
             "kind",
-            "issuer_key",
-            "issued_at"
+            "issuer_key"
           ],
-          "/artifact/parent": [
+          "/artifact/template/parent": [
             "kind",
             "id"
           ]
         },
         "nonempty": [
-          "/artifact/issuer_key"
+          "/artifact/template/issuer_key"
         ],
         "nullable_patterns": {
           "/expected_head": "sha256:[0-9a-f]{64}"
         },
         "statement": "/responsibility_statement",
-        "timestamps": [
-          "/artifact/issued_at"
-        ]
+        "timestamps": []
       },
       "responsibility_statement": "Everything this root spawns counts as yours for human responsibility; this grants no resource permissions.",
       "rule": "live_floor",
@@ -316,6 +350,7 @@
       "variant": "default"
     },
     {
+      "approval_format": "intent_v1",
       "bindings": {
         "certificate_id": "/subject/certificate_id",
         "expected_membership": "/subject/expected_membership",
@@ -345,6 +380,15 @@
         "title": "Remove {/subject/expected_membership/alias} from {/subject/team_id}?"
       },
       "family": "member_revocation",
+      "issuance": {
+        "expiry_field": null,
+        "fixed_route": null,
+        "issued_fields": [
+          "/request/timestamp"
+        ],
+        "lifetime_seconds": null,
+        "route_field": "/request/path"
+      },
       "key_role": "team_controller",
       "operation": "team.agent.remove",
       "prepared_fields": [
@@ -353,10 +397,10 @@
       ],
       "presentation": {
         "constants": {
-          "/artifact/request/method": "POST",
-          "/artifact/request/operation": "revoke_certificate",
-          "/artifact/request/type": "aweb.awid-controller-request",
-          "/artifact/request/v": 2
+          "/artifact/template/request/method": "POST",
+          "/artifact/template/request/operation": "revoke_certificate",
+          "/artifact/template/request/type": "aweb.awid-controller-request",
+          "/artifact/template/request/v": 2
         },
         "enums": {
           "/target_kind": [
@@ -366,7 +410,7 @@
         },
         "equals": [
           [
-            "/artifact/request/aud",
+            "/artifact/template/request/aud",
             "/audience"
           ],
           [
@@ -374,20 +418,20 @@
             "/scope/authority/id"
           ],
           [
-            "/artifact/request/domain",
+            "/artifact/template/request/domain",
             "/scope/authority/domain"
           ],
           [
-            "/artifact/request/certificate_id",
+            "/artifact/template/request/certificate_id",
             "/subject/certificate_id"
           ]
         ],
         "exact": {
-          "/artifact": [
+          "/artifact/template": [
             "controller_did",
             "request"
           ],
-          "/artifact/request": [
+          "/artifact/template/request": [
             "v",
             "type",
             "aud",
@@ -397,26 +441,23 @@
             "operation",
             "team_name",
             "certificate_id",
-            "timestamp",
             "body_sha256"
           ]
         },
         "json_sha256": {
-          "/artifact/request/body_sha256": {
+          "/artifact/template/request/body_sha256": {
             "certificate_id": "/subject/certificate_id"
           }
         },
         "nonempty": [
-          "/artifact/controller_did",
+          "/artifact/template/controller_did",
           "/requester_key"
         ],
         "templates": {
-          "/artifact/request/path": "/v1/namespaces/{/artifact/request/domain}/teams/{/artifact/request/team_name}/certificates/revoke",
-          "/subject/team_id": "{/artifact/request/team_name}:{/artifact/request/domain}"
+          "/artifact/template/request/path": "/v1/namespaces/{/artifact/template/request/domain}/teams/{/artifact/template/request/team_name}/certificates/revoke",
+          "/subject/team_id": "{/artifact/template/request/team_name}:{/artifact/template/request/domain}"
         },
-        "timestamps": [
-          "/artifact/request/timestamp"
-        ]
+        "timestamps": []
       },
       "responsibility_statement": null,
       "rule": "live_floor",
