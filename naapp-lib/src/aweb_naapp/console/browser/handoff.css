@@ -1,7 +1,8 @@
 [hidden] { display: none !important; }
 body { margin: 0; }
 .handoff { max-width: 44rem; margin: 0 auto; padding: clamp(1.25rem, 5vw, 3rem); }
-.handoff h1 { font-size: var(--step-3); line-height: 1.15; margin: 0 0 var(--s3); }
+.handoff h1 { font-size: var(--step-3); line-height: 1.15; margin: 0 0 var(--s3); overflow-wrap: anywhere; }
+#handoff-consequences { padding-left: 1.25rem; overflow-wrap: anywhere; }
 .handoff p { margin: var(--s2) 0; }
 .handoff-eyebrow { color: var(--muted); font-size: var(--step--1); }
 .handoff-origin { overflow-wrap: anywhere; color: var(--muted); }
