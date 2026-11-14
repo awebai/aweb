@@ -148,7 +148,7 @@ async def test_genuine_b3_owner_act_reaches_protected_sql_consumer(world, tmp_pa
                 assert [(item["operation_id"], item["state"]) for item in view["history"]] == [
                     (prepared.operation_id, "unresolved")]
                 html = owner_page_html(view)
-                assert "whether it took effect is not confirmed yet" in html
+                assert "Approved, not confirmed yet:" in html
                 assert "Expired, nobody decided" not in html and "by you" not in html
             historical = await w.app.signer.receipt(prepared.operation_id, reader=w.human)
             assert historical.state == "unknown" and historical.code == "external_effect_unresolved"
