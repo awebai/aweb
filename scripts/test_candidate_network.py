@@ -203,17 +203,19 @@ class EndpointTests(unittest.TestCase):
             for assignment in assignments:
                 variable = assignment.split('=', 1)[0]
                 result = bash('source scripts/journey-network.sh\n'
-                              'PROJECT=proof; DOCKER_PUBLISHED_HOST=aweb-docker.test; '
+                              'PROJECT=proof; CUSTOMER_PROJECT=proof-customer; '
+                              'DOCKER_PUBLISHED_HOST=aweb-docker.test; '
                               'PUBLISHED_HOST=aweb-docker.test; '
                               'AWID_PORT=49151; AWEB_PORT=49152; LIBRARY_PORT=49153; '
                               'ALPHA_PORT=49154; BETA_PORT=49155; GATEWAY_PORT=49156; '
                               'AWID_A_PORT=49157; AWID_B_PORT=49158; '
-                              'AWEB_A_PORT=49159; AWEB_B_PORT=49160\n'
+                              'AWEB_A_PORT=49159; AWEB_B_PORT=49160; CUSTOMER_PORT=49161\n'
                               + assignment + f'\nprintf "%s" "${variable}"',
                               CANDIDATE_RUNNER_NAME='probe')
                 self.assertEqual(result.returncode, 0, result.stderr)
-                service = re.search(r'journey_url "[^"]+" ([a-z-]+)', assignment)[1]
-                self.assertEqual(urlsplit(result.stdout).hostname, network.hostname('proof', service))
+                project, service = re.search(r'journey_url "([^"]+)" ([a-z-]+)', assignment).groups()
+                project = {'$PROJECT': 'proof', '$CUSTOMER_PROJECT': 'proof-customer'}[project]
+                self.assertEqual(urlsplit(result.stdout).hostname, network.hostname(project, service))
         # Host invocation is a supported neighboring path, not a gate route.
         result = bash('source scripts/journey-network.sh; journey_url proof awid 8010 http://127.0.0.1:49151',
                       CANDIDATE_RUNNER_NAME='')
@@ -782,6 +784,146 @@ class ComposeNetworkTests(unittest.TestCase):
                 self.assertEqual(cleanup_errors, [], 'Compose teardown failed before final labelled cleanup')
                 print(f'network probe cleanup PASSED: label={label}; containers=0; project networks=0')
 
+
+
+JOURNEY = ROOT / 'scripts/e2e-oss-user-journey.sh'
+# The project whose Phase 11b2 the gate refused at a035f02114e9.
+GATE_PROJECT = 'aweb-candidate-a035f02114e9-jxmain-user'
+
+
+def journey_function(name):
+    match = re.search(rf'(?ms)^{name}\(\) \{{\n.*?^\}}', JOURNEY.read_text())
+    if match is None:
+        raise AssertionError(f'journey function {name} is missing')
+    return match.group()
+
+
+def journey_line(prefix):
+    lines = [line for line in JOURNEY.read_text().splitlines() if line.startswith(prefix)]
+    if len(lines) != 1:
+        raise AssertionError(f'expected one journey line starting {prefix!r}, found {lines}')
+    return lines[0]
+
+
+class CustomerServerNetworkTests(unittest.TestCase):
+    """Phase 11b2's customer server reaches the journey registry on plain hosts and in the gate."""
+
+    def customer_setup(self, tmp, runner, docker_function):
+        # The journey's own definitions, with Docker replaced by the caller's function.
+        return '\n'.join([
+            'source scripts/journey-network.sh',
+            f'PROJECT={GATE_PROJECT}',
+            journey_line('CUSTOMER_PROJECT='),
+            'CUSTOMER_PORT_ALLOCATOR=""',
+            f'SERVER_DIR={ROOT}/server; CUSTOMER_DIR={tmp}; CUSTOMER_SECRETS_DIR={tmp}/secrets',
+            'DOCKER_PUBLISHED_HOST=127.0.0.1; DOCKER_BIND_ADDRESS=127.0.0.1',
+            f'CANDIDATE_RUNNER_NAME={runner}',
+            docker_function,
+            journey_function('customer_compose'),
+            journey_function('allocate_customer_port'),
+            journey_function('release_customer_port'),
+            journey_function('write_customer_server_env'),
+            journey_function('start_customer_server'),
+        ]) + '\n'
+
+    def customer_config(self, tmp, extra_files=()):
+        """Real Compose config of the journey's customer project: CLI merge only, no daemon."""
+        real = os.environ.get('AWEB_CANDIDATE_REAL_DOCKER') or shutil.which('docker')
+        self.assertIsNotNone(real, 'Docker Compose CLI is required for config validation')
+        docker = ('docker() {\n'
+                  '  [[ "$1" == compose && " $* " == *" config "* ]] || { echo "unexpected docker $*" >&2; return 99; }\n'
+                  f'  {real} "$@"\n'
+                  '}')
+        extra = ''.join(f' -f {file}' for file in extra_files)
+        result = bash(self.customer_setup(tmp, 'probe', docker)
+                      + 'allocate_customer_port\n'
+                      + journey_line('CUSTOMER_URL=') + '\n'
+                      + 'write_customer_server_env\n'
+                      + f'customer_compose{extra} config --format json\n')
+        self.assertEqual(result.returncode, 0, result.stderr)
+        return json.loads(result.stdout)
+
+    def test_gate_renders_the_real_customer_server_config(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            config = self.customer_config(tmp)
+            self.assertEqual(config['name'], GATE_PROJECT + '-customer')
+            for key, spec in config.get('networks', {}).items():
+                self.assertFalse(spec.get('external', False), key)
+            rendered = network.override(config)  # Refused the external journey network at a035f02114e9.
+            self.assertEqual(set(network.networks(config)), {'default'})
+            aweb = config['services']['aweb']['environment']
+            self.assertEqual(aweb['AWID_REGISTRY_URL'], 'http://awid:8010')
+            # The member's signed audience is the gate-reachable scoped name.
+            self.assertEqual(aweb['AWEB_PUBLIC_ORIGIN'],
+                             f'http://{network.hostname(GATE_PROJECT + "-customer", "aweb")}:8000')
+            overlay = Path(tmp) / 'network.yml'
+            overlay.write_text(rendered)
+            merged = self.customer_config(tmp, [overlay])
+            for name, service in merged['services'].items():
+                self.assertFalse(service.get('ports'), name)
+                self.assertIn(network.hostname(GATE_PROJECT + '-customer', name),
+                              service['networks']['default']['aliases'])
+
+    def test_caller_external_journey_network_stays_refused_for_the_real_config(self):
+        # Negative control: the customer project declaring the journey network external.
+        with tempfile.TemporaryDirectory() as tmp:
+            overlay = Path(tmp) / 'external.yml'
+            overlay.write_text('services:\n  aweb:\n    networks: [default, journey]\n'
+                               f'networks:\n  journey:\n    name: {GATE_PROJECT}_default\n    external: true\n')
+            config = self.customer_config(tmp, [overlay])
+            with self.assertRaisesRegex(ValueError, f'{GATE_PROJECT}-customer/journey: caller-declared external network'):
+                network.override(config)
+            with self.assertRaisesRegex(ValueError, 'caller-declared external network'):
+                network.networks(config)
+
+    def recorded_start(self, runner, fail=None, running='customer-aweb-id'):
+        with tempfile.TemporaryDirectory() as tmp:
+            calls = Path(tmp) / 'calls'
+            docker = ('docker() {\n'
+                      f'  printf "%s\\n" "$*" >> {calls}\n'
+                      f'  [[ "$*" != *"{fail or "no failure"}"* ]] || return 7\n'
+                      '  case "$*" in\n'
+                      '    *" ps -aq aweb") echo customer-aweb-id ;;\n'
+                      f'    *" ps -q aweb") echo {running} ;;\n'
+                      '    "inspect --format "*) echo 49999 ;;\n'
+                      '  esac\n'
+                      '}')
+            result = bash(self.customer_setup(tmp, runner, docker)
+                          + 'allocate_customer_port\n'
+                          + journey_line('CUSTOMER_URL=') + '\n'
+                          + 'write_customer_server_env\nrelease_customer_port\n'
+                          + 'if start_customer_server; then started=yes; else started=no; fi\n'
+                          + 'printf "%s %s\\n" "$started" "$CUSTOMER_URL"')
+            self.assertEqual(result.returncode, 0, result.stderr)
+            recorded = calls.read_text().splitlines() if calls.exists() else []
+            compose = f'compose -p {GATE_PROJECT}-customer --env-file {tmp}/.env -f {ROOT}/server/docker-compose.customer.yml'
+            return result.stdout.split(), [line.replace(compose, 'customer') for line in recorded]
+
+    def test_customer_aweb_joins_the_journey_network_before_it_starts(self):
+        start = ['customer up --build --no-start', 'customer ps -aq aweb',
+                 f'network connect {GATE_PROJECT}_default customer-aweb-id', 'customer up -d',
+                 'customer ps -q aweb']
+        # The gate: no host port is allocated or published; the scoped name is the URL.
+        outcome, calls = self.recorded_start('probe')
+        self.assertEqual(outcome, ['yes', f'http://{network.hostname(GATE_PROJECT + "-customer", "aweb")}:8000'])
+        self.assertEqual(calls, start)
+        # A plain host: the daemon allocates the published port, released before start.
+        outcome, calls = self.recorded_start('')
+        self.assertEqual(outcome, ['yes', 'http://127.0.0.1:49999'])
+        self.assertEqual(calls[0].split()[:3], ['run', '-d', '--name'])
+        self.assertIn('-p 0:8000', calls[0])
+        self.assertEqual(calls[1:3], [f'inspect --format {{{{(index (index .NetworkSettings.Ports "8000/tcp") 0).HostPort}}}} {GATE_PROJECT}-customer-port',
+                                      f'rm -fv {GATE_PROJECT}-customer-port'])
+        self.assertEqual(calls[3:], start)
+
+    def test_customer_server_does_not_start_off_the_journey_network(self):
+        outcome, calls = self.recorded_start('probe', fail='network connect')
+        self.assertEqual(outcome[0], 'no')
+        self.assertNotIn('customer up -d', calls)
+        # A container Compose replaced on start would have left the journey network.
+        outcome, calls = self.recorded_start('probe', running='replacement-aweb-id')
+        self.assertEqual(outcome[0], 'no')
+        self.assertEqual(calls[-1], 'customer ps -q aweb')
 
 
 if __name__ == '__main__':
