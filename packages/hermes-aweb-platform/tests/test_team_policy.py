@@ -161,3 +161,103 @@ class TeamPolicyTests(unittest.IsolatedAsyncioTestCase):
                     self.assertIsNone(adapter._stream_task)
                 finally:
                     await adapter.disconnect()
+
+    async def test_real_runner_global_and_pairing_grants_refuse_strict_connect(self):
+        from gateway.config import Platform
+        from gateway.run import GatewayRunner
+        try:
+            from gateway.session_ingress_context import reauthorize_roles
+        except ModuleNotFoundError:
+            reauthorize_roles = None  # v0.22.2 predates the durable role seam.
+        await self.deliver("mail", {"state": "active", "team_id": TEAM}, "saved")
+        retained = await asyncio.wait_for(self.adapter.turns.get(), .5)
+        self.adapter.inbound["saved"]["sender_membership"]["state"] = "inactive"
+        runner = GatewayRunner()
+        self.addCleanup(runner.close_all_session_db_handles)
+        if hasattr(runner.session_store, "close_all_db_handles"):
+            self.addCleanup(runner.session_store.close_all_db_handles)
+        runner.adapters[Platform("aweb")] = self.adapter
+        self.adapter.gateway_runner = runner
+        source = retained.source
+        self.assertTrue(source.role_authorized)
+        direct = runner._is_user_authorized_for_source
+        for grant in ("all", "allowlist", "pairing"):
+            with self.subTest(grant=grant), patch.dict(os.environ, {
+                "GATEWAY_ALLOW_ALL_USERS": "true" if grant == "all" else "false",
+                "GATEWAY_ALLOWED_USERS": "example.test/alice" if grant == "allowlist" else "",
+            }):
+                store = runner.pairing_store
+                if grant == "pairing":
+                    code = store.generate_code("aweb", source.user_id)
+                    self.assertIsNotNone(store.approve_code("aweb", code))
+                try:
+                    self.assertTrue(direct(source, allow_adapter_delegation=False), "real grant positive failed")
+                    if reauthorize_roles is not None:
+                        # The provenance port is local ownership, not an auth grant.
+                        # Actual runner auth and actual upstream replay function run.
+                        before = len(self.adapter.commands)
+                        with patch("gateway.session_ingress_context.restore_provenance", lambda *a: None):
+                            self.assertTrue(await reauthorize_roles(runner, source, {"transport_home": os.environ["HERMES_HOME"]}))
+                        self.assertEqual(len(self.adapter.commands), before, "real upstream seam did not reproduce the bypass")
+                    with patch.object(adapter_module, "CONNECT_TIMEOUT", .01, create=True):
+                        self.assertFalse(await self.adapter.connect(), "strict transport started with a replay-bypassing grant")
+                    self.assertEqual(self.adapter.fatal_error_code, "team_policy_conflict")
+                    self.assertIsNone(self.adapter._stream_task)
+                finally:
+                    await self.adapter.disconnect()
+                    if grant == "pairing":
+                        store.revoke("aweb", source.user_id)
+        self.assertIs(runner._is_user_authorized_for_source.__func__, direct.__func__)
+        # No global/pairing overlap: the existing strict positive remains valid.
+        with patch.dict(os.environ, {"GATEWAY_ALLOW_ALL_USERS": "false", "GATEWAY_ALLOWED_USERS": ""}), \
+                patch.object(adapter_module, "CONNECT_TIMEOUT", .01, create=True):
+            self.assertTrue(await self.adapter.connect())
+            if reauthorize_roles is not None:
+                from hermes_state_runtime import RuntimeStoreError
+                with patch("gateway.session_ingress_context.restore_provenance", lambda *a: None):
+                    with self.assertRaises(RuntimeStoreError):
+                        await reauthorize_roles(runner, source, {"transport_home": os.environ["HERMES_HOME"]})
+                    self.adapter.inbound["saved"]["sender_membership"]["state"] = "active"
+                    self.assertTrue(await reauthorize_roles(runner, source, {"transport_home": os.environ["HERMES_HOME"]}))
+        await self.adapter.disconnect()
+        self.adapter._allow_team = False
+        with patch.dict(os.environ, {"GATEWAY_ALLOW_ALL_USERS": "true"}), \
+                patch.object(adapter_module, "CONNECT_TIMEOUT", .01, create=True):
+            self.assertTrue(await self.adapter.connect(), "legacy global grants must keep working")
+
+    async def test_served_profile_global_and_pairing_grants_are_also_conflicts(self):
+        from types import SimpleNamespace
+
+        from agent.secret_scope import reset_multiplex_context, set_multiplex_context
+        from gateway.pairing import PairingStore
+        secondary = Path(os.environ["HERMES_HOME"]) / "secondary"
+        secondary.mkdir()
+        runner = SimpleNamespace(config=SimpleNamespace(_runtime_profile_homes=[("secondary", secondary)]),
+                                 pairing_store=None, pairing_stores={})
+        self.adapter.gateway_runner = runner
+        (secondary / ".env").write_text("AWEB_ALLOW_TEAM=true\nGATEWAY_ALLOW_ALL_USERS=true\n")
+        with patch.dict(os.environ, {"GATEWAY_ALLOW_ALL_USERS": "false", "GATEWAY_ALLOWED_USERS": ""}):
+            token = set_multiplex_context(True)
+            try:
+                from gateway.run import _profile_runtime_scope
+                with patch.dict(os.environ, {"AWEB_ALLOW_TEAM": "false"}), _profile_runtime_scope(secondary):
+                    scoped_adapter = MemoryTransport()
+                    scoped_adapter._write_runtime_status_safe = lambda *a, **k: None
+                    self.addAsyncCleanup(scoped_adapter.disconnect)
+                    self.assertTrue(scoped_adapter._allow_team, "TEAM mode used ambient instead of served profile policy")
+                self.assertFalse(await self.adapter.connect(), "served profile grant was ignored")
+            finally:
+                reset_multiplex_context(token)
+        (secondary / ".env").write_text("")
+        with patch.dict(os.environ, {"HERMES_HOME": str(secondary)}):
+            store = PairingStore()
+            code = store.generate_code("aweb", "example.test/alice")
+            self.assertIsNotNone(store.approve_code("aweb", code))
+        try:
+            self.assertFalse(await self.adapter.connect(), "not-yet-loaded served profile pairing was ignored")
+            runner.pairing_stores["secondary"] = store
+            self.assertFalse(await self.adapter.connect(), "served profile pairing was ignored")
+        finally:
+            store.revoke("aweb", "example.test/alice")
+        with patch.object(adapter_module, "CONNECT_TIMEOUT", .01, create=True):
+            self.assertTrue(await self.adapter.connect(), "cleared profile policy should remain supported")

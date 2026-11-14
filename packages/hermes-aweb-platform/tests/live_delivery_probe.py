@@ -39,7 +39,8 @@ assert YAML(typ="safe").load((RECEIVER / ".aw/workspace.yaml").read_text())["awe
 (HOME / "plugins/platforms/aweb").symlink_to(PLUGIN)
 (HOME / "config.yaml").write_text("_config_version: 12\nplugins:\n  enabled: [platforms/aweb]\ngateway:\n  unauthorized_dm_behavior: ignore\n  platforms:\n    aweb:\n      enabled: true\n      gateway_restart_notification: false\n")
 if CASE == "team":
-    os.environ.update(AWEB_ALLOW_TEAM="true", AWEB_ALLOWED_USERS="", AWEB_ALLOW_ALL_USERS="false")
+    os.environ.update(AWEB_ALLOW_TEAM="true", AWEB_ALLOWED_USERS="", AWEB_ALLOW_ALL_USERS="false",
+                      GATEWAY_ALLOW_ALL_USERS="false", GATEWAY_ALLOWED_USERS="")
 if CASE != "home_notice":
     os.environ["AWEB_HOME_CHANNEL"] = "alice"
 logging.basicConfig(level=logging.INFO)

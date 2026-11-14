@@ -133,3 +133,49 @@ with (root / "frames").open() as source:
         await self.adapter.disconnect()
         connected, _ = await asyncio.wait_for(operation, .5)
         self.assertFalse(connected)
+
+    async def test_disconnect_during_team_lookup_invalidates_pending_start(self):
+        self.adapter._allow_team = True
+        entered, release = asyncio.Event(), asyncio.Event()
+        starts = []
+        async def lookup(*args):
+            entered.set()
+            await release.wait()
+            return {"selected_team": "demo:example.test"}
+        async def stream():
+            starts.append(True)
+            self.adapter._stream_health(True)
+            await asyncio.Event().wait()
+        self.adapter._run_aw_json = lookup
+        self.adapter._run_event_stream = stream
+        operation = asyncio.create_task(self.adapter.connect())
+        try:
+            await asyncio.wait_for(entered.wait(), 1)
+            await self.adapter.disconnect()
+            release.set()
+            self.assertFalse(await asyncio.wait_for(operation, 1))
+            self.assertFalse(self.adapter._running)
+            self.assertEqual(starts, [])
+        finally:
+            release.set()
+            operation.cancel()
+            await asyncio.gather(operation, return_exceptions=True)
+
+    async def test_lookup_cleanup_spends_original_five_second_budget(self):
+        self.adapter._allow_team = True
+        self.child.write_text(f"#!{sys.executable}\n" + '''import os, pathlib, signal, time
+signal.signal(signal.SIGTERM, signal.SIG_IGN)
+pathlib.Path("query-pid").write_text(str(os.getpid()))
+while True:
+    time.sleep(.01)
+''')
+        self.child.chmod(0o700)
+        started = asyncio.get_running_loop().time()
+        self.assertFalse(await self.adapter.connect())
+        elapsed = asyncio.get_running_loop().time() - started
+        self.assertEqual(self.adapter.fatal_error_code, "team_unavailable")
+        pid = int((self.root / "query-pid").read_text())
+        with self.assertRaises(ProcessLookupError):
+            os.kill(pid, 0)
+        self.assertGreaterEqual(elapsed, 4.9)
+        self.assertLess(elapsed, 5.8, "lookup termination added a fresh grace after the connect budget")

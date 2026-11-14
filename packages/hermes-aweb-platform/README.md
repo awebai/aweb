@@ -115,7 +115,11 @@ conversations use that team context.
 `AWEB_ALLOWED_USERS` makes startup fail clearly. False or unset keeps the usual
 allow-all/allowlist behavior. If an old setting persists, use the duplicate-key
 recovery described below before restarting. Strict team access does not grant
-remote command or tool-approval authority.
+remote command or tool-approval authority. Strict mode also refuses overlapping
+Hermes global allow-all/allowlists, configured adapter allowlists, or existing
+aweb pairing approvals, including grants in other served profiles. Clear those
+grants locally before starting, or use a separate Hermes home. The plugin never
+changes grants or approval policy for you.
 
 Optionally select an authorized recipient for cron
 sends and owner notices:
