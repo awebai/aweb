@@ -9,8 +9,8 @@ from playwright.async_api import expect
 from aweb_naapp.runtime.protected_signer import SignerRefused
 from tests.console.test_handoff_governance_page import open_page
 from tests.console.test_handoff_link_page import link_service as link_service  # noqa: F401
-from tests.console.test_handoff_link_page import sign_in, signed_in_service as signed_in_service  # noqa: F401
-from tests.console.test_handoff_link_page import watch_posts
+from tests.console.test_handoff_link_page import sign_in, watch_posts  # noqa: F401
+from tests.console.test_handoff_link_page import signed_in_service as signed_in_service
 from tests.runtime.protected_signer_support import world as world  # noqa: F401
 
 
@@ -48,7 +48,9 @@ async def test_a_mailed_link_reopened_after_a_failed_read_finishes_the_approval(
         await expect(page.locator("#handoff-action")).to_be_enabled()
         assert (await s.world.signer.receipt(s.prepared.operation_id, reader=s.world.reader)).state == "pending"
         assert await signed(s) == 0
-        # The approver opens the mailed link again.
+        # The approver opens the mailed link again: a new page load, not a
+        # fragment change within the page that already stripped its token.
+        await page.goto("about:blank")
         posts = watch_posts(page, s.origin)
         await page.goto(s.link)
         await expect(page.locator("#handoff-action")).to_be_enabled()
