@@ -490,11 +490,14 @@ class NetworkLinkGuardDockerTests(unittest.TestCase):
         run = 'link-guard-' + uuid.uuid4().hex[:12]
         label = f'aweb.candidate-gate={run}'
         shim_env = {**os.environ, 'AWEB_CANDIDATE_REAL_DOCKER': real, 'AWEB_CANDIDATE_RESOURCE_LABEL': run}
-        names = {'own': run + '-own', 'foreign': run + '-foreign', 'ctr': run + '-ctr'}
+        # The container starts on one run-owned bridge, as a Compose service does, and
+        # is linked to a second run-owned bridge; the foreign bridge is not the run's.
+        names = {'start': run + '-start', 'own': run + '-own', 'foreign': run + '-foreign', 'ctr': run + '-ctr'}
         try:
-            subprocess.run([real, 'network', 'create', '--label', label, names['own']], check=True, capture_output=True)
+            for network in ('start', 'own'):
+                subprocess.run([real, 'network', 'create', '--label', label, names[network]], check=True, capture_output=True)
             subprocess.run([real, 'network', 'create', names['foreign']], check=True, capture_output=True)
-            subprocess.run([real, 'run', '-d', '--name', names['ctr'], '--label', label, '--network', 'none',
+            subprocess.run([real, 'run', '-d', '--name', names['ctr'], '--label', label, '--network', names['start'],
                             'busybox', 'sleep', '300'], check=True, capture_output=True)
             shim = ['bash', str(ROOT / 'candidate-gate/bin/docker'), 'network', 'connect']
             refused = subprocess.run([*shim, names['foreign'], names['ctr']], env=shim_env, capture_output=True, text=True)
@@ -509,7 +512,7 @@ class NetworkLinkGuardDockerTests(unittest.TestCase):
             self.assertIn(names['own'], networks)
         finally:
             subprocess.run([real, 'rm', '-f', names['ctr']], capture_output=True)
-            for network in (names['own'], names['foreign']):
+            for network in (names['start'], names['own'], names['foreign']):
                 subprocess.run([real, 'network', 'rm', network], capture_output=True)
 
 
