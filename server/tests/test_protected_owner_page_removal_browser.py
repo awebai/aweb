@@ -82,14 +82,27 @@ async def owner_origin(a, tmp_path):
 
 @pytest.mark.asyncio
 @pytest.mark.parametrize("width", [375, 1440])
+@pytest.mark.parametrize("lost_answer", [False, True])
 async def test_the_owner_removes_a_member_from_the_owner_page_with_one_exact_passkey_approval(
-    admissions, tmp_path, width
+    admissions, tmp_path, width, lost_answer, monkeypatch
 ):
     a = admissions
     rows = await a.w.registry.list_team_certificates_fresh(DOMAIN, "engineering", active_only=True)
     root = next(row for row in rows if row.member_did_key == did(a.w.root))
     certificate = {"certificate_id": root.certificate_id}
     async with independent_reader(a), owner_origin(a, tmp_path) as (origin, browser):
+        from aweb_naapp.runtime.protected_signer import SignerRefused
+
+        custody = a.w.app.authority.custody
+        deliver, deliveries = custody.deliver_retained, []
+
+        async def release(operation, retained):
+            deliveries.append(retained.fields())
+            await deliver(operation, retained)
+            if lost_answer:
+                raise SignerRefused("receipt_unavailable")  # Lose only the already applied answer.
+
+        monkeypatch.setattr(custody, "deliver_retained", release)
         # No root or requester grant: the owner's own session starts it.
         await a.w.db.execute("UPDATE {{tables.protected_requester_bindings}} SET active=false")
         # The team owner's enrolled passkey.
@@ -111,9 +124,20 @@ async def test_the_owner_removes_a_member_from_the_owner_page_with_one_exact_pas
             await expect(page.locator("#handoff-title")).to_have_text(f"Remove {root.alias} from engineering?")
             await expect(page.locator("#handoff-names dt")).to_contain_text(["Kind"])
             assert not await revoked(a, certificate)
+            retained_page = page.url
             await approve.click()
+            if lost_answer:
+                await expect(page.locator("#handoff-status")).to_contain_text("could not confirm")
+                assert await revoked(a, certificate)
+                await page.goto(origin + "/")
+                await expect(page.locator(f'[data-remove-certificate="{root.certificate_id}"]')).to_have_count(0)
+                recovery = page.get_by_role("link", name="Check this request", exact=True)
+                await expect(recovery).to_have_attribute("href", retained_page.removeprefix(origin))
+                await recovery.click()
+                await page.wait_for_url(retained_page)
             await expect(page.locator("#handoff-title")).to_have_text("Approved")
             assert await revoked(a, certificate)
+            assert len(deliveries) == 1
             # Opening the same request again shows its outcome, not a refusal.
             await page.reload()
             await expect(page.locator("#handoff-title")).to_have_text("Approved")
@@ -126,4 +150,3 @@ async def test_the_owner_removes_a_member_from_the_owner_page_with_one_exact_pas
             ]
             assert len([p for p in posts if p == "/governance/operations"]) == 1
             assert len([p for p in posts if p.endswith("/governance/execute")]) == 1
-            assert len([p for p in posts if p == "/governance/operations"]) == 1
