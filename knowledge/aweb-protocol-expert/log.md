@@ -1,5 +1,9 @@
 # Knowledge log
 
+## 2026-11-14
+* **Harvest**: OKF proposal from seat aweb-protocol-expert-security-fixes with one backing note; the operator's requirement is source-reported.
+* **Creation**: decision [approval provenance is an additive signer statement](/aweb-protocol-expert/decisions/approval-provenance-is-an-additive-signer-statement.md), an accepted requirement with no designed mechanism. It does not supersede [accepted guarantees change only by ruling](/aweb-protocol-expert/lessons/accepted-guarantees-change-only-by-ruling.md).
+
 ## 2026-11-06
 * **Fix**: review of the db-access proposal on npm gitHead, PubSub release and stream checkouts: hosted specifics in [stream bodies leave the request connection scope](/aweb-protocol-expert/lessons/stream-bodies-leave-the-request-connection-scope.md) and [an npm tarball publish records no gitHead](/aweb-protocol-expert/lessons/npm-tarball-publish-records-no-githead.md) are stated generically or dropped, as the OSS and Cloud boundary requires.
 * **Update**: [SSE cleanup is cancelled on client disconnect](/aweb-protocol-expert/lessons/sse-cleanup-is-cancelled-on-disconnect.md) and [a PubSub release survives any cancellation](/aweb-protocol-expert/decisions/pubsub-release-survives-any-cancellation.md) link each other: the AnyIO shield covers Starlette's disconnect, not native task cancellation.
