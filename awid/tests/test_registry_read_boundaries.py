@@ -2,12 +2,17 @@
 
 import asyncio
 from contextlib import asynccontextmanager
+from datetime import datetime, timedelta, timezone
+from uuid import uuid4
 
 import pytest
 
 from awid.protected_receipts import PATH
-from awid_service.protected_teams import _lock_key
-from test_controller_request_v2_http import controller_app as controller_app, keypair, send
+from awid.protected_effect import HEADER, artifact_digest, encode_proofs, http_consumer, issue_proof
+from awid.signing import canonical_json_bytes, sign_message
+from awid.team_server_record import record_signing_bytes
+from awid_service.protected_teams import _lock_key, provision_team_protection
+from test_controller_request_v2_http import ORIGIN, controller_app as controller_app, keypair, send
 
 TEAM_PATH = "/v1/namespaces/local/teams/base"
 
@@ -35,10 +40,11 @@ async def test_actual_get_readers_share_team_guard_and_exclude_writer(controller
     env = controller_app
     tasks = []
     try:
-        # Hold only the table: real HTTP readers must first acquire their
-        # advisory guards and then wait on their actual SELECT, not a stub.
+        # Hold the binding table: readers acquire their guards and read the
+        # team, then wait on their real protection SELECT. The HTTP writer's
+        # controller preflight can still run before it waits on that guard.
         async with env.db.transaction() as blocker:
-            await blocker.execute("LOCK TABLE {{tables.teams}} IN ACCESS EXCLUSIVE MODE")
+            await blocker.execute("LOCK TABLE {{tables.team_protection}} IN ACCESS EXCLUSIVE MODE")
             tasks.extend(asyncio.create_task(env.client.get(TEAM_PATH)) for _ in range(2))
             rows = await wait_locks(blocker, 2)
             assert all(r["granted"] and r["mode"] == "ShareLock" for r in rows), rows
@@ -142,6 +148,19 @@ async def test_bad_binding_refuses_entire_list_without_inventing_legacy(controll
 
 
 @pytest.mark.asyncio
+async def test_unavailable_projection_store_refuses_the_whole_page(controller_app):
+    env = controller_app
+    await env.db.execute("ALTER TABLE {{tables.team_protection}} RENAME TO unavailable_protection")
+    try:
+        env.client._transport.raise_app_exceptions = False
+        response = await env.client.get("/v1/namespaces/local/teams")
+        assert response.status_code == 503, response.text
+        assert response.json()["detail"]["code"] == "protected_state_unavailable"
+    finally:
+        await env.db.execute('ALTER TABLE "awid".unavailable_protection RENAME TO team_protection')
+
+
+@pytest.mark.asyncio
 @pytest.mark.parametrize("domain", ["%2E", "%2E%2E"])
 async def test_empty_canonical_domain_is_a_client_error(controller_app, domain):
     env = controller_app
@@ -159,11 +178,61 @@ async def test_historical_receipt_route_uses_real_rate_limiter(controller_app):
     env = controller_app
     assert type(env.app.state.rate_limiter).__name__ == "RedisFixedWindowRateLimiter"
     path = PATH + "/11111111-1111-4111-8111-111111111111"
-    for _ in range(60):
+    allowed, window = 0, None
+    for _ in range(122):
         response = await env.client.get(path)
+        assert response.headers.get("X-RateLimit-Limit") == "60"
+        reset = response.headers["X-RateLimit-Reset"]
+        if reset != window:
+            window, allowed = reset, 0
+        if response.status_code == 429:
+            assert allowed == 60
+            break
         assert response.status_code == 404
         assert response.headers["cache-control"] == "no-store"
-    response = await env.client.get(path)
+        allowed += 1
+    else:
+        pytest.fail("receipt reads never reached their real rate limit")
     assert response.status_code == 429, response.text
     assert int(response.headers["Retry-After"]) >= 0
     assert response.headers["cache-control"] == "no-store"
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("protected", [False, True])
+@pytest.mark.parametrize("configured", [False, True])
+async def test_registry_artifact_origin_configuration_has_no_request_fallback(controller_app, protected, configured):
+    """Real registry+codec proof: no claim about signer/UV execution."""
+    env = controller_app
+    env.app.state.awid_public_origins = (ORIGIN,) if configured else ()
+    service_key, service_did = keypair()
+    if protected:
+        async with env.db.transaction() as tx:
+            binding = await provision_team_protection(tx, domain="local", name="base",
+                service_id="test-service", service_did_key=service_did,
+                expected_generation=0, approval_ref="native-origin-control")
+    now = datetime.now(timezone.utc).replace(microsecond=0)
+    record = {"v": 1, "type": "aweb.team-server", "team_id": "base:local",
+              "team_did_key": env.team[1], "server_url": "https://coord.example",
+              "issued_at": now.strftime("%Y-%m-%dT%H:%M:%SZ")}
+    signing = record_signing_bytes(record)
+    signature = sign_message(env.team[0], signing)
+    body = canonical_json_bytes({"record": record, "signature": signature})
+    path = TEAM_PATH + "/server"
+    request_headers = {"Content-Type": "application/json"}
+    if protected:
+        proof = issue_proof({"v": 1, "type": "aweb.protected-effect", "service_id": "test-service",
+            "team_id": "base:local", "history_id": binding["history_id"], "generation": binding["generation"],
+            "controller_did_key": env.team[1], "operation": "team.server-record.publish", "variant": "default",
+            "operation_id": str(uuid4()), "artifact_type": "team-server-record",
+            "artifact_sha256": artifact_digest(signing, signature),
+            "consumer": http_consumer(audience=ORIGIN, method="PUT", path=path, body=body),
+            "issued_at": now.strftime("%Y-%m-%dT%H:%M:%SZ"),
+            "expires_at": (now + timedelta(seconds=120)).strftime("%Y-%m-%dT%H:%M:%SZ")}, service_key)
+        request_headers[HEADER] = encode_proofs([proof])
+    response = await env.client.put(path, content=body, headers=request_headers)
+    accepted = not protected or configured
+    assert response.status_code == (200 if accepted else 403), response.text
+    if not accepted:
+        assert response.json()["detail"]["code"] == "protected_controller_required"
+    assert await env.db.fetch_value("SELECT count(*) FROM {{tables.team_server_records}}") == int(accepted)

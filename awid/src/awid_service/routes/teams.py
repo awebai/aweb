@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import base64
 import json
+import logging
 import re
 import secrets
 from datetime import datetime, timezone
@@ -15,7 +16,7 @@ from pgdbm.errors import QueryError
 from fastapi.exceptions import RequestValidationError
 from pydantic import BaseModel, ConfigDict, Field, ValidationError, field_validator, model_validator
 
-from awid_service.protected_teams import advance_incarnation, effect_transaction, protection, team_guard
+from awid_service.protected_teams import advance_incarnation, effect_transaction, protection, project_protection, refusal, team_guard
 
 _TEAM_NAME_PATTERN = re.compile(r"^[a-z0-9]([a-z0-9-]*[a-z0-9])?$")
 
@@ -37,7 +38,15 @@ from awid_service.delivery_origin import validate_delivery_origin
 from awid.controller_request import ControllerAuthRoute, verify_controller_json_request
 from awid_service.attestation_rotation import ResignedRecords, apply_resigned_records
 
-router = APIRouter(prefix="/v1/namespaces/{domain}/teams", tags=["teams"], route_class=ControllerAuthRoute)
+logger = logging.getLogger(__name__)
+
+def _validate_domain_path(domain: str) -> None:
+    if not domain.strip().rstrip("."):
+        raise HTTPException(status_code=400, detail="Invalid namespace domain")
+
+
+router = APIRouter(prefix="/v1/namespaces/{domain}/teams", tags=["teams"], route_class=ControllerAuthRoute,
+                   dependencies=[Depends(_validate_domain_path)])
 
 
 # ---------------------------------------------------------------------------
@@ -643,18 +652,24 @@ async def list_teams(
             raise HTTPException(status_code=400, detail="Invalid cursor") from exc
         params.extend([cursor_ts, cursor_team_uuid])
         where_clauses.append(
-            f"(created_at, team_uuid) > (${len(params) - 1}::timestamptz, ${len(params)}::uuid)"
+            f"(t.created_at, t.team_uuid) > (${len(params) - 1}::timestamptz, ${len(params)}::uuid)"
         )
 
     params.append(validated_limit + 1)
     query = (
-        "SELECT t.team_uuid, t.domain, t.name, t.display_name, t.team_did_key, t.visibility, t.created_at"
+        "SELECT t.team_uuid, t.domain, t.name, t.display_name, t.team_did_key, t.visibility, t.created_at,"
+        " p.mode, p.service_id, p.service_did_key, p.history_id, p.generation"
         " FROM {{tables.teams}} t"
+        " LEFT JOIN {{tables.team_protection}} p ON p.domain=t.domain AND p.name=t.name"
         " WHERE " + " AND ".join(where_clauses)
         + f" ORDER BY t.created_at, t.team_uuid"
         f" LIMIT ${len(params)}"
     )
-    rows = await db.fetch_all(query, *params)
+    try:
+        rows = await db.fetch_all(query, *params)
+    except QueryError:
+        logger.exception("Authoritative team listing/protection read unavailable")
+        raise refusal("protected_state_unavailable") from None
     has_more = len(rows) > validated_limit
     page_rows = rows[:validated_limit]
     next_cursor = None
@@ -666,7 +681,7 @@ async def list_teams(
         })
 
     return TeamListResponse(
-        teams=[await _team_response(db, r) for r in page_rows],
+        teams=[_team_model(r, project_protection(r if r["mode"] is not None else None)) for r in page_rows],
         has_more=has_more,
         next_cursor=next_cursor,
     )
@@ -687,7 +702,7 @@ async def get_team(
     name = _validate_team_name_path(name)
     db = db_infra.get_manager("aweb")
     async with db.transaction() as tx:
-        await team_guard(tx, domain, name)
+        await team_guard(tx, domain, name, exclusive=False)
         row = await tx.fetch_one(
             """
             SELECT team_uuid, domain, name, display_name, team_did_key, visibility, created_at
@@ -1129,7 +1144,7 @@ async def certificate_status(
     db = db_infra.get_manager("aweb")
     if include_protection:
         async with db.transaction() as tx:
-            await team_guard(tx, domain, name)
+            await team_guard(tx, domain, name, exclusive=False)
             return await _certificate_status_response(tx, domain, name, certificate_id, include_protection=True)
     return await _certificate_status_response(db, domain, name, certificate_id)
 
@@ -1528,8 +1543,12 @@ async def list_revocations(
 
 
 async def _team_response(db, row) -> TeamResponse:
+    return _team_model(row, await protection(db, row["domain"], row["name"]))
+
+
+def _team_model(row, binding) -> TeamResponse:
     return TeamResponse(
-        protection=await protection(db, row["domain"], row["name"]),
+        protection=binding,
         team_id=build_team_id(row["domain"], row["name"]),
         domain=row["domain"],
         name=row["name"],
