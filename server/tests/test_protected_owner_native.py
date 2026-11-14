@@ -68,6 +68,16 @@ async def test_the_team_owner_sees_admitted_agents_counts_bounds_and_approvers(a
     assert view["policy"] == a.policy
     [approver] = view["approvers"]
     assert approver["contact"] and approver["passkeys"] and all(set(p) == {"key_id", "added_at"} for p in approver["passkeys"])
+    # Every current member of the team is listed, with its kind and how it
+    # joined, whether or not this signer added it.
+    members = {m["alias"]: m for m in view["members"]}
+    alias = added.intent()["subject"]["member_alias"]
+    assert members[alias]["joined"] == "signer" and members[alias]["kind"] == "agent"
+    assert members[alias]["member_did_key"] == added.intent()["subject"]["child_key"]
+    assert all(set(m) == {"alias", "kind", "joined", "member_did_aw", "member_did_key", "certificate_id"}
+        for m in view["members"])
+    assert all(m["joined"] in ("signer", "other") for m in view["members"])
+    assert all(m["kind"] in ("agent", "human", "kind not verified", "not checked") for m in view["members"])
 
 
 @pytest.mark.asyncio
@@ -88,7 +98,8 @@ def owner_fixture_view():
              "asked_at": "2026-11-13T09:30:00Z", "title": "Approve build as the root agent for <eng>?"},
             {"operation_id": "op-2", "operation": "human-role.revoke", "requester": "did:aw:OPS",
              "digest": "ef" * 32, "handoff_id": "h-2", "expires_at": "2026-11-13T10:10:00Z",
-             "asked_at": "2026-11-13T10:00:00Z", "title": "Remove did:aw:BOB from app.owner?"},
+             "asked_at": "2026-11-13T10:00:00Z", "title": "Remove did:aw:BOB from app.owner?",
+             "requester_name": "ops"},
         ],
         "history": [{"operation_id": "op-0", "operation": "human-role.revoke", "requester": "did:aw:ROOT",
             "digest": "cd" * 32, "state": "refused", "code": "human_refused", "at": "2026-11-13T10:00:00Z",
@@ -103,6 +114,12 @@ def owner_fixture_view():
         "approvers": [{"contact": "first@customer.example", "passkeys": []},
             {"contact": "owner@customer.example", "passkeys": [{"key_id": "0a1b2c3d", "added_at": "2026-11-12T08:00:00Z"}]}],
         "you": "owner@customer.example",
+        "members": [{"alias": "build-<1>", "kind": "agent", "joined": "signer", "member_did_aw": None,
+                "member_did_key": "did:key:zK", "certificate_id": "cert-1"},
+            {"alias": "ops", "kind": "kind not verified", "joined": "other", "member_did_aw": "did:aw:OPS",
+                "member_did_key": "did:key:zO", "certificate_id": "cert-2"},
+            {"alias": "ann", "kind": "not checked", "joined": "other", "member_did_aw": "did:aw:ANN",
+                "member_did_key": "did:key:zA", "certificate_id": "cert-3"}],
     }
 
 
@@ -127,6 +144,19 @@ def test_the_owner_page_names_what_it_governs_and_reads_as_sentences():
     assert ('Denied by you, <time datetime="2026-11-13T10:00:00Z" data-local>2026-11-13 10:00 UTC</time>: '
         "Remove did:aw:ANN from app.owner?") in html
     assert "a request from" not in html
+    # A requester the team knows is named by its alias; its identifier stays
+    # in Technical details.
+    assert ('<p>Requested by ops, asked '
+        '<time datetime="2026-11-13T10:00:00Z" data-local>2026-11-13 10:00 UTC</time></p>') in html
+    # Every current member is listed with its kind and how it joined; no
+    # action is offered from this page.
+    assert ">Team members</h2>" in html
+    assert "build-&lt;1&gt;: agent, added through this signer" in html
+    assert "ops: kind not verified, joined another way" in html
+    assert "ann: kind could not be checked, joined another way" in html
+    unread = owner_page_html({**view, "members": None})
+    assert "The member list could not be read right now." in unread
+    assert "Remove</button>" not in html
     assert "The root agent: 3 of 5 at a time, 2 of 10 in the last hour." in html
     assert "in engineering" in html and "in engineering:customer.example" not in html
     assert "needs its own approval" not in html
@@ -136,9 +166,9 @@ def test_the_owner_page_names_what_it_governs_and_reads_as_sentences():
     assert "build-&lt;1&gt;" in html and "build-<1>" not in html
     human = owner_page_html({**view, "authority": {**view["authority"], "kind": "human_identity", "id": "did:aw:HUMAN"}})
     assert "<h1>Your own approvals</h1>" in human and "Agents added without asking you" not in human
-    empty = owner_page_html({**view, "pending": [], "history": [], "admitted": [], "roots": []})
+    empty = owner_page_html({**view, "pending": [], "history": [], "admitted": [], "roots": [], "members": []})
     assert "Nothing is waiting for you." in empty and "No agents have been added yet." in empty
-    assert "Nothing has happened yet." in empty
+    assert "Nothing has happened yet." in empty and "No members." in empty
 
 
 @pytest.mark.asyncio
@@ -198,3 +228,15 @@ async def test_a_signed_but_unconfirmed_effect_is_unresolved_never_expired(admis
         # This operation's own row (others in the fixture may really expire).
         [row] = [li for li in owner_page_html(view).split("<li>") if entry["digest"] in li]
         assert "Expired, nobody decided" not in row and "not confirmed yet" in row
+
+
+def test_a_requester_the_team_knows_is_named_by_its_alias():
+    from aweb.protected_signing.owner import _name_requesters
+
+    entries = [{"requester": "did:aw:OPS"}, {"requester": "did:key:zK"}, {"requester": "did:aw:STRANGER"}]
+    members = [{"alias": "ops", "member_did_aw": "did:aw:OPS", "member_did_key": "did:key:zO"},
+        {"alias": "build-1", "member_did_aw": None, "member_did_key": "did:key:zK"}]
+    _name_requesters(entries, members)
+    assert [e["requester_name"] for e in entries] == ["ops", "build-1", None]
+    _name_requesters(entries, None)
+    assert [e["requester_name"] for e in entries] == [None, None, None]

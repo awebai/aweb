@@ -16,7 +16,9 @@ from aweb_naapp.runtime.protected_signer import SignerRefused
 from aweb_naapp.runtime.protected_signer.admission_policy import AdmissionPolicy
 from aweb_naapp.runtime.protected_signer.catalog import OPERATIONS
 
-from .admission import admission_counts
+from awid.identity_observation import IdentityObservationRefused, observe_identity_binding, observe_identity_kind
+
+from .admission import _registry, admission_counts
 
 HISTORY_LIMIT = 50
 
@@ -100,6 +102,7 @@ async def owner_view(composition, *, scope: str, subject: str, now: datetime | N
         "policy": None,
         "approvers": approvers,
         "you": next((a["contact"] for a in approvers if a["subject"] == subject), None),
+        "members": [],
     }
     for item in [*pending, *view["history"]]:
         del item["approval_id"]
@@ -107,7 +110,20 @@ async def owner_view(composition, *, scope: str, subject: str, now: datetime | N
         del approver["subject"]
     if context.authority_kind == "team_controller":
         await _admissions(c, view, requests, now)
+        await _members(c, view)
+        _name_requesters([*view["pending"], *view["history"]], view["members"])
     return view
+
+
+def _name_requesters(entries, members):
+    """A requester the team knows by identity or key is named by its alias."""
+    names = {}
+    for member in members or []:
+        for key in (member["member_did_aw"], member["member_did_key"]):
+            if key:
+                names[key] = member["alias"]
+    for entry in entries:
+        entry["requester_name"] = names.get(entry["requester"])
 
 
 async def _admissions(c, view, requests, now):
@@ -137,6 +153,46 @@ async def _admissions(c, view, requests, now):
                 root_id=root_id, window_seconds=policy["bounds"]["rate_window_seconds"], now=now)
             view["roots"].append({"root_id": root_id, "active": counts["active"], "in_window": counts["in_window"],
                 "next_at": _stamp(counts["next_at"])})
+
+
+async def _members(c, view):
+    """Every current member of the team, whoever added it: its kind and
+    whether this signer admitted it. None when the registry cannot say."""
+    name, domain = c.context.authority_id.split(":", 1)
+    client = getattr(c.registry, "client", c.registry)
+    try:
+        records = await _registry(client.list_team_certificates_fresh(domain, name, active_only=True))
+    except SignerRefused:
+        view["members"] = None
+        return
+    added = {a["child_key"] for a in view["admitted"] if a["state"] == "active"}
+    for record in records:
+        view["members"].append({"alias": record.alias, "kind": await _member_kind(c, record),
+            "joined": "signer" if record.member_did_key in added else "other",
+            "member_did_aw": record.member_did_aw or None, "member_did_key": record.member_did_key,
+            "certificate_id": record.certificate_id})
+
+
+async def _member_kind(c, record):
+    """What the registry says this member is, for reading only: "agent",
+    "human", "kind not verified", or "not checked" when evidence is
+    unavailable. Removal decides eligibility again, under its own rules."""
+    if record.identity_scope == "local":
+        return "agent"
+    if not record.member_did_aw:
+        return "kind not verified"
+    try:
+        resolved = await _registry(c.registry.resolve_key_fresh(record.member_did_aw), missing="subject_ineligible")
+        binding = await observe_identity_binding(c.registry, did_aw=record.member_did_aw,
+            did_key=resolved.current_did_key)
+        kind = (await observe_identity_kind(c.registry, binding)).result
+    except (SignerRefused, IdentityObservationRefused):
+        return "not checked"
+    if kind["outcome"] == "unavailable":
+        return "not checked"
+    if kind["identity_valid"] is True and kind["kind"] in ("agent", "human"):
+        return kind["kind"]
+    return "kind not verified"
 
 
 async def _deciders(c, history, subject):
@@ -188,6 +244,7 @@ def _window(seconds):
 _OUTCOMES = {"committed": "Approved", "expired": "Expired, nobody decided",
     "unresolved": "Signed; whether it took effect is not confirmed yet"}
 _REFUSALS = {"human_refused": "Denied"}
+_KINDS = {"not checked": "kind could not be checked"}
 
 
 def _technical(rows):
@@ -218,9 +275,10 @@ def owner_page_html(view: dict) -> str:
             asked = f", asked {_time(item['asked_at'])}" if item.get("asked_at") else ""
             parts.append(
                 f'<li><a href="/handoff/{e(item["handoff_id"])}">{e(item["title"])}</a>'
-                f'<p>Requested by {e(item["requester"])}{asked}</p>'
+                f'<p>Requested by {e(item.get("requester_name") or item["requester"])}{asked}</p>'
                 f'<p>Expires {_time(item["expires_at"])}</p>'
-                + _technical([("Operation", item["operation"]), ("Digest", item["digest"])]) + "</li>"
+                + _technical([("Requested by", item["requester"]), ("Operation", item["operation"]),
+                    ("Digest", item["digest"])]) + "</li>"
             )
         parts.append("</ul>")
     else:
@@ -247,6 +305,22 @@ def owner_page_html(view: dict) -> str:
             parts.append("</ul>")
         else:
             parts.append("<p>No agents have been added yet.</p>")
+        parts.append("<h2>Team members</h2>")
+        if view["members"] is None:
+            parts.append("<p>The member list could not be read right now. Reload to try again.</p>")
+        elif view["members"]:
+            parts.append('<ul class="owner-list">')
+            for member in view["members"]:
+                kind = _KINDS.get(member["kind"], member["kind"])
+                joined = "added through this signer" if member["joined"] == "signer" else "joined another way"
+                parts.append(
+                    f'<li>{e(member["alias"])}: {e(kind)}, {joined}'
+                    + _technical([("Identity", member["member_did_aw"] or "none"), ("Key", member["member_did_key"]),
+                        ("Certificate", member["certificate_id"])]) + "</li>"
+                )
+            parts.append("</ul>")
+        else:
+            parts.append("<p>No members.</p>")
         parts.append("<h2>Current limits</h2>")
         if bounds:
             policy = view["policy"]
