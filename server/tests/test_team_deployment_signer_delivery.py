@@ -98,6 +98,11 @@ def test_a_service_key_the_custodian_did_not_install_is_refused_before_any_servi
         ("AWEB_PROTECTED_OWNER_ACT_ORIGINS", "https://secrets.example.com"),
         ("AWEB_PROTECTED_OWNER_ACT_ORIGINS", '["https://secrets.example.com/path"]'),
         ("AWEB_PROTECTED_EFFECT_RECEIPT_ORIGINS", '[""]'),
+        # HOST.md: canonical HTTPS origins. The host enforces it itself, since
+        # a host launched without the bundle never passes the bundle's check.
+        ("AWEB_PROTECTED_OWNER_ACT_ORIGINS", '["http://secrets.example.com"]'),
+        ("AWEB_PROTECTED_EFFECT_RECEIPT_ORIGINS", '["http://secrets.example.com"]'),
+        ("AWEB_PROTECTED_OWNER_ACT_ORIGINS", '["http://127.0.0.1:8770"]'),
     ],
 )
 def test_the_host_refuses_a_malformed_value_given_around_the_bundle(monkeypatch, name, value):
