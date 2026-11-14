@@ -14,6 +14,8 @@ from datetime import UTC, datetime
 from html import escape
 from urllib.parse import quote
 
+from fastapi import HTTPException, Query, Request
+
 from aweb_naapp.runtime.protected_signer import SignerRefused
 from aweb_naapp.runtime.protected_signer.admission_policy import AdmissionPolicy
 from aweb_naapp.runtime.protected_signer.catalog import OPERATIONS
@@ -74,24 +76,32 @@ _COLUMNS = (
     "(SELECT r.suppressed FROM {{tables.protected_signer_notice_reservations}} r "
     "WHERE r.operation_id=o.operation_id) AS notice_suppressed"
 )
-# Each list the page shows, as its stored state: waiting for a decision,
-# approved but not confirmed, and final (committed, refused, or never signed
-# and past its expiry). Approval-less rows are bounded admissions, listed
-# under added agents instead.
-_STATES = {
-    "pending": "result IS NULL AND refusal_code IS NULL AND signed_result IS NULL AND expires_at > $2::timestamptz",
-    # It never expires into history: it may already be applied ($2 is unused).
-    "unresolved": "result IS NULL AND refusal_code IS NULL AND signed_result IS NOT NULL AND $2::timestamptz IS NOT NULL",
-    "history": "(result IS NOT NULL OR refusal_code IS NOT NULL OR (signed_result IS NULL AND expires_at <= $2::timestamptz))",
-}
+# Each state class the page lists, stated exactly as its partial index's
+# predicate (migration 009), so each page reads only its own class: open
+# (waiting, or unsigned past its expiry), signed but unconfirmed, and final.
+# Approval-less rows are bounded admissions, listed under added agents instead.
+_OPEN = "approval_id IS NOT NULL AND result IS NULL AND refusal_code IS NULL AND signed_result IS NULL"
+_UNRESOLVED = "approval_id IS NOT NULL AND result IS NULL AND refusal_code IS NULL AND signed_result IS NOT NULL"
+_FINAL = "approval_id IS NOT NULL AND (result IS NOT NULL OR refusal_code IS NOT NULL)"
+_AFTER = "AND ($3::timestamptz IS NULL OR (expires_at, operation_id) < ($3::timestamptz, $4::text)) "
+_ORDER = "ORDER BY expires_at DESC, operation_id DESC LIMIT $5"
+
+
+def _page(state: str, extra: str = "") -> str:
+    return ("SELECT " + _COLUMNS + " FROM {{tables.protected_signer_operations}} o "
+            "WHERE scope=$1::jsonb AND " + state + " " + extra + _AFTER + _ORDER)
+
+
 # One page of one list for one scope, newest expiry first, after an optional
-# (expires_at, operation_id) cursor: a load reads a page, never every row.
+# (expires_at, operation_id) cursor. History merges two bounded pages, each
+# through its own index: final outcomes, and unsigned requests past expiry
+# ($2, the reader's now). The unresolved list never expires into history: it
+# may already be applied ($2 is typed but unused there).
 LISTS = {
-    name: "SELECT " + _COLUMNS + " FROM {{tables.protected_signer_operations}} o "
-    "WHERE scope=$1::jsonb AND approval_id IS NOT NULL AND " + state + " "
-    "AND ($3::timestamptz IS NULL OR (expires_at, operation_id) < ($3::timestamptz, $4::text)) "
-    "ORDER BY expires_at DESC, operation_id DESC LIMIT $5"
-    for name, state in _STATES.items()
+    "pending": _page(_OPEN, "AND expires_at > $2::timestamptz "),
+    "unresolved": _page(_UNRESOLVED, "AND $2::timestamptz IS NOT NULL "),
+    "history": "SELECT * FROM ((" + _page(_FINAL, "AND $2::timestamptz IS NOT NULL ") + ") UNION ALL ("
+               + _page(_OPEN, "AND expires_at <= $2::timestamptz ") + ")) h " + _ORDER,
 }
 
 
@@ -367,6 +377,15 @@ def _team_name(team_id):
     return team_id.partition(":")[0]
 
 
+def _older(view: dict, listing: str, text: str) -> str:
+    """The link to the next page of one list, when it has one."""
+    cursor = (view.get("more") or {}).get(listing)
+    if not cursor:
+        return ""
+    href = "/older?list=" + quote(listing, safe="") + "&after=" + quote(cursor, safe="")
+    return f'<p><a data-older="{escape(listing, quote=True)}" href="{escape(href, quote=True)}">{escape(text)}</a></p>'
+
+
 def owner_page_html(view: dict) -> str:
     """The owner page's HTML from owner_view. Every value is escaped. Each
     request reads as its operation definition's own question."""
@@ -393,6 +412,7 @@ def owner_page_html(view: dict) -> str:
                     ("Digest", item["digest"])]) + "</li>"
             )
         parts.append("</ul>")
+        parts.append(_older(view, "pending", "Older requests waiting for you"))
     else:
         parts.append("<p>Nothing is waiting for you.</p>")
     if team:
@@ -488,6 +508,8 @@ def owner_page_html(view: dict) -> str:
                     ("Digest", item["digest"])]) + "</li>"
             )
         parts.append("</ul>")
+        parts.append(_older(view, "unresolved", "Older requests approved but not confirmed"))
+        parts.append(_older(view, "history", "Older history"))
     else:
         parts.append("<p>Nothing has happened yet.</p>")
     parts.append('<h2>Who can approve</h2><ul class="owner-list">')
@@ -508,7 +530,25 @@ def owner_router(composition, *, sessions, csrf_key):
     async def home(session):
         return owner_page_html(await owner_view(composition, scope=session.scope, subject=session.subject))
 
-    router = protected_shell(csrf_key).router(sessions=sessions, home_title="Approvals", home=home)
+    shell = protected_shell(csrf_key)
+    router = shell.router(sessions=sessions, home_title="Approvals", home=home)
+
+    @router.get("/older")
+    async def older(request: Request, listing: str = Query("", alias="list"), after: str = ""):
+        """The same page with one list at the page after ``after``, so every
+        retained request stays reachable; the other lists show their first
+        page. A malformed list name or cursor is refused."""
+        from aweb_naapp.console.browser import login_redirect
+
+        if listing not in LISTS or _after(after) == (None, None):
+            raise HTTPException(400, "request_invalid")
+        try:
+            session = await sessions.current(request)
+            body_html = owner_page_html(await owner_view(
+                composition, scope=session.scope, subject=session.subject, cursors={listing: after}))
+        except HTTPException as error:
+            return login_redirect(error)
+        return shell.console_page(title="Approvals", body_html=body_html, session=session)
 
     @router.get("/owner-ui/owner.js")
     async def script():

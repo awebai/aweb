@@ -36,14 +36,17 @@
   }
   retire();
   // Selections whose operation this page's History does not show: ask by exact
-  // id. Any failure keeps them; only a stored final outcome retires one.
-  const unknown = held().map((key) => saved(key).operation_id).filter((id) => !final.has(id)).slice(0, 50);
-  if (unknown.length) {
-    window.awebConsole.post("/governance/operations/final", {operation_ids: unknown}).then((result) => {
+  // id, every one of them, fifty at a time. Any failure keeps them and stops
+  // asking; only a stored final outcome retires one.
+  const unknown = held().map((key) => saved(key).operation_id).filter((id) => !final.has(id));
+  (async () => {
+    for (let start = 0; start < unknown.length; start += 50) {
+      const result = await window.awebConsole.post("/governance/operations/final",
+        {operation_ids: unknown.slice(start, start + 50)});
       for (const id of Array.isArray(result?.final) ? result.final : []) final.add(id);
       retire();
-    }).catch(() => {});
-  }
+    }
+  })().catch(() => {});
 
   // A refusal the signer names says only why: retrying gets the same answer.
   const refusals = {
