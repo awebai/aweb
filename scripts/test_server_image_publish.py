@@ -84,7 +84,7 @@ class ServerDispatchTests(unittest.TestCase):
 
 
 class ServerOciTests(unittest.TestCase):
-    def exercise(self, *, existing=False, conflict=False, fail_readback=False, version="1.2.3"):
+    def exercise(self, *, existing=False, conflict=False, fail_readback=False, version="1.2.3", listing=None):
         raw = b'{"schemaVersion":2}\n'
         digest = "sha256:" + hashlib.sha256(raw).hexdigest()
         calls = []
@@ -93,16 +93,57 @@ class ServerOciTests(unittest.TestCase):
             calls.append(args)
             if "inspect-staged" in args:
                 Path(args[args.index("--out") + 1]).write_text(json.dumps({"index": digest}))
-            if args[:2] == ("skopeo", "list-tags"):
-                return json.dumps({"Tags": ["1.2.3", "latest"] if existing else []})
             if "verify-published" in args and fail_readback:
                 raise PUBLISH.PublishRefusal("published digest mismatch")
             return ""
 
+        if listing is None:
+            listing = (0, json.dumps({"Tags": ["1.2.3", "latest"] if existing else []}), "")
         observed = subprocess.CompletedProcess([], 0, b"different" if conflict else raw, b"")
-        with patch.dict(os.environ, GHCR_USERNAME="fixture", GHCR_TOKEN="fixture-token"), patch.object(PUBLISH.shutil, "which", return_value="skopeo"), patch.object(PUBLISH, "run", run), patch.object(PUBLISH.subprocess, "run", return_value=observed), redirect_stdout(io.StringIO()) as output:
+
+        def direct(argv, **kwargs):
+            calls.append(tuple(argv))
+            if tuple(argv[:2]) == ("skopeo", "list-tags"):
+                self.assertTrue(kwargs.get("text"))
+                return subprocess.CompletedProcess(argv, *listing)
+            return observed
+
+        with patch.dict(os.environ, GHCR_USERNAME="fixture", GHCR_TOKEN="fixture-token"), patch.object(PUBLISH.shutil, "which", return_value="skopeo"), patch.object(PUBLISH, "run", run), patch.object(PUBLISH.subprocess, "run", direct), redirect_stdout(io.StringIO()) as output:
             PUBLISH.publish_oci(ROOT, "server-v", version, "a" * 40)
         return calls, output.getvalue(), digest
+
+    # skopeo's exact answer for ghcr.io/awebai/aweb-server before its first
+    # image (Publish service image run 43622390148, server-v1.27.51rc2).
+    ABSENT_REPOSITORY = ('time="2026-11-14T17:42:02Z" level=fatal '
+                         'msg="Error listing repository tags: fetching tags list: name unknown"\n')
+
+    def test_first_publication_to_an_absent_repository_has_no_tags(self):
+        for version, expected in (("1.27.51rc2", ["1.27.51rc2"]), ("1.2.3", ["1.2.3", "latest"])):
+            with self.subTest(version=version):
+                calls, output, digest = self.exercise(version=version, listing=(1, "", self.ABSENT_REPOSITORY))
+                self.assertFalse(any(args[:3] == ("skopeo", "inspect", "--raw") for args in calls))
+                copies = [args[-1] for args in calls if args[:2] == ("skopeo", "copy")]
+                self.assertEqual(copies, [f"docker://ghcr.io/awebai/aweb-server:{tag}" for tag in expected])
+                self.assertEqual(calls[-1][:3], ("bash", "scripts/oci-exact-publish.sh", "verify-published"))
+                self.assertEqual(json.loads(output.split("release-index=")[1])["digest"], digest)
+
+    def test_every_other_listing_failure_refuses_before_any_copy(self):
+        failures = {
+            "unauthorized": 'time="t" level=fatal msg="Error listing repository tags: fetching tags list: unauthorized: authentication required"\n',
+            "denied": 'time="t" level=fatal msg="Error listing repository tags: fetching tags list: denied"\n',
+            "name unknown with other detail": 'time="t" level=fatal msg="Error listing repository tags: fetching tags list: name unknown: repository name not known to registry"\n',
+            "name unknown at another step": 'time="t" level=fatal msg="Error listing repository tags: pinging container registry: name unknown"\n',
+            "transport": 'time="t" level=fatal msg="Error listing repository tags: fetching tags list: Get \\"https://ghcr.io/v2/\\": dial tcp: i/o timeout"\n',
+            "absent answer plus more output": self.ABSENT_REPOSITORY + 'time="t" level=warning msg="extra"\n',
+            "empty": "",
+        }
+        for name, stderr in failures.items():
+            with self.subTest(failure=name):
+                with self.assertRaisesRegex(PUBLISH.PublishRefusal, "skopeo list-tags docker://ghcr.io/awebai/aweb-server failed"):
+                    self.exercise(listing=(1, "", stderr))
+        # The absent-repository text on success output is a malformed listing, not "no tags".
+        with self.assertRaisesRegex(PUBLISH.PublishRefusal, "malformed tag listing"):
+            self.exercise(listing=(0, json.dumps({"Error": self.ABSENT_REPOSITORY}), ""))
 
     def test_server_builds_both_platforms_and_uses_exact_helper_and_readback(self):
         calls, output, digest = self.exercise()

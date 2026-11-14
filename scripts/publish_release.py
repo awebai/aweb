@@ -499,6 +499,27 @@ def build_oci_archive(root: Path, prefix: str, version: str, source_sha: str, ar
     run(root, *build, capture=False)
 
 
+# skopeo's whole answer when GHCR has no repository of that name yet, which is
+# the state before an image's first publication.
+ABSENT_REPOSITORY = re.compile(
+    r'time="[^"]*" level=fatal msg="Error listing repository tags: fetching tags list: name unknown"'
+)
+
+
+def published_tags(root: Path, repository: str) -> list:
+    argv = ("skopeo", "list-tags", f"docker://{repository}")
+    completed = subprocess.run(argv, cwd=root, text=True, capture_output=True, timeout=120, check=False)
+    if completed.returncode:
+        if not completed.stdout.strip() and ABSENT_REPOSITORY.fullmatch(completed.stderr.strip()):
+            return []
+        detail = (completed.stderr or completed.stdout or "").strip()
+        raise PublishRefusal(f"{' '.join(argv)} failed: {detail}")
+    tags = json.loads(completed.stdout).get("Tags")
+    if not isinstance(tags, list):
+        raise PublishRefusal("GHCR returned a malformed tag listing")
+    return tags
+
+
 def publish_oci(root: Path, prefix: str, version: str, source_sha: str) -> None:
     username = os.environ.get("GHCR_USERNAME", "").strip() or os.environ.get(
         "AC_REGISTRY_USERNAME", ""
@@ -526,10 +547,7 @@ def publish_oci(root: Path, prefix: str, version: str, source_sha: str) -> None:
             root, "skopeo", "login", "ghcr.io", "--username", username,
             "--password-stdin", input_text=token + "\n", timeout=120,
         )
-        listing = json.loads(run(root, "skopeo", "list-tags", f"docker://{repository}", timeout=120))
-        tags = listing.get("Tags")
-        if not isinstance(tags, list):
-            raise PublishRefusal("GHCR returned a malformed tag listing")
+        tags = published_tags(root, repository)
         version_only = prefix == "server-v" and "rc" in version
         for image_tag in ((version,) if version_only else (version, "latest")):
             remote = ""
