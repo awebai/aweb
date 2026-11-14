@@ -14,10 +14,36 @@ from aweb_naapp.runtime.protected_signer.operation_display import OperationDispl
 REQUEST = {
     "requester": "did:key:z6Mkrequester",
     "subject": {"alias": "agent-one", "teams": ["a:customer.example", "b:customer.example"],
+        "team_id": "engineering:customer.example", "target_kind": "kind not verified", "agent_kind": "agent",
+        "other_kind": "human", "root_id": "did:aw:ROOT", "label": "oats-root", "window": 3600, "day": 86400,
+        "odd": 90,
         "count": 3, "nothing": None, "policy": {"b": 2, "a": [1]}, "flag": True},
 }
 
 CASES = [
+    # "|period" names a window in seconds; the requester is named when it is
+    # the subject the definition names.
+    (OperationDisplay("At most {/subject/count} per {/subject/window|period}?",
+        ("Or per {/subject/day|period}, or per {/subject/odd|period}.",), (), (), (),
+        requester_name=("/requester", "/subject/label")),
+     {"title": "At most 3 per hour?", "consequences": ["Or per day, or per 90 seconds."], "names": [],
+      "technical": [], "requester": "oats-root"}),
+    (OperationDisplay("Remove it?", ("x",), (), (), (), requester_name=("/subject/root_id", "/subject/label")),
+     {"title": "Remove it?", "consequences": ["x"], "names": [], "technical": [],
+      "requester": "did:key:z6Mkrequester"}),
+    # "|kind" names a frozen target kind in the words the owner page uses.
+    (OperationDisplay("Remove {/subject/alias}?", ("x",),
+        (("kind", "/subject/target_kind|kind"), ("other", "/subject/agent_kind|kind")),
+        (("kind", "/subject/target_kind"),), ()),
+     {"title": "Remove agent-one?", "consequences": ["x"],
+      "names": [["Kind", "agent or person not confirmed"], ["Other", "agent"]],
+      "technical": [["Kind", "kind not verified"]]}),
+    # "|team" shows a team by its name, as the owner page does; the full id
+    # stays available to technical rows without it.
+    (OperationDisplay("Add {/subject/alias} to {/subject/team_id|team} and {/subject/teams|team}?", ("x",),
+        (("team", "/subject/team_id|team"),), (("team", "/subject/team_id"),), ()),
+     {"title": "Add agent-one to engineering and a, b?", "consequences": ["x"],
+      "names": [["Team", "engineering"]], "technical": [["Team", "engineering:customer.example"]]}),
     (OperationDisplay("Remove {/subject/alias} from {/subject/teams}?",
         ("It counts {/subject/count} times.",), (("member", "/subject/alias"),),
         (("policy", "/subject/policy"), ("nothing", "/subject/nothing"), ("flag", "/subject/flag"),
@@ -31,6 +57,14 @@ CASES = [
 ]
 
 REFUSED = [
+    OperationDisplay("Per {/subject/alias|period}?", ("x",), (), (), ()),
+    OperationDisplay("Per {/subject/count|period}?", ("x",), (), (), (), requester_name=("/subject/missing", "/subject/label")),
+    OperationDisplay("Remove it?", ("x",), (("kind", "/subject/other_kind|kind"),), (), ()),
+    OperationDisplay("Remove it?", ("x",), (("kind", "/subject/teams|kind"),), (), ()),
+    OperationDisplay("Add {/subject/alias|team}?", ("x",), (), (), ()),
+    OperationDisplay("Add {/subject/team_id|unknown}?", ("x",), (), (), ()),
+    OperationDisplay("Add {/subject/team_id|Team}?", ("x",), (), (), ()),
+    OperationDisplay("Add it?", ("x",), (("team", "/subject/count|team"),), (), ()),
     OperationDisplay("Remove {/subject/missing}?", ("x",), (), (), ()),
     OperationDisplay("Remove {/subject/policy}?", ("x",), (), (), ()),
     OperationDisplay("Remove {/subject/nothing}?", ("x",), (), (), ()),
@@ -61,7 +95,7 @@ def test_python_refuses_a_display_it_cannot_fill_exactly(display):
 
 
 def test_refusal_sentence_is_the_definitions_own_or_none():
-    display = CASES[0][0]
+    display = CASES[4][0]
     assert display.refusal("subject_ineligible") == "Not eligible."
     assert display.refusal("approval_spent") is None
 
@@ -69,8 +103,8 @@ def test_refusal_sentence_is_the_definitions_own_or_none():
 def test_revoke_row_names_the_principal_and_role_from_its_frozen_request():
     request = revoke_request()
     rendered = OPERATIONS[("human-role.revoke", "default")].display.render(request)
-    assert rendered["title"] == "Remove human-id from customer.owner?"
-    assert rendered["consequences"][0] == "This revokes the exact retained application role holding."
+    assert rendered["title"] == "Remove human-id as customer.owner of customer-app?"
+    assert rendered["consequences"] == ["human-id will no longer be customer.owner of customer-app."]
     assert ["Role", "customer.owner"] in rendered["names"]
 
 

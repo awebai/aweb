@@ -196,7 +196,7 @@ func pendingEndorsementReport(prepared *handoff.Prepared, page string, receipt *
 func pendingEndorsementText(report map[string]any) string {
 	expires, _ := time.Parse(time.RFC3339Nano, fmt.Sprint(report["expires_at"]))
 	return fmt.Sprintf("Waiting for the approver, who approves on %s; the request expires at %s. Run the same command again to continue (operation %s).\n",
-		report["page"], expires.UTC().Format("2006-01-02 15:04 UTC"), report["operation_id"])
+		report["page"], handoff.ReaderTime(expires, "2006-01-02 15:04"), report["operation_id"])
 }
 
 // endorsedCertificate is the root's signed ID certificate in a committed

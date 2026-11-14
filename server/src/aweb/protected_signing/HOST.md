@@ -89,12 +89,14 @@ settings under `AWEB_PROTECTED_` are `EMAIL_SMTP_HOST`, `EMAIL_SMTP_PORT`,
 trusted CA file. The existing mailer requires TLS and SMTP authentication.
 Missing configuration fails before a database or registry connection opens.
 The small `ProtectedNotifications` adapter also implements B2's notification
-port: it sends a retained public handoff locator to the recorded contact, never
-a candidate bearer token, request payload or signature. The shared signer
-currently retains B2 links privately and does not dispatch these notices from
-prepare. Enrollment/contact notices use the existing B3 delivery contract.
-Any future dispatch of the B2 notification port must happen after the prepare
-transaction commits: its fresh database read needs the committed handoff row.
+port. After the prepare transaction commits (its fresh database read needs the
+committed handoff row), the signer mails each eligible approver their own link:
+the public handoff locator with that approver's personal token in the URL
+fragment, never a request payload or signature, and the request's actual
+expiry. A notice names the request's question only when the operation's whole
+request is classified revealable and its frozen policy lets the link reveal it;
+otherwise it carries the link alone. Enrollment/contact notices use the
+existing B3 delivery contract.
 
 For a disposable fixture, configure those same SMTP settings to a private TLS
 capture server with a fixture CA/authentication, and keep its mailbox available

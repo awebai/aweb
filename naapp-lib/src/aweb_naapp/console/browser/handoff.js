@@ -112,21 +112,15 @@ import { renderDisplay, displayRefusal } from "/handoff-assets/protected-display
     document.getElementById("handoff-payload").textContent = JSON.stringify(payload, null, 2);
     const asked = request.artifact?.issued_at;
     document.getElementById("handoff-requested").textContent =
-      `Requested by ${request.requester}` + (nonempty(asked) ? ` · asked ${when(asked)}` : "");
-    document.getElementById("handoff-expires").textContent = `Expires ${when(state.expires_at)}`;
+      (words.requester ?? request.requester) + (nonempty(asked) ? `, asked ${when(asked)}` : "");
+    document.getElementById("handoff-expires").textContent = when(state.expires_at);
     document.getElementById("handoff-governance").hidden = false;
     document.getElementById("handoff-explanation").hidden = true;
     action.textContent = "Approve";
     deny.hidden = false;
     deny.disabled = false;
     note.hidden = false;
-    if (request.operation === "identity.root.endorse") {
-      const policy = request.admission_policy;
-      status.textContent = `${request.responsibility_statement} Agent admissions for ${policy.teams.join(", ")}: ` +
-        `at most ${policy.bounds.max_active} active per root and ${policy.bounds.max_per_window} per ${policy.bounds.rate_window_seconds} seconds.`;
-    } else {
-      status.textContent = "Check the request before you decide.";
-    }
+    status.textContent = "Check the request before you decide.";
     document.body.dataset.handoffState = "ready";
     action.disabled = false;
     document.getElementById("handoff-title").focus();
@@ -296,6 +290,8 @@ import { renderDisplay, displayRefusal } from "/handoff-assets/protected-display
 
   function outcome(title, text) {
     decided = true;
+    // Once decided, the card describes what was asked, not what it does.
+    document.getElementById("handoff-governance-title").textContent = "What was asked";
     stopChoices();
     status.textContent = "";
     setTitle(title);
