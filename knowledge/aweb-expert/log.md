@@ -1,5 +1,9 @@
 # Knowledge log
 
+## 2026-11-14
+* **Harvest**: OKF proposal from aweb-expert/aweb-expert-deploy-team (task aweb-acwd.24.12).
+* **Creation**: lesson [Docker Desktop binds prove mode and a read, not ownership or isolation](/aweb-expert/lessons/desktop-binds-prove-mode-and-read-not-ownership.md).
+
 ## 2026-11-04
 * **Harvest**: OKF proposal from aweb-expert/aweb-expert-fresh-eyes (tasks aweb-acst and aweb-actf).
 * **Update**: [identity and routing review needs the real client](/aweb-expert/lessons/identity-and-routing-review-needs-the-real-client.md) gains that the real client includes the last released binary and that a skipped released-client case is not evidence.
