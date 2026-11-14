@@ -112,4 +112,5 @@ async def ready_owner_act_consumer(world, tmp_path, test_db_factory):
     async with httpx.AsyncClient(transport=httpx.ASGITransport(app=app), follow_redirects=False) as client:
         custody.configure_effects(registry=w.registry, clients={operation.audience: client},
             receipt_origins=frozenset({operation.audience}), clock=lambda: w.app.signer.clock())
-        yield SimpleNamespace(world=w, operation=operation, custody=custody, db=db, app=app, client=client)
+        yield SimpleNamespace(world=w, operation=operation, custody=custody, db=db, app=app, client=client,
+            service_key_file=tmp_path / "retention-custody" / "service")

@@ -329,7 +329,16 @@ async def prepare(world):
     return await world.app.signer.prepare(world.operation, requester=requester)
 
 
+@pytest_asyncio.fixture
+async def ready_owner_consumer(world, tmp_path, test_db_factory):
+    from tests.protected_consumer_support import ready_owner_act_consumer
+
+    async with ready_owner_act_consumer(world, tmp_path, test_db_factory) as consumer:
+        yield consumer
+
+
 @pytest.mark.asyncio
+@pytest.mark.usefixtures("ready_owner_consumer")
 async def test_one_shared_effect_with_customer_registry_private_reads_and_actual_uv(
     world,
 ):
@@ -342,9 +351,10 @@ async def test_one_shared_effect_with_customer_registry_private_reads_and_actual
         prepared.operation_id, proof, human=world.human
     )
     assert receipt.state == "committed"
+    assert receipt.result["v"] == 2 and receipt.result["delivery"]["state"] == "applied"
     world.controller.verify_key.verify(
-        base64.b64decode(receipt.result["signing"]),
-        base64.b64decode(receipt.result["signature"]),
+        base64.b64decode(receipt.result["artifact"]["signing"]),
+        base64.b64decode(receipt.result["artifact"]["signature"]),
     )
     reader = await world.app.requester(
         proof_request(
@@ -403,6 +413,7 @@ async def test_worker_tokens_and_plain_keys_cannot_prepare(world, authorization)
 
 
 @pytest.mark.asyncio
+@pytest.mark.usefixtures("ready_owner_consumer")
 async def test_unprovisioned_registered_requester_cannot_prepare(world):
     key = SigningKey.generate()
     principal = (await world.registry.register_did(did(key), bytes(key))).did_aw
@@ -416,6 +427,7 @@ async def test_unprovisioned_registered_requester_cannot_prepare(world):
 
 
 @pytest.mark.asyncio
+@pytest.mark.usefixtures("ready_owner_consumer")
 async def test_authorizer_removed_between_prepare_and_execute_cannot_sign(world):
     prepared = await prepare(world)
     options = await world.app.signer.approval_options(
@@ -482,6 +494,7 @@ async def test_root_old_key_stops_authenticating_after_continuity_rotation(world
 
 
 @pytest.mark.asyncio
+@pytest.mark.usefixtures("ready_owner_consumer")
 async def test_policy_changed_after_options_cannot_commit_the_old_approval(world):
     prepared = await prepare(world)
     options = await world.app.signer.approval_options(
@@ -547,6 +560,7 @@ async def test_agent_with_verified_human_ancestor_cannot_be_an_authorizing_human
 
 @pytest.mark.asyncio
 @pytest.mark.parametrize("elapsed,allowed", [(59, True), (61, False)])
+@pytest.mark.usefixtures("ready_owner_consumer")
 async def test_registry_evidence_deadline_survives_an_actual_authority_lock_wait(
     world, elapsed, allowed
 ):
@@ -594,6 +608,7 @@ async def test_registry_evidence_deadline_survives_an_actual_authority_lock_wait
 
 
 @pytest.mark.asyncio
+@pytest.mark.usefixtures("ready_owner_consumer")
 async def test_no_uv_cannot_authorize_the_controller_effect(world):
     prepared = await prepare(world)
     options = await world.app.signer.approval_options(
@@ -615,6 +630,7 @@ async def test_no_uv_cannot_authorize_the_controller_effect(world):
 
 
 @pytest.mark.asyncio
+@pytest.mark.usefixtures("ready_owner_consumer")
 async def test_agent_requester_cannot_execute_a_live_floor_operation(world):
     requester = await world.app.requester(
         proof_request(world),
@@ -650,3 +666,11 @@ async def test_agent_requester_cannot_execute_a_live_floor_operation(world):
     )
     assert row["result"] is None and row["signed_result"] is None and row["refusal_code"] is None
     assert row["approval_id"] is not None
+
+
+@pytest.mark.asyncio
+async def test_unmarked_owner_act_is_unserved_before_pending_or_signing(world):
+    with pytest.raises(SignerRefused, match="operation_not_served"):
+        await prepare(world)
+    assert await world.db.fetch_value("SELECT count(*) FROM {{tables.protected_signer_operations}}") == 0
+    assert await world.db.fetch_value("SELECT count(*) FROM {{tables.protected_local_audit}} WHERE kind='protected_operation_signed'") == 0
