@@ -86,6 +86,19 @@ import { renderDisplay, displayRefusal } from "/handoff-assets/protected-display
   }
 
   async function governanceState(state) {
+    if (state.mode === "governance" && state.handoff_id === handoffId && nonempty(state.operation_id) &&
+        state.state !== "pending") {
+      // A request already decided or carried out: its outcome, never its
+      // controls. Committed shows only for this operation's confirmed result.
+      operationId = state.operation_id;
+      if (state.state === "committed" && !committedResult(state.result)) {
+        document.body.dataset.handoffState = "complete";
+        outcome(...unconfirmed);
+        return;
+      }
+      linkOutcome(state);
+      return;
+    }
     const {payload, digest} = state;
     const {request} = await validateProtectedPresentation(state, handoffId, operationTable);
     display = operationTable[`${request.operation}|${request.variant}`].display;
@@ -170,6 +183,22 @@ import { renderDisplay, displayRefusal } from "/handoff-assets/protected-display
     document.getElementById("handoff-explanation").hidden = true;
   }
 
+  function isObject(value) {
+    return value !== null && typeof value === "object" && !Array.isArray(value);
+  }
+
+  // A committed result: a signed act, or a service-delivered act that its
+  // consumer confirmed applied for this exact operation.
+  function committedResult(result) {
+    if (!isObject(result)) return false;
+    if (result.v === undefined) return nonempty(result.signing) && nonempty(result.signature);
+    const delivery = result.delivery;
+    return result.v === 2 && result.type === "aweb.protected-delivery" && isObject(result.artifact) &&
+      nonempty(result.artifact.signing) && nonempty(result.artifact.signature) && isObject(delivery) &&
+      delivery.state === "applied" && isObject(delivery.reference) &&
+      delivery.reference.operation_id === operationId && nonempty(delivery.reference.artifact_sha256);
+  }
+
   function governanceComplete(result) {
     if (result.state === "pending") {
       if (result.redirect_uri !== undefined || !nonempty(result.expires_at) ||
@@ -178,9 +207,7 @@ import { renderDisplay, displayRefusal } from "/handoff-assets/protected-display
       outcome("Approved", "It is still being carried out. Your owner page shows the outcome under History.");
       return;
     }
-    if (result.state !== "committed" || !result.result ||
-        typeof result.result !== "object" || Array.isArray(result.result) ||
-        !nonempty(result.result.signing) || !nonempty(result.result.signature)) {
+    if (result.state !== "committed" || !committedResult(result.result)) {
       throw new Error("handoff_refused");
     }
     if (frozenRedirect === undefined) {
