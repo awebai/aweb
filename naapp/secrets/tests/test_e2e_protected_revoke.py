@@ -4,13 +4,15 @@ First the approver's holding of the app role, made the supported way while
 the owner still holds the team's key: the owner publishes the team's server,
 installs Secrets and Logs, and designates the approver's passkey once the
 hook bindings the designation's governance needs are in effect. Then the
-signer is provisioned with the team controller key, and the shared body runs:
-the refusals, then one human-role.revoke through the independent protected
-server (aweb.protected_signing.host, HOST.md) whose prepare answer and first
-delivery answer are lost; aw resumes it, the approving human approves the
-exact act in a fresh Chromium tab, the server signs it once, aw delivers it
-and the app applies it; the exact replay is answered applied earlier, and the
-app's own records show one effect.
+signer is provisioned with the team controller key and its own service
+attestation key, the registry operator protects the team, and the shared body
+runs: the refusals, then one human-role.revoke through the independent
+protected server (aweb.protected_signing.host, HOST.md) whose prepare answer is
+lost; aw resumes it, the approving human approves the exact act in a fresh
+Chromium tab, the server signs it once and delivers it to the app, which
+applies it, and the app's answer is lost; the server confirms the effect from
+the app's receipt route, aw reports it applied by the service, a resume of the
+committed operation sends nothing, and the app's own records show one effect.
 
 Real: AWID with DNS verification, aweb, the secrets app installed as a
 disposable fixture app, the Logs app as a team deployment runs it, the
@@ -34,6 +36,8 @@ from collections.abc import Iterator
 from pathlib import Path
 
 import pytest
+from awid.did import did_from_public_key
+from nacl.signing import SigningKey
 from protected_round_trip import (
     AnswerDrop,
     AnswerWitness,
@@ -78,6 +82,9 @@ SIGNER = "https://signer.svc.test"
 HUMAN = "https://human.svc.test"
 SERVICE_ID = "e2e-protected"
 PROFILE = "/runtime/protected/config/profile.json"
+# The app's console origin: the act's audience, which the signer delivers to.
+CONSOLE = "https://console.secrets.svc.test"
+PROTECT_TEAM = REPO / "naapp/secrets/e2e/protected/protect_team.py"
 CONTACT = "approver@h.test"
 # The lane's front, with the protected server on its request and human hosts.
 PROTECTED_UPSTREAMS = {**UPSTREAMS, "signer.svc.test": "protected:8080", "human.svc.test": "protected:8080"}
@@ -201,6 +208,39 @@ def protected_site(lane: ProtectedLane) -> Site:
         finally:
             _docker("run", "--rm", "-v", f"{lane.runtime}:/r", "alpine:3.22", "rm", "-rf", "/r/private-provisioning")
 
+    def install_service_key() -> str:
+        """The custodian installs the signer's distinct service attestation
+        key beside the controller's, from a short-lived source; returns its
+        public did:key for the registry's protection binding."""
+        key = SigningKey.generate()
+        source = lane.runtime / "private-provisioning"
+        source.mkdir(mode=0o700)
+        (source / "service.key").write_text(bytes(key).hex() + "\n")
+        _docker("run", "--rm", "-v", f"{source}:/p", "alpine:3.22", "sh", "-c",
+                "chown -R 1001:1001 /p && chmod 0400 /p/service.key")
+        try:
+            protected_run("--entrypoint", "sh", "protected", "-c",
+                          "install -m 0400 -o 1001 -g 1001 /private-provisioning/service.key "
+                          "/private-controller/service.key", user="0",
+                          mounts=(f"{source}:/private-provisioning:ro",))
+        finally:
+            _docker("run", "--rm", "-v", f"{lane.runtime}:/r", "alpine:3.22", "rm", "-rf", "/r/private-provisioning")
+        return did_from_public_key(bytes(key.verify_key))
+
+    def protect_team(service_did_key: str) -> dict:
+        """The registry operator's explicit protection of the team, in the
+        registry's own container (e2e/protected/protect_team.py)."""
+        result = subprocess.run(
+            ["docker", "compose", "-p", lane.project, "-f", str(REPO / "naapp/secrets/docker-compose.e2e.yml"),
+             "run", "--rm", "-T", "--no-deps", "-v", f"{PROTECT_TEAM}:/protect_team.py:ro",
+             "--entrypoint", "python", "awid", "/protect_team.py", "--domain", DOMAIN, "--name", TEAM,
+             "--service-id", SERVICE_ID, "--service-did-key", service_did_key,
+             "--approval-ref", "e2e-explicit-operator-protection"],
+            env=lane.env, text=True, capture_output=True, timeout=300, check=False,
+        )
+        assert result.returncode == 0, result.stdout + result.stderr
+        return first_json(result.stdout)
+
     def signer_evidence(operation: str) -> dict:
         return lane.evidence(operation)
 
@@ -226,6 +266,11 @@ def protected_site(lane: ProtectedLane) -> Site:
             "AWEB_PROTECTED_EMAIL_PASSWORD_FILE": "/config/smtp-password",
             "AWEB_PROTECTED_EMAIL_CA_FILE": "/runtime/tls/ca.pem",
             "SSL_CERT_FILE": "/runtime/tls/ca.pem",
+            # Service-owned delivery: the attestation key beside the
+            # controller's, and the app's console origin pinned and ready.
+            "AWEB_PROTECTED_SERVICE_KEY_FILE": "/private-controller/service.key",
+            "AWEB_PROTECTED_OWNER_ACT_ORIGINS": json.dumps([CONSOLE]),
+            "AWEB_PROTECTED_EFFECT_RECEIPT_ORIGINS": json.dumps([CONSOLE]),
         }.items()))
 
     def start_signer() -> None:
@@ -248,8 +293,9 @@ def protected_site(lane: ProtectedLane) -> Site:
                           witness_owner_act_answers().listener, lambda: reload_front(lane))
 
     def signatures() -> int:
+        # A service-delivered act holds its signature before it is confirmed.
         return int(secrets_query(lane)("SELECT count(*) FROM protected_signer.protected_signer_operations"
-                                       " WHERE result IS NOT NULL"))
+                                       " WHERE signed_result IS NOT NULL OR result IS NOT NULL"))
 
     return Site(
         runtime=lane.runtime, mounted="/runtime", domain=DOMAIN, team=TEAM, registry=REGISTRY, aweb=AWEB,
@@ -257,7 +303,8 @@ def protected_site(lane: ProtectedLane) -> Site:
         secrets_schema=SECRETS_SCHEMA, role=ROLE, contact=CONTACT,
         mail_api="http://mail.svc.test:8025", profile_in_machine=PROFILE,
         publish_controller=lambda did: publish_awid_txt(lane, did), store_member=store_member,
-        configure_signer=configure_signer, install_controller=install_controller, operator=operator,
+        configure_signer=configure_signer, install_controller=install_controller,
+        install_service_key=install_service_key, protect_team=protect_team, operator=operator,
         start_signer=start_signer, signer_evidence=signer_evidence,
         signer_access_log=lambda: lane.protected("logs", "--no-color", "--no-log-prefix", "protected").stdout,
         chromium=lane.chromium, drop_prepare_answers=drop_prepare_answers, signatures=signatures,

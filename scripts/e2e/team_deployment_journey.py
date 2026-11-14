@@ -51,12 +51,15 @@ from pathlib import Path
 import pexpect
 import yaml
 from aweb_naapp_testing.network import make_certificates
+from awid.did import did_from_public_key
+from nacl.signing import SigningKey
 
 REPO = Path(__file__).resolve().parents[2]
 TEAM_DIR = REPO / "deploy" / "team"
 ADAPTER = REPO / "scripts" / "e2e-team-deployment.sh"
 TEAMCTL = REPO / "deploy" / "team" / "teamctl"
 EVIDENCE = REPO / "naapp" / "secrets" / "e2e" / "protected" / "evidence.py"
+PROTECT_TEAM = REPO / "naapp" / "secrets" / "e2e" / "protected" / "protect_team.py"
 sys.path.insert(0, str(REPO / "naapp" / "secrets" / "e2e"))
 
 from protected_round_trip import (  # noqa: E402
@@ -80,12 +83,12 @@ from protected_round_trip import (  # noqa: E402
     hook_app_ids,
     install_app,
     lost_prepare,
+    nothing_resent,
     provision_signer,
     publish_team_server,
     read_only_psql,
     receiver_snapshot,
     refusals,
-    replay_delivery,
     secrets_holding,
     start_revoke,
 )
@@ -549,6 +552,12 @@ class World:
                 "emailUsername": "signer",
                 "emailFrom": f"signer@{DOMAIN}",
                 "emailCaFile": str(self.world / "tls" / "ca.pem"),
+                # Service-owned delivery: the attestation key the custodian
+                # installs beside the controller's, and the Secrets console the
+                # signer delivers human-role acts to, pinned and ready.
+                "serviceKey": True,
+                "ownerActOrigins": [origin("secrets-console")],
+                "effectReceiptOrigins": [origin("secrets-console")],
             }
         if self.agents_configured:
             config["agents"] = {
@@ -728,9 +737,10 @@ class World:
 
     def signer_table(self) -> dict:
         """The signer's own record: each operation's id, whether it holds a
-        signature, and its expiry."""
+        signature (a service-delivered act holds it before it is confirmed),
+        and its expiry."""
         rows = self.compose("exec", "-T", "postgres", "psql", "-U", "postgres", "-d", "signer", "-At", "-F", " ", "-c",
-                            "select operation_id, result is not null, expires_at from "
+                            "select operation_id, (signed_result is not null or result is not null), expires_at from "
                             "protected_signer.protected_signer_operations")
         table = {}
         for line in rows.splitlines():
@@ -946,6 +956,32 @@ class World:
             self.signer_configured = True
             self.deployment()
 
+        def install_service_key() -> str:
+            """The custodian installs the signer's distinct service attestation
+            key beside the controller's, from a short-lived source only the
+            signer's uid reads; returns its public did:key."""
+            key = SigningKey.generate()
+            source = self.world / "private-provisioning"
+            source.mkdir(mode=0o700)
+            (source / "service.key").write_text(bytes(key).hex() + "\n")
+            try:
+                run("docker", "run", "--rm", "-v", f"{source}:/p:ro",
+                    "-v", f"{signer_secrets / 'private-controller'}:/c", "alpine:3.22", "install", "-m", "0400",
+                    "-o", str(signer_uid), "-g", str(signer_uid), "/p/service.key", "/c/service.key")
+            finally:
+                run("docker", "run", "--rm", "-v", f"{self.world}:/w", "alpine:3.22", "rm", "-rf",
+                    "/w/private-provisioning")
+            return did_from_public_key(bytes(key.verify_key))
+
+        def protect_team(service_did_key: str) -> dict:
+            """The registry operator's explicit protection of the team, in the
+            registry's own container (e2e/protected/protect_team.py)."""
+            return first_json(self.compose("run", "--rm", "-T", "--no-deps", "-v", f"{PROTECT_TEAM}:/protect_team.py:ro",
+                                           "--entrypoint", "python", "registry", "/protect_team.py",
+                                           "--domain", DOMAIN, "--name", TEAM, "--service-id", f"{TEAM}-signer",
+                                           "--service-did-key", service_did_key,
+                                           "--approval-ref", "journey-explicit-operator-protection"))
+
         def operator_command(*args: str, mounts: list[str] | None = None) -> dict:
             """The package's local administrator command in the signer's
             container, as its uid, with the signer's own settings and mounts."""
@@ -999,6 +1035,7 @@ class World:
             contact=f"approver@{DOMAIN}", mail_api=f"http://{MAIL}:8025",
             profile_in_machine="/world/signer/profile.json", publish_controller=self.publish_controller,
             store_member=store_member, configure_signer=configure_signer, install_controller=install_controller,
+            install_service_key=install_service_key, protect_team=protect_team,
             operator=operator_command, start_signer=start_signer, signer_evidence=signer_evidence,
             signer_access_log=lambda: self.compose("logs", "--no-color", "--no-log-prefix", "signer"),
             chromium=chromium, drop_prepare_answers=drop_prepare_answers,
@@ -1102,9 +1139,10 @@ def the_revoke(world: World, site: Site, holder: Holder, founded: Founded) -> di
     prepare leaves the operation pending; with the registry refusing the
     signer's key lookups, aw resumes it, waits out the registry's Retry-After
     and resends the same bytes; once approved the original operation is signed
-    once, delivered and applied, and the app's answer is withheld. With the
-    limiter's window over, the exact replay is answered applied earlier. The
-    app's own records show one effect."""
+    once and delivered by the signer, the app applies it and its answer is
+    withheld; the signer confirms the effect from the app's receipt route and
+    aw reports it applied by the service. A resume of the committed operation
+    sends and signs nothing. The app's own records show one effect."""
     operation = lost_prepare(site, holder, founded)
     pending = site.signer_evidence(operation)
     nonce = pending["frozen_nonce"]
@@ -1135,19 +1173,17 @@ def the_revoke(world: World, site: Site, holder: Holder, founded: Founded) -> di
     subject = baseline["holding"]["subject"]
     first = receiver_snapshot(site.secrets_query, holding, nonce, subject, act.sha256,
                                schema=site.secrets_schema)
-    # The replay comes after the filled window, so the limiter cannot stand in
-    # for the app's answer, and inside the signed act's own validity.
+    # The resume comes after the filled window, so the limiter cannot stand in
+    # for a send that did not happen.
     world.await_window_end(seed)
-    if datetime.datetime.now(datetime.UTC) >= datetime.datetime.fromisoformat(act.expires_at.replace("Z", "+00:00")):
-        raise SystemExit(f"BOUNDARY: the signed act expired at {act.expires_at} before its replay could be sent")
-    report = replay_delivery(site, holder, operation, act)
+    nothing_resent(site, holder, operation, act)
     replayed = world.signer_table()
     evidence["replay_new_signatures"] = sum(row["signed"] for row in replayed.values()) - signed_before - 1
     evidence["replay_rows_for_operation"] = sum(1 for op in replayed if op == operation)
     replay = receiver_snapshot(site.secrets_query, holding, nonce, subject, act.sha256,
                                schema=site.secrets_schema)
     assert_one_effect(baseline, first, replay, act)
-    evidence["applied"] = report["applied"]
+    evidence["applied"] = delivered["applied"]
     return evidence
 
 
@@ -1182,7 +1218,7 @@ def throttled_calls(world: World, site: Site, holder: Holder, founded: Founded) 
     assert lost["waited"] >= min(lost["hints"]) - 1, lost
     assert lost["signed"] and lost["rows_for_operation"] == 1 and lost["new_signatures"] == 1, lost
     assert lost["replay_new_signatures"] == 0 and lost["replay_rows_for_operation"] == 1, lost
-    assert lost["applied"] == "earlier", lost
+    assert lost["applied"] == "service", lost
 
 
 # Every image scripts/e2e/team-deployment-images.sh builds for the journey;
