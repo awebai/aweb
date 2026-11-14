@@ -2,6 +2,20 @@
 
 ## Unreleased
 
+- `aw id operation status --operation-id <UUID>` reads a protected
+  operation's receipt once, as its requester, without performing it.
+  Before this, the only way to learn the outcome of a prepared operation
+  whose answer was never seen was to resume it.
+  - It reports the receipt's state: `pending` (with its reason and deadline),
+    `committed` (its result, not verified by the read), `refused` or
+    `unknown` (with a code). It reports `none` when the service holds no such
+    operation for this requester in that scope.
+  - It prepares, executes and settles nothing, and leaves aw's saved request
+    as it was.
+  - A saved request is read under the profile's one binding for its scope.
+    Without a saved request, the profile must have exactly one binding.
+  - A refused or failed read is an error, never a state.
+
 - `aw custody serve` picks up a parent import, certificate install or connect
   that changes its resident home while it runs, without a restart and
   without a request mixing old and new credentials. Those commands now

@@ -415,6 +415,7 @@ Subcommands:
 - `human` Human identities in a namespace's identity tree
 - `log` Show a global AWID DID log
 - `namespace` Protocol/admin namespace controller and address operations
+- `operation` Inspect protected operations this identity requested
 - `parent` Request and import your own certificate from a parent
 - `register` Register the current global identity at the configured registry
 - `request` Make a DIDKey-signed HTTP request with the local identity key
@@ -954,6 +955,42 @@ Flags:
 - `-h, --help help for set-delivery-origin`
 - `--namespace string Namespace domain (e.g. acme.com)`
 - `--origin string Canonical aweb server origin (e.g. https://aweb.acme.com)`
+
+## `id operation`
+
+### `id operation`
+
+Inspect protected operations this identity requested
+
+Subcommands:
+- `status` Read a protected operation's receipt without performing it
+
+Flags:
+- `-h, --help help for operation`
+
+## `id operation status`
+
+### `id operation status`
+
+Read, once, the receipt of a protected operation this identity requested at the
+service named by --protected-profile. Nothing is prepared, executed, approved or
+resumed, and aw's own saved request is left as it is. The service may record an
+outcome that is already confirmed; it never starts or extends anything for a read.
+
+The state is the service's receipt: pending (with its reason and deadline),
+committed (its result, which this read does not verify), refused or unknown
+(with a code), or none when the service holds no such operation for this
+requester in that scope. none does not prove an earlier request never took
+effect elsewhere. A read that is refused or cannot be made is an error, not a
+state.
+
+A request aw saved is read under the profile's one binding for its scope; without
+one, the profile must have exactly one binding.
+
+Flags:
+- `-h, --help help for status`
+- `--operation-id string The UUID of the operation to read`
+- `--protected-profile string The operator-provisioned protected-service profile (default: AWEB_PROTECTED_PROFILE, else protected-profile.json in the identity home)`
 
 ## `id parent`
 
