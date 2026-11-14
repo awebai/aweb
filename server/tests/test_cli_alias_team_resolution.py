@@ -17,10 +17,10 @@ from pathlib import Path
 from uuid import UUID, uuid4
 
 import pytest
-from awid.signing import canonical_json_bytes, sign_message
+import yaml
+from awid.signing import canonical_json_bytes, load_signing_key_pem, sign_message
 
 from tests.test_addressless_sender_cli import _registry_http
-from tests.test_cli_human_reply import _pem
 from tests.test_dashboard_privacy import TEAM, privacy_app as privacy_app  # noqa: F401
 from tests.test_messages_http import _encode_certificate, _make_certificate, _make_keypair, _signed_identity_headers
 
@@ -85,7 +85,7 @@ async def memberships(env, tmp_path, registry_url, *, missing):
         "INSERT INTO {{tables.teams}} (domain,name,team_did_key,visibility) VALUES('example.test',$1,$2,'public')",
         beta.split(":", 1)[0], beta_did,
     )
-    alice, bob, carol = (env.actors[name] for name in ("alice", "bob", "carol"))
+    alice, carol = (env.actors[name] for name in ("alice", "carol"))
     alpha_alias = "someone-else" if missing else "reviewer"
     await env.db.execute(
         "UPDATE {{tables.agents}} SET alias=$1,agent_type='human',human_verified_key=did_key WHERE agent_id=$2",
@@ -94,41 +94,42 @@ async def memberships(env, tmp_path, registry_url, *, missing):
     await env.db.execute("UPDATE {{tables.workspaces}} SET alias=$1 WHERE workspace_id=$2", alpha_alias, alice.workspace)
     await env.db.execute("UPDATE {{tables.agents}} SET team_id=$1,alias='reviewer' WHERE agent_id=$2", beta, carol.id)
     await env.db.execute("UPDATE {{tables.workspaces}} SET team_id=$1,alias='reviewer' WHERE workspace_id=$2", beta, carol.workspace)
-    beta_sender, beta_workspace = uuid4(), uuid4()
-    await env.db.execute(
-        "INSERT INTO {{tables.agents}} (agent_id,team_id,did_key,alias,identity_scope,inbound_mode) VALUES($1,$2,$3,'sender','local','open')",
-        beta_sender, beta, bob.did,
-    )
-    await env.db.execute(
-        "INSERT INTO {{tables.workspaces}} (workspace_id,team_id,agent_id,alias) VALUES($1,$2,$3,'sender')",
-        beta_workspace, beta, beta_sender,
-    )
-    certificates = [await register(env, TEAM, env.team_sk, bob, "bob"),
-        await register(env, beta, beta_key, bob, "sender")]
     human_certificate = await register(env, TEAM, env.team_sk, alice, alpha_alias)
     peer_certificate = await register(env, beta, beta_key, carol, "reviewer")
-    for actor, cert in ((alice, human_certificate), (bob, certificates[0]), (carol, peer_certificate)):
+    for actor, cert in ((alice, human_certificate), (carol, peer_certificate)):
         await env.db.execute("UPDATE {{tables.agents}} SET certificate_id=$1 WHERE agent_id=$2", cert["certificate_id"], actor.id)
-    await env.db.execute("UPDATE {{tables.agents}} SET certificate_id=$1 WHERE agent_id=$2", certificates[1]["certificate_id"], beta_sender)
-    home = tmp_path / ".aw"
+    home = tmp_path / "sender-home"
     home.mkdir(mode=0o700)
-    (home / "team-certs").mkdir(mode=0o700)
-    entries = []
-    for cert, workspace in zip(certificates, (bob.workspace, beta_workspace), strict=True):
-        path = "team-certs/" + cert["team_id"].replace(":", "__") + ".pem"
-        (home / path).write_text(json.dumps(cert))
-        (home / path).chmod(0o600)
-        entries.append({"team_id": cert["team_id"], "alias": cert["alias"], "cert_path": path,
-            "workspace_id": str(workspace), "registry_url": registry_url})
-    _pem(home / "signing.key", "ED25519 PRIVATE KEY", bob.sk)
-    (home / "identity.yaml").write_text(json.dumps({"did": bob.did, "custody": "self", "identity_scope": "local"}))
-    (home / "workspace.yaml").write_text(json.dumps({"aweb_url": str(env.client.base_url), "memberships": entries}))
-    (home / "teams.yaml").write_text(json.dumps({"active_team": TEAM, "memberships": entries}))
     child_env = {k: v for k, v in os.environ.items() if not k.startswith(("AW", "XDG_"))}
     child_env.update(AWEB_IDENTITY_HOME=str(home), AWEB_URL=str(env.client.base_url), AWID_REGISTRY_URL=registry_url,
         AW_NO_UPDATE_CHECK="1", HOME=str(tmp_path), XDG_CONFIG_HOME=str(tmp_path / "config"))
-    return SimpleNamespace(beta=beta, alpha_sender=bob.id, beta_sender=beta_sender, human=human_certificate,
-        env=child_env, home=home, entries=entries)
+    binary = Path(os.environ["AW_TEST_CLI_BINARY"])
+    code, identity, stderr = await run_aw(binary, tmp_path, child_env,
+        "--identity-home", str(home), "id", "create", "--local")
+    assert code == 0, (identity, stderr)
+    sender = SimpleNamespace(did=identity["did_key"], sk=load_signing_key_pem((home / "signing.key").read_bytes()))
+    # Let the real CLI write every identity, certificate, membership and
+    # workspace file. Registry pins belong to teams.yaml, never workspace.yaml.
+    for team, key in ((TEAM, env.team_sk), (beta, beta_key)):
+        cert = await register(env, team, key, sender, "sender")
+        code, fetched, stderr = await run_aw(binary, tmp_path, child_env,
+            "id", "team", "fetch-cert", "--team", team.split(":", 1)[0],
+            "--namespace", "example.test", "--cert-id", cert["certificate_id"], "--registry", registry_url)
+        assert code == 0, (fetched, stderr)
+        code, connected, stderr = await run_aw(binary, tmp_path, child_env,
+            "workspace", "connect", "--team", team, "--service", str(env.client.base_url))
+        assert code == 0, (connected, stderr)
+        assert connected["team_id"] == team
+    code, switched, stderr = await run_aw(binary, tmp_path, child_env, "id", "team", "switch", TEAM)
+    assert code == 0, (switched, stderr)
+    code, status, stderr = await run_aw(binary, tmp_path, child_env, "workspace", "status")
+    assert code == 0, (status, stderr)
+    assert status["selected_team"] == TEAM
+    alpha_sender = await env.db.fetch_value("SELECT agent_id FROM {{tables.agents}} WHERE team_id=$1 AND did_key=$2", TEAM, sender.did)
+    beta_sender = await env.db.fetch_value("SELECT agent_id FROM {{tables.agents}} WHERE team_id=$1 AND did_key=$2", beta, sender.did)
+    assert alpha_sender is not None and beta_sender is not None
+    return SimpleNamespace(beta=beta, alpha_sender=alpha_sender, beta_sender=beta_sender, human=human_certificate,
+        env=child_env, home=home)
 
 
 async def inbox(env, actor):
@@ -146,6 +147,7 @@ async def inbox(env, actor):
     ("available", "chat"), ("unreachable", "chat"),
 ])
 async def test_bare_alias_never_changes_team_on_unknown_roster(privacy_app, tmp_path, condition, kind):
+    tmp_path = tmp_path.resolve()
     env = privacy_app
     async with _registry_http(env.registry_app) as (registry_url, _), unavailable_origin() as down:
         world = await memberships(env, tmp_path, registry_url, missing=condition in ("not_found", "unreachable_not_found"))
@@ -156,10 +158,12 @@ async def test_bare_alias_never_changes_team_on_unknown_roster(privacy_app, tmp_
             )
         if condition in ("unreachable", "revoked_unreachable", "unreachable_not_found"):
             world.env["AWID_REGISTRY_URL"] = down
-            world.entries[0]["registry_url"] = down
-        elif condition == "pin_refused":
-            world.entries[0]["registry_url"] = down
-        (world.home / "teams.yaml").write_text(json.dumps({"active_team": TEAM, "memberships": world.entries}))
+        if condition in ("unreachable", "pin_refused", "revoked_unreachable", "unreachable_not_found"):
+            # Change only the selected membership's stored pin to introduce
+            # the declared fault after successful real CLI setup/routing.
+            state = yaml.safe_load((world.home / "teams.yaml").read_text())
+            next(entry for entry in state["memberships"] if entry["team_id"] == TEAM)["registry_url"] = down
+            (world.home / "teams.yaml").write_text(yaml.safe_dump(state))
         body = tmp_path / "body.txt"
         body.write_text("The selected team's reviewer is the intended recipient.")
         binary = Path(os.environ["AW_TEST_CLI_BINARY"])
@@ -201,4 +205,4 @@ async def test_bare_alias_never_changes_team_on_unknown_roster(privacy_app, tmp_
         assert not (alpha_inbox if selected_beta else beta_inbox)
         if selected_beta:
             assert world.beta in stderr, (result, stderr)
-        assert json.loads((world.home / "teams.yaml").read_text())["active_team"] == TEAM
+        assert yaml.safe_load((world.home / "teams.yaml").read_text())["active_team"] == TEAM
