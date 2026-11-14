@@ -227,16 +227,18 @@ async def test_a_signed_receipt_without_a_confirmation_provider_preserves_its_hi
     world, contacts = mailing
     prepared, _ = await mailed(world, contacts)
     from aweb_naapp.runtime.protected_signer.execution_intent import materialize_artifact
+    from aweb_naapp.runtime.protected_signer.types import owner_act_operation
 
-    issued = materialize_artifact(world.signer._operation(prepared.payload), prepared.payload["artifact"], world.clock())
+    operation = owner_act_operation(world.signer._operation(prepared.payload))
+    issued = materialize_artifact(operation, prepared.payload["artifact"], world.clock())
     signing = owner_act_signing_bytes(issued)
     signed = {"signing": base64.b64encode(signing).decode(),
         "signature": base64.b64encode(world.key.sign(signing).signature).decode()}
     # Model a historical signed, non-retained row. The definition either has
     # no external confirmation port, or its named port is no longer installed.
     await world.passkeys.db.execute(
-        "UPDATE {{tables.protected_signer_operations}} SET signed_result=$2::jsonb WHERE operation_id=$1",
-        prepared.operation_id, json.dumps(signed))
+        "UPDATE {{tables.protected_signer_operations}} SET signed_result=$2::jsonb,issued_artifact=$3::jsonb WHERE operation_id=$1",
+        prepared.operation_id, json.dumps(signed), json.dumps(issued))
     spec = catalog.OPERATIONS[("human-role.revoke", "default")]
     monkeypatch.setattr(catalog, "OPERATIONS", {**catalog.OPERATIONS,
         ("human-role.revoke", "default"): replace(spec, effect=replace(spec.effect, provider=provider_name))})
