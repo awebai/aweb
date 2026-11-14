@@ -1090,3 +1090,25 @@ derivation; they are never message/provenance fields. Author projections test
 exact session/subject/signer binding and external/untrusted guest assurance.
 They assume independently verified signer facts and do not authorize membership
 or activate managed chat. See [P3 readiness](../human-channels-participants.md).
+
+## Protected team verifier boundary
+
+`protected-effect-v1.json` freezes the detached proof encoding and exact
+artifact/controller-signature digest for the approved opt-in
+[protected team boundary](../protected-team-boundary.md). Python verifies the
+proof and wrong-service/history/generation controls; Go independently verifies
+the artifact digest. All authority is synthetic fixture data. These codec
+controls do not establish actual protected custody, B3 approval, remote effect
+application or team cutover; those require native executor/consumer evidence.
+
+`protected-membership-v1.json` deliberately adds the protected presentation
+reason `certificate_binding_mismatch` without changing the legacy certificate
+vectors. It freezes an exact admitted-member positive, controller-signed key,
+alias and rights replacements under an active ID, unsigned alteration, unknown
+ID and unavailable historical-blob controls. Its baseline and authority are
+synthetic; it does not establish protected executor issuance or activation.
+
+
+`protected-effect-receipt-v1.json` freezes the proof-gated consumer confirmation
+route, complete header channel, minimal exact response, no-store policy and
+404/503 distinction. Historical receipt reads grant no renewed effect authority.

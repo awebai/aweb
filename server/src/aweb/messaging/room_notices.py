@@ -7,6 +7,8 @@ from time import monotonic
 from uuid import UUID
 
 from fastapi import HTTPException, Request
+from aweb.membership import observe, verify_presented, require_fresh
+from awid.team_certificate import decode_team_certificate
 from aweb.config import require_registered_certificates
 from aweb.grant_streams import grant_has_scope, grant_terminal_reason
 from aweb.identity_binding import verify_identity_binding
@@ -81,6 +83,8 @@ async def _refresh_room_authority(request, db, identity):
         ):
             raise HTTPException(status_code=403, detail="Room grant out of scope")
     else:
+        registry = getattr(request.app.state, "awid_registry_client", None)
+        observation = await observe(registry, identity.team_id)
         team_key = await _resolve_team_key(authority_request, identity.team_id)
         if not team_key:
             raise HTTPException(status_code=401, detail="unknown_team")
@@ -101,6 +105,11 @@ async def _refresh_room_authority(request, db, identity):
             )
         except TeamCertificateError as exc:
             raise certificate_refusal(exc) from exc
+        try:
+            complete = decode_team_certificate(request.headers.get("X-AWID-Team-Certificate", ""))
+        except TeamCertificateError as exc:
+            raise certificate_refusal(exc) from exc
+        await verify_presented(registry, observation, complete)
         # The team key is the identity's team's: the certificate must name
         # that team, and be the one the session was admitted with.
         if (
@@ -115,6 +124,8 @@ async def _refresh_room_authority(request, db, identity):
         address=identity.address,
     )
     await authenticate_id_chain(authority_request, binding)
+    if identity.grant is None:
+        require_fresh(observation)
 
 
 async def count_room_notices(db, actor: TeamIdentity) -> int:

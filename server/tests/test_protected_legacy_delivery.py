@@ -1,8 +1,10 @@
 """Closed legacy transport/auth controls, with no DB or external service."""
 
+from contextlib import aclosing
+
 import base64
 import json
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from types import SimpleNamespace
 from uuid import uuid4
 
@@ -161,3 +163,33 @@ async def test_a_changed_signed_result_never_reaches_a_cache_or_delivery_port():
         assert client.events == [] and client.sent == []
     finally:
         await client.aclose()
+
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("name", ["team.agent.admit", "team.agent.remove"])
+@pytest.mark.parametrize("lost", [False, True])
+async def test_service_owned_send_preserves_sdk_cache_fences(name, lost):
+    from aweb.protected_signing.legacy_delivery import delivery_plan, authenticate_plan
+    from aweb_naapp.runtime.protected_signer.retention import FrozenDelivery, RetainedEffect
+    from awid.protected_effect import HEADER, artifact_digest
+    op, artifact, result, custody, calls = fixture(name)
+    signing, signature = base64.b64decode(result["signing"]), base64.b64decode(result["signature"])
+    plan = delivery_plan(custody, op, artifact, signing, signature, NOW.strftime("%Y-%m-%dT%H:%M:%SZ"))
+    delivery = authenticate_plan(custody, plan, signing=signing, signature=signature)
+    frozen = FrozenDelivery(delivery.audience, delivery.method, delivery.path,
+        {**delivery.headers, HEADER: "transport-only-fixture"}, delivery.body)
+    retained = RetainedEffect(op.operation_id, signing, signature,
+        artifact_digest(signing, base64.b64encode(signature).rstrip(b"=").decode()),
+        NOW + timedelta(seconds=60), frozen, "transport-only-fixture")
+    async with aclosing(ObservedCachedRegistry(lost=lost)) as registry:
+        custody.configure_effects(registry=registry, clients={ORIGIN: registry._http_client}, clock=lambda: NOW)
+        if lost:
+            with pytest.raises(httpx.ReadError):
+                await custody.deliver_retained(op, retained)
+        else:
+            await custody.deliver_retained(op, retained)
+        expected = "invalidate"
+        assert registry.events == [expected, "post", expected]
+        assert len(registry.sent) == 1
+    assert len(calls) == (1 if name == "team.agent.admit" else 0)

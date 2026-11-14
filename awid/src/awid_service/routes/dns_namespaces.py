@@ -12,6 +12,7 @@ from fastapi import APIRouter, Depends, HTTPException, Query, Request
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_serializer
 
 from awid.dns_verify import DomainVerifier
+from awid_service.protected_teams import effect_transaction
 from awid_service.deps import get_db, get_domain_verifier
 from awid.dns_verify import DnsVerificationError
 from awid.pagination import encode_cursor, validate_pagination_params
@@ -806,7 +807,7 @@ async def delete_namespace(
     caller_did = await _verify_controller_signature(request, domain=domain, operation="delete_namespace")
 
     # Transactional: lock the row, verify ownership, then delete
-    async with db.transaction() as tx:
+    async with effect_transaction(request, db, domain=domain, operation="delete_namespace") as tx:
         row = await tx.fetch_one(
             """
             SELECT namespace_id, controller_did, parent_domain, parent_controller_key
@@ -841,6 +842,10 @@ async def delete_namespace(
             raise HTTPException(status_code=409, detail="Namespace has active certificates")
 
         now = datetime.now(timezone.utc)
+        await tx.execute(
+            "UPDATE {{tables.team_protection}} SET generation=generation+1,approval_ref='controller-effect:delete_namespace' WHERE domain=$1",
+            domain,
+        )
         await tx.execute(
             """
             DELETE FROM {{tables.team_certificates}} tc

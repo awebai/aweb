@@ -7,6 +7,7 @@ from typing import Optional
 
 from fastapi import Request
 
+from aweb.membership import verify_retained, require_fresh
 from aweb.config import require_registered_certificates
 from aweb.grant_expiry import never_expires
 from aweb.team_auth_deps import _get_registered_certificates, _get_revoked_certificates
@@ -37,4 +38,9 @@ async def effective_grant_status(request: Request, row, now: datetime) -> tuple[
             registered_certs = await _get_registered_certificates(request, row["team_id"])
             if issuing_certificate_id not in registered_certs:
                 return "issuer_not_registered", "grant issuing certificate not registered"
+    observation = await verify_retained(
+        getattr(request.app.state, "awid_registry_client", None), row,
+        certificate_id=issuing_certificate_id,
+    )
+    require_fresh(observation)
     return "active", None

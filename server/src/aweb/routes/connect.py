@@ -24,6 +24,7 @@ from aweb.service_errors import ServiceError
 from aweb.identity_scope import normalize_identity_scope
 from aweb.identity_binding import IdentityBinding, refresh_projection_binding
 from aweb.team_auth_deps import verify_request_certificate
+from awid.protected_effect import EffectRefused
 
 router = APIRouter(prefix="/v1", tags=["connect"])
 
@@ -456,6 +457,10 @@ async def connect_agent(
             human_name=human_name,
         )
 
+        protection_observation = cert_info.get("protection_observation")
+        if protection_observation is not None:
+            protection_observation.require_fresh()
+
     return {
         "team_id": team_id,
         "agent_type": agent_type,
@@ -501,6 +506,8 @@ async def connect_endpoint(
             human_name=payload.human_name,
             agent_type=payload.agent_type,
         )
+    except EffectRefused as exc:
+        raise HTTPException(status_code=503, detail={"code": exc.code}) from exc
     except AliasConflictError as exc:
         raise HTTPException(status_code=409, detail={"code": exc.code, "message": str(exc)}) from exc
     except ValueError as exc:

@@ -9,8 +9,10 @@ from __future__ import annotations
 import json
 from datetime import UTC, datetime
 from pathlib import Path
+from time import monotonic
 
 import pytest
+from awid.protected_membership import TeamProtectionObservation
 
 from aweb_naapp.hooks.delivery import ReceiveOptions, _verify_client_certificate
 from aweb_naapp.hooks.envelope import Envelope, Refused
@@ -37,6 +39,7 @@ def test_the_receiver_answers_each_case_as_recorded(case: dict) -> None:
             case["certificate_header"],
             delivery,
             ReceiveOptions(
+                protection_observation=TeamProtectionObservation(VECTORS["team_id"], case["team_did_key"], {"mode": "legacy"}, monotonic()+60),
                 audience="https://logs.example.com",
                 binding_id="binding",
                 now=datetime(2026, 11, 2, tzinfo=UTC),

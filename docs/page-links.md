@@ -87,13 +87,29 @@ separate from the membership evidence.
 
 Before opening the joined transaction, the host calls
 `runtime.check_current_member(creator.scope.team_id,
-certificate_id=creator.certificate_id, team_did_key=creator.team_did_key)`.
+certificate_id=creator.certificate_id, team_did_key=creator.team_did_key,
+principal=creator.principal_did)`.
 It uses the request verifier's AWID facts/cache, requires an active known
 certificate and the same current team key, and returns the shared frozen
 `MembershipProof {team_id, certificate_id, team_did_key, checked_at, fresh_until}`.
 Both times are integer monotonic nanoseconds and retain the facts' original fetch-start and expiry;
 a cache hit never extends that expiry. The window is at most 60 seconds.
 The proof is an in-process object, never request JSON, stored data or a token.
+On a protected team, the original literal principal is compared with the full-
+artifact-backed registered subject using the shared protected membership verifier;
+`did:aw` also retains its independent current-key check. The proof carries that
+principal and the original protection observation, and N5 checks the principal
+again against the locked creator evidence. Exchange, read admission and action
+admission recheck the original protected observation after their final local
+await, before returning or committing. A host performing further work in the
+same transaction retains that observation and rechecks it before its commit.
+An ID and controller alone cannot
+establish protected membership. Missing original evidence or unreadable exact
+registry state is 503; a conflicting registered subject is 401
+`certificate_binding_mismatch`. Historical subject-only references require the
+operator's explicitly inventoried baseline from
+[the protected-team boundary](protected-team-boundary.md); no alias or rights are
+reconstructed from a current record. Resource ACL checks remain independent.
 Phase 1 refuses unknown/revoked/rotated/incomplete evidence with 403
 `current_member_required`; unavailable facts remain 503
 `current_membership_unavailable`.
