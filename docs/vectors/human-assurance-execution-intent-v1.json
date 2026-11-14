@@ -415,6 +415,35 @@
         "original_operation_pointer_retained": true,
         "automatic_new_operation": false
       }
+    },
+    {
+      "id": "expired-legacy-owner-act-leaves-active-resume-with-evidence",
+      "given": {
+        "saved_approval_format": null,
+        "historical_signature_retained": true,
+        "act_expired": true,
+        "past_application_unknown": true
+      },
+      "expected": {
+        "active_resume_entry_retired": true,
+        "quarantine_keeps_original_id_body_signature_and_receipt_facts": true,
+        "message": "signed; application unconfirmed; the act has expired and will not be sent",
+        "new_post": false,
+        "claims_not_applied": false,
+        "new_act_requires_explicit_human_choice": true
+      }
+    },
+    {
+      "id": "adding-version-does-not-hide-an-old-operation",
+      "given": {
+        "old_saved_same_operation_variant_scope_audience_and_subject": true,
+        "new_request_adds_approval_format": "intent_v1"
+      },
+      "expected": {
+        "old_guard_runs_before_canonical_match_or_new_uuid": true,
+        "bounded_nonexecuting_receipt_reads": 1,
+        "automatic_new_operation": false
+      }
     }
   ]
 }

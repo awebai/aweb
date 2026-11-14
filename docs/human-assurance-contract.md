@@ -975,6 +975,23 @@ retain or quarantine the original ID/body for reconciliation; they cannot be
 silently forgotten or automatically replaced by a new operation. Tell an
 already upgraded user that the old operation needs reconciliation or a new act
 after a definite no-effect outcome, rather than repeatedly saying “upgrade aw”.
+For a signed legacy owner act past its retained `expires_at`, move the save
+out of the active resumable set into a quarantine record, keeping the original
+ID, body, signed bytes and known receipt facts. Report **"signed; application
+unconfirmed; the act has expired and will not be sent"**. Expiry prevents a new
+admissible submission; it does not prove that an earlier delivery failed to
+apply. Quarantine is a terminal state for automatic resume, not data erasure
+or permission to remint. The human uses the application's existing authorized
+role-state view and explicitly requests a new act if needed; this guard adds
+no generic app-state read endpoint. The new act needs its own current-state
+checks and exact-act UV.
+
+Before allocating a new UUID or matching canonical intent, aw detects an old
+unfinished save for the same operation/variant, stable target scope, audience
+and exact subject. Adding `approval_format` cannot make that save disappear
+from matching and bypass the single non-executing receipt read. Different
+team/resource scopes are not conflated. A quarantined uncertain operation
+requires an explicit human decision before any new act for that target.
 This migration guard is not an alternative old-format approval/execution path.
 
 Coordinator `cef58d92` owns rollout: the server and all three aw clients (app
