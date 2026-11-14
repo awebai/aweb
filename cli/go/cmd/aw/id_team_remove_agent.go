@@ -154,29 +154,6 @@ func signedRevocation(result []byte, prepared *handoff.Prepared, controllerDID s
 	return nil
 }
 
-// signedFrozenRevocation accepts a committed removal's result only as the
-// controller's signature over exactly the registry request in request, the
-// verified operation's frozen request. Anything else is
-// signed_request_invalid.
-func signedFrozenRevocation(result []byte, request map[string]any, controllerDID string) error {
-	invalid := func(format string, args ...any) error {
-		return withErrorCode("signed_request_invalid", fmt.Errorf("the signed revocation is not the one aw requested: "+format, args...))
-	}
-	signing, signature, reason := signedResult(result)
-	if reason != "" {
-		return invalid("%s", reason)
-	}
-	artifact, _ := request["artifact"].(map[string]any)
-	frozen, err := awid.StrictCanonicalJSON(artifact["request"])
-	if err != nil || !bytes.Equal(frozen, signing) {
-		return invalid("it is not the registry request the operation froze")
-	}
-	if err := awid.VerifyControllerRequestSignature(controllerDID, signature, signing); err != nil {
-		return invalid("it is not signed by the pinned controller: %v", err)
-	}
-	return nil
-}
-
 func runTeamRemoveAgent(cmd *cobra.Command, _ []string) error {
 	if teamRemoveAgentOwnerApprovedFlag {
 		return runTeamRemoveAgentAsOwner(cmd)

@@ -34,7 +34,8 @@ type ownerRemoveService struct {
 	server   *httptest.Server
 	revoke   *removeService
 	kind     any
-	tamper   string
+	tamper   string // a change to the committed result
+	window   [2]time.Time
 	receipt  string // committed, pending, refused or unavailable
 	expired  bool
 	loseNext bool // the next prepare reaches the service but its answer is lost
@@ -77,6 +78,15 @@ func (s *ownerRemoveService) prepared(t *testing.T) []byte {
 	payload := answer["payload"].(map[string]any)
 	request := payload["request"].(map[string]any)
 	request["target_kind"] = s.kind
+	// The intent: the revocation without its execution-issued timestamp,
+	// issued once the owner approves, inside the window fixed now.
+	template := s.revoke.artifact
+	delete(template["request"].(map[string]any), "timestamp")
+	now := time.Now().UTC().Truncate(time.Second)
+	s.window = [2]time.Time{now.Add(-time.Hour), now.Add(23 * time.Hour)}
+	request["artifact"] = map[string]any{"v": 1, "type": "aweb.protected-artifact-intent", "template": template,
+		"delivery":        map[string]any{"audience": request["audience"], "method": "POST", "path": template["request"].(map[string]any)["path"]},
+		"issuance_window": map[string]any{"not_before": s.window[0].Format(time.RFC3339), "not_after": s.window[1].Format(time.RFC3339)}}
 	digest, _ := handoff.CoveredRequestDigest(decodeForDigest(payload))
 	answer["digest"] = digest
 	switch {
@@ -90,6 +100,36 @@ func (s *ownerRemoveService) prepared(t *testing.T) []byte {
 	return raw
 }
 
+// committed is the receipt of the revocation issued at the owner's approval
+// and applied at the registry by the service. tamper varies it.
+func (s *ownerRemoveService) committed(t *testing.T) []byte {
+	subject := s.revoke.sent["subject"].(map[string]any)
+	team, certificateID, audience := subject["team_id"].(string), subject["certificate_id"].(string), s.revoke.sent["audience"].(string)
+	issued := s.window[0].Add(2 * time.Hour)
+	switch s.tamper {
+	case "issued-outside-window":
+		issued = s.window[1].Add(time.Hour)
+	case "signed-another-request":
+		certificateID = "99999999-9999-4999-8999-999999999999"
+	}
+	request := s.revoke.revokeRequestAt(t, team, certificateID, audience, issued.Format(time.RFC3339))
+	signing, _ := awid.StrictCanonicalJSON(request)
+	if s.tamper == "noncanonical-signing" {
+		signing, _ = json.MarshalIndent(request, "", " ")
+	}
+	key := s.revoke.signKey
+	if s.tamper == "signed-by-another-key" {
+		_, key, _ = ed25519.GenerateKey(nil)
+	}
+	signature := ed25519.Sign(key, signing)
+	reference := s.revoke.sent["operation_id"].(string)
+	if s.tamper == "another-reference" {
+		reference = "66666666-6666-4666-8666-666666666666"
+	}
+	raw, _ := json.Marshal(map[string]any{"state": "committed", "result": appliedTestResult(reference, signing, signature)})
+	return raw
+}
+
 func (s *ownerRemoveService) answerReceipt(t *testing.T, w http.ResponseWriter) {
 	switch s.receipt {
 	case "pending":
@@ -100,7 +140,7 @@ func (s *ownerRemoveService) answerReceipt(t *testing.T, w http.ResponseWriter) 
 		w.WriteHeader(http.StatusServiceUnavailable)
 		_, _ = w.Write([]byte(`{"detail":"unavailable"}`))
 	default:
-		_, _ = w.Write(s.revoke.committed(t))
+		_, _ = w.Write(s.committed(t))
 	}
 }
 
@@ -195,6 +235,9 @@ func TestAnOwnerRemovalAsksForTheClosedSubjectAndWaitsForTheOwnersApproval(t *te
 		if memberID != "" {
 			wantMember = memberID
 		}
+		if sent["approval_format"] != "intent_v1" {
+			t.Fatalf("sent %v: an owner's removal asks in the intent format", sent)
+		}
 		if sent["operation"] != "team.agent.remove" || sent["variant"] != "owner_approved" || sent["audience"] != profile.RegistryOrigin ||
 			len(subject) != 4 || subject["team_id"] != cert.Team || subject["member_id"] != wantMember || subject["certificate_id"] != cert.CertificateID {
 			t.Fatalf("sent %v", sent)
@@ -247,10 +290,10 @@ func TestAFrozenOwnerRemovalThatIsNotExactlyTheRequestIsNeverShown(t *testing.T)
 }
 
 func TestAnInvalidCommittedRevocationKeepsTheSameRequestUntilItVerifies(t *testing.T) {
-	for _, tamper := range []string{"signed-another-request", "signed-by-another-key"} {
+	for _, tamper := range []string{"signed-another-request", "signed-by-another-key", "issued-outside-window", "another-reference", "noncanonical-signing"} {
 		teamKey, profile, service := ownerRemoveTestSetup(t)
 		request := ownerRemoveByFile(removeTestCertificate(t, teamKey, ""))
-		service.revoke.tamper = tamper
+		service.tamper = tamper
 		report, err := removeMemberAsOwner(context.Background(), service.options(), profile, request)
 		if errorCodeOf(err) != "signed_request_invalid" || report != nil {
 			t.Fatalf("%s: report %v, err %v", tamper, report, err)
@@ -258,7 +301,7 @@ func TestAnInvalidCommittedRevocationKeepsTheSameRequestUntilItVerifies(t *testi
 		if savedOwnerRemoval(t, ownerRemoveTestOperation) == nil {
 			t.Fatalf("%s: an unverified result forgot the request", tamper)
 		}
-		service.revoke.tamper = ""
+		service.tamper = ""
 		if report, err := removeMemberAsOwner(context.Background(), service.options(), profile, request); err != nil || report["state"] != "committed" {
 			t.Fatalf("%s: resume %v, %v", tamper, report, err)
 		}

@@ -63,7 +63,7 @@ func membershipSubject(cert *awid.TeamCertificate) map[string]any {
 // removing cert's membership under binding.
 func ownerRemovalIntent(profile *handoff.Profile, binding *handoff.ProfileBinding, cert *awid.TeamCertificate) map[string]any {
 	return map[string]any{
-		"operation": "team.agent.remove", "variant": "owner_approved",
+		"operation": "team.agent.remove", "variant": "owner_approved", "approval_format": "intent_v1",
 		"scope": binding.Scope, "audience": profile.RegistryOrigin, "subject": membershipSubject(cert),
 	}
 }
@@ -139,9 +139,7 @@ func removeMemberAsOwner(ctx context.Context, opts handoff.GovernanceOptions, pr
 		}
 		return pendingEndorsementReport(presented, page, receipt), nil
 	}
-	// A result whose prepared operation aw never verified (its prepare answer
-	// was lost) has no frozen request to match, and is never taken.
-	if err := signedFrozenRevocation(receipt.Result, frozen, binding.AuthorityKeyDID); err != nil {
+	if err := issuedRevocation(receipt.Result, operationID, frozen, binding.AuthorityKeyDID); err != nil {
 		return nil, fmt.Errorf("operation %s: %w", operationID, err)
 	}
 	forgetProtectedOperationQuietly(operationID)
@@ -157,8 +155,11 @@ func removeMemberAsOwner(ctx context.Context, opts handoff.GovernanceOptions, pr
 // pinned controller signs it and it names this home's key as the requester. It
 // keeps the frozen request it accepted in kept.
 func ownerRemovalCheck(request map[string]any, controllerDID, requesterKey string, kept *map[string]any) error {
-	artifact, _ := request["artifact"].(map[string]any)
-	if artifact["controller_did"] != controllerDID {
+	template, err := handoff.IntentTemplate(request)
+	if err != nil {
+		return err
+	}
+	if template["controller_did"] != controllerDID {
 		return withErrorCode("operation_mismatch", errors.New("the prepared revocation names another controller than the profile pins"))
 	}
 	if request["requester_key"] != requesterKey {
@@ -167,6 +168,35 @@ func ownerRemovalCheck(request map[string]any, controllerDID, requesterKey strin
 	// The generated verifier has already closed target_kind to the
 	// classifications the service may freeze.
 	*kept = request
+	return nil
+}
+
+// issuedRevocation accepts a committed removal's result only as the registry
+// revocation issued under the owner's approval of the frozen intent: the
+// receipt's retained signed request for operationID, canonical, equal to the
+// intent's template in every static field with its timestamp inside the
+// frozen issuance window, and signed by the pinned controller. A result whose
+// prepared operation aw never verified (its prepare answer was lost) has no
+// frozen intent and is never taken. Anything else is signed_request_invalid.
+func issuedRevocation(result []byte, operationID string, frozen map[string]any, controllerDID string) error {
+	invalid := func(format string, args ...any) error {
+		return withErrorCode("signed_request_invalid", fmt.Errorf("the signed revocation is not the one the owner approved: "+format, args...))
+	}
+	signing, signature, reason := retainedSignedResult(result, &handoff.Prepared{OperationID: operationID})
+	if reason != "" {
+		return invalid("%s", reason)
+	}
+	issued, ok := handoff.DecodeObject(signing)
+	canonical, err := awid.StrictCanonicalJSON(issued)
+	if !ok || err != nil || !bytes.Equal(canonical, signing) {
+		return invalid("its signed request is not canonical")
+	}
+	if err := handoff.VerifyIssuedArtifact(frozen, map[string]any{"controller_did": controllerDID, "request": issued}); err != nil {
+		return invalid("%v", err)
+	}
+	if err := awid.VerifyControllerRequestSignature(controllerDID, signature, signing); err != nil {
+		return invalid("it is not signed by the pinned controller: %v", err)
+	}
 	return nil
 }
 

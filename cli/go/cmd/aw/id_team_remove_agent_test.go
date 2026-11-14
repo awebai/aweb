@@ -64,11 +64,15 @@ func newRemoveService(t *testing.T, signKey ed25519.PrivateKey, requesterKey str
 }
 
 func (s *removeService) revokeRequest(t *testing.T, team, certificateID, aud string) map[string]any {
+	return s.revokeRequestAt(t, team, certificateID, aud, "2026-11-13T10:00:00Z")
+}
+
+func (s *removeService) revokeRequestAt(t *testing.T, team, certificateID, aud, timestamp string) map[string]any {
 	t.Helper()
 	name, domain, _ := strings.Cut(team, ":")
 	body, _ := json.Marshal(map[string]any{"certificate_id": certificateID})
 	raw, err := awid.ControllerRequestPayload(aud, "POST", "/v1/namespaces/"+domain+"/teams/"+name+"/certificates/revoke", body,
-		"2026-11-13T10:00:00Z", domain, "revoke_certificate", map[string]any{"team_name": name, "certificate_id": certificateID})
+		timestamp, domain, "revoke_certificate", map[string]any{"team_name": name, "certificate_id": certificateID})
 	if err != nil {
 		t.Fatal(err)
 	}
