@@ -74,3 +74,55 @@ the image's uid 1001, and invoke `/app/.venv/bin/python -I` with the same
 arguments/environment. Its installed files must still pass the wheel check.
 This is an alternative installation of the same fixture, not a second route
 harness. An image digest or a check-only receipt alone is not a runtime result.
+
+## Attachment to the ADAZ transport
+
+The shared transport receives a host loopback backend through its orchestration
+input `ADAZ_REGISTRY_BACKEND`. It fronts that listener without changing bodies
+at `https://api.awid.ai` and `https://registry.aweb-docker.test:8010`. Set
+`AWID_PUBLIC_ORIGINS` to both external origins. The backend is never a CLI
+registry override. The transport owner supplies its assigned public IPv4,
+isolated DNS, certificate SANs, public fixture CA and disposable client OS
+trust installation. Both DNS names must resolve to that actual public IPv4;
+keep normal TLS verification on and use no development or service-token bypass.
+
+The joined Python runner can own one old-registry epoch with the context
+manager in `released_registry.py` (the caller supplies private DSNs):
+
+```python
+from released_registry import old_registry_listener
+
+with old_registry_listener(
+    python="/lab/old-registry/bin/python",
+    wheel="/lab/inputs/awid_service-0.5.39-py3-none-any.whl",
+    run_root="/lab/run/epochs/old-registry",
+    port=18010,
+    database_url=private_postgres_dsn,
+    redis_url=private_redis_dsn,
+    schema="old_registry",
+    public_origins=("https://api.awid.ai", "https://registry.aweb-docker.test:8010"),
+) as backend:
+    # Pass only to the operator's transport launcher. Clients use the normal
+    # public default or the naturally discovered origin, never this value.
+    transport_environment = {"ADAZ_REGISTRY_BACKEND": backend}
+    run_joined_matrix(transport_environment)
+```
+
+The manager binds the stock service only to `127.0.0.1`. It waits for an actual
+200 `/health` with version `0.5.39`, the requested schema, live PostgreSQL/Redis
+checks and `RedisFixedWindowRateLimiter`. It supplies no service token. It
+records package/dependency identity in `package.json`, health/PID/backend and
+shutdown/owned-process-group absence in `process.json`, and the private service
+log in `service.log`. A failed startup is recorded as failed. The wheel process
+has `installation: published-wheel` and `image: null`; do not invent an image
+receipt for that path. If using the image installation instead, the operator's
+container receipt must identify the actual digest, ID and absence after stop.
+
+On leaving the context, it terminates and reaps its owned process group and
+refuses successful cleanup if the group remains. The outer placement still
+owns destruction and independent absence checks for its PG/Redis, DNS/TLS,
+client network and provider resources. Run epochs serially with fresh homes,
+DB/cache and a new `run_root`; a listener or health pass alone does not qualify
+the matrix. Preserve startup and request/limiter evidence separately. The
+transport launcher and allocation must exist before this is a runnable joined
+stack.
