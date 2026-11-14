@@ -21,7 +21,8 @@ async def signatures(a, operation_id):
 
 
 @pytest.mark.asyncio
-async def test_a_registry_read_failing_after_the_touch_does_not_spend_the_approval(admissions, monkeypatch):
+@pytest.mark.parametrize("retry", ["same_assertion", "fresh_gesture"])
+async def test_a_registry_read_failing_after_the_touch_does_not_spend_the_approval(admissions, monkeypatch, retry):
     from aweb_naapp.runtime.protected_signer import SignerRefused
 
     a = admissions
@@ -57,7 +58,9 @@ async def test_a_registry_read_failing_after_the_touch_does_not_spend_the_approv
         "SELECT refusal_code FROM {{tables.protected_signer_operations}} WHERE operation_id=$1", operation.operation_id)
     assert refusal is None
 
-    # The owner's page retries with what it holds: the same exact-act assertion.
+    if retry == "fresh_gesture":
+        # The owner touches again: new options, a new exact-act assertion.
+        proof = a.device.get(dict(await signer.approval_options(operation.operation_id, human=a.actor)))
     receipt = await signer.execute(operation.operation_id, proof, human=a.actor)
     assert receipt.state == "committed", receipt
     assert await signatures(a, operation.operation_id) == 1
