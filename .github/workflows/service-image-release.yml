@@ -17,9 +17,7 @@ permissions:
   packages: write
 
 concurrency:
-  # One image publication at a time, across lanes: whether latest moves is
-  # decided from the registry, so two runs must not race on it.
-  group: image-publication
+  group: image-${{ github.event_name == 'workflow_dispatch' && format('refs/tags/{0}', inputs.tag) || github.ref }}
   cancel-in-progress: false
 
 jobs:
@@ -54,4 +52,7 @@ jobs:
             echo "no release tag $RELEASE_TAG" >&2
             exit 1
           fi
-          python3 scripts/publish_release.py --only oci "$RELEASE_TAG"
+          # A dispatch is a recovery of an existing tag's image: it never moves latest.
+          recovery=()
+          [[ "$GITHUB_EVENT_NAME" != workflow_dispatch ]] || recovery=(--recovery)
+          python3 scripts/publish_release.py --only oci "${recovery[@]}" "$RELEASE_TAG"
