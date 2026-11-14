@@ -66,6 +66,23 @@ async def operation_row(a, operation):
         "SELECT * FROM {{tables.protected_signer_operations}} WHERE operation_id=$1", operation.operation_id))
 
 
+def settled_history_only(before, after, *, quota=False):
+    """Every preexisting audit event and every other operation stays exact."""
+    original = {json.loads(row)["operation_id"]: json.loads(row) for row in before["protected_signer_operations"]}
+    current = {json.loads(row)["operation_id"]: json.loads(row) for row in after["protected_signer_operations"]}
+    assert original.keys() == current.keys()
+    changed = [key for key in original if original[key] != current[key]]
+    assert len(changed) == 1
+    assert set(before["protected_local_audit"]) < set(after["protected_local_audit"])
+    assert len(after["protected_local_audit"]) == len(before["protected_local_audit"]) + 1
+    for table in TABLES:
+        allowed = {"protected_signer_operations", "protected_local_audit"}
+        if quota:
+            allowed.add("protected_root_admissions")
+        if table not in allowed:
+            assert after[table] == before[table]
+
+
 def forbid_effects(a, monkeypatch):
     """Leave confirmation/authentication reads installed; fail any effect call."""
     calls = []
@@ -196,7 +213,7 @@ async def test_status_can_confirm_a_lost_admission_once_without_releasing_again(
     assert response.status_code == 200 and response.json()["state"] == "committed", response.text
     after, settled = await snapshot(a.w.db), await operation_row(a, operation)
     assert {key for key in settled if settled[key] != original_row[key]} == {"result", "committed_at"}
-    assert len(after["protected_local_audit"]) == len(before["protected_local_audit"]) + 1
+    settled_history_only(before, after, quota=True)
     assert len(after["protected_root_admissions"]) == len(before["protected_root_admissions"])
     quota_before = [json.loads(value) for value in before["protected_root_admissions"]]
     quota_after = [json.loads(value) for value in after["protected_root_admissions"]]
@@ -236,10 +253,7 @@ async def test_status_settles_an_expired_approved_uv_once_without_signing(admiss
     after, settled = await snapshot(a.w.db), await operation_row(a, operation)
     assert {key for key in settled if settled[key] != original_row[key]} <= {"refusal_code", "candidate_links"}
     assert json.loads(settled["candidate_links"]) == {} and settled["expires_at"] > a.human.signer.clock()
-    assert len(after["protected_local_audit"]) == len(before["protected_local_audit"]) + 1
-    for table in TABLES:
-        if table not in ("protected_signer_operations", "protected_local_audit"):
-            assert after[table] == before[table]
+    settled_history_only(before, after)
     again = await read(a, operation)
     assert again.status_code == 200 and again.json() == response.json()
     assert await snapshot(a.w.db) == after and calls == []
@@ -328,10 +342,7 @@ async def test_status_recovers_a_genuine_retained_effect_after_unknown_without_a
         settled = await operation_row(a, operation)
         assert {key for key in settled if settled[key] != original_row[key]} == {"result", "committed_at"}
         after = await snapshot(a.w.db)
-        assert len(after["protected_local_audit"]) == len(before["protected_local_audit"]) + 1
-        for table in TABLES:
-            if table not in ("protected_signer_operations", "protected_local_audit"):
-                assert after[table] == before[table]
+        settled_history_only(before, after)
         again = await read(a, operation)
         assert again.status_code == 200 and again.json() == response.json()
         assert await snapshot(a.w.db) == after
