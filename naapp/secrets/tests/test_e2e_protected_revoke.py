@@ -229,7 +229,8 @@ def protected_site(lane: ProtectedLane) -> Site:
 
     def protect_team(service_did_key: str) -> dict:
         """The registry operator's explicit protection of the team, in the
-        registry's own container (e2e/protected/protect_team.py)."""
+        registry's own container (e2e/protected/protect_team.py).
+        Test setup standing in for aweb-adax's operator command; see that file."""
         result = subprocess.run(
             ["docker", "compose", "-p", lane.project, "-f", str(REPO / "naapp/secrets/docker-compose.e2e.yml"),
              "run", "--rm", "-T", "--no-deps", "-v", f"{PROTECT_TEAM}:/protect_team.py:ro",

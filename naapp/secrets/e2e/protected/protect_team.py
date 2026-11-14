@@ -1,5 +1,11 @@
 """The registry operator's explicit protection of one team.
 
+TEST SETUP ONLY: a stand-in for the registry operator command aweb-adax is
+designing, which does not exist yet. It mirrors the in-process proof
+(server/tests/protected_consumer_support.py) and is the one place both
+journeys protect a team, so it is the one place to replace once adax ships.
+It is not an operator procedure and belongs in no operator doc or deployment.
+
 Runs inside the registry's own container with its AWID_DATABASE_URL and
 AWID_DB_SCHEMA, and calls the registry host's administrator transition
 (awid_service.protected_teams.provision_team_protection, which has no HTTP

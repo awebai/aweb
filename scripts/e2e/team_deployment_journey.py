@@ -975,7 +975,8 @@ class World:
 
         def protect_team(service_did_key: str) -> dict:
             """The registry operator's explicit protection of the team, in the
-            registry's own container (e2e/protected/protect_team.py)."""
+            registry's own container (e2e/protected/protect_team.py).
+            Test setup standing in for aweb-adax's operator command; see that file."""
             return first_json(self.compose("run", "--rm", "-T", "--no-deps", "-v", f"{PROTECT_TEAM}:/protect_team.py:ro",
                                            "--entrypoint", "python", "registry", "/protect_team.py",
                                            "--domain", DOMAIN, "--name", TEAM, "--service-id", f"{TEAM}-signer",
