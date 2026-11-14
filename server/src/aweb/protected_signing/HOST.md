@@ -22,7 +22,10 @@ direct access to the protected process to that proxy. This header selects
 only rate-limit identity, never authentication, request audience or authority.
 With no configured header, forwarded values are ignored and identity is the
 connection peer. Behind a single proxy this means one shared 30-per-minute
-budget per bucket: a CLI polling every two seconds can use that entire budget.
+budget per bucket. aw reads a pending receipt every two seconds at first and
+backs off to once a minute (never past the operation's expiry), so one waiting
+operation leaves most of that budget to others; many concurrent waits still
+share it.
 That default is suitable for a single-human host; configure the trusted header
 for multiple clients rather than broadly enabling forwarded-header trust.
 
