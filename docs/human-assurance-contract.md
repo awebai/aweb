@@ -45,7 +45,10 @@ this enforcement claim.
 The v1 ID certificate and team certificate formats do not acquire an assurance
 field. Their signatures establish issuer authority under their existing
 verification rules, not whether the issuer used this signer or a passkey.
-Remote consumers trust the issuer's signing policy. A previously token-issued
+Remote consumers trust the issuer's signing policy. Explicitly cut-over protected
+teams additionally require the detached service attestation specified in
+[Protected team boundary](protected-team-boundary.md), under Juan's 2026-11-13
+approval via coordinator; unmarked teams retain the existing rule. A previously token-issued
 root cannot be relabelled as gesture-confirmed: its transition requires an
 explicit, reviewed revoke/re-endorsement plan. Existing cryptographic
 verification, current-head rules, expiry and revocation remain mandatory.
@@ -1037,9 +1040,18 @@ about accessibility and authority, not a directory basename. Package .8 owns
 per-installation migration approval, backup/removal and rollback limits.
 
 Released local BYOT owner-act signing continues to produce artifacts that
-remote verifiers accept under the unchanged wire rules. It is unsupported in
-the protected profile, not cryptographically distinguishable or universally
-rejected. Package .8 must name every affected BYOT team/client and its explicit
+remote verifiers accept for unmarked teams under the unchanged wire rules.
+The 2026-11-13 extension approved by Juan via coordinator applies only after
+explicit team cutover: AWID marks the canonical team authoritatively and each
+controller effect requires a detached attestation from a separate isolated
+service key. The original signature alone still cannot distinguish custody.
+The binding, exact-certificate checks, replay/deadline rules, controller route
+inventory and coordinated cutover are specified in
+[Protected team boundary](protected-team-boundary.md), including its fixed proof-gated
+consumer confirmation read. That read matches immutable history in the actual
+effect transaction; a missing receipt leaves application unresolved and permits
+no blind retry. Historical confirmation after expiry grants no new effect
+authority, and the signer receipt reader authority is unchanged. Package .8 must name every affected BYOT team/client and its explicit
 transition before activation; a documentation change does not perform cutover.
 Protecting an existing team is an operator-approved .8 migration, announced to
 all affected deployment owners before it takes effect. Inventory even clients

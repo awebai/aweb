@@ -114,6 +114,15 @@ class PinnedRegistryView:
             registry_origin=self.registry_url,
         )
 
+    async def get_team_fresh(self, domain, name):
+        from awid.registry import _team_from_json
+
+        self._domain(domain)
+        value = await self.client._request_optional_json(
+            "GET", f"/v1/namespaces/{domain}/teams/{name}", registry_url=self.registry_url,
+        )
+        return _team_from_json(value) if value is not None else None
+
     async def fetch_id_certificate_status(self, domain, request):
         self._domain(domain)
         return await self.client.fetch_id_certificate_status(

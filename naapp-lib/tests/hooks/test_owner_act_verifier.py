@@ -294,3 +294,102 @@ async def test_a_prepared_act_older_than_the_key_bound_is_refused(db, registry, 
     moment[0] = issued + timedelta(seconds=60)
     async with db.transaction() as tx:
         await verify.consume_in(tx, prepared, expected_subject=SUBJECT)
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("protected", [False, True], ids=["legacy", "protected"])
+async def test_current_protection_refuses_a_controller_only_owner_act(registry, team_key, protected):
+    from awid.did import did_from_public_key, generate_keypair
+    from awid.protected_membership import observe_team_protection
+    from awid.registry import RegistryClient
+
+    if protected:
+        _, public = generate_keypair()
+        await registry.db.execute(
+            "INSERT INTO {{tables.team_protection}} "
+            "(domain,name,service_id,service_did_key,generation) VALUES ($1,$2,$3,$4,$5)",
+            "example.com", "demo", "test-service", did_from_public_key(public), 1,
+        )
+    client = RegistryClient(REGISTRY_URL, transport=registry.transport, service_token=SERVICE_TOKEN)
+    try:
+        async def authority(team_id):
+            return await observe_team_protection(client, team_id)
+        async def legacy_key(team_id):
+            return did_key(team_key)
+        checked = OwnerActVerifier(scope="core", audience=AUDIENCE, acts=CORE_ACTS,
+                                   team_key_for=legacy_key, team_authority_for=authority)
+        signing, signature = owner_act(team_key, issued=datetime.now(UTC))
+        if protected:
+            with pytest.raises(Refused) as refused:
+                await checked.prepare(signing, signature, team_id=TEAM_ID)
+            assert refused.value.code == "protected_controller_required"
+        else:
+            prepared = await checked.prepare(signing, signature, team_id=TEAM_ID)
+            assert prepared.act_name == "hook-binding.activate"
+    finally:
+        await client.aclose()
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("checkpoint", ["fresh", "consume", "final-await"])
+async def test_original_detached_proof_deadline_is_not_extended(db, registry, team_key, checkpoint):
+    from uuid import uuid4
+
+    from awid.protected_effect import artifact_digest, encode_proofs, http_consumer, issue_proof
+    from awid.protected_membership import observe_team_protection
+    from awid.registry import RegistryClient
+
+    service = SigningKey.generate()
+    await registry.db.execute(
+        "INSERT INTO {{tables.team_protection}} "
+        "(domain,name,service_id,service_did_key,generation) VALUES ('example.com','demo','test-service',$1,1)",
+        did_key(service),
+    )
+    client = RegistryClient(REGISTRY_URL, transport=registry.transport, service_token=SERVICE_TOKEN)
+    now = datetime.now(UTC).replace(microsecond=0)
+    current = now
+    try:
+        async def authority(team_id):
+            return await observe_team_protection(client, team_id)
+
+        observation = await authority(TEAM_ID)
+        signing, signature = owner_act(team_key, issued=now)
+        consumer = http_consumer(audience=AUDIENCE, method="POST", path="/owner", body=signing)
+        proof = issue_proof({
+            "v": 1, "type": "aweb.protected-effect", "service_id": "test-service",
+            "team_id": TEAM_ID, "history_id": observation.binding["history_id"], "generation": 1,
+            "controller_did_key": did_key(team_key), "operation": "hook-binding.activate",
+            "variant": "default", "operation_id": str(uuid4()), "artifact_type": "owner-act",
+            "artifact_sha256": artifact_digest(signing, signature), "consumer": consumer,
+            "issued_at": now.strftime("%Y-%m-%dT%H:%M:%SZ"),
+            "expires_at": (now + timedelta(seconds=10)).strftime("%Y-%m-%dT%H:%M:%SZ"),
+        }, bytes(service))
+        checked = OwnerActVerifier(
+            scope="core", audience=AUDIENCE, acts=CORE_ACTS,
+            team_key_for=verifier(registry)._team_key_for, team_authority_for=authority,
+            protected_delivery=(encode_proofs([proof]), consumer), clock=lambda: current,
+        )
+        prepared = await checked.prepare(signing, signature, team_id=TEAM_ID)
+
+        async def apply():
+            nonlocal current
+            async with db.transaction() as tx:
+                if checkpoint == "consume":
+                    current += timedelta(seconds=11)
+                await checked.consume_in(tx, prepared, expected_subject=SUBJECT)
+                await tx.execute("INSERT INTO effects(nonce) VALUES ('proof-deadline-control')")
+                if checkpoint == "final-await":
+                    current += timedelta(seconds=11)
+                prepared.require_fresh()
+
+        if checkpoint == "fresh":
+            await apply()
+        else:
+            with pytest.raises(Refused) as refused:
+                await apply()
+            assert refused.value.code == "protected_controller_required"
+        expected = int(checkpoint == "fresh")
+        assert await db.fetch_value("SELECT count(*) FROM effects") == expected
+        assert await db.fetch_value("SELECT count(*) FROM {{tables.owner_act_nonces}}") == expected
+    finally:
+        await client.aclose()

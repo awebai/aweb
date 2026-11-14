@@ -483,7 +483,10 @@ class NaappRuntime:
         return self._hooks.producer(installation_id=installation_id, generation=generation)
 
     async def require_current_member(
-        self, team_id: str, *, certificate_id: str, team_did_key: str
+        self, team_id: str, *, certificate_id: str, team_did_key: str,
+        certificate: dict[str, Any] | None = None,
+        principal: str | None = None,
+        member_alias: str | None = None,
     ) -> None:
         """Check membership before a transaction without retaining a proof.
 
@@ -491,11 +494,14 @@ class NaappRuntime:
         result of :meth:`check_current_member` for local checking under the lock.
         """
         await self.check_current_member(
-            team_id, certificate_id=certificate_id, team_did_key=team_did_key
+            team_id, certificate_id=certificate_id, team_did_key=team_did_key, certificate=certificate, principal=principal, member_alias=member_alias
         )
 
     async def check_current_member(
-        self, team_id: str, *, certificate_id: str, team_did_key: str
+        self, team_id: str, *, certificate_id: str, team_did_key: str,
+        certificate: dict[str, Any] | None = None,
+        principal: str | None = None,
+        member_alias: str | None = None,
     ) -> MembershipProof:
         """Fetch/check mint evidence before opening any transaction or lock.
 
@@ -503,7 +509,7 @@ class NaappRuntime:
         link lock is acquired. Its deadline is the original AWID facts' expiry.
         """
         return await self.team_cache().check_current_member(
-            team_id, certificate_id=certificate_id, team_did_key=team_did_key
+            team_id, certificate_id=certificate_id, team_did_key=team_did_key, certificate=certificate, principal=principal, member_alias=member_alias
         )
 
     async def check_human_role_member(

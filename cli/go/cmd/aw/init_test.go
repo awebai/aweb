@@ -756,6 +756,9 @@ func runControllerKeyJoinFromForTest(t *testing.T, asJSON bool) (string, string,
 	}
 	var sawRegistry, sawConnect bool
 	registry := newLocalHTTPServer(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if serveExplicitLegacyInviteTeam(t, w, r, "backend:source") {
+			return
+		}
 		if r.Method == http.MethodPost && r.URL.Path == "/v1/namespaces/source/teams/backend/certificates" {
 			sawRegistry = true
 			w.WriteHeader(http.StatusCreated)

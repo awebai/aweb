@@ -24,6 +24,9 @@ from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from typing import Any
 
+from awid.protected_effect import EffectRefused, decode_proofs, verify_proof
+from awid.protected_membership import TeamProtectionObservation
+from awid.protected_receipts import record_receipt
 from pgdbm import AsyncDatabaseManager, AsyncMigrationManager, TransactionManager
 
 from aweb_naapp.hooks.owner_act import (
@@ -63,7 +66,7 @@ class PreparedOwnerAct:
     name, for logging.
     """
 
-    __slots__ = ("_checked", "_prepared_at", "_signing", "_verifier")
+    __slots__ = ("_checked", "_prepared_at", "_signing", "_verifier", "_protection", "_proof_expires_at", "_proof", "_proof_header", "_transaction_id")
 
     def __init__(
         self,
@@ -71,11 +74,30 @@ class PreparedOwnerAct:
         signing: bytes,
         verifier: OwnerActVerifier,
         prepared_at: datetime,
+        protection: TeamProtectionObservation | None = None,
+        proof_expires_at: datetime | None = None,
+        proof=None,
+        proof_header=None,
     ) -> None:
         self._checked = checked
         self._signing = signing
         self._verifier = verifier
         self._prepared_at = prepared_at
+        self._protection = protection
+        self._proof_expires_at = proof_expires_at
+        self._proof, self._proof_header = proof, proof_header
+        self._transaction_id: int | None = None
+
+    async def record_applied(self, tx):
+        """Trusted consumer calls after its actual effect/audit in this tx."""
+        if self._proof is None:
+            return
+        if self._transaction_id != await tx.fetch_value("SELECT txid_current()"):
+            raise Refused("verifier_misconfigured")
+        try:
+            await record_receipt(tx, self._proof, self._proof_header)
+        except EffectRefused as exc:
+            raise Refused(exc.code) from None
 
     @property
     def act_name(self) -> str:
@@ -90,7 +112,14 @@ class PreparedOwnerAct:
         This does not authenticate again, renew evidence, or consume a nonce.
         The caller must still use consume_in in the effect's transaction.
         """
+        if self._protection is not None:
+            try:
+                self._protection.require_fresh()
+            except EffectRefused as exc:
+                raise Refused(exc.code) from None
         now = _utc_now(self._verifier._clock)
+        if self._proof_expires_at is not None and now >= self._proof_expires_at:
+            raise Refused("protected_controller_required", "the original service proof expired")
         if now - self._prepared_at > KEY_FRESHNESS:
             raise Refused("owner_required", "prepared too long ago for its team key to be current")
         if now >= self._checked.expires_at:
@@ -113,6 +142,8 @@ class OwnerActVerifier:
         audience: str,
         acts: Sequence[str],
         team_key_for: Callable[[str], Awaitable[str]],
+        team_authority_for: Callable[[str], Awaitable[TeamProtectionObservation]] | None = None,
+        protected_delivery: tuple[str | None, Mapping[str, Any]] | None = None,
         clock: Callable[[], datetime] = lambda: datetime.now(UTC),
     ) -> None:
         if not scope or not audience or not acts:
@@ -123,15 +154,19 @@ class OwnerActVerifier:
         self.audience = audience
         self.acts = tuple(acts)
         self._team_key_for = team_key_for
+        self._team_authority_for = team_authority_for
+        self._protected_delivery = protected_delivery
         self._clock = clock
 
-    async def prepare(self, signing: bytes, signature: str, *, team_id: str) -> PreparedOwnerAct:
+    async def prepare(self, signing: bytes, signature: str, *, team_id: str,
+                      protected_delivery: tuple[str | None, Mapping[str, Any]] | None = None) -> PreparedOwnerAct:
         """Read the team's current key and check the act up to its signature.
 
         Call this outside any transaction: it may read the registry over the
         network. The result is not authority; pass it to ``consume_in``.
         """
-        team_key = await self._team_key_for(team_id)
+        protection = await self._team_authority_for(team_id) if self._team_authority_for is not None else None
+        team_key = protection.controller_did_key if protection is not None else await self._team_key_for(team_id)
         now = self._clock()
         checked = _check_owner_act(
             signing,
@@ -142,7 +177,35 @@ class OwnerActVerifier:
             acts=self.acts,
             now=now,
         )
-        return PreparedOwnerAct(checked, signing, self, _utc_now(lambda: now))
+        proof_expires_at = None
+        proof_fields = proof_header = None
+        if protection is not None and protection.protected:
+            delivery = protected_delivery if protected_delivery is not None else self._protected_delivery
+            try:
+                if delivery is None:
+                    raise EffectRefused()
+                header, consumer = delivery
+                proofs = decode_proofs(header)
+                matched = False
+                for proof in proofs:
+                    try:
+                        fields = verify_proof(proof, binding=dict(protection.binding), team_id=team_id,
+                            controller_did_key=team_key, operations={(checked.act, "default")},
+                            artifact_type="owner-act", artifact=signing, artifact_signature=signature,
+                            consumer=dict(consumer), now=now)
+                        # Owner-act clocks use naive UTC internally, matching
+                        # the existing act/key deadline representation.
+                        proof_expires_at = datetime.strptime(fields["expires_at"], "%Y-%m-%dT%H:%M:%SZ")
+                        proof_fields, proof_header = fields, header
+                        matched = True
+                        break
+                    except EffectRefused:
+                        continue
+                if not matched:
+                    raise EffectRefused()
+            except EffectRefused:
+                raise Refused("protected_controller_required") from None
+        return PreparedOwnerAct(checked, signing, self, _utc_now(lambda: now), protection, proof_expires_at, proof_fields, proof_header)
 
     async def applied_in(self, tx: TransactionManager, prepared: PreparedOwnerAct) -> bool:
         """Read an exact committed act's nonce receipt, without consuming it.
@@ -213,7 +276,8 @@ class OwnerActVerifier:
         )
         if inserted is None:
             raise Refused("nonce_reused", act.nonce)
-        return _verified(act, int(await tx.fetch_value("SELECT txid_current()")))
+        prepared._transaction_id = int(await tx.fetch_value("SELECT txid_current()"))
+        return _verified(act, prepared._transaction_id)
 
 
 def _utc_now(clock: Callable[[], datetime]) -> datetime:

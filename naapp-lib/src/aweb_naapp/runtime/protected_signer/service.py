@@ -1261,5 +1261,11 @@ class ProtectedSigner:
                     return await self._execution_refusal(operation_id, reader, SignerRefused("approval_expired"),
                         human_session=human_session)
         if row["signed_result"] is not None and row["result"] is None and type(reader) is ReceiptReader:
-            return await self._reconcile_admission(operation_id, reader, may_send=False)
+            # Local signatures have no external confirmation port. A missing
+            # configured port also leaves historical application unresolved;
+            # a receipt read must not turn either case into an execution refusal.
+            operation = owner_act_operation(self._operation(_json(row["request"])))
+            provider_name = operation.spec.effect.provider
+            if provider_name is not None and getattr(self, provider_name, None) is not None:
+                return await self._reconcile_admission(operation_id, reader, may_send=False)
         return self._receipt(row)

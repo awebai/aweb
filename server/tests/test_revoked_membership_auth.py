@@ -13,6 +13,7 @@ from __future__ import annotations
 
 from types import SimpleNamespace
 from unittest.mock import AsyncMock
+from team_facts_fixtures import legacy_team
 
 import httpx
 import pytest
@@ -31,6 +32,7 @@ MEMBER_DID_KEY = "did:key:z6MkRevocable"
 
 def _request_with_revocations(result):
     registry = AsyncMock()
+    registry.get_team_fresh = AsyncMock(side_effect=legacy_team)
     if isinstance(result, Exception):
         registry.get_team_revocations = AsyncMock(side_effect=result)
     else:

@@ -6,8 +6,10 @@ import base64
 import json
 from datetime import UTC, datetime
 from pathlib import Path
+from time import monotonic
 
 import pytest
+from awid.protected_membership import TeamProtectionObservation
 
 from aweb_naapp.hooks.delivery import (
     MAX_DELIVERY_BYTES,
@@ -39,6 +41,7 @@ def _options(receive: dict) -> ReceiveOptions:
         revoked_certificate_ids=receive.get("revoked_certificate_ids", ()),
         registered_certificate_ids=receive.get("registered_certificate_ids"),
         now=_time(receive["now"]),
+        protection_observation=TeamProtectionObservation("demo:example.com", receive.get("team_key_did", ""), {"mode": "legacy"}, monotonic()+60),
     )
 
 
