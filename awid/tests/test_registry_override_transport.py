@@ -101,6 +101,8 @@ async def test_dns_override_dials_only_checked_ip_preserving_host_and_tls_name(
         ("development", True, "http://awid-b:8010", "http://awid-a:8010", ("172.20.0.2",), True),
         ("production", True, "http://awid-b:8010", "http://awid-a:8010", ("172.20.0.2",), False),
         ("development", False, "http://awid-b:8010", "http://awid-a:8010", ("172.20.0.2",), False),
+        ("development", True, "", "http://awid-a:8010", ("172.20.0.2",), False),
+        ("development", True, "http://", "http://awid-a:8010", ("172.20.0.2",), False),
         ("development", True, "https://server.example.com", "http://awid-a:8010", ("172.20.0.2",), False),
         ("development", True, "http://awid-b:8010", "http://registry.example.com", ("1.1.1.1",), False),
         ("development", True, "http://awid-b:8010", "https://registry.example.com", ("1.1.1.1", "127.0.0.1"), False),
