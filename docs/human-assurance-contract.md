@@ -305,7 +305,12 @@ selected by current verified kind. A verified human belongs exclusively to
 `team.human.remove/default`, which refuses unknown kind. A verified agent or
 an unknown kind belongs to `team.agent.remove/owner_approved`. For unknown
 kind, including a registered but unenrolled legacy member, the frozen approval
-display says plainly **"kind not verified"**. The server derives this
+display includes a **Kind** row in the main view before approval: **"agent"**
+for `target_kind="agent"`, or **"agent or person not confirmed"** for
+`target_kind="kind not verified"`. Technical details retain the exact frozen
+value. The shared `|kind` formatter accepts only those two strings; every other
+value refuses. This wording supersedes the earlier literal main-view text
+"kind not verified" (coordinator `32499ce5`, 2026-11-13). The server derives this
 classification from current authoritative facts, never a requester-supplied
 kind label. The same classification is required at release: an unknown target
 that becomes a verified human must refuse, without switching operations or

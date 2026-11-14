@@ -152,3 +152,34 @@ func TestARefusalTheDefinitionNamesReadsAsItsSentence(t *testing.T) {
 		t.Errorf("unexpected shared sentence %q", got)
 	}
 }
+
+func TestOwnerRemovalKeepsBothKindsVisibleBeforeApproval(t *testing.T) {
+	for _, kind := range []string{"agent", "kind not verified"} {
+		t.Run(kind, func(t *testing.T) {
+			request := map[string]any{
+				"requester": "did:key:z6Mkrequester", "target_kind": kind,
+				"subject": map[string]any{"team_id": "engineering:customer.example", "member_id": "did:aw:member",
+					"certificate_id": "certificate", "expected_membership": map[string]any{"alias": "worker"}},
+			}
+			display := generatedDisplays["team.agent.remove|owner_approved"]
+			got, err := display.render(request)
+			if err != nil {
+				t.Fatal(err)
+			}
+			label := "agent"
+			if kind == "kind not verified" {
+				label = "agent or person not confirmed"
+			}
+			want := RenderedDisplay{
+				Title:        "Remove worker from engineering?",
+				Consequences: []string{"worker leaves engineering.", "Its aweb identity is not deleted."},
+				Names:        [][2]string{{"Member", "worker"}, {"Team", "engineering"}, {"Kind", label}},
+				Technical: [][2]string{{"Member", "did:aw:member"}, {"Certificate", "certificate"},
+					{"Team", "engineering:customer.example"}, {"Kind", kind}, {"Requester", "did:key:z6Mkrequester"}},
+			}
+			if !reflect.DeepEqual(got, want) {
+				t.Fatalf("rendered %#v, want %#v", got, want)
+			}
+		})
+	}
+}

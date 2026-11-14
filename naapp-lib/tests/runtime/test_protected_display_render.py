@@ -147,5 +147,7 @@ def test_owner_removal_shows_its_frozen_kind_before_approval_on_every_surface(ki
     assert rendered["consequences"] == [f"{alias} leaves {team}.", "Its aweb identity is not deleted."]
     assert ["Kind", label] in rendered["names"]
     assert ["Kind", kind] in rendered["technical"]
+    assert display.refusal("subject_ineligible") == "This member is a person, or could not be checked, so it cannot be removed here."
+    assert display.refusal("issuer_kind_forbidden") == "Only an owner's passkey can approve this."
     [[page, _]] = run_page_renderer([[display.fields(), request, "subject_ineligible"]])
     assert page == rendered
