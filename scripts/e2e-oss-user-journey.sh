@@ -470,11 +470,15 @@ write_staged_file() {
 
 # stage_customer_secrets writes the customer server's credentials. The key map
 # names the key by a path relative to itself. The key and the database URL are
-# readable by the image's uid 1001 and by no one else. The ownership change runs
-# in a container, which sees the directory through the Docker daemon, so it
-# first checks that every staged file is visible there. Its diagnostics name
-# files, owners and modes, never contents. Returns non-zero after a recorded
-# failure.
+# given to the image's uid 1001 with mode 0400. The ownership change runs in a
+# container, which sees the directory through the Docker daemon, so it first
+# checks that every staged file is a regular file visible there. What is
+# asserted is that the files are mode 0400 and that uid 1001 actually reads
+# them. The owner is reported, not asserted: Docker Desktop file sharing
+# accepts chown without storing it, and enforces neither owner nor mode
+# between container uids, so this phase makes no claim that other uids cannot
+# read the files. Diagnostics name files, owners and modes, never contents.
+# Returns non-zero after a recorded failure.
 stage_customer_secrets() {
   local failures_before="$fail" ownership
   run_success "customer server key staged" \
@@ -501,8 +505,19 @@ stage_customer_secrets() {
       chmod 0400 /keys/customerteam.key /keys/database-url
       stat -c "%n %u:%g %a" /keys/customerteam.key /keys/database-url'
   [[ "$fail" == "$failures_before" ]] || return 1
-  assert_eq "customer secrets are owned by the image user" \
-    $'/keys/customerteam.key 1001:1001 400\n/keys/database-url 1001:1001 400' "$ownership"
+  echo "$ownership" | while read -r name owner mode; do
+    echo "  customer secrets owner (not asserted): $name $owner"
+  done
+  assert_eq "customer secrets are mode 0400" "400 400" "$(echo "$ownership" | awk '{print $3}' | paste -sd' ' -)"
+  [[ "$fail" == "$failures_before" ]] || return 1
+  run_success "customer secrets are readable by the image user" \
+    docker run --rm --user 1001:1001 -v "$CUSTOMER_KEYS_DIR:/keys:ro" --entrypoint /bin/sh redis:7-alpine -c '
+      for f in customerteam.key database-url; do
+        if ! cat "/keys/$f" >/dev/null; then
+          echo "unreadable by uid 1001: $f"
+          exit 4
+        fi
+      done'
   [[ "$fail" == "$failures_before" ]]
 }
 
