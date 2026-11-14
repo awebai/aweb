@@ -45,7 +45,8 @@ def capability(tmp_path):
     authority = SimpleNamespace(context=context, protection=observation, team_key_did=did(controller),
         require_fresh=lambda: None)
     operation = CatalogOperation("22222222-2222-4222-8222-222222222222", context, ORIGIN,
-        "human-role.revoke", "default", {})
+        "human-role.revoke", "default", {"app_id": "app", "installation_id": "installation",
+            "role": "app.owner", "principal": "did:aw:owner"})
     # Startup checked real custody; the capability method may only inspect
     # configured identities and presence, never access either private key.
     custody._key = custody._service_key = SealedKey()
