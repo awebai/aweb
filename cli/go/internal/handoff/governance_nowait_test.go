@@ -35,7 +35,7 @@ func TestANoWaitResumeOfADecidedOperationSettlesItsReceipt(t *testing.T) {
 		var opened string
 		opts := stub.options(&opened)
 		opts.NoWait = true
-		saved := []byte(`{"operation_id":"11111111-1111-4111-8111-111111111111","operation":"human-role.revoke","variant":"default",` +
+		saved := []byte(`{"operation_id":"11111111-1111-4111-8111-111111111111","operation":"human-role.revoke","variant":"default","approval_format":"intent_v1",` +
 			`"scope":{"v":1,"kind":"protected_key","service_id":"svc","authority":{"kind":"team_controller","id":"h:example.com","domain":"example.com"}},` +
 			`"audience":"https://console.example","subject":{"app_id":"example","installation_id":"i","role":"example.owner","principal":"did:aw:holder"}}`)
 		got, err := Resume(context.Background(), opts, saved)

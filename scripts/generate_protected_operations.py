@@ -27,7 +27,14 @@ def generated():
         selector = row["operation"] + "|" + row["variant"]
         added = ", ".join(json.dumps(name) for name in row["prepared_fields"])
         paths = ", ".join(json.dumps(path) for path in row["bindings"].values())
-        lines.append(f'{json.dumps(selector)}: {{added: []string{{{added}}}, check: {verifier}, bindings: []string{{{paths}}}}},')
+        issuance = row.get("issuance")
+        issued = ""
+        if issuance is not None:
+            fields = ", ".join(json.dumps(path) for path in issuance["issued_fields"])
+            issued = (f', issuance: &artifactIssuance{{issued: []string{{{fields}}}, '
+                f'expiry: {json.dumps(issuance["expiry_field"] or "")}, lifetime: {issuance["lifetime_seconds"] or 0}, '
+                f'route: {json.dumps(issuance["fixed_route"] or "")}, routeField: {json.dumps(issuance["route_field"] or "")}}}')
+        lines.append(f'{json.dumps(selector)}: {{added: []string{{{added}}}, check: {verifier}, bindings: []string{{{paths}}}{issued}}},')
     lines.extend(["}", ""])
     # Generated constant is shared with CLI callers of the root codec. Its one
     # authored value lives in the root definition's display metadata.

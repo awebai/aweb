@@ -47,10 +47,11 @@ async def test_prepare_availability_before_any_pending_state(case, monkeypatch):
     human_id = stable_id_from_public_key(bytes(human.verify_key))
     key = did_from_public_key(bytes(root.verify_key))
     context = ProtectedKeyContext("service", "team_controller", "team:example.org", "example.org", human_id, "example.org", 1)
-    body = {"operation_id": str(uuid4()), "operation": "human-role.revoke", "variant": "default",
+    body = {"operation_id": str(uuid4()), "operation": "human-role.revoke", "variant": "default", "approval_format": "intent_v1",
         "scope": context.fields(), "audience": "https://registry.example",
         "subject": {"app_id": "app", "installation_id": str(uuid4()), "role": "app.owner", "principal": human_id}}
     if case["change"].get("operation") == "team.agent.admit":
+        body.pop("approval_format")
         body["subject"] = {"team_id": context.authority_id, "root_id": root_id, "root_key": key,
             "child_id": None, "child_key": did_from_public_key(bytes(child.verify_key)), "member_alias": "child",
             "admission_policy_digest": "sha256:" + "0" * 64, "expected_policy_version": 1}

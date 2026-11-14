@@ -1,6 +1,6 @@
 """OATS artifacts retain the existing ID and membership consumer encodings."""
 
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from uuid import uuid4
 
 import pytest
@@ -10,6 +10,7 @@ from awid.signing import canonical_json_bytes
 
 from aweb_naapp.runtime.protected_signer import CatalogOperation, ProtectedKeyContext, SignerRefused
 from aweb_naapp.runtime.protected_signer.codecs import artifact_for, authority_key, signing_bytes
+from aweb_naapp.runtime.protected_signer.execution_intent import prepare_artifact_intent
 
 
 def identity():
@@ -110,7 +111,7 @@ def test_browser_accepts_the_frozen_endorsement_and_refuses_artifact_or_policy_s
         "root_selector": {"kind": "service_endorsed_root", "service_id": SERVICE},
         "subject_kinds": ["local_agent"], "member_role": "member",
         "bounds": {"max_active": 10, "rate_window_seconds": 60, "max_per_window": 2}}, service_id=SERVICE)
-    request = {**op.intent(), "artifact": artifact_for(op, HKEY, NOW), "registry": op.audience,
+    request = {**op.intent(), "artifact": prepare_artifact_intent(op, HKEY, NOW, NOW + timedelta(minutes=10)), "registry": op.audience,
         "expected_head": None, "admission_policy": policy.fields(),
         "responsibility_statement": "Everything this root spawns counts as yours for human responsibility; this grants no resource permissions."}
     script = r'''
@@ -124,9 +125,9 @@ const state = {mode:'governance',handoff_id:'handoff',state:'pending',operation_
 state.digest = await coveredRequestDigest(state.payload);
 assert.deepEqual((await validateProtectedPresentation(state,'handoff',table)).artifact,request.artifact);
 for (const mutation of [
- r=>r.artifact.parent.id=r.subject.root_id,
- r=>r.artifact.domain='other.example',
- r=>r.artifact.root_key=r.subject.root_key,
+ r=>r.artifact.template.parent.id=r.subject.root_id,
+ r=>r.artifact.template.domain='other.example',
+ r=>r.artifact.template.root_key=r.subject.root_key,
  r=>r.registry='https://other.example',
  r=>r.admission_policy.bounds.max_active++,
  r=>r.admission_policy.member_role='admin',
@@ -159,7 +160,7 @@ def test_browser_accepts_the_existing_revoke_through_the_generated_catalog():
     context = ProtectedKeyContext(SERVICE, "team_controller", TEAM, DOMAIN, H, DOMAIN, 1)
     legacy = RevokeHumanRole(str(uuid4()), context, "https://app.customer.example", "customer-app", str(uuid4()), "customer.owner", H)
     op = owner_act_operation(legacy)
-    request = {**legacy.intent(), "artifact": artifact_for(op, HKEY, NOW)}
+    request = {**legacy.intent(), "artifact": prepare_artifact_intent(op, HKEY, NOW, NOW + timedelta(minutes=10))}
     script = r'''
 import assert from 'node:assert/strict';
 import {readFileSync} from 'node:fs';
@@ -177,7 +178,7 @@ for (const {pattern} of Object.values(table['human-role.revoke|default'].subject
 }
 const changed=structuredClone(state);
 changed.payload.request.subject.principal='';
-changed.payload.request.artifact.subject.principal='';
+changed.payload.request.artifact.template.subject.principal='';
 changed.digest=await coveredRequestDigest(changed.payload);
 await assert.rejects(validateProtectedPresentation(changed,'handoff',table));
 '''
