@@ -141,5 +141,21 @@ const lost = () => { throw new TypeError('Failed to fetch'); };
   const failed = page({stored: {[key]: saved}, answers: [lost]});
   await settle();
   assert.ok(failed.store.has(key), 'a failed lookup forgot a selection');
+  // Fifty held selections that are not final, then one that is, off the page:
+  // the page asks about all of them, in batches, and retires only the final one.
+  const many = {};
+  for (let i = 0; i < 50; i++) {
+    many[`aweb.owner-removal:${scope}:cert-${i}`] = JSON.stringify({operation_id: `op-open-${i}`,
+      operation: 'team.agent.remove', variant: 'owner_approved', team_id: team, certificate_id: `cert-${i}`});
+  }
+  many[key] = saved;
+  const batched = page({stored: many, answers: [() => ({final: []}), () => ({final: ['op-final']})]});
+  await settle();
+  await settle();
+  assert.equal(batched.sent.length, 2, 'the held selections were not all asked about');
+  assert.ok(batched.sent.every(([path, body]) => path === '/governance/operations/final' &&
+    body.operation_ids.length <= 50), 'a lookup named more than fifty');
+  assert.ok(!batched.store.has(key), 'the final selection past the first fifty was not forgotten');
+  for (let i = 0; i < 50; i++) assert.ok(batched.store.has(`aweb.owner-removal:${scope}:cert-${i}`));
   console.log('owner removal probe passed');
 })().catch(error => { console.error(error.message); process.exitCode = 1; });

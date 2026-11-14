@@ -73,3 +73,43 @@ async def test_another_scopes_rows_are_never_read(admissions):
                          "WHERE operation_id = ANY($1::text[])", other, json.dumps(elsewhere))
     view = await owner_view(a.group, scope=await scope_of(a.human), subject=a.actor.subject)
     assert sorted(p["operation_id"] for p in view["pending"]) == sorted(mine)
+
+
+def _inspected(plan) -> int:
+    """Rows a plan's nodes actually produced or filtered away, summed over every node."""
+    total = 0
+    stack = [plan]
+    while stack:
+        node = stack.pop()
+        total += int(node.get("Actual Rows", 0)) * int(node.get("Actual Loops", 1))
+        total += int(node.get("Rows Removed by Filter", 0)) + int(node.get("Rows Removed by Index Recheck", 0))
+        stack.extend(node.get("Plans", []))
+    return total
+
+
+@pytest.mark.asyncio
+async def test_each_list_inspects_a_page_however_much_final_history_is_retained(admissions):
+    from datetime import UTC, datetime
+
+    from aweb.protected_signing.owner import LISTS
+
+    a = admissions
+    [template] = await prepared(a, 1)
+    # Thousands of final rows in this scope, as years of decided requests leave.
+    await a.w.db.execute(
+        "INSERT INTO {{tables.protected_signer_operations}} "
+        "(operation_id,handoff_id,requester,intent,request,digest,approval_id,candidate_links,expires_at,scope,"
+        "refusal_code) "
+        "SELECT gen_random_uuid()::text,gen_random_uuid()::text,requester,intent,request,digest,"
+        "gen_random_uuid()::text,'{}'::jsonb,expires_at - make_interval(secs => g),scope,'human_refused' "
+        "FROM {{tables.protected_signer_operations}}, generate_series(1, 4000) g WHERE operation_id=$1", template)
+    await a.w.db.execute("ANALYZE {{tables.protected_signer_operations}}")
+    scope = await a.w.db.fetch_value(
+        "SELECT scope::text FROM {{tables.protected_signer_operations}} WHERE operation_id=$1", template)
+    page = 3
+    for listing, query in LISTS.items():
+        [row] = await a.w.db.fetch_all("EXPLAIN (ANALYZE, FORMAT JSON) " + query,
+                                       scope, datetime.now(UTC), None, None, page + 1)
+        plan = json.loads(row[0])[0]["Plan"] if isinstance(row[0], str) else row[0][0]["Plan"]
+        # A page and its lookahead per branch, never the retained history.
+        assert _inspected(plan) <= 4 * (page + 1), (listing, _inspected(plan), json.dumps(plan)[:2000])
