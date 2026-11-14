@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from team_facts_fixtures import legacy_registry
+
 from collections import OrderedDict
 from time import monotonic
 from aweb.identity_binding import IdentityBinding
@@ -251,7 +253,7 @@ def _build_test_app(aweb_db, registry, *, verified_bindings=()):
     app.state.db = _DbShim()
     app.state.redis = None
     app.state.rate_limiter = None
-    app.state.awid_registry_client = registry
+    app.state.awid_registry_client = legacy_registry(registry)
     if registry is not None:
         # These routing unit cases select the supplied strict foreign authority.
         # Configured-home authority is exercised against real AWID apps.

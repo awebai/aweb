@@ -21,6 +21,9 @@ are made.
 
 from __future__ import annotations
 
+from team_facts_fixtures import LegacyTeamFacts
+from did_key_fixtures import named_did_key
+
 import base64
 import hashlib
 import json
@@ -46,19 +49,19 @@ TEAM_ID = "backend:acme.com"
 FLAG = "AWEB_REQUIRE_REGISTERED_CERTIFICATES"
 
 
-class _FakeRegistry:
+class _FakeRegistry(LegacyTeamFacts):
     """Local fake of the cached AWID registry client's read surface."""
 
     def __init__(
         self,
         *,
-        team_did_key: str = "did:key:zTeam",
+        team_did_key: str | None = None,
         revoked: set[str] | None = None,
         certificate_ids: list[str] | None = None,
         revocations_error: Exception | None = None,
         list_error: Exception | None = None,
     ) -> None:
-        self.team_did_key = team_did_key
+        self.team_did_key = team_did_key or named_did_key("legacy-unit-team")
         self.revoked = revoked or set()
         self.certificate_ids = certificate_ids or []
         self.revocations_error = revocations_error

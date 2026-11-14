@@ -14,6 +14,7 @@ from fastapi import HTTPException
 
 import awid.registry as registry_module
 from awid.registry import CachedRegistryClient
+from team_facts_fixtures import LegacyTeamFacts
 from awid.signing import canonical_json_bytes, sign_message
 from aweb.team_auth_deps import verify_request_certificate
 from test_team_auth_deps import (
@@ -48,6 +49,10 @@ class _Redis:
     async def delete(self, *keys):
         for key in keys:
             self.values.pop(key, None)
+
+
+class LegacyCacheRegistry(LegacyTeamFacts, CachedRegistryClient):
+    """Real cache/transport, with independent explicit-legacy protection facts."""
 
 
 @pytest_asyncio.fixture
@@ -87,7 +92,7 @@ async def world(monkeypatch):
     env.redis = _Redis(clock)
 
     def client():
-        value = CachedRegistryClient(
+        value = LegacyCacheRegistry(
             registry_url="http://registry.test", redis_client=env.redis,
             transport=httpx.MockTransport(handler),
         )
@@ -275,3 +280,14 @@ async def test_cached_revocation_never_triggers_key_refresh(world):
     world.redis.values[key] = json.dumps(entry)
     assert await _refused(world, signer="old") == "revoked"
     assert world.key_reads == 0
+
+
+@pytest.mark.asyncio
+async def test_invalid_certificate_does_not_read_protection(world):
+    from unittest.mock import AsyncMock
+
+    world.registry.get_team_fresh = AsyncMock(
+        side_effect=AssertionError("invalid certificate must not buy a protection read")
+    )
+    assert await _refused(world, signer="old", cert_patch={"alias": "forged"}) == "bad_signature"
+    world.registry.get_team_fresh.assert_not_awaited()
