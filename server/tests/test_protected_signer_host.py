@@ -273,16 +273,6 @@ async def test_notification_adapter_reuses_b3_and_b2_mail_boundary(mail_fails):
         assert all(message.to == approver.contact for message in mail.messages)
 
 
-def test_consumer_receipt_readiness_is_explicit_and_not_inferred_from_a_client(tmp_path):
-    config = settings(tmp_path, owner_act_origins=("https://app.example",))
-    assert config.effect_receipt_origins == ()
-    configured = settings(tmp_path, owner_act_origins=("https://app.example",),
-        effect_receipt_origins=("https://app.example",))
-    assert configured.effect_receipt_origins == ("https://app.example",)
-    with pytest.raises(ValidationError):
-        settings(tmp_path, effect_receipt_origins=("https://app.example/path",))
-
-
 def test_current_host_composition_calls_the_installed_production_custody_port_without_future_arguments():
     from aweb_naapp.runtime.protected_signer import ProtectedKeyContext
     from awid.did import did_from_public_key, stable_id_from_did_key

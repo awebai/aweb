@@ -455,15 +455,13 @@ logs and traces and return no-store; it exposes no private delivery headers.
 
 ### Execution-intent owner-act delivery readiness
 
-`AWEB_PROTECTED_EFFECT_RECEIPT_ORIGINS` is an explicit list of canonical pinned
-consumer origins whose protected effect verifier and exact historical receipt
-route have been deployed and checked by the operator. It defaults to empty.
-It does not configure a client, discover a consumer or cut a team over. An
-owner-act origin also needs its pinned `AWEB_PROTECTED_OWNER_ACT_ORIGINS` client,
-current authoritative protection binding and the matching isolated service key.
-A protected intent requiring service-owned delivery refuses
-`operation_not_served` before creating a pending approval when those capabilities
-are absent. Publishing a client or server alone does not establish readiness.
+Owner-act readiness configuration is composed with the isolated custody's
+matching capability and exact consumer-receipt implementation. This component
+does not add a host setting that the installed custody cannot accept. Until
+that paired composition is present, a required service-owned owner act refuses
+`operation_not_served` before pending or signing. A pinned HTTP client by itself
+is not evidence of an installed verifier or receipt route; deployment readiness
+and explicit cutover remain separate from the current approval authority.
 
 Live approvals use the single `approval_format="intent_v1"` prepare form. The
 frozen descriptor contains the exact static template, delivery target and original
