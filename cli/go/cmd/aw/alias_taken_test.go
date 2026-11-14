@@ -31,6 +31,9 @@ func TestAcceptInviteAliasTakenIsAPlainSentence(t *testing.T) {
 			aliasTaken.Store(true)
 			var memberDIDKey, memberStableID string
 			server := newLocalHTTPServer(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				if serveExplicitLegacyInviteTeam(t, w, r, "backend:acme.com") {
+					return
+				}
 				switch {
 				case r.Method == http.MethodPost && strings.HasSuffix(r.URL.Path, "/certificates"):
 					if aliasTaken.Load() {

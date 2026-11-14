@@ -27,6 +27,7 @@ const removeTestOperation = "88888888-8888-4888-8888-88888888abcd"
 // signs its canonical bytes with signKey. tamper changes what it freezes or
 // signs (see the cases).
 type removeService struct {
+	serviceOwned bool
 	mu           sync.Mutex
 	server       *httptest.Server
 	signKey      ed25519.PrivateKey
@@ -124,10 +125,12 @@ func (s *removeService) committed(t *testing.T) []byte {
 	if s.tamper == "signed-by-another-key" {
 		_, key, _ = ed25519.GenerateKey(nil)
 	}
-	raw, _ := json.Marshal(map[string]any{"state": "committed", "result": map[string]any{
-		"signing":   base64.StdEncoding.EncodeToString(signing),
-		"signature": base64.StdEncoding.EncodeToString(ed25519.Sign(key, signing)),
-	}})
+	signature := ed25519.Sign(key, signing)
+	var result any = map[string]any{"signing": base64.StdEncoding.EncodeToString(signing), "signature": base64.StdEncoding.EncodeToString(signature)}
+	if s.serviceOwned {
+		result = appliedTestResult(s.sent["operation_id"].(string), signing, signature)
+	}
+	raw, _ := json.Marshal(map[string]any{"state": "committed", "result": result})
 	return raw
 }
 

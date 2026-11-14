@@ -71,10 +71,11 @@ class LiveChatTests(unittest.TestCase):
             plugin_dir = temp / "plugins/platforms"
             plugin_dir.mkdir(parents=True)
             (plugin_dir / "aweb").symlink_to(Path(__file__).resolve().parents[1])
-            (temp / "config.yaml").write_text("_config_version: 12\nplugins:\n  enabled: [platforms/aweb]\ngateway:\n  unauthorized_dm_behavior: ignore\n  platforms:\n    aweb:\n      enabled: true\n")
+            (temp / "config.yaml").write_text("_config_version: 12\nplugins:\n  enabled: [platforms/aweb]\ngateway:\n  unauthorized_dm_behavior: ignore\n  platforms:\n    aweb:\n      enabled: true\n      gateway_restart_notification: false\n")
             env.update(HERMES_HOME=str(temp), PYTHONPATH=str(source),
                        AWEB_PLATFORM_ENABLED="true", AWEB_PLATFORM_WORKDIR=str(receiver),
-                       AWEB_ALLOWED_USERS=summary["from_address"], AWEB_ALLOW_ALL_USERS="false")
+                       AWEB_ALLOWED_USERS=summary["from_address"], AWEB_ALLOW_ALL_USERS="false",
+                       AWEB_HOME_CHANNEL="alice")
             log = open(temp / "gateway.log", "w+")
             gateway = subprocess.Popen([sys.executable, "-m", "hermes_cli.main", "gateway", "run"],
                                        cwd=temp, env=env, stdout=log, stderr=subprocess.STDOUT)
@@ -138,10 +139,10 @@ class LiveChatTests(unittest.TestCase):
                 else:
                     self.fail("new input was not delivered through the replacement stream")
                 self.assertEqual(len([r for r in current if r["from_alias"] == "hermes"]), 3)
-                body.write_text("/start")  # Real Hermes command with an intentionally empty response.
-                no_reply = json.loads(aw(sender, "chat", "send", "--session-id", session,
+                body.write_text("/start")  # Now ordinary content, never a remote Hermes command.
+                slash_content = json.loads(aw(sender, "chat", "send", "--session-id", session,
                                         "--plaintext", "--leave", "--body-file", str(body)))
-                ids.append(no_reply["message_id"])
+                ids.append(slash_content["message_id"])
                 deadline = time.monotonic() + 10
                 while time.monotonic() < deadline:
                     current = rows()
@@ -149,8 +150,8 @@ class LiveChatTests(unittest.TestCase):
                         break
                     time.sleep(.1)
                 else:
-                    self.fail("successful no-reply processing was not acknowledged")
-                self.assertEqual(len([r for r in current if r["from_alias"] == "hermes"]), 3)
+                    self.fail("slash-prefixed content was not processed/acknowledged")
+                self.assertEqual(len([r for r in current if r["from_alias"] == "hermes"]), 4)
                 print(json.dumps({"session_id": session, "input_ids": ids, "rows": current,
                                   "restarted_stream_pid": stream_pid, "replacement_stream_pid": next(iter(replacement))}))
             except BaseException:

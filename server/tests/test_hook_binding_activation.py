@@ -30,7 +30,7 @@ from aweb.hook_bindings import (
     revoke_binding,
     write_pending_bindings,
 )
-from aweb.service_errors import ConflictError, ForbiddenError, NotFoundError
+from aweb.service_errors import ConflictError, ForbiddenError, NotFoundError, ServiceError
 from aweb_naapp.hooks.owner_act import PREFIX
 from aweb_naapp.hooks.strictjson import canonical
 from awid.did import did_from_public_key
@@ -182,6 +182,66 @@ async def _activate(env, binding, *, owner=None, team_id=TEAM, act="hook-binding
     return await activate_binding(
         env.db, env.verifier, team_id=team_id, binding_id=binding.binding_id, signing=signing, signature=signature,
     )
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("expire", [False, True])
+async def test_original_protection_deadline_after_last_effect_await_rolls_back(env, monkeypatch, expire):
+    from awid import protected_membership
+
+    clock = 1000.0
+    monkeypatch.setattr(protected_membership, "monotonic", lambda: clock)
+    await _install(env.db)
+    registration, _ = await _bindings(env)
+    signing, signature = env.owner.sign("hook-binding.activate", registration)
+    reached = False
+
+    async def final_effect(tx):
+        nonlocal clock, reached
+        assert await tx.fetch_value(
+            "SELECT state FROM {{tables.app_hook_bindings}} WHERE binding_id=$1",
+            registration.binding_id,
+        ) == "active"
+        reached = True
+        if expire:
+            clock += 61
+
+    async def apply():
+        return await activate_binding(
+            env.db, env.verifier, team_id=TEAM, binding_id=registration.binding_id,
+            signing=signing, signature=signature, in_transaction=final_effect,
+        )
+
+    if expire:
+        with pytest.raises(ServiceError) as refused:
+            await apply()
+        assert refused.value.status_code == 503
+        assert "protected_state_unavailable" in str(refused.value)
+    else:
+        assert (await apply()).state == "active"
+    assert reached
+    assert await env.db.fetch_value(
+        "SELECT state FROM {{tables.app_hook_bindings}} WHERE binding_id=$1",
+        registration.binding_id,
+    ) == ("pending" if expire else "active")
+    assert await env.db.fetch_value("SELECT count(*) FROM {{tables.owner_act_nonces}}") == int(not expire)
+
+
+@pytest.mark.asyncio
+async def test_protected_core_owner_act_refusal_preserves_its_code(env):
+    await _install(env.db)
+    registration, _ = await _bindings(env)
+    await env.registry_db.execute(
+        "INSERT INTO {{tables.team_protection}} "
+        "(domain,name,service_id,service_did_key,generation) VALUES ('acme.com','backend','test-service',$1,1)",
+        _did(SigningKey.generate()),
+    )
+    with pytest.raises(ServiceError) as refused:
+        await _activate(env, registration)
+    assert refused.value.status_code == 403
+    assert refused.value.detail["code"] == "protected_controller_required"
+    assert (await list_app_bindings(env.db, team_id=TEAM, app_id="logs"))[0].state == "pending"
+    assert await env.db.fetch_value("SELECT count(*) FROM {{tables.owner_act_nonces}}") == 0
 
 
 async def _revoke(env, binding, *, owner=None, team_id=TEAM, act="hook-binding.revoke"):

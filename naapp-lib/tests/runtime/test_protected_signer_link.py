@@ -10,6 +10,8 @@ of the human-assurance policy vectors."""
 
 from __future__ import annotations
 
+import base64
+import json
 import uuid
 from dataclasses import replace
 from datetime import datetime, timedelta
@@ -207,6 +209,46 @@ async def test_a_signed_but_unconfirmed_request_is_never_reported_expired_to_its
     # The signer's own receipt keeps it unresolved, not expired.
     receipt = await world.signer.receipt(prepared.operation_id, reader=world.reader)
     assert (receipt.state, receipt.code) == ("unknown", "external_effect_unresolved")
+
+
+@pytest.mark.parametrize("provider_name", [None, "admission"])
+@pytest.mark.parametrize("expired", [False, True])
+async def test_a_signed_receipt_without_a_confirmation_provider_preserves_its_history(
+    mailing, monkeypatch, provider_name, expired
+):
+    from aweb_naapp.hooks.owner_act import owner_act_signing_bytes
+    from aweb_naapp.runtime.protected_signer import catalog
+
+    world, contacts = mailing
+    prepared, _ = await mailed(world, contacts)
+    signing = owner_act_signing_bytes(prepared.payload["artifact"])
+    signed = {"signing": base64.b64encode(signing).decode(),
+        "signature": base64.b64encode(world.key.sign(signing).signature).decode()}
+    # Model a historical signed, non-retained row. The definition either has
+    # no external confirmation port, or its named port is no longer installed.
+    await world.passkeys.db.execute(
+        "UPDATE {{tables.protected_signer_operations}} SET signed_result=$2::jsonb WHERE operation_id=$1",
+        prepared.operation_id, json.dumps(signed))
+    spec = catalog.OPERATIONS[("human-role.revoke", "default")]
+    monkeypatch.setattr(catalog, "OPERATIONS", {**catalog.OPERATIONS,
+        ("human-role.revoke", "default"): replace(spec, effect=replace(spec.effect, provider=provider_name))})
+    assert world.signer.admission is None
+    if expired:
+        world.clock.advance(timedelta(hours=25))
+    query = "SELECT * FROM {{tables.protected_signer_operations}} WHERE operation_id=$1"
+    before = await world.passkeys.db.fetch_one(query, prepared.operation_id)
+    audit_before = await world.audit.kinds()
+
+    def never_sign(*args):
+        pytest.fail("a receipt read cannot sign another artifact")
+
+    monkeypatch.setattr(world.signer.custody, "sign_owner_act", never_sign)
+    receipt = await world.signer.receipt(prepared.operation_id, reader=world.reader)
+    assert (receipt.state, receipt.code) == (
+        ("unknown", "external_effect_unresolved") if expired else ("pending", "effect_in_progress"))
+    assert receipt.result is None
+    assert await world.passkeys.db.fetch_one(query, prepared.operation_id) == before
+    assert await world.audit.kinds() == audit_before
 
 
 async def test_a_signing_after_the_authorized_read_still_spends_the_link(mailing, monkeypatch):

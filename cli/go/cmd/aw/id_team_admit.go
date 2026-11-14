@@ -220,7 +220,7 @@ func admittedCertificate(result []byte, prepared *handoff.Prepared, body map[str
 	invalid := func(format string, args ...any) error {
 		return withErrorCode("signed_certificate_invalid", fmt.Errorf("the signed certificate is not the one aw requested: "+format, args...))
 	}
-	signing, signature, reason := signedResult(result)
+	signing, signature, reason := retainedSignedResult(result, prepared)
 	if reason != "" {
 		return nil, invalid("%s", reason)
 	}

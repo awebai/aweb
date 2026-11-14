@@ -736,6 +736,7 @@ core's chain, and pgdbm records it under its own module name. Its tables:
 
 <!-- BEGIN SOURCE INVENTORY: aweb-kit-tables -->
 - `owner_act_nonces`
+- `protected_effect_receipts`
 <!-- END SOURCE INVENTORY: aweb-kit-tables -->
 
 ---
@@ -758,6 +759,7 @@ router entry.
 - `agent_activity`
 - `apps`
 - `hook_bindings`
+- `protected_effect_receipts`
 - `app_hooks`
 - `connect`
 - `chat`

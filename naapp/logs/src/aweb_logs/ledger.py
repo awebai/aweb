@@ -100,6 +100,7 @@ async def append(
     received_at: datetime,
     before_append: Callable[[Any], Awaitable[None]] | None = None,
     purge_act: str | None = None,
+    authority_fence: Callable[[], None] | None = None,
 ) -> Appended | Conflicted:
     """Append a verified event in a new transaction.
 
@@ -107,11 +108,14 @@ async def append(
     :func:`append_on` with its existing transaction instead.
     """
     async with db.transaction() as tx:
-        return await append_on(
+        result = await append_on(
             tx, signer, event=event, signing_bytes=signing_bytes, signature=signature,
             key_evidence=key_evidence, received_at=received_at, before_append=before_append,
             purge_act=purge_act,
         )
+        if authority_fence is not None:
+            authority_fence()
+        return result
 
 
 async def append_on(

@@ -13,11 +13,11 @@ class OperationEffect:
     confirmation_commit: str | None = None
     delivery_plan: Callable | None = None
     cache_tolerates_unavailable: bool = False
+    invalidates_membership: bool = False
 
 
 LOCAL_SIGNATURE = OperationEffect(delivery_plan=owner_act_delivery)
 ENDORSEMENT = OperationEffect("admission", signing_commit="record_endorsement")
-REGISTERED_MEMBERSHIP = OperationEffect("admission", confirmation_commit="confirm", delivery_plan=certificate_delivery, cache_tolerates_unavailable=True)
-REVOKED_MEMBERSHIP = OperationEffect("admission", confirmation_commit="confirm", delivery_plan=revocation_delivery)
-
-OWNER_REVOKED_MEMBERSHIP = OperationEffect("owner_removal", confirmation_commit="confirm", delivery_plan=revocation_delivery)
+REGISTERED_MEMBERSHIP = OperationEffect("admission", confirmation_commit="confirm", delivery_plan=certificate_delivery, cache_tolerates_unavailable=True, invalidates_membership=True)
+REVOKED_MEMBERSHIP = OperationEffect("admission", confirmation_commit="confirm", delivery_plan=revocation_delivery, invalidates_membership=True)
+OWNER_REVOKED_MEMBERSHIP = OperationEffect("owner_removal", confirmation_commit="confirm", delivery_plan=revocation_delivery, invalidates_membership=True)

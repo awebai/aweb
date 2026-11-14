@@ -605,6 +605,10 @@ def create_app(
     app.include_router(agent_activity_router)
     app.include_router(apps_router)
     app.include_router(hook_bindings_router)
+    from aweb_naapp.runtime.protected_effect_receipts import receipt_router
+
+    protected_effect_receipts_router = receipt_router(lambda request: request.app.state.db.get_manager("aweb"))
+    app.include_router(protected_effect_receipts_router)
     app.include_router(app_hooks_router)
     app.include_router(connect_router)
     app.include_router(chat_router)

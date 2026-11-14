@@ -796,7 +796,8 @@ async def test_signed_continuation_after_rotation_keeps_stored_route(
             await cached.get_team_public_key("example.test", TEAM.split(":")[0])
             await cached.get_team_revocations("example.test", TEAM.split(":")[0])
             await listener.aclose()
-            stack.callback(setattr, env.app.state, "awid_registry_client", env.app.state.awid_registry_client)
+            available_registry = env.app.state.awid_registry_client
+            stack.callback(setattr, env.app.state, "awid_registry_client", available_registry)
             stack.push_async_callback(cached.aclose)
             env.app.state.awid_registry_client = cached
         result = await request(env, alice, "POST", "/v1/messages", payload)
@@ -810,11 +811,16 @@ async def test_signed_continuation_after_rotation_keeps_stored_route(
         else:
             assert result.status_code == (503 if evidence == "unavailable" else 403), result.text
             if evidence == "unavailable":
-                assert result.json()["detail"] == "identity_binding_unavailable"
+                # Fresh certificate protection evidence is required before
+                # the continuation's independent identity-binding read.
+                assert result.json()["detail"].startswith("AWID team key resolution upstream unavailable (ConnectError):")
             assert await env.db.fetch_value("SELECT COUNT(*) FROM {{tables.messages}}") == before_count
         assert before == await env.db.fetch_all("SELECT * FROM {{tables.agents}} ORDER BY agent_id")
         assert await resolve_agent_by_did(env.infra, stable) is None
         # A stored continuation must not restore stable-DID routing for new mail.
+        if evidence == "unavailable":
+            # Restore real AWID for the independent first-contact neighbor.
+            env.app.state.awid_registry_client = available_registry
         new_mail = await request(env, alice, "POST", "/v1/messages", {
             "to_did": stable, "subject": "new route", "body": "new route",
             "new_conversation": True, "conversation_id": str(uuid4()),

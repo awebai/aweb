@@ -30,6 +30,7 @@ from fastapi.responses import JSONResponse
 from pgdbm import AsyncDatabaseManager
 from pydantic import Field, SecretStr, StrictInt, model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
+import httpx
 
 from ..config import load_member_signing_keys
 from .composition import IndependentProtectedSigner
@@ -46,6 +47,8 @@ class HostSettings(BaseSettings):
     profile_file: Path
     scope_file: Path
     controller_key_file: Path
+    service_key_file: Path | None = None
+    owner_act_origins: tuple[str, ...] = ()
     controller_keys_file: Path | None = None
     member_keys_file: Path
     worker_uids: list[Annotated[StrictInt, Field(gt=0)]] = Field(min_length=1)
@@ -67,6 +70,10 @@ class HostSettings(BaseSettings):
 
     @model_validator(mode="after")
     def database_source(self):
+        from awid.log import require_canonical_server_origin
+
+        for origin in self.owner_act_origins:
+            require_canonical_server_origin(origin)
         if self.database_url_file is not None:
             if "database_url" in self.model_fields_set:
                 raise ValueError("protected_database_url_sources_conflict")
@@ -155,7 +162,7 @@ def load_custodies(settings, *, profile, scope):
         context = binding.context()
         custody = ProtectedControllerCustody(
             service_id=context.service_id, team_id=context.authority_id, domain=context.authority_domain,
-            key_file=paths[binding.authority_key_did], worker_uids=frozenset(settings.worker_uids), authority_kind=context.authority_kind,
+            key_file=paths[binding.authority_key_did], service_key_file=settings.service_key_file, worker_uids=frozenset(settings.worker_uids), authority_kind=context.authority_kind,
         )
         if custody.team_key_did != binding.authority_key_did:
             raise SignerRefused("authority_changed")
@@ -166,6 +173,10 @@ def load_custodies(settings, *, profile, scope):
     private_keys = ({custody.team_key_did for _, custody in custodians}
                     | {binding.authority_key_did for binding in profile.bindings}
                     | set(profile.namespace_keys().values()))
+    service_keys = {custody.service_did_key for _,custody in custodians if custody.service_did_key is not None}
+    if service_keys & private_keys:
+        raise SignerRefused("custody_not_isolated")
+    private_keys |= service_keys
     if any(did_key_from_signing_key(key) in private_keys for key in keys.values()):
         raise SignerRefused("custody_not_isolated")
     return selected, keys, custodians
@@ -195,6 +206,10 @@ async def open_composition(
             member_signing_keys=keys,
         )
         resources.push_async_callback(registry.aclose)
+        consumer_clients = {}
+        if settings.owner_act_origins:
+            consumer_client = await resources.enter_async_context(httpx.AsyncClient(follow_redirects=False, timeout=10))
+            consumer_clients = {origin: consumer_client for origin in settings.owner_act_origins}
         groups = []
 
         async def proof_context(scope, *, tx):
@@ -204,7 +219,7 @@ async def open_composition(
 
         components = [IndependentProtectedSigner.from_profile(
             db, profile=profile, scope=binding.scope.model_dump(mode="json"), registry_client=registry, custody=custody,
-            delivery=ProtectedNotifications(db=db, mailer=mailer, human_origin=profile.human_origin),
+            delivery=ProtectedNotifications(db=db, mailer=mailer, human_origin=profile.human_origin), consumer_clients=consumer_clients,
             proof_context=proof_context if len(custodians) > 1 else None,
         ) for binding, custody in custodians]
         composition = components[0]

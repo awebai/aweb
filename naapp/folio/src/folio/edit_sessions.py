@@ -41,6 +41,8 @@ async def member_proof(runtime: NaappRuntime, row: dict[str, Any]) -> Membership
         row["team_id"],
         certificate_id=row["certificate_id"],
         team_did_key=key,
+        principal=row.get("created_by_did_aw") or row.get("created_by_did_key"),
+        member_alias=row.get("created_by_alias"),
     )
 
 
@@ -50,6 +52,9 @@ def require_proof(row: dict[str, Any], proof: MembershipProof) -> None:
         proof.team_id != row["team_id"]
         or proof.certificate_id != row["certificate_id"]
         or proof.team_did_key != row["creator_team_did_key"]
+        or (proof.protection_observation is not None and proof.protection_observation.protected
+            and (proof.principal != (row.get("created_by_did_aw") or row.get("created_by_did_key"))
+                 or proof.member_alias != row.get("created_by_alias")))
         or not proof.is_fresh_at(now)
     ):
         raise unavailable()
@@ -115,6 +120,7 @@ async def exchange(
         if current is None:
             raise unavailable()
         row.update(dict(current))
+        require_proof(row, proof)
     return credential, row
 
 
@@ -162,6 +168,7 @@ async def access(
         require_binding(permit, row)
         require_binding(permit, row, session=True)
         yield tx, row
+        require_proof(row, proof)
 
 
 @asynccontextmanager

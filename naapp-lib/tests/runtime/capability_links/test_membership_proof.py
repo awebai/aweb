@@ -6,6 +6,7 @@ from aweb_naapp.runtime.capability_links import LinkRefused, read
 from aweb_naapp.runtime.clock import seconds_to_ns
 
 from .conftest import SCOPE, T0
+from .test_lifecycle import action_app as action_app
 from .test_lifecycle import holder
 
 
@@ -293,3 +294,56 @@ async def test_http_phase_one_refusal_precedes_transaction_and_keeps_privacy_hea
     assert _has_link_headers(response)
     assert len(checked) == 1 and checked[0].scope == SCOPE
     assert checked[0].certificate_id not in response.text
+
+
+@pytest.mark.parametrize("operation", ["exchange", "read", "admit"])
+async def test_protected_observation_expiry_after_local_authority_await_refuses(
+    db, authority, action_app, monkeypatch, operation,
+):
+    from dataclasses import replace
+    from time import monotonic
+    from uuid import uuid4
+
+    from awid import protected_membership
+    from awid.did import did_from_public_key
+    from awid.protected_membership import TeamProtectionObservation
+    from nacl.signing import SigningKey
+
+    from aweb_naapp.runtime.capability_links import admit, exchange
+
+    from .conftest import CREATOR, TEAM_KEY, mint_link, proof_for_link
+    from .test_exchange import body
+    from .test_lifecycle import action_body
+
+    minted = await mint_link(db, authority)
+    caller = await holder(db, authority)
+    link_id = minted.link_id if operation == "exchange" else caller.link_id
+    observation = TeamProtectionObservation(SCOPE.team_id, TEAM_KEY, {
+        "mode": "protected", "service_id": "test-signer", "generation": 1,
+        "history_id": str(uuid4()),
+        "service_did_key": did_from_public_key(bytes(SigningKey(b"S" * 32).verify_key)),
+    }, monotonic()+60)
+    proof = replace(await proof_for_link(db, link_id),
+                    protection_observation=observation, principal=CREATOR)
+    local = authority.require_current_creator
+    clock = protected_membership.monotonic
+
+    async def expire_after_await(tx, **kwargs):
+        await local(tx, **kwargs)
+        await tx.fetch_value("SELECT 1")
+        monkeypatch.setattr(protected_membership, "monotonic", lambda: clock()+61)
+
+    authority.require_current_creator = expire_after_await
+    with pytest.raises(LinkRefused) as refused:
+        if operation == "exchange":
+            await exchange(db, authority, link_id=link_id, body=body(minted.secret),
+                           client="203.0.113.7", now=T0, proof=proof)
+        else:
+            async with db.transaction() as tx:
+                kwargs = dict(caller=caller, page_id=SCOPE.page_id, now=T0, proof=proof)
+                if operation == "read":
+                    await read(tx, authority, **kwargs)
+                else:
+                    await admit(tx, authority, action_app, body=action_body(), client="203.0.113.7", **kwargs)
+    assert (refused.value.status, refused.value.code) == (503, "protected_state_unavailable")
+    assert await db.fetch_value("SELECT count(*) FROM {{tables.test_link_actions}}") == 0

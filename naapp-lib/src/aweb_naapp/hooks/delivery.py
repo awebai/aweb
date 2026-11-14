@@ -20,6 +20,11 @@ from typing import Any
 from urllib.parse import urlsplit
 
 from awid.did import did_from_public_key
+from awid.protected_effect import EffectRefused
+from awid.protected_membership import (
+    TeamProtectionObservation,
+    check_presented_membership,
+)
 from awid.team_certificate import (
     TeamCertificateError,
     check_team_certificate,
@@ -83,7 +88,12 @@ class ReceiveOptions:
     controller key, its revoked certificate ids and its registered ones.
     ``audience`` and ``binding_id`` are required. A target that takes client
     deliveries gives all three registry facts; without the key or the
-    registered ids a client delivery is refused as ``verifier_misconfigured``."""
+    registered ids a client delivery is refused as ``verifier_misconfigured``.
+    Client deliveries also require the original negotiated protection observation
+    for their exact certificate. Unknown protection is unavailable; a protected
+    presentation must match its full registered artifact digest. The adapter
+    retains this observation and checks its deadline after its final effect await.
+    """
 
     audience: str
     binding_id: str
@@ -91,6 +101,7 @@ class ReceiveOptions:
     team_key_did: str = ""
     revoked_certificate_ids: Collection[str] = ()
     registered_certificate_ids: Collection[str] | None = None
+    protection_observation: TeamProtectionObservation | None = None
 
 
 @dataclass(frozen=True)
@@ -248,13 +259,22 @@ def _verify_client_certificate(encoded: str, envelope: Envelope, options: Receiv
         )
     _certificate_names_producer(_decode_certificate(encoded), envelope)
     try:
-        check_team_certificate(
+        certificate = check_team_certificate(
             encoded,
             subject_did_key=envelope.producer_did_key,
             team_did_key=options.team_key_did,
             revoked_certificate_ids=options.revoked_certificate_ids,
             registered_certificate_ids=options.registered_certificate_ids,
         )
+        observation = options.protection_observation
+        if observation is None:
+            raise EffectRefused("protected_state_unavailable")
+        observation.require_fresh()
+        if observation.team_id != envelope.team_id or observation.controller_did_key != options.team_key_did:
+            raise TeamCertificateError("certificate_binding_mismatch")
+        check_presented_membership(observation, certificate)
+    except EffectRefused as exc:
+        raise Refused(exc.code) from exc
     except TeamCertificateError as exc:
         if exc.reason == "invalid_team_key":
             raise Refused("verifier_misconfigured", "the team key does not decode") from None

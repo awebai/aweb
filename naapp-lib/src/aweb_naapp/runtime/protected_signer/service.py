@@ -1302,5 +1302,10 @@ class ProtectedSigner:
                     return await self._execution_refusal(operation_id, reader, SignerRefused("approval_expired"),
                         human_session=human_session)
         if row["signed_result"] is not None and row["result"] is None:
-            return await self._reconcile_admission(operation_id, reader, may_send=False, human_session=human_session)
+            # An absent confirmation port leaves history unresolved. Keep
+            # main's definition-owned guard for both human and requester reads.
+            operation = owner_act_operation(self._operation(_json(row["request"])))
+            provider_name = operation.spec.effect.provider
+            if provider_name is not None and getattr(self, provider_name, None) is not None:
+                return await self._reconcile_admission(operation_id, reader, may_send=False, human_session=human_session)
         return self._receipt(row)

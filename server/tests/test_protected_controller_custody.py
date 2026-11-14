@@ -160,3 +160,50 @@ def test_symlink_directory_is_not_a_custody_boundary(case):
     path.parent.symlink_to(original, target_is_directory=True)
     with pytest.raises(SignerRefused, match="custody_not_isolated"):
         custody(case)
+
+
+@pytest.mark.parametrize(
+    "reuse_controller",
+    [False, True],
+    ids=["distinct-service-key", "reused-controller-key"],
+)
+def test_attestation_key_is_loaded_only_from_separate_isolated_custody(
+    case, reuse_controller
+):
+    path, controller, operation, _ = case
+    service = controller if reuse_controller else SigningKey.generate()
+    service_path = path.parent / "service.key"
+    service_path.write_text(bytes(service).hex() + "\n")
+    service_path.chmod(0o400)
+    arguments = dict(
+        service_id=operation.context.service_id,
+        team_id=operation.context.authority_id,
+        domain=operation.context.authority_domain,
+        key_file=path,
+        worker_uids=frozenset({65534}),
+        service_key_file=service_path,
+    )
+    if reuse_controller:
+        with pytest.raises(SignerRefused, match="custody_not_isolated"):
+            ProtectedControllerCustody(**arguments)
+    else:
+        adapter = ProtectedControllerCustody(**arguments)
+        assert adapter.service_did_key == did_from_public_key(bytes(service.verify_key))
+        assert adapter.service_did_key != adapter.team_key_did
+        assert not hasattr(adapter, "export") and not hasattr(adapter, "sign")
+
+
+def test_world_readable_service_key_refuses_before_signing(case):
+    path, _, operation, _ = case
+    service_path = path.parent / "service.key"
+    service_path.write_text(bytes(SigningKey.generate()).hex() + "\n")
+    service_path.chmod(0o644)
+    with pytest.raises(SignerRefused, match="custody_not_isolated"):
+        ProtectedControllerCustody(
+            service_id=operation.context.service_id,
+            team_id=operation.context.authority_id,
+            domain=operation.context.authority_domain,
+            key_file=path,
+            worker_uids=frozenset({65534}),
+            service_key_file=service_path,
+        )

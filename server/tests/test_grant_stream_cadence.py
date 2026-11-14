@@ -3,6 +3,7 @@ from dataclasses import replace
 from datetime import datetime, timedelta, timezone
 from types import SimpleNamespace
 from uuid import uuid4
+from team_facts_fixtures import legacy_team
 
 import httpx
 import pytest
@@ -45,6 +46,9 @@ def harness(monkeypatch):
 
         def __init__(self):
             self.calls = []
+
+        async def get_team_fresh(self, domain, name):
+            return legacy_team(domain, name)
 
         async def get_team_revocations(self, *_):
             self.calls.append(clock.seconds)
