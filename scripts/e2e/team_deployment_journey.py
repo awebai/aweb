@@ -51,8 +51,7 @@ from pathlib import Path
 import pexpect
 import yaml
 from aweb_naapp_testing.network import make_certificates
-from awid.did import did_from_public_key
-from nacl.signing import SigningKey
+from awid.did import did_from_public_key, generate_keypair
 
 REPO = Path(__file__).resolve().parents[2]
 TEAM_DIR = REPO / "deploy" / "team"
@@ -967,10 +966,10 @@ class World:
             """The custodian installs the signer's distinct service attestation
             key beside the controller's, from a short-lived source only the
             signer's uid reads; returns its public did:key."""
-            key = SigningKey.generate()
+            seed, public = generate_keypair()
             source = self.world / "private-provisioning"
             source.mkdir(mode=0o700)
-            (source / "service.key").write_text(bytes(key).hex() + "\n")
+            (source / "service.key").write_text(seed.hex() + "\n")
             try:
                 run("docker", "run", "--rm", "-v", f"{source}:/p:ro",
                     "-v", f"{signer_secrets / 'private-controller'}:/c", "alpine:3.22", "install", "-m", "0400",
@@ -978,7 +977,7 @@ class World:
             finally:
                 run("docker", "run", "--rm", "-v", f"{self.world}:/w", "alpine:3.22", "rm", "-rf",
                     "/w/private-provisioning")
-            return did_from_public_key(bytes(key.verify_key))
+            return did_from_public_key(public)
 
         def protect_team(service_did_key: str) -> dict:
             """The registry operator's explicit protection of the team, in the

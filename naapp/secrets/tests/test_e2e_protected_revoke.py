@@ -36,8 +36,7 @@ from collections.abc import Iterator
 from pathlib import Path
 
 import pytest
-from awid.did import did_from_public_key
-from nacl.signing import SigningKey
+from awid.did import did_from_public_key, generate_keypair
 from protected_round_trip import (
     AnswerDrop,
     AnswerWitness,
@@ -212,10 +211,10 @@ def protected_site(lane: ProtectedLane) -> Site:
         """The custodian installs the signer's distinct service attestation
         key beside the controller's, from a short-lived source; returns its
         public did:key for the registry's protection binding."""
-        key = SigningKey.generate()
+        seed, public = generate_keypair()
         source = lane.runtime / "private-provisioning"
         source.mkdir(mode=0o700)
-        (source / "service.key").write_text(bytes(key).hex() + "\n")
+        (source / "service.key").write_text(seed.hex() + "\n")
         _docker("run", "--rm", "-v", f"{source}:/p", "alpine:3.22", "sh", "-c",
                 "chown -R 1001:1001 /p && chmod 0400 /p/service.key")
         try:
@@ -225,7 +224,7 @@ def protected_site(lane: ProtectedLane) -> Site:
                           mounts=(f"{source}:/private-provisioning:ro",))
         finally:
             _docker("run", "--rm", "-v", f"{lane.runtime}:/r", "alpine:3.22", "rm", "-rf", "/r/private-provisioning")
-        return did_from_public_key(bytes(key.verify_key))
+        return did_from_public_key(public)
 
     def protect_team(service_did_key: str) -> dict:
         """The registry operator's explicit protection of the team, in the
