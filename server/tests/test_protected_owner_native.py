@@ -104,7 +104,8 @@ def owner_fixture_view():
         "history": [{"operation_id": "op-0", "operation": "human-role.revoke", "requester": "did:aw:ROOT",
             "digest": "cd" * 32, "state": "refused", "code": "human_refused", "at": "2026-11-13T10:00:00Z",
             "decided_by_you": True, "title": "Remove did:aw:ANN from app.owner?"}],
-        "admitted": [{"root_id": "did:aw:ROOT", "alias": "build-<1>", "child_id": None, "child_key": "did:key:zK",
+        "admitted": [{"root_id": "did:aw:ROOT", "alias": "build-<1>", "certificate_id": "cert-1", "child_id": None,
+            "child_key": "did:key:zK",
             "admitted_at": "2026-11-13T09:00:00Z", "state": "active"}],
         "roots": [{"root_id": "did:aw:ROOT", "active": 3, "in_window": 2, "next_at": "2026-11-13T10:00:00Z"}],
         "policy": {"version": 1, "digest": "sha256:" + "e" * 64, "teams": ["engineering:customer.example"],
@@ -240,3 +241,29 @@ def test_a_requester_the_team_knows_is_named_by_its_alias():
     assert [e["requester_name"] for e in entries] == ["ops", "build-1", None]
     _name_requesters(entries, None)
     assert [e["requester_name"] for e in entries] == [None, None, None]
+
+
+@pytest.mark.asyncio
+async def test_only_the_exact_admitted_certificate_counts_as_added_through_this_signer():
+    """AWID allows several active certificates for one member key. Only the
+    certificate this signer admitted is credited to it; another certificate
+    for the same key joined another way."""
+    from types import SimpleNamespace
+
+    from aweb.protected_signing.owner import _members
+
+    def certificate(certificate_id, alias):
+        return SimpleNamespace(certificate_id=certificate_id, alias=alias, member_did_key="did:key:zSHARED",
+            member_did_aw=None, identity_scope="local")
+
+    async def certificates(domain, name, *, active_only):
+        assert (domain, name, active_only) == ("customer.example", "engineering", True)
+        return [certificate("cert-admitted", "build-1"), certificate("cert-other", "build-1-elsewhere")]
+
+    c = SimpleNamespace(context=SimpleNamespace(authority_id="engineering:customer.example"),
+        registry=SimpleNamespace(list_team_certificates_fresh=certificates))
+    view = {"admitted": [{"child_key": "did:key:zSHARED", "certificate_id": "cert-admitted", "state": "active"}],
+        "members": []}
+    await _members(c, view)
+    assert {m["certificate_id"]: m["joined"] for m in view["members"]} == {
+        "cert-admitted": "signer", "cert-other": "other"}

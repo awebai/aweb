@@ -138,14 +138,16 @@ async def _admissions(c, view, requests, now):
         return
     view["policy"] = policy
     admitted = await c.db.fetch_all(
-        "SELECT operation_id,root_id,child_id,child_key,admitted_at,state FROM {{tables.protected_root_admissions}} "
+        "SELECT operation_id,root_id,certificate_id,child_id,child_key,admitted_at,state "
+        "FROM {{tables.protected_root_admissions}} "
         "WHERE service_id=$1 AND team_id=$2 ORDER BY admitted_at DESC",
         context.service_id, context.authority_id,
     )
     for row in admitted:
         subject = requests.get(row["operation_id"], {}).get("subject", {})
         view["admitted"].append({"root_id": row["root_id"], "alias": subject.get("member_alias"),
-            "child_id": row["child_id"], "child_key": row["child_key"], "admitted_at": _stamp(row["admitted_at"]),
+            "certificate_id": row["certificate_id"], "child_id": row["child_id"], "child_key": row["child_key"],
+            "admitted_at": _stamp(row["admitted_at"]),
             "state": row["state"]})
     async with c.db.transaction() as tx:
         for root_id in sorted({row["root_id"] for row in admitted}):
@@ -165,10 +167,12 @@ async def _members(c, view):
     except SignerRefused:
         view["members"] = None
         return
-    added = {a["child_key"] for a in view["admitted"] if a["state"] == "active"}
+    # One member key may hold several certificates; only the exact
+    # certificate this signer admitted counts as added through it.
+    added = {a["certificate_id"] for a in view["admitted"] if a["state"] == "active"}
     for record in records:
         view["members"].append({"alias": record.alias, "kind": await _member_kind(c, record),
-            "joined": "signer" if record.member_did_key in added else "other",
+            "joined": "signer" if record.certificate_id in added else "other",
             "member_did_aw": record.member_did_aw or None, "member_did_key": record.member_did_key,
             "certificate_id": record.certificate_id})
 
