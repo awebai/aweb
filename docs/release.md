@@ -34,15 +34,20 @@ alone qualifies a customer release or a target platform.
 
 Python lanes also accept strict `X.Y.ZrcN` versions, with `N >= 1`:
 `server-v1.27.34rc1`, `awid-service-v0.5.32rc1`, and
-`aweb-naapp-v0.4.1rc1`, or `aweb-secrets-runner-v0.1.0rc1`, for example.
+`aweb-naapp-v0.4.1rc1`, or `aweb-secrets-runner-v0.1.0rc1`, for example. The
+registry image lane, whose version is awid's manifest, uses the same spelling:
+`awid-v0.5.40rc2`.
 The manifest versions, including `aweb-naapp-testing` or the runner's lockstep
 values package, must equal the tag. The aw spelling is SemVer:
 `aw-v1.36.48-rc.1`. Other artifact lanes continue to accept final versions only.
 
 The coordinator publishes these RCs first. The Cloud candidate pins the exact
 RC versions and must pass its ordinary pin gate against real services before
-OSS final publication and Cloud deployment. Python RCs publish to PyPI; server RCs also publish the immutable RC image tag
-without moving `latest`. Final server images update `latest`. Every
+OSS final publication and Cloud deployment. Python RCs publish to PyPI; server
+and registry RCs also publish the immutable RC image tag without moving
+`latest`. On every image lane `latest` names the newest final: a final image
+moves it unless the lane already has a newer final tag, so recovering an older
+tag's image by dispatch never moves `latest` back. Every
 aw RC npm package publishes with `--tag next`; final packages use `latest`
 unless the release explicitly stages the final on `next` as described below.
 The downstream `awebai/aw` workflow accepts `v*`, uses the synced

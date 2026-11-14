@@ -23,6 +23,8 @@ from pathlib import Path
 from release_versions import (
     SEMVER,
     VersionRefusal as PublishRefusal,
+    final_version,
+    python_version_key,
     require_final_promotion,
     require_runner_values,
     tag_parts,
@@ -520,6 +522,27 @@ def published_tags(root: Path, repository: str) -> list:
     return tags
 
 
+def moves_latest(root: Path, prefix: str, version: str) -> bool:
+    """latest names the newest final release of a lane.
+
+    An rc never moves it, and neither does a final older than one the lane has
+    already tagged, such as an older tag's image recovered by dispatch.
+    """
+    if final_version(version) is not None:
+        return False
+    newer = []
+    for tag in run(root, "git", "tag", "--list", f"{prefix}*").split():
+        try:
+            lane, other = tag_parts(tag)
+        except PublishRefusal:
+            continue
+        if lane == prefix and final_version(other) is None and python_version_key(other) > python_version_key(version):
+            newer.append(tag)
+    if newer:
+        print(f"latest unchanged: {', '.join(sorted(newer))} is newer than {version}")
+    return not newer
+
+
 def publish_oci(root: Path, prefix: str, version: str, source_sha: str) -> None:
     username = os.environ.get("GHCR_USERNAME", "").strip() or os.environ.get(
         "AC_REGISTRY_USERNAME", ""
@@ -548,7 +571,7 @@ def publish_oci(root: Path, prefix: str, version: str, source_sha: str) -> None:
             "--password-stdin", input_text=token + "\n", timeout=120,
         )
         tags = published_tags(root, repository)
-        version_only = prefix == "server-v" and "rc" in version
+        version_only = not moves_latest(root, prefix, version)
         for image_tag in ((version,) if version_only else (version, "latest")):
             remote = ""
             if image_tag in tags:

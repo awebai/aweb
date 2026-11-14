@@ -193,6 +193,25 @@ class TagContractTest(unittest.TestCase):
         self.assertEqual((prefix, version), ("server-v", "1.2.3"))
         self.assertNotEqual(source, command(root, "git", "rev-parse", "HEAD"))
 
+    def test_registry_image_rc_tag_is_bound_to_the_awid_manifest(self):
+        # The registry image lane carries rc versions in awid's Python spelling;
+        # the other image lanes keep final-only tags.
+        self.assertEqual(VERSIONS.tag_parts("awid-v0.5.40rc2"), ("awid-v", "0.5.40rc2"))
+        for tag in ("awid-v0.5.40-rc.2", "awid-v0.5.40rc0", "secrets-v1.2.3rc1", "logs-v1.2.3rc1", "a2a-gw-v1.2.3rc1"):
+            with self.subTest(tag=tag), self.assertRaises(VERSIONS.VersionRefusal):
+                VERSIONS.tag_parts(tag)
+        temporary, root = self.repository()
+        self.addCleanup(temporary.cleanup)
+        manifest = root / "awid" / "pyproject.toml"
+        import re
+        manifest.write_text(re.sub(r'version = "[^"]+"', 'version = "2.3.4rc2"', manifest.read_text()))
+        command(root, "git", "commit", "-qam", "registry rc")
+        command(root, "git", "tag", "awid-v2.3.4rc2")
+        self.assertEqual(PUBLISH.tag_identity(root, "awid-v2.3.4rc2")[:2], ("awid-v", "2.3.4rc2"))
+        command(root, "git", "tag", "awid-v2.3.4rc3")
+        with self.assertRaisesRegex(PUBLISH.PublishRefusal, "does not match"):
+            PUBLISH.tag_identity(root, "awid-v2.3.4rc3")
+
     def test_python_rc_tags_preserve_manifest_equality(self):
         temporary, root = self.repository()
         self.addCleanup(temporary.cleanup)

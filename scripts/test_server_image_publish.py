@@ -184,13 +184,16 @@ class ImageRecoveryDispatchTests(unittest.TestCase):
 
 
 class ServerOciTests(unittest.TestCase):
-    def exercise(self, *, existing=False, conflict=False, fail_readback=False, version="1.2.3", listing=None):
+    def exercise(self, *, existing=False, conflict=False, fail_readback=False, version="1.2.3", listing=None,
+                 prefix="server-v", lane_tags=""):
         raw = b'{"schemaVersion":2}\n'
         digest = "sha256:" + hashlib.sha256(raw).hexdigest()
         calls = []
 
         def run(root, *args, **kwargs):
             calls.append(args)
+            if args[:3] == ("git", "tag", "--list"):
+                return lane_tags
             if "inspect-staged" in args:
                 Path(args[args.index("--out") + 1]).write_text(json.dumps({"index": digest}))
             if "verify-published" in args and fail_readback:
@@ -209,7 +212,7 @@ class ServerOciTests(unittest.TestCase):
             return observed
 
         with patch.dict(os.environ, GHCR_USERNAME="fixture", GHCR_TOKEN="fixture-token"), patch.object(PUBLISH.shutil, "which", return_value="skopeo"), patch.object(PUBLISH, "run", run), patch.object(PUBLISH.subprocess, "run", direct), redirect_stdout(io.StringIO()) as output:
-            PUBLISH.publish_oci(ROOT, "server-v", version, "a" * 40)
+            PUBLISH.publish_oci(ROOT, prefix, version, "a" * 40)
         return calls, output.getvalue(), digest
 
     # skopeo's exact answer for ghcr.io/awebai/aweb-server before its first
@@ -267,6 +270,31 @@ class ServerOciTests(unittest.TestCase):
         copies = [args for args in calls if args[:2] == ("skopeo", "copy")]
         self.assertEqual([args[-1] for args in copies], ["docker://ghcr.io/awebai/aweb-server:1.2.3rc1"])
         self.assertIn("--version-only", calls[-1])
+
+    def published_tags_and_readback(self, **kwargs):
+        calls, _, _ = self.exercise(**kwargs)
+        copies = [args[-1] for args in calls if args[:2] == ("skopeo", "copy")]
+        verifies = [args for args in calls if args[:3] == ("bash", "scripts/oci-exact-publish.sh", "verify-published")]
+        return copies, verifies
+
+    def test_an_rc_on_any_image_lane_never_moves_latest(self):
+        for prefix, version, repository in (("server-v", "1.2.3rc1", "ghcr.io/awebai/aweb-server"),
+                                            ("awid-v", "0.5.40rc2", "ghcr.io/awebai/awid")):
+            with self.subTest(prefix=prefix):
+                copies, verifies = self.published_tags_and_readback(prefix=prefix, version=version)
+                self.assertEqual(copies, [f"docker://{repository}:{version}"])
+                self.assertTrue(verifies and all("--version-only" in args for args in verifies))
+
+    def test_latest_names_the_newest_final_of_the_lane(self):
+        tags = "awid-v0.5.38\nawid-v0.5.39\nawid-v0.5.40rc2\nawid-service-v0.6.0\nnot-a-release-tag\n"
+        # The newest final moves latest; an rc or another lane's tag is no newer final.
+        copies, verifies = self.published_tags_and_readback(prefix="awid-v", version="0.5.40", lane_tags=tags)
+        self.assertEqual(copies, ["docker://ghcr.io/awebai/awid:0.5.40", "docker://ghcr.io/awebai/awid:latest"])
+        self.assertTrue(all("--version-only" not in args for args in verifies))
+        # Recovering an older final, as a dispatch can, publishes its version and leaves latest alone.
+        copies, verifies = self.published_tags_and_readback(prefix="awid-v", version="0.5.38", lane_tags=tags)
+        self.assertEqual(copies, ["docker://ghcr.io/awebai/awid:0.5.38"])
+        self.assertTrue(verifies and all("--version-only" in args for args in verifies))
 
     def test_identical_published_index_is_adopted_and_read_back(self):
         calls, _, _ = self.exercise(existing=True)
