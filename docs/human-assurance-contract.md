@@ -1095,6 +1095,30 @@ An operation ID is never a capability. A retired credential cannot inspect
 through its retired session; an independently authorized reader can still
 recover the committed result.
 
+`aw id operation status --operation-id <UUID> [--protected-profile <path>]`
+is the requester's receipt read, made on its own. It reads the existing
+operation once. The service may record an already-confirmed outcome and its
+existing atomic bookkeeping. The read never creates an operation or a release
+claim, never signs a new protected artifact, never sends an effect and never
+extends a deadline. aw prepares, executes, approves and resumes nothing for
+it, and leaves its saved request, UUID and quarantine facts as they were.
+
+- **Scope.** A saved request is read only at the origins it was sent to, under
+  the profile's one binding whose scope matches it in every field but
+  `generation`. Without a saved request, the profile must have exactly one
+  binding.
+- **State.** The answer is the receipt's own state:
+  - `pending`, with its reason and `expires_at`;
+  - `committed`, with its `result` and `result_verification: not_performed`;
+  - `refused` or `unknown`, with its code;
+  - `none`, only for the typed 404 `operation_not_found`.
+
+  `none` carries the same limit as that 404: it is not proof that an earlier
+  send never committed.
+- **Errors.** Any other refusal or failure is an error, not a state. That
+  includes a retired requester's 401, which neither proves an outcome nor
+  justifies discarding saved evidence.
+
 An internal typed custody adapter resolves an existing protected key reference;
 missing references refuse, never generate or rotate a replacement. A
 current-authorizer adapter supplies original-transaction prepare/check and
