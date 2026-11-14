@@ -113,7 +113,7 @@ def test_browser_accepts_the_frozen_endorsement_and_refuses_artifact_or_policy_s
         "bounds": {"max_active": 10, "rate_window_seconds": 60, "max_per_window": 2}}, service_id=SERVICE)
     request = {**op.intent(), "artifact": prepare_artifact_intent(op, HKEY, NOW, NOW + timedelta(minutes=10)), "registry": op.audience,
         "expected_head": None, "admission_policy": policy.fields(),
-        "responsibility_statement": "Everything this root spawns counts as yours for human responsibility; this grants no resource permissions."}
+        "responsibility_statement": "Agents it adds count as yours. It gets no other access."}
     script = r'''
 import assert from 'node:assert/strict';
 import {readFileSync} from 'node:fs';

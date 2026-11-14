@@ -25,6 +25,14 @@ verified nearest human, account association, team owner, role holder and
 credential holder are distinct facts and must not substitute for one another.
 For a human leaf, the responsible human is the leaf itself.
 
+The frozen root-endorsement responsibility statement is exactly **"Agents it
+adds count as yours. It gets no other access."** (coordinator `752284d2`,
+2026-11-13). It states human responsibility for the agents added under this
+root and grants no membership or resource permissions. The definition, page
+verifier and generated client pin this same sentence. This wording replaces
+the earlier longer statement without changing that authority model, and ships
+with the coordinated `intent_v1` client/server release (`94664f19`).
+
 One OSS library, embedded in an existing trusted server process, controls
 human, namespace-controller and team-controller signing in supported
 deployments. Cloud imports the same published package with account/custody

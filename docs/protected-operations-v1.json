@@ -126,7 +126,7 @@
       },
       "display": {
         "consequences": [
-          "Everything this root spawns counts as yours for human responsibility; this grants no resource permissions.",
+          "Agents it adds count as yours. It gets no other access.",
           "It can add agents only to {/subject/teams|team}, within the team's limits."
         ],
         "names": {
@@ -227,7 +227,7 @@
         "statement": "/responsibility_statement",
         "timestamps": []
       },
-      "responsibility_statement": "Everything this root spawns counts as yours for human responsibility; this grants no resource permissions.",
+      "responsibility_statement": "Agents it adds count as yours. It gets no other access.",
       "rule": "live_floor",
       "subject_schema": {
         "fields": {

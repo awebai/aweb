@@ -206,7 +206,7 @@ _ROWS = (
         ),
         (
             "Child possession and eligible existing identity; no silent remint",
-            "Everything it spawns counts as yours describes ancestry, not permissions",
+            "Agents it adds count as yours describes ancestry, not permissions",
             "Current registered agent mapping and subject proof; local root refuses",
             "Existing chainless registered agent eligible; conflicting/revoked head refuses",
             "No team membership or Cloud login prerequisite",
@@ -230,7 +230,7 @@ _ROWS = (
              ("human", "/scope/human/id"), ("policy", "/admission_policy"), ("requester", "/requester")),
             (("subject_ineligible", "This agent cannot become your root agent."),
              ("issuer_kind_forbidden", "Your identity cannot approve a root agent.")),
-            responsibility_statement="Everything this root spawns counts as yours for human responsibility; this grants no resource permissions."),
+            responsibility_statement="Agents it adds count as yours. It gets no other access."),
         prepared_fields=frozenset({"registry", "expected_head", "responsibility_statement", "admission_policy"}),
         finalize_execution_refusal=True,
         receipt_uv_expiry=True,
