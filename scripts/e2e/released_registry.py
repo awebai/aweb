@@ -17,6 +17,7 @@ import os
 from pathlib import Path
 import re
 import signal
+import socket
 import subprocess
 import sys
 import time
@@ -52,17 +53,26 @@ def old_registry_listener(*, python, wheel, run_root, port, database_url, redis_
     receipt = {"state": "STARTING", "backend_url": backend, "version": VERSION,
                "installation": "published-wheel", "image": None,
                "public_origins": list(public_origins), "pid": None,
-               "stopped": False, "process_group_absent": False}
+               "stopped": False, "process_group_absent": False,
+               "listener_reserved": False, "listener_closed": False}
 
     def record():
         (root / "process.json").write_text(json.dumps(receipt, indent=2) + "\n")
 
     record()
     process = None
-    with (root / "service.log").open("wb") as log:
+    with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as listener, (root / "service.log").open("wb") as log:
         try:
+            # Bind before launching, and keep the reservation until cleanup.
+            # No health answer from an earlier epoch can reach this socket.
+            listener.bind(("127.0.0.1", port))
+            listener.listen(128)
+            receipt["listener_reserved"] = True
+            descriptor = listener.fileno()
+            command.extend(["--fd", str(descriptor)])
             process = subprocess.Popen(command, cwd=root, env=env, stdout=log,
-                                       stderr=subprocess.STDOUT, start_new_session=True)
+                                       stderr=subprocess.STDOUT, start_new_session=True,
+                                       pass_fds=(descriptor,))
             receipt["pid"] = process.pid
             record()
             deadline = time.monotonic() + startup_timeout
@@ -115,6 +125,8 @@ def old_registry_listener(*, python, wheel, run_root, port, database_url, redis_
                     os.killpg(process.pid, 0)
                 except ProcessLookupError:
                     receipt["process_group_absent"] = True
+            listener.close()
+            receipt["listener_closed"] = True
             record()
             if process is not None and not receipt["process_group_absent"]:
                 raise RuntimeError("old registry process group remains; epoch cleanup is incomplete")
@@ -184,6 +196,7 @@ def main():
     parser.add_argument("--check-only", action="store_true", help="verify installation without DB or network I/O")
     parser.add_argument("--host", default="127.0.0.1")
     parser.add_argument("--port", type=int, default=8010)
+    parser.add_argument("--fd", type=int, help="Owned, inherited loopback listening socket")
     args = parser.parse_args()
     if not 1 <= args.port <= 65535:
         parser.error("port must be between 1 and 65535")
@@ -191,9 +204,18 @@ def main():
     args.receipt.write_text(json.dumps(receipt, indent=2) + "\n")
     if not args.check_only:
         env = service_environment()
+        binding = ["--host", args.host, "--port", str(args.port)]
+        if args.fd is not None:
+            inherited = socket.socket(fileno=args.fd)
+            try:
+                if (inherited.family != socket.AF_INET or inherited.getsockname() != ("127.0.0.1", args.port)
+                        or inherited.getsockopt(socket.SOL_SOCKET, socket.SO_ACCEPTCONN) != 1):
+                    raise RuntimeError("inherited registry descriptor is not its owned loopback listener")
+            finally:
+                inherited.detach()  # uvicorn inherits the original descriptor through exec.
+            binding = ["--fd", str(args.fd)]
         os.execve(sys.executable, [sys.executable, "-I", "-m", "uvicorn",
-                  "awid_service.main:create_app", "--factory", "--host", args.host,
-                  "--port", str(args.port)], env)
+                  "awid_service.main:create_app", "--factory", *binding], env)
 
 
 if __name__ == "__main__":

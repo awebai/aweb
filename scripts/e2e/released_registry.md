@@ -108,11 +108,17 @@ with old_registry_listener(
     run_joined_matrix(transport_environment)
 ```
 
-The manager binds the stock service only to `127.0.0.1`. It waits for an actual
+The manager reserves a listening socket on `127.0.0.1` before launching. An
+occupied port refuses before any child starts and leaves its foreign listener
+untouched. The owned socket is passed through both execs to stock uvicorn's
+`--fd` interface; the parent retains its descriptor until cleanup so another
+epoch cannot acquire the port even if the child exits during a health read.
+No `SO_REUSEPORT` or close-and-rebind handoff is used. It waits for an actual
 200 `/health` with version `0.5.39`, the requested schema, live PostgreSQL/Redis
 checks and `RedisFixedWindowRateLimiter`. It supplies no service token. It
 records package/dependency identity in `package.json`, health/PID/backend and
-shutdown/owned-process-group absence in `process.json`, and the private service
+shutdown/owned-process-group absence and socket reservation/close state in
+`process.json`, and the private service
 log in `service.log`. A failed startup is recorded as failed. The wheel process
 has `installation: published-wheel` and `image: null`; do not invent an image
 receipt for that path. If using the image installation instead, the operator's
