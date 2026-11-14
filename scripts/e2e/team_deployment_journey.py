@@ -290,6 +290,10 @@ class World:
         for path in [*(self.world / "tls").iterdir(), *(self.world / "tls-renewal").iterdir(),
                      *(self.world / "front").iterdir(), *(self.world / "dns").iterdir()]:
             path.chmod(0o644)
+        # The services read these as their own non-root users, whatever the
+        # launching shell's umask made of the directories.
+        for directory in ("tls", "tls-renewal", "front", "dns"):
+            (self.world / directory).chmod(0o755)
 
     def write_trust(self, services: list[str]) -> None:
         """Each deployed service resolves through this world's DNS and trusts
