@@ -120,7 +120,11 @@ def owner_fixture_view():
             {"alias": "ops", "kind": "kind not verified", "joined": "unrecorded", "member_did_aw": "did:aw:OPS",
                 "member_did_key": "did:key:zO", "certificate_id": "cert-2"},
             {"alias": "ann", "kind": "not checked", "joined": "signer_reserved", "member_did_aw": "did:aw:ANN",
-                "member_did_key": "did:key:zA", "certificate_id": "cert-3"}],
+                "member_did_key": "did:key:zA", "certificate_id": "cert-3"},
+            {"alias": "bea", "kind": "human", "joined": "unrecorded", "member_did_aw": "did:aw:BEA",
+                "member_did_key": "did:key:zB", "certificate_id": "cert-4"}],
+        "owner_initiable": True,
+        "storage_scope": "s-0123abcd",
     }
 
 
@@ -189,6 +193,11 @@ async def test_the_host_serves_the_owner_page_only_behind_sign_in(world, tmp_pat
             assert "Waiting for you" not in response.text
             # Never on the request origin.
             assert (await client.get(ORIGIN + "/", follow_redirects=False)).status_code == 404
+            script = await client.get(HUMAN_ORIGIN + "/owner-ui/owner.js")
+            assert script.status_code == 200 and script.headers["content-type"].startswith("text/javascript")
+            assert "/governance/operations" in script.text
+            assert "script-src 'self'" in script.headers["content-security-policy"]
+            assert (await client.get(ORIGIN + "/owner-ui/owner.js")).status_code == 404
 
 
 
@@ -309,3 +318,50 @@ async def test_member_kind_is_observed_for_the_certificates_own_key(monkeypatch,
     record = SimpleNamespace(identity_scope="global", member_did_aw="did:aw:MEMBER", member_did_key="did:key:zCERT")
     assert await owner._member_kind(SimpleNamespace(registry=object()), record) == expected
     assert observed == ["did:key:zCERT"]
+
+
+def test_the_owner_can_start_removing_any_member_but_a_verified_human_from_the_page():
+    from aweb.protected_signing.owner import owner_page_html
+
+    view = owner_fixture_view()
+    html = owner_page_html(view)
+    # The page's own script, same origin, and what it needs to save the
+    # selection under this team and this signed-in approver.
+    assert '<script src="/owner-ui/owner.js" defer></script>' in html
+    assert ('<ul class="owner-list" id="owner-members" data-team-id="engineering:customer.example" '
+        'data-storage-scope="s-0123abcd">') in html
+    for certificate, alias in (("cert-1", "build-&lt;1&gt;"), ("cert-2", "ops"), ("cert-3", "ann")):
+        assert (f'<button type="button" class="btn secondary" data-remove-certificate="{certificate}">'
+            f"Remove {alias}…</button>") in html
+    # The server refuses a verified human; the page does not offer it.
+    assert 'data-remove-certificate="cert-4"' not in html
+    assert '<p id="owner-remove-status" role="status" aria-live="polite"></p>' in html
+    # Only a decided operation with a stored final state lets the page forget
+    # what it saved for a retry.
+    assert '<li data-final-operation="op-0">' in html
+    without = owner_page_html({**view, "owner_initiable": False})
+    assert "data-remove-certificate" not in without and "owner.js" not in without
+
+
+@pytest.mark.asyncio
+async def test_removal_is_offered_and_saved_per_team_and_signed_in_approver(admissions):
+    a = admissions
+    scope = await scope_of(a.w.app)
+    view = await owner_view(a.group, scope=scope, subject=a.actor.subject)
+    assert view["owner_initiable"] is True
+    again = await owner_view(a.group, scope=scope, subject=a.actor.subject)
+    other = await owner_view(a.group, scope=scope, subject="another-approver")
+    assert view["storage_scope"] == again["storage_scope"] != other["storage_scope"]
+    assert a.actor.subject not in view["storage_scope"] and scope not in view["storage_scope"]
+    human = await owner_view(a.group, scope=await scope_of(a.human), subject=a.actor.subject)
+    assert human["owner_initiable"] is False
+
+
+def test_the_owner_page_script_saves_before_sending_and_keeps_its_selection_until_final():
+    import subprocess
+    from pathlib import Path
+
+    result = subprocess.run(["node", "tests/owner_remove_probe.cjs"], capture_output=True, text=True,
+        cwd=Path(__file__).resolve().parents[1], timeout=20)
+    assert result.returncode == 0, result.stdout + result.stderr
+    assert result.stdout.strip() == "owner removal probe passed"

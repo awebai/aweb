@@ -41,6 +41,11 @@ async def _component_for(composition, scope):
     raise SignerRefused("scope_refused")
 
 
+def _owner_initiable():
+    spec = OPERATIONS.get(("team.agent.remove", "owner_approved"))
+    return spec is not None and spec.owner_initiable
+
+
 def _title(request):
     """The operation definition's own question for this frozen request."""
     spec = OPERATIONS.get((request.get("operation"), request.get("variant", "default")))
@@ -103,6 +108,12 @@ async def owner_view(composition, *, scope: str, subject: str, now: datetime | N
         "approvers": approvers,
         "you": next((a["contact"] for a in approvers if a["subject"] == subject), None),
         "members": [],
+        "owner_initiable": context.authority_kind == "team_controller" and _owner_initiable(),
+        # Names where this tab keeps a removal it started: the same for one
+        # approver of one team on one signer, and no identifier in clear.
+        "storage_scope": "s-" + hashlib.sha256(
+            "\n".join((context.service_id, context.authority_kind, context.authority_id, scope, subject)).encode()
+        ).hexdigest()[:16],
     }
     for item in [*pending, *view["history"]]:
         del item["approval_id"]
@@ -322,16 +333,33 @@ def owner_page_html(view: dict) -> str:
         if view["members"] is None:
             parts.append("<p>The member list could not be read right now. Reload to try again.</p>")
         elif view["members"]:
-            parts.append('<ul class="owner-list">')
+            removable = view.get("owner_initiable", False)
+            if removable:
+                parts.append(
+                    f'<ul class="owner-list" id="owner-members" data-team-id="{e(authority["id"])}" '
+                    f'data-storage-scope="{e(view["storage_scope"])}">'
+                )
+            else:
+                parts.append('<ul class="owner-list">')
             for member in view["members"]:
                 kind = _KINDS.get(member["kind"], member["kind"])
                 joined = _JOINED_TEXT.get(member["joined"], "not recorded by this signer")
+                # The signer refuses an owner-approved removal of a verified
+                # human, so the page does not offer it.
+                remove = (
+                    f'<button type="button" class="btn secondary" data-remove-certificate="{e(member["certificate_id"])}">'
+                    f'Remove {e(member["alias"])}…</button>'
+                    if removable and member["kind"] != "human" else ""
+                )
                 parts.append(
-                    f'<li>{e(member["alias"])}: {e(kind)}, {joined}'
+                    f'<li>{e(member["alias"])}: {e(kind)}, {joined}{remove}'
                     + _technical([("Identity", member["member_did_aw"] or "none"), ("Key", member["member_did_key"]),
                         ("Certificate", member["certificate_id"])]) + "</li>"
                 )
             parts.append("</ul>")
+            if removable:
+                parts.append('<p id="owner-remove-status" role="status" aria-live="polite"></p>'
+                    '<script src="/owner-ui/owner.js" defer></script>')
         else:
             parts.append("<p>No members.</p>")
         parts.append("<h2>Current limits</h2>")
@@ -353,8 +381,10 @@ def owner_page_html(view: dict) -> str:
             outcome = _OUTCOMES.get(item["state"]) or _REFUSALS.get(item.get("code"), "Not completed")
             if item.get("decided_by_you") and item["state"] not in ("expired", "unresolved"):
                 outcome += " by you"
+            # A stored final state lets the page forget a removal it saved.
+            final = f' data-final-operation="{e(item["operation_id"])}"' if item["state"] in ("committed", "refused") else ""
             parts.append(
-                f'<li>{e(outcome)}, {_time(item["at"])}: {e(item["title"])}'
+                f'<li{final}>{e(outcome)}, {_time(item["at"])}: {e(item["title"])}'
                 + _technical([("Requested by", item["requester"]), ("Operation", item["operation"]),
                     ("Digest", item["digest"])]) + "</li>"
             )
@@ -379,4 +409,14 @@ def owner_router(composition, *, sessions, csrf_key):
     async def home(session):
         return owner_page_html(await owner_view(composition, scope=session.scope, subject=session.subject))
 
-    return protected_shell(csrf_key).router(sessions=sessions, home_title="Approvals", home=home)
+    router = protected_shell(csrf_key).router(sessions=sessions, home_title="Approvals", home=home)
+
+    @router.get("/owner-ui/owner.js")
+    async def script():
+        from importlib.resources import files
+
+        from fastapi import Response
+
+        return Response(files("aweb.protected_signing").joinpath("owner.js").read_text(), media_type="text/javascript")
+
+    return router
