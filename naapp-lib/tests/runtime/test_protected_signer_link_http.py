@@ -221,6 +221,8 @@ async def test_an_unexpected_failure_on_a_link_route_is_logged_without_its_token
     [record] = [r for r in caplog.records if r.levelno >= logging.ERROR]
     assert (record.route, record.operation_id, record.failure) == (
         "/handoff/{handoff_id}/link", None, "QueryError")
-    logged = caplog.text + "".join(str(r.__dict__) for r in caplog.records)
+    # The signer's own records; the in-process test client logs its request URL itself.
+    logged = "".join(r.getMessage() + str(r.__dict__) for r in caplog.records if r.name.startswith("aweb_naapp"))
+    assert token not in caplog.text
     for secret in (token, prepared.handoff_id, "protected_signer_operations"):
         assert secret not in logged
