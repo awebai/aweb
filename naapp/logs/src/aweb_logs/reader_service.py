@@ -181,6 +181,10 @@ async def reader_service(
     async def governance_view(team_id: str) -> RegistrationView | None:
         return await registrations.view(team_id, GOVERNANCE_HOOK)
 
+    async def team_authority(team_id):
+        from awid.protected_membership import observe_team_protection
+        return await observe_team_protection(runtime.registry_client(), team_id)
+
     async def team_key(team_id: str) -> str:
         return (await runtime.team_cache().get(team_id)).team_did_key
 
@@ -217,7 +221,7 @@ async def reader_service(
         scope=app_id,
         audience=runtime.settings.public_origin,
         acts=APP_ACTS + LOGS_ACTS,
-        team_key_for=team_key,
+        team_key_for=team_key, team_authority_for=team_authority,
     )
     client_identity = ClientIdentity(trusted_header=client_address_header)
     limiter = LoginLimiter(
@@ -239,7 +243,7 @@ async def reader_service(
         runtime=runtime,
         effect=acts,
         verifier=OwnerActVerifier(
-            scope=app_id, audience=console_origin, acts=HUMAN_ROLE_ACTS, team_key_for=team_key
+            scope=app_id, audience=console_origin, acts=HUMAN_ROLE_ACTS, team_key_for=team_key, team_authority_for=team_authority
         ),
         limiter=OwnerActLimiter(
             client_identity=client_identity, limit=12, window=timedelta(minutes=1)

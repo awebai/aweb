@@ -487,6 +487,7 @@ async def receive_federated_message(
                 id_chain=getattr(request.state, "id_chain", None),
                 recipient=recipient,
                 authority_token=authority_token,
+                registry_client=registry_client,
                 stored_route_continuation=stored_route,
                 stored_route_snapshot=stored_route_snapshot,
                 envelope_hash_override=ingress_envelope_hash,

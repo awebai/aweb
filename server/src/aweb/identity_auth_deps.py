@@ -8,6 +8,7 @@ from awid.dns_auth import enforce_timestamp_skew, parse_didkey_auth, require_tim
 from awid.signing import verify_did_key_signature
 from fastapi import Depends, HTTPException, Request
 
+from aweb.membership import verify_retained, require_fresh
 from aweb.auth_context import GrantContext
 from aweb.auth_metrics import count_legacy_request_auth
 from aweb.config import require_registered_certificates
@@ -210,7 +211,11 @@ async def current_membership(registry_client, row: dict | None) -> dict | None:
         return row
     team_id = (row.get("team_id") or "").strip()
     certificate_id = (row.get("certificate_id") or "").strip()
-    if not team_id or not certificate_id:
+    if not team_id:
+        return row
+    observation = await verify_retained(registry_client, row)
+    if not certificate_id:
+        require_fresh(observation)
         return row
     revoked = await revoked_certificates(registry_client, team_id)
     if certificate_id not in revoked:
@@ -222,9 +227,11 @@ async def current_membership(registry_client, row: dict | None) -> dict | None:
         # bypass the existence check the presenting path enforces. Same
         # remedy as revocation here: strip membership, keep the identity.
         if not require_registered_certificates():
+            require_fresh(observation)
             return row
         registered = await registered_certificates(registry_client, team_id)
         if certificate_id in registered:
+            require_fresh(observation)
             return row
         logger.warning(
             "identity-auth team context stripped: certificate %s for alias %r in %s "

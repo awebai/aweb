@@ -303,8 +303,13 @@ async def world(tmp_path, human, coordination, test_db_factory):
     async def current_key(team):
         return (await runtime.team_cache().get(team)).team_did_key
 
+    async def current_authority(team):
+        from awid.protected_membership import observe_team_protection
+        return await observe_team_protection(runtime.registry_client(), team)
+
     verifier = OwnerActVerifier(
-        scope="example", audience=ORIGIN, acts=HUMAN_ROLE_ACTS, team_key_for=current_key
+        scope="example", audience=ORIGIN, acts=HUMAN_ROLE_ACTS, team_key_for=current_key,
+        team_authority_for=current_authority,
     )
     owner = TeamOwner(member.team_key, verifier, member.team_id, current_key)
     effect = SqlEffect(runtime, human[2], applied=asyncio.Event())
@@ -520,7 +525,7 @@ async def test_forged_signature_cannot_observe_holding_or_installation(
     )
     response = await world.post(body)
     assert (response.status_code, response.json()["detail"]) == (
-        (503, "team_key_unavailable") if unknown_team else (403, "owner_required")
+        (503, "protected_state_unavailable") if unknown_team else (403, "owner_required")
     )
     assert world.effect.prepared is None
     assert len(world.coordination.server.transport.calls) == before_reads
@@ -538,6 +543,37 @@ async def test_missing_or_failing_membership_certificate_refuses_without_effect(
     response = await world.post(body)
     assert (response.status_code, response.json()["detail"]) == (403, "principal_not_member")
     assert await world.counts() == (0, 0, 0)
+
+
+@pytest.mark.parametrize("expire", [False, True])
+async def test_original_protection_expiry_at_final_effect_await_is_unavailable(world, monkeypatch, expire):
+    from awid import protected_membership
+
+    clock = 1000.0
+    monkeypatch.setattr(protected_membership, "monotonic", lambda: clock)
+    assert (await world.post(world.body())).status_code == 200
+    # The trusted prepared effect performs real SQL writes before this final
+    # synchronous clock advance; H2 and installation clocks remain unchanged.
+    original = SqlPreparedEffect.apply
+
+    async def apply(prepared, tx, **kwargs):
+        nonlocal clock
+        result = await original(prepared, tx, **kwargs)
+        if expire:
+            clock += 61
+        return result
+
+    monkeypatch.setattr(SqlPreparedEffect, "apply", apply)
+    # Revoke consumes no H2 membership proof, isolating the owner's original
+    # protection deadline from the principal's separate membership deadline.
+    response = await world.post(world.body(act="human-role.revoke"))
+    assert response.status_code == (503 if expire else 200), response.text
+    if expire:
+        assert response.json()["detail"] == "protected_state_unavailable"
+        assert await world.counts() == (1, 1, 1)
+        assert world.effect.committed == 1
+    else:
+        assert await world.counts() == (2, 0, 2)
 
 
 async def test_revoke_needs_no_principal_membership_and_refuses_a_carried_certificate(world):

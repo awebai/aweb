@@ -1,0 +1,40 @@
+{
+  "schema_version": 1,
+  "contract": "docs/protected-team-boundary.md#exact-consumer-confirmation",
+  "method": "GET",
+  "path": "/.well-known/aweb-protected-effect-receipts/33333333-3333-4333-8333-333333333333",
+  "header_name": "X-AWEB-Protected-Effect",
+  "header": "eyJwcm9vZnMiOlt7InBheWxvYWQiOiJleUpoY25ScFptRmpkRjl6YUdFeU5UWWlPaUpqT0Rjd1pHTXdaamMwT1RKbE1UTXlNak16TlRSaU5XRm1NVGcyTURBd05qbGhOalE1WmpobU1tTTBZV05qTkdJM1l6QXhaR1JoTWpnMk1HUTBNREk0SWl3aVlYSjBhV1poWTNSZmRIbHdaU0k2SW1OdmJuUnliMnhzWlhJdGNtVnhkV1Z6ZENJc0ltTnZibk4xYldWeUlqcDdJbUYxWkdsbGJtTmxJam9pYUhSMGNITTZMeTl5WldkcGMzUnllUzVsZUdGdGNHeGxJaXdpWW05a2VWOXphR0V5TlRZaU9pSmpNR0k0TW1FME9XVmhNekEzTnpVeFptWmtZemcyWW1Rek1qWXdNVFZpWW1JNU5Ea3pabUZoWW1JelpUaG1Oak5pTXpoa1lUWmxOVFZoWXpobU5tSTJJaXdpWTI5dWRISnZiR3hsY2w5bGJuWmxiRzl3WlY5emFHRXlOVFlpT2lJME1EQmxNbUUxTVdNNU5XWXdaamhpT0RBeU56TmxObUprTkRRNU1qbGpNekF5WmpCbVlUazBPRGRqTTJVNU9UZG1OREV4WWpNek9UTTVPVEl4TTJJMElpd2lhMmx1WkNJNkltaDBkSEFpTENKdFpYUm9iMlFpT2lKUVQxTlVJaXdpY0dGMGFDSTZJaTkyTVM5dVlXMWxjM0JoWTJWekwyVjRZVzF3YkdVdWRHVnpkQzkwWldGdGN5OWxibWRwYm1WbGNtbHVaeTlqWlhKMGFXWnBZMkYwWlhNdmNtVjJiMnRsSW4wc0ltTnZiblJ5YjJ4c1pYSmZaR2xrWDJ0bGVTSTZJbVJwWkRwclpYazZlalpOYTI5dU0wNWxZMlEyVG10cmVXWnZSMjlJZUdsa01ucHVSMk0xT1V4Vk0wczNiWFZpWVZKalJtSk1aa3hZSWl3aVpYaHdhWEpsYzE5aGRDSTZJakl3TWpZdE1URXRNVE5VTVRJNk1EVTZNREJhSWl3aVoyVnVaWEpoZEdsdmJpSTZOeXdpYUdsemRHOXllVjlwWkNJNklqSXlNakl5TWpJeUxUSXlNakl0TkRJeU1pMDRNakl5TFRJeU1qSXlNakl5TWpJeU1pSXNJbWx6YzNWbFpGOWhkQ0k2SWpJd01qWXRNVEV0TVROVU1USTZNREE2TURCYUlpd2liM0JsY21GMGFXOXVJam9pZEdWaGJTNWhaMlZ1ZEM1eVpXMXZkbVVpTENKdmNHVnlZWFJwYjI1ZmFXUWlPaUl6TXpNek16TXpNeTB6TXpNekxUUXpNek10T0RNek15MHpNek16TXpNek16TXpNek1pTENKelpYSjJhV05sWDJsa0lqb2labWw0ZEhWeVpTMXphV2R1WlhJaUxDSjBaV0Z0WDJsa0lqb2laVzVuYVc1bFpYSnBibWM2WlhoaGJYQnNaUzUwWlhOMElpd2lkSGx3WlNJNkltRjNaV0l1Y0hKdmRHVmpkR1ZrTFdWbVptVmpkQ0lzSW5ZaU9qRXNJblpoY21saGJuUWlPaUprWldaaGRXeDBJbjAiLCJzaWduYXR1cmUiOiJBVC9nOW1HK0RmbGtoZE9HZWlFaWVoS1ZTYXQrckYxeDcvUVlVSjkvK3pzbzljUTR6aHU4YlozR1NUaDRPbHhLczBTN1pvd3RYcUpKL2xxMUNocGhEQSJ9XSwidiI6MX0",
+  "reference": {
+    "operation_id": "33333333-3333-4333-8333-333333333333",
+    "team_id": "engineering:example.test",
+    "service_id": "fixture-signer",
+    "operation": "team.agent.remove",
+    "variant": "default",
+    "artifact_sha256": "c870dc0f7492e13223354b5af18600069a649f8f2c4acc4b7c01dda2860d4028"
+  },
+  "response": {
+    "v": 1,
+    "operation_id": "33333333-3333-4333-8333-333333333333",
+    "artifact_sha256": "c870dc0f7492e13223354b5af18600069a649f8f2c4acc4b7c01dda2860d4028"
+  },
+  "controls": [
+    {
+      "evidence": "exact_committed_header",
+      "status": 200
+    },
+    {
+      "evidence": "historical_expired_header",
+      "status": 200
+    },
+    {
+      "evidence": "absent_or_mismatched_header",
+      "status": 404
+    },
+    {
+      "evidence": "unavailable_storage",
+      "status": 503
+    }
+  ],
+  "cache_control": "no-store"
+}

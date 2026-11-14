@@ -82,6 +82,9 @@ func TestLocalSurfaceE2EEmptyProfileCreateAdd(t *testing.T) {
 		case r.Method == http.MethodGet && r.URL.Path == "/v1/namespaces/local":
 			http.NotFound(w, r)
 		case r.Method == http.MethodGet && r.URL.Path == "/v1/namespaces/local/teams/eng":
+			if sawTeamCreate && serveExplicitLegacyInviteTeam(t, w, r, "eng:local") {
+				return
+			}
 			http.NotFound(w, r)
 		case r.Method == http.MethodPost && r.URL.Path == "/v1/namespaces":
 			var body map[string]any
@@ -180,6 +183,7 @@ func TestLocalSurfaceE2ELibraryBoundCreateAndAdd(t *testing.T) {
 		}
 	}
 
+	var sawTeamCreate bool
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if serveUnadvertisedHealth(w, r) || serveNoManifestCatalog(w, r) {
 			return
@@ -193,6 +197,9 @@ func TestLocalSurfaceE2ELibraryBoundCreateAndAdd(t *testing.T) {
 		case r.Method == http.MethodGet && r.URL.Path == "/v1/namespaces/local":
 			http.NotFound(w, r)
 		case r.Method == http.MethodGet && r.URL.Path == "/v1/namespaces/local/teams/eng":
+			if sawTeamCreate && serveExplicitLegacyInviteTeam(t, w, r, "eng:local") {
+				return
+			}
 			http.NotFound(w, r)
 		case r.Method == http.MethodPost && r.URL.Path == "/v1/namespaces":
 			var body map[string]any
@@ -201,6 +208,7 @@ func TestLocalSurfaceE2ELibraryBoundCreateAndAdd(t *testing.T) {
 			}
 			_ = json.NewEncoder(w).Encode(map[string]any{"namespace_id": "ns-local", "domain": "local", "controller_did": body["controller_did"], "verification_status": "verified", "created_at": "2026-06-19T00:00:00Z"})
 		case r.Method == http.MethodPost && r.URL.Path == "/v1/namespaces/local/teams":
+			sawTeamCreate = true
 			var body map[string]any
 			if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
 				t.Fatal(err)

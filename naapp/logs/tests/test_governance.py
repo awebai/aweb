@@ -128,6 +128,41 @@ async def test_a_shortened_retention_is_recorded_and_its_purges_name_that_record
     assert await purged(world) == {1: f"logs.retention.set:{event_id}", 2: None}
 
 
+@pytest.mark.parametrize("expire", [False, True])
+async def test_original_protection_deadline_after_recording_rolls_back(world: World, monkeypatch, expire):
+    from awid import protected_membership
+
+    clock = 1000.0
+    monkeypatch.setattr(protected_membership, "monotonic", lambda: clock)
+    reached = False
+
+    async def final_recording():
+        nonlocal clock, reached
+        reached = True
+        if expire:
+            clock += 61
+
+    world.before_append = final_recording
+    registry = world.registry._client()
+    try:
+        async def authority(team_id):
+            return await protected_membership.observe_team_protection(registry, team_id)
+
+        monkeypatch.setattr(world.owner.verifier, "_team_authority_for", authority)
+        if expire:
+            with pytest.raises(Refused) as refused:
+                await hold(world, "deadline-control")
+            assert refused.value.code == "protected_state_unavailable"
+        else:
+            await hold(world, "deadline-control")
+    finally:
+        await registry.aclose()
+    assert reached
+    assert await count(world, "legal_holds") == int(not expire)
+    assert await count(world, "owner_act_nonces") == int(not expire)
+    assert len(await governance(world)) == int(not expire)
+
+
 async def test_keeping_events_longer_is_a_widening_act_that_needs_a_target(world: World):
     await set_retention(world, "all", 30)
     world.registered[0] = False

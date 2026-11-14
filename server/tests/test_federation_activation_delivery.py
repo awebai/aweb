@@ -1003,6 +1003,13 @@ async def test_identity_policy_share_locks_allow_opposite_team_deliveries(aweb_c
         "sender_address": forward.target_address, "target_did_aw": forward.sender_did_aw,
         "target_current_did_key": forward.sender_current_did_key, "target_address": forward.sender_address,
     })
+    from time import monotonic
+    from awid.protected_membership import TeamProtectionObservation
+    # This test isolates local lock order. Native registry authority is covered
+    # by test_federation_membership_binding; supply explicit legacy evidence.
+    observation = TeamProtectionObservation("backend:beta.example", named_did_key("z6Mkteam"),
+                                            {"mode": "legacy"}, monotonic()+60)
+    evidence = {str(row["agent_id"]): (observation, None) for row in (alice, bob)}
     ready = [asyncio.Event(), asyncio.Event()]
 
     async def check(envelope, recipient, index):
@@ -1010,7 +1017,7 @@ async def test_identity_policy_share_locks_allow_opposite_team_deliveries(aweb_c
             current = await _lock_current_recipient(tx, envelope=envelope, recipient=recipient)
             ready[index].set()
             await ready[1-index].wait()
-            await _authorize_policy(tx, envelope=envelope, recipient=current, stored_route_continuation=False)
+            await _authorize_policy(tx, envelope=envelope, recipient=current, stored_route_continuation=False, membership_evidence=evidence)
 
     await asyncio.wait_for(asyncio.gather(check(forward, bob, 0), check(reverse, alice, 1)), 5)
 

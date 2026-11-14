@@ -244,6 +244,23 @@ func settleProtectedAct(cmd *cobra.Command, operationID string, intent map[strin
 		}
 		return err
 	}
+	if receipt == nil || receipt.State != "committed" {
+		return withErrorCode("signed_act_invalid", fmt.Errorf("operation %s has no committed result", operationID))
+	}
+	if result, ok := handoff.DecodeObject(receipt.Result); ok {
+		if _, versioned := result["v"]; versioned {
+			signed, err := appliedActFor(operationID, intent, binding.AuthorityKeyDID, receipt.Result, time.Now())
+			if err != nil {
+				return fmt.Errorf("operation %s: %w", operationID, err)
+			}
+			forgetProtectedOperation(cmd, operationID)
+			printOutput(map[string]any{"operation_id": operationID, "state": "committed", "result": json.RawMessage(receipt.Result), "applied": "service"},
+				func(any) string {
+					return fmt.Sprintf("Operation %s committed; %s was applied by the protected service.\n", operationID, signed.Act)
+				})
+			return nil
+		}
+	}
 	signed, err := signedActFor(intent, binding.AuthorityKeyDID, receipt.Result, time.Now())
 	if err != nil {
 		return fmt.Errorf("operation %s: %w", operationID, err)
