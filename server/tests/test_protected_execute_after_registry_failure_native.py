@@ -147,3 +147,49 @@ async def test_an_empty_assertion_before_any_approval_signs_nothing(admissions, 
     except (SignerRefused, ApprovalRefused):
         pass
     assert await stored_signatures(a, operation.operation_id) == 0
+
+
+@pytest.mark.asyncio
+async def test_a_credential_revoked_after_the_touch_finishes_nothing(admissions, monkeypatch):
+    from aweb_naapp.runtime.protected_signer import SignerRefused
+
+    a = admissions
+    operation, signer, proof, signs = await touched_then_failed(a, monkeypatch)
+    async with signer.passkeys.db.transaction() as tx:
+        await signer.passkeys.revoke_passkey_in(tx, scope=a.actor.b3_scope, subject=a.actor.subject,
+            credential_id=next(iter(a.device.credentials)), authorized_by="owner")
+    options = None
+    try:
+        options = await signer.approval_options(operation.operation_id, human=a.actor)
+    except (ApprovalRefused, SignerRefused):
+        pass
+    assert options is None or dict(options) != {"state": "approved"}
+    try:
+        receipt = await signer.execute(operation.operation_id, proof, human=a.actor)
+        assert receipt.state != "committed", receipt
+    except (ApprovalRefused, SignerRefused):
+        pass
+    assert signs == [] and await stored_signatures(a, operation.operation_id) == 0
+
+
+@pytest.mark.asyncio
+async def test_another_candidate_is_never_told_the_act_is_approved(admissions, monkeypatch):
+    from dataclasses import replace
+
+    from aweb_naapp.runtime.protected_signer import SignerRefused
+
+    a = admissions
+    operation, signer, _, signs = await touched_then_failed(a, monkeypatch)
+    other = replace(a.actor, subject="another-candidate")
+    options = None
+    try:
+        options = await signer.approval_options(operation.operation_id, human=other)
+    except (ApprovalRefused, SignerRefused):
+        pass
+    assert options is None or dict(options) != {"state": "approved"}
+    try:
+        receipt = await signer.execute(operation.operation_id, {}, human=other)
+        assert receipt.state != "committed", receipt
+    except (ApprovalRefused, SignerRefused):
+        pass
+    assert signs == [] and await stored_signatures(a, operation.operation_id) == 0
