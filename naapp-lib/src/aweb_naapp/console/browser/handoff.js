@@ -1,6 +1,6 @@
 "use strict";
 
-import { validateProtectedPresentation } from "/handoff-assets/protected-presentation.mjs";
+import { validateProtectedPresentation, validateProtectedReceiptPresentation } from "/handoff-assets/protected-presentation.mjs";
 import { operationTable } from "/handoff-assets/operations.mjs";
 import { renderDisplay, displayRefusal } from "/handoff-assets/protected-display.mjs";
 
@@ -86,21 +86,9 @@ import { renderDisplay, displayRefusal } from "/handoff-assets/protected-display
   }
 
   async function governanceState(state) {
-    if (state.mode === "governance" && state.handoff_id === handoffId && nonempty(state.operation_id) &&
-        state.state !== "pending") {
-      // A request already decided or carried out: its outcome, never its
-      // controls. Committed shows only for this operation's confirmed result.
-      operationId = state.operation_id;
-      if (state.state === "committed" && !committedResult(state.result)) {
-        document.body.dataset.handoffState = "complete";
-        outcome(...unconfirmed);
-        return;
-      }
-      linkOutcome(state);
-      return;
-    }
     const {payload, digest} = state;
-    const {request} = await validateProtectedPresentation(state, handoffId, operationTable);
+    const validate = state.state === "pending" ? validateProtectedPresentation : validateProtectedReceiptPresentation;
+    const {request} = await validate(state, handoffId, operationTable);
     display = operationTable[`${request.operation}|${request.variant}`].display;
     const words = renderDisplay(display, request);
     operationId = state.operation_id;
@@ -129,6 +117,16 @@ import { renderDisplay, displayRefusal } from "/handoff-assets/protected-display
     document.getElementById("handoff-expires").textContent = when(state.expires_at);
     document.getElementById("handoff-governance").hidden = false;
     document.getElementById("handoff-explanation").hidden = true;
+    if (state.state !== "pending") {
+      stopChoices();
+      if (state.state === "committed" && !await committedResult(state.result)) {
+        document.body.dataset.handoffState = "complete";
+        outcome(...unconfirmed);
+      } else {
+        linkOutcome(state);
+      }
+      return;
+    }
     action.textContent = "Approve";
     deny.hidden = false;
     deny.disabled = false;
@@ -189,17 +187,42 @@ import { renderDisplay, displayRefusal } from "/handoff-assets/protected-display
 
   // A committed result: a signed act, or a service-delivered act that its
   // consumer confirmed applied for this exact operation.
-  function committedResult(result) {
+  async function committedResult(result) {
     if (!isObject(result)) return false;
     if (result.v === undefined) return nonempty(result.signing) && nonempty(result.signature);
+    const exact = (value, keys) => isObject(value) && Object.keys(value).sort().join(",") === keys.sort().join(",");
     const delivery = result.delivery;
-    return result.v === 2 && result.type === "aweb.protected-delivery" && isObject(result.artifact) &&
-      nonempty(result.artifact.signing) && nonempty(result.artifact.signature) && isObject(delivery) &&
-      delivery.state === "applied" && isObject(delivery.reference) &&
-      delivery.reference.operation_id === operationId && nonempty(delivery.reference.artifact_sha256);
+    if (!exact(result, ["v", "type", "artifact", "delivery"]) || result.v !== 2 || result.type !== "aweb.protected-delivery" ||
+        !exact(result.artifact, ["signing", "signature"]) || !exact(delivery, ["mode", "state", "reference"]) ||
+        delivery.mode !== "service_owned" || delivery.state !== "applied" ||
+        !exact(delivery.reference, ["operation_id", "artifact_sha256"]) || delivery.reference.operation_id !== operationId ||
+        !/^[0-9a-f]{64}$/.test(delivery.reference.artifact_sha256)) return false;
+    try {
+      const decode = value => {
+        if (!nonempty(value)) throw new Error("handoff_refused");
+        const raw = atob(value);
+        if (btoa(raw) !== value) throw new Error("handoff_refused");
+        return Uint8Array.from(raw, byte => byte.charCodeAt(0));
+      };
+      const signing = decode(result.artifact.signing);
+      const signature = decode(result.artifact.signature);
+      if (signing.length === 0 || signature.length !== 64) return false;
+      // Existing protected-artifact digest: domain, uint64-BE byte length,
+      // exact signing bytes and decoded Ed25519 signature.
+      const prefix = new TextEncoder().encode("aweb.protected-artifact/1\n");
+      const bytes = new Uint8Array(prefix.length + 8 + signing.length + signature.length);
+      bytes.set(prefix);
+      new DataView(bytes.buffer).setBigUint64(prefix.length, BigInt(signing.length), false);
+      bytes.set(signing, prefix.length + 8);
+      bytes.set(signature, prefix.length + 8 + signing.length);
+      const digest = new Uint8Array(await crypto.subtle.digest("SHA-256", bytes));
+      return Array.from(digest, byte => byte.toString(16).padStart(2, "0")).join("") === delivery.reference.artifact_sha256;
+    } catch {
+      return false;
+    }
   }
 
-  function governanceComplete(result) {
+  async function governanceComplete(result) {
     if (result.state === "pending") {
       if (result.redirect_uri !== undefined || !nonempty(result.expires_at) ||
           !Number.isFinite(Date.parse(result.expires_at))) throw new Error("handoff_refused");
@@ -207,7 +230,7 @@ import { renderDisplay, displayRefusal } from "/handoff-assets/protected-display
       outcome("Approved", "It is still being carried out. Your owner page shows the outcome under History.");
       return;
     }
-    if (result.state !== "committed" || !committedResult(result.result)) {
+    if (result.state !== "committed" || !await committedResult(result.result)) {
       throw new Error("handoff_refused");
     }
     if (frozenRedirect === undefined) {
@@ -548,7 +571,7 @@ import { renderDisplay, displayRefusal } from "/handoff-assets/protected-display
         });
         if (!credential) throw new Error("handoff_refused");
         submitted = true;
-        governanceComplete(await request("/execute", {assertion: credential.toJSON()}));
+        await governanceComplete(await request("/execute", {assertion: credential.toJSON()}));
         return;
       }
       if (purpose === "credential") {

@@ -63,12 +63,19 @@ async function validAdmissionPolicy(policy, service, teams) {
 }
 
 export async function validateProtectedPresentation(state, handoffId, table) {
+  if (state.state !== "pending") refused();
+  return validateProtectedReceiptPresentation(state, handoffId, table);
+}
+
+// Terminal receipt views keep the same immutable request/digest binding, but
+// cannot borrow the pending-only gate that enables a new approval ceremony.
+export async function validateProtectedReceiptPresentation(state, handoffId, table) {
   const {payload, digest} = state;
   const request = payload?.request;
   const subject = request?.subject;
   const artifact = request?.artifact;
   const spec = table?.[`${request?.operation}|${request?.variant}`];
-  if (state.mode !== "governance" || state.handoff_id !== handoffId || state.state !== "pending" ||
+  if (state.mode !== "governance" || state.handoff_id !== handoffId || !["pending", "committed", "refused", "unknown"].includes(state.state) ||
       !nonempty(state.operation_id) || request?.operation_id !== state.operation_id ||
       !/^[0-9a-f]{64}$/.test(digest) || !nonempty(state.expires_at) || !Number.isFinite(Date.parse(state.expires_at)) ||
       !nonempty(payload?.policy?.ref) || !Number.isSafeInteger(payload?.policy?.version) || payload.policy.version < 1 ||

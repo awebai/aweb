@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import base64
 import uuid
 from dataclasses import dataclass, replace
 from datetime import timedelta
@@ -89,11 +90,14 @@ class ControllerCustody:
         pass  # Explicit transport double; not protected-consumer readiness evidence.
 
     def retain_authorized_effect(self, **kw):
+        from awid.protected_effect import artifact_digest
+
         from aweb_naapp.runtime.protected_signer import FrozenDelivery, RetainedEffect
         from aweb_naapp.runtime.protected_signer.execution_intent import validate_issued_artifact
 
         assert validate_issued_artifact(kw["operation"], kw["request"]["artifact"], kw["artifact"]) == kw["signing"]
-        return RetainedEffect(kw["operation"].operation_id, kw["signing"], kw["signature"], "a" * 64,
+        digest = artifact_digest(kw["signing"], base64.b64encode(kw["signature"]).decode().rstrip("="))
+        return RetainedEffect(kw["operation"].operation_id, kw["signing"], kw["signature"], digest,
             kw["expires_at"], FrozenDelivery(kw["operation"].audience, "POST", "/.well-known/aweb-owner-act",
                 {"Authorization": "transport-double"}, kw["signing"]), "transport-double-not-a-proof")
 
