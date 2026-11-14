@@ -14,9 +14,9 @@ SEMVER = r"(?:0|[1-9][0-9]*)\.(?:0|[1-9][0-9]*)\.(?:0|[1-9][0-9]*)"
 PYTHON_VERSION = rf"{SEMVER}(?:rc[1-9][0-9]*)?"
 NPM_VERSION = rf"{SEMVER}(?:-rc\.[1-9][0-9]*)?"
 TAG_PATTERN = re.compile(
-    rf"^(?:(server-v|awid-service-v|aweb-naapp-v|aweb-secrets-runner-v)({PYTHON_VERSION})"
+    rf"^(?:(server-v|awid-service-v|aweb-naapp-v|aweb-secrets-runner-v|awid-v)({PYTHON_VERSION})"
     rf"|(aw-v)({NPM_VERSION})"
-    rf"|(awid-v|channel-v|pi-v|skills-v|a2a-gw-v|secrets-v|logs-v)({SEMVER}))$"
+    rf"|(channel-v|pi-v|skills-v|a2a-gw-v|secrets-v|logs-v)({SEMVER}))$"
 )
 
 
