@@ -58,6 +58,14 @@ async def test_only_a_stored_unsigned_expiry_lets_the_page_start_a_new_removal(a
             assert retry.status_code == 200
             # Possibly applied: the page keeps the selection and its pointer.
             assert marker not in html and "not confirmed yet" in html
+            row = await a.w.db.fetch_one(
+                "SELECT approval_id,expires_at FROM {{tables.protected_signer_operations}} WHERE operation_id=$1",
+                body["operation_id"])
+            approval = await signer.store.get(row["approval_id"])
+            from aweb.protected_signing.owner import _stamp
+
+            assert approval.decided_at != row["expires_at"]
+            assert f'<time datetime="{_stamp(approval.decided_at)}"' in html
 
 
 @pytest.mark.asyncio
@@ -72,9 +80,16 @@ async def test_a_removal_the_owner_started_is_requested_by_them(admissions, tmp_
         assert response.status_code == 200, response.text
         mine = await owner_view(a.w.app, scope=a.w.human.b3_scope, subject=a.w.human.subject)
         [waiting] = [p for p in mine["pending"] if p["operation_id"] == body["operation_id"]]
-        assert waiting["requester_name"] == "you"
+        assert waiting["requester_name"] == "you" and waiting["requested_by_you"] is True
         assert "<p>Requested by you, asked " in owner_page_html(mine)
         # Another approver of the scope did not start it.
         theirs = await owner_view(a.w.app, scope=a.w.human.b3_scope, subject="another-approver")
         [other] = [p for p in theirs["pending"] if p["operation_id"] == body["operation_id"]]
-        assert other["requester_name"] != "you"
+        assert other["requester_name"] != "you" and other["requested_by_you"] is False
+        from aweb.protected_signing.owner import _name_requesters
+
+        # A known alias for the host key cannot replace session ownership.
+        host_member = {"alias": "signer-host", "member_did_aw": None,
+            "member_did_key": waiting["requester"]}
+        _name_requesters([waiting, other], [host_member])
+        assert waiting["requester_name"] == "you" and other["requester_name"] == "signer-host"

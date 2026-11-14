@@ -89,12 +89,13 @@ async def owner_view(composition, *, scope: str, subject: str, now: datetime | N
             continue
         title, named = _rendered(request)
         # A request this signed-in approver started from the owner page is theirs.
-        if row["initiator_subject"] == subject and row["initiator_scope"] == scope:
+        requested_by_you = row["initiator_subject"] == subject and row["initiator_scope"] == scope
+        if requested_by_you:
             named = "you"
         entry = {"operation_id": row["operation_id"], "operation": request["operation"],
             "requester": row["requester"], "digest": row["digest"],
             "asked_at": _asked_at(request), "title": title, "requester_name": named,
-            "approval_id": row["approval_id"]}
+            "approval_id": row["approval_id"], "requested_by_you": requested_by_you}
         if row["approval_id"] is None:
             # Bounded unattended work (admissions) is listed under added agents.
             continue
@@ -148,7 +149,10 @@ def _name_requesters(entries, members):
             if key:
                 names[key] = member["alias"]
     for entry in entries:
-        entry["requester_name"] = names.get(entry["requester"]) or entry.get("requester_name")
+        entry["requester_name"] = (
+            "you" if entry.get("requested_by_you") is True
+            else names.get(entry["requester"]) or entry.get("requester_name")
+        )
 
 
 async def _admissions(c, view, requests, now):

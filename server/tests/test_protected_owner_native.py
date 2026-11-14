@@ -442,3 +442,14 @@ def test_unresolved_history_shows_its_decision_time_only_when_recorded(decided_a
         assert "<time" not in history
     else:
         assert f'<time datetime="{decided_at}"' in history
+
+
+@pytest.mark.parametrize("owned", [True, False])
+def test_session_ownership_takes_precedence_over_a_signer_host_member_alias(owned):
+    from aweb.protected_signing.owner import _name_requesters
+
+    entry = {"requester": "did:key:HOST", "requester_name": "you",
+        "requested_by_you": owned}
+    _name_requesters([entry], [{"alias": "signer-host", "member_did_aw": None,
+        "member_did_key": "did:key:HOST"}])
+    assert entry["requester_name"] == ("you" if owned else "signer-host")
