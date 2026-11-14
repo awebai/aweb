@@ -437,7 +437,9 @@ import { renderDisplay, displayRefusal } from "/handoff-assets/protected-display
         document.body.dataset.handoffState = "ready";
         inFlight = false;
         pressed.focus();
-      } else if (sent && error.status === 503) {
+      } else if (sent && error.status === 503 && decision === "approve") {
+        // Only an approval has a retry lane; a failed rejection stays
+        // unconfirmed below, never offered back as an approval.
         notYet();
       } else if (sent) {
         document.body.dataset.handoffState = "unconfirmed";
