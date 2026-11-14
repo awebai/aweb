@@ -58,6 +58,13 @@
         if (typeof result.handoff_id !== "string" || !result.handoff_id) throw new Error("unconfirmed");
         window.location.assign("/handoff/" + encodeURIComponent(result.handoff_id));
       } catch (error) {
+        // The signer stored this request's expiry as final; reloading shows
+        // it in History, which lets this tab start a new request.
+        if (error?.detail === "operation_expired") {
+          status.textContent = "This request expired without being carried out. Reload to request a new approval.";
+          button.disabled = false;
+          return;
+        }
         const reason = refusals[error?.detail];
         status.textContent = (reason ? reason + " " : "") +
           "The request was not confirmed. Nothing is removed until you approve it on its page. " +

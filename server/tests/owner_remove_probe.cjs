@@ -12,6 +12,8 @@ const team = 'engineering:customer.example';
 const certificate = '11111111-1111-4111-8111-111111111111';
 const key = `aweb.owner-removal:${scope}:${certificate}`;
 
+let uuids = 0;
+
 function page({finals = [], stored = {}, answers}) {
   const store = new Map(Object.entries(stored));
   const sessionStorage = {
@@ -30,7 +32,6 @@ function page({finals = [], stored = {}, answers}) {
   const sent = [];
   const storedAtSend = [];
   const assigned = [];
-  let uuids = 0;
   const context = {
     console, JSON, Error, String, encodeURIComponent,
     sessionStorage,
@@ -79,6 +80,20 @@ const lost = () => { throw new TypeError('Failed to fetch'); };
   await q.button.events.click();
   assert.equal(q.button.disabled, false);
   assert.ok(q.store.has(key) && q.status.textContent.length > 0);
+
+  // An expired request says so and how to start again; the selection stays
+  // until the reloaded page shows the signer's stored final refusal.
+  const expired = page({answers: [() => { const e = new Error('Request refused'); e.status = 410;
+    e.detail = 'operation_expired'; throw e; }]});
+  await expired.button.events.click();
+  assert.equal(expired.status.textContent,
+    'This request expired without being carried out. Reload to request a new approval.');
+  assert.ok(expired.store.has(key));
+  const reloaded = page({finals: [JSON.parse(expired.store.get(key)).operation_id],
+    stored: {[key]: expired.store.get(key)}, answers: [() => ({handoff_id: 'h-2'})]});
+  await reloaded.button.events.click();
+  assert.notEqual(reloaded.sent[0][1].operation_id, JSON.parse(expired.store.get(key)).operation_id,
+    'the next Remove after a final expiry reused the old request');
 
   // Only a final history entry for the saved operation forgets it.
   const saved = JSON.stringify({operation_id: 'op-final', operation: 'team.agent.remove',
