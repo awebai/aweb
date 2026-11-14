@@ -145,8 +145,10 @@ async def test_genuine_b3_owner_act_reaches_protected_sql_consumer(world, tmp_pa
             for offset in (timedelta(), timedelta(days=2)):
                 view = await owner_view(w.app, scope=scope, subject=w.human.subject, now=original_clock() + offset)
                 assert view["pending"] == []
-                assert [(item["operation_id"], item["state"]) for item in view["history"]] == [
+                # Approved but not confirmed: listed as such, never as expired history.
+                assert [(item["operation_id"], item["state"]) for item in view["unresolved"]] == [
                     (prepared.operation_id, "unresolved")]
+                assert view["history"] == []
                 html = owner_page_html(view)
                 assert "Approved, not confirmed yet:" in html
                 assert "Expired, nobody decided" not in html and "by you" not in html
