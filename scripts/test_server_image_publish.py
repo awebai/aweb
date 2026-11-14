@@ -295,8 +295,7 @@ class ServerOciTests(unittest.TestCase):
                 self.assertEqual(copies, [f"docker://ghcr.io/awebai/aweb-server:{version}"])
                 verifies = [args for args in calls if args[:3] == ("bash", "scripts/oci-exact-publish.sh", "verify-published")]
                 self.assertTrue(verifies and all("--version-only" in args for args in verifies))
-                if version == "1.2.3":
-                    self.assertIn("latest unchanged (recovery)", output)
+                self.assertIn("latest unchanged (recovery)", output)
 
     def test_a_final_from_its_own_tag_moves_version_and_latest(self):
         copies, verifies = self.published_tags_and_readback(prefix="awid-v", version="0.5.40")

@@ -24,7 +24,6 @@ from release_versions import (
     SEMVER,
     VersionRefusal as PublishRefusal,
     final_version,
-    python_version_key,
     require_final_promotion,
     require_runner_values,
     tag_parts,
@@ -528,12 +527,10 @@ def moves_latest(version: str, recovery: bool) -> bool:
     An rc publishes its immutable version only. So does a recovery: a
     dispatch that publishes an existing tag's image again, rc or final.
     """
-    if final_version(version) is not None:
-        return False
     if recovery:
         print("latest unchanged (recovery)")
         return False
-    return True
+    return final_version(version) is None
 
 
 def publish_oci(root: Path, prefix: str, version: str, source_sha: str, *, recovery: bool = False) -> None:
