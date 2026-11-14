@@ -30,6 +30,9 @@ const again = "Run the command again to send a new request."
 // sentences tell each stable code in words. A code missing here is still
 // told, with the code named (Sentence).
 var sentences = map[string]func(Facts) string{
+	"operation_not_served": func(Facts) string {
+		return "This protected service does not serve the requested operation; upgrade the service to a version that supports it."
+	},
 	"awaiting_human":     func(Facts) string { return "Waiting for the approver to decide." },
 	"awaiting_execute":   func(Facts) string { return "Approved; waiting for the signer to carry it out." },
 	"effect_in_progress": func(Facts) string { return "The signer is carrying this out now." },

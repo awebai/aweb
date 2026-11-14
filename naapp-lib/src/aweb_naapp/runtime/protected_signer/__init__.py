@@ -3,6 +3,7 @@
 from aweb_naapp.runtime.passkeys.proof import ProtectedKeyContext
 
 from .http import ProtectedOperationsHTTP
+from .retention import EffectConfirmation, FrozenDelivery, RetainedEffect, RetainedEffectCustody
 from .service import POLICY_REF, ProtectedSigner
 from .types import (
     AdmittedHuman,
@@ -24,6 +25,8 @@ __all__ = [
     "AdmittedHuman",
     "AuthorityProvider",
     "ControllerCustody",
+    "EffectConfirmation",
+    "FrozenDelivery",
     "CurrentAuthority",
     "CatalogOperation",
     "OperationReceipt",
@@ -35,6 +38,8 @@ __all__ = [
     "ProtectedOperationsHTTP",
     "ReceiptReader",
     "RestrictedRequester",
+    "RetainedEffect",
+    "RetainedEffectCustody",
     "RevokeHumanRole",
     "SignerRefused",
     "VerifiedProtectedEffect",

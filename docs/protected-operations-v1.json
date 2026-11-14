@@ -1,0 +1,321 @@
+{
+  "operations": [
+    {
+      "bindings": {
+        "app_id": "/subject/app_id",
+        "installation_id": "/subject/installation_id",
+        "principal": "/subject/principal",
+        "role": "/subject/role"
+      },
+      "display": {
+        "consequences": [
+          "This revokes the exact retained application role holding.",
+          "Last-owner protection still applies."
+        ],
+        "names": {
+          "application": "/subject/app_id",
+          "role": "/subject/role"
+        },
+        "refusals": {
+          "issuer_kind_forbidden": "This controller cannot revoke the selected role holding.",
+          "subject_ineligible": "The selected role holding cannot be revoked by this operation."
+        },
+        "technical": {
+          "installation": "/subject/installation_id",
+          "principal": "/subject/principal",
+          "requester": "/requester",
+          "team": "/scope/authority/id"
+        },
+        "title": "Remove {/subject/principal} from {/subject/role}?"
+      },
+      "family": "owner_act",
+      "key_role": "team_controller",
+      "operation": "human-role.revoke",
+      "prepared_fields": [],
+      "presentation": {
+        "constants": {
+          "/artifact/type": "aweb.owner-act",
+          "/artifact/v": 1
+        },
+        "equals": [
+          [
+            "/artifact/act",
+            "/operation"
+          ],
+          [
+            "/artifact/team_id",
+            "/scope/authority/id"
+          ],
+          [
+            "/artifact/aud",
+            "/audience"
+          ],
+          [
+            "/artifact/subject",
+            "/subject"
+          ]
+        ]
+      },
+      "responsibility_statement": null,
+      "rule": "live_floor",
+      "subject_schema": {
+        "fields": {
+          "app_id": {
+            "pattern": "[\\s\\S]+"
+          },
+          "installation_id": {
+            "pattern": "[\\s\\S]+"
+          },
+          "principal": {
+            "pattern": "[\\s\\S]+"
+          },
+          "role": {
+            "pattern": "[\\s\\S]+"
+          }
+        },
+        "required": [
+          "app_id",
+          "installation_id",
+          "principal",
+          "role"
+        ]
+      },
+      "variant": "default"
+    },
+    {
+      "bindings": {
+        "certificate": "/artifact",
+        "default_admission_policy_digest": "/admission_policy/digest",
+        "default_admission_policy_version": "/admission_policy/version",
+        "deployment_label": "/subject/deployment_label",
+        "domain": "/subject/domain",
+        "expected_head": "/expected_head",
+        "parent": "/artifact/parent",
+        "registry": "/registry",
+        "responsibility_statement": "/responsibility_statement",
+        "root_id": "/subject/root_id",
+        "root_key": "/subject/root_key",
+        "service_id": "/scope/service_id"
+      },
+      "display": {
+        "consequences": [
+          "Everything this root spawns counts as yours for human responsibility; this grants no resource permissions.",
+          "Admission remains limited by the provisioned policy and its active-count and rate bounds.",
+          "This endorsement grants no resource permissions."
+        ],
+        "names": {
+          "deployment": "/subject/deployment_label",
+          "teams": "/subject/teams"
+        },
+        "refusals": {
+          "issuer_kind_forbidden": "The selected protected identity cannot endorse this root.",
+          "subject_ineligible": "This root is not an eligible registered agent of the selected human."
+        },
+        "technical": {
+          "human": "/scope/human/id",
+          "policy": "/admission_policy",
+          "requester": "/requester",
+          "root": "/subject/root_id",
+          "root_key": "/subject/root_key"
+        },
+        "title": "Approve {/subject/deployment_label} as the root agent for {/subject/teams}?"
+      },
+      "family": "id_certificate",
+      "key_role": "human_identity",
+      "operation": "identity.root.endorse",
+      "prepared_fields": [
+        "admission_policy",
+        "expected_head",
+        "registry",
+        "responsibility_statement"
+      ],
+      "presentation": {
+        "admission_policy": [
+          "/admission_policy",
+          "/scope/service_id",
+          "/subject/teams"
+        ],
+        "constants": {
+          "/artifact/kind": "agent",
+          "/artifact/parent/kind": "identity",
+          "/artifact/type": "aweb.id-certificate",
+          "/artifact/v": 1
+        },
+        "equals": [
+          [
+            "/artifact/id",
+            "/subject/root_id"
+          ],
+          [
+            "/artifact/domain",
+            "/subject/domain"
+          ],
+          [
+            "/subject/domain",
+            "/scope/authority/domain"
+          ],
+          [
+            "/scope/authority/id",
+            "/scope/human/id"
+          ],
+          [
+            "/artifact/parent/id",
+            "/scope/authority/id"
+          ],
+          [
+            "/registry",
+            "/audience"
+          ]
+        ],
+        "exact": {
+          "/artifact": [
+            "v",
+            "type",
+            "id",
+            "domain",
+            "parent",
+            "kind",
+            "issuer_key",
+            "issued_at"
+          ],
+          "/artifact/parent": [
+            "kind",
+            "id"
+          ]
+        },
+        "nonempty": [
+          "/artifact/issuer_key"
+        ],
+        "nullable_patterns": {
+          "/expected_head": "sha256:[0-9a-f]{64}"
+        },
+        "statement": "/responsibility_statement",
+        "timestamps": [
+          "/artifact/issued_at"
+        ]
+      },
+      "responsibility_statement": "Everything this root spawns counts as yours for human responsibility; this grants no resource permissions.",
+      "rule": "live_floor",
+      "subject_schema": {
+        "fields": {
+          "deployment_label": {
+            "pattern": "[^\\x00-\\x1f]{1,128}"
+          },
+          "domain": {
+            "pattern": "[a-z0-9.-]+"
+          },
+          "root_id": {
+            "pattern": "did:aw:[1-9A-HJ-NP-Za-km-z]+"
+          },
+          "root_key": {
+            "pattern": "did:key:z[1-9A-HJ-NP-Za-km-z]+"
+          },
+          "teams": {
+            "list": true,
+            "maxItems": 4096,
+            "pattern": "[^\\s:]+:[^\\s:]+"
+          }
+        },
+        "required": [
+          "domain",
+          "root_id",
+          "root_key",
+          "teams",
+          "deployment_label"
+        ]
+      },
+      "variant": "default"
+    },
+    {
+      "bindings": {
+        "admission_policy_digest": "/subject/admission_policy_digest",
+        "admission_policy_version": "/admission_policy_version",
+        "certificate_fields": "/artifact",
+        "child_id": "/subject/child_id",
+        "child_key": "/subject/child_key",
+        "expected_policy_version": "/subject/expected_policy_version",
+        "member_alias": "/subject/member_alias",
+        "request_id": "/request_id",
+        "root_id": "/subject/root_id",
+        "root_key": "/subject/root_key",
+        "service_id": "/scope/service_id",
+        "team_id": "/subject/team_id"
+      },
+      "display": {
+        "consequences": [
+          "This creates one ordinary agent membership under the endorsed root's policy.",
+          "It grants no owner role or resource permissions."
+        ],
+        "names": {
+          "member": "/subject/member_alias",
+          "team": "/subject/team_id"
+        },
+        "refusals": {
+          "issuer_kind_forbidden": "The selected controller cannot admit this kind of member.",
+          "subject_ineligible": "This admission requires a positively verified eligible agent or permitted local agent."
+        },
+        "technical": {
+          "member_key": "/subject/child_key",
+          "policy_digest": "/subject/admission_policy_digest",
+          "requester": "/requester",
+          "root": "/subject/root_id"
+        },
+        "title": "Admit {/subject/member_alias} to {/subject/team_id}?"
+      },
+      "family": "member_certificate",
+      "key_role": "team_controller",
+      "operation": "team.agent.admit",
+      "prepared_fields": [
+        "admission_policy_version",
+        "request_id"
+      ],
+      "presentation": null,
+      "responsibility_statement": null,
+      "rule": "bounded_unattended",
+      "subject_schema": null,
+      "variant": "default"
+    },
+    {
+      "bindings": {
+        "certificate_id": "/subject/certificate_id",
+        "expected_membership": "/subject/expected_membership",
+        "member_id": "/subject/member_id",
+        "root_id_or_self": "/subject/root_id_or_self",
+        "team_id": "/subject/team_id"
+      },
+      "display": {
+        "consequences": [
+          "This revokes the exact team membership certificate.",
+          "Identity revocation is a separate operation."
+        ],
+        "names": {
+          "member": "/subject/expected_membership/alias",
+          "team": "/subject/team_id"
+        },
+        "refusals": {
+          "issuer_kind_forbidden": "This signer cannot remove that kind of membership.",
+          "subject_ineligible": "This unattended path requires an eligible agent membership."
+        },
+        "technical": {
+          "certificate": "/subject/certificate_id",
+          "member": "/subject/member_id",
+          "requester": "/requester"
+        },
+        "title": "Remove {/subject/expected_membership/alias} from {/subject/team_id}?"
+      },
+      "family": "member_revocation",
+      "key_role": "team_controller",
+      "operation": "team.agent.remove",
+      "prepared_fields": [
+        "requester_key"
+      ],
+      "presentation": null,
+      "responsibility_statement": null,
+      "rule": "bounded_unattended",
+      "subject_schema": null,
+      "variant": "default"
+    }
+  ],
+  "type": "aweb.protected-operations",
+  "v": 1
+}

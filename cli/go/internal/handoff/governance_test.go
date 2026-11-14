@@ -602,6 +602,66 @@ func TestTheFingerprintIsTheDigestsFirstSixteenHexInFours(t *testing.T) {
 	}
 }
 
+// The prepare response distinguishes an unavailable operation from an origin
+// without a protected route. It never invents this code for a detail-less 404.
+func TestAnUnservedPrepareKeepsItsCodeAndExplainsTheServiceUpgrade(t *testing.T) {
+	for _, tc := range []struct {
+		name    string
+		status  int
+		body    string
+		code    string
+		upgrade bool
+	}{
+		{"operation", 400, `{"detail":"operation_not_served"}`, "operation_not_served", true},
+		{"wrong-origin", 404, "not found", "handoff_http_404", false},
+		{"scope-denial", 403, `{"detail":"scope_refused"}`, "scope_refused", false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			var calls atomic.Int32
+			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				calls.Add(1)
+				if r.Method != http.MethodPost || r.URL.Path != "/protected-operations" {
+					t.Errorf("unexpected request %s %s", r.Method, r.URL.Path)
+				}
+				w.WriteHeader(tc.status)
+				_, _ = io.WriteString(w, tc.body)
+			}))
+			defer server.Close()
+			saved := 0
+			opts := GovernanceOptions{Request: server.URL, Human: "https://human.example", NoWait: true, Notify: io.Discard,
+				Sign: func(ctx context.Context, method string, target *url.URL, body []byte) (*http.Response, error) {
+					req, err := http.NewRequestWithContext(ctx, method, target.String(), bytes.NewReader(body))
+					if err != nil {
+						return nil, err
+					}
+					return http.DefaultClient.Do(req)
+				},
+				Open:   func(string) error { t.Error("unserved operation opened an approval page"); return nil },
+				Save:   func(string, []byte) error { saved++; return nil },
+				Forget: func(string) error { t.Error("unserved operation forgot its saved request"); return nil },
+			}
+			receipt, err := Approve(context.Background(), opts, "44444444-4444-4444-8444-444444444444", revokeIntent())
+			if receipt != nil || ErrorCode(err) != tc.code || calls.Load() != 1 || saved != 1 {
+				t.Fatalf("receipt=%#v error=%v requests=%d saved=%d", receipt, err, calls.Load(), saved)
+			}
+			if strings.Contains(err.Error(), "upgrade the service") != tc.upgrade {
+				t.Fatalf("wrong user guidance: %v", err)
+			}
+		})
+	}
+}
+
+func TestAnUndefinedOperationCannotBorrowTheOwnerActPreparedShape(t *testing.T) {
+	stub := newSignerStub(t, `{"state":"committed","result":{"signing":"x","signature":"y"}}`)
+	intent := revokeIntent()
+	intent["operation"] = "operation.without.a.pinned.definition"
+	var opened string
+	_, err := Approve(context.Background(), stub.options(&opened), "11111111-1111-4111-8111-111111111111", intent)
+	if ErrorCode(err) != "operation_mismatch" || opened != "" {
+		t.Fatalf("undefined prepared operation accepted: opened=%q err=%v", opened, err)
+	}
+}
+
 // The terminal leads with what happens, keeps the fingerprint in sight and the
 // full digest in --json (Juan 2026-11-13, via coordinator). It never claims a
 // notice was mailed: the prepare answer carries no evidence of that, and a
