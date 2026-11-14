@@ -19,6 +19,7 @@ import time
 from types import SimpleNamespace
 from urllib.parse import urlsplit
 import unittest
+from unittest.mock import patch
 import uuid
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -414,6 +415,105 @@ class ComposeConfigTests(unittest.TestCase):
                 # Preserve the fixture's actual signed loopback audience.
                 self.assertEqual(merged['services']['aweb']['environment']['AWEB_PUBLIC_ORIGIN'],
                                  original['services']['aweb']['environment']['AWEB_PUBLIC_ORIGIN'])
+
+
+LINK_STUB = r"""#!/usr/bin/env bash
+# The real docker, recorded: run-owned resources carry aweb.candidate-gate=run.
+echo "$*" >> "$CALLS"
+if [[ "$1" == network && "$2" == inspect ]]; then
+  [[ -n "${INSPECT_FAIL:-}" ]] && { echo "Cannot connect to the Docker daemon" >&2; exit 1; }
+  case "${@: -1}" in run-net) echo run ;; other-run-net) echo other ;; *) echo "" ;; esac; exit 0
+fi
+if [[ "$1" == inspect ]]; then
+  case "${@: -1}" in run-ctr) echo run ;; *) echo "" ;; esac; exit 0
+fi
+exit 0
+"""
+
+
+class NetworkLinkGuardTests(unittest.TestCase):
+    """Under a gate run, the shim links only this run's containers to this run's networks."""
+
+    def link(self, *args, label='run'):
+        with tempfile.TemporaryDirectory() as tmp:
+            stub = Path(tmp) / 'docker'
+            stub.write_text(LINK_STUB)
+            stub.chmod(0o755)
+            calls = Path(tmp) / 'calls'
+            result = subprocess.run(['bash', str(ROOT / 'candidate-gate/bin/docker'), 'network', *args],
+                                    capture_output=True, text=True, timeout=30,
+                                    env={**os.environ, 'AWEB_CANDIDATE_REAL_DOCKER': str(stub), 'CALLS': str(calls),
+                                         'AWEB_CANDIDATE_RESOURCE_LABEL': label})
+            recorded = calls.read_text().splitlines() if calls.exists() else []
+            return result, recorded
+
+    def test_a_run_container_joins_a_run_network(self):
+        for verb in ('connect', 'disconnect'):
+            with self.subTest(verb=verb):
+                result, calls = self.link(verb, '--alias', 'awid', 'run-net', 'run-ctr')
+                self.assertEqual(result.returncode, 0, result.stderr)
+                self.assertEqual(calls[-1], f'network {verb} --alias awid run-net run-ctr')
+
+    def test_anything_not_owned_by_this_run_is_refused_before_the_daemon_acts(self):
+        cases = {
+            'a network outside the run': ('connect', 'host-net', 'run-ctr'),
+            "another run's network": ('connect', 'other-run-net', 'run-ctr'),
+            'a container outside the run': ('connect', 'run-net', 'other-ctr'),
+            'a disconnect outside the run': ('disconnect', '-f', 'host-net', 'run-ctr'),
+        }
+        for name, args in cases.items():
+            with self.subTest(case=name):
+                result, calls = self.link(*args)
+                self.assertEqual(result.returncode, 2, result.stdout + result.stderr)
+                self.assertIn('candidate gate refuses network', result.stderr)
+                self.assertFalse([c for c in calls if c.startswith(('network connect', 'network disconnect'))])
+
+    def test_an_unreadable_label_is_a_refusal_not_permission(self):
+        with patch.dict(os.environ, INSPECT_FAIL='1'):
+            result, calls = self.link('connect', 'run-net', 'run-ctr')
+        self.assertEqual(result.returncode, 2)
+        self.assertFalse([c for c in calls if c.startswith('network connect')])
+
+    def test_outside_a_gate_run_the_shim_passes_network_commands_through(self):
+        result, calls = self.link('connect', 'host-net', 'other-ctr', label='')
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertEqual(calls, ['network connect host-net other-ctr'])
+
+
+@unittest.skipUnless(os.environ.get('AWEB_TEST_DOCKER_NETWORK') == '1', 'requires an approved Docker slot')
+class NetworkLinkGuardDockerTests(unittest.TestCase):
+    """Negative control on a real daemon: the shim refuses linking a run container
+    to a network the run does not own, and allows its own."""
+
+    def test_real_link_to_a_foreign_network_is_refused(self):
+        real = os.environ.get('AWEB_CANDIDATE_REAL_DOCKER') or shutil.which('docker')
+        run = 'link-guard-' + uuid.uuid4().hex[:12]
+        label = f'aweb.candidate-gate={run}'
+        shim_env = {**os.environ, 'AWEB_CANDIDATE_REAL_DOCKER': real, 'AWEB_CANDIDATE_RESOURCE_LABEL': run}
+        # The container starts on one run-owned bridge, as a Compose service does, and
+        # is linked to a second run-owned bridge; the foreign bridge is not the run's.
+        names = {'start': run + '-start', 'own': run + '-own', 'foreign': run + '-foreign', 'ctr': run + '-ctr'}
+        try:
+            for network in ('start', 'own'):
+                subprocess.run([real, 'network', 'create', '--label', label, names[network]], check=True, capture_output=True)
+            subprocess.run([real, 'network', 'create', names['foreign']], check=True, capture_output=True)
+            subprocess.run([real, 'run', '-d', '--name', names['ctr'], '--label', label, '--network', names['start'],
+                            'busybox', 'sleep', '300'], check=True, capture_output=True)
+            shim = ['bash', str(ROOT / 'candidate-gate/bin/docker'), 'network', 'connect']
+            refused = subprocess.run([*shim, names['foreign'], names['ctr']], env=shim_env, capture_output=True, text=True)
+            self.assertEqual(refused.returncode, 2, refused.stderr)
+            networks = subprocess.run([real, 'inspect', '--format', '{{json .NetworkSettings.Networks}}', names['ctr']],
+                                      check=True, capture_output=True, text=True).stdout
+            self.assertNotIn(names['foreign'], networks)
+            allowed = subprocess.run([*shim, names['own'], names['ctr']], env=shim_env, capture_output=True, text=True)
+            self.assertEqual(allowed.returncode, 0, allowed.stderr)
+            networks = subprocess.run([real, 'inspect', '--format', '{{json .NetworkSettings.Networks}}', names['ctr']],
+                                      check=True, capture_output=True, text=True).stdout
+            self.assertIn(names['own'], networks)
+        finally:
+            subprocess.run([real, 'rm', '-f', names['ctr']], capture_output=True)
+            for network in (names['start'], names['own'], names['foreign']):
+                subprocess.run([real, 'network', 'rm', network], capture_output=True)
 
 
 @unittest.skipUnless(os.environ.get('AWEB_TEST_DOCKER_NETWORK') == '1', 'requires an approved Docker slot')
