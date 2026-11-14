@@ -157,6 +157,9 @@ async def _admissions(c, view, requests, now):
                 "next_at": _stamp(counts["next_at"])})
 
 
+_JOINED = {"active": "signer", "reserved": "signer_reserved", "removed": "signer_removed"}
+
+
 async def _members(c, view):
     """Every current member of the team, whoever added it: its kind and
     whether this signer admitted it. None when the registry cannot say."""
@@ -167,12 +170,13 @@ async def _members(c, view):
     except SignerRefused:
         view["members"] = None
         return
-    # One member key may hold several certificates; only the exact
-    # certificate this signer admitted counts as added through it.
-    added = {a["certificate_id"] for a in view["admitted"] if a["state"] == "active"}
+    # One member key may hold several certificates; only this signer's exact
+    # record of a certificate says anything about how it joined, and then
+    # with the state recorded. Without one, nothing about its origin is known.
+    recorded = {a["certificate_id"]: a["state"] for a in view["admitted"]}
     for record in records:
         view["members"].append({"alias": record.alias, "kind": await _member_kind(c, record),
-            "joined": "signer" if record.certificate_id in added else "other",
+            "joined": _JOINED.get(recorded.get(record.certificate_id), "unrecorded"),
             "member_did_aw": record.member_did_aw or None, "member_did_key": record.member_did_key,
             "certificate_id": record.certificate_id})
 
@@ -185,12 +189,15 @@ async def _member_kind(c, record):
         return "agent"
     if not record.member_did_aw:
         return "kind not verified"
+    # Observed for the certificate's own member key: what the identity's
+    # current key proves says nothing about a certificate for another key.
     try:
-        resolved = await _registry(c.registry.resolve_key_fresh(record.member_did_aw), missing="subject_ineligible")
         binding = await observe_identity_binding(c.registry, did_aw=record.member_did_aw,
-            did_key=resolved.current_did_key)
+            did_key=record.member_did_key)
         kind = (await observe_identity_kind(c.registry, binding)).result
-    except (SignerRefused, IdentityObservationRefused):
+    except IdentityObservationRefused as error:
+        return "kind not verified" if error.code == "identity_binding_mismatch" else "not checked"
+    except SignerRefused:
         return "not checked"
     if kind["outcome"] == "unavailable":
         return "not checked"
@@ -249,6 +256,8 @@ _OUTCOMES = {"committed": "Approved", "expired": "Expired, nobody decided",
     "unresolved": "Signed; whether it took effect is not confirmed yet"}
 _REFUSALS = {"human_refused": "Denied"}
 _KINDS = {"not checked": "kind could not be checked"}
+_JOINED_TEXT = {"signer": "added through this signer", "signer_reserved": "being added through this signer",
+    "signer_removed": "recorded by this signer as removed"}
 
 
 def _technical(rows):
@@ -316,7 +325,7 @@ def owner_page_html(view: dict) -> str:
             parts.append('<ul class="owner-list">')
             for member in view["members"]:
                 kind = _KINDS.get(member["kind"], member["kind"])
-                joined = "added through this signer" if member["joined"] == "signer" else "joined another way"
+                joined = _JOINED_TEXT.get(member["joined"], "not recorded by this signer")
                 parts.append(
                     f'<li>{e(member["alias"])}: {e(kind)}, {joined}'
                     + _technical([("Identity", member["member_did_aw"] or "none"), ("Key", member["member_did_key"]),
