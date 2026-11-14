@@ -179,6 +179,12 @@ func retryWithin(opts GovernanceOptions) time.Duration {
 	return DefaultRetryWithin
 }
 
+// pollCap is the longest aw waits between two reads of a pending receipt.
+// Each ordinary wait doubles from the poll interval up to it, so a long human
+// wait does not spend the requester's whole read allowance; a wake still
+// reads at once.
+var pollCap = time.Minute
+
 func pollInterval(opts GovernanceOptions) time.Duration {
 	if opts.PollInterval > 0 {
 		return opts.PollInterval
@@ -382,11 +388,14 @@ func checkPrepared(ctx context.Context, opts GovernanceOptions, prepared *Prepar
 }
 
 // awaitReceipt reads operationID's receipt until it is final or the operation
-// expires, every poll interval or sooner when woken (a nil woken never wakes).
+// expires. Each ordinary wait doubles from the poll interval up to pollCap; a
+// wake ends one ordinary wait early, once (a nil woken never wakes), and never
+// a wait the service asked for.
 // No read outlasts the operation; a pending operation at its expiry is
 // operation_expired, and an unreadable receipt leaves the outcome unknown.
 func awaitReceipt(ctx context.Context, opts GovernanceOptions, operationID string, expiresAt time.Time, woken <-chan struct{}) (*Receipt, error) {
 	interval := pollInterval(opts)
+	wait := interval
 	for {
 		// No read outlasts the operation.
 		readCtx, cancelRead := context.WithDeadline(ctx, expiresAt)
@@ -416,11 +425,14 @@ func awaitReceipt(ctx context.Context, opts GovernanceOptions, operationID strin
 		if _, hintedWait := retryHint(err); !hintedWait {
 			select {
 			case <-woken:
-			case <-time.After(interval):
+				// One wake reads once; a closed or repeated wake reads no faster.
+				woken = nil
+			case <-time.After(min(wait, expiresAt.Sub(now()))):
 			case <-ctx.Done():
 				return unresolvedReceipt(operationID, "receipt_unavailable"), ctx.Err()
 			}
 		}
+		wait = min(2*wait, max(pollCap, interval))
 		// A wait that ran past the expiry sends no further read.
 		if !now().Before(expiresAt) {
 			if err != nil {
