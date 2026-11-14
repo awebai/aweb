@@ -170,6 +170,7 @@ async def test_owner_console_uv_reaches_protected_revocation_and_exact_recovery_
         path = "/handoff/" + prepared["handoff_id"] + "/governance"
         view = await client.get(path)
         assert view.status_code == 200 and view.json()["state"] == "pending", view.text
+        assert view.json()["requested_by_you"] is True
         frozen = view.json()["payload"]["request"]
         assert frozen == prepared["payload"]["request"]
         assert frozen["target_kind"] == ("agent" if target == "tracked" else "kind not verified")

@@ -224,6 +224,17 @@ class ProtectedSigner:
             await self._authorized(operation_id, human, "approval", human_session=human_session)
         )
 
+    async def requested_by_you(self, operation_id, *, human, human_session=None):
+        """Compare private initiation provenance with the authenticated viewer."""
+        if type(human) is not AdmittedHuman:
+            raise SignerRefused("scope_refused")
+        if type(human_session) is not ConsoleSession:
+            raise SignerRefused("console_session_required")
+        row = await self._authorized(operation_id, human, "approval", human_session=human_session)
+        return (row.get("initiator_subject"), row.get("initiator_scope")) == (
+            human_session.subject, human_session.scope,
+        )
+
     async def _hold_session(self, tx, human, session, *, b3_held=False):
         if session is None:
             return
