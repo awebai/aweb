@@ -121,8 +121,11 @@ import { renderDisplay, displayRefusal } from "/handoff-assets/protected-display
     // When it was asked: a frozen artifact's issue time, or for an intent the
     // start of its issuance window, which is the moment it was prepared.
     const asked = request.artifact?.issued_at ?? request.artifact?.issuance_window?.not_before;
+    // The signed-in owner who started this request is "you"; the server says
+    // so from the session, never from anything in the request.
+    const requester = state.requested_by_you === true ? "you" : (words.requester ?? request.requester);
     document.getElementById("handoff-requested").textContent =
-      (words.requester ?? request.requester) + (nonempty(asked) ? `, asked ${when(asked)}` : "");
+      requester + (nonempty(asked) ? `, asked ${when(asked)}` : "");
     document.getElementById("handoff-expires").textContent = when(state.expires_at);
     document.getElementById("handoff-governance").hidden = false;
     document.getElementById("handoff-explanation").hidden = true;

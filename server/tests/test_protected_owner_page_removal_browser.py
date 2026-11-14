@@ -8,6 +8,7 @@ route and console login over TLS; no root or requester grant is active.
 """
 
 import asyncio
+import re
 import socket
 from contextlib import asynccontextmanager
 from datetime import timedelta
@@ -125,6 +126,9 @@ async def test_the_owner_removes_a_member_from_the_owner_page_with_one_exact_pas
             await expect(approve).to_have_text("Approve")
             await expect(page.locator("#handoff-title")).to_have_text(f"Remove {root.alias} from engineering?")
             await expect(page.locator("#handoff-names dt")).to_contain_text(["Kind"])
+            # The owner pressed Remove a moment ago: the request is theirs.
+            await expect(page.locator("#handoff-requested")).to_have_text(re.compile(r"^you, asked .+$"))
+            assert "did:" not in await page.locator("#handoff-facts").inner_text()
             assert not await revoked(a, certificate)
             retained_page = page.url
             await approve.click()
