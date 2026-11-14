@@ -49,7 +49,7 @@ async def independent_reader(a):
     """Host reads survive revoking the root's own membership certificate."""
     from aweb.protected_signing.registry import CustomerRegistry
 
-    key, _ = await legacy_member(a, "local")
+    key, _ = await legacy_member(a, "local", alias="protected-receipt-reader")
     original = a.w.registry
     registry = CustomerRegistry(registry_origin=original.registry_url, namespace_keys=original.namespace_keys,
         transport=a.w.host.transport, member_signing_keys={TEAM: bytes(key)})
