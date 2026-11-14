@@ -27,7 +27,51 @@
     "member_key_mismatch",
     "bad_signature",
     "revoked",
-    "unregistered"
+    "unregistered",
+    "certificate_binding_mismatch"
+  ],
+  "refusal_answers": [
+    {
+      "reason": "malformed",
+      "status_code": 401,
+      "detail": "malformed"
+    },
+    {
+      "reason": "unsupported_version",
+      "status_code": 401,
+      "detail": "unsupported_version"
+    },
+    {
+      "reason": "invalid_field",
+      "field": "alias",
+      "status_code": 401,
+      "detail": "invalid_field: alias"
+    },
+    {
+      "reason": "member_key_mismatch",
+      "status_code": 401,
+      "detail": "member_key_mismatch"
+    },
+    {
+      "reason": "bad_signature",
+      "status_code": 401,
+      "detail": "bad_signature"
+    },
+    {
+      "reason": "revoked",
+      "status_code": 401,
+      "detail": "revoked"
+    },
+    {
+      "reason": "unregistered",
+      "status_code": 401,
+      "detail": "unregistered"
+    },
+    {
+      "reason": "certificate_binding_mismatch",
+      "status_code": 401,
+      "detail": "certificate_binding_mismatch"
+    }
   ],
   "today_verifiers": {
     "awid": "awid.team_certificate: decode_team_certificate, then verify_team_certificate_signature",

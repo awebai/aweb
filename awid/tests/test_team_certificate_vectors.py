@@ -131,3 +131,11 @@ def test_every_reason_is_an_invalid_credential_and_only_the_registrys_key_is_a_5
         detail = reason if field is None else f"{reason}: {field}"
         assert refusal_answer(TeamCertificateError(reason, field)) == (401, detail)
     assert refusal_answer(TeamCertificateError("invalid_team_key")) == (503, "authority_unavailable")
+
+
+def test_refusal_answers_match_the_complete_shared_reason_catalog() -> None:
+    assert [case["reason"] for case in VECTORS["refusal_answers"]] == list(REASONS)
+    for case in VECTORS["refusal_answers"]:
+        refused = TeamCertificateError(case["reason"], case.get("field"))
+        assert refusal_answer(refused) == (case["status_code"], case["detail"])
+        assert str(refused) == case["detail"]
