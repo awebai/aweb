@@ -188,7 +188,10 @@ def mount_registry(app: FastAPI) -> None:
 
         checks["schema"] = str(getattr(request.app.state, "db_schema", "awid"))
         checks["rate_limiter"] = type(request.app.state.rate_limiter).__name__
-        return {"status": "ok" if healthy else "unhealthy", "version": service_version, "checks": checks}
+        return {
+            "status": "ok" if healthy else "unhealthy", "version": service_version, "checks": checks,
+            "capabilities": {"team_protection": True},
+        }
 
     @app.get("/live", tags=["ops"])
     async def live() -> dict:

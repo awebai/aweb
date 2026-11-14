@@ -16,7 +16,7 @@ from pgdbm.errors import QueryError
 from fastapi.exceptions import RequestValidationError
 from pydantic import BaseModel, ConfigDict, Field, ValidationError, field_validator, model_validator
 
-from awid_service.protected_teams import advance_incarnation, effect_transaction, protection, project_protection, refusal, team_guard
+from awid_service.protected_teams import advance_incarnation, effect_transaction, protection, project_protection, refusal, team_read_transaction
 
 from awid_service.deps import get_db
 from awid.contract import normalize_identity_scope
@@ -680,7 +680,9 @@ async def list_teams(
         })
 
     return TeamListResponse(
-        teams=[_team_model(r, project_protection(r if r["mode"] is not None else None)) for r in page_rows],
+        teams=[_team_model(r, project_protection(
+            r if r["mode"] is not None else None, team_id=build_team_id(r["domain"], r["name"]),
+        )) for r in page_rows],
         has_more=has_more,
         next_cursor=next_cursor,
     )
@@ -700,8 +702,7 @@ async def get_team(
 ) -> TeamResponse:
     name = _validate_team_name_path(name)
     db = db_infra.get_manager("aweb")
-    async with db.transaction() as tx:
-        await team_guard(tx, domain, name, exclusive=False)
+    async with team_read_transaction(db, domain, name) as tx:
         row = await tx.fetch_one(
             """
             SELECT team_uuid, domain, name, display_name, team_did_key, visibility, created_at
@@ -1142,8 +1143,7 @@ async def certificate_status(
     """
     db = db_infra.get_manager("aweb")
     if include_protection:
-        async with db.transaction() as tx:
-            await team_guard(tx, domain, name, exclusive=False)
+        async with team_read_transaction(db, domain, name) as tx:
             return await _certificate_status_response(tx, domain, name, certificate_id, include_protection=True)
     return await _certificate_status_response(db, domain, name, certificate_id)
 

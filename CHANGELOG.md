@@ -2,6 +2,10 @@
 
 ## Unreleased
 
+- Registry team reads that hit a database lock timeout now return retryable
+  `503 protected_state_unavailable`; invalid-binding logs identify the team.
+  Health responses advertise `capabilities.team_protection: true` so startup
+  checks can detect protection support without inferring it from a version.
 - `aw id operation status --operation-id <UUID>` reads a protected
   operation's receipt once, as its requester, without performing it.
   Before this, the only way to learn the outcome of a prepared operation

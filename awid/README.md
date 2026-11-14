@@ -74,6 +74,21 @@ the existing four fields. See [the protection contract](../docs/protected-team-b
 
 ### Registry-first upgrades and rollback limits
 
+Team and negotiated certificate-status reads share the canonical namespace
+and team locks. A namespace-level controller effect holds the namespace lock
+exclusively and blocks team reads throughout that domain. Keep those effects
+short and perform no network work under effect locks. A read that reaches the
+database lock timeout answers `503 protected_state_unavailable` with
+`Retry-After: 1`; retry rather than treating it as an older registry or legacy
+team. Invalid protection projections also log the affected team ID.
+
+The health aliases `/health`, `/ready` and `/ops/health` add
+`capabilities.team_protection: true` while preserving their existing fields.
+This advertises implementation of explicit team protection and negotiated
+certificate status, not a team's state or readiness to cut over. An older
+registry may omit the flag; see [startup capability diagnostics](../docs/awid-sot.md#health-probes)
+for the distinction between older and unknown responses.
+
 Upgrade the registry before deploying consumers that require its explicit
 protection projection. Migrations 012–015 add tables; the native compatibility
 check starts the published 0.5.39 registry on that schema and exercises legacy

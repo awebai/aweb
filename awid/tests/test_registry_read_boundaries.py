@@ -240,7 +240,7 @@ async def test_registry_artifact_origin_configuration_has_no_request_fallback(co
 
 
 @pytest.mark.asyncio
-@pytest.mark.parametrize("guard", ["team", "namespace"])
+@pytest.mark.parametrize("guard", ["team", "namespace", "projection"])
 @pytest.mark.parametrize("route", ["team", "certificate_status"])
 async def test_reader_lock_timeout_is_retryable_unavailable(controller_app, caplog, guard, route):
     env = controller_app
@@ -259,7 +259,10 @@ async def test_reader_lock_timeout_is_retryable_unavailable(controller_app, capl
     async with env.db.transaction() as blocker:
         # Use the real deployed session lock_timeout, not a replaced DB call.
         assert await blocker.fetch_value("SHOW lock_timeout") == "5s"
-        await blocker.execute("SELECT pg_advisory_xact_lock($1::bigint)", lock)
+        if guard == "projection":
+            await blocker.execute("LOCK TABLE {{tables.team_protection}} IN ACCESS EXCLUSIVE MODE")
+        else:
+            await blocker.execute("SELECT pg_advisory_xact_lock($1::bigint)", lock)
         async with asyncio.timeout(10):
             response = await env.client.get(path)
         assert response.status_code == 503, response.text
