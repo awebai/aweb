@@ -183,6 +183,22 @@ case "$cmd" in
       shift
       exec "$real" "$cmd" create --label "aweb.candidate-gate=$label" "$@"
     fi
+    if [[ -n "$label" && "$cmd" == network && ( "${1:-}" == connect || "${1:-}" == disconnect ) ]]; then
+      # A run links only its own containers to its own networks. The Compose
+      # network guard reads Compose files; this closes the runtime path to
+      # the same effect. An unreadable label is a refusal, not permission.
+      [[ "$#" -ge 3 ]] || { printf 'candidate gate refuses network %s: name a network and a container\n' "$1" >&2; exit 2; }
+      link_args=("$@")
+      link_network="${link_args[$# - 2]}"
+      link_container="${link_args[$# - 1]}"
+      network_owner="$("$real" network inspect --format '{{index .Labels "aweb.candidate-gate"}}' "$link_network" 2>/dev/null)" || network_owner=""
+      container_owner="$("$real" inspect --format '{{index .Config.Labels "aweb.candidate-gate"}}' "$link_container" 2>/dev/null)" || container_owner=""
+      if [[ "$network_owner" != "$label" || "$container_owner" != "$label" ]]; then
+        printf 'candidate gate refuses network %s: %s and %s must both belong to this run\n' \
+          "$1" "$link_network" "$link_container" >&2
+        exit 2
+      fi
+    fi
     exec "$real" "$cmd" "$@"
     ;;
   buildx)

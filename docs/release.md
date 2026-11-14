@@ -6,7 +6,7 @@ commit.
 
 | Tag | Published artifact |
 |---|---|
-| `server-vX.Y.Z` | PyPI `aweb` and `ghcr.io/awebai/aweb-server` image |
+| `server-vX.Y.Z` | PyPI `aweb`, and the `ghcr.io/awebai/aweb-server` and `ghcr.io/awebai/aweb-protected` images |
 | `awid-service-vX.Y.Z` | PyPI `awid-service` |
 | `aweb-naapp-vX.Y.Z` | PyPI `aweb-naapp`, the shared naapp toolkit in `naapp-lib/`, then its dev-only test support `aweb-naapp-testing` (`naapp-lib/testing/`) at the same version |
 | `awid-vX.Y.Z` | `ghcr.io/awebai/awid` image |
@@ -419,21 +419,31 @@ so each needs only its own registry credentials. Runnerless publication without
 `--only` publishes both. Both selectors still validate the tagged manifest and
 RC-to-final source identity before checking out that exact commit.
 
-The image uses `server/Dockerfile` with the repository root context and builds
-`linux/amd64` and `linux/arm64` into one OCI archive. The shared exact OCI helper
-checks the complete archive and each platform's version/source labels before
-publication. Version tags are immutable: a different existing digest refuses;
-an identical one is adopted. The publisher reads back the published index and
-prints `release-index` with its digest, source SHA and version. Deployments pin
-`ghcr.io/awebai/aweb-server@sha256:...` using that receipt. This is the ordinary
-server image; it adds no protected signer variant.
+A server tag publishes two images from the same tree and lock:
+`ghcr.io/awebai/aweb-server`, the coordination server, and
+`ghcr.io/awebai/aweb-protected`, the protected signer a team deployment runs as
+`signer.image` (`deploy/team/descriptors/signer.md`). Both use `server/Dockerfile`
+with the repository root context; the signer is built with
+`AWEB_EXTRA=protected`, which installs the tree's `aweb-naapp[runtime]` at the
+version its lock records. Each builds `linux/amd64` and `linux/arm64` into one
+OCI archive. Both archives are built and checked before the registry is touched,
+so a failed build publishes neither. The shared exact OCI helper checks each
+complete archive and each platform's version/source labels before publication.
+Version tags are immutable: a different existing digest refuses; an identical
+one is adopted. The publisher reads back each published index and prints one
+`release-index` line per image with its repository, digest, source SHA and
+version. Deployments pin `ghcr.io/awebai/aweb-server@sha256:...` and
+`ghcr.io/awebai/aweb-protected@sha256:...` using those receipts.
 
 `python3 scripts/test_server_image_publish.py` runs the dispatch, identity,
 immutability, readback and archive-handoff controls without Docker.
-`make test-server-image-build` builds both platforms through the same publisher
-function, validates the archive with the exact helper, and runs the packaged
-imports and server CLI as the image's non-root user on the Docker daemon's
-**native** platform only. Both runtime probes have a 120-second bound.
+`make test-server-image-build` builds both images, each for both platforms,
+through the same publisher function, validates each archive with the exact
+helper, and runs the packaged imports and server CLI as the image's non-root user
+on the Docker daemon's **native** platform only. For the signer image it also
+imports the protected host and runtime, checks that the installed `aweb`,
+`aweb-naapp` and `awid-service` versions equal the tree's manifests, and runs
+`uvicorn --help`. Every runtime probe has a 120-second bound.
 A one-host PASS qualifies only the platform printed in its receipt.
 
 Complete platform qualification requires the same archive, index and source SHA
@@ -443,6 +453,9 @@ host (Docker buildx, skopeo and build support for both architectures):
 ```sh
 AWEB_SERVER_IMAGE_ARCHIVE_OUT=/evidence/server.oci.tar make test-server-image-build
 ```
+
+The signer image's archive moves the same way with
+`AWEB_SIGNER_IMAGE_ARCHIVE_OUT` and `AWEB_SIGNER_IMAGE_ARCHIVE_IN`.
 
 The output path must not already exist. Preserve the archive and its printed
 SHA-256/size/index/source receipt. Transfer it to the authorized ARM host and
@@ -465,9 +478,14 @@ These tests do not publish to a registry. The tag publisher's authenticated
 readback establishes registry digest and source identity, not public pullability.
 
 Before the first server image release, the coordinator must arrange package
-provisioning and the release identity's access, including any separately authorized
-first-publication bootstrap, so authenticated tag listing succeeds. An unavailable
-listing remains a refusal; a 403 or 404 is not permission to assume absence.
+provisioning and the release identity's access, so authenticated tag listing
+succeeds. An unavailable listing remains a refusal; a 403 or 404 is not
+permission to assume absence. GHCR's "name unknown" for a repository that does
+not exist yet is never taken as absence on its own either: a new repository is
+published only by a `workflow_dispatch` whose `first_publication` input names it
+(`--first-publication <repository>`), and then only if the listing says exactly
+that. A named repository that already lists tags refuses as "not a first
+publication"; a tag push never passes the flag.
 
 The coordinator must also arrange public package visibility and verify
 anonymous retrieval in an environment with no registry credentials. Read the

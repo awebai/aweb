@@ -12,11 +12,12 @@ and `/readyz` at `f8947bf94`, and the Compose service body at `1a86d3ff7`.
 
 ## Process, image and dependencies
 
-Build the existing `server/Dockerfile` from the **current joined source** with
-`AWEB_EXTRA=protected`; use its existing optional-extra support from the joined
-lane, not an older Dockerfile without that argument. The deployment supplies the
-image repository and immutable source/digest pin. No published protected
-image tag is asserted here. The executable remains the existing aweb package:
+The release publishes the signer image with every `server-v*` tag:
+`ghcr.io/awebai/aweb-protected`, built from the tag's `server/Dockerfile` with
+`AWEB_EXTRA=protected`, from the same tree and lock as `ghcr.io/awebai/aweb-server`
+(`docs/release.md`, "Server OCI image"). The deployment pins
+`signer.image` to `ghcr.io/awebai/aweb-protected@sha256:...` from that tag's
+`release-index` receipt. The executable remains the existing aweb package:
 
 ```text
 uvicorn aweb.protected_signing.host:create_app --factory --host 0.0.0.0 --port 8080 --no-proxy-headers
@@ -124,7 +125,7 @@ projected symlinks through the existing file reader.
 
 | Platform-only input | Why it stays outside the signer/profile |
 | --- | --- |
-| Image repository/digest, build source and `AWEB_EXTRA=protected`, entrypoint/8080 | Artifact selection and process launch; no new signer implementation or published-pin assumption. |
+| Image digest of `ghcr.io/awebai/aweb-protected` (the release's `AWEB_EXTRA=protected` build), entrypoint/8080 | Artifact selection and process launch; no new signer implementation. |
 | One bundle `config.schema.json` reused as `values.schema.json` | Helm and Compose validate the same nonsecret configuration source; no copied signer schema/parser. |
 | Secret resources, private-volume init/materialization, runAs uid/gid and worker UIDs | Platform enforces filesystem/process/mount isolation; a Secret name or pod label cannot grant custody. |
 | Dedicated PG role/database and first provisioning/migration procedure | Establishes the declared SQL and B3 bindings; startup never bootstraps authority on a miss. |
