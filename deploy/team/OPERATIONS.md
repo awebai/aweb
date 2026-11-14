@@ -328,13 +328,14 @@ membership. A global target must have verified agent kind; a legacy global
 mapping with unknown kind is not sufficient. Local memberships keep their
 separate local-subject checks.
 
-**The current protected path cannot remove pre-cutover seats, service members,
-or another root's admissions on the owner's authority.** Replacing a root's
-requester grants does not transfer its admission bucket. The planned
-`team.agent.remove/owner_approved` variant will require the current owner's
-live passkey approval for an exact agent/service certificate, including an
-authoritatively unknown legacy kind displayed as "kind not verified"; it is not
-yet implemented. Human membership removal is a separate protected operation.
+`team.agent.remove/owner_approved` lets the current owner remove an exact
+agent/service certificate outside a root bucket, including pre-cutover seats
+and a replaced root's members, with fresh exact-act passkey approval. A verified
+service agent displays `agent`; authoritative unknown kind displays
+"kind not verified". Unavailable evidence refuses. The frozen classification
+and membership are rechecked before release; verified humans require the
+separate human membership operation. Requester-key provenance confers no owner
+authority. Native/client qualification belongs to the slice's exact receipts.
 The owner's separately protected offline backup and the host operator's ability
 to read the custody file remain; whoever uses the raw key bypasses the signer's
 browser approval, outside the supported workflow. The remaining owner-approved
@@ -344,8 +345,8 @@ definition and generated client description are documented in
 
 | Remove | Supported path | Effective authority afterwards | Stored state that remains |
 | --- | --- | --- | --- |
-| An agent seat | Before cutover: the owner's `aw id team remove-member`. After: protected `team.agent.remove/default`, by its admitting root or the eligible member itself. Owner removal of arbitrary seats awaits `owner_approved`. | The certificate is revoked at the registry, and aweb refuses it (`AWEB_REQUIRE_REGISTERED_CERTIFICATES`). Admission capacity is released only after fresh confirmation; admission history remains for the rate bound. Deleting a key file does not revoke it. | The seat's `.aw` and key in the agents' state, until the operator deletes them; its messages in aweb; its events in Logs; Secrets grants naming it, until an owner revokes them |
-| A service member (aweb, Secrets, Logs) | No general owner-approved protected removal yet (`aweb-acxy.14`). The root path does not authorize removal of arbitrary service certificates. | Revocation ends its team access and the service then stops working for the team. | Its key and certificate files in the secrets directory; its database |
+| An agent seat | Before cutover: the owner's `aw id team remove-member`. After: protected `team.agent.remove/default`, by its admitting root or the eligible member itself. The current owner can instead approve the exact `owner_approved` operation. | The certificate is revoked at the registry, and aweb refuses it (`AWEB_REQUIRE_REGISTERED_CERTIFICATES`). Admission capacity is released only after fresh confirmation; admission history remains for the rate bound. Deleting a key file does not revoke it. | The seat's `.aw` and key in the agents' state, until the operator deletes them; its messages in aweb; its events in Logs; Secrets grants naming it, until an owner revokes them |
+| A service member (aweb, Secrets, Logs) | Protected `team.agent.remove/owner_approved`, with the current owner’s live passkey approval. The root path retains its own narrower bucket. | Revocation ends its team access and the service then stops working for the team. | Its key and certificate files in the secrets directory; its database |
 | An app role a human holds | `human-role.revoke`, the signer's protected act, approved in the browser. | The signer signs the owner act; delivering it to the app, which ends the designation, is not yet in this bundle. | The receipt in the signer's database |
 | An owner | No supported recipe in this bundle. | | Open: to be named |
 

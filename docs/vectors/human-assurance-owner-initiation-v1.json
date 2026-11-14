@@ -1,0 +1,217 @@
+{
+  "schema_version": 1,
+  "status": "implementation source; policy scenarios, not native evidence; visible action and qualification pending",
+  "approval": "Juan 2026-11-13 via coordinator4d1c282e",
+  "base": "human-assurance-v1.json",
+  "route": {
+    "method": "POST",
+    "path": "/governance/operations",
+    "origin": "pinned human origin",
+    "selection_members": [
+      "operation_id",
+      "operation",
+      "variant",
+      "team_id",
+      "certificate_id"
+    ],
+    "initial_operation": "team.agent.remove",
+    "initial_variant": "owner_approved"
+  },
+  "common": "The owner prepares one frozen intent under the current B3 session; host requester identity is provenance only. Existing shared exact-act UV and effect fences remain required. No controller-key or registry-write shortcut.",
+  "scenarios": [
+    {
+      "id": "owner-can-start-without-a-terminal",
+      "given": {
+        "current_owner_session": true,
+        "csrf_valid": true,
+        "host_and_origin_pinned": true,
+        "compromised_root_unavailable": true
+      },
+      "expected": {
+        "outcome": "prepare_pending",
+        "host_requester_is_provenance": true,
+        "signature": false,
+        "registry_mutation": false,
+        "requester_grant_created": false
+      }
+    },
+    {
+      "id": "compromised-root-can-be-the-target",
+      "given": {
+        "current_owner_session": true,
+        "selected_certificate_is_compromised_root": true,
+        "root_request_present": false
+      },
+      "expected": {
+        "outcome": "prepare_pending",
+        "target_snapshot_frozen": true,
+        "fresh_exact_act_uv_still_required": true
+      }
+    },
+    {
+      "id": "login-does-not-authorize-removal",
+      "given": {
+        "current_owner_session": true,
+        "login_uv": true,
+        "exact_act_uv": false
+      },
+      "expected": {
+        "outcome": "no_effect",
+        "signatures": 0,
+        "mutation_attempts": 0
+      }
+    },
+    {
+      "id": "host-provenance-cannot-approve",
+      "given": {
+        "host_requester_key_valid": true,
+        "current_owner_session": false
+      },
+      "expected": {
+        "outcome": "refuse",
+        "pending_created": false,
+        "signature": false
+      }
+    },
+    {
+      "id": "missing-csrf-refuses-before-prepare",
+      "given": {
+        "current_owner_session": true,
+        "csrf_valid": false
+      },
+      "expected": {
+        "outcome": "refuse",
+        "pending_created": false,
+        "signatures": 0
+      }
+    },
+    {
+      "id": "foreign-origin-refuses-before-prepare",
+      "given": {
+        "current_owner_session": true,
+        "csrf_valid": true,
+        "origin_matches_pinned_human_origin": false
+      },
+      "expected": {
+        "outcome": "refuse",
+        "pending_created": false,
+        "signatures": 0
+      }
+    },
+    {
+      "id": "wrong-host-refuses-before-prepare",
+      "given": {
+        "current_owner_session": true,
+        "host_matches_pinned_human_host": false
+      },
+      "expected": {
+        "outcome": "refuse",
+        "pending_created": false
+      }
+    },
+    {
+      "id": "foreign-scope-cannot-select-a-team",
+      "given": {
+        "session_scope_matches_team_binding": false
+      },
+      "expected": {
+        "outcome": "refuse",
+        "reason": "scope_refused",
+        "pending_created": false
+      }
+    },
+    {
+      "id": "retired-owner-session-cannot-borrow-host-identity",
+      "given": {
+        "session_was_valid": true,
+        "current_owner_or_credential_retired": true
+      },
+      "expected": {
+        "outcome": "refuse",
+        "pending_created": false,
+        "signature": false
+      }
+    },
+    {
+      "id": "caller-cannot-supply-provenance-or-kind",
+      "given": {
+        "extra_selection_fields": [
+          "requester",
+          "requester_key",
+          "target_kind",
+          "snapshot",
+          "audience",
+          "controller"
+        ]
+      },
+      "expected": {
+        "outcome": "refuse",
+        "reason": "request_invalid",
+        "pending_created": false
+      }
+    },
+    {
+      "id": "exact-selection-retry-keeps-frozen-intent",
+      "given": {
+        "same_operation_uuid_and_selection": true,
+        "registry_list_has_changed": true
+      },
+      "expected": {
+        "outcome": "return_original_prepared_intent",
+        "new_pending": false,
+        "new_snapshot": false,
+        "expiry_refreshed": false
+      }
+    },
+    {
+      "id": "changed-selection-conflicts",
+      "given": {
+        "same_operation_uuid": true,
+        "certificate_selection_changed": true
+      },
+      "expected": {
+        "outcome": "refuse",
+        "reason": "operation_conflict",
+        "original_intent_unchanged": true
+      }
+    },
+    {
+      "id": "read-only-member-inventory-until-text-ack",
+      "given": {
+        "owner_session_route_text_acked": false,
+        "current_members_include_pre_cutover_and_services": true
+      },
+      "expected": {
+        "all_current_members_listed": true,
+        "kind_and_recorded_provenance_shown": true,
+        "removal_action": false
+      }
+    },
+    {
+      "id": "same-executor-removes-after-one-exact-uv",
+      "given": {
+        "prepared_intent_unchanged": true,
+        "current_owner_fresh_exact_uv": true,
+        "consumer_confirms": true
+      },
+      "expected": {
+        "outcome": "committed",
+        "signatures": 1,
+        "mutation_attempts": 1,
+        "standing_authority_created": false
+      }
+    },
+    {
+      "id": "receipt-recovery-is-not-a-second-effect",
+      "given": {
+        "signed_effect_retained": true,
+        "external_answer_uncertain": true
+      },
+      "expected": {
+        "reconcile_owned_receipt": true,
+        "new_signature": false,
+        "new_mutation": false
+      }
+    }
+  ]
+}

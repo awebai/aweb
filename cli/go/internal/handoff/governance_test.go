@@ -147,7 +147,7 @@ func (s *signerStub) answer() string {
 	case "policy-extra":
 		policy["extra"] = true
 	}
-	request["artifact"] = artifact
+	request["artifact"] = freezeTestArtifactIntent(artifact, s.prepared["audience"], "/.well-known/aweb-owner-act", []string{"/issued_at"}, "/expires_at")
 	switch s.tamper {
 	case "intent":
 		request["subject"] = map[string]any{"app_id": "other"}
@@ -229,7 +229,7 @@ var (
 
 func revokeIntent() map[string]any {
 	return map[string]any{
-		"operation": "human-role.revoke", "variant": "default",
+		"operation": "human-role.revoke", "variant": "default", "approval_format": "intent_v1",
 		"scope": map[string]any{"v": 1, "kind": "protected_key", "service_id": "svc",
 			"authority": map[string]any{"kind": "team_controller", "id": "h:example.com", "domain": "example.com"}},
 		"audience": "https://console.example",
@@ -375,7 +375,7 @@ func TestResumeSendsTheSavedBytesUnchanged(t *testing.T) {
 	intent["operation_id"] = "14141414-1414-4414-8414-141414141414"
 	intent["redirect_uri"] = "http://127.0.0.1:1/callback"
 	// Key order and spacing no Go encoder writes: only the saved bytes match.
-	saved := []byte(" {\"subject\": " + mustJSON(intent["subject"]) + ",\"operation\":\"human-role.revoke\",\"variant\":\"default\"," +
+	saved := []byte(" {\"subject\": " + mustJSON(intent["subject"]) + ",\"operation\":\"human-role.revoke\",\"variant\":\"default\",\"approval_format\":\"intent_v1\"," +
 		"\"scope\":" + mustJSON(intent["scope"]) + ",\"audience\":\"https://console.example\"," +
 		"\"operation_id\":\"14141414-1414-4414-8414-141414141414\",\"redirect_uri\":\"http://127.0.0.1:1/callback\"}")
 	if _, err := Resume(context.Background(), stub.options(&opened), saved); err != nil {

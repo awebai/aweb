@@ -146,7 +146,8 @@ async def test_a_root_endorsement_asks_in_plain_words_and_approves_with_the_pass
             await expect(page.locator("#handoff-names dt")).to_have_text(["Root agent", "Teams"])
             await expect(page.locator("#handoff-names dd")).to_have_text(["oats-root", team])
             # The root asks for itself: it is named, not shown as its DID.
-            await expect(page.locator("#handoff-requested")).to_have_text(re.compile(r"^oats-root(, asked .+)?$"))
+            # When it was asked: the moment the request was prepared.
+            await expect(page.locator("#handoff-requested")).to_have_text(re.compile(r"^oats-root, asked .+$"))
             assert "did:aw" not in await page.locator("#handoff-facts").inner_text()
             assert "limits" not in await page.locator("#handoff-status").inner_text()
             # The name rows and the facts below them are visibly two groups.

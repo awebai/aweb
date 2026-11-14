@@ -14,6 +14,7 @@ from typing import Literal
 
 from .operation_codecs import (
     ADMISSION_CODEC,
+    OWNER_REMOVAL_CODEC,
     REMOVAL_CODEC,
     REVOKE_CODEC,
     ROOT_CODEC,
@@ -23,6 +24,7 @@ from .operation_display import OperationDisplay
 from .operation_effects import (
     ENDORSEMENT,
     LOCAL_SIGNATURE,
+    OWNER_REVOKED_MEMBERSHIP,
     REGISTERED_MEMBERSHIP,
     REVOKED_MEMBERSHIP,
     OperationEffect,
@@ -45,6 +47,7 @@ class OperationDefinition:
     display: OperationDisplay
     binding_paths: tuple[tuple[str, str], ...] = ()
     consumer_available: bool = True
+    owner_initiable: bool = False
     # A whole frozen request is revealable only after its definition's fields
     # have been reviewed as public. A deployment policy cannot widen this.
     link_revealable: bool = False
@@ -56,6 +59,8 @@ class OperationDefinition:
     request_window: tuple[tuple[str, ...], int] | None = None
 
     def effect_deadline(self, artifact, deadline):
+        if self.needs_human and self.codec.issuance is not None and artifact.get("type") == "aweb.protected-artifact-intent":
+            return min(deadline, datetime.fromisoformat(artifact["issuance_window"]["not_after"].replace("Z", "+00:00")))
         if "expires_at" in artifact:
             deadline = min(deadline, datetime.fromisoformat(artifact["expires_at"].replace("Z", "+00:00")))
         if self.request_window is not None:
@@ -66,9 +71,44 @@ class OperationDefinition:
             deadline = min(deadline, datetime.fromisoformat(stamp.replace("Z", "+00:00")) + timedelta(seconds=seconds))
         return deadline
 
+    def presentation(self):
+        """Project the existing closed codec guard onto its unsigned intent template."""
+        guard = deepcopy(self.codec.presentation)
+        issuance = self.codec.issuance if self.needs_human else None
+        if issuance is None or guard is None:
+            return guard
+        omitted = (*issuance.issued_fields, *((issuance.expiry_field,) if issuance.expiry_field else ()))
+        for path in omitted:
+            parent = "/artifact" + ("/" + "/".join(path[:-1]) if len(path) > 1 else "")
+            names = guard.get("exact", {}).get(parent)
+            if names is not None and path[-1] in names:
+                names.remove(path[-1])
+        absent = {"/artifact/" + "/".join(path) for path in omitted}
+        guard["timestamps"] = [path for path in guard.get("timestamps", []) if path not in absent]
+
+        def project(value):
+            if isinstance(value, str):
+                return value.replace("/artifact", "/artifact/template")
+            if isinstance(value, list):
+                return [project(item) for item in value]
+            if isinstance(value, dict):
+                return {project(key): project(item) for key, item in value.items()}
+            return value
+
+        return project(guard)
+
+    def issuance_fields(self):
+        if not self.needs_human or self.codec.issuance is None:
+            return {}
+        return {"approval_format": "intent_v1", "issuance": self.codec.issuance.fields()}
+
     def bindings(self):
         overrides = dict(self.binding_paths)
-        return {name: overrides.get(name, "/subject/" + name) for name in self.payload_binding}
+        paths = {name: overrides.get(name, "/subject/" + name) for name in self.payload_binding}
+        if self.needs_human and self.codec.issuance is not None:
+            paths = {name: path.replace("/artifact", "/artifact/template", 1) if path.startswith("/artifact") else path
+                for name, path in paths.items()}
+        return paths
 
     def bound_values(self, request):
         """Make the frozen catalog bindings actual required request projections."""
@@ -93,6 +133,25 @@ OperationSpec = OperationDefinition
 
 
 _ROWS = (
+    OperationDefinition(
+        "team.agent.remove", "owner_approved", "team_controller", "live_floor", "member_revocation",
+        ("team_id", "member_id", "certificate_id", "expected_membership", "target_kind"),
+        ("Current owner's exact live UV; no root admission bucket prerequisite",
+         "Verified agent or authoritative unknown only; never verified human or unavailable evidence",
+         "Exact membership and frozen classification rechecked before release"),
+        codec=OWNER_REMOVAL_CODEC, effect=OWNER_REVOKED_MEMBERSHIP,
+        binding_paths=(("target_kind", "/target_kind"),),
+        display=OperationDisplay("Remove {/subject/expected_membership/alias} from {/subject/team_id|team}?",
+            ("{/subject/expected_membership/alias} leaves {/subject/team_id|team}.", "Its aweb identity is not deleted."),
+            (("member", "/subject/expected_membership/alias"), ("team", "/subject/team_id|team"), ("kind", "/target_kind|kind")),
+            (("member", "/subject/member_id"), ("certificate", "/subject/certificate_id"), ("team", "/subject/team_id"),
+             ("kind", "/target_kind"), ("requester", "/requester")),
+            (("subject_ineligible", "This member is a person, or could not be checked, so it cannot be removed here."),
+             ("issuer_kind_forbidden", "Only an owner's passkey can approve this."))),
+        prepared_fields=frozenset({"requester_key", "target_kind"}),
+        finalize_execution_refusal=True, receipt_uv_expiry=True, link_revealable=True, owner_initiable=True,
+        request_window=(("request", "timestamp"), 300),
+    ),
     OperationDefinition(
         "team.agent.remove",
         "default",
@@ -147,7 +206,7 @@ _ROWS = (
         ),
         (
             "Child possession and eligible existing identity; no silent remint",
-            "Everything it spawns counts as yours describes ancestry, not permissions",
+            "Agents it adds count as yours describes ancestry, not permissions",
             "Current registered agent mapping and subject proof; local root refuses",
             "Existing chainless registered agent eligible; conflicting/revoked head refuses",
             "No team membership or Cloud login prerequisite",
@@ -173,7 +232,7 @@ _ROWS = (
              ("human", "/scope/human/id"), ("policy", "/admission_policy"), ("requester", "/requester")),
             (("subject_ineligible", "This agent cannot become your root agent."),
              ("issuer_kind_forbidden", "Your identity cannot approve a root agent.")),
-            responsibility_statement="Everything this root spawns counts as yours for human responsibility; this grants no resource permissions.",
+            responsibility_statement="Agents it adds count as yours. It gets no other access.",
             # The root asks for its own endorsement; its name is frozen.
             requester_name=("/subject/root_id", "/subject/deployment_label")),
         prepared_fields=frozenset({"registry", "expected_head", "responsibility_statement", "admission_policy"}),
@@ -287,7 +346,9 @@ def presentation_catalog() -> dict[str, dict]:
             "rule": spec.rule,
             "consumer_available": spec.consumer_available,
             "subject_schema": deepcopy(spec.codec.subject_schema),
-            "presentation": deepcopy(spec.codec.presentation),
+            "presentation": spec.presentation(),
+            **spec.issuance_fields(),
+            **({"owner_initiable": True} if spec.owner_initiable else {}),
             "display": spec.display.fields(),
             "responsibility_statement": spec.display.responsibility_statement,
         }
@@ -303,5 +364,6 @@ def operation_description():
          "subject_schema": deepcopy(spec.codec.subject_schema),
          "prepared_fields": sorted(spec.prepared_fields), "bindings": spec.bindings(),
          "display": spec.display.fields(), "responsibility_statement": spec.display.responsibility_statement,
-         "presentation": deepcopy(spec.codec.presentation)}
+         "presentation": spec.presentation(), **spec.issuance_fields(),
+         **({"owner_initiable": True} if spec.owner_initiable else {})}
         for _, spec in sorted(OPERATIONS.items())]}

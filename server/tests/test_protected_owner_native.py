@@ -1,6 +1,8 @@
 """The owner's one page: what waits for them, what happened, which agents
 were added without asking, the current bounds and who can approve."""
 
+from datetime import UTC
+
 import pytest
 
 from aweb.protected_signing.owner import owner_view
@@ -32,6 +34,10 @@ async def test_the_owner_sees_waiting_requests_then_their_history(admissions):
     assert waiting["title"] == f"Make {subject['deployment_label']} your root agent for {teams}?"
     # The root asks for itself: the page names it by its frozen label.
     assert waiting["requester_name"] == subject["deployment_label"]
+    # When it was asked: the moment the request was prepared, as the approval page shows.
+    artifact = frozen["payload"]["request"]["artifact"]
+    assert waiting["asked_at"] == artifact.get("issued_at", artifact.get("issuance_window", {}).get("not_before"))
+    assert waiting["asked_at"] is not None
     assert view["history"] == []
     # The page names the approver who is signed in, not the first one listed.
     assert view["you"] == next(x["contact"] for x in view["approvers"] if x["contact"])
@@ -123,7 +129,11 @@ def owner_fixture_view():
             {"alias": "ops", "kind": "kind not verified", "joined": "unrecorded", "member_did_aw": "did:aw:OPS",
                 "member_did_key": "did:key:zO", "certificate_id": "cert-2"},
             {"alias": "ann", "kind": "not checked", "joined": "signer_reserved", "member_did_aw": "did:aw:ANN",
-                "member_did_key": "did:key:zA", "certificate_id": "cert-3"}],
+                "member_did_key": "did:key:zA", "certificate_id": "cert-3"},
+            {"alias": "bea", "kind": "human", "joined": "unrecorded", "member_did_aw": "did:aw:BEA",
+                "member_did_key": "did:key:zB", "certificate_id": "cert-4"}],
+        "owner_initiable": True,
+        "storage_scope": "s-0123abcd",
     }
 
 
@@ -194,6 +204,11 @@ async def test_the_host_serves_the_owner_page_only_behind_sign_in(world, tmp_pat
             assert "Waiting for you" not in response.text
             # Never on the request origin.
             assert (await client.get(ORIGIN + "/", follow_redirects=False)).status_code == 404
+            script = await client.get(HUMAN_ORIGIN + "/owner-ui/owner.js")
+            assert script.status_code == 200 and script.headers["content-type"].startswith("text/javascript")
+            assert "/governance/operations" in script.text
+            assert "script-src 'self'" in script.headers["content-security-policy"]
+            assert (await client.get(ORIGIN + "/owner-ui/owner.js")).status_code == 404
 
 
 
@@ -242,6 +257,7 @@ async def test_a_signed_but_unconfirmed_effect_is_unresolved_never_expired(admis
         # This operation's own row (others in the fixture may really expire).
         [row] = [li for li in owner_page_html(view).split("<li>") if entry["digest"] in li]
         assert "Expired, nobody decided" not in row and "not confirmed yet" in row
+        assert "Approved, not confirmed yet: " in row and "Signed" not in row
 
 
 def test_a_requester_the_team_knows_is_named_by_its_alias():
@@ -316,3 +332,124 @@ async def test_member_kind_is_observed_for_the_certificates_own_key(monkeypatch,
     record = SimpleNamespace(identity_scope="global", member_did_aw="did:aw:MEMBER", member_did_key="did:key:zCERT")
     assert await owner._member_kind(SimpleNamespace(registry=object()), record) == expected
     assert observed == ["did:key:zCERT"]
+
+
+def test_the_owner_can_start_removing_any_member_but_a_verified_human_from_the_page():
+    from aweb.protected_signing.owner import owner_page_html
+
+    view = owner_fixture_view()
+    html = owner_page_html(view)
+    # The page's own script, same origin, and what it needs to save the
+    # selection under this team and this signed-in approver.
+    assert '<script src="/owner-ui/owner.js" defer></script>' in html
+    assert ('<ul class="owner-list" id="owner-members" data-team-id="engineering:customer.example" '
+        'data-storage-scope="s-0123abcd">') in html
+    for certificate, alias in (("cert-1", "build-&lt;1&gt;"), ("cert-2", "ops")):
+        assert (f'<button type="button" class="btn secondary" data-remove-certificate="{certificate}">'
+            f"Remove {alias}…</button>") in html
+    # The signer refuses a verified human and a member whose kind could not
+    # be checked; the page offers neither.
+    assert 'data-remove-certificate="cert-3"' not in html
+    assert 'data-remove-certificate="cert-4"' not in html
+    assert '<p id="owner-remove-status" role="status" aria-live="polite"></p>' in html
+    # Only a decided operation with a stored final state lets the page forget
+    # what it saved for a retry.
+    assert '<li data-final-operation="op-0">' in html
+    without = owner_page_html({**view, "owner_initiable": False})
+    assert "data-remove-certificate" not in without and "owner.js" not in without
+
+
+@pytest.mark.asyncio
+async def test_removal_is_offered_and_saved_per_team_and_signed_in_approver(admissions):
+    a = admissions
+    scope = await scope_of(a.w.app)
+    view = await owner_view(a.group, scope=scope, subject=a.actor.subject)
+    assert view["owner_initiable"] is True
+    again = await owner_view(a.group, scope=scope, subject=a.actor.subject)
+    other = await owner_view(a.group, scope=scope, subject="another-approver")
+    assert view["storage_scope"] == again["storage_scope"] != other["storage_scope"]
+    assert a.actor.subject not in view["storage_scope"] and scope not in view["storage_scope"]
+    human = await owner_view(a.group, scope=await scope_of(a.human), subject=a.actor.subject)
+    assert human["owner_initiable"] is False
+
+
+def test_the_owner_page_script_saves_before_sending_and_keeps_its_selection_until_final():
+    import subprocess
+    from pathlib import Path
+
+    result = subprocess.run(["node", "tests/owner_remove_probe.cjs"], capture_output=True, text=True,
+        cwd=Path(__file__).resolve().parents[1], timeout=20)
+    assert result.returncode == 0, result.stdout + result.stderr
+    assert result.stdout.strip() == "owner removal probe passed"
+
+
+def test_an_applied_but_unconfirmed_removal_can_reopen_its_handoff_without_a_member_button():
+    from aweb.protected_signing.owner import owner_page_html
+
+    view = owner_fixture_view()
+    # The removed certificate is absent from the active listing; only the
+    # remaining human is listed, and cannot offer an agent Remove button.
+    view["pending"] = []
+    view["members"] = [view["members"][-1]]
+    view["history"] = [{**view["history"][0], "operation_id": "same-operation", "state": "unresolved",
+        "handoff_id": "same-retained-handoff", "title": "Remove worker from engineering?"}]
+    html = owner_page_html(view)
+    assert 'data-remove-certificate=' not in html
+    assert 'data-final-operation="same-operation"' not in html
+    assert 'href="/handoff/same-retained-handoff"' in html
+    assert "Check this request" in html
+
+
+@pytest.mark.asyncio
+async def test_history_shows_when_it_was_decided_never_the_expiry(admissions):
+    """A denial is dated by the approver's decision; a request nobody decided
+    has no decision time to show."""
+    from aweb_naapp.runtime.protected_signer.service import Decision
+
+    from aweb.protected_signing.owner import owner_page_html
+
+    a = admissions
+    operation = root_operation(a)
+    assert (await prepare(a, operation)).status_code == 200
+    options = await a.human.signer.approval_options(operation.operation_id, human=a.actor, decision=Decision.REJECT)
+    denied = await a.human.signer.reject(operation.operation_id, a.device.get(dict(options)), human=a.actor)
+    assert (denied.state, denied.code) == ("refused", "human_refused")
+    scope = await scope_of(a.human)
+    view = await owner_view(a.group, scope=scope, subject=a.actor.subject)
+    [entry] = [h for h in view["history"] if h["operation_id"] == operation.operation_id]
+    row = await a.w.db.fetch_one(
+        "SELECT approval_id,expires_at FROM {{tables.protected_signer_operations}} WHERE operation_id=$1",
+        operation.operation_id)
+    approval = await a.human.signer.store.get(row["approval_id"])
+    decided = approval.decided_at.astimezone(UTC).isoformat().replace("+00:00", "Z")
+    assert entry["at"] == decided != row["expires_at"].astimezone(UTC).isoformat().replace("+00:00", "Z")
+    # Without a decision time the row says none, rather than a wrong one.
+    html = owner_page_html({**view, "history": [{**entry, "at": None}]})
+    assert "Denied by you: Make " in html
+
+
+@pytest.mark.parametrize("decided_at", ["2026-11-14T06:10:00Z", None])
+def test_unresolved_history_shows_its_decision_time_only_when_recorded(decided_at):
+    from aweb.protected_signing.owner import owner_page_html
+
+    view = owner_fixture_view()
+    view["history"] = [{**view["history"][0], "state": "unresolved", "at": decided_at,
+        "handoff_id": "original-handoff", "title": "Remove worker from engineering?"}]
+    history = owner_page_html(view).split("<h2>History</h2>")[1].split("<h2>Who can approve</h2>")[0]
+    assert "Approved, not confirmed yet: Remove worker from engineering?" in history
+    assert 'href="/handoff/original-handoff"' in history
+    if decided_at is None:
+        assert "<time" not in history
+    else:
+        assert f'<time datetime="{decided_at}"' in history
+
+
+@pytest.mark.parametrize("owned", [True, False])
+def test_session_ownership_takes_precedence_over_a_signer_host_member_alias(owned):
+    from aweb.protected_signing.owner import _name_requesters
+
+    entry = {"requester": "did:key:HOST", "requester_name": "you",
+        "requested_by_you": owned}
+    _name_requesters([entry], [{"alias": "signer-host", "member_did_aw": None,
+        "member_did_key": "did:key:HOST"}])
+    assert entry["requester_name"] == ("you" if owned else "signer-host")

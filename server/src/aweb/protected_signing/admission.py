@@ -230,7 +230,7 @@ class AdmissionEffects:
             raise SignerRefused("subject_ineligible")
         return row
 
-    async def record_endorsement(self, tx, operation, request, result, evidence):
+    async def record_endorsement(self, tx, operation, request, result, evidence, *, artifact):
         from awid.id_certificates import id_certificate_id
         from aweb_naapp.runtime.protected_signer import VerifiedProtectedEffect
 
@@ -243,7 +243,7 @@ class AdmissionEffects:
             "(service_id,root_id,human_id,human_domain,operation_id,certificate_id,policy_digest) "
             "VALUES($1,$2,$3,$4,$5,$6,$7)",
             c.service_id, operation.intent()["subject"]["root_id"], c.human_id, c.human_domain,
-            operation.operation_id, id_certificate_id(request["artifact"]), request["admission_policy"]["digest"],
+            operation.operation_id, id_certificate_id(artifact), request["admission_policy"]["digest"],
         )
         await evidence.require_in(tx, operation, clock=self.c.signer.clock)
 

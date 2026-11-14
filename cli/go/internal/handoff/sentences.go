@@ -33,6 +33,9 @@ const again = "Run the command again to send a new request."
 // sentences tell each stable code in words. A code missing here is still
 // told, with the code named (Sentence).
 var sentences = map[string]func(Facts) string{
+	"upgrade_aw_required": func(Facts) string {
+		return "Upgrade aw to use this protected approval format."
+	},
 	"operation_not_served": func(Facts) string {
 		return "This protected service does not serve the requested operation; upgrade the service to a version that supports it."
 	},

@@ -101,6 +101,7 @@ func init() {
 	}
 	appRoleRevokeCmd.Flags().StringVar(&appProtectedProfileFlag, "protected-profile", "", "Prepare the act at the protected service this operator-provisioned profile names; the controlling human approves it there")
 	appRoleRevokeCmd.Flags().StringVar(&appApproverFlag, "approver", "", "With --protected-profile, the did:aw of the human who approves the act")
+	appRoleRevokeCmd.Flags().StringVar(&appRoleReplaceFlag, "replace", "", "With --protected-profile, the id of an earlier unfinished request for this same act, which stays kept, to ask for a separately approved act")
 	appRoleResumeCmd.Flags().StringVar(&appProtectedProfileFlag, "protected-profile", "", "The profile the operation was prepared through")
 	appRoleCmd.AddCommand(appRoleDesignateCmd, appRoleRevokeCmd, appRoleResumeCmd)
 	appCredentialCmd.AddCommand(appCredentialRegisterCmd, appCredentialReplaceCmd)
@@ -220,6 +221,9 @@ func runHumanRoleAct(cmd *cobra.Command, act, appName string) error {
 	// Through a protected service, the act is approved by the controlling
 	// human there; aw needs no controller key.
 	protected := strings.TrimSpace(appProtectedProfileFlag) != ""
+	if !protected && strings.TrimSpace(appRoleReplaceFlag) != "" {
+		return usageError("--replace applies only with --protected-profile")
+	}
 	var teamKey ed25519.PrivateKey
 	if !protected {
 		if teamKey, err = loadOwnerTeamKey(selection.TeamID); err != nil {

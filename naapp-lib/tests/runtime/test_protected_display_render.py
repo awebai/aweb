@@ -137,3 +137,30 @@ def test_page_renders_exactly_what_python_renders_and_refuses_the_same_displays(
         assert refusal == display.refusal("subject_ineligible")
     for page, refusal in out[len(rendered):]:
         assert page == "handoff_refused" and refusal is None
+
+
+@pytest.mark.parametrize("kind", ["agent", "kind not verified"])
+def test_owner_removal_shows_its_frozen_kind_before_approval_on_every_surface(kind):
+    from datetime import timedelta
+
+    from aweb_naapp.runtime.protected_signer.execution_intent import prepare_artifact_intent
+    from tests.runtime.test_protected_identity_artifacts import NOW
+    from tests.runtime.test_protected_member_removal import CONTROLLER
+    from tests.runtime.test_protected_owner_removal import owner_operation
+
+    op = owner_operation()
+    request = {**op.intent(), "artifact": prepare_artifact_intent(op, CONTROLLER, NOW, NOW + timedelta(hours=24)),
+        "requester": "did:key:z6Mkrequester", "requester_key": CONTROLLER, "target_kind": kind}
+    display = op.spec.display
+    rendered = display.render(request)
+    alias = request["subject"]["expected_membership"]["alias"]
+    team = request["subject"]["team_id"].split(":")[0]
+    label = "agent" if kind == "agent" else "agent or person not confirmed"
+    assert rendered["title"] == f"Remove {alias} from {team}?"
+    assert rendered["consequences"] == [f"{alias} leaves {team}.", "Its aweb identity is not deleted."]
+    assert ["Kind", label] in rendered["names"]
+    assert ["Kind", kind] in rendered["technical"]
+    assert display.refusal("subject_ineligible") == "This member is a person, or could not be checked, so it cannot be removed here."
+    assert display.refusal("issuer_kind_forbidden") == "Only an owner's passkey can approve this."
+    [[page, _]] = run_page_renderer([[display.fields(), request, "subject_ineligible"]])
+    assert page == rendered

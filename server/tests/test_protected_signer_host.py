@@ -274,6 +274,26 @@ async def test_notification_adapter_reuses_b3_and_b2_mail_boundary(mail_fails):
         assert all(message.to == approver.contact for message in mail.messages)
 
 
+def test_current_host_composition_calls_the_installed_production_custody_port_without_future_arguments():
+    from aweb_naapp.runtime.protected_signer import ProtectedKeyContext
+    from awid.did import did_from_public_key, stable_id_from_did_key
+    from nacl.signing import SigningKey
+
+    from aweb.protected_signing.composition import IndependentProtectedSigner
+    from aweb.protected_signing.custody import ProtectedControllerCustody
+
+    # Real constructor and actual production configure method; no DB/network.
+    custody = object.__new__(ProtectedControllerCustody)
+    custody.team_key_did = did_from_public_key(bytes(SigningKey.generate().verify_key))
+    human = stable_id_from_did_key(did_from_public_key(bytes(SigningKey.generate().verify_key)))
+    context = ProtectedKeyContext("service", "team_controller", "team:example.org", "example.org", human, "example.org", 1)
+    registry = SimpleNamespace(registry_url="https://registry.example", _http_client=object())
+    component = IndependentProtectedSigner(object(), context=context, registry=registry, custody=custody,
+        human_origin="https://human.example", request_origin="https://request.example", delivery=object())
+    assert component.signer.custody is custody
+    assert custody._effect_clients == {registry.registry_url: registry._http_client}
+
+
 def revoke_request(principal="did:aw:holder"):
     return {"operation": "human-role.revoke", "variant": "default", "requester": "did:aw:requester",
         "scope": {"authority": {"id": "eng:customer.example"}},

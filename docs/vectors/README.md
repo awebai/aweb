@@ -67,11 +67,14 @@ shared signer and adapters; static catalog validation is not runtime acceptance.
 
 The current owner's live approval can revoke an exact agent/service or
 unknown-kind membership outside a root's admission bucket, including
-pre-cutover and retired-root members. Unknown kind displays "kind not verified";
-verified humans use `team.human.remove` exclusively. The unchanged base
+pre-cutover and retired-root members. The main-view Kind row displays
+"agent or person not confirmed" for frozen `kind not verified`, whose exact
+value remains in Technical details (coordinator `32499ce5`); verified humans use `team.human.remove` exclusively. The unchanged base
 inventory remains in `human-assurance-v1.json`.
-These additional scenarios specify the `owner_approved` variant before its
-implementation; they do not claim a served route or successful native run.
+The definition implements this additive `owner_approved` row. These policy
+scenarios do not themselves establish a successful native run. The frozen
+classification has exactly two values: `agent` (including service agents) and
+`kind not verified`; requester-key provenance never substitutes for owner UV.
 
 ### `protected-operation-availability-v1.json` — prepare availability
 
@@ -1090,6 +1093,27 @@ derivation; they are never message/provenance fields. Author projections test
 exact session/subject/signer binding and external/untrusted guest assurance.
 They assume independently verified signer facts and do not authorize membership
 or activate managed chat. See [P3 readiness](../human-channels-participants.md).
+
+### `human-assurance-execution-intent-v1.json` — execution-issued artifacts
+
+Proposed `intent_v1` approval binds one static artifact template and original
+issuance window. Execution issues only definition-owned time fields, retaining
+one artifact/signature/exact delivery. Mailed pending work can wait up to24h;
+UV and consumer freshness do not grow. Old clients fail closed with
+`upgrade_aw_required`; there is no parallel frozen-artifact execution path.
+Owner acts require service-owned exact-confirmed delivery; late applied reads
+verify history without another POST. Saved old unfinished operations are never
+resent, and ambiguous outcomes retain their reconciliation pointer. The
+coordinated server/three-client/consumer readiness precedes deployment. These are
+policy scenarios, not served-source or native evidence.
+
+### `human-assurance-owner-initiation-v1.json` — owner-session prepare
+
+Proposed human-origin/CSRF write creates one pending exact intent from a current
+B3 owner session, independently of an agent/terminal. Host requester identity
+is provenance only; the same executor still requires one fresh exact-act UV.
+No write route is built before security text ACK. Until then the all-current-
+members inventory is read-only. These scenarios do not claim implementation.
 
 ## Protected team verifier boundary
 

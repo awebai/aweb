@@ -132,7 +132,7 @@ def test_engine_rejects_a_retainer_that_changes_the_verified_effect(change):
     engine.custody = SimpleNamespace(retain_authorized_effect=retain,
         deliver_retained=no_network, confirm_retained=no_network)
     with pytest.raises(SignerRefused, match="operation_mismatch"):
-        engine._retain_authorized_effect(op, {"artifact": artifact}, signing, signature, object(), limit)
+        engine._retain_authorized_effect(op, {"artifact": artifact}, signing, signature, object(), limit, artifact=artifact)
     assert calls == []
 
 
@@ -141,4 +141,29 @@ def test_legacy_custody_keeps_its_existing_signed_result_without_retention(has_p
     engine = object.__new__(ProtectedSigner)
     engine.custody = SimpleNamespace(**({"retain_authorized_effect": lambda **kw: None} if has_port else {}))
     op = operation("team.agent.admit")
-    assert engine._retain_authorized_effect(op, {"artifact": {}}, b"signing", b"s" * 64, object(), NOW) is None
+    assert engine._retain_authorized_effect(op, {"artifact": {}}, b"signing", b"s" * 64, object(), NOW, artifact={}) is None
+
+
+def test_shared_owner_transport_fixture_uses_the_public_artifact_digest():
+    from awid.did import did_from_public_key
+    from awid.protected_effect import artifact_digest
+    from nacl.signing import SigningKey
+
+    from aweb_naapp.runtime.protected_signer.execution_intent import (
+        materialize_artifact,
+        prepare_artifact_intent,
+    )
+    from tests.runtime.protected_signer_support import ControllerCustody
+    from tests.runtime.test_protected_execution_intent import live_operation
+
+    op = live_operation("owner_act")
+    key = SigningKey.generate()
+    descriptor = prepare_artifact_intent(op, did_from_public_key(bytes(key.verify_key)), NOW, NOW + timedelta(hours=24))
+    artifact = materialize_artifact(op, descriptor, NOW + timedelta(seconds=1))
+    signing = signing_bytes(op, artifact)
+    signature = key.sign(signing).signature
+    retained = ControllerCustody(key, lambda: NOW).retain_authorized_effect(
+        operation=op, request={"artifact": descriptor}, artifact=artifact, signing=signing, signature=signature,
+        expires_at=NOW + timedelta(seconds=300))
+    assert retained.artifact_sha256 == artifact_digest(signing, base64.b64encode(signature).decode().rstrip("="))
+    assert retained.applied_result()["delivery"]["reference"]["artifact_sha256"] == retained.artifact_sha256

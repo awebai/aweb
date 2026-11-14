@@ -16,7 +16,7 @@ from tests.test_protected_signer_host import CapturedMail
 pytest_plugins = ("tests.test_independent_protected_signer",)
 
 
-def host_settings_for(w, tmp_path):
+def host_settings_for(w, tmp_path, *, consumer=None):
     profile = profile_for(w)
     private = tmp_path / "host-controller"
     private.mkdir(mode=0o700)
@@ -45,80 +45,90 @@ def host_settings_for(w, tmp_path):
         worker_uids=[65534 if os.geteuid() != 65534 else 65533],
         database_url_file=database_url_file,
         database_schema=w.db.schema,
+        **({"service_key_file": consumer.service_key_file,
+            "owner_act_origins": (w.operation.audience,), "effect_receipt_origins": (w.operation.audience,)}
+            if consumer is not None else {}),
     )
     return settings
 
 
-def host_for(w, tmp_path):
-    settings = host_settings_for(w, tmp_path)
+def host_for(w, tmp_path, *, consumer=None):
+    settings = host_settings_for(w, tmp_path, consumer=consumer)
     # Capture only notification transport. Custody, registry, SQL bindings,
     # original B2/B3, LOGIN and exact-act assertions are the real adapters.
     return create_app(
-        settings, mailer=CapturedMail(), registry_transport=w.host.transport
+        settings, mailer=CapturedMail(), registry_transport=w.host.transport,
+        consumer_transport=httpx.ASGITransport(app=consumer.app) if consumer is not None else None,
     )
 
 
 @pytest.mark.asyncio
 async def test_factory_real_custody_shared_page_login_act_uv_and_exact_receipt(
-    world, tmp_path
+    world, tmp_path, test_db_factory
 ):
     w = world
-    host = host_for(w, tmp_path)
-    async with host.api_app.router.lifespan_context(host.api_app):
-        c = host.api_app.state.composition
-        assert c.db is c.passkeys.db is c.signer.db
-        assert c.authority.custody is not w.app.authority.custody
-        assert c.authority.custody.team_key_did == w.app.authority.custody.team_key_did
+    from tests.protected_consumer_support import ready_owner_act_consumer
+
+    async with ready_owner_act_consumer(w, tmp_path, test_db_factory) as consumer:
+        host = host_for(w, tmp_path, consumer=consumer)
+        async with host.api_app.router.lifespan_context(host.api_app):
+            c = host.api_app.state.composition
+            assert c.db is c.passkeys.db is c.signer.db
+            assert c.authority.custody is not w.app.authority.custody
+            assert c.authority.custody.team_key_did == w.app.authority.custody.team_key_did
+            async with httpx.AsyncClient(transport=httpx.ASGITransport(app=host)) as client:
+                ready = await client.get(ORIGIN + "/readyz")
+                assert ready.status_code == 200
+                assert ready.json() == {"ready": True}
+                body = json.dumps(w.operation.intent(), separators=(",", ":")).encode()
+                prepared = await client.post(
+                    ORIGIN + "/protected-operations",
+                    content=body,
+                    headers=headers(w, body=body),
+                )
+                assert prepared.status_code == 200, prepared.text
+                data = prepared.json()
+                handoff = "/handoff/" + data["handoff_id"]
+                page = await client.get(HUMAN_ORIGIN + handoff)
+                assert page.status_code == 200, page.text
+                assert 'data-purpose="governance"' in page.text
+                assert (await client.get(ORIGIN + handoff)).status_code == 404
+                assert (
+                    await client.post(HUMAN_ORIGIN + "/protected-operations")
+                ).status_code == 404
+                options = await client.post(
+                    HUMAN_ORIGIN + "/login/options", json={"scope": w.scope}
+                )
+                assert options.status_code == 200, options.text
+                login = await client.post(
+                    HUMAN_ORIGIN + "/login",
+                    json={"scope": w.scope, "assertion": w.device.get(options.json())},
+                )
+                assert login.status_code == 200, login.text
+                csrf = {"Origin": HUMAN_ORIGIN, "X-CSRF-Token": login.json()["csrf_token"]}
+                governance = HUMAN_ORIGIN + handoff + "/governance"
+                options = await client.post(governance + "/options", headers=csrf, json={})
+                assert options.status_code == 200, options.text
+                executed = await client.post(
+                    governance + "/execute",
+                    headers=csrf,
+                    json={"assertion": w.device.get(options.json())},
+                )
+                assert executed.status_code == 200, executed.text
+                path = "/protected-operations/" + data["operation_id"]
+                receipt = await client.get(
+                    ORIGIN + path, headers=headers(w, method="GET", path=path)
+                )
+                assert receipt.status_code == 200, receipt.text
+                assert receipt.json() == executed.json()
+                assert receipt.json()["state"] == "committed"
+                assert receipt.json()["result"]["v"] == 2
+                assert receipt.json()["result"]["delivery"]["state"] == "applied"
+                assert await consumer.db.fetch_value("SELECT count(*) FROM holding") == 0
+                assert "set-cookie" not in receipt.headers
+        assert not hasattr(host.api_app.state, "composition")
         async with httpx.AsyncClient(transport=httpx.ASGITransport(app=host)) as client:
-            ready = await client.get(ORIGIN + "/readyz")
-            assert ready.status_code == 200
-            assert ready.json() == {"ready": True}
-            body = json.dumps(w.operation.intent(), separators=(",", ":")).encode()
-            prepared = await client.post(
-                ORIGIN + "/protected-operations",
-                content=body,
-                headers=headers(w, body=body),
-            )
-            assert prepared.status_code == 200, prepared.text
-            data = prepared.json()
-            handoff = "/handoff/" + data["handoff_id"]
-            page = await client.get(HUMAN_ORIGIN + handoff)
-            assert page.status_code == 200, page.text
-            assert 'data-purpose="governance"' in page.text
-            assert (await client.get(ORIGIN + handoff)).status_code == 404
-            assert (
-                await client.post(HUMAN_ORIGIN + "/protected-operations")
-            ).status_code == 404
-            options = await client.post(
-                HUMAN_ORIGIN + "/login/options", json={"scope": w.scope}
-            )
-            assert options.status_code == 200, options.text
-            login = await client.post(
-                HUMAN_ORIGIN + "/login",
-                json={"scope": w.scope, "assertion": w.device.get(options.json())},
-            )
-            assert login.status_code == 200, login.text
-            csrf = {"Origin": HUMAN_ORIGIN, "X-CSRF-Token": login.json()["csrf_token"]}
-            governance = HUMAN_ORIGIN + handoff + "/governance"
-            options = await client.post(governance + "/options", headers=csrf, json={})
-            assert options.status_code == 200, options.text
-            executed = await client.post(
-                governance + "/execute",
-                headers=csrf,
-                json={"assertion": w.device.get(options.json())},
-            )
-            assert executed.status_code == 200, executed.text
-            path = "/protected-operations/" + data["operation_id"]
-            receipt = await client.get(
-                ORIGIN + path, headers=headers(w, method="GET", path=path)
-            )
-            assert receipt.status_code == 200, receipt.text
-            assert receipt.json() == executed.json()
-            assert receipt.json()["state"] == "committed"
-            assert "set-cookie" not in receipt.headers
-    assert not hasattr(host.api_app.state, "composition")
-    async with httpx.AsyncClient(transport=httpx.ASGITransport(app=host)) as client:
-        assert (await client.get(ORIGIN + "/readyz")).status_code == 503
+            assert (await client.get(ORIGIN + "/readyz")).status_code == 503
 
 
 @pytest.mark.asyncio

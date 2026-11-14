@@ -7,38 +7,19 @@ from datetime import timedelta
 import pytest
 from nacl.signing import SigningKey
 
-from aweb.protected_signing.custody import ProtectedControllerCustody
 from aweb_naapp.runtime.protected_signer import SignerRefused
 from awid.protected_effect import HEADER
 from awid.registry_types import RegistryError
 from awid_service.protected_teams import provision_team_protection
-from tests.test_independent_protected_signer import DOMAIN, TEAM, did
+from tests.test_independent_protected_signer import DOMAIN, did
 from tests.test_protected_admission_native import admit_operation, endorse, execute, prepare
 from tests.test_protected_removal_native import removal
+
+from tests.protected_consumer_support import activate, ready_owner_act_consumer
 
 pytest_plugins = ("tests.test_protected_admission_native",)
 
 
-async def activate(a, tmp_path):
-    w = a.w
-    service = SigningKey.generate()
-    directory = tmp_path / "retention-custody"
-    directory.mkdir(mode=0o700)
-    controller_file, service_file = directory / "controller", directory / "service"
-    for path, key in ((controller_file, w.controller), (service_file, service)):
-        path.write_text(bytes(key).hex())
-        path.chmod(0o400)
-    custody = ProtectedControllerCustody(
-        service_id=w.context.service_id, team_id=TEAM, domain=DOMAIN,
-        key_file=controller_file, service_key_file=service_file, worker_uids=frozenset({65534}),
-    )
-    w.app.authority.custody = w.app.signer.custody = custody
-    custody.configure_effects(registry=w.registry, clients={w.registry.registry_url: w.registry._http_client},
-        clock=lambda: w.app.signer.clock())
-    async with w.host.db.transaction() as tx:
-        await provision_team_protection(tx, domain=DOMAIN, name="engineering", service_id=w.context.service_id,
-            service_did_key=did(service), expected_generation=0, approval_ref="native-explicit-provisioning")
-    return custody
 
 
 @pytest.mark.asyncio
@@ -113,64 +94,11 @@ async def test_genuine_retained_admission_and_exact_confirmation(admissions, tmp
 @pytest.mark.asyncio
 @pytest.mark.parametrize("unconfirmed", [False, True])
 async def test_genuine_b3_owner_act_reaches_protected_sql_consumer(world, tmp_path, test_db_factory, monkeypatch, unconfirmed):
-    import httpx
-    from fastapi import FastAPI, Request
-    from fastapi.responses import JSONResponse
-    from types import SimpleNamespace
-
-    from aweb_naapp.hooks.owner_act import HUMAN_ROLE_ACTS, Refused
-    from aweb_naapp.hooks.owner_act_nonces import OwnerActVerifier, apply_owner_act_migrations
-    from aweb_naapp.runtime.protected_effect_receipts import receipt_router
-    from awid.protected_effect import http_consumer
-    from awid.protected_membership import observe_team_protection
     from tests.test_independent_protected_signer import prepare as prepare_owner
 
     w = world
-    custody = await activate(SimpleNamespace(w=w), tmp_path)
-    db = await test_db_factory.create_db(
-        suffix="actual_owner_consumer", schema="owner_consumer"
-    )
-    await apply_owner_act_migrations(db)
-    assert db.schema == "owner_consumer"
-    await db.execute("CREATE TABLE holding (app_id text,installation_id text,role text,principal text)")
-    consumer_tables = {"schema_migrations", "owner_act_nonces", "protected_effect_receipts", "holding"}
-    namespaces = await db.fetch_all(
-        "SELECT n.nspname AS namespace,c.relname AS name FROM pg_catalog.pg_class c "
-        "JOIN pg_catalog.pg_namespace n ON n.oid=c.relnamespace "
-        "WHERE c.relkind='r' AND c.relname=ANY($1::text[])", list(consumer_tables))
-    assert {(row["namespace"], row["name"]) for row in namespaces} == {
-        ("owner_consumer", name) for name in consumer_tables}
-    await db.execute("INSERT INTO holding VALUES($1,$2,$3,$4)", w.operation.app_id,
-        w.operation.installation_id, w.operation.role, w.operation.principal)
-    async def key(team):
-        return (await observe_team_protection(w.registry, team)).controller_did_key
-    async def authority(team):
-        return await observe_team_protection(w.registry, team)
-    verifier = OwnerActVerifier(scope=w.operation.app_id, audience=w.operation.audience, acts=HUMAN_ROLE_ACTS,
-        team_key_for=key, team_authority_for=authority)
-    app = FastAPI()
-    app.include_router(receipt_router(lambda request: db))
-
-    @app.post("/.well-known/aweb-owner-act")
-    async def effect(request: Request):
-        body = await request.body()
-        payload = json.loads(body)
-        try:
-            prepared = await verifier.prepare(base64.b64decode(payload["signing"]), payload["signature"], team_id=TEAM,
-                protected_delivery=(request.headers.get(HEADER), http_consumer(audience=w.operation.audience,
-                    method="POST", path=request.url.path, body=body)))
-            async with db.transaction() as tx:
-                row = await tx.fetch_one("SELECT * FROM holding FOR UPDATE")
-                await verifier.consume_in(tx, prepared, expected_subject=dict(row))
-                await tx.execute("DELETE FROM holding")
-                await prepared.record_applied(tx)
-                prepared.require_fresh()
-        except Refused as exc:
-            return JSONResponse({"detail": exc.code}, status_code=503 if exc.code == "protected_state_unavailable" else 403)
-        return {"applied": True}
-
-    async with httpx.AsyncClient(transport=httpx.ASGITransport(app=app), follow_redirects=False) as client:
-        custody.configure_effects(registry=w.registry, clients={w.operation.audience: client}, clock=lambda: w.app.signer.clock())
+    async with ready_owner_act_consumer(w, tmp_path, test_db_factory) as consumer:
+        db, custody, client = consumer.db, consumer.custody, consumer.client
         prepared = await prepare_owner(w)
         candidate_row = await w.db.fetch_one(
             "SELECT candidate_links FROM {{tables.protected_signer_operations}} WHERE operation_id=$1", prepared.operation_id)

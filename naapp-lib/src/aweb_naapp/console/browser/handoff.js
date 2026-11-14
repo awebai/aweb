@@ -1,6 +1,6 @@
 "use strict";
 
-import { validateProtectedPresentation } from "/handoff-assets/protected-presentation.mjs";
+import { validateProtectedPresentation, validateProtectedReceiptPresentation } from "/handoff-assets/protected-presentation.mjs";
 import { operationTable } from "/handoff-assets/operations.mjs";
 import { renderDisplay, displayRefusal } from "/handoff-assets/protected-display.mjs";
 
@@ -55,6 +55,13 @@ import { renderDisplay, displayRefusal } from "/handoff-assets/protected-display
   function failed() {
     // Completion may have committed even if its response was lost. Never
     // replay a completion or an Allow, and never collect the result here.
+    if (governance && submitted) {
+      // The same outcome as the mailed link's: what was asked stays in view,
+      // with no control that could act and the way back to History.
+      outcome(...unconfirmed);
+      document.body.dataset.handoffState = "unconfirmed";
+      return;
+    }
     action.disabled = true;
     confirm.disabled = true;
     allow.hidden = true;
@@ -87,7 +94,8 @@ import { renderDisplay, displayRefusal } from "/handoff-assets/protected-display
 
   async function governanceState(state) {
     const {payload, digest} = state;
-    const {request} = await validateProtectedPresentation(state, handoffId, operationTable);
+    const validate = state.state === "pending" ? validateProtectedPresentation : validateProtectedReceiptPresentation;
+    const {request} = await validate(state, handoffId, operationTable);
     display = operationTable[`${request.operation}|${request.variant}`].display;
     const words = renderDisplay(display, request);
     operationId = state.operation_id;
@@ -110,12 +118,27 @@ import { renderDisplay, displayRefusal } from "/handoff-assets/protected-display
     document.getElementById("handoff-digest").textContent = digest;
     document.getElementById("handoff-fingerprint").textContent = digest.slice(0, 16).match(/.{4}/g).join(" ");
     document.getElementById("handoff-payload").textContent = JSON.stringify(payload, null, 2);
-    const asked = request.artifact?.issued_at;
+    // When it was asked: a frozen artifact's issue time, or for an intent the
+    // start of its issuance window, which is the moment it was prepared.
+    const asked = request.artifact?.issued_at ?? request.artifact?.issuance_window?.not_before;
+    // The signed-in owner who started this request is "you"; the server says
+    // so from the session, never from anything in the request.
+    const requester = state.requested_by_you === true ? "you" : (words.requester ?? request.requester);
     document.getElementById("handoff-requested").textContent =
-      (words.requester ?? request.requester) + (nonempty(asked) ? `, asked ${when(asked)}` : "");
+      requester + (nonempty(asked) ? `, asked ${when(asked)}` : "");
     document.getElementById("handoff-expires").textContent = when(state.expires_at);
     document.getElementById("handoff-governance").hidden = false;
     document.getElementById("handoff-explanation").hidden = true;
+    if (state.state !== "pending") {
+      stopChoices();
+      if (state.state === "committed" && !await committedResult(state.result)) {
+        document.body.dataset.handoffState = "complete";
+        outcome(...unconfirmed);
+      } else {
+        linkOutcome(state);
+      }
+      return;
+    }
     action.textContent = "Approve";
     deny.hidden = false;
     deny.disabled = false;
@@ -158,7 +181,48 @@ import { renderDisplay, displayRefusal } from "/handoff-assets/protected-display
     document.getElementById("handoff-explanation").hidden = true;
   }
 
-  function governanceComplete(result) {
+  function isObject(value) {
+    return value !== null && typeof value === "object" && !Array.isArray(value);
+  }
+
+  // A committed result: a signed act, or a service-delivered act that its
+  // consumer confirmed applied for this exact operation.
+  async function committedResult(result) {
+    if (!isObject(result)) return false;
+    if (result.v === undefined) return nonempty(result.signing) && nonempty(result.signature);
+    const exact = (value, keys) => isObject(value) && Object.keys(value).sort().join(",") === keys.sort().join(",");
+    const delivery = result.delivery;
+    if (!exact(result, ["v", "type", "artifact", "delivery"]) || result.v !== 2 || result.type !== "aweb.protected-delivery" ||
+        !exact(result.artifact, ["signing", "signature"]) || !exact(delivery, ["mode", "state", "reference"]) ||
+        delivery.mode !== "service_owned" || delivery.state !== "applied" ||
+        !exact(delivery.reference, ["operation_id", "artifact_sha256"]) || delivery.reference.operation_id !== operationId ||
+        !/^[0-9a-f]{64}$/.test(delivery.reference.artifact_sha256)) return false;
+    try {
+      const decode = value => {
+        if (!nonempty(value)) throw new Error("handoff_refused");
+        const raw = atob(value);
+        if (btoa(raw) !== value) throw new Error("handoff_refused");
+        return Uint8Array.from(raw, byte => byte.charCodeAt(0));
+      };
+      const signing = decode(result.artifact.signing);
+      const signature = decode(result.artifact.signature);
+      if (signing.length === 0 || signature.length !== 64) return false;
+      // Existing protected-artifact digest: domain, uint64-BE byte length,
+      // exact signing bytes and decoded Ed25519 signature.
+      const prefix = new TextEncoder().encode("aweb.protected-artifact/1\n");
+      const bytes = new Uint8Array(prefix.length + 8 + signing.length + signature.length);
+      bytes.set(prefix);
+      new DataView(bytes.buffer).setBigUint64(prefix.length, BigInt(signing.length), false);
+      bytes.set(signing, prefix.length + 8);
+      bytes.set(signature, prefix.length + 8 + signing.length);
+      const digest = new Uint8Array(await crypto.subtle.digest("SHA-256", bytes));
+      return Array.from(digest, byte => byte.toString(16).padStart(2, "0")).join("") === delivery.reference.artifact_sha256;
+    } catch {
+      return false;
+    }
+  }
+
+  async function governanceComplete(result) {
     if (result.state === "pending") {
       if (result.redirect_uri !== undefined || !nonempty(result.expires_at) ||
           !Number.isFinite(Date.parse(result.expires_at))) throw new Error("handoff_refused");
@@ -166,9 +230,7 @@ import { renderDisplay, displayRefusal } from "/handoff-assets/protected-display
       outcome("Approved", "It is still being carried out. Your owner page shows the outcome under History.");
       return;
     }
-    if (result.state !== "committed" || !result.result ||
-        typeof result.result !== "object" || Array.isArray(result.result) ||
-        !nonempty(result.result.signing) || !nonempty(result.result.signature)) {
+    if (result.state !== "committed" || !await committedResult(result.result)) {
       throw new Error("handoff_refused");
     }
     if (frozenRedirect === undefined) {
@@ -282,7 +344,7 @@ import { renderDisplay, displayRefusal } from "/handoff-assets/protected-display
     approval_spent: ["Not completed", "Your passkeys or access changed, so this approval cannot be used."],
     stale_binding: ["Not completed", "Your passkeys or access changed while this was waiting."],
     policy_changed: ["Not completed", "The team's policy changed after this was requested, so this approval cannot apply."],
-    authority_changed: ["Not completed", "The team's signing key or approvers changed after this was requested."],
+    authority_changed: ["Not completed", "The team's approval settings changed after this was requested."],
   };
 
   const unconfirmed = ["Not confirmed",
@@ -296,7 +358,16 @@ import { renderDisplay, displayRefusal } from "/handoff-assets/protected-display
     status.textContent = "";
     setTitle(title);
     const sentence = document.getElementById("handoff-outcome-text");
-    sentence.textContent = text;
+    // "owner page" is the way to History: a link, as text everywhere else.
+    const [before, after] = text.split("owner page");
+    if (after === undefined) {
+      sentence.textContent = text;
+    } else {
+      const link = document.createElement("a");
+      link.href = "/";
+      link.textContent = "owner page";
+      sentence.replaceChildren(before, link, after);
+    }
     sentence.hidden = false;
     document.getElementById("handoff-title").focus();
   }
@@ -509,7 +580,7 @@ import { renderDisplay, displayRefusal } from "/handoff-assets/protected-display
         });
         if (!credential) throw new Error("handoff_refused");
         submitted = true;
-        governanceComplete(await request("/execute", {assertion: credential.toJSON()}));
+        await governanceComplete(await request("/execute", {assertion: credential.toJSON()}));
         return;
       }
       if (purpose === "credential") {

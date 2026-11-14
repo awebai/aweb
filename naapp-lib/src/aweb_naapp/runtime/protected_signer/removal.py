@@ -21,13 +21,13 @@ REMOVE_FIELDS = {"team_id", "root_id_or_self", "member_id", "certificate_id", "e
 MEMBERSHIP_FIELDS = {"member_did_key", "member_did_aw", "member_address", "alias", "identity_scope"}
 
 
-def validate_removal_subject(subject):
+def validate_removal_subject(subject, *, owner_approved=False):
     """Snapshot the exact membership projection, preserving explicit nulls."""
     try:
-        if type(subject) is not dict or set(subject) != REMOVE_FIELDS:
+        if type(subject) is not dict or set(subject) != (REMOVE_FIELDS - {"root_id_or_self"} if owner_approved else REMOVE_FIELDS):
             raise ValueError()
         _team(subject["team_id"])
-        if subject["root_id_or_self"] != "self":
+        if not owner_approved and subject["root_id_or_self"] != "self":
             _stable(subject["root_id_or_self"])
         certificate_id = subject["certificate_id"]
         if type(certificate_id) is not str or str(UUID(certificate_id)) != certificate_id:
@@ -55,13 +55,17 @@ def validate_removal_subject(subject):
         raise SignerRefused("request_invalid") from None
 
 
+def validate_owner_removal_subject(subject):
+    return validate_removal_subject(subject, owner_approved=True)
+
+
 def removal_artifact(operation, controller_did, timestamp):
     """The retained artifact wraps an existing covering-v2 registry request.
 
     Only its canonical request is signed, using AWID's existing serializer.
     The wrapper pins controller selection within the protected B2 digest.
     """
-    subject = validate_removal_subject(operation.intent()["subject"])
+    subject = operation.spec.codec.parse_subject(operation.intent()["subject"]) if hasattr(operation, "spec") else validate_removal_subject(operation.intent()["subject"])
     c = operation.context
     if c.authority_kind != "team_controller" or subject["team_id"] != c.authority_id:
         raise SignerRefused("scope_refused")

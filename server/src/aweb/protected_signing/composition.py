@@ -103,6 +103,7 @@ class IndependentProtectedSigner:
         policy_version=None,
         proof_context=None,
         consumer_clients=None,
+        receipt_origins=frozenset(),
     ):
         from awid.log import require_canonical_server_origin
 
@@ -155,14 +156,17 @@ class IndependentProtectedSigner:
         from .admission import AdmissionEffects
 
         self.signer.admission = AdmissionEffects(self)
+        from .owner_removal import OwnerRemovalEffects
+
+        self.signer.owner_removal = OwnerRemovalEffects(self)
         configure = getattr(custody, "configure_effects", None)
         if callable(configure):
             client = getattr(registry, "client", registry)
             clients = {registry.registry_url: client._http_client, **(consumer_clients or {})}
-            configure(registry=registry, clients=clients, clock=lambda: self.signer.clock())
+            configure(registry=registry, clients=clients, clock=lambda: self.signer.clock(), receipt_origins=receipt_origins)
 
     @classmethod
-    def from_profile(cls, db, *, profile, scope, registry_client, custody, delivery, proof_context=None, consumer_clients=None):
+    def from_profile(cls, db, *, profile, scope, registry_client, custody, delivery, proof_context=None, consumer_clients=None, receipt_origins=frozenset()):
         """Use the host's lifespan-owned registry_client(), without another client.
 
         The profile must already come from trusted operator configuration.
@@ -184,6 +188,7 @@ class IndependentProtectedSigner:
             policy_version=binding.policy.version,
             proof_context=proof_context,
             consumer_clients=consumer_clients,
+            receipt_origins=receipt_origins,
         )
 
     async def authenticate_prepare(self, request, operation):
@@ -195,7 +200,7 @@ class IndependentProtectedSigner:
         ):
             raise SignerRefused("scope_refused")
         if operation.intent()["operation"] == "team.agent.remove":
-            if operation.intent()["subject"]["root_id_or_self"] == "self":
+            if operation.spec.supports_self_removal and operation.intent()["subject"]["root_id_or_self"] == "self":
                 from .self_removal import self_requester
 
                 return await self_requester(self, request, operation, purpose="prepare")
@@ -213,7 +218,7 @@ class IndependentProtectedSigner:
         if operation is None:
             raise SignerRefused("operation_not_found")
         if operation.intent()["operation"] == "team.agent.remove":
-            if operation.intent()["subject"]["root_id_or_self"] == "self":
+            if operation.spec.supports_self_removal and operation.intent()["subject"]["root_id_or_self"] == "self":
                 from .self_removal import self_requester
 
                 return await self_requester(self, request, operation, purpose=purpose)
@@ -255,9 +260,15 @@ class IndependentProtectedSigner:
             limiter=limiter,
             executor=self.authenticate_execute,
             policy_reader=self.read_admission_policy,
+            owner_prepare=self.prepare_owner_selection,
             human_sessions=human_sessions,
             human_csrf_key=human_csrf_key,
         )
+
+    async def prepare_owner_selection(self, selection, session):
+        from .owner_removal import prepare_owner_selection
+
+        return await prepare_owner_selection(self, selection, session)
 
     async def read_admission_policy(self, request, team_id):
         """Configuration only, under a named requester's current registered key.

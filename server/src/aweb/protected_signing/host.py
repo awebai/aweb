@@ -49,6 +49,7 @@ class HostSettings(BaseSettings):
     controller_key_file: Path
     service_key_file: Path | None = None
     owner_act_origins: tuple[str, ...] = ()
+    effect_receipt_origins: tuple[str, ...] = ()
     controller_keys_file: Path | None = None
     member_keys_file: Path
     worker_uids: list[Annotated[StrictInt, Field(gt=0)]] = Field(min_length=1)
@@ -72,7 +73,7 @@ class HostSettings(BaseSettings):
     def database_source(self):
         from awid.log import require_canonical_server_origin
 
-        for origin in self.owner_act_origins:
+        for origin in (*self.owner_act_origins, *self.effect_receipt_origins):
             require_canonical_server_origin(origin)
         if self.database_url_file is not None:
             if "database_url" in self.model_fields_set:
@@ -184,7 +185,7 @@ def load_custodies(settings, *, profile, scope):
 
 @asynccontextmanager
 async def open_composition(
-    settings, *, profile, scope, mailer, registry_transport=None
+    settings, *, profile, scope, mailer, registry_transport=None, consumer_transport=None
 ):
     """The same isolated custody and owned DB/client for host and local admin."""
     selected, keys, custodians = load_custodies(settings, profile=profile, scope=scope)
@@ -208,7 +209,7 @@ async def open_composition(
         resources.push_async_callback(registry.aclose)
         consumer_clients = {}
         if settings.owner_act_origins:
-            consumer_client = await resources.enter_async_context(httpx.AsyncClient(follow_redirects=False, timeout=10))
+            consumer_client = await resources.enter_async_context(httpx.AsyncClient(transport=consumer_transport, follow_redirects=False, timeout=10))
             consumer_clients = {origin: consumer_client for origin in settings.owner_act_origins}
         groups = []
 
@@ -220,6 +221,7 @@ async def open_composition(
         components = [IndependentProtectedSigner.from_profile(
             db, profile=profile, scope=binding.scope.model_dump(mode="json"), registry_client=registry, custody=custody,
             delivery=ProtectedNotifications(db=db, mailer=mailer, human_origin=profile.human_origin), consumer_clients=consumer_clients,
+            receipt_origins=frozenset(settings.effect_receipt_origins),
             proof_context=proof_context if len(custodians) > 1 else None,
         ) for binding, custody in custodians]
         composition = components[0]
@@ -232,7 +234,7 @@ async def open_composition(
         yield composition
 
 
-def create_app(settings=None, *, mailer=None, registry_transport=None):
+def create_app(settings=None, *, mailer=None, registry_transport=None, consumer_transport=None):
     """Own one DB/registry lifetime and mount the sole shared human page.
 
     In-process hosts may supply their existing configured mailer/transport;
@@ -263,6 +265,7 @@ def create_app(settings=None, *, mailer=None, registry_transport=None):
                     scope=scope,
                     mailer=configured_mailer,
                     registry_transport=registry_transport,
+                    consumer_transport=consumer_transport,
                 )
             )
             db = composition.db

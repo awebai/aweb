@@ -30,6 +30,16 @@ const endorseTestOperation = "77777777-7777-4777-8777-77777777abcd"
 // customer.example, beside a team controller binding.
 func endorseTestProfile(t *testing.T, humanKey ed25519.PrivateKey) *handoff.Profile {
 	t.Helper()
+	profile, err := handoff.ParseProfile(endorseTestProfileJSON(humanKey, "https://signer.customer.example", "https://human.customer.example"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	return profile
+}
+
+// endorseTestProfileJSON is endorseTestProfile's file, at the given service
+// origins.
+func endorseTestProfileJSON(humanKey ed25519.PrivateKey, requestOrigin, humanOrigin string) []byte {
 	humanDID := awid.ComputeDIDKey(humanKey.Public().(ed25519.PublicKey))
 	scope := func(kind, id string) map[string]any {
 		return map[string]any{"v": 1, "kind": "protected_key", "service_id": "customer-signer",
@@ -38,8 +48,8 @@ func endorseTestProfile(t *testing.T, humanKey ed25519.PrivateKey) *handoff.Prof
 	}
 	_, teamKey, _ := ed25519.GenerateKey(nil)
 	raw, _ := json.Marshal(map[string]any{
-		"v": 1, "service_id": "customer-signer", "request_origin": "https://signer.customer.example",
-		"human_origin": "https://human.customer.example", "rp_id": "human.customer.example",
+		"v": 1, "service_id": "customer-signer", "request_origin": requestOrigin,
+		"human_origin": humanOrigin, "rp_id": "human.customer.example",
 		"registry_origin":       "https://registry.customer.example",
 		"namespace_authorities": []any{map[string]any{"domain": "customer.example", "controller_did": humanDID}},
 		"bindings": []any{
@@ -50,11 +60,7 @@ func endorseTestProfile(t *testing.T, humanKey ed25519.PrivateKey) *handoff.Prof
 				"policy":            map[string]any{"ref": "aweb.human-assurance/1", "version": 1}},
 		},
 	})
-	profile, err := handoff.ParseProfile(raw)
-	if err != nil {
-		t.Fatal(err)
-	}
-	return profile
+	return raw
 }
 
 func endorseTestRequest() endorsementRequest {
@@ -90,7 +96,8 @@ func TestAnEndorsementNamesTheRootInTheHumansDomainAndItsSortedTeams(t *testing.
 	}
 	subject, _ := json.Marshal(intent["subject"])
 	want := `{"deployment_label":"lab","domain":"customer.example","root_id":"did:aw:29L9sa47RQVPv4wyy2Bp9jqCJh2f","root_key":"did:key:zroot","teams":["engineering:customer.example","zeta:customer.example"]}`
-	if string(subject) != want || intent["operation"] != "identity.root.endorse" || intent["audience"] != profile.RegistryOrigin {
+	if string(subject) != want || intent["operation"] != "identity.root.endorse" || intent["audience"] != profile.RegistryOrigin ||
+		intent["approval_format"] != "intent_v1" {
 		t.Fatalf("intent %v", intent)
 	}
 	for name, change := range map[string]func(*endorsementRequest){
@@ -124,7 +131,8 @@ func protectedRead(team string, policy map[string]any) *handoff.AdmissionPolicyR
 
 func TestTheLinkIsShownOnlyWhenEveryTeamsPolicyReadIsTheFrozenPolicy(t *testing.T) {
 	frozen := endorseTestPolicy(3)
-	request := map[string]any{"admission_policy": frozen, "artifact": map[string]any{"issuer_key": "did:key:zhuman"}}
+	_, humanKey, _ := ed25519.GenerateKey(nil)
+	request := endorseFrozenIntent(t, endorseTestProfile(t, humanKey), "did:key:zhuman")
 	teams := []string{"engineering:customer.example", "zeta:customer.example"}
 	same := map[string]*handoff.AdmissionPolicyRead{teams[0]: protectedRead(teams[0], frozen), teams[1]: protectedRead(teams[1], frozen)}
 	var kept map[string]any
@@ -175,6 +183,46 @@ func endorsedArtifact(issuer string) map[string]any {
 		"issuer_key": issuer, "issued_at": "2026-11-13T10:00:00Z"}
 }
 
+// signedCertificate is artifact signed by key, in the {certificate,
+// signature} wrapper a verified endorsement yields.
+func signedCertificate(t *testing.T, key ed25519.PrivateKey, artifact map[string]any) map[string]any {
+	t.Helper()
+	signing, err := awid.IDCertificateSigningBytes(artifact)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return map[string]any{"certificate": artifact, "signature": base64.RawURLEncoding.EncodeToString(ed25519.Sign(key, signing))}
+}
+
+// endorseFrozenIntent is the request an endorsement of endorseTestRequest
+// freezes for the human issuer: the certificate to issue, without its
+// issued_at, inside a day's issuance window around endorsedArtifact's time.
+func endorseFrozenIntent(t *testing.T, profile *handoff.Profile, issuer string) map[string]any {
+	t.Helper()
+	binding, err := endorsementBinding(profile, admitTestHuman)
+	if err != nil {
+		t.Fatal(err)
+	}
+	intent, err := endorsementIntent(profile, binding, endorseTestRequest())
+	if err != nil {
+		t.Fatal(err)
+	}
+	template := endorsedArtifact(issuer)
+	delete(template, "issued_at")
+	intent["operation_id"] = endorseTestOperation
+	intent["registry"], intent["expected_head"] = profile.RegistryOrigin, nil
+	intent["responsibility_statement"], intent["admission_policy"] = handoff.RootResponsibilityStatement, endorseTestPolicy(3)
+	intent["artifact"] = map[string]any{"v": 1, "type": "aweb.protected-artifact-intent", "template": template,
+		"delivery":        map[string]any{"audience": profile.RegistryOrigin, "method": "POST", "path": "/v1/id-certificates/register"},
+		"issuance_window": map[string]any{"not_before": "2026-11-13T09:00:00Z", "not_after": "2026-11-14T09:00:00Z"}}
+	raw, _ := json.Marshal(intent)
+	request, ok := handoff.DecodeObject(raw)
+	if !ok {
+		t.Fatal("the frozen intent does not decode")
+	}
+	return request
+}
+
 func signedEndorsement(t *testing.T, key ed25519.PrivateKey, artifact map[string]any) []byte {
 	t.Helper()
 	signing, err := awid.IDCertificateSigningBytes(artifact)
@@ -190,7 +238,8 @@ func TestTheEndorsedCertificateIsTheFrozenOneSignedByTheHumansPinnedKey(t *testi
 	_, humanKey, _ := ed25519.GenerateKey(nil)
 	humanDID := awid.ComputeDIDKey(humanKey.Public().(ed25519.PublicKey))
 	artifact := endorsedArtifact(humanDID)
-	signed, err := endorsedCertificate(signedEndorsement(t, humanKey, artifact), artifact, humanDID)
+	frozen := endorseFrozenIntent(t, endorseTestProfile(t, humanKey), humanDID)
+	signed, err := endorsedCertificate(signedEndorsement(t, humanKey, artifact), frozen, humanDID)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -199,11 +248,14 @@ func TestTheEndorsedCertificateIsTheFrozenOneSignedByTheHumansPinnedKey(t *testi
 	}
 	_, otherKey, _ := ed25519.GenerateKey(nil)
 	otherArtifact := endorsedArtifact(humanDID)
-	otherArtifact["issued_at"] = "2026-11-13T11:00:00Z"
+	otherArtifact["id"] = "did:aw:2e2SPDJNyxg5Dt6EFJX3Tcn8Tauj"
+	lateArtifact := endorsedArtifact(humanDID)
+	lateArtifact["issued_at"] = "2026-11-14T10:00:00Z"
 	for name, result := range map[string][]byte{
-		"another key":         signedEndorsement(t, otherKey, artifact),
-		"another certificate": signedEndorsement(t, humanKey, otherArtifact),
-		"not a result":        []byte(`{"signing":"x"}`),
+		"another key":               signedEndorsement(t, otherKey, artifact),
+		"another certificate":       signedEndorsement(t, humanKey, otherArtifact),
+		"issued outside its window": signedEndorsement(t, humanKey, lateArtifact),
+		"not a result":              []byte(`{"signing":"x"}`),
 		"signing that is not what was signed": func() []byte {
 			signing, _ := awid.IDCertificateSigningBytes(artifact)
 			other, _ := awid.IDCertificateSigningBytes(otherArtifact)
@@ -212,7 +264,7 @@ func TestTheEndorsedCertificateIsTheFrozenOneSignedByTheHumansPinnedKey(t *testi
 			return raw
 		}(),
 	} {
-		if _, err := endorsedCertificate(result, artifact, humanDID); errorCodeOf(err) != "signed_certificate_invalid" {
+		if _, err := endorsedCertificate(result, frozen, humanDID); errorCodeOf(err) != "signed_certificate_invalid" {
 			t.Errorf("%s: err %v", name, err)
 		}
 	}
@@ -246,7 +298,7 @@ func TestARegisteredEndorsementIsConfirmedOnlyByItsReadBack(t *testing.T) {
 	_, humanKey, _ := ed25519.GenerateKey(nil)
 	humanDID := awid.ComputeDIDKey(humanKey.Public().(ed25519.PublicKey))
 	artifact := endorsedArtifact(humanDID)
-	signed, _ := endorsedCertificate(signedEndorsement(t, humanKey, artifact), artifact, humanDID)
+	signed := signedCertificate(t, humanKey, artifact)
 	ours, _ := awid.IDCertificateID(signed["certificate"].(map[string]any))
 	chain := []any{signedHumanCertificate(t, humanKey)}
 	refused := errors.New("already registered")
@@ -294,7 +346,7 @@ func TestARerunOfAConfirmedEndorsementInstallsItsChainOnce(t *testing.T) {
 	_, humanKey, _ := ed25519.GenerateKey(nil)
 	humanDID := awid.ComputeDIDKey(humanKey.Public().(ed25519.PublicKey))
 	artifact := endorsedArtifact(humanDID)
-	signed, _ := endorsedCertificate(signedEndorsement(t, humanKey, artifact), artifact, humanDID)
+	signed := signedCertificate(t, humanKey, artifact)
 	ours, _ := awid.IDCertificateID(signed["certificate"].(map[string]any))
 	chain := []any{signedHumanCertificate(t, humanKey)}
 	home := t.TempDir()
@@ -423,10 +475,7 @@ func readBackAt(t *testing.T, status any, controller string) error {
 	humanSigned := map[string]any{"certificate": human, "signature": base64.RawURLEncoding.EncodeToString(ed25519.Sign(humanKey, humanSigning))}
 	artifact := map[string]any{"v": json.Number("1"), "type": "aweb.id-certificate", "id": root, "domain": "example.com",
 		"parent": map[string]any{"kind": "identity", "id": admitTestHuman}, "kind": "agent", "issuer_key": humanDID, "issued_at": "2026-11-13T10:00:00Z"}
-	signed, err := endorsedCertificate(signedEndorsement(t, humanKey, artifact), artifact, humanDID)
-	if err != nil {
-		t.Fatal(err)
-	}
+	signed := signedCertificate(t, humanKey, artifact)
 	server := statusRegistry(t, status)
 	raw, _ := json.Marshal(map[string]any{
 		"v": 1, "service_id": "customer-signer", "request_origin": "https://signer.example.com",
@@ -552,7 +601,7 @@ func TestAnEndorsedRootInvitesAnAgentChildWithItsInstalledChain(t *testing.T) {
 	_, humanKey, _ := ed25519.GenerateKey(nil)
 	humanDID := awid.ComputeDIDKey(humanKey.Public().(ed25519.PublicKey))
 	artifact := endorsedArtifact(humanDID)
-	signed, _ := endorsedCertificate(signedEndorsement(t, humanKey, artifact), artifact, humanDID)
+	signed := signedCertificate(t, humanKey, artifact)
 	ours, _ := awid.IDCertificateID(signed["certificate"].(map[string]any))
 	root, err := filepath.EvalSymlinks(t.TempDir())
 	if err != nil {
@@ -590,5 +639,99 @@ func TestAnEndorsedRootInvitesAnAgentChildWithItsInstalledChain(t *testing.T) {
 	}
 	if parent, _ := invited["parent"].(map[string]any); parent["kind"] != "identity" || parent["id"] != artifact["id"] {
 		t.Fatalf("parent %v", invited["parent"])
+	}
+}
+
+func TestAnOldCommittedEndorsementIsKeptAndNeverRegistered(t *testing.T) {
+	_, humanKey, _ := ed25519.GenerateKey(nil)
+	result := signedEndorsement(t, humanKey, endorsedArtifact(awid.ComputeDIDKey(humanKey.Public().(ed25519.PublicKey))))
+	report, facts := endorsementReading(&awconfig.PendingGovernanceOperation{OperationID: endorseTestOperation}, nil, result)
+	if report != nil || facts == nil || facts.State != "committed" || facts.Verification != "unverifiable" || len(facts.Signing) == 0 || len(facts.Signature) != 64 {
+		t.Fatalf("report %v facts %+v", report, facts)
+	}
+}
+
+// TestTheEndorseCommandStopsAtAQuarantinedEndorsementOfThisRoot runs aw id
+// endorse itself, from a root's identity home, against a service that has an
+// earlier endorsement of this root that aw cannot continue.
+func TestTheEndorseCommandStopsAtAQuarantinedEndorsementOfThisRoot(t *testing.T) {
+	ctx, cancel := context.WithTimeout(context.Background(), 90*time.Second)
+	defer cancel()
+	root, err := filepath.EvalSymlinks(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	bin := filepath.Join(root, "aw")
+	buildAwBinary(t, ctx, bin)
+	home := filepath.Join(root, "home")
+	t.Setenv("HOME", home)
+	service := newReceiptService(t)
+	_, humanKey, _ := ed25519.GenerateKey(nil)
+	profilePath := filepath.Join(root, "protected-profile.json")
+	if err := os.WriteFile(profilePath, endorseTestProfileJSON(humanKey, service.server.URL, "https://human.customer.example"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	identityHome := filepath.Join(root, "root", ".aw")
+	public, key, _ := ed25519.GenerateKey(nil)
+	if err := os.MkdirAll(identityHome, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := awid.SaveSigningKey(filepath.Join(identityHome, "signing.key"), key); err != nil {
+		t.Fatal(err)
+	}
+	if err := awconfig.SaveWorktreeIdentityTo(filepath.Join(identityHome, "identity.yaml"), &awconfig.WorktreeIdentity{
+		DID: awid.ComputeDIDKey(public), StableID: awid.ComputeStableID(public), Custody: awid.CustodySelf,
+		IdentityScope: awid.IdentityModeGlobal, CreatedAt: "2026-11-13T00:00:00Z"}); err != nil {
+		t.Fatal(err)
+	}
+	profile, err := handoff.ParseProfile(endorseTestProfileJSON(humanKey, service.server.URL, "https://human.customer.example"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	binding, err := endorsementBinding(profile, admitTestHuman)
+	if err != nil {
+		t.Fatal(err)
+	}
+	request := endorseTestRequest()
+	request.RootID, request.RootKey = awid.ComputeStableID(public), awid.ComputeDIDKey(public)
+	old, err := endorsementIntent(profile, binding, request)
+	if err != nil {
+		t.Fatal(err)
+	}
+	delete(old, "approval_format")
+	old["operation_id"] = endorseTestOperation
+	body, _ := json.Marshal(old)
+	if err := awconfig.SavePendingGovernanceOperation(&awconfig.PendingGovernanceOperation{OperationID: endorseTestOperation,
+		RequestOrigin: service.server.URL, HumanOrigin: "https://human.customer.example", Body: body}); err != nil {
+		t.Fatal(err)
+	}
+	service.receipts[endorseTestOperation] = `{"state":"unknown","code":"external_effect_unresolved"}`
+	endorse := func(extra ...string) (string, error) {
+		args := append([]string{"--identity-home", identityHome, "id", "endorse", "--protected-profile", profilePath, "--human", admitTestHuman,
+			"--team", "engineering:customer.example", "--team", "zeta:customer.example", "--deployment-label", "lab", "--no-browser", "--no-wait", "--json"}, extra...)
+		run := exec.CommandContext(ctx, bin, args...)
+		run.Env = append(testCommandEnv(home), "HOME="+home)
+		run.Dir = root
+		out, err := run.CombinedOutput()
+		return string(out), err
+	}
+	out, err := endorse()
+	if err == nil || !strings.Contains(out, "operation_reconciliation_required") || service.reads != 1 || service.others != 0 {
+		t.Fatalf("err %v reads %d others %d:\n%s", err, service.reads, service.others, out)
+	}
+	if saved, _ := awconfig.LoadPendingGovernanceOperation(endorseTestOperation); saved == nil || saved.Quarantine == nil {
+		t.Fatal("the earlier endorsement was not quarantined")
+	}
+	// A new operation id alone is not the explicit choice.
+	if out, err := endorse("--operation-id", "99999999-9999-4999-8999-999999999999"); err == nil || service.others != 0 {
+		t.Fatalf("a new operation id bypassed the guard: %v others %d:\n%s", err, service.others, out)
+	}
+	// --replace names it: a separately approved endorsement is asked for.
+	_, _ = endorse("--replace", endorseTestOperation)
+	if service.others != 1 {
+		t.Fatalf("replace sent %d new requests", service.others)
+	}
+	if saved, _ := awconfig.LoadPendingGovernanceOperation(endorseTestOperation); saved == nil || !bytes.Equal(saved.Body, body) {
+		t.Fatal("the replaced endorsement's record changed")
 	}
 }

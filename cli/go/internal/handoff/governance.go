@@ -104,6 +104,9 @@ func Approve(ctx context.Context, opts GovernanceOptions, operationID string, in
 		members[k] = v
 	}
 	members["operation_id"] = operationID
+	if err := requireIntentFormat(members); err != nil {
+		return nil, err
+	}
 	// A caller that does not wait has no callback to receive.
 	var wake *Loopback
 	if !opts.NoWait {
@@ -141,6 +144,9 @@ func Resume(ctx context.Context, opts GovernanceOptions, saved []byte) (*Receipt
 	operationID, _ := body["operation_id"].(string)
 	if !ok || operationID == "" {
 		return nil, coded("intent_invalid", errors.New("the saved body is not a prepared operation's"))
+	}
+	if err := requireIntentFormat(body); err != nil {
+		return nil, err
 	}
 	fmt.Fprintf(opts.Notify, "Resuming operation %s\n", operationID)
 	return approve(ctx, opts, operationID, body, saved, nil)
@@ -596,6 +602,16 @@ func verifyPrepared(sent map[string]any, digest string, payload map[string]any) 
 			}
 		}
 	}
+	if shape.issuance != nil {
+		if sent["approval_format"] != "intent_v1" {
+			return coded("upgrade_aw_required", errors.New("upgrade aw to use this protected approval format"))
+		}
+		var err error
+		artifact, err = shape.issuance.preparedArtifact(request, artifact)
+		if err != nil {
+			return mismatch(err.Error())
+		}
+	}
 	if reason := shape.check(sent, request, artifact); reason != "" {
 		return mismatch(reason)
 	}
@@ -609,6 +625,7 @@ type preparedShape struct {
 	// check names how request or artifact differs from sent, or is "".
 	check    func(sent, request, artifact map[string]any) string
 	bindings []string
+	issuance *artifactIssuance
 }
 
 // preparedShapeOf selects only a generated, pinned definition. A response
@@ -672,6 +689,13 @@ func endorsementDiffers(sent, request, artifact map[string]any) string {
 // names the key that authenticated it, and its artifact is a controller and
 // the covering-v2 registry request revoking exactly the certificate aw named,
 // of its team, at the audience registry (docs/protected-team-removal.md).
+func ownerRemovalArtifactDiffers(sent, request, artifact map[string]any) string {
+	if request["target_kind"] != "agent" && request["target_kind"] != "kind not verified" {
+		return "its target classification is not supported"
+	}
+	return removalArtifactDiffers(sent, request, artifact)
+}
+
 func removalArtifactDiffers(sent, request, artifact map[string]any) string {
 	if key, _ := request["requester_key"].(string); key == "" {
 		return "it names no requester key"

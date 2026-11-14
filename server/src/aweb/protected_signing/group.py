@@ -25,6 +25,9 @@ class _Executors:
     async def inspect(self, operation_id, *, human, human_session=None):
         return await self.group.component(human.context).signer.inspect(operation_id, human=human, human_session=human_session)
 
+    async def requested_by_you(self, operation_id, *, human, human_session=None):
+        return await self.group.component(human.context).signer.requested_by_you(operation_id, human=human, human_session=human_session)
+
     async def approval_options(self, operation_id, *, human, human_session=None):
         return await self.group.component(human.context).signer.approval_options(operation_id, human=human, human_session=human_session)
 
@@ -113,12 +116,17 @@ class ProtectedSignerGroup:
                 return False
         return ConsoleSessions(self.db, passkeys=self.passkeys, scopes=current_scope)
 
+    async def prepare_owner_selection(self, selection, session):
+        async with self.db.transaction() as tx:
+            component = await self.for_b3_scope(session.scope, tx=tx)
+        return await component.prepare_owner_selection(selection, session)
+
     def operations_http(self, **kwargs):
         from aweb_naapp.runtime.protected_signer import ProtectedOperationsHTTP
 
         return ProtectedOperationsHTTP(self.signer, request_origin=self.request_origin,
             requester=self.authenticate_prepare, reader=self.authenticate_receipt, executor=self.authenticate_execute,
-            policy_reader=self.read_admission_policy, **kwargs)
+            policy_reader=self.read_admission_policy, owner_prepare=self.prepare_owner_selection, **kwargs)
 
     async def migrate(self):
         await self.selected.migrate()
