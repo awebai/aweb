@@ -25,6 +25,9 @@ class _Executors:
     async def inspect(self, operation_id, *, human, human_session=None):
         return await self.group.component(human.context).signer.inspect(operation_id, human=human, human_session=human_session)
 
+    async def requested_by_you(self, operation_id, *, human, human_session=None):
+        return await self.group.component(human.context).signer.requested_by_you(operation_id, human=human, human_session=human_session)
+
     async def approval_options(self, operation_id, *, human, human_session=None):
         return await self.group.component(human.context).signer.approval_options(operation_id, human=human, human_session=human_session)
 

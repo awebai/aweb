@@ -438,7 +438,13 @@ class ProtectedOperationsHTTP:
                     "policy": {"ref": frozen["policy_ref"], "version": frozen["policy_version"]},
                     "request": frozen,
                 }
-                return {"mode": "governance", **result, **receipt_json(receipt)}
+                requested_by_you = await self.signer.requested_by_you(
+                    operation_id, human=human, human_session=session
+                )
+                return {
+                    "mode": "governance", **result, **receipt_json(receipt),
+                    "requested_by_you": requested_by_you,
+                }
             except Exception as error:
                 raise self._human_error(error) from None
 
