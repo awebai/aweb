@@ -120,6 +120,7 @@ def write_tls(runtime: Path, hosts: list[str]) -> tuple[str, str]:
     shutil.copyfile(tls.key_file, runtime / "tls" / "smtp-key.pem")
     for path in (runtime / "tls").iterdir():
         path.chmod(0o644)
+    (runtime / "tls").chmod(0o755)
     return tls.cert_file.name, tls.key_file.name
 
 
@@ -222,6 +223,27 @@ class Lane:
         return container
 
 
+def write_front(runtime: Path, caddyfile: str) -> None:
+    """The lane's front configuration: public, whatever the launching umask."""
+    (runtime / "front").mkdir()
+    (runtime / "front").chmod(0o755)
+    (runtime / "front" / "Caddyfile").write_text(caddyfile)
+    (runtime / "front" / "Caddyfile").chmod(0o644)
+
+
+def write_dns(runtime: Path) -> None:
+    """The lane's DNS server configuration: public, read by the DNS image's
+    non-root user whatever the launching shell's umask."""
+    (runtime / "dns").mkdir()
+    (runtime / "dns").chmod(0o755)
+    corefile = runtime / "dns" / "Corefile"
+    corefile.write_text(
+        f"{DOMAIN}:53 {{\n  errors\n  file /zones/{DOMAIN}.zone {DOMAIN} {{ reload 1s }}\n}}\n"
+        ".:53 {\n  errors\n  forward . 127.0.0.11\n}\n"
+    )
+    corefile.chmod(0o644)
+
+
 def publish_awid_txt(lane: Lane, controller_did: str) -> None:
     zone = lane.runtime / "dns" / f"{DOMAIN}.zone"
     serial = int(time.time())
@@ -231,6 +253,7 @@ def publish_awid_txt(lane: Lane, controller_did: str) -> None:
         f"@ IN NS ns.{DOMAIN}.\nns IN A 127.0.0.1\n"
         f'_awid IN TXT "awid=v1; controller={controller_did}; registry={REGISTRY};"\n'
     )
+    zone.with_suffix(".tmp").chmod(0o644)
     zone.with_suffix(".tmp").replace(zone)
 
 
@@ -270,15 +293,10 @@ def lane(tmp_path_factory: pytest.TempPathFactory) -> Iterator[Lane]:
     lane = Lane(project, runtime, {**os.environ, "SECRETS_E2E_RUNTIME": str(runtime), "SECRETS_E2E_SOURCE_COMMIT": commit,
                                        "SECRETS_E2E_AWID_SERVICE_TOKEN": secrets.token_hex(32), **LOGS_COMPOSE_ENV})
 
-    (runtime / "dns").mkdir()
-    (runtime / "dns" / "Corefile").write_text(
-        f"{DOMAIN}:53 {{\n  errors\n  file /zones/{DOMAIN}.zone {DOMAIN} {{ reload 1s }}\n}}\n"
-        ".:53 {\n  errors\n  forward . 127.0.0.11\n}\n"
-    )
+    write_dns(runtime)
     publish_awid_txt(lane, "did:key:z6MkpendingpendingpendingpendingpendingpendingpendingP")
     cert, key = write_tls(runtime, [*UPSTREAMS, "mail.svc.test"])
-    (runtime / "front").mkdir()
-    (runtime / "front" / "Caddyfile").write_text(front_caddyfile(UPSTREAMS, cert, key))
+    write_front(runtime, front_caddyfile(UPSTREAMS, cert, key))
     write_secrets_env(lane)
     try:
         lane.up("dns")

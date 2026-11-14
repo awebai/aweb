@@ -73,6 +73,8 @@ from tests.test_e2e_owner_acts import (
     publish_awid_txt,
     secrets_query,
     start_apps,
+    write_dns,
+    write_front,
     write_secrets_env,
     write_tls,
 )
@@ -130,15 +132,10 @@ def lane(tmp_path_factory: pytest.TempPathFactory) -> Iterator[ProtectedLane]:
     lane = ProtectedLane(project, runtime, {**os.environ, "SECRETS_E2E_RUNTIME": str(runtime), "SECRETS_E2E_SOURCE_COMMIT": commit,
                                        "SECRETS_E2E_AWID_SERVICE_TOKEN": secrets.token_hex(32), **LOGS_COMPOSE_ENV})
 
-    (runtime / "dns").mkdir()
-    (runtime / "dns" / "Corefile").write_text(
-        f"{DOMAIN}:53 {{\n  errors\n  file /zones/{DOMAIN}.zone {DOMAIN} {{ reload 1s }}\n}}\n"
-        ".:53 {\n  errors\n  forward . 127.0.0.11\n}\n"
-    )
+    write_dns(runtime)
     publish_awid_txt(lane, "did:key:z6MkpendingpendingpendingpendingpendingpendingpendingP")
     cert, key = write_tls(runtime, [*PROTECTED_UPSTREAMS, "mail.svc.test"])
-    (runtime / "front").mkdir()
-    (runtime / "front" / "Caddyfile").write_text(front_caddyfile(PROTECTED_UPSTREAMS, cert, key))
+    write_front(runtime, front_caddyfile(PROTECTED_UPSTREAMS, cert, key))
     write_secrets_env(lane)
     try:
         lane.up("dns")
