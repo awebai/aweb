@@ -81,7 +81,7 @@ an ordinary unattended governance variant.
 
 The exact request binds service/origin, operation and variant, selected key
 authority and current key version, subject/key, target, domain/team/holding,
-rights, every artifact field, expected current state/head, deployment policy
+rights, every frozen template field and permitted issuance rule, expected current state/head, deployment policy
 reference/version and the operation's idempotency identifier. A display is
 derived from that frozen request, never a second request rebuilt from labels.
 Omitted, unknown or duplicate fields, ambiguous targets and unknown authority
@@ -779,7 +779,7 @@ Use B2's existing covered-request digest, not a second digest engine:
 SHA-256 of `aweb.approval-request/1` plus LF plus canonical UTF-8 JSON of
 `{"policy":{"ref":POLICY_REF,"version":POLICY_VERSION},"request":REQUEST}`.
 REQUEST freezes the typed operation/variant, service/origins, requester, scope,
-key authority/generation, every artifact field, expected state/head, operation
+key authority/generation, every frozen template field and permitted issuance rule, expected state/head, operation
 ID, protocol nonce/issued/expiry and validated completion binding. Canonical
 JSON is the existing B2 safe-integer/no-float form; unknown and duplicate fields
 refuse. The `digest` is 64 lowercase hex characters. Its comparison
@@ -863,6 +863,16 @@ already pinned consumer; it contains no private headers or capability.
 capped by the original pending/B2 policy window. The published, pinned operation
 definition owns these grammars and the only omitted fields; the caller cannot
 choose a template, time field, serializer, route, lifetime or signing key.
+
+Whole-request mailed-link classification for these three rows covers the
+operation/variant/version/UUID, public scope and authority identifiers,
+requester provenance, closed subject/snapshot/kind, applicable frozen policy
+and expected head, descriptor/template/delivery/issuance window, and an optional
+validated loopback redirect. The new owner-removal row may be added to the
+revealable pin only after that complete classification has security text ACK.
+No session or link token, credential evidence, private key, retained attestation,
+Authorization header or private delivery bundle is part of that view. Adding
+another field requires its classification before revealability can expand.
 
 For membership removal the template retains the exact covering-v2 revoke
 request's team, certificate UUID, registry audience, method, route, domain,

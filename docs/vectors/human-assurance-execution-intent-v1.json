@@ -278,6 +278,19 @@
       "expected": {
         "intent_v1_deployment_enabled": false
       }
+    },
+    {
+      "id": "mailed-intent-view-excludes-private-retention",
+      "given": {
+        "row": "team.agent.remove/owner_approved",
+        "whole_frozen_request_classification_acked": true,
+        "private_retained_effect_present": true
+      },
+      "expected": {
+        "descriptor_and_frozen_target_visible": true,
+        "private_headers_proofs_keys_and_tokens_visible": false,
+        "issued_effect_authority_from_view": false
+      }
     }
   ]
 }
