@@ -18,8 +18,6 @@ from pydantic import BaseModel, ConfigDict, Field, ValidationError, field_valida
 
 from awid_service.protected_teams import advance_incarnation, effect_transaction, protection, project_protection, refusal, team_guard
 
-_TEAM_NAME_PATTERN = re.compile(r"^[a-z0-9]([a-z0-9-]*[a-z0-9])?$")
-
 from awid_service.deps import get_db
 from awid.contract import normalize_identity_scope
 from awid.pagination import encode_cursor, validate_pagination_params
@@ -39,6 +37,7 @@ from awid.controller_request import ControllerAuthRoute, verify_controller_json_
 from awid_service.attestation_rotation import ResignedRecords, apply_resigned_records
 
 logger = logging.getLogger(__name__)
+_TEAM_NAME_PATTERN = re.compile(r"^[a-z0-9]([a-z0-9-]*[a-z0-9])?$")
 
 def _validate_domain_path(domain: str) -> None:
     if not domain.strip().rstrip("."):
