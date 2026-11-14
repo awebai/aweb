@@ -73,6 +73,7 @@ from tests.test_e2e_owner_acts import (
     publish_awid_txt,
     secrets_query,
     start_apps,
+    write_secrets_env,
     write_tls,
 )
 
@@ -138,6 +139,7 @@ def lane(tmp_path_factory: pytest.TempPathFactory) -> Iterator[ProtectedLane]:
     cert, key = write_tls(runtime, [*PROTECTED_UPSTREAMS, "mail.svc.test"])
     (runtime / "front").mkdir()
     (runtime / "front" / "Caddyfile").write_text(front_caddyfile(PROTECTED_UPSTREAMS, cert, key))
+    write_secrets_env(lane)
     try:
         lane.up("dns")
         dns = lane.compose("ps", "-q", "dns").stdout.strip()

@@ -123,6 +123,12 @@ def write_tls(runtime: Path, hosts: list[str]) -> tuple[str, str]:
     return tls.cert_file.name, tls.key_file.name
 
 
+def write_secrets_env(lane) -> None:
+    """The app's settings file. Compose checks every service's env_file when
+    any service starts, so it is written before the lane's first service."""
+    (lane.runtime / "secrets.env").write_text("".join(f"{k}={v}\n" for k, v in secrets_env().items()))
+
+
 def secrets_env() -> dict[str, str]:
     """The lane's Secrets settings: its own member credential (no AWID
     service token), its key files, its mail, and its hook events to the
@@ -273,6 +279,7 @@ def lane(tmp_path_factory: pytest.TempPathFactory) -> Iterator[Lane]:
     cert, key = write_tls(runtime, [*UPSTREAMS, "mail.svc.test"])
     (runtime / "front").mkdir()
     (runtime / "front" / "Caddyfile").write_text(front_caddyfile(UPSTREAMS, cert, key))
+    write_secrets_env(lane)
     try:
         lane.up("dns")
         dns = lane.compose("ps", "-q", "dns").stdout.strip()
@@ -340,7 +347,7 @@ def write_service_member(lane: Lane, controller: str) -> None:
     shutil.copyfile(lane.runtime / "tls" / "ca.pem", keys / "hook-ca.pem")
     for path in keys.iterdir():
         path.chmod(0o644)
-    (lane.runtime / "secrets.env").write_text("".join(f"{k}={v}\n" for k, v in secrets_env().items()))
+    write_secrets_env(lane)
 
 
 def write_logs_files(lane: Lane, controller: str) -> None:
