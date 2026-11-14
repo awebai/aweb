@@ -330,10 +330,12 @@ def test_the_owner_can_start_removing_any_member_but_a_verified_human_from_the_p
     assert '<script src="/owner-ui/owner.js" defer></script>' in html
     assert ('<ul class="owner-list" id="owner-members" data-team-id="engineering:customer.example" '
         'data-storage-scope="s-0123abcd">') in html
-    for certificate, alias in (("cert-1", "build-&lt;1&gt;"), ("cert-2", "ops"), ("cert-3", "ann")):
+    for certificate, alias in (("cert-1", "build-&lt;1&gt;"), ("cert-2", "ops")):
         assert (f'<button type="button" class="btn secondary" data-remove-certificate="{certificate}">'
             f"Remove {alias}…</button>") in html
-    # The server refuses a verified human; the page does not offer it.
+    # The signer refuses a verified human and a member whose kind could not
+    # be checked; the page offers neither.
+    assert 'data-remove-certificate="cert-3"' not in html
     assert 'data-remove-certificate="cert-4"' not in html
     assert '<p id="owner-remove-status" role="status" aria-live="polite"></p>' in html
     # Only a decided operation with a stored final state lets the page forget

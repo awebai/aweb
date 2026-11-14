@@ -266,6 +266,7 @@ def _window(seconds):
 _OUTCOMES = {"committed": "Approved", "expired": "Expired, nobody decided",
     "unresolved": "Signed; whether it took effect is not confirmed yet"}
 _REFUSALS = {"human_refused": "Denied"}
+_REMOVABLE_KINDS = ("agent", "kind not verified")
 _KINDS = {"not checked": "kind could not be checked"}
 _JOINED_TEXT = {"signer": "added through this signer", "signer_reserved": "being added through this signer",
     "signer_removed": "recorded by this signer as removed"}
@@ -344,12 +345,13 @@ def owner_page_html(view: dict) -> str:
             for member in view["members"]:
                 kind = _KINDS.get(member["kind"], member["kind"])
                 joined = _JOINED_TEXT.get(member["joined"], "not recorded by this signer")
-                # The signer refuses an owner-approved removal of a verified
-                # human, so the page does not offer it.
+                # Offered only for kinds the signer can remove on an owner's
+                # approval: never a verified human, nor a member whose kind
+                # could not be checked (unavailable evidence never authorizes).
                 remove = (
                     f'<button type="button" class="btn secondary" data-remove-certificate="{e(member["certificate_id"])}">'
                     f'Remove {e(member["alias"])}…</button>'
-                    if removable and member["kind"] != "human" else ""
+                    if removable and member["kind"] in _REMOVABLE_KINDS else ""
                 )
                 parts.append(
                     f'<li>{e(member["alias"])}: {e(kind)}, {joined}{remove}'
