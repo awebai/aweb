@@ -1,5 +1,9 @@
 # Knowledge log
 
+## 2026-11-14
+* **Harvest**: OKF proposal from seat aweb-protocol-expert-signer-boundary with one backing note; acceptance is source-reported and message identifiers are omitted.
+* **Creation**: decision [legacy outage grace is not protected authority](/aweb-protocol-expert/decisions/legacy-outage-grace-is-not-protected-authority.md), which refines [evidence freshness survives lock waits](/aweb-protocol-expert/lessons/evidence-freshness-survives-lock-waits.md) across effect classes and points to docs/trust-model.md for the outage-grace constants.
+
 ## 2026-11-06
 * **Fix**: review of the db-access proposal on npm gitHead, PubSub release and stream checkouts: hosted specifics in [stream bodies leave the request connection scope](/aweb-protocol-expert/lessons/stream-bodies-leave-the-request-connection-scope.md) and [an npm tarball publish records no gitHead](/aweb-protocol-expert/lessons/npm-tarball-publish-records-no-githead.md) are stated generically or dropped, as the OSS and Cloud boundary requires.
 * **Update**: [SSE cleanup is cancelled on client disconnect](/aweb-protocol-expert/lessons/sse-cleanup-is-cancelled-on-disconnect.md) and [a PubSub release survives any cancellation](/aweb-protocol-expert/decisions/pubsub-release-survives-any-cancellation.md) link each other: the AnyIO shield covers Starlette's disconnect, not native task cancellation.
