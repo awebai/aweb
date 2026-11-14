@@ -457,22 +457,17 @@ def test_session_ownership_takes_precedence_over_a_signer_host_member_alias(owne
 
 @pytest.mark.asyncio
 async def test_a_request_past_the_notice_budget_shows_it_was_not_mailed(admissions):
-    from datetime import datetime
+    from aweb_naapp.runtime.protected_signer import NOTICE_BUDGET
 
     from aweb.protected_signing.owner import owner_page_html
 
     a = admissions
-    mailed, suppressed = root_operation(a), root_operation(a)
-    for operation in (mailed, suppressed):
-        await prepare(a, operation)
-    # The signer's own record that it was not mailed, as its prepare writes it past the budget.
-    context = suppressed.context
-    await a.human.db.execute(
-        "INSERT INTO {{tables.protected_signer_notice_reservations}} "
-        "(operation_id,service_id,authority_id,requester,notices,suppressed,reserved_at) VALUES($1,$2,$3,$4,0,true,$5)",
-        suppressed.operation_id, context.service_id, context.authority_id, a.w.root_id, datetime.now(UTC))
+    operations = [root_operation(a) for _ in range(NOTICE_BUDGET + 1)]
+    for operation in operations:
+        assert (await prepare(a, operation)).status_code == 200
     view = await owner_view(a.group, scope=await scope_of(a.human), subject=a.actor.subject)
     notices = {p["operation_id"]: p.get("notice") for p in view["pending"]}
-    assert notices == {mailed.operation_id: None, suppressed.operation_id: "not_mailed"}
+    # The signer mailed the first NOTICE_BUDGET and suppressed the last.
+    assert notices == {**{o.operation_id: None for o in operations[:-1]}, operations[-1].operation_id: "not_mailed"}
     html = owner_page_html(view)
     assert html.count('data-notice="not-mailed"') == 1
