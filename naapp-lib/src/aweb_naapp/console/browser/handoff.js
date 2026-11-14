@@ -55,6 +55,13 @@ import { renderDisplay, displayRefusal } from "/handoff-assets/protected-display
   function failed() {
     // Completion may have committed even if its response was lost. Never
     // replay a completion or an Allow, and never collect the result here.
+    if (governance && submitted) {
+      // The same outcome as the mailed link's: what was asked stays in view,
+      // with no control that could act and the way back to History.
+      outcome(...unconfirmed);
+      document.body.dataset.handoffState = "unconfirmed";
+      return;
+    }
     action.disabled = true;
     confirm.disabled = true;
     allow.hidden = true;
@@ -111,7 +118,9 @@ import { renderDisplay, displayRefusal } from "/handoff-assets/protected-display
     document.getElementById("handoff-digest").textContent = digest;
     document.getElementById("handoff-fingerprint").textContent = digest.slice(0, 16).match(/.{4}/g).join(" ");
     document.getElementById("handoff-payload").textContent = JSON.stringify(payload, null, 2);
-    const asked = request.artifact?.issued_at;
+    // When it was asked: a frozen artifact's issue time, or for an intent the
+    // start of its issuance window, which is the moment it was prepared.
+    const asked = request.artifact?.issued_at ?? request.artifact?.issuance_window?.not_before;
     document.getElementById("handoff-requested").textContent =
       (words.requester ?? request.requester) + (nonempty(asked) ? `, asked ${when(asked)}` : "");
     document.getElementById("handoff-expires").textContent = when(state.expires_at);
@@ -332,7 +341,7 @@ import { renderDisplay, displayRefusal } from "/handoff-assets/protected-display
     approval_spent: ["Not completed", "Your passkeys or access changed, so this approval cannot be used."],
     stale_binding: ["Not completed", "Your passkeys or access changed while this was waiting."],
     policy_changed: ["Not completed", "The team's policy changed after this was requested, so this approval cannot apply."],
-    authority_changed: ["Not completed", "The team's signing key or approvers changed after this was requested."],
+    authority_changed: ["Not completed", "The team's approval settings changed after this was requested."],
   };
 
   const unconfirmed = ["Not confirmed",
@@ -346,7 +355,16 @@ import { renderDisplay, displayRefusal } from "/handoff-assets/protected-display
     status.textContent = "";
     setTitle(title);
     const sentence = document.getElementById("handoff-outcome-text");
-    sentence.textContent = text;
+    // "owner page" is the way to History: a link, as text everywhere else.
+    const [before, after] = text.split("owner page");
+    if (after === undefined) {
+      sentence.textContent = text;
+    } else {
+      const link = document.createElement("a");
+      link.href = "/";
+      link.textContent = "owner page";
+      sentence.replaceChildren(before, link, after);
+    }
     sentence.hidden = false;
     document.getElementById("handoff-title").focus();
   }

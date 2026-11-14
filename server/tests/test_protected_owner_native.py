@@ -1,6 +1,8 @@
 """The owner's one page: what waits for them, what happened, which agents
 were added without asking, the current bounds and who can approve."""
 
+from datetime import UTC
+
 import pytest
 
 from aweb.protected_signing.owner import owner_view
@@ -32,6 +34,10 @@ async def test_the_owner_sees_waiting_requests_then_their_history(admissions):
     assert waiting["title"] == f"Make {subject['deployment_label']} your root agent for {teams}?"
     # The root asks for itself: the page names it by its frozen label.
     assert waiting["requester_name"] == subject["deployment_label"]
+    # When it was asked: the moment the request was prepared, as the approval page shows.
+    artifact = frozen["payload"]["request"]["artifact"]
+    assert waiting["asked_at"] == artifact.get("issued_at", artifact.get("issuance_window", {}).get("not_before"))
+    assert waiting["asked_at"] is not None
     assert view["history"] == []
     # The page names the approver who is signed in, not the first one listed.
     assert view["you"] == next(x["contact"] for x in view["approvers"] if x["contact"])
@@ -251,6 +257,7 @@ async def test_a_signed_but_unconfirmed_effect_is_unresolved_never_expired(admis
         # This operation's own row (others in the fixture may really expire).
         [row] = [li for li in owner_page_html(view).split("<li>") if entry["digest"] in li]
         assert "Expired, nobody decided" not in row and "not confirmed yet" in row
+        assert "Approved, not confirmed yet: " in row and "Signed" not in row
 
 
 def test_a_requester_the_team_knows_is_named_by_its_alias():
@@ -391,3 +398,31 @@ def test_an_applied_but_unconfirmed_removal_can_reopen_its_handoff_without_a_mem
     assert 'data-final-operation="same-operation"' not in html
     assert 'href="/handoff/same-retained-handoff"' in html
     assert "Check this request" in html
+
+
+@pytest.mark.asyncio
+async def test_history_shows_when_it_was_decided_never_the_expiry(admissions):
+    """A denial is dated by the approver's decision; a request nobody decided
+    has no decision time to show."""
+    from aweb_naapp.runtime.protected_signer.service import Decision
+
+    from aweb.protected_signing.owner import owner_page_html
+
+    a = admissions
+    operation = root_operation(a)
+    assert (await prepare(a, operation)).status_code == 200
+    options = await a.human.signer.approval_options(operation.operation_id, human=a.actor, decision=Decision.REJECT)
+    denied = await a.human.signer.reject(operation.operation_id, a.device.get(dict(options)), human=a.actor)
+    assert (denied.state, denied.code) == ("refused", "human_refused")
+    scope = await scope_of(a.human)
+    view = await owner_view(a.group, scope=scope, subject=a.actor.subject)
+    [entry] = [h for h in view["history"] if h["operation_id"] == operation.operation_id]
+    row = await a.w.db.fetch_one(
+        "SELECT approval_id,expires_at FROM {{tables.protected_signer_operations}} WHERE operation_id=$1",
+        operation.operation_id)
+    approval = await a.human.signer.store.get(row["approval_id"])
+    decided = approval.decided_at.astimezone(UTC).isoformat().replace("+00:00", "Z")
+    assert entry["at"] == decided != row["expires_at"].astimezone(UTC).isoformat().replace("+00:00", "Z")
+    # Without a decision time the row says none, rather than a wrong one.
+    html = owner_page_html({**view, "history": [{**entry, "at": None}]})
+    assert "Denied by you: Make " in html

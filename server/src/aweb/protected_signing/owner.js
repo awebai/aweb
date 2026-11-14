@@ -30,12 +30,15 @@
     if (key && key.startsWith(prefix) && final.has(saved(key)?.operation_id)) sessionStorage.removeItem(key);
   }
 
+  // A refusal the signer names says only why: retrying gets the same answer.
   const refusals = {
-    subject_ineligible: "The signer will not remove this member on an owner's approval.",
-    authority_changed: "The team's signing key or approvers changed.",
-    scope_refused: "This request was started by another approver or team.",
-    receipt_unavailable: "The signer could not answer right now.",
+    subject_ineligible: "This member cannot be removed here.",
+    authority_changed: "The team's approval settings changed. Reload the page.",
+    scope_refused: "Another approver or team started this request.",
   };
+  // No answer came back: nothing is known, and a retry sends the same request.
+  const unconfirmed = "The request was not confirmed. Nothing is removed until you approve it on its page. " +
+    "Trying again sends the same request.";
 
   function selection(certificate) {
     const key = prefix + certificate;
@@ -58,18 +61,21 @@
         if (typeof result.handoff_id !== "string" || !result.handoff_id) throw new Error("unconfirmed");
         window.location.assign("/handoff/" + encodeURIComponent(result.handoff_id));
       } catch (error) {
+        // The sentence goes in the pressed member's row, and focus returns to
+        // the pressed button, so cause and effect stay together.
+        button.closest("li")?.append(status);
         // The signer stored this request's expiry as final; reloading shows
         // it in History, which lets this tab start a new request.
         if (error?.detail === "operation_expired") {
           status.textContent = "This request expired without being carried out. Reload to request a new approval.";
           button.disabled = false;
+          button.focus();
           return;
         }
-        const reason = refusals[error?.detail];
-        status.textContent = (reason ? reason + " " : "") +
-          "The request was not confirmed. Nothing is removed until you approve it on its page. " +
-          "Trying again sends the same request.";
+        status.textContent = refusals[error?.detail] ??
+          (error?.detail === "receipt_unavailable" ? "No answer came back. " + unconfirmed : unconfirmed);
         button.disabled = false;
+        button.focus();
       }
     });
   }

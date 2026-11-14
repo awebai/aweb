@@ -47,6 +47,13 @@ def _owner_initiable():
     return spec is not None and spec.owner_initiable
 
 
+def _asked_at(request):
+    """When a request was asked: a frozen artifact's issue time, or for an
+    intent the start of its issuance window, which is when it was prepared."""
+    artifact = request.get("artifact") or {}
+    return artifact.get("issued_at") or (artifact.get("issuance_window") or {}).get("not_before")
+
+
 def _rendered(request):
     """The operation definition's question and the requester's frozen name."""
     spec = OPERATIONS.get((request.get("operation"), request.get("variant", "default")))
@@ -68,7 +75,7 @@ async def owner_view(composition, *, scope: str, subject: str, now: datetime | N
     now = datetime.now(UTC) if now is None else now
     fields = context.fields()
     rows = await c.db.fetch_all(
-        "SELECT operation_id,handoff_id,requester,request,digest,approval_id,expires_at,"
+        "SELECT operation_id,handoff_id,requester,request,digest,approval_id,expires_at,initiator_subject,initiator_scope,"
         "result IS NOT NULL AS committed,signed_result IS NOT NULL AS signed,refusal_code,committed_at "
         "FROM {{tables.protected_signer_operations}} "
         "ORDER BY expires_at DESC"
@@ -81,9 +88,12 @@ async def owner_view(composition, *, scope: str, subject: str, now: datetime | N
         if request.get("scope") != fields:
             continue
         title, named = _rendered(request)
+        # A request this signed-in approver started from the owner page is theirs.
+        if row["initiator_subject"] == subject and row["initiator_scope"] == scope:
+            named = "you"
         entry = {"operation_id": row["operation_id"], "operation": request["operation"],
             "requester": row["requester"], "digest": row["digest"],
-            "asked_at": request.get("artifact", {}).get("issued_at"), "title": title, "requester_name": named,
+            "asked_at": _asked_at(request), "title": title, "requester_name": named,
             "approval_id": row["approval_id"]}
         if row["approval_id"] is None:
             # Bounded unattended work (admissions) is listed under added agents.
@@ -91,12 +101,12 @@ async def owner_view(composition, *, scope: str, subject: str, now: datetime | N
         if row["committed"]:
             history.append({**entry, "state": "committed", "at": _stamp(row["committed_at"])})
         elif row["refusal_code"] is not None:
-            history.append({**entry, "state": "refused", "code": row["refusal_code"], "at": _stamp(row["expires_at"])})
+            history.append({**entry, "state": "refused", "code": row["refusal_code"], "at": None})
         elif row["signed"]:
             # Signed but not confirmed: it may already be applied, so it is
             # never "expired" and no longer waits for a decision (the
             # signer's own receipt says unknown, external_effect_unresolved).
-            history.append({**entry, "state": "unresolved", "handoff_id": row["handoff_id"], "at": _stamp(row["expires_at"])})
+            history.append({**entry, "state": "unresolved", "handoff_id": row["handoff_id"], "at": None})
         elif row["expires_at"] <= now:
             history.append({**entry, "state": "expired", "at": _stamp(row["expires_at"])})
         else:
@@ -229,6 +239,10 @@ async def _deciders(c, history, subject):
         approval = await c.signer.store.get(item["approval_id"])
         decider = approval.decided_by if approval is not None else None
         item["decided_by_you"] = decider is not None and decider.subject == subject
+        # A refused or unresolved request is dated by the approver's decision;
+        # without one it has no time to show, never its expiry.
+        if item["state"] in ("refused", "unresolved"):
+            item["at"] = _stamp(approval.decided_at) if approval is not None and approval.decided_at else None
     return history
 
 
@@ -268,7 +282,7 @@ def _window(seconds):
 
 
 _OUTCOMES = {"committed": "Approved", "expired": "Expired, nobody decided",
-    "unresolved": "Signed; whether it took effect is not confirmed yet"}
+    "unresolved": "Approved, not confirmed yet"}
 _REFUSALS = {"human_refused": "Denied"}
 _REMOVABLE_KINDS = ("agent", "kind not verified")
 _KINDS = {"agent": "agent", "human": "person", "kind not verified": "agent or person not confirmed",
@@ -400,7 +414,7 @@ def owner_page_html(view: dict) -> str:
                 if item["state"] == "unresolved" and item.get("handoff_id") else ""
             )
             parts.append(
-                f'<li{final}>{e(outcome)}, {_time(item["at"])}: {e(item["title"])}'
+                f'<li{final}>{e(outcome)}{", " + _time(item["at"]) if item["at"] and item["state"] != "unresolved" else ""}: {e(item["title"])}'
                 + reopen + _technical([("Requested by", item["requester"]), ("Operation", item["operation"]),
                     ("Digest", item["digest"])]) + "</li>"
             )

@@ -542,11 +542,15 @@ async def test_committed_operation_with_damaged_or_lost_response_is_unconfirmed(
         await page.locator("#handoff-action").click()
         await expect(page.locator("body")).to_have_attribute("data-handoff-state", "unconfirmed")
         assert observed == [(200, "committed")]
-        await expect(page.locator("#handoff-action")).to_be_disabled()
-        await expect(page.get_by_role("status")).to_contain_text("could not confirm")
-        await expect(page.get_by_role("status")).to_contain_text(
-            "Your owner page shows the outcome under History."
-        )
+        # The mailed link's outcome: a heading, no control that could act,
+        # and the way back to History.
+        await expect(page.locator("#handoff-title")).to_have_text("Not confirmed")
+        await expect(page.locator("#handoff-title")).to_be_focused()
+        await expect(page.locator("#handoff-action")).to_be_hidden()
+        outcome = page.locator("#handoff-outcome-text")
+        await expect(outcome).to_contain_text("could not confirm")
+        await expect(outcome).to_contain_text("Your owner page shows the outcome under History.")
+        await expect(outcome.get_by_role("link", name="owner page")).to_have_attribute("href", "/")
         assert not s.callback.done()
         # The effect committed before its browser reply was damaged. Refusing
         # navigation must never replay it; aw can recover its receipt.

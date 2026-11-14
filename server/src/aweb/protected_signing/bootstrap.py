@@ -296,7 +296,7 @@ main details { margin-top: 0.25rem; }
 main dl { margin: 0.25rem 0 0; }
 main dt { font-weight: 600; margin-top: 0.25rem; }
 main dd { margin: 0; overflow-wrap: anywhere; font-family: var(--font-mono); font-size: var(--step--1); }
-#logout .btn { min-height: 44px; }
+#logout .btn, .owner-list .btn { min-height: 44px; }
 """
 
 

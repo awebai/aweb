@@ -58,3 +58,23 @@ async def test_only_a_stored_unsigned_expiry_lets_the_page_start_a_new_removal(a
             assert retry.status_code == 200
             # Possibly applied: the page keeps the selection and its pointer.
             assert marker not in html and "not confirmed yet" in html
+
+
+@pytest.mark.asyncio
+async def test_a_removal_the_owner_started_is_requested_by_them(admissions, tmp_path):
+    from aweb.protected_signing.owner import owner_page_html, owner_view
+
+    a = admissions
+    _, certificate = await legacy_member(a, "unknown")
+    body = selection(certificate)
+    async with owner_http(a, tmp_path) as (client, headers, _):
+        response = await client.post("/governance/operations", json=body, headers=headers)
+        assert response.status_code == 200, response.text
+        mine = await owner_view(a.w.app, scope=a.w.human.b3_scope, subject=a.w.human.subject)
+        [waiting] = [p for p in mine["pending"] if p["operation_id"] == body["operation_id"]]
+        assert waiting["requester_name"] == "you"
+        assert "<p>Requested by you, asked " in owner_page_html(mine)
+        # Another approver of the scope did not start it.
+        theirs = await owner_view(a.w.app, scope=a.w.human.b3_scope, subject="another-approver")
+        [other] = [p for p in theirs["pending"] if p["operation_id"] == body["operation_id"]]
+        assert other["requester_name"] != "you"

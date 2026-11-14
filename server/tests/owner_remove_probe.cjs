@@ -23,9 +23,11 @@ function page({finals = [], stored = {}, answers}) {
     key: i => [...store.keys()][i] ?? null,
     get length() { return store.size; },
   };
-  const button = {dataset: {removeCertificate: certificate}, disabled: false, events: {},
-    addEventListener(name, fn) { this.events[name] = fn; }};
   const status = {textContent: ''};
+  const row = {children: [], append(node) { this.children.push(node); }};
+  const button = {dataset: {removeCertificate: certificate}, disabled: false, events: {}, focused: false,
+    addEventListener(name, fn) { this.events[name] = fn; }, closest: selector => (selector === 'li' ? row : null),
+    focus() { this.focused = true; }};
   const list = {dataset: {teamId: team, storageScope: scope},
     querySelectorAll: selector => (selector === '[data-remove-certificate]' ? [button] : [])};
   const finalItems = finals.map(id => ({dataset: {finalOperation: id}}));
@@ -51,7 +53,7 @@ function page({finals = [], stored = {}, answers}) {
   };
   vm.runInNewContext(fs.readFileSync('src/aweb/protected_signing/owner.js', 'utf8'), context,
     {filename: 'owner.js'});
-  return {button, status, sent, storedAtSend, assigned, store};
+  return {button, status, row, sent, storedAtSend, assigned, store};
 }
 
 const refusal = detail => () => { const e = new Error('Request refused'); e.status = 409; e.detail = detail; throw e; };
@@ -75,11 +77,33 @@ const lost = () => { throw new TypeError('Failed to fetch'); };
   // Success does not prove a final receipt either: the selection stays.
   assert.equal(JSON.parse(p.store.get(key)).operation_id, first[1].operation_id);
 
-  // An error tells the person, keeps the button usable and the selection kept.
-  const q = page({answers: [refusal('subject_ineligible')]});
-  await q.button.events.click();
-  assert.equal(q.button.disabled, false);
-  assert.ok(q.store.has(key) && q.status.textContent.length > 0);
+  // A refusal the signer names says only why; it never invites a retry that
+  // would get the same answer. The selection is still kept.
+  const named = {
+    subject_ineligible: 'This member cannot be removed here.',
+    authority_changed: "The team's approval settings changed. Reload the page.",
+    scope_refused: 'Another approver or team started this request.',
+  };
+  for (const [code, sentence] of Object.entries(named)) {
+    const q = page({answers: [refusal(code)]});
+    await q.button.events.click();
+    assert.equal(q.button.disabled, false);
+    assert.equal(q.status.textContent, sentence);
+    assert.ok(q.store.has(key));
+  }
+  // No answer at all: not confirmed, and a retry sends the same request.
+  const unconfirmed = 'The request was not confirmed. Nothing is removed until you approve it on its page. ' +
+    'Trying again sends the same request.';
+  const none = page({answers: [refusal('receipt_unavailable')]});
+  await none.button.events.click();
+  assert.equal(none.status.textContent, 'No answer came back. ' + unconfirmed);
+  const dropped = page({answers: [lost]});
+  await dropped.button.events.click();
+  assert.equal(dropped.status.textContent, unconfirmed);
+  // Cause and effect stay together: the sentence sits in the pressed row,
+  // and focus returns to the pressed button.
+  assert.deepEqual(dropped.row.children, [dropped.status]);
+  assert.equal(dropped.button.focused, true);
 
   // An expired request says so and how to start again; the selection stays
   // until the reloaded page shows the signer's stored final refusal.

@@ -115,6 +115,8 @@ async def test_the_owner_removes_a_member_from_the_owner_page_with_one_exact_pas
             await page.wait_for_url(origin + "/")
             remove = page.locator(f'[data-remove-certificate="{root.certificate_id}"]')
             await expect(remove).to_have_text(f"Remove {root.alias}…")
+            # As tall as the page's other buttons: the most consequential one on a phone.
+            assert (await remove.bounding_box())["height"] >= 44
             assert await page.evaluate("document.documentElement.scrollWidth <= innerWidth")
             await page.screenshot(path=tmp_path / f"owner-remove-{width}.png", full_page=True)
             await remove.click()
@@ -127,9 +129,20 @@ async def test_the_owner_removes_a_member_from_the_owner_page_with_one_exact_pas
             retained_page = page.url
             await approve.click()
             if lost_answer:
-                await expect(page.locator("#handoff-status")).to_contain_text("could not confirm")
+                # The same outcome as the mailed link: a heading, no controls,
+                # what was asked kept in view, and the way back to History.
+                title = page.locator("#handoff-title")
+                await expect(title).to_have_text("Not confirmed")
+                await expect(title).to_be_focused()
+                await expect(page.locator("#handoff-action")).to_be_hidden()
+                await expect(page.locator("#handoff-deny")).to_be_hidden()
+                await expect(page.locator("#handoff-governance-title")).to_have_text("What was asked")
+                await expect(page.locator("#handoff-governance")).to_be_visible()
+                owner_page = page.locator("#handoff-outcome-text").get_by_role("link", name="owner page", exact=True)
+                await expect(owner_page).to_have_attribute("href", "/")
                 assert await revoked(a, certificate)
-                await page.goto(origin + "/")
+                await owner_page.click()
+                await page.wait_for_url(origin + "/")
                 await expect(page.locator(f'[data-remove-certificate="{root.certificate_id}"]')).to_have_count(0)
                 recovery = page.get_by_role("link", name="Check this request", exact=True)
                 await expect(recovery).to_have_attribute("href", retained_page.removeprefix(origin))
