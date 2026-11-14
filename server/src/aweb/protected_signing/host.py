@@ -73,8 +73,11 @@ class HostSettings(BaseSettings):
     def database_source(self):
         from awid.log import require_canonical_server_origin
 
+        # Consumer origins are canonical HTTPS origins (HOST.md): the signer
+        # sends retained acts and their attestations to them.
         for origin in (*self.owner_act_origins, *self.effect_receipt_origins):
-            require_canonical_server_origin(origin)
+            if require_canonical_server_origin(origin).split("://", 1)[0] != "https":
+                raise ValueError("protected_consumer_origin_not_https")
         if self.database_url_file is not None:
             if "database_url" in self.model_fields_set:
                 raise ValueError("protected_database_url_sources_conflict")
