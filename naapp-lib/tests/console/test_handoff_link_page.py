@@ -47,17 +47,23 @@ async def test_one_touch_from_the_mailed_link_approves(link_service, width):
         await expect(page.locator("#handoff-choice-note")).to_have_text("Both choices ask for your passkey.")
         await expect(page.locator("#handoff-fingerprint")).to_be_visible()
         # Who asked and until when are in sight; identifiers are in details.
-        await expect(page.locator("#handoff-requested")).to_contain_text("Requested by")
-        await expect(page.locator("#handoff-expires")).to_have_text(re.compile(r"^Expires .+$"))
+        # Who asked and until when are rows like the others, not fine print.
+        facts = page.locator("#handoff-facts")
+        await expect(facts.locator("dt")).to_have_text(["Requested by", "Expires", "Fingerprint"])
+        await expect(page.locator("#handoff-requested")).to_contain_text(s.world.requester.principal)
+        await expect(page.locator("#handoff-expires")).not_to_be_empty()
+        # Names read as text; identifiers keep the code face in Technical details.
+        assert await page.evaluate(
+            "getComputedStyle(document.querySelector('#handoff-names dd')).fontFamily"
+            " !== getComputedStyle(document.querySelector('#handoff-digest')).fontFamily")
         # The definition's words lead: the question, then what it does and
         # to whom, before either button is pressed.
         principal = s.world.operation.principal
-        question = f"Remove {principal} from example.owner?"
+        question = f"Remove {principal} as example.owner of example?"
         await expect(page.locator("#handoff-title")).to_have_text(question)
         assert await page.title() == question
         await expect(page.locator("#handoff-consequences li")).to_have_text([
-            "This revokes the exact retained application role holding.",
-            "Last-owner protection still applies.",
+            f"{principal} will no longer be example.owner of example.",
         ])
         await expect(page.locator("#handoff-names")).to_have_text(
             re.compile(r"^Application\s*example\s*Role\s*example\.owner$"))
@@ -96,8 +102,11 @@ async def test_one_touch_from_the_mailed_link_denies(link_service):
     context, page, _, _ = await open_page(s, 375)
     async with context:
         await page.goto(s.link)
+        await expect(page.locator("#handoff-governance-title")).to_have_text("What this request does")
         await page.locator("#handoff-deny").click()
         await expect(page.locator("#handoff-title")).to_have_text("Denied")
+        # Under "Denied", the card says what was asked, not what it does.
+        await expect(page.locator("#handoff-governance-title")).to_have_text("What was asked")
         receipt = await s.world.signer.receipt(s.prepared.operation_id, reader=s.world.reader)
         assert (receipt.state, receipt.code) == ("refused", "human_refused")
 
@@ -232,8 +241,11 @@ async def test_a_signed_in_approver_denies_with_one_touch(signed_in_service):
     context, page, _, _ = await open_page(s, 1440)
     async with context:
         await sign_in(page, s)
+        await expect(page.locator("#handoff-governance-title")).to_have_text("What this request does")
         await page.locator("#handoff-deny").click()
         await expect(page.locator("#handoff-title")).to_have_text("Denied")
+        # Under "Denied", the card says what was asked, not what it does.
+        await expect(page.locator("#handoff-governance-title")).to_have_text("What was asked")
         receipt = await s.world.signer.receipt(s.prepared.operation_id, reader=s.world.reader)
         assert (receipt.state, receipt.code) == ("refused", "human_refused")
 
@@ -289,5 +301,5 @@ async def test_times_read_in_the_readers_own_zone(link_service):
     async with context:
         await page.goto(s.link)
         expires = page.locator("#handoff-expires")
-        await expect(expires).to_have_text(re.compile(r"^Expires [A-Z][a-z]{2} \d{1,2}, \d{4}, [1-9]\d?:\d\d [AP]M E[SD]T$"))
+        await expect(expires).to_have_text(re.compile(r"^[A-Z][a-z]{2} \d{1,2}, \d{4}, [1-9]\d?:\d\d [AP]M E[SD]T$"))
         assert "UTC" not in await expires.inner_text()

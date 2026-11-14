@@ -14,7 +14,7 @@ import (
 func displayRequest(t *testing.T) map[string]any {
 	t.Helper()
 	request, ok := DecodeObject([]byte(`{"requester":"did:key:z6Mkrequester","subject":{"alias":"agent-one",
-		"teams":["a:customer.example","b:customer.example"],"count":3,"nothing":null,
+		"teams":["a:customer.example","b:customer.example"],"team_id":"engineering:customer.example","count":3,"nothing":null,
 		"policy":{"b":2,"a":[1]},"flag":true}}`))
 	if !ok {
 		t.Fatal("bad request fixture")
@@ -45,15 +45,41 @@ func TestDisplayFillsTemplatesExactlyAsThePageDoes(t *testing.T) {
 	}
 }
 
+func TestDisplayShowsATeamByItsName(t *testing.T) {
+	display := operationDisplay{
+		title:        "Add {/subject/alias} to {/subject/team_id|team} and {/subject/teams|team}?",
+		consequences: []string{"x"},
+		names:        []displayRow{{"team", "/subject/team_id|team"}},
+		technical:    []displayRow{{"team", "/subject/team_id"}},
+	}
+	got, err := display.render(displayRequest(t))
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := RenderedDisplay{
+		Title:        "Add agent-one to engineering and a, b?",
+		Consequences: []string{"x"},
+		Names:        [][2]string{{"Team", "engineering"}},
+		Technical:    [][2]string{{"Team", "engineering:customer.example"}},
+	}
+	if !reflect.DeepEqual(got, want) {
+		t.Fatalf("rendered %#v, want %#v", got, want)
+	}
+}
+
 func TestDisplayRefusesWhatItCannotFillExactly(t *testing.T) {
 	for name, display := range map[string]operationDisplay{
-		"missing":          {title: "Remove {/subject/missing}?"},
-		"object in title":  {title: "Remove {/subject/policy}?"},
-		"null in title":    {title: "Remove {/subject/nothing}?"},
-		"bool in title":    {title: "Remove {/subject/flag}?"},
-		"object in names":  {title: "Remove it?", names: []displayRow{{"member", "/subject/policy"}}},
-		"missing in tech":  {title: "Remove it?", technical: []displayRow{{"member", "/subject/missing"}}},
-		"through a string": {title: "Remove it?", technical: []displayRow{{"member", "/subject/alias/deeper"}}},
+		"missing":            {title: "Remove {/subject/missing}?"},
+		"object in title":    {title: "Remove {/subject/policy}?"},
+		"null in title":      {title: "Remove {/subject/nothing}?"},
+		"bool in title":      {title: "Remove {/subject/flag}?"},
+		"object in names":    {title: "Remove it?", names: []displayRow{{"member", "/subject/policy"}}},
+		"missing in tech":    {title: "Remove it?", technical: []displayRow{{"member", "/subject/missing"}}},
+		"through a string":   {title: "Remove it?", technical: []displayRow{{"member", "/subject/alias/deeper"}}},
+		"team of a non-team": {title: "Add {/subject/alias|team}?"},
+		"unknown formatter":  {title: "Add {/subject/team_id|unknown}?"},
+		"upper formatter":    {title: "Add {/subject/team_id|Team}?"},
+		"team of a number":   {title: "Add it?", names: []displayRow{{"team", "/subject/count|team"}}},
 	} {
 		if _, err := display.render(displayRequest(t)); ErrorCode(err) != "operation_mismatch" {
 			t.Errorf("%s: rendered without refusing (%v)", name, err)
@@ -79,7 +105,7 @@ func TestWaitingTextAsksTheDefinitionsQuestion(t *testing.T) {
 	if _, err := Approve(context.Background(), opts, "11111111-1111-4111-8111-111111111111", revokeIntent()); err != nil {
 		t.Fatal(err)
 	}
-	if !strings.Contains(text.String(), "Asking the approver: Remove did:aw:holder from example.owner?\n") {
+	if !strings.Contains(text.String(), "Asking the approver: Remove did:aw:holder as example.owner of example?\n") {
 		t.Errorf("the waiting text does not ask the definition's question: %q", text.String())
 	}
 }
@@ -93,7 +119,7 @@ func TestARefusalTheDefinitionNamesReadsAsItsSentence(t *testing.T) {
 	if ErrorCode(err) != "subject_ineligible" {
 		t.Fatalf("code %q, want subject_ineligible", ErrorCode(err))
 	}
-	want := "The selected role holding cannot be revoked by this operation."
+	want := "You cannot approve this: your identity is not a confirmed person for this team."
 	if err.Error() != want {
 		t.Errorf("refusal reads %q, want the definition's %q", err.Error(), want)
 	}

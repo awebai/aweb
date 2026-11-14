@@ -321,8 +321,8 @@ async def notice_for(request, policies):
 @pytest.mark.asyncio
 async def test_a_revealable_request_under_a_revealing_frozen_policy_names_its_question_in_the_body():
     notice = await notice_for(revoke_request(), FrozenPolicy())
-    assert "Remove did:aw:holder from app.owner?" in notice.text
-    assert "Remove did:aw:holder from app.owner?" in notice.html
+    assert "Remove did:aw:holder as app.owner of app?" in notice.text
+    assert "Remove did:aw:holder as app.owner of app?" in notice.html
 
 
 @pytest.mark.asyncio

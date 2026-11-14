@@ -14,10 +14,17 @@ from aweb_naapp.runtime.protected_signer.operation_display import OperationDispl
 REQUEST = {
     "requester": "did:key:z6Mkrequester",
     "subject": {"alias": "agent-one", "teams": ["a:customer.example", "b:customer.example"],
+        "team_id": "engineering:customer.example",
         "count": 3, "nothing": None, "policy": {"b": 2, "a": [1]}, "flag": True},
 }
 
 CASES = [
+    # "|team" shows a team by its name, as the owner page does; the full id
+    # stays available to technical rows without it.
+    (OperationDisplay("Add {/subject/alias} to {/subject/team_id|team} and {/subject/teams|team}?", ("x",),
+        (("team", "/subject/team_id|team"),), (("team", "/subject/team_id"),), ()),
+     {"title": "Add agent-one to engineering and a, b?", "consequences": ["x"],
+      "names": [["Team", "engineering"]], "technical": [["Team", "engineering:customer.example"]]}),
     (OperationDisplay("Remove {/subject/alias} from {/subject/teams}?",
         ("It counts {/subject/count} times.",), (("member", "/subject/alias"),),
         (("policy", "/subject/policy"), ("nothing", "/subject/nothing"), ("flag", "/subject/flag"),
@@ -31,6 +38,10 @@ CASES = [
 ]
 
 REFUSED = [
+    OperationDisplay("Add {/subject/alias|team}?", ("x",), (), (), ()),
+    OperationDisplay("Add {/subject/team_id|unknown}?", ("x",), (), (), ()),
+    OperationDisplay("Add {/subject/team_id|Team}?", ("x",), (), (), ()),
+    OperationDisplay("Add it?", ("x",), (("team", "/subject/count|team"),), (), ()),
     OperationDisplay("Remove {/subject/missing}?", ("x",), (), (), ()),
     OperationDisplay("Remove {/subject/policy}?", ("x",), (), (), ()),
     OperationDisplay("Remove {/subject/nothing}?", ("x",), (), (), ()),
@@ -61,7 +72,7 @@ def test_python_refuses_a_display_it_cannot_fill_exactly(display):
 
 
 def test_refusal_sentence_is_the_definitions_own_or_none():
-    display = CASES[0][0]
+    display = CASES[1][0]
     assert display.refusal("subject_ineligible") == "Not eligible."
     assert display.refusal("approval_spent") is None
 
@@ -69,8 +80,8 @@ def test_refusal_sentence_is_the_definitions_own_or_none():
 def test_revoke_row_names_the_principal_and_role_from_its_frozen_request():
     request = revoke_request()
     rendered = OPERATIONS[("human-role.revoke", "default")].display.render(request)
-    assert rendered["title"] == "Remove human-id from customer.owner?"
-    assert rendered["consequences"][0] == "This revokes the exact retained application role holding."
+    assert rendered["title"] == "Remove human-id as customer.owner of customer-app?"
+    assert rendered["consequences"] == ["human-id will no longer be customer.owner of customer-app."]
     assert ["Role", "customer.owner"] in rendered["names"]
 
 

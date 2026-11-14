@@ -255,9 +255,13 @@ def _window(seconds):
 _OUTCOMES = {"committed": "Approved", "expired": "Expired, nobody decided",
     "unresolved": "Signed; whether it took effect is not confirmed yet"}
 _REFUSALS = {"human_refused": "Denied"}
-_KINDS = {"not checked": "kind could not be checked"}
-_JOINED_TEXT = {"signer": "added through this signer", "signer_reserved": "being added through this signer",
-    "signer_removed": "recorded by this signer as removed"}
+_KINDS = {"agent": "agent", "human": "person", "kind not verified": "agent or person not confirmed",
+    "not checked": "could not be checked right now"}
+# Said only when this signer's own record knows it. A removal is recorded only
+# after the registry confirms the certificate revoked, so a still-listed
+# member with that record was removed earlier but is still listed.
+_JOINED_TEXT = {"signer": ", added by the root agent", "signer_reserved": ", being added by the root agent",
+    "signer_removed": ", removed earlier but still listed"}
 
 
 def _technical(rows):
@@ -325,9 +329,9 @@ def owner_page_html(view: dict) -> str:
             parts.append('<ul class="owner-list">')
             for member in view["members"]:
                 kind = _KINDS.get(member["kind"], member["kind"])
-                joined = _JOINED_TEXT.get(member["joined"], "not recorded by this signer")
+                joined = _JOINED_TEXT.get(member["joined"], "")
                 parts.append(
-                    f'<li>{e(member["alias"])}: {e(kind)}, {joined}'
+                    f'<li>{e(member["alias"])}: {e(kind)}{joined}'
                     + _technical([("Identity", member["member_did_aw"] or "none"), ("Key", member["member_did_key"]),
                         ("Certificate", member["certificate_id"])]) + "</li>"
                 )

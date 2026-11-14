@@ -522,6 +522,9 @@ func TestAPendingEndorsementReportsWhatTheCallerShowsTheHuman(t *testing.T) {
 }
 
 func TestAPendingEndorsementSaysWhoDecidesWhereAndHowToContinue(t *testing.T) {
+	saved := time.Local
+	time.Local = time.UTC
+	t.Cleanup(func() { time.Local = saved })
 	prepared := &handoff.Prepared{OperationID: endorseTestOperation, Digest: strings.Repeat("ab", 32),
 		ExpiresAt: time.Date(2026, 11, 14, 9, 30, 0, 0, time.UTC)}
 	report := pendingEndorsementReport(prepared, "https://human.customer.example/handoff/h1", &handoff.Receipt{State: "pending", Reason: "awaiting_human"})
