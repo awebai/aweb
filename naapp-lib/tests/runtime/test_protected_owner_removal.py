@@ -118,3 +118,39 @@ async def test_human_delivery_keeps_the_original_uv_deadline_not_the_retry_time(
     metadata["request_sha256"] = "another request"
     with pytest.raises(SignerRefused, match="evidence_unavailable"):
         await service._signed_deadline(row)
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("human_reader", [False, True])
+@pytest.mark.parametrize("expired", [False, True])
+async def test_composed_historical_receipt_guard_covers_owner_and_requester(human_reader, expired):
+    import json
+    from datetime import timedelta
+
+    from aweb_naapp.runtime.protected_signer import AdmittedHuman, ProtectedSigner, ReceiptReader
+
+    op = owner_operation()
+    assert op.spec.effect.invalidates_membership is True
+    actor = (AdmittedHuman(op.context.human_id, "owner-subject", "owner-scope", op.context)
+        if human_reader else ReceiptReader("requester", op.context, CONTROLLER))
+    now = datetime.now(UTC)
+    row = {"operation_id": op.operation_id, "request": json.dumps(op.intent()),
+        "result": None, "signed_result": {"retained": "historical row"}, "refusal_code": None,
+        "retained_effect": None, "approval_id": None, "verification_claim": None,
+        "expires_at": now + timedelta(seconds=-1 if expired else 60)}
+    service = object.__new__(ProtectedSigner)
+    service.clock = lambda: now
+    service.owner_removal = None
+
+    async def authorized(operation_id, reader, purpose, **kwargs):
+        assert (operation_id, reader, purpose) == (op.operation_id, actor, "receipt")
+        return row
+
+    async def unavailable(*args, **kwargs):
+        pytest.fail("absent-provider history must not enter reconciliation or delivery")
+
+    service._authorized, service._reconcile_admission = authorized, unavailable
+    receipt = await service.receipt(op.operation_id, reader=actor)
+    assert (receipt.state, receipt.code) == (("unknown", "external_effect_unresolved")
+        if expired else ("pending", "effect_in_progress"))
+    assert receipt.result is None and row["result"] is None

@@ -1135,4 +1135,3 @@ synthetic; it does not establish protected executor issuance or activation.
 `protected-effect-receipt-v1.json` freezes the proof-gated consumer confirmation
 route, complete header channel, minimal exact response, no-store policy and
 404/503 distinction. Historical receipt reads grant no renewed effect authority.
-
