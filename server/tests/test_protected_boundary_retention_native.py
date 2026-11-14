@@ -128,10 +128,18 @@ async def test_genuine_b3_owner_act_reaches_protected_sql_consumer(world, tmp_pa
     w = world
     custody = await activate(SimpleNamespace(w=w), tmp_path)
     db = await test_db_factory.create_db(
-        suffix="actual_owner_consumer", server_settings={"search_path": "pg_catalog"}
+        suffix="actual_owner_consumer", schema="owner_consumer"
     )
     await apply_owner_act_migrations(db)
+    assert db.schema == "owner_consumer"
     await db.execute("CREATE TABLE holding (app_id text,installation_id text,role text,principal text)")
+    consumer_tables = {"schema_migrations", "owner_act_nonces", "protected_effect_receipts", "holding"}
+    namespaces = await db.fetch_all(
+        "SELECT n.nspname AS namespace,c.relname AS name FROM pg_catalog.pg_class c "
+        "JOIN pg_catalog.pg_namespace n ON n.oid=c.relnamespace "
+        "WHERE c.relkind='r' AND c.relname=ANY($1::text[])", list(consumer_tables))
+    assert {(row["namespace"], row["name"]) for row in namespaces} == {
+        ("owner_consumer", name) for name in consumer_tables}
     await db.execute("INSERT INTO holding VALUES($1,$2,$3,$4)", w.operation.app_id,
         w.operation.installation_id, w.operation.role, w.operation.principal)
     async def key(team):
