@@ -15,7 +15,7 @@ Native bodies require the coordinator's VM placement. No local DB fallback.
 import asyncio
 import json
 import os
-import re
+import shlex
 import socket
 import sys
 from contextlib import asynccontextmanager
@@ -93,8 +93,13 @@ def _root_home(tmp_path, w):
     _pem(home / "signing.key", "ED25519 PRIVATE KEY", bytes(w.root))
     (home / "identity.yaml").write_text(json.dumps({"did": did(w.root), "stable_id": w.root_id, "custody": "self",
         "identity_scope": "global"}))
+    # aw's only PATH: a browser opener (open on macOS, xdg-open elsewhere)
+    # that records the page aw asks it to show, and nothing else.
     no_opener = tmp_path / "no-browser-opener"
     no_opener.mkdir()
+    for opener in ("open", "xdg-open"):
+        (no_opener / opener).write_text(f"#!/bin/sh\nprintf '%s\\n' \"$1\" >> {shlex.quote(str(_opened_pages(root)))}\n")
+        (no_opener / opener).chmod(0o755)
     env = {k: v for k, v in os.environ.items() if not k.startswith(("AW", "XDG_"))}
     env.update(HOME=str(root), PWD=str(root), XDG_CONFIG_HOME=str(root / ".config"), XDG_STATE_HOME=str(root / ".state"),
         AW_NO_UPDATE_CHECK="1", PATH=str(no_opener), AWID_REGISTRY_URL=w.registry_origin)
@@ -128,18 +133,34 @@ async def _aw(home, *args, timeout=120, grace=5.0):
     return proc.returncode, json.loads(out or b"{}"), err.decode()
 
 
+def _opened_pages(root):
+    """The file the root home's browser opener records each page in."""
+    return Path(root).parent / "opened-pages"
+
+
 async def _endorse(a, profile, home, operation_id, *, page_timeout=60, timeout=120):
-    """Run aw id endorse, approving its exact operation once aw shows its page."""
+    """Run aw id endorse, approving its exact operation once aw has shown its
+    page, which is when it hands the page to the browser opener. An aw that
+    ends first is reported with its progress."""
     args = ("id", "endorse", "--protected-profile", str(profile), "--human", a.human.context.authority_id if a else "",
         "--team", TEAM, "--deployment-label", "oats-root", "--operation-id", operation_id)
+    pages = _opened_pages(home[0])
+    pages.unlink(missing_ok=True)
     async with _running(home, *args) as proc:
         progress = []
-        while True:
-            line = (await asyncio.wait_for(proc.stderr.readline(), page_timeout)).decode()
+        loop = asyncio.get_running_loop()
+        deadline = loop.time() + page_timeout
+        while not (pages.exists() and pages.read_text().strip()):
+            if loop.time() >= deadline:
+                raise TimeoutError
+            try:
+                line = (await asyncio.wait_for(proc.stderr.readline(), min(0.2, deadline - loop.time()))).decode()
+            except TimeoutError:
+                continue
             assert line, "".join(progress)
             progress.append(line)
-            if re.search(r"Approve it on this page: \S+/handoff/\S+", line):
-                break
+        opened = pages.read_text().split()
+        assert len(opened) == 1 and opened[0].startswith(f"{a.w.human_origin}/handoff/"), opened
         options = await a.human.signer.approval_options(operation_id, human=a.actor)
         approved = await a.human.signer.execute(operation_id, a.device.get(dict(options)), human=a.actor)
         assert approved.state == "committed"
