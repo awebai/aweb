@@ -61,6 +61,40 @@ release as a prerelease. Its workflow needs no separate RC syntax change.
 Runnerless npm publication remains available without GitHub; hosted binary
 assets remain resumable.
 
+### Protection-aware upgrade order
+
+Upgrade the selected AWID registry first, then the aweb server and apps that
+consume protection state, then `aw`. The registry must serve the explicit
+protection-state metadata introduced in `awid-service` 0.5.40; a coordinated
+release candidate of that registry version is suitable for the matching
+candidate train. Do not upgrade only the server or CLI against an older
+registry. A successful registry answer with no protection field remains
+unavailable evidence, including for an unprotected team. There is no inferred
+legacy mode or compatibility path. Connection failures, HTTP 429 and HTTP 5xx
+are separate failures and must not be described as an older registry.
+
+Before running the upgraded CLI for an existing home that uses an `http`,
+address-literal or private registry, explicitly pin the same registry origin in
+the environment that invokes `aw`, for example:
+
+```sh
+export AWID_REGISTRY_URL='https://registry.internal.example'
+aw doctor
+```
+
+Use the actual configured origin, including its scheme and port. A stored URL
+in `identity.yaml` or `teams.yaml` does not itself authorize access to a private
+registry. Commands that offer `--registry` may use that explicit selection
+instead. A stored public HTTPS registry continues to use the normal public
+origin rules. Do not switch registries, replace an identity or use a development
+policy bypass to repair a missing operator pin.
+
+This installation order does not replace the coordinated `intent_v1`
+client/server publication and consumer-readiness requirements in
+[the human-assurance contract](human-assurance-contract.md). Publish and pin
+that matching release before enabling its owner-act paths; a package version
+label alone is not installation evidence.
+
 ### Stage a final CLI before promoting public installations
 
 When a CLI needs a dependent service upgrade first, publish its final version

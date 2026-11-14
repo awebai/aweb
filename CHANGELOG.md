@@ -2,6 +2,23 @@
 
 ## Unreleased
 
+- Upgrade protection-aware components in this order: the selected AWID registry
+  (`awid-service` 0.5.40, or the matching release candidate), then the aweb
+  server and apps that consume protection state, then `aw`. Even an unprotected
+  team needs an explicit protection-state answer from the upgraded registry;
+  an older answer with no protection field is unavailable evidence. An
+  unreachable registry or an HTTP 429/5xx response is a network/service failure,
+  not evidence of an older registry.
+
+- Existing `aw` homes whose registry uses `http`, an IP address or a private
+  address need an explicit operator pin when upgrading. Set
+  `AWID_REGISTRY_URL` to that exact registry origin in the environment that
+  runs `aw`, or use the command's `--registry` option where offered. A URL
+  stored in `identity.yaml` or `teams.yaml` alone does not authorize a private
+  registry. `aw doctor` reports the missing pin and its remediation. Keep the
+  existing registry and identities; this upgrade does not call for moving or
+  recreating them. See [the upgrade procedure](docs/release.md#protection-aware-upgrade-order).
+
 - `aw custody serve` picks up a parent import, certificate install or connect
   that changes its resident home while it runs, without a restart and
   without a request mixing old and new credentials. Those commands now
