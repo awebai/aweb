@@ -435,8 +435,8 @@ async def _operation_row(w, operation_id):
 
 
 def _saved_requests(home):
-    """Every request aw keeps in the home's own state, by file, with its bytes."""
-    return {path.name: path.read_bytes() for path in (home[0] / ".state").rglob("governance/*.json")}
+    """Every request aw keeps in the user's own aw state (HOME/.config/aw/governance), by file, with its bytes."""
+    return {path.name: path.read_bytes() for path in (home[0] / ".config" / "aw" / "governance").glob("*.json")}
 
 
 @pytest.mark.usefixtures("source_cli_binary")
