@@ -3,6 +3,7 @@ package handoff
 import (
 	"encoding/json"
 	"errors"
+	"fmt"
 	"regexp"
 	"strings"
 
@@ -117,6 +118,23 @@ func readPointer(request map[string]any, source string) (any, error) {
 	}
 	if !formatted {
 		return value, nil
+	}
+	if formatter == "period" {
+		number, isNumber := value.(json.Number)
+		if !isNumber || strings.ContainsAny(number.String(), ".eE") {
+			return nil, errDisplay()
+		}
+		seconds, err := number.Int64()
+		if err != nil || seconds <= 0 {
+			return nil, errDisplay()
+		}
+		switch seconds {
+		case 3600:
+			return "hour", nil
+		case 86400:
+			return "day", nil
+		}
+		return fmt.Sprintf("%d seconds", seconds), nil
 	}
 	if formatter == "kind" {
 		kind, ok := value.(string)

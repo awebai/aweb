@@ -15,11 +15,22 @@ REQUEST = {
     "requester": "did:key:z6Mkrequester",
     "subject": {"alias": "agent-one", "teams": ["a:customer.example", "b:customer.example"],
         "team_id": "engineering:customer.example", "target_kind": "kind not verified", "agent_kind": "agent",
-        "other_kind": "human",
+        "other_kind": "human", "root_id": "did:aw:ROOT", "label": "oats-root", "window": 3600, "day": 86400,
+        "odd": 90,
         "count": 3, "nothing": None, "policy": {"b": 2, "a": [1]}, "flag": True},
 }
 
 CASES = [
+    # "|period" names a window in seconds; the requester is named when it is
+    # the subject the definition names.
+    (OperationDisplay("At most {/subject/count} per {/subject/window|period}?",
+        ("Or per {/subject/day|period}, or per {/subject/odd|period}.",), (), (), (),
+        requester_name=("/requester", "/subject/label")),
+     {"title": "At most 3 per hour?", "consequences": ["Or per day, or per 90 seconds."], "names": [],
+      "technical": [], "requester": "oats-root"}),
+    (OperationDisplay("Remove it?", ("x",), (), (), (), requester_name=("/subject/root_id", "/subject/label")),
+     {"title": "Remove it?", "consequences": ["x"], "names": [], "technical": [],
+      "requester": "did:key:z6Mkrequester"}),
     # "|kind" names a frozen target kind in the words the owner page uses.
     (OperationDisplay("Remove {/subject/alias}?", ("x",),
         (("kind", "/subject/target_kind|kind"), ("other", "/subject/agent_kind|kind")),
@@ -46,6 +57,8 @@ CASES = [
 ]
 
 REFUSED = [
+    OperationDisplay("Per {/subject/alias|period}?", ("x",), (), (), ()),
+    OperationDisplay("Per {/subject/count|period}?", ("x",), (), (), (), requester_name=("/subject/missing", "/subject/label")),
     OperationDisplay("Remove it?", ("x",), (("kind", "/subject/other_kind|kind"),), (), ()),
     OperationDisplay("Remove it?", ("x",), (("kind", "/subject/teams|kind"),), (), ()),
     OperationDisplay("Add {/subject/alias|team}?", ("x",), (), (), ()),
@@ -82,7 +95,7 @@ def test_python_refuses_a_display_it_cannot_fill_exactly(display):
 
 
 def test_refusal_sentence_is_the_definitions_own_or_none():
-    display = CASES[2][0]
+    display = CASES[4][0]
     assert display.refusal("subject_ineligible") == "Not eligible."
     assert display.refusal("approval_spent") is None
 

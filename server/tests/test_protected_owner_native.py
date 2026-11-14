@@ -30,6 +30,8 @@ async def test_the_owner_sees_waiting_requests_then_their_history(admissions):
     subject = operation.intent()["subject"]
     teams = ", ".join(team.partition(":")[0] for team in subject["teams"])
     assert waiting["title"] == f"Make {subject['deployment_label']} your root agent for {teams}?"
+    # The root asks for itself: the page names it by its frozen label.
+    assert waiting["requester_name"] == subject["deployment_label"]
     assert view["history"] == []
     # The page names the approver who is signed in, not the first one listed.
     assert view["you"] == next(x["contact"] for x in view["approvers"] if x["contact"])
@@ -250,8 +252,10 @@ def test_a_requester_the_team_knows_is_named_by_its_alias():
         {"alias": "build-1", "member_did_aw": None, "member_did_key": "did:key:zK"}]
     _name_requesters(entries, members)
     assert [e["requester_name"] for e in entries] == ["ops", "build-1", None]
-    _name_requesters(entries, None)
-    assert [e["requester_name"] for e in entries] == [None, None, None]
+    unknown = [{"requester": "did:aw:OPS"}, {"requester": "did:aw:ROOT", "requester_name": "oats-root"}]
+    _name_requesters(unknown, None)
+    # Without the team, a name the definition already gave is kept.
+    assert [e["requester_name"] for e in unknown] == [None, "oats-root"]
 
 
 @pytest.mark.asyncio

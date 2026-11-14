@@ -15,8 +15,15 @@ function teamName(teamId) {
 const kinds = {"agent": "agent", "kind not verified": "agent or person not confirmed"};
 
 // "|team" shows a team id ("name:domain") by its name, as the owner page does;
-// "|kind" names a frozen target kind. Any other value refuses.
+// "|kind" names a frozen target kind; "|period" names a window in seconds.
+// Any other value refuses.
+function period(seconds) {
+  if (!Number.isSafeInteger(seconds) || seconds <= 0) refused();
+  return {3600: "hour", 86400: "day"}[seconds] ?? `${seconds} seconds`;
+}
+
 function formatted(value, formatter) {
+  if (formatter === "period") return period(value);
   if (formatter === "kind") {
     if (typeof value !== "string" || !Object.hasOwn(kinds, value)) refused();
     return kinds[value];
@@ -57,12 +64,20 @@ function label(key) {
 const fill = (template, request) =>
   template.replace(/\{(\/[^{}]*)\}/g, (_, pointer) => words(read(request, pointer)));
 
+// The requester, by the subject's frozen name when it is that subject.
+function requester(display, request) {
+  const who = words(read(request, "/requester"));
+  const [subject, name] = display.requester_name;
+  return read(request, subject) === who ? words(read(request, name)) : who;
+}
+
 export function renderDisplay(display, request) {
   return {
     title: fill(display.title, request),
     consequences: display.consequences.map(line => fill(line, request)),
     names: Object.entries(display.names).map(([key, source]) => [label(key), words(read(request, source))]),
     technical: Object.entries(display.technical).map(([key, source]) => [label(key), technical(read(request, source))]),
+    ...(display.requester_name ? {requester: requester(display, request)} : {}),
   };
 }
 
