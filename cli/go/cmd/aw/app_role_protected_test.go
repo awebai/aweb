@@ -49,7 +49,8 @@ func TestTheRevokeIntentNamesTheActScopeAudienceAndSubject(t *testing.T) {
 	binding := profile.Bindings[0]
 	subject := map[string]any{"app_id": "customer-app", "installation_id": "22222222-2222-4222-8222-222222222222", "role": "customer.owner", "principal": "did:aw:3YDAM5ZLRKg7eHH1Zs6sSMwkga8w"}
 	intent := protectedRoleIntent("human-role.revoke", binding.Scope, "https://app.customer.example", subject)
-	if len(intent) != 5 || intent["operation"] != "human-role.revoke" || intent["variant"] != "default" || intent["audience"] != "https://app.customer.example" {
+	if len(intent) != 6 || intent["operation"] != "human-role.revoke" || intent["variant"] != "default" || intent["audience"] != "https://app.customer.example" ||
+		intent["approval_format"] != "intent_v1" {
 		t.Fatalf("intent %v", intent)
 	}
 	if _, ok := intent["operation_id"]; ok {

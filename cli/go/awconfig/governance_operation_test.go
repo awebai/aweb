@@ -103,3 +103,30 @@ func TestASavedOperationNamesTheIDItIsStoredUnder(t *testing.T) {
 		t.Fatalf("a file for another operation loaded as %s: %+v", other, got)
 	}
 }
+
+func TestAQuarantinedOperationKeepsItsEvidenceWithItsExactBody(t *testing.T) {
+	t.Setenv("HOME", t.TempDir())
+	op := pendingOperation()
+	op.Quarantine = &GovernanceQuarantine{State: "committed", Code: "", Signing: []byte("signed bytes\x00"),
+		Signature: bytes.Repeat([]byte{7}, 64), Verification: "signature_verified", ObservedAt: "2026-11-13T12:00:00Z"}
+	if err := SavePendingGovernanceOperation(op); err != nil {
+		t.Fatal(err)
+	}
+	got, err := LoadPendingGovernanceOperation(testOperationID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	q := got.Quarantine
+	if q == nil || q.State != "committed" || !bytes.Equal(q.Signing, op.Quarantine.Signing) || !bytes.Equal(q.Signature, op.Quarantine.Signature) ||
+		q.Verification != "signature_verified" || q.ObservedAt != "2026-11-13T12:00:00Z" || !bytes.Equal(got.Body, op.Body) {
+		t.Fatalf("loaded %+v", got)
+	}
+	unmarked := pendingOperation()
+	unmarked.OperationID = "22222222-2222-4222-8222-222222222222"
+	if err := SavePendingGovernanceOperation(unmarked); err != nil {
+		t.Fatal(err)
+	}
+	if got, _ := LoadPendingGovernanceOperation(unmarked.OperationID); got.Quarantine != nil {
+		t.Fatal("an ordinary pending operation reads as quarantined")
+	}
+}
