@@ -41,7 +41,8 @@ func errDisplay() error {
 // the owner page and the approval notice do (operation_display.py): a string
 // shows as itself, an integer in decimal, a list of strings joined with ", ".
 // Technical rows show any other value as canonical JSON. A pointer ending in
-// "|team" shows a team id, or each in a list, by its name. A missing pointer,
+// "|team" shows a team id, or each in a list, by its name; "|kind" names a
+// frozen target kind. A missing pointer,
 // or a title, consequence or name of another kind, refuses.
 func RenderDisplay(selector string, request map[string]any) (RenderedDisplay, error) {
 	display, ok := generatedDisplays[selector]
@@ -117,6 +118,13 @@ func readPointer(request map[string]any, source string) (any, error) {
 	if !formatted {
 		return value, nil
 	}
+	if formatter == "kind" {
+		kind, ok := value.(string)
+		if words, named := displayKinds[kind]; ok && named {
+			return words, nil
+		}
+		return nil, errDisplay()
+	}
 	if formatter != "team" {
 		return nil, errDisplay()
 	}
@@ -133,6 +141,9 @@ func readPointer(request map[string]any, source string) (any, error) {
 	}
 	return teamName(value)
 }
+
+// displayKinds names a frozen target kind in the words the owner page uses.
+var displayKinds = map[string]string{"agent": "agent", "kind not verified": "agent or person not confirmed"}
 
 // teamName shows a team id ("name:domain") by its name, as the owner page does.
 func teamName(value any) (any, error) {

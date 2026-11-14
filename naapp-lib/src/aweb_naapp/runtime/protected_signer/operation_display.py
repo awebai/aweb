@@ -8,7 +8,8 @@ Every surface (approval page, mail, owner page, CLI) fills the same templates
 the same way: a ``{/pointer}`` is read from the frozen request; a string shows
 as itself, an integer in decimal and a list of strings joined with ", ".
 Technical rows also show any other value as canonical JSON. A pointer may end
-in ``|team`` to show a team id ("name:domain"), or each in a list, by its name. A row's label is
+in ``|team`` to show a team id ("name:domain"), or each in a list, by its name,
+or in ``|kind`` to name a frozen target kind ("agent", "kind not verified"). A row's label is
 its key with underscores as spaces and the first letter capitalised. A pointer that is
 missing, or a title, consequence or name that is not one of those values,
 refuses: a surface never shows a blank or invented word.
@@ -30,8 +31,17 @@ def _team_name(team_id):
     return team_id.split(":")[0]
 
 
+# A frozen target kind in the words the owner page uses.
+_KINDS = {"agent": "agent", "kind not verified": "agent or person not confirmed"}
+
+
 def _formatted(value, formatter):
-    """``|team`` shows a team id ("name:domain") by its name, as the owner page does."""
+    """``|team`` shows a team id ("name:domain") by its name, as the owner page
+    does; ``|kind`` names a frozen target kind. Any other value refuses."""
+    if formatter == "kind":
+        if not isinstance(value, str) or value not in _KINDS:
+            raise SignerRefused("request_invalid")
+        return _KINDS[value]
     if formatter != "team":
         raise SignerRefused("request_invalid")
     if isinstance(value, list):

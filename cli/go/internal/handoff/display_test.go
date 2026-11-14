@@ -14,7 +14,7 @@ import (
 func displayRequest(t *testing.T) map[string]any {
 	t.Helper()
 	request, ok := DecodeObject([]byte(`{"requester":"did:key:z6Mkrequester","subject":{"alias":"agent-one",
-		"teams":["a:customer.example","b:customer.example"],"team_id":"engineering:customer.example","count":3,"nothing":null,
+		"teams":["a:customer.example","b:customer.example"],"team_id":"engineering:customer.example","target_kind":"kind not verified","agent_kind":"agent","other_kind":"human","count":3,"nothing":null,
 		"policy":{"b":2,"a":[1]},"flag":true}}`))
 	if !ok {
 		t.Fatal("bad request fixture")
@@ -67,6 +67,28 @@ func TestDisplayShowsATeamByItsName(t *testing.T) {
 	}
 }
 
+func TestDisplayNamesAFrozenTargetKind(t *testing.T) {
+	display := operationDisplay{
+		title:        "Remove {/subject/alias}?",
+		consequences: []string{"x"},
+		names:        []displayRow{{"kind", "/subject/target_kind|kind"}, {"other", "/subject/agent_kind|kind"}},
+		technical:    []displayRow{{"kind", "/subject/target_kind"}},
+	}
+	got, err := display.render(displayRequest(t))
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := RenderedDisplay{
+		Title:        "Remove agent-one?",
+		Consequences: []string{"x"},
+		Names:        [][2]string{{"Kind", "agent or person not confirmed"}, {"Other", "agent"}},
+		Technical:    [][2]string{{"Kind", "kind not verified"}},
+	}
+	if !reflect.DeepEqual(got, want) {
+		t.Fatalf("rendered %#v, want %#v", got, want)
+	}
+}
+
 func TestDisplayRefusesWhatItCannotFillExactly(t *testing.T) {
 	for name, display := range map[string]operationDisplay{
 		"missing":            {title: "Remove {/subject/missing}?"},
@@ -80,6 +102,8 @@ func TestDisplayRefusesWhatItCannotFillExactly(t *testing.T) {
 		"unknown formatter":  {title: "Add {/subject/team_id|unknown}?"},
 		"upper formatter":    {title: "Add {/subject/team_id|Team}?"},
 		"team of a number":   {title: "Add it?", names: []displayRow{{"team", "/subject/count|team"}}},
+		"unknown kind":       {title: "Add it?", names: []displayRow{{"kind", "/subject/other_kind|kind"}}},
+		"kind of a list":     {title: "Add it?", names: []displayRow{{"kind", "/subject/teams|kind"}}},
 	} {
 		if _, err := display.render(displayRequest(t)); ErrorCode(err) != "operation_mismatch" {
 			t.Errorf("%s: rendered without refusing (%v)", name, err)

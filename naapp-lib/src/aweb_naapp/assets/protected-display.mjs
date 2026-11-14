@@ -11,8 +11,16 @@ function teamName(teamId) {
   return teamId.split(":")[0];
 }
 
-// "|team" shows a team id ("name:domain") by its name, as the owner page does.
+// A frozen target kind in the words the owner page uses.
+const kinds = {"agent": "agent", "kind not verified": "agent or person not confirmed"};
+
+// "|team" shows a team id ("name:domain") by its name, as the owner page does;
+// "|kind" names a frozen target kind. Any other value refuses.
 function formatted(value, formatter) {
+  if (formatter === "kind") {
+    if (typeof value !== "string" || !Object.hasOwn(kinds, value)) refused();
+    return kinds[value];
+  }
   if (formatter !== "team") refused();
   return Array.isArray(value) ? value.map(teamName) : teamName(value);
 }

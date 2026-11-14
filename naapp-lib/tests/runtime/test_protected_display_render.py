@@ -14,11 +14,19 @@ from aweb_naapp.runtime.protected_signer.operation_display import OperationDispl
 REQUEST = {
     "requester": "did:key:z6Mkrequester",
     "subject": {"alias": "agent-one", "teams": ["a:customer.example", "b:customer.example"],
-        "team_id": "engineering:customer.example",
+        "team_id": "engineering:customer.example", "target_kind": "kind not verified", "agent_kind": "agent",
+        "other_kind": "human",
         "count": 3, "nothing": None, "policy": {"b": 2, "a": [1]}, "flag": True},
 }
 
 CASES = [
+    # "|kind" names a frozen target kind in the words the owner page uses.
+    (OperationDisplay("Remove {/subject/alias}?", ("x",),
+        (("kind", "/subject/target_kind|kind"), ("other", "/subject/agent_kind|kind")),
+        (("kind", "/subject/target_kind"),), ()),
+     {"title": "Remove agent-one?", "consequences": ["x"],
+      "names": [["Kind", "agent or person not confirmed"], ["Other", "agent"]],
+      "technical": [["Kind", "kind not verified"]]}),
     # "|team" shows a team by its name, as the owner page does; the full id
     # stays available to technical rows without it.
     (OperationDisplay("Add {/subject/alias} to {/subject/team_id|team} and {/subject/teams|team}?", ("x",),
@@ -38,6 +46,8 @@ CASES = [
 ]
 
 REFUSED = [
+    OperationDisplay("Remove it?", ("x",), (("kind", "/subject/other_kind|kind"),), (), ()),
+    OperationDisplay("Remove it?", ("x",), (("kind", "/subject/teams|kind"),), (), ()),
     OperationDisplay("Add {/subject/alias|team}?", ("x",), (), (), ()),
     OperationDisplay("Add {/subject/team_id|unknown}?", ("x",), (), (), ()),
     OperationDisplay("Add {/subject/team_id|Team}?", ("x",), (), (), ()),
@@ -72,7 +82,7 @@ def test_python_refuses_a_display_it_cannot_fill_exactly(display):
 
 
 def test_refusal_sentence_is_the_definitions_own_or_none():
-    display = CASES[1][0]
+    display = CASES[2][0]
     assert display.refusal("subject_ineligible") == "Not eligible."
     assert display.refusal("approval_spent") is None
 
