@@ -2,13 +2,17 @@ package main
 
 import (
 	"bytes"
+	"cmp"
 	"context"
+	"crypto/ed25519"
 	"errors"
 	"fmt"
+	"strings"
 
 	"github.com/awebai/aw/awconfig"
 	"github.com/awebai/aw/awid"
 	"github.com/awebai/aw/internal/handoff"
+	"github.com/spf13/cobra"
 )
 
 // An agent membership's owner-approved removal
@@ -32,9 +36,6 @@ type ownerRemovalRequest struct {
 	RequesterKey  string
 	List          func(ctx context.Context, team string) ([]awid.RegistryCertificate, error)
 }
-
-// ownerRemovalTargetKinds are the classifications the service may freeze.
-var ownerRemovalTargetKinds = map[any]bool{"agent": true, "kind not verified": true}
 
 // membershipSubject is the closed subject naming cert's exact membership.
 // The membership snapshot keeps absent fields as explicit nulls.
@@ -138,9 +139,8 @@ func removeMemberAsOwner(ctx context.Context, opts handoff.GovernanceOptions, pr
 		}
 		return pendingEndorsementReport(presented, page, receipt), nil
 	}
-	if frozen == nil {
-		return nil, withErrorCode("signed_request_invalid", fmt.Errorf("operation %s: the signed revocation is not the one aw requested: its prepared operation was never verified; run the same command again to continue it", operationID))
-	}
+	// A result whose prepared operation aw never verified (its prepare answer
+	// was lost) has no frozen request to match, and is never taken.
 	if err := signedFrozenRevocation(receipt.Result, frozen, binding.AuthorityKeyDID); err != nil {
 		return nil, fmt.Errorf("operation %s: %w", operationID, err)
 	}
@@ -164,9 +164,8 @@ func ownerRemovalCheck(request map[string]any, controllerDID, requesterKey strin
 	if request["requester_key"] != requesterKey {
 		return withErrorCode("operation_mismatch", errors.New("the prepared revocation names another requester key than this home's"))
 	}
-	if !ownerRemovalTargetKinds[request["target_kind"]] {
-		return withErrorCode("operation_mismatch", errors.New("the prepared revocation classifies its target with a kind aw does not know"))
-	}
+	// The generated verifier has already closed target_kind to the
+	// classifications the service may freeze.
 	*kept = request
 	return nil
 }
@@ -275,4 +274,115 @@ func listedCertificate(ctx context.Context, list func(context.Context, string) (
 	}
 	return &awid.TeamCertificate{Team: row.TeamID, CertificateID: row.CertificateID, MemberDIDKey: row.MemberDIDKey,
 		MemberDIDAW: row.MemberDIDAW, MemberAddress: row.MemberAddress, Alias: row.Alias, IdentityScope: row.IdentityScope}, nil
+}
+
+// memberCertificateListing reads a team's active certificate listing at the
+// profile's pinned registry, signed by this home's key: the registry answers
+// a private team's listing only to a current member. Without its key in the
+// home, a certificate cannot be selected by id; its file still can be named.
+func memberCertificateListing(registry *awid.RegistryClient, profile *handoff.Profile, key ed25519.PrivateKey) (func(context.Context, string) ([]awid.RegistryCertificate, error), error) {
+	if key == nil {
+		return nil, withErrorCode("selector_unauthorized", errors.New("this home's key is not in the home, so it cannot read the team's private certificate listing; pass --certificate with the certificate's file"))
+	}
+	return func(ctx context.Context, team string) ([]awid.RegistryCertificate, error) {
+		domain, name, err := awid.ParseTeamID(team)
+		if err != nil {
+			return nil, err
+		}
+		return registry.ListCertificates(ctx, profile.RegistryOrigin, domain, name, true, key)
+	}, nil
+}
+
+// ownerRemovalTargetFlags checks that an owner-approved removal names its
+// target exactly one way: a certificate file, or a team and a certificate id.
+func ownerRemovalTargetFlags(certificate, team, certificateID string) error {
+	switch {
+	case certificate != "" && team == "" && certificateID == "":
+		return nil
+	case certificate == "" && team != "" && certificateID != "":
+		return nil
+	}
+	return usageError("name the membership either with --certificate, or with --team and --certificate-id")
+}
+
+func runTeamRemoveAgentAsOwner(cmd *cobra.Command) error {
+	request := ownerRemovalRequest{
+		OperationID: strings.TrimSpace(teamRemoveAgentOperationIDFlag), Certificate: strings.TrimSpace(teamRemoveAgentCertificateFlag),
+		Team: strings.TrimSpace(teamRemoveAgentTeamFlag), CertificateID: strings.TrimSpace(teamRemoveAgentCertificateIDFlag),
+	}
+	if err := ownerRemovalTargetFlags(request.Certificate, request.Team, request.CertificateID); err != nil {
+		return err
+	}
+	profile, err := loadProtectedProfile()
+	if err != nil {
+		return err
+	}
+	identity, err := resolveLocalSigningIdentity()
+	if err != nil {
+		return err
+	}
+	if identity.StableID == "" {
+		return usageError("only a registered requester (with a did:aw) can request a removal")
+	}
+	request.RequesterKey = identity.DIDKey
+	team := request.Team
+	if request.Certificate != "" {
+		cert, err := awid.LoadTeamCertificate(request.Certificate)
+		if err != nil {
+			return withErrorCode("certificate_invalid", fmt.Errorf("%s is not a team certificate: %w", request.Certificate, err))
+		}
+		team = cert.Team
+	}
+	binding, err := admissionBinding(profile, team)
+	if err != nil {
+		return err
+	}
+	if request.Certificate == "" {
+		// Built here, read only for a new removal: a saved one continues
+		// without the listing.
+		registry, err := newConfiguredRegistryClient(nil)
+		if err != nil {
+			return err
+		}
+		if err := registry.TrustRegistryOrigin(profile.RegistryOrigin); err != nil {
+			return err
+		}
+		request.List = func(ctx context.Context, team string) ([]awid.RegistryCertificate, error) {
+			list, err := memberCertificateListing(registry, profile, identity.SigningKey)
+			if err != nil {
+				return nil, err
+			}
+			return list(ctx, team)
+		}
+	}
+	opts := governanceOptions(cmd, profile, binding.Scope, identity)
+	if teamRemoveAgentNoBrowserFlag {
+		opts.Open = nil
+	}
+	opts.NoWait = teamRemoveAgentNoWaitFlag
+	ctx, cancel := context.WithCancel(cmd.Context())
+	defer cancel()
+	fmt.Fprintf(cmd.ErrOrStderr(), "Removing certificate %s from %s with the owner's approval, through %s\n",
+		cmp.Or(request.CertificateID, request.Certificate), team, profile.ServiceID)
+	report, err := removeMemberAsOwner(ctx, opts, profile, request)
+	if err != nil {
+		return err
+	}
+	if report["state"] == "pending" {
+		printOutput(report, func(any) string { return pendingEndorsementText(report) })
+		return nil
+	}
+	printOutput(report, func(any) string {
+		return fmt.Sprintf("Operation %s committed; %s's membership of %s (certificate %s, %s) is removed\n",
+			report["operation_id"], report["alias"], report["team_id"], report["certificate_id"], targetKindText(report["target_kind"]))
+	})
+	return nil
+}
+
+// targetKindText says what the service froze about the removed member's kind.
+func targetKindText(kind any) string {
+	if kind == "kind not verified" {
+		return "kind not verified"
+	}
+	return "a verified agent"
 }

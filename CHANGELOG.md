@@ -50,6 +50,22 @@
   and changes nothing in the agent's home. The same `--operation-id` resumes
   the removal; changed inputs refuse `operation_conflict`.
 
+- `aw id team remove-agent --owner-approved` removes any agent membership of a
+  protected team, whoever admitted it, once the team's current owner approves
+  it live on the protected service's page (`team.agent.remove/owner_approved`).
+  The registered requester the profile grants asks for it; its key is recorded,
+  never authority. Name the membership with `--certificate F`, or with
+  `--team T --certificate-id C`, which reads the team's active listing at the
+  profile's registry, signed by this member's key (`selector_unauthorized`
+  when the key is not in the home). `--no-wait` and `--no-browser` work as for
+  `aw id endorse`. The result names the frozen team, certificate, alias and
+  target kind, with `kind not verified` printed as the service froze it.
+  Running the same command again continues an unfinished removal from its
+  saved request, without the listing, so a removal whose answer was lost is
+  recovered by its receipt after the certificate has left the listing. The
+  saved request is forgotten only after the controller's signature over
+  exactly the frozen revocation verifies, or after the service refuses it.
+
 - `aw id team install-cert --identity-home H --certificate F` installs a team
   certificate file, such as the one `aw id team admit --certificate-out`
   wrote, into the home whose identity it names, after checking it at the

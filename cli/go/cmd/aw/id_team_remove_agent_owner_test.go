@@ -11,6 +11,8 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"net/url"
+	"os"
+	"path/filepath"
 	"strings"
 	"sync"
 	"testing"
@@ -127,6 +129,9 @@ func (s *ownerRemoveService) options() handoff.GovernanceOptions {
 				OperationID: operationID, RequestOrigin: s.server.URL, HumanOrigin: s.server.URL, Body: body,
 			})
 		},
+		// A caller's Forget would drop the request on any committed receipt;
+		// the removal decides itself when its request is done.
+		Forget: awconfig.RemovePendingGovernanceOperation,
 	}
 }
 
@@ -355,8 +360,12 @@ func TestAChangedTargetUnderASavedOwnerRemovalConflicts(t *testing.T) {
 	other, _ := awid.LoadTeamCertificate(removeTestCertificate(t, teamKey, ""))
 	list := &listing{rows: []awid.RegistryCertificate{rowOf(other)}}
 	for name, request := range map[string]ownerRemovalRequest{
-		"file":     ownerRemoveByFile(removeTestCertificate(t, teamKey, "")),
-		"selector": func() ownerRemovalRequest { r := ownerRemoveBySelector(other, list); r.OperationID = ownerRemoveTestOperation; return r }(),
+		"file": ownerRemoveByFile(removeTestCertificate(t, teamKey, "")),
+		"selector": func() ownerRemovalRequest {
+			r := ownerRemoveBySelector(other, list)
+			r.OperationID = ownerRemoveTestOperation
+			return r
+		}(),
 	} {
 		prepares := len(service.prepareBodies)
 		if _, err := removeMemberAsOwner(context.Background(), service.options(), profile, request); errorCodeOf(err) != "operation_conflict" || len(service.prepareBodies) != prepares {
@@ -377,8 +386,11 @@ func TestAFreshSelectionRefusesAnythingButOneActiveRowBeforePreparing(t *testing
 	malformed.IdentityScope = "planetary"
 	otherTeam := rowOf(cert)
 	otherTeam.TeamID = "other:customer.example"
+	noAlias, noKey, globalWithoutID := rowOf(cert), rowOf(cert), rowOf(cert)
+	noAlias.Alias, noKey.MemberDIDKey, globalWithoutID.IdentityScope = "", "", awid.IdentityModeGlobal
 	for name, rows := range map[string][]awid.RegistryCertificate{
 		"missing": nil, "revoked": {revoked}, "malformed": {malformed}, "duplicated": {rowOf(cert), rowOf(cert)}, "another team": {otherTeam},
+		"no alias": {noAlias}, "no member key": {noKey}, "global without did:aw": {globalWithoutID},
 	} {
 		_, err := removeMemberAsOwner(context.Background(), service.options(), profile, ownerRemoveBySelector(cert, &listing{rows: rows}))
 		if err == nil || len(service.prepareBodies) != 0 {
@@ -407,5 +419,233 @@ func TestAFreshSelectionRemovesTheListedMembership(t *testing.T) {
 	subject := service.revoke.sent["subject"].(map[string]any)
 	if subject["member_id"] != cert.MemberDIDAW || subject["expected_membership"].(map[string]any)["member_did_aw"] != cert.MemberDIDAW {
 		t.Fatalf("subject %v", subject)
+	}
+}
+
+// listingRegistry answers a team's active certificate listing, page by page,
+// recording who signed each read.
+type listingRegistry struct {
+	server  *httptest.Server
+	status  int
+	pages   [][]awid.RegistryCertificate
+	failAt  int // the page index that fails, or -1
+	signers []string
+	paths   []string
+}
+
+func newListingRegistry(t *testing.T, pages ...[]awid.RegistryCertificate) *listingRegistry {
+	r := &listingRegistry{status: http.StatusOK, pages: pages, failAt: -1}
+	r.server = httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, req *http.Request) {
+		r.paths = append(r.paths, req.URL.Path)
+		r.signers = append(r.signers, req.Header.Get("Authorization"))
+		page := 0
+		if cursor := req.URL.Query().Get("cursor"); cursor != "" {
+			_, _ = fmt.Sscanf(cursor, "page-%d", &page)
+		}
+		w.Header().Set("Content-Type", "application/json")
+		if r.status != http.StatusOK || page == r.failAt {
+			w.WriteHeader(failureStatus(r.status))
+			_, _ = w.Write([]byte(`{"detail":"refused"}`))
+			return
+		}
+		answer := map[string]any{"certificates": r.pages[page], "has_more": page+1 < len(r.pages)}
+		if page+1 < len(r.pages) {
+			answer["next_cursor"] = fmt.Sprintf("page-%d", page+1)
+		}
+		_ = json.NewEncoder(w).Encode(answer)
+	}))
+	t.Cleanup(r.server.Close)
+	return r
+}
+
+func failureStatus(status int) int {
+	if status == http.StatusOK {
+		return http.StatusServiceUnavailable
+	}
+	return status
+}
+
+func memberListingAt(t *testing.T, registryURL string, key ed25519.PrivateKey) (func(context.Context, string) ([]awid.RegistryCertificate, error), error) {
+	t.Helper()
+	registry, err := newConfiguredRegistryClient(nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := registry.TrustRegistryOrigin(registryURL); err != nil {
+		t.Fatal(err)
+	}
+	return memberCertificateListing(registry, &handoff.Profile{RegistryOrigin: registryURL}, key)
+}
+
+func TestTheListingIsReadAtThePinnedRegistrySignedByThisHomesKey(t *testing.T) {
+	teamKey, _, _ := ownerRemoveTestSetup(t)
+	cert, _ := awid.LoadTeamCertificate(removeTestCertificate(t, teamKey, ""))
+	pinned := newListingRegistry(t, []awid.RegistryCertificate{rowOf(cert)})
+	configured := newListingRegistry(t, nil)
+	t.Setenv("AWID_REGISTRY_URL", configured.server.URL)
+	public, key, _ := ed25519.GenerateKey(nil)
+	list, err := memberListingAt(t, pinned.server.URL, key)
+	if err != nil {
+		t.Fatal(err)
+	}
+	rows, err := list(context.Background(), cert.Team)
+	if err != nil || len(rows) != 1 || rows[0].CertificateID != cert.CertificateID {
+		t.Fatalf("rows %v, %v", rows, err)
+	}
+	if len(configured.paths) != 0 || len(pinned.paths) != 1 || !strings.Contains(pinned.signers[0], awid.ComputeDIDKey(public)) {
+		t.Fatalf("pinned %v signed %v; configured %v", pinned.paths, pinned.signers, configured.paths)
+	}
+}
+
+func TestAHomeWithoutItsKeyCannotSelectFromThePrivateListing(t *testing.T) {
+	pinned := newListingRegistry(t, nil)
+	if _, err := memberListingAt(t, pinned.server.URL, nil); errorCodeOf(err) != "selector_unauthorized" || len(pinned.paths) != 0 {
+		t.Fatalf("err %v after %d reads", err, len(pinned.paths))
+	}
+}
+
+func TestARefusedOrIncompleteListingSelectsNothing(t *testing.T) {
+	teamKey, profile, service := ownerRemoveTestSetup(t)
+	cert, _ := awid.LoadTeamCertificate(removeTestCertificate(t, teamKey, ""))
+	forbidden := newListingRegistry(t, []awid.RegistryCertificate{rowOf(cert)})
+	forbidden.status = http.StatusForbidden
+	midway := newListingRegistry(t, nil, []awid.RegistryCertificate{rowOf(cert)})
+	midway.failAt = 1
+	_, key, _ := ed25519.GenerateKey(nil)
+	for name, registry := range map[string]*listingRegistry{"forbidden": forbidden, "failed second page": midway} {
+		list, err := memberListingAt(t, registry.server.URL, key)
+		if err != nil {
+			t.Fatal(err)
+		}
+		request := ownerRemovalRequest{Team: cert.Team, CertificateID: cert.CertificateID, RequesterKey: removeTestRootKey, List: list}
+		_, err = removeMemberAsOwner(context.Background(), service.options(), profile, request)
+		if err == nil || errorCodeOf(err) == "certificate_not_found" || len(service.prepareBodies) != 0 {
+			t.Errorf("%s: err %v (code %q) after %d prepares", name, err, errorCodeOf(err), len(service.prepareBodies))
+		}
+	}
+}
+
+func TestAnOwnerRemovalNamesItsTargetOneWay(t *testing.T) {
+	for name, flags := range map[string][3]string{
+		"nothing":            {"", "", ""},
+		"file and selector":  {"worker.cert", "engineering:customer.example", "d511db2c-430c-41ab-a823-87fe43070cf3"},
+		"team without id":    {"", "engineering:customer.example", ""},
+		"id without team":    {"", "", "d511db2c-430c-41ab-a823-87fe43070cf3"},
+		"file and team only": {"worker.cert", "engineering:customer.example", ""},
+	} {
+		var usage *cliError
+		if err := ownerRemovalTargetFlags(flags[0], flags[1], flags[2]); !errors.As(err, &usage) || usage.ExitCode() != 2 {
+			t.Errorf("%s: accepted", name)
+		}
+	}
+	for name, flags := range map[string][3]string{
+		"file":     {"worker.cert", "", ""},
+		"selector": {"", "engineering:customer.example", "d511db2c-430c-41ab-a823-87fe43070cf3"},
+	} {
+		if err := ownerRemovalTargetFlags(flags[0], flags[1], flags[2]); err != nil {
+			t.Errorf("%s: %v", name, err)
+		}
+	}
+}
+
+func TestOwnerOnlyFlagsAreRefusedWithoutOwnerApproval(t *testing.T) {
+	// Every root-mode input is otherwise in place, so only the owner-only
+	// flags make this a usage error.
+	teamKey, _, _ := ownerRemoveTestSetup(t)
+	profilePath := filepath.Join(t.TempDir(), "protected-profile.json")
+	if err := os.WriteFile(profilePath, admitTestProfileJSON(teamKey, admitTestHuman), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("AWEB_PROTECTED_PROFILE", profilePath)
+	teamRemoveAgentCertificateFlag = removeTestCertificate(t, teamKey, "")
+	t.Cleanup(func() {
+		teamRemoveAgentCertificateFlag, teamRemoveAgentTeamFlag, teamRemoveAgentCertificateIDFlag, teamRemoveAgentNoWaitFlag, teamRemoveAgentNoBrowserFlag = "", "", "", false, false
+	})
+	set := map[string]func(){
+		"team":           func() { teamRemoveAgentTeamFlag = "engineering:customer.example" },
+		"certificate-id": func() { teamRemoveAgentCertificateIDFlag = "d511db2c-430c-41ab-a823-87fe43070cf3" },
+		"no-wait":        func() { teamRemoveAgentNoWaitFlag = true },
+		"no-browser":     func() { teamRemoveAgentNoBrowserFlag = true },
+	}
+	for name, apply := range set {
+		teamRemoveAgentTeamFlag, teamRemoveAgentCertificateIDFlag, teamRemoveAgentNoWaitFlag, teamRemoveAgentNoBrowserFlag = "", "", false, false
+		apply()
+		// A usage error, before any profile or identity is read.
+		var usage *cliError
+		if err := runTeamRemoveAgent(teamRemoveAgentCmd, nil); !errors.As(err, &usage) || usage.ExitCode() != 2 {
+			t.Errorf("%s: %v", name, err)
+		}
+	}
+}
+
+func TestASavedOperationForAnythingElseIsNeverContinued(t *testing.T) {
+	type variant struct {
+		explicitID bool
+		change     func(saved *awconfig.PendingGovernanceOperation, body map[string]any)
+	}
+	for name, v := range map[string]variant{
+		"another service": {true, func(saved *awconfig.PendingGovernanceOperation, _ map[string]any) {
+			saved.RequestOrigin = "https://other-signer.example"
+		}},
+		"another binding": {true, func(_ *awconfig.PendingGovernanceOperation, body map[string]any) {
+			body["scope"].(map[string]any)["generation"] = 2
+		}},
+		"another registry": {true, func(_ *awconfig.PendingGovernanceOperation, body map[string]any) { body["audience"] = "https://other-registry.example" }},
+		"the root's removal": {true, func(_ *awconfig.PendingGovernanceOperation, body map[string]any) { body["variant"] = "default" }},
+		"another snapshot": {true, func(_ *awconfig.PendingGovernanceOperation, body map[string]any) {
+			body["subject"].(map[string]any)["expected_membership"].(map[string]any)["alias"] = "renamed"
+		}},
+		"another snapshot, found by target": {false, func(_ *awconfig.PendingGovernanceOperation, body map[string]any) {
+			body["subject"].(map[string]any)["expected_membership"].(map[string]any)["alias"] = "renamed"
+		}},
+	} {
+		teamKey, profile, service := ownerRemoveTestSetup(t)
+		certificate := removeTestCertificate(t, teamKey, "")
+		cert, _ := awid.LoadTeamCertificate(certificate)
+		body := ownerRemovalIntent(profile, mustAdmissionBinding(t, profile, cert.Team), cert)
+		body["operation_id"] = ownerRemoveTestOperation
+		raw, _ := json.Marshal(body)
+		body, _ = handoff.DecodeObject(raw)
+		saved := &awconfig.PendingGovernanceOperation{OperationID: ownerRemoveTestOperation, RequestOrigin: profile.RequestOrigin, HumanOrigin: profile.HumanOrigin}
+		v.change(saved, body)
+		saved.Body, _ = json.Marshal(body)
+		if err := awconfig.SavePendingGovernanceOperation(saved); err != nil {
+			t.Fatal(err)
+		}
+		request := ownerRemoveByFile(certificate)
+		if !v.explicitID {
+			request.OperationID = ""
+		}
+		report, err := removeMemberAsOwner(context.Background(), service.options(), profile, request)
+		if v.explicitID && errorCodeOf(err) != "operation_conflict" || !v.explicitID && report["operation_id"] == ownerRemoveTestOperation {
+			t.Errorf("%s: report %v, err %v", name, report, err)
+		}
+		for _, sent := range service.prepareBodies {
+			if bytes.Equal(sent, saved.Body) {
+				t.Errorf("%s: the saved request was sent", name)
+			}
+		}
+	}
+}
+
+func TestASavedOperationIsContinuedFromItsOwnBytes(t *testing.T) {
+	teamKey, profile, service := ownerRemoveTestSetup(t)
+	certificate := removeTestCertificate(t, teamKey, "")
+	cert, _ := awid.LoadTeamCertificate(certificate)
+	body := ownerRemovalIntent(profile, mustAdmissionBinding(t, profile, cert.Team), cert)
+	body["operation_id"] = ownerRemoveTestOperation
+	body["redirect_uri"] = "http://127.0.0.1:1/callback"
+	raw, _ := json.Marshal(body)
+	if err := awconfig.SavePendingGovernanceOperation(&awconfig.PendingGovernanceOperation{OperationID: ownerRemoveTestOperation,
+		RequestOrigin: profile.RequestOrigin, HumanOrigin: profile.HumanOrigin, Body: raw}); err != nil {
+		t.Fatal(err)
+	}
+	for _, request := range []ownerRemovalRequest{ownerRemoveByFile(certificate), ownerRemoveBySelector(cert, &listing{err: errors.New("unreadable")})} {
+		service.receipt = "unavailable"
+		_, _ = removeMemberAsOwner(context.Background(), service.options(), profile, request)
+		last := service.prepareBodies[len(service.prepareBodies)-1]
+		if !bytes.Equal(last, raw) {
+			t.Fatalf("sent %s, saved %s", last, raw)
+		}
 	}
 }

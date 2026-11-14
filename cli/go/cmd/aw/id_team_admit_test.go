@@ -33,6 +33,15 @@ const (
 // controller key teamKey once per human in humans.
 func admitTestProfile(t *testing.T, teamKey ed25519.PrivateKey, humans ...string) *handoff.Profile {
 	t.Helper()
+	profile, err := handoff.ParseProfile(admitTestProfileJSON(teamKey, humans...))
+	if err != nil {
+		t.Fatal(err)
+	}
+	return profile
+}
+
+// admitTestProfileJSON is admitTestProfile's provisioned file.
+func admitTestProfileJSON(teamKey ed25519.PrivateKey, humans ...string) []byte {
 	var bindings []any
 	for _, human := range humans {
 		bindings = append(bindings, map[string]any{
@@ -50,11 +59,7 @@ func admitTestProfile(t *testing.T, teamKey ed25519.PrivateKey, humans ...string
 		"namespace_authorities": []any{map[string]any{"domain": "customer.example", "controller_did": awid.ComputeDIDKey(teamKey.Public().(ed25519.PublicKey))}},
 		"bindings":              bindings,
 	})
-	profile, err := handoff.ParseProfile(raw)
-	if err != nil {
-		t.Fatal(err)
-	}
-	return profile
+	return raw
 }
 
 // admitService stands in for the protected service's bounded admission: it
