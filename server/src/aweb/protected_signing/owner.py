@@ -14,6 +14,7 @@ from html import escape
 
 from aweb_naapp.runtime.protected_signer import SignerRefused
 from aweb_naapp.runtime.protected_signer.admission_policy import AdmissionPolicy
+from aweb_naapp.runtime.protected_signer.catalog import OPERATIONS
 
 from .admission import admission_counts
 
@@ -38,7 +39,20 @@ async def _component_for(composition, scope):
     raise SignerRefused("scope_refused")
 
 
-async def owner_view(composition, *, scope: str, now: datetime | None = None) -> dict:
+def _title(request):
+    """The operation definition's own question for this frozen request."""
+    spec = OPERATIONS.get((request.get("operation"), request.get("variant", "default")))
+    if spec is None:
+        return request.get("operation")
+    try:
+        return spec.display.render(request)["title"]
+    except SignerRefused:
+        return request.get("operation")
+
+
+async def owner_view(composition, *, scope: str, subject: str, now: datetime | None = None) -> dict:
+    """``subject`` is the signed-in approver: the page names them and marks
+    the decisions they made, even when the scope has other approvers."""
     c = await _component_for(composition, scope)
     context = c.context
     now = datetime.now(UTC) if now is None else now
@@ -50,6 +64,7 @@ async def owner_view(composition, *, scope: str, now: datetime | None = None) ->
         "ORDER BY expires_at DESC"
     )
     pending, history, requests = [], [], {}
+    approvers = await _approvers(c, scope)
     for row in rows:
         request = _json(row["request"])
         requests[row["operation_id"]] = request
@@ -57,7 +72,8 @@ async def owner_view(composition, *, scope: str, now: datetime | None = None) ->
             continue
         entry = {"operation_id": row["operation_id"], "operation": request["operation"],
             "requester": row["requester"], "digest": row["digest"],
-            "asked_at": request.get("artifact", {}).get("issued_at")}
+            "asked_at": request.get("artifact", {}).get("issued_at"), "title": _title(request),
+            "approval_id": row["approval_id"]}
         if row["approval_id"] is None:
             # Bounded unattended work (admissions) is listed under added agents.
             continue
@@ -78,12 +94,17 @@ async def owner_view(composition, *, scope: str, now: datetime | None = None) ->
         "authority": {"kind": context.authority_kind, "id": context.authority_id, "domain": context.authority_domain,
             "human": context.human_id},
         "pending": pending,
-        "history": await _deciders(c, history[:HISTORY_LIMIT]),
+        "history": await _deciders(c, history[:HISTORY_LIMIT], subject),
         "admitted": [],
         "roots": [],
         "policy": None,
-        "approvers": await _approvers(c, scope),
+        "approvers": approvers,
+        "you": next((a["contact"] for a in approvers if a["subject"] == subject), None),
     }
+    for item in [*pending, *view["history"]]:
+        del item["approval_id"]
+    for approver in approvers:
+        del approver["subject"]
     if context.authority_kind == "team_controller":
         await _admissions(c, view, requests, now)
     return view
@@ -118,17 +139,14 @@ async def _admissions(c, view, requests, now):
                 "next_at": _stamp(counts["next_at"])})
 
 
-async def _deciders(c, history):
-    """Mark each decision the signed-in person made: the signer audits the
-    approving human as the actor of a signed or refused operation."""
-    human = c.context.human_id
+async def _deciders(c, history, subject):
+    """Mark each decision the signed-in approver made. The approval records
+    which approver decided; the audit names only the governed human, the same
+    for every approver of the scope."""
     for item in history:
-        actor = await c.db.fetch_value(
-            "SELECT actor FROM {{tables.protected_local_audit}} WHERE subject=$1 "
-            "AND kind IN ('protected_operation_signed','protected_operation_refused') ORDER BY sequence DESC LIMIT 1",
-            item["operation_id"],
-        )
-        item["decided_by_you"] = actor == human
+        approval = await c.signer.store.get(item["approval_id"])
+        decider = approval.decided_by if approval is not None else None
+        item["decided_by_you"] = decider is not None and decider.subject == subject
     return history
 
 
@@ -142,7 +160,7 @@ async def _approvers(c, scope):
             "WHERE subject=$1 AND revoked_at IS NULL ORDER BY created_at",
             row["subject"],
         )
-        approvers.append({"contact": row["contact"], "passkeys": [
+        approvers.append({"subject": row["subject"], "contact": row["contact"], "passkeys": [
             {"key_id": hashlib.sha256(bytes(p["credential_id"])).hexdigest()[:8], "added_at": _stamp(p["created_at"])}
             for p in passkeys]})
     return approvers
@@ -183,17 +201,15 @@ def _team_name(team_id):
 
 
 def owner_page_html(view: dict) -> str:
-    """The owner page's HTML from owner_view. Every value is escaped. What a
-    request asks for comes from each operation's display definition once it
-    exists; until then a request names who asked and when."""
+    """The owner page's HTML from owner_view. Every value is escaped. Each
+    request reads as its operation definition's own question."""
     e = lambda value: escape(str(value), quote=True)  # noqa: E731
     authority = view["authority"]
     team = authority["kind"] == "team_controller"
     title = f"Approvals for team {_team_name(authority['id'])}" if team else "Your own approvals"
-    contacts = [a["contact"] for a in view["approvers"] if a["contact"]]
     parts = [f"<h1>{e(title)}</h1>"]
-    if contacts:
-        parts.append(f"<p>Signed in as {e(contacts[0])}</p>")
+    if view["you"]:
+        parts.append(f"<p>Signed in as {e(view['you'])}</p>")
     parts.append('<form id="logout"><button class="btn secondary" type="submit">Sign out</button></form>')
     parts.append("<h2>Waiting for you</h2>")
     if view["pending"]:
@@ -201,7 +217,8 @@ def owner_page_html(view: dict) -> str:
         for item in view["pending"]:
             asked = f", asked {_time(item['asked_at'])}" if item.get("asked_at") else ""
             parts.append(
-                f'<li><a href="/handoff/{e(item["handoff_id"])}">Review the request from {e(item["requester"])}{asked}</a>'
+                f'<li><a href="/handoff/{e(item["handoff_id"])}">{e(item["title"])}</a>'
+                f'<p>Requested by {e(item["requester"])}{asked}</p>'
                 f'<p>Expires {_time(item["expires_at"])}</p>'
                 + _technical([("Operation", item["operation"]), ("Digest", item["digest"])]) + "</li>"
             )
@@ -250,8 +267,9 @@ def owner_page_html(view: dict) -> str:
             if item.get("decided_by_you") and item["state"] not in ("expired", "unresolved"):
                 outcome += " by you"
             parts.append(
-                f'<li>{e(outcome)}, {_time(item["at"])}: a request from {e(item["requester"])}'
-                + _technical([("Operation", item["operation"]), ("Digest", item["digest"])]) + "</li>"
+                f'<li>{e(outcome)}, {_time(item["at"])}: {e(item["title"])}'
+                + _technical([("Requested by", item["requester"]), ("Operation", item["operation"]),
+                    ("Digest", item["digest"])]) + "</li>"
             )
         parts.append("</ul>")
     else:
@@ -272,6 +290,6 @@ def owner_router(composition, *, sessions, csrf_key):
     from .bootstrap import protected_shell
 
     async def home(session):
-        return owner_page_html(await owner_view(composition, scope=session.scope))
+        return owner_page_html(await owner_view(composition, scope=session.scope, subject=session.subject))
 
     return protected_shell(csrf_key).router(sessions=sessions, home_title="Approvals", home=home)
