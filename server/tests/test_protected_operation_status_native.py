@@ -292,7 +292,9 @@ async def test_status_refusals_create_nothing_and_leave_history_unchanged(admiss
         expected = (401, "requester_invalid")
     before = await snapshot(a.w.db)
     calls = forbid_effects(a, monkeypatch)
-    proof = dict(proof_request(a.w, key=key, path=path, method="GET", operation="protected_operation_receipt", context=context).headers)
+    # The actual GET has no body. Authenticate that exact request before
+    # exercising requester scope, registry availability or retired-key checks.
+    proof = dict(proof_request(a.w, key=key, body=b"", path=path, method="GET", operation="protected_operation_receipt", context=context).headers)
     proof["X-AWEB-DID-AW"] = principal
     for _ in range(2):
         response = await a.client.get(path, headers=proof)
