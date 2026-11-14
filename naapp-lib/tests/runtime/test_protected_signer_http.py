@@ -378,7 +378,7 @@ async def test_an_unexpected_failure_is_logged_by_route_and_class_only(http_worl
     assert response.status_code == 503 and response.json() == {"detail": "receipt_unavailable"}
     [record] = [r for r in caplog.records if r.levelno >= logging.ERROR]
     template = "/protected-operations" if method == "POST" else "/protected-operations/{operation_id}"
-    assert (record.route, record.operation_id, record.failure) == (template, operation_id, "UndefinedTableError")
+    assert (record.route, record.operation_id, record.failure) == (template, operation_id, "QueryError")
     logged = caplog.text + "".join(str(r.__dict__) for r in caplog.records)
     for secret in (UNEXPECTED_CANARY, "http_requesters", sent["Authorization"].split()[-1],
                    sent["X-AWEB-Signed-Payload"]):

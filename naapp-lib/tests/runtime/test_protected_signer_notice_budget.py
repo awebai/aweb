@@ -32,7 +32,7 @@ async def test_past_the_budget_a_request_is_created_but_not_mailed_and_that_is_r
     # The answer has the same members as a mailed one: deployed aw reads it unchanged.
     assert asdict(over).keys() == asdict(mailed[0]).keys()
     receipt = await signer.receipt(over.operation_id, reader=world.reader)
-    assert (receipt.state, receipt.reason) == ("pending", "awaiting_human")
+    assert receipt.state == "pending" and receipt.expires_at == over.expires_at
     [suppressed] = await suppressions(world)
     assert suppressed["subject"] == over.operation_id and suppressed["actor"] == world.requester.principal
 

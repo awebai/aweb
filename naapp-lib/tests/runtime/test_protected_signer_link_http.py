@@ -220,7 +220,7 @@ async def test_an_unexpected_failure_on_a_link_route_is_logged_without_its_token
     assert response.status_code == 503 and response.json() == {"detail": "receipt_unavailable"}
     [record] = [r for r in caplog.records if r.levelno >= logging.ERROR]
     assert (record.route, record.operation_id, record.failure) == (
-        "/handoff/{handoff_id}/link", None, "UndefinedTableError")
+        "/handoff/{handoff_id}/link", None, "QueryError")
     logged = caplog.text + "".join(str(r.__dict__) for r in caplog.records)
     for secret in (token, prepared.handoff_id, "protected_signer_operations"):
         assert secret not in logged
