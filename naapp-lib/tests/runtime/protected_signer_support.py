@@ -70,13 +70,17 @@ class SQLAuthority:
                     actor.principal != context.human_id or actor.subject != row["subject"]
                 ):
                     raise SignerRefused("scope_refused")
-                if not isinstance(actor, AdmittedHuman) and actor.principal != "agent-requester":
+                if not isinstance(actor, AdmittedHuman) and actor.principal not in REQUESTERS:
                     raise SignerRefused("scope_refused")
 
             def require_fresh(self):
                 pass  # This fixture authority is local SQL, held through commit.
 
         return Fence()
+
+
+# The restricted requesters this fixture authority holds current.
+REQUESTERS = {"agent-requester"}
 
 
 class ControllerCustody:
