@@ -350,6 +350,19 @@ import { renderDisplay, displayRefusal } from "/handoff-assets/protected-display
   const unconfirmed = ["Not confirmed",
     "This page could not confirm what happened. Your owner page shows the outcome under History."];
 
+  // The signer answered that it could not finish now (503): the act is not
+  // known to be done, and the same act can be tried again. Pressing Approve
+  // again asks for options, which say whether another passkey check is needed.
+  function notYet() {
+    status.textContent = "Not completed yet: the signer could not finish this right now. Try again.";
+    action.disabled = false;
+    deny.disabled = true;
+    document.body.dataset.handoffState = "retry";
+    inFlight = false;
+    submitted = false;
+    action.focus();
+  }
+
   function outcome(title, text) {
     decided = true;
     // Once decided, the card describes what was asked, not what it does.
@@ -400,6 +413,13 @@ import { renderDisplay, displayRefusal } from "/handoff-assets/protected-display
     let sent = false;
     try {
       const options = await linkPost("/options", {token: linkToken, decision});
+      if (decision === "approve" && options.state === "approved") {
+        // You already approved this exact act and nothing is signed yet:
+        // finishing it needs no new passkey check.
+        sent = true;
+        linkOutcome(await linkPost("/decide", {token: linkToken, decision, assertion: {}}));
+        return;
+      }
       if (options.userVerification !== "required") throw new Error("handoff_refused");
       const credential = await navigator.credentials.get({
         publicKey: PublicKeyCredential.parseRequestOptionsFromJSON(options),
@@ -417,6 +437,8 @@ import { renderDisplay, displayRefusal } from "/handoff-assets/protected-display
         document.body.dataset.handoffState = "ready";
         inFlight = false;
         pressed.focus();
+      } else if (sent && error.status === 503) {
+        notYet();
       } else if (sent) {
         document.body.dataset.handoffState = "unconfirmed";
         outcome(...unconfirmed);
@@ -573,6 +595,12 @@ import { renderDisplay, displayRefusal } from "/handoff-assets/protected-display
         return;
       }
       const options = await request("/options", {});
+      if (governance && operationId && options.state === "approved") {
+        // You already approved this exact act and nothing is signed yet.
+        submitted = true;
+        await governanceComplete(await request("/execute", {assertion: {}}));
+        return;
+      }
       if (governance) {
         if (!operationId || options.userVerification !== "required") throw new Error("handoff_refused");
         const credential = await navigator.credentials.get({
@@ -614,6 +642,8 @@ import { renderDisplay, displayRefusal } from "/handoff-assets/protected-display
         action.focus();
       } else if (governance && loggedIn && !submitted && error.status === 401) {
         signedOut();
+      } else if (governance && submitted && error.status === 503) {
+        notYet();
       } else {
         failed();
       }
