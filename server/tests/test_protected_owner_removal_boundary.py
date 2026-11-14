@@ -4,9 +4,10 @@ These component controls use the definition's actual issued artifact and
 retained HTTP request; they do not claim the pending intent_v1 client handoff.
 """
 
+import base64
 import hashlib
 import json
-from datetime import timedelta
+from datetime import datetime, timedelta
 
 import pytest
 from awid.protected_effect import HEADER
@@ -14,7 +15,7 @@ from awid.registry_types import RegistryError
 
 from tests.test_independent_protected_signer import DOMAIN
 from tests.test_protected_admission_native import execute, prepare
-from tests.test_protected_boundary_retention_native import activate
+from tests.protected_consumer_support import activate
 from tests.test_protected_owner_removal_native import (
     legacy_member,
     owner_execute,
@@ -28,7 +29,8 @@ pytest_plugins = ("tests.test_protected_admission_native",)
 
 async def retained_row(a, operation):
     return await a.w.db.fetch_one(
-        "SELECT signed_result,retained_effect,delivery_claim FROM {{tables.protected_signer_operations}} "
+        "SELECT request,expires_at,issued_artifact,signed_result,retained_effect,delivery_claim "
+        "FROM {{tables.protected_signer_operations}} "
         "WHERE operation_id=$1", operation.operation_id)
 
 
@@ -42,7 +44,11 @@ async def test_owner_uv_reaches_marked_revocation_with_exact_proof_and_receipt(
     _, certificate = await legacy_member(a, kind)
     custody = await activate(a, tmp_path)
     operation = owner_removal(a, certificate)
-    assert (await prepare(a, operation)).status_code == 200
+    prepared = await prepare(a, operation)
+    assert prepared.status_code == 200
+    frozen_request = prepared.json()["payload"]["request"]
+    descriptor = frozen_request["artifact"]
+    assert descriptor["type"] == "aweb.protected-artifact-intent"
     no_uv = await execute(a, operation)
     assert no_uv.status_code == 403 and no_uv.json()["detail"] == "live_approval_required"
     assert await signature_count(a, operation) == 0
@@ -88,6 +94,14 @@ async def test_owner_uv_reaches_marked_revocation_with_exact_proof_and_receipt(
     row = await retained_row(a, operation)
     retained = json.loads(row["retained_effect"])
     assert row["delivery_claim"] is not None
+    assert json.loads(row["request"]) == frozen_request
+    issued = json.loads(row["issued_artifact"])
+    issued_request = dict(issued["request"])
+    timestamp = issued_request.pop("timestamp")
+    assert {**issued, "request": issued_request} == descriptor["template"]
+    window = descriptor["issuance_window"]
+    assert datetime.fromisoformat(window["not_before"]) <= datetime.fromisoformat(timestamp) <= datetime.fromisoformat(window["not_after"])
+    assert json.loads(base64.b64decode(result.result["artifact"]["signing"])) == issued["request"]
     # The real consumer validated the signature, current binding and exact
     # request; its committed receipt must associate this same proof and act.
     receipt = await a.w.host.db.fetch_one(
