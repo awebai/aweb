@@ -86,6 +86,10 @@ ROOT_CONSUMERS = {
         "id-certificates-v1.json",
         "Path(__file__).resolve().parents[2] / 'docs/vectors/id-certificates-v1.json'",
     ),
+    PurePosixPath("awid/tests/test_cross_registry_python_verifier.py"): _consumer(
+        "id-certificates-v1.json",
+        'Path(__file__).resolve().parents[2]',
+    ),
     PurePosixPath("awid/tests/id_tree_support.py"): _consumer(
         "id-certificates-v1.json",
         'Path(__file__).resolve().parents[2] / "docs" / "vectors"',
