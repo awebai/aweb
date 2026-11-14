@@ -543,9 +543,10 @@ func resolveClientSelectionForAliasTarget(ctx context.Context, targetAlias strin
 	if found {
 		return c, sel, nil
 	}
-	// Preserve a current-team human alias before native-agent fallback searches
-	// another local membership with the same display label.
-	if _, live, lookupErr := resolveLiveTeamMemberAliasTarget(ctx, sel, targetAlias); lookupErr == nil && live {
+	// Only a successful absent lookup may search another team's aliases.
+	// On unavailable evidence, keep this team and let its service resolve the
+	// unchanged alias with its current membership and recipient policy.
+	if _, live, lookupErr := resolveLiveTeamMemberAliasTarget(ctx, sel, targetAlias); lookupErr != nil || live {
 		return c, sel, nil
 	}
 
@@ -583,6 +584,7 @@ func resolveClientSelectionForAliasTarget(ctx context.Context, targetAlias strin
 	}
 	if len(candidates) == 1 {
 		lastClient = candidates[0].client
+		fmt.Fprintf(os.Stderr, "Using team %s for %s.\n", termtext.Line(candidates[0].selection.TeamID), termtext.Line(targetAlias))
 		return candidates[0].client, candidates[0].selection, nil
 	}
 	if len(candidates) > 1 {
@@ -1656,7 +1658,11 @@ func networkError(err error, target string) error {
 		case "local_recipient_route_missing":
 			return errors.New(awid.UnreachableAddressText(target))
 		}
-		return fmt.Errorf("agent not found: %s", target)
+		return &plainRefusal{
+			text:        fmt.Sprintf("agent not found: %s", target),
+			err:         err,
+			jsonMessage: awid.DescribeError(err).Detail,
+		}
 	}
 	return err
 }

@@ -73,6 +73,8 @@ func errorCodeOf(err error) string {
 type plainRefusal struct {
 	text string
 	err  error
+	// Preserve the server's sentence in JSON when terminal text names a target.
+	jsonMessage string
 }
 
 func (e *plainRefusal) Error() string { return e.text }
@@ -144,6 +146,10 @@ type cliErrorBody struct {
 
 func errorEnvelope(err error, message string) cliErrorEnvelope {
 	detail := awid.DescribeError(err)
+	var plain *plainRefusal
+	if errors.As(err, &plain) && plain.jsonMessage != "" {
+		message = plain.jsonMessage
+	}
 	var coded *codedError
 	if errors.As(err, &coded) {
 		detail.Code = coded.code
