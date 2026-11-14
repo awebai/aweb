@@ -21,9 +21,7 @@ from aweb_naapp.runtime.protected_signer import (
     RetainedEffect,
     SignerRefused,
 )
-from tests.runtime.test_protected_signer import approve
-
-pytest_plugins = ("tests.runtime.test_protected_signer",)
+from tests.runtime.protected_signer_support import approve
 
 
 class EffectPort:

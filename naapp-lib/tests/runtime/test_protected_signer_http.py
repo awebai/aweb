@@ -27,9 +27,7 @@ from aweb_naapp.console import (
 )
 from aweb_naapp.runtime.protected_signer import SignerRefused
 from aweb_naapp.runtime.protected_signer.http import ProtectedOperationsHTTP
-from tests.runtime.test_protected_signer import ORIGIN, SCOPE, did_key
-
-pytest_plugins = ("tests.runtime.test_protected_signer",)
+from tests.runtime.protected_signer_support import ORIGIN, SCOPE, did_key
 
 
 @pytest_asyncio.fixture
