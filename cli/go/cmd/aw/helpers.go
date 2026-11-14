@@ -1658,7 +1658,11 @@ func networkError(err error, target string) error {
 		case "local_recipient_route_missing":
 			return errors.New(awid.UnreachableAddressText(target))
 		}
-		return fmt.Errorf("agent not found: %s", target)
+		return &plainRefusal{
+			text:        fmt.Sprintf("agent not found: %s", target),
+			err:         err,
+			jsonMessage: awid.DescribeError(err).Detail,
+		}
 	}
 	return err
 }
