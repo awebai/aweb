@@ -77,10 +77,110 @@ class ServerDispatchTests(unittest.TestCase):
                 PUBLISH.publish(self.root, "awid-service-v2.3.4", only="oci")
 
     def test_tag_workflows_select_both_server_artifacts(self):
-        for workflow, lane in (("pypi-release.yml", "pypi"), ("service-image-release.yml", "oci")):
+        for workflow, invocation in (("pypi-release.yml", '--only pypi "${GITHUB_REF_NAME}"'),
+                                     ("service-image-release.yml", '--only oci "$RELEASE_TAG"')):
             source = (ROOT / ".github/workflows" / workflow).read_text()
             self.assertIn('"server-v*"', source)
-            self.assertIn(f'python3 scripts/publish_release.py --only {lane} "${{GITHUB_REF_NAME}}"', source)
+            self.assertIn(f'python3 scripts/publish_release.py {invocation}', source)
+        # On a tag push the image lane's tag is the pushed tag itself.
+        self.assertIn("|| github.ref_name }}", (ROOT / ".github/workflows/service-image-release.yml").read_text())
+
+
+IMAGE_WORKFLOW = ROOT / ".github/workflows/service-image-release.yml"
+
+
+def workflow_step_script(name):
+    """The run block of one step of the image workflow, exactly as GitHub runs it."""
+    lines = IMAGE_WORKFLOW.read_text().splitlines()
+    start = lines.index(f"      - name: {name}")
+    run = next(i for i in range(start + 1, len(lines)) if lines[i] == "        run: |")
+    body = []
+    for line in lines[run + 1:]:
+        if line and not line.startswith("          "):
+            break
+        body.append(line[10:])
+    return "\n".join(body) + "\n"
+
+
+class ImageRecoveryDispatchTests(unittest.TestCase):
+    """An existing tag's image can be published again by dispatch, from main's publisher."""
+
+    def test_publication_builds_the_tags_commit_when_the_publisher_is_later(self):
+        temporary, root = test_shipping.TagContractTest.repository(self)
+        self.addCleanup(temporary.cleanup)
+        command(root, "git", "tag", "server-v1.2.3")
+        tagged = command(root, "git", "rev-parse", "HEAD")
+        (root / "PUBLISHER_FIX").write_text("main moved on after the tag\n")
+        command(root, "git", "add", "PUBLISHER_FIX")
+        command(root, "git", "commit", "-qm", "publisher fix after the tag")
+        later = command(root, "git", "rev-parse", "HEAD")
+        self.assertNotEqual(later, tagged)
+        built = []
+
+        def publish_oci(checkout, prefix, version, sha):
+            built.append((command(checkout, "git", "rev-parse", "HEAD"), prefix, version, sha))
+
+        with patch.object(PUBLISH, "publish_pypi") as pypi, patch.object(PUBLISH, "publish_oci", publish_oci):
+            PUBLISH.publish(root, "server-v1.2.3", only="oci")
+        pypi.assert_not_called()
+        self.assertEqual(built, [(tagged, "server-v", "1.2.3", tagged)])
+        self.assertEqual(command(root, "git", "rev-parse", "HEAD"), later)
+
+    def test_workflow_offers_a_tag_input_and_keys_concurrency_to_the_tag(self):
+        source = IMAGE_WORKFLOW.read_text()
+        self.assertIn("  workflow_dispatch:\n    inputs:\n      tag:\n", source)
+        dispatch = source[source.index("  workflow_dispatch:"):source.index("permissions:")]
+        self.assertIn("required: true", dispatch)
+        self.assertIn("type: string", dispatch)
+        # A dispatch and the tag's own push run publish the same image: one at a time.
+        self.assertIn("group: image-${{ github.event_name == 'workflow_dispatch' && format('refs/tags/{0}', inputs.tag) || github.ref }}", source)
+        self.assertIn("RELEASE_TAG: ${{ github.event_name == 'workflow_dispatch' && inputs.tag || github.ref_name }}", source)
+        # The input reaches the shell only through the environment, never as interpolated script text.
+        script = workflow_step_script("Publish or adopt the tagged image")
+        self.assertNotIn("${{", script)
+        # Tags are fetched, so the publisher can resolve the requested one.
+        self.assertIn("fetch-depth: 0", source)
+
+    def run_step(self, event, ref, release_tag):
+        temporary, root = test_shipping.TagContractTest.repository(self)
+        self.addCleanup(temporary.cleanup)
+        command(root, "git", "tag", "server-v1.2.3")
+        command(root, "git", "branch", "server-v9.9.9")  # a branch, not a tag
+        scratch = tempfile.TemporaryDirectory(prefix="aweb-image-step-")
+        self.addCleanup(scratch.cleanup)
+        bin_dir = Path(scratch.name) / "bin"
+        bin_dir.mkdir()
+        calls = Path(scratch.name) / "publisher-calls"
+        (bin_dir / "python3").write_text(f'#!/usr/bin/env bash\nprintf "%s\\n" "$*" >> {calls}\n')
+        (bin_dir / "python3").chmod(0o755)
+        script = workflow_step_script("Publish or adopt the tagged image")
+        result = subprocess.run(["bash", "-e", "-c", script], cwd=root, text=True, capture_output=True,
+                                env={"PATH": f"{bin_dir}:{os.environ['PATH']}", "HOME": scratch.name,
+                                     "GITHUB_EVENT_NAME": event, "GITHUB_REF": ref, "RELEASE_TAG": release_tag,
+                                     "GHCR_USERNAME": "fixture", "GHCR_TOKEN": "fixture-token"})
+        published = calls.read_text().splitlines() if calls.exists() else []
+        return result, published
+
+    def test_push_and_main_dispatch_run_the_publisher_for_the_tag(self):
+        for event, ref in (("push", "refs/tags/server-v1.2.3"), ("workflow_dispatch", "refs/heads/main")):
+            with self.subTest(event=event):
+                result, published = self.run_step(event, ref, "server-v1.2.3")
+                self.assertEqual(result.returncode, 0, result.stderr)
+                self.assertEqual(published, ["scripts/publish_release.py --only oci server-v1.2.3"])
+
+    def test_dispatch_refuses_another_publisher_ref_or_a_name_that_is_not_a_tag(self):
+        cases = {
+            "branch publisher": ("refs/heads/feature", "server-v1.2.3", "image recovery runs main's publisher; dispatched from refs/heads/feature"),
+            "branch named like a tag": ("refs/heads/main", "server-v9.9.9", "no release tag server-v9.9.9"),
+            "absent tag": ("refs/heads/main", "server-v1.2.4", "no release tag server-v1.2.4"),
+            "empty": ("refs/heads/main", "", "no release tag "),
+        }
+        for name, (ref, tag, message) in cases.items():
+            with self.subTest(case=name):
+                result, published = self.run_step("workflow_dispatch", ref, tag)
+                self.assertNotEqual(result.returncode, 0)
+                self.assertIn(message, result.stderr)
+                self.assertEqual(published, [])
 
 
 class ServerOciTests(unittest.TestCase):
