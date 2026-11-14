@@ -952,11 +952,14 @@ class World:
                 (self.world / "signer" / name).chmod(0o644)
             (signer_secrets / "smtp-password").write_text(secrets.token_urlsafe(16))
             # The private controller directory, created as its owner before
-            # the controller is installed into it.
+            # the controller is installed into it. The signer's own uid enters
+            # its secrets directory whatever the launching umask made of it;
+            # each file in it stays its own 0400.
             run("docker", "run", "--rm", "-v", f"{signer_secrets}:/s", "alpine:3.22", "sh", "-c",
                 f"chown {signer_uid}:{signer_uid} /s/database-url /s/smtp-password /s/members.json "
                 f"/s/member-signer.pem && chmod 0400 /s/database-url /s/smtp-password /s/members.json "
-                f"/s/member-signer.pem && install -d -m 0700 -o {signer_uid} -g {signer_uid} /s/private-controller")
+                f"/s/member-signer.pem && install -d -m 0700 -o {signer_uid} -g {signer_uid} /s/private-controller "
+                "&& chmod 0755 /s")
             self.signer_configured = True
             self.deployment()
 
