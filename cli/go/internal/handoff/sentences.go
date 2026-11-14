@@ -9,8 +9,11 @@ import (
 // and is left out of the sentence.
 type Facts struct {
 	OperationID string
-	Team        string
-	ExpiresAt   time.Time
+	// Operation is the definition selector ("operation|variant"); a refusal
+	// its definition names reads as that definition's own sentence.
+	Operation string
+	Team      string
+	ExpiresAt time.Time
 	// RetryAt is when the service said the same request may succeed.
 	RetryAt   time.Time
 	Admission *AdmissionCounts
@@ -131,7 +134,9 @@ var sentences = map[string]func(Facts) string{
 func Sentence(code string, f Facts) string {
 	tell, ok := sentences[code]
 	text := fmt.Sprintf("The signer refused this request (%s).", code)
-	if ok {
+	if own, defined := displayRefusal(f.Operation, code); defined {
+		text = own
+	} else if ok {
 		text = tell(f)
 	}
 	if !f.RetryAt.IsZero() {
