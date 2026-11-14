@@ -1,0 +1,283 @@
+{
+  "schema_version": 1,
+  "status": "proposed amendment; intent_v1 unimplemented; not runtime evidence",
+  "approval": "Juan 2026-11-13 via coordinator d03f6a96, 465f00d3; coordinated rollout cef58d92",
+  "base": "human-assurance-v1.json",
+  "approval_format": "intent_v1",
+  "descriptor": {
+    "members": [
+      "v",
+      "type",
+      "template",
+      "delivery",
+      "issuance_window"
+    ],
+    "v": 1,
+    "type": "aweb.protected-artifact-intent",
+    "delivery_members": [
+      "audience",
+      "method",
+      "path"
+    ],
+    "issuance_window_members": [
+      "not_before",
+      "not_after"
+    ]
+  },
+  "rows": [
+    {
+      "operation": "identity.root.endorse",
+      "variant": "default",
+      "issued_fields": [
+        "/issued_at"
+      ]
+    },
+    {
+      "operation": "human-role.revoke",
+      "variant": "default",
+      "issued_fields": [
+        "/issued_at",
+        "/expires_at"
+      ],
+      "consumer_lifetime_seconds": 600
+    },
+    {
+      "operation": "team.agent.remove",
+      "variant": "owner_approved",
+      "issued_fields": [
+        "/request/timestamp"
+      ],
+      "consumer_freshness_seconds": 300
+    }
+  ],
+  "bounds": {
+    "pending_seconds_at_most": 86400,
+    "uv_seconds_at_most": 300,
+    "owner_act_lifetime_seconds_at_most": 600
+  },
+  "common": "Current exact owner/binding/policy/credential/target checks succeed unless varied. The intent and pending expiry are immutable. This file does not re-freeze base80/53.",
+  "scenarios": [
+    {
+      "id": "mailed-removal-after-five-minutes",
+      "given": {
+        "row": "team.agent.remove/owner_approved",
+        "wait_before_uv_seconds": 3600,
+        "pending_window_seconds": 86400,
+        "fresh_exact_uv": true
+      },
+      "expected": {
+        "outcome": "allow",
+        "issued_request_timestamp": "execution_time",
+        "frozen_request_changed": false
+      }
+    },
+    {
+      "id": "mailed-owner-act-after-ten-minutes",
+      "given": {
+        "row": "human-role.revoke/default",
+        "wait_before_uv_seconds": 7200,
+        "fresh_exact_uv": true
+      },
+      "expected": {
+        "outcome": "allow",
+        "issued_at": "execution_time",
+        "expires_at": "issued_at + definition lifetime <=600s",
+        "frozen_nonce_reused": true
+      }
+    },
+    {
+      "id": "endorsement-uses-same-intent-format",
+      "given": {
+        "row": "identity.root.endorse/default",
+        "wait_before_uv_seconds": 3600,
+        "fresh_exact_uv": true
+      },
+      "expected": {
+        "outcome": "allow",
+        "issued_at": "execution_time",
+        "frozen_root_parent_policy_and_head_unchanged": true,
+        "root_subject_registration_separate": true
+      }
+    },
+    {
+      "id": "expired-pending-is-not-reissued",
+      "given": {
+        "pending_expired": true,
+        "fresh_exact_uv": true
+      },
+      "expected": {
+        "outcome": "refuse",
+        "signatures": 0,
+        "pending_window_refreshed": false
+      }
+    },
+    {
+      "id": "expired-uv-cannot-use-long-pending-window",
+      "given": {
+        "pending_window_seconds": 86400,
+        "uv_age_at_effect_seconds": 301
+      },
+      "expected": {
+        "outcome": "refuse",
+        "signatures": 0
+      }
+    },
+    {
+      "id": "frozen-target-is-never-reresolved-to-another-certificate",
+      "given": {
+        "current_membership_differs_from_frozen": true,
+        "owner_uv": true
+      },
+      "expected": {
+        "outcome": "refuse",
+        "signatures": 0,
+        "mutation_attempts": 0
+      }
+    },
+    {
+      "id": "changed-eligible-kind-needs-new-display",
+      "given": {
+        "frozen_target_kind": "kind not verified",
+        "current_target_kind": "agent"
+      },
+      "expected": {
+        "outcome": "refuse",
+        "reason": "operation_mismatch",
+        "old_uv_reused": false
+      }
+    },
+    {
+      "id": "unknown-becomes-human-before-release",
+      "given": {
+        "frozen_target_kind": "kind not verified",
+        "current_verified_kind": "human",
+        "signature_already_retained": true
+      },
+      "expected": {
+        "outcome": "refuse_release",
+        "mutation_attempts": 0,
+        "retained_bytes_preserved": true
+      }
+    },
+    {
+      "id": "late-cache-await-cannot-renew-issuance",
+      "given": {
+        "cache_invalidation_crosses_original_effect_deadline": true,
+        "retained_artifact_exists": true
+      },
+      "expected": {
+        "outcome": "refuse_release",
+        "mutation_attempts": 0,
+        "timestamps_refreshed": false
+      }
+    },
+    {
+      "id": "lost-answer-keeps-one-issued-artifact",
+      "given": {
+        "mutation_applied": true,
+        "answer_lost": true
+      },
+      "expected": {
+        "reconcile_owned_receipt": true,
+        "retained_artifacts": 1,
+        "retained_signatures": 1,
+        "mutation_attempts": 1,
+        "reissued_timestamp": false
+      }
+    },
+    {
+      "id": "historical-confirmation-is-not-a-new-release",
+      "given": {
+        "applied_receipt_available": true,
+        "effect_deadline_expired": true
+      },
+      "expected": {
+        "outcome": "confirm_historical",
+        "new_signature": false,
+        "new_mutation": false
+      }
+    },
+    {
+      "id": "substituted-result-template-field",
+      "given": {
+        "signed_result_changes": "certificate or route or audience or body hash or nonce"
+      },
+      "expected": {
+        "outcome": "refuse",
+        "reason": "signed_request_invalid",
+        "local_post": false
+      }
+    },
+    {
+      "id": "result-outside-frozen-issuance-window",
+      "given": {
+        "artifact_timestamp_outside_issuance_window": true
+      },
+      "expected": {
+        "outcome": "refuse",
+        "local_post": false
+      }
+    },
+    {
+      "id": "old-client-missing-intent-version",
+      "given": {
+        "approval_format": null
+      },
+      "expected": {
+        "outcome": "refuse",
+        "http_status": 426,
+        "detail": "upgrade_aw_required",
+        "message": "upgrade aw to use this protected approval format",
+        "pending_created": false,
+        "page_shown": false,
+        "signatures": 0
+      }
+    },
+    {
+      "id": "unknown-intent-version",
+      "given": {
+        "approval_format": "intent_v999"
+      },
+      "expected": {
+        "outcome": "refuse",
+        "http_status": 426,
+        "detail": "upgrade_aw_required",
+        "pending_created": false,
+        "signatures": 0
+      }
+    },
+    {
+      "id": "saved-old-pending-cannot-be-converted",
+      "given": {
+        "old_frozen_artifact_operation_exists": true,
+        "attempt": "execute or reinterpret as intent_v1"
+      },
+      "expected": {
+        "outcome": "refuse",
+        "detail": "upgrade_aw_required",
+        "original_request_and_expiry_unchanged": true,
+        "new_signature": false
+      }
+    },
+    {
+      "id": "bounded-unattended-neighbor-keeps-existing-wire",
+      "given": {
+        "row": "team.agent.remove/default"
+      },
+      "expected": {
+        "approval_format_added": false,
+        "existing_request_window_seconds": 300,
+        "fake_human_uv": false
+      }
+    },
+    {
+      "id": "matched-release-before-deployment",
+      "given": {
+        "three_updated_aw_clients_published": false
+      },
+      "expected": {
+        "intent_v1_deployment_enabled": false
+      }
+    }
+  ]
+}
