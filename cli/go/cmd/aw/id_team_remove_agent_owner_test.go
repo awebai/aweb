@@ -103,6 +103,11 @@ func (s *ownerRemoveService) prepared(t *testing.T) []byte {
 // committed is the receipt of the revocation issued at the owner's approval
 // and applied at the registry by the service. tamper varies it.
 func (s *ownerRemoveService) committed(t *testing.T) []byte {
+	if s.revoke.sent == nil {
+		// Nothing was prepared here, so this service has no committed result
+		// for the operation read: an earlier request's outcome is unsettled.
+		return []byte(`{"state":"unknown","code":"external_effect_unresolved"}`)
+	}
 	subject := s.revoke.sent["subject"].(map[string]any)
 	team, certificateID, audience := subject["team_id"].(string), subject["certificate_id"].(string), s.revoke.sent["audience"].(string)
 	issued := s.window[0].Add(2 * time.Hour)

@@ -438,3 +438,44 @@ func TestAQuarantinedRequestIsNeverTheOneAnEndorsementResumes(t *testing.T) {
 		t.Fatalf("named quarantined endorsement: %v", err)
 	}
 }
+
+// From security-fixes' review of 624de91543 (ede1fefc), adapted from the two
+// single conflict fields to the conflicts list that replaced them: the same
+// sequence through the private store, for an equal and a stronger
+// verification of the original bytes.
+func TestSecurityReviewARecordedConflictSurvivesAnotherReadOfTheOriginalBytes(t *testing.T) {
+	for _, verification := range []string{"signature_verified", "expired"} {
+		t.Run(verification, func(t *testing.T) {
+			service, profile, intent := unfinishedWorld(t)
+			saveUnfinished(t, profile, unfinishedOld, intent, oldFormat)
+			saved := savedRecord(t, unfinishedOld)
+			first, firstSig := []byte("original signed bytes"), []byte("original signature")
+			other, otherSig := []byte("conflicting signed bytes"), []byte("conflicting signature")
+			saved.Quarantine = &awconfig.GovernanceQuarantine{State: "committed", Signing: first, Signature: firstSig, Verification: "signature_verified"}
+			if err := awconfig.SavePendingGovernanceOperation(saved); err != nil {
+				t.Fatal(err)
+			}
+			service.receipts[unfinishedOld] = `{"state":"committed","result":{}}`
+			conflicting := func(*awconfig.PendingGovernanceOperation, map[string]any, []byte) (map[string]any, *awconfig.GovernanceQuarantine) {
+				return nil, &awconfig.GovernanceQuarantine{State: "committed", Signing: other, Signature: otherSig, Verification: "unverifiable"}
+			}
+			if _, _, err := reconcileUnfinished(context.Background(), service.reader, saved, conflicting); err != nil {
+				t.Fatal(err)
+			}
+			if kept := savedRecord(t, unfinishedOld).Quarantine; len(kept.Conflicts) != 1 || !bytes.Equal(kept.Conflicts[0].Signing, other) {
+				t.Fatalf("conflict not established: %+v", kept)
+			}
+			originalAgain := func(*awconfig.PendingGovernanceOperation, map[string]any, []byte) (map[string]any, *awconfig.GovernanceQuarantine) {
+				return nil, &awconfig.GovernanceQuarantine{State: "committed", Signing: first, Signature: firstSig, Verification: verification}
+			}
+			if _, _, err := reconcileUnfinished(context.Background(), service.reader, savedRecord(t, unfinishedOld), originalAgain); err != nil {
+				t.Fatal(err)
+			}
+			kept := savedRecord(t, unfinishedOld).Quarantine
+			if !bytes.Equal(kept.Signing, first) || len(kept.Conflicts) != 1 || !bytes.Equal(kept.Conflicts[0].Signing, other) ||
+				!bytes.Equal(kept.Conflicts[0].Signature, otherSig) || kept.Verification != verification {
+				t.Fatalf("reading original bytes again erased the recorded conflict: %+v", kept)
+			}
+		})
+	}
+}
