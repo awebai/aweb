@@ -15,6 +15,12 @@
   - A saved request is read under the profile's one binding for its scope.
     Without a saved request, the profile must have exactly one binding.
   - A refused or failed read is an error, never a state.
+- Upgrade protection-aware releases in this order: AWID registry, then aweb
+  server, then `aw`. Registry startup on an additive schema is not rollback
+  approval: after any team is provisioned, registry binary/schema rollback is
+  unsupported, including after forward deprotection. See the [registry operator
+  notes](awid/README.md#registry-first-upgrades-and-rollback-limits) for the
+  measured compatibility, public status contract and pinned-origin requirements.
 
 - `aw custody serve` picks up a parent import, certificate install or connect
   that changes its resident home while it runs, without a restart and
