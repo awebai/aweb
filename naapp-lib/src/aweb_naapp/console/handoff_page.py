@@ -26,14 +26,17 @@ if TYPE_CHECKING:
 def _unavailable(error: HTTPException) -> HTMLResponse:
     # Fixed copy only: do not echo an id, scope, exception detail or redirect.
     # A refusal is final; a rate limit is not, so it says only when to retry.
-    lead = "" if error.status_code == 429 else '<p role="status">This request cannot be completed.</p>'
+    throttled = error.status_code == 429
+    lead = "" if throttled else '<p role="status">This request cannot be completed.</p>'
     # The page cannot tell yet whether a terminal or a mailed link opened it.
     guidance = (
         "Too many attempts from this browser. Wait a minute, then open the page again."
-        if error.status_code == 429
+        if throttled
         else "If it came by email, the link is no longer valid; if a terminal started it, "
         "start a new request there."
     )
+    # Exactly one status per page: the refusal's lead, or a rate limit's guidance.
+    announce = ' role="status"' if throttled else ""
     return HTMLResponse(
         '<!doctype html><html lang="en"><head><meta charset="utf-8">'
         '<meta name="viewport" content="width=device-width,initial-scale=1">'
@@ -42,7 +45,7 @@ def _unavailable(error: HTTPException) -> HTMLResponse:
         '<link rel="stylesheet" href="/handoff-assets/handoff.css"></head>'
         '<body><main class="handoff" aria-labelledby="handoff-unavailable">'
         '<h1 id="handoff-unavailable">Request unavailable</h1>'
-        f"{lead}<p>{guidance}</p></main></body></html>",
+        f"{lead}<p{announce}>{guidance}</p></main></body></html>",
         status_code=error.status_code,
         headers=error.headers,
     )
