@@ -141,7 +141,11 @@ def test_owner_removal_shows_its_frozen_kind_before_approval_on_every_surface(ki
     display = op.spec.display
     rendered = display.render(request)
     alias = request["subject"]["expected_membership"]["alias"]
-    assert rendered["title"] == f"Remove {alias} from {request['subject']['team_id']}?"
-    assert f"Target kind: {kind}." in rendered["consequences"]
+    team = request["subject"]["team_id"].split(":")[0]
+    label = "agent" if kind == "agent" else "agent or person not confirmed"
+    assert rendered["title"] == f"Remove {alias} from {team}?"
+    assert rendered["consequences"] == [f"{alias} leaves {team}.", "Its aweb identity is not deleted."]
+    assert ["Kind", label] in rendered["names"]
+    assert ["Kind", kind] in rendered["technical"]
     [[page, _]] = run_page_renderer([[display.fields(), request, "subject_ineligible"]])
     assert page == rendered
