@@ -8,7 +8,9 @@ Not part of any suite (the name does not match test_*.py); run it by path:
     # Live mode: a visible browser; the person presses every button.
     AWEB_WALK=live uv run pytest -q -s tests/walks/walk_acxy16.py
 
-Live mode waits up to 15 minutes at each step for the person's click. A
+Live mode waits up to 15 minutes at each step for the person's click, and
+after every screen until Enter is pressed in the terminal (so a final screen
+stays open as long as it is being looked at). A
 virtual authenticator holds the fixture's enrolled passkeys and answers every
 passkey prompt at once: no Touch ID or phone prompt appears. Everything else
 (TLS origins, PostgreSQL, the AWID registry, the signer, the owner session,
@@ -16,6 +18,7 @@ exact-act approval, retained delivery) is the real composition the native
 tests use. The run prints each step's instruction.
 """
 
+import asyncio
 import os
 from pathlib import Path
 from types import SimpleNamespace
@@ -49,6 +52,11 @@ class Walk:
         if SHOTS:
             Path(SHOTS).mkdir(parents=True, exist_ok=True)
             await page.screenshot(path=Path(SHOTS) / f"{self.number:02d}-{name}.png", full_page=True)
+        if LIVE:
+            # Nothing moves on, and no browser closes, until whoever runs the
+            # walk says the screen has been looked at. The servers keep
+            # running meanwhile: the wait is off the event loop.
+            await asyncio.to_thread(input, "     Press Enter here when done looking at this screen. ")
 
     async def press(self, locator, instruction):
         """The person presses it in live mode; capture mode presses it."""
@@ -78,6 +86,7 @@ async def test_walk(admissions, tmp_path, monkeypatch):
                 "The question names the root agent and the team; its responsibility and limits read plainly; "
                 "Requested by names the root, with when it asked.")
             await walk.press(page.get_by_text("Technical details", exact=True), "Open Technical details.")
+            await expect(page.locator("#handoff-details")).to_have_attribute("open", "", timeout=WAIT)
             await walk.screen(page, "endorse-technical-details",
                 "Identifiers (root, keys, policy, full digest) only here; the fingerprint above matches.")
             await walk.press(page.locator("#handoff-action"), "Press Approve.")
