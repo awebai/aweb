@@ -12,6 +12,7 @@ import pytest
 from awid.protected_effect import HEADER
 from awid.registry_types import RegistryError
 
+from tests.test_independent_protected_signer import DOMAIN
 from tests.test_protected_admission_native import execute, prepare
 from tests.test_protected_boundary_retention_native import activate
 from tests.test_protected_owner_removal_native import (
@@ -46,6 +47,11 @@ async def test_owner_uv_reaches_marked_revocation_with_exact_proof_and_receipt(
     assert no_uv.status_code == 403 and no_uv.json()["detail"] == "live_approval_required"
     assert await signature_count(a, operation) == 0
     assert not await revoked(a, certificate)
+    with pytest.raises(RegistryError) as raw_key:
+        await a.w.registry.revoke_team_certificate(
+            DOMAIN, "engineering", team_controller_signing_key=bytes(a.w.controller),
+            certificate_id=certificate["certificate_id"])
+    assert raw_key.value.status_code == 403 and raw_key.value.code == "protected_controller_required"
     invalidations, sends = [], []
     original_invalidate = a.w.registry.invalidate_team_certificate_cache
     original_request = custody._request_effect
