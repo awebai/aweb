@@ -67,10 +67,11 @@ passes its inherited environment to aw, so bind `AWEB_IDENTITY_HOME` to this
 agent's `.aw` explicitly. An existing Hermes `.env` overrides shell exports and
 can otherwise restore a stale identity selector even with the correct workdir.
 
-For a **team-only (local) agent**, enable team access:
+For a **team-only (local) agent**, the standard setup allows its reachable senders:
 
 ```bash
-hermes config unset AWEB_ALLOWED_USERS
+hermes config set AWEB_ALLOWED_USERS ""
+hermes config set AWEB_ALLOW_TEAM false
 hermes config set AWEB_ALLOW_ALL_USERS true
 ```
 
@@ -82,12 +83,40 @@ Use allow-all only for this kind of agent. For an agent with a **public address*
 keep allow-all false and list the full sender addresses allowed to use it:
 
 ```bash
+hermes config set AWEB_ALLOW_TEAM false
 hermes config set AWEB_ALLOW_ALL_USERS false
 hermes config set AWEB_ALLOWED_USERS example.aweb.ai/alice
 ```
 
 Replace the example with authorized full addresses, separated by commas when
-there is more than one. Optionally configure a recipient for home delivery in
+there is more than one.
+
+For **strict team access**, choose this alternative locally and restart the gateway:
+
+```bash
+hermes config set AWEB_ALLOW_ALL_USERS false
+hermes config set AWEB_ALLOWED_USERS ""
+hermes config set AWEB_ALLOW_TEAM true
+```
+
+Strict mode accepts only senders whose delivery server reports active membership
+in the selected team of this agent. Contacts, other teams in the same namespace and
+connected channels cannot bypass this check. Missing or inactive membership is
+refused and the message stays unread; the gateway logs the reason locally without
+message content. Dashboard messages sent from the agent page and replies in its
+conversations use that team context.
+
+`AWEB_ALLOW_TEAM=true` is exclusive: a true `AWEB_ALLOW_ALL_USERS` or nonempty
+`AWEB_ALLOWED_USERS` makes startup fail clearly. False or unset keeps the usual
+allow-all/allowlist behavior. If an old setting persists, use the duplicate-key
+recovery described below before restarting. Strict team access does not grant
+remote command or tool-approval authority. Strict mode also refuses overlapping
+Hermes global allow-all/allowlists, configured adapter allowlists, or existing
+aweb pairing approvals, including grants in other served profiles. Clear those
+grants locally before starting, or use a separate Hermes home. The plugin never
+changes grants or approval policy for you.
+
+Optionally configure a recipient for home delivery in
 your local terminal, using the same Hermes home:
 
 ```bash

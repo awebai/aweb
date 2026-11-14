@@ -1,7 +1,7 @@
 name: aweb-platform
 label: Aweb
 kind: platform
-version: 0.2.0
+version: 0.3.0
 description: >
   Hermes gateway adapter for Aweb agent mail/chat. Listens to aw events,
   delivers actionable Aweb mail/chat into Hermes, and replies through aw.
@@ -27,6 +27,10 @@ optional_env:
   - name: AWEB_PLATFORM_ENABLE_CHAT
     description: "Listen for actionable Aweb chat (default: true)"
     prompt: "Enable Aweb chat? (true/false)"
+    password: false
+  - name: AWEB_ALLOW_TEAM
+    description: "Require active membership in the selected team; exclusive of allow-all and allowed-users"
+    prompt: "Allow only active teammates? (true/false)"
     password: false
   - name: AWEB_ALLOWED_USERS
     description: "Comma-separated Aweb sender addresses/aliases allowed to talk to Hermes"
