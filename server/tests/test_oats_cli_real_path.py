@@ -426,3 +426,69 @@ async def test_the_endorsed_root_removes_the_agent_it_admitted_once_under_its_ow
         assert await w.db.fetch_value(
             "SELECT count(*) FROM {{tables.protected_local_audit}} WHERE kind='protected_operation_signed' AND subject=$1",
             removal) == 1
+
+
+async def _operation_row(w, operation_id):
+    """The service's whole stored record of an operation, as one value."""
+    return await w.db.fetch_value(
+        "SELECT to_jsonb(o)::text FROM {{tables.protected_signer_operations}} o WHERE operation_id=$1", operation_id)
+
+
+def _saved_requests(home):
+    """Every request aw keeps in the home's own state, by file, with its bytes."""
+    return {path.name: path.read_bytes() for path in (home[0] / ".state").rglob("governance/*.json")}
+
+
+@pytest.mark.usefixtures("source_cli_binary")
+@pytest.mark.asyncio
+async def test_an_operation_status_reads_the_receipt_without_performing_or_settling_anything(test_db_factory, tmp_path):
+    async with oats_world(test_db_factory, tmp_path) as (a, profile, home):
+        w = a.w
+        operation = str(uuid4())
+        status, pending, progress = await _aw(home, "id", "endorse", "--protected-profile", str(profile), "--human",
+            a.human.context.authority_id, "--team", TEAM, "--deployment-label", "oats-root", "--operation-id", operation,
+            "--no-wait", "--no-browser")
+        assert status == 0 and pending["state"] == "pending", progress
+        saved, row = _saved_requests(home), await _operation_row(w, operation)
+        audit = await w.db.fetch_value("SELECT count(*) FROM {{tables.protected_local_audit}}")
+        assert saved and row
+
+        # Waiting for its human: the read reports that, and changes nothing.
+        read = ("id", "operation", "status", "--protected-profile", str(profile), "--operation-id", operation)
+        status, answer, progress = await _aw(home, *read)
+        assert status == 0, progress
+        assert answer == {"operation_id": operation, "state": "pending", "reason": "awaiting_human", "expires_at": answer["expires_at"]}
+        assert await _operation_row(w, operation) == row and _saved_requests(home) == saved
+        assert await w.db.fetch_value("SELECT count(*) FROM {{tables.protected_local_audit}}") == audit
+
+        # Approved on the service: the read reports the committed receipt as
+        # served. It registers nothing and keeps aw's saved request, which the
+        # endorse command itself still finishes.
+        options = await a.human.signer.approval_options(operation, human=a.actor)
+        assert (await a.human.signer.execute(operation, a.device.get(dict(options)), human=a.actor)).state == "committed"
+        row, audit = await _operation_row(w, operation), await w.db.fetch_value("SELECT count(*) FROM {{tables.protected_local_audit}}")
+        status, answer, progress = await _aw(home, *read)
+        assert status == 0, progress
+        assert answer["state"] == "committed" and answer["result_verification"] == "not_performed" and answer["result"]
+        assert await _operation_row(w, operation) == row and _saved_requests(home) == saved
+        assert await w.db.fetch_value("SELECT count(*) FROM {{tables.protected_local_audit}}") == audit
+        status, again, progress = await _aw(home, *read)
+        assert status == 0 and again == answer, progress
+        status, endorsed, progress = await _aw(home, "id", "endorse", "--protected-profile", str(profile), "--human",
+            a.human.context.authority_id, "--team", TEAM, "--deployment-label", "oats-root", "--operation-id", operation,
+            "--no-wait", "--no-browser")
+        assert status == 0 and endorsed["state"] == "committed" and endorsed["registered"] is True, progress
+
+        # An id the service never received: none under the profile's one
+        # binding. With two bindings and nothing saved, aw cannot tell which
+        # scope to read under and sends nothing.
+        unseen = str(uuid4())
+        status, refused, progress = await _aw(home, "id", "operation", "status", "--protected-profile", str(profile), "--operation-id", unseen)
+        assert status != 0 and refused["error"]["code"] == "profile_scope_ambiguous", progress
+        fields = json.loads(profile.read_text())
+        for binding in fields["bindings"]:
+            single = tmp_path / "single-binding-profile.json"
+            single.write_text(json.dumps({**fields, "bindings": [binding]}))
+            status, answer, progress = await _aw(home, "id", "operation", "status", "--protected-profile", str(single), "--operation-id", unseen)
+            assert status == 0 and answer == {"operation_id": unseen, "state": "none"}, progress
+        assert await _operation_row(w, unseen) is None

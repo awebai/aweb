@@ -797,10 +797,16 @@ func sameJSON(a, b any) bool {
 	return err == nil && bytes.Equal(left, right)
 }
 
+// ErrOperationNotFound is the service's typed answer to a receipt read that
+// it holds no operation by that id for this requester in this scope. It says
+// nothing of whether some other service, scope or earlier send holds one.
+var ErrOperationNotFound = errors.New("the protected service holds no such operation for this requester")
+
 // ReadReceipt reads the operation's receipt as its requester. A receipt that
 // cannot be read now (transport, 429, 5xx) is receipt_unavailable; any other
-// refusal keeps its own code; one that is not exactly a receipt of its state
-// is receipt_invalid.
+// refusal keeps its own code, the service's typed 404 operation_not_found
+// wrapping ErrOperationNotFound; one that is not exactly a receipt of its
+// state is receipt_invalid.
 func ReadReceipt(ctx context.Context, opts GovernanceOptions, operationID string) (*Receipt, error) {
 	target, err := url.Parse(opts.Request + "/protected-operations/" + url.PathEscape(operationID))
 	if err != nil {
@@ -820,6 +826,8 @@ func ReadReceipt(ctx context.Context, opts GovernanceOptions, operationID string
 	switch {
 	case resp.StatusCode == http.StatusTooManyRequests || resp.StatusCode >= 500:
 		return nil, hinted(unavailable(refusal(resp.StatusCode, reply)), resp)
+	case resp.StatusCode == http.StatusNotFound && RefusalCode(reply) == "operation_not_found":
+		return nil, &Error{Code: "operation_not_found", Err: ErrOperationNotFound, Facts: &Facts{}}
 	case resp.StatusCode != http.StatusOK:
 		// A refusal of the requester, its scope or the id does not pass.
 		return nil, refusal(resp.StatusCode, reply)
