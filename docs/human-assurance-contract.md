@@ -812,7 +812,20 @@ themselves.
 ### Mailed approval links
 
 The signer mails each eligible approver their own approval notice after the
-prepare transaction commits; the requester never receives or relays a link.
+prepare transaction commits, up to the requester's notice budget; the requester
+never receives or relays a link. The budget is ten notices per requester per
+hour, one per approver mailed, across operation kinds and for one signer
+authority. Each prepare reserves its notices once, in its own transaction, so a
+repeated prepare or concurrent prepares cannot spend more. Past the budget the
+request is still created and waits for its approver exactly as a mailed one
+does, but no notice is mailed for it, then or later. Its authorized owners see
+it on the owner page marked not mailed (over the notice budget), and the signer
+records the suppression durably: an audit event and the reservation row. The
+prepare answer, its receipt, frozen payload, digest, operation id, expiry and
+resume are unchanged, so the requester's aw does not yet report it; an agent
+requester cannot necessarily read the owner page, and gains no permission to.
+Reporting it to the requester is a later, negotiated aw change. A request past
+the budget is never refused, re-approved or shortened for it.
 Opening that personal link reveals the request, and one fresh user-verified
 passkey assertion bound to the exact act approves or rejects it: one gesture,
 with no separate LOGIN (Juan 2026-11-13, via coordinator). The notice says

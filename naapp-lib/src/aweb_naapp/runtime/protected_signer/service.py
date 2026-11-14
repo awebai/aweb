@@ -40,6 +40,7 @@ from .execution_intent import (
     prepare_artifact_intent,
     validate_issued_artifact,
 )
+from .notice_budget import reserve_notices
 from .owner_initiation import OwnerInitiation, _checked_owner_initiation
 from .retention import EffectConfirmation, RetainedEffect
 from .types import (
@@ -369,7 +370,7 @@ class ProtectedSigner:
         if cap is not None and cap.read_only:
             raise SignerRefused("scope_refused")
         extra = await provider.observe(typed, requester, purpose="prepare") if provider is not None else None
-        pending = None
+        pending = mail = None
         async with self.db.transaction() as tx:
             row = await self._lock(tx, operation.operation_id)
             await prepare_authority(tx)
@@ -447,6 +448,17 @@ class ProtectedSigner:
             )
             row = await self._lock(tx, operation.operation_id)
             await self._emit(AuditKind.PROTECTED_OPERATION_PREPARED, tx, row, actor.principal)
+            if pending is not None and self.mailed_approval_wait is not None and pending.deliveries:
+                if await reserve_notices(
+                    tx, operation_id=operation.operation_id, service_id=operation.context.service_id,
+                    authority_id=operation.context.authority_id, requester=actor.principal,
+                    notices=len(pending.deliveries), now=self.clock(),
+                ):
+                    mail = pending
+                else:
+                    # Past the requester's budget: created and waiting as any
+                    # other, its notices not mailed and recorded so.
+                    await self._emit(AuditKind.PROTECTED_NOTICE_SUPPRESSED, tx, row, actor.principal)
             if extra is not None:
                 await extra.check(tx, request)
                 extra.require_fresh()
@@ -457,10 +469,10 @@ class ProtectedSigner:
             if self.clock() >= row["expires_at"]:
                 raise SignerRefused("operation_expired")
             prepared = self._prepared(row)
-        if pending is not None and self.mailed_approval_wait is not None:
+        if mail is not None:
             # After commit only: B2's delivery reads the committed handoff row.
             # Each approver's personal link goes to their own recorded contact.
-            await self.approvals.deliver(pending)
+            await self.approvals.deliver(mail)
         return prepared
 
     def _check_prepare_owner(self, row, requester, *, intent=None):

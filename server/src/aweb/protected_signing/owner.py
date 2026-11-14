@@ -76,8 +76,10 @@ async def owner_view(composition, *, scope: str, subject: str, now: datetime | N
     fields = context.fields()
     rows = await c.db.fetch_all(
         "SELECT operation_id,handoff_id,requester,request,digest,approval_id,expires_at,initiator_subject,initiator_scope,"
-        "result IS NOT NULL AS committed,signed_result IS NOT NULL AS signed,refusal_code,committed_at "
-        "FROM {{tables.protected_signer_operations}} "
+        "result IS NOT NULL AS committed,signed_result IS NOT NULL AS signed,refusal_code,committed_at,"
+        "(SELECT r.suppressed FROM {{tables.protected_signer_notice_reservations}} r "
+        "WHERE r.operation_id=o.operation_id) AS notice_suppressed "
+        "FROM {{tables.protected_signer_operations}} o "
         "ORDER BY expires_at DESC"
     )
     pending, history, requests = [], [], {}
@@ -111,7 +113,9 @@ async def owner_view(composition, *, scope: str, subject: str, now: datetime | N
         elif row["expires_at"] <= now:
             history.append({**entry, "state": "expired", "at": _stamp(row["expires_at"])})
         else:
-            pending.append({**entry, "handoff_id": row["handoff_id"], "expires_at": _stamp(row["expires_at"])})
+            pending.append({**entry, "handoff_id": row["handoff_id"], "expires_at": _stamp(row["expires_at"]),
+                # Past its requester's notice budget nobody was mailed: it waits here only.
+                **({"notice": "not_mailed"} if row["notice_suppressed"] else {})})
     view = {
         "authority": {"kind": context.authority_kind, "id": context.authority_id, "domain": context.authority_domain,
             "human": context.human_id},
@@ -328,6 +332,8 @@ def owner_page_html(view: dict) -> str:
                 f'<li><a href="/handoff/{e(item["handoff_id"])}">{e(item["title"])}</a>'
                 f'<p>Requested by {e(item.get("requester_name") or item["requester"])}{asked}</p>'
                 f'<p>Expires {_time(item["expires_at"])}</p>'
+                + ('<p data-notice="not-mailed">Not mailed: its requester is over the notice budget.</p>'
+                    if item.get("notice") == "not_mailed" else "")
                 + _technical([("Requested by", item["requester"]), ("Operation", item["operation"]),
                     ("Digest", item["digest"])]) + "</li>"
             )

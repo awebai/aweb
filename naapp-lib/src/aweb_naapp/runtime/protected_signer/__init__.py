@@ -3,6 +3,7 @@
 from aweb_naapp.runtime.passkeys.proof import ProtectedKeyContext
 
 from .http import ProtectedOperationsHTTP
+from .notice_budget import NOTICE_BUDGET, NOTICE_WINDOW
 from .retention import EffectConfirmation, FrozenDelivery, RetainedEffect, RetainedEffectCustody
 from .service import POLICY_REF, ProtectedSigner
 from .types import (
@@ -22,6 +23,8 @@ from .types import (
 )
 
 __all__ = [
+    "NOTICE_BUDGET",
+    "NOTICE_WINDOW",
     "AdmittedHuman",
     "AuthorityProvider",
     "ControllerCustody",
