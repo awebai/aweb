@@ -11,6 +11,7 @@ import hashlib
 import json
 from datetime import UTC, datetime
 from html import escape
+from urllib.parse import quote
 
 from aweb_naapp.runtime.protected_signer import SignerRefused
 from aweb_naapp.runtime.protected_signer.admission_policy import AdmissionPolicy
@@ -92,7 +93,7 @@ async def owner_view(composition, *, scope: str, subject: str, now: datetime | N
             # Signed but not confirmed: it may already be applied, so it is
             # never "expired" and no longer waits for a decision (the
             # signer's own receipt says unknown, external_effect_unresolved).
-            history.append({**entry, "state": "unresolved", "at": _stamp(row["expires_at"])})
+            history.append({**entry, "state": "unresolved", "handoff_id": row["handoff_id"], "at": _stamp(row["expires_at"])})
         elif row["expires_at"] <= now:
             history.append({**entry, "state": "expired", "at": _stamp(row["expires_at"])})
         else:
@@ -389,9 +390,15 @@ def owner_page_html(view: dict) -> str:
                 outcome += " by you"
             # A stored final state lets the page forget a removal it saved.
             final = f' data-final-operation="{e(item["operation_id"])}"' if item["state"] in ("committed", "refused") else ""
+            # A removed member may have vanished from the active listing. Its
+            # existing handoff still permits authenticated receipt-only recovery.
+            reopen = (
+                f'<p><a href="/handoff/{e(quote(str(item["handoff_id"]), safe=""))}">Check this request</a></p>'
+                if item["state"] == "unresolved" and item.get("handoff_id") else ""
+            )
             parts.append(
                 f'<li{final}>{e(outcome)}, {_time(item["at"])}: {e(item["title"])}'
-                + _technical([("Requested by", item["requester"]), ("Operation", item["operation"]),
+                + reopen + _technical([("Requested by", item["requester"]), ("Operation", item["operation"]),
                     ("Digest", item["digest"])]) + "</li>"
             )
         parts.append("</ul>")

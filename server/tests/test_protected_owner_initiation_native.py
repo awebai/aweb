@@ -38,6 +38,9 @@ async def owner_http(a, tmp_path):
     app = FastAPI()
     mount = c.operations_http(limiter=Limiter(), human_sessions=sessions, human_csrf_key="owner-init-csrf")
     app.include_router(mount.human_router())
+    from aweb.protected_signing.owner import owner_router
+
+    app.include_router(owner_router(c, sessions=sessions, csrf_key="owner-init-csrf"))
     async with httpx.AsyncClient(transport=httpx.ASGITransport(app=app), base_url=a.w.human_origin,
         cookies={COOKIE_NAME: issued.token}) as client:
         yield client, {"Origin": a.w.human_origin, CSRF_HEADER: issued.csrf_token}, custody
@@ -186,8 +189,18 @@ async def test_owner_console_uv_reaches_protected_revocation_and_exact_recovery_
             assert answer.status_code == 200 and answer.json()["state"] == "committed", answer.text
         assert await revoked(a, certificate)
         signed = await a.w.db.fetch_one(query, body["operation_id"])
-        # A historical console read confirms the exact retained consumer receipt;
-        # it does not submit the request again, even after its answer was lost.
+        # A lost applied answer removes the member from the active listing.
+        # The owner can still reopen the same handoff from unresolved History.
+        if lost_answer:
+            page = await client.get("/")
+            assert page.status_code == 200, page.text
+            locator = "/handoff/" + prepared["handoff_id"]
+            assert f'href="{locator}"' in page.text and "Check this request" in page.text
+            assert f'data-remove-certificate="{body["certificate_id"]}"' not in page.text
+            assert f'data-final-operation="{body["operation_id"]}"' not in page.text
+            path = locator + "/governance"
+        # Authenticated receipt recovery confirms the exact retained effect,
+        # independently of the member listing and without another delivery.
         recovered = await client.get(path)
         assert recovered.status_code == 200 and recovered.json()["state"] == "committed", recovered.text
         result = recovered.json()["result"]
