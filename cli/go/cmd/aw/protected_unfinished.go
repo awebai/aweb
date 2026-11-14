@@ -150,31 +150,36 @@ func reconcileUnfinished(ctx context.Context, reader func(scope map[string]any) 
 	return nil, false, awconfig.SavePendingGovernanceOperation(saved)
 }
 
-// mergedFacts is what aw knows of a quarantined request after a later read:
-// signed bytes once observed are never dropped, and other signed bytes a
-// later read carries are recorded beside them as a conflict, the original
-// kept. Without signed bytes, the read that says more is kept: a committed
-// answer over any other, any answer over none.
+// mergedFacts is what aw knows of a quarantined request after a later read.
+// Signed bytes once observed are never dropped: a later read of the same
+// bytes only raises how far they are verified, and other signed bytes are
+// added, each once, to the conflicts kept beside the original. Without
+// signed bytes, the read that says more is kept: a committed answer over any
+// other, any answer over none.
 func mergedFacts(earlier, later *awconfig.GovernanceQuarantine) *awconfig.GovernanceQuarantine {
 	if earlier == nil {
 		return later
 	}
-	if len(earlier.Signing) > 0 {
-		sameBytes := bytes.Equal(later.Signing, earlier.Signing) && bytes.Equal(later.Signature, earlier.Signature)
-		switch {
-		case len(later.Signing) > 0 && !sameBytes:
-			kept := *earlier
-			kept.ConflictingSigning, kept.ConflictingSignature = later.Signing, later.Signature
-			return &kept
-		case sameBytes && verificationRank(later.Verification) >= verificationRank(earlier.Verification):
+	if len(earlier.Signing) == 0 {
+		if len(later.Signing) > 0 || stateRank(later.State) >= stateRank(earlier.State) {
 			return later
 		}
 		return earlier
 	}
-	if len(later.Signing) > 0 || stateRank(later.State) >= stateRank(earlier.State) {
-		return later
+	kept := *earlier
+	kept.Conflicts = append([]awconfig.GovernanceSignedResult(nil), earlier.Conflicts...)
+	switch {
+	case len(later.Signing) == 0:
+	case bytes.Equal(later.Signing, earlier.Signing) && bytes.Equal(later.Signature, earlier.Signature):
+		if verificationRank(later.Verification) > verificationRank(earlier.Verification) {
+			kept.Verification = later.Verification
+		}
+	case !slices.ContainsFunc(kept.Conflicts, func(c awconfig.GovernanceSignedResult) bool {
+		return bytes.Equal(c.Signing, later.Signing) && bytes.Equal(c.Signature, later.Signature)
+	}):
+		kept.Conflicts = append(kept.Conflicts, awconfig.GovernanceSignedResult{Signing: later.Signing, Signature: later.Signature})
 	}
-	return earlier
+	return &kept
 }
 
 // stateRank orders what a read said: nothing, an unsettled state, committed.

@@ -38,10 +38,16 @@ type GovernanceQuarantine struct {
 	Signature    []byte `json:"signature,omitempty"`
 	Verification string `json:"verification"`
 	ObservedAt   string `json:"observed_at"`
-	// ConflictingSigning and ConflictingSignature are other signed bytes a
-	// later read carried; the original observation is kept beside them.
-	ConflictingSigning   []byte `json:"conflicting_signing,omitempty"`
-	ConflictingSignature []byte `json:"conflicting_signature,omitempty"`
+	// Conflicts are every other signed result later reads carried, each
+	// once, in the order observed; the original observation is kept beside
+	// them.
+	Conflicts []GovernanceSignedResult `json:"conflicts,omitempty"`
+}
+
+// GovernanceSignedResult is one signed result a receipt carried.
+type GovernanceSignedResult struct {
+	Signing   []byte `json:"signing"`
+	Signature []byte `json:"signature"`
 }
 
 var operationIDPattern = regexp.MustCompile(`^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$`)

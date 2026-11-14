@@ -330,8 +330,46 @@ func TestAConflictingLaterSignedResultKeepsTheOriginalAndRecordsTheConflict(t *t
 		t.Fatal(err)
 	}
 	kept := savedRecord(t, unfinishedOld).Quarantine
-	if !bytes.Equal(kept.Signing, []byte("first signed bytes")) || kept.Verification != "signature_verified" || !bytes.Equal(kept.ConflictingSigning, []byte("other signed bytes")) {
+	if !bytes.Equal(kept.Signing, []byte("first signed bytes")) || kept.Verification != "signature_verified" || len(kept.Conflicts) != 1 || !bytes.Equal(kept.Conflicts[0].Signing, []byte("other signed bytes")) {
 		t.Fatalf("kept %+v", kept)
+	}
+}
+
+// observing reads one committed result carrying signing and signature,
+// verified as verification.
+func observing(signing, verification string) committedReading {
+	return func(*awconfig.PendingGovernanceOperation, map[string]any, []byte) (map[string]any, *awconfig.GovernanceQuarantine) {
+		return nil, &awconfig.GovernanceQuarantine{State: "committed", Signing: []byte(signing), Signature: []byte(signing + "-signature"), Verification: verification}
+	}
+}
+
+func TestEverySignedResultObservedIsKeptAcrossSavedReads(t *testing.T) {
+	for name, sequence := range map[string][]committedReading{
+		"A, B, A again verified": {observing("A", "unverifiable"), observing("B", "unverifiable"), observing("A", "signature_verified")},
+		"A, B, C":                {observing("A", "unverifiable"), observing("B", "unverifiable"), observing("C", "unverifiable")},
+		"A, B, B, nothing":       {observing("A", "unverifiable"), observing("B", "unverifiable"), observing("B", "unverifiable"), keepCommittedWithoutBytes},
+	} {
+		service, profile, intent := unfinishedWorld(t)
+		saveUnfinished(t, profile, unfinishedOld, intent, oldFormat)
+		service.receipts[unfinishedOld] = `{"state":"committed","result":{}}`
+		for _, read := range sequence {
+			// Each read starts from the record as saved by the last.
+			if _, _, err := reconcileUnfinished(context.Background(), service.reader, savedRecord(t, unfinishedOld), read); err != nil {
+				t.Fatal(err)
+			}
+		}
+		kept := savedRecord(t, unfinishedOld).Quarantine
+		var conflicts []string
+		for _, c := range kept.Conflicts {
+			conflicts = append(conflicts, string(c.Signing))
+		}
+		want := map[string][]string{"A, B, A again verified": {"B"}, "A, B, C": {"B", "C"}, "A, B, B, nothing": {"B"}}[name]
+		if string(kept.Signing) != "A" || strings.Join(conflicts, ",") != strings.Join(want, ",") {
+			t.Errorf("%s: kept %s with conflicts %v", name, kept.Signing, conflicts)
+		}
+		if name == "A, B, A again verified" && kept.Verification != "signature_verified" {
+			t.Errorf("%s: verification %s", name, kept.Verification)
+		}
 	}
 }
 
