@@ -193,3 +193,54 @@ async def test_service_owned_send_preserves_sdk_cache_fences(name, lost):
         assert registry.events == [expected, "post", expected]
         assert len(registry.sent) == 1
     assert len(calls) == (1 if name == "team.agent.admit" else 0)
+
+
+def _other_signature(signing: bytes) -> str:
+    """A valid Ed25519 signature over the same bytes, by a key that is not the controller's."""
+    seed, _ = generate_keypair()
+    return base64.b64encode(base64.b64decode(sign_message(seed, signing) + "==")).decode()
+
+
+def _controller_signature_over(custody, payload: bytes) -> str:
+    """The controller's own valid signature, over bytes that are not this operation's."""
+    return base64.b64encode(custody._key.sign(payload).signature).decode()
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("name", ["team.agent.admit", "team.agent.remove"])
+@pytest.mark.parametrize("case", ["other_key_signature", "unrelated_signed_bytes", "changed_artifact",
+                                  "other_custody_key", "other_scope"])
+async def test_only_the_verified_signed_artifact_of_this_custodys_operation_is_authenticated(name, case):
+    from aweb_naapp.runtime.protected_signer import SignerRefused
+
+    op, artifact, result, custody, calls = fixture(name)
+    signing = base64.b64decode(result["signing"])
+    if case == "other_key_signature":
+        result = {**result, "signature": _other_signature(signing)}
+    elif case == "unrelated_signed_bytes":
+        unrelated = signing + b" "
+        result = {"signing": base64.b64encode(unrelated).decode(),
+                  "signature": _controller_signature_over(custody, unrelated)}
+    elif case == "changed_artifact":
+        field = "alias" if "alias" in artifact else "certificate_id"
+        artifact = {**artifact, field: "changed"}
+    elif case == "other_custody_key":
+        custody.team_key_did = did_from_public_key(generate_keypair()[1])
+    else:
+        custody.team_id = "other:customer.example"
+    calls.clear()
+    client = ObservedCachedRegistry()
+    try:
+        with pytest.raises((SignerRefused, ValueError)):
+            await deliver_legacy(custody, client, op, artifact, result)
+        assert calls == [] and client.sent == []
+    finally:
+        await client.aclose()
+
+
+def test_the_controller_key_is_used_only_by_custody_methods():
+    from pathlib import Path
+
+    package = Path(__file__).resolve().parents[1] / "src" / "aweb" / "protected_signing"
+    users = sorted(path.name for path in package.glob("*.py") if "._key." in path.read_text())
+    assert users == ["custody.py"], users
