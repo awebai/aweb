@@ -70,7 +70,7 @@ async def test_owner_uv_reaches_marked_revocation_with_exact_proof_and_receipt(
         before = await retained_row(a, operation)
         clock = a.w.app.signer.clock
         monkeypatch.setattr(a.w.app.signer, "clock", lambda: clock() + timedelta(hours=2))
-        result = await a.w.app.signer.receipt(operation.operation_id, reader=a.w.reader)
+        result = await a.w.app.signer.receipt(operation.operation_id, reader=a.w.human)
         assert dict(await retained_row(a, operation)) == dict(before)
     else:
         result = await owner_execute(a, operation)
@@ -136,7 +136,7 @@ async def test_owner_removal_cache_fences_keep_original_retention_and_single_rel
     before = await retained_row(a, operation)
     assert all(before[name] is not None for name in ("signed_result", "retained_effect", "delivery_claim"))
     monkeypatch.setattr(a.w.app.signer, "clock", lambda: clock() + timedelta(hours=2))
-    recovered = await a.w.app.signer.receipt(operation.operation_id, reader=a.w.reader)
+    recovered = await a.w.app.signer.receipt(operation.operation_id, reader=a.w.human)
     if cache_failure == "after_send":
         assert recovered.state == "committed" and len(sends) == 1
         assert await revoked(a, certificate)
