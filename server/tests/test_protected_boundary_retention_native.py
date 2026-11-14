@@ -127,7 +127,9 @@ async def test_genuine_b3_owner_act_reaches_protected_sql_consumer(world, tmp_pa
 
     w = world
     custody = await activate(SimpleNamespace(w=w), tmp_path)
-    db = await test_db_factory.create_db(suffix="actual_owner_consumer")
+    db = await test_db_factory.create_db(
+        suffix="actual_owner_consumer", server_settings={"search_path": "pg_catalog"}
+    )
     await apply_owner_act_migrations(db)
     await db.execute("CREATE TABLE holding (app_id text,installation_id text,role text,principal text)")
     await db.execute("INSERT INTO holding VALUES($1,$2,$3,$4)", w.operation.app_id,
