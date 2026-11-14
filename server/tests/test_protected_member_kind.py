@@ -108,3 +108,25 @@ async def test_local_member_removal_does_not_require_global_kind(legacy_member, 
     c, record = legacy_member
     record.member_did_aw, record.identity_scope = None, "local"
     await agent_target(c, record, self_key=record.member_did_key if self_remove else None)
+
+
+@pytest.mark.asyncio
+async def test_only_owner_approved_removal_accepts_authoritative_unknown(legacy_member):
+    from aweb.protected_signing.removal import removable_kind
+
+    c, record = legacy_member
+    assert await removable_kind(c, record, allow_unknown=True) == "kind not verified"
+    with pytest.raises(SignerRefused, match="subject_ineligible"):
+        await agent_target(c, record)
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("missing_enrollment", [False, True])
+async def test_owner_unknown_exception_never_converts_an_evidence_outage(legacy_member, missing_enrollment):
+    from aweb.protected_signing.removal import removable_kind
+
+    c, record = legacy_member
+    c.registry.enrollment = None if missing_enrollment else IDTreeEnrollment(True, "example.org")
+    with pytest.raises(SignerRefused, match="evidence_unavailable"):
+        await removable_kind(c, record, allow_unknown=True)
+    assert c.registry.evidence_calls == (0 if missing_enrollment else 1)
