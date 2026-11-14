@@ -31,15 +31,51 @@ def _stamp(value):
 
 
 class ProtectedEffectCustody:
-    def configure_effects(self, *, registry, clients, clock):
+    def configure_effects(self, *, registry, clients, clock, receipt_origins=frozenset()):
         """Host-owned clients only; never a worker-selected origin or transport."""
         self._effect_registry = registry
         self._effect_clients = MappingProxyType(dict(clients))
+        self._effect_receipt_origins = frozenset(receipt_origins)
         self._effect_clock = clock
+
+    def require_service_delivery(self, *, operation, authority):
+        """Check trusted deployment capability without signing or doing I/O.
+
+        Receipt readiness is explicit host configuration, separate from client
+        pinning. It grants no effect authority and never activates a team.
+        """
+        authority.require_fresh()
+        context = operation.context
+        observation = getattr(authority, "protection", None)
+        client = getattr(self, "_effect_clients", {}).get(operation.audience)
+        if (
+            context.authority_kind != "team_controller"
+            or context.service_id != self.service_id
+            or context.authority_id != self.team_id
+            or context.authority_domain != self.domain
+            or getattr(authority, "context", None) != context
+            or observation is None
+            or not observation.protected
+            or observation.team_id != self.team_id
+            or observation.controller_did_key != self.team_key_did
+            or getattr(authority, "team_key_did", None) != self.team_key_did
+            or observation.binding["service_id"] != self.service_id
+            or observation.binding["service_did_key"] != self.service_did_key
+            or self._service_key is None
+            or self.service_did_key == self.team_key_did
+            or client is None
+            or client.is_closed
+            or operation.audience not in getattr(self, "_effect_receipt_origins", ())
+            or not callable(getattr(operation.spec.effect, "delivery_plan", None))
+        ):
+            raise SignerRefused("operation_not_served")
+        authority.require_fresh()
 
     def retain_authorized_effect(
         self, *, operation, request, artifact, signing, signature, authority, expires_at
     ):
+        if getattr(operation.spec.effect, "requires_service_delivery", False):
+            self.require_service_delivery(operation=operation, authority=authority)
         if operation.context.authority_kind != "team_controller":
             return None  # No team-controller consumer (e.g. human root endorsement).
         observation = getattr(authority, "protection", None)

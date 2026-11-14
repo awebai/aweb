@@ -127,6 +127,22 @@ member-custody and member-person publication. Rotation proof covers the complete
 silently replaced by controller authority. Core/app owner-act consumers check
 the same binding/proof before their nonce/effect transaction.
 
+Certificate revocation also accepts `team.agent.remove/owner_approved` service
+proofs. The executor requires the current owner's fresh exact-act UV for that
+variant; root/requester provenance is not approval. The proof covers the actual
+issued artifact and complete retained revocation request, and the consumer
+records its exact confirmation in the revocation transaction. Existing
+root/self and human-removal variants retain their own authority rules.
+
+An intent owner-act definition requiring service-owned delivery checks custody
+capability before creating a pending operation or approval page. The host must
+explicitly mark its pinned consumer origin ready for the proof verifier and
+exact receipt route; a client mapping alone is insufficient. The readiness set
+defaults empty. The synchronous check signs nothing, requires the current
+protected binding to match the isolated service/controller, and refuses missing
+capability with `operation_not_served`. Execution still checks authority and
+retains one exact artifact/request/proof bundle; readiness renews no deadline.
+
 Every protected membership acceptance compares the full authoritative signed
 certificate; a registered ID alone is insufficient. The registry's certificate
 history projection adds `certificate_sha256`, the SHA256 of canonical JSON of

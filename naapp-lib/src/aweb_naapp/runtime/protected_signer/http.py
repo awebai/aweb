@@ -413,7 +413,8 @@ class ProtectedOperationsHTTP:
                 body = await self._human_body(request, {"operation_id", "operation", "variant", "team_id", "certificate_id"})
                 if self.owner_prepare is None:
                     raise SignerRefused("operation_not_served")
-                prepared = await self.owner_prepare(body, session)
+                with _gone_when_expired():
+                    prepared = await self.owner_prepare(body, session)
                 result = asdict(prepared)
                 frozen = prepared.payload
                 result["payload"] = {"policy": {"ref": frozen["policy_ref"], "version": frozen["policy_version"]}, "request": frozen}

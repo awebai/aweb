@@ -41,6 +41,7 @@ OPERATIONS = {
     },
     "revoke_certificate": {
         ("team.agent.remove", "default"),
+        ("team.agent.remove", "owner_approved"),
         ("team.human.remove", "default"),
     },
     "set_team_visibility": {("team.controller-permissions.change", "default")},

@@ -455,13 +455,14 @@ logs and traces and return no-store; it exposes no private delivery headers.
 
 ### Execution-intent owner-act delivery readiness
 
-Owner-act readiness configuration is composed with the isolated custody's
-matching capability and exact consumer-receipt implementation. This component
-does not add a host setting that the installed custody cannot accept. Until
-that paired composition is present, a required service-owned owner act refuses
-`operation_not_served` before pending or signing. A pinned HTTP client by itself
-is not evidence of an installed verifier or receipt route; deployment readiness
-and explicit cutover remain separate from the current approval authority.
+`AWEB_PROTECTED_EFFECT_RECEIPT_ORIGINS` names canonical pinned consumer origins
+whose protected verifier and exact historical receipt route the operator has
+deployed and checked. It defaults to empty, independently of the pinned clients
+in `AWEB_PROTECTED_OWNER_ACT_ORIGINS`. The host forwards it to the matching
+custody capability port as an immutable set. This setting neither discovers a
+consumer nor activates a team. The current protection binding and matching
+isolated service key remain required; missing capability refuses before pending
+or signing. Readiness configuration is not the owner's exact-act authority.
 
 Live approvals use the single `approval_format="intent_v1"` prepare form. The
 frozen descriptor contains the exact static template, delivery target and original
