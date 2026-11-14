@@ -271,3 +271,13 @@ async def test_notification_adapter_reuses_b3_and_b2_mail_boundary(mail_fails):
         assert "2026-11-14 09:30 UTC" in notice.text
         assert "Deny also asks for your passkey" in notice.text
         assert all(message.to == approver.contact for message in mail.messages)
+
+
+def test_consumer_receipt_readiness_is_explicit_and_not_inferred_from_a_client(tmp_path):
+    config = settings(tmp_path, owner_act_origins=("https://app.example",))
+    assert config.effect_receipt_origins == ()
+    configured = settings(tmp_path, owner_act_origins=("https://app.example",),
+        effect_receipt_origins=("https://app.example",))
+    assert configured.effect_receipt_origins == ("https://app.example",)
+    with pytest.raises(ValidationError):
+        settings(tmp_path, effect_receipt_origins=("https://app.example/path",))

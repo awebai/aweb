@@ -488,7 +488,7 @@ async def test_malformed_real_authenticated_state_disables_approval(governance_s
                 state["handoff_id"] = s.prepared.operation_id
             elif fault == "consistent_target":
                 state["payload"]["request"]["subject"]["role"] = "changed.owner"
-                state["payload"]["request"]["artifact"]["subject"]["role"] = "changed.owner"
+                state["payload"]["request"]["artifact"]["template"]["subject"]["role"] = "changed.owner"
             elif fault == "valid_digest":
                 state["digest"] = ("0" if state["digest"][0] != "0" else "1") + state["digest"][1:]
             else:

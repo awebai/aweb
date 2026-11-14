@@ -21,7 +21,7 @@ async def test_signs_one_real_owner_act_with_actual_uv_and_recovers_exact_receip
     prepared, proof = await approve(world)
     result = await world.signer.execute(prepared.operation_id, proof, human=world.human)
     assert result.state == "committed"
-    signed = result.result
+    signed = result.result["artifact"]
     raw, signature = base64.b64decode(signed["signing"]), base64.b64decode(signed["signature"])
     world.key.verify_key.verify(raw, signature)
     fields = json.loads(raw.split(b"\n", 1)[1])

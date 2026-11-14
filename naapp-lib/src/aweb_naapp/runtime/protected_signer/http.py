@@ -52,12 +52,17 @@ _FIELDS = {"operation_id", "operation", "variant", "scope", "audience", "subject
 _SCOPE = {"v", "kind", "service_id", "authority", "human", "generation"}
 
 
-def parse_operation(body: Any) -> RevokeHumanRole | OwnerActOperation:
+def parse_operation(body: Any, *, historical_read: bool = False) -> RevokeHumanRole | OwnerActOperation:
     """The closed catalog selects the typed codec; possession is not authority."""
     try:
-        if not isinstance(body, dict) or not _FIELDS <= set(body) <= _FIELDS | {"redirect_uri"}:
+        if not isinstance(body, dict) or not _FIELDS <= set(body) <= _FIELDS | {"redirect_uri", "approval_format"}:
             raise ValueError()
         definition = operation_spec(body["operation"], body["variant"])
+        if definition.needs_human:
+            if not historical_read and body.get("approval_format") != "intent_v1":
+                raise SignerRefused("upgrade_aw_required")
+        elif "approval_format" in body:
+            raise ValueError()
         scope, subject = body["scope"], body["subject"]
         if not isinstance(scope, dict) or set(scope) != _SCOPE or not isinstance(subject, dict):
             raise ValueError()
@@ -145,6 +150,7 @@ def _http(error: Exception) -> HTTPException:
             "redirect_uri_refused": (400, "redirect_uri_refused"),
             "operation_refused": (400, "operation_refused"),
             "operation_not_served": (400, "operation_not_served"),
+            "upgrade_aw_required": (426, "upgrade_aw_required"),
             "requester_invalid": (401, "requester_invalid"),
             "scope_refused": (403, "scope_refused"),
             "authority_changed": (403, "authority_changed"),

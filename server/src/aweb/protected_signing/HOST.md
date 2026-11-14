@@ -451,3 +451,26 @@ authentication is accepted. Consumers must install the shared hooks ordered
 migrations and record the reference after their actual effect in its transaction.
 Their fixed receipt route must redact the proof header from all proxy/application
 logs and traces and return no-store; it exposes no private delivery headers.
+
+
+### Execution-intent owner-act delivery readiness
+
+`AWEB_PROTECTED_EFFECT_RECEIPT_ORIGINS` is an explicit list of canonical pinned
+consumer origins whose protected effect verifier and exact historical receipt
+route have been deployed and checked by the operator. It defaults to empty.
+It does not configure a client, discover a consumer or cut a team over. An
+owner-act origin also needs its pinned `AWEB_PROTECTED_OWNER_ACT_ORIGINS` client,
+current authoritative protection binding and the matching isolated service key.
+A protected intent requiring service-owned delivery refuses
+`operation_not_served` before creating a pending approval when those capabilities
+are absent. Publishing a client or server alone does not establish readiness.
+
+Live approvals use the single `approval_format="intent_v1"` prepare form. The
+frozen descriptor contains the exact static template, delivery target and original
+issuance window. One concrete artifact is issued under fresh exact-act UV and
+stored privately with its signature and complete retained request before release.
+A historical read reuses those bytes and cannot renew the issuance window. Old
+prepare/execute forms fail `upgrade_aw_required`; old receipts remain available
+for non-executing reconciliation. Deploy this format only after the coordinated
+matching aw/server publication and affected installations' actual pin/restart
+and consumer-readiness evidence described in the human-assurance contract.

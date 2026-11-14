@@ -306,7 +306,7 @@ async def test_retained_context_is_exact_routing_metadata_not_receipt_authority(
     )
     other = replace(w.operation, operation_id=str(uuid.uuid4()), context=other_context)
     request = {**prepared.payload, **other.intent()}
-    request["artifact"] = {**request["artifact"], "team_id": other_context.authority_id}
+    request["artifact"]["template"]["team_id"] = other_context.authority_id
     covered = {
         "policy": {"ref": request["policy_ref"], "version": request["policy_version"]},
         "request": request,

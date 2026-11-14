@@ -5,7 +5,7 @@ rejects it (human-assurance-contract.md, "Mailed approval links").
 These exercise the policy scenarios mailed-link-reveals-and-decides-nothing,
 mailed-link-approves-with-one-exact-act-uv, mailed-link-denies-with-one-exact-act-uv,
 mailed-link-assertion-for-the-other-decision, mailed-link-other-candidate-or-spent,
-mailed-link-not-revealing-policy and mailed-wait-capped-by-frozen-owner-act
+mailed-link-not-revealing-policy and mailed-owner-act-after-ten-minutes
 of the human-assurance policy vectors."""
 
 from __future__ import annotations
@@ -146,12 +146,13 @@ async def test_a_signer_that_does_not_mail_sends_nothing(world):
     assert stamp(prepared.expires_at) <= world.clock() + timedelta(seconds=600)
 
 
-async def test_a_mailed_owner_act_still_expires_with_its_frozen_artifact(mailing):
+async def test_a_mailed_owner_act_freezes_an_intent_for_the_original_day_window(mailing):
     world, contacts = mailing
     prepared, _ = await mailed(world, contacts)
-    # The 24-hour mailed wait never outlives the owner act's own frozen expiry.
-    assert prepared.expires_at == prepared.payload["artifact"]["expires_at"]
-    assert stamp(prepared.expires_at) <= world.clock() + timedelta(seconds=600)
+    descriptor = prepared.payload["artifact"]
+    assert prepared.expires_at == descriptor["issuance_window"]["not_after"]
+    assert stamp(prepared.expires_at) == world.clock() + timedelta(hours=24)
+    assert "issued_at" not in descriptor["template"] and "expires_at" not in descriptor["template"]
 
 
 async def test_the_links_own_approver_is_told_the_request_expired(mailing):
@@ -221,7 +222,10 @@ async def test_a_signed_receipt_without_a_confirmation_provider_preserves_its_hi
 
     world, contacts = mailing
     prepared, _ = await mailed(world, contacts)
-    signing = owner_act_signing_bytes(prepared.payload["artifact"])
+    from aweb_naapp.runtime.protected_signer.execution_intent import materialize_artifact
+
+    issued = materialize_artifact(world.signer._operation(prepared.payload), prepared.payload["artifact"], world.clock())
+    signing = owner_act_signing_bytes(issued)
     signed = {"signing": base64.b64encode(signing).decode(),
         "signature": base64.b64encode(world.key.sign(signing).signature).decode()}
     # Model a historical signed, non-retained row. The definition either has
@@ -272,3 +276,29 @@ async def test_a_signing_after_the_authorized_read_still_spends_the_link(mailing
     with pytest.raises(SignerRefused) as refused:
         await world.signer.link_view(prepared.handoff_id, token)
     assert refused.value.code == "scope_refused"
+
+
+async def test_owner_act_is_issued_after_hours_and_delivered_without_a_waiting_client(mailing):
+    """Real B2/B3/SQL, explicit transport double; no genuine consumer claim."""
+    world, contacts = mailing
+    prepared, token = await mailed(world, contacts)
+    before = await world.passkeys.db.fetch_one(
+        "SELECT * FROM {{tables.protected_signer_operations}} WHERE operation_id=$1", prepared.operation_id)
+    assert before["issued_artifact"] is None and before["signed_result"] is None
+    nonce = prepared.payload["artifact"]["template"]["nonce"]
+    world.clock.advance(timedelta(hours=2))
+    options = await world.signer.link_options(prepared.handoff_id, token, "approve")
+    result = await world.signer.link_decide(prepared.handoff_id, token, "approve", world.device.get(dict(options)))
+    assert result.state == "committed" and result.result["delivery"]["state"] == "applied"
+    after = await world.passkeys.db.fetch_one(
+        "SELECT * FROM {{tables.protected_signer_operations}} WHERE operation_id=$1", prepared.operation_id)
+    issued = json.loads(after["issued_artifact"])
+    assert issued["nonce"] == nonce and stamp(issued["issued_at"]) == world.clock()
+    assert stamp(issued["expires_at"]) == world.clock() + timedelta(minutes=10)
+    assert after["request"] == before["request"] and after["digest"] == before["digest"]
+    assert after["expires_at"] == before["expires_at"]
+    assert world.signer.custody.applied == {prepared.operation_id}
+    world.clock.advance(timedelta(hours=25))
+    assert await world.signer.receipt(prepared.operation_id, reader=world.reader) == result
+    assert (await world.audit.kinds()).count("protected_operation_signed") == 1
+    assert world.signer.custody.applied == {prepared.operation_id}

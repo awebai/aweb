@@ -49,6 +49,7 @@ class HostSettings(BaseSettings):
     controller_key_file: Path
     service_key_file: Path | None = None
     owner_act_origins: tuple[str, ...] = ()
+    effect_receipt_origins: tuple[str, ...] = ()
     controller_keys_file: Path | None = None
     member_keys_file: Path
     worker_uids: list[Annotated[StrictInt, Field(gt=0)]] = Field(min_length=1)
@@ -72,7 +73,7 @@ class HostSettings(BaseSettings):
     def database_source(self):
         from awid.log import require_canonical_server_origin
 
-        for origin in self.owner_act_origins:
+        for origin in (*self.owner_act_origins, *self.effect_receipt_origins):
             require_canonical_server_origin(origin)
         if self.database_url_file is not None:
             if "database_url" in self.model_fields_set:
@@ -220,6 +221,7 @@ async def open_composition(
         components = [IndependentProtectedSigner.from_profile(
             db, profile=profile, scope=binding.scope.model_dump(mode="json"), registry_client=registry, custody=custody,
             delivery=ProtectedNotifications(db=db, mailer=mailer, human_origin=profile.human_origin), consumer_clients=consumer_clients,
+            receipt_origins=frozenset(settings.effect_receipt_origins),
             proof_context=proof_context if len(custodians) > 1 else None,
         ) for binding, custody in custodians]
         composition = components[0]
