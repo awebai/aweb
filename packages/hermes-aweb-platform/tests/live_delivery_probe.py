@@ -113,6 +113,7 @@ async def main():
     original_event = cls._handle_aw_event
     original_complete = cls.on_processing_complete
     original_turn = GatewayRunner._handle_message_with_agent
+    original_handle = cls.handle_message
     empty = asyncio.Event()
     release = asyncio.Event()
     hint = asyncio.Event()
@@ -124,6 +125,7 @@ async def main():
     dropped = False
     connections = 0
     turns = []
+    ingress = {}
     prompt_results = []
     pending = None
     pending_key = None
@@ -166,11 +168,24 @@ async def main():
         if CASE == "unauthorized" and str(value.message_id) == target:
             handled.set()
 
+    async def ingress_event(self, value):
+        # v0.23.1 durable admission intentionally omits raw_message on restore.
+        # Observe the actual fetched event here, then correlate its unchanged
+        # message id at ordinary-turn entry; never fabricate a replacement.
+        ingress[value.message_id] = {
+            "body": value.raw_message["body"],
+            "subject": value.raw_message.get("subject") if str(value.source.chat_id).startswith("mail:") else None,
+            "text": value.text, "control": value.allow_gateway_control,
+        }
+        return await original_handle(self, value)
+
     async def ordinary_turn(self, value, source, key, generation):
         nonlocal pending, pending_key
-        body = value.raw_message["body"]
+        original = ingress[value.message_id]
+        body = original["body"]
         turns.append({"message_id": value.message_id, "body": body, "text": value.text,
-                      "subject": value.raw_message.get("subject") if str(source.chat_id).startswith("mail:") else None,
+                      "subject": original["subject"], "ingress_text": original["text"],
+                      "ingress_control": original["control"],
                       "control": value.allow_gateway_control, "command": value.get_command()})
         if CASE in {"stop", "mail_routes"} and body in {"/fixturehold", "unfinished"}:
             target_marker = HOME / "blocked"
@@ -228,7 +243,8 @@ async def main():
         selected = [row for row in turns if row["message_id"] in ids]
         assert [row["message_id"] for row in selected] == list(ids), selected
         for row in selected:
-            assert row["control"] is False and row["command"] is None, row
+            assert row["ingress_control"] is False and row["control"] is False and row["command"] is None, row
+            assert row["ingress_text"] == row["text"], row
             # Mail retains its subject before the exact original body; chat
             # has only the unconditional prefix. Neither strips original bytes.
             rendered = f"Subject: {row['subject']}\n\n{row['body']}" if row["subject"] else row["body"]
@@ -242,6 +258,7 @@ async def main():
         return await until(finished, "ordinary content did not finish/read", 12)
 
     cls._run_aw_json = io
+    cls.handle_message = ingress_event
     GatewayRunner._handle_message_with_agent = ordinary_turn
     cls._handle_aw_event = event
     cls.on_processing_complete = complete
@@ -398,6 +415,7 @@ async def main():
         cls._run_aw_json = original_io
         cls._handle_aw_event = original_event
         cls.on_processing_complete = original_complete
+        cls.handle_message = original_handle
         GatewayRunner._handle_message_with_agent = original_turn
 
 
