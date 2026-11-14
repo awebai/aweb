@@ -62,6 +62,12 @@ last await. This is coordinated cutover, not distributed atomicity. Package .8
 owns each installation's authorization, historical baseline, restore and rollback
 limits; a restored database counter alone cannot establish safe history.
 
+After any provisioning transition, registry binary and schema rollback are
+unsupported, including after forward deprotection. An older registry may start
+on the additive schema while silently dropping protection enforcement and
+generation/history maintenance. Restoring a pre-cutover registry backup is not
+a way to undo provisioning; recovery must preserve history and move forward.
+
 Core certificate authentication first verifies the presented certificate through
 its existing controller-key cache, bounded signature-failure refresh, revocation
 and optional registration checks. Invalid credentials do not trigger a fresh

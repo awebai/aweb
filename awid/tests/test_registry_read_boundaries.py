@@ -110,15 +110,15 @@ async def add_teams(env, count):
 
 
 @pytest.mark.asyncio
-@pytest.mark.parametrize("count", [1, 200])
-async def test_paginated_team_projection_is_one_actual_select_per_page(controller_app, count):
+@pytest.mark.parametrize("count,page_size", [(1, 200), (200, 200), (200, 100)])
+async def test_paginated_team_projection_is_one_actual_select_per_page(controller_app, count, page_size):
     env = controller_app
     await add_teams(env, count - 1)
     found = []
     cursor = None
     while True:
         async with actual_queries(env.db) as queries:
-            response = await env.client.get("/v1/namespaces/local/teams", params={"limit": 100, **({"cursor": cursor} if cursor else {})})
+            response = await env.client.get("/v1/namespaces/local/teams", params={"limit": page_size, **({"cursor": cursor} if cursor else {})})
         assert response.status_code == 200, response.text
         assert len(queries) == 1, queries
         data = response.json()

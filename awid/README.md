@@ -27,6 +27,12 @@ Optional environment:
 - `AWID_PORT` default `8010`
 - `AWID_DB_SCHEMA` default `awid`
 - `AWID_RATE_LIMIT_BACKEND` default `redis`
+- `AWID_PUBLIC_ORIGINS` comma-separated canonical external registry origins,
+  for example `https://registry.example.com`. Set it before protecting any
+  team or using covering controller requests. An embedding may instead set
+  `app.state.awid_public_origins` explicitly. Protected mutations fail closed
+  when their audience is not configured; Host, forwarded headers and a supplied
+  proof never configure an origin. Legacy-only startup remains supported.
 - `AWEB_CF_EDGE_CIDRS` and `AWEB_TRUSTED_PROXY_CIDRS` default empty. Both must
   contain valid JSON-array, comma- or pipe-separated CIDR lists to use forwarded
   client IPs for rate limits. Configured proxy peers are trusted first-party
@@ -56,6 +62,44 @@ Optional environment:
   to start unless connections carry the `search_path` pin and the pgdbm
   timeouts (`statement_timeout`, `lock_timeout`,
   `idle_in_transaction_session_timeout`, `jit`).
+
+### Private teams and public certificate status
+
+Private team metadata remains permission-gated. Anyone who knows a certificate
+ID can read its existing public status. Negotiating `?protection=1` also returns
+the team's protection binding and certificate hash, including for a private
+team. These are intentionally public governance facts; no member fields or
+certificate blob are returned. Without the query the response stays exactly
+the existing four fields. See [the protection contract](../docs/protected-team-boundary.md#binding-and-cutover).
+
+### Registry-first upgrades and rollback limits
+
+Upgrade the registry before deploying consumers that require its explicit
+protection projection. Migrations 012–015 add tables; the native compatibility
+check starts the published 0.5.39 registry on that schema and exercises legacy
+reads and mutations. Startup compatibility alone is not rollback approval.
+
+After any team has been provisioned, **no registry binary or schema rollback is
+supported**, including after forward deprotection. Version 0.5.39 starts but
+does not enforce protected teams: a key-only mutation it accepts is refused by
+0.5.40. After deprotection it can also rotate the controller without advancing
+retained protection generation. Never restore a pre-cutover registry backup to
+undo protection. Reconcile and repair forward while preserving its history.
+Whether an untouched, never-provisioned legacy installation can downgrade is a
+separate compatibility decision.
+
+To repeat the isolated startup/enforcement matrix, provide a disposable
+PostgreSQL administrator URL and a dedicated Redis database. The check creates
+and removes its own database and runs the actual published 0.5.39 CLI:
+
+```bash
+AWID_COMPAT_POSTGRES_URL='<disposable-postgres-url>' \
+AWID_REDIS_URL='<dedicated-redis-url>' \
+uv run --project awid python scripts/check_awid_039_schema_compatibility.py
+```
+
+This is a compatibility test, not an operator provisioning command or a full
+client/deployment compatibility matrix.
 
 ### Session settings in the connection URL
 
