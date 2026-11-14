@@ -1,6 +1,7 @@
 """Non-signing capability checks use explicit host consumer readiness."""
 
 from dataclasses import replace
+from datetime import UTC, datetime, timedelta
 from time import monotonic
 from types import SimpleNamespace
 
@@ -54,15 +55,16 @@ def capability(tmp_path):
 
 
 @pytest.mark.asyncio
-@pytest.mark.parametrize("case", ["ready", "no_receipt", "no_client", "closed_client", "legacy",
+@pytest.mark.parametrize("case", ["ready", "no_receipt", "default_receipt", "no_client", "closed_client", "legacy",
     "wrong_service", "wrong_service_key", "wrong_controller", "wrong_team", "wrong_context",
-    "missing_key", "stale"])
+    "missing_key", "no_protection", "stale", "final_stale"])
 async def test_capability_requires_current_isolation_and_explicit_pinned_receipt_consumer(capability, case):
     c = capability
     async with httpx.AsyncClient() as client:
         clients = {} if case == "no_client" else {ORIGIN: client}
         receipts = frozenset() if case == "no_receipt" else frozenset({ORIGIN})
-        c.custody.configure_effects(registry=None, clients=clients, receipt_origins=receipts, clock=lambda: None)
+        options = {} if case == "default_receipt" else {"receipt_origins": receipts}
+        c.custody.configure_effects(registry=None, clients=clients, clock=lambda: None, **options)
         if case == "closed_client":
             await client.aclose()
         observation = c.authority.protection
@@ -81,23 +83,51 @@ async def test_capability_requires_current_isolation_and_explicit_pinned_receipt
             c.authority.context = replace(c.operation.context, authority_id="other:example.test")
         elif case == "missing_key":
             c.custody._service_key = None
+        elif case == "no_protection":
+            observation = None
         elif case == "stale":
             def expired():
                 raise SignerRefused("evidence_unavailable")
             c.authority.require_fresh = expired
+        elif case == "final_stale":
+            checks = 0
+            def expires_after_capability_check():
+                nonlocal checks
+                checks += 1
+                if checks == 2:
+                    raise SignerRefused("evidence_unavailable")
+            c.authority.require_fresh = expires_after_capability_check
         c.authority.protection = observation
         if case == "ready":
             assert c.custody.require_service_delivery(operation=c.operation, authority=c.authority) is None
         else:
-            code = "evidence_unavailable" if case == "stale" else "operation_not_served"
+            code = "evidence_unavailable" if case in {"stale", "final_stale"} else "operation_not_served"
             with pytest.raises(SignerRefused, match=code):
                 c.custody.require_service_delivery(operation=c.operation, authority=c.authority)
 
 
-def test_required_readiness_is_rechecked_at_retention_without_touching_the_artifact(capability):
+@pytest.mark.asyncio
+async def test_required_readiness_is_rechecked_at_retention_without_touching_the_artifact(capability, monkeypatch):
+    from aweb_naapp.runtime.protected_signer import catalog
+
     c = capability
-    operation = SimpleNamespace(context=c.operation.context, audience=ORIGIN,
-        spec=SimpleNamespace(effect=SimpleNamespace(requires_service_delivery=True)))
-    with pytest.raises(SignerRefused, match="operation_not_served"):
-        c.custody.retain_authorized_effect(operation=operation, request={}, artifact={},
-            signing=b"unchanged", signature=b"unchanged", authority=c.authority, expires_at=None)
+    spec = c.operation.spec
+    effect = SimpleNamespace(**vars(spec.effect), requires_service_delivery=True)
+    monkeypatch.setattr(catalog, "OPERATIONS", {**catalog.OPERATIONS,
+        (c.operation.operation, c.operation.variant): replace(spec, effect=effect)})
+
+    class UnreadableArtifact(dict):
+        def __getitem__(self, key):
+            pytest.fail("missing receipt readiness must refuse before reading an artifact")
+
+        def get(self, *args):
+            pytest.fail("missing receipt readiness must refuse before reading an artifact")
+
+    now = datetime.now(UTC)
+    async with httpx.AsyncClient() as client:
+        # Transport is installed; only the explicit receipt readiness is absent.
+        c.custody.configure_effects(registry=None, clients={ORIGIN: client}, clock=lambda: now)
+        with pytest.raises(SignerRefused, match="operation_not_served"):
+            c.custody.retain_authorized_effect(operation=c.operation, request={}, artifact=UnreadableArtifact(),
+                signing=b"unchanged", signature=b"unchanged", authority=c.authority,
+                expires_at=now + timedelta(seconds=60))
