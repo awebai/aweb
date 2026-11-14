@@ -370,3 +370,20 @@ def test_the_owner_page_script_saves_before_sending_and_keeps_its_selection_unti
         cwd=Path(__file__).resolve().parents[1], timeout=20)
     assert result.returncode == 0, result.stdout + result.stderr
     assert result.stdout.strip() == "owner removal probe passed"
+
+
+def test_an_applied_but_unconfirmed_removal_can_reopen_its_handoff_without_a_member_button():
+    from aweb.protected_signing.owner import owner_page_html
+
+    view = owner_fixture_view()
+    # The removed certificate is absent from the active listing; only the
+    # remaining human is listed, and cannot offer an agent Remove button.
+    view["pending"] = []
+    view["members"] = [view["members"][-1]]
+    view["history"] = [{**view["history"][0], "operation_id": "same-operation", "state": "unresolved",
+        "handoff_id": "same-retained-handoff", "title": "Remove worker from engineering?"}]
+    html = owner_page_html(view)
+    assert 'data-remove-certificate=' not in html
+    assert 'data-final-operation="same-operation"' not in html
+    assert 'href="/handoff/same-retained-handoff"' in html
+    assert "Check this request" in html
