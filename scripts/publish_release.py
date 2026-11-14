@@ -523,17 +523,27 @@ ABSENT_REPOSITORY = re.compile(
 )
 
 
-def published_tags(root: Path, repository: str) -> list:
+def published_tags(root: Path, repository: str, first_publication: bool = False) -> list:
+    """The repository's tags. GHCR's "name unknown" means "no tags" only for a
+    repository the operator explicitly names as a first publication; the answer
+    alone never establishes absence. A named repository that lists tags is not
+    a first publication."""
     argv = ("skopeo", "list-tags", f"docker://{repository}")
     completed = subprocess.run(argv, cwd=root, text=True, capture_output=True, timeout=120, check=False)
     if completed.returncode:
-        if not completed.stdout.strip() and ABSENT_REPOSITORY.fullmatch(completed.stderr.strip()):
+        absent = not completed.stdout.strip() and ABSENT_REPOSITORY.fullmatch(completed.stderr.strip())
+        if absent and first_publication:
             return []
+        if absent:
+            raise PublishRefusal(f"{' '.join(argv)}: name unknown; a new repository is published only with "
+                                 f"--first-publication {repository}")
         detail = (completed.stderr or completed.stdout or "").strip()
         raise PublishRefusal(f"{' '.join(argv)} failed: {detail}")
     tags = json.loads(completed.stdout).get("Tags")
     if not isinstance(tags, list):
         raise PublishRefusal("GHCR returned a malformed tag listing")
+    if first_publication:
+        raise PublishRefusal(f"not a first publication: {repository} lists {len(tags)} tags")
     return tags
 
 
@@ -549,7 +559,8 @@ def moves_latest(version: str, recovery: bool) -> bool:
     return final_version(version) is None
 
 
-def publish_oci(root: Path, prefix: str, version: str, source_sha: str, *, recovery: bool = False) -> None:
+def publish_oci(root: Path, prefix: str, version: str, source_sha: str, *, recovery: bool = False,
+                first_publication: tuple | list = ()) -> None:
     username = os.environ.get("GHCR_USERNAME", "").strip() or os.environ.get(
         "AC_REGISTRY_USERNAME", ""
     ).strip()
@@ -560,6 +571,10 @@ def publish_oci(root: Path, prefix: str, version: str, source_sha: str, *, recov
         raise PublishRefusal("GHCR_USERNAME and GHCR_TOKEN are required")
     if not shutil.which("skopeo"):
         raise PublishRefusal("skopeo is required for exact OCI publication")
+    repositories = [repository for repository, _ in oci_images(prefix)]
+    for repository in first_publication:
+        if repository not in repositories:
+            raise PublishRefusal(f"{prefix} publishes no {repository}; it publishes {', '.join(repositories)}")
     # One decision for every image of the tag: an rc or a recovery moves no latest.
     version_only = not moves_latest(version, recovery)
     with tempfile.TemporaryDirectory(prefix="aweb-oci-") as temporary:
@@ -584,7 +599,8 @@ def publish_oci(root: Path, prefix: str, version: str, source_sha: str, *, recov
             "--password-stdin", input_text=token + "\n", timeout=120,
         )
         for repository, archive, index in staged:
-            publish_staged_image(root, repository, archive, index, version, version_only)
+            publish_staged_image(root, repository, archive, index, version, version_only,
+                                 repository in first_publication)
         for repository, archive, index in staged:
             run(
                 root, "bash", "scripts/oci-exact-publish.sh", "verify-published",
@@ -597,9 +613,10 @@ def publish_oci(root: Path, prefix: str, version: str, source_sha: str, *, recov
 
 
 def publish_staged_image(
-    root: Path, repository: str, archive: Path, staged: str, version: str, version_only: bool
+    root: Path, repository: str, archive: Path, staged: str, version: str, version_only: bool,
+    first_publication: bool = False,
 ) -> None:
-    tags = published_tags(root, repository)
+    tags = published_tags(root, repository, first_publication)
     for image_tag in ((version,) if version_only else (version, "latest")):
         remote = ""
         if image_tag in tags:
@@ -622,7 +639,8 @@ def publish_staged_image(
         )
 
 
-def publish(root: Path, tag: str, *, only: str | None = None, recovery: bool = False) -> None:
+def publish(root: Path, tag: str, *, only: str | None = None, recovery: bool = False,
+            first_publication: tuple | list = ()) -> None:
     prefix, version, source_sha = tag_identity(root, tag)
     if only is not None and not (
         (only == "pypi" and prefix in PYPI_LANES)
@@ -643,7 +661,8 @@ def publish(root: Path, tag: str, *, only: str | None = None, recovery: bool = F
             if prefix in PYPI_LANES and only != "oci":
                 publish_pypi(checkout, prefix, version)
             if prefix in OCI_REPOSITORIES and only != "pypi":
-                publish_oci(checkout, prefix, version, source_sha, recovery=recovery)
+                publish_oci(checkout, prefix, version, source_sha, recovery=recovery,
+                            first_publication=first_publication)
             elif prefix in NPM_LANES:
                 publish_npm(checkout, prefix, version)
             elif prefix == "aw-v":
@@ -658,13 +677,16 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--only", choices=("pypi", "oci"), help="publish only this artifact lane")
     parser.add_argument("--recovery", action="store_true",
                         help="publish an existing tag's images again; never moves latest")
+    parser.add_argument("--first-publication", action="append", default=[], metavar="REPOSITORY",
+                        help="an image repository this publication creates; repeat for each")
     parser.add_argument("tag")
     arguments = parser.parse_args(argv)
     try:
         if arguments.check_tag:
             tag_identity(Path.cwd().resolve(), arguments.tag)
         else:
-            publish(Path.cwd().resolve(), arguments.tag, only=arguments.only, recovery=arguments.recovery)
+            publish(Path.cwd().resolve(), arguments.tag, only=arguments.only, recovery=arguments.recovery,
+                    first_publication=arguments.first_publication)
     except (
         PublishRefusal,
         OSError,

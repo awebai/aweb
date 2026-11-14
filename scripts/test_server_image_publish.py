@@ -117,7 +117,7 @@ class ImageRecoveryDispatchTests(unittest.TestCase):
         self.assertNotEqual(later, tagged)
         built = []
 
-        def publish_oci(checkout, prefix, version, sha, recovery=False):
+        def publish_oci(checkout, prefix, version, sha, recovery=False, first_publication=()):
             built.append((command(checkout, "git", "rev-parse", "HEAD"), prefix, version, sha))
 
         with patch.object(PUBLISH, "publish_pypi") as pypi, patch.object(PUBLISH, "publish_oci", publish_oci):
@@ -143,7 +143,7 @@ class ImageRecoveryDispatchTests(unittest.TestCase):
         # Tags are fetched, so the publisher can resolve the requested one.
         self.assertIn("fetch-depth: 0", source)
 
-    def run_step(self, event, ref, release_tag):
+    def run_step(self, event, ref, release_tag, first_publication=""):
         temporary, root = test_shipping.TagContractTest.repository(self)
         self.addCleanup(temporary.cleanup)
         command(root, "git", "tag", "server-v1.2.3")
@@ -159,9 +159,26 @@ class ImageRecoveryDispatchTests(unittest.TestCase):
         result = subprocess.run(["bash", "-e", "-c", script], cwd=root, text=True, capture_output=True,
                                 env={"PATH": f"{bin_dir}:{os.environ['PATH']}", "HOME": scratch.name,
                                      "GITHUB_EVENT_NAME": event, "GITHUB_REF": ref, "RELEASE_TAG": release_tag,
+                                     "FIRST_PUBLICATION": first_publication,
                                      "GHCR_USERNAME": "fixture", "GHCR_TOKEN": "fixture-token"})
         published = calls.read_text().splitlines() if calls.exists() else []
         return result, published
+
+    def test_only_a_dispatch_carries_an_explicit_first_publication(self):
+        result, published = self.run_step("workflow_dispatch", "refs/heads/main", "server-v1.2.3",
+                                          first_publication="ghcr.io/awebai/aweb-protected")
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertEqual(published, ["scripts/publish_release.py --only oci --recovery "
+                                     "--first-publication ghcr.io/awebai/aweb-protected server-v1.2.3"])
+        result, published = self.run_step("push", "refs/tags/server-v1.2.3", "server-v1.2.3",
+                                          first_publication="ghcr.io/awebai/aweb-protected")
+        self.assertEqual(published, ["scripts/publish_release.py --only oci server-v1.2.3"])
+
+    def test_workflow_offers_the_first_publication_input(self):
+        source = IMAGE_WORKFLOW.read_text()
+        dispatch = source[source.index("  workflow_dispatch:"):source.index("permissions:")]
+        self.assertIn("      first_publication:\n", dispatch)
+        self.assertIn("FIRST_PUBLICATION: ${{ github.event_name == 'workflow_dispatch' && inputs.first_publication || '' }}", source)
 
     def test_push_and_main_dispatch_run_the_publisher_for_the_tag(self):
         # Only a dispatch is a recovery, which never moves latest.
@@ -198,7 +215,7 @@ def release_indexes(output):
 
 class ServerOciTests(unittest.TestCase):
     def exercise(self, *, existing=False, conflict=False, fail_readback=False, version="1.2.3", listing=None,
-                 prefix="server-v", recovery=False):
+                 prefix="server-v", recovery=False, first_publication=()):
         raw = b'{"schemaVersion":2}\n'
         digest = "sha256:" + hashlib.sha256(raw).hexdigest()
         calls = []
@@ -219,11 +236,13 @@ class ServerOciTests(unittest.TestCase):
             calls.append(tuple(argv))
             if tuple(argv[:2]) == ("skopeo", "list-tags"):
                 self.assertTrue(kwargs.get("text"))
-                return subprocess.CompletedProcess(argv, *listing)
+                answer = listing[argv[-1].removeprefix("docker://")] if isinstance(listing, dict) else listing
+                return subprocess.CompletedProcess(argv, *answer)
             return observed
 
         with patch.dict(os.environ, GHCR_USERNAME="fixture", GHCR_TOKEN="fixture-token"), patch.object(PUBLISH.shutil, "which", return_value="skopeo"), patch.object(PUBLISH, "run", run), patch.object(PUBLISH.subprocess, "run", direct), redirect_stdout(io.StringIO()) as output:
-            PUBLISH.publish_oci(ROOT, prefix, version, "a" * 40, recovery=recovery)
+            PUBLISH.publish_oci(ROOT, prefix, version, "a" * 40, recovery=recovery,
+                                first_publication=first_publication)
         return calls, output.getvalue(), digest
 
     # skopeo's exact answer for ghcr.io/awebai/aweb-server before its first
@@ -234,13 +253,46 @@ class ServerOciTests(unittest.TestCase):
     def test_first_publication_to_an_absent_repository_has_no_tags(self):
         for version, expected in (("1.27.51rc2", ["1.27.51rc2"]), ("1.2.3", ["1.2.3", "latest"])):
             with self.subTest(version=version):
-                calls, output, digest = self.exercise(version=version, listing=(1, "", self.ABSENT_REPOSITORY))
+                calls, output, digest = self.exercise(version=version, listing=(1, "", self.ABSENT_REPOSITORY),
+                                                      first_publication=SERVER_TAG_REPOSITORIES)
                 self.assertFalse(any(args[:3] == ("skopeo", "inspect", "--raw") for args in calls))
                 copies = [args[-1] for args in calls if args[:2] == ("skopeo", "copy")]
                 self.assertEqual(copies, [f"docker://{repository}:{tag}" for repository in SERVER_TAG_REPOSITORIES
                                           for tag in expected])
                 self.assertEqual(calls[-1][:3], ("bash", "scripts/oci-exact-publish.sh", "verify-published"))
                 self.assertEqual([index["digest"] for index in release_indexes(output)], [digest, digest])
+
+    def test_name_unknown_without_the_explicit_first_publication_refuses(self):
+        # "name unknown" is never taken to mean absent on its own (Antares, aweb-adbc 2).
+        with self.assertRaisesRegex(PUBLISH.PublishRefusal,
+                                    "name unknown.*--first-publication ghcr.io/awebai/aweb-server"):
+            self.exercise(listing=(1, "", self.ABSENT_REPOSITORY))
+
+    def test_only_the_named_repository_may_be_new(self):
+        server, signer = SERVER_TAG_REPOSITORIES
+        listings = {server: (0, json.dumps({"Tags": ["1.2.2", "latest"]}), ""),
+                    signer: (1, "", self.ABSENT_REPOSITORY)}
+        calls, _, _ = self.exercise(version="1.2.3rc1", listing=listings, first_publication=(signer,))
+        copies = [args[-1] for args in calls if args[:2] == ("skopeo", "copy")]
+        self.assertEqual(copies, [f"docker://{server}:1.2.3rc1", f"docker://{signer}:1.2.3rc1"])
+        # Naming the existing one as new refuses on it; naming none refuses on the absent one.
+        with self.assertRaisesRegex(PUBLISH.PublishRefusal, f"not a first publication: {server}"):
+            self.exercise(version="1.2.3rc1", listing=listings, first_publication=(server,))
+        with self.assertRaisesRegex(PUBLISH.PublishRefusal, f"{signer}: name unknown"):
+            self.exercise(version="1.2.3rc1", listing=listings)
+
+    def test_a_named_repository_that_lists_tags_is_not_a_first_publication(self):
+        with self.assertRaisesRegex(PUBLISH.PublishRefusal, "not a first publication: ghcr.io/awebai/aweb-protected"):
+            self.exercise(existing=True, first_publication=("ghcr.io/awebai/aweb-protected",))
+
+    def test_a_first_publication_outside_the_tags_images_refuses_before_any_build(self):
+        calls = []
+        with patch.object(PUBLISH, "run", lambda root, *args, **kwargs: calls.append(args) or ""):
+            with patch.dict(os.environ, GHCR_USERNAME="fixture", GHCR_TOKEN="fixture-token"), \
+                    patch.object(PUBLISH.shutil, "which", return_value="skopeo"):
+                with self.assertRaisesRegex(PUBLISH.PublishRefusal, "server-v publishes no ghcr.io/awebai/awid"):
+                    PUBLISH.publish_oci(ROOT, "server-v", "1.2.3", "a" * 40, first_publication=("ghcr.io/awebai/awid",))
+        self.assertEqual(calls, [])
 
     def test_every_other_listing_failure_refuses_before_any_copy(self):
         failures = {
@@ -563,6 +615,16 @@ class RecoveryArgumentTests(unittest.TestCase):
             publish.reset_mock()
             self.assertEqual(PUBLISH.main(["--only", "oci", "server-v1.2.3"]), 0)
             self.assertFalse(publish.call_args.kwargs["recovery"])
+
+
+class FirstPublicationArgumentTests(unittest.TestCase):
+    def test_cli_first_publication_reaches_the_image_publisher(self):
+        with patch.object(PUBLISH, "publish") as publish:
+            self.assertEqual(PUBLISH.main(["--only", "oci", "--first-publication", "ghcr.io/awebai/aweb-protected",
+                                           "server-v1.2.3"]), 0)
+            self.assertEqual(publish.call_args.kwargs["first_publication"], ["ghcr.io/awebai/aweb-protected"])
+            self.assertEqual(PUBLISH.main(["--only", "oci", "server-v1.2.3"]), 0)
+            self.assertEqual(publish.call_args.kwargs["first_publication"], [])
 
 
 if __name__ == "__main__":
