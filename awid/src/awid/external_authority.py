@@ -260,7 +260,7 @@ def _isolated_http_enabled(host: str, context: OriginContext) -> bool:
     except ValueError:
         return False
     listener_host = listener.hostname or ""
-    return _is_isolated_host(host) and _is_isolated_host(listener_host)
+    return bool(listener_host) and _is_isolated_host(host) and _is_isolated_host(listener_host)
 
 
 def canonical_registry_origin(raw: str, *, context: OriginContext | None = None) -> str:
