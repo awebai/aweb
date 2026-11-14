@@ -256,17 +256,11 @@ async def verify_request_certificate(request: Request, db, *, fresh: bool = Fals
     from awid.protected_effect import EffectRefused
     from awid.protected_membership import observe_team_protection, verify_registered_membership
 
-    registry = getattr(request.app.state, "awid_registry_client", None)
-    try:
-        protection_observation = await observe_team_protection(registry, cert_team_id)
-    except EffectRefused as exc:
-        if isinstance(exc.__cause__, AWID_DEPENDENCY_ERRORS):
-            raise _team_read_failure(
-                exc.__cause__, registry, cert_team_id,
-                operation="AWID team key resolution", reading="team key resolution",
-            ) from exc
-        raise HTTPException(status_code=503, detail={"code": exc.code}) from exc
-    team_did_key = protection_observation.controller_did_key
+    # Keep the existing bounded controller-key verification/refresh ahead of
+    # the current protection lookup. Invalid certificates buy no fresh lookup.
+    team_did_key = await _resolve_team_key(request, cert_team_id)
+    if not team_did_key:
+        raise HTTPException(status_code=401, detail="unknown_team")
 
     # -- Step 5: The team's revoked and registered certificates --
     revoked_certs = await _get_revoked_certificates(request, cert_team_id)
@@ -345,6 +339,17 @@ async def verify_request_certificate(request: Request, db, *, fresh: bool = Fals
                 cert_team_id,
             )
         raise certificate_refusal(e) from None
+
+    registry = getattr(request.app.state, "awid_registry_client", None)
+    try:
+        protection_observation = await observe_team_protection(registry, cert_team_id)
+    except EffectRefused as exc:
+        if isinstance(exc.__cause__, AWID_DEPENDENCY_ERRORS):
+            raise _team_read_failure(
+                exc.__cause__, registry, cert_team_id,
+                operation="AWID team key resolution", reading="team key resolution",
+            ) from exc
+        raise HTTPException(status_code=503, detail={"code": exc.code}) from exc
 
     try:
         await verify_registered_membership(registry, protection_observation, cert_data)

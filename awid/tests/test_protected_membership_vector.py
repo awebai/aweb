@@ -69,3 +69,12 @@ async def test_explicit_revoked_status_precedes_legacy_and_digest_checks(
             await verify()
         reason = refused.value.reason if isinstance(refused.value, TeamCertificateError) else refused.value.code
         assert reason == expected
+
+
+@pytest.mark.parametrize("binding", [None, 1, "legacy", [], [["mode"]], [["mode", "legacy"]]])
+def test_missing_or_malformed_binding_is_a_typed_refusal(binding):
+    with pytest.raises(EffectRefused) as refused:
+        protected_membership.TeamProtectionObservation(
+            VECTOR["team_id"], VECTOR["controller_did_key"], binding, 100.0
+        )
+    assert refused.value.code == "protected_state_unavailable"

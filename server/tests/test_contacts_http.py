@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from team_facts_fixtures import legacy_registry
+
 import base64
 import hashlib
 import json
@@ -116,7 +118,7 @@ def _build_test_app(aweb_db, registry):
     app.state.db = _DbShim()
     app.state.redis = None
     app.state.rate_limiter = None
-    app.state.awid_registry_client = registry
+    app.state.awid_registry_client = legacy_registry(registry)
     app.state.federation_authority = TestFederationAuthority(aweb_db, registry)
     return app
 
@@ -148,7 +150,7 @@ async def test_contact_add_unregistered_cross_namespace_target(aweb_cloud_db, mi
     app.state.db = SimpleNamespace(get_manager=lambda name="aweb": db)
     app.state.redis = None
     app.state.rate_limiter = None
-    app.state.awid_registry_client = registry
+    app.state.awid_registry_client = legacy_registry(registry)
     target = "juan.aweb.ai/aweb-expert-secrets-root"
     mapping, responses = _identity_registry_responses(
         "juan.aweb.ai", "aweb-expert-secrets-root", "https://target.test"
