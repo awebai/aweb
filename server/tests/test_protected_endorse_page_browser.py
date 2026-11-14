@@ -43,7 +43,7 @@ HOST = "human.customer.example"
 
 
 @asynccontextmanager
-async def endorse_page(a, tmp_path):
+async def endorse_page(a, tmp_path, *, headless=True):
     """The human origin, over TLS, for the server's composed human signer,
     with one prepared root endorsement."""
     tls = make_certificates(tmp_path, [HOST], ["127.0.0.1"])
@@ -85,7 +85,7 @@ async def endorse_page(a, tmp_path):
                         raise RuntimeError("human origin stopped before startup")
                     await asyncio.sleep(0.01)
             async with async_playwright() as playwright:
-                browser = await playwright.chromium.launch(
+                browser = await playwright.chromium.launch(headless=headless,
                     args=[f"--host-resolver-rules=MAP {HOST} 127.0.0.1", "--no-proxy-server"])
                 try:
                     yield SimpleNamespace(origin=origin, operation=operation, prepared=response.json(), browser=browser)
