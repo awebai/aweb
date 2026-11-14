@@ -1,0 +1,159 @@
+package handoff
+
+import (
+	"encoding/json"
+	"errors"
+	"regexp"
+	"strings"
+
+	awid "github.com/awebai/aw/awid"
+)
+
+// displayRow is one labelled value of a display: its key and the JSON
+// pointer into the frozen request it shows.
+type displayRow struct{ key, source string }
+
+// operationDisplay is an operation definition's display, pinned from the
+// generated description (scripts/generate_protected_operations.py).
+type operationDisplay struct {
+	title        string
+	consequences []string
+	names        []displayRow
+	technical    []displayRow
+	refusals     map[string]string
+}
+
+// RenderedDisplay is what a person is shown for one frozen request.
+type RenderedDisplay struct {
+	Title        string
+	Consequences []string
+	Names        [][2]string
+	Technical    [][2]string
+}
+
+var displayTemplate = regexp.MustCompile(`\{(/[^{}]*)\}`)
+
+func errDisplay() error {
+	return coded("operation_mismatch", errors.New("the frozen request does not fill its definition's display"))
+}
+
+// RenderDisplay fills selector's display from request exactly as the page,
+// the owner page and the approval notice do (operation_display.py): a string
+// shows as itself, an integer in decimal, a list of strings joined with ", ".
+// Technical rows show any other value as canonical JSON. A missing pointer,
+// or a title, consequence or name of another kind, refuses.
+func RenderDisplay(selector string, request map[string]any) (RenderedDisplay, error) {
+	display, ok := generatedDisplays[selector]
+	if !ok {
+		return RenderedDisplay{}, errDisplay()
+	}
+	return display.render(request)
+}
+
+func (d operationDisplay) render(request map[string]any) (RenderedDisplay, error) {
+	var failed error
+	fill := func(template string) string {
+		return displayTemplate.ReplaceAllStringFunc(template, func(match string) string {
+			value, err := readPointer(request, match[1:len(match)-1])
+			if err == nil {
+				var text string
+				if text, err = displayWords(value); err == nil {
+					return text
+				}
+			}
+			failed = err
+			return ""
+		})
+	}
+	rendered := RenderedDisplay{Title: fill(d.title)}
+	for _, line := range d.consequences {
+		rendered.Consequences = append(rendered.Consequences, fill(line))
+	}
+	if failed != nil {
+		return RenderedDisplay{}, failed
+	}
+	for _, row := range d.names {
+		value, err := readPointer(request, row.source)
+		if err != nil {
+			return RenderedDisplay{}, err
+		}
+		text, err := displayWords(value)
+		if err != nil {
+			return RenderedDisplay{}, err
+		}
+		rendered.Names = append(rendered.Names, [2]string{displayLabel(row.key), text})
+	}
+	for _, row := range d.technical {
+		value, err := readPointer(request, row.source)
+		if err != nil {
+			return RenderedDisplay{}, err
+		}
+		text, err := displayWords(value)
+		if err != nil {
+			canonical, cerr := awid.StrictCanonicalJSON(value)
+			if cerr != nil {
+				return RenderedDisplay{}, errDisplay()
+			}
+			text = string(canonical)
+		}
+		rendered.Technical = append(rendered.Technical, [2]string{displayLabel(row.key), text})
+	}
+	return rendered, nil
+}
+
+func readPointer(request map[string]any, pointer string) (any, error) {
+	var value any = request
+	for _, part := range strings.Split(pointer, "/")[1:] {
+		object, ok := value.(map[string]any)
+		if !ok {
+			return nil, errDisplay()
+		}
+		if value, ok = object[part]; !ok {
+			return nil, errDisplay()
+		}
+	}
+	return value, nil
+}
+
+func displayWords(value any) (string, error) {
+	switch v := value.(type) {
+	case string:
+		return v, nil
+	case json.Number:
+		if _, err := v.Int64(); err == nil && !strings.ContainsAny(v.String(), ".eE") {
+			return v.String(), nil
+		}
+	case []any:
+		items := make([]string, 0, len(v))
+		for _, item := range v {
+			text, ok := item.(string)
+			if !ok {
+				return "", errDisplay()
+			}
+			items = append(items, text)
+		}
+		return strings.Join(items, ", "), nil
+	}
+	return "", errDisplay()
+}
+
+func displayLabel(key string) string {
+	text := strings.ReplaceAll(key, "_", " ")
+	if text == "" {
+		return text
+	}
+	return strings.ToUpper(text[:1]) + text[1:]
+}
+
+// displayRefusal is the definition's own sentence for a refusal code, if any.
+func displayRefusal(selector, code string) (string, bool) {
+	sentence, ok := generatedDisplays[selector].refusals[code]
+	return sentence, ok
+}
+
+// selectorOf is the definition selector a prepare body names.
+func selectorOf(body map[string]any) string {
+	operation, _ := body["operation"].(string)
+	variant, _ := body["variant"].(string)
+	return operation + "|" + variant
+}
