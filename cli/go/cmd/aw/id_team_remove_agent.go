@@ -60,26 +60,11 @@ type removalRequest struct {
 // removalBody is the exact prepare body removing cert's membership under
 // binding. The membership snapshot keeps absent fields as explicit nulls.
 func removalBody(profile *handoff.Profile, binding *handoff.ProfileBinding, request removalRequest, cert *awid.TeamCertificate) map[string]any {
-	nullable := func(value string) any {
-		if value == "" {
-			return nil
-		}
-		return value
-	}
-	memberID := cert.MemberDIDKey
-	if cert.MemberDIDAW != "" {
-		memberID = cert.MemberDIDAW
-	}
+	subject := membershipSubject(cert)
+	subject["root_id_or_self"] = request.RootID
 	return map[string]any{
 		"operation_id": request.OperationID, "operation": "team.agent.remove", "variant": "default",
-		"scope": binding.Scope, "audience": profile.RegistryOrigin,
-		"subject": map[string]any{
-			"team_id": cert.Team, "root_id_or_self": request.RootID, "member_id": memberID, "certificate_id": cert.CertificateID,
-			"expected_membership": map[string]any{
-				"member_did_key": cert.MemberDIDKey, "member_did_aw": nullable(cert.MemberDIDAW),
-				"member_address": nullable(cert.MemberAddress), "alias": cert.Alias, "identity_scope": cert.IdentityScope,
-			},
-		},
+		"scope": binding.Scope, "audience": profile.RegistryOrigin, "subject": subject,
 	}
 }
 
@@ -131,15 +116,29 @@ func signedRevocation(result []byte, prepared *handoff.Prepared, controllerDID s
 	invalid := func(format string, args ...any) error {
 		return withErrorCode("signed_request_invalid", fmt.Errorf("the signed revocation is not the one aw requested: "+format, args...))
 	}
-	signing, signature, reason := signedResult(result)
-	if reason != "" {
-		return invalid("%s", reason)
-	}
 	if prepared == nil {
+		if _, _, reason := signedResult(result); reason != "" {
+			return invalid("%s", reason)
+		}
 		return invalid("its prepared operation was never verified")
 	}
 	payload, _ := handoff.DecodeObject(prepared.Payload)
 	request, _ := payload["request"].(map[string]any)
+	return signedFrozenRevocation(result, request, controllerDID)
+}
+
+// signedFrozenRevocation accepts a committed removal's result only as the
+// controller's signature over exactly the registry request in request, the
+// verified operation's frozen request. Anything else is
+// signed_request_invalid.
+func signedFrozenRevocation(result []byte, request map[string]any, controllerDID string) error {
+	invalid := func(format string, args ...any) error {
+		return withErrorCode("signed_request_invalid", fmt.Errorf("the signed revocation is not the one aw requested: "+format, args...))
+	}
+	signing, signature, reason := signedResult(result)
+	if reason != "" {
+		return invalid("%s", reason)
+	}
 	artifact, _ := request["artifact"].(map[string]any)
 	frozen, err := awid.StrictCanonicalJSON(artifact["request"])
 	if err != nil || !bytes.Equal(frozen, signing) {
