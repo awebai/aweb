@@ -18,7 +18,6 @@ from fastapi import APIRouter, Depends, HTTPException, Query, Request
 from pydantic import BaseModel, ConfigDict, Field
 
 from aweb.awid_error_handling import (
-    awid_dependency_http_exception,
     awid_registry_not_configured_exception,
 )
 from aweb.db import DatabaseInfra, get_db_infra
@@ -160,7 +159,9 @@ async def _owner_act_route(request: Request, db_infra: DatabaseInfra, binding_id
     except OwnerActTeamKeyUnavailable as exc:
         # The team key is read before any transaction, so nothing was written.
         logger.warning("AWID registry dependency failed reading the owner-act team key", exc_info=True)
-        raise awid_dependency_http_exception(exc.dependency_error, operation="AWID owner-act team key") from exc
+        # This port reads mandatory current protection as well as the key.
+        # Keep its typed cause in the log, and its closed protocol code on wire.
+        raise HTTPException(status_code=503, detail={"code": "protected_state_unavailable"}) from exc
     return _as_response(binding)
 
 

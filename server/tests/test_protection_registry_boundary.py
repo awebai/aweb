@@ -108,3 +108,39 @@ async def test_owner_act_authority_failure_keeps_registry_cause():
         with pytest.raises(OwnerActTeamKeyUnavailable) as caught:
             await verifier.prepare(b"", "", team_id="backend:acme.com")
         assert caught.value.dependency_error.code == "team_private"
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("failure", ["connect", "timeout"])
+async def test_hook_http_keeps_closed_protection_refusal_and_logs_cause(monkeypatch, caplog, failure):
+    import base64
+    from types import SimpleNamespace
+    import aweb.routes.hook_bindings as routes
+
+    async def identity(request, db):
+        return SimpleNamespace(team_id="backend:acme.com")
+
+    monkeypatch.setattr(routes, "get_team_identity", identity)
+
+    async def handler(req):
+        error = httpx.ConnectError if failure == "connect" else httpx.ReadTimeout
+        raise error("test registry unavailable", request=req)
+
+    async def change(db, verifier, *, team_id, signing, signature, **kwargs):
+        # This is the actual verifier's pre-transaction authority read. The DB
+        # sentinel deliberately exposes no transaction or write capability.
+        await verifier.prepare(signing, signature, team_id=team_id)
+        pytest.fail("unavailable authority must not reach the effect")
+
+    request = _request_with_app_state({})
+    request.scope["method"] = "POST"
+    request._body = b""
+    db = SimpleNamespace(get_manager=lambda name: object())
+    payload = routes.OwnerActRequest(act=base64.b64encode(b"unparsed act").decode(), signature="unused")
+    async with aclosing(RegistryClient("https://registry.test", transport=httpx.MockTransport(handler))) as registry:
+        request.app.state.awid_registry_client = registry
+        with pytest.raises(HTTPException) as caught:
+            await routes._owner_act_route(request, db, "binding", payload, change)
+    assert caught.value.status_code == 503
+    assert caught.value.detail == {"code": "protected_state_unavailable"}
+    assert "test registry unavailable" in caplog.text
