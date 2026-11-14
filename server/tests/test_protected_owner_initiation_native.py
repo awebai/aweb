@@ -134,7 +134,7 @@ async def test_owner_prepare_refuses_wrong_session_scope_origin_or_selector_with
 
 @pytest.mark.asyncio
 @pytest.mark.parametrize("lost_answer", [False, True])
-@pytest.mark.parametrize("target", ["legacy", "root"])
+@pytest.mark.parametrize("target", ["legacy", "root", "tracked"])
 async def test_owner_console_uv_reaches_protected_revocation_and_exact_recovery_without_a_root_grant(
     admissions, tmp_path, monkeypatch, lost_answer, target
 ):
@@ -149,6 +149,12 @@ async def test_owner_console_uv_reaches_protected_revocation_and_exact_recovery_
     a = admissions
     if target == "legacy":
         _, certificate = await legacy_member(a, "unknown")
+    elif target == "tracked":
+        from tests.test_protected_admission_native import endorse
+        from tests.test_protected_removal_native import admitted
+
+        await endorse(a)
+        _, certificate = await admitted(a)
     else:
         from tests.test_independent_protected_signer import DOMAIN, did
 
@@ -165,7 +171,8 @@ async def test_owner_console_uv_reaches_protected_revocation_and_exact_recovery_
         view = await client.get(path)
         assert view.status_code == 200 and view.json()["state"] == "pending", view.text
         frozen = view.json()["payload"]["request"]
-        assert frozen == prepared["payload"]["request"] and frozen["target_kind"] == "kind not verified"
+        assert frozen == prepared["payload"]["request"]
+        assert frozen["target_kind"] == ("agent" if target == "tracked" else "kind not verified")
         query = "SELECT * FROM {{tables.protected_signer_operations}} WHERE operation_id=$1"
         before = await a.w.db.fetch_one(query, body["operation_id"])
         assert before["issued_artifact"] is None and before["signed_result"] is None
@@ -223,7 +230,11 @@ async def test_owner_console_uv_reaches_protected_revocation_and_exact_recovery_
         for kind in ("protected_operation_signed", "protected_operation_applied"):
             assert await a.w.db.fetch_value("SELECT count(*) FROM {{tables.protected_local_audit}} WHERE subject=$1 AND kind=$2",
                 body["operation_id"], kind) == 1
-        assert await a.w.db.fetch_value("SELECT count(*) FROM {{tables.protected_root_admissions}}") == 0
+        assert await a.w.db.fetch_value("SELECT count(*) FROM {{tables.protected_root_admissions}}") == int(target == "tracked")
+        assert await a.w.db.fetch_value(
+            "SELECT count(*) FROM {{tables.protected_root_admissions}} WHERE certificate_id=$1 AND state='removed'",
+            certificate["certificate_id"],
+        ) == int(target == "tracked")
 
 
 @pytest.mark.asyncio
