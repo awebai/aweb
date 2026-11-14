@@ -27,6 +27,9 @@ from awid.did import did_from_public_key
 from awid.signing import sign_message
 
 
+from .legacy_delivery import deliver_legacy
+
+
 class ProtectedControllerCustody:
     def __init__(
         self,
@@ -131,52 +134,7 @@ class ProtectedControllerCustody:
         return base64.b64decode(signature + "=" * (-len(signature) % 4), validate=True)
 
     async def register_admission(self, registry, operation, artifact, result):
-        """One typed registry mutation with this isolated controller; no export.
-
-        The shared executor has already retained this exact signature and quota
-        admission. SDK request authentication is separate from the act signature.
-        The adapter never changes the certificate ID or signs the act again.
-        """
-        from awid.signing import canonical_json_bytes, verify_did_key_signature
-
-        typed = owner_act_operation(operation)
-        if typed.operation != "team.agent.admit" or typed.variant != "default" or typed.context.authority_id != self.team_id:
-            raise SignerRefused("scope_refused")
-        signing = signing_bytes(typed, artifact)
-        if set(result) != {"signing", "signature"} or base64.b64decode(result["signing"], validate=True) != signing:
-            raise SignerRefused("operation_mismatch")
-        signature = base64.b64decode(result["signature"], validate=True)
-        if len(signature) != 64 or authority_key(typed, artifact) != self.team_key_did:
-            raise SignerRefused("operation_mismatch")
-        verify_did_key_signature(did_key=self.team_key_did, payload=signing, signature_b64=result["signature"])
-        certificate = {**artifact, "signature": base64.b64encode(signature).rstrip(b"=").decode()}
-        client = getattr(registry, "client", registry)
-        namespace, name = self.domain, self.team_id.partition(":")[0]
-        await client.register_team_certificate(namespace, name,
-            team_controller_signing_key=bytes(self._key), certificate_id=artifact["certificate_id"],
-            member_did_key=artifact["member_did_key"], member_did_aw=artifact.get("member_did_aw"), member_address=None,
-            alias=artifact["alias"], identity_scope=artifact["identity_scope"],
-            certificate=base64.b64encode(canonical_json_bytes(certificate)).decode())
-
+        return await deliver_legacy(self, registry, operation, artifact, result)
 
     async def remove_member(self, registry, operation, artifact, result):
-        """Release only the retained proof of this one typed revocation."""
-        from awid.signing import verify_did_key_signature
-
-        typed = owner_act_operation(operation)
-        if (typed.operation != "team.agent.remove" or typed.variant != "default"
-            or typed.context.service_id != self.service_id or typed.context.authority_kind != self.authority_kind
-            or typed.context.authority_id != self.team_id or typed.context.authority_domain != self.domain
-            or authority_key(typed, artifact) != self.team_key_did):
-            raise SignerRefused("operation_mismatch")
-        signing = signing_bytes(typed, artifact)
-        if set(result) != {"signing", "signature"} or base64.b64decode(result["signing"], validate=True) != signing:
-            raise SignerRefused("operation_mismatch")
-        signature = base64.b64decode(result["signature"], validate=True)
-        if len(signature) != 64:
-            raise SignerRefused("operation_mismatch")
-        verify_did_key_signature(did_key=self.team_key_did, payload=signing, signature_b64=result["signature"])
-        client = getattr(registry, "client", registry)
-        await client.revoke_team_certificate_with_proof(self.domain, self.team_id.partition(":")[0],
-            certificate_id=typed.intent()["subject"]["certificate_id"], controller_did=self.team_key_did,
-            signing=signing, signature=signature)
+        return await deliver_legacy(self, registry, operation, artifact, result)

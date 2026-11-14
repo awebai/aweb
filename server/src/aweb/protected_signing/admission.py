@@ -333,7 +333,7 @@ class _AdmissionObservation:
             if existing is not None:
                 raise SignerRefused("operation_conflict")
             return {"registry": self.adapter.c.registry.registry_url, "expected_head": None,
-                "responsibility_statement": "Everything this root spawns counts as yours for human responsibility; this grants no resource permissions.",
+                "responsibility_statement": op.spec.display.responsibility_statement,
                 "admission_policy": fields}
         await self._root(tx)
         if fields["digest"] != subject["admission_policy_digest"] or fields["version"] != subject["expected_policy_version"]:

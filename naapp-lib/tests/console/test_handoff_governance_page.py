@@ -32,8 +32,8 @@ from aweb_naapp.console.handoff_page import handoff_page_router
 from aweb_naapp.console.handoff_store import HandoffStore
 from aweb_naapp.runtime.passkeys import RelyingParty
 from aweb_naapp.runtime.protected_signer.http import ProtectedOperationsHTTP
-from tests.runtime.test_protected_signer import SCOPE
-from tests.runtime.test_protected_signer import world as world
+from tests.runtime.protected_signer_support import SCOPE
+from tests.runtime.protected_signer_support import world as world
 
 CSRF_KEY = "aweb.protected.console.csrf"
 

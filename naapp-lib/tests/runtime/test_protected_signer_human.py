@@ -9,10 +9,9 @@ from datetime import UTC, datetime, timedelta
 import pytest
 from awid.signing import canonical_json_bytes
 
-from tests.runtime.test_protected_signer import ORIGIN, SCOPE
+from tests.runtime.protected_signer_support import ORIGIN, SCOPE
 from tests.runtime.test_protected_signer_http import headers, post
-
-pytest_plugins = ("tests.runtime.test_protected_signer_http",)
+from tests.runtime.test_protected_signer_http import http_world as http_world
 
 
 async def prepared(http_world):

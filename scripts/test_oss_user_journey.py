@@ -238,5 +238,233 @@ class ServicePortTests(unittest.TestCase):
         self.assertEqual(result.stdout, "18100 18110")
 
 
+
+# A Docker daemon with its own filesystem. Inside the candidate runner the CLI
+# talks to the host daemon, which resolves a bind source on its own host: only
+# the run-owned bind root, mounted into the runner at the same path, is there.
+# A missing bind source is created as an empty directory, as Docker does. The
+# ownership tools record what they were asked to do: the controls run
+# unprivileged. FAKE_CHOWN_NOT_PERSISTED models Docker Desktop file sharing,
+# where chown succeeds but the owner is not stored; the files then read as
+# root's in the container.
+DAEMON_STUB = r"""
+docker() {
+  local src="" script="" user="root"
+  while [[ $# -gt 0 ]]; do
+    case "$1" in
+      -v) src="${2%%:*}"; shift 2 ;;
+      --user) user="$2"; shift 2 ;;
+      -c) script="$2"; shift 2 ;;
+      *) shift ;;
+    esac
+  done
+  printf '%s %s\n' "$src" "$user" >>"$CALLS"
+  local view="$DAEMON_ROOT$src"
+  mkdir -p "$view"
+  KEYS_VIEW="$view" CONTAINER_USER="$user" PATH="$FAKE_BIN:$PATH" sh -c "${script//\/keys/$view}"
+}
+"""
+
+FAKE_TOOLS = {
+    "chown": r"""#!/usr/bin/env bash
+owner="$1"; shift; status=0
+for path in "$@"; do
+  if [[ -n "${FAKE_CHOWN_REFUSE:-}" ]]; then
+    echo "chown: ${path/#$KEYS_VIEW//keys}: Operation not permitted" >&2; status=1
+  elif [[ ! -e "$path" ]]; then
+    echo "chown: ${path/#$KEYS_VIEW//keys}: No such file or directory" >&2; status=1
+  elif [[ -z "${FAKE_CHOWN_NOT_PERSISTED:-}" ]]; then
+    printf 'owner %s %s\n' "${path/#$KEYS_VIEW//keys}" "$owner" >>"$LEDGER"
+  fi
+done
+exit "$status"
+""",
+    "chmod": r"""#!/usr/bin/env bash
+mode="$1"; shift; status=0
+for path in "$@"; do
+  if [[ -n "${FAKE_CHMOD_REFUSE:-}" ]]; then
+    echo "chmod: ${path/#$KEYS_VIEW//keys}: Operation not permitted" >&2; status=1
+  elif [[ ! -e "$path" ]]; then
+    echo "chmod: ${path/#$KEYS_VIEW//keys}: No such file or directory" >&2; status=1
+  elif [[ -z "${FAKE_CHMOD_NOT_PERSISTED:-}" ]]; then
+    printf 'mode %s %s\n' "${path/#$KEYS_VIEW//keys}" "${mode#0}" >>"$LEDGER"
+  fi
+done
+exit "$status"
+""",
+    "stat": r"""#!/usr/bin/env bash
+shift 2
+for path in "$@"; do
+  name="${path/#$KEYS_VIEW//keys}"
+  owner="$(awk -v n="$name" '$1 == "owner" && $2 == n {v = $3} END {print v}' "$LEDGER")"
+  mode="$(awk -v n="$name" '$1 == "mode" && $2 == n {v = $3} END {print v}' "$LEDGER")"
+  printf '%s %s %s\n' "$name" "${owner:-0:0}" "${mode:-644}"
+done
+""",
+    "cat": r"""#!/usr/bin/env bash
+for path in "$@"; do
+  if [[ -n "${FAKE_READ_REFUSE:-}" ]]; then
+    echo "cat: can't open '${path/#$KEYS_VIEW//keys}': Permission denied" >&2; exit 1
+  fi
+  printf 'read %s as %s\n' "${path/#$KEYS_VIEW//keys}" "$CONTAINER_USER" >>"$LEDGER"
+done
+exec /bin/cat "$@"
+""",
+}
+
+SYNTHETIC_CONTENTS = ("test-only member key", "customer-e2e-test")
+
+
+class CustomerSecretsStagingTests(unittest.TestCase):
+    """Phase 11b2 stages the customer server's credentials where the daemon sees them."""
+
+    def stage(self, bind_root=True, env_bind_root=None, remove_key=False, **faults):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(os.path.realpath(directory))
+            private_tmp, bind, daemon, fake_bin = (root / "runner-tmp", root / "docker-bind",
+                                                   root / "daemon", root / "bin")
+            for path in (private_tmp, bind, daemon, fake_bin):
+                path.mkdir()
+            # The gate mounts the bind root into the runner at its own path.
+            (daemon / bind.relative_to("/")).parent.mkdir(parents=True)
+            (daemon / bind.relative_to("/")).symlink_to(bind)
+            for name, body in FAKE_TOOLS.items():
+                (fake_bin / name).write_text(body)
+                (fake_bin / name).chmod(0o755)
+            ledger, calls = root / "ledger", root / "calls"
+            ledger.touch(); calls.touch()
+            script = "\n".join([
+                "set -euo pipefail", "pass=0; fail=0",
+                function("canonicalize_dir"), function("journey_temp_root"),
+                function("assert_eq"), function("capture_success"), function("run_success"),
+                function("write_staged_file"), function("stage_customer_secrets"),
+                DAEMON_STUB,
+                'TEMP_ROOT="$(journey_temp_root)"',
+                'E2E_ROOT="$(mktemp -d "$TEMP_ROOT/aw-e2e.XXXXXX")"',
+                'CUSTOMER_IDENTITY_DIR="$E2E_ROOT/customer-server-home/identity"',
+                'CUSTOMER_SECRETS_DIR="$E2E_ROOT/customer-server/secrets"',
+                'CUSTOMER_KEYS_DIR="$CUSTOMER_SECRETS_DIR/aweb"',
+                'mkdir -p "$CUSTOMER_IDENTITY_DIR/.aw" "$CUSTOMER_KEYS_DIR"',
+                "printf 'test-only member key' >\"$CUSTOMER_IDENTITY_DIR/.aw/signing.key\"",
+                'chmod 0600 "$CUSTOMER_IDENTITY_DIR/.aw/signing.key"',
+                '[[ -z "$REMOVE_KEY" ]] || rm "$CUSTOMER_IDENTITY_DIR/.aw/signing.key"',
+                'if stage_customer_secrets; then staged=yes; else staged=no; fi',
+                'printf "staged=%s fail=%s root=%s\\n" "$staged" "$fail" "$E2E_ROOT"',
+            ])
+            env = {key: value for key, value in os.environ.items()
+                   if key != "AWEB_DOCKER_BIND_ROOT" and not key.startswith("FAKE_")}
+            env.update({"TMPDIR": str(private_tmp), "DAEMON_ROOT": str(daemon),
+                        "FAKE_BIN": str(fake_bin), "LEDGER": str(ledger), "CALLS": str(calls),
+                        "REMOVE_KEY": "1" if remove_key else ""})
+            env.update({f"FAKE_{name.upper()}": "1" for name, enabled in faults.items() if enabled})
+            if bind_root:
+                env["AWEB_DOCKER_BIND_ROOT"] = env_bind_root or str(bind)
+            result = subprocess.run(["bash", "-c", script], capture_output=True, text=True, env=env)
+            daemon_views = sorted(str(p.relative_to(daemon)) for p in daemon.rglob("aweb")
+                                  if p.is_dir() and not p.is_symlink())
+            return dict(result=result, ledger=ledger.read_text(), calls=calls.read_text(),
+                        bind=bind, private_tmp=private_tmp, daemon_views=daemon_views)
+
+    def assertNoSecretContents(self, run):
+        for content in SYNTHETIC_CONTENTS:
+            self.assertNotIn(content, run["result"].stdout)
+            self.assertNotIn(content, run["result"].stderr)
+
+    def test_runner_private_temp_root_is_invisible_to_the_daemon(self):
+        # The gate-13 mechanism: the runner wrote the files under its own /tmp,
+        # and the daemon bound an empty directory it created for that path.
+        run = self.stage(bind_root=False)
+        out = run["result"].stdout
+        self.assertEqual(run["result"].returncode, 0, run["result"].stderr)
+        self.assertIn("staged=no fail=1", out)
+        self.assertIn("FAIL: customer secrets ownership exit", out)
+        self.assertIn("missing in the daemon view of the customer secrets: customerteam.key", out)
+        self.assertEqual(run["ledger"], "", "nothing may be chowned that the daemon cannot see")
+        self.assertEqual(len(run["daemon_views"]), 1, run["daemon_views"])
+        self.assertIn(str(run["private_tmp"]).lstrip("/"), run["daemon_views"][0])
+
+    def assert_usable(self, run, owner):
+        out = run["result"].stdout
+        self.assertEqual(run["result"].returncode, 0, run["result"].stderr)
+        self.assertIn("staged=yes fail=0", out)
+        self.assertIn(f"root={run['bind']}/aw-e2e.", out)
+        self.assertIn("PASS: customer secrets ownership exit", out)
+        self.assertIn("PASS: customer secrets are mode 0400", out)
+        self.assertIn("PASS: customer secrets are readable by the image user exit", out)
+        self.assertIn(f"customer secrets owner (not asserted): /keys/customerteam.key {owner}", out)
+        reads = sorted(line for line in run["ledger"].splitlines() if line.startswith("read "))
+        self.assertEqual(reads, ["read /keys/customerteam.key as 1001:1001",
+                                 "read /keys/database-url as 1001:1001"])
+        self.assertEqual(run["daemon_views"], [], "the daemon must not create a bind source")
+        self.assertNoSecretContents(run)
+
+    def test_persisted_ownership_is_usable_and_owned_by_the_image_user(self):
+        run = self.stage()
+        self.assert_usable(run, "1001:1001")
+        self.assertEqual(sorted(l for l in run["ledger"].splitlines() if not l.startswith("read ")), sorted([
+            "owner /keys/customerteam.key 1001:1001", "owner /keys/database-url 1001:1001",
+            "mode /keys/customerteam.key 400", "mode /keys/database-url 400"]))
+
+    def test_unpersisted_ownership_is_usable_and_reported_not_asserted(self):
+        # Docker Desktop file sharing: chown succeeds, the owner is not stored,
+        # and the mode is. The image user still reads both files.
+        run = self.stage(chown_not_persisted=True)
+        self.assert_usable(run, "0:0")
+        self.assertNotIn("owner ", run["ledger"])
+
+    def test_missing_member_key_is_a_named_failure_before_any_container(self):
+        run = self.stage(remove_key=True)
+        out = run["result"].stdout
+        self.assertEqual(run["result"].returncode, 0, run["result"].stderr)
+        self.assertIn("staged=no fail=1", out)
+        self.assertIn("FAIL: customer server key staged exit", out)
+        self.assertEqual(run["calls"], "", "no container runs after a staging failure")
+
+    def assert_named_failure(self, run, label, stderr=None):
+        out = run["result"].stdout
+        self.assertEqual(run["result"].returncode, 0, run["result"].stderr)
+        self.assertIn("staged=no", out)
+        self.assertIn(f"FAIL: {label}", out)
+        if stderr:
+            self.assertIn(stderr, run["result"].stdout + run["result"].stderr)
+        self.assertNoSecretContents(run)
+
+    def test_refused_ownership_change_is_a_named_failure(self):
+        run = self.stage(chown_refuse=True)
+        self.assert_named_failure(run, "customer secrets ownership exit", "Operation not permitted")
+        self.assertNotIn("1001:1001", run["calls"], "no read is attempted after a failed chown")
+
+    def test_refused_mode_change_is_a_named_failure(self):
+        run = self.stage(chmod_refuse=True)
+        self.assert_named_failure(run, "customer secrets ownership exit", "Operation not permitted")
+
+    def test_mode_that_did_not_stick_is_a_named_failure(self):
+        run = self.stage(chmod_not_persisted=True)
+        self.assert_named_failure(run, "customer secrets are mode 0400")
+
+    def test_image_user_that_cannot_read_is_a_named_failure(self):
+        run = self.stage(read_refuse=True)
+        self.assert_named_failure(run, "customer secrets are readable by the image user exit",
+                                  "Permission denied")
+        self.assertIn("unreadable by uid 1001: customerteam.key", run["result"].stdout)
+
+    def test_bind_root_must_be_an_existing_absolute_directory(self):
+        for value in ("relative/docker-bind", "/nonexistent-aweb-bind-root"):
+            with self.subTest(value=value):
+                run = self.stage(env_bind_root=value)
+                self.assertNotEqual(run["result"].returncode, 0)
+                self.assertIn("AWEB_DOCKER_BIND_ROOT must be an existing absolute directory",
+                              run["result"].stderr)
+
+    def test_journey_allocates_its_root_and_stages_through_the_checked_functions(self):
+        text = JOURNEY.read_text()
+        self.assertIn('TEMP_ROOT="$(journey_temp_root)" || exit 2', text)
+        self.assertIn("stage_customer_secrets || exit 1", text)
+        self.assertEqual(text.count('-v "$CUSTOMER_KEYS_DIR:/keys'), 2,
+                         "the keys directory is bound only by stage_customer_secrets")
+        self.assertEqual(function("stage_customer_secrets").count('-v "$CUSTOMER_KEYS_DIR:/keys'), 2)
+        self.assertNotIn("no one else", function("stage_customer_secrets"),
+                         "Docker Desktop does not enforce isolation between container uids")
+
 if __name__ == "__main__":
     unittest.main()

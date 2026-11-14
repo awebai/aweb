@@ -23,7 +23,7 @@ def test_runtime_selectors_are_exactly_the_reviewed_slice_and_existing_revoke():
     for row in enforced:
         selector = row["operation"], row["variant"]
         if selector not in OPERATIONS:
-            with pytest.raises(SignerRefused, match="operation_refused"):
+            with pytest.raises(SignerRefused, match="operation_not_served"):
                 operation_spec(*selector)
             continue
         spec = operation_spec(*selector)
@@ -34,8 +34,29 @@ def test_runtime_selectors_are_exactly_the_reviewed_slice_and_existing_revoke():
 
 @pytest.mark.parametrize("name", ["sign_bytes", "team.log-key.sign", "team.owner.change", "team.controller-permissions.change"])
 def test_no_unreviewed_route_or_generic_signing_operation_is_enabled(name):
-    with pytest.raises(SignerRefused, match="operation_refused"):
+    with pytest.raises(SignerRefused, match="operation_not_served"):
         operation_spec(name)
+
+
+def test_each_definition_owns_its_consumer_codec_and_page_schema():
+    """The page and byte codec select the same closed definition.
+
+    This guards the architectural boundary: a new table row must supply its
+    codec, rather than require another selector list in the shared codec.
+    """
+    from aweb_naapp.runtime.protected_signer.catalog import presentation_catalog
+
+    page = presentation_catalog()
+    for selector, definition in OPERATIONS.items():
+        assert callable(definition.codec.parse_subject)
+        assert callable(definition.codec.build_artifact)
+        assert callable(definition.codec.signing_bytes)
+        assert definition.codec.authority_field
+        assert page["|".join(selector)]["subject_schema"] == definition.codec.subject_schema
+
+    # Public presentation data must not mutate the authoritative definition.
+    page["human-role.revoke|default"]["subject_schema"]["required"].clear()
+    assert presentation_catalog()["human-role.revoke|default"]["subject_schema"]["required"]
 
 
 @pytest.mark.asyncio
