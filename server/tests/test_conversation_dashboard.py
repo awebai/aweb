@@ -52,6 +52,10 @@ async def test_bound_details_and_whole_thread_batch_unread_across_teams(human_me
     env = human_messages
     other_team = f"other-{uuid4().hex[:12]}:example.test"
     await env.db.execute("INSERT INTO {{tables.teams}} (team_id,namespace,team_name,team_did_key) VALUES ($1,'example.test','other',$2)", other_team, env.team_did)
+    await env.registry_db.execute(
+        "INSERT INTO {{tables.teams}} (domain,name,team_did_key,visibility) "
+        "VALUES ('example.test',$1,$2,'public')", other_team.split(':')[0], env.team_did,
+    )
     await env.db.execute("UPDATE {{tables.agents}} SET team_id=$1,alias='alice' WHERE agent_id=$2", other_team, env.actors["carol"].id)
     first = await mail(env)
     await mail(env, conversation_id=first["conversation_id"], subject="Later subject")
