@@ -590,7 +590,9 @@ func TestASavedOperationForAnythingElseIsNeverContinued(t *testing.T) {
 		"another binding": {true, func(_ *awconfig.PendingGovernanceOperation, body map[string]any) {
 			body["scope"].(map[string]any)["generation"] = 2
 		}},
-		"another registry": {true, func(_ *awconfig.PendingGovernanceOperation, body map[string]any) { body["audience"] = "https://other-registry.example" }},
+		"another registry": {true, func(_ *awconfig.PendingGovernanceOperation, body map[string]any) {
+			body["audience"] = "https://other-registry.example"
+		}},
 		"the root's removal": {true, func(_ *awconfig.PendingGovernanceOperation, body map[string]any) { body["variant"] = "default" }},
 		"another snapshot": {true, func(_ *awconfig.PendingGovernanceOperation, body map[string]any) {
 			body["subject"].(map[string]any)["expected_membership"].(map[string]any)["alias"] = "renamed"
