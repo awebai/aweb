@@ -56,9 +56,7 @@ hermes config set AWEB_IDENTITY_HOME "$PWD/.aw"
 ```
 
 Keep the export before installation: it suppresses the required-environment
-prompt, including when pasting the block. In a terminal, install still prompts
-for optional plugin environment values. Press Enter to skip them; the
-`hermes config set` lines above set them next. To update an existing plugin:
+prompt. To update an existing plugin:
 
 ```bash
 hermes plugins update aweb-platform
