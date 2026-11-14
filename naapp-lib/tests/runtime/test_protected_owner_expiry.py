@@ -142,3 +142,59 @@ async def test_expiry_after_a_retained_signature_is_unknown_even_while_the_human
     receipt = await engine._execution_refusal(op.operation_id, actor.human, SignerRefused(code))
     assert (receipt.state, receipt.code) == ("unknown", "external_effect_unresolved")
     assert row == before
+
+
+@pytest.mark.asyncio
+async def test_an_already_retired_owner_uuid_returns_expiry_without_a_second_audit():
+    actor, op = initiation()
+    actor = replace(actor, session=replace(actor.session, expires_at=NOW + timedelta(hours=48)))
+    row = owned_row(actor, op)
+    row.update(refusal_code="operation_expired")
+    engine, events, commits = ports(row, actor)
+    with pytest.raises(SignerRefused, match="operation_expired"):
+        await engine.owner_prepared(actor)
+    assert commits == [True] and events == []
+
+
+@pytest.mark.asyncio
+async def test_an_inflight_human_continuation_cannot_sign_after_unsigned_retirement():
+    from aweb_naapp.runtime.approvals import ApprovalState, Assurance
+
+    actor, op = initiation()
+    row = owned_row(actor, op)
+    row.update(result=None, signed_result=None, retained_effect=None, refusal_code=None,
+        approval_id="approval", candidate_links={actor.human.subject: "personal"})
+    initial = deepcopy(row)
+    engine, _, _ = ports(row, actor)
+    engine.clock = lambda: NOW
+
+    async def authorized(*args, **kwargs):
+        return initial
+
+    async def approval(*args):
+        # The owner's concurrent retry retires the row while B3 finishes.
+        row["refusal_code"] = "operation_expired"
+        return SimpleNamespace(state=ApprovalState.APPROVED, decided_by=SimpleNamespace(
+            subject=actor.human.subject, scope=actor.human.b3_scope, assurance=Assurance.PASSKEY))
+
+    async def observed(*args, **kwargs):
+        return None
+
+    engine._authorized = authorized
+    engine.store = SimpleNamespace(get=approval)
+    engine.owner_removal = SimpleNamespace(observe=observed)
+    engine.passkeys = SimpleNamespace(prepare_current_approvers=lambda *a: pytest.fail("a terminal row cannot reach signing"))
+    receipt = await engine._execute_human(op.operation_id, {}, human=actor.human, human_session=actor.session)
+    assert (receipt.state, receipt.code) == ("refused", "operation_expired")
+    assert row["signed_result"] is None
+
+
+@pytest.mark.asyncio
+async def test_a_late_verification_failure_cannot_overwrite_the_retired_receipt():
+    actor, op = initiation()
+    row = owned_row(actor, op)
+    row.update(result=None, refusal_code="operation_expired", verification_claim="original-claim")
+    before = deepcopy(row)
+    engine, events, _ = ports(row, actor)
+    await engine._refuse_verification(op.operation_id, "original-claim", "proof_invalid")
+    assert row == before and events == []

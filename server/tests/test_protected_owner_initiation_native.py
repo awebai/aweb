@@ -112,7 +112,7 @@ async def test_owner_prepare_refuses_wrong_session_scope_origin_or_selector_with
         if change == "credential":
             await a.w.db.execute("UPDATE {{tables.passkey_credentials}} SET revoked_at=NOW() WHERE subject=$1", a.w.human.subject)
         if change == "session":
-            await a.w.db.execute("UPDATE {{tables.console_sessions}} SET expires_at=NOW()-$1", timedelta(seconds=1))
+            await a.w.db.execute("UPDATE {{tables.console_sessions}} SET expires_at=NOW()-$1::interval", timedelta(seconds=1))
         if change == "foreign_team":
             body["team_id"] = "another:customer.example"
         if change == "extra":
@@ -210,4 +210,80 @@ async def test_owner_console_uv_reaches_protected_revocation_and_exact_recovery_
         for kind in ("protected_operation_signed", "protected_operation_applied"):
             assert await a.w.db.fetch_value("SELECT count(*) FROM {{tables.protected_local_audit}} WHERE subject=$1 AND kind=$2",
                 body["operation_id"], kind) == 1
+        assert await a.w.db.fetch_value("SELECT count(*) FROM {{tables.protected_root_admissions}}") == 0
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("state", ["unsigned", "signed", "unavailable"])
+async def test_owner_retry_retires_only_definite_unsigned_expiry_and_can_start_a_new_uuid(
+    admissions, tmp_path, monkeypatch, state
+):
+    from aweb.protected_signing.owner import owner_view
+    from aweb_naapp.runtime.protected_signer import OperationReceipt, SignerRefused
+
+    a = admissions
+    _, certificate = await legacy_member(a, "unknown")
+    body = selection(certificate)
+    async with owner_http(a, tmp_path) as (client, headers, _):
+        signer = a.w.app.signer
+        signer.mailed_approval_wait = timedelta(seconds=30)
+        response = await client.post("/governance/operations", json=body, headers=headers)
+        assert response.status_code == 200, response.text
+        prepared = response.json()
+        path = "/handoff/" + prepared["handoff_id"] + "/governance"
+        if state == "signed":
+            async def no_release(operation_id, *args, **kwargs):
+                return OperationReceipt(operation_id, "unknown", code="external_effect_unresolved")
+
+            monkeypatch.setattr(signer, "_reconcile_retained", no_release)
+            options = await client.post(path + "/options", json={}, headers=headers)
+            assert options.status_code == 200, options.text
+            answer = await client.post(path + "/execute", json={"assertion": a.w.device.get(options.json())}, headers=headers)
+            assert answer.status_code == 200 and answer.json()["state"] == "unknown", answer.text
+        query = "SELECT * FROM {{tables.protected_signer_operations}} WHERE operation_id=$1"
+        before = await a.w.db.fetch_one(query, body["operation_id"])
+        assert (before["signed_result"] is not None) == (state == "signed")
+        assert (before["retained_effect"] is not None) == (state == "signed")
+        expired = before["expires_at"] + timedelta(seconds=1)
+        monkeypatch.setattr(signer, "clock", lambda: expired)
+        if state == "unavailable":
+            observe = signer.authority.observe
+
+            async def unavailable(*args, **kwargs):
+                fence = await observe(*args, **kwargs)
+
+                class Unavailable:
+                    def __getattr__(self, name):
+                        return getattr(fence, name)
+
+                    async def check(self, *args, **kwargs):
+                        raise SignerRefused("evidence_unavailable")
+
+                return Unavailable()
+
+            monkeypatch.setattr(signer.authority, "observe", unavailable)
+        response = await client.post("/governance/operations", json=body, headers=headers)
+        after = await a.w.db.fetch_one(query, body["operation_id"])
+        if state == "unsigned":
+            assert response.status_code == 410 and response.json() == {"detail": "operation_expired"}, response.text
+            assert after["refusal_code"] == "operation_expired"
+            assert all(after[name] is None for name in ("result", "signed_result", "retained_effect", "issued_artifact", "delivery_claim"))
+            assert all(after[name] == before[name] for name in ("request", "intent", "digest", "expires_at", "initiation_selection"))
+            view = await owner_view(a.w.app, scope=a.w.human.b3_scope, subject=a.w.human.subject, now=expired)
+            history = next(item for item in view["history"] if item["operation_id"] == body["operation_id"])
+            assert history["state"] == "refused" and history["code"] == "operation_expired"
+            retry = await client.post("/governance/operations", json=body, headers=headers)
+            assert retry.status_code == 410
+            assert await a.w.db.fetch_value(
+                "SELECT count(*) FROM {{tables.protected_local_audit}} WHERE subject=$1 AND kind='protected_operation_refused'",
+                body["operation_id"],
+            ) == 1
+            fresh = await client.post("/governance/operations", json={**body, "operation_id": str(uuid4())}, headers=headers)
+            assert fresh.status_code == 200 and fresh.json()["operation_id"] != body["operation_id"], fresh.text
+        elif state == "signed":
+            assert response.status_code == 200 and response.json() == prepared, response.text
+            assert after == before
+        else:
+            assert response.status_code == 503 and response.json() == {"detail": "receipt_unavailable"}, response.text
+            assert after == before
         assert await a.w.db.fetch_value("SELECT count(*) FROM {{tables.protected_root_admissions}}") == 0
