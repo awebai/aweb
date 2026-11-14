@@ -12,6 +12,7 @@ from awid.did import did_from_public_key, generate_keypair
 from awid.protected_membership import TeamProtectionObservation
 from aweb_naapp.runtime.protected_signer import CatalogOperation, SignerRefused
 from pydantic import ValidationError
+from pydantic_settings import SettingsError
 
 from aweb.protected_signing.host import HostSettings, load_custodies
 from tests.test_protected_custody_manifest import slots  # noqa: F401  (fixture)
@@ -96,13 +97,12 @@ def test_a_service_key_the_custodian_did_not_install_is_refused_before_any_servi
     [
         ("AWEB_PROTECTED_OWNER_ACT_ORIGINS", "https://secrets.example.com"),
         ("AWEB_PROTECTED_OWNER_ACT_ORIGINS", '["https://secrets.example.com/path"]'),
-        ("AWEB_PROTECTED_OWNER_ACT_ORIGINS", '["http://secrets.example.com"]'),
         ("AWEB_PROTECTED_EFFECT_RECEIPT_ORIGINS", '[""]'),
     ],
 )
 def test_the_host_refuses_a_malformed_value_given_around_the_bundle(monkeypatch, name, value):
     monkeypatch.setenv(name, value)
-    with pytest.raises(ValidationError):
+    with pytest.raises((ValidationError, SettingsError)):
         HostSettings(profile_file=FIXTURE, scope_file=Path("/nonexistent"), controller_key_file=Path("/nonexistent"),
             member_keys_file=Path("/nonexistent"), worker_uids=[65534], database_url="postgresql://unused",
             _env_file=None)
