@@ -99,8 +99,6 @@ async def test_genuine_b3_owner_act_reaches_protected_sql_consumer(world, tmp_pa
     w = world
     async with ready_owner_act_consumer(w, tmp_path, test_db_factory) as consumer:
         db, custody, client = consumer.db, consumer.custody, consumer.client
-        custody.configure_effects(registry=w.registry, clients={w.operation.audience: client},
-            receipt_origins=frozenset({w.operation.audience}), clock=lambda: w.app.signer.clock())
         prepared = await prepare_owner(w)
         candidate_row = await w.db.fetch_one(
             "SELECT candidate_links FROM {{tables.protected_signer_operations}} WHERE operation_id=$1", prepared.operation_id)
