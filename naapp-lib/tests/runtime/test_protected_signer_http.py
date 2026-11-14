@@ -318,8 +318,9 @@ async def test_retained_context_is_exact_routing_metadata_not_receipt_authority(
     # no B2 approval and never purports to be a signed or executable effect.
     await w.passkeys.db.execute(
         "INSERT INTO {{tables.protected_signer_operations}} "
-        "(operation_id,handoff_id,requester,intent,request,digest,approval_id,candidate_links,expires_at) "
-        "SELECT $1,$2,'other-requester',$3,$4,$7,$5,'{}'::jsonb,expires_at "
+        "(operation_id,handoff_id,requester,intent,request,digest,approval_id,candidate_links,expires_at,scope) "
+        "SELECT $1,$2,'other-requester',$3,$4,$7,$5,'{}'::jsonb,expires_at,"
+        "(convert_from($4::bytea,'UTF8')::jsonb)->'scope' "
         "FROM {{tables.protected_signer_operations}} WHERE operation_id=$6",
         other.operation_id,
         str(uuid.uuid4()),
