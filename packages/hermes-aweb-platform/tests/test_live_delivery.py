@@ -2,7 +2,8 @@
 
 Uses the same opt-in local fixtures as test_live_chat.py. Timing/fault probes
 observe or delay completed real CLI operations; no replacement CLI, server,
-adapter, gateway handler, model or fabricated event payload is installed.
+adapter, model or fabricated event payload is installed. Ordinary-turn entry
+observers forward to the real handler, and prompt checks use real Hermes primitives.
 """
 import json
 import os
@@ -35,7 +36,7 @@ class LiveDeliveryTests(unittest.TestCase):
         self.assertTrue(any(r.get("case") == case for r in receipts),
                         "probe exited without completing acceptance assertions: " + result.stderr[-12000:])
 
-    def test_blocked_clarify_and_ordered_turns(self):
+    def test_clarify_refusal_and_ordered_content(self):
         self.probe("clarify")
 
     def test_empty_history_hint(self):
@@ -47,13 +48,16 @@ class LiveDeliveryTests(unittest.TestCase):
     def test_mail_reply_routes(self):
         self.probe("mail_routes")
 
+    def test_first_contact_notice_explains_local_home_setup(self):
+        self.probe("home_notice")
+
     def test_stream_health(self):
         self.probe("health")
 
-    def test_approve_and_deny_unblock_real_approval(self):
+    def test_aweb_cannot_resolve_approval_or_receive_prompt(self):
         self.probe("approval")
 
-    def test_stop_unblocks_session(self):
+    def test_stop_is_content_and_shutdown_stays_unread(self):
         self.probe("stop")
 
     @unittest.skipUnless(os.environ.get("HERMES_LIVE_UNAUTHORIZED_HOME"), "requires unauthorized sender fixture")

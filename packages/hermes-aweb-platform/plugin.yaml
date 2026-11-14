@@ -1,7 +1,7 @@
 name: aweb-platform
 label: Aweb
 kind: platform
-version: 0.1.0
+version: 0.2.0
 description: >
   Hermes gateway adapter for Aweb agent mail/chat. Listens to aw events,
   delivers actionable Aweb mail/chat into Hermes, and replies through aw.

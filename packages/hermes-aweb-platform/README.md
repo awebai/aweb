@@ -129,14 +129,34 @@ key `platforms/aweb` and can be enabled with `hermes plugins enable platforms/aw
 Use `hermes config set` for persistent platform settings in the selected Hermes
 home. Keep model and Telegram credentials in Hermes's own configuration.
 `AWEB_PLATFORM_AW_BIN` optionally selects an aw executable.
-Without a configured home channel, Hermes can send its missing-home-channel
-notice as a visible reply before the model answer; that notice can mark the
-input read. Likewise, a clarify prompt is a visible reply: read state does not
-mean the model turn has finished. In an aweb chat, `/sethome` stores that exact
-chat as the home target (`AWEB_HOME_CHANNEL=chat:<session-id>` and the matching
-platform home channel). A new conversation no longer triggers the missing-home
-notice. The separate
-model acceptance run configured the home channel.
+Home delivery is optional and configured in the operator terminal, in the
+selected Hermes home:
+
+```bash
+hermes config set AWEB_HOME_CHANNEL alice
+```
+
+Home delivery uses agent chat. Use an existing recipient agent alias in the
+same team or a full reachable agent address. A local recipient agent needs no
+public address. Leave the setting unset until there
+is a recipient, and restart the gateway after changing it. The standalone sender
+takes a recipient, not `chat:<session-id>`. When unset, a first-contact notice
+explains local setup; a notice can mark the input read before the model turn
+finishes.
+
+Aweb mail and chat are **content only**: every message retains its original body
+after an `[Aweb message: content only]` prefix and has
+`allow_gateway_control=False`. Leading slashes and plain replies cannot invoke
+Hermes commands or satisfy pending approval, clarification, update or confirmation
+prompts. No inbound message is silently dropped by this boundary.
+
+Interactive tool-approval and clarification delivery is definitively refused
+before any prompt or command preview reaches the sender. The approval-required
+tool is blocked and the gateway logs a local warning without the command text.
+It does not automatically prompt in the terminal. Do work requiring approval
+in a separate local Hermes CLI/TUI session under its normal approval policy;
+use ordinary conversational replies for follow-up questions. Approval mode and
+existing grants are not changed by this transport boundary.
 
 ## Troubleshooting settings
 
@@ -155,11 +175,11 @@ hermes config set AWEB_IDENTITY_HOME "$PWD/.aw"
 
 - Session-summary chat events resolve all returned unread messages, oldest first.
   Ordinary turns finish separately; bursts never merge in Hermes's pending slot.
-- Authorized `/approve`, `/deny`, `/stop`, `/new`, `/reset`, and pending clarify
-  answers reach the actual gateway while another turn waits. Other messages stay ordered.
+- All inbound is ordinary content, including slash-prefixed messages. There is
+  no remote-control fast lane; messages stay ordered while another turn waits.
 - Immutable input routes bind each reply and read mark to its triggering input.
-  Read follows a persisted reply or accepted no-reply processing. An explicit
-  successful stop retires its cancelled input; shutdown cancellation stays unread.
+  Read follows a persisted reply or accepted no-reply processing. Shutdown
+  cancellation leaves an unfinished input unread.
 - Failed mail fetches stay retryable. A completed response with a failed read
   mark retries that receipt in this process. A gateway crash can still duplicate
   a committed reply between send and read; no crash-level exactly-once claim is made.
@@ -179,22 +199,25 @@ For development, run these checks from the root of the
 [aweb source monorepo](https://github.com/awebai/aweb), using the supported
 Hermes checkout's dependency environment. The public
 surfaces used are platform registration, `handle_message`, processing-completion
-hooks, command/clarify helpers and `send_path_degraded`. These pinned private
-boundaries remain because a public final-turn/guard-release receipt is absent:
+hooks, content-only events, prompt-delivery dispositions and `send_path_degraded`.
+The following pinned upstream boundaries require inspection on upgrades:
 
 | Boundary (v0.22.2 source locations) | Why it remains | Upgrade check |
 | --- | --- | --- |
 | `BasePlatformAdapter._session_tasks`, `_event_session_key` (`base.py:1993,2554,4768`) | The public completion hook runs before guard cleanup; ordinary admission waits for actual task completion. | Ordered burst/restart and blocked-turn probes. |
 | Runner `_startup_restore_in_progress` (`run_inbound.py:219`) | A volatile startup replay queue is not completed no-reply processing. | Burst queued before real gateway boot. |
-| Runner `_is_user_authorized_for_source` (`run.py:4020`) | Distinguish ignored unauthorized `None` from accepted no-reply `None`; refuse unauthorized control bypass. | Real unauthorized sender remains unread; do not remove this gate on upgrade. |
-| `_dispatch_inline_reply` (`base.py:3599`) | Preserve a failed inline handler disposition when Hermes contains its exception. | Approval/clarify/stop probes through actual gateway dispatch. |
+| Runner `_is_user_authorized_for_source` (`run.py:4020`) | Distinguish ignored unauthorized `None` from accepted no-reply `None`. | Real unauthorized sender remains unread; do not remove this gate on upgrade. |
+| `MessageEvent.allow_gateway_control` and pending-reply guards (`event.py:97-135`, `run_inbound.py:1224`, `run_busy.py:553`) | Every aweb input must stay conversational, including plain-word and slash approval replies. | Content preservation and pending-approval refusal tests at both releases. |
+| Definitive `egress_declined` prompt disposition (`run.py:763-813`, `run_turn_runner.py:1501-1531`, `run_turn_runner_clarify_delivery.py:47-58`) | Approval/clarify refusal must clear the waiter without a text fallback or a command preview. | Real notifier/registry tests and sender-visible output checks. |
+| Exact localized missing-home notice (`run_turn.py:1453-1457`; v0.23.1 `run_turn_prepare.py:691-695`) | Upstream provides no typed notice kind. Only the exact Aweb render is replaced with local setup advice. | Real localized notice plus unchanged neighboring text, at both releases. |
 | aw reconnect diagnostic (`cli/go/cmd/aw/events.go:93`) | aw may reconnect HTTP streams inside one child process; degrade health before the next frame. | Check this CLI diagnostic and JSON event shape when upgrading aw. |
 
-The v0.22.2/v0.23.1 comparison passed lifecycle, live chat and seven of eight
-delivery probes on each release. `test_mail_reply_routes` failed on both:
-a nonempty mail subject prefixes the body, so a body slash command is not
-recognized as a command. The mail overlap/control-route assertions remain
-unproved; the upgrade comparison did not exercise a model.
+The earlier comparison of plugin `df0b38022` on v0.22.2/v0.23.1 passed lifecycle,
+live chat and seven of eight delivery probes on each release. Its mail-route
+probe expected a remote slash command and failed on both releases because mail
+subjects prevented command parsing. Remote command dispatch is now forbidden;
+current probes check content-only delivery and local prompt refusal instead.
+The earlier comparison did not exercise model inference.
 
 For a Hermes upgrade, inspect those boundaries at the new commit and run the
 following targeted checks before advancing the supported version:
@@ -203,6 +226,8 @@ following targeted checks before advancing the supported version:
 export HERMES_AGENT_SOURCE=/path/to/supported/hermes-agent
 python -m unittest discover -s packages/hermes-aweb-platform/tests \
   -p test_hermes_lifecycle.py -v
+python -m unittest discover -s packages/hermes-aweb-platform/tests \
+  -p test_content_boundary.py -v
 
 export HERMES_LIVE_RECEIVER_HOME=/path/to/local-hermes-workspace
 export HERMES_LIVE_SENDER_HOME=/path/to/local-alice-workspace
@@ -217,9 +242,11 @@ python -m unittest discover -s packages/hermes-aweb-platform/tests \
 The opt-in tests require disposable loopback aweb/AWID/PostgreSQL fixtures,
 receiver alias `hermes`, sender alias `alice`, address `hermes-acft1.test/alice`,
 and exclusive receiver ownership. They run the actual gateway, aw and server.
-Fixture commands use Hermes's real clarify/approval primitives without a model;
-timing/fault probes hold or drop completed real CLI results, never fabricate
-messages or server events. These checks establish transport behavior only.
+Prompt probes use Hermes's real approval notifier, clarify and pending registries
+without executing a tool or using model credentials. Timing/fault probes hold
+real processing boundaries or drop completed real CLI results; they never
+fabricate messages or server events. These checks establish transport and
+control-boundary behavior, not model inference.
 
 ## Releases
 
