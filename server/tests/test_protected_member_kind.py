@@ -97,7 +97,7 @@ async def test_registered_kind_evidence_failure_is_unavailable(legacy_member, pa
         else:
             await agent_target(c, record, self_key=record.member_did_key if path == "self_remove" else None)
     assert c.registry.evidence_calls == (0 if missing_enrollment else 1)
-    response = _http(refusal.value)
+    response = _http(refusal.value, None)
     assert response.status_code == 503 and response.detail == "receipt_unavailable"
 
 

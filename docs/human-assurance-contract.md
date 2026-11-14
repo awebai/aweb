@@ -876,7 +876,10 @@ mailed link reveals a request. Its requirements:
   its locks. A reject never takes this path, another candidate never gets it,
   and past the window, or once the credential is revoked, nothing finishes. A
   `503` from execute or decide is "not completed yet", which the page offers to
-  try again; a lost answer stays unconfirmed.
+  try again. The 503 may also be the lost answer of an act already applied:
+  its options are then refused, nothing runs again, and the signed-in page
+  reads the request to show how it ended, while the mailed link, which cannot
+  read a decided request, says it cannot confirm and points to History.
 
 Inbox access therefore discloses the complete classified request to whoever
 holds the inbox or runs the page with its link; it never supplies the

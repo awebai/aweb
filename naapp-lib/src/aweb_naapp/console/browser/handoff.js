@@ -25,6 +25,9 @@ import { renderDisplay, displayRefusal } from "/handoff-assets/protected-display
   let loggedIn = false;
   let operationId;
   let submitted = false;
+  // Set once the signer has answered 503 after a decision was sent: the act
+  // may already have been applied, with only its answer lost.
+  let retrying = false;
   let frozenRedirect;
   let csrf;
   let display;
@@ -358,9 +361,19 @@ import { renderDisplay, displayRefusal } from "/handoff-assets/protected-display
     action.disabled = false;
     deny.disabled = true;
     document.body.dataset.handoffState = "retry";
+    retrying = true;
     inFlight = false;
     submitted = false;
     action.focus();
+  }
+
+  async function reread() {
+    try {
+      await governanceState(await request(""));
+    } catch {
+      submitted = true;
+      failed();
+    }
   }
 
   function outcome(title, text) {
@@ -441,7 +454,9 @@ import { renderDisplay, displayRefusal } from "/handoff-assets/protected-display
         // Only an approval has a retry lane; a failed rejection stays
         // unconfirmed below, never offered back as an approval.
         notYet();
-      } else if (sent) {
+      } else if (sent || (retrying && error.status !== 410)) {
+        // A retry refused before sending: the earlier attempt may have
+        // applied the act, so this page cannot say how it ended.
         document.body.dataset.handoffState = "unconfirmed";
         outcome(...unconfirmed);
       } else if (error.status === 410) {
@@ -646,6 +661,10 @@ import { renderDisplay, displayRefusal } from "/handoff-assets/protected-display
         signedOut();
       } else if (governance && submitted && error.status === 503) {
         notYet();
+      } else if (governance && retrying && !submitted) {
+        // A retry refused before sending: the earlier attempt may have
+        // applied the act. The request itself says how it ended.
+        await reread();
       } else {
         failed();
       }

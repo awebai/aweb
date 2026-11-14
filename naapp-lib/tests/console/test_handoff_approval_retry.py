@@ -92,3 +92,31 @@ async def test_a_mailed_link_deny_that_fails_after_the_touch_never_turns_into_ap
         await expect(page.locator("body")).to_have_attribute("data-handoff-state", "unconfirmed")
         await expect(page.locator("#handoff-action")).to_be_hidden()
         assert await signed(s) == 0
+
+
+async def test_a_mailed_link_answer_lost_after_signing_tries_again_into_not_confirmed(link_service, monkeypatch):  # noqa: F811
+    s = link_service
+    # The page's signer is the fixture's own instance: patch its class.
+    service = type(s.world.signer)
+    decide = service.link_decide
+
+    async def lose_the_answer(self, *args, **kwargs):
+        await decide(self, *args, **kwargs)
+        raise SignerRefused("evidence_unavailable")  # Lose only the already applied answer.
+
+    monkeypatch.setattr(service, "link_decide", lose_the_answer)
+    context, page, _, _ = await open_page(s, 375)
+    async with context:
+        await page.goto(s.link)
+        await page.locator("#handoff-action").click()
+        await expect(page.locator("body")).to_have_attribute("data-handoff-state", "retry")
+        assert await signed(s) == 1
+        # Trying again cannot sign twice; the page says it cannot confirm
+        # and points to History rather than calling the link unusable.
+        await page.locator("#handoff-action").click()
+        await expect(page.locator("#handoff-title")).to_have_text("Not confirmed")
+        await expect(page.locator("#handoff-action")).to_be_hidden()
+        await expect(page.locator("#handoff-deny")).to_be_hidden()
+        owner_page = page.locator("#handoff-outcome-text").get_by_role("link", name="owner page", exact=True)
+        await expect(owner_page).to_have_attribute("href", "/")
+        assert await signed(s) == 1
