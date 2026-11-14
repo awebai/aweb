@@ -478,9 +478,14 @@ These tests do not publish to a registry. The tag publisher's authenticated
 readback establishes registry digest and source identity, not public pullability.
 
 Before the first server image release, the coordinator must arrange package
-provisioning and the release identity's access, including any separately authorized
-first-publication bootstrap, so authenticated tag listing succeeds. An unavailable
-listing remains a refusal; a 403 or 404 is not permission to assume absence.
+provisioning and the release identity's access, so authenticated tag listing
+succeeds. An unavailable listing remains a refusal; a 403 or 404 is not
+permission to assume absence. GHCR's "name unknown" for a repository that does
+not exist yet is never taken as absence on its own either: a new repository is
+published only by a `workflow_dispatch` whose `first_publication` input names it
+(`--first-publication <repository>`), and then only if the listing says exactly
+that. A named repository that already lists tags refuses as "not a first
+publication"; a tag push never passes the flag.
 
 The coordinator must also arrange public package visibility and verify
 anonymous retrieval in an environment with no registry credentials. Read the
