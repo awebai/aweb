@@ -78,3 +78,17 @@ async def test_a_signed_in_tab_tries_again_and_finishes_the_approval(signed_in_s
         assert posts == [governance + "/options", governance + "/execute"]
         assert (await s.world.signer.receipt(s.prepared.operation_id, reader=s.world.reader)).state == "committed"
         assert await signed(s) == 1
+
+
+async def test_a_mailed_link_deny_that_fails_after_the_touch_never_turns_into_approve(link_service, monkeypatch):  # noqa: F811
+    s = link_service
+    fail_the_read_after_the_touch(s, monkeypatch)
+    context, page, _, _ = await open_page(s, 375)
+    async with context:
+        await page.goto(s.link)
+        await page.locator("#handoff-deny").click()
+        # A rejection the signer could not finish is unconfirmed, as a lost
+        # answer is: the page never offers to approve instead.
+        await expect(page.locator("body")).to_have_attribute("data-handoff-state", "unconfirmed")
+        await expect(page.locator("#handoff-action")).to_be_hidden()
+        assert await signed(s) == 0
