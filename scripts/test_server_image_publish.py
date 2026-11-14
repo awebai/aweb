@@ -30,7 +30,7 @@ class ServerDispatchTests(unittest.TestCase):
         calls = []
 
         def record(kind):
-            def publish(checkout, prefix, version, *sha):
+            def publish(checkout, prefix, version, *sha, **options):
                 self.assertNotEqual(checkout, self.root)
                 self.assertEqual(command(checkout, "git", "rev-parse", "HEAD"), self.sha)
                 calls.append((kind, prefix, version, sha))
@@ -77,10 +77,114 @@ class ServerDispatchTests(unittest.TestCase):
                 PUBLISH.publish(self.root, "awid-service-v2.3.4", only="oci")
 
     def test_tag_workflows_select_both_server_artifacts(self):
-        for workflow, lane in (("pypi-release.yml", "pypi"), ("service-image-release.yml", "oci")):
+        for workflow, invocation in (("pypi-release.yml", '--only pypi "${GITHUB_REF_NAME}"'),
+                                     ("service-image-release.yml", '--only oci "${recovery[@]}" "$RELEASE_TAG"')):
             source = (ROOT / ".github/workflows" / workflow).read_text()
             self.assertIn('"server-v*"', source)
-            self.assertIn(f'python3 scripts/publish_release.py --only {lane} "${{GITHUB_REF_NAME}}"', source)
+            self.assertIn(f'python3 scripts/publish_release.py {invocation}', source)
+        # On a tag push the image lane's tag is the pushed tag itself.
+        self.assertIn("|| github.ref_name }}", (ROOT / ".github/workflows/service-image-release.yml").read_text())
+
+
+IMAGE_WORKFLOW = ROOT / ".github/workflows/service-image-release.yml"
+
+
+def workflow_step_script(name):
+    """The run block of one step of the image workflow, exactly as GitHub runs it."""
+    lines = IMAGE_WORKFLOW.read_text().splitlines()
+    start = lines.index(f"      - name: {name}")
+    run = next(i for i in range(start + 1, len(lines)) if lines[i] == "        run: |")
+    body = []
+    for line in lines[run + 1:]:
+        if line and not line.startswith("          "):
+            break
+        body.append(line[10:])
+    return "\n".join(body) + "\n"
+
+
+class ImageRecoveryDispatchTests(unittest.TestCase):
+    """An existing tag's image can be published again by dispatch, from main's publisher."""
+
+    def test_publication_builds_the_tags_commit_when_the_publisher_is_later(self):
+        temporary, root = test_shipping.TagContractTest.repository(self)
+        self.addCleanup(temporary.cleanup)
+        command(root, "git", "tag", "server-v1.2.3")
+        tagged = command(root, "git", "rev-parse", "HEAD")
+        (root / "PUBLISHER_FIX").write_text("main moved on after the tag\n")
+        command(root, "git", "add", "PUBLISHER_FIX")
+        command(root, "git", "commit", "-qm", "publisher fix after the tag")
+        later = command(root, "git", "rev-parse", "HEAD")
+        self.assertNotEqual(later, tagged)
+        built = []
+
+        def publish_oci(checkout, prefix, version, sha, recovery=False):
+            built.append((command(checkout, "git", "rev-parse", "HEAD"), prefix, version, sha))
+
+        with patch.object(PUBLISH, "publish_pypi") as pypi, patch.object(PUBLISH, "publish_oci", publish_oci):
+            PUBLISH.publish(root, "server-v1.2.3", only="oci")
+        pypi.assert_not_called()
+        self.assertEqual(built, [(tagged, "server-v", "1.2.3", tagged)])
+        self.assertEqual(command(root, "git", "rev-parse", "HEAD"), later)
+
+    def test_workflow_offers_a_tag_input_and_keys_concurrency_to_the_tag(self):
+        source = IMAGE_WORKFLOW.read_text()
+        self.assertIn("  workflow_dispatch:\n    inputs:\n      tag:\n", source)
+        dispatch = source[source.index("  workflow_dispatch:"):source.index("permissions:")]
+        self.assertIn("required: true", dispatch)
+        self.assertIn("type: string", dispatch)
+        # A dispatch and the tag's own push run publish the same image: one at a time.
+        # A dispatch and the tag's own push run publish the same image: one at a time.
+        # Per tag, so a release pushing several image tags at once cancels none of them.
+        self.assertIn("group: image-${{ github.event_name == 'workflow_dispatch' && format('refs/tags/{0}', inputs.tag) || github.ref }}", source)
+        self.assertIn("RELEASE_TAG: ${{ github.event_name == 'workflow_dispatch' && inputs.tag || github.ref_name }}", source)
+        # The input reaches the shell only through the environment, never as interpolated script text.
+        script = workflow_step_script("Publish or adopt the tagged image")
+        self.assertNotIn("${{", script)
+        # Tags are fetched, so the publisher can resolve the requested one.
+        self.assertIn("fetch-depth: 0", source)
+
+    def run_step(self, event, ref, release_tag):
+        temporary, root = test_shipping.TagContractTest.repository(self)
+        self.addCleanup(temporary.cleanup)
+        command(root, "git", "tag", "server-v1.2.3")
+        command(root, "git", "branch", "server-v9.9.9")  # a branch, not a tag
+        scratch = tempfile.TemporaryDirectory(prefix="aweb-image-step-")
+        self.addCleanup(scratch.cleanup)
+        bin_dir = Path(scratch.name) / "bin"
+        bin_dir.mkdir()
+        calls = Path(scratch.name) / "publisher-calls"
+        (bin_dir / "python3").write_text(f'#!/usr/bin/env bash\nprintf "%s\\n" "$*" >> {calls}\n')
+        (bin_dir / "python3").chmod(0o755)
+        script = workflow_step_script("Publish or adopt the tagged image")
+        result = subprocess.run(["bash", "-e", "-c", script], cwd=root, text=True, capture_output=True,
+                                env={"PATH": f"{bin_dir}:{os.environ['PATH']}", "HOME": scratch.name,
+                                     "GITHUB_EVENT_NAME": event, "GITHUB_REF": ref, "RELEASE_TAG": release_tag,
+                                     "GHCR_USERNAME": "fixture", "GHCR_TOKEN": "fixture-token"})
+        published = calls.read_text().splitlines() if calls.exists() else []
+        return result, published
+
+    def test_push_and_main_dispatch_run_the_publisher_for_the_tag(self):
+        # Only a dispatch is a recovery, which never moves latest.
+        for event, ref, expected in (("push", "refs/tags/server-v1.2.3", "--only oci server-v1.2.3"),
+                                     ("workflow_dispatch", "refs/heads/main", "--only oci --recovery server-v1.2.3")):
+            with self.subTest(event=event):
+                result, published = self.run_step(event, ref, "server-v1.2.3")
+                self.assertEqual(result.returncode, 0, result.stderr)
+                self.assertEqual(published, ["scripts/publish_release.py " + expected])
+
+    def test_dispatch_refuses_another_publisher_ref_or_a_name_that_is_not_a_tag(self):
+        cases = {
+            "branch publisher": ("refs/heads/feature", "server-v1.2.3", "image recovery runs main's publisher; dispatched from refs/heads/feature"),
+            "branch named like a tag": ("refs/heads/main", "server-v9.9.9", "no release tag server-v9.9.9"),
+            "absent tag": ("refs/heads/main", "server-v1.2.4", "no release tag server-v1.2.4"),
+            "empty": ("refs/heads/main", "", "no release tag "),
+        }
+        for name, (ref, tag, message) in cases.items():
+            with self.subTest(case=name):
+                result, published = self.run_step("workflow_dispatch", ref, tag)
+                self.assertNotEqual(result.returncode, 0)
+                self.assertIn(message, result.stderr)
+                self.assertEqual(published, [])
 
 
 # A server tag's images, in publication order: the coordination server, then the
@@ -93,7 +197,8 @@ def release_indexes(output):
 
 
 class ServerOciTests(unittest.TestCase):
-    def exercise(self, *, existing=False, conflict=False, fail_readback=False, version="1.2.3", listing=None):
+    def exercise(self, *, existing=False, conflict=False, fail_readback=False, version="1.2.3", listing=None,
+                 prefix="server-v", recovery=False):
         raw = b'{"schemaVersion":2}\n'
         digest = "sha256:" + hashlib.sha256(raw).hexdigest()
         calls = []
@@ -118,7 +223,7 @@ class ServerOciTests(unittest.TestCase):
             return observed
 
         with patch.dict(os.environ, GHCR_USERNAME="fixture", GHCR_TOKEN="fixture-token"), patch.object(PUBLISH.shutil, "which", return_value="skopeo"), patch.object(PUBLISH, "run", run), patch.object(PUBLISH.subprocess, "run", direct), redirect_stdout(io.StringIO()) as output:
-            PUBLISH.publish_oci(ROOT, "server-v", version, "a" * 40)
+            PUBLISH.publish_oci(ROOT, prefix, version, "a" * 40, recovery=recovery)
         return calls, output.getvalue(), digest
 
     # skopeo's exact answer for ghcr.io/awebai/aweb-server before its first
@@ -242,6 +347,42 @@ class ServerOciTests(unittest.TestCase):
         self.assertIn("--version-only", calls[-1])
         verifies = [args for args in calls if args[:3] == ("bash", "scripts/oci-exact-publish.sh", "verify-published")]
         self.assertTrue(all("--version-only" in args for args in verifies))
+
+    def published_tags_and_readback(self, **kwargs):
+        calls, _, _ = self.exercise(**kwargs)
+        copies = [args[-1] for args in calls if args[:2] == ("skopeo", "copy")]
+        verifies = [args for args in calls if args[:3] == ("bash", "scripts/oci-exact-publish.sh", "verify-published")]
+        return copies, verifies
+
+    def test_an_rc_on_any_image_lane_never_moves_latest(self):
+        for prefix, version, repositories in (("server-v", "1.2.3rc1", SERVER_TAG_REPOSITORIES),
+                                              ("awid-v", "0.5.40rc2", ("ghcr.io/awebai/awid",))):
+            with self.subTest(prefix=prefix):
+                copies, verifies = self.published_tags_and_readback(prefix=prefix, version=version)
+                self.assertEqual(copies, [f"docker://{repository}:{version}" for repository in repositories])
+                self.assertTrue(verifies and all("--version-only" in args for args in verifies))
+
+    def test_a_recovery_never_moves_latest(self):
+        for version in ("1.2.3", "1.2.3rc1"):
+            with self.subTest(version=version):
+                calls, output, _ = self.exercise(version=version, recovery=True)
+                copies = [args[-1] for args in calls if args[:2] == ("skopeo", "copy")]
+                self.assertEqual(copies, [f"docker://{repository}:{version}" for repository in SERVER_TAG_REPOSITORIES])
+                verifies = [args for args in calls if args[:3] == ("bash", "scripts/oci-exact-publish.sh", "verify-published")]
+                self.assertEqual(len(verifies), 2)
+                self.assertTrue(all("--version-only" in args for args in verifies))
+                self.assertEqual(output.count("latest unchanged (recovery)"), 1)
+
+    def test_a_final_from_its_own_tag_moves_version_and_latest(self):
+        copies, verifies = self.published_tags_and_readback(prefix="awid-v", version="0.5.40")
+        self.assertEqual(copies, ["docker://ghcr.io/awebai/awid:0.5.40", "docker://ghcr.io/awebai/awid:latest"])
+        self.assertTrue(all("--version-only" not in args for args in verifies))
+
+    def test_the_only_reads_are_the_tag_listing_and_present_tags(self):
+        # No registry latest config read and no tag inventory: the decision is the rc and recovery facts alone.
+        calls, _, _ = self.exercise(prefix="awid-v", version="0.5.40")
+        self.assertFalse([args for args in calls if args[:3] == ("skopeo", "inspect", "--config")])
+        self.assertFalse([args for args in calls if args[:1] == ("git",)])
 
     def test_identical_published_index_is_adopted_and_read_back(self):
         calls, _, _ = self.exercise(existing=True)
@@ -410,6 +551,18 @@ class ServerPlatformBuildTests(unittest.TestCase):
                     subprocess.run(["docker", "rm", "-f", container], capture_output=True, timeout=60, check=False)
                     if loaded:
                         PUBLISH.run(ROOT, "docker", "image", "rm", "-f", image, timeout=60)
+
+
+
+class RecoveryArgumentTests(unittest.TestCase):
+    def test_cli_recovery_reaches_the_image_publisher(self):
+        with patch.object(PUBLISH, "publish") as publish:
+            self.assertEqual(PUBLISH.main(["--only", "oci", "--recovery", "server-v1.2.3"]), 0)
+            publish.assert_called_once()
+            self.assertTrue(publish.call_args.kwargs["recovery"])
+            publish.reset_mock()
+            self.assertEqual(PUBLISH.main(["--only", "oci", "server-v1.2.3"]), 0)
+            self.assertFalse(publish.call_args.kwargs["recovery"])
 
 
 if __name__ == "__main__":

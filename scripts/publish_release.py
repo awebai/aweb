@@ -23,6 +23,7 @@ from pathlib import Path
 from release_versions import (
     SEMVER,
     VersionRefusal as PublishRefusal,
+    final_version,
     require_final_promotion,
     require_runner_values,
     tag_parts,
@@ -536,7 +537,19 @@ def published_tags(root: Path, repository: str) -> list:
     return tags
 
 
-def publish_oci(root: Path, prefix: str, version: str, source_sha: str) -> None:
+def moves_latest(version: str, recovery: bool) -> bool:
+    """Only a final published by its own tag moves latest.
+
+    An rc publishes its immutable version only. So does a recovery: a
+    dispatch that publishes an existing tag's image again, rc or final.
+    """
+    if recovery:
+        print("latest unchanged (recovery)")
+        return False
+    return final_version(version) is None
+
+
+def publish_oci(root: Path, prefix: str, version: str, source_sha: str, *, recovery: bool = False) -> None:
     username = os.environ.get("GHCR_USERNAME", "").strip() or os.environ.get(
         "AC_REGISTRY_USERNAME", ""
     ).strip()
@@ -547,7 +560,8 @@ def publish_oci(root: Path, prefix: str, version: str, source_sha: str) -> None:
         raise PublishRefusal("GHCR_USERNAME and GHCR_TOKEN are required")
     if not shutil.which("skopeo"):
         raise PublishRefusal("skopeo is required for exact OCI publication")
-    version_only = prefix == "server-v" and "rc" in version
+    # One decision for every image of the tag: an rc or a recovery moves no latest.
+    version_only = not moves_latest(version, recovery)
     with tempfile.TemporaryDirectory(prefix="aweb-oci-") as temporary:
         # Every image of the tag is built and checked before the registry is
         # touched, so a failed build publishes none of them.
@@ -608,7 +622,7 @@ def publish_staged_image(
         )
 
 
-def publish(root: Path, tag: str, *, only: str | None = None) -> None:
+def publish(root: Path, tag: str, *, only: str | None = None, recovery: bool = False) -> None:
     prefix, version, source_sha = tag_identity(root, tag)
     if only is not None and not (
         (only == "pypi" and prefix in PYPI_LANES)
@@ -629,7 +643,7 @@ def publish(root: Path, tag: str, *, only: str | None = None) -> None:
             if prefix in PYPI_LANES and only != "oci":
                 publish_pypi(checkout, prefix, version)
             if prefix in OCI_REPOSITORIES and only != "pypi":
-                publish_oci(checkout, prefix, version, source_sha)
+                publish_oci(checkout, prefix, version, source_sha, recovery=recovery)
             elif prefix in NPM_LANES:
                 publish_npm(checkout, prefix, version)
             elif prefix == "aw-v":
@@ -642,13 +656,15 @@ def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--check-tag", action="store_true", help="validate tag/tree identity without publishing")
     parser.add_argument("--only", choices=("pypi", "oci"), help="publish only this artifact lane")
+    parser.add_argument("--recovery", action="store_true",
+                        help="publish an existing tag's images again; never moves latest")
     parser.add_argument("tag")
     arguments = parser.parse_args(argv)
     try:
         if arguments.check_tag:
             tag_identity(Path.cwd().resolve(), arguments.tag)
         else:
-            publish(Path.cwd().resolve(), arguments.tag, only=arguments.only)
+            publish(Path.cwd().resolve(), arguments.tag, only=arguments.only, recovery=arguments.recovery)
     except (
         PublishRefusal,
         OSError,
