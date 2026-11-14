@@ -81,6 +81,13 @@ def handoff_page_router(
             media_type="text/javascript",
         )
 
+    @router.get("/handoff-assets/protected-display.mjs")
+    async def protected_display() -> Response:
+        return Response(
+            files("aweb_naapp").joinpath("assets/protected-display.mjs").read_text(),
+            media_type="text/javascript",
+        )
+
     @router.get("/handoff-assets/operations.mjs")
     async def protected_operation_table() -> Response:
         table = {}
@@ -153,11 +160,12 @@ def handoff_page_router(
             governance_fields = (
                 '<section id="handoff-governance" class="card" aria-labelledby="handoff-governance-title" hidden>'
                 '<h2 id="handoff-governance-title">What this request does</h2>'
+                '<ul id="handoff-consequences"></ul><dl id="handoff-names"></dl>'
                 '<p id="handoff-requested"></p><p id="handoff-expires"></p>'
                 '<dl><dt>Fingerprint</dt><dd id="handoff-fingerprint"></dd></dl>'
                 '<details id="handoff-details"><summary>Technical details</summary>'
+                '<dl id="handoff-technical"></dl>'
                 '<dl><dt>Act</dt><dd id="handoff-act"></dd>'
-                '<dt>Target</dt><dd id="handoff-target"></dd>'
                 '<dt>Full digest</dt><dd id="handoff-digest"></dd></dl>'
                 "<details><summary>View the frozen operation</summary>"
                 '<pre id="handoff-payload"></pre></details></details></section>'

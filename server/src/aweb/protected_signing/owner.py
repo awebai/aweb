@@ -14,8 +14,11 @@ from html import escape
 
 from aweb_naapp.runtime.protected_signer import SignerRefused
 from aweb_naapp.runtime.protected_signer.admission_policy import AdmissionPolicy
+from aweb_naapp.runtime.protected_signer.catalog import OPERATIONS
 
-from .admission import admission_counts
+from awid.identity_observation import IdentityObservationRefused, observe_identity_binding, observe_identity_kind
+
+from .admission import _registry, admission_counts
 
 HISTORY_LIMIT = 50
 
@@ -38,7 +41,20 @@ async def _component_for(composition, scope):
     raise SignerRefused("scope_refused")
 
 
-async def owner_view(composition, *, scope: str, now: datetime | None = None) -> dict:
+def _title(request):
+    """The operation definition's own question for this frozen request."""
+    spec = OPERATIONS.get((request.get("operation"), request.get("variant", "default")))
+    if spec is None:
+        return request.get("operation")
+    try:
+        return spec.display.render(request)["title"]
+    except SignerRefused:
+        return request.get("operation")
+
+
+async def owner_view(composition, *, scope: str, subject: str, now: datetime | None = None) -> dict:
+    """``subject`` is the signed-in approver: the page names them and marks
+    the decisions they made, even when the scope has other approvers."""
     c = await _component_for(composition, scope)
     context = c.context
     now = datetime.now(UTC) if now is None else now
@@ -50,6 +66,7 @@ async def owner_view(composition, *, scope: str, now: datetime | None = None) ->
         "ORDER BY expires_at DESC"
     )
     pending, history, requests = [], [], {}
+    approvers = await _approvers(c, scope)
     for row in rows:
         request = _json(row["request"])
         requests[row["operation_id"]] = request
@@ -57,7 +74,8 @@ async def owner_view(composition, *, scope: str, now: datetime | None = None) ->
             continue
         entry = {"operation_id": row["operation_id"], "operation": request["operation"],
             "requester": row["requester"], "digest": row["digest"],
-            "asked_at": request.get("artifact", {}).get("issued_at")}
+            "asked_at": request.get("artifact", {}).get("issued_at"), "title": _title(request),
+            "approval_id": row["approval_id"]}
         if row["approval_id"] is None:
             # Bounded unattended work (admissions) is listed under added agents.
             continue
@@ -78,15 +96,34 @@ async def owner_view(composition, *, scope: str, now: datetime | None = None) ->
         "authority": {"kind": context.authority_kind, "id": context.authority_id, "domain": context.authority_domain,
             "human": context.human_id},
         "pending": pending,
-        "history": await _deciders(c, history[:HISTORY_LIMIT]),
+        "history": await _deciders(c, history[:HISTORY_LIMIT], subject),
         "admitted": [],
         "roots": [],
         "policy": None,
-        "approvers": await _approvers(c, scope),
+        "approvers": approvers,
+        "you": next((a["contact"] for a in approvers if a["subject"] == subject), None),
+        "members": [],
     }
+    for item in [*pending, *view["history"]]:
+        del item["approval_id"]
+    for approver in approvers:
+        del approver["subject"]
     if context.authority_kind == "team_controller":
         await _admissions(c, view, requests, now)
+        await _members(c, view)
+        _name_requesters([*view["pending"], *view["history"]], view["members"])
     return view
+
+
+def _name_requesters(entries, members):
+    """A requester the team knows by identity or key is named by its alias."""
+    names = {}
+    for member in members or []:
+        for key in (member["member_did_aw"], member["member_did_key"]):
+            if key:
+                names[key] = member["alias"]
+    for entry in entries:
+        entry["requester_name"] = names.get(entry["requester"])
 
 
 async def _admissions(c, view, requests, now):
@@ -101,14 +138,16 @@ async def _admissions(c, view, requests, now):
         return
     view["policy"] = policy
     admitted = await c.db.fetch_all(
-        "SELECT operation_id,root_id,child_id,child_key,admitted_at,state FROM {{tables.protected_root_admissions}} "
+        "SELECT operation_id,root_id,certificate_id,child_id,child_key,admitted_at,state "
+        "FROM {{tables.protected_root_admissions}} "
         "WHERE service_id=$1 AND team_id=$2 ORDER BY admitted_at DESC",
         context.service_id, context.authority_id,
     )
     for row in admitted:
         subject = requests.get(row["operation_id"], {}).get("subject", {})
         view["admitted"].append({"root_id": row["root_id"], "alias": subject.get("member_alias"),
-            "child_id": row["child_id"], "child_key": row["child_key"], "admitted_at": _stamp(row["admitted_at"]),
+            "certificate_id": row["certificate_id"], "child_id": row["child_id"], "child_key": row["child_key"],
+            "admitted_at": _stamp(row["admitted_at"]),
             "state": row["state"]})
     async with c.db.transaction() as tx:
         for root_id in sorted({row["root_id"] for row in admitted}):
@@ -118,17 +157,56 @@ async def _admissions(c, view, requests, now):
                 "next_at": _stamp(counts["next_at"])})
 
 
-async def _deciders(c, history):
-    """Mark each decision the signed-in person made: the signer audits the
-    approving human as the actor of a signed or refused operation."""
-    human = c.context.human_id
+async def _members(c, view):
+    """Every current member of the team, whoever added it: its kind and
+    whether this signer admitted it. None when the registry cannot say."""
+    name, domain = c.context.authority_id.split(":", 1)
+    client = getattr(c.registry, "client", c.registry)
+    try:
+        records = await _registry(client.list_team_certificates_fresh(domain, name, active_only=True))
+    except SignerRefused:
+        view["members"] = None
+        return
+    # One member key may hold several certificates; only the exact
+    # certificate this signer admitted counts as added through it.
+    added = {a["certificate_id"] for a in view["admitted"] if a["state"] == "active"}
+    for record in records:
+        view["members"].append({"alias": record.alias, "kind": await _member_kind(c, record),
+            "joined": "signer" if record.certificate_id in added else "other",
+            "member_did_aw": record.member_did_aw or None, "member_did_key": record.member_did_key,
+            "certificate_id": record.certificate_id})
+
+
+async def _member_kind(c, record):
+    """What the registry says this member is, for reading only: "agent",
+    "human", "kind not verified", or "not checked" when evidence is
+    unavailable. Removal decides eligibility again, under its own rules."""
+    if record.identity_scope == "local":
+        return "agent"
+    if not record.member_did_aw:
+        return "kind not verified"
+    try:
+        resolved = await _registry(c.registry.resolve_key_fresh(record.member_did_aw), missing="subject_ineligible")
+        binding = await observe_identity_binding(c.registry, did_aw=record.member_did_aw,
+            did_key=resolved.current_did_key)
+        kind = (await observe_identity_kind(c.registry, binding)).result
+    except (SignerRefused, IdentityObservationRefused):
+        return "not checked"
+    if kind["outcome"] == "unavailable":
+        return "not checked"
+    if kind["identity_valid"] is True and kind["kind"] in ("agent", "human"):
+        return kind["kind"]
+    return "kind not verified"
+
+
+async def _deciders(c, history, subject):
+    """Mark each decision the signed-in approver made. The approval records
+    which approver decided; the audit names only the governed human, the same
+    for every approver of the scope."""
     for item in history:
-        actor = await c.db.fetch_value(
-            "SELECT actor FROM {{tables.protected_local_audit}} WHERE subject=$1 "
-            "AND kind IN ('protected_operation_signed','protected_operation_refused') ORDER BY sequence DESC LIMIT 1",
-            item["operation_id"],
-        )
-        item["decided_by_you"] = actor == human
+        approval = await c.signer.store.get(item["approval_id"])
+        decider = approval.decided_by if approval is not None else None
+        item["decided_by_you"] = decider is not None and decider.subject == subject
     return history
 
 
@@ -142,7 +220,7 @@ async def _approvers(c, scope):
             "WHERE subject=$1 AND revoked_at IS NULL ORDER BY created_at",
             row["subject"],
         )
-        approvers.append({"contact": row["contact"], "passkeys": [
+        approvers.append({"subject": row["subject"], "contact": row["contact"], "passkeys": [
             {"key_id": hashlib.sha256(bytes(p["credential_id"])).hexdigest()[:8], "added_at": _stamp(p["created_at"])}
             for p in passkeys]})
     return approvers
@@ -170,6 +248,7 @@ def _window(seconds):
 _OUTCOMES = {"committed": "Approved", "expired": "Expired, nobody decided",
     "unresolved": "Signed; whether it took effect is not confirmed yet"}
 _REFUSALS = {"human_refused": "Denied"}
+_KINDS = {"not checked": "kind could not be checked"}
 
 
 def _technical(rows):
@@ -183,17 +262,15 @@ def _team_name(team_id):
 
 
 def owner_page_html(view: dict) -> str:
-    """The owner page's HTML from owner_view. Every value is escaped. What a
-    request asks for comes from each operation's display definition once it
-    exists; until then a request names who asked and when."""
+    """The owner page's HTML from owner_view. Every value is escaped. Each
+    request reads as its operation definition's own question."""
     e = lambda value: escape(str(value), quote=True)  # noqa: E731
     authority = view["authority"]
     team = authority["kind"] == "team_controller"
     title = f"Approvals for team {_team_name(authority['id'])}" if team else "Your own approvals"
-    contacts = [a["contact"] for a in view["approvers"] if a["contact"]]
     parts = [f"<h1>{e(title)}</h1>"]
-    if contacts:
-        parts.append(f"<p>Signed in as {e(contacts[0])}</p>")
+    if view["you"]:
+        parts.append(f"<p>Signed in as {e(view['you'])}</p>")
     parts.append('<form id="logout"><button class="btn secondary" type="submit">Sign out</button></form>')
     parts.append("<h2>Waiting for you</h2>")
     if view["pending"]:
@@ -201,9 +278,11 @@ def owner_page_html(view: dict) -> str:
         for item in view["pending"]:
             asked = f", asked {_time(item['asked_at'])}" if item.get("asked_at") else ""
             parts.append(
-                f'<li><a href="/handoff/{e(item["handoff_id"])}">Review the request from {e(item["requester"])}{asked}</a>'
+                f'<li><a href="/handoff/{e(item["handoff_id"])}">{e(item["title"])}</a>'
+                f'<p>Requested by {e(item.get("requester_name") or item["requester"])}{asked}</p>'
                 f'<p>Expires {_time(item["expires_at"])}</p>'
-                + _technical([("Operation", item["operation"]), ("Digest", item["digest"])]) + "</li>"
+                + _technical([("Requested by", item["requester"]), ("Operation", item["operation"]),
+                    ("Digest", item["digest"])]) + "</li>"
             )
         parts.append("</ul>")
     else:
@@ -230,6 +309,22 @@ def owner_page_html(view: dict) -> str:
             parts.append("</ul>")
         else:
             parts.append("<p>No agents have been added yet.</p>")
+        parts.append("<h2>Team members</h2>")
+        if view["members"] is None:
+            parts.append("<p>The member list could not be read right now. Reload to try again.</p>")
+        elif view["members"]:
+            parts.append('<ul class="owner-list">')
+            for member in view["members"]:
+                kind = _KINDS.get(member["kind"], member["kind"])
+                joined = "added through this signer" if member["joined"] == "signer" else "joined another way"
+                parts.append(
+                    f'<li>{e(member["alias"])}: {e(kind)}, {joined}'
+                    + _technical([("Identity", member["member_did_aw"] or "none"), ("Key", member["member_did_key"]),
+                        ("Certificate", member["certificate_id"])]) + "</li>"
+                )
+            parts.append("</ul>")
+        else:
+            parts.append("<p>No members.</p>")
         parts.append("<h2>Current limits</h2>")
         if bounds:
             policy = view["policy"]
@@ -250,8 +345,9 @@ def owner_page_html(view: dict) -> str:
             if item.get("decided_by_you") and item["state"] not in ("expired", "unresolved"):
                 outcome += " by you"
             parts.append(
-                f'<li>{e(outcome)}, {_time(item["at"])}: a request from {e(item["requester"])}'
-                + _technical([("Operation", item["operation"]), ("Digest", item["digest"])]) + "</li>"
+                f'<li>{e(outcome)}, {_time(item["at"])}: {e(item["title"])}'
+                + _technical([("Requested by", item["requester"]), ("Operation", item["operation"]),
+                    ("Digest", item["digest"])]) + "</li>"
             )
         parts.append("</ul>")
     else:
@@ -272,6 +368,6 @@ def owner_router(composition, *, sessions, csrf_key):
     from .bootstrap import protected_shell
 
     async def home(session):
-        return owner_page_html(await owner_view(composition, scope=session.scope))
+        return owner_page_html(await owner_view(composition, scope=session.scope, subject=session.subject))
 
     return protected_shell(csrf_key).router(sessions=sessions, home_title="Approvals", home=home)
