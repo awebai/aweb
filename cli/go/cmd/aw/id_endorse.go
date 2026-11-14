@@ -115,7 +115,8 @@ func endorsementIntent(profile *handoff.Profile, binding *handoff.ProfileBinding
 	}
 	authority, _ := binding.Scope["authority"].(map[string]any)
 	return map[string]any{
-		"operation": "identity.root.endorse", "variant": "default", "scope": binding.Scope, "audience": profile.RegistryOrigin,
+		"operation": "identity.root.endorse", "variant": "default", "approval_format": "intent_v1",
+		"scope": binding.Scope, "audience": profile.RegistryOrigin,
 		"subject": map[string]any{"domain": authority["domain"], "root_id": request.RootID, "root_key": request.RootKey,
 			"teams": listed, "deployment_label": request.DeploymentLabel},
 	}, nil
@@ -153,8 +154,11 @@ func savedEndorsement(profile *handoff.Profile, operationID string, intent map[s
 // frozen request it accepted in kept.
 func endorsementCheck(issuerKey string, teams []string, readPolicy func(context.Context, string) (*handoff.AdmissionPolicyRead, error), kept *map[string]any) func(context.Context, map[string]any) error {
 	return func(ctx context.Context, request map[string]any) error {
-		artifact, _ := request["artifact"].(map[string]any)
-		if artifact["issuer_key"] != issuerKey {
+		template, err := handoff.IntentTemplate(request)
+		if err != nil {
+			return err
+		}
+		if template["issuer_key"] != issuerKey {
 			return withErrorCode("operation_mismatch", errors.New("the prepared certificate is issued by another key than the profile pins for the human"))
 		}
 		frozen, err := awid.StrictCanonicalJSON(request["admission_policy"])
@@ -200,10 +204,12 @@ func pendingEndorsementText(report map[string]any) string {
 }
 
 // endorsedCertificate is the root's signed ID certificate in a committed
-// result, in the standard {certificate, signature} wrapper, if it is exactly
-// the frozen artifact signed by the human's pinned key. Anything else,
-// including no frozen artifact, is signed_certificate_invalid.
-func endorsedCertificate(result []byte, artifact map[string]any, issuerKey string) (map[string]any, error) {
+// result, in the standard {certificate, signature} wrapper, if it is the
+// certificate issued under the human's approval of frozen: the intent's
+// template in every static field, issued_at inside the frozen issuance
+// window, signed by the human's pinned key. Anything else, including no
+// frozen intent, is signed_certificate_invalid.
+func endorsedCertificate(result []byte, frozen map[string]any, issuerKey string) (map[string]any, error) {
 	invalid := func(format string, args ...any) error {
 		return withErrorCode("signed_certificate_invalid", fmt.Errorf("the signed certificate is not the one the human approved: "+format, args...))
 	}
@@ -218,11 +224,13 @@ func endorsedCertificate(result []byte, artifact map[string]any, issuerKey strin
 	if errSigning != nil || errSignature != nil || len(signature) != ed25519.SignatureSize {
 		return nil, invalid("its signing or signature is not padded base64 of the right size")
 	}
-	frozen, err := awid.IDCertificateSigningBytes(artifact)
-	if err != nil || !bytes.Equal(frozen, signing) {
-		return nil, invalid("it is not the certificate the operation froze")
+	// The signature is verified over the issued certificate's own canonical
+	// bytes, so signing bytes that are anything else never verify.
+	issued, _ := handoff.DecodeObject(bytes.TrimPrefix(signing, []byte(awid.IDCertificatePrefix)))
+	if err := handoff.VerifyIssuedArtifact(frozen, issued); err != nil {
+		return nil, invalid("it is not the certificate the operation froze: %v", err)
 	}
-	signed := map[string]any{"certificate": artifact, "signature": base64.RawURLEncoding.EncodeToString(signature)}
+	signed := map[string]any{"certificate": issued, "signature": base64.RawURLEncoding.EncodeToString(signature)}
 	if err := awid.VerifyIDCertificate(signed, issuerKey); err != nil {
 		return nil, invalid("%v", err)
 	}
@@ -406,8 +414,7 @@ func runIDEndorse(cmd *cobra.Command, _ []string) error {
 		printOutput(report, func(any) string { return pendingEndorsementText(report) })
 		return nil
 	}
-	artifact, _ := frozen["artifact"].(map[string]any)
-	signed, err := endorsedCertificate(receipt.Result, artifact, binding.AuthorityKeyDID)
+	signed, err := endorsedCertificate(receipt.Result, frozen, binding.AuthorityKeyDID)
 	if err != nil {
 		return fmt.Errorf("operation %s: %w", request.OperationID, err)
 	}
@@ -432,7 +439,7 @@ func runIDEndorse(cmd *cobra.Command, _ []string) error {
 	if err := registerEndorsement(ctx, root, chain, signed, expectedHead, filepath.Dir(identity.SigningKeyPath)); err != nil {
 		return fmt.Errorf("operation %s committed; %w", request.OperationID, err)
 	}
-	certificateID, _ := awid.IDCertificateID(artifact)
+	certificateID, _ := awid.IDCertificateID(signed["certificate"].(map[string]any))
 	forgetProtectedOperationQuietly(request.OperationID)
 	report := map[string]any{"operation_id": request.OperationID, "state": receipt.State, "certificate_id": certificateID, "registered": true, "chain_installed": true}
 	printOutput(report, func(any) string {

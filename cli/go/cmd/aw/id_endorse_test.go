@@ -90,7 +90,8 @@ func TestAnEndorsementNamesTheRootInTheHumansDomainAndItsSortedTeams(t *testing.
 	}
 	subject, _ := json.Marshal(intent["subject"])
 	want := `{"deployment_label":"lab","domain":"customer.example","root_id":"did:aw:29L9sa47RQVPv4wyy2Bp9jqCJh2f","root_key":"did:key:zroot","teams":["engineering:customer.example","zeta:customer.example"]}`
-	if string(subject) != want || intent["operation"] != "identity.root.endorse" || intent["audience"] != profile.RegistryOrigin {
+	if string(subject) != want || intent["operation"] != "identity.root.endorse" || intent["audience"] != profile.RegistryOrigin ||
+		intent["approval_format"] != "intent_v1" {
 		t.Fatalf("intent %v", intent)
 	}
 	for name, change := range map[string]func(*endorsementRequest){
@@ -124,7 +125,8 @@ func protectedRead(team string, policy map[string]any) *handoff.AdmissionPolicyR
 
 func TestTheLinkIsShownOnlyWhenEveryTeamsPolicyReadIsTheFrozenPolicy(t *testing.T) {
 	frozen := endorseTestPolicy(3)
-	request := map[string]any{"admission_policy": frozen, "artifact": map[string]any{"issuer_key": "did:key:zhuman"}}
+	_, humanKey, _ := ed25519.GenerateKey(nil)
+	request := endorseFrozenIntent(t, endorseTestProfile(t, humanKey), "did:key:zhuman")
 	teams := []string{"engineering:customer.example", "zeta:customer.example"}
 	same := map[string]*handoff.AdmissionPolicyRead{teams[0]: protectedRead(teams[0], frozen), teams[1]: protectedRead(teams[1], frozen)}
 	var kept map[string]any
@@ -175,6 +177,46 @@ func endorsedArtifact(issuer string) map[string]any {
 		"issuer_key": issuer, "issued_at": "2026-11-13T10:00:00Z"}
 }
 
+// signedCertificate is artifact signed by key, in the {certificate,
+// signature} wrapper a verified endorsement yields.
+func signedCertificate(t *testing.T, key ed25519.PrivateKey, artifact map[string]any) map[string]any {
+	t.Helper()
+	signing, err := awid.IDCertificateSigningBytes(artifact)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return map[string]any{"certificate": artifact, "signature": base64.RawURLEncoding.EncodeToString(ed25519.Sign(key, signing))}
+}
+
+// endorseFrozenIntent is the request an endorsement of endorseTestRequest
+// freezes for the human issuer: the certificate to issue, without its
+// issued_at, inside a day's issuance window around endorsedArtifact's time.
+func endorseFrozenIntent(t *testing.T, profile *handoff.Profile, issuer string) map[string]any {
+	t.Helper()
+	binding, err := endorsementBinding(profile, admitTestHuman)
+	if err != nil {
+		t.Fatal(err)
+	}
+	intent, err := endorsementIntent(profile, binding, endorseTestRequest())
+	if err != nil {
+		t.Fatal(err)
+	}
+	template := endorsedArtifact(issuer)
+	delete(template, "issued_at")
+	intent["operation_id"] = endorseTestOperation
+	intent["registry"], intent["expected_head"] = profile.RegistryOrigin, nil
+	intent["responsibility_statement"], intent["admission_policy"] = handoff.RootResponsibilityStatement, endorseTestPolicy(3)
+	intent["artifact"] = map[string]any{"v": 1, "type": "aweb.protected-artifact-intent", "template": template,
+		"delivery":        map[string]any{"audience": profile.RegistryOrigin, "method": "POST", "path": "/v1/id-certificates/register"},
+		"issuance_window": map[string]any{"not_before": "2026-11-13T09:00:00Z", "not_after": "2026-11-14T09:00:00Z"}}
+	raw, _ := json.Marshal(intent)
+	request, ok := handoff.DecodeObject(raw)
+	if !ok {
+		t.Fatal("the frozen intent does not decode")
+	}
+	return request
+}
+
 func signedEndorsement(t *testing.T, key ed25519.PrivateKey, artifact map[string]any) []byte {
 	t.Helper()
 	signing, err := awid.IDCertificateSigningBytes(artifact)
@@ -190,7 +232,8 @@ func TestTheEndorsedCertificateIsTheFrozenOneSignedByTheHumansPinnedKey(t *testi
 	_, humanKey, _ := ed25519.GenerateKey(nil)
 	humanDID := awid.ComputeDIDKey(humanKey.Public().(ed25519.PublicKey))
 	artifact := endorsedArtifact(humanDID)
-	signed, err := endorsedCertificate(signedEndorsement(t, humanKey, artifact), artifact, humanDID)
+	frozen := endorseFrozenIntent(t, endorseTestProfile(t, humanKey), humanDID)
+	signed, err := endorsedCertificate(signedEndorsement(t, humanKey, artifact), frozen, humanDID)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -199,11 +242,14 @@ func TestTheEndorsedCertificateIsTheFrozenOneSignedByTheHumansPinnedKey(t *testi
 	}
 	_, otherKey, _ := ed25519.GenerateKey(nil)
 	otherArtifact := endorsedArtifact(humanDID)
-	otherArtifact["issued_at"] = "2026-11-13T11:00:00Z"
+	otherArtifact["id"] = "did:aw:2e2SPDJNyxg5Dt6EFJX3Tcn8Tauj"
+	lateArtifact := endorsedArtifact(humanDID)
+	lateArtifact["issued_at"] = "2026-11-14T10:00:00Z"
 	for name, result := range map[string][]byte{
-		"another key":         signedEndorsement(t, otherKey, artifact),
-		"another certificate": signedEndorsement(t, humanKey, otherArtifact),
-		"not a result":        []byte(`{"signing":"x"}`),
+		"another key":               signedEndorsement(t, otherKey, artifact),
+		"another certificate":       signedEndorsement(t, humanKey, otherArtifact),
+		"issued outside its window": signedEndorsement(t, humanKey, lateArtifact),
+		"not a result":              []byte(`{"signing":"x"}`),
 		"signing that is not what was signed": func() []byte {
 			signing, _ := awid.IDCertificateSigningBytes(artifact)
 			other, _ := awid.IDCertificateSigningBytes(otherArtifact)
@@ -212,7 +258,7 @@ func TestTheEndorsedCertificateIsTheFrozenOneSignedByTheHumansPinnedKey(t *testi
 			return raw
 		}(),
 	} {
-		if _, err := endorsedCertificate(result, artifact, humanDID); errorCodeOf(err) != "signed_certificate_invalid" {
+		if _, err := endorsedCertificate(result, frozen, humanDID); errorCodeOf(err) != "signed_certificate_invalid" {
 			t.Errorf("%s: err %v", name, err)
 		}
 	}
@@ -246,7 +292,7 @@ func TestARegisteredEndorsementIsConfirmedOnlyByItsReadBack(t *testing.T) {
 	_, humanKey, _ := ed25519.GenerateKey(nil)
 	humanDID := awid.ComputeDIDKey(humanKey.Public().(ed25519.PublicKey))
 	artifact := endorsedArtifact(humanDID)
-	signed, _ := endorsedCertificate(signedEndorsement(t, humanKey, artifact), artifact, humanDID)
+	signed := signedCertificate(t, humanKey, artifact)
 	ours, _ := awid.IDCertificateID(signed["certificate"].(map[string]any))
 	chain := []any{signedHumanCertificate(t, humanKey)}
 	refused := errors.New("already registered")
@@ -294,7 +340,7 @@ func TestARerunOfAConfirmedEndorsementInstallsItsChainOnce(t *testing.T) {
 	_, humanKey, _ := ed25519.GenerateKey(nil)
 	humanDID := awid.ComputeDIDKey(humanKey.Public().(ed25519.PublicKey))
 	artifact := endorsedArtifact(humanDID)
-	signed, _ := endorsedCertificate(signedEndorsement(t, humanKey, artifact), artifact, humanDID)
+	signed := signedCertificate(t, humanKey, artifact)
 	ours, _ := awid.IDCertificateID(signed["certificate"].(map[string]any))
 	chain := []any{signedHumanCertificate(t, humanKey)}
 	home := t.TempDir()
@@ -423,10 +469,7 @@ func readBackAt(t *testing.T, status any, controller string) error {
 	humanSigned := map[string]any{"certificate": human, "signature": base64.RawURLEncoding.EncodeToString(ed25519.Sign(humanKey, humanSigning))}
 	artifact := map[string]any{"v": json.Number("1"), "type": "aweb.id-certificate", "id": root, "domain": "example.com",
 		"parent": map[string]any{"kind": "identity", "id": admitTestHuman}, "kind": "agent", "issuer_key": humanDID, "issued_at": "2026-11-13T10:00:00Z"}
-	signed, err := endorsedCertificate(signedEndorsement(t, humanKey, artifact), artifact, humanDID)
-	if err != nil {
-		t.Fatal(err)
-	}
+	signed := signedCertificate(t, humanKey, artifact)
 	server := statusRegistry(t, status)
 	raw, _ := json.Marshal(map[string]any{
 		"v": 1, "service_id": "customer-signer", "request_origin": "https://signer.example.com",
@@ -549,7 +592,7 @@ func TestAnEndorsedRootInvitesAnAgentChildWithItsInstalledChain(t *testing.T) {
 	_, humanKey, _ := ed25519.GenerateKey(nil)
 	humanDID := awid.ComputeDIDKey(humanKey.Public().(ed25519.PublicKey))
 	artifact := endorsedArtifact(humanDID)
-	signed, _ := endorsedCertificate(signedEndorsement(t, humanKey, artifact), artifact, humanDID)
+	signed := signedCertificate(t, humanKey, artifact)
 	ours, _ := awid.IDCertificateID(signed["certificate"].(map[string]any))
 	root, err := filepath.EvalSymlinks(t.TempDir())
 	if err != nil {
