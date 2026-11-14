@@ -522,24 +522,25 @@ def published_tags(root: Path, repository: str) -> list:
     return tags
 
 
-def moves_latest(root: Path, prefix: str, version: str) -> bool:
-    """latest names the newest final release of a lane.
+def moves_latest(root: Path, repository: str, version: str, tags: list) -> bool:
+    """latest names the newest final release published to a repository.
 
-    An rc never moves it, and neither does a final older than one the lane has
-    already tagged, such as an older tag's image recovered by dispatch.
+    An rc never moves it. A final moves it only when it is not older than the
+    release latest names now, read from the registry rather than from local
+    tags, so an older tag's image recovered by dispatch never moves latest back.
     """
     if final_version(version) is not None:
         return False
-    newer = []
-    for tag in run(root, "git", "tag", "--list", f"{prefix}*").split():
-        try:
-            lane, other = tag_parts(tag)
-        except PublishRefusal:
-            continue
-        if lane == prefix and final_version(other) is None and python_version_key(other) > python_version_key(version):
-            newer.append(tag)
+    if "latest" not in tags:
+        return True
+    config = json.loads(run(root, "skopeo", "inspect", "--config", f"docker://{repository}:latest", timeout=120))
+    current = ((config.get("config") or {}).get("Labels") or {}).get("org.opencontainers.image.version")
+    try:
+        newer = python_version_key(current) > python_version_key(version)
+    except (PublishRefusal, TypeError) as error:
+        raise PublishRefusal(f"cannot read the version of {repository}:latest: {current!r}") from error
     if newer:
-        print(f"latest unchanged: {', '.join(sorted(newer))} is newer than {version}")
+        print(f"latest unchanged: {repository}:latest is {current}, newer than {version}")
     return not newer
 
 
@@ -571,7 +572,7 @@ def publish_oci(root: Path, prefix: str, version: str, source_sha: str) -> None:
             "--password-stdin", input_text=token + "\n", timeout=120,
         )
         tags = published_tags(root, repository)
-        version_only = not moves_latest(root, prefix, version)
+        version_only = not moves_latest(root, repository, version, tags)
         for image_tag in ((version,) if version_only else (version, "latest")):
             remote = ""
             if image_tag in tags:

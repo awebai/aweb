@@ -45,9 +45,11 @@ The coordinator publishes these RCs first. The Cloud candidate pins the exact
 RC versions and must pass its ordinary pin gate against real services before
 OSS final publication and Cloud deployment. Python RCs publish to PyPI; server
 and registry RCs also publish the immutable RC image tag without moving
-`latest`. On every image lane `latest` names the newest final: a final image
-moves it unless the lane already has a newer final tag, so recovering an older
-tag's image by dispatch never moves `latest` back. Every
+`latest`. On every image lane `latest` names the newest final published: a
+final image moves it only when it is not older than the release `latest` names
+in the registry now (its version label), so recovering an older tag's image by
+dispatch never moves `latest` back, whatever tags the publisher has fetched.
+Image publications run one at a time across lanes. Every
 aw RC npm package publishes with `--tag next`; final packages use `latest`
 unless the release explicitly stages the final on `next` as described below.
 The downstream `awebai/aw` workflow accepts `v*`, uses the synced

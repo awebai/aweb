@@ -133,7 +133,9 @@ class ImageRecoveryDispatchTests(unittest.TestCase):
         self.assertIn("required: true", dispatch)
         self.assertIn("type: string", dispatch)
         # A dispatch and the tag's own push run publish the same image: one at a time.
-        self.assertIn("group: image-${{ github.event_name == 'workflow_dispatch' && format('refs/tags/{0}', inputs.tag) || github.ref }}", source)
+        # Every image publication, tag push or dispatch, on any lane, runs one at a time:
+        # the latest decision reads the registry and must not race another lane run.
+        self.assertIn("  group: image-publication\n", source)
         self.assertIn("RELEASE_TAG: ${{ github.event_name == 'workflow_dispatch' && inputs.tag || github.ref_name }}", source)
         # The input reaches the shell only through the environment, never as interpolated script text.
         script = workflow_step_script("Publish or adopt the tagged image")
@@ -185,15 +187,15 @@ class ImageRecoveryDispatchTests(unittest.TestCase):
 
 class ServerOciTests(unittest.TestCase):
     def exercise(self, *, existing=False, conflict=False, fail_readback=False, version="1.2.3", listing=None,
-                 prefix="server-v", lane_tags=""):
+                 prefix="server-v", latest_config=None):
         raw = b'{"schemaVersion":2}\n'
         digest = "sha256:" + hashlib.sha256(raw).hexdigest()
         calls = []
 
         def run(root, *args, **kwargs):
             calls.append(args)
-            if args[:3] == ("git", "tag", "--list"):
-                return lane_tags
+            if args[:3] == ("skopeo", "inspect", "--config"):
+                return json.dumps(latest_config)
             if "inspect-staged" in args:
                 Path(args[args.index("--out") + 1]).write_text(json.dumps({"index": digest}))
             if "verify-published" in args and fail_readback:
@@ -201,7 +203,10 @@ class ServerOciTests(unittest.TestCase):
             return ""
 
         if listing is None:
-            listing = (0, json.dumps({"Tags": ["1.2.3", "latest"] if existing else []}), "")
+            present = (["1.2.3", "latest"] if existing else []) + (["latest"] if latest_config is not None and not existing else [])
+            listing = (0, json.dumps({"Tags": present}), "")
+        if existing and latest_config is None:
+            latest_config = {"config": {"Labels": {"org.opencontainers.image.version": version}}}
         observed = subprocess.CompletedProcess([], 0, b"different" if conflict else raw, b"")
 
         def direct(argv, **kwargs):
@@ -209,6 +214,9 @@ class ServerOciTests(unittest.TestCase):
             if tuple(argv[:2]) == ("skopeo", "list-tags"):
                 self.assertTrue(kwargs.get("text"))
                 return subprocess.CompletedProcess(argv, *listing)
+            if not existing and argv[-1].endswith(":latest"):
+                # The registry's latest is another release's index.
+                return subprocess.CompletedProcess(argv, 0, b'{"schemaVersion":2,"other":true}\n', b"")
             return observed
 
         with patch.dict(os.environ, GHCR_USERNAME="fixture", GHCR_TOKEN="fixture-token"), patch.object(PUBLISH.shutil, "which", return_value="skopeo"), patch.object(PUBLISH, "run", run), patch.object(PUBLISH.subprocess, "run", direct), redirect_stdout(io.StringIO()) as output:
@@ -285,16 +293,26 @@ class ServerOciTests(unittest.TestCase):
                 self.assertEqual(copies, [f"docker://{repository}:{version}"])
                 self.assertTrue(verifies and all("--version-only" in args for args in verifies))
 
-    def test_latest_names_the_newest_final_of_the_lane(self):
-        tags = "awid-v0.5.38\nawid-v0.5.39\nawid-v0.5.40rc2\nawid-service-v0.6.0\nnot-a-release-tag\n"
-        # The newest final moves latest; an rc or another lane's tag is no newer final.
-        copies, verifies = self.published_tags_and_readback(prefix="awid-v", version="0.5.40", lane_tags=tags)
-        self.assertEqual(copies, ["docker://ghcr.io/awebai/awid:0.5.40", "docker://ghcr.io/awebai/awid:latest"])
-        self.assertTrue(all("--version-only" not in args for args in verifies))
-        # Recovering an older final, as a dispatch can, publishes its version and leaves latest alone.
-        copies, verifies = self.published_tags_and_readback(prefix="awid-v", version="0.5.38", lane_tags=tags)
-        self.assertEqual(copies, ["docker://ghcr.io/awebai/awid:0.5.38"])
+    def test_latest_moves_only_forward_from_what_it_names_in_the_registry(self):
+        def latest(version):
+            return {"config": {"Labels": {"org.opencontainers.image.version": version}}}
+        awid = "ghcr.io/awebai/awid"
+        # A newer final than the registry's latest moves it; the first final of a lane moves it.
+        for current in ("0.5.39", None):
+            with self.subTest(current=current):
+                copies, verifies = self.published_tags_and_readback(
+                    prefix="awid-v", version="0.5.40", latest_config=latest(current) if current else None)
+                self.assertEqual(copies, [f"docker://{awid}:0.5.40", f"docker://{awid}:latest"])
+                self.assertTrue(all("--version-only" not in args for args in verifies))
+        # Recovering an older final, as a dispatch can, never moves latest back,
+        # whatever tags the publisher's checkout happens to have.
+        copies, verifies = self.published_tags_and_readback(prefix="awid-v", version="0.5.38", latest_config=latest("0.5.40"))
+        self.assertEqual(copies, [f"docker://{awid}:0.5.38"])
         self.assertTrue(verifies and all("--version-only" in args for args in verifies))
+        # A latest whose version cannot be read is no permission to move it.
+        for config in ({"config": {"Labels": {}}}, {"config": {"Labels": {"org.opencontainers.image.version": "nightly"}}}):
+            with self.subTest(config=config), self.assertRaisesRegex(PUBLISH.PublishRefusal, "version of .*:latest"):
+                self.exercise(prefix="awid-v", version="0.5.40", latest_config=config)
 
     def test_identical_published_index_is_adopted_and_read_back(self):
         calls, _, _ = self.exercise(existing=True)
