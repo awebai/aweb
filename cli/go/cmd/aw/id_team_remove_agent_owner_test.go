@@ -466,26 +466,49 @@ func TestAFreshSelectionRemovesTheListedMembership(t *testing.T) {
 }
 
 // listingRegistry answers a team's active certificate listing, page by page,
-// recording who signed each read.
+// recording who signed each read, and each certificate's public status as
+// statuses names it ("" is unknown), under teamDID.
 type listingRegistry struct {
-	server  *httptest.Server
-	status  int
-	pages   [][]awid.RegistryCertificate
-	failAt  int // the page index that fails, or -1
-	signers []string
-	paths   []string
+	server   *httptest.Server
+	status   int
+	pages    [][]awid.RegistryCertificate
+	failAt   int // the page index that fails, or -1
+	signers  []string
+	listings int
+	statuses map[string]string
+	teamDID  string
+	// statusTeam, when set, is the team the status names.
+	statusTeam string
 }
 
-func newListingRegistry(t *testing.T, pages ...[]awid.RegistryCertificate) *listingRegistry {
-	r := &listingRegistry{status: http.StatusOK, pages: pages, failAt: -1}
+func newListingRegistry(t *testing.T, teamDID string, pages ...[]awid.RegistryCertificate) *listingRegistry {
+	r := &listingRegistry{status: http.StatusOK, pages: pages, failAt: -1, statuses: map[string]string{}, teamDID: teamDID}
 	r.server = httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, req *http.Request) {
-		r.paths = append(r.paths, req.URL.Path)
+		w.Header().Set("Content-Type", "application/json")
+		if id, isStatus := strings.CutSuffix(req.URL.Path, "/status"); isStatus {
+			id = id[strings.LastIndex(id, "/")+1:]
+			switch status := r.statuses[id]; status {
+			case "":
+				w.WriteHeader(http.StatusNotFound)
+				_, _ = w.Write([]byte(`{"detail":"not_found"}`))
+			case "unavailable":
+				w.WriteHeader(http.StatusServiceUnavailable)
+				_, _ = w.Write([]byte(`{"detail":"unavailable"}`))
+			default:
+				team := "engineering:customer.example"
+				if r.statusTeam != "" {
+					team = r.statusTeam
+				}
+				_ = json.NewEncoder(w).Encode(map[string]any{"team_id": team, "team_did_key": r.teamDID, "status": status, "revoked_at": nil})
+			}
+			return
+		}
+		r.listings++
 		r.signers = append(r.signers, req.Header.Get("Authorization"))
 		page := 0
 		if cursor := req.URL.Query().Get("cursor"); cursor != "" {
 			_, _ = fmt.Sscanf(cursor, "page-%d", &page)
 		}
-		w.Header().Set("Content-Type", "application/json")
 		if r.status != http.StatusOK || page == r.failAt {
 			w.WriteHeader(failureStatus(r.status))
 			_, _ = w.Write([]byte(`{"detail":"refused"}`))
@@ -508,7 +531,18 @@ func failureStatus(status int) int {
 	return status
 }
 
-func memberListingAt(t *testing.T, registryURL string, key ed25519.PrivateKey) (func(context.Context, string) ([]awid.RegistryCertificate, error), error) {
+// membershipOf is the team certificate teamKey issues memberKey in team.
+func membershipOf(t *testing.T, teamKey, memberKey ed25519.PrivateKey, team string) *awid.TeamCertificate {
+	t.Helper()
+	cert, err := awid.SignTeamCertificate(teamKey, awid.TeamCertificateFields{Team: team,
+		MemberDIDKey: awid.ComputeDIDKey(memberKey.Public().(ed25519.PublicKey)), Alias: "requester", IdentityScope: awid.IdentityModeLocal})
+	if err != nil {
+		t.Fatal(err)
+	}
+	return cert
+}
+
+func memberListingAt(t *testing.T, registryURL string, key ed25519.PrivateKey, own *awid.TeamCertificate) (func(context.Context, string) ([]awid.RegistryCertificate, error), error) {
 	t.Helper()
 	registry, err := newConfiguredRegistryClient(nil)
 	if err != nil {
@@ -517,17 +551,21 @@ func memberListingAt(t *testing.T, registryURL string, key ed25519.PrivateKey) (
 	if err := registry.TrustRegistryOrigin(registryURL); err != nil {
 		t.Fatal(err)
 	}
-	return memberCertificateListing(registry, &handoff.Profile{RegistryOrigin: registryURL}, key)
+	ownCertificate := func(string) (*awid.TeamCertificate, error) { return own, nil }
+	return memberCertificateListing(registry, &handoff.Profile{RegistryOrigin: registryURL}, key, ownCertificate)
 }
 
-func TestTheListingIsReadAtThePinnedRegistrySignedByThisHomesKey(t *testing.T) {
+func TestTheListingIsReadAtThePinnedRegistryAsACurrentMember(t *testing.T) {
 	teamKey, _, _ := ownerRemoveTestSetup(t)
 	cert, _ := awid.LoadTeamCertificate(removeTestCertificate(t, teamKey, ""))
-	pinned := newListingRegistry(t, []awid.RegistryCertificate{rowOf(cert)})
-	configured := newListingRegistry(t, nil)
-	t.Setenv("AWID_REGISTRY_URL", configured.server.URL)
 	public, key, _ := ed25519.GenerateKey(nil)
-	list, err := memberListingAt(t, pinned.server.URL, key)
+	own := membershipOf(t, teamKey, key, cert.Team)
+	teamDID := awid.ComputeDIDKey(teamKey.Public().(ed25519.PublicKey))
+	pinned := newListingRegistry(t, teamDID, []awid.RegistryCertificate{rowOf(cert)})
+	pinned.statuses[own.CertificateID] = "active"
+	configured := newListingRegistry(t, teamDID, nil)
+	t.Setenv("AWID_REGISTRY_URL", configured.server.URL)
+	list, err := memberListingAt(t, pinned.server.URL, key, own)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -535,28 +573,93 @@ func TestTheListingIsReadAtThePinnedRegistrySignedByThisHomesKey(t *testing.T) {
 	if err != nil || len(rows) != 1 || rows[0].CertificateID != cert.CertificateID {
 		t.Fatalf("rows %v, %v", rows, err)
 	}
-	if len(configured.paths) != 0 || len(pinned.paths) != 1 || !strings.Contains(pinned.signers[0], awid.ComputeDIDKey(public)) {
-		t.Fatalf("pinned %v signed %v; configured %v", pinned.paths, pinned.signers, configured.paths)
+	if configured.listings != 0 || pinned.listings != 1 || !strings.Contains(pinned.signers[0], awid.ComputeDIDKey(public)) {
+		t.Fatalf("pinned %d signed %v; configured %d", pinned.listings, pinned.signers, configured.listings)
+	}
+}
+
+func TestOnlyACurrentMemberOfThatTeamMaySelectFromItsListing(t *testing.T) {
+	teamKey, _, _ := ownerRemoveTestSetup(t)
+	cert, _ := awid.LoadTeamCertificate(removeTestCertificate(t, teamKey, ""))
+	teamDID := awid.ComputeDIDKey(teamKey.Public().(ed25519.PublicKey))
+	_, key, _ := ed25519.GenerateKey(nil)
+	_, otherKey, _ := ed25519.GenerateKey(nil)
+	_, otherTeamKey, _ := ed25519.GenerateKey(nil)
+	for name, tc := range map[string]struct {
+		own    *awid.TeamCertificate
+		status string
+	}{
+		"no membership":                {nil, "active"},
+		"another member's certificate": {membershipOf(t, teamKey, otherKey, cert.Team), "active"},
+		"another team's certificate":   {membershipOf(t, teamKey, key, "other:customer.example"), "active"},
+		"a revoked membership":         {membershipOf(t, teamKey, key, cert.Team), "revoked"},
+		"an unregistered membership":   {membershipOf(t, teamKey, key, cert.Team), ""},
+		"not issued by the team's key": {membershipOf(t, otherTeamKey, key, cert.Team), "active"},
+	} {
+		registry := newListingRegistry(t, teamDID, []awid.RegistryCertificate{rowOf(cert)})
+		if tc.own != nil {
+			registry.statuses[tc.own.CertificateID] = tc.status
+		}
+		list, err := memberListingAt(t, registry.server.URL, key, tc.own)
+		if err == nil {
+			_, err = list(context.Background(), cert.Team)
+		}
+		if errorCodeOf(err) != "selector_unauthorized" || registry.listings != 0 {
+			t.Errorf("%s: err %v after %d listings", name, err, registry.listings)
+		}
+	}
+	// A status for another team is not this membership.
+	own := membershipOf(t, teamKey, key, cert.Team)
+	elsewhere := newListingRegistry(t, teamDID, []awid.RegistryCertificate{rowOf(cert)})
+	elsewhere.statuses[own.CertificateID], elsewhere.statusTeam = "active", "other:customer.example"
+	if list, _ := memberListingAt(t, elsewhere.server.URL, key, own); list != nil {
+		if _, err := list(context.Background(), cert.Team); errorCodeOf(err) != "selector_unauthorized" || elsewhere.listings != 0 {
+			t.Errorf("another team's status: %v after %d listings", err, elsewhere.listings)
+		}
+	}
+	// A membership certificate that could not be loaded is not a membership,
+	// whatever was read.
+	registryClient, _ := newConfiguredRegistryClient(nil)
+	partial := newListingRegistry(t, teamDID, []awid.RegistryCertificate{rowOf(cert)})
+	partial.statuses[own.CertificateID] = "active"
+	_ = registryClient.TrustRegistryOrigin(partial.server.URL)
+	broken := func(string) (*awid.TeamCertificate, error) {
+		return own, errors.New("the certificate file could not be read whole")
+	}
+	list, _ := memberCertificateListing(registryClient, &handoff.Profile{RegistryOrigin: partial.server.URL}, key, broken)
+	if _, err := list(context.Background(), cert.Team); errorCodeOf(err) != "selector_unauthorized" || partial.listings != 0 {
+		t.Errorf("a load error: %v after %d listings", err, partial.listings)
+	}
+	// A status that cannot be read is its own failure, not a missing
+	// certificate and not a membership.
+	registry := newListingRegistry(t, teamDID, []awid.RegistryCertificate{rowOf(cert)})
+	registry.statuses[own.CertificateID] = "unavailable"
+	list, _ = memberListingAt(t, registry.server.URL, key, own)
+	if _, err := list(context.Background(), cert.Team); err == nil || errorCodeOf(err) == "certificate_not_found" || registry.listings != 0 {
+		t.Errorf("unavailable status: err %v after %d listings", err, registry.listings)
 	}
 }
 
 func TestAHomeWithoutItsKeyCannotSelectFromThePrivateListing(t *testing.T) {
-	pinned := newListingRegistry(t, nil)
-	if _, err := memberListingAt(t, pinned.server.URL, nil); errorCodeOf(err) != "selector_unauthorized" || len(pinned.paths) != 0 {
-		t.Fatalf("err %v after %d reads", err, len(pinned.paths))
+	pinned := newListingRegistry(t, "", nil)
+	if _, err := memberListingAt(t, pinned.server.URL, nil, nil); errorCodeOf(err) != "selector_unauthorized" || pinned.listings != 0 {
+		t.Fatalf("err %v after %d reads", err, pinned.listings)
 	}
 }
 
 func TestARefusedOrIncompleteListingSelectsNothing(t *testing.T) {
 	teamKey, profile, service := ownerRemoveTestSetup(t)
 	cert, _ := awid.LoadTeamCertificate(removeTestCertificate(t, teamKey, ""))
-	forbidden := newListingRegistry(t, []awid.RegistryCertificate{rowOf(cert)})
-	forbidden.status = http.StatusForbidden
-	midway := newListingRegistry(t, nil, []awid.RegistryCertificate{rowOf(cert)})
-	midway.failAt = 1
+	teamDID := awid.ComputeDIDKey(teamKey.Public().(ed25519.PublicKey))
 	_, key, _ := ed25519.GenerateKey(nil)
+	own := membershipOf(t, teamKey, key, cert.Team)
+	forbidden := newListingRegistry(t, teamDID, []awid.RegistryCertificate{rowOf(cert)})
+	forbidden.status = http.StatusForbidden
+	midway := newListingRegistry(t, teamDID, nil, []awid.RegistryCertificate{rowOf(cert)})
+	midway.failAt = 1
 	for name, registry := range map[string]*listingRegistry{"forbidden": forbidden, "failed second page": midway} {
-		list, err := memberListingAt(t, registry.server.URL, key)
+		registry.statuses[own.CertificateID] = "active"
+		list, err := memberListingAt(t, registry.server.URL, key, own)
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -744,5 +847,54 @@ func TestAnOwnerRemovalUnderAnotherAuthorityGenerationIsNeverSilentlyReplaced(t 
 	}
 	if op := savedOwnerRemoval(t, ownerRemoveTestOperation); op == nil || op.Quarantine == nil {
 		t.Fatal("the replaced earlier request is gone")
+	}
+}
+
+func TestAnUnfinishedRemovalsAppliedReceiptKeepsItsSignedBytes(t *testing.T) {
+	signing, signature := []byte(`{"request":"revoke"}`), make([]byte, 64)
+	result, _ := json.Marshal(appliedTestResult(ownerRemoveTestOperation, signing, signature))
+	report, facts := keepUnverifiedRemoval(&awconfig.PendingGovernanceOperation{OperationID: ownerRemoveTestOperation}, nil, result)
+	if report != nil || facts == nil || !bytes.Equal(facts.Signing, signing) || len(facts.Signature) != 64 || facts.Verification != "unverifiable" {
+		t.Fatalf("report %v facts %+v", report, facts)
+	}
+	other, _ := json.Marshal(appliedTestResult("66666666-6666-4666-8666-666666666666", signing, signature))
+	if _, facts := keepUnverifiedRemoval(&awconfig.PendingGovernanceOperation{OperationID: ownerRemoveTestOperation}, nil, other); len(facts.Signing) != 0 {
+		t.Fatalf("another operation's receipt kept as this one's: %+v", facts)
+	}
+}
+
+func TestAQuarantinedCurrentRemovalIsNeverResumedOnlyExplicitlyReplaced(t *testing.T) {
+	teamKey, profile, service := ownerRemoveTestSetup(t)
+	certificate := removeTestCertificate(t, teamKey, "")
+	cert, _ := awid.LoadTeamCertificate(certificate)
+	body := ownerRemovalIntent(profile, mustAdmissionBinding(t, profile, cert.Team), cert)
+	body["operation_id"] = ownerRemoveTestOperation
+	raw, _ := json.Marshal(body)
+	if err := awconfig.SavePendingGovernanceOperation(&awconfig.PendingGovernanceOperation{OperationID: ownerRemoveTestOperation,
+		RequestOrigin: profile.RequestOrigin, HumanOrigin: profile.HumanOrigin, Body: raw,
+		Quarantine: &awconfig.GovernanceQuarantine{State: "unknown", Code: "external_effect_unresolved", Verification: "unsettled"}}); err != nil {
+		t.Fatal(err)
+	}
+	service.receipt = "unavailable"
+	for name, request := range map[string]ownerRemovalRequest{
+		"by target":           {Certificate: certificate, RequesterKey: removeTestRootKey},
+		"by its operation id": {OperationID: ownerRemoveTestOperation, Certificate: certificate, RequesterKey: removeTestRootKey},
+	} {
+		if _, err := removeMemberAsOwner(context.Background(), service.options(), profile, request); errorCodeOf(err) != "operation_reconciliation_required" || len(service.prepareBodies) != 0 {
+			t.Fatalf("%s: err %v after %d prepares", name, err, len(service.prepareBodies))
+		}
+	}
+	service.receipt = "committed"
+	// Naming it both to replace and to continue is refused.
+	both := ownerRemovalRequest{OperationID: ownerRemoveTestOperation, Certificate: certificate, RequesterKey: removeTestRootKey, Replace: ownerRemoveTestOperation}
+	if _, err := removeMemberAsOwner(context.Background(), service.options(), profile, both); errorCodeOf(err) != "operation_reconciliation_required" || len(service.prepareBodies) != 0 {
+		t.Fatalf("continued the quarantined request: %v after %d prepares", err, len(service.prepareBodies))
+	}
+	report, err := removeMemberAsOwner(context.Background(), service.options(), profile, ownerRemovalRequest{Certificate: certificate, RequesterKey: removeTestRootKey, Replace: ownerRemoveTestOperation})
+	if err != nil || report["operation_id"] == ownerRemoveTestOperation || len(service.prepareBodies) != 1 || bytes.Equal(service.prepareBodies[0], raw) {
+		t.Fatalf("replace: report %v err %v; the quarantined request was resumed or nothing new was asked", report, err)
+	}
+	if op := savedOwnerRemoval(t, ownerRemoveTestOperation); op == nil || op.Quarantine == nil {
+		t.Fatal("the replaced request's record is gone")
 	}
 }

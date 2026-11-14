@@ -132,6 +132,9 @@ func savedEndorsement(profile *handoff.Profile, operationID string, intent map[s
 	if err != nil || saved == nil {
 		return nil, err
 	}
+	if saved.Quarantine != nil {
+		return nil, quarantinedOperation(operationID)
+	}
 	conflict := withErrorCode("operation_conflict", fmt.Errorf("operation %s was requested with other inputs or at another service; a changed endorsement needs a new operation id", operationID))
 	body, ok := handoff.DecodeObject(saved.Body)
 	if !ok || saved.RequestOrigin != profile.RequestOrigin || saved.HumanOrigin != profile.HumanOrigin || body["operation_id"] != operationID {

@@ -3,6 +3,7 @@ package main
 import (
 	"bytes"
 	"context"
+	"crypto/ed25519"
 	"encoding/json"
 	"errors"
 	"io"
@@ -247,4 +248,155 @@ func TestAnOldRequestWhoseBindingIsGoneIsQuarantinedUnread(t *testing.T) {
 func isUsageError(err error) bool {
 	var usage *cliError
 	return errors.As(err, &usage) && usage.ExitCode() == 2
+}
+
+// Controls from security-fixes' source review of d34cebe6f2 (e019d7cf),
+// kept as written.
+
+func TestSecurityReviewKnownQuarantineEvidenceSurvivesAnUnverifiableCommittedRead(t *testing.T) {
+	service, profile, intent := unfinishedWorld(t)
+	saveUnfinished(t, profile, unfinishedOld, intent, oldFormat)
+	saved := savedRecord(t, unfinishedOld)
+	body, _ := handoff.DecodeObject(saved.Body)
+	profile.Bindings = []handoff.ProfileBinding{{Scope: body["scope"].(map[string]any), AuthorityKeyDID: "did:key:original-pin"}}
+	signing, signature := []byte("previously observed signed bytes"), []byte("previously observed signature")
+	saved.Quarantine = &awconfig.GovernanceQuarantine{State: "committed", Signing: signing, Signature: signature, Verification: "signature_verified", Code: "original-observation"}
+	if err := awconfig.SavePendingGovernanceOperation(saved); err != nil {
+		t.Fatal(err)
+	}
+	service.receipts[unfinishedOld] = `{"state":"committed","result":{}}`
+	_, refused, err := reconcileUnfinished(context.Background(), service.reader, saved, roleActReading(profile, time.Now()))
+	if err != nil || refused {
+		t.Fatalf("refused=%v err=%v", refused, err)
+	}
+	kept := savedRecord(t, unfinishedOld).Quarantine
+	if !bytes.Equal(kept.Signing, signing) || !bytes.Equal(kept.Signature, signature) || kept.Verification != "signature_verified" {
+		t.Fatalf("later unverifiable committed receipt erased prior facts: %+v", kept)
+	}
+	if service.reads != 1 || service.others != 0 {
+		t.Fatalf("reads=%d others=%d", service.reads, service.others)
+	}
+}
+
+func TestSecurityReviewQuarantineRemainsInactiveWhenItsScopeMatchesAgain(t *testing.T) {
+	service, profile, intent := unfinishedWorld(t)
+	saveUnfinished(t, profile, unfinishedOld, intent, func(map[string]any) {})
+	saved := savedRecord(t, unfinishedOld)
+	saved.Quarantine = &awconfig.GovernanceQuarantine{State: "unknown", Code: "external_effect_unresolved", Verification: "unsettled"}
+	if err := awconfig.SavePendingGovernanceOperation(saved); err != nil {
+		t.Fatal(err)
+	}
+	service.receipts[unfinishedOld] = `{"state":"unknown","code":"external_effect_unresolved"}`
+	report, err := guardUnfinished(context.Background(), io.Discard, profile, service.reader, intent, sameCanonical, "", keepCommitted)
+	if report != nil || errorCodeOf(err) != "operation_reconciliation_required" || service.reads != 1 || service.others != 0 {
+		t.Fatalf("explicit quarantine was skipped when format/scope matched: report=%v err=%v reads=%d others=%d", report, err, service.reads, service.others)
+	}
+}
+
+func TestSecurityReviewRoleRevokeDoesNotPrepareOverMatchingQuarantine(t *testing.T) {
+	app := newOwnerActApp(t)
+	frozen, binding, _, id := settleWorld(t, app, time.Now())
+	service, optionsFor := roleService(t)
+	profile := &handoff.Profile{RequestOrigin: service.server.URL, HumanOrigin: service.server.URL, Bindings: []handoff.ProfileBinding{*binding}}
+	subject := frozen["subject"].(map[string]any)
+	body := protectedRoleIntent("human-role.revoke", binding.Scope, app.server.URL, subject)
+	body["operation_id"] = id
+	raw, _ := json.Marshal(body)
+	saved := &awconfig.PendingGovernanceOperation{OperationID: id, RequestOrigin: profile.RequestOrigin, HumanOrigin: profile.HumanOrigin, Body: raw,
+		Quarantine: &awconfig.GovernanceQuarantine{State: "unknown", Code: "external_effect_unresolved", Verification: "unsettled"}}
+	if err := awconfig.SavePendingGovernanceOperation(saved); err != nil {
+		t.Fatal(err)
+	}
+	service.receipts[id] = `{"state":"unknown","code":"external_effect_unresolved"}`
+	err := requestProtectedRoleAct(context.Background(), settleCommand(), profile, binding, optionsFor, "human-role.revoke", app.server.URL, subject, "")
+	if errorCodeOf(err) != "operation_reconciliation_required" || service.reads != 1 || service.others != 0 || len(app.posts) != 0 {
+		t.Fatalf("new command prepared over quarantine: err=%v reads=%d new-prepares=%d app-posts=%d", err, service.reads, service.others, len(app.posts))
+	}
+}
+
+func TestAConflictingLaterSignedResultKeepsTheOriginalAndRecordsTheConflict(t *testing.T) {
+	service, profile, intent := unfinishedWorld(t)
+	saveUnfinished(t, profile, unfinishedOld, intent, oldFormat)
+	saved := savedRecord(t, unfinishedOld)
+	saved.Quarantine = &awconfig.GovernanceQuarantine{State: "committed", Signing: []byte("first signed bytes"), Signature: []byte("first signature"), Verification: "signature_verified"}
+	if err := awconfig.SavePendingGovernanceOperation(saved); err != nil {
+		t.Fatal(err)
+	}
+	service.receipts[unfinishedOld] = `{"state":"committed","result":{}}`
+	other := func(*awconfig.PendingGovernanceOperation, map[string]any, []byte) (map[string]any, *awconfig.GovernanceQuarantine) {
+		return nil, &awconfig.GovernanceQuarantine{State: "committed", Signing: []byte("other signed bytes"), Signature: []byte("other signature"), Verification: "unverifiable"}
+	}
+	if _, _, err := reconcileUnfinished(context.Background(), service.reader, saved, other); err != nil {
+		t.Fatal(err)
+	}
+	kept := savedRecord(t, unfinishedOld).Quarantine
+	if !bytes.Equal(kept.Signing, []byte("first signed bytes")) || kept.Verification != "signature_verified" || !bytes.Equal(kept.ConflictingSigning, []byte("other signed bytes")) {
+		t.Fatalf("kept %+v", kept)
+	}
+}
+
+func TestSignedEvidenceSurvivesAnEmptyCommittedReadAndThenNoAnswer(t *testing.T) {
+	service, profile, intent := unfinishedWorld(t)
+	saveUnfinished(t, profile, unfinishedOld, intent, oldFormat)
+	saved := savedRecord(t, unfinishedOld)
+	saved.Quarantine = &awconfig.GovernanceQuarantine{State: "committed", Signing: []byte("signed"), Signature: []byte("signature"), Verification: "expired"}
+	if err := awconfig.SavePendingGovernanceOperation(saved); err != nil {
+		t.Fatal(err)
+	}
+	for _, answer := range []string{`{"state":"committed","result":{}}`, ""} {
+		service.receipts[unfinishedOld] = answer
+		if _, _, err := reconcileUnfinished(context.Background(), service.reader, savedRecord(t, unfinishedOld), keepCommittedWithoutBytes); err != nil {
+			t.Fatal(err)
+		}
+		if kept := savedRecord(t, unfinishedOld).Quarantine; !bytes.Equal(kept.Signing, []byte("signed")) || kept.Verification != "expired" {
+			t.Fatalf("after %q: %+v", answer, kept)
+		}
+	}
+}
+
+func keepCommittedWithoutBytes(*awconfig.PendingGovernanceOperation, map[string]any, []byte) (map[string]any, *awconfig.GovernanceQuarantine) {
+	return nil, &awconfig.GovernanceQuarantine{State: "committed", Verification: "unverifiable"}
+}
+
+func TestTheStrongerObservationOfTheSameBytesAndTheMoreTellingStateAreKept(t *testing.T) {
+	expired := &awconfig.GovernanceQuarantine{State: "committed", Signing: []byte("s"), Signature: []byte("g"), Verification: "expired"}
+	verified := &awconfig.GovernanceQuarantine{State: "committed", Signing: []byte("s"), Signature: []byte("g"), Verification: "signature_verified"}
+	if got := mergedFacts(expired, verified); got.Verification != "expired" {
+		t.Fatalf("a weaker read of the same bytes replaced expired: %+v", got)
+	}
+	if got := mergedFacts(verified, expired); got.Verification != "expired" {
+		t.Fatalf("expiry of the same bytes was not recorded: %+v", got)
+	}
+	pending := &awconfig.GovernanceQuarantine{State: "pending", Verification: "unsettled"}
+	unread := &awconfig.GovernanceQuarantine{State: "unread", Code: "receipt_unavailable", Verification: "unread"}
+	if got := mergedFacts(pending, unread); got.State != "pending" {
+		t.Fatalf("no answer replaced a receipt's state: %+v", got)
+	}
+}
+
+func TestAQuarantinedRequestIsNeverTheOneAnEndorsementResumes(t *testing.T) {
+	_, humanKey, _ := ed25519.GenerateKey(nil)
+	t.Setenv("HOME", t.TempDir())
+	profile := endorseTestProfile(t, humanKey)
+	binding, _ := endorsementBinding(profile, admitTestHuman)
+	intent, _ := endorsementIntent(profile, binding, endorseTestRequest())
+	raw, _ := json.Marshal(func() map[string]any {
+		b := map[string]any{"operation_id": endorseTestOperation}
+		for k, v := range intent {
+			b[k] = v
+		}
+		return b
+	}())
+	if err := awconfig.SavePendingGovernanceOperation(&awconfig.PendingGovernanceOperation{OperationID: endorseTestOperation,
+		RequestOrigin: profile.RequestOrigin, HumanOrigin: profile.HumanOrigin, Body: raw,
+		Quarantine: &awconfig.GovernanceQuarantine{State: "unknown", Verification: "unsettled"}}); err != nil {
+		t.Fatal(err)
+	}
+	id, resumed, err := protectedOperationID("", profile, intent)
+	if err != nil || resumed || id == endorseTestOperation {
+		t.Fatalf("id %s resumed %v err %v", id, resumed, err)
+	}
+	if _, err := savedEndorsement(profile, endorseTestOperation, intent); errorCodeOf(err) != "operation_reconciliation_required" {
+		t.Fatalf("named quarantined endorsement: %v", err)
+	}
 }

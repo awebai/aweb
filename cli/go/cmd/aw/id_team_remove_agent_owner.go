@@ -7,6 +7,7 @@ import (
 	"crypto/ed25519"
 	"errors"
 	"fmt"
+	"net/http"
 	"strings"
 
 	"github.com/awebai/aw/awconfig"
@@ -236,6 +237,9 @@ func savedOwnerRemovalFor(profile *handoff.Profile, binding *handoff.ProfileBind
 		if err != nil || saved == nil {
 			return nil, err
 		}
+		if saved.Quarantine != nil {
+			return nil, quarantinedOperation(operationID)
+		}
 		if !savedOwnerRemovalOf(profile, binding, saved, team, certificateID, fileCert) {
 			return nil, conflict(operationID)
 		}
@@ -247,7 +251,7 @@ func savedOwnerRemovalFor(profile *handoff.Profile, binding *handoff.ProfileBind
 	}
 	var matches []*awconfig.PendingGovernanceOperation
 	for _, saved := range all {
-		if savedOwnerRemovalOf(profile, binding, saved, team, certificateID, nil) {
+		if saved.Quarantine == nil && savedOwnerRemovalOf(profile, binding, saved, team, certificateID, nil) {
 			matches = append(matches, saved)
 		}
 	}
@@ -325,10 +329,16 @@ func listedCertificate(ctx context.Context, list func(context.Context, string) (
 }
 
 // memberCertificateListing reads a team's active certificate listing at the
-// profile's pinned registry, signed by this home's key: the registry answers
-// a private team's listing only to a current member. Without its key in the
-// home, a certificate cannot be selected by id; its file still can be named.
-func memberCertificateListing(registry *awid.RegistryClient, profile *handoff.Profile, key ed25519.PrivateKey) (func(context.Context, string) ([]awid.RegistryCertificate, error), error) {
+// profile's pinned registry as a current member of exactly that team: this
+// home's own certificate for the team (ownCertificate) must name this home's
+// key, be issued by the team key the registry reports, and be active in the
+// registry's public certificate status. Only then is the listing read,
+// signed by that member key. Without that proof the selector is
+// selector_unauthorized, and the membership's certificate file can still be
+// named with --certificate. The listing is only a selector: the owner's
+// approval of the frozen target authorizes the removal.
+func memberCertificateListing(registry *awid.RegistryClient, profile *handoff.Profile, key ed25519.PrivateKey,
+	ownCertificate func(team string) (*awid.TeamCertificate, error)) (func(context.Context, string) ([]awid.RegistryCertificate, error), error) {
 	if key == nil {
 		return nil, withErrorCode("selector_unauthorized", errors.New("this home's key is not in the home, so it cannot read the team's private certificate listing; pass --certificate with the certificate's file"))
 	}
@@ -336,6 +346,29 @@ func memberCertificateListing(registry *awid.RegistryClient, profile *handoff.Pr
 		domain, name, err := awid.ParseTeamID(team)
 		if err != nil {
 			return nil, err
+		}
+		unauthorized := func(why string) error {
+			return withErrorCode("selector_unauthorized", fmt.Errorf("%s, so it cannot select from team %s's listing; pass --certificate with the certificate's file", why, team))
+		}
+		own, err := ownCertificate(team)
+		if err != nil || own == nil {
+			return nil, unauthorized("this home holds no membership certificate for the team")
+		}
+		if own.Team != team || own.MemberDIDKey != awid.ComputeDIDKey(key.Public().(ed25519.PublicKey)) {
+			return nil, unauthorized("this home's certificate for the team is not its own membership")
+		}
+		status, err := registry.GetTeamCertificateStatus(ctx, profile.RegistryOrigin, domain, name, own.CertificateID)
+		if err != nil {
+			if code, ok := awid.HTTPStatusCode(err); ok && code == http.StatusNotFound {
+				return nil, unauthorized("this home's membership of the team is not registered")
+			}
+			return nil, fmt.Errorf("this home's membership of team %s could not be confirmed: %w", team, err)
+		}
+		if status.Status != "active" || status.TeamID != team {
+			return nil, unauthorized("this home's membership of the team is not current")
+		}
+		if err := awid.CheckDecodedTeamCertificate(own, status.TeamDIDKey); err != nil {
+			return nil, unauthorized("this home's certificate for the team is not issued by the team's key")
 		}
 		return registry.ListCertificates(ctx, profile.RegistryOrigin, domain, name, true, key)
 	}, nil
@@ -397,7 +430,7 @@ func runTeamRemoveAgentAsOwner(cmd *cobra.Command) error {
 			return err
 		}
 		request.List = func(ctx context.Context, team string) ([]awid.RegistryCertificate, error) {
-			list, err := memberCertificateListing(registry, profile, identity.SigningKey)
+			list, err := memberCertificateListing(registry, profile, identity.SigningKey, homeTeamCertificate(identity))
 			if err != nil {
 				return nil, err
 			}
@@ -444,12 +477,33 @@ func sameRemovalTarget(saved, asked any) bool {
 	return a["team_id"] == b["team_id"] && a["certificate_id"] == b["certificate_id"]
 }
 
-// keepUnverifiedRemoval keeps an unfinished removal's committed receipt: aw
-// no longer holds the intent that request froze, so it cannot verify it.
-func keepUnverifiedRemoval(_ *awconfig.PendingGovernanceOperation, _ map[string]any, result []byte) (map[string]any, *awconfig.GovernanceQuarantine) {
+// keepUnverifiedRemoval keeps an unfinished removal's committed receipt with
+// the signed bytes its result carries for that operation: aw no longer holds
+// the intent that request froze, so it cannot verify them.
+func keepUnverifiedRemoval(saved *awconfig.PendingGovernanceOperation, _ map[string]any, result []byte) (map[string]any, *awconfig.GovernanceQuarantine) {
 	facts := &awconfig.GovernanceQuarantine{State: "committed", Verification: "unverifiable"}
-	if signing, signature, reason := retainedSignedResult(result, nil); reason == "" {
+	if signing, signature, reason := retainedSignedResult(result, &handoff.Prepared{OperationID: saved.OperationID}); reason == "" {
 		facts.Signing, facts.Signature = signing, signature
 	}
 	return nil, facts
+}
+
+// homeTeamCertificate loads identity's home's own membership certificate for a
+// team, from the membership its team state names.
+func homeTeamCertificate(identity *localSigningIdentity) func(team string) (*awid.TeamCertificate, error) {
+	return func(team string) (*awid.TeamCertificate, error) {
+		state, err := awconfig.LoadTeamStateFromIdentityHome(identity.IdentityHome)
+		if err != nil || state == nil {
+			return nil, err
+		}
+		membership := state.Membership(team)
+		if membership == nil || strings.TrimSpace(membership.CertPath) == "" {
+			return nil, nil
+		}
+		path, err := awconfig.IdentityHomeStoredPath(awconfig.IdentityHome{Root: identity.IdentityHome}, membership.CertPath)
+		if err != nil {
+			return nil, err
+		}
+		return awid.LoadTeamCertificate(path)
+	}
 }

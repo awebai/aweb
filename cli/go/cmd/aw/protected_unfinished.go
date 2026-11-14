@@ -1,6 +1,7 @@
 package main
 
 import (
+	"bytes"
 	"cmp"
 	"context"
 	"fmt"
@@ -46,8 +47,8 @@ func stableScope(scope any) any {
 
 // unfinishedFor is every saved request at profile's service for intent's act
 // and target, as sameTarget compares their subjects, that aw would not
-// continue as it is: in another approval format or under another authority
-// generation. It is sorted by operation id.
+// continue as it is: quarantined, in another approval format, or under
+// another authority generation. It is sorted by operation id.
 func unfinishedFor(profile *handoff.Profile, intent map[string]any, sameTarget func(saved, asked any) bool) ([]*awconfig.PendingGovernanceOperation, error) {
 	all, err := awconfig.ListPendingGovernanceOperations()
 	if err != nil {
@@ -61,7 +62,7 @@ func unfinishedFor(profile *handoff.Profile, intent map[string]any, sameTarget f
 			!sameTarget(body["subject"], intent["subject"]) || !sameCanonical(stableScope(body["scope"]), stableScope(intent["scope"])) {
 			continue
 		}
-		if body["approval_format"] != intent["approval_format"] || !sameCanonical(body["scope"], intent["scope"]) {
+		if saved.Quarantine != nil || body["approval_format"] != intent["approval_format"] || !sameCanonical(body["scope"], intent["scope"]) {
 			found = append(found, saved)
 		}
 	}
@@ -143,21 +144,59 @@ func reconcileUnfinished(ctx context.Context, reader func(scope map[string]any) 
 			facts = &awconfig.GovernanceQuarantine{State: receipt.State, Code: receipt.Code, Verification: "unsettled"}
 		}
 	}
-	if previous := saved.Quarantine; previous != nil && observedMore(previous, facts) {
-		facts = previous
-	}
+	facts = mergedFacts(saved.Quarantine, facts)
 	facts.ObservedAt = time.Now().UTC().Format(time.RFC3339)
 	saved.Quarantine = facts
 	return nil, false, awconfig.SavePendingGovernanceOperation(saved)
 }
 
-// observedMore reports whether earlier facts say more than later ones: a
-// committed observation, or any read answer against no answer.
-func observedMore(earlier, later *awconfig.GovernanceQuarantine) bool {
-	if later.State == "committed" {
-		return false
+// mergedFacts is what aw knows of a quarantined request after a later read:
+// signed bytes once observed are never dropped, and other signed bytes a
+// later read carries are recorded beside them as a conflict, the original
+// kept. Without signed bytes, the read that says more is kept: a committed
+// answer over any other, any answer over none.
+func mergedFacts(earlier, later *awconfig.GovernanceQuarantine) *awconfig.GovernanceQuarantine {
+	if earlier == nil {
+		return later
 	}
-	return earlier.State == "committed" || (later.State == "unread" && earlier.State != "unread")
+	if len(earlier.Signing) > 0 {
+		sameBytes := bytes.Equal(later.Signing, earlier.Signing) && bytes.Equal(later.Signature, earlier.Signature)
+		switch {
+		case len(later.Signing) > 0 && !sameBytes:
+			kept := *earlier
+			kept.ConflictingSigning, kept.ConflictingSignature = later.Signing, later.Signature
+			return &kept
+		case sameBytes && verificationRank(later.Verification) >= verificationRank(earlier.Verification):
+			return later
+		}
+		return earlier
+	}
+	if len(later.Signing) > 0 || stateRank(later.State) >= stateRank(earlier.State) {
+		return later
+	}
+	return earlier
+}
+
+// stateRank orders what a read said: nothing, an unsettled state, committed.
+func stateRank(state string) int {
+	switch state {
+	case "unread":
+		return 0
+	case "committed":
+		return 2
+	}
+	return 1
+}
+
+// verificationRank orders how far observed signed bytes were verified.
+func verificationRank(verification string) int {
+	switch verification {
+	case "signature_verified":
+		return 1
+	case "expired":
+		return 2
+	}
+	return 0
 }
 
 func unfinishedText(kept []*awconfig.PendingGovernanceOperation) string {
@@ -182,4 +221,12 @@ func unfinishedState(q *awconfig.GovernanceQuarantine) string {
 		return "its receipt could not be read (" + cmp.Or(q.Code, q.Verification) + ")"
 	}
 	return "its receipt says " + q.State
+}
+
+// quarantinedOperation refuses to continue a quarantined request named by its
+// id: it is only read for reconciliation, and a new request for the same act
+// needs --replace.
+func quarantinedOperation(operationID string) error {
+	return withErrorCode("operation_reconciliation_required", fmt.Errorf(
+		"operation %s is quarantined for reconciliation and is not continued; to ask for a separately approved act, run without --operation-id %s and with --replace %s", operationID, operationID, operationID))
 }

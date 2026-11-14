@@ -57,7 +57,8 @@ func protectedOperationID(flag string, profile *handoff.Profile, intent map[stri
 	}
 	var matches []string
 	for _, op := range saved {
-		if op.RequestOrigin != profile.RequestOrigin || op.HumanOrigin != profile.HumanOrigin {
+		// A quarantined request is never resumed (guardUnfinished).
+		if op.Quarantine != nil || op.RequestOrigin != profile.RequestOrigin || op.HumanOrigin != profile.HumanOrigin {
 			continue
 		}
 		body, ok := handoff.DecodeObject(op.Body)
