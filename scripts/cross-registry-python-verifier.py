@@ -4,12 +4,20 @@ import json
 import sys
 
 from redis.asyncio import Redis
+from awid.external_authority import OriginContext
 from awid.id_certificates import verify_id_chain
 from awid.registry import CachedRegistryClient
 
 
 def outsider_client(redis):
-    return CachedRegistryClient("https://api.awid.ai", redis)
+    # Only this isolated journey opts in; DNS still selects each foreign route.
+    return CachedRegistryClient(
+        "https://api.awid.ai", redis,
+        registry_origin_context=OriginContext(
+            app_env="development", federation_test_enabled=True,
+            listener_origin="http://awid-b:8010",
+        ),
+    )
 
 
 async def main():
