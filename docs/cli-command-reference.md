@@ -686,6 +686,7 @@ Flags:
 - `--no-wait Exit without waiting for the approver; run the same command again to finish`
 - `--operation-id string The UUID for this endorsement; by default aw continues the same unfinished request or starts a new one`
 - `--protected-profile string The operator-provisioned protected-service profile (default: AWEB_PROTECTED_PROFILE, else protected-profile.json in the identity home)`
+- `--replace string The id of an earlier unfinished endorsement of this root, which stays kept, to ask for a separately approved one`
 - `--team stringArray A team (name:domain) the root will admit agents to; repeat for each`
 
 ## `id grant`
@@ -1140,7 +1141,7 @@ Subcommands:
 - `members` List a team's members from AWID certificates
 - `register` Protocol/admin: register or sync a customer-controlled team with a service
 - `reissue-cert` Protocol/admin: mint and register a fresh certificate for the same member key
-- `remove-agent` Remove an admitted agent from a protected team through its protected service, as the endorsed root
+- `remove-agent` Remove an agent from a protected team through its protected service, as the endorsed root or with the owner's approval
 - `remove-member` Protocol/admin: remove a member by revoking a team certificate
 - `request` Protocol/admin bridge: print the add-member command the team owner should run
 - `rotate-key` Rotate the team controller key, re-signing the team's AWID records with it
@@ -1533,11 +1534,26 @@ the same command again continues that request. With --operation-id, running
 again with the same id and the same inputs resumes that operation and returns its
 receipt; changed inputs under the id refuse operation_conflict.
 
+With --owner-approved, the team's current owner approves the removal live, on
+the protected service's page, and any agent membership of the team can be
+removed, whoever admitted it. This identity asks as the registered requester the
+profile grants; it authorizes nothing itself. Name the membership with
+--certificate, or with --team and --certificate-id, which reads the team's
+active listing at the profile's registry as this member. Running the same
+command again continues a removal not yet finished, even once its certificate
+has left the listing.
+
 Flags:
 - `--certificate string The agent's team certificate file`
+- `--certificate-id string With --owner-approved and --team: the certificate id, selected from the team's active listing`
 - `-h, --help help for remove-agent`
+- `--no-browser With --owner-approved: do not open a browser; the page is printed`
+- `--no-wait With --owner-approved: show the approval page and return; run the same command again to continue`
 - `--operation-id string The UUID for this removal; by default aw continues the same unfinished request or starts a new one`
+- `--owner-approved Remove with the team owner's live approval instead of as the endorsed root`
 - `--protected-profile string The operator-provisioned protected-service profile (default: AWEB_PROTECTED_PROFILE, else protected-profile.json in the identity home)`
+- `--replace string With --owner-approved: the id of an earlier unfinished removal of this membership, which stays kept, to ask for a separately approved one`
+- `--team string With --owner-approved and --certificate-id: the team (name:domain) whose membership is removed`
 
 ## `id team remove-member`
 
@@ -4348,6 +4364,7 @@ Flags:
 - `-h, --help help for revoke`
 - `--principal string The holder's did:aw`
 - `--protected-profile string Prepare the act at the protected service this operator-provisioned profile names; the controlling human approves it there`
+- `--replace string With --protected-profile, the id of an earlier unfinished request for this same act, which stays kept, to ask for a separately approved act`
 - `--role string The app role, as its manifest names it`
 - `--yes Sign what is shown without asking`
 

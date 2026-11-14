@@ -224,6 +224,17 @@ class ProtectedSigner:
             await self._authorized(operation_id, human, "approval", human_session=human_session)
         )
 
+    async def requested_by_you(self, operation_id, *, human, human_session=None):
+        """Compare private initiation provenance with the authenticated viewer."""
+        if type(human) is not AdmittedHuman:
+            raise SignerRefused("scope_refused")
+        if type(human_session) is not ConsoleSession:
+            raise SignerRefused("console_session_required")
+        row = await self._authorized(operation_id, human, "approval", human_session=human_session)
+        return (row.get("initiator_subject"), row.get("initiator_scope")) == (
+            human_session.subject, human_session.scope,
+        )
+
     async def _hold_session(self, tx, human, session, *, b3_held=False):
         if session is None:
             return
@@ -472,22 +483,40 @@ class ProtectedSigner:
         # the first prepare. A newly fetched snapshot cannot retarget its UUID.
 
     async def owner_prepared(self, initiation):
-        """Authenticate an owner retry before the host refreshes any target."""
+        """Authenticate a saved selection and settle only a definite unsigned expiry."""
         if _checked_owner_initiation(initiation) is None:
             raise SignerRefused("scope_refused")
         human, session = initiation.human, initiation.session
         fence = await self.authority.observe(human.context, purpose="prepare")
+        expired = False
         async with self.db.transaction() as tx:
             row = await self._lock(tx, initiation.operation_id)
             await fence.prepare(tx, human)
             await self._hold_session(tx, human, session)
             if row is not None:
                 self._check_prepare_owner(row, initiation)
+                expired = row["refusal_code"] == "operation_expired"
+                if (row["refusal_code"] is None and self.clock() >= row["expires_at"]
+                    and all(row.get(name) is None for name in
+                        ("result", "signed_result", "retained_effect", "issued_artifact", "delivery_claim"))):
+                    # The same lock fences every signature/release continuation.
+                    # A verification claim alone is not a signed effect.
+                    await tx.execute(
+                        "UPDATE {{tables.protected_signer_operations}} SET refusal_code='operation_expired',"
+                        "candidate_links='{}'::jsonb WHERE operation_id=$1", initiation.operation_id,
+                    )
+                    await self._emit(AuditKind.PROTECTED_OPERATION_REFUSED, tx, row, human.principal,
+                        refusal="operation_expired")
+                    expired = True
             await self._check_session(tx, session)
             await fence.check(tx, human)
             fence.require_fresh()
             self._session_fresh(session)
-            return self._prepared(row) if row is not None else None
+            prepared = self._prepared(row) if row is not None else None
+        # Raising within the transaction would roll back this terminal receipt.
+        if expired:
+            raise SignerRefused("operation_expired")
+        return prepared
 
     async def _authorized(self, operation_id, actor, purpose, *, human_session=None):
         fence = await self.authority.observe(actor.context, purpose=purpose)
@@ -752,7 +781,7 @@ class ProtectedSigner:
             if row is None:
                 raise SignerRefused("operation_not_found")
             await fence.prepare(tx, human)
-            if row["result"] is not None:
+            if row["result"] is not None or row["refusal_code"] is not None:
                 await self._hold_session(tx, human, human_session)
                 await self._check_session(tx, human_session)
                 await fence.check(tx, human)
@@ -911,6 +940,11 @@ class ProtectedSigner:
             row = await self._lock(tx, operation_id)
             fence.require_fresh()
             self._session_fresh(human_session)
+            if (row["result"] is None and row["refusal_code"] is None and row["signed_result"] is not None
+                and code in {"operation_expired", "approval_expired"}):
+                # The human wait may still be open after the retained effect's
+                # original release window has ended. It grants no new send.
+                return OperationReceipt(operation_id, "unknown", code="external_effect_unresolved")
             return self._receipt(row)
 
     async def _execute_request(self, operation_id, *, requester):
@@ -1305,7 +1339,7 @@ class ProtectedSigner:
         # its B2 approval is still pending and this claim owns verification.
         async with self.db.transaction() as tx:
             row = await self._lock(tx, operation_id)
-            if row["result"] is None and row["verification_claim"] == claim:
+            if row["result"] is None and row["refusal_code"] is None and row["verification_claim"] == claim:
                 await tx.execute(
                     "UPDATE {{tables.protected_signer_operations}} SET refusal_code=$2,"
                     "candidate_links='{}'::jsonb WHERE operation_id=$1",

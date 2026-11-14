@@ -35,6 +35,7 @@ var (
 	idEndorseOperationFlag string
 	idEndorseNoWaitFlag    bool
 	idEndorseNoBrowserFlag bool
+	idEndorseReplaceFlag   string
 )
 
 var idEndorseCmd = &cobra.Command{
@@ -63,6 +64,7 @@ func init() {
 	flags.StringVar(&appProtectedProfileFlag, "protected-profile", "", "The operator-provisioned protected-service profile (default: AWEB_PROTECTED_PROFILE, else protected-profile.json in the identity home)")
 	flags.BoolVar(&idEndorseNoWaitFlag, "no-wait", false, "Exit without waiting for the approver; run the same command again to finish")
 	flags.BoolVar(&idEndorseNoBrowserFlag, "no-browser", false, "Do not open a browser; the page is only reported")
+	flags.StringVar(&idEndorseReplaceFlag, "replace", "", "The id of an earlier unfinished endorsement of this root, which stays kept, to ask for a separately approved one")
 	identityCmd.AddCommand(idEndorseCmd)
 }
 
@@ -115,7 +117,8 @@ func endorsementIntent(profile *handoff.Profile, binding *handoff.ProfileBinding
 	}
 	authority, _ := binding.Scope["authority"].(map[string]any)
 	return map[string]any{
-		"operation": "identity.root.endorse", "variant": "default", "scope": binding.Scope, "audience": profile.RegistryOrigin,
+		"operation": "identity.root.endorse", "variant": "default", "approval_format": "intent_v1",
+		"scope": binding.Scope, "audience": profile.RegistryOrigin,
 		"subject": map[string]any{"domain": authority["domain"], "root_id": request.RootID, "root_key": request.RootKey,
 			"teams": listed, "deployment_label": request.DeploymentLabel},
 	}, nil
@@ -128,6 +131,9 @@ func savedEndorsement(profile *handoff.Profile, operationID string, intent map[s
 	saved, err := awconfig.LoadPendingGovernanceOperation(operationID)
 	if err != nil || saved == nil {
 		return nil, err
+	}
+	if saved.Quarantine != nil {
+		return nil, quarantinedOperation(operationID)
 	}
 	conflict := withErrorCode("operation_conflict", fmt.Errorf("operation %s was requested with other inputs or at another service; a changed endorsement needs a new operation id", operationID))
 	body, ok := handoff.DecodeObject(saved.Body)
@@ -153,8 +159,11 @@ func savedEndorsement(profile *handoff.Profile, operationID string, intent map[s
 // frozen request it accepted in kept.
 func endorsementCheck(issuerKey string, teams []string, readPolicy func(context.Context, string) (*handoff.AdmissionPolicyRead, error), kept *map[string]any) func(context.Context, map[string]any) error {
 	return func(ctx context.Context, request map[string]any) error {
-		artifact, _ := request["artifact"].(map[string]any)
-		if artifact["issuer_key"] != issuerKey {
+		template, err := handoff.IntentTemplate(request)
+		if err != nil {
+			return err
+		}
+		if template["issuer_key"] != issuerKey {
 			return withErrorCode("operation_mismatch", errors.New("the prepared certificate is issued by another key than the profile pins for the human"))
 		}
 		frozen, err := awid.StrictCanonicalJSON(request["admission_policy"])
@@ -196,14 +205,16 @@ func pendingEndorsementReport(prepared *handoff.Prepared, page string, receipt *
 func pendingEndorsementText(report map[string]any) string {
 	expires, _ := time.Parse(time.RFC3339Nano, fmt.Sprint(report["expires_at"]))
 	return fmt.Sprintf("Waiting for the approver, who approves on %s; the request expires at %s. Run the same command again to continue (operation %s).\n",
-		report["page"], expires.UTC().Format("2006-01-02 15:04 UTC"), report["operation_id"])
+		report["page"], handoff.ReaderTime(expires, "2006-01-02 15:04"), report["operation_id"])
 }
 
 // endorsedCertificate is the root's signed ID certificate in a committed
-// result, in the standard {certificate, signature} wrapper, if it is exactly
-// the frozen artifact signed by the human's pinned key. Anything else,
-// including no frozen artifact, is signed_certificate_invalid.
-func endorsedCertificate(result []byte, artifact map[string]any, issuerKey string) (map[string]any, error) {
+// result, in the standard {certificate, signature} wrapper, if it is the
+// certificate issued under the human's approval of frozen: the intent's
+// template in every static field, issued_at inside the frozen issuance
+// window, signed by the human's pinned key. Anything else, including no
+// frozen intent, is signed_certificate_invalid.
+func endorsedCertificate(result []byte, frozen map[string]any, issuerKey string) (map[string]any, error) {
 	invalid := func(format string, args ...any) error {
 		return withErrorCode("signed_certificate_invalid", fmt.Errorf("the signed certificate is not the one the human approved: "+format, args...))
 	}
@@ -218,11 +229,13 @@ func endorsedCertificate(result []byte, artifact map[string]any, issuerKey strin
 	if errSigning != nil || errSignature != nil || len(signature) != ed25519.SignatureSize {
 		return nil, invalid("its signing or signature is not padded base64 of the right size")
 	}
-	frozen, err := awid.IDCertificateSigningBytes(artifact)
-	if err != nil || !bytes.Equal(frozen, signing) {
-		return nil, invalid("it is not the certificate the operation froze")
+	// The signature is verified over the issued certificate's own canonical
+	// bytes, so signing bytes that are anything else never verify.
+	issued, _ := handoff.DecodeObject(bytes.TrimPrefix(signing, []byte(awid.IDCertificatePrefix)))
+	if err := handoff.VerifyIssuedArtifact(frozen, issued); err != nil {
+		return nil, invalid("it is not the certificate the operation froze: %v", err)
 	}
-	signed := map[string]any{"certificate": artifact, "signature": base64.RawURLEncoding.EncodeToString(signature)}
+	signed := map[string]any{"certificate": issued, "signature": base64.RawURLEncoding.EncodeToString(signature)}
 	if err := awid.VerifyIDCertificate(signed, issuerKey); err != nil {
 		return nil, invalid("%v", err)
 	}
@@ -359,6 +372,13 @@ func runIDEndorse(cmd *cobra.Command, _ []string) error {
 	if err != nil {
 		return err
 	}
+	// An earlier endorsement aw cannot continue is read and settled, or
+	// explicitly replaced, before a new one is asked for; its result can
+	// only be kept, never registered by this aw (endorsementReading).
+	if _, err := guardUnfinished(cmd.Context(), cmd.ErrOrStderr(), profile, requesterOptions(cmd, profile, identity), intent, sameCanonical,
+		strings.TrimSpace(idEndorseReplaceFlag), endorsementReading); err != nil {
+		return err
+	}
 	if err := announceOperationID(cmd, &request.OperationID, profile, intent); err != nil {
 		return err
 	}
@@ -406,8 +426,7 @@ func runIDEndorse(cmd *cobra.Command, _ []string) error {
 		printOutput(report, func(any) string { return pendingEndorsementText(report) })
 		return nil
 	}
-	artifact, _ := frozen["artifact"].(map[string]any)
-	signed, err := endorsedCertificate(receipt.Result, artifact, binding.AuthorityKeyDID)
+	signed, err := endorsedCertificate(receipt.Result, frozen, binding.AuthorityKeyDID)
 	if err != nil {
 		return fmt.Errorf("operation %s: %w", request.OperationID, err)
 	}
@@ -432,11 +451,22 @@ func runIDEndorse(cmd *cobra.Command, _ []string) error {
 	if err := registerEndorsement(ctx, root, chain, signed, expectedHead, filepath.Dir(identity.SigningKeyPath)); err != nil {
 		return fmt.Errorf("operation %s committed; %w", request.OperationID, err)
 	}
-	certificateID, _ := awid.IDCertificateID(artifact)
+	certificateID, _ := awid.IDCertificateID(signed["certificate"].(map[string]any))
 	forgetProtectedOperationQuietly(request.OperationID)
 	report := map[string]any{"operation_id": request.OperationID, "state": receipt.State, "certificate_id": certificateID, "registered": true, "chain_installed": true}
 	printOutput(report, func(any) string {
 		return fmt.Sprintf("Operation %s committed; %s is endorsed by %s and registered as certificate %s.\n", request.OperationID, request.RootID, request.Human, certificateID)
 	})
 	return nil
+}
+
+// endorsementReading keeps an unfinished endorsement's committed receipt with
+// the signed bytes it carries: aw no longer holds the certificate that
+// request froze, so it can neither verify nor register it.
+func endorsementReading(_ *awconfig.PendingGovernanceOperation, _ map[string]any, result []byte) (map[string]any, *awconfig.GovernanceQuarantine) {
+	facts := &awconfig.GovernanceQuarantine{State: "committed", Verification: "unverifiable"}
+	if signing, signature, reason := signedResult(result); reason == "" {
+		facts.Signing, facts.Signature = signing, signature
+	}
+	return nil, facts
 }

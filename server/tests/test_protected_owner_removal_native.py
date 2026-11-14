@@ -28,7 +28,7 @@ def owner_removal(a, certificate):
                 "member_did_key", "member_did_aw", "member_address", "alias", "identity_scope")}})
 
 
-async def legacy_member(a, kind):
+async def legacy_member(a, kind, *, alias="service-or-legacy-member"):
     key = SigningKey.generate()
     member = None
     if kind == "unknown":
@@ -37,7 +37,7 @@ async def legacy_member(a, kind):
         member = await registered_identity(a, key, kind=kind)
     certificate = {"version": 1, "certificate_id": str(uuid4()), "team_id": TEAM,
         "team_did_key": did(a.w.controller), "member_did_key": did(key),
-        "alias": "service-or-legacy-member", "identity_scope": "global" if member else "local",
+        "alias": alias, "identity_scope": "global" if member else "local",
         "issued_at": datetime.now(UTC).strftime("%Y-%m-%dT%H:%M:%SZ")}
     if member:
         certificate["member_did_aw"] = member

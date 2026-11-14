@@ -212,20 +212,31 @@ async def test_missing_policy_refuses_endorse_before_any_pending_record(admissio
 
 
 @pytest.mark.asyncio
-async def test_unendorsed_root_cannot_use_unattended_admission_or_execute_a_live_act(admissions):
+async def test_unendorsed_root_cannot_use_unattended_admission_or_execute_a_live_act(admissions, tmp_path, test_db_factory):
+    from tests.protected_consumer_support import ready_owner_act_consumer
+
     a = admissions
     response = await prepare(a, admit_operation(a))
     assert response.status_code == 403 and response.json()["detail"] == "subject_ineligible"
-    for operation in (root_operation(a), a.w.operation):
-        assert (await prepare(a, operation)).status_code == 200
-        response = await execute(a, operation)
-        assert response.status_code == 403 and response.json() == {"detail": "live_approval_required"}
-        row = await a.w.db.fetch_one(
-            "SELECT result,signed_result,refusal_code,approval_id FROM {{tables.protected_signer_operations}} WHERE operation_id=$1",
-            operation.operation_id,
-        )
-        assert row["result"] is None and row["signed_result"] is None and row["refusal_code"] is None
-        assert row["approval_id"] is not None
+    # A live owner act is served only with an explicitly ready consumer. A
+    # working requester key cannot turn the legacy world into that capability.
+    unserved = await prepare(a, a.w.operation)
+    assert unserved.status_code == 400 and unserved.json() == {"detail": "operation_not_served"}, unserved.text
+    assert await a.w.db.fetch_value(
+        "SELECT count(*) FROM {{tables.protected_signer_operations}} WHERE operation_id=$1", a.w.operation.operation_id,
+    ) == 0
+    async with ready_owner_act_consumer(a.w, tmp_path, test_db_factory):
+        for operation in (root_operation(a), a.w.operation):
+            prepared = await prepare(a, operation)
+            assert prepared.status_code == 200, prepared.text
+            response = await execute(a, operation)
+            assert response.status_code == 403 and response.json() == {"detail": "live_approval_required"}
+            row = await a.w.db.fetch_one(
+                "SELECT result,signed_result,refusal_code,approval_id FROM {{tables.protected_signer_operations}} WHERE operation_id=$1",
+                operation.operation_id,
+            )
+            assert row["result"] is None and row["signed_result"] is None and row["refusal_code"] is None
+            assert row["approval_id"] is not None
 
 
 @pytest.mark.asyncio
@@ -389,7 +400,8 @@ async def test_runnable_host_serves_both_private_authorities_and_the_same_three_
     manifest = tmp_path / "controller-keys.json"
     manifest.write_text(json.dumps({did(a.w.controller): str(settings.controller_key_file), did(a.w.human_key): str(human_key)}))
     settings.controller_keys_file = manifest
-    host = create_app(settings, mailer=CapturedMail(), registry_transport=a.w.host.transport)
+    mailer = CapturedMail()
+    host = create_app(settings, mailer=mailer, registry_transport=a.w.host.transport)
     async with host.api_app.router.lifespan_context(host.api_app):
         group = host.api_app.state.composition
         assert len(group.components) == 2
@@ -401,6 +413,12 @@ async def test_runnable_host_serves_both_private_authorities_and_the_same_three_
             response = await client.get(path, headers=headers(a, path=path, method="GET", label="protected_admission_policy_read"))
             assert response.status_code == 200 and response.json()["policy"] == a.policy
             await endorse(a)
+            # The composed host's approval notice for the revealable root
+            # endorsement, under its revealing frozen policy, names the
+            # definition's question in the body; the subject stays generic.
+            [notice] = [m for m in mailer.messages if "#k=" in m.text]
+            assert notice.subject == "A request is waiting for your approval"
+            assert "It asks: Make " in notice.text and " your root agent for " in notice.text
             operation = admit_operation(a)
             assert (await prepare(a, operation)).status_code == 200
             response = await execute(a, operation)

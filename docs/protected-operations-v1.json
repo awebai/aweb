@@ -10,16 +10,15 @@
       },
       "display": {
         "consequences": [
-          "This revokes the exact retained application role holding.",
-          "Last-owner protection still applies."
+          "{/subject/principal} will no longer be {/subject/role} of {/subject/app_id}."
         ],
         "names": {
           "application": "/subject/app_id",
           "role": "/subject/role"
         },
         "refusals": {
-          "issuer_kind_forbidden": "This controller cannot revoke the selected role holding.",
-          "subject_ineligible": "The selected role holding cannot be revoked by this operation."
+          "issuer_kind_forbidden": "Only a person can approve this.",
+          "subject_ineligible": "You cannot approve this: your identity is not a confirmed person for this team."
         },
         "technical": {
           "installation": "/subject/installation_id",
@@ -27,7 +26,7 @@
           "requester": "/requester",
           "team": "/scope/authority/id"
         },
-        "title": "Remove {/subject/principal} from {/subject/role}?"
+        "title": "Remove {/subject/principal} as {/subject/role} of {/subject/app_id}?"
       },
       "family": "owner_act",
       "issuance": {
@@ -127,26 +126,30 @@
       },
       "display": {
         "consequences": [
-          "Everything this root spawns counts as yours for human responsibility; this grants no resource permissions.",
-          "Admission remains limited by the provisioned policy and its active-count and rate bounds.",
-          "This endorsement grants no resource permissions."
+          "Agents it adds count as yours. It gets no other access.",
+          "It can add agents only to {/subject/teams|team}: at most {/admission_policy/bounds/max_active} at a time, and at most {/admission_policy/bounds/max_per_window} per {/admission_policy/bounds/rate_window_seconds|period}."
         ],
         "names": {
-          "deployment": "/subject/deployment_label",
-          "teams": "/subject/teams"
+          "root_agent": "/subject/deployment_label",
+          "teams": "/subject/teams|team"
         },
         "refusals": {
-          "issuer_kind_forbidden": "The selected protected identity cannot endorse this root.",
-          "subject_ineligible": "This root is not an eligible registered agent of the selected human."
+          "issuer_kind_forbidden": "Your identity cannot approve a root agent.",
+          "subject_ineligible": "This agent cannot become your root agent."
         },
+        "requester_name": [
+          "/subject/root_id",
+          "/subject/deployment_label"
+        ],
         "technical": {
           "human": "/scope/human/id",
           "policy": "/admission_policy",
           "requester": "/requester",
           "root": "/subject/root_id",
-          "root_key": "/subject/root_key"
+          "root_key": "/subject/root_key",
+          "teams": "/subject/teams"
         },
-        "title": "Approve {/subject/deployment_label} as the root agent for {/subject/teams}?"
+        "title": "Make {/subject/deployment_label} your root agent for {/subject/teams|team}?"
       },
       "family": "id_certificate",
       "issuance": {
@@ -228,7 +231,7 @@
         "statement": "/responsibility_statement",
         "timestamps": []
       },
-      "responsibility_statement": "Everything this root spawns counts as yours for human responsibility; this grants no resource permissions.",
+      "responsibility_statement": "Agents it adds count as yours. It gets no other access.",
       "rule": "live_floor",
       "subject_schema": {
         "fields": {
@@ -277,16 +280,16 @@
       },
       "display": {
         "consequences": [
-          "This creates one ordinary agent membership under the endorsed root's policy.",
-          "It grants no owner role or resource permissions."
+          "{/subject/member_alias} joins as an ordinary member, within the root agent's limits.",
+          "It gets no owner role and no other access."
         ],
         "names": {
           "member": "/subject/member_alias",
-          "team": "/subject/team_id"
+          "team": "/subject/team_id|team"
         },
         "refusals": {
-          "issuer_kind_forbidden": "The selected controller cannot admit this kind of member.",
-          "subject_ineligible": "This admission requires a positively verified eligible agent or permitted local agent."
+          "issuer_kind_forbidden": "This team cannot add that kind of member.",
+          "subject_ineligible": "This agent cannot be added to this team."
         },
         "technical": {
           "member_key": "/subject/child_key",
@@ -294,7 +297,7 @@
           "requester": "/requester",
           "root": "/subject/root_id"
         },
-        "title": "Admit {/subject/member_alias} to {/subject/team_id}?"
+        "title": "Add {/subject/member_alias} to {/subject/team_id|team}?"
       },
       "family": "member_certificate",
       "key_role": "team_controller",
@@ -319,23 +322,24 @@
       },
       "display": {
         "consequences": [
-          "This revokes the exact team membership certificate.",
-          "Identity revocation is a separate operation."
+          "{/subject/expected_membership/alias} leaves {/subject/team_id|team}.",
+          "Its aweb identity is not deleted."
         ],
         "names": {
           "member": "/subject/expected_membership/alias",
-          "team": "/subject/team_id"
+          "team": "/subject/team_id|team"
         },
         "refusals": {
-          "issuer_kind_forbidden": "This signer cannot remove that kind of membership.",
-          "subject_ineligible": "This unattended path requires an eligible agent membership."
+          "issuer_kind_forbidden": "This team cannot remove that kind of member.",
+          "subject_ineligible": "This member cannot be removed this way."
         },
         "technical": {
           "certificate": "/subject/certificate_id",
           "member": "/subject/member_id",
-          "requester": "/requester"
+          "requester": "/requester",
+          "team": "/subject/team_id"
         },
-        "title": "Remove {/subject/expected_membership/alias} from {/subject/team_id}?"
+        "title": "Remove {/subject/expected_membership/alias} from {/subject/team_id|team}?"
       },
       "family": "member_revocation",
       "key_role": "team_controller",
@@ -360,24 +364,26 @@
       },
       "display": {
         "consequences": [
-          "This revokes the exact team membership certificate.",
-          "Target kind: {/target_kind}.",
-          "This removal does not revoke its identity or remove a human role."
+          "{/subject/expected_membership/alias} leaves {/subject/team_id|team}.",
+          "Its aweb identity is not deleted."
         ],
         "names": {
+          "kind": "/target_kind|kind",
           "member": "/subject/expected_membership/alias",
-          "team": "/subject/team_id"
+          "team": "/subject/team_id|team"
         },
         "refusals": {
-          "issuer_kind_forbidden": "Only the current owner's exact passkey approval authorizes this removal.",
-          "subject_ineligible": "Verified human memberships require human removal; unavailable kind evidence cannot authorize removal."
+          "issuer_kind_forbidden": "Only an owner's passkey can approve this.",
+          "subject_ineligible": "This member is a person, or could not be checked, so it cannot be removed here."
         },
         "technical": {
           "certificate": "/subject/certificate_id",
+          "kind": "/target_kind",
           "member": "/subject/member_id",
-          "requester": "/requester"
+          "requester": "/requester",
+          "team": "/subject/team_id"
         },
-        "title": "Remove {/subject/expected_membership/alias} from {/subject/team_id}?"
+        "title": "Remove {/subject/expected_membership/alias} from {/subject/team_id|team}?"
       },
       "family": "member_revocation",
       "issuance": {

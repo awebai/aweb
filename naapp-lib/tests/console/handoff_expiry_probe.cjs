@@ -25,6 +25,7 @@ const context = {
   PublicKeyCredential:{parseRequestOptionsFromJSON:o=>o},
   navigator:{credentials:{get:async()=>({toJSON:()=>({})})}},
   validateProtectedPresentation:async state=>({request:state.payload.request,subject:state.payload.request.subject}),
+  validateProtectedReceiptPresentation:async state=>({request:state.payload.request,subject:state.payload.request.subject}),
   operationTable:{'human-role.revoke|default':{display:{}}},
   renderDisplay:()=>({title:'Remove holder from reader?',consequences:[],names:[],technical:[]}),
   displayRefusal:()=>null,

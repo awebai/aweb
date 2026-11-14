@@ -11,6 +11,7 @@ import hashlib
 import json
 from datetime import UTC, datetime
 from html import escape
+from urllib.parse import quote
 
 from aweb_naapp.runtime.protected_signer import SignerRefused
 from aweb_naapp.runtime.protected_signer.admission_policy import AdmissionPolicy
@@ -41,15 +42,29 @@ async def _component_for(composition, scope):
     raise SignerRefused("scope_refused")
 
 
-def _title(request):
-    """The operation definition's own question for this frozen request."""
+def _owner_initiable():
+    spec = OPERATIONS.get(("team.agent.remove", "owner_approved"))
+    return spec is not None and spec.owner_initiable
+
+
+def _asked_at(request):
+    """When a request was asked: a frozen artifact's issue time, or for an
+    intent the start of its issuance window, which is when it was prepared."""
+    artifact = request.get("artifact") or {}
+    return artifact.get("issued_at") or (artifact.get("issuance_window") or {}).get("not_before")
+
+
+def _rendered(request):
+    """The operation definition's question and the requester's frozen name."""
     spec = OPERATIONS.get((request.get("operation"), request.get("variant", "default")))
     if spec is None:
-        return request.get("operation")
+        return request.get("operation"), None
     try:
-        return spec.display.render(request)["title"]
+        rendered = spec.display.render(request)
     except SignerRefused:
-        return request.get("operation")
+        return request.get("operation"), None
+    named = rendered.get("requester")
+    return rendered["title"], named if named != request.get("requester") else None
 
 
 async def owner_view(composition, *, scope: str, subject: str, now: datetime | None = None) -> dict:
@@ -60,7 +75,7 @@ async def owner_view(composition, *, scope: str, subject: str, now: datetime | N
     now = datetime.now(UTC) if now is None else now
     fields = context.fields()
     rows = await c.db.fetch_all(
-        "SELECT operation_id,handoff_id,requester,request,digest,approval_id,expires_at,"
+        "SELECT operation_id,handoff_id,requester,request,digest,approval_id,expires_at,initiator_subject,initiator_scope,"
         "result IS NOT NULL AS committed,signed_result IS NOT NULL AS signed,refusal_code,committed_at "
         "FROM {{tables.protected_signer_operations}} "
         "ORDER BY expires_at DESC"
@@ -72,22 +87,27 @@ async def owner_view(composition, *, scope: str, subject: str, now: datetime | N
         requests[row["operation_id"]] = request
         if request.get("scope") != fields:
             continue
+        title, named = _rendered(request)
+        # A request this signed-in approver started from the owner page is theirs.
+        requested_by_you = row["initiator_subject"] == subject and row["initiator_scope"] == scope
+        if requested_by_you:
+            named = "you"
         entry = {"operation_id": row["operation_id"], "operation": request["operation"],
             "requester": row["requester"], "digest": row["digest"],
-            "asked_at": request.get("artifact", {}).get("issued_at"), "title": _title(request),
-            "approval_id": row["approval_id"]}
+            "asked_at": _asked_at(request), "title": title, "requester_name": named,
+            "approval_id": row["approval_id"], "requested_by_you": requested_by_you}
         if row["approval_id"] is None:
             # Bounded unattended work (admissions) is listed under added agents.
             continue
         if row["committed"]:
             history.append({**entry, "state": "committed", "at": _stamp(row["committed_at"])})
         elif row["refusal_code"] is not None:
-            history.append({**entry, "state": "refused", "code": row["refusal_code"], "at": _stamp(row["expires_at"])})
+            history.append({**entry, "state": "refused", "code": row["refusal_code"], "at": None})
         elif row["signed"]:
             # Signed but not confirmed: it may already be applied, so it is
             # never "expired" and no longer waits for a decision (the
             # signer's own receipt says unknown, external_effect_unresolved).
-            history.append({**entry, "state": "unresolved", "at": _stamp(row["expires_at"])})
+            history.append({**entry, "state": "unresolved", "handoff_id": row["handoff_id"], "at": None})
         elif row["expires_at"] <= now:
             history.append({**entry, "state": "expired", "at": _stamp(row["expires_at"])})
         else:
@@ -103,6 +123,12 @@ async def owner_view(composition, *, scope: str, subject: str, now: datetime | N
         "approvers": approvers,
         "you": next((a["contact"] for a in approvers if a["subject"] == subject), None),
         "members": [],
+        "owner_initiable": context.authority_kind == "team_controller" and _owner_initiable(),
+        # Names where this tab keeps a removal it started: the same for one
+        # approver of one team on one signer, and no identifier in clear.
+        "storage_scope": "s-" + hashlib.sha256(
+            "\n".join((context.service_id, context.authority_kind, context.authority_id, scope, subject)).encode()
+        ).hexdigest()[:16],
     }
     for item in [*pending, *view["history"]]:
         del item["approval_id"]
@@ -123,7 +149,10 @@ def _name_requesters(entries, members):
             if key:
                 names[key] = member["alias"]
     for entry in entries:
-        entry["requester_name"] = names.get(entry["requester"])
+        entry["requester_name"] = (
+            "you" if entry.get("requested_by_you") is True
+            else names.get(entry["requester"]) or entry.get("requester_name")
+        )
 
 
 async def _admissions(c, view, requests, now):
@@ -157,6 +186,9 @@ async def _admissions(c, view, requests, now):
                 "next_at": _stamp(counts["next_at"])})
 
 
+_JOINED = {"active": "signer", "reserved": "signer_reserved", "removed": "signer_removed"}
+
+
 async def _members(c, view):
     """Every current member of the team, whoever added it: its kind and
     whether this signer admitted it. None when the registry cannot say."""
@@ -167,12 +199,13 @@ async def _members(c, view):
     except SignerRefused:
         view["members"] = None
         return
-    # One member key may hold several certificates; only the exact
-    # certificate this signer admitted counts as added through it.
-    added = {a["certificate_id"] for a in view["admitted"] if a["state"] == "active"}
+    # One member key may hold several certificates; only this signer's exact
+    # record of a certificate says anything about how it joined, and then
+    # with the state recorded. Without one, nothing about its origin is known.
+    recorded = {a["certificate_id"]: a["state"] for a in view["admitted"]}
     for record in records:
         view["members"].append({"alias": record.alias, "kind": await _member_kind(c, record),
-            "joined": "signer" if record.certificate_id in added else "other",
+            "joined": _JOINED.get(recorded.get(record.certificate_id), "unrecorded"),
             "member_did_aw": record.member_did_aw or None, "member_did_key": record.member_did_key,
             "certificate_id": record.certificate_id})
 
@@ -185,12 +218,15 @@ async def _member_kind(c, record):
         return "agent"
     if not record.member_did_aw:
         return "kind not verified"
+    # Observed for the certificate's own member key: what the identity's
+    # current key proves says nothing about a certificate for another key.
     try:
-        resolved = await _registry(c.registry.resolve_key_fresh(record.member_did_aw), missing="subject_ineligible")
         binding = await observe_identity_binding(c.registry, did_aw=record.member_did_aw,
-            did_key=resolved.current_did_key)
+            did_key=record.member_did_key)
         kind = (await observe_identity_kind(c.registry, binding)).result
-    except (SignerRefused, IdentityObservationRefused):
+    except IdentityObservationRefused as error:
+        return "kind not verified" if error.code == "identity_binding_mismatch" else "not checked"
+    except SignerRefused:
         return "not checked"
     if kind["outcome"] == "unavailable":
         return "not checked"
@@ -207,6 +243,10 @@ async def _deciders(c, history, subject):
         approval = await c.signer.store.get(item["approval_id"])
         decider = approval.decided_by if approval is not None else None
         item["decided_by_you"] = decider is not None and decider.subject == subject
+        # A refused or unresolved request is dated by the approver's decision;
+        # without one it has no time to show, never its expiry.
+        if item["state"] in ("refused", "unresolved"):
+            item["at"] = _stamp(approval.decided_at) if approval is not None and approval.decided_at else None
     return history
 
 
@@ -246,9 +286,16 @@ def _window(seconds):
 
 
 _OUTCOMES = {"committed": "Approved", "expired": "Expired, nobody decided",
-    "unresolved": "Signed; whether it took effect is not confirmed yet"}
+    "unresolved": "Approved, not confirmed yet"}
 _REFUSALS = {"human_refused": "Denied"}
-_KINDS = {"not checked": "kind could not be checked"}
+_REMOVABLE_KINDS = ("agent", "kind not verified")
+_KINDS = {"agent": "agent", "human": "person", "kind not verified": "agent or person not confirmed",
+    "not checked": "could not be checked right now"}
+# Said only when this signer's own record knows it. A removal is recorded only
+# after the registry confirms the certificate revoked, so a still-listed
+# member with that record was removed earlier but is still listed.
+_JOINED_TEXT = {"signer": ", added by the root agent", "signer_reserved": ", being added by the root agent",
+    "signer_removed": ", removed earlier but still listed"}
 
 
 def _technical(rows):
@@ -313,16 +360,34 @@ def owner_page_html(view: dict) -> str:
         if view["members"] is None:
             parts.append("<p>The member list could not be read right now. Reload to try again.</p>")
         elif view["members"]:
-            parts.append('<ul class="owner-list">')
+            removable = view.get("owner_initiable", False)
+            if removable:
+                parts.append(
+                    f'<ul class="owner-list" id="owner-members" data-team-id="{e(authority["id"])}" '
+                    f'data-storage-scope="{e(view["storage_scope"])}">'
+                )
+            else:
+                parts.append('<ul class="owner-list">')
             for member in view["members"]:
                 kind = _KINDS.get(member["kind"], member["kind"])
-                joined = "added through this signer" if member["joined"] == "signer" else "joined another way"
+                joined = _JOINED_TEXT.get(member["joined"], "")
+                # Offered only for kinds the signer can remove on an owner's
+                # approval: never a verified human, nor a member whose kind
+                # could not be checked (unavailable evidence never authorizes).
+                remove = (
+                    f'<button type="button" class="btn secondary" data-remove-certificate="{e(member["certificate_id"])}">'
+                    f'Remove {e(member["alias"])}…</button>'
+                    if removable and member["kind"] in _REMOVABLE_KINDS else ""
+                )
                 parts.append(
-                    f'<li>{e(member["alias"])}: {e(kind)}, {joined}'
+                    f'<li>{e(member["alias"])}: {e(kind)}{joined}{remove}'
                     + _technical([("Identity", member["member_did_aw"] or "none"), ("Key", member["member_did_key"]),
                         ("Certificate", member["certificate_id"])]) + "</li>"
                 )
             parts.append("</ul>")
+            if removable:
+                parts.append('<p id="owner-remove-status" role="status" aria-live="polite"></p>'
+                    '<script src="/owner-ui/owner.js" defer></script>')
         else:
             parts.append("<p>No members.</p>")
         parts.append("<h2>Current limits</h2>")
@@ -344,9 +409,21 @@ def owner_page_html(view: dict) -> str:
             outcome = _OUTCOMES.get(item["state"]) or _REFUSALS.get(item.get("code"), "Not completed")
             if item.get("decided_by_you") and item["state"] not in ("expired", "unresolved"):
                 outcome += " by you"
+            # A stored final state lets the page forget a removal it saved.
+            final = f' data-final-operation="{e(item["operation_id"])}"' if item["state"] in ("committed", "refused") else ""
+            # A removed member may have vanished from the active listing. Its
+            # existing handoff still permits authenticated receipt-only recovery.
+            reopen = (
+                f'<p><a href="/handoff/{e(quote(str(item["handoff_id"]), safe=""))}">Check this request</a></p>'
+                if item["state"] == "unresolved" and item.get("handoff_id") else ""
+            )
+            decision_time = (
+                f'<p>Decided {_time(item["at"])}.</p>'
+                if item["state"] == "unresolved" and item["at"] else ""
+            )
             parts.append(
-                f'<li>{e(outcome)}, {_time(item["at"])}: {e(item["title"])}'
-                + _technical([("Requested by", item["requester"]), ("Operation", item["operation"]),
+                f'<li{final}>{e(outcome)}{", " + _time(item["at"]) if item["at"] and item["state"] != "unresolved" else ""}: {e(item["title"])}'
+                + decision_time + reopen + _technical([("Requested by", item["requester"]), ("Operation", item["operation"]),
                     ("Digest", item["digest"])]) + "</li>"
             )
         parts.append("</ul>")
@@ -370,4 +447,14 @@ def owner_router(composition, *, sessions, csrf_key):
     async def home(session):
         return owner_page_html(await owner_view(composition, scope=session.scope, subject=session.subject))
 
-    return protected_shell(csrf_key).router(sessions=sessions, home_title="Approvals", home=home)
+    router = protected_shell(csrf_key).router(sessions=sessions, home_title="Approvals", home=home)
+
+    @router.get("/owner-ui/owner.js")
+    async def script():
+        from importlib.resources import files
+
+        from fastapi import Response
+
+        return Response(files("aweb.protected_signing").joinpath("owner.js").read_text(), media_type="text/javascript")
+
+    return router
