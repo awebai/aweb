@@ -44,7 +44,18 @@ canonicalize_dir() {
 
 REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd -P)"
 source "$REPO_ROOT/scripts/journey-network.sh"
-TEMP_ROOT="$(canonicalize_dir "${TMPDIR:-/tmp}")"
+# Docker resolves a bind source on the daemon's host. Inside the candidate
+# runner the daemon is the host's, and only the run-owned bind root has the same
+# path on both sides, so the journey's files live there when it is set.
+journey_temp_root() {
+  local root="${AWEB_DOCKER_BIND_ROOT:-${TMPDIR:-/tmp}}"
+  if [[ -n "${AWEB_DOCKER_BIND_ROOT:-}" && ( "$root" != /* || ! -d "$root" ) ]]; then
+    echo "FATAL: AWEB_DOCKER_BIND_ROOT must be an existing absolute directory: $root" >&2
+    return 2
+  fi
+  canonicalize_dir "$root"
+}
+TEMP_ROOT="$(journey_temp_root)" || exit 2
 case "$TEMP_ROOT" in
   /|"$REPO_ROOT"|"$REPO_ROOT"/*) echo "FATAL: unsafe journey temp root: $TEMP_ROOT" >&2; exit 2 ;;
 esac
@@ -450,6 +461,49 @@ run_success() {
     echo "  $label output: ${output:0:240}"
   fi
   return 0
+}
+
+write_staged_file() {
+  local path="$1" content="$2"
+  printf '%s' "$content" >"$path"
+}
+
+# stage_customer_secrets writes the customer server's credentials. The key map
+# names the key by a path relative to itself. The key and the database URL are
+# readable by the image's uid 1001 and by no one else. The ownership change runs
+# in a container, which sees the directory through the Docker daemon, so it
+# first checks that every staged file is visible there. Its diagnostics name
+# files, owners and modes, never contents. Returns non-zero after a recorded
+# failure.
+stage_customer_secrets() {
+  local failures_before="$fail" ownership
+  run_success "customer server key staged" \
+    cp "$CUSTOMER_IDENTITY_DIR/.aw/signing.key" "$CUSTOMER_KEYS_DIR/customerteam.key"
+  run_success "customer server key map staged" write_staged_file "$CUSTOMER_KEYS_DIR/member-keys.json" \
+    $'{"customerteam:test.local": "customerteam.key"}\n'
+  run_success "customer server database url staged" write_staged_file "$CUSTOMER_KEYS_DIR/database-url" \
+    $'postgresql://aweb:customer-e2e-test@postgres:5432/aweb\n'
+  run_success "customer postgres secrets directory" mkdir -p "$CUSTOMER_SECRETS_DIR/postgres"
+  run_success "customer postgres password staged" write_staged_file "$CUSTOMER_SECRETS_DIR/postgres/password" \
+    'customer-e2e-test'
+  [[ "$fail" == "$failures_before" ]] || return 1
+  capture_success ownership "customer secrets ownership" \
+    docker run --rm -v "$CUSTOMER_KEYS_DIR:/keys" --entrypoint /bin/sh redis:7-alpine -c '
+      set -e
+      for f in customerteam.key database-url member-keys.json; do
+        if [ ! -f "/keys/$f" ]; then
+          echo "missing in the daemon view of the customer secrets: $f"
+          ls -ln /keys
+          exit 3
+        fi
+      done
+      chown 1001:1001 /keys/customerteam.key /keys/database-url
+      chmod 0400 /keys/customerteam.key /keys/database-url
+      stat -c "%n %u:%g %a" /keys/customerteam.key /keys/database-url'
+  [[ "$fail" == "$failures_before" ]] || return 1
+  assert_eq "customer secrets are owned by the image user" \
+    $'/keys/customerteam.key 1001:1001 400\n/keys/database-url 1001:1001 400' "$ownership"
+  [[ "$fail" == "$failures_before" ]]
 }
 
 # assert_who_legacy_local checks `aw who --json` for a local did:key identity
@@ -1430,15 +1484,7 @@ run_success "customer server fetch cert" run_aw_with_home_in "$CUSTOMER_IDENTITY
   --cert-id "$CUSTOMER_SERVER_CERT_ID" \
   --json
 
-# The key map names the key by a path relative to itself. The key is readable
-# by the image's uid 1001 and by no one else.
-cp "$CUSTOMER_IDENTITY_DIR/.aw/signing.key" "$CUSTOMER_KEYS_DIR/customerteam.key"
-printf '{"customerteam:test.local": "customerteam.key"}\n' > "$CUSTOMER_KEYS_DIR/member-keys.json"
-printf 'postgresql://aweb:customer-e2e-test@postgres:5432/aweb\n' > "$CUSTOMER_KEYS_DIR/database-url"
-mkdir -p "$CUSTOMER_SECRETS_DIR/postgres"
-printf 'customer-e2e-test' > "$CUSTOMER_SECRETS_DIR/postgres/password"
-docker run --rm -v "$CUSTOMER_KEYS_DIR:/keys" --entrypoint /bin/sh redis:7-alpine \
-  -c 'chown 1001:1001 /keys/customerteam.key /keys/database-url && chmod 0400 /keys/customerteam.key /keys/database-url'
+stage_customer_secrets || exit 1
 
 CUSTOMER_PORT_ALLOCATOR="$CUSTOMER_PROJECT-port"
 docker run -d --name "$CUSTOMER_PORT_ALLOCATOR" \
