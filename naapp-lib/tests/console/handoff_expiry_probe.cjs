@@ -12,7 +12,7 @@ const el = id => {
     addEventListener(name, fn) { this.events[name] = fn; }, focus() {}, replaceChildren(...parts) {this.textContent=parts.join('');}});
   return elements.get(id);
 };
-const request = {operation:'human-role.revoke', subject:{principal:'holder',role:'reader',app_id:'app',installation_id:'install'},
+const request = {operation:'human-role.revoke', variant:'default', subject:{principal:'holder',role:'reader',app_id:'app',installation_id:'install'},
   artifact:{issued_at:new Date(now).toISOString()},requester:'requester'};
 let sent = false;
 let answer;
@@ -25,7 +25,9 @@ const context = {
   PublicKeyCredential:{parseRequestOptionsFromJSON:o=>o},
   navigator:{credentials:{get:async()=>({toJSON:()=>({})})}},
   validateProtectedPresentation:async state=>({request:state.payload.request,subject:state.payload.request.subject}),
-  operationTable:{},
+  operationTable:{'human-role.revoke|default':{display:{}}},
+  renderDisplay:()=>({title:'Remove holder from reader?',consequences:[],names:[],technical:[]}),
+  displayRefusal:()=>null,
   setTimeout:fn=>{expiryTimers.push(fn);return expiryTimers.length;},
   fetch:async path=>{
     if (path.endsWith('/options')) return {ok:true,json:async()=>({userVerification:'required'})};

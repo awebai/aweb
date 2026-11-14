@@ -49,14 +49,29 @@ async def test_one_touch_from_the_mailed_link_approves(link_service, width):
         # Who asked and until when are in sight; identifiers are in details.
         await expect(page.locator("#handoff-requested")).to_contain_text("Requested by")
         await expect(page.locator("#handoff-expires")).to_have_text(re.compile(r"^Expires .+$"))
+        # The definition's words lead: the question, then what it does and
+        # to whom, before either button is pressed.
+        principal = s.world.operation.principal
+        question = f"Remove {principal} from example.owner?"
+        await expect(page.locator("#handoff-title")).to_have_text(question)
+        assert await page.title() == question
+        await expect(page.locator("#handoff-consequences li")).to_have_text([
+            "This revokes the exact retained application role holding.",
+            "Last-owner protection still applies.",
+        ])
+        await expect(page.locator("#handoff-names")).to_have_text(
+            re.compile(r"^Application\s*example\s*Role\s*example\.owner$"))
         await expect(page.locator("#handoff-act")).to_be_hidden()
-        await expect(page.locator("#handoff-target")).to_be_hidden()
+        await expect(page.locator("#handoff-technical")).to_be_hidden()
         await expect(page.locator("#handoff-fingerprint")).to_have_text(
             " ".join(s.prepared.digest[i : i + 4] for i in range(0, 16, 4)))
         # The full digest is one step away, in Technical details.
         await expect(page.locator("#handoff-digest")).to_be_hidden()
         await page.get_by_text("Technical details", exact=True).click()
         await expect(page.locator("#handoff-digest")).to_have_text(s.prepared.digest)
+        await expect(page.locator("#handoff-technical")).to_contain_text(f"Principal{principal}")
+        await expect(page.locator("#handoff-technical")).to_contain_text("Installation")
+        await expect(page.locator("#handoff-technical")).to_contain_text("Requester")
         assert await page.evaluate("document.documentElement.scrollWidth <= innerWidth")
         assert "terminal" not in (await page.locator("main").inner_text()).lower()
         await approve.click()

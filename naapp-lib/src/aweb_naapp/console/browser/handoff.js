@@ -2,6 +2,7 @@
 
 import { validateProtectedPresentation } from "/handoff-assets/protected-presentation.mjs";
 import { operationTable } from "/handoff-assets/operations.mjs";
+import { renderDisplay, displayRefusal } from "/handoff-assets/protected-display.mjs";
 
 (() => {
   const {handoffId, purpose} = document.body.dataset;
@@ -26,6 +27,7 @@ import { operationTable } from "/handoff-assets/operations.mjs";
   let submitted = false;
   let frozenRedirect;
   let csrf;
+  let display;
 
   document.getElementById("handoff-origin").textContent = window.location.origin;
 
@@ -85,7 +87,9 @@ import { operationTable } from "/handoff-assets/operations.mjs";
 
   async function governanceState(state) {
     const {payload, digest} = state;
-    const {request, subject} = await validateProtectedPresentation(state, handoffId, operationTable);
+    const {request} = await validateProtectedPresentation(state, handoffId, operationTable);
+    display = operationTable[`${request.operation}|${request.variant}`].display;
+    const words = renderDisplay(display, request);
     operationId = state.operation_id;
     frozenRedirect = request.redirect_uri;
     if (frozenRedirect !== undefined) {
@@ -94,11 +98,15 @@ import { operationTable } from "/handoff-assets/operations.mjs";
       if (redirect.protocol !== "http:" || redirect.search || redirect.hash ||
           redirect.username || redirect.password) throw new Error("handoff_refused");
     }
+    setTitle(words.title);
+    document.getElementById("handoff-consequences").replaceChildren(...words.consequences.map(line => {
+      const item = document.createElement("li");
+      item.textContent = line;
+      return item;
+    }));
+    rows("handoff-names", words.names);
+    rows("handoff-technical", words.technical);
     document.getElementById("handoff-act").textContent = request.operation;
-    document.getElementById("handoff-target").textContent =
-      [subject.principal, subject.role, subject.app_id, subject.installation_id,
-        subject.deployment_label, subject.root_id, subject.root_key, subject.domain]
-        .filter(value => value !== undefined).join(" · ");
     document.getElementById("handoff-digest").textContent = digest;
     document.getElementById("handoff-fingerprint").textContent = digest.slice(0, 16).match(/.{4}/g).join(" ");
     document.getElementById("handoff-payload").textContent = JSON.stringify(payload, null, 2);
@@ -122,6 +130,17 @@ import { operationTable } from "/handoff-assets/operations.mjs";
     document.body.dataset.handoffState = "ready";
     action.disabled = false;
     document.getElementById("handoff-title").focus();
+  }
+
+  // Label/value rows of a description list, as text only.
+  function rows(id, pairs) {
+    document.getElementById(id).replaceChildren(...pairs.flatMap(([label, value]) => {
+      const term = document.createElement("dt");
+      const detail = document.createElement("dd");
+      term.textContent = label;
+      detail.textContent = value;
+      return [term, detail];
+    }));
   }
 
   // A stored time in the reader's own zone, with the zone named.
@@ -294,6 +313,9 @@ import { operationTable } from "/handoff-assets/operations.mjs";
       outcome("Approved", "It is still being carried out. Your owner page shows the outcome under History.");
     } else if (result.state === "refused" && refusals[result.code]) {
       outcome(...refusals[result.code]);
+    } else if (result.state === "refused" && display && displayRefusal(display, result.code)) {
+      // The operation's own sentence for why it cannot go ahead.
+      outcome("Not completed", `${displayRefusal(display, result.code)} Nothing was signed.`);
     } else {
       // A code this page does not know: it cannot say what happened.
       outcome(...unconfirmed);
