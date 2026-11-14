@@ -208,3 +208,19 @@ async def test_an_assertion_the_verifier_refuses_reaches_no_log_or_answer(link_h
     assert (receipt.state, receipt.code) == ("refused", "proof_invalid")
     assert CANARY not in response.text and CANARY not in caplog.text
     assert all(CANARY not in str(record.__dict__) for record in caplog.records)
+
+
+async def test_an_unexpected_failure_on_a_link_route_is_logged_without_its_token_or_handoff(link_http, caplog):
+    import logging
+
+    world, client, prepared, token = link_http
+    await world.passkeys.db.execute("DROP TABLE {{tables.protected_signer_operations}} CASCADE")
+    caplog.set_level(logging.DEBUG)
+    response = await client.post(f"/handoff/{prepared.handoff_id}/link", json={"token": token}, headers=BROWSER)
+    assert response.status_code == 503 and response.json() == {"detail": "receipt_unavailable"}
+    [record] = [r for r in caplog.records if r.levelno >= logging.ERROR]
+    assert (record.route, record.operation_id, record.failure) == (
+        "/handoff/{handoff_id}/link", None, "UndefinedTableError")
+    logged = caplog.text + "".join(str(r.__dict__) for r in caplog.records)
+    for secret in (token, prepared.handoff_id, "protected_signer_operations"):
+        assert secret not in logged

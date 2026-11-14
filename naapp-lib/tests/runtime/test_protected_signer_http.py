@@ -348,3 +348,39 @@ async def test_valid_json_above_64_kib_is_refused_before_mint(http_world):
         )
         == 0
     )
+
+
+UNEXPECTED_CANARY = "canary-7f3e9b"
+
+
+@pytest.mark.parametrize("method", ["POST", "GET"])
+async def test_an_unexpected_failure_is_logged_by_route_and_class_only(http_world, caplog, method):
+    """The wire keeps its bounded 503; the operator gets the route template,
+    the operation id when the route names one, and the failure's class.
+    No message, request bytes or credential reaches the record."""
+    import logging
+
+    w, client, key = http_world
+    intent = {**w.operation.intent(), "redirect_uri": f"http://127.0.0.1:41234/{UNEXPECTED_CANARY}"}
+    path, operation_id = "/protected-operations", None
+    if method == "GET":
+        operation_id = (await post(w, client, key, intent)).json()["operation_id"]
+        path += "/" + operation_id
+    await w.passkeys.db.execute("DROP TABLE {{tables.http_requesters}}")
+    caplog.set_level(logging.DEBUG)
+    if method == "POST":
+        raw = canonical_json_bytes(intent)
+        sent = headers(w, key, "POST", path, raw)
+        response = await client.post(path, content=raw, headers=sent)
+    else:
+        sent = headers(w, key, "GET", path)
+        response = await client.get(path, headers=sent)
+    assert response.status_code == 503 and response.json() == {"detail": "receipt_unavailable"}
+    [record] = [r for r in caplog.records if r.levelno >= logging.ERROR]
+    template = "/protected-operations" if method == "POST" else "/protected-operations/{operation_id}"
+    assert (record.route, record.operation_id, record.failure) == (template, operation_id, "UndefinedTableError")
+    logged = caplog.text + "".join(str(r.__dict__) for r in caplog.records)
+    for secret in (UNEXPECTED_CANARY, "http_requesters", sent["Authorization"].split()[-1],
+                   sent["X-AWEB-Signed-Payload"]):
+        assert secret not in logged
+    assert record.exc_info is None
