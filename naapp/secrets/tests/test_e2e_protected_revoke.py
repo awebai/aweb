@@ -167,6 +167,7 @@ def protected_site(lane: ProtectedLane) -> Site:
 
     def store_member(pem: str) -> None:
         member_dir.mkdir(parents=True)
+        member_dir.chmod(0o755)  # read by the signer's uid, whatever the launching umask
         (member_dir / "member.pem").write_text(pem)
         (member_dir / "members.json").write_text(json.dumps({TEAM_ID: "member.pem"}))
         for path in member_dir.iterdir():
@@ -246,6 +247,7 @@ def protected_site(lane: ProtectedLane) -> Site:
 
     def configure_signer(profile: dict, scope: dict) -> None:
         config.mkdir(parents=True)
+        config.chmod(0o755)  # read by the signer's uid, whatever the launching umask
         (config / "profile.json").write_text(json.dumps(profile))
         (config / "scope.json").write_text(json.dumps(scope))
         (config / "smtp-password").write_text(secrets.token_urlsafe(16))

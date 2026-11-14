@@ -210,6 +210,7 @@ class Lane:
         accounts = self.runtime / "accounts"
         if not accounts.exists():
             accounts.mkdir(mode=0o755)
+            accounts.chmod(0o755)  # mkdir's mode is masked by the launching umask
             (accounts / "passwd").write_text(f"root:x:0:0:root:/root:/bin/sh\nlane:x:{uid}:{gid}:lane:/runtime:/bin/sh\n")
             (accounts / "group").write_text(f"root:x:0:\nlane:x:{gid}:\n")
             for path in accounts.iterdir():
@@ -355,6 +356,7 @@ def write_service_member(lane: Lane, controller: str) -> None:
     """The app's own team member credential (no AWID service token), and its config."""
     keys = lane.runtime / "keys"
     keys.mkdir(mode=0o755)
+    keys.chmod(0o755)  # mkdir's mode is masked by the launching umask
     pem, certificate = admit_app_member(lane, controller, "secrets-service", keys / "service-home")
     (keys / "member.pem").write_text(pem)
     shutil.copyfile(certificate, keys / "member-cert.json")
@@ -374,6 +376,7 @@ def write_logs_files(lane: Lane, controller: str) -> None:
     content and purge-ledger databases, each its own database."""
     files = lane.runtime / "logs"
     files.mkdir(mode=0o755)
+    files.chmod(0o755)  # mkdir's mode is masked by the launching umask
     pem, certificate = admit_app_member(lane, controller, "logs-service", lane.runtime / "logs-member")
     (files / "awid-member-key").write_text(pem)
     shutil.copyfile(certificate, files / "awid-member-certificate")
@@ -452,7 +455,10 @@ def test_the_owner_designates_a_human_holder_registered_on_another_machine(lane:
                "--domain", DOMAIN, "--root-parent", "--registry", REGISTRY)
     # Then the owner's membership, and the holder's.
     invite = aw(controller, "id", "team", "invite", "--team", TEAM, "--namespace", DOMAIN, "--member-global")
-    aw(controller, "id", "team", "accept-invite", invite["token"], "--name", "owner", "--global")
+    # The owner's machine holds no namespace authority, so the membership
+    # names the address the namespace root already issued to this identity.
+    aw(controller, "id", "team", "accept-invite", invite["token"], "--name", "owner", "--global",
+       "--address", owner["address"])
     aw(controller, "init", "--url", AWEB, "--name", "owner", "--do-not-touch-agents-md")
     added = aw(controller, "id", "team", "add-member", "--team", TEAM, "--namespace", DOMAIN,
                "--did", human["did_key"], "--did-aw", principal, "--name", "holder", "--global")
