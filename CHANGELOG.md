@@ -50,6 +50,44 @@
   and changes nothing in the agent's home. The same `--operation-id` resumes
   the removal; changed inputs refuse `operation_conflict`.
 
+- `aw id team remove-agent --owner-approved` removes any agent membership of a
+  protected team, whoever admitted it, once the team's current owner approves
+  it live on the protected service's page (`team.agent.remove/owner_approved`).
+  The registered requester the profile grants asks for it; its key is recorded,
+  never authority. Name the membership with `--certificate F`, or with
+  `--team T --certificate-id C`, which reads the team's active listing at the
+  profile's registry, signed by this member's key (`selector_unauthorized`
+  when the key is not in the home). `--no-wait` and `--no-browser` work as for
+  `aw id endorse`. The result names the frozen team, certificate, alias and
+  target kind, with `kind not verified` printed as the service froze it.
+  Running the same command again continues an unfinished removal from its
+  saved request, without the listing, so a removal whose answer was lost is
+  recovered by its receipt after the certificate has left the listing. The
+  saved request is forgotten only after the controller's signature over
+  exactly the frozen revocation verifies, or after the service refuses it.
+
+- The protected approvals `aw id endorse`, `aw app role revoke
+  --protected-profile` and `aw id team remove-agent --owner-approved` ask in
+  the `intent_v1` approval format: the human approves the frozen intent, and
+  the certificate, owner act or registry request is issued when they approve,
+  so a mailed approval can wait up to the operation's own window instead of
+  a few minutes. aw checks every issued artifact against the approved intent
+  and its issuance window. A protected role act is now delivered to the app
+  by the protected service, which confirms it applied; aw never posts it, and
+  a signed act without that confirmation is `application_unconfirmed` and
+  keeps its request. A service still serving the older format answers
+  `upgrade_aw_required`; this aw needs a service that serves `intent_v1`.
+
+- A request saved by an older aw in the previous approval format, or under
+  another authority generation of the same binding, is never sent again and
+  never silently replaced. Before asking for the same act on the same target,
+  aw reads its receipt once: a refusal retires it, a verified applied effect
+  settles it, and anything else keeps it quarantined in aw's private state
+  with what was observed, stopping with `operation_reconciliation_required`.
+  `--replace <operation-id>` on each of the three commands names that kept
+  request to ask for a separately approved act; the kept record stays.
+  `aw app role resume` on such a request only reads its receipt.
+
 - `aw id team install-cert --identity-home H --certificate F` installs a team
   certificate file, such as the one `aw id team admit --certificate-out`
   wrote, into the home whose identity it names, after checking it at the

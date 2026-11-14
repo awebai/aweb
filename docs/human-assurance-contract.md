@@ -25,6 +25,14 @@ verified nearest human, account association, team owner, role holder and
 credential holder are distinct facts and must not substitute for one another.
 For a human leaf, the responsible human is the leaf itself.
 
+The frozen root-endorsement responsibility statement is exactly **"Agents it
+adds count as yours. It gets no other access."** (coordinator `752284d2`,
+2026-11-13). It states human responsibility for the agents added under this
+root and grants no membership or resource permissions. The definition, page
+verifier and generated client pin this same sentence. This wording replaces
+the earlier longer statement without changing that authority model, and ships
+with the coordinated `intent_v1` client/server release (`94664f19`).
+
 One OSS library, embedded in an existing trusted server process, controls
 human, namespace-controller and team-controller signing in supported
 deployments. Cloud imports the same published package with account/custody
@@ -305,7 +313,12 @@ selected by current verified kind. A verified human belongs exclusively to
 `team.human.remove/default`, which refuses unknown kind. A verified agent or
 an unknown kind belongs to `team.agent.remove/owner_approved`. For unknown
 kind, including a registered but unenrolled legacy member, the frozen approval
-display says plainly **"kind not verified"**. The server derives this
+display includes a **Kind** row in the main view before approval: **"agent"**
+for `target_kind="agent"`, or **"agent or person not confirmed"** for
+`target_kind="kind not verified"`. Technical details retain the exact frozen
+value. The shared `|kind` formatter accepts only those two strings; every other
+value refuses. This wording supersedes the earlier literal main-view text
+"kind not verified" (coordinator `32499ce5`, 2026-11-13). The server derives this
 classification from current authoritative facts, never a requester-supplied
 kind label. The same classification is required at release: an unknown target
 that becomes a verified human must refuse, without switching operations or
@@ -1017,7 +1030,6 @@ known deployed flow would be stranded, report it before adding any exception.
 These are explicit rulings for this format change, not a general permission to
 narrow other released routes. Policy scenarios:
 `vectors/human-assurance-execution-intent-v1.json`.
-
 
 Governance prepare accepts an optional `redirect_uri` under the existing
 literal-loopback parser. Invalid input is HTTP 400 `redirect_uri_refused`.

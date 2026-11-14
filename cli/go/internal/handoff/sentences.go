@@ -140,7 +140,7 @@ func Sentence(code string, f Facts) string {
 		text = tell(f)
 	}
 	if !f.RetryAt.IsZero() {
-		text += " Try again after " + f.RetryAt.UTC().Format("15:04:05") + " UTC."
+		text += " Try again after " + ReaderTime(f.RetryAt, "15:04:05") + "."
 	}
 	return text
 }
@@ -178,16 +178,22 @@ func nextAt(t time.Time) string {
 	if t.IsZero() {
 		return ""
 	}
-	return " The next one is possible at " + t.UTC().Format(clock) + " UTC."
+	return " The next one is possible at " + ReaderTime(t, clock) + "."
 }
 
 const clock = "15:04"
+
+// ReaderTime is t in the reader's own zone, the zone named, as the approval
+// page and the mail show times.
+func ReaderTime(t time.Time, layout string) string {
+	return t.Local().Format(layout + " MST")
+}
 
 func at(t time.Time, layout string) string {
 	if t.IsZero() {
 		return ""
 	}
-	return " at " + t.UTC().Format(layout) + " UTC"
+	return " at " + ReaderTime(t, layout)
 }
 
 func forTeam(team string) string {

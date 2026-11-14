@@ -32,7 +32,8 @@
         "/issued_at"
       ],
       "issued_at_semantics": "informational; no registration age limit",
-      "registration": "same retained certificate; fresh subject-proof envelope; current key/head/ancestry checks"
+      "registration": "same retained certificate; fresh subject-proof envelope; current key/head/ancestry checks",
+      "responsibility_statement": "Agents it adds count as yours. It gets no other access."
     },
     {
       "operation": "human-role.revoke",
@@ -101,7 +102,8 @@
         "outcome": "allow",
         "issued_at": "execution_time",
         "frozen_root_parent_policy_and_head_unchanged": true,
-        "root_subject_registration_separate": true
+        "root_subject_registration_separate": true,
+        "responsibility_statement": "Agents it adds count as yours. It gets no other access."
       }
     },
     {

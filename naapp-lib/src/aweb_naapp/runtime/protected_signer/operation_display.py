@@ -7,7 +7,9 @@ does not add members to an existing prepared request.
 Every surface (approval page, mail, owner page, CLI) fills the same templates
 the same way: a ``{/pointer}`` is read from the frozen request; a string shows
 as itself, an integer in decimal and a list of strings joined with ", ".
-Technical rows also show any other value as canonical JSON. A row's label is
+Technical rows also show any other value as canonical JSON. A pointer may end
+in ``|team`` to show a team id ("name:domain"), or each in a list, by its name,
+or in ``|kind`` to name a frozen target kind ("agent", "kind not verified"). A row's label is
 its key with underscores as spaces and the first letter capitalised. A pointer that is
 missing, or a title, consequence or name that is not one of those values,
 refuses: a surface never shows a blank or invented word.
@@ -23,13 +25,38 @@ from .types import SignerRefused
 _TEMPLATE = re.compile(r"\{(/[^{}]*)\}")
 
 
-def _read(request, pointer: str):
+def _team_name(team_id):
+    if not isinstance(team_id, str) or team_id.count(":") != 1 or not team_id.split(":")[0]:
+        raise SignerRefused("request_invalid")
+    return team_id.split(":")[0]
+
+
+# A frozen target kind in the words the owner page uses.
+_KINDS = {"agent": "agent", "kind not verified": "agent or person not confirmed"}
+
+
+def _formatted(value, formatter):
+    """``|team`` shows a team id ("name:domain") by its name, as the owner page
+    does; ``|kind`` names a frozen target kind. Any other value refuses."""
+    if formatter == "kind":
+        if not isinstance(value, str) or value not in _KINDS:
+            raise SignerRefused("request_invalid")
+        return _KINDS[value]
+    if formatter != "team":
+        raise SignerRefused("request_invalid")
+    if isinstance(value, list):
+        return [_team_name(item) for item in value]
+    return _team_name(value)
+
+
+def _read(request, source: str):
+    pointer, _, formatter = source.partition("|")
     value = request
     for part in pointer.split("/")[1:]:
         if not isinstance(value, dict) or part not in value:
             raise SignerRefused("request_invalid")
         value = value[part]
-    return value
+    return _formatted(value, formatter) if formatter else value
 
 
 def _words(value) -> str:

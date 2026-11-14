@@ -28,7 +28,8 @@ async def test_the_owner_sees_waiting_requests_then_their_history(admissions):
     assert waiting["requester"] == a.w.root_id and waiting["digest"] == frozen["digest"]
     # The row asks the definition's own question, filled from the frozen request.
     subject = operation.intent()["subject"]
-    assert waiting["title"] == f"Approve {subject['deployment_label']} as the root agent for {', '.join(subject['teams'])}?"
+    teams = ", ".join(team.partition(":")[0] for team in subject["teams"])
+    assert waiting["title"] == f"Make {subject['deployment_label']} your root agent for {teams}?"
     assert view["history"] == []
     # The page names the approver who is signed in, not the first one listed.
     assert view["you"] == next(x["contact"] for x in view["approvers"] if x["contact"])
@@ -156,10 +157,12 @@ def test_the_owner_page_names_what_it_governs_and_reads_as_sentences():
     # Every current member is listed with its kind and how it joined; no
     # action is offered from this page.
     assert ">Team members</h2>" in html
-    assert "build-&lt;1&gt;: agent, added through this signer" in html
-    assert "ops: kind not verified, not recorded by this signer" in html
-    assert "ann: kind could not be checked, being added through this signer" in html
-    assert "joined another way" not in html
+    # The reader's words: kind, then how it joined only when this signer knows.
+    assert "build-&lt;1&gt;: agent, added by the root agent" in html
+    assert "ops: agent or person not confirmed<" in html
+    assert "ann: could not be checked right now, being added by the root agent" in html
+    for mechanism in ("signer", "recorded", "joined another way", "kind not verified"):
+        assert mechanism not in html.split(">Team members</h2>", 1)[1].split("<h2>", 1)[0].split("<details>")[0]
     unread = owner_page_html({**view, "members": None})
     assert "The member list could not be read right now." in unread
     assert "Remove</button>" not in html

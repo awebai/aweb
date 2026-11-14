@@ -293,6 +293,7 @@ def test_current_host_composition_calls_the_installed_production_custody_port_wi
     assert component.signer.custody is custody
     assert custody._effect_clients == {registry.registry_url: registry._http_client}
 
+
 def revoke_request(principal="did:aw:holder"):
     return {"operation": "human-role.revoke", "variant": "default", "requester": "did:aw:requester",
         "scope": {"authority": {"id": "eng:customer.example"}},
@@ -340,8 +341,8 @@ async def notice_for(request, policies):
 @pytest.mark.asyncio
 async def test_a_revealable_request_under_a_revealing_frozen_policy_names_its_question_in_the_body():
     notice = await notice_for(revoke_request(), FrozenPolicy())
-    assert "Remove did:aw:holder from app.owner?" in notice.text
-    assert "Remove did:aw:holder from app.owner?" in notice.html
+    assert "Remove did:aw:holder as app.owner of app?" in notice.text
+    assert "Remove did:aw:holder as app.owner of app?" in notice.html
 
 
 @pytest.mark.asyncio
@@ -363,4 +364,3 @@ async def test_a_hostile_label_in_the_title_stays_text():
     assert "<img" not in notice.html
     assert "&lt;img src=x onerror=&quot;alert(1)&quot;&gt;" in notice.html
     assert '<img src=x onerror="alert(1)">' in notice.text
-

@@ -67,8 +67,9 @@ shared signer and adapters; static catalog validation is not runtime acceptance.
 
 The current owner's live approval can revoke an exact agent/service or
 unknown-kind membership outside a root's admission bucket, including
-pre-cutover and retired-root members. Unknown kind displays "kind not verified";
-verified humans use `team.human.remove` exclusively. The unchanged base
+pre-cutover and retired-root members. The main-view Kind row displays
+"agent or person not confirmed" for frozen `kind not verified`, whose exact
+value remains in Technical details (coordinator `32499ce5`); verified humans use `team.human.remove` exclusively. The unchanged base
 inventory remains in `human-assurance-v1.json`.
 The definition implements this additive `owner_approved` row. These policy
 scenarios do not themselves establish a successful native run. The frozen

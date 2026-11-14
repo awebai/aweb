@@ -21,7 +21,7 @@ import (
 const (
 	endorseOperationID = "33333333-3333-4333-8333-333333333333"
 	endorseHuman       = "did:aw:3YDAM5ZLRKg7eHH1Zs6sSMwkga8w"
-	endorseStatement   = "Everything this root spawns counts as yours for human responsibility; this grants no resource permissions."
+	endorseStatement   = "Agents it adds count as yours. It gets no other access."
 )
 
 // endorseIntent is a root endorsement aw prepares.
@@ -109,7 +109,7 @@ func (s *endorseStub) answer() string {
 	case "registry":
 		request["registry"] = "https://other.example"
 	case "statement":
-		request["responsibility_statement"] = "You are responsible."
+		request["responsibility_statement"] = "Everything this root spawns counts as yours for human responsibility; this grants no resource permissions."
 	case "policy without the team":
 		request["admission_policy"] = endorsePolicy(func(p map[string]any) { p["teams"] = []any{"zeta:customer.example"} })
 	case "policy digest":

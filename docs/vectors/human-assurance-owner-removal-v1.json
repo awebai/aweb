@@ -55,7 +55,9 @@
       },
       "expected": {
         "outcome": "allow",
-        "target_kind": "agent"
+        "target_kind": "agent",
+        "display_kind": "agent",
+        "technical_target_kind": "agent"
       }
     },
     {
@@ -112,7 +114,10 @@
       },
       "expected": {
         "outcome": "allow",
-        "display": "kind not verified"
+        "display": "agent or person not confirmed",
+        "display_label": "Kind",
+        "target_kind": "kind not verified",
+        "technical_target_kind": "kind not verified"
       }
     },
     {

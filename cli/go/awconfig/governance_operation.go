@@ -20,6 +20,34 @@ type PendingGovernanceOperation struct {
 	RequestOrigin string `json:"request_origin"`
 	HumanOrigin   string `json:"human_origin"`
 	Body          []byte `json:"body"`
+	// Quarantine, when set, marks an operation aw will not resume: its saved
+	// body is in an approval format the service no longer serves, or was
+	// prepared under another authority generation, and its outcome is not
+	// settled. It keeps what aw observed for reconciliation.
+	Quarantine *GovernanceQuarantine `json:"quarantine,omitempty"`
+}
+
+// GovernanceQuarantine is what aw last observed of a quarantined operation:
+// its receipt's state and code, any signed bytes the receipt carried, and
+// how far aw could verify them. Facts once observed are kept when a later
+// read cannot be answered.
+type GovernanceQuarantine struct {
+	State        string `json:"state"`
+	Code         string `json:"code,omitempty"`
+	Signing      []byte `json:"signing,omitempty"`
+	Signature    []byte `json:"signature,omitempty"`
+	Verification string `json:"verification"`
+	ObservedAt   string `json:"observed_at"`
+	// Conflicts are every other signed result later reads carried, each
+	// once, in the order observed; the original observation is kept beside
+	// them.
+	Conflicts []GovernanceSignedResult `json:"conflicts,omitempty"`
+}
+
+// GovernanceSignedResult is one signed result a receipt carried.
+type GovernanceSignedResult struct {
+	Signing   []byte `json:"signing"`
+	Signature []byte `json:"signature"`
 }
 
 var operationIDPattern = regexp.MustCompile(`^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$`)

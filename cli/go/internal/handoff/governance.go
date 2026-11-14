@@ -260,7 +260,7 @@ func approve(ctx context.Context, opts GovernanceOptions, operationID string, bo
 	// verified it above (human-assurance-contract.md section 5).
 	fmt.Fprintf(opts.Notify, "Asking the approver: %s\n", question.Title)
 	fmt.Fprintf(opts.Notify, "Waiting for the approver; the request expires at %s. They approve on %s\n  details: operation %s · fingerprint %s\n",
-		prepared.ExpiresAt.UTC().Format("2006-01-02 15:04 UTC"), page, prepared.OperationID, Fingerprint(prepared.Digest))
+		ReaderTime(prepared.ExpiresAt, "2006-01-02 15:04"), page, prepared.OperationID, Fingerprint(prepared.Digest))
 	if opts.Open != nil {
 		if err := opts.Open(page); err != nil {
 			fmt.Fprintf(opts.Notify, "Could not open a browser (%v).\n", err)

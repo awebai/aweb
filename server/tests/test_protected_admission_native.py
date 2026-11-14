@@ -407,7 +407,7 @@ async def test_runnable_host_serves_both_private_authorities_and_the_same_three_
             # definition's question in the body; the subject stays generic.
             [notice] = [m for m in mailer.messages if "#k=" in m.text]
             assert notice.subject == "A request is waiting for your approval"
-            assert "It asks: Approve " in notice.text and " as the root agent for " in notice.text
+            assert "It asks: Make " in notice.text and " your root agent for " in notice.text
             operation = admit_operation(a)
             assert (await prepare(a, operation)).status_code == 200
             response = await execute(a, operation)
