@@ -21,7 +21,7 @@ class LiveDeliveryTests(unittest.TestCase):
     def probe(self, case):
         result = subprocess.run(
             [sys.executable, str(Path(__file__).with_name("live_delivery_probe.py")), case],
-            text=True, capture_output=True, timeout=65,
+            text=True, capture_output=True, timeout=240 if case == "team" else 65,
         )
         self.assertEqual(result.returncode, 0, result.stderr)
         receipts = []
@@ -50,6 +50,9 @@ class LiveDeliveryTests(unittest.TestCase):
 
     def test_first_contact_notice_explains_local_home_setup(self):
         self.probe("home_notice")
+
+    def test_strict_team_intake(self):
+        self.probe("team")
 
     def test_stream_health(self):
         self.probe("health")
