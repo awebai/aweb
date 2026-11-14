@@ -29,7 +29,10 @@ an injectable clock.
 The mechanisms are in `docs/page-links.md` and `docs/app-registry.md`; this
 records the design rule. The same gap appears in
 [lock order in authority and approval transactions](/aweb-expert/lessons/lock-order-in-authority-and-approval-transactions.md)
-("recheck after every blocking wait").
+("recheck after every blocking wait"). Where a registry outage window is
+allowed at all, and for which evidence and effects, is
+[registry outage grace is limited to ordinary legacy messaging](/aweb-protocol-expert/decisions/outage-grace-is-limited-to-ordinary-legacy-messaging.md);
+the original producer age still governs there.
 
 # Provenance
 
