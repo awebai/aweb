@@ -103,6 +103,20 @@ async def history(session):
     return (await aw(SENDER, "chat", "history", "--session-id", session))["messages"]
 
 
+async def observe_connect(original, adapter, measurements, *, is_reconnect=False):
+    """Time the actual adapter call, preserving its arguments/result/cancellation."""
+    started = time.monotonic()
+    sample = {"is_reconnect": is_reconnect, "completed": False}
+    try:
+        result = await original(adapter, is_reconnect=is_reconnect)
+        sample.update(completed=True, returned=result)
+        return result
+    finally:
+        sample["adapter_connect_seconds"] = time.monotonic() - started
+        sample["degraded_after"] = adapter.send_path_degraded
+        measurements.append(sample)
+
+
 async def prepare_team_senders():
     # Only the already-owned disposable fixture. No identity is copied, no row
     # or attestation is patched; public aw creates/joins each additional actor.
@@ -151,6 +165,7 @@ async def main():
     # fabricate its return values or bypass the gateway handler.
     adapter = platform_registry.create_adapter("aweb", runner.config.platforms[Platform("aweb")])
     cls = type(adapter)
+    original_connect = cls.connect
     original_io = cls._run_aw_json
     original_event = cls._handle_aw_event
     original_complete = cls.on_processing_complete
@@ -171,6 +186,10 @@ async def main():
     prompt_results = []
     pending = None
     pending_key = None
+    connect_measurements = []
+
+    async def connect(self, *, is_reconnect=False):
+        return await observe_connect(original_connect, self, connect_measurements, is_reconnect=is_reconnect)
 
     def runtime_state():
         status = HOME / "gateway_state.json"
@@ -302,6 +321,7 @@ async def main():
             return rows if int(receipt.strip()) == len(inputs) else None
         return await until(finished, "ordinary content did not finish/read", 12)
 
+    cls.connect = connect
     cls._run_aw_json = io
     cls.handle_message = ingress_event
     GatewayRunner._handle_message_with_agent = ordinary_turn
@@ -310,14 +330,20 @@ async def main():
     try:
         started = time.monotonic()
         assert await runner.start(), "real gateway failed startup"
-        start_elapsed = time.monotonic() - started
+        runner_start_seconds = time.monotonic() - started
         adapter = runner.adapters[Platform("aweb")]
+        print(json.dumps({"measurement": "gateway_start", "runner_start_seconds": runner_start_seconds,
+                          "connect_calls": connect_measurements}), flush=True)
+        assert connect_measurements and connect_measurements[0]["completed"], connect_measurements
+        assert connect_measurements[0]["returned"] is True, connect_measurements
+        adapter_connect_seconds = connect_measurements[0]["adapter_connect_seconds"]
+        assert adapter_connect_seconds < 5.25, connect_measurements
         if CASE != "health":
             assert not adapter.send_path_degraded, "healthy server did not prove startup health"
 
         if CASE == "health":
             await until(connected.is_set, "no real server frame")
-            assert start_elapsed >= 4.9, start_elapsed
+            assert adapter_connect_seconds >= 4.9, connect_measurements
             assert adapter.send_path_degraded, "reports healthy before first live frame is accepted"
             await until(lambda: runtime_state() == "retrying", "unproven receive path not exposed in Hermes status")
             release.set()
@@ -333,7 +359,9 @@ async def main():
             await until(lambda: runtime_state() == "connected", "recovery not exposed in Hermes status")
             print(json.dumps({"case": CASE, "old_pid": old.pid, "new_pid": adapter._proc.pid,
                               "states": ["retrying", "connected", "retrying", "connected"],
-                              "startup_wait_seconds": start_elapsed}))
+                              "runner_start_seconds": runner_start_seconds,
+                              "adapter_connect_seconds": adapter_connect_seconds,
+                              "connect_calls": connect_measurements}))
         elif CASE == "team":
             teammate_chat = await send("strict teammate chat")
             await read_chat_inputs(teammate_chat["session_id"], [teammate_chat["message_id"]])
@@ -384,7 +412,9 @@ async def main():
             assert len(refusals) == 5, refusals
             print(json.dumps({"case": CASE, "own_team": own_team, "turns": turns,
                               "admitted": [ingress[teammate_chat["message_id"]], ingress[teammate_mail["message_id"]]],
-                              "refusals": refusals}))
+                              "refusals": refusals, "runner_start_seconds": runner_start_seconds,
+                              "adapter_connect_seconds": adapter_connect_seconds,
+                              "connect_calls": connect_measurements}))
         elif CASE == "clarify":
             first = await send("require-clarify")
             session = first["session_id"]
@@ -521,6 +551,7 @@ async def main():
         if pending is not None:
             await asyncio.wait_for(asyncio.gather(pending, return_exceptions=True), 2)
         await runner.stop()
+        cls.connect = original_connect
         cls._run_aw_json = original_io
         cls._handle_aw_event = original_event
         cls.on_processing_complete = original_complete
