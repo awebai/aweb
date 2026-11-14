@@ -112,7 +112,7 @@ async def test_required_readiness_is_rechecked_at_retention_without_touching_the
 
     c = capability
     spec = c.operation.spec
-    effect = SimpleNamespace(**vars(spec.effect), requires_service_delivery=True)
+    effect = SimpleNamespace(**{**vars(spec.effect), "requires_service_delivery": True})
     monkeypatch.setattr(catalog, "OPERATIONS", {**catalog.OPERATIONS,
         (c.operation.operation, c.operation.variant): replace(spec, effect=effect)})
 
