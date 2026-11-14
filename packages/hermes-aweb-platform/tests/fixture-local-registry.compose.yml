@@ -1,0 +1,12 @@
+# Merge with the frozen base compose and the loopback/resource override.
+# Development-only discovery matches scripts/e2e-oss-user-journey.sh.
+services:
+  aweb:
+    environment:
+      APP_ENV: development
+      AWEB_FEDERATION_TEST: "1"
+      AWEB_FEDERATION_TEST_DEFAULT_REGISTRY: "1"
+  awid:
+    environment:
+      APP_ENV: test
+      AWID_ALLOW_INSECURE_DELIVERY_ORIGIN: "true"

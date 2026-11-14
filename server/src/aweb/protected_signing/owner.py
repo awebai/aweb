@@ -47,15 +47,17 @@ def _owner_initiable():
     return spec is not None and spec.owner_initiable
 
 
-def _title(request):
-    """The operation definition's own question for this frozen request."""
+def _rendered(request):
+    """The operation definition's question and the requester's frozen name."""
     spec = OPERATIONS.get((request.get("operation"), request.get("variant", "default")))
     if spec is None:
-        return request.get("operation")
+        return request.get("operation"), None
     try:
-        return spec.display.render(request)["title"]
+        rendered = spec.display.render(request)
     except SignerRefused:
-        return request.get("operation")
+        return request.get("operation"), None
+    named = rendered.get("requester")
+    return rendered["title"], named if named != request.get("requester") else None
 
 
 async def owner_view(composition, *, scope: str, subject: str, now: datetime | None = None) -> dict:
@@ -78,9 +80,10 @@ async def owner_view(composition, *, scope: str, subject: str, now: datetime | N
         requests[row["operation_id"]] = request
         if request.get("scope") != fields:
             continue
+        title, named = _rendered(request)
         entry = {"operation_id": row["operation_id"], "operation": request["operation"],
             "requester": row["requester"], "digest": row["digest"],
-            "asked_at": request.get("artifact", {}).get("issued_at"), "title": _title(request),
+            "asked_at": request.get("artifact", {}).get("issued_at"), "title": title, "requester_name": named,
             "approval_id": row["approval_id"]}
         if row["approval_id"] is None:
             # Bounded unattended work (admissions) is listed under added agents.
@@ -135,7 +138,7 @@ def _name_requesters(entries, members):
             if key:
                 names[key] = member["alias"]
     for entry in entries:
-        entry["requester_name"] = names.get(entry["requester"])
+        entry["requester_name"] = names.get(entry["requester"]) or entry.get("requester_name")
 
 
 async def _admissions(c, view, requests, now):

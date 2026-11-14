@@ -53,6 +53,8 @@ class TeamProtectionObservation:
     certificate_status: str | None = None
 
     def __post_init__(self):
+        if not isinstance(self.binding, Mapping):
+            raise EffectRefused("protected_state_unavailable")
         object.__setattr__(
             self, "binding", MappingProxyType(validate_binding(dict(self.binding)))
         )

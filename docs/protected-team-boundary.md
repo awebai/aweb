@@ -56,6 +56,15 @@ last await. This is coordinated cutover, not distributed atomicity. Package .8
 owns each installation's authorization, historical baseline, restore and rollback
 limits; a restored database counter alone cannot establish safe history.
 
+Core certificate authentication first verifies the presented certificate through
+its existing controller-key cache, bounded signature-failure refresh, revocation
+and optional registration checks. Invalid credentials do not trigger a fresh
+protection read. It then obtains the current protection observation before
+acceptance: explicit legacy keeps the existing controller-key acceptance rules;
+protected membership additionally binds the full certificate to the current
+observed controller and registry record. No failed or missing observation is
+inferred to be legacy.
+
 Core certificate authentication retains that original observation through
 identity binding, ID-chain authentication and local identity resolution.
 Projection updates and grant mint/revoke effects check it inside their

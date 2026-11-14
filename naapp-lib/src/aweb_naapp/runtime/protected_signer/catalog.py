@@ -224,13 +224,17 @@ _ROWS = (
             ("default_admission_policy_digest", "/admission_policy/digest"),
             ("default_admission_policy_version", "/admission_policy/version")),
         display=OperationDisplay("Make {/subject/deployment_label} your root agent for {/subject/teams|team}?",
-            ("It can add agents only to {/subject/teams|team}, within the team's limits.",),
+            ("It can add agents only to {/subject/teams|team}: at most {/admission_policy/bounds/max_active} at a "
+             "time, and at most {/admission_policy/bounds/max_per_window} per "
+             "{/admission_policy/bounds/rate_window_seconds|period}.",),
             (("root_agent", "/subject/deployment_label"), ("teams", "/subject/teams|team")),
             (("root", "/subject/root_id"), ("root_key", "/subject/root_key"), ("teams", "/subject/teams"),
              ("human", "/scope/human/id"), ("policy", "/admission_policy"), ("requester", "/requester")),
             (("subject_ineligible", "This agent cannot become your root agent."),
              ("issuer_kind_forbidden", "Your identity cannot approve a root agent.")),
-            responsibility_statement="Agents it adds count as yours. It gets no other access."),
+            responsibility_statement="Agents it adds count as yours. It gets no other access.",
+            # The root asks for its own endorsement; its name is frozen.
+            requester_name=("/subject/root_id", "/subject/deployment_label")),
         prepared_fields=frozenset({"registry", "expected_head", "responsibility_statement", "admission_policy"}),
         finalize_execution_refusal=True,
         receipt_uv_expiry=True,

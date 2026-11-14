@@ -12,6 +12,7 @@ import pytest
 import pytest_asyncio
 from aweb.team_auth_deps import verify_request_certificate
 from awid.registry import CachedRegistryClient
+from team_facts_fixtures import LegacyTeamFacts
 from awid.signing import canonical_json_bytes, sign_message
 from fastapi import HTTPException
 from test_team_auth_deps import (
@@ -21,6 +22,10 @@ from test_team_auth_deps import (
     _request_with_app_state,
 )
 from test_team_key_rotation_cache import _Redis
+
+
+class LegacyCacheRegistry(LegacyTeamFacts, CachedRegistryClient):
+    """Real cache/transport, with independent explicit-legacy protection facts."""
 
 
 @pytest_asyncio.fixture
@@ -60,7 +65,7 @@ async def world(monkeypatch):
     env.redis = _Redis(clock)
 
     def client(**kwargs):
-        value = CachedRegistryClient(
+        value = LegacyCacheRegistry(
             registry_url="http://registry.test", redis_client=env.redis,
             transport=httpx.MockTransport(handler), **kwargs,
         )

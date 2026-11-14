@@ -34,6 +34,7 @@ from gateway.platforms.base import BasePlatformAdapter, MessageEvent, MessageTyp
 logger = logging.getLogger(__name__)
 
 RECONNECT_BACKOFF = [1, 2, 5, 10, 30]
+CONNECT_TIMEOUT = 5.0
 MAX_MESSAGE_LENGTH = 16_000
 CONTENT_PREFIX = "[Aweb message: content only]\n"
 
@@ -49,6 +50,7 @@ class InputRoute(NamedTuple):
 # worker-thread bridge. Each ordinary input keeps its own reply route. Explicit
 # reply_to anchors also support Hermes final-delivery recovery.
 _input_route: ContextVar[Optional[InputRoute]] = ContextVar("aweb_input_route", default=None)
+_query_cleanup_deadline: ContextVar[float | None] = ContextVar("aweb_query_cleanup_deadline", default=None)
 
 
 class _Lane:
@@ -144,6 +146,13 @@ class AwebAdapter(BasePlatformAdapter):
         self._mail_wake = asyncio.Event()
         self._mail_task: Optional[asyncio.Task] = None
         self._stream_live = False
+        self._stream_ready = asyncio.Event()
+        from gateway.authz_mixin import _auth_env
+
+        self._allow_team = _truthy(_auth_env("AWEB_ALLOW_TEAM"))
+        self._own_team_id: str | None = None
+        self._connect_generation = 0
+        self._disconnect_deadline: float | None = None
 
     @property
     def name(self) -> str:
@@ -154,6 +163,10 @@ class AwebAdapter(BasePlatformAdapter):
         return not self._stream_live
 
     def _stream_health(self, live: bool) -> None:
+        if live:
+            self._stream_ready.set()
+        else:
+            self._stream_ready.clear()
         if self._stream_live == live:
             return
         self._stream_live = live
@@ -164,22 +177,71 @@ class AwebAdapter(BasePlatformAdapter):
                 self._mark_degraded()
 
     async def connect(self, *, is_reconnect: bool = False) -> bool:
+        self._connect_generation += 1
+        generation = self._connect_generation
+        deadline = asyncio.get_running_loop().time() + CONNECT_TIMEOUT
+        if self._allow_team:
+            conflict = self._strict_policy_conflict()
+            if conflict:
+                self._set_fatal_error("team_policy_conflict", conflict, retryable=False)
+                return False
         if not validate_config(self.config):
             self._set_fatal_error("aw_missing", "aw binary not found; set AWEB_PLATFORM_AW_BIN", retryable=False)
             return False
         if not os.path.isdir(self.workdir):
             self._set_fatal_error("workdir_missing", f"Aweb workdir does not exist: {self.workdir}", retryable=False)
             return False
+        if self._allow_team:
+            self._own_team_id = None
+            cleanup_token = _query_cleanup_deadline.set(deadline)
+            try:
+                async with asyncio.timeout_at(deadline):
+                    selected = await self._run_aw_json("workspace", "status")
+                if generation != self._connect_generation:
+                    return False
+                team = selected.get("selected_team") if isinstance(selected, dict) else None
+                if not isinstance(team, str) or not team.strip():
+                    raise ValueError("selected_team missing")
+                self._own_team_id = team
+            except asyncio.CancelledError:
+                raise
+            except (OSError, RuntimeError, ValueError, TimeoutError):
+                if generation != self._connect_generation:
+                    return False
+                logger.warning("Aweb: cannot establish the selected canonical team; refusing strict-mode connect", exc_info=True)
+                self._set_fatal_error("team_unavailable", "Cannot establish the selected Aweb team", retryable=True)
+                return False
+            finally:
+                _query_cleanup_deadline.reset(cleanup_token)
+        if generation != self._connect_generation:
+            return False
         self._running = True
+        self._stream_health(False)
         self._stream_task = asyncio.create_task(self._run_event_stream())
         self._mark_connected()
         logger.info("Aweb: listening with %s in %s", self.aw_bin, self.workdir)
-        return True
+        try:
+            async with asyncio.timeout_at(deadline):
+                await self._stream_ready.wait()
+        except TimeoutError:
+            logger.warning("Aweb: no connected/heartbeat frame within %.1fs; background reconnect continues", CONNECT_TIMEOUT)
+        except asyncio.CancelledError:
+            if generation == self._connect_generation:
+                await self._disconnect(deadline)
+            raise
+        return self._running and generation == self._connect_generation
 
     async def disconnect(self) -> None:
+        await self._disconnect()
+
+    async def _disconnect(self, deadline: float | None = None) -> None:
+        self._connect_generation += 1
+        self._disconnect_deadline = deadline
         self._running = False
         self._mark_disconnected()
         self._stream_live = False
+        # Wake an in-progress connect without claiming live proof.
+        self._stream_ready.set()
         workers = [task for lane in self._lanes.values() for task in (lane.worker, lane.turn) if task]
         if self._mail_task:
             workers.append(self._mail_task)
@@ -192,8 +254,6 @@ class AwebAdapter(BasePlatformAdapter):
         self._queued.clear()
         self._mail_events.clear()
         self._mail_task = None
-        if self._proc and self._proc.returncode is None:
-            await self._stop_process(self._proc)
         if self._stream_task:
             self._stream_task.cancel()
             try:
@@ -201,10 +261,13 @@ class AwebAdapter(BasePlatformAdapter):
             except asyncio.CancelledError:
                 pass
             self._stream_task = None
+        if self._proc and self._proc.returncode is None:
+            await self._stop_process(self._proc, deadline=deadline)
         if self._stderr_task:
             self._stderr_task.cancel()
             self._stderr_task = None
         self._proc = None
+        self._disconnect_deadline = None
 
     async def _run_event_stream(self) -> None:
         backoff_idx = 0
@@ -246,7 +309,7 @@ class AwebAdapter(BasePlatformAdapter):
             finally:
                 self._stream_health(False)
                 if self._proc and self._proc.returncode is None:
-                    await self._stop_process(self._proc)
+                    await self._stop_process(self._proc, deadline=self._disconnect_deadline)
                 if self._stderr_task:
                     self._stderr_task.cancel()
                     await asyncio.gather(self._stderr_task, return_exceptions=True)
@@ -275,7 +338,7 @@ class AwebAdapter(BasePlatformAdapter):
         typ = event.get("type")
         if typ == "error":
             self._stream_health(False)
-        elif typ in {"connected", "heartbeat", "actionable_mail", "actionable_chat"}:
+        elif typ in {"connected", "heartbeat"}:
             self._stream_health(True)
         if typ == "actionable_mail" and self.enable_mail:
             await self._dispatch_mail_event(event)
@@ -316,6 +379,78 @@ class AwebAdapter(BasePlatformAdapter):
             lane.worker = asyncio.create_task(self._run_lane(lane))
         return lane
 
+    def _team_admits(self, message: dict) -> bool:
+        if not self._allow_team:
+            return True
+        membership = message.get("sender_membership")
+        if not isinstance(membership, dict):
+            reason = "missing server sender_membership"
+        elif membership.get("state") != "active":
+            reason = "team membership is not active"
+        elif not self._own_team_id or membership.get("team_id") != self._own_team_id:
+            reason = "team differs from the receiver's selected team"
+        else:
+            return True
+        logger.warning("Aweb: strict team policy refused input: %s; input stays unread", reason)
+        return False
+
+    def _strict_policy_conflict(self) -> str | None:
+        # Hermes can accept these independent grants before invoking native
+        # role reauthorization. Refuse that configuration before any replay.
+        from gateway.authz_mixin import _auth_env
+        from gateway.pairing import PairingStore
+
+        def broad_grant():
+            return (any(_truthy(_auth_env(key)) for key in ("AWEB_ALLOW_ALL_USERS", "GATEWAY_ALLOW_ALL_USERS"))
+                    or any(_auth_env(key).strip() for key in ("AWEB_ALLOWED_USERS", "GATEWAY_ALLOWED_USERS")))
+
+        if broad_grant():
+            return "AWEB_ALLOW_TEAM requires platform/global allow-all=false and empty platform/global allowlists"
+        runner = self.gateway_runner
+        # A routed source may be authorized in another served runtime home.
+        # Inspect the same profile scope Hermes uses for that authorization.
+        homes = getattr(getattr(runner, "config", None), "_runtime_profile_homes", ()) or ()
+        if homes:
+            from pathlib import Path
+
+            from gateway.run import _profile_runtime_scope
+
+            for _, home in homes:
+                with _profile_runtime_scope(Path(home), hydrate_secrets=False):
+                    if broad_grant():
+                        return "AWEB_ALLOW_TEAM conflicts with a served profile's platform/global access grant"
+                    if PairingStore().list_approved("aweb"):
+                        return "AWEB_ALLOW_TEAM conflicts with a served profile's aweb pairing grants"
+        extra = getattr(self.config, "extra", {}) or {}
+        if extra.get("allowed_users") or extra.get("allow_from"):
+            return "AWEB_ALLOW_TEAM conflicts with a configured adapter allowlist"
+        stores = [getattr(runner, "pairing_store", None), *(getattr(runner, "pairing_stores", {}) or {}).values()]
+        stores = [store for store in stores if store is not None] or [PairingStore()]
+        if any(store.list_approved("aweb") for store in stores):
+            return "AWEB_ALLOW_TEAM conflicts with existing aweb pairing grants; revoke them locally before starting"
+        return None
+
+    async def reauthorize_native_roles(self, source) -> bool:
+        """Hermes durable ingress rechecks an adapter grant against current server facts."""
+        if not self._allow_team or not source.message_id:
+            return False
+        kind, target = source.chat_id.split(":", 1)
+        if kind == "mail":
+            payload = await self._run_aw_json("mail", "show", "--message-id", source.message_id)
+        elif kind == "chat":
+            payload = await self._run_aw_json("chat", "history", "--session-id", target, "--message-id", source.message_id)
+            if payload.get("session_id") != target:
+                return False
+        else:
+            return False
+        for message in payload.get("messages") or []:
+            if message.get("message_id") != source.message_id:
+                continue
+            sender = message.get("from_address") or message.get("from_alias") or message.get("from_agent") or "aweb"
+            return (sender == source.user_id and (kind == "chat" or message.get("conversation_id") == target)
+                    and self._team_admits(message))
+        return False
+
     async def _dispatch_mail_event(self, event: dict) -> None:
         message_id = str(event.get("message_id") or "").strip()
         if not message_id or message_id in self._mail_events or "mail:" + message_id in self._queued:
@@ -338,12 +473,17 @@ class AwebAdapter(BasePlatformAdapter):
                     msg = _first_mapping_item(payload, "messages")
                     if not msg:
                         raise RuntimeError(f"actionable mail {message_id} was not returned")
+                    if not self._team_admits(msg):
+                        self._ignored.add("mail:" + message_id)
+                        self._mail_events.pop(message_id, None)
+                        continue
                     conversation_id = str(msg.get("conversation_id") or hint.get("conversation_id") or message_id)
                     sender = str(msg.get("from_address") or hint.get("from_address") or msg.get("from_alias") or "aweb")
                     subject, body = str(msg.get("subject") or ""), str(msg.get("body") or "")
                     source = self.build_source(
                         chat_id=f"mail:{conversation_id}", chat_name=subject or sender, chat_type="dm",
                         user_id=sender, user_name=sender, message_id=message_id,
+                        role_authorized=self._allow_team,
                     )
                     event = MessageEvent(
                         text=CONTENT_PREFIX + (f"Subject: {subject}\n\n{body}" if subject else body),
@@ -407,10 +547,16 @@ class AwebAdapter(BasePlatformAdapter):
                                 raise RuntimeError("Aweb unread history omitted message_id")
                             if message_id in lane.pending:
                                 continue
+                            if f"chat:{lane.chat_id[5:]}:{message_id}" in self._ignored:
+                                continue
+                            if not self._team_admits(msg):
+                                self._ignored.add(f"chat:{lane.chat_id[5:]}:{message_id}")
+                                continue
                             sender = str(msg.get("from_address") or msg.get("from_agent") or "aweb")
                             source = self.build_source(
                                 chat_id=lane.chat_id, chat_name=sender, chat_type="dm",
                                 user_id=sender, user_name=sender, message_id=message_id,
+                                role_authorized=self._allow_team,
                             )
                             lane.pending[message_id] = MessageEvent(
                                 text=CONTENT_PREFIX + str(msg.get("body") or ""), message_type=MessageType.TEXT,
@@ -643,15 +789,23 @@ class AwebAdapter(BasePlatformAdapter):
         return path
 
     @staticmethod
-    async def _stop_process(proc: asyncio.subprocess.Process) -> None:
+    async def _stop_process(proc: asyncio.subprocess.Process, *, deadline: float | None = None) -> None:
         if proc.returncode is not None:
+            return
+        remaining = 5.0 if deadline is None else max(0.0, deadline - asyncio.get_running_loop().time())
+        if remaining <= 0:
+            try:
+                proc.kill()
+            except ProcessLookupError:
+                pass
+            await proc.wait()
             return
         try:
             proc.terminate()
         except ProcessLookupError:
             pass
         try:
-            await asyncio.wait_for(proc.wait(), timeout=5)
+            await asyncio.wait_for(proc.wait(), timeout=remaining)
         except asyncio.TimeoutError:
             proc.kill()
             await proc.wait()
@@ -668,7 +822,7 @@ class AwebAdapter(BasePlatformAdapter):
             stdout, stderr = await asyncio.wait_for(proc.communicate(), timeout=30)
         finally:
             if proc.returncode is None:
-                await self._stop_process(proc)
+                await self._stop_process(proc, deadline=_query_cleanup_deadline.get())
         out = stdout.decode("utf-8", errors="replace").strip()
         err = stderr.decode("utf-8", errors="replace").strip()
         if proc.returncode != 0:

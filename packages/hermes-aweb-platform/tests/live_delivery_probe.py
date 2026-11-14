@@ -38,6 +38,9 @@ assert YAML(typ="safe").load((RECEIVER / ".aw/workspace.yaml").read_text())["awe
 (HOME / "plugins/platforms").mkdir(parents=True)
 (HOME / "plugins/platforms/aweb").symlink_to(PLUGIN)
 (HOME / "config.yaml").write_text("_config_version: 12\nplugins:\n  enabled: [platforms/aweb]\ngateway:\n  unauthorized_dm_behavior: ignore\n  platforms:\n    aweb:\n      enabled: true\n      gateway_restart_notification: false\n")
+if CASE == "team":
+    os.environ.update(AWEB_ALLOW_TEAM="true", AWEB_ALLOWED_USERS="", AWEB_ALLOW_ALL_USERS="false",
+                      GATEWAY_ALLOW_ALL_USERS="false", GATEWAY_ALLOWED_USERS="")
 if CASE != "home_notice":
     os.environ["AWEB_HOME_CHANNEL"] = "alice"
 logging.basicConfig(level=logging.INFO)
@@ -48,8 +51,8 @@ from gateway.config import Platform
 from gateway.platform_registry import platform_registry
 
 
-async def command(argv, *, cwd=None):
-    proc = await asyncio.create_subprocess_exec(*argv, cwd=cwd, env=ENV,
+async def command(argv, *, cwd=None, env=None):
+    proc = await asyncio.create_subprocess_exec(*argv, cwd=cwd, env=ENV if env is None else env,
              stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.PIPE)
     out, err = await asyncio.wait_for(proc.communicate(), 12)
     if proc.returncode:
@@ -100,15 +103,69 @@ async def history(session):
     return (await aw(SENDER, "chat", "history", "--session-id", session))["messages"]
 
 
+async def observe_connect(original, adapter, measurements, *, is_reconnect=False):
+    """Time the actual adapter call, preserving its arguments/result/cancellation."""
+    started = time.monotonic()
+    sample = {"is_reconnect": is_reconnect, "completed": False}
+    try:
+        result = await original(adapter, is_reconnect=is_reconnect)
+        sample.update(completed=True, returned=result)
+        return result
+    finally:
+        sample["adapter_connect_seconds"] = time.monotonic() - started
+        sample["degraded_after"] = adapter.send_path_degraded
+        measurements.append(sample)
+
+
+async def prepare_team_senders():
+    # Only the already-owned disposable fixture. No identity is copied, no row
+    # or attestation is patched; public aw creates/joins each additional actor.
+    root = RECEIVER.parent
+    controller = root / "controller"
+    assert controller.is_dir()
+    namespace = "hermes-acft1.test"
+    registry = "http://127.0.0.1:28110"
+    await aw(controller, "id", "team", "create", "--name", "other", "--namespace", namespace, "--registry", registry)
+    actors = {}
+    for actor in ("otherteam", "contact", "nonmember"):
+        home = root / actor
+        home.mkdir(mode=0o700)
+        actors[actor] = home
+        await aw(home, "id", "create", "--name", actor, "--domain", namespace,
+                 "--registry", registry, "--skip-dns-verify")
+        if actor != "nonmember":
+            invite = await aw(controller, "id", "team", "invite", "--team", "other",
+                              "--namespace", namespace, "--member-global")
+            # Token stays private stdin, never argv, logs or evidence.
+            proc = await asyncio.create_subprocess_exec(
+                "aw", "id", "team", "accept-invite", "--token-stdin", "--name", actor,
+                "--global", "--address", f"{namespace}/{actor}", "--json", cwd=home, env=ENV,
+                stdin=asyncio.subprocess.PIPE, stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.PIPE)
+            _, err = await asyncio.wait_for(proc.communicate((invite["token"] + "\n").encode()), 45)
+            assert proc.returncode == 0, err.decode()
+            await aw(home, "workspace", "connect", "--service", "http://127.0.0.1:28180",
+                     "--team", "other:" + namespace)
+    await aw(RECEIVER, "contacts", "add", namespace + "/contact")
+    contacts = await aw(RECEIVER, "contacts", "list")
+    assert any(c.get("contact_address") == namespace + "/contact" for c in contacts["contacts"]), contacts
+    # Let the real server deliver each negative neighbor. Otherwise a server
+    # refusal would say nothing about the plugin's strict intake policy.
+    opened = await aw(RECEIVER, "inbound-mode", "open")
+    assert opened["inbound_mode"] == "open", opened
+    return actors
+
+
 async def main():
     upstream = (await command(["git", "rev-parse", "HEAD"], cwd=SOURCE)).strip()
     await command(["git", "diff", "--exit-code"], cwd=SOURCE)
     print(json.dumps({"upstream_hermes": upstream, "plugin": str(PLUGIN)}), flush=True)
+    team_senders = await prepare_team_senders() if CASE == "team" else {}
     runner = GatewayRunner()
     # Obtain the actual installed plugin class. Probes wrap the real I/O, never
     # fabricate its return values or bypass the gateway handler.
     adapter = platform_registry.create_adapter("aweb", runner.config.platforms[Platform("aweb")])
     cls = type(adapter)
+    original_connect = cls.connect
     original_io = cls._run_aw_json
     original_event = cls._handle_aw_event
     original_complete = cls.on_processing_complete
@@ -129,6 +186,10 @@ async def main():
     prompt_results = []
     pending = None
     pending_key = None
+    connect_measurements = []
+
+    async def connect(self, *, is_reconnect=False):
+        return await observe_connect(original_connect, self, connect_measurements, is_reconnect=is_reconnect)
 
     def runtime_state():
         status = HOME / "gateway_state.json"
@@ -176,6 +237,7 @@ async def main():
             "body": value.raw_message["body"],
             "subject": value.raw_message.get("subject") if str(value.source.chat_id).startswith("mail:") else None,
             "text": value.text, "control": value.allow_gateway_control,
+            "membership": value.raw_message.get("sender_membership"), "role_authorized": value.source.role_authorized,
         }
         return await original_handle(self, value)
 
@@ -259,16 +321,29 @@ async def main():
             return rows if int(receipt.strip()) == len(inputs) else None
         return await until(finished, "ordinary content did not finish/read", 12)
 
+    cls.connect = connect
     cls._run_aw_json = io
     cls.handle_message = ingress_event
     GatewayRunner._handle_message_with_agent = ordinary_turn
     cls._handle_aw_event = event
     cls.on_processing_complete = complete
     try:
+        started = time.monotonic()
         assert await runner.start(), "real gateway failed startup"
+        runner_start_seconds = time.monotonic() - started
         adapter = runner.adapters[Platform("aweb")]
+        print(json.dumps({"measurement": "gateway_start", "runner_start_seconds": runner_start_seconds,
+                          "connect_calls": connect_measurements}), flush=True)
+        assert connect_measurements and connect_measurements[0]["completed"], connect_measurements
+        assert connect_measurements[0]["returned"] is True, connect_measurements
+        adapter_connect_seconds = connect_measurements[0]["adapter_connect_seconds"]
+        assert adapter_connect_seconds < 5.25, connect_measurements
+        if CASE != "health":
+            assert not adapter.send_path_degraded, "healthy server did not prove startup health"
+
         if CASE == "health":
             await until(connected.is_set, "no real server frame")
+            assert adapter_connect_seconds >= 4.9, connect_measurements
             assert adapter.send_path_degraded, "reports healthy before first live frame is accepted"
             await until(lambda: runtime_state() == "retrying", "unproven receive path not exposed in Hermes status")
             release.set()
@@ -283,7 +358,63 @@ async def main():
                         "stream did not recover on real traffic")
             await until(lambda: runtime_state() == "connected", "recovery not exposed in Hermes status")
             print(json.dumps({"case": CASE, "old_pid": old.pid, "new_pid": adapter._proc.pid,
-                              "states": ["retrying", "connected", "retrying", "connected"]}))
+                              "states": ["retrying", "connected", "retrying", "connected"],
+                              "runner_start_seconds": runner_start_seconds,
+                              "adapter_connect_seconds": adapter_connect_seconds,
+                              "connect_calls": connect_measurements}))
+        elif CASE == "team":
+            teammate_chat = await send("strict teammate chat")
+            await read_chat_inputs(teammate_chat["session_id"], [teammate_chat["message_id"]])
+            teammate_mail = await mail("strict teammate mail")
+            async def admitted_mail():
+                result = await aw(RECEIVER, "mail", "show", "--message-id", teammate_mail["message_id"])
+                return result if result["messages"][0].get("read_at") else None
+            await until(admitted_mail, "strict teammate mail not read", 15)
+            assert_content([teammate_chat["message_id"], teammate_mail["message_id"]])
+            own_team = (await aw(RECEIVER, "workspace", "status"))["selected_team"]
+            for mid in (teammate_chat["message_id"], teammate_mail["message_id"]):
+                assert ingress[mid]["role_authorized"] is True, ingress[mid]
+                assert ingress[mid]["membership"]["state"] == "active", ingress[mid]
+                assert ingress[mid]["membership"]["team_id"] == own_team, ingress[mid]
+            refusals = []
+            for actor, home in team_senders.items():
+                body = HOME / "strict-negative-body"
+                body.write_text("ordinary strict-mode negative " + actor)
+                # Identity-only mail has no team/workspace; select only its
+                # loopback service, preserving its own signing key/registry.
+                env = dict(ENV, AWEB_URL="http://127.0.0.1:28180")
+                sent = json.loads(await command(["aw", "mail", "send", "--to", "hermes-acft1.test/hermes",
+                    "--subject", "Strict negative", "--plaintext", "--body-file", str(body), "--json"], cwd=home, env=env))
+                mid = sent["message_id"]
+                await until(lambda mid=mid: "mail:" + mid in adapter._ignored, "strict negative not refused: " + actor, 15)
+                fetched = (await aw(RECEIVER, "mail", "show", "--message-id", mid))["messages"][0]
+                assert not fetched.get("read_at"), fetched
+                assert mid not in ingress and not any(row["message_id"] == mid for row in turns)
+                assert not any(reply["input"] == mid for reply in replies)
+                refusals.append({"actor": actor, "transport": "mail", "message_id": mid,
+                                 "membership": fetched.get("sender_membership"),
+                                 "unread": True, "ordinary_turn": False, "reply": False})
+                if actor != "nonmember":
+                    chat_sent = json.loads(await command(["aw", "chat", "send-and-leave", "hermes-acft1.test/hermes",
+                        "--start-conversation", "--plaintext", "--body-file", str(body), "--json"], cwd=home, env=env))
+                    sid, cid = chat_sent["session_id"], chat_sent["message_id"]
+                    await until(lambda sid=sid, cid=cid: f"chat:{sid}:{cid}" in adapter._ignored,
+                                "strict chat negative not refused: " + actor, 15)
+                    fetched_chat = await aw(RECEIVER, "chat", "history", "--session-id", sid)
+                    incoming = next(row for row in fetched_chat["messages"] if row["message_id"] == cid)
+                    read_count = await sql(f"SELECT count(*) FROM aweb.chat_message_reads WHERE message_id='{cid}'")
+                    assert int(read_count.strip()) == 0, fetched_chat
+                    assert cid not in ingress and not any(row["message_id"] == cid for row in turns)
+                    assert len(fetched_chat["messages"]) == 1, fetched_chat
+                    refusals.append({"actor": actor, "transport": "chat", "message_id": cid,
+                                     "membership": incoming.get("sender_membership"),
+                                     "unread": True, "ordinary_turn": False, "reply": False})
+            assert len(refusals) == 5, refusals
+            print(json.dumps({"case": CASE, "own_team": own_team, "turns": turns,
+                              "admitted": [ingress[teammate_chat["message_id"]], ingress[teammate_mail["message_id"]]],
+                              "refusals": refusals, "runner_start_seconds": runner_start_seconds,
+                              "adapter_connect_seconds": adapter_connect_seconds,
+                              "connect_calls": connect_measurements}))
         elif CASE == "clarify":
             first = await send("require-clarify")
             session = first["session_id"]
@@ -420,6 +551,7 @@ async def main():
         if pending is not None:
             await asyncio.wait_for(asyncio.gather(pending, return_exceptions=True), 2)
         await runner.stop()
+        cls.connect = original_connect
         cls._run_aw_json = original_io
         cls._handle_aw_event = original_event
         cls.on_processing_complete = original_complete

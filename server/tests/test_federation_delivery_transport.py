@@ -495,9 +495,11 @@ def test_every_server_caller_passes_the_delivery_transport():
     assert sorted(callers) == ["messaging/chat_send.py", "messaging/mail_send.py"]
 
 
-def test_one_module_makes_destination_named_requests():
-    """Outside the operator's own CLI and the test harness, the server builds an
-    HTTP client in the delivery function alone and dials in the transport module alone."""
+def test_outbound_client_factories_match_reviewed_inventory():
+    """Inventory every client factory; peer-controlled federation uses its one
+    delivery adapter/transport. Protected execution has a separate host-owned
+    client for configured consumer origins, not peer-selected mail destinations.
+    """
     clients, dialers = [], []
     for path in SOURCE.rglob("*.py"):
         relative = path.relative_to(SOURCE).as_posix()
@@ -506,8 +508,18 @@ def test_one_module_makes_destination_named_requests():
         tree = ast.parse(path.read_text())
         clients += [relative for _ in _calls(tree, "AsyncClient") + _calls(tree, "Client")]
         dialers += [relative for _ in _calls(tree, "AsyncHTTPTransport") + _calls(tree, "HTTPTransport")]
-    assert clients == ["federation/mail.py"]
+    reviewed_clients = {
+        "federation/mail.py": "peer delivery through the admitted federation transport",
+        "protected_signing/host.py": "isolated executor delivery to operator-pinned consumer origins",
+    }
+    assert sorted(clients) == sorted(reviewed_clients)
     assert dialers == ["federation/transport.py"]
+    # The distinct executor client must not forward its private retained headers
+    # to a response-selected redirect. No additional client factory is exempt.
+    host = ast.parse((SOURCE / "protected_signing/host.py").read_text())
+    [client] = _calls(host, "AsyncClient")
+    redirects = next(keyword.value for keyword in client.keywords if keyword.arg == "follow_redirects")
+    assert isinstance(redirects, ast.Constant) and redirects.value is False
 
 
 def test_id_tree_registry_reads_use_the_same_pinned_transport():

@@ -24,3 +24,4 @@ body { margin: 0; }
    are not controls and show no ring. */
 .handoff [tabindex="-1"]:focus { outline: none; }
 #handoff-names dd, #handoff-requested, #handoff-expires { font-family: inherit; font-size: inherit; }
+#handoff-names:not(:empty) { margin-bottom: var(--s2); }

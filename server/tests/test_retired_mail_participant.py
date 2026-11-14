@@ -1,5 +1,6 @@
 """Old identity threads cannot forward to a replacement occupying its alias."""
 import json
+from types import SimpleNamespace
 from uuid import UUID
 
 import pytest
@@ -25,9 +26,13 @@ async def test_retired_identity_continuation_refuses_new_alias_mail_reaches_repl
     assert resolution.current_did_key == replacement.did
     await env.db.execute("UPDATE {{tables.agents}} SET did_aw=$1,did_aw_verified_key=did_key,identity_scope='global' WHERE agent_id=$2", stable, replacement.id)
     before = list(env.dispatched)
-    # No registry or hosted forwarding can make the retired identity live.
+    # Current team evidence remains required; identity forwarding is unavailable.
     registry = env.app.state.awid_registry_client
-    env.app.state.awid_registry_client = object()
+    env.app.state.awid_registry_client = SimpleNamespace(
+        get_team_fresh=registry.get_team_fresh,
+        get_team_public_key=registry.get_team_public_key,
+        get_team_revocations=registry.get_team_revocations,
+    )
     try:
         refused = await _request(env, 'alice', 'POST', '/v1/messages', {'conversation_id': cid, 'body': 'must not forward'})
     finally:

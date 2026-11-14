@@ -14,7 +14,7 @@ import (
 func displayRequest(t *testing.T) map[string]any {
 	t.Helper()
 	request, ok := DecodeObject([]byte(`{"requester":"did:key:z6Mkrequester","subject":{"alias":"agent-one",
-		"teams":["a:customer.example","b:customer.example"],"team_id":"engineering:customer.example","target_kind":"kind not verified","agent_kind":"agent","other_kind":"human","count":3,"nothing":null,
+		"teams":["a:customer.example","b:customer.example"],"team_id":"engineering:customer.example","target_kind":"kind not verified","agent_kind":"agent","other_kind":"human","window":3600,"day":86400,"odd":90,"count":3,"nothing":null,
 		"policy":{"b":2,"a":[1]},"flag":true}}`))
 	if !ok {
 		t.Fatal("bad request fixture")
@@ -89,6 +89,20 @@ func TestDisplayNamesAFrozenTargetKind(t *testing.T) {
 	}
 }
 
+func TestDisplayNamesAWindowInSeconds(t *testing.T) {
+	display := operationDisplay{
+		title:        "At most {/subject/count} per {/subject/window|period}?",
+		consequences: []string{"Or per {/subject/day|period}, or per {/subject/odd|period}."},
+	}
+	got, err := display.render(displayRequest(t))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got.Title != "At most 3 per hour?" || got.Consequences[0] != "Or per day, or per 90 seconds." {
+		t.Fatalf("rendered %#v", got)
+	}
+}
+
 func TestDisplayRefusesWhatItCannotFillExactly(t *testing.T) {
 	for name, display := range map[string]operationDisplay{
 		"missing":            {title: "Remove {/subject/missing}?"},
@@ -104,6 +118,7 @@ func TestDisplayRefusesWhatItCannotFillExactly(t *testing.T) {
 		"team of a number":   {title: "Add it?", names: []displayRow{{"team", "/subject/count|team"}}},
 		"unknown kind":       {title: "Add it?", names: []displayRow{{"kind", "/subject/other_kind|kind"}}},
 		"kind of a list":     {title: "Add it?", names: []displayRow{{"kind", "/subject/teams|kind"}}},
+		"period of a string": {title: "Per {/subject/alias|period}?"},
 	} {
 		if _, err := display.render(displayRequest(t)); ErrorCode(err) != "operation_mismatch" {
 			t.Errorf("%s: rendered without refusing (%v)", name, err)

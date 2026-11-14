@@ -62,6 +62,11 @@ async def same_origin(privacy_app, monkeypatch, same_origin_registry_socket):
         "INSERT INTO {{tables.teams}} (team_id, namespace, team_name, team_did_key) "
         "VALUES ($1, 'recipient.test', 'recipients', $2)", target_team, env.team_did,
     )
+    # A retained recipient membership needs a real current registry team, too.
+    await env.registry_db.execute(
+        "INSERT INTO {{tables.teams}} (domain,name,team_did_key,visibility) "
+        "VALUES ('recipient.test','recipients',$1,'public')", env.team_did,
+    )
     sk, _, did = _make_keypair()
     target = SimpleNamespace(sk=sk, did=did, id=uuid4())
     address = f"recipient.test/recipient-{uuid4().hex[:12]}"

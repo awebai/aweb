@@ -8,6 +8,7 @@ authenticator. What the page says comes from the operation definition.
 
 import asyncio
 import base64
+import re
 import socket
 from contextlib import asynccontextmanager
 from datetime import timedelta
@@ -135,16 +136,24 @@ async def test_a_root_endorsement_asks_in_plain_words_and_approves_with_the_pass
             request = s.prepared["payload"]["request"]
             # The frozen responsibility statement first, then the one limit
             # line; no claim twice.
+            bounds = a.policy["bounds"]
+            # The limits are part of what it does, in the list the person reads.
             await expect(page.locator("#handoff-consequences li")).to_have_text([
                 request["responsibility_statement"],
-                f"It can add agents only to {team}, within the team's limits.",
+                f"It can add agents only to {team}: at most {bounds['max_active']} at a time, "
+                f"and at most {bounds['max_per_window']} per hour.",
             ])
             await expect(page.locator("#handoff-names dt")).to_have_text(["Root agent", "Teams"])
             await expect(page.locator("#handoff-names dd")).to_have_text(["oats-root", team])
-            bounds = a.policy["bounds"]
-            await expect(page.locator("#handoff-status")).to_have_text(
-                f"Its limits: at most {bounds['max_active']} agents at a time, "
-                f"and at most {bounds['max_per_window']} added per hour.")
+            # The root asks for itself: it is named, not shown as its DID.
+            await expect(page.locator("#handoff-requested")).to_have_text(re.compile(r"^oats-root(, asked .+)?$"))
+            assert "did:aw" not in await page.locator("#handoff-facts").inner_text()
+            assert "limits" not in await page.locator("#handoff-status").inner_text()
+            # The name rows and the facts below them are visibly two groups.
+            gap = await page.evaluate(
+                "document.querySelector('#handoff-facts').getBoundingClientRect().top"
+                " - document.querySelector('#handoff-names').getBoundingClientRect().bottom")
+            assert gap >= 8
             body = await page.locator("main").inner_text()
             assert TEAM not in body.split("Technical details")[0]
             assert "endorse" not in body.lower().split("technical details")[0]

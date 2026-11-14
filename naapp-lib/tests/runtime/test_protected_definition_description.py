@@ -17,7 +17,8 @@ def test_description_covers_every_runtime_definition_with_its_frozen_display_and
         row = rows["|".join(selector)]
         assert row["prepared_fields"] == sorted(definition.prepared_fields)
         display = row["display"]
-        assert set(display) == {"title", "consequences", "names", "technical", "refusals"}
+        assert set(display) - {"requester_name"} == {"title", "consequences", "names", "technical", "refusals"}
+        assert all(source.startswith("/") for source in display.get("requester_name", []))
         assert display["title"] and display["consequences"] and display["technical"]
         assert all(source.startswith("/") for source in [*display["names"].values(), *display["technical"].values()])
         assert set(display["refusals"]) == {"subject_ineligible", "issuer_kind_forbidden"}

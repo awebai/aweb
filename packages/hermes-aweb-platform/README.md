@@ -72,10 +72,11 @@ to this agent's `.aw` explicitly. An existing Hermes `.env` overrides shell
 exports and can otherwise restore a stale selector despite a correct workdir.
 The export before installation also enables platform discovery for that command.
 
-For a **team-only (local) agent**, enable team access:
+For a **team-only (local) agent**, the standard setup allows its reachable senders:
 
 ```bash
-hermes config unset AWEB_ALLOWED_USERS
+hermes config set AWEB_ALLOWED_USERS ""
+hermes config set AWEB_ALLOW_TEAM false
 hermes config set AWEB_ALLOW_ALL_USERS true
 ```
 
@@ -87,12 +88,40 @@ Use allow-all only for a team-only agent. For an agent with a **public address**
 allowlist the full sender addresses and keep allow-all false:
 
 ```bash
+hermes config set AWEB_ALLOW_TEAM false
 hermes config set AWEB_ALLOW_ALL_USERS false
 hermes config set AWEB_ALLOWED_USERS example.aweb.ai/alice
 ```
 
 Replace the example with authorized full addresses, separated by commas when
-there is more than one. Optionally select an authorized recipient for cron
+there is more than one.
+
+For **strict team access**, choose this alternative locally and restart the gateway:
+
+```bash
+hermes config set AWEB_ALLOW_ALL_USERS false
+hermes config set AWEB_ALLOWED_USERS ""
+hermes config set AWEB_ALLOW_TEAM true
+```
+
+Strict mode accepts only senders whose delivery server reports active membership
+in the selected team of this agent. Contacts, other teams in the same namespace and
+connected channels cannot bypass this check. Missing or inactive membership is
+refused and the message stays unread; the gateway logs the reason locally without
+message content. Dashboard messages sent from the agent page and replies in its
+conversations use that team context.
+
+`AWEB_ALLOW_TEAM=true` is exclusive: a true `AWEB_ALLOW_ALL_USERS` or nonempty
+`AWEB_ALLOWED_USERS` makes startup fail clearly. False or unset keeps the usual
+allow-all/allowlist behavior. If an old setting persists, use the duplicate-key
+recovery described below before restarting. Strict team access does not grant
+remote command or tool-approval authority. Strict mode also refuses overlapping
+Hermes global allow-all/allowlists, configured adapter allowlists, or existing
+aweb pairing approvals, including grants in other served profiles. Clear those
+grants locally before starting, or use a separate Hermes home. The plugin never
+changes grants or approval policy for you.
+
+Optionally select an authorized recipient for cron
 sends and owner notices:
 
 ```bash
@@ -183,8 +212,10 @@ hermes config set AWEB_IDENTITY_HOME "$PWD/.aw"
 - Failed mail fetches stay retryable. A completed response with a failed read
   mark retries that receipt in this process. A gateway crash can still duplicate
   a committed reply between send and read; no crash-level exactly-once claim is made.
-- Runtime health starts retrying until a parsed real stream frame, degrades on
-  stream failure, and recovers only after another real frame.
+- Each connect waits up to five seconds for a parsed `connected` or `heartbeat`
+  frame. Healthy startup therefore reports connected immediately. On timeout it
+  returns degraded and keeps reconnecting in the background; stream failure
+  degrades health until another connected/heartbeat frame arrives.
 - A full 2000-row unread history window is refused: today's newest-window API
   cannot prove the oldest prefix is present. Server pagination/receipts remain separate work.
 
