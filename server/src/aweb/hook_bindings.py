@@ -316,8 +316,14 @@ def core_owner_act_verifier(*, audience: str, registry_client: Any, protected_de
         return team.team_did_key
 
     async def authority_for(team_id):
+        from awid.protected_effect import EffectRefused
         from awid.protected_membership import observe_team_protection
-        return await observe_team_protection(registry_client, team_id)
+        try:
+            return await observe_team_protection(registry_client, team_id)
+        except EffectRefused as exc:
+            if isinstance(exc.__cause__, AWID_DEPENDENCY_ERRORS):
+                raise OwnerActTeamKeyUnavailable(exc.__cause__) from exc
+            raise
 
     try:
         return OwnerActVerifier(scope=OWNER_ACT_SCOPE, audience=audience, acts=CORE_ACTS, team_key_for=team_key_for, team_authority_for=authority_for, protected_delivery=protected_delivery)

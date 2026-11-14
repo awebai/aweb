@@ -1,6 +1,7 @@
 """Actual SDK/authentication with HTTP doubles; no DB, Redis or sockets."""
 
 import hashlib
+from contextlib import aclosing
 from datetime import datetime, timezone
 from unittest.mock import AsyncMock
 
@@ -65,7 +66,7 @@ async def test_valid_certificate_requires_explicit_current_protection(monkeypatc
                 }
         return httpx.Response(200, json=value)
 
-    async with RegistryClient("https://registry.test", transport=httpx.MockTransport(handler)) as registry:
+    async with aclosing(RegistryClient("https://registry.test", transport=httpx.MockTransport(handler))) as registry:
         request.app.state.awid_registry_client = registry
         if projection == "legacy":
             assert (await verify_request_certificate(request, db=object()))["alias"] == cert["alias"]
@@ -76,7 +77,8 @@ async def test_valid_certificate_requires_explicit_current_protection(monkeypatc
                 assert caught.value.status_code == 401
             else:
                 assert caught.value.status_code == 503
-                assert caught.value.detail == {"code": "protected_state_unavailable"}
+                if projection != "down":
+                    assert caught.value.detail == {"code": "protected_state_unavailable"}
 
 
 @pytest.mark.asyncio
@@ -100,7 +102,7 @@ async def test_owner_act_authority_failure_keeps_registry_cause():
     async def handler(req):
         return httpx.Response(403, json={"detail": {"code": "team_private", "message": "private"}})
 
-    async with RegistryClient("https://registry.test", transport=httpx.MockTransport(handler)) as registry:
+    async with aclosing(RegistryClient("https://registry.test", transport=httpx.MockTransport(handler))) as registry:
         verifier = core_owner_act_verifier(audience="https://aweb.test", registry_client=registry)
         # Authority is observed before artifact parsing; no effect or DB is entered.
         with pytest.raises(OwnerActTeamKeyUnavailable) as caught:

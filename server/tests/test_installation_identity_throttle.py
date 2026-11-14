@@ -23,6 +23,7 @@ from aweb.identity_binding import observe_identity_binding
 from aweb.routes import apps
 from awid.did import did_from_public_key, stable_id_from_did_key
 from awid.registry import RegistryClient
+from team_facts_fixtures import LegacyTeamFacts
 from awid.registry_types import RegistryThrottled
 from awid.signing import canonical_json_bytes, sign_message
 
@@ -59,7 +60,7 @@ class Storage:
         return "UPDATE 1"
 
 
-class Registry(RegistryClient):
+class Registry(LegacyTeamFacts, RegistryClient):
     def __init__(self, world, transport):
         super().__init__(
             "http://registry.test", transport=transport, timeout_seconds=0.1
