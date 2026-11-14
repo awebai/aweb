@@ -252,7 +252,7 @@ async def test_a_signed_but_unconfirmed_effect_is_unresolved_never_expired(admis
         assert canary not in repr(view) and canary not in owner_page_html(view)
         assert "c2lnbmF0dXJl" not in owner_page_html(view)
         assert view["pending"] == []
-        [entry] = [h for h in view["history"] if h["operation_id"] == operation.operation_id]
+        [entry] = [h for h in view["unresolved"] if h["operation_id"] == operation.operation_id]
         assert entry["state"] == "unresolved"
         # This operation's own row (others in the fixture may really expire).
         [row] = [li for li in owner_page_html(view).split("<li>") if entry["digest"] in li]

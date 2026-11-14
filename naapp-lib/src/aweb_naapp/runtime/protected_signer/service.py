@@ -431,8 +431,8 @@ class ProtectedSigner:
             await tx.execute(
                 "INSERT INTO {{tables.protected_signer_operations}} "
                 "(operation_id,handoff_id,requester,intent,request,digest,approval_id,"
-                "candidate_links,expires_at,initiator_subject,initiator_scope,initiation_selection) "
-                "VALUES($1,$2,$3,$4,$5,$6,$7,$8::jsonb,$9,$10,$11,$12)",
+                "candidate_links,expires_at,initiator_subject,initiator_scope,initiation_selection,scope) "
+                "VALUES($1,$2,$3,$4,$5,$6,$7,$8::jsonb,$9,$10,$11,$12,$13::jsonb)",
                 operation.operation_id,
                 str(uuid.uuid4()),
                 requester.principal,
@@ -445,6 +445,7 @@ class ProtectedSigner:
                 initiation.human.subject if initiation is not None else None,
                 initiation.human.b3_scope if initiation is not None else None,
                 initiation._selection if initiation is not None else None,
+                json.dumps(request["scope"]),
             )
             row = await self._lock(tx, operation.operation_id)
             await self._emit(AuditKind.PROTECTED_OPERATION_PREPARED, tx, row, actor.principal)

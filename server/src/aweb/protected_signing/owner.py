@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import uuid
 from datetime import UTC, datetime
 from html import escape
 from urllib.parse import quote
@@ -67,28 +68,66 @@ def _rendered(request):
     return rendered["title"], named if named != request.get("requester") else None
 
 
-async def owner_view(composition, *, scope: str, subject: str, now: datetime | None = None) -> dict:
+_COLUMNS = (
+    "operation_id,handoff_id,requester,request,digest,approval_id,expires_at,initiator_subject,initiator_scope,"
+    "result IS NOT NULL AS committed,signed_result IS NOT NULL AS signed,refusal_code,committed_at,"
+    "(SELECT r.suppressed FROM {{tables.protected_signer_notice_reservations}} r "
+    "WHERE r.operation_id=o.operation_id) AS notice_suppressed"
+)
+# Each list the page shows, as its stored state: waiting for a decision,
+# approved but not confirmed, and final (committed, refused, or never signed
+# and past its expiry). Approval-less rows are bounded admissions, listed
+# under added agents instead.
+_STATES = {
+    "pending": "result IS NULL AND refusal_code IS NULL AND signed_result IS NULL AND expires_at > $2::timestamptz",
+    # It never expires into history: it may already be applied ($2 is unused).
+    "unresolved": "result IS NULL AND refusal_code IS NULL AND signed_result IS NOT NULL AND $2::timestamptz IS NOT NULL",
+    "history": "(result IS NOT NULL OR refusal_code IS NOT NULL OR (signed_result IS NULL AND expires_at <= $2::timestamptz))",
+}
+# One page of one list for one scope, newest expiry first, after an optional
+# (expires_at, operation_id) cursor: a load reads a page, never every row.
+LISTS = {
+    name: "SELECT " + _COLUMNS + " FROM {{tables.protected_signer_operations}} o "
+    "WHERE scope=$1::jsonb AND approval_id IS NOT NULL AND " + state + " "
+    "AND ($3::timestamptz IS NULL OR (expires_at, operation_id) < ($3::timestamptz, $4::text)) "
+    "ORDER BY expires_at DESC, operation_id DESC LIMIT $5"
+    for name, state in _STATES.items()
+}
+
+
+def _cursor(row) -> str:
+    return row["expires_at"].astimezone(UTC).isoformat() + "|" + row["operation_id"]
+
+
+def _after(cursor: str | None):
+    if not cursor:
+        return None, None
+    expires, _, operation_id = cursor.partition("|")
+    try:
+        return datetime.fromisoformat(expires), str(uuid.UUID(operation_id))
+    except ValueError:
+        return None, None
+
+
+async def owner_view(composition, *, scope: str, subject: str, now: datetime | None = None,
+                     page: int = HISTORY_LIMIT, cursors: dict[str, str] | None = None) -> dict:
     """``subject`` is the signed-in approver: the page names them and marks
-    the decisions they made, even when the scope has other approvers."""
+    the decisions they made, even when the scope has other approvers. Each
+    list is one page after its cursor in ``cursors``; ``view["more"]`` holds
+    the cursor of the next page of each, or None."""
     c = await _component_for(composition, scope)
     context = c.context
     now = datetime.now(UTC) if now is None else now
-    fields = context.fields()
-    rows = await c.db.fetch_all(
-        "SELECT operation_id,handoff_id,requester,request,digest,approval_id,expires_at,initiator_subject,initiator_scope,"
-        "result IS NOT NULL AS committed,signed_result IS NOT NULL AS signed,refusal_code,committed_at,"
-        "(SELECT r.suppressed FROM {{tables.protected_signer_notice_reservations}} r "
-        "WHERE r.operation_id=o.operation_id) AS notice_suppressed "
-        "FROM {{tables.protected_signer_operations}} o "
-        "ORDER BY expires_at DESC"
-    )
-    pending, history, requests = [], [], {}
+    fields = json.dumps(context.fields())
+    lists, more = {}, {}
+    for name, query in LISTS.items():
+        expires, operation_id = _after((cursors or {}).get(name))
+        rows = await c.db.fetch_all(query, fields, now, expires, operation_id, page + 1)
+        lists[name], more[name] = rows[:page], (_cursor(rows[page - 1]) if len(rows) > page else None)
+    pending, unresolved, history = [], [], []
     approvers = await _approvers(c, scope)
-    for row in rows:
+    for row in [*lists["pending"], *lists["unresolved"], *lists["history"]]:
         request = _json(row["request"])
-        requests[row["operation_id"]] = request
-        if request.get("scope") != fields:
-            continue
         title, named = _rendered(request)
         # A request this signed-in approver started from the owner page is theirs.
         requested_by_you = row["initiator_subject"] == subject and row["initiator_scope"] == scope
@@ -98,9 +137,6 @@ async def owner_view(composition, *, scope: str, subject: str, now: datetime | N
             "requester": row["requester"], "digest": row["digest"],
             "asked_at": _asked_at(request), "title": title, "requester_name": named,
             "approval_id": row["approval_id"], "requested_by_you": requested_by_you}
-        if row["approval_id"] is None:
-            # Bounded unattended work (admissions) is listed under added agents.
-            continue
         if row["committed"]:
             history.append({**entry, "state": "committed", "at": _stamp(row["committed_at"])})
         elif row["refusal_code"] is not None:
@@ -109,7 +145,7 @@ async def owner_view(composition, *, scope: str, subject: str, now: datetime | N
             # Signed but not confirmed: it may already be applied, so it is
             # never "expired" and no longer waits for a decision (the
             # signer's own receipt says unknown, external_effect_unresolved).
-            history.append({**entry, "state": "unresolved", "handoff_id": row["handoff_id"], "at": None})
+            unresolved.append({**entry, "state": "unresolved", "handoff_id": row["handoff_id"], "at": None})
         elif row["expires_at"] <= now:
             history.append({**entry, "state": "expired", "at": _stamp(row["expires_at"])})
         else:
@@ -120,7 +156,9 @@ async def owner_view(composition, *, scope: str, subject: str, now: datetime | N
         "authority": {"kind": context.authority_kind, "id": context.authority_id, "domain": context.authority_domain,
             "human": context.human_id},
         "pending": pending,
-        "history": await _deciders(c, history[:HISTORY_LIMIT], subject),
+        "unresolved": await _deciders(c, unresolved, subject),
+        "history": await _deciders(c, history, subject),
+        "more": more,
         "admitted": [],
         "roots": [],
         "policy": None,
@@ -134,14 +172,14 @@ async def owner_view(composition, *, scope: str, subject: str, now: datetime | N
             "\n".join((context.service_id, context.authority_kind, context.authority_id, scope, subject)).encode()
         ).hexdigest()[:16],
     }
-    for item in [*pending, *view["history"]]:
+    for item in [*pending, *view["unresolved"], *view["history"]]:
         del item["approval_id"]
     for approver in approvers:
         del approver["subject"]
     if context.authority_kind == "team_controller":
-        await _admissions(c, view, requests, now)
+        await _admissions(c, view, now)
         await _members(c, view)
-        _name_requesters([*view["pending"], *view["history"]], view["members"])
+        _name_requesters([*view["pending"], *view["unresolved"], *view["history"]], view["members"])
     return view
 
 
@@ -159,7 +197,7 @@ def _name_requesters(entries, members):
         )
 
 
-async def _admissions(c, view, requests, now):
+async def _admissions(c, view, now):
     context = c.context
     row = await c.db.fetch_one(
         "SELECT policy FROM {{tables.protected_admission_policies}} WHERE service_id=$1", context.service_id
@@ -176,6 +214,9 @@ async def _admissions(c, view, requests, now):
         "WHERE service_id=$1 AND team_id=$2 ORDER BY admitted_at DESC",
         context.service_id, context.authority_id,
     )
+    requests = {row["operation_id"]: _json(row["request"]) for row in await c.db.fetch_all(
+        "SELECT operation_id,request FROM {{tables.protected_signer_operations}} WHERE operation_id = ANY($1::text[])",
+        [row["operation_id"] for row in admitted])}
     for row in admitted:
         subject = requests.get(row["operation_id"], {}).get("subject", {})
         view["admitted"].append({"root_id": row["root_id"], "alias": subject.get("member_alias"),
@@ -409,9 +450,9 @@ def owner_page_html(view: dict) -> str:
         else:
             parts.append("<p>This team has no admission policy on this signer.</p>")
     parts.append("<h2>History</h2>")
-    if view["history"]:
+    if view.get("unresolved") or view["history"]:
         parts.append('<ul class="owner-list">')
-        for item in view["history"]:
+        for item in [*view.get("unresolved", []), *view["history"]]:
             outcome = _OUTCOMES.get(item["state"]) or _REFUSALS.get(item.get("code"), "Not completed")
             if item.get("decided_by_you") and item["state"] not in ("expired", "unresolved"):
                 outcome += " by you"
