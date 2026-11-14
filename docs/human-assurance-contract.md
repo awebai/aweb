@@ -690,10 +690,10 @@ No adapter implements its own ceremony, request parser or receipt store.
 | Request | GET `/protected-admission-policies?team_id=T` | Nonsecret setup/status read for an authorized requester. |
 | Human | GET `/handoff/{handoff_id}` | Existing shared page in its stored governance or LOGIN mode. |
 | Human | GET `/handoff/{handoff_id}/governance` | Current authorized human reads the frozen operation/state. |
-| Human | POST `/handoff/{handoff_id}/governance/options` | B3 options for this exact act/current human. |
+| Human | POST `/handoff/{handoff_id}/governance/options` | B3 options for this exact act/current human; `{"state":"approved"}` when that human's own retained approval of it awaits only execute (below). |
 | Human | POST `/handoff/{handoff_id}/governance/execute` | Existing browser/CSRF protections, bound UV and current authority; execute once. |
 | Human | POST `/handoff/{handoff_id}/link` | Personal mailed link: reveals the frozen operation's display to that approver; decides nothing. |
-| Human | POST `/handoff/{handoff_id}/link/options` | B3 options for that approver, this exact act and one decision (approve or reject). |
+| Human | POST `/handoff/{handoff_id}/link/options` | B3 options for that approver, this exact act and one decision (approve or reject); for approve, `{"state":"approved"}` as on the governance route. |
 | Human | POST `/handoff/{handoff_id}/link/decide` | That approver's one fresh exact-act UV decides; approve then executes once. |
 
 The request origin accepts one of these mutually exclusive requester proofs:
@@ -863,6 +863,20 @@ mailed link reveals a request. Its requirements:
   purpose and records `refused(human_refused)`.
 * No standing session is created. The link never authenticates a console
   session, an owner page, another operation or another candidate.
+* An approval is not spent by a failure after it is recorded. When this
+  approver's own passkey approval of this exact act is decided and retained,
+  nothing is signed, and its original UV-at-effect window (the earliest of the
+  challenge's issue plus 300 seconds, the challenge's expiry and the
+  operation's) is still open, approve options answer `{"state":"approved"}`
+  instead of a challenge, and that approver's reveal still shows the act, so a
+  reopened page can finish it. The page then runs execute (or decide) once
+  more when the person presses Approve; it reuses the retained UV and does not
+  extend its window. The answer is advisory and grants nothing: execute
+  rechecks the session, credential, B2/B3, policy, authority and deadlines under
+  its locks. A reject never takes this path, another candidate never gets it,
+  and past the window, or once the credential is revoked, nothing finishes. A
+  `503` from execute or decide is "not completed yet", which the page offers to
+  try again; a lost answer stays unconfirmed.
 
 Inbox access therefore discloses the complete classified request to whoever
 holds the inbox or runs the page with its link; it never supplies the
