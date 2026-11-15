@@ -477,11 +477,16 @@ and, while enforcement is on, fails closed with 401 `team_key_unverified`.
 
 Enforcement is staged. `AWEB_ENFORCE_TEAM_KEY_PINS` (one name for the aweb
 server and every naapp, default off) turns refusal on. While it is off a
-mismatch is logged with `enforced=false`, the registry's key is served and the
-pin stays, so admitted teams whose pin already differs (a rotation from before
-acts were kept) can be counted and re-attested by their namespace controller
-first. **Until it is on, the registry-substitution gap this section closes
-stays open.**
+mismatch is logged with `enforced=false`, the registry's key is served, and
+the pin moves to it, logged as
+`team_key_pin_moved_without_act team=<id> from=<key> to=<key> reason=<reason>`
+with the time of the last accepted act kept. The key certificates are verified
+under is then the team's one current key on the server in both modes, so the
+member check (a member is accepted under the current key) agrees with
+certificate verification, and admitted teams whose key differs (a rotation
+from before acts were kept) can be counted and re-attested by their namespace
+controller before enforcement. **Until it is on, the registry-substitution gap
+this section closes stays open.**
 
 Named residuals:
 
@@ -491,9 +496,18 @@ Named residuals:
   act does not sign the key, so first admission has no act to check.
 - **Delegated child namespaces** whose controller is a distinct key authorized
   by the parent, with no `_awid` record of their own, cannot present an act DNS
-  verifies: the inherited record names the parent's key. Their servers refuse
-  a rotated key until the server operator re-pins it. Hosted children that
-  reuse the parent key are unaffected.
+  verifies: the inherited record names the parent's key. Under enforcement
+  their servers refuse a rotated key until the server operator re-pins it.
+  Hosted children are such namespaces: each has its own controller key, and
+  the parent's key signs only for the base domain. Before enforcement serves
+  hosted teams, an inherited authority must accept the child's controller
+  through the parent-signed delegation, or hosted team keys are rotated and
+  re-pinned first.
+- **A pin set at first sight has no act time.** An act is required to be newer
+  than the act behind the pin only when there is one, so before enforcement
+  is turned on, a genuine but older act (a historical rotation, or one for a
+  deleted team of the same name) could move such a pin. The admission time is
+  to serve as the floor.
 - **The `local` namespace** has no DNS, so a pinned local team cannot rotate
   without the server operator re-pinning it.
 - **Hosted teams.** Pinning separates the registry from the namespace

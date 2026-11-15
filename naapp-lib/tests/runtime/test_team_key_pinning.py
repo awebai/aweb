@@ -141,7 +141,7 @@ async def test_rotation_by_a_controller_dns_does_not_name_is_refused(registry, t
     assert pinned == member.team_did_key
 
 
-async def test_before_enforcement_a_mismatch_is_logged_and_the_pin_kept(registry, team_cache, pins_db, caplog):
+async def test_before_enforcement_a_mismatch_is_logged_and_moves_the_pin(registry, team_cache, pins_db, caplog):
     member = await _admitted(registry, team_cache)
     substituted = Member(team_id=TEAM_ID, alias="measured", certificate_id="measured-1")
     await registry.rotate_team_key(TEAM_ID, substituted.team_did_key)
@@ -153,9 +153,11 @@ async def test_before_enforcement_a_mismatch_is_logged_and_the_pin_kept(registry
 
     assert response.status_code == 200, response.text
     pinned = await pins_db.fetch_value("SELECT team_did_key FROM {{tables.team_key_pins}} WHERE team_id = $1", TEAM_ID)
-    assert pinned == member.team_did_key
-    mismatches = {r.getMessage() for r in caplog.records if r.getMessage().startswith("team_key_pin_mismatch")}
-    assert mismatches == {
+    # The key certificates were verified under is the team's one current key here.
+    assert pinned == substituted.team_did_key
+    lines = [r.getMessage() for r in caplog.records if r.getMessage().startswith("team_key_pin_")]
+    assert lines == [
         f"team_key_pin_mismatch team={TEAM_ID} pinned={member.team_did_key} "
         f"served={substituted.team_did_key} reason=no_act enforced=false",
-    }
+        f"team_key_pin_moved_without_act team={TEAM_ID} from={member.team_did_key} to={substituted.team_did_key} reason=no_act",
+    ]
