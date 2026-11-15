@@ -2,7 +2,6 @@
 
 ## 2026-11-14
 * **Harvest**: OKF proposal from aweb-expert/aweb-expert-owner-acts (task aweb-adbb).
-* **Creation**: decision [a new member on the signer's answers breaks every released aw](/aweb-expert/decisions/signer-answers-are-exact-member-wire.md).
 * **Creation**: lesson [Compose checks every service's env_file when any service starts](/aweb-expert/lessons/compose-checks-every-env-file.md).
 
 ## 2026-11-04
