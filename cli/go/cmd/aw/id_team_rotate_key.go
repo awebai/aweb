@@ -27,8 +27,17 @@ import (
 // exactly once.
 //
 // The new key is stored as pending before AWID sees it and promoted once AWID
-// holds it, so an interruption never loses a key AWID may already have. Member
-// certificates are signed by the team key and are not re-issued here.
+// holds it, so an interruption never loses a key AWID may already have.
+//
+// Member certificates are signed by the team key, so a server refuses every
+// member until it holds a certificate under the new key. The same request
+// therefore carries, for every active member, a fresh certificate under the
+// new key for the same member, alias and identity scope, and the member's
+// custody and person records for it; AWID revokes the old certificate and
+// registers and records the new one in the rotation's transaction. Members'
+// clients fetch the certificate now recorded for them when a server refuses
+// the old one. A registry without this refuses the request, and the key is
+// not changed.
 
 type teamRotateKeyOptions struct {
 	Domain      string
@@ -56,6 +65,7 @@ type teamRotateKeyOutput struct {
 	ResignedCustody    int      `json:"resigned_member_custody"`
 	ResignedPerson     int      `json:"resigned_member_person"`
 	LearnedCustodians  []string `json:"learned_custodians,omitempty"`
+	ReissuedMembers    int      `json:"reissued_members"`
 	Notice             string   `json:"notice"`
 }
 
@@ -71,9 +81,11 @@ var (
 			"controller key. Every record the team key has signed at AWID (the team-server record,\n" +
 			"custodian, member-custody and member-person records) is verified, re-signed by the\n" +
 			"new key and swapped with the key in one atomic request.\n\n" +
-			"Every member certificate is signed by the team key, so after a rotation all of them are\n" +
-			"invalid: re-issue each with `aw id team reissue-cert`. If the command is interrupted,\n" +
-			"run it again: it resumes with the same new key.",
+			"Every member certificate is signed by the team key, so the same request gives each active\n" +
+			"member a fresh certificate under the new key, with the member's custody and person records:\n" +
+			"AWID revokes the old certificate and registers the new one with the key. Members' clients\n" +
+			"fetch their new certificate when a server refuses the old one. If the command is\n" +
+			"interrupted, run it again: it resumes with the same new key.",
 		RunE: runTeamRotateKey,
 	}
 )
@@ -109,6 +121,7 @@ func formatTeamRotateKey(v any) string {
 		fmt.Fprintf(&b, "Rotated the team key of %s.\n", out.TeamID)
 		fmt.Fprintf(&b, "Re-signed: team server record %t, %d custodian, %d member-custody, %d member-person record(s).\n",
 			out.ResignedTeamServer, out.ResignedCustodians, out.ResignedCustody, out.ResignedPerson)
+		fmt.Fprintf(&b, "Issued a new certificate under the new key for %d member(s).\n", out.ReissuedMembers)
 	}
 	if len(out.LearnedCustodians) > 0 {
 		fmt.Fprintf(&b, "AWID named custodian records aw could not discover itself: %s.\n", strings.Join(out.LearnedCustodians, ", "))
@@ -119,9 +132,9 @@ func formatTeamRotateKey(v any) string {
 }
 
 func teamRotateKeyNotice(domain, team string) string {
-	return fmt.Sprintf("Every member certificate of %s was signed by the old team key and is no longer valid. "+
-		"Re-issue each member's certificate with `aw id team reissue-cert <alias> --team %s --namespace %s`.",
-		awid.BuildTeamID(domain, team), team, domain)
+	return fmt.Sprintf("Every active member of %s now has a certificate under the new team key; members' clients "+
+		"fetch it when a server refuses their old one. A member whose client cannot fetch it installs the "+
+		"certificate with `aw id team install-cert`.", awid.BuildTeamID(domain, team))
 }
 
 func didOf(key ed25519.PrivateKey) string {
@@ -140,6 +153,7 @@ type teamRotation struct {
 	now         time.Time
 	pageSize    int
 	resigned    awid.ResignedRecords
+	members     []awid.MemberCertificateChange
 }
 
 func (r *teamRotation) verifyStored(kind string, stored *awid.SignedAttestationRecord, keyField, key string) error {
@@ -216,6 +230,64 @@ func (r *teamRotation) collect(ctx context.Context, currentKey ed25519.PrivateKe
 	return nil
 }
 
+// collectMembers gives every active member certificate a replacement under
+// the new key, for the same member, alias and identity scope, with the
+// member's custody and person records (already re-signed by collect) restated
+// for the new certificate.
+func (r *teamRotation) collectMembers(ctx context.Context, currentKey ed25519.PrivateKey) error {
+	certificates, err := r.registry.ListCertificates(ctx, r.registryURL, r.domain, r.team, true, currentKey)
+	if err != nil {
+		return fmt.Errorf("list the member certificates of %s: %w", r.teamID, err)
+	}
+	for _, old := range certificates {
+		fresh, err := awid.SignTeamCertificate(r.newKey, awid.TeamCertificateFields{
+			Team:          r.teamID,
+			MemberDIDKey:  old.MemberDIDKey,
+			MemberDIDAW:   old.MemberDIDAW,
+			MemberAddress: old.MemberAddress,
+			Alias:         old.Alias,
+			IdentityScope: awid.NormalizeIdentityScope(old.IdentityScope),
+		})
+		if err != nil {
+			return fmt.Errorf("sign %s's certificate under the new key: %w", old.Alias, err)
+		}
+		encoded, err := awid.EncodeTeamCertificateHeader(fresh)
+		if err != nil {
+			return fmt.Errorf("encode %s's certificate: %w", old.Alias, err)
+		}
+		change := awid.MemberCertificateChange{OldCertificateID: old.CertificateID, Certificate: encoded}
+		if change.Custody, err = r.restated(r.resigned.MemberCustody, old.CertificateID, fresh.CertificateID); err != nil {
+			return err
+		}
+		if change.Person, err = r.restated(r.resigned.MemberPerson, old.CertificateID, fresh.CertificateID); err != nil {
+			return err
+		}
+		r.members = append(r.members, change)
+	}
+	return nil
+}
+
+// restated is the record in records for certificate oldID, signed by the new
+// key for certificate newID, or nil when there is none.
+func (r *teamRotation) restated(records []awid.SignedAttestationRecord, oldID, newID string) (*awid.SignedAttestationRecord, error) {
+	for _, record := range records {
+		if record.Record["certificate_id"] != oldID {
+			continue
+		}
+		fields := make(map[string]any, len(record.Record))
+		for key, value := range record.Record {
+			fields[key] = value
+		}
+		fields["certificate_id"] = newID
+		restated, err := awid.ResignAttestationRecord(r.newKey, fields, r.now)
+		if err != nil {
+			return nil, err
+		}
+		return &restated, nil
+	}
+	return nil, nil
+}
+
 // onlyMissingCustodians is the one 409 a retry can fix: AWID names custodian
 // records aw could not discover, and nothing else is wrong.
 func onlyMissingCustodians(detail *awid.ResignedRecordsIncomplete) bool {
@@ -225,6 +297,9 @@ func onlyMissingCustodians(detail *awid.ResignedRecordsIncomplete) bool {
 }
 
 func rotateRefusal(teamID string, err error) error {
+	if awid.MemberCertificatesUnsupported(err) {
+		return fmt.Errorf("AWID refused the rotation of %s: this registry cannot change a team key together with its members' certificates; the team key is unchanged: %w", teamID, err)
+	}
 	if code, ok := registryStatusCode(err); ok && code == http.StatusRequestEntityTooLarge {
 		return fmt.Errorf("AWID refused the rotation of %s: the re-signed records exceed its rotate body limit (AWID_ROTATE_MAX_BODY_BYTES, at least 4 MiB); the team key is unchanged: %w", teamID, err)
 	}
@@ -313,11 +388,14 @@ func executeTeamRotateKey(ctx context.Context, opts teamRotateKeyOptions) (teamR
 	if err := rotation.collect(ctx, currentKey); err != nil {
 		return teamRotateKeyOutput{}, err
 	}
+	if err := rotation.collectMembers(ctx, currentKey); err != nil {
+		return teamRotateKeyOutput{}, err
+	}
 	if opts.AfterRead != nil {
 		opts.AfterRead()
 	}
 	newDID := didOf(newKey)
-	_, err = registry.RotateTeamKey(ctx, registryURL, domain, teamName, newDID, &rotation.resigned, controllerKey)
+	_, err = registry.RotateTeamKey(ctx, registryURL, domain, teamName, newDID, &rotation.resigned, rotation.members, controllerKey)
 	if detail, ok := awid.ResignedRecordsIncompleteDetail(err); ok && onlyMissingCustodians(detail) {
 		learned := append([]string{}, detail.Missing.TeamCustodians...)
 		sort.Strings(learned)
@@ -330,7 +408,7 @@ func executeTeamRotateKey(ctx context.Context, opts teamRotateKeyOptions) (teamR
 			}
 		}
 		out.LearnedCustodians = learned
-		_, err = registry.RotateTeamKey(ctx, registryURL, domain, teamName, newDID, &rotation.resigned, controllerKey)
+		_, err = registry.RotateTeamKey(ctx, registryURL, domain, teamName, newDID, &rotation.resigned, rotation.members, controllerKey)
 	}
 	if err != nil {
 		return teamRotateKeyOutput{}, rotateRefusal(teamID, err)
@@ -344,5 +422,6 @@ func executeTeamRotateKey(ctx context.Context, opts teamRotateKeyOptions) (teamR
 	out.ResignedCustodians = len(rotation.resigned.TeamCustodians)
 	out.ResignedCustody = len(rotation.resigned.MemberCustody)
 	out.ResignedPerson = len(rotation.resigned.MemberPerson)
+	out.ReissuedMembers = len(rotation.members)
 	return out, nil
 }

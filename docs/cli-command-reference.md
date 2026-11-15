@@ -1591,9 +1591,11 @@ controller key. Every record the team key has signed at AWID (the team-server re
 custodian, member-custody and member-person records) is verified, re-signed by the
 new key and swapped with the key in one atomic request.
 
-Every member certificate is signed by the team key, so after a rotation all of them are
-invalid: re-issue each with `aw id team reissue-cert`. If the command is interrupted,
-run it again: it resumes with the same new key.
+Every member certificate is signed by the team key, so the same request gives each active
+member a fresh certificate under the new key, with the member's custody and person records:
+AWID revokes the old certificate and registers the new one with the key. Members' clients
+fetch their new certificate when a server refuses the old one. If the command is
+interrupted, run it again: it resumes with the same new key.
 
 Flags:
 - `-h, --help help for rotate-key`
