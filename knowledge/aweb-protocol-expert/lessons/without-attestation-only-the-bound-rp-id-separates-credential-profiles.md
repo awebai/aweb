@@ -21,6 +21,12 @@ looks like a browser registration.
 A design that "keeps native credentials out of the browser profile" through
 registration provenance believes in a check it does not have.
 
+This holds wherever no attestation is checked, as in the naapp B3 verifier.
+The human approval service in the approval and key custody architecture
+(aweb-adcl) checks hardware attestation against a pinned, dated list of
+certified models, so there a key's grade is evidence about the authenticator,
+not the client's claim. The rp_id rule below still separates profiles in B3.
+
 # What does
 
 - **The authenticator's rpIdHash.** The authenticator computes the rpIdHash

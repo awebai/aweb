@@ -14,6 +14,13 @@ read the record.
 branch and not on aweb main at 06e61e395. The other open questions of that
 design are not covered by this ruling and are not recorded here.
 
+**Scope.** This covers the naapp human-origin ceremonies `aw` starts (human
+confirmation from `aw`). In the approval and key custody architecture
+(aweb-adcl), approvals of identity, key and governance acts happen at the
+separate human approval service, which the person opens themselves and which
+grades keys by hardware attestation; that service's key profiles are its own
+design, not this decision.
+
 # Decision
 
 - **The default gesture is a browser passkey.** When `aw` starts a protected
