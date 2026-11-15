@@ -149,7 +149,7 @@ async def test_external_rotation_recovers_on_first_request_and_updates_cache(wor
     assert (await _verify(env))["verified_team_did_key"] == env.new_did
     assert env.key_reads == 1
     assert await env.registry.get_team_public_key("acme.com", "backend") == env.new_did
-    assert await _refused(env, signer="old") == "bad_signature"
+    assert (await _refused(env, signer="old"))["code"] == "team_key_not_current"
     assert env.key_reads == 1
 
 
@@ -189,9 +189,9 @@ async def test_bad_certificate_flood_is_coalesced_including_slow_attempt(world):
 async def test_cooldown_is_shared_by_clients_and_independent_per_team(world):
     env = world
     other_client = env.client()
-    assert await _refused(env) == "bad_signature"
+    assert (await _refused(env))["code"] == "team_key_not_current"
     assert env.key_reads == 1
-    assert await _refused(env, registry=other_client) == "bad_signature"
+    assert (await _refused(env, registry=other_client))["code"] == "team_key_not_current"
     assert env.key_reads == 1
     await _refused(env, name="other", registry=other_client)
     assert env.key_reads == 2
@@ -232,7 +232,7 @@ async def test_unchanged_or_failed_refresh_keeps_401_and_original_fact_age(world
     before = env.redis.values[cache_key]
     env.clock[0] += 2
     env.status = status
-    assert await _refused(env) == "bad_signature"
+    assert (await _refused(env))["code"] == "team_key_not_current"
     assert env.key_reads == 1
     assert env.redis.values[cache_key] == before
     await _refused(env)
@@ -258,7 +258,11 @@ async def test_redis_admission_failure_never_falls_back_to_an_unbounded_read(wor
 @pytest.mark.asyncio
 async def test_bad_signature_under_refreshed_key_never_drives_revocation_read(world):
     world.keys["backend"] = world.new_did
-    await _refused(world, cert_patch={"signature": sign_message(world.member, b"wrong certificate")})
+    # A certificate naming the current key whose signature fails is not a
+    # superseded certificate: it keeps the plain signature refusal.
+    assert await _refused(
+        world, cert_patch={"signature": sign_message(world.member, b"wrong certificate")},
+    ) == "bad_signature"
     assert world.key_reads == 1
     assert world.revocation_reads == 0
 

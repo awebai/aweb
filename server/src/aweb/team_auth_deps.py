@@ -109,7 +109,7 @@ async def resolve_team_identity(
     if not (isinstance(row, dict) and row.get("team_id") == team_id and row.get("did_key") == did_key):
         row = await db.fetch_one(
             """
-            SELECT agent_id, certificate_id, did_aw, address FROM {{tables.agents}}
+            SELECT agent_id, certificate_id, accepted_team_did_key, did_aw, address FROM {{tables.agents}}
             WHERE team_id = $1 AND did_key = $2 AND deleted_at IS NULL
             """,
             team_id,
@@ -145,12 +145,19 @@ async def resolve_team_identity(
     # revocations, so a row still naming a replaced certificate would either
     # miss a revocation or strip a live member. The certificate presented here
     # was verified against the registry (signature and revocation) above.
+    # The team key it was verified under is recorded with it
+    # (aweb.member_team_key): a certificate under a new key may keep its id.
     presented_certificate_id = (cert_info.get("certificate_id") or "").strip()
-    if presented_certificate_id and presented_certificate_id != (row.get("certificate_id") or "").strip():
+    verified_team_did_key = (cert_info.get("verified_team_did_key") or "").strip()
+    if presented_certificate_id and (
+        presented_certificate_id != (row.get("certificate_id") or "").strip()
+        or verified_team_did_key != (row.get("accepted_team_did_key") or "").strip()
+    ):
         await db.execute(
-            "UPDATE {{tables.agents}} SET certificate_id = $2 WHERE agent_id = $1",
+            "UPDATE {{tables.agents}} SET certificate_id = $2, accepted_team_did_key = $3 WHERE agent_id = $1",
             row["agent_id"],
             presented_certificate_id,
+            verified_team_did_key or None,
         )
 
     return TeamIdentity(
@@ -318,6 +325,13 @@ async def verify_request_certificate(request: Request, db, *, fresh: bool = Fals
             team_did_key = refreshed_key
             cert_info = await check_with_registration(team_did_key, refresh_revocations=True)
     except TeamCertificateError as e:
+        if e.reason == "bad_signature" and str(cert_data.get("team_did_key") or "").strip() != team_did_key:
+            # A certificate under a key the team no longer holds: the member
+            # fetches the certificate now recorded for it and continues.
+            raise HTTPException(
+                status_code=401,
+                detail={"code": "team_key_not_current", "message": "The team certificate is under a superseded team key"},
+            ) from None
         if e.reason == "unregistered":
             logger.warning(
                 "certificate existence check failed: a certificate presented for team %s "

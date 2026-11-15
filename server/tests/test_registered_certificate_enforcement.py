@@ -267,6 +267,9 @@ _ROW = {
     "address": "acme.com/alice",
     "identity_scope": "global",
     "certificate_id": "cert-9",
+    # Accepted under the team's current key, as lookup_identity_agent_context reads it.
+    "accepted_team_did_key": "did:key:zTeam",
+    "current_team_did_key": "did:key:zTeam",
 }
 
 

@@ -6,6 +6,7 @@ from awid.team_ids import parse_team_id
 from fastapi import HTTPException, Request
 from pydantic import BaseModel
 
+from aweb.member_team_key import member_key_columns_sql, member_key_current
 from aweb.team_auth_deps import _get_revoked_certificates
 
 
@@ -33,8 +34,9 @@ async def sender_memberships(
     if not ids:
         return result
     members = member_rows if member_rows is not None else await db.get_manager("aweb").fetch_all(
-        "SELECT agent_id, team_id, CASE WHEN did_aw_verified_key = did_key THEN did_aw END AS did_aw, status, deleted_at, certificate_id "
-        "FROM {{tables.agents}} WHERE agent_id = ANY($1::uuid[])", ids,
+        "SELECT a.agent_id, a.team_id, CASE WHEN a.did_aw_verified_key = a.did_key THEN a.did_aw END AS did_aw, "
+        "a.status, a.deleted_at, a.certificate_id, " + member_key_columns_sql("a") + " "
+        "FROM {{tables.agents}} AS a WHERE a.agent_id = ANY($1::uuid[])", ids,
     )
     revocations = {}
     for member in members:
@@ -43,7 +45,7 @@ async def sender_memberships(
             continue
         projection = result[key]
         projection.member_did_aw = str(member.get("did_aw") or "").strip() or None
-        if member["status"] != "active" or member.get("deleted_at") is not None:
+        if member["status"] != "active" or member.get("deleted_at") is not None or not member_key_current(member):
             projection.state = "inactive"
             continue
         certificate_id = str(member.get("certificate_id") or "").strip()

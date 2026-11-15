@@ -12,6 +12,7 @@ from fastapi import HTTPException
 from aweb.id_chain_auth import authenticate_id_chain
 from aweb.identity_binding import verify_identity_binding
 from aweb.identity_auth_deps import _enforce_current_membership
+from aweb.member_team_key import member_key_columns_sql
 from aweb.agent_wake import agent_wake_scope
 from aweb.mcp.auth import current_agent_wake_publisher, get_auth
 from aweb.mcp.signing import sign_hosted_message
@@ -39,8 +40,10 @@ async def _room_actor(db):
         raise HTTPException(403, "Room requires authenticated team context")
     row = await db.get_manager("aweb").fetch_one(
         """
-        SELECT agent_id,team_id,did_key,certificate_id,status,deleted_at FROM {{tables.agents}}
-        WHERE agent_id=$1 AND team_id=$2 AND did_key=$3
+        SELECT a.agent_id,a.team_id,a.did_key,a.certificate_id,a.status,a.deleted_at,"""
+        + member_key_columns_sql("a")
+        + """ FROM {{tables.agents}} AS a
+        WHERE a.agent_id=$1 AND a.team_id=$2 AND a.did_key=$3
     """,
         UUID(auth.agent_id),
         auth.team_id,

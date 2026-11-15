@@ -32,6 +32,7 @@ from aweb.messaging.verification import (
 )
 from aweb.service_errors import RESOURCE_NOT_FOUND_DETAIL
 
+from aweb.member_team_key import current_team_key_sql
 from aweb.messaging.sender_membership import SenderMembership, sender_memberships
 
 router = APIRouter(prefix="/v1/messages", tags=["aweb-mail"])
@@ -538,7 +539,9 @@ async def get_inbox(
                sender.agent_id AS sender_agent_id, sender.team_id AS sender_team_id,
                CASE WHEN sender.did_aw_verified_key = sender.did_key THEN sender.did_aw END AS sender_did_aw,
                sender.status AS sender_status, sender.deleted_at AS sender_deleted_at,
-               sender.certificate_id AS sender_certificate_id
+               sender.certificate_id AS sender_certificate_id,
+               sender.accepted_team_did_key AS sender_accepted_team_did_key,
+               {current_team_key_sql("sender")} AS sender_current_team_did_key
         FROM {{{{tables.messages}}}} m
         LEFT JOIN {{{{tables.agents}}}} sender ON sender.agent_id = m.from_agent_id
         {where_clause}
@@ -549,7 +552,10 @@ async def get_inbox(
         query_limit,
     )
     # The senders' agent rows, read with the page for their membership state.
-    sender_columns = ("agent_id", "team_id", "did_aw", "status", "deleted_at", "certificate_id")
+    sender_columns = (
+        "agent_id", "team_id", "did_aw", "status", "deleted_at", "certificate_id",
+        "accepted_team_did_key", "current_team_did_key",
+    )
     sender_member_rows = list({
         str(row["sender_agent_id"]): {column: row[f"sender_{column}"] for column in sender_columns}
         for row in rows

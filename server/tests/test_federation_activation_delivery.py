@@ -1071,3 +1071,35 @@ async def test_global_recipient_without_stable_did_uses_own_federation_policy(aw
     async with manager.transaction() as tx:
         current = await _lock_current_recipient(tx, envelope=keyed, recipient=recipient)
         await _authorize_policy(tx, envelope=keyed, recipient=current, stored_route_continuation=False)
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("accepted_under,delivered", [("current", True), ("superseded", False)])
+async def test_phase_b_same_team_delivery_needs_the_sender_under_the_current_key(aweb_cloud_db, accepted_under, delivered):
+    manager = aweb_cloud_db.aweb_db
+    envelope = _envelope()
+    recipient, token = await _seed_recipient_and_authority(manager, envelope)
+    await manager.execute(
+        "UPDATE {{tables.agents}} SET inbound_mode='team_and_contacts' WHERE agent_id=$1", recipient["agent_id"],
+    )
+    current_key = await manager.fetch_value(
+        "SELECT team_did_key FROM {{tables.teams}} WHERE team_id='backend:beta.example'",
+    )
+    await manager.execute("""
+        INSERT INTO {{tables.agents}} (team_id, alias, did_key, did_aw, address, identity_scope, inbound_mode,
+                                       did_aw_verified_key, certificate_id, accepted_team_did_key)
+        VALUES ('backend:beta.example', 'alice', $1, $2, $3, 'global', 'open', $1, 'alice-certificate', $4)
+    """, envelope.sender_current_did_key, envelope.sender_did_aw, envelope.sender_address,
+        current_key if accepted_under == "current" else "did:key:z6MkhaXgBZDvotDkL5257faiztiGiC2QtKLGpbnnEGta2doK")
+
+    if delivered:
+        accepted = await deliver_federated_phase_b(
+            _DB(manager), envelope=envelope, signature="signed-message", recipient=recipient, authority_token=token,
+        )
+        assert accepted["message_id"] == envelope.message_id
+    else:
+        with pytest.raises(FederationAuthorityError) as refused:
+            await deliver_federated_phase_b(
+                _DB(manager), envelope=envelope, signature="signed-message", recipient=recipient, authority_token=token,
+            )
+        assert refused.value.reason == "recipient_policy_rejected"
