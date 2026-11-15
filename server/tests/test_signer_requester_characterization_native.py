@@ -150,3 +150,22 @@ async def test_self_certificate_proof_cannot_be_replaced_or_mixed_with_root_proo
     assert (mixed.status_code, mixed.json()) == (401, {"detail": "requester_invalid"})
     accepted = await self_call(a, key, certificate, operation)
     assert accepted.status_code == 200, accepted.text
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("row,status", [("admit", 200), ("endorse", 200), ("remove", 401), ("owner_remove", 401), ("owner_act", 200)])
+async def test_each_served_row_preserves_its_extra_certificate_header_outcome(
+    admissions, tmp_path, test_db_factory, row, status
+):
+    a = admissions
+    async with operation_case(a, row, tmp_path, test_db_factory) as operation:
+        body = canonical_json_bytes(operation.intent())
+        proof = headers(a, body=body, context=operation.context)
+        proof["X-AWID-Team-Certificate"] = "not-a-certificate"
+        response = await a.client.post("/protected-operations", content=body, headers=proof)
+        assert response.status_code == status, response.text
+        if status == 401:
+            assert response.json() == {"detail": "requester_invalid"}
+            assert await a.w.app.signer.lookup_context(operation.operation_id) is None
+        else:
+            assert response.json()["payload"]["request"]["requester"] == a.w.root_id

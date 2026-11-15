@@ -11,6 +11,8 @@ from aweb_naapp.hooks.owner_act import owner_act_signing_bytes
 
 from .execution_intent import ArtifactIssuance
 from .identity_artifacts import (
+    ADMIT_FIELDS,
+    ROOT_FIELDS,
     admission_artifact,
     admission_signing_bytes,
     root_artifact,
@@ -19,6 +21,7 @@ from .identity_artifacts import (
     validate_root_subject,
 )
 from .removal import (
+    REMOVE_FIELDS,
     removal_artifact,
     removal_signing_bytes,
     validate_owner_removal_subject,
@@ -38,6 +41,7 @@ class OperationCodec:
     go_verifier: str = ""
     presentation: dict | None = None
     issuance: ArtifactIssuance | None = None
+    subject_fields: frozenset[str] = frozenset()
 
 
 def _stamp(now):
@@ -117,9 +121,9 @@ ROOT_CODEC = OperationCodec(validate_root_subject, _root, root_signing_bytes, "i
     "nullable_patterns": {"/expected_head": "sha256:[0-9a-f]{64}"},
     "statement": "/responsibility_statement",
     "admission_policy": ["/admission_policy", "/scope/service_id", "/subject/teams"],
-}, issuance=ArtifactIssuance((("issued_at",),), fixed_route="/v1/id-certificates/register"))
-ADMISSION_CODEC = OperationCodec(validate_admission_subject, _admission, admission_signing_bytes, "team_did_key", decode_intent=catalog_intent, go_verifier="admissionArtifactDiffers")
-REMOVAL_CODEC = OperationCodec(validate_removal_subject, _removal, removal_signing_bytes, "controller_did", decode_intent=catalog_intent, go_verifier="removalArtifactDiffers")
+}, issuance=ArtifactIssuance((("issued_at",),), fixed_route="/v1/id-certificates/register"), subject_fields=frozenset(ROOT_FIELDS))
+ADMISSION_CODEC = OperationCodec(validate_admission_subject, _admission, admission_signing_bytes, "team_did_key", decode_intent=catalog_intent, go_verifier="admissionArtifactDiffers", subject_fields=frozenset(ADMIT_FIELDS))
+REMOVAL_CODEC = OperationCodec(validate_removal_subject, _removal, removal_signing_bytes, "controller_did", decode_intent=catalog_intent, go_verifier="removalArtifactDiffers", subject_fields=frozenset(REMOVE_FIELDS))
 OWNER_REMOVAL_CODEC = OperationCodec(validate_owner_removal_subject, _removal, removal_signing_bytes, "controller_did", {
     "fields": {
         "team_id": {"pattern": r"[^\s:]+:[^\s:]+"},
@@ -145,7 +149,7 @@ OWNER_REMOVAL_CODEC = OperationCodec(validate_owner_removal_subject, _removal, r
         "/artifact/request/path": "/v1/namespaces/{/artifact/request/domain}/teams/{/artifact/request/team_name}/certificates/revoke"},
     "json_sha256": {"/artifact/request/body_sha256": {"certificate_id": "/subject/certificate_id"}},
     "nonempty": ["/artifact/controller_did", "/requester_key"], "timestamps": ["/artifact/request/timestamp"],
-}, issuance=ArtifactIssuance((("request", "timestamp"),), route_field=("request", "path")))
+}, issuance=ArtifactIssuance((("request", "timestamp"),), route_field=("request", "path")), subject_fields=frozenset(REMOVE_FIELDS - {"root_id_or_self"}))
 REVOKE_CODEC = OperationCodec(_revoke_subject, _owner_artifact, _owner_signing, "team_key_did", {
     "fields": {field: {"pattern": r"[\s\S]+"} for field in sorted(_REVOKE_FIELDS)},
     "required": sorted(_REVOKE_FIELDS),
@@ -156,4 +160,4 @@ REVOKE_CODEC = OperationCodec(_revoke_subject, _owner_artifact, _owner_signing, 
     "equals": [["/artifact/act", "/operation"], ["/artifact/team_id", "/scope/authority/id"],
         ["/artifact/aud", "/audience"], ["/artifact/subject", "/subject"]],
 }, issuance=ArtifactIssuance((("issued_at",),), fixed_route="/.well-known/aweb-owner-act",
-    expiry_field=("expires_at",), lifetime_seconds=600))
+    expiry_field=("expires_at",), lifetime_seconds=600), subject_fields=frozenset(_REVOKE_FIELDS))

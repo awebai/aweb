@@ -7,7 +7,7 @@ The cross-contract test pins every row to the public frozen catalog.
 """
 
 from copy import deepcopy
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from datetime import datetime, timedelta
 from types import MappingProxyType
 from typing import Literal
@@ -71,6 +71,16 @@ class OperationDefinition:
     finalize_execution_refusal: bool = False
     receipt_uv_expiry: bool = False
     request_window: tuple[tuple[str, ...], int] | None = None
+    requester_subject_field: str | None = field(init=False, default=None)
+
+    def __post_init__(self):
+        if self.requester.principal_bound_to == "subject_root":
+            fields = self.codec.subject_fields & {"root_id", "root_id_or_self"}
+            if len(fields) != 1:
+                raise ValueError("requester subject must declare exactly one root field")
+            object.__setattr__(self, "requester_subject_field", next(iter(fields)))
+        if self.supports_self_removal and self.requester_subject_field != "root_id_or_self":
+            raise ValueError("requester subject for own-certificate proof must declare root_id_or_self")
 
     @property
     def owner_initiable(self) -> bool:

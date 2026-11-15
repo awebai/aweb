@@ -573,7 +573,7 @@ class ProtectedSigner:
         if rule.principal_bound_to == "nothing" or (rule.bound_in == "prepare_only" and purpose != "prepare"):
             return
         subject = operation.intent()["subject"]
-        root = subject.get("root_id", subject.get("root_id_or_self"))
+        root = subject[operation.spec.requester_subject_field]
         if root == "self" and operation.spec.supports_self_removal:
             if _checked_self_removal(actor, operation=operation) is not None:
                 return

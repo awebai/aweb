@@ -133,6 +133,7 @@ def owner_fixture_view():
             {"alias": "bea", "kind": "human", "joined": "unrecorded", "member_did_aw": "did:aw:BEA",
                 "member_did_key": "did:key:zB", "certificate_id": "cert-4"}],
         "owner_initiable": True,
+        "member_removal": {"operation": "team.agent.remove", "variant": "owner_approved"},
         "storage_scope": "s-0123abcd",
     }
 

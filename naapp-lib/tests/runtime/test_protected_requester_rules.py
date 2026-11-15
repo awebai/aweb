@@ -1,4 +1,4 @@
-"""Draft requester rule tests; copied into the source before implementation."""
+"""Closed requester rules and their validated subject/phase bindings."""
 from dataclasses import fields, replace
 
 import pytest
@@ -56,3 +56,30 @@ def test_subject_binding_uses_the_rows_phase_rule(name, purpose):
         # The human who approves a root is not the root; prepare-only binding
         # must not be silently applied again to its approval or retained read.
         ProtectedSigner._check_requester_subject(selected, other, purpose=purpose)
+
+
+@pytest.mark.parametrize("fields", [frozenset(), frozenset({"deployment_root"}), frozenset({"root_id", "root_id_or_self"})])
+def test_subject_binding_field_is_refused_when_the_catalog_is_built(fields):
+    row = operation_spec("team.agent.admit")
+    with pytest.raises(ValueError, match="requester subject"):
+        replace(row, codec=replace(row.codec, subject_fields=fields))
+
+
+def test_own_certificate_proof_requires_the_self_subject_field_at_catalog_build():
+    row = operation_spec("team.agent.remove")
+    with pytest.raises(ValueError, match="requester subject"):
+        replace(row, codec=replace(row.codec, subject_fields=frozenset({"root_id"})))
+
+
+def test_current_rows_declare_the_same_subject_fields_as_their_existing_schema():
+    expected = {
+        ("team.agent.admit", "default"): "root_id",
+        ("identity.root.endorse", "default"): "root_id",
+        ("team.agent.remove", "default"): "root_id_or_self",
+        ("team.agent.remove", "owner_approved"): None,
+        ("human-role.revoke", "default"): None,
+    }
+    for selector, row in OPERATIONS.items():
+        assert row.requester_subject_field == expected[selector]
+        if row.codec.subject_schema is not None:
+            assert row.codec.subject_fields == frozenset(row.codec.subject_schema["required"])

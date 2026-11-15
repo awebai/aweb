@@ -163,6 +163,10 @@ class IndependentProtectedSigner:
             definitions=tuple(row for row in OPERATIONS.values() if row.key_role == context.authority_kind),
         )
 
+        from .member_actions import member_removal_definition
+
+        self.member_removal = member_removal_definition(self.signer.definitions.values())
+
         configure = getattr(custody, "configure_effects", None)
         if callable(configure):
             client = getattr(registry, "client", registry)
@@ -225,7 +229,7 @@ class IndependentProtectedSigner:
 
         operation = owner_act_operation(operation)
         rule = operation.spec.requester
-        if operation.spec.supports_self_removal and operation.intent()["subject"]["root_id_or_self"] == "self":
+        if operation.spec.supports_self_removal and operation.intent()["subject"][operation.spec.requester_subject_field] == "self":
             from .self_removal import self_requester
 
             return await self_requester(self, request, operation, purpose=purpose)

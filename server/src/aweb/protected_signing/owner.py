@@ -45,10 +45,6 @@ async def _component_for(composition, scope):
     raise SignerRefused("scope_refused")
 
 
-def _owner_initiable():
-    return any(spec.owner_initiable for spec in OPERATIONS.values())
-
-
 def _asked_at(request):
     """When a request was asked: a frozen artifact's issue time, or for an
     intent the start of its issuance window, which is when it was prepared."""
@@ -192,7 +188,9 @@ async def owner_view(composition, *, scope: str, subject: str, now: datetime | N
         "approvers": approvers,
         "you": next((a["contact"] for a in approvers if a["subject"] == subject), None),
         "members": [],
-        "owner_initiable": context.authority_kind == "team_controller" and _owner_initiable(),
+        "owner_initiable": context.authority_kind == "team_controller" and c.member_removal is not None,
+        "member_removal": ({"operation": c.member_removal.operation, "variant": c.member_removal.variant}
+            if c.member_removal is not None else None),
         # Names where this tab keeps a removal it started: the same for one
         # approver of one team on one signer, and no identifier in clear.
         "storage_scope": "s-" + hashlib.sha256(
@@ -473,11 +471,11 @@ def owner_page_html(view: dict) -> str:
         elif view["members"]:
             removable = view.get("owner_initiable", False)
             if removable:
-                definition = next(spec for spec in OPERATIONS.values() if spec.owner_initiable)
+                definition = view["member_removal"]
                 parts.append(
                     f'<ul class="owner-list" id="owner-members" data-team-id="{e(authority["id"])}" '
                     f'data-storage-scope="{e(view["storage_scope"])}" '
-                    f'data-operation="{e(definition.operation)}" data-variant="{e(definition.variant)}">'
+                    f'data-operation="{e(definition["operation"])}" data-variant="{e(definition["variant"])}">'
                 )
             else:
                 parts.append('<ul class="owner-list">')
