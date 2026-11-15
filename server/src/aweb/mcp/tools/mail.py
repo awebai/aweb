@@ -200,7 +200,10 @@ async def send_mail(
 ) -> str:
     """Send an async message by alias, did:aw, or address."""
     auth = get_auth()
-    sender_address = _sender_address(auth)
+    try:
+        sender_address = _sender_address(auth)
+    except HTTPException as exc:
+        return send_refusal(exc)
     if priority not in VALID_PRIORITIES:
         return json.dumps(
             {"error": f"Invalid priority. Must be one of: {', '.join(sorted(VALID_PRIORITIES))}"}

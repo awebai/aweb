@@ -26,4 +26,5 @@ def team_identity(auth: AuthContext) -> TeamIdentity:
         agent_id=auth.agent_id or "",
         identity_scope=auth.identity_scope or "",
         certificate_id=auth.certificate_id or "",
+        address_resolution=auth.address_resolution,
     )

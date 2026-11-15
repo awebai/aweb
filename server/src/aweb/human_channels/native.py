@@ -26,6 +26,7 @@ from aweb.attachment_service import prepare_attachment_send
 from aweb.db import TransactionInfra
 from aweb.identity_auth_deps import auth_dids, participant_dids
 from aweb.identity_binding import verified_projection
+from aweb.identity_address import require_address_evidence
 from aweb.inbound_modes import effective_inbound_mode
 from aweb.messaging.chat import ensure_session, send_in_session
 from aweb.messaging.chat_policy import HumanChatRefused, recipient_label, require_agent_chat
@@ -65,6 +66,7 @@ def _principal(auth):
 
 
 def _auth_binding(auth):
+    require_address_evidence(auth)
     # Grants remain bound even when their root principal is the same.
     return (
         auth.did_key,
@@ -373,6 +375,7 @@ class NativeMessagingService:
         return prepared
 
     async def _policy(self, db, auth, recipient):
+        require_address_evidence(auth)
         from aweb.service_errors import ServiceError
 
         try:

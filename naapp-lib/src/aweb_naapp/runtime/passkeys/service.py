@@ -801,7 +801,11 @@ class Passkeys:
         once, and a new one, with the act's credential, takes effect after the
         recovery cooling-off; the holding and its `held_since` are kept and its
         certificate replaced. The returned notices go to the contacts recorded
-        for the scope; deliver them after the commit."""
+        for the scope; deliver them after the commit.
+
+        The caller takes F6 and then `prepare_retirement` on this same
+        transaction before calling, ahead of any role, B3 or S4 hold; this
+        method does not check that it did."""
         act_id, actor = await self._verified_act(tx, act, (HOLDER_REPLACE_ACT,))
         await self._refuse_used(tx, act_id)
         self._require_bound(act, credential, notice_contact)
@@ -840,7 +844,11 @@ class Passkeys:
         """End the holding a `human-role.revoke` act names, in the transaction
         that consumed it, and retire its approver with its credentials. It
         reads no membership: a holder who has left the team is revoked too.
-        The installation's record stays as history."""
+        The installation's record stays as history.
+
+        The caller takes F6 and then `prepare_retirement` on this same
+        transaction before calling, ahead of any role, B3 or S4 hold; this
+        method does not check that it did."""
         act_id, actor = await self._verified_act(tx, act, (HOLDER_REVOKE_ACT,))
         await self._refuse_used(tx, act_id)
         key = _holding_key(act)
