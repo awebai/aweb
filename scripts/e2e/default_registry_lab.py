@@ -43,6 +43,7 @@ def checked(args, deadline, log, timeout=60):
 
 def tls_files(root, deadline, log):
     root.mkdir(mode=0o755)
+    root.chmod(0o755)
     checked(["openssl", "req", "-x509", "-newkey", "rsa:2048", "-nodes", "-days", "1",
              "-subj", "/CN=Disposable default registry CA", "-addext", "basicConstraints=critical,CA:TRUE",
              "-keyout", str(root / "ca.key"), "-out", str(root / "ca.pem")], deadline, log)
@@ -72,6 +73,8 @@ def main():
         parser.error("exclusive admitted Linux lab root is required")
     assert hashlib.sha256(args.admission.read_bytes()).hexdigest() == args.admission_sha256
     admission = load_json(args.admission)
+    if '0::/' + admission['fixture_id'] not in Path('/proc/self/cgroup').read_text().splitlines():
+        parser.error('standalone must run inside the admitted outer kernel containment')
     address = str(ipaddress.IPv4Address(admission["public_ipv4"]))
     assert ipaddress.ip_address(address).is_global
     assert hashlib.file_digest(args.binary.open("rb"), "sha256").hexdigest() == BINARY_SHA256
@@ -97,6 +100,10 @@ def main():
         json.dump(plan, stream, indent=2)
         stream.flush()
         os.fsync(stream.fileno())
+    directory = os.open(args.out, os.O_RDONLY | os.O_DIRECTORY)
+    os.fsync(directory)
+    os.close(directory)
+    print('resource plan: ' + str(args.out / 'resources.plan.json'), flush=True)
     resources = Resources(args.out, plan, body_end)
     result = {"primary": "FAIL", "cleanup": {"verdict": "UNKNOWN"}, "images": IMAGES}
     def interrupted(signum, _frame):
@@ -119,6 +126,7 @@ def main():
         tls_files(args.out / "tls", body_end, log)
         dns = work / "dns"
         dns.mkdir(mode=0o755)
+        dns.chmod(0o755)
         os.chown(dns, 1000, 1000)
         (dns / "Corefile").write_text(".:53 {\n errors\n log\n file /zones/authority.zone . { reload 1s }\n}\n")
         (dns / "Corefile").chmod(0o644)
@@ -133,6 +141,12 @@ def main():
         def container(name, image, command, *, env=None, ports=(), mounts=(), cpus="1", memory="1g", aliases=()):
             argv = ["docker", "run", "-d", "--pull=never", "--name", label + "-" + name,
                     *label_args, "--network", network, "--cpus", cpus, "--memory", memory, "--pids-limit", "256"]
+            if name == "client":
+                argv += ["--user", "0:0"]  # public CA bootstrap then irreversible uid1000 drop
+            if name == "postgres":
+                argv += ["--tmpfs", "/var/lib/postgresql/data:rw,size=2147483648"]
+            if name == "redis":
+                argv += ["--tmpfs", "/data:rw,size=67108864"]
             for alias in aliases:
                 argv += ["--network-alias", alias]
             if name not in {"postgres", "redis", "dns"}:
@@ -206,12 +220,13 @@ def main():
         while True:
             state = json.loads(checked(["docker", "inspect", client], body_end, log))[0]["State"]
             # Read-only Redis accounting: no FLUSH/DEL/expiry or quota edits.
-            keys = checked(["docker", "exec", redis, "redis-cli", "--scan", "--pattern", "aweb:rl:*"], body_end, log).splitlines()
-            values = {}
-            for key in keys:
-                count = checked(["docker", "exec", redis, "redis-cli", "GET", key], body_end, log).strip()
-                ttl = checked(["docker", "exec", redis, "redis-cli", "TTL", key], body_end, log).strip()
-                values[key] = {"count": count, "ttl": ttl}
+            # One bounded read-only script, rather than an exec per key.
+            script = ("local cursor='0'; local out={}; local n=0; repeat "
+                      "local scan=redis.call('SCAN',cursor,'MATCH','aweb:rl:*','COUNT',256); cursor=scan[1]; "
+                      "for _,key in ipairs(scan[2]) do n=n+1; if n>2048 then return redis.error_reply('snapshot key cap') end; "
+                      "table.insert(out,{key,redis.call('GET',key),redis.call('TTL',key)}) end; "
+                      "until cursor=='0'; return cjson.encode(out)")
+            values = json.loads(checked(["docker", "exec", redis, "redis-cli", "--raw", "EVAL_RO", script, "0"], body_end, log))
             with (args.out / "redis-usage.jsonl").open("a") as stream:
                 stream.write(json.dumps({"time": time.time(), "keys": values}) + "\n")
             if not state["Running"]:
@@ -227,12 +242,15 @@ def main():
     finally:
         for sig in (signal.SIGTERM, signal.SIGINT):
             signal.signal(sig, signal.SIG_IGN)
-        try:
-            # Retain stock access logs, including original status/path/peer;
-            # explicit limiter exercise retains real Retry-After headers too.
-            for ref in (locals().get("awid"), locals().get("server")):
-                if ref:
+        # Log failure cannot prevent independent best-effort resource cleanup.
+        log_errors = []
+        for ref in (locals().get("awid"), locals().get("server")):
+            if ref:
+                try:
                     checked(["docker", "logs", ref], end, log, timeout=5)
+                except BaseException as error:
+                    log_errors.append({"id": ref, "error": type(error).__name__})
+        try:
             resources.deadline = end
             result["cleanup"] = resources.reconcile()
             if result["primary"] != "PASS":
@@ -240,7 +258,9 @@ def main():
                 result["cleanup"]["verdict"] = "UNKNOWN"
         except BaseException as error:
             result["cleanup"] = {"verdict": "UNKNOWN", "error": type(error).__name__}
-        result["final"] = "PASS" if result["primary"] == "PASS" and result["cleanup"]["verdict"] == "CLEAN" else "FAIL"
+        result["log_errors"] = log_errors
+        result["final"] = "PASS" if (result["primary"] == "PASS" and result["cleanup"]["verdict"] == "CLEAN"
+                                     and not log_errors) else "FAIL"
         with (args.out / "standalone-result.json").open("x") as stream:
             json.dump(result, stream, indent=2)
             stream.flush()

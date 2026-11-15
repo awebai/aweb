@@ -83,49 +83,82 @@ class Containment:
         return dict(line.split() for line in (self.path / "cgroup.events").read_text().splitlines())["populated"] != "0"
 
     def stop(self, process, deadline):
-        signals = []
-        errors = []
-        for value in (self.path / "cgroup.procs").read_text().split():
-            try:
-                descriptor = os.pidfd_open(int(value))
+        """Always attempt kernel termination, including an uncertain Popen.
+
+        Leader bookkeeping is optional. Failed reads never skip cgroup.kill
+        and never become a clean verdict after a later successful observation.
+        """
+        signals, errors, reaped = [], [], []
+        def failure(phase, error):
+            errors.append({"phase": phase, "error": type(error).__name__, "errno": getattr(error, "errno", None)})
+        try:
+            members = (self.path / "cgroup.procs").read_text().split()
+            for value in members:
                 try:
-                    membership = Path("/proc", value, "cgroup").read_text()
-                    if any(line == "0::/" + self.path.name for line in membership.splitlines()):
-                        signal.pidfd_send_signal(descriptor, signal.SIGTERM)
-                        signals.append(int(value))
-                finally:
-                    os.close(descriptor)
-            except OSError as error:
-                errors.append({"pid": int(value), "errno": error.errno})
-        grace = min(deadline, time.monotonic() + 5)
-        while self.populated() and time.monotonic() < grace:
-            process.poll()
-            time.sleep(0.05)
-        if self.populated():
+                    descriptor = os.pidfd_open(int(value))
+                    try:
+                        membership = Path("/proc", value, "cgroup").read_text()
+                        if any(line == "0::/" + self.path.name for line in membership.splitlines()):
+                            signal.pidfd_send_signal(descriptor, signal.SIGTERM)
+                            signals.append(int(value))
+                    finally:
+                        os.close(descriptor)
+                except ProcessLookupError:
+                    pass  # this process exited; kernel kill still covers the subtree
+                except OSError as error:
+                    failure("term-member", error)
+            grace = min(deadline, time.monotonic() + 5)
+            while self.populated() and time.monotonic() < grace:
+                if process is not None:
+                    process.poll()
+                time.sleep(0.05)
+        except BaseException as error:
+            failure("preliminary-observation", error)
+        # This does not depend on successful enumeration, a leader PID, or a
+        # populated read. The already-open owned cgroup is the kill anchor.
+        try:
             self.write("cgroup.kill", "1")
-        while self.populated() and time.monotonic() < deadline:
-            process.poll()
+            kill_attempted, kill_succeeded = True, True
+        except BaseException as error:
+            kill_attempted, kill_succeeded = True, False
+            failure("kernel-kill", error)
+        gone = False
+        while time.monotonic() < deadline:
+            try:
+                if process is not None:
+                    process.poll()
+                if not self.populated():
+                    gone = True
+                    break
+            except BaseException as error:
+                failure("terminal-observation", error)
+                break
             time.sleep(0.05)
-        process.poll()
-        gone = not self.populated()
-        reaped = []
         all_reaped = False
         if gone:
-            process.wait(timeout=max(0.01, deadline - time.monotonic()))
-            while time.monotonic() < deadline:
-                try:
-                    pid, status = os.waitpid(-1, os.WNOHANG)
-                except ChildProcessError:
-                    all_reaped = True
-                    break
-                if pid:
-                    reaped.append({"pid": pid, "status": status})
-                else:
-                    time.sleep(0.01)
-        result = {"path": str(self.path), "term_pidfds": signals, "populated": not gone,
-                  "leader_reaped": process.returncode is not None, "term_errors": errors,
-                  "adopted_reaped": reaped, "all_children_reaped": all_reaped}
+            try:
+                if process is not None:
+                    process.wait(timeout=max(0.01, deadline - time.monotonic()))
+                while time.monotonic() < deadline:
+                    try:
+                        pid, status = os.waitpid(-1, os.WNOHANG)
+                    except ChildProcessError:
+                        all_reaped = True
+                        break
+                    if pid:
+                        reaped.append({"pid": pid, "status": status})
+                    else:
+                        time.sleep(0.01)
+            except BaseException as error:
+                failure("reap", error)
         if gone:
-            self.close_empty()
-        return result
-
+            try:
+                self.close_empty()
+            except BaseException as error:
+                failure("release-cgroup", error)
+        return {"path": str(self.path), "term_pidfds": signals, "populated": not gone,
+                "leader_handle_returned": process is not None,
+                "leader_reaped": process is not None and process.returncode is not None,
+                "errors": errors, "adopted_reaped": reaped, "all_children_reaped": all_reaped,
+                "kernel_kill_attempted": kill_attempted, "kernel_kill_succeeded": kill_succeeded,
+                "verdict": "CLEAN" if gone and all_reaped and kill_succeeded and not errors else "UNKNOWN"}

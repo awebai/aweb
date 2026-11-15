@@ -43,7 +43,9 @@ def snapshot(root):
     for path in [root, *sorted(root.rglob('*'))]:
         info = path.lstat()
         if (stat.S_ISLNK(info.st_mode) or info.st_uid != 0 or info.st_mode & 0o222
-                or not (stat.S_ISDIR(info.st_mode) or stat.S_ISREG(info.st_mode))):
+                or not (stat.S_ISDIR(info.st_mode) or stat.S_ISREG(info.st_mode))
+                or (stat.S_ISDIR(info.st_mode) and info.st_mode & 0o005 != 0o005)
+                or (stat.S_ISREG(info.st_mode) and not info.st_mode & 0o004)):
             raise ValueError('control source must be root-owned, immutable regular files/directories')
         if path.is_file():
             hashes[str(path.relative_to(root))] = hashlib.file_digest(path.open('rb'), 'sha256').hexdigest()
@@ -79,6 +81,11 @@ def main():
         parser.error('invocation digest differs from external admission')
     source = snapshot(args.source)
     invocation = validate_invocation(json.loads(raw), source)
+    if (invocation['interpreter'] != '/usr/bin/python3'
+            or invocation['source_directory'] != str(args.source.resolve())
+            or invocation['output_directory'] != str(args.out.resolve())
+            or invocation['work_directory'] != str((args.out / 'private-work').resolve())):
+        parser.error('interpreter/source/work/output paths differ from invocation admission')
     now = time.time()
     if not (now >= invocation['window_started_unix_seconds']
             and now + BODY_SECONDS + CLEANUP_SECONDS <= invocation['window_ends_unix_seconds']
@@ -106,7 +113,11 @@ def main():
             'source': source, 'cgroup': str(containment.path), 'started_unix_seconds': time.time(),
             'body_seconds': BODY_SECONDS, 'cleanup_seconds': CLEANUP_SECONDS,
             'cpu_max': '200000 100000', 'memory_max': 2 * 1024**3, 'pids_max': 128,
-            'uid': 1000, 'network': 'unshared; no configured interfaces',
+            'uid': 1000, 'interpreter': '/usr/bin/python3', 'entry': invocation['entry'],
+            'args': invocation['args'], 'source_path': str(args.source), 'work_path': str(work),
+            'installed_modes': {str(p.relative_to(args.source)): oct(p.stat().st_mode & 0o777)
+                                for p in [args.source, *sorted(args.source.rglob('*'))]},
+            'network': 'unshared; no configured interfaces',
         })
         def enter():
             containment.enter()
@@ -117,12 +128,16 @@ def main():
             os.setgid(1000)
             os.setuid(1000)
             containment.parent_death()  # setuid clears the first parent-death setting
+            for path in [args.source, *args.source.rglob('*')]:
+                if not os.access(path, os.R_OK | (os.X_OK if path.is_dir() else 0)):
+                    raise PermissionError('uid1000 cannot read/traverse installed source')
         command = ['/usr/bin/python3', '-B', str(args.source / invocation['entry']), *invocation['args']]
         with (args.out / 'body.private.log').open('xb') as log:
             process = subprocess.Popen(command, cwd=work, stdin=subprocess.DEVNULL,
                 stdout=log, stderr=subprocess.STDOUT, env={'HOME': str(work), 'TMPDIR': str(work),
                 'PATH': '/usr/bin:/bin', 'PYTHONDONTWRITEBYTECODE': '1'},
                 preexec_fn=enter, pass_fds=(containment.fd,))
+            result['uid1000_source_access_checked'] = True
             result['child_exit'] = process.wait(timeout=max(0.01, start + BODY_SECONDS - time.monotonic()))
             result['primary'] = 'PASS' if result['child_exit'] == 0 else 'FAIL'
     except BaseException as error:
@@ -132,11 +147,8 @@ def main():
         for sig in old:
             signal.signal(sig, signal.SIG_IGN)
         try:
-            if process is not None:
+            if containment is not None:
                 result['process'] = containment.stop(process, end)
-            elif containment is not None:
-                containment.close_empty()
-                result['process'] = {'populated': False, 'all_children_reaped': True, 'body_started': False}
         except BaseException as error:
             result['cleanup_error'] = type(error).__name__
         try:
@@ -146,7 +158,7 @@ def main():
             result['source_error'] = type(error).__name__
         result['elapsed_seconds'] = time.monotonic() - start
         result['final'] = 'PASS' if (result['primary'] == 'PASS' and result.get('source_unchanged')
-            and not result['process']['populated'] and result['process'].get('all_children_reaped')
+            and result['process'].get('verdict') == 'CLEAN'
             and not result.get('cleanup_error')) else 'FAIL'
         write_record(args.out / 'result.json', result)
         for sig, handler in old.items():

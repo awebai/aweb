@@ -5,11 +5,11 @@ The plan is written before mutations by the reviewed child. The caller supplies
 the admitted fixture/run/source/IP separately. Raw observations stay private.
 Provider teardown is outside this program and has its own result.
 """
-import argparse
 import datetime
 import errno
 import hashlib
 import json
+import math
 import os
 from pathlib import Path
 import re
@@ -17,6 +17,7 @@ import signal
 import socket
 import subprocess
 from lab_process import Containment
+from lab_ingress import Ingress
 import time
 
 
@@ -56,19 +57,28 @@ def validate_plan(plan, admission):
             or listener["service"] != "awid" or listener["published_port"] != (443 if default else 8010)
             or listener["target_port"] != 8010 or listener["protocol"] != "tcp"):
         raise ValueError("public listener differs from admission")
-    if not isinstance(plan["created_unix_seconds"], (int, float)):
+    if (not isinstance(plan["created_unix_seconds"], (int, float))
+            or not math.isfinite(plan["created_unix_seconds"])):
         raise ValueError("missing plan creation time")
     return plan
 
 
 class Resources:
-    def __init__(self, root, plan, deadline):
+    def __init__(self, root, plan, deadline, *, baseline=None):
         self.root, self.plan, self.deadline = root, plan, deadline
+        self.baseline = baseline
         self.observed = {}
         self.errors = []
         self.uncertain = []
         self.listener_seen = False
         self.publications = {}
+        self.started_containers = set()
+        self.linked_volumes = set()
+
+    def builder_name(self):
+        shared = self.plan.get("shared_resources", {})
+        builder = shared.get("builder_name")
+        return "buildx_buildkit_" + builder + "0" if builder else None
 
     def call(self, args, mutate=False):
         left = self.deadline - time.monotonic()
@@ -96,11 +106,28 @@ class Resources:
         result = self.call([*commands[kind], "--filter", "label=" + selector])
         if result["rc"] != 0:
             raise RuntimeError("Docker inventory is UNKNOWN")
-        return result["stdout"].split()
+        return self.identifiers(kind, result["stdout"])
+
+    @staticmethod
+    def identifiers(kind, stdout):
+        values = stdout.split()
+        pattern = r"[A-Za-z0-9][A-Za-z0-9_.-]*" if kind == "volume" else r"[0-9a-f]{64}"
+        if any(not re.fullmatch(pattern, value) for value in values):
+            raise RuntimeError("unexpected Docker resource inventory")
+        return values
 
     def inspect(self, kind, reference):
         result = self.call([kind, "inspect", reference])
         if result["rc"] != 0:
+            # A short-lived labelled seed can disappear between list/inspect.
+            # Do not parse diagnostics or equate names with IDs. A separate
+            # complete successful inventory may establish this exact ID gone.
+            # Keep both calls and the failed inspect in the raw receipt.
+            if kind == "volume" or re.fullmatch("[0-9a-f]{64}", reference):
+                failed = self.errors[-1]
+                if reference not in self.all_objects(kind):
+                    failed["resolved_absent_after_inspect"] = True
+                    return None
             raise RuntimeError("Docker inspect is UNKNOWN")
         values = json.loads(result["stdout"])
         if not isinstance(values, list) or len(values) != 1:
@@ -112,8 +139,29 @@ class Resources:
         owner = self.plan["owner_label"]
         belongs = (labels.get(owner["key"]) == owner["value"]
                    or labels.get("com.docker.compose.project") in self.plan["compose_projects"])
+        # The complete pre-child inventory proved this exclusive host had no
+        # containers/volumes. The reviewed Cloud plan separately names its new
+        # Buildx/cache; these resources are not adopted from another run.
+        if self.baseline is not None:
+            if kind == "container" and value["Name"].lstrip("/") == self.builder_name():
+                mounts = value.get("Mounts", [])
+                belongs = any(m.get("Type") == "volume" and m.get("Name") == self.builder_name() + "_state"
+                              for m in mounts)
+            elif kind == "volume":
+                cache = self.plan.get("shared_resources", {}).get("package_cache_volume")
+                belongs = belongs or value["Name"] in self.linked_volumes or (
+                    value["Name"] == cache and labels.get("aweb.ac.candidate-cache") == "packages")
         stamp = value.get("CreatedAt" if kind == "volume" else "Created")
-        if not belongs or created_epoch(stamp) < self.plan["created_unix_seconds"]:
+        exact = value["Name"] if kind == "volume" else value["Id"]
+        created = created_epoch(stamp)
+        boundary = self.plan["created_unix_seconds"]
+        # Docker volume creation timestamps can have only second precision.
+        # Relax that precision only with the independent pre-child inventory;
+        # an object present there is never adopted even if labels match.
+        if kind == "volume" and self.baseline is not None:
+            boundary = math.floor(boundary)
+        if (not belongs or created < boundary or created > time.time() + 1
+                or (self.baseline is not None and exact in self.baseline[kind])):
             raise RuntimeError("resource is not owned by this attempt")
         return labels, stamp
 
@@ -125,18 +173,41 @@ class Resources:
             refs = set()
             for selector in selectors:
                 refs.update(self.inventory(kind, selector))
+            if kind == "container" and self.builder_name():
+                result = self.call(["ps", "-aq", "--no-trunc", "--filter", "name=^/" + self.builder_name() + "$"])
+                if result["rc"] != 0:
+                    raise RuntimeError("builder inventory is UNKNOWN")
+                refs.update(self.identifiers(kind, result["stdout"]))
+            if kind == "volume":
+                # Names come from independently inspected owned mounts. A
+                # complete successful inventory distinguishes absence from an
+                # inspect failure without guessing Docker diagnostics.
+                existing = self.all_objects("volume")
+                cache = self.plan.get("shared_resources", {}).get("package_cache_volume")
+                refs.update((self.linked_volumes | ({cache} if cache else set())) & existing)
             if len(refs) > 128:
                 raise RuntimeError("unexpectedly large lab resource set")
             for ref in sorted(refs):
-                if (kind, ref) in self.observed and (kind != "container" or self.listener_seen):
+                if (kind, ref) in self.observed and (kind != "container" or ref in self.started_containers):
                     continue
                 value = self.inspect(kind, ref)
+                if value is None:
+                    continue
                 labels, stamp = self.ownership(kind, value)
                 exact = value["Name"] if kind == "volume" else value["Id"]
                 identity = {"kind": kind, "id": exact, "name": value.get("Name"),
                             "created": stamp, "labels": labels}
                 self.observed[(kind, exact)] = identity
                 if kind == "container":
+                    self.linked_volumes.update(m["Name"] for m in value.get("Mounts", []) if m.get("Type") == "volume")
+                    identity["mounts"] = value.get("Mounts", [])
+                    identity["image_id"] = value["Image"]
+                    identity["network_ids"] = {name: item["NetworkID"] for name, item in
+                        (value.get("NetworkSettings", {}).get("Networks") or {}).items()}
+                    identity["limits"] = {key: value["HostConfig"].get(key) for key in
+                        ("NanoCpus", "CpuQuota", "Memory", "PidsLimit", "NetworkMode")}
+                    if value["State"]["Running"]:
+                        self.started_containers.add(ref)
                     ports = value.get("NetworkSettings", {}).get("Ports") or {}
                     if any(ports.values()):
                         self.publications[exact] = {**identity, "ports": ports}
@@ -160,7 +231,9 @@ class Resources:
         except Exception as error:
             self.errors.append({"phase": "pre-cleanup", "error": type(error).__name__})
         for kind in ("container", "network", "volume"):
-            for (item_kind, ref), identity in list(self.observed.items()):
+            ordered = sorted(self.observed.items(), key=lambda item:
+                             item[1].get("name", "").lstrip("/") != self.builder_name())
+            for (item_kind, ref), identity in ordered:
                 if item_kind != kind:
                     continue
                 try:
@@ -170,10 +243,12 @@ class Resources:
                     if ref not in current:
                         continue
                     value = self.inspect(kind, ref)
+                    if value is None:
+                        continue
                     _, stamp = self.ownership(kind, value)
                     if stamp != identity["created"]:
                         raise RuntimeError("resource identity changed before cleanup")
-                    args = [kind, "rm", *( ["-f"] if kind == "container" else []), ref]
+                    args = [kind, "rm", *( ["-f", "-v"] if kind == "container" else []), ref]
                     self.call(args, mutate=True)
                 except Exception as error:
                     self.errors.append({"kind": kind, "id": ref, "error": type(error).__name__})
@@ -206,7 +281,8 @@ class Resources:
         except TimeoutError:
             connection["result"] = "UNKNOWN"
         clean = clean and connection["closed"]
-        return {"verdict": "CLEAN" if clean and not self.errors and not self.uncertain else "UNKNOWN",
+        unresolved_errors = [e for e in self.errors if not e.get("resolved_absent_after_inspect")]
+        return {"verdict": "CLEAN" if clean and not unresolved_errors and not self.uncertain else "UNKNOWN",
                 "terminal": terminal, "errors": self.errors, "uncertain_mutations": self.uncertain,
                 "terminal_listener": connection,
                 "observed": list(self.observed.values()), "publications": list(self.publications.values()),
@@ -219,23 +295,54 @@ class Resources:
         result = self.call(commands[kind])
         if result["rc"] != 0:
             raise RuntimeError("terminal full inventory is UNKNOWN")
-        return set(result["stdout"].split())
+        return set(self.identifiers(kind, result["stdout"]))
 
 
+def fresh_host_baseline(root, deadline):
+    """Read before the child can mutate; only Docker's built-in networks exist."""
+    observer = Resources(root, {}, deadline)
+    baseline = {kind: observer.all_objects(kind) for kind in ("container", "network", "volume")}
+    if baseline["container"] or baseline["volume"]:
+        raise RuntimeError("exclusive fresh host has existing containers or volumes")
+    for ref in baseline["network"]:
+        value = observer.inspect("network", ref)
+        if value["Name"] not in {"bridge", "host", "none"}:
+            raise RuntimeError("exclusive fresh host has a non-default network")
+    with (root / "pre-child-inventory.json").open("x") as stream:
+        json.dump({k: sorted(v) for k, v in baseline.items()}, stream, indent=2)
+        stream.flush()
+        os.fsync(stream.fileno())
+    return baseline
 
 
-def supervise(command, admission, plan_paths, out, body_seconds, cleanup_seconds):
+def supervise(command, admission, plan_paths, out, body_seconds, cleanup_seconds, admission_digest):
     start = time.monotonic()
     deadline = start + body_seconds + cleanup_seconds
     out.mkdir(mode=0o700, parents=False, exist_ok=False)
+    with (out / "start.json").open("x") as stream:
+        json.dump({"kind": "start, never a result", "admission": admission,
+                   "containment": "/sys/fs/cgroup/" + admission["fixture_id"],
+                   "plans": [str(p) for p in plan_paths], "body_seconds": body_seconds,
+                   "cleanup_seconds": cleanup_seconds}, stream, indent=2)
+        stream.flush()
+        os.fsync(stream.fileno())
+    descriptor = os.open(out, os.O_RDONLY | os.O_DIRECTORY)
+    os.fsync(descriptor)
+    os.close(descriptor)
     result = {"primary": "NOT RUN", "cleanup": {}, "process": {"populated": True}}
     process = containment = None
+    baseline = None
     resources = {}
+    quota_observations = {}
+    next_observation = {}
     def interrupted(signum, _frame):
         raise InterruptedError(f"signal {signum}")
     old = {s: signal.signal(s, interrupted) for s in (signal.SIGTERM, signal.SIGINT)}
     try:
         containment = Containment(admission["fixture_id"])
+        containment.limits(4, 2 * 1024**3, 512)
+        baseline = fresh_host_baseline(out, min(start + body_seconds, time.monotonic() + 60))
+        result["ingress"] = Ingress(out, admission["fixture_id"], start + body_seconds).install()
         with (out / "child.log").open("xb") as log:
             process = subprocess.Popen(command, stdout=log, stderr=subprocess.STDOUT,
                                        preexec_fn=containment.enter, pass_fds=(containment.fd,))
@@ -248,53 +355,88 @@ def supervise(command, admission, plan_paths, out, body_seconds, cleanup_seconds
                         plan = validate_plan(load_json(plan_path), admission)
                         directory = out / ("resources-" + str(len(resources)))
                         directory.mkdir(mode=0o700)
-                        resources[key] = (Resources(directory, plan, start + body_seconds),
+                        resources[key] = (Resources(directory, plan, start + body_seconds, baseline=baseline),
                                           hashlib.sha256(plan_path.read_bytes()).hexdigest())
                     if key in resources:
                         observer, digest = resources[key]
                         if hashlib.sha256(plan_path.read_bytes()).hexdigest() != digest:
                             raise RuntimeError("immutable resource plan changed")
-                        observer.discover()
-                time.sleep(min(5, max(0.01, start + body_seconds - time.monotonic())))
+                        ready = plan_path.parent / "results/quota-observation-ready.json"
+                        if ready.exists() and key not in quota_observations:
+                            from lab_quota_observer import capture
+                            quota_observations[key] = capture(observer, ready, admission, admission_digest)
+                        if time.monotonic() >= next_observation.get(key, 0):
+                            observer.discover()
+                            if key not in quota_observations:
+                                from lab_quota_observer import periodic
+                                periodic(observer)
+                            next_observation[key] = time.monotonic() + 3
+                time.sleep(min(0.25, max(0.01, start + body_seconds - time.monotonic())))
             result["child_exit"] = process.returncode
             result["primary"] = "PASS" if process.returncode == 0 else "FAIL"
+            result["quota_observations"] = quota_observations
     except BaseException as error:
         result.update(primary="INTERRUPTED" if isinstance(error, (TimeoutError, InterruptedError)) else "FAIL",
                       error=type(error).__name__)
     finally:
+        deadline = min(deadline, time.monotonic() + cleanup_seconds)
         for sig in old:
             signal.signal(sig, signal.SIG_IGN)
         try:
-            if process is not None:
-                result["process"] = containment.stop(process, min(deadline, time.monotonic() + 15))
-            # Only after all contained producers are stopped, read every plan
-            # again and reconcile daemon resources. New sessions cannot escape
-            # the kernel cgroup. Timed-out Docker operations remain uncertain.
+            if containment is not None:
+                result["process"] = containment.stop(process, min(deadline, time.monotonic() + 45))
+        except BaseException as error:
+            result["process_error"] = type(error).__name__
+        producers_closed = not result["process"]["populated"] and result["process"].get("all_children_reaped")
+        try:
+            # Resolve plans after producer closure. Each plan has independent
+            # error handling so one unreadable plan cannot skip the other.
             for plan_path in plan_paths:
                 key = str(plan_path)
-                if key not in resources and plan_path.exists():
-                    directory = out / ("resources-" + str(len(resources)))
-                    directory.mkdir(mode=0o700)
-                    resources[key] = (Resources(directory, validate_plan(load_json(plan_path), admission), deadline),
-                                      hashlib.sha256(plan_path.read_bytes()).hexdigest())
-                if key in resources:
-                    observer, digest = resources[key]
-                    observer.deadline = deadline
-                    result["cleanup"][key] = {"plan_sha256": digest, **observer.reconcile()}
-                    if result["primary"] != "PASS":
-                        # A killed/failed child can have an unanswered daemon
-                        # mutation. Terminal absence is retained, but no CLEAN
-                        # completion is inferred from one later empty read.
-                        result["cleanup"][key]["possible_unanswered_child_mutation"] = True
-                        result["cleanup"][key]["verdict"] = "UNKNOWN"
-                else:
-                    result["cleanup"][key] = {"verdict": "UNKNOWN", "error": "required resource plan absent"}
-        except BaseException as error:
-            result["cleanup_error"] = type(error).__name__
+                try:
+                    if key not in resources and plan_path.exists():
+                        directory = out / ("resources-" + str(len(resources)))
+                        directory.mkdir(mode=0o700)
+                        resources[key] = (Resources(directory, validate_plan(load_json(plan_path), admission), deadline,
+                                                    baseline=baseline),
+                                          hashlib.sha256(plan_path.read_bytes()).hexdigest())
+                    if key in resources:
+                        observer, digest = resources[key]
+                        observer.deadline = deadline
+                        if hashlib.sha256(plan_path.read_bytes()).hexdigest() != digest:
+                            raise RuntimeError("immutable resource plan changed during finalization")
+                        if producers_closed:
+                            result["cleanup"][key] = {"plan_sha256": digest, **observer.reconcile()}
+                        else:
+                            # Read-only discovery may help recovery; live or
+                            # unaccounted producers prohibit deletion/CLEAN.
+                            observer.discover()
+                            result["cleanup"][key] = {"verdict": "UNKNOWN", "error": "producer closure unknown",
+                                                       "observed": list(observer.observed.values())}
+                        if result["primary"] != "PASS":
+                            result["cleanup"][key]["possible_unanswered_child_mutation"] = True
+                            result["cleanup"][key]["verdict"] = "UNKNOWN"
+                    else:
+                        result["cleanup"][key] = {"verdict": "UNKNOWN", "error": "required resource plan absent"}
+                except BaseException as error:
+                    result["cleanup"][key] = {"verdict": "UNKNOWN", "error": type(error).__name__}
         finally:
+            for observed in quota_observations.values():
+                try:
+                    shared, private = Path(observed["shared_ack"]), Path(observed["private_ack"])
+                    if (shared.is_symlink() or shared.read_bytes() != private.read_bytes()
+                            or hashlib.sha256(Path(observed["private_artifact"]).read_bytes()).hexdigest() != observed["sha256"]):
+                        raise ValueError("shared acknowledgment differs from root-private observation")
+                    observed["binding_verified_after_body"] = True
+                except BaseException as error:
+                    observed["binding_verified_after_body"] = False
+                    observed["binding_error"] = type(error).__name__
+            result["quota_observations"] = quota_observations
             result["final"] = "PASS" if (result["primary"] == "PASS" and not result["process"]["populated"]
-                and result["process"].get("all_children_reaped")
+                and result["process"].get("verdict") == "CLEAN"
                 and not result.get("cleanup_error") and len(result["cleanup"]) == len(plan_paths)
+                and any(q.get("enforcement", {}).get("verdict") == "PASS" and q.get("binding_verified_after_body")
+                        for q in quota_observations.values())
                 and all(r.get("verdict") == "CLEAN" and r.get("public_listener_seen")
                         for r in result["cleanup"].values())) else "FAIL"
             with (out / "supervisor.json").open("x") as stream:
@@ -305,24 +447,3 @@ def supervise(command, admission, plan_paths, out, body_seconds, cleanup_seconds
             for sig, handler in old.items():
                 signal.signal(sig, handler)
     return result
-
-
-def main():
-    os.umask(0o077)
-    parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--admission", type=Path, required=True)
-    parser.add_argument("--plan", type=Path, action="append", required=True)
-    parser.add_argument("--out", type=Path, required=True)
-    parser.add_argument("--body-seconds", type=int, required=True)
-    parser.add_argument("--cleanup-seconds", type=int, default=300)
-    parser.add_argument("command", nargs=argparse.REMAINDER)
-    args = parser.parse_args()
-    if not args.command or args.body_seconds <= 0 or args.cleanup_seconds < 30:
-        parser.error("positive body, cleanup >=30 seconds and a child command are required")
-    result = supervise(args.command, load_json(args.admission), args.plan, args.out,
-                       args.body_seconds, args.cleanup_seconds)
-    return 0 if result["final"] == "PASS" else 1
-
-
-if __name__ == "__main__":
-    raise SystemExit(main())
