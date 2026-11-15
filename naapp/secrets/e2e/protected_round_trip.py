@@ -1138,7 +1138,10 @@ def deliver_once_lost(site: Site, holder: Holder, operation: str, aw_bin: str = 
         status, output = finish(child)
         sent = witness.answers(site.front_log())[len(answered):]
     assert printed == operation, f"approval: aw resumed {printed}, not {operation}"
-    assert report["states"][:2] == ["login-required", "ready"], f"approval: {report}"
+    # The front aborted the app's answer to the signer's own delivery, so
+    # execute answered 503 and the page offers the same act again; aw's
+    # receipt read below confirms the applied effect.
+    assert report["states"] == ["login-required", "ready", "retry"], f"approval: {report}"
     assert report["digest"] == digest and report["act"] == "human-role.revoke", f"approval: {report}"
     # The app was sent the act once, by the signer, and applied it.
     assert sent == [200], f"delivery: the app answered {sent}"
