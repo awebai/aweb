@@ -58,7 +58,7 @@ async def test_one_touch_from_the_mailed_link_approves(link_service, width):
             " !== getComputedStyle(document.querySelector('#handoff-digest')).fontFamily")
         # The definition's words lead: the question, then what it does and
         # to whom, before either button is pressed.
-        principal = s.world.operation.principal
+        principal = s.world.operation.intent()["subject"]["principal"]
         question = f"Remove {principal} as example.owner of example?"
         await expect(page.locator("#handoff-title")).to_have_text(question)
         assert await page.title() == question
