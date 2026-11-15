@@ -1147,9 +1147,6 @@ func TestAwWorkspaceAddWorktreeCreatesLocalSelfCustodialCLIWorkspaceWithTeamKey(
 	defer cancel()
 
 	server := newLocalHTTPServer(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if serveExplicitLegacyInviteTeam(t, w, r, "backend:source") {
-			return
-		}
 		switch r.URL.Path {
 		case "/v1/did/" + parentStableID + "/key":
 			_ = json.NewEncoder(w).Encode(map[string]any{
@@ -1342,9 +1339,6 @@ func TestAwWorkspaceAddWorktreeWithoutIdentityUsesDiscoveryAndMailRoundTrip(t *t
 	)
 
 	registryServer := newLocalHTTPServer(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if serveExplicitLegacyInviteTeam(t, w, r, "backend:source") {
-			return
-		}
 		if serveUnadvertisedHealth(w, r) {
 			return
 		}
@@ -1964,9 +1958,6 @@ func TestAwWorkspaceAddWorktreeRevokesCertificateWhenConnectFails(t *testing.T) 
 	defer cancel()
 
 	server := newLocalHTTPServer(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if serveExplicitLegacyInviteTeam(t, w, r, "backend:source") {
-			return
-		}
 		switch r.URL.Path {
 		case "/v1/did/" + parentStableID + "/key":
 			_ = json.NewEncoder(w).Encode(map[string]any{
@@ -2074,9 +2065,6 @@ func TestAwWorkspaceAddWorktreeRevokesCertificateWhenConnectAliasMismatches(t *t
 	defer cancel()
 
 	server := newLocalHTTPServer(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if serveExplicitLegacyInviteTeam(t, w, r, "backend:source") {
-			return
-		}
 		switch r.URL.Path {
 		case "/v1/did/" + parentStableID + "/key":
 			_ = json.NewEncoder(w).Encode(map[string]any{

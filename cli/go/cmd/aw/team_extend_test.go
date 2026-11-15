@@ -1073,9 +1073,6 @@ func newBYOTRegistryTestServer(t *testing.T, domain, team string, controllerKey 
 	controllerDID := awid.ComputeDIDKey(controllerKey.Public().(ed25519.PublicKey))
 	namespaceCreated := false
 	return httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if serveExplicitLegacyInviteTeam(t, w, r, "ops:acme.com") {
-			return
-		}
 		if serveUnadvertisedHealth(w, r) {
 			return
 		}

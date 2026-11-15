@@ -464,10 +464,10 @@ func reportCLIError(err error, msg string, asJSON bool) {
 func codedRefusalText(err error, msg string) string {
 	refusal, message, ok := awid.CodedRefusal(err)
 	if !ok || !strings.Contains(msg, refusal) {
-		return protectedBoundaryRefusalText(err, msg)
+		return msg
 	}
 	debugLog("%s", refusal)
-	return protectedBoundaryRefusalText(err, strings.Replace(msg, refusal, message, 1))
+	return strings.Replace(msg, refusal, message, 1)
 }
 
 // commandStdout is the stdout every command writes through, so the error

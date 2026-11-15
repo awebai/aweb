@@ -1855,9 +1855,6 @@ func TestTeamHumanCreateBYOTWithAgentsCreatesTeamAndRoster(t *testing.T) {
 	var certAliases []string
 	var server *httptest.Server
 	server = newHTTPTestServerHandlerWithURL(t, func(serverURL string, w http.ResponseWriter, r *http.Request) {
-		if serveExplicitLegacyInviteTeam(t, w, r, "ops:acme.com") {
-			return
-		}
 		if serveUnadvertisedHealth(w, r) {
 			return
 		}

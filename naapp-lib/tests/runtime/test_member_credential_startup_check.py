@@ -37,8 +37,6 @@ def _cache(case: dict) -> AWIDTeamCache:
                 "status": "revoked" if certificate_id in revoked else "active",
                 "revoked_at": "2026-11-02T00:00:00Z" if certificate_id in revoked else None,
             }
-            if request.url.params.get("protection") == "1":
-                response.update(protection={"mode": "legacy"}, certificate_sha256=None)
             return httpx.Response(200, json=response)
         if request.url.path.endswith("/certificates"):
             page = [

@@ -87,13 +87,6 @@ def _auth_view(auth: MessagingAuth) -> dict:
     return asdict(auth)
 
 
-def _team_identity_view(identity: TeamIdentity) -> dict:
-    # The observation is internal admission evidence, not a response field.
-    view = asdict(replace(identity, protection_observation=None))
-    view.pop("protection_observation")
-    return view
-
-
 def _verified_subject_fixture(app):
     # These are scope/protocol unit fixtures with root auth already supplied
     # by _identity. Model the corresponding fresh, previously verified fact;
@@ -126,11 +119,11 @@ def _build_app(aweb_db) -> FastAPI:
 
     @app.get("/v1/team-agents")
     async def _team_roster(identity: TeamIdentity = Depends(team_identity_with_grant_scope(GRANT_SCOPE_ANY))):
-        return _team_identity_view(identity)
+        return asdict(identity)
 
     @app.post("/v1/heartbeat")
     async def _heartbeat(identity: TeamIdentity = Depends(team_identity_with_grant_scope("presence.write"))):
-        return _team_identity_view(identity)
+        return asdict(identity)
 
     @app.get("/v1/chat/{session_id}/messages")
     async def _chat_read(session_id: str, auth: MessagingAuth = Depends(get_messaging_auth)):

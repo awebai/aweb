@@ -33,7 +33,6 @@ from datetime import datetime, timedelta
 from pathlib import Path
 from typing import Any, Protocol
 
-from awid.protected_effect import EffectRefused
 from awid.signing import canonical_json_bytes
 from pgdbm import AsyncDatabaseManager, AsyncMigrationManager
 from pgdbm.core import TransactionManager
@@ -836,7 +835,6 @@ async def exchange(
             now,
             expires_at,
         )
-        _require_protected_freshness(proof)
     return LinkSession(
         session_id=session_id,
         csrf_token=csrf_token,
@@ -982,16 +980,6 @@ async def load_link_creator(db: AsyncDatabaseManager, *, link_id: str) -> LinkCr
     return _link_creator(_record(row["record"]))
 
 
-def _require_protected_freshness(proof: MembershipProof | None) -> None:
-    """Fence the original protected observation after this consumer's final await."""
-    if proof is None or proof.protection_observation is None or not proof.protection_observation.protected:
-        return
-    try:
-        proof.protection_observation.require_fresh()
-    except EffectRefused as exc:
-        raise LinkRefused(exc.code, 503, reason="protected membership evidence expired") from exc
-
-
 async def _require_current_creator(
     tx: TransactionManager,
     authority: LinkAuthority,
@@ -1008,8 +996,6 @@ async def _require_current_creator(
         or proof.team_id != creator.scope.team_id
         or proof.certificate_id != creator.certificate_id
         or proof.team_did_key != creator.team_did_key
-        or (proof.protection_observation is not None and proof.protection_observation.protected
-            and proof.principal != creator.principal_did)
         or not proof.is_fresh_at(checked_now)
     ):
         raise LinkRefused(
@@ -1178,7 +1164,6 @@ async def read(
     limit = await take(tx, [Charge("link.read", caller.session_id, *READS_PER_SESSION)], now=now)
     if not limit.allowed:
         raise _limited(limit)
-    _require_protected_freshness(proof)
     return LinkRead(
         scope=_scope(record),
         creator=creator,
@@ -1304,7 +1289,6 @@ async def admit(
     try:
         stored = await actions.lookup(tx, key=key, request_hash=request_hash)
         if stored is not None:
-            _require_protected_freshness(proof)
             return stored
         _check_lifecycle(row, now)
         _check_action_request(request)
@@ -1382,7 +1366,6 @@ async def admit(
             now,
             receipt.operation_id,
         )
-    _require_protected_freshness(proof)
     return receipt
 
 

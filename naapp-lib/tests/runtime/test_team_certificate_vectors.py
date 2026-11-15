@@ -102,33 +102,3 @@ def test_a_cache_cannot_be_made_to_keep_team_facts_longer_than_the_limit() -> No
     AWIDTeamCache(registry_url=REGISTRY, ttl_seconds=60)
     with pytest.raises(ValueError, match="cached for at most 60 seconds"):
         AWIDTeamCache(registry_url=REGISTRY, ttl_seconds=61)
-
-
-@pytest.mark.parametrize("fault", ["missing", "null", "malformed", "unavailable"])
-async def test_vector_registry_never_turns_missing_protection_into_legacy(fault):
-    from fastapi import HTTPException
-
-    case = next(case for case in VECTORS["cases"] if case["name"] == "valid")
-    original = _registry(case)
-
-    async def answer(request):
-        response = await original.handle_async_request(request)
-        if request.url.path.endswith("/status") and request.url.params.get("protection") == "1":
-            if fault == "unavailable":
-                return httpx.Response(503)
-            payload = response.json()
-            if fault == "missing":
-                del payload["protection"]
-            else:
-                payload["protection"] = None if fault == "null" else {"mode": "unknown"}
-            return httpx.Response(200, json=payload)
-        return response
-
-    cache = AWIDTeamCache(registry_url=REGISTRY, ttl_seconds=60, service_token="s" * 40,
-        transport=httpx.MockTransport(answer))
-    certificate_id = json.loads(base64.b64decode(case["certificate_header"]))["certificate_id"]
-    with pytest.raises(HTTPException) as refused:
-        await cache.get(VECTORS["team_id"], certificate_id)
-    assert refused.value.status_code == 503
-    assert refused.value.detail == {"code": "protected_state_unavailable"}
-    assert cache._cache[VECTORS["team_id"]].protection_observation is None

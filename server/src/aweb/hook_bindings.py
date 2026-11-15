@@ -301,7 +301,7 @@ class OwnerActTeamKeyUnavailable(Exception):
         super().__init__(str(dependency_error))
 
 
-def core_owner_act_verifier(*, audience: str, registry_client: Any, protected_delivery=None) -> OwnerActVerifier:
+def core_owner_act_verifier(*, audience: str, registry_client: Any) -> OwnerActVerifier:
     """The server's owner-act verifier: core's closed vocabulary, its public
     origin as audience, and the team's controller key read fresh from AWID."""
 
@@ -315,18 +315,8 @@ def core_owner_act_verifier(*, audience: str, registry_client: Any, protected_de
             raise Refused("owner_required", "the team has no controller key at its registry")
         return team.team_did_key
 
-    async def authority_for(team_id):
-        from awid.protected_effect import EffectRefused
-        from awid.protected_membership import observe_team_protection
-        try:
-            return await observe_team_protection(registry_client, team_id)
-        except EffectRefused as exc:
-            if isinstance(exc.__cause__, AWID_DEPENDENCY_ERRORS):
-                raise OwnerActTeamKeyUnavailable(exc.__cause__) from exc
-            raise
-
     try:
-        return OwnerActVerifier(scope=OWNER_ACT_SCOPE, audience=audience, acts=CORE_ACTS, team_key_for=team_key_for, team_authority_for=authority_for, protected_delivery=protected_delivery)
+        return OwnerActVerifier(scope=OWNER_ACT_SCOPE, audience=audience, acts=CORE_ACTS, team_key_for=team_key_for)
     except Refused as refused:
         raise _service_error(refused) from refused
 
@@ -339,10 +329,6 @@ _CONFLICT_REFUSALS = frozenset({"subject_mismatch", "nonce_reused"})
 
 def _service_error(refused: Refused) -> ServiceError:
     detail = str(refused)
-    if refused.code in {"protected_state_unavailable", "protected_controller_required"}:
-        error = ServiceError({"code": refused.code, "message": detail})
-        error.status_code = 503 if refused.code == "protected_state_unavailable" else 403
-        return error
     if refused.code in _CONFLICT_REFUSALS:
         return ConflictError(detail)
     if refused.code == "verifier_misconfigured":
@@ -493,11 +479,6 @@ async def _apply_owner_act(
             )
         if in_transaction is not None:
             await in_transaction(tx)
-        try:
-            await prepared.record_applied(tx)
-            prepared.require_fresh()
-        except Refused as refused:
-            raise _service_error(refused) from refused
     return binding_from_row(row)
 
 

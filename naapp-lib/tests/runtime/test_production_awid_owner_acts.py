@@ -26,3 +26,11 @@ async def coordination_registry(test_db_factory) -> AsyncIterator[Registry]:
     registry_db = await test_db_factory.create_db(suffix="owner_acts_production_awid")
     async with running_production_registry(registry_db.config.get_dsn()) as running:
         yield running
+
+
+async def test_an_unreadable_production_awid_still_refuses_owner_act_delivery(world):  # noqa: F811
+    before = await world.counts()
+    world.coordination.registry.transport.down = True
+    response = await world.post(world.body())
+    assert response.status_code == 503, response.text
+    assert await world.counts() == before

@@ -280,14 +280,3 @@ async def test_cached_revocation_never_triggers_key_refresh(world):
     world.redis.values[key] = json.dumps(entry)
     assert await _refused(world, signer="old") == "revoked"
     assert world.key_reads == 0
-
-
-@pytest.mark.asyncio
-async def test_invalid_certificate_does_not_read_protection(world):
-    from unittest.mock import AsyncMock
-
-    world.registry.get_team_fresh = AsyncMock(
-        side_effect=AssertionError("invalid certificate must not buy a protection read")
-    )
-    assert await _refused(world, signer="old", cert_patch={"alias": "forged"}) == "bad_signature"
-    world.registry.get_team_fresh.assert_not_awaited()

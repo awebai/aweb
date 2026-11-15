@@ -209,9 +209,6 @@ func TestSelectedIdentityControllerInviteAndAcceptRoundTrip(t *testing.T) {
 			writeTeamKeyForTest(t, userHome, "acme.com", "backend", controller)
 			var registrations, assertions atomic.Int32
 			server := newLocalHTTPServer(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-				if serveExplicitLegacyInviteTeam(t, w, r, team) {
-					return
-				}
 				switch {
 				case r.Method == "POST" && strings.HasSuffix(r.URL.Path, "/certificates"):
 					var payload struct {

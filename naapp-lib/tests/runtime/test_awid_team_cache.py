@@ -411,11 +411,9 @@ async def test_status_path_verifies_without_a_token_and_reuses_for_at_most_a_min
     cache = status_cache(registry)
     async with relying_app(registry, public_origin=ORIGIN, cache=cache) as (client, _):
         assert (await client.get("/v1/items", headers=get_items(team))).status_code == 200
-        status_path = "/v1/namespaces/example.com/teams/backend/certificates/target/status"
-        # Ordinary cached status and the original fresh protection observation
-        # are distinct reads. Both stay on the anonymous fixed status route.
-        assert [(r.url.path, r.url.params.get("protection")) for r in registry.transport.calls] == [
-            (status_path, None), (status_path, "1")]
+        assert [r.url.path for r in registry.transport.calls] == [
+            "/v1/namespaces/example.com/teams/backend/certificates/target/status"
+        ]
 
         assert "X-AWID-Service-Token" not in registry.transport.calls[0].headers
         cached = cache._certificate_cache[(TEAM_ID, "target")]
@@ -441,8 +439,8 @@ async def test_status_cache_is_per_certificate(registry, team):
     with pytest.raises(HTTPException) as caught:
         await cache.get(TEAM_ID, "unpublished")
     assert caught.value.status_code == 401
-    assert [(r.url.path.rsplit("/", 2)[-2], r.url.params.get("protection"))
-        for r in registry.transport.calls] == [("target", None), ("target", "1"), ("unpublished", None)]
+    assert [r.url.path.rsplit("/", 2)[-2] for r in registry.transport.calls] == [
+        "target", "unpublished"]
 
 
 async def test_without_a_certificate_id_the_team_key_is_a_plain_read(registry, team):

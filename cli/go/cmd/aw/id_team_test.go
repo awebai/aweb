@@ -1352,9 +1352,6 @@ func testTeamInviteAndAcceptInviteFlow(t *testing.T, tokenStdin bool) {
 	var memberDIDKey string
 	var memberStableID string
 	server := newLocalHTTPServer(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if serveExplicitLegacyInviteTeam(t, w, r, "backend:acme.com") {
-			return
-		}
 		switch {
 		case r.Method == http.MethodGet && r.URL.Path == "/v1/namespaces/acme.com/addresses/alice":
 			_ = json.NewEncoder(w).Encode(map[string]any{
@@ -1526,9 +1523,6 @@ func TestTeamInviteJoinConnectsWorkspaceByDefault(t *testing.T) {
 	var failConnect atomic.Bool
 	var server *httptest.Server
 	server = newLocalHTTPServerHandlerWithURL(t, func(serverURL string, w http.ResponseWriter, r *http.Request) {
-		if serveExplicitLegacyInviteTeam(t, w, r, "backend:acme.com") {
-			return
-		}
 		switch {
 		case r.Method == http.MethodGet && r.URL.Path == "/api/v1/discovery":
 			_ = json.NewEncoder(w).Encode(map[string]any{
@@ -3288,9 +3282,6 @@ func TestTeamAcceptInviteGlobalDefaultClaimUsesNamespaceAuthority(t *testing.T) 
 	var events []string
 	var sawCert bool
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if serveExplicitLegacyInviteTeam(t, w, r, "backend:acme.com") {
-			return
-		}
 		switch {
 		case r.Method == http.MethodGet && r.URL.Path == "/v1/did/"+memberDIDAW+"/key":
 			_ = json.NewEncoder(w).Encode(map[string]any{
@@ -3426,9 +3417,6 @@ func TestTeamAcceptInviteGlobalDefaultClaimResumesAfterClaimRollbackFailure(t *t
 	deleteAttempts := 0
 	var events []string
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if serveExplicitLegacyInviteTeam(t, w, r, "backend:acme.com") {
-			return
-		}
 		switch {
 		case r.Method == http.MethodGet && r.URL.Path == "/v1/did/"+memberDIDAW+"/key":
 			_ = json.NewEncoder(w).Encode(map[string]any{
@@ -3605,9 +3593,6 @@ func TestTeamAcceptInviteAddressOverrideUsesRegisteredAddress(t *testing.T) {
 	var memberDIDKey string
 	var memberStableID string
 	server := newLocalHTTPServer(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if serveExplicitLegacyInviteTeam(t, w, r, "backend:acme.com") {
-			return
-		}
 		switch {
 		case r.Method == http.MethodGet && r.URL.Path == "/v1/namespaces/otherco.com/addresses/alice":
 			_ = json.NewEncoder(w).Encode(map[string]any{
@@ -3781,9 +3766,6 @@ func TestTeamAcceptInviteAddressOverrideRejectsDifferentDID(t *testing.T) {
 	var memberStableID string
 	otherDIDAW := "did:aw:other"
 	server := newLocalHTTPServer(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if serveExplicitLegacyInviteTeam(t, w, r, "backend:acme.com") {
-			return
-		}
 		switch {
 		case r.Method == http.MethodGet && r.URL.Path == "/v1/namespaces/otherco.com/addresses/alice":
 			_ = json.NewEncoder(w).Encode(map[string]any{
@@ -4853,9 +4835,6 @@ func TestTeamAddSwitchListLeaveFlow(t *testing.T) {
 	var memberDIDKey string
 	var memberStableID string
 	server := newLocalHTTPServer(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if serveExplicitLegacyInviteTeam(t, w, r, "ops:acme.com") {
-			return
-		}
 		switch {
 		case r.Method == http.MethodGet && r.URL.Path == "/v1/namespaces/acme.com/addresses/alice":
 			_ = json.NewEncoder(w).Encode(map[string]any{
