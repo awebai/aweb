@@ -7,6 +7,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"reflect"
 	"strings"
 	"testing"
 	"time"
@@ -81,6 +82,99 @@ func TestVerifyExportedMessageAuthenticatesOriginalBytes(t *testing.T) {
 	}
 }
 
+func TestVerifyExportedMessageReservedEvidenceIsNeutral(t *testing.T) {
+	export := testMessageExport(t, false)
+	raw := marshalMessageExport(t, export)
+	want := verifyExportedMessage(context.Background(), raw, whoOptions{})
+	tampered := strings.Replace(string(raw), "original body", "tampered body", 1)
+	wantTampered := verifyExportedMessage(context.Background(), []byte(tampered), whoOptions{})
+	for _, evidence := range []string{
+		`{"v":1,"links":[]}`,
+		`{"v":999,"future":{"v":1}}`,
+		`{"v":1,"identity_valid":true,"human_id":"did:aw:untrusted","grade":"certified_hardware"}`,
+		`{"v":1,"v":2,"nested":{"signature":"first","signature":"last"}}`,
+		`{"v":"malformed"}`,
+		`null`, `[]`, `"opaque"`,
+	} {
+		t.Run(evidence, func(t *testing.T) {
+			withEvidence := []byte(strings.TrimSuffix(string(raw), "}") + `,"evidence":` + evidence + `}`)
+			got := verifyExportedMessage(context.Background(), withEvidence, whoOptions{})
+			if !reflect.DeepEqual(got, want) {
+				t.Fatalf("reserved evidence changed verification: got %+v want %+v", got, want)
+			}
+			withTamper := []byte(strings.TrimSuffix(tampered, "}") + `,"evidence":` + evidence + `}`)
+			if got := verifyExportedMessage(context.Background(), withTamper, whoOptions{}); !reflect.DeepEqual(got, wantTampered) {
+				t.Fatalf("evidence changed invalid message result: got %+v want %+v", got, wantTampered)
+			}
+		})
+	}
+	for _, name := range []string{`"V"`, `"\u0076"`} {
+		alias := strings.Replace(string(raw), `"v"`, name, 1)
+		if got := verifyExportedMessage(context.Background(), []byte(alias), whoOptions{}); !reflect.DeepEqual(got, want) {
+			t.Fatalf("rejected a unique decoded field: %+v", got)
+		}
+	}
+	// Reserving evidence must not disable strictness for unrelated outer fields.
+	unknown := []byte(strings.TrimSuffix(string(raw), "}") + `,"future":{}}`)
+	if got := verifyExportedMessage(context.Background(), unknown, whoOptions{}); got.Reason != "malformed_envelope" {
+		t.Fatalf("accepted unrelated outer field: %+v", got)
+	}
+}
+
+func TestVerifyExportedMessageRejectsDuplicateOuterMembers(t *testing.T) {
+	raw := marshalMessageExport(t, testMessageExport(t, false))
+	var fields map[string]json.RawMessage
+	if err := json.Unmarshal(raw, &fields); err != nil {
+		t.Fatal(err)
+	}
+	fields["id_chain"], fields["evidence"] = json.RawMessage(`null`), json.RawMessage(`{"v":1}`)
+	for field, value := range fields {
+		t.Run(field, func(t *testing.T) {
+			key, _ := json.Marshal(field)
+			// Identical values must also refuse, regardless of which value wins.
+			duplicate := []byte(`{` + string(key) + `:` + string(value) + `,` + string(key) + `:` + string(value) + `,` + string(raw[1:]))
+			if !json.Valid(duplicate) {
+				t.Fatal("control must be syntactically valid JSON")
+			}
+			got := verifyExportedMessage(context.Background(), duplicate, whoOptions{})
+			if got.Reason != "malformed_envelope" || got.IdentityValid == nil || *got.IdentityValid {
+				t.Fatalf("accepted duplicate %s: %+v", field, got)
+			}
+		})
+	}
+	for _, prefix := range []string{
+		`"v":2,`, // The later valid value currently hides this first value.
+		`"\u0076":1,`,
+		`"V":1,`, // encoding/json also accepts case-insensitive field aliases.
+		`"TYPE":"aweb.message-envelope",`,
+		`"\u017fignature":"invalid",`, // Unicode folding also aliases signature.
+	} {
+		t.Run(prefix, func(t *testing.T) {
+			got := verifyExportedMessage(context.Background(), []byte(`{`+prefix+string(raw[1:])), whoOptions{})
+			if got.Reason != "malformed_envelope" || got.IdentityValid == nil || *got.IdentityValid {
+				t.Fatalf("duplicate decoded field accepted: %+v", got)
+			}
+		})
+	}
+}
+
+func TestMessageExportPreservesOpaqueVersionedEvidence(t *testing.T) {
+	raw := marshalMessageExport(t, testMessageExport(t, false))
+	evidence := `{"v":999,"future":{"statement":"unchanged"}}`
+	withEvidence := []byte(strings.TrimSuffix(string(raw), "}") + `,"evidence":` + evidence + `}`)
+	var export messageExport
+	if err := json.Unmarshal(withEvidence, &export); err != nil {
+		t.Fatal(err)
+	}
+	var roundtrip map[string]json.RawMessage
+	if err := json.Unmarshal(marshalMessageExport(t, export), &roundtrip); err != nil {
+		t.Fatal(err)
+	}
+	if string(roundtrip["evidence"]) != evidence {
+		t.Fatalf("lost reserved evidence: %s", roundtrip["evidence"])
+	}
+}
+
 func TestExportMailEnvelopePreservesSignedBytesAndRefusesReconstruction(t *testing.T) {
 	export := testMessageExport(t, false)
 	message := awid.InboxMessage{MessageID: "exact", SignedPayload: export.SignedPayload, Signature: export.Signature, SigningKeyID: export.SigningKeyID,
@@ -131,6 +225,7 @@ func TestVerifyEncryptedExportNeedsNoDecryptionKey(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	export.Evidence = json.RawMessage(`{"v":999,"future":true}`)
 	raw := marshalMessageExport(t, export)
 	if strings.Contains(string(raw), "secret") || strings.Contains(string(raw), "decrypted text") {
 		t.Fatal("export contains plaintext")
@@ -153,7 +248,7 @@ func TestVerifyBinaryIgnoresIdentityStateAndReadsFileOrStdin(t *testing.T) {
 	bin := filepath.Join(root, "aw")
 	buildAwBinary(t, ctx, bin)
 	export := testMessageExport(t, false)
-	raw := marshalMessageExport(t, export)
+	raw := []byte(strings.TrimSuffix(string(marshalMessageExport(t, export)), "}") + `,"evidence":{"v":999}}`)
 	path := filepath.Join(root, "export.json")
 	if err := os.WriteFile(path, raw, 0o600); err != nil {
 		t.Fatal(err)
@@ -193,6 +288,7 @@ func TestVerifyBinaryIgnoresIdentityStateAndReadsFileOrStdin(t *testing.T) {
 	}{
 		{"invalid", marshalMessageExport(t, invalid), 1, "message_signature_invalid"},
 		{"malformed", []byte("{"), 1, "malformed_envelope"},
+		{"duplicate outer field", []byte(`{"v":2,` + string(raw[1:])), 1, "malformed_envelope"},
 		{"unavailable", marshalMessageExport(t, testMessageExport(t, true)), 2, "evidence_unavailable"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {

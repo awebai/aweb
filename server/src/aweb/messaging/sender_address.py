@@ -1,10 +1,15 @@
 """Sender address policy shared by HTTP and MCP messaging adapters."""
 from typing import Any
 
+from aweb.identity_address import require_address_evidence
 from aweb.messaging.alias_targets import derive_team_address
 
 
 def sender_address(auth: Any) -> str | None:
+    require_address_evidence(auth)
+    outcome = getattr(auth, "address_resolution", None)
+    if outcome is not None and outcome.state == "unknown":
+        return outcome.stored_address
     address = (auth.address or "").strip()
     if address:
         return address

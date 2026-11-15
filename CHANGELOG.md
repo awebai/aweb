@@ -2,6 +2,11 @@
 
 ## Unreleased
 
+- Failed identity address discovery now remains unknown instead of looking
+  addressless. Identity sends keep using a stored binding verified for the
+  current key, including a verified empty address; an unverified sender gets
+  retryable `503 address_evidence_unavailable` before delivery. Optional
+  identity display reports unknown without clearing stored bindings.
 - Registry team reads that hit a database lock timeout now return retryable
   `503 protected_state_unavailable`; invalid-binding logs identify the team.
   Health responses advertise `capabilities.team_protection: true` so startup

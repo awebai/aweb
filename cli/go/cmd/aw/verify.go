@@ -24,6 +24,8 @@ type messageExport struct {
 	SigningKeyID      string                    `json:"signing_key_id,omitempty"`
 	EncryptedEnvelope *awid.E2EEMessageEnvelope `json:"encrypted_envelope,omitempty"`
 	IDChain           awid.ReceivedIDChain      `json:"id_chain,omitempty"`
+	// Reserve versioned evidence without trusting or interpreting its contents.
+	Evidence json.RawMessage `json:"evidence,omitempty"`
 }
 
 var verifyRegistry string
@@ -99,7 +101,7 @@ func verifyExportedMessage(ctx context.Context, raw []byte, opts whoOptions) who
 	if err := decoder.Decode(&export); err != nil {
 		return messageVerificationFailure("", "malformed_envelope", true)
 	}
-	if decoder.Decode(new(any)) != io.EOF || export.V != 1 || export.Type != "aweb.message-envelope" {
+	if decoder.Decode(new(any)) != io.EOF || export.V != 1 || export.Type != "aweb.message-envelope" || !uniqueExportMembers(raw) {
 		return messageVerificationFailure("", "malformed_envelope", true)
 	}
 	message := awid.InboxMessage{IDChain: export.IDChain}
@@ -188,6 +190,38 @@ func verifyExportedMessage(ctx context.Context, raw []byte, opts whoOptions) who
 		return messageVerificationFailure(subject.ID, "evidence_unavailable", false)
 	}
 	return out
+}
+
+// Check original outer names before trusting encoding/json's last-wins result.
+// Values stay opaque, including evidence and the original signed payload.
+// Strict field decoding runs first, so unique names are limited to known fields.
+func uniqueExportMembers(raw []byte) bool {
+	decoder := json.NewDecoder(bytes.NewReader(raw))
+	token, err := decoder.Token()
+	if err != nil || token != json.Delim('{') {
+		return false
+	}
+	var names []string
+	for decoder.More() {
+		token, err := decoder.Token()
+		name, ok := token.(string)
+		if err != nil || !ok {
+			return false
+		}
+		for _, seen := range names {
+			// Match the typed decoder's case-insensitive field aliases too.
+			if strings.EqualFold(seen, name) {
+				return false
+			}
+		}
+		names = append(names, name)
+		var value json.RawMessage
+		if decoder.Decode(&value) != nil {
+			return false
+		}
+	}
+	token, err = decoder.Token()
+	return err == nil && token == json.Delim('}')
 }
 
 func formatVerifiedMessage(v any) string {

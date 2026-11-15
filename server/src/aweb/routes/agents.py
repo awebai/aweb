@@ -352,6 +352,9 @@ def _used_global_names(existing_names: list[str], exclude: list[str], *, user_pr
 
 
 def _identity_global_name_prefix(identity: TeamIdentity) -> str:
+    from aweb.identity_address import require_address_evidence
+
+    require_address_evidence(identity)
     raw = ""
     if identity.address and "/" in identity.address:
         _namespace, raw = identity.address.split("/", 1)

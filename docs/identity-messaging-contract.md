@@ -46,6 +46,21 @@ Team certificates remain valid for team membership, local ACLs, and certificate
 verification flows. They are not an address reachability or message routing
 oracle.
 
+Address discovery distinguishes not requested, observed empty, verified value,
+and unavailable evidence. A failed address read is optional UNKNOWN enrichment,
+not proof that an identity has no address: it never clears a stored binding,
+caches an empty result, or changes the sender's From. Identity displays report
+unknown when discovery is unavailable. Independent DID/key authentication and
+membership checks still apply.
+
+Sender, From and routing uses require address evidence. A stored binding
+already verified for the authenticated current key supplies that evidence,
+including a verified empty address, which still permits addressless sending
+during a registry outage. Only when no such binding is available and discovery
+fails does the operation refuse with HTTP 503 `address_evidence_unavailable`,
+before delivery or other effects. Conflicting stored bindings do not select a
+different From. DID-only reads do not acquire this address dependency.
+
 Global recipients expose an explicit delivery-time `inbound_mode`. It is an
 identity property across every non-deleted row for the exact `did:aw`, including
 retired or inactive memberships. The effective policy is the strictest valid
