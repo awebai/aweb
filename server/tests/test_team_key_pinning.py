@@ -189,7 +189,7 @@ async def test_an_older_act_cannot_roll_the_pin_back(pinning):
 
 
 @pytest.mark.asyncio
-async def test_before_enforcement_a_mismatch_is_logged_and_the_pin_kept(pinning, monkeypatch, caplog):
+async def test_before_enforcement_a_mismatch_is_logged_and_moves_the_pin(pinning, monkeypatch, caplog):
     env = pinning
     monkeypatch.setenv("AWEB_ENFORCE_TEAM_KEY_PINS", "false")
     await register_namespace_controller(env, env.namespace_did)
@@ -201,11 +201,13 @@ async def test_before_enforcement_a_mismatch_is_logged_and_the_pin_kept(pinning,
         response = await _connect(env, _member(substituted_sk, substituted_did, "measured"))
 
     assert response.status_code == 200, response.text
-    assert (await _pin(env))["team_did_key"] == env.team_did
-    mismatches = [r.getMessage() for r in caplog.records if r.getMessage().startswith("team_key_pin_mismatch")]
-    assert mismatches and set(mismatches) == {
+    # The key certificates were verified under is the team's one current key here.
+    assert (await _pin(env))["team_did_key"] == substituted_did
+    lines = [r.getMessage() for r in caplog.records if r.getMessage().startswith("team_key_pin_")]
+    assert lines == [
         f"team_key_pin_mismatch team={TEAM} pinned={env.team_did} served={substituted_did} reason=no_act enforced=false",
-    }
+        f"team_key_pin_moved_without_act team={TEAM} from={env.team_did} to={substituted_did} reason=no_act",
+    ]
 
 
 @pytest.mark.asyncio

@@ -336,7 +336,7 @@ async def test_a_pin_that_moved_elsewhere_meanwhile_is_not_overwritten():
 
 
 @pytest.mark.asyncio
-async def test_without_enforcement_a_mismatch_is_logged_served_and_the_pin_kept(caplog):
+async def test_without_enforcement_a_mismatch_is_logged_served_and_moves_the_pin(caplog):
     pins = MemoryTeamKeyPins()
     _, pinned = keypair()
     _, served = keypair()
@@ -346,10 +346,27 @@ async def test_without_enforcement_a_mismatch_is_logged_served_and_the_pin_kept(
             TEAM_ID, served, pins=pins, fetch_act=_fetch(None), resolver=TXTAnswers({}), enforce=False,
         )
     assert key == served
-    assert await pins.pin(TEAM_ID) == TeamKeyPin(pinned, None)
+    # The served key is the team's one current key on this server.
+    assert await pins.pin(TEAM_ID) == TeamKeyPin(served, None)
     assert [r.getMessage() for r in caplog.records] == [
         f'team_key_pin_mismatch team={TEAM_ID} pinned={pinned} served={served} reason=no_act enforced=false',
+        f'team_key_pin_moved_without_act team={TEAM_ID} from={pinned} to={served} reason=no_act',
     ]
+
+
+@pytest.mark.asyncio
+async def test_a_move_without_an_act_keeps_the_time_of_the_last_accepted_act():
+    pins = MemoryTeamKeyPins()
+    _, first = keypair()
+    _, acted = keypair()
+    _, served = keypair()
+    signed_at = datetime(2026, 11, 12, 10, 0, tzinfo=timezone.utc)
+    await pins.first_sight(TEAM_ID, first)
+    assert await pins.move(TEAM_ID, expected=TeamKeyPin(first, None), new=TeamKeyPin(acted, signed_at))
+
+    await pinned_team_key(TEAM_ID, served, pins=pins, fetch_act=_fetch(None), resolver=TXTAnswers({}), enforce=False)
+
+    assert await pins.pin(TEAM_ID) == TeamKeyPin(served, signed_at)
 
 
 @pytest.mark.asyncio
