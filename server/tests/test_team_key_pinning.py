@@ -218,3 +218,18 @@ async def test_an_embedding_app_without_a_resolver_still_authenticates(pinning):
     bob = env.actors["bob"]
     response = await env.client.get("/v1/agents", headers=_signed_team_headers(bob.sk, bob.did, TEAM, bob.certificate))
     assert response.status_code == 200, response.text
+
+
+@pytest.mark.asyncio
+async def test_a_warm_request_under_the_pinned_key_reads_no_pin(pinning):
+    env = pinning
+    member = _member(env.team_sk, env.team_did, "warm")
+    assert (await _connect(env, member)).status_code == 200
+    # Another process's act moves the stored pin; this server read the pin within
+    # the last 60 s, and a request under the key it read takes no further read.
+    elsewhere = _make_keypair()[2]
+    await env.db.execute("UPDATE {{tables.teams}} SET team_did_key = $1 WHERE team_id = $2", elsewhere, TEAM)
+
+    roster = await _roster(env, member)
+
+    assert roster.status_code == 200, roster.text
