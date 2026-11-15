@@ -115,7 +115,11 @@ version and live B3 approver subject/scope. Empty or mismatched provisioning
 refuses startup. Each operation still performs its own fresh authority checks.
 Resources close on startup failure and shutdown. Existing deployments require
 their authorized migration procedure; this entry point is not permission to
-apply migrations or move keys in a real deployment.
+apply migrations or move keys in a real deployment. Stop every running signer
+process before starting the upgraded one: the signer's operation-scope
+migration (008) rewrites the operations table and makes its new column
+required in one step, so an older signer still running would fail every
+prepare after it.
 
 ## One-command setup
 
