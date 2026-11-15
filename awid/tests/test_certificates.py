@@ -760,3 +760,44 @@ async def test_certificate_listing_serves_a_whole_small_team_in_one_page(client,
     assert len(body["certificates"]) == 3
     assert body["has_more"] is False
     assert body["next_cursor"] is None
+
+
+@pytest.mark.asyncio
+async def test_certificate_listing_names_the_team_key_each_certificate_is_under(client, controller_identity, awid_db_infra):
+    """A controller replacing certificates after a key change tells the ones
+    already under the new key from the rest; a metadata-only record names none."""
+    ns_key, ns_did = controller_identity
+    team_key, team_did, _ = await _setup_team(client, ns_key, ns_did, "keyed.cert.com", "backend")
+    _, member_pub = generate_keypair()
+    cert_id = str(uuid4())
+    headers = _sign(
+        team_key, team_did, domain="keyed.cert.com", operation="register_certificate",
+        team_name="backend", certificate_id=cert_id,
+    )
+    resp = await client.post(
+        "/v1/namespaces/keyed.cert.com/teams/backend/certificates",
+        json={
+            "certificate": _signed_certificate_blob(
+                team_key, certificate_id=cert_id, team_id="backend:keyed.cert.com", team_did_key=team_did,
+                member_did_key=did_from_public_key(member_pub), alias="keyed", lifetime="local",
+            ),
+            "certificate_id": cert_id,
+            "member_did_key": did_from_public_key(member_pub),
+            "alias": "keyed",
+            "identity_scope": "local",
+        },
+        headers=headers,
+    )
+    assert resp.status_code == 200, resp.text
+    legacy_id = str(uuid4())
+    await awid_db_infra.get_manager().execute(
+        "INSERT INTO {{tables.team_certificates}} (team_uuid,certificate_id,member_did_key,alias,identity_scope) "
+        "SELECT team_uuid,$1,$2,'legacy','local' FROM {{tables.teams}} WHERE domain='keyed.cert.com' AND name='backend'",
+        legacy_id, did_from_public_key(generate_keypair()[1]),
+    )
+
+    resp = await client.get("/v1/namespaces/keyed.cert.com/teams/backend/certificates")
+
+    assert resp.status_code == 200, resp.text
+    keys = {c["certificate_id"]: c.get("team_did_key") for c in resp.json()["certificates"]}
+    assert keys == {cert_id: team_did, legacy_id: None}

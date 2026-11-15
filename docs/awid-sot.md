@@ -720,6 +720,9 @@ POST   /v1/namespaces/{domain}/teams/{name}/certificates
        member. If member_address is present, awid validates that it
        resolves to member_did_aw before recording the certificate.
        Response: { "registered": true, "certificate_id": "uuid" }
+       The certificate is verified under, and inserted while holding, the
+       team row's current key (the lock rotate takes); a key change that
+       commits meanwhile refuses it 409 team_key_not_current.
 
 GET    /v1/namespaces/{domain}/teams/{name}/certificates
        List issued certificates (active and revoked).
@@ -734,8 +737,13 @@ GET    /v1/namespaces/{domain}/teams/{name}/certificates
                    "alias": "alice",
                    "identity_scope": "global",
                    "issued_at": "...",
-                   "revoked_at": null }] }
+                   "revoked_at": null,
+                   "team_did_key": "did:key:z6Mk..." }] }
        With active_only=true: only rows where revoked_at IS NULL.
+       team_did_key is the team key the stored certificate names (null for a
+       record stored without its certificate). It is what the certificate
+       claims, not a verification: a controller uses it after a team key
+       change to tell the certificates already issued under the new key.
        This is how the dashboard lists team members.
 
 GET    /v1/namespaces/{domain}/teams/{name}/certificates/{certificate_id}/status

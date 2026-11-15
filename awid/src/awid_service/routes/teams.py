@@ -29,6 +29,7 @@ from awid.dns_auth import (
 )
 from awid.did import public_key_from_did
 from awid.signing import VerifyResult, canonical_json_bytes, verify_signature_with_public_key
+from awid.team_certificate import TeamCertificateError, decode_team_certificate
 from awid.team_ids import build_team_id
 from awid.team_server_record import TeamServerRecordError, verify_team_server_record
 from awid_service.delivery_origin import validate_delivery_origin
@@ -493,6 +494,8 @@ class CertificateResponse(BaseModel):
     identity_scope: str
     issued_at: str
     revoked_at: str | None = None
+    # The team key the stored certificate names; None for a metadata-only record.
+    team_did_key: str | None = None
 
 
 class CertificateFetchResponse(CertificateResponse):
@@ -1100,7 +1103,7 @@ async def list_certificates(
     params.append(validated_limit + 1)
     query = (
         "SELECT tc.id, tc.certificate_id, tc.member_did_key, tc.member_did_aw, tc.member_address,"
-        " tc.alias, tc.identity_scope, tc.issued_at, tc.revoked_at, t.domain, t.name"
+        " tc.alias, tc.identity_scope, tc.issued_at, tc.revoked_at, tc.certificate, t.domain, t.name"
         " FROM {{tables.team_certificates}} tc"
         " JOIN {{tables.teams}} t ON t.team_uuid = tc.team_uuid"
         " WHERE " + " AND ".join(where_clauses)
@@ -1604,8 +1607,20 @@ def _team_response(row) -> TeamResponse:
     )
 
 
+def _certificate_team_key(blob: str | None) -> str | None:
+    """The team key a stored certificate names, or None without a readable one."""
+    if not blob:
+        return None
+    try:
+        key = decode_team_certificate(blob).get("team_did_key")
+    except TeamCertificateError:
+        return None
+    return key if isinstance(key, str) and key else None
+
+
 def _cert_response(row) -> CertificateResponse:
     return CertificateResponse(
+        team_did_key=_certificate_team_key(row.get("certificate")),
         team_id=build_team_id(row["domain"], row["name"]),
         certificate_id=row["certificate_id"],
         member_did_key=row["member_did_key"],
