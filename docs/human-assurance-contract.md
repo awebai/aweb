@@ -815,7 +815,8 @@ The signer mails each eligible approver their own approval notice after the
 prepare transaction commits, up to the requester's notice budget; the requester
 never receives or relays a link. The budget is ten notices per requester per
 hour, one per approver mailed, across operation kinds and for one signer
-authority. Each prepare reserves its notices once, in its own transaction, so a
+authority, and never less than one full round: a request to more approvers than
+the budget is mailed whole when the window holds no other notice. Each prepare reserves its notices once, in its own transaction, so a
 repeated prepare or concurrent prepares cannot spend more. Past the budget the
 request is still created and waits for its approver exactly as a mailed one
 does, but no notice is mailed for it, then or later. Its authorized owners see
@@ -1094,7 +1095,11 @@ operation and keeps its generic status code. The
 controls distinguish these cases from an incorrect request origin.
 
 Invalid authentication is 401 `requester_invalid`, scope denial 403
-`scope_refused`, binding conflict 409 `operation_conflict`. Authenticated
+`scope_refused`, binding conflict 409 `operation_conflict`. A requester that
+already has twenty requests waiting for a human under one signer authority is
+refused at prepare with 403 `open_requests_limit_reached`, before any approval
+or operation is created; a decided or expired request frees its place, and
+resending a prepare already made still answers. Authenticated
 lookup with no authorized matching record returns 404 `operation_not_found`,
 not proof that a previously sent request never committed. Availability failure
 is 503 `receipt_unavailable`. Receipt states themselves use HTTP 200.

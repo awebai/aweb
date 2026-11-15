@@ -40,8 +40,8 @@ from .execution_intent import (
     prepare_artifact_intent,
     validate_issued_artifact,
 )
-from .notice_budget import reserve_notices
 from .owner_initiation import OwnerInitiation, _checked_owner_initiation
+from .requester_budget import admit_open_request, reserve_notices
 from .retention import EffectConfirmation, RetainedEffect
 from .types import (
     AdmittedHuman,
@@ -382,6 +382,11 @@ class ProtectedSigner:
             policy = await self.policies.current(POLICY_REF, tx=tx)
             if policy is None or policy.min_assurance is not Assurance.PASSKEY:
                 raise SignerRefused("policy_changed")
+            if typed.spec.needs_human:
+                await admit_open_request(
+                    tx, service_id=operation.context.service_id, authority_id=operation.context.authority_id,
+                    requester=requester.principal, now=self.clock(),
+                )
             now = self.clock().replace(microsecond=0)
             # Pending approval is bounded even for artifacts whose existing
             # consumer wire has no expiry (for example a team server record).

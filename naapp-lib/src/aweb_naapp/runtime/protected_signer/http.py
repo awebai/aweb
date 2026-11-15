@@ -192,6 +192,7 @@ def _http(error: Exception, request: Request | None) -> HTTPException:
             "live_approval_required": (403, "live_approval_required"),
             "admission_policy_missing": (403, "admission_policy_missing"),
             "admission_limit_reached": (403, "admission_limit_reached"),
+            "open_requests_limit_reached": (403, "open_requests_limit_reached"),
             "subject_ineligible": (403, "subject_ineligible"),
             "operation_not_found": (404, "operation_not_found"),
             "operation_conflict": (409, "operation_conflict"),
